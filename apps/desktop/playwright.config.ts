@@ -11,5 +11,6 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   forbidOnly: !!process.env['CI'],
-  reporter: [['list']],
+  // In CI an HTML report is kept too (uploaded by .github/workflows/ci.yml when the job fails).
+  reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : [['list']],
 });

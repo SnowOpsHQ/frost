@@ -1,0 +1,204 @@
+# IPC sender-guard rules (CI gate; acceptance: specs/ci-gates.feature.md). Every IPC message must
+# enter main through the one transport handler and every tRPC procedure must pass enforceSender.
+#
+#   Rule test (fixtures):   pnpm security:semgrep:test
+#   Repo scan (0 findings): pnpm security:semgrep:scan   (both: pnpm security:semgrep)
+#
+# `paths.exclude` is honoured by both — and `semgrep --test` passes vacuously on an excluded file,
+# so the fixture must never match an exclude. Test-only code (vitest suites and the Electron fake)
+# is excluded: it is never bundled into the app, and it mocks these APIs on purpose.
+rules:
+  - id: ipc-handler-outside-transport
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      IPC listener registered outside the transport. All renderer→main IPC must go through the
+      single sender-validated handler in packages/ipc-contract/src/transport/main.ts (add a tRPC
+      procedure guarded by enforceSender instead).
+    paths:
+      exclude:
+        - /packages/ipc-contract/src/transport/main.ts
+        - "__tests__/"
+        - "*.test.ts"
+        - /apps/desktop/src/test/
+    mode: taint
+    # Labels: MAIN = ipcMain; CONTENTS = a WebContents / WebFrameMain; IPC = the `ipc` of a CONTENTS
+    # (per-WebContents IPC, Electron >= 17). Registrations on MAIN or IPC are flagged; an `ipc`
+    # property of anything else is not.
+    pattern-sources:
+      - label: MAIN
+        pattern-either:
+          - pattern: ipcMain
+          - pattern: $X.ipcMain
+          - pattern: "($M : IpcMain)"
+      - label: CONTENTS
+        pattern-either:
+          - pattern: $X.webContents
+          - pattern: $X.mainFrame
+          - pattern: $X.sender
+          - pattern: $X.senderFrame
+          - pattern: $X.frames
+          - pattern: $X.framesInSubtree
+          - pattern: $X.parent
+          - pattern: $X.top
+          - pattern: webContents
+          - pattern: webFrameMain
+          - pattern: "($W : WebContents)"
+          - pattern: "($W : WebFrameMain)"
+      - label: IPC
+        requires: CONTENTS
+        pattern: $X.ipc
+      # Untyped callback parameters (`app.on('web-contents-created', (_e, contents) => …)`): judged
+      # by name.
+      - label: IPC
+        patterns:
+          - pattern: $W.ipc
+          - metavariable-regex:
+              metavariable: $W
+              regex: (?i)(contents|frame|sender|\bwc)\w*$
+      # Destructuring (`const { ipcMain: alias } = electron`, `const { ipc } = win.webContents`, a
+      # destructured parameter): Semgrep does not taint the binding itself, so the later uses of the
+      # bound name are the source (the other names bound by the same statement are not).
+      - label: MAIN
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const { ..., ipcMain: $V, ... } = $E;
+                  ...
+              - pattern-inside: |
+                  let { ..., ipcMain: $V, ... } = $E;
+                  ...
+              - pattern-inside: |
+                  function $FN(..., { ..., ipcMain: $V, ... }: $T, ...) { ... }
+              - pattern-inside: |
+                  (..., { ..., ipcMain: $V, ... }: $T, ...) => { ... }
+          - pattern: $V
+      - label: IPC
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const { ..., ipc: $V, ... } = $E;
+                  ...
+              - pattern-inside: |
+                  let { ..., ipc: $V, ... } = $E;
+                  ...
+          - metavariable-pattern:
+              metavariable: $E
+              pattern-either:
+                - pattern: $X.webContents
+                - pattern: $X.mainFrame
+                - pattern: $X.sender
+                - pattern: $X.senderFrame
+                - pattern: "($W : WebContents)"
+                - pattern: "($W : WebFrameMain)"
+          - pattern: $V
+    pattern-sinks:
+      - requires: MAIN or IPC
+        patterns:
+          - pattern: $RECV.$METHOD(...)
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(on|once|handle|handleOnce|addListener|prependListener|prependOnceListener)$
+          - focus-metavariable: $RECV
+
+  - id: ipc-main-escapes
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      ipcMain handed to other code. A registration through an injected ipcMain is invisible to
+      ipc-handler-outside-transport; the only allowed hand-off is attachIpcHandler({ ipcMain, … })
+      (packages/ipc-contract/src/transport/main.ts). Add a tRPC procedure guarded by enforceSender
+      instead.
+    paths:
+      exclude:
+        - /packages/ipc-contract/src/transport/main.ts
+        - "__tests__/"
+        - "*.test.ts"
+        - /apps/desktop/src/test/
+    patterns:
+      - pattern-either:
+          - pattern: $F(..., ipcMain, ...)
+          - pattern: $F(..., $X.ipcMain, ...)
+          - pattern: "$F(..., {..., ipcMain, ...}, ...)"
+          - pattern: "$F(..., {..., $K: ipcMain, ...}, ...)"
+          - pattern: "$F(..., {..., $K: $X.ipcMain, ...}, ...)"
+          - pattern: "const $V = {..., ipcMain, ...};"
+          - pattern: "const $V = {..., $K: ipcMain, ...};"
+          - pattern: "let $V = {..., ipcMain, ...};"
+          - pattern: "let $V = {..., $K: ipcMain, ...};"
+      - pattern-not: "attachIpcHandler({..., ipcMain, ...})"
+
+  - id: trpc-procedure-without-enforce-sender
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      tRPC procedure not guarded by enforceSender. Every procedure must be written
+      `publicProcedure.use(enforceSender)` first, before .input()/.query()/.mutation()/.subscription()
+      or any other middleware; never alias or extend the unguarded publicProcedure.
+    paths:
+      exclude:
+        - "__tests__/"
+        - "*.test.ts"
+        - /apps/desktop/src/test/
+    pattern-either:
+      # Any reference to the unguarded base procedure (bare or via a namespace import, including a
+      # re-export) is fine only as the receiver of an immediate `.use(enforceSender)`, and in its
+      # own definition in trpc.ts. Import specifiers are not identifier references.
+      - patterns:
+          - pattern-either:
+              - pattern: publicProcedure
+              - pattern: $NS.publicProcedure
+          - pattern-not-inside: publicProcedure.use(enforceSender)
+          - pattern-not-inside: $NS.publicProcedure.use($NS.enforceSender)
+          - pattern-not-inside: export const publicProcedure = $T.procedure;
+      # An aliased import would hide later uses from the check above.
+      - pattern: import { ..., publicProcedure as $ALIAS, ... } from '$MOD';
+
+  - id: trpc-builder-outside-trpc-module
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      tRPC is initialised only in packages/ipc-contract/src/trpc.ts, so that enforceSender and the
+      error formatter apply to every procedure. Import publicProcedure/enforceSender/router from
+      there instead of calling initTRPC or using a `.procedure` builder.
+    paths:
+      exclude:
+        - /packages/ipc-contract/src/trpc.ts
+        - "__tests__/"
+        - "*.test.ts"
+        - /apps/desktop/src/test/
+    pattern-either:
+      - pattern: import { ..., initTRPC, ... } from '@trpc/server';
+      - pattern: import { ..., initTRPC as $ALIAS, ... } from '@trpc/server';
+      - pattern: initTRPC
+      # A builder chain on any tRPC instance's `procedure` (a plain property read is not one).
+      - patterns:
+          - pattern: $T.procedure.$METHOD(...)
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(use|input|output|meta|query|mutation|subscription|concat|unstable_concat)$
+
+  - id: renderer-bridge-outside-preload
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      ipcRenderer/contextBridge used outside the transport preload. The only renderer bridge is the
+      fixed-channel invoke exposed by packages/ipc-contract/src/transport/preload.ts; never expose
+      ipcRenderer, a channel parameter or another world API.
+    paths:
+      exclude:
+        - /packages/ipc-contract/src/transport/preload.ts
+        - "__tests__/"
+        - "*.test.ts"
+        - /apps/desktop/src/test/
+    pattern-either:
+      - pattern: ipcRenderer
+      - pattern: contextBridge
+      - pattern: $X.ipcRenderer
+      - pattern: $X.contextBridge
+      - pattern: import { ..., ipcRenderer, ... } from '$MOD';
+      - pattern: import { ..., ipcRenderer as $ALIAS, ... } from '$MOD';
+      - pattern: import { ..., contextBridge, ... } from '$MOD';
+      - pattern: import { ..., contextBridge as $ALIAS, ... } from '$MOD';
+      - pattern: "const { ..., ipcRenderer: $V, ... } = $E;"
+      - pattern: "const { ..., contextBridge: $V, ... } = $E;"

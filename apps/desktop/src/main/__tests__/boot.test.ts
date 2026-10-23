@@ -22,6 +22,12 @@ describe('main window hardening', () => {
     expect(Object.hasOwn(webPreferences, key)).toBe(true);
     expect(webPreferences[key as keyof typeof webPreferences]).toBe(value);
   });
+
+  test('sets no webPreferences beyond the hardened set', () => {
+    const win = createMainWindow() as unknown as FakeBrowserWindow;
+    const keys = Object.keys(win.options.webPreferences ?? {}).sort();
+    expect(keys).toEqual([...Object.keys(HARDENED_WEB_PREFERENCES), 'preload'].sort());
+  });
 });
 
 describe('loading the renderer', () => {

@@ -10,9 +10,14 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "test:e2e": "turbo run test:e2e"
+    "test:e2e": "turbo run test:e2e",
+    "security:electronegativity": "node scripts/electronegativity.mjs",
+    "security:semgrep": "pnpm security:semgrep:test && pnpm security:semgrep:scan",
+    "security:semgrep:test": "uvx semgrep@1.182.1 --test --metrics off --config semgrep/ipc-sender-guard.yml semgrep/__fixtures__/ipc-sender-guard.ts && uvx semgrep@1.182.1 --test --metrics off --config semgrep/webcontents-factory.yml semgrep/__fixtures__/webcontents-factory.ts",
+    "security:semgrep:scan": "uvx semgrep@1.182.1 scan --metrics off --error --no-git-ignore --config semgrep/ipc-sender-guard.yml --config semgrep/webcontents-factory.yml apps packages specs"
   },
   "devDependencies": {
+    "@doyensec/electronegativity": "1.10.3",
     "turbo": "^2.11.10",
     "typescript": "^7.0.2"
   }

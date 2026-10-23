@@ -54,15 +54,19 @@ export async function startLoopbackServer(): Promise<{ origin: string; close(): 
 
 /**
  * Creates, from the main process, a window the app never tracked: the same hardened webPreferences
- * and the app's own preload (so `window.frostIpc` exists), loading `url`. Resolves the window id and
- * the `loadURL` error message, if the load failed.
+ * and, unless `preload: false`, the app's own preload (so `window.frostIpc` exists), loading `url`.
+ * Resolves the window id and the `loadURL` error message, if the load failed.
  */
-export async function openUntrackedWindow(app: ElectronApplication, url: string): Promise<{ id: number; loadError: string | null }> {
+export async function openUntrackedWindow(
+  app: ElectronApplication,
+  url: string,
+  options: { preload?: boolean } = {},
+): Promise<{ id: number; loadError: string | null }> {
   return app.evaluate(
-    async ({ app: electronApp, BrowserWindow }, { url, prefs }) => {
+    async ({ app: electronApp, BrowserWindow }, { url, prefs, preload }) => {
       const win = new BrowserWindow({
         show: false,
-        webPreferences: { ...prefs, preload: `${electronApp.getAppPath()}/.vite/build/preload.cjs` },
+        webPreferences: preload ? { ...prefs, preload: `${electronApp.getAppPath()}/.vite/build/preload.cjs` } : prefs,
       });
       try {
         await win.loadURL(url);
@@ -71,7 +75,7 @@ export async function openUntrackedWindow(app: ElectronApplication, url: string)
         return { id: win.id, loadError: error instanceof Error ? error.message : String(error) };
       }
     },
-    { url, prefs: { ...HARDENED_WEB_PREFERENCES } },
+    { url, prefs: { ...HARDENED_WEB_PREFERENCES }, preload: options.preload ?? true },
   );
 }
 
