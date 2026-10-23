@@ -53,7 +53,8 @@ function resolveOptions(options: SecurityOptions | undefined): SecurityOptions {
  * before this call, so `web-contents-created` may have fired before the guards existed. Omitting
  * `options` reuses the installed ones; differing options throw (spec `rejects-conflicting-security-options`).
  *
- * The session holds a single `onHeadersReceived` listener; it is owned here. In Electron 45 it fires
+ * The session holds a single `onHeadersReceived` listener; it is owned here (its single
+ * `onBeforeRequest` listener is owned by `protocol/requests.ts`). In Electron 45 it fires
  * for, and its headers are enforced on, `protocol.handle` responses (verified against the built
  * bundle); the `app://` handler (Task 4) should still set `appCspHeader()` on its own `Response`
  * as defense in depth.

@@ -4,8 +4,11 @@ import type {
   BrowserWindowConstructorOptions,
   DevicePermissionHandlerHandlerDetails,
   HandlerDetails,
+  CallbackResponse,
+  OnBeforeRequestListenerDetails,
   OnHeadersReceivedListenerDetails,
   HeadersReceivedResponse,
+  WebRequestFilter,
   WebPreferences,
   WindowOpenHandlerResponse,
 } from 'electron';
@@ -84,12 +87,14 @@ type PermissionRequestHandler = (webContents: unknown, permission: string, callb
 type PermissionCheckHandler = (webContents: unknown, permission: string, requestingOrigin: string, details: unknown) => boolean;
 type DevicePermissionHandler = (details: DevicePermissionHandlerHandlerDetails) => boolean;
 type HeadersReceivedListener = (details: OnHeadersReceivedListenerDetails, callback: (response: HeadersReceivedResponse) => void) => void;
+type BeforeRequestListener = (details: OnBeforeRequestListenerDetails, callback: (response: CallbackResponse) => void) => void;
 
 export class FakeSession {
   permissionRequestHandler: PermissionRequestHandler | null | undefined;
   permissionCheckHandler: PermissionCheckHandler | null | undefined;
   devicePermissionHandler: DevicePermissionHandler | null | undefined;
   headersReceivedListener: HeadersReceivedListener | null | undefined;
+  beforeRequest: { filter: WebRequestFilter; listener: BeforeRequestListener } | null | undefined;
 
   setPermissionRequestHandler = vi.fn((handler: PermissionRequestHandler | null) => {
     this.permissionRequestHandler = handler;
@@ -100,10 +105,13 @@ export class FakeSession {
   setDevicePermissionHandler = vi.fn((handler: DevicePermissionHandler | null) => {
     this.devicePermissionHandler = handler;
   });
-  // Like Electron, a session holds one onHeadersReceived listener; registering again replaces it.
+  // Like Electron, a session holds one listener per webRequest event; registering again replaces it.
   readonly webRequest = {
     onHeadersReceived: vi.fn((listener: HeadersReceivedListener | null) => {
       this.headersReceivedListener = listener;
+    }),
+    onBeforeRequest: vi.fn((filter: WebRequestFilter, listener: BeforeRequestListener | null) => {
+      this.beforeRequest = listener ? { filter, listener } : null;
     }),
   };
 }
@@ -131,6 +139,8 @@ export function electronFake() {
   });
   const shell = { openExternal: vi.fn(async (_url: string) => {}) };
   const session = { defaultSession: new FakeSession() };
-  const electron = { app, BrowserWindow: FakeBrowserWindow, shell, session };
+  const protocol = { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() };
+  const ipcMain = { handle: vi.fn(), removeHandler: vi.fn() };
+  const electron = { app, BrowserWindow: FakeBrowserWindow, shell, session, protocol, ipcMain };
   return { ...electron, default: electron };
 }

@@ -1,5 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
+import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { senderRejection, type IpcContext } from './sender';
 
 // tRPC init for the IPC contract (spec `specs/ipc-sender.spec.ts`). Module-private to the package:
@@ -9,10 +10,12 @@ import { senderRejection, type IpcContext } from './sender';
 // The error shape goes back to the renderer. `isDev` defaults to `NODE_ENV !== 'production'`, which
 // is always true in Electron main, and would add `data.stack` (absolute main-process paths); the
 // formatter also allowlists `data` so nothing else internal is ever sent (`error-shape-hides-internals`).
+// An unexpected error's message (wrapped as INTERNAL_SERVER_ERROR) may itself carry internals (paths,
+// SQL…), so it is replaced by the code (`ipc-transport.feature.md`, `internal-errors-are-masked`).
 const t = initTRPC.context<IpcContext>().create({
   isDev: false,
   errorFormatter: ({ shape }) => ({
-    message: shape.message,
+    message: shape.data.code === IPC_INTERNAL_ERROR_CODE ? IPC_INTERNAL_ERROR_CODE : shape.message,
     code: shape.code,
     data: { code: shape.data.code, httpStatus: shape.data.httpStatus, path: shape.data.path },
   }),

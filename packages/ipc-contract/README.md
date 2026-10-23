@@ -12,7 +12,8 @@ The typed tRPC contract for all main ↔ renderer IPC (design doc §2–3). Spec
 - `createContext({ sender, senderFrame, window, policy })`: called per message with the real
   Electron objects (`event.sender`, `event.senderFrame`, `BrowserWindow.fromWebContents(event.sender)`).
 
-The package imports no `electron` code at runtime (types only), so it runs under plain Node/Vitest.
+The root entry and `/main` import no `electron` code at runtime (types only; `ipcMain` and
+`fromWebContents` are injected), so they run under plain Node/Vitest. Only `/preload` imports `electron`.
 Consumers bundle the TypeScript source (`exports` → `src/index.ts`); `build` only type-checks.
 Renderer code must import `AppRouter` with `import type`, because tRPC's server init throws in a
 browser context.
@@ -28,10 +29,20 @@ third-party Electron/tRPC bridge.
   `event.senderFrame` is `null`, calls `createContext` outside its `try` (unhandled rejections), does
   not validate the message envelope, bundles its own drifting copy of tRPC, and has one maintainer.
 
-The in-repo transport (Task 4; not built yet):
-- **main:** one `ipcMain.handle` channel; the envelope is validated with Zod (hence the `zod`
-  dependency here); the context is captured synchronously from the event (`createContext`) before
-  any `await`; `callTRPCProcedure` runs inside a `try`, and failures are returned as tRPC error
-  shapes (no stack or other internals: `error-shape-hides-internals`).
-- **preload:** `contextBridge` exposes only `invoke(envelope)`; no raw `ipcRenderer`.
-- **renderer:** a `TRPCLink` that sends envelopes through `invoke`.
+The in-repo transport (spec `specs/ipc-transport.spec.ts`, acceptance `specs/ipc-transport.feature.md`)
+lives under `src/transport/` and is consumed through subpath exports, so the root entry stays free
+of runtime `electron` imports:
+- **`@app/ipc-contract/main`** — `attachIpcHandler({ router, policy, ipcMain, fromWebContents })`
+  registers one `ipcMain.handle` on `IPC_CHANNEL` (`app:trpc`). Per message it captures the context
+  synchronously (`createContext` from `event.sender`, `event.senderFrame`, `fromWebContents(sender)`),
+  rejects a bad sender with `FORBIDDEN` before looking at the envelope (so a foreign sender learns
+  nothing about paths), validates the envelope with Zod (`{ id?, type: 'query'|'mutation', path,
+  input? }`, strict → `BAD_REQUEST`), then runs `callTRPCProcedure` (unknown path → `NOT_FOUND`).
+  Errors come back as the router's formatted shape (no stack; unexpected errors masked to
+  `INTERNAL_SERVER_ERROR`). The handler always resolves an envelope; it never throws or rejects.
+- **`@app/ipc-contract/preload`** — `exposeIpcBridge()` exposes `window.frostIpc = { invoke }` (frozen)
+  via `contextBridge`; `invoke(envelope)` is `ipcRenderer.invoke(IPC_CHANNEL, envelope)`. Nothing else.
+  It imports only `electron` and spec constants, so it bundles into the sandboxed CJS preload.
+- **`@app/ipc-contract/renderer`** — `ipcLink()` (a tRPC v11 `TRPCLink`) and `createIpcClient<AppRouter>()`.
+  Error envelopes and bridge failures surface as `TRPCClientError`. `@trpc/client` is pinned to the
+  exact `@trpc/server` version.

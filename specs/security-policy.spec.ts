@@ -104,3 +104,16 @@ export const APP_CSP_DIRECTIVES = {
 export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
   .map(([directive, sources]) => `${directive} ${sources.join(' ')}`)
   .join('; ');
+
+/**
+ * Packaged builds refuse to start with a remote-debugging switch: the Chrome DevTools Protocol
+ * would expose the trusted app page and its IPC bridge to any local process. Checked first thing in
+ * main, before any window exists: `app.commandLine.hasSwitch` for each of
+ * `PACKAGED_FORBIDDEN_SWITCHES` (Chromium's own parsing, any switch prefix), plus — belt and braces
+ * — any `process.argv` entry matching `PACKAGED_FORBIDDEN_ARGV` (`--inspect*` is also disabled by
+ * the `EnableNodeCliInspectArguments` fuse). On a match the app prints one line to stderr and
+ * exits with code `1`. Unpackaged runs (`electron-forge start`, the Playwright e2e harness, which
+ * passes `--remote-debugging-port=0` / `--inspect`) are unaffected.
+ */
+export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe'] as const;
+export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;

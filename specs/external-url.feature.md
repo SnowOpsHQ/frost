@@ -52,6 +52,18 @@ not describe end-to-end `window.open` behaviour (see `window-open-judges-chromiu
 - **Scenario: app-csp-is-strict** — `object-src 'none'`, `base-uri 'none'`, `frame-ancestors 'none'`,
   `form-action 'none'`, `require-trusted-types-for 'script'`; no `'unsafe-inline'`, `'unsafe-eval'`, `*`.
 
+## Packaged debugging lockdown — `remoteDebuggingRefusal({ isPackaged, hasSwitch, argv })` (policy.test.ts)
+Called first thing in `src/main/index.ts`; a non-null result is printed and the app exits `1`.
+- **Scenario: packaged-app-refuses-remote-debugging** — packaged, any of
+  `PACKAGED_FORBIDDEN_SWITCHES` (`remote-debugging-port`, `remote-debugging-pipe`) reported by
+  `hasSwitch`, or an argv entry matching `PACKAGED_FORBIDDEN_ARGV` (`--remote-debugging-port=9339`,
+  `-remote-debugging-pipe`, `--inspect`, `--inspect-brk=0`, `--INSPECT`) → a refusal message naming
+  the switch.
+- **Scenario: packaged-app-starts-without-debug-switches** — packaged with ordinary arguments
+  (`--lang=en`, a path containing `inspect`, `--no-remote-debugging`) → `null`.
+- **Scenario: unpackaged-app-allows-debugging** — unpackaged (dev / e2e) → `null` whatever the
+  switches (Playwright passes `--remote-debugging-port=0` and `--inspect=0`).
+
 ## Electron wiring — `registerSecurity(session, win, options?)` (register.test.ts)
 - **Scenario: window-open-is-always-denied-in-app** — the window-open handler returns
   `{ action: 'deny' }` for every URL (no child windows, ever).

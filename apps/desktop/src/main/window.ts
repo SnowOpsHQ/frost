@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { BrowserWindow } from 'electron';
+import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
 
 /**
@@ -24,12 +25,10 @@ export function createMainWindow(): BrowserWindow {
 }
 
 /**
- * Loads the renderer into `win`: the Vite dev server under `electron-forge start`, the bundled
- * index.html otherwise. Phase 0 Task 4 replaces the file load with the privileged `app://` scheme.
+ * Loads the renderer into `win`: the Vite dev server when `devServerUrl` is given (unpackaged
+ * `electron-forge start` only), otherwise the bundled renderer over the privileged `app://` scheme
+ * (spec `app-protocol.spec.ts`). Never `file://`.
  */
-export function loadRenderer(win: BrowserWindow): Promise<void> {
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    return win.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  }
-  return win.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+export function loadRenderer(win: BrowserWindow, opts: { devServerUrl: string | undefined }): Promise<void> {
+  return win.loadURL(opts.devServerUrl ?? APP_ENTRY_URL);
 }

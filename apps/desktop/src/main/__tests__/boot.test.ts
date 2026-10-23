@@ -1,8 +1,10 @@
 // Spec: specs/window-hardening.spec.ts · Acceptance: specs/window-hardening.feature.md
+// Spec: specs/app-protocol.spec.ts · Acceptance: specs/app-protocol.feature.md (Loading the renderer)
 import { describe, expect, test, vi } from 'vitest';
+import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
 import type { FakeBrowserWindow } from '../../test/electron-fake';
-import { createMainWindow } from '../window';
+import { createMainWindow, loadRenderer } from '../window';
 
 vi.mock('electron', async () => (await import('../../test/electron-fake')).electronFake());
 
@@ -19,5 +21,21 @@ describe('main window hardening', () => {
     const webPreferences = win.options.webPreferences ?? {};
     expect(Object.hasOwn(webPreferences, key)).toBe(true);
     expect(webPreferences[key as keyof typeof webPreferences]).toBe(value);
+  });
+});
+
+describe('loading the renderer', () => {
+  test('loads-renderer-from-app-scheme', async () => {
+    const win = createMainWindow() as unknown as FakeBrowserWindow;
+    await loadRenderer(win as never, { devServerUrl: undefined });
+    expect(win.loadURL).toHaveBeenCalledExactlyOnceWith(APP_ENTRY_URL);
+    expect(win.loadFile).not.toHaveBeenCalled();
+  });
+
+  test('loads-dev-server-only-when-given', async () => {
+    const win = createMainWindow() as unknown as FakeBrowserWindow;
+    await loadRenderer(win as never, { devServerUrl: 'http://localhost:5173' });
+    expect(win.loadURL).toHaveBeenCalledExactlyOnceWith('http://localhost:5173');
+    expect(win.loadFile).not.toHaveBeenCalled();
   });
 });
