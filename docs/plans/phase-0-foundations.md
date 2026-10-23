@@ -24,7 +24,7 @@ This plan is spec-first. **Every task begins by authoring or updating a machine-
 - No raw `ipcRenderer`/`ipcMain` passthrough is exposed to any renderer; all IPC flows through `packages/ipc-contract`.
 - Every `ipcMain`/tRPC procedure passes through the shared `enforceSender` middleware — no exceptions.
 - App's own pages load from a custom `app://` scheme (registered privileged), never `file://`.
-- Naming: packages are `@app/<name>`; the product name is a placeholder `app` (no third-party assets, code, or marks).
+- Naming: packages are `@app/<name>`; the product name is `frost` (no third-party assets, code, or marks).
 - Commit after every task with a conventional-commit message.
 
 ## Review Focus

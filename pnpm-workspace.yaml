@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+  - specs
+
+# Electron Forge's packager does not support pnpm's isolated symlinked layout.
+nodeLinker: hoisted
+
+# pnpm blocks dependency lifecycle scripts by default. No current dependency needs one:
+# Electron >=45 ships no postinstall (its binary is fetched by `install-electron`, which
+# @app/desktop runs from its own postinstall). Add packages to `allowBuilds` only when required.
