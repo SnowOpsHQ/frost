@@ -14,6 +14,11 @@ allowBuilds:
   # Pulled in by @doyensec/electronegativity (via escope). Its postinstall only
   # prints a message; it is not needed to run.
   es5-ext: false
+  # macOS only (via @electron-forge/maker-dmg → electron-installer-dmg → appdmg, all darwin-only
+  # optional deps): small native addons appdmg needs to write the DMG's Finder alias and xattrs.
+  # Their install script is `node-gyp rebuild`; never installed on Linux.
+  fs-xattr: true
+  macos-alias: true
 
 overrides:
   # @doyensec/electronegativity → @mapbox/node-pre-gyp@1 pins tar@^6 (12 advisories, fixed only in

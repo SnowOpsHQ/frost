@@ -7,6 +7,7 @@ import {
   FORBIDDEN_EXTERNAL_URL_CHARS,
   GRANTED_PERMISSIONS,
   HOST_REQUIRED_EXTERNAL_SCHEMES,
+  PACKAGED_DEBUG_REFUSAL,
   PACKAGED_FORBIDDEN_ARGV,
   PACKAGED_FORBIDDEN_SWITCHES,
   USER_ACTIVATION_INPUT_TYPES,
@@ -110,7 +111,8 @@ export function withAppCsp(headers: Record<string, string | string[]> = {}): Rec
 
 /**
  * Why a packaged app must refuse to start, or `null` (spec `PACKAGED_FORBIDDEN_SWITCHES` /
- * `PACKAGED_FORBIDDEN_ARGV`). Unpackaged runs (dev, e2e) are never refused.
+ * `PACKAGED_FORBIDDEN_ARGV`), starting with `PACKAGED_DEBUG_REFUSAL`. Unpackaged runs (dev, e2e)
+ * are never refused.
  */
 export function remoteDebuggingRefusal(opts: {
   isPackaged: boolean;
@@ -121,5 +123,5 @@ export function remoteDebuggingRefusal(opts: {
   const name = PACKAGED_FORBIDDEN_SWITCHES.find((s) => opts.hasSwitch(s));
   const arg = opts.argv.slice(1).find((a) => PACKAGED_FORBIDDEN_ARGV.test(a));
   const offending = name ?? arg;
-  return offending === undefined ? null : `remote debugging is disabled in packaged builds (${offending})`;
+  return offending === undefined ? null : `${PACKAGED_DEBUG_REFUSAL} (${offending})`;
 }

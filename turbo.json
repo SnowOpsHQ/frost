@@ -6,6 +6,7 @@
       "outputs": [".vite/**", "out/**"]
     },
     "test": {
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/specs/*.ts", "$TURBO_ROOT$/specs/*.md", "$TURBO_ROOT$/.github/workflows/*.yml"],
       "outputs": []
     },
     "lint": {

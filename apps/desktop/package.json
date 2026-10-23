@@ -10,6 +10,9 @@
     "postinstall": "install-electron",
     "start": "electron-forge start",
     "build": "electron-forge package",
+    "make": "electron-forge make",
+    "make:mac": "electron-forge make --platform darwin --arch arm64",
+    "verify:mac": "node scripts/verify-mac-package.mjs",
     "test": "vitest run",
     "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p src/renderer/tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
     "test:e2e": "playwright test"
@@ -22,6 +25,7 @@
   },
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",
+    "@electron-forge/maker-dmg": "^8.0.1",
     "@electron-forge/maker-zip": "^8.0.1",
     "@electron-forge/plugin-fuses": "^8.0.1",
     "@electron-forge/plugin-vite": "^8.0.1",

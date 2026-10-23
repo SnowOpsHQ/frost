@@ -57,8 +57,8 @@ Called first thing in `src/main/index.ts`; a non-null result is printed and the 
 - **Scenario: packaged-app-refuses-remote-debugging** — packaged, any of
   `PACKAGED_FORBIDDEN_SWITCHES` (`remote-debugging-port`, `remote-debugging-pipe`) reported by
   `hasSwitch`, or an argv entry matching `PACKAGED_FORBIDDEN_ARGV` (`--remote-debugging-port=9339`,
-  `-remote-debugging-pipe`, `--inspect`, `--inspect-brk=0`, `--INSPECT`) → a refusal message naming
-  the switch.
+  `-remote-debugging-pipe`, `--inspect`, `--inspect-brk=0`, `--INSPECT`) → a refusal message that
+  starts with `PACKAGED_DEBUG_REFUSAL` and names the switch.
 - **Scenario: packaged-app-starts-without-debug-switches** — packaged with ordinary arguments
   (`--lang=en`, a path containing `inspect`, `--no-remote-debugging`) → `null`.
 - **Scenario: unpackaged-app-allows-debugging** — unpackaged (dev / e2e) → `null` whatever the

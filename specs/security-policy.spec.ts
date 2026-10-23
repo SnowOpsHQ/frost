@@ -117,3 +117,10 @@ export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
  */
 export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe'] as const;
 export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;
+
+/**
+ * Start of the refusal line (followed by ` (<offending switch>)`). The app prints it to stderr as
+ * `frost: <refusal>`; `apps/desktop/scripts/verify-mac-package.mjs` looks for it in the packaged
+ * app's stderr.
+ */
+export const PACKAGED_DEBUG_REFUSAL = 'remote debugging is disabled in packaged builds';

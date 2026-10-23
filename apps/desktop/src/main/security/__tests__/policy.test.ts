@@ -5,6 +5,7 @@ import {
   ALLOWED_MAILTO_PARAMS,
   APP_CSP,
   APP_CSP_DIRECTIVES,
+  PACKAGED_DEBUG_REFUSAL,
   PACKAGED_FORBIDDEN_SWITCHES,
   USER_ACTIVATION_INPUT_TYPES,
   USER_ACTIVATION_WINDOW_MS,
@@ -157,11 +158,11 @@ describe('packaged debugging lockdown', () => {
   test('packaged-app-refuses-remote-debugging', () => {
     for (const name of PACKAGED_FORBIDDEN_SWITCHES) {
       const refusal = remoteDebuggingRefusal({ isPackaged: true, hasSwitch: (s) => s === name, argv: ARGV0 });
-      expect(refusal, name).toContain(name);
+      expect(refusal, name).toBe(`${PACKAGED_DEBUG_REFUSAL} (${name})`);
     }
     for (const arg of ['--remote-debugging-port=9339', '-remote-debugging-pipe', '--inspect', '--inspect-brk=0', '--INSPECT']) {
       const refusal = remoteDebuggingRefusal({ isPackaged: true, hasSwitch: noSwitch, argv: [...ARGV0, '--lang=en', arg] });
-      expect(refusal, arg).toContain(arg);
+      expect(refusal, arg).toBe(`${PACKAGED_DEBUG_REFUSAL} (${arg})`);
     }
   });
 
