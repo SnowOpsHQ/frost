@@ -6,6 +6,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { BROWSE_PARTITION, NEW_TAB_LABEL } from '@app/specs/browser.spec';
 import {
   FULLSCREEN_BANNER_HEIGHT,
+  FULLSCREEN_EXIT_SETTLE_MS,
   FULLSCREEN_NOTICE_MS,
   FULLSCREEN_NOTICE_TEXT,
   PERMISSION_PROMPT_ACTIONS,
@@ -92,6 +93,21 @@ test.beforeAll(async () => {
         }
       }
     }).observe(document.body, { childList: true, subtree: true });
+  });
+  // When the window or a tab last had a fullscreen event (see `windowSettled`).
+  await app.evaluate(({ app: electronApp, BrowserWindow }) => {
+    const record = globalThis as unknown as { __fullscreenEventAt: number };
+    record.__fullscreenEventAt = 0;
+    const mark = () => {
+      record.__fullscreenEventAt = Date.now();
+    };
+    const win = BrowserWindow.getAllWindows()[0]!;
+    win.on('enter-full-screen', mark);
+    win.on('leave-full-screen', mark);
+    electronApp.on('web-contents-created', (_event, contents) => {
+      contents.on('enter-html-full-screen', mark);
+      contents.on('leave-html-full-screen', mark);
+    });
   });
 });
 
@@ -409,8 +425,31 @@ const windowLayout = () =>
     return { content: { width, height }, fullScreen: win.isFullScreen(), view: view?.getBounds() ?? null };
   });
 
+/**
+ * The window is out of (or, with `fullScreen`, in) OS fullscreen and had no fullscreen event for
+ * `FULLSCREEN_EXIT_SETTLE_MS`, i.e. no macOS fullscreen animation is running or queued: a page's
+ * fullscreen request made while the window still animates out of the last fullscreen is dropped
+ * there, so each test enters only once the previous one's animation is over.
+ */
+async function windowSettled(fullScreen = false): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        app.evaluate(
+          ({ BrowserWindow }, { fullScreen, quiet }) => {
+            const at = (globalThis as unknown as { __fullscreenEventAt: number }).__fullscreenEventAt;
+            return BrowserWindow.getAllWindows()[0]!.isFullScreen() === fullScreen && Date.now() - at >= quiet;
+          },
+          { fullScreen, quiet: FULLSCREEN_EXIT_SETTLE_MS },
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+}
+
 /** A real click (a user gesture) on the fullscreen page's button; waits until the page is fullscreen. */
 async function enterFullscreen(id: number): Promise<void> {
+  await windowSettled();
   const [x, y] = (await run(id, '(() => { const r = document.getElementById("go").getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()')) as [number, number];
   await app.evaluate(
     ({ webContents }, { id, x, y }) => {
@@ -478,6 +517,32 @@ test('esc-leaves-fullscreen-e2e', async () => {
   await expectPrompt(a.origin, a.host, 'notifications');
   await page.getByTestId('permission-dismiss').click();
   await expect(asked).resolves.toBe('denied');
+});
+
+test('esc-leaves-fullscreen-on-hung-page-e2e', async () => {
+  const a = await site();
+  const id = await open(`${a.origin}/fullscreen`, 'Fullscreen');
+  const before = await windowLayout();
+  await enterFullscreen(id);
+  // In OS fullscreen for good (on macOS, killing a renderer that got Esc during the enter animation
+  // leaves Electron unable to grant the next page's fullscreen request).
+  await windowSettled(true);
+  // The page hangs: nothing runs in it any more (main's exit script included).
+  void run(id, 'for (;;) {}').catch(() => undefined);
+  await expect(settledWithin(run(id, '1').catch(() => 'gone'), 500)).resolves.toBe('pending');
+  await app.evaluate(({ webContents }, id) => {
+    const contents = webContents.fromId(id)!;
+    contents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    contents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  }, id);
+  // frost left fullscreen without the page: the window, the notice, and the view back under the chrome.
+  await expect.poll(async () => (await windowLayout()).fullScreen).toBe(false);
+  await expect(page.getByTestId('fullscreen-notice')).toHaveCount(0);
+  await expect.poll(async () => (await windowLayout()).view).toEqual(before.view);
+  await expect(address()).toBeVisible();
+  // The hung renderer is killed, so the next test can close its tab.
+  await app.evaluate(({ webContents }, id) => process.kill(webContents.fromId(id)!.getOSProcessId(), 'SIGKILL'), id);
+  await expect(page.getByTestId('page-crashed')).toBeVisible();
 });
 
 test('leaving-fullscreen-tab-restores-window-e2e', async () => {

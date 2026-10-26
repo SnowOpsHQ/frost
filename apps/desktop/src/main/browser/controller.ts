@@ -15,7 +15,13 @@ import {
   type TabState,
 } from '@app/specs/browser.spec';
 import { IGNORED_LOAD_ERROR_CODES } from '@app/specs/browse-guard.spec';
-import { FULLSCREEN_BANNER_HEIGHT, FULLSCREEN_EXIT_KEY, FULLSCREEN_NOTICE_MS, type PermissionDecision } from '@app/specs/permissions.spec';
+import {
+  FULLSCREEN_BANNER_HEIGHT,
+  FULLSCREEN_EXIT_KEY,
+  FULLSCREEN_EXIT_SETTLE_MS,
+  FULLSCREEN_NOTICE_MS,
+  type PermissionDecision,
+} from '@app/specs/permissions.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { isWebUrl } from './guard';
 import { pageTitle } from './page-title';
@@ -140,7 +146,7 @@ type FullscreenMode = NonNullable<TabState['fullscreen']>;
  * scripts cannot replace the DOM methods seen there.
  */
 const FULLSCREEN_EXIT_WORLD_ID = 1_001;
-const EXIT_FULLSCREEN_SCRIPT = 'document.exitFullscreen().catch(() => undefined)';
+const EXIT_FULLSCREEN_SCRIPT = 'document.fullscreenElement && document.exitFullscreen().catch(() => undefined)';
 
 interface Tab {
   readonly id: number;
@@ -164,6 +170,15 @@ interface Tab {
   fullscreen: FullscreenMode | null;
   /** Ends the `notice` phase. */
   fullscreenTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The tab left HTML fullscreen (frost took it out, or Electron reported `leave-html-full-screen`)
+   * but its document may still hold a fullscreen element: Electron can report leaving while the
+   * renderer is still entering (macOS, Esc during the native animation), and a hidden page
+   * completes its exit only once shown. The page is asked to leave once the window settled
+   * (`schedulePageExits`), and again whenever the view is shown, until it enters fullscreen again
+   * or a new document commits (asking a page that is not fullscreen does nothing).
+   */
+  exitRequested: boolean;
   /** The tab whose page opened this one (popup placement), if any. */
   readonly openerId: number | null;
   /**
@@ -251,6 +266,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   /** The one view attached to the window: the active tab's, or none. */
   let attached: TabView | null = null;
   let focusAddressBarSeq = 0;
+  /** Asks pending pages to leave HTML fullscreen once the window settled (`schedulePageExits`). */
+  let pageExitTimer: ReturnType<typeof setTimeout> | undefined;
   let notice: Notice | null = null;
   /** Pending watches, oldest first: their wake-up check → their early finish. */
   const waiters = new Map<() => void, () => void>();
@@ -320,6 +337,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       unresponsive: false,
       fullscreen: null,
       fullscreenTimer: undefined,
+      exitRequested: false,
       openerId,
       restored: null,
       state: emptyTabState(id),
@@ -381,6 +399,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.crashed = false;
     tab.error = null;
     tab.unresponsive = false;
+    tab.exitRequested = false;
     // Its WebContents is going: nothing will leave HTML fullscreen, so the window leaves OS fullscreen.
     if (clearFullscreen(tab)) leaveWindowFullscreen();
     denyPrompts(tab);
@@ -438,9 +457,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return was;
   }
 
-  /** Takes the window out of OS fullscreen (which Electron entered for a page). */
+  /**
+   * Takes the window out of OS fullscreen (which Electron entered for a page). Called only when a
+   * tab was fullscreen, and unconditionally then: on macOS `isFullScreen()` is still `false` during
+   * the native enter animation, and Electron queues a leave requested mid-transition.
+   */
   function leaveWindowFullscreen(): void {
-    if (win && !win.isDestroyed() && win.isFullScreen()) win.setFullScreen(false);
+    if (win && !win.isDestroyed()) win.setFullScreen(false);
   }
 
   /** `tab` entered (`notice` first, then `full`) or left HTML fullscreen. */
@@ -457,21 +480,50 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   };
 
   /** Asks `tab`'s page to leave HTML fullscreen, from an isolated world the page cannot tamper with. */
-  const exitHtmlFullscreen = (tab: Tab): void => {
+  function exitHtmlFullscreen(tab: Tab): void {
     const contents = tab.view ? aliveContents(tab.view) : undefined;
     contents?.executeJavaScriptInIsolatedWorld(FULLSCREEN_EXIT_WORLD_ID, [{ code: EXIT_FULLSCREEN_SCRIPT }]).catch(() => {
       // The page is gone or navigating; nothing is fullscreen any more.
     });
-  };
+  }
 
-  /** `tab` stops being shown while fullscreen: its page leaves fullscreen, and the window too. */
+  /** `tab` left HTML fullscreen: its page is asked to leave once the window settled, and again later. */
+  function requestPageExit(tab: Tab): void {
+    tab.exitRequested = true;
+    schedulePageExits();
+  }
+
+  /**
+   * (Re)starts the wait after which the pages of tabs with `exitRequested` are asked to leave HTML
+   * fullscreen: `FULLSCREEN_EXIT_SETTLE_MS` with no window or tab fullscreen event, the window out
+   * of OS fullscreen (still in it, its `leave-full-screen` restarts the wait). On macOS a request
+   * made while the native animation runs, or is queued to run (`isFullScreen()` does not tell), is
+   * never completed and blocks every later one.
+   */
+  function schedulePageExits(): void {
+    clearTimeout(pageExitTimer);
+    pageExitTimer = undefined;
+    if (!tabs.some((tab) => tab.exitRequested)) return;
+    pageExitTimer = setTimeout(() => {
+      pageExitTimer = undefined;
+      if (!win || win.isDestroyed() || win.isFullScreen()) return;
+      for (const tab of tabs) if (tab.exitRequested) exitHtmlFullscreen(tab);
+    }, FULLSCREEN_EXIT_SETTLE_MS);
+  }
+
+  /**
+   * frost takes `tab` out of HTML fullscreen (Esc, or the tab stops being shown), from main and at
+   * once: its state (the notice goes), the window's OS fullscreen and the view's bounds (the page
+   * area under the chrome). This state is authoritative: it holds even if the page never leaves
+   * its own fullscreen (it hangs, or Chromium ignores the request mid-transition). Only then is the
+   * page asked to leave, and asked again later (`exitRequested`).
+   */
   const leaveFullscreen = (tab: Tab): void => {
-    if (tab.fullscreen === null) return;
-    exitHtmlFullscreen(tab);
-    clearFullscreen(tab);
+    if (!clearFullscreen(tab)) return;
     leaveWindowFullscreen();
     applyBounds(tab);
     reportFullscreen(tab);
+    requestPageExit(tab);
   };
 
   /** Loads a restored tab's saved URL the first time it is shown. */
@@ -499,6 +551,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     attached = want;
     applyBounds(tab);
     want.setVisible(true);
+    // Chromium completes a hidden page's exit only once it is shown: ask again (once settled).
+    if (tab.exitRequested) schedulePageExits();
   };
 
   /** Asks the chrome to focus its address bar (it watches `focusAddressBarSeq`). */
@@ -587,6 +641,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       const restoring = tab.restored !== null && url === tab.restored.url;
       tab.error = null;
       tab.restored = null;
+      tab.exitRequested = false;
       if (denyPrompts(tab)) changed();
       if (clearFullscreen(tab)) applyBounds(tab);
       refresh(tab);
@@ -611,13 +666,33 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     });
     // HTML fullscreen (granted without a prompt, `permissions.spec.ts`): the window goes
     // fullscreen; the chrome's notice banner shows first, then the page's view covers it all.
-    listen('enter-html-full-screen', () => setFullscreen(tab, 'notice'));
-    listen('leave-html-full-screen', () => setFullscreen(tab, null));
-    // Esc always leaves fullscreen: taken before the page can see (and swallow) it.
+    listen('enter-html-full-screen', () => {
+      tab.exitRequested = false;
+      setFullscreen(tab, 'notice');
+      schedulePageExits();
+    });
+    // Electron leaves HTML fullscreen on its own too (it handles Esc before `before-input-event`):
+    // the page is asked to leave as well, since its document may still be entering.
+    listen('leave-html-full-screen', () => {
+      setFullscreen(tab, null);
+      requestPageExit(tab);
+    });
+    // Esc always leaves fullscreen: taken before the page can see (and swallow) it, and left from
+    // main at once, whether or not the page cooperates.
+    // The key-up of that Esc is kept from the page too (frost already left fullscreen on key-down).
+    let escapeTaken = false;
     listen('before-input-event', (event: { preventDefault(): void }, input: KeyInput) => {
-      if (tab.fullscreen === null || input.key !== FULLSCREEN_EXIT_KEY) return;
+      if (input.key !== FULLSCREEN_EXIT_KEY) return;
+      if (input.type === 'keyUp' && escapeTaken) {
+        escapeTaken = false;
+        event.preventDefault();
+        return;
+      }
+      if (tab.fullscreen === null) return;
       event.preventDefault();
-      if (input.type === 'keyDown') exitHtmlFullscreen(tab);
+      if (input.type !== 'keyDown') return;
+      escapeTaken = true;
+      leaveFullscreen(tab);
     });
     // A hang is the tab's own state: the status bar reports it while the tab is shown.
     listen('unresponsive', () => {
@@ -898,8 +973,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         if (win === target && tab) applyBounds(tab);
       };
       target.on('resize', relayout);
-      target.on('enter-full-screen', relayout);
-      target.on('leave-full-screen', relayout);
+      // A window fullscreen transition ended: pending page exits wait for the window to settle.
+      const transitioned = (): void => {
+        relayout();
+        if (win === target) schedulePageExits();
+      };
+      target.on('enter-full-screen', transitioned);
+      target.on('leave-full-screen', transitioned);
       // Closing: a last change of the strip is saved; the tear-down and the empty tab left behind
       // are not. A window closed as it started (a macOS window reopened on an empty tab) saves
       // nothing, so the session saved before it is kept.
@@ -910,6 +990,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       });
       target.once('closed', () => {
         if (win !== target) return;
+        clearTimeout(pageExitTimer);
+        pageExitTimer = undefined;
         closeAll();
         win = null;
         pageBounds = null;

@@ -3,7 +3,7 @@
 // specs/browse-guard.feature.md (Controller)
 import type { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { FULLSCREEN_BANNER_HEIGHT, FULLSCREEN_NOTICE_MS } from '@app/specs/permissions.spec';
+import { FULLSCREEN_BANNER_HEIGHT, FULLSCREEN_EXIT_SETTLE_MS, FULLSCREEN_NOTICE_MS } from '@app/specs/permissions.spec';
 import {
   APP_WINDOW_TITLE,
   BrowserStateSchema,
@@ -1151,44 +1151,126 @@ describe('permissions', () => {
   });
 
   test('esc-always-leaves-fullscreen', () => {
-    const a = openPage('https://a.test/');
-    const contents = a.view.webContents;
-    // Not fullscreen: Escape is the page's.
-    expect(press(contents, 'Escape').defaultPrevented).toBe(false);
-    expect(contents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
-    enterFullscreen(a.view);
-    const down = press(contents, 'Escape');
-    expect(down.defaultPrevented).toBe(true);
-    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
-    const [worldId, scripts] = contents.executeJavaScriptInIsolatedWorld.mock.calls[0]!;
-    expect(worldId).toBeGreaterThan(0);
-    expect(scripts.map((script) => script.code).join('')).toContain('document.exitFullscreen()');
-    // The key-up is kept from the page as well, and does not exit twice.
-    expect(press(contents, 'Escape', 'keyUp').defaultPrevented).toBe(true);
-    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
-    // Other keys still reach the page.
-    expect(press(contents, 'a').defaultPrevented).toBe(false);
+    vi.useFakeTimers();
+    try {
+      controller.setPageBounds({ x: 0, y: 90, width: 1280, height: 684 });
+      const a = openPage('https://a.test/');
+      const contents = a.view.webContents;
+      // Not fullscreen: Escape is the page's.
+      expect(press(contents, 'Escape').defaultPrevented).toBe(false);
+      expect(contents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
+      enterFullscreen(a.view);
+      // The page hangs: its exit script never settles, and it never reports leaving fullscreen.
+      contents.executeJavaScriptInIsolatedWorld.mockImplementation(() => new Promise<undefined>(() => {}));
+      a.view.setBounds.mockClear();
+      const before = controller.getState().version;
+      const down = press(contents, 'Escape');
+      expect(down.defaultPrevented).toBe(true);
+      // Main left fullscreen at once, without the page: state, window and bounds.
+      expect(tabState(a.id).fullscreen).toBeNull();
+      expect(controller.isFullscreen(a.id)).toBe(false);
+      expect(controller.getState().version).toBeGreaterThan(before);
+      expect(win.setFullScreen).toHaveBeenLastCalledWith(false);
+      expect(win.fullScreen).toBe(false);
+      expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1280, height: 684 });
+      // Then, once the window settled, the page is asked to leave, from an isolated world.
+      expect(contents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS);
+      expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
+      const [worldId, scripts] = contents.executeJavaScriptInIsolatedWorld.mock.calls[0]!;
+      expect(worldId).toBeGreaterThan(0);
+      expect(scripts.map((script) => script.code).join('')).toContain('document.exitFullscreen()');
+      // The key-up is kept from the page as well, and does not exit twice.
+      expect(press(contents, 'Escape', 'keyUp').defaultPrevented).toBe(true);
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS);
+      expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
+      // Other keys still reach the page.
+      expect(press(contents, 'a').defaultPrevented).toBe(false);
+      // frost stays out of fullscreen though the page never reported leaving.
+      expect(tabState(a.id).fullscreen).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('page-exit-waits-for-window-to-settle', () => {
+    vi.useFakeTimers();
+    try {
+      const a = openPage('https://a.test/');
+      const b = openPage('https://b.test/');
+      const exits = () => b.view.contents.executeJavaScriptInIsolatedWorld.mock.calls.length;
+      // macOS: Electron handles Esc first and reports leaving while the window still animates.
+      enterFullscreen(b.view);
+      b.view.webContents.emit('leave-html-full-screen');
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS * 3);
+      expect(exits()).toBe(0);
+      // Each window fullscreen event restarts the wait; asked once it has been still that long.
+      win.fullScreen = false;
+      win.emit('leave-full-screen');
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS - 1);
+      win.emit('enter-full-screen');
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS - 1);
+      expect(exits()).toBe(0);
+      vi.advanceTimersByTime(1);
+      expect(exits()).toBe(1);
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS * 3);
+      expect(exits()).toBe(1);
+      // Shown again after another tab: asked again, after the same wait.
+      controller.activateTab(a.id);
+      controller.activateTab(b.id);
+      expect(exits()).toBe(1);
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS);
+      expect(exits()).toBe(2);
+      // Fullscreen again: no exit of frost's is pending.
+      enterFullscreen(b.view);
+      win.fullScreen = false;
+      win.emit('leave-full-screen');
+      controller.activateTab(a.id);
+      expect(exits()).toBe(2);
+      // (Switching away left it: asked once settled.)
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS);
+      expect(exits()).toBe(3);
+      // Nor after a new document commits.
+      controller.activateTab(b.id);
+      commit(b.view.webContents, 'https://b.test/next', 'Next');
+      win.emit('leave-full-screen');
+      controller.activateTab(a.id);
+      controller.activateTab(b.id);
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS * 3);
+      expect(exits()).toBe(3);
+      expect(a.view.contents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('leaving-fullscreen-tab-restores-window', () => {
-    const a = openPage('https://a.test/');
-    const b = openPage('https://b.test/');
-    // Switching away from a fullscreen tab.
-    enterFullscreen(b.view);
-    controller.activateTab(a.id);
-    expect(b.view.contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
-    expect(controller.isFullscreen(b.id)).toBe(false);
-    expect(win.setFullScreen).toHaveBeenLastCalledWith(false);
-    expect(win.fullScreen).toBe(false);
-    // Closing a fullscreen tab.
-    controller.activateTab(b.id);
-    enterFullscreen(b.view);
-    controller.closeTab(b.id);
-    expect(win.fullScreen).toBe(false);
-    expect(win.setFullScreen).toHaveBeenCalledTimes(2);
-    // Nothing to restore when no tab was fullscreen.
-    controller.closeTab(a.id);
-    expect(win.setFullScreen).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers();
+    try {
+      const a = openPage('https://a.test/');
+      const b = openPage('https://b.test/');
+      // Switching away from a fullscreen tab.
+      enterFullscreen(b.view);
+      controller.activateTab(a.id);
+      expect(controller.isFullscreen(b.id)).toBe(false);
+      expect(win.setFullScreen).toHaveBeenLastCalledWith(false);
+      expect(win.fullScreen).toBe(false);
+      vi.advanceTimersByTime(FULLSCREEN_EXIT_SETTLE_MS);
+      expect(b.view.contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
+      // Closing a fullscreen tab.
+      controller.activateTab(b.id);
+      enterFullscreen(b.view);
+      controller.closeTab(b.id);
+      expect(win.fullScreen).toBe(false);
+      expect(win.setFullScreen).toHaveBeenCalledTimes(2);
+      // Nothing to restore when no tab was fullscreen.
+      controller.closeTab(a.id);
+      expect(win.setFullScreen).toHaveBeenCalledTimes(2);
+      vi.runAllTimers();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('window-events-reapply-bounds', () => {
