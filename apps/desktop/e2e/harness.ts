@@ -1,7 +1,8 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -49,6 +50,26 @@ export async function launchApp(
   await app.firstWindow();
   const page = await pageAt(app, 'app://app/');
   return { app, page };
+}
+
+/**
+ * Starts the built app on `userDataDir` **without** Playwright: no inspector and no DevTools
+ * attached to any page, so nothing answers a page's JavaScript dialogs for it (Playwright does,
+ * over DevTools, for every page it drives). `stop()` kills its process tree.
+ */
+export function launchUndrivenApp(userDataDir: string): { stop(): void } {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
+  }
+  const electron = createRequire(import.meta.url)('electron') as unknown as string;
+  // Its own process group (like Playwright's launches), so `killProcessTree` takes all of it.
+  const child = spawn(electron, [APP_DIR, `--user-data-dir=${userDataDir}`], { env, cwd: APP_DIR, detached: true, stdio: 'ignore' });
+  return {
+    stop: () => {
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) killProcessTree(child.pid);
+    },
+  };
 }
 
 /** How long `closeApp` waits for the app to quit before it kills the app's process tree. */

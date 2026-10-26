@@ -139,7 +139,10 @@ strip). Test: unit + `e2e/tabs.e2e.ts`.
   `window.open`/`target=_blank` with a gesture → new background tab for browsable URLs, without a
   gesture → blocked; `<webview>` refused; downloads cancelled with a status-bar notice (Phase 1 has
   no download manager); certificate errors are refused (never `callback(true)`) and the chrome shows
-  an error state; a crashed renderer (`render-process-gone`) shows a reload state.
+  an error state; a crashed renderer (`render-process-gone`) shows a reload state; JavaScript
+  dialogs are off in tabs (`disableDialogs`: no origin-less native dialog owned by frost;
+  chrome-rendered, origin-labelled dialogs come later) and a page's `beforeunload` never blocks
+  navigating away, reloading, or closing its tab or the window (`will-prevent-unload` prevented).
 - [ ] **Steps 2–5:** red → green, including every Review Focus item owned by this task.
 - [ ] **Step 6: commit** — `feat(security): browsed-content navigation guards`.
 

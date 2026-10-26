@@ -11,9 +11,12 @@ import { pathToFileURL } from 'node:url';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { CRASH_TITLE, LOAD_ERROR_TITLES } from '@app/specs/browse-guard.spec';
 import { BROWSE_PARTITION, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
-import { closeApp, launchApp } from './harness';
+import { closeApp, launchApp, launchUndrivenApp } from './harness';
 
 const MAILTO = 'mailto:someone@example.com?subject=hello';
+
+/** What `/dialogs` pages reported (`POST /report`), in order. */
+const dialogReports: unknown[] = [];
 
 /** The loopback site's pages (see each route). `hop()` is the origin of a second loopback server. */
 function route(request: IncomingMessage, response: ServerResponse, origin: () => string, hop: () => string): void {
@@ -76,6 +79,32 @@ function route(request: IncomingMessage, response: ServerResponse, origin: () =>
       return;
     case '/webview':
       return html(`<title>Webview</title><webview src="${origin()}/a"></webview>`);
+    // Calls every JavaScript dialog as it loads and reports what each gave it (a value, or what it threw).
+    case '/dialogs':
+      return html(`<title>Dialogs</title><script>
+        const results = [() => typeof alert('frost'), () => confirm('frost?'), () => prompt('frost?', 'default')].map((call) => {
+          try { return call(); } catch (error) { return String(error); }
+        });
+        fetch('/report', { method: 'POST', body: JSON.stringify(results) });
+      </script>`);
+    case '/report': {
+      let body = '';
+      request.on('data', (chunk: Buffer) => (body += chunk.toString()));
+      request.on('end', () => {
+        dialogReports.push(JSON.parse(body));
+        response.writeHead(204).end();
+      });
+      return;
+    }
+    // Asks to keep the user on the page when it unloads (needs an activation: click the button).
+    case '/beforeunload':
+      return html(`<title>Stay</title><style>button { margin: 20px; padding: 20px; font-size: 18px; }</style>
+        <button id="activate">activate</button>
+        <script>
+          window.activated = false;
+          document.getElementById('activate').addEventListener('click', () => { window.activated = true; });
+          addEventListener('beforeunload', (event) => { event.preventDefault(); event.returnValue = 'stay'; return 'stay'; });
+        </script>`);
     default: {
       const name = path.slice(1).toUpperCase() || 'ROOT';
       return html(`<title>Page ${name}</title><h1>Page ${name}</h1>`);
@@ -617,4 +646,90 @@ test('webview-tag-creates-nothing-e2e', async () => {
   const record = await mainRecord();
   expect(record.webviewsCreated).toBe(0);
   expect(record.browseContentsCreated).toBe(1);
+});
+
+test('page-dialogs-are-disabled-e2e', async () => {
+  // Playwright answers every dialog of a page it drives (over DevTools), so the page runs in an
+  // app nothing drives: a profile whose restored tab is `/dialogs`, launched without Playwright.
+  const profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-dialogs-'));
+  try {
+    const first = await launchApp([], { userDataDir: profile });
+    await first.page.getByTestId('address').fill(`${site.origin}/dialogs`);
+    await first.page.getByTestId('address').press('Enter');
+    await expect(first.page.locator('[data-testid="tab"][aria-selected="true"]')).toHaveAttribute('title', 'Dialogs');
+    await expect.poll(() => dialogReports.length).toBe(1);
+    await closeApp(first.app);
+    dialogReports.length = 0;
+
+    const undriven = launchUndrivenApp(profile);
+    try {
+      // A native dialog would block the page at alert() (nobody answers it): no report would come.
+      await expect.poll(() => dialogReports.length, { timeout: 20_000 }).toBe(1);
+      // alert() returns at once, confirm() is false, prompt() throws (Electron never supports it).
+      expect(dialogReports[0]).toEqual(['undefined', false, 'Error: prompt() is not supported.']);
+    } finally {
+      undriven.stop();
+    }
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('page-cannot-block-unload-e2e', async () => {
+  const stay = async (): Promise<number> => {
+    const id = await open('/beforeunload', 'Stay');
+    // beforeunload only asks once the page had a user activation.
+    await realClick(id, '#activate');
+    await expect.poll(() => run(id, 'window.activated')).toBe(true);
+    return id;
+  };
+  // Navigating away (the address bar) and reloading.
+  let id = await stay();
+  await go(`${site.origin}/b`);
+  await expect(activeTab()).toHaveAttribute('title', 'Page B');
+  id = await stay();
+  await run(id, 'document.title = "marked"; 0');
+  await page.getByTestId('reload').click();
+  await expect(activeTab()).toHaveAttribute('title', 'Stay');
+  // Closing the tab: its WebContents goes.
+  await menu('close-tab');
+  await expect.poll(async () => (await browseContents()).map((c) => c.id)).not.toContain(id);
+  await expect(strip()).toHaveCount(1);
+  expect(await browseContents()).toEqual([]);
+
+  // Closing the window (its own app, so this suite's window stays open).
+  const other = await launchApp();
+  try {
+    await other.page.getByTestId('address').fill(`${site.origin}/beforeunload`);
+    await other.page.getByTestId('address').press('Enter');
+    await expect(other.page.locator('[data-testid="tab"][aria-selected="true"]')).toHaveAttribute('title', 'Stay');
+    const pageId = await other.app.evaluate(({ webContents }, url) => webContents.getAllWebContents().find((c) => c.getURL() === url)!.id, `${site.origin}/beforeunload`);
+    const [x, y] = (await other.app.evaluate(
+      ({ webContents }, id) =>
+        webContents.fromId(id)!.executeJavaScript('(() => { const r = document.getElementById("activate").getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()'),
+      pageId,
+    )) as [number, number];
+    await other.app.evaluate(
+      ({ webContents }, { id, x, y }) => {
+        const contents = webContents.fromId(id)!;
+        contents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+        contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+      },
+      { id: pageId, x, y },
+    );
+    await expect.poll(() => other.app.evaluate(({ webContents }, id) => webContents.fromId(id)!.executeJavaScript('window.activated'), pageId)).toBe(true);
+    await other.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+    // The window closes (on Linux the app then quits with it).
+    await expect
+      .poll(async () => {
+        try {
+          return await other.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+        } catch {
+          return 0;
+        }
+      })
+      .toBe(0);
+  } finally {
+    await closeApp(other.app);
+  }
 });

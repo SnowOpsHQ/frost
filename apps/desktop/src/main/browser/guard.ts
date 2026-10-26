@@ -88,6 +88,7 @@ export interface BrowseGuardHooks {
  * - `window.open` / `target=_blank`: always `{ action: 'deny' }`; `judgeBrowsePopup` decides
  *   whether a background tab opens (through `hooks.openTab`) or the URL is opened externally.
  * - `<webview>`: refused.
+ * - `beforeunload` cannot keep the user on the page: every `will-prevent-unload` is prevented.
  */
 export function guardBrowseContents(contents: WebContents, options: { now: () => number; hooks?: BrowseGuardHooks | undefined }): void {
   const gesture = trackUserGesture(contents, options.now);
@@ -116,6 +117,10 @@ export function guardBrowseContents(contents: WebContents, options: { now: () =>
   });
 
   contents.on('will-attach-webview', (event) => event.preventDefault());
+
+  // Without this Electron cancels the unload a page's `beforeunload` asks to stop (no dialog), so a
+  // page could block navigating away from it and reloading.
+  contents.on('will-prevent-unload', (event) => event.preventDefault());
 }
 
 /** What the browse session reports to, and asks of, the rest of main. */

@@ -32,8 +32,8 @@ export function createMainWindow(): BrowserWindow {
 
 /**
  * Creates a tab's page view (spec `TAB_VIEW_WEB_PREFERENCES` in `specs/browser.spec.ts`): the four
- * hardened webPreferences as literals (for Electronegativity, as above), the browse partition, and
- * **no preload**, so browsed content never gets the IPC bridge. `tab-view.test.ts` keeps the
+ * hardened webPreferences as literals (for Electronegativity, as above), the browse partition,
+ * JavaScript dialogs off, and **no preload**, so browsed content never gets the IPC bridge. `tab-view.test.ts` keeps the
  * options equal to the spec. The app-wide guard (`security/register.ts`) classifies the new
  * WebContents by its session and applies the browse guard.
  */
@@ -45,6 +45,9 @@ export function createTabView(): WebContentsView {
       nodeIntegration: false,
       webSecurity: true,
       partition: BROWSE_PARTITION,
+      // No native alert/confirm/prompt owned by frost with no origin on it (a Phase 1 limit:
+      // `browse-guard.feature.md`, JavaScript dialogs).
+      disableDialogs: true,
     },
   });
 }

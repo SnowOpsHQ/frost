@@ -200,6 +200,8 @@ test('tab-has-no-ipc', async () => {
   expect(facts.globals).toEqual({ bridge: 'undefined', require: 'undefined', process: 'undefined' });
   const { partition: _partition, ...hardened } = TAB_VIEW_WEB_PREFERENCES;
   expect(facts.prefs).toMatchObject({ ...hardened, preload: null });
+  // JavaScript dialogs are off in tabs (browse-guard.feature.md).
+  expect((facts.prefs as Record<string, unknown> | null)?.['disableDialogs']).toBe(true);
   // Hosted in the app window, but not its own WebContents → `not-window-contents`.
   expect(facts.ownerId).toBe(facts.appWindowId);
   expect(facts.ownerContentsIsTab).toBe(false);
