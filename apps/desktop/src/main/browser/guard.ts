@@ -75,18 +75,16 @@ function isMainFrameOf(contents: WebContents, initiator: FrameRef | null | undef
   }
 }
 
-export type PopupVerdict = 'tab' | 'open-externally' | 'drop';
+export type PopupVerdict = 'tab' | 'drop';
 
 /**
  * What to do with a tab's `window.open` / `target=_blank` (never an Electron window): with a real
- * gesture an `http(s)` URL becomes a background tab and an allowlisted external URL (`mailto:`)
- * goes to the Phase 0 external-open policy; anything else, or no gesture, is dropped.
+ * gesture an `http(s)` URL becomes a background tab; anything else, or no gesture, is dropped. A
+ * popup never opens an external handler (`mailto:` included): it carries no frame, so a subframe
+ * could spend a click in the top frame on it.
  */
 export function judgeBrowsePopup(url: string, userGesture: boolean): PopupVerdict {
-  if (!userGesture) return 'drop';
-  if (isWebUrl(url)) return 'tab';
-  if (isAboutBlank(url)) return 'drop';
-  return resolveExternalOpen(url, { userGesture }) === 'allow' ? 'open-externally' : 'drop';
+  return userGesture && isWebUrl(url) ? 'tab' : 'drop';
 }
 
 /** What the browse guard asks of the rest of main (the browser controller). */
@@ -100,10 +98,10 @@ export interface BrowseGuardHooks {
  * - `will-frame-navigate` (any frame) and `will-redirect`: pinned by `judgeBrowseNavigation`; a
  *   dropped navigation the main frame started, to an allowlisted external scheme, on a real gesture
  *   is opened externally.
- * - Popups carry no frame (`HandlerDetails`), so their gesture stays per WebContents (accepted
- *   risk, `browse-guard.feature.md`, Gesture attribution).
+ * - Popups carry no frame (`HandlerDetails`), so their gesture is per WebContents: they only ever
+ *   become `http(s)` tabs (`browse-guard.feature.md`, Popups).
  * - `window.open` / `target=_blank`: always `{ action: 'deny' }`; `judgeBrowsePopup` decides
- *   whether a background tab opens (through `hooks.openTab`) or the URL is opened externally.
+ *   whether a background tab opens (through `hooks.openTab`); nothing is ever opened externally.
  * - `<webview>`: refused.
  * - `beforeunload` cannot keep the user on the page: every `will-prevent-unload` is prevented.
  */
@@ -127,10 +125,7 @@ export function guardBrowseContents(contents: WebContents, options: { now: () =>
   contents.on('will-redirect', pin(true));
 
   contents.setWindowOpenHandler(({ url }) => {
-    const userGesture = gesture.consume();
-    const verdict = judgeBrowsePopup(url, userGesture);
-    if (verdict === 'tab') options.hooks?.openTab?.(contents, url);
-    else if (verdict === 'open-externally') openExternalIfAllowed(url, userGesture);
+    if (judgeBrowsePopup(url, gesture.consume()) === 'tab') options.hooks?.openTab?.(contents, url);
     return { action: 'deny' };
   });
 

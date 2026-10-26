@@ -71,11 +71,12 @@ packages/
 
 **Security model (baked in, not bolted on)**
 - `setWindowOpenHandler`: always deny (no Electron window is ever created). Only `http/https/mailto`
-  are allowlisted, and only on a real, unconsumed user gesture: in a browser tab an `http(s)` popup
-  becomes a background tab, in the app's own windows it opens externally, and `mailto:` (without
-  attachment keys) opens externally. Everything else is dropped outright, with no confirmation
-  dialog to click through (stricter than an allow-on-confirm flow). (Directly closes the confirmed
-  High finding.)
+  are allowlisted, and only on a real, unconsumed user gesture: in the app's own windows such a
+  popup opens externally (`mailto:` without attachment keys); in a browser tab an `http(s)` popup
+  becomes a background tab and a popup never opens an external handler (a tab reaches `mailto:`
+  only by a main-frame navigation on a gesture). Everything else is dropped outright, with no
+  confirmation dialog to click through (stricter than an allow-on-confirm flow). (Directly closes
+  the confirmed High finding.)
 - Every `WebContentsView`: `sandbox:true`, `contextIsolation:true`, `nodeIntegration:false`,
   `webSecurity:true` set **explicitly**; cookie-encryption fuse on.
 - `will-navigate` guard pins the app frame to its own `app://` origin.

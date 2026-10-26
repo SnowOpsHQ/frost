@@ -34,8 +34,13 @@ function route(request: IncomingMessage, response: ServerResponse, origin: () =>
     <a id="chain-popup" href="/hop1?do=popup">via a redirect chain, then a popup</a>
     <a id="chain-mailto" href="/hop1?do=mailto">via a redirect chain, then mailto</a>
     <a id="blank-download" href="/file" target="_blank">download in a new tab</a>
+    <a id="blank-mailto" href="${MAILTO}" target="_blank">mail in a new tab</a>
+    <button id="open-mailto">window.open mailto</button>
     <script>
       document.getElementById('open').addEventListener('click', () => { window.open('/b'); });
+      // Each retitles once its popup request is out (a later task), so the chrome's title shows main handled it.
+      document.getElementById('open-mailto').addEventListener('click', () => { window.open(${JSON.stringify(MAILTO)}); setTimeout(() => { document.title = 'opened-mailto'; }); });
+      document.getElementById('blank-mailto').addEventListener('click', () => { setTimeout(() => { document.title = 'clicked-blank-mailto'; }); });
       if (new URL(location.href).searchParams.has('auto')) setTimeout(() => { window.open('/b'); document.title = 'auto-opened'; }, 200);
     </script>`;
   const query = new URL(request.url ?? '/', 'http://x').search;
@@ -525,6 +530,20 @@ test('subframe-cannot-open-externally-e2e', async () => {
   await run(id, `location = ${JSON.stringify(MAILTO)}; 0`);
   await expect.poll(async () => (await mainRecord()).openExternal).toEqual([MAILTO]);
   expect(await urlOf(id)).toBe(`${site.origin}/subframes`);
+});
+
+test('popup-to-external-scheme-is-dropped-e2e', async () => {
+  const id = await open('/opener', 'Opener');
+  await realClick(id, '#blank-mailto');
+  await expect(activeTab()).toHaveAttribute('title', 'clicked-blank-mailto');
+  await realClick(id, '#open-mailto');
+  await expect(activeTab()).toHaveAttribute('title', 'opened-mailto');
+  const record = await mainRecord();
+  expect(record.openExternal).toEqual([]);
+  // The opener's own WebContents only: no tab for either popup.
+  expect(record.browseContentsCreated).toBe(1);
+  await expect(strip()).toHaveCount(1);
+  expect(await urlOf(id)).toBe(`${site.origin}/opener`);
 });
 
 test('download-is-cancelled-with-notice-e2e', async () => {
