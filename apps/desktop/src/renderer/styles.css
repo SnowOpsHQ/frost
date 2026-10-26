@@ -42,6 +42,10 @@
   --on-accent: #ffffff;
   --accent-hover: #2560cc;
   --panel-art: #6b7a90;
+
+  --bg-prompt: #ffffff;
+  --prompt-edge: #dfe4eb;
+  --shadow-prompt: 0 1px 3px rgb(16 24 40 / 0.07);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -75,6 +79,10 @@
     --on-accent: #0e1422;
     --accent-hover: #86afff;
     --panel-art: #8f9bad;
+
+    --bg-prompt: #242830;
+    --prompt-edge: #343943;
+    --shadow-prompt: 0 1px 3px rgb(0 0 0 / 0.35);
   }
 }
 
@@ -123,7 +131,8 @@ input {
 
 .chrome {
   display: grid;
-  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) minmax(0, 1fr) var(--status-height);
+  /* The prompt row is empty (0 high) unless the active tab shows a permission prompt. */
+  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto minmax(0, 1fr) var(--status-height);
   height: 100%;
 }
 
@@ -268,6 +277,23 @@ input {
 
 .tab .tab-icon-alert {
   color: var(--warn);
+}
+
+/* A background tab whose page asks for a permission: a small accent dot after its label. */
+.tab-attention {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 10px;
+  height: 16px;
+}
+
+.tab-attention-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 /* Loading indicator: a small ring with a sweeping accent arc. */
@@ -505,6 +531,133 @@ input {
   }
   to {
     transform: translateX(320%);
+  }
+}
+
+/* ---- Permission prompt -------------------------------------------------------------------- */
+
+/* The row between the toolbar and the page area; empty unless the active tab has a prompt. */
+.prompt-slot {
+  min-width: 0;
+}
+
+.prompt-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 7px 10px 7px 14px;
+  border-bottom: 1px solid var(--prompt-edge);
+  background: var(--bg-prompt);
+  box-shadow: var(--shadow-prompt);
+  animation: prompt-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.prompt-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-prompt));
+  color: var(--accent);
+}
+
+.prompt-icon .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.prompt-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-origin {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.prompt-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+/* Allow and Block weigh the same: frost does not nudge either answer. */
+.prompt-button {
+  min-width: 72px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--border-field);
+  border-radius: 8px;
+  background: var(--bg-field);
+  box-shadow: var(--shadow-field);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+
+.prompt-button:hover:not(:disabled) {
+  background: var(--bg-field-hover);
+  border-color: color-mix(in srgb, var(--border-field) 70%, var(--text-faint));
+}
+
+.prompt-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.prompt-button:disabled,
+.prompt-dismiss:disabled {
+  opacity: 0.55;
+}
+
+.prompt-button:focus-visible,
+.prompt-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.prompt-dismiss {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-faint);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.prompt-dismiss:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.prompt-dismiss .icon {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -785,6 +938,7 @@ input {
   .start-mark,
   .tab-spinner,
   .panel-card,
+  .prompt-bar,
   .panel-button[data-busy='true'] .icon {
     animation: none;
   }

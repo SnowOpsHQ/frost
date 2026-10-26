@@ -13,6 +13,7 @@ import {
 } from '@app/specs/browser.spec';
 import { fakeEvent } from '../../../test/electron-fake';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../controller';
+import { createPermissionBroker, type PermissionBroker } from '../permissions';
 
 /** A tab's WebContents: tests set the fields, then emit the Electron event that reports them. */
 class FakeTabContents extends EventEmitter {
@@ -84,6 +85,8 @@ class FakeHostWindow extends EventEmitter {
 let views: FakeTabView[];
 let win: FakeHostWindow;
 let controller: BrowserController;
+/** The controller's permission broker (a real one, with its in-memory decision store). */
+let broker: PermissionBroker;
 /** The injected `openWindow` (the app opens and attaches a new window). */
 let openWindow: ReturnType<typeof vi.fn<() => void>>;
 
@@ -114,7 +117,9 @@ beforeEach(() => {
     win = new FakeHostWindow();
     controller.attach(win as unknown as HostWindow);
   });
+  broker = createPermissionBroker();
   controller = createBrowserController({
+    permissions: broker,
     createView: () => {
       const created = new FakeTabView();
       views.push(created);
@@ -442,7 +447,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);
@@ -1041,5 +1046,140 @@ describe('guards', () => {
     controller.downloadBlocked(views.at(-1)!.webContents);
     expect(ids()).toEqual([a.id, loaded, own]);
     expect(blank).not.toBe(own);
+  });
+});
+
+describe('permissions', () => {
+  const ids = () => controller.getState().tabs.map((tab) => tab.id);
+  const tabState = (id: number) => controller.getState().tabs.find((tab) => tab.id === id)!;
+  const promptOf = (id: number) => tabState(id).permissionPrompt;
+  const notifications = (origin: string) => ({ origin, permission: 'notifications' as const });
+
+  /** Opens a tab with a committed page; answers its id and view. */
+  function openPage(url: string) {
+    if (views.length > 0) controller.newTab();
+    controller.navigate(url);
+    const created = views.at(-1)!;
+    commit(created.webContents, url, url);
+    return { id: controller.getState().activeTabId!, view: created };
+  }
+
+  test('prompt-in-tab-state', () => {
+    const a = openPage('https://a.test/');
+    const b = openPage('https://b.test/');
+    expect(promptOf(a.id)).toBeNull();
+    const before = controller.getState().version;
+    broker.request(a.id, notifications('https://a.test'), vi.fn());
+    const state = controller.getState();
+    expect(state.version).toBe(before + 1);
+    expect(promptOf(a.id)).toMatchObject({ origin: 'https://a.test', permission: 'notifications' });
+    expect(promptOf(b.id)).toBeNull();
+    expect(BrowserStateSchema.parse(state)).toEqual(state);
+    // A snapshot is a copy: changing it changes nothing in main.
+    state.tabs[0]!.permissionPrompt!.origin = 'https://evil.test';
+    expect(promptOf(a.id)?.origin).toBe('https://a.test');
+  });
+
+  test('answer-applies-to-active-tab-only', () => {
+    const a = openPage('https://a.test/');
+    const b = openPage('https://b.test/');
+    const answerA = vi.fn();
+    const answerB = vi.fn();
+    broker.request(a.id, notifications('https://a.test'), answerA);
+    broker.request(b.id, notifications('https://b.test'), answerB);
+    const idA = promptOf(a.id)!.id;
+    const idB = promptOf(b.id)!.id;
+    // b is active: a's prompt cannot be answered from the chrome.
+    expect(controller.answerPermission(idA, 'allow')).toBe(false);
+    expect(answerA).not.toHaveBeenCalled();
+    expect(promptOf(a.id)?.id).toBe(idA);
+    expect(controller.answerPermission(idB, 'block')).toBe(true);
+    expect(answerB).toHaveBeenCalledExactlyOnceWith(false);
+    expect(promptOf(b.id)).toBeNull();
+    // Single use, and only once its tab is shown.
+    expect(controller.answerPermission(idB, 'allow')).toBe(false);
+    controller.activateTab(a.id);
+    expect(controller.answerPermission(idA, 'allow')).toBe(true);
+    expect(answerA).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  test('tab-id-of-contents', () => {
+    const a = openPage('https://a.test/');
+    const b = openPage('https://b.test/');
+    expect(controller.tabIdOf(a.view.webContents)).toBe(a.id);
+    expect(controller.tabIdOf(b.view.webContents)).toBe(b.id);
+    expect(controller.tabIdOf(win.webContents)).toBeNull();
+    expect(controller.tabIdOf(new FakeTabContents())).toBeNull();
+    expect(controller.tabIdOf(null)).toBeNull();
+    expect(controller.tabIdOf(undefined)).toBeNull();
+    const contents = a.view.contents;
+    controller.closeTab(a.id);
+    expect(controller.tabIdOf(contents)).toBeNull();
+  });
+
+  test('prompts-denied-when-tab-goes', () => {
+    const ask = (tabId: number) => {
+      const callback = vi.fn();
+      broker.request(tabId, notifications('https://a.test'), callback);
+      expect(promptOf(tabId)).not.toBeNull();
+      return callback;
+    };
+    const a = openPage('https://a.test/');
+    const contents = a.view.webContents;
+
+    // A same-document navigation keeps the prompt.
+    const kept = ask(a.id);
+    contents.emit('did-navigate-in-page', fakeEvent(), 'https://a.test/#x', true);
+    expect(kept).not.toHaveBeenCalled();
+    // A cross-document commit denies it.
+    commit(contents, 'https://a.test/next', 'Next');
+    expect(kept).toHaveBeenCalledExactlyOnceWith(false);
+    expect(promptOf(a.id)).toBeNull();
+
+    // A main-frame load failure (an error page replaces the document) denies; a subframe's does not.
+    const failed = ask(a.id);
+    contents.emit('did-fail-load', fakeEvent(), -105, 'ERR_NAME_NOT_RESOLVED', 'https://ads.test/', false, 1, 2);
+    expect(failed).not.toHaveBeenCalled();
+    contents.emit('did-fail-load', fakeEvent(), -105, 'ERR_NAME_NOT_RESOLVED', 'https://nowhere.test/', true, 1, 1);
+    expect(failed).toHaveBeenCalledExactlyOnceWith(false);
+    commit(contents, 'https://a.test/', 'A');
+
+    const crashed = ask(a.id);
+    contents.emit('render-process-gone', fakeEvent(), { reason: 'crashed', exitCode: 1 });
+    expect(crashed).toHaveBeenCalledExactlyOnceWith(false);
+    commit(contents, 'https://a.test/', 'A');
+
+    // Closing the tab.
+    const b = openPage('https://b.test/');
+    const closed = ask(b.id);
+    controller.closeTab(b.id);
+    expect(closed).toHaveBeenCalledExactlyOnceWith(false);
+
+    // The page closing itself (its WebContents destroyed).
+    const c = openPage('https://c.test/');
+    const destroyed = ask(c.id);
+    c.view.contents.destroy();
+    expect(destroyed).toHaveBeenCalledExactlyOnceWith(false);
+    expect(ids()).toEqual([a.id]);
+    expect(broker.pendingCount()).toBe(0);
+    expect(broker.check('https://a.test', 'notifications')).toBe(false);
+  });
+
+  test('html-fullscreen-fills-window', () => {
+    controller.setPageBounds({ x: 0, y: 90, width: 1280, height: 684 });
+    const a = openPage('https://a.test/');
+    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1280, height: 684 });
+    a.view.webContents.emit('enter-html-full-screen');
+    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1280, height: 800 });
+    // The window goes fullscreen; the chrome reports its new page area, the view keeps filling it.
+    win.size = [1920, 1080];
+    controller.setPageBounds({ x: 0, y: 90, width: 1920, height: 964 });
+    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1920, height: 1080 });
+    a.view.webContents.emit('leave-html-full-screen');
+    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1920, height: 964 });
+    // A new document is never fullscreen.
+    a.view.webContents.emit('enter-html-full-screen');
+    commit(a.view.webContents, 'https://a.test/next', 'Next');
+    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1920, height: 964 });
   });
 });

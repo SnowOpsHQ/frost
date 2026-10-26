@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import {
+  AnswerPermissionInputSchema,
   BrowserStateSchema,
   NavigateInputSchema,
   PageBoundsSchema,
@@ -52,9 +53,11 @@ async function watchState(browser: BrowserService, sinceVersion: number): Promis
 }
 
 /**
- * Browser chrome ↔ main (spec `browser-chrome.feature.md` and `tabs.feature.md`, Router). `navigate`
- * answers whether a navigation started; `newTab` the new tab's id (`null` at `MAX_TABS`);
- * `closeTab` / `activateTab` whether the id named an open tab; the other mutations answer `null`.
+ * Browser chrome ↔ main (spec `browser-chrome.feature.md`, `tabs.feature.md` and
+ * `permissions.feature.md`, Router). `navigate` answers whether a navigation started; `newTab` the
+ * new tab's id (`null` at `MAX_TABS`); `closeTab` / `activateTab` whether the id named an open
+ * tab; `answerPermission` whether the id was the active tab's prompt; the other mutations answer
+ * `null`.
  * `navigate`, `back`, `forward`, `reload` and `stop` act on the active tab.
  */
 const browserRouter = router({
@@ -113,6 +116,11 @@ const browserRouter = router({
       ctx.browser.setPageBounds(input);
       return null;
     }),
+  answerPermission: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(AnswerPermissionInputSchema)
+    .mutation(({ ctx, input }) => ctx.browser.answerPermission(input.promptId, input.decision) === true),
   watch: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)

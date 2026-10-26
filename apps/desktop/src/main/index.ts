@@ -6,6 +6,7 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { createWindowRegistry } from './app-windows';
 import { createBrowserController } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
+import { createBrowsePermissionHandlers, createMemoryDecisionStore, createPermissionBroker } from './browser/permissions';
 import { installAppMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
@@ -39,7 +40,10 @@ const devServerUrl = app.isPackaged ? undefined : MAIN_WINDOW_VITE_DEV_SERVER_UR
 // Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
 // procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
 // New Tab with no window open (macOS) opens the window instead of adding a hidden tab.
-const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow() });
+// Tabs' permission requests become per-origin prompts (specs/permissions.feature.md); decisions
+// are remembered in memory for the app session (Task 5 persists them).
+const permissions = createPermissionBroker({ store: createMemoryDecisionStore() });
+const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow(), permissions });
 
 // The browse guard turns a tab's gesture-backed popups into background tabs
 // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
@@ -71,9 +75,12 @@ void app.whenReady().then(() => {
   // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
   // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
   restrictAppRequests(session.defaultSession, windows.isAppWebContents);
-  // Tabs' session: no `app:` handler (protocol.handle below is the default session's),
-  // deny-by-default permissions until Task 4's prompts, and every download cancelled with a notice.
-  hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), { onDownloadBlocked: (contents) => browser.downloadBlocked(contents) });
+  // Tabs' session: no `app:` handler (protocol.handle below is the default session's), per-origin
+  // permission prompts (everything not promptable denied), and every download cancelled with a notice.
+  hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), {
+    onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
+    permissions: createBrowsePermissionHandlers({ broker: permissions, tabIdOf: (contents) => browser.tabIdOf(contents) }),
+  });
   // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
   handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
   attachIpcHandler({
