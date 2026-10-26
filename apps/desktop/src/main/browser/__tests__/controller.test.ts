@@ -1,7 +1,13 @@
 // Spec: specs/browser.spec.ts (BrowserStateSchema, APP_WINDOW_TITLE) · Acceptance: specs/browser-chrome.feature.md (Controller)
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { APP_WINDOW_TITLE, BrowserStateSchema, SEARCH_URL_TEMPLATE } from '@app/specs/browser.spec';
+import {
+  APP_WINDOW_TITLE,
+  BrowserStateSchema,
+  MAX_PENDING_WATCHES,
+  SEARCH_URL_TEMPLATE,
+  WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH,
+} from '@app/specs/browser.spec';
 import { fakeEvent } from '../../../test/electron-fake';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../controller';
 
@@ -20,8 +26,14 @@ class FakeTabContents extends EventEmitter {
   reload = vi.fn();
   stop = vi.fn();
   focus = vi.fn();
+  destroyed = false;
   close = vi.fn();
-  isDestroyed = () => false;
+  isDestroyed = () => this.destroyed;
+  /** What Electron does when the page calls `window.close()`: the WebContents is destroyed. */
+  destroy() {
+    this.destroyed = true;
+    this.emit('destroyed');
+  }
   readonly navigationHistory = {
     canGoBack: () => this.back,
     canGoForward: () => this.forward,
@@ -39,7 +51,7 @@ class FakeTabView {
 class FakeHostWindow extends EventEmitter {
   size: [number, number] = [1280, 800];
   title = '';
-  readonly contentView = { addChildView: vi.fn(), removeChildView: vi.fn() };
+  readonly contentView = { addChildView: vi.fn(), removeChildView: vi.fn(), children: [] as unknown[] };
   getContentSize = () => [...this.size];
   setTitle = vi.fn((title: string) => {
     this.title = title;
@@ -98,10 +110,10 @@ describe('browser controller', () => {
   });
 
   test('navigate-loads-resolved-url', () => {
-    controller.navigate('   ');
+    expect(controller.navigate('   ')).toBe(false);
     expect(views).toHaveLength(0);
 
-    controller.navigate('example.com');
+    expect(controller.navigate('example.com')).toBe(true);
     expect(views).toHaveLength(1);
     expect(win.contentView.addChildView).toHaveBeenCalledExactlyOnceWith(view());
     expect(view().setVisible).toHaveBeenLastCalledWith(true);
@@ -154,6 +166,78 @@ describe('browser controller', () => {
     const event = fakeEvent();
     win.emit('page-title-updated', event, 'frost', false);
     expect(event.defaultPrevented).toBe(true);
+
+    // A huge page title is cut.
+    const long = 'x'.repeat(WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH * 3);
+    commit(view().webContents, 'https://example.com/long', long);
+    expect(win.title).toBe(`${'x'.repeat(WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH - 1)}… — frost`);
+  });
+
+  test('state-url-hides-userinfo', () => {
+    controller.navigate('example.com');
+    commit(view().webContents, 'https://user:pw@example.com/', '');
+    expect(controller.getState().tabs[0]?.url).toBe('https://example.com/');
+    expect(win.title).toBe('https://example.com/ — frost');
+  });
+
+  test('attach-same-window-twice-is-a-no-op', () => {
+    controller.navigate('example.com');
+    const version = controller.getState().version;
+    controller.attach(win as unknown as HostWindow);
+    expect(win.listenerCount('page-title-updated')).toBe(1);
+    expect(win.listenerCount('closed')).toBe(1);
+    expect(controller.getState().version).toBe(version);
+    expect(view().webContents.close).not.toHaveBeenCalled();
+  });
+
+  test('page-close-resets-tab', () => {
+    controller.navigate('example.com');
+    const first = view();
+    commit(first.webContents, 'https://example.com/', 'Example Domain');
+    const before = controller.getState().version;
+
+    first.webContents.destroy();
+    expect(win.contentView.removeChildView).toHaveBeenCalledExactlyOnceWith(first);
+    const state = controller.getState();
+    expect(state.version).toBeGreaterThan(before);
+    expect(state.tabs).toHaveLength(1);
+    expect(state.tabs[0]).toMatchObject({ url: '', title: '', loading: false, canGoBack: false, canGoForward: false });
+    expect(win.title).toBe(APP_WINDOW_TITLE);
+
+    // Nothing touches the destroyed WebContents; the next navigation gets a fresh view.
+    for (const action of ['back', 'forward', 'reload', 'stop'] as const) controller[action]();
+    expect(first.webContents.reload).not.toHaveBeenCalled();
+    expect(controller.navigate('example.org')).toBe(true);
+    expect(views).toHaveLength(2);
+    expect(first.webContents.loadURL).toHaveBeenCalledTimes(1);
+    expect(views[1]!.webContents.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.org/');
+    expect(win.contentView.addChildView).toHaveBeenLastCalledWith(views[1]);
+  });
+
+  test('destroyed-contents-count-as-no-view', () => {
+    controller.navigate('example.com');
+    const first = view();
+    // Destroyed without (yet) a `destroyed` event.
+    first.webContents.destroyed = true;
+    expect(controller.navigate('example.org')).toBe(true);
+    expect(views).toHaveLength(2);
+    expect(first.webContents.loadURL).toHaveBeenCalledTimes(1);
+  });
+
+  test('renderer-crash-stops-loading', () => {
+    controller.navigate('example.com');
+    const contents = view().webContents;
+    contents.loading = true;
+    contents.emit('did-start-loading');
+    expect(controller.getState().tabs[0]?.loading).toBe(true);
+    // The renderer died mid-load; the WebContents may still report loading.
+    contents.emit('render-process-gone', fakeEvent(), { reason: 'crashed', exitCode: 1 });
+    expect(controller.getState().tabs[0]?.loading).toBe(false);
+    contents.emit('page-title-updated', fakeEvent(), 'x', false);
+    expect(controller.getState().tabs[0]?.loading).toBe(false);
+    // A new load clears the crash.
+    contents.emit('did-start-loading');
+    expect(controller.getState().tabs[0]?.loading).toBe(true);
   });
 
   test('history-and-reload-act-on-active-tab', () => {
@@ -217,13 +301,53 @@ describe('browser controller', () => {
     view().webContents.emit('did-start-loading');
     await expect(pending).resolves.toMatchObject({ version: version + 1, tabs: [{ loading: true }] });
 
+    expect(controller.pendingWatches()).toBe(0);
+
     // An aborted watch is released (resolves with the current state) and not kept around.
     const abort = new AbortController();
     const aborted = controller.watch(controller.getState().version, abort.signal);
+    expect(controller.pendingWatches()).toBe(1);
     abort.abort();
+    expect(controller.pendingWatches()).toBe(0);
     await expect(aborted).resolves.toEqual(controller.getState());
     const preAborted = controller.watch(controller.getState().version, abort.signal);
+    expect(controller.pendingWatches()).toBe(0);
     await expect(preAborted).resolves.toEqual(controller.getState());
+  });
+
+  test('watch-caps-pending-waiters', async () => {
+    const { version } = controller.getState();
+    const settled: number[] = [];
+    const pending = Array.from({ length: MAX_PENDING_WATCHES }, (_, i) =>
+      controller.watch(version).then((state) => {
+        settled.push(i);
+        return state;
+      }),
+    );
+    expect(controller.pendingWatches()).toBe(MAX_PENDING_WATCHES);
+    await Promise.resolve();
+    expect(settled).toEqual([]);
+
+    // One more: the oldest resolves at once with the current state.
+    const extra = controller.watch(version);
+    expect(controller.pendingWatches()).toBe(MAX_PENDING_WATCHES);
+    await expect(pending[0]).resolves.toEqual(controller.getState());
+    expect(settled).toEqual([0]);
+
+    controller.navigate('example.com');
+    view().webContents.loading = true;
+    view().webContents.emit('did-start-loading');
+    await Promise.all([...pending, extra]);
+    expect(controller.pendingWatches()).toBe(0);
+  });
+
+  test('watch-clamps-future-version', async () => {
+    const { version } = controller.getState();
+    const pending = controller.watch(version + 1_000);
+    controller.navigate('example.com');
+    view().webContents.loading = true;
+    view().webContents.emit('did-start-loading');
+    await expect(pending).resolves.toMatchObject({ version: version + 1 });
   });
 
   test('window-close-closes-tab-contents', () => {

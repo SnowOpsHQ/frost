@@ -23,7 +23,7 @@ function fakeService(version = 3) {
   let current = stateAt(version);
   let release: ((state: BrowserState) => void) | undefined;
   const service = {
-    navigate: vi.fn((_input: string) => {}),
+    navigate: vi.fn((input: string) => input.trim() !== ''),
     back: vi.fn(),
     forward: vi.fn(),
     reload: vi.fn(),
@@ -146,6 +146,12 @@ describe('browser router', () => {
     expect(service.setPageBounds).toHaveBeenCalledExactlyOnceWith({ x: 0.5, y: 48, width: 1280, height: 720 });
   });
 
+  test('navigate-reports-whether-it-navigated', async () => {
+    const { service } = fakeService();
+    await expect(procedure(ctxFor(service), 'navigate')({ input: 'example.com' })).resolves.toBe(true);
+    await expect(procedure(ctxFor(service), 'navigate')({ input: '   ' })).resolves.toBe(false);
+  });
+
   test('missing-browser-service-is-internal-error', async () => {
     for (const name of BROWSER_PROCEDURES) {
       const error = await errorOf(procedure(ctxFor(undefined), name)(VALID_INPUT[name]));
@@ -192,13 +198,25 @@ describe('browser.watch', () => {
     await vi.advanceTimersByTimeAsync(WATCH_TIMEOUT_MS - 1);
     expect(result).toBeUndefined();
     // The state may have changed without the service's watch resolving (e.g. a missed wake-up):
-    // the timeout answers with whatever is current then.
-    fake.setState(stateAt(3));
+    // the timeout answers with whatever is current then, not the state at call time.
+    const later = { ...stateAt(3), tabs: [{ ...stateAt(3).tabs[0]!, title: 'Changed later' }] };
+    fake.setState(later);
     await vi.advanceTimersByTimeAsync(1);
     await pending;
-    expect(result).toEqual(stateAt(3));
+    expect(result).toEqual(later);
+    expect(result).not.toEqual(stateAt(3));
     expect(fake.service.watch.mock.calls[0]?.[1]?.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test('watch-clamps-future-version-in-router', async () => {
+    const fake = fakeService(3);
+    const pending = procedure(ctxFor(fake.service), 'watch')({ sinceVersion: 1_000_000 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.service.watch).toHaveBeenCalledTimes(1);
+    expect(fake.service.watch.mock.calls[0]?.[0]).toBe(3);
+    fake.change(stateAt(4));
+    await expect(pending).resolves.toEqual(stateAt(4));
   });
 });
 
@@ -218,10 +236,11 @@ describe('transport carries the browser service', () => {
       id: 1,
       result: { data: stateAt(3) },
     });
-    // Mutations answer `null` (never `undefined`, which a structured clone might drop).
     expect(await handle({ sender, senderFrame }, { type: 'mutation', path: 'browser.navigate', input: { input: 'example.com' } })).toStrictEqual({
-      result: { data: null },
+      result: { data: true },
     });
+    // Other mutations answer `null` (never `undefined`, which a structured clone might drop).
+    expect(await handle({ sender, senderFrame }, { type: 'mutation', path: 'browser.stop' })).toStrictEqual({ result: { data: null } });
     expect(service.navigate).toHaveBeenCalledExactlyOnceWith('example.com');
   });
 });

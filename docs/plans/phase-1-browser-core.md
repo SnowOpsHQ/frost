@@ -84,7 +84,8 @@ owning task.
   `apps/desktop/e2e/browser.e2e.ts`
 
 **Interfaces:**
-- `resolveAddressInput(input: string): { kind: 'url' | 'search'; url: string }` — pure.
+- `resolveAddressInput(input: string): { kind: 'url' | 'search'; url: string } | null` — pure;
+  `null` for empty/whitespace input (a no-op).
 - `createTabView(): WebContentsView` — allowlisted factory; prefs equal `TAB_VIEW_WEB_PREFERENCES`.
 - `BrowserService` (in `@app/ipc-contract`): `navigate(input)`, `back()`, `forward()`, `reload()`,
   `stop()`, `setPageBounds(rect)`, `getState()`, `watch(sinceVersion): Promise<BrowserState>`.
