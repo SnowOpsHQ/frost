@@ -13,11 +13,15 @@ arguments Playwright needs, and they stay on. Entry points: `pnpm test:e2e` (Tur
 `pnpm --filter @app/desktop test:e2e` after a build; both need a display. Every suite closes its
 app with the harness's `closeApp`: Playwright's `close()` (the app quits), and if that has not
 finished within `APP_CLOSE_TIMEOUT_MS` (10 s) the app's whole process tree is killed (`SIGKILL`), so
-a wedged app fails only its own test, never the worker's teardown.
+a wedged app fails only its own test, never the worker's teardown. An app that already quit on its
+own (closing its last window quits it on Linux) is already closed: `closeApp` then does nothing.
 
 - **Scenario: close-app-kills-wedged-app** — an app whose main process refuses to quit
   (`before-quit` prevented) is still closed by `closeApp`: after its timeout the main process and
   every renderer it had are gone, and the app's `close` event fired.
+- **Scenario: close-app-tolerates-app-that-quit** — once an app has quit by itself (its `close`
+  event fired; Playwright no longer answers `process()` for it), `closeApp` resolves without
+  throwing.
 - **Scenario: loads-app-from-app-scheme** — the main window's URL starts with `app://app/`.
 - **Scenario: renders-pong-over-ipc** — the renderer's `<output data-testid="ping">` shows `pong`,
   i.e. a real sender-validated `ping` round trip through preload and main.
