@@ -41,13 +41,17 @@ As Phases 0–1:
 
 Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds, plus:
 - **Clean-room.** Rule ids, wording, thresholds and scoring are frost's own, written from SEO first
-  principles. Nothing is copied from the analyzed product's rule catalog, prompts or UI. Third-party
+  principles. Nothing is copied from any other product's rules, prompts or UI. Third-party
   libraries are used only as npm dependencies under their licenses: `web-vitals` (Apache-2.0) and
   `axe-core` (MPL-2.0, used unmodified).
 - **Isolated extraction.** Extraction and measurement scripts run only via
   `executeJavaScriptInIsolatedWorld` with a dedicated world id. They never run in the main world, and
   never modify the page's DOM, CSP or globals. Pages cannot observe or tamper with them beyond
-  ordinary DOM changes.
+  ordinary DOM changes. One exception, on the user's request only: highlight mode (Task 2) appends a
+  single host element of its own to `<html>`, holding its overlay in a closed shadow root styled
+  through the CSSOM; it changes no page element, adds no stylesheet, and is removed when turned off,
+  on navigation, when the tab changes, the sidebar collapses or its panel is left. The page can see
+  (and remove) that host, never its contents.
 - **Snapshot handling.**
   - Results are untrusted. Zod-validate them in main, with hard caps on counts and string lengths.
   - A page that returns garbage gets an "audit unavailable" state, not a crash.

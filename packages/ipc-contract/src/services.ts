@@ -3,6 +3,12 @@ import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
+/** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
+export interface SeoAuditRef {
+  readonly url: string;
+  readonly takenAt: number;
+}
+
 // Main-process services the procedures call (spec `specs/browser.spec.ts`). Main supplies the
 // implementations through the IPC context (`IpcHandlerOptions.services`); this package only knows
 // the interfaces, so it stays free of Electron.
@@ -81,11 +87,14 @@ export interface SeoService {
   /**
    * Writes the links `filter` selects from the tab's ready audit to the system clipboard as CSV
    * (`seo-sidebar.spec.ts`, `LINKS_CSV_COLUMNS`); answers how many rows, or `null` (nothing
-   * written) without a ready audit.
+   * written) without a ready audit, or when it is not the audit the panel shows (`audit`).
    */
-  copyLinksCsv(tabId: number, filter: LinkFilter): number | null;
-  /** Writes `url` to the system clipboard if the tab's ready audit lists it (`pageUrls`); else `false`, nothing written. */
-  copyUrl(tabId: number, url: string): boolean;
+  copyLinksCsv(tabId: number, audit: SeoAuditRef, filter: LinkFilter): number | null;
+  /**
+   * Writes `url` to the system clipboard if the tab's ready audit is the one the panel shows
+   * (`audit`) and lists it (`pageUrls`, parsed hrefs); else `false`, nothing written.
+   */
+  copyUrl(tabId: number, audit: SeoAuditRef, url: string): boolean;
 }
 
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */

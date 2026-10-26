@@ -9,7 +9,7 @@ const URL_A = 'https://example.com/a';
 const ok = (s: unknown) => PageSnapshotSchema.safeParse(s).success;
 const many = <T>(n: number, make: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => make(i));
 const link = (i: number) => ({ href: `https://example.com/${i}`, scheme: 'https:', rel: '', text: 'x', kind: 'internal' as const, target: null });
-const image = (i: number) => ({ src: `https://example.com/${i}.png`, alt: null, width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false });
+const image = (i: number) => ({ src: `https://example.com/${i}.png`, alt: null, width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false, cssSized: false });
 const social = (changes: Partial<PageSnapshot['social']>) => ({ social: { ...rawSnapshot(URL_A).social, ...changes } });
 const capped = (text: string) => ({ text, length: text.length });
 
@@ -108,6 +108,7 @@ describe('snapshot schema', () => {
       rawSnapshot(URL_A, { images: [{ ...image(0), natural: { width: -1, height: 2 } }] }),
       rawSnapshot(URL_A, { images: [{ ...image(0), natural: { width: 1, height: 2, depth: 3 } as never }] }),
       rawSnapshot(URL_A, { images: [{ ...image(0), inFirstViewport: 1 as never }] }),
+      rawSnapshot(URL_A, { images: [{ ...image(0), cssSized: 'yes' as never }] }),
       rawSnapshot(URL_A, { links: [{ ...link(0), target: 5 as never }] }),
       rawSnapshot(URL_A, social({ 'og:audio': 'x' } as never)),
       rawSnapshot(URL_A, social({ 'og:title': 1 as never })),

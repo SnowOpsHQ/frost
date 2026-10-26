@@ -8,7 +8,8 @@ import { withoutFragment } from './auditor';
 // the tab's state; the overlay itself is drawn in the page by `paint` (`runHighlight`). It goes
 // back to `off` when the page changes (a new document, a load error, a crash, the view released:
 // nothing to remove, the overlay went with the document), when an in-page navigation leaves the
-// URL it was drawn on, and when another tab becomes active (then the overlay is removed).
+// URL it was drawn on, when another tab becomes active (then the overlay is removed), and when the
+// page itself removes the overlay's host (the overlay reports it: `ended` settles with `removed`).
 
 export type TabContents = TabView['webContents'];
 
@@ -26,9 +27,17 @@ export interface TabHighlights {
   deactivated(tab: Tab): void;
 }
 
+/** Draws the overlay in a page and waits for it to end (`runHighlight`, `watchHighlight`). Their answers are page data: checked, never trusted. */
+export interface HighlightPainter {
+  /** Draws (or removes, for `off`) the overlay; resolves `{ mode, boxes }` once drawn (`mode` `off`: nothing is). */
+  paint(contents: TabContents, mode: HighlightMode): Promise<unknown>;
+  /** Resolves why the current overlay ended (`removed`: the page took it out). */
+  ended(contents: TabContents): Promise<unknown>;
+}
+
 export interface TabHighlightsContext {
-  /** Draws (or removes, for `off`) the overlay in the page (`runHighlight`); `undefined`: highlight mode is unavailable. */
-  readonly paint: ((contents: TabContents, mode: HighlightMode) => Promise<unknown>) | undefined;
+  /** The painter; `undefined`: highlight mode is unavailable. */
+  readonly painter: HighlightPainter | undefined;
   /** Whether `tab` is the active tab of an attached window. */
   isActive(tab: Tab): boolean;
   /** The browser state changed (bump and wake `watch`). */
@@ -49,15 +58,15 @@ export function createTabHighlights(ctx: TabHighlightsContext): TabHighlights {
     tab.highlight = 'off';
     tab.highlightKey = '';
     const contents = remove ? contentsOf(tab) : undefined;
-    if (contents && ctx.paint) ctx.paint(contents, 'off').catch(ignore);
+    if (contents && ctx.painter) ctx.painter.paint(contents, 'off').catch(ignore);
     ctx.changed();
   };
 
   return {
     set(tab, mode) {
-      const paint = ctx.paint;
+      const painter = ctx.painter;
       const contents = contentsOf(tab);
-      if (!paint || !contents || !ctx.isActive(tab) || !showsPage(tab)) return false;
+      if (!painter || !contents || !ctx.isActive(tab) || !showsPage(tab)) return false;
       const url = contents.getURL();
       if (!isWebUrl(url)) return false;
       const key = withoutFragment(url);
@@ -66,19 +75,31 @@ export function createTabHighlights(ctx: TabHighlightsContext): TabHighlights {
       latest.set(tab, run);
       tab.highlight = mode;
       tab.highlightKey = mode === 'off' ? '' : key;
-      const settle = (ok: boolean): void => {
+      const isCurrent = (): boolean => latest.get(tab) === run && contentsOf(tab) === contents && tab.highlight === mode && withoutFragment(contents.getURL()) === key;
+      const settle = (answer: unknown, ok: boolean): void => {
         // A newer request replaces whatever this one drew.
         if (latest.get(tab) !== run || mode === 'off') return;
-        const now = contentsOf(tab);
-        const current = now === contents && tab.highlight === mode && withoutFragment(contents.getURL()) === key;
+        const current = isCurrent();
         // The page moved on (or was reset) while it ran: whatever it drew goes.
-        if (!current && now === contents) paint(contents, 'off').catch(ignore);
-        // It failed: nothing is drawn.
-        else if (!ok && current) reset(tab, false);
+        if (!current && contentsOf(tab) === contents) {
+          painter.paint(contents, 'off').catch(ignore);
+          return;
+        }
+        if (!current) return;
+        // It failed, or drew nothing (the page took the host away at once).
+        const drawn = ok && typeof answer === 'object' && answer !== null && (answer as { mode?: unknown }).mode === mode;
+        if (!drawn) {
+          reset(tab, false);
+          return;
+        }
+        // Drawn: if the page removes it later, the tab's mode goes back to off.
+        painter.ended(contents).then((reason) => {
+          if (reason === 'removed' && isCurrent()) reset(tab, false);
+        }, ignore);
       };
-      paint(contents, mode).then(
-        () => settle(true),
-        () => settle(false),
+      painter.paint(contents, mode).then(
+        (answer) => settle(answer, true),
+        () => settle(undefined, false),
       );
       if (changed) ctx.changed();
       return true;

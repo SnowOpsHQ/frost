@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest';
 import type { Finding, SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { TITLE_MAX_CHARS, TITLE_MIN_CHARS } from '@app/specs/seo-rules.spec';
 import { LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN } from '@app/specs/seo-sidebar.spec';
-import { declaredSize, formatSize, isolatedTooltip, lengthIndicator, linkQuery, openableUrl, oversizeRatio, railStatuses, shownResponse, sidebarOpenFromStorage } from '../seo-view';
+import { declaredSize, formatSize, highlightToClear, isolatedTooltip, lengthIndicator, linkQuery, openableUrl, oversizeRatio, railStatuses, shownResponse, sidebarOpenFromStorage } from '../seo-view';
 
 function finding(severity: Finding['severity'], category: Finding['category']): Finding {
   return { ruleId: 'title-missing', category, severity, title: 't', why: 'w', fix: 'f', details: { facts: [], samples: [] } };
@@ -84,5 +84,18 @@ describe('seo view helpers', () => {
     // A surrogate pair at the cut is dropped whole.
     const emoji = `${'x'.repeat(LINK_FILTER_QUERY_MAX_CHARS - 1)}😀`;
     expect(linkQuery(emoji)).toBe('x'.repeat(LINK_FILTER_QUERY_MAX_CHARS - 1));
+  });
+
+  test('highlight-follows-its-panel', () => {
+    // Shown with its toggle in view: kept.
+    expect(highlightToClear('links', 'links', true)).toBe(false);
+    expect(highlightToClear('headings', 'on-page', true)).toBe(false);
+    // The sidebar collapsed, or another panel opened: off.
+    expect(highlightToClear('links', 'links', false)).toBe(true);
+    expect(highlightToClear('links', 'overview', true)).toBe(true);
+    expect(highlightToClear('headings', 'links', true)).toBe(true);
+    expect(highlightToClear('headings', 'on-page', false)).toBe(true);
+    // Nothing on: nothing to do.
+    expect(highlightToClear('off', 'overview', false)).toBe(false);
   });
 });

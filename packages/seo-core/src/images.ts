@@ -14,7 +14,10 @@ export function altState(image: Pick<PageImage, 'alt'>): AltState {
   return image.alt.text === '' && image.alt.length === 0 ? 'decorative' : 'present';
 }
 
-/** Whether `src` is an SVG image (by its path's extension, or a `data:image/svg+xml` URL): vectors scale for free. */
+/**
+ * Whether `src` is an SVG image (vectors scale for free). By URL only: a `.svg` / `.svgz` path or a
+ * `data:image/svg+xml` URL; an SVG served from another URL is not recognised.
+ */
 export function isSvg(src: string): boolean {
   const lower = src.trim().toLowerCase();
   if (lower.startsWith('data:')) return lower.startsWith('data:image/svg+xml');
@@ -22,9 +25,12 @@ export function isSvg(src: string): boolean {
   return path.endsWith('.svg') || path.endsWith('.svgz');
 }
 
-/** Rendered with a width or height attribute missing (absent or empty): no space reserved before it loads. */
-export function lacksDimensions(image: Pick<PageImage, 'rendered' | 'width' | 'height'>): boolean {
-  return image.rendered !== null && (image.width === null || image.width.trim() === '' || image.height === null || image.height.trim() === '');
+/**
+ * Rendered with a width or height attribute missing (absent or empty), and CSS does not fix its box
+ * either (`cssSized`): no space is reserved before it loads.
+ */
+export function lacksDimensions(image: Pick<PageImage, 'rendered' | 'width' | 'height' | 'cssSized'>): boolean {
+  return image.rendered !== null && !image.cssSized && (image.width === null || image.width.trim() === '' || image.height === null || image.height.trim() === '');
 }
 
 /**

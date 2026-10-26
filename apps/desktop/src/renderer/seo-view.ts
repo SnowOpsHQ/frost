@@ -1,5 +1,5 @@
 import { panelStatus, type SeoAuditResponse } from '@app/seo-core';
-import { LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN, type PanelStatus, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
+import { HIGHLIGHT_PANELS, LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN, type HighlightMode, type PanelStatus, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 
 // Pure helpers behind the SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance
@@ -43,6 +43,14 @@ export interface FetchedAudit {
 export function shownResponse(tab: { readonly id: number; readonly url: string }, fetched: FetchedAudit | null): SeoAuditResponse {
   if (fetched && fetched.tabId === tab.id && fetched.response.url === tab.url) return fetched.response;
   return { status: 'pending', url: tab.url };
+}
+
+/**
+ * Whether the tab's highlight overlay must be turned off (`HIGHLIGHT_PANELS`): it is on, and the
+ * sidebar is collapsed or shows another panel than the one whose toggle owns it.
+ */
+export function highlightToClear(mode: HighlightMode, panel: SeoPanelId, open: boolean): boolean {
+  return mode !== 'off' && (!open || HIGHLIGHT_PANELS[mode] !== panel);
 }
 
 /** `n` with thousands separators. */

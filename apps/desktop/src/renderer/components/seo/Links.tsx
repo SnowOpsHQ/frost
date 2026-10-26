@@ -5,7 +5,7 @@ import { LINK_REL_FILTERS, LINK_REL_FLAGS, LINK_TYPE_FILTERS, type LinkRelFilter
 import { CopyIcon, SearchIcon } from '../../icons';
 import { actions } from '../../ipc';
 import { formatCount, linkQuery } from '../../seo-view';
-import { Flash, HighlightToggle, PanelIssues, UrlActions, useFlash } from './actions';
+import { auditRef, Flash, HighlightToggle, PanelIssues, UrlActions, useFlash } from './actions';
 import { PageText } from './parts';
 
 // Links (acceptance `seo-panels.feature.md`, Links): the page's links (the snapshot's first
@@ -17,7 +17,21 @@ const TYPE_LABELS: Readonly<Record<LinkTypeFilter, string>> = { all: 'All', inte
 const REL_LABELS: Readonly<Record<LinkRelFilter, string>> = { all: 'Any rel', nofollow: 'nofollow', sponsored: 'sponsored', ugc: 'ugc', followed: 'Followed (none of them)' };
 const KIND_TAG: Readonly<Record<PageLink['kind'], string>> = { internal: 'int', external: 'ext', other: 'other' };
 
-function LinkRow({ link, open, onToggle, tabId, flash }: { readonly link: PageLink; readonly open: boolean; readonly onToggle: () => void; readonly tabId: number; readonly flash: (message: string) => void }) {
+function LinkRow({
+  link,
+  audit,
+  open,
+  onToggle,
+  tabId,
+  flash,
+}: {
+  readonly link: PageLink;
+  readonly audit: SeoAudit;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly tabId: number;
+  readonly flash: (message: string) => void;
+}) {
   const flags = relFlags(link);
   return (
     <li className="seo-table-row" data-testid="seo-link-row" data-kind={link.kind} data-rel={LINK_REL_FLAGS.filter((flag) => flags[flag]).join(' ')} data-open={open}>
@@ -36,7 +50,7 @@ function LinkRow({ link, open, onToggle, tabId, flash }: { readonly link: PageLi
         </span>
         {link.href === '' ? <span className="seo-missing seo-table-sub">No usable URL</span> : <PageText value={link.href} className="seo-table-sub seo-mono" testId="seo-link-href" />}
       </button>
-      {open ? <UrlActions tabId={tabId} url={link.href} flash={flash} /> : null}
+      {open ? <UrlActions tabId={tabId} audit={audit} url={link.href} flash={flash} /> : null}
     </li>
   );
 }
@@ -107,7 +121,7 @@ export function Links({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
             data-testid="seo-links-copy-csv"
             disabled={rows.length === 0}
             onClick={() => {
-              void actions.copyLinksCsv(tab.id, filter).then((copied) => flash(copied === null ? 'Nothing to copy' : `Copied ${formatCount(copied)} ${copied === 1 ? 'link' : 'links'} as CSV`));
+              void actions.copyLinksCsv(tab.id, auditRef(audit), filter).then((copied) => flash(copied === null ? 'Nothing to copy' : `Copied ${formatCount(copied)} ${copied === 1 ? 'link' : 'links'} as CSV`));
             }}
           >
             <CopyIcon />
@@ -179,7 +193,7 @@ export function Links({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
         ) : (
           <ul className="seo-table" data-testid="seo-links-table" aria-label="Links">
             {rows.map((link, index) => (
-              <LinkRow key={index} link={link} open={openRow === index} onToggle={() => setOpenRow(openRow === index ? null : index)} tabId={tab.id} flash={flash} />
+              <LinkRow key={index} link={link} audit={audit} open={openRow === index} onToggle={() => setOpenRow(openRow === index ? null : index)} tabId={tab.id} flash={flash} />
             ))}
           </ul>
         )}

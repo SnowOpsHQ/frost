@@ -4,7 +4,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import { COMING_SOON_LABEL, DEFAULT_SEO_PANEL, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { AuditArt, ChevronIcon, ComplianceIcon, ImagesIcon, IndexabilityIcon, LinksIcon, OnPageIcon, OverviewIcon, ReloadIcon, SchemaIcon, SocialIcon, SpeedIcon } from '../icons';
 import { actions } from '../ipc';
-import { isolatedTooltip, railStatuses } from '../seo-view';
+import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
 import { Images } from './seo/Images';
 import { Links } from './seo/Links';
@@ -160,6 +160,13 @@ export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab
     }
     wasOpen.current = open;
   }, [open, panel, railItems]);
+  // The page overlay never outlives its toggle: collapsing the sidebar or leaving the panel that owns
+  // it turns it off (`HIGHLIGHT_PANELS`).
+  const highlight = tab?.highlight ?? 'off';
+  const tabId = tab?.id;
+  useEffect(() => {
+    if (tabId !== undefined && highlightToClear(highlight, panel, open)) void actions.setHighlight(tabId, 'off');
+  }, [tabId, highlight, panel, open]);
   const current = SEO_PANELS.find((p) => p.id === panel)!;
   const ready = response?.status === 'ready' ? response : null;
   const host = tab ? hostOf(tab.url) : '';

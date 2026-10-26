@@ -5,7 +5,7 @@ export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreA
 export { RULES } from './rules';
 export { altState, filterImages, imageCounts, isLazyInFirstViewport, isOversized, isSvg, lacksDimensions, type AltState } from './images';
 export { csvCell, filterLinks, linkCounts, linksCsv, NO_LINK_FILTER, relFlags, type LinkCounts, type LinkFilter } from './links';
-export { pageUrls, socialPreview, type SocialPreview, type SocialSource, type SocialValue } from './social';
+export { pageUrls, socialPreview, type SocialCard, type SocialImage, type SocialPreview, type SocialSource, type SocialValue } from './social';
 export type {
   CappedText,
   Finding,

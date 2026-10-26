@@ -58,6 +58,7 @@ const image = (changes: Partial<PageSnapshot['images'][number]> = {}): PageSnaps
   rendered: { width: 100, height: 50 },
   natural: { width: 200, height: 100 },
   inFirstViewport: false,
+  cssSized: false,
   ...changes,
 });
 const canonical = (href: string, resolved: string | null = new URL(href, PAGE_URL).href) => ({ canonicals: [{ href, resolved }], canonicalTotal: 1 });
@@ -301,6 +302,8 @@ describe('image loading and size', () => {
     expect(result.samples).toEqual(['https://example.com/w.png', 'https://example.com/h.png', 'https://example.com/none.png']);
     expect(factOf(result, 'Images without width and height')).toBe('3 of 4');
     passes('images-missing-dimensions', page({ images: [image()], imageTotal: 1 }));
+    // CSS fixes its box (aspect-ratio, or width and height declared together): nothing shifts.
+    passes('images-missing-dimensions', page({ images: [image({ width: null, height: null, cssSized: true })], imageTotal: 1 }));
     // An image with no layout box (hidden) shifts nothing.
     passes('images-missing-dimensions', page({ images: [image({ width: null, height: null, rendered: null })], imageTotal: 1 }));
   });

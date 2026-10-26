@@ -175,14 +175,14 @@ const seoRouter = router({
     .use(requireSeo)
     .input(SeoLinksCsvInputSchema)
     .mutation(({ ctx, input }) => {
-      const rows = ctx.seo.copyLinksCsv(input.tabId, input.filter);
+      const rows = ctx.seo.copyLinksCsv(input.tabId, input.audit, input.filter);
       return typeof rows === 'number' ? rows : null;
     }),
   copyUrl: publicProcedure
     .use(enforceSender)
     .use(requireSeo)
     .input(SeoCopyUrlInputSchema)
-    .mutation(({ ctx, input }) => ctx.seo.copyUrl(input.tabId, input.url) === true),
+    .mutation(({ ctx, input }) => ctx.seo.copyUrl(input.tabId, input.audit, input.url) === true),
 });
 
 export const appRouter = router({

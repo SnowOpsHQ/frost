@@ -20,8 +20,8 @@ function fakeSeo() {
     getAudit: vi.fn((_tabId: number): SeoAuditResponse => PENDING),
     rerun: vi.fn((tabId: number) => tabId === 1),
     setHighlight: vi.fn((tabId: number, _mode: 'off' | 'links' | 'headings') => tabId === 1),
-    copyLinksCsv: vi.fn((tabId: number, _filter: { type: string; rel: string; query: string }): number | null => (tabId === 1 ? 4 : null)),
-    copyUrl: vi.fn((tabId: number, _url: string) => tabId === 1),
+    copyLinksCsv: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _filter: { type: string; rel: string; query: string }): number | null => (tabId === 1 ? 4 : null)),
+    copyUrl: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _url: string) => tabId === 1),
   } satisfies SeoService;
 }
 
@@ -50,12 +50,13 @@ async function errorOf(run: Promise<unknown>): Promise<TRPCError> {
 }
 
 const FILTER = { type: 'all', rel: 'all', query: '' };
+const AUDIT = { url: 'https://example.com/', takenAt: 1_760_000_000_000 };
 const VALID_INPUT: Record<string, unknown> = {
   getAudit: { tabId: 1 },
   rerun: { tabId: 1 },
   setHighlight: { tabId: 1, mode: 'links' },
-  copyLinksCsv: { tabId: 1, filter: FILTER },
-  copyUrl: { tabId: 1, url: 'https://example.com/a' },
+  copyLinksCsv: { tabId: 1, audit: AUDIT, filter: FILTER },
+  copyUrl: { tabId: 1, audit: AUDIT, url: 'https://example.com/a' },
 };
 const SEO_PROCEDURES = Object.keys(VALID_INPUT);
 /** No service method was called. */
@@ -87,15 +88,28 @@ describe('seo router', () => {
       rerun: [{ tabId: 1, extra: true }],
       setHighlight: [{ tabId: 1 }, { tabId: 1, mode: 'images' }, { tabId: 1, mode: 'LINKS' }, { tabId: 1, mode: 'links', extra: 1 }],
       copyLinksCsv: [
-        { tabId: 1 },
-        { tabId: 1, filter: { ...FILTER, type: 'nofollow' } },
-        { tabId: 1, filter: { ...FILTER, rel: 'internal' } },
-        { tabId: 1, filter: { ...FILTER, query: 'x'.repeat(LINK_FILTER_QUERY_MAX_CHARS + 1) } },
-        { tabId: 1, filter: { ...FILTER, extra: true } },
-        { tabId: 1, filter: { type: 'all', rel: 'all' } },
-        { tabId: 1, filter: FILTER, extra: true },
+        { tabId: 1, audit: AUDIT },
+        { tabId: 1, filter: FILTER },
+        { tabId: 1, audit: { url: AUDIT.url }, filter: FILTER },
+        { tabId: 1, audit: { ...AUDIT, takenAt: -1 }, filter: FILTER },
+        { tabId: 1, audit: { ...AUDIT, url: '' }, filter: FILTER },
+        { tabId: 1, audit: { ...AUDIT, extra: 1 }, filter: FILTER },
+        { tabId: 1, audit: AUDIT, filter: { ...FILTER, type: 'nofollow' } },
+        { tabId: 1, audit: AUDIT, filter: { ...FILTER, rel: 'internal' } },
+        { tabId: 1, audit: AUDIT, filter: { ...FILTER, query: 'x'.repeat(LINK_FILTER_QUERY_MAX_CHARS + 1) } },
+        { tabId: 1, audit: AUDIT, filter: { ...FILTER, extra: true } },
+        { tabId: 1, audit: AUDIT, filter: { type: 'all', rel: 'all' } },
+        { tabId: 1, audit: AUDIT, filter: FILTER, extra: true },
       ],
-      copyUrl: [{ tabId: 1 }, { tabId: 1, url: '' }, { tabId: 1, url: 5 }, { tabId: 1, url: `https://example.com/${'x'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}` }, { tabId: 1, url: 'https://example.com/', extra: 1 }],
+      copyUrl: [
+        { tabId: 1, audit: AUDIT },
+        { tabId: 1, url: 'https://example.com/' },
+        { tabId: 1, audit: { ...AUDIT, takenAt: 'now' }, url: 'https://example.com/' },
+        { tabId: 1, audit: AUDIT, url: '' },
+        { tabId: 1, audit: AUDIT, url: 5 },
+        { tabId: 1, audit: AUDIT, url: `https://example.com/${'x'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}` },
+        { tabId: 1, audit: AUDIT, url: 'https://example.com/', extra: 1 },
+      ],
     };
     for (const name of SEO_PROCEDURES) {
       const valid = VALID_INPUT[name] as Record<string, unknown>;
@@ -121,12 +135,12 @@ describe('seo router', () => {
     expect(seo.setHighlight).toHaveBeenLastCalledWith(1, 'headings');
     await expect(procedure(ctxFor(seo), 'setHighlight')({ tabId: 2, mode: 'off' })).resolves.toBe(false);
     const filter = { type: 'external', rel: 'nofollow', query: 'shop' };
-    await expect(procedure(ctxFor(seo), 'copyLinksCsv')({ tabId: 1, filter })).resolves.toBe(4);
-    expect(seo.copyLinksCsv).toHaveBeenLastCalledWith(1, filter);
-    await expect(procedure(ctxFor(seo), 'copyLinksCsv')({ tabId: 2, filter })).resolves.toBeNull();
-    await expect(procedure(ctxFor(seo), 'copyUrl')({ tabId: 1, url: 'https://example.com/a' })).resolves.toBe(true);
-    expect(seo.copyUrl).toHaveBeenLastCalledWith(1, 'https://example.com/a');
-    await expect(procedure(ctxFor(seo), 'copyUrl')({ tabId: 2, url: 'https://example.com/a' })).resolves.toBe(false);
+    await expect(procedure(ctxFor(seo), 'copyLinksCsv')({ tabId: 1, audit: AUDIT, filter })).resolves.toBe(4);
+    expect(seo.copyLinksCsv).toHaveBeenLastCalledWith(1, AUDIT, filter);
+    await expect(procedure(ctxFor(seo), 'copyLinksCsv')({ tabId: 2, audit: AUDIT, filter })).resolves.toBeNull();
+    await expect(procedure(ctxFor(seo), 'copyUrl')({ tabId: 1, audit: AUDIT, url: 'https://example.com/a' })).resolves.toBe(true);
+    expect(seo.copyUrl).toHaveBeenLastCalledWith(1, AUDIT, 'https://example.com/a');
+    await expect(procedure(ctxFor(seo), 'copyUrl')({ tabId: 2, audit: AUDIT, url: 'https://example.com/a' })).resolves.toBe(false);
 
     // Over the transport too: getAudit is a query, rerun a mutation.
     const sender = { id: 1, mainFrame: { frameTreeNodeId: 100 }, isDestroyed: () => false };

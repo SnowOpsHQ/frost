@@ -1,4 +1,4 @@
-import { socialPreview, type SeoAudit, type SocialSource } from '@app/seo-core';
+import { socialPreview, type SeoAudit, type SocialCard, type SocialImage, type SocialSource } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import { SOCIAL_TAGS, type SocialTag } from '@app/specs/seo-limits.spec';
 import { ImagePlaceholderArt } from '../../icons';
@@ -6,7 +6,9 @@ import { Flash, PanelIssues, UrlActions, useFlash } from './actions';
 import { FactRow, PageText, Section } from './parts';
 
 // Social (acceptance `seo-panels.feature.md`, Social): the Open Graph and Twitter card tags, and two
-// previews drawn by frost from their text (a large-image card and a summary card). The image is
+// previews drawn by frost from their text, each from its own fallback chain: the large-image card
+// from Open Graph, then the page; the summary card from the Twitter card tags, then Open Graph,
+// then the page. The image is
 // never loaded into the chrome (`SOCIAL_REMOTE_IMAGES`: the CSP stays `img-src 'self' data:`): the
 // cards show a neutral placeholder, and the image's URL and declared size as text.
 
@@ -31,54 +33,76 @@ function TagRows({ tags, values, ogUrl }: { readonly tags: readonly SocialTag[];
   );
 }
 
+/** Where a card's title and description came from (`SOURCE_LABEL`), as one line. */
+function Sources({ card, testId }: { readonly card: SocialCard; readonly testId: string }) {
+  const part = (label: string, value: SocialCard['title']) => `${label} ${value.source === 'none' ? 'missing' : SOURCE_LABEL[value.source]}`;
+  return (
+    <p className="seo-note seo-card-source" data-testid={testId}>
+      {part('Title', card.title)} · {part('description', card.description)}
+    </p>
+  );
+}
+
+/** A card's image: its URL (resolved) and declared size as text, with its actions. Never loaded. */
+function CardImage({ label, image, size, tab, audit, flash, testId }: { readonly label: string; readonly image: SocialImage; readonly size?: string | null; readonly tab: TabState; readonly audit: SeoAudit; readonly flash: (message: string) => void; readonly testId: string }) {
+  return (
+    <div className="seo-card-image-info" data-testid={testId}>
+      <span className="seo-row-label">
+        {label} ({SOURCE_LABEL[image.source]})
+      </span>
+      <PageText value={image.resolved ?? image.raw} className="seo-mono" testId={`${testId}-url`} lines={2} />
+      {size !== undefined ? (
+        <span className="seo-note seo-card-size" data-testid={`${testId}-size`}>
+          {size ? `Declared ${size} px` : 'No declared size (og:image:width / og:image:height)'}
+        </span>
+      ) : null}
+      {image.resolved ? <UrlActions tabId={tab.id} audit={audit} url={image.resolved} openLabel="Open image in new tab" flash={flash} /> : null}
+    </div>
+  );
+}
+
 export function Social({ audit, tab }: { readonly audit: SeoAudit; readonly tab: TabState }) {
   const [message, flash] = useFlash();
   const preview = socialPreview(audit.page);
-  const title = preview.title.value || 'No title';
-  const description = preview.description.value;
+  const { large, summary } = preview;
   const site = preview.siteName ?? preview.domain;
+  const sameImage = large.image !== null && summary.image !== null && large.image.resolved === summary.image.resolved;
   return (
     <div className="seo-social" data-testid="seo-social">
       <PanelIssues audit={audit} categories={['social']} clean="Every social tag check passed." />
 
       <Section title="Share preview" testId="seo-social-preview">
         <p className="seo-note seo-preview-note">Drawn by frost from the tags. The page’s image is not loaded here.</p>
-        <figure className="seo-card seo-card-large" data-testid="seo-social-card-large" data-card={preview.card ?? 'none'}>
-          <div className="seo-card-image" data-has-image={preview.image !== null}>
+        <p className="seo-card-heading">Large image card · Open Graph</p>
+        <figure className="seo-card seo-card-large" data-testid="seo-social-card-large">
+          <div className="seo-card-image" data-has-image={large.image !== null}>
             <ImagePlaceholderArt />
-            <span className="seo-card-image-label">{preview.image ? (preview.imageSize ?? 'Image') : 'No image'}</span>
+            <span className="seo-card-image-label">{large.image ? (preview.imageSize ?? 'Image') : 'No image'}</span>
           </div>
           <figcaption className="seo-card-body">
             <PageText value={preview.domain.toUpperCase()} className="seo-card-domain" />
-            <PageText value={title} className="seo-card-title" lines={2} testId="seo-social-card-title" />
-            {description ? <PageText value={description} className="seo-card-description" lines={2} testId="seo-social-card-description" /> : null}
+            <PageText value={large.title.value || 'No title'} className="seo-card-title" lines={2} testId="seo-social-card-title" />
+            {large.description.value ? <PageText value={large.description.value} className="seo-card-description" lines={2} testId="seo-social-card-description" /> : null}
           </figcaption>
         </figure>
-        <figure className="seo-card seo-card-summary" data-testid="seo-social-card-summary">
-          <div className="seo-card-thumb" data-has-image={preview.image !== null}>
+        <Sources card={large} testId="seo-social-large-sources" />
+        <p className="seo-card-heading">Summary card · Twitter card tags</p>
+        <figure className="seo-card seo-card-summary" data-testid="seo-social-card-summary" data-card={preview.card ?? 'none'}>
+          <div className="seo-card-thumb" data-has-image={summary.image !== null}>
             <ImagePlaceholderArt />
           </div>
           <figcaption className="seo-card-body">
-            <PageText value={title} className="seo-card-title" lines={2} />
-            {description ? <PageText value={description} className="seo-card-description" lines={2} /> : null}
+            <PageText value={summary.title.value || 'No title'} className="seo-card-title" lines={2} testId="seo-social-summary-title" />
+            {summary.description.value ? <PageText value={summary.description.value} className="seo-card-description" lines={2} /> : null}
             <PageText value={site} className="seo-card-domain" />
           </figcaption>
         </figure>
+        <Sources card={summary} testId="seo-social-summary-sources" />
         <dl className="seo-rows seo-card-sources">
-          <FactRow label="Title" value={preview.title.source === 'none' ? null : SOURCE_LABEL[preview.title.source]} />
-          <FactRow label="Description" value={preview.description.source === 'none' ? null : SOURCE_LABEL[preview.description.source]} />
           <FactRow label="Card type" value={preview.card} testId="seo-social-card-type" />
         </dl>
-        {preview.image ? (
-          <div className="seo-card-image-info" data-testid="seo-social-image">
-            <span className="seo-row-label">Image ({SOURCE_LABEL[preview.image.source]})</span>
-            <PageText value={preview.image.resolved ?? preview.image.raw} className="seo-mono" testId="seo-social-image-url" lines={2} />
-            <span className="seo-note seo-card-size" data-testid="seo-social-image-size">
-              {preview.imageSize ? `Declared ${preview.imageSize} px` : 'No declared size (og:image:width / og:image:height)'}
-            </span>
-            {preview.image.resolved ? <UrlActions tabId={tab.id} url={preview.image.resolved} openLabel="Open image in new tab" flash={flash} /> : null}
-          </div>
-        ) : null}
+        {large.image ? <CardImage label="Large card image" image={large.image} size={preview.imageSize} tab={tab} audit={audit} flash={flash} testId="seo-social-image" /> : null}
+        {summary.image && !sameImage ? <CardImage label="Summary card image" image={summary.image} tab={tab} audit={audit} flash={flash} testId="seo-social-summary-image" /> : null}
       </Section>
 
       <Section title="Open Graph">

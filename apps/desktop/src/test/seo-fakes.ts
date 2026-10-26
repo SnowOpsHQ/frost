@@ -29,7 +29,7 @@ export function rawSnapshot(url: string, changes: Partial<PageSnapshot> = {}): P
     partial: false,
     links: [{ href: 'https://example.com/other', scheme: 'https:', rel: '', text: 'Other page', kind: 'internal', target: null }],
     linkTotal: 1,
-    images: [{ src: 'https://example.com/a.png', alt: { text: 'An image', length: 8 }, width: '10', height: '10', loading: null, rendered: { width: 10, height: 10 }, natural: { width: 10, height: 10 }, inFirstViewport: true }],
+    images: [{ src: 'https://example.com/a.png', alt: { text: 'An image', length: 8 }, width: '10', height: '10', loading: null, rendered: { width: 10, height: 10 }, natural: { width: 10, height: 10 }, inFirstViewport: true, cssSized: false }],
     imageTotal: 1,
     ...changes,
   };

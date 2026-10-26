@@ -39,12 +39,18 @@ interface PageRect {
   readonly width: number;
   readonly height: number;
 }
+interface PageStyle {
+  getPropertyValue(name: string): string;
+}
 interface PageImageElement extends PageElement {
   readonly currentSrc: string;
   readonly src: string;
   readonly naturalWidth: number;
   readonly naturalHeight: number;
+  readonly style?: PageStyle;
+  readonly parentElement: (PageElement & { getElementsByTagName(name: string): PageList<PageElement> }) | null;
   getBoundingClientRect(): PageRect;
+  matches(selectors: string): boolean;
 }
 /** The parts of the page's window the extractor reads (the first viewport's size and the scroll offset). */
 interface PageView {
@@ -52,6 +58,13 @@ interface PageView {
   readonly innerHeight: number;
   readonly scrollX: number;
   readonly scrollY: number;
+  getComputedStyle?(el: PageImageElement): PageStyle;
+}
+/** A stylesheet rule as the CSSOM exposes it (style rules have a selector and a style; grouping rules nested rules). */
+interface PageRule {
+  readonly selectorText?: string;
+  readonly style?: PageStyle;
+  readonly cssRules?: PageList<PageRule>;
 }
 interface PageList<T> {
   readonly length: number;
@@ -69,6 +82,8 @@ export interface PageDocument {
   readonly links: PageList<PageElement>;
   readonly images: PageList<PageImageElement>;
   readonly defaultView: PageView | null;
+  /** Its stylesheets (a cross-origin sheet's `cssRules` throws: skipped). */
+  readonly styleSheets?: PageList<{ readonly cssRules: PageList<PageRule> }>;
   getElementsByTagName(name: string): PageList<PageElement>;
   querySelectorAll(selectors: string): PageList<PageElement>;
   createTreeWalker(root: PageNode, whatToShow: number, filter?: { acceptNode(node: PageNode): number } | null): PageTreeWalker;
@@ -176,7 +191,8 @@ export function extractPage(
   const resolve = (raw: string): { href: string; scheme: string; host: string } | null => {
     try {
       const url = new URL(cut(raw.trim(), L.maxUrlChars * 2), document.baseURI);
-      return { href: cut(url.href, L.maxUrlChars), scheme: cut(url.protocol.toLowerCase(), 32), host: url.hostname };
+      // `host`: the port counts (`LinkSchema.kind`).
+      return { href: cut(url.href, L.maxUrlChars), scheme: cut(url.protocol.toLowerCase(), 32), host: url.host };
     } catch {
       return null;
     }
@@ -274,12 +290,133 @@ export function extractPage(
   const scrollX = view ? finite(view.scrollX) : 0;
   const scrollY = view ? finite(view.scrollY) : 0;
   const px = (n: number): number => Math.min(L.maxImagePixels, Math.max(0, Math.round(finite(n))));
+
+  // `srcset` candidates (`url descriptors`, comma-separated; a URL may itself hold commas, as in
+  // `data:` URLs), read from at most `maxSrcsetChars` characters, at most `maxSrcsetCandidates`.
+  const isSpace = (c: number): boolean => c === 32 || c === 9 || c === 10 || c === 12 || c === 13;
+  const candidates = (value: string): { url: string; descriptor: string }[] => {
+    const text = cut(value, L.maxSrcsetChars);
+    const out: { url: string; descriptor: string }[] = [];
+    let pos = 0;
+    while (pos < text.length && out.length < L.maxSrcsetCandidates) {
+      while (pos < text.length && (isSpace(text.charCodeAt(pos)) || text.charCodeAt(pos) === 44)) pos += 1;
+      if (pos >= text.length) break;
+      const start = pos;
+      while (pos < text.length && !isSpace(text.charCodeAt(pos))) pos += 1;
+      let url = text.slice(start, pos);
+      let descriptor = '';
+      if (url.endsWith(',')) url = url.replace(/,+$/, '');
+      else {
+        const from = pos;
+        let depth = 0;
+        for (; pos < text.length; pos++) {
+          const c = text.charCodeAt(pos);
+          if (c === 40) depth += 1;
+          else if (c === 41) depth = Math.max(0, depth - 1);
+          else if (c === 44 && depth === 0) break;
+        }
+        descriptor = text.slice(from, pos).trim().toLowerCase();
+        pos += 1;
+      }
+      out.push({ url, descriptor });
+    }
+    return out;
+  };
+  /**
+   * The size of the file the image shows. `naturalWidth` / `naturalHeight` are divided by the
+   * density the browser picked from a `srcset` (its own or a `<picture><source>`'s), so the
+   * candidate `currentSrc` came from corrects them: `Nw` is the file's width (its height from the
+   * natural aspect), `Nx` multiplies; anything else is the natural size.
+   */
+  const fileSize = (img: PageImageElement, natural: { width: number; height: number }) => {
+    const current = img.currentSrc;
+    if (!current) return natural;
+    const lists: string[] = [];
+    const own = img.getAttribute('srcset');
+    if (own) lists.push(own);
+    const parent = img.parentElement;
+    if (parent && parent.localName === 'picture') {
+      const sources = parent.getElementsByTagName('source');
+      for (let i = 0; i < sources.length && i < L.maxPictureSources; i++) {
+        const value = sources[i]?.getAttribute('srcset');
+        if (value) lists.push(value);
+      }
+    }
+    for (const list of lists) {
+      for (const candidate of candidates(list)) {
+        let href = '';
+        try {
+          href = new URL(candidate.url, document.baseURI).href;
+        } catch {
+          continue;
+        }
+        if (href !== current) continue;
+        for (const token of candidate.descriptor.split(/\s+/)) {
+          const match = /^(\d+(?:\.\d+)?)([wx])$/.exec(token);
+          const n = match ? Number(match[1]) : 0;
+          if (!match || !(n > 0)) continue;
+          if (match[2] === 'w') return { width: px(n), height: px((n * natural.height) / natural.width) };
+          return { width: px(natural.width * n), height: px(natural.height * n) };
+        }
+        return natural;
+      }
+    }
+    return natural;
+  };
+
+  // Selectors of same-origin stylesheet rules that declare both `width` and `height` (not `auto`):
+  // read once, at most `maxSizingRules` rules and `maxSizingSelectors` selectors, before the deadline.
+  let sizingSelectors: string[] | null = null;
+  const declared = (style: PageStyle | undefined, name: string): boolean => {
+    const value = style ? style.getPropertyValue(name).trim().toLowerCase() : '';
+    return value !== '' && value !== 'auto';
+  };
+  const readSizingSelectors = (): string[] => {
+    const out: string[] = [];
+    let seen = 0;
+    const visit = (rules: PageList<PageRule>, depth: number): void => {
+      for (let i = 0; i < rules.length; i++) {
+        if (seen >= L.maxSizingRules || out.length >= L.maxSizingSelectors || ((seen & 255) === 0 && late())) return;
+        seen += 1;
+        const rule = rules[i];
+        if (!rule) continue;
+        if (rule.selectorText && declared(rule.style, 'width') && declared(rule.style, 'height')) out.push(cut(rule.selectorText, 1_024));
+        else if (rule.cssRules && depth < 4) visit(rule.cssRules, depth + 1);
+      }
+    };
+    const sheets = document.styleSheets;
+    for (let i = 0; sheets && i < sheets.length && i < 256; i++) {
+      try {
+        const rules = sheets[i]?.cssRules;
+        if (rules) visit(rules, 0);
+      } catch {
+        // A cross-origin sheet: its rules cannot be read.
+      }
+    }
+    return out;
+  };
+  /** CSS fixes the image's box: a computed `aspect-ratio` with a ratio, or `width` and `height` declared together (inline or a matching rule). */
+  const cssSized = (img: PageImageElement): boolean => {
+    const ratio = view && typeof view.getComputedStyle === 'function' ? view.getComputedStyle(img).getPropertyValue('aspect-ratio') : '';
+    if (/\d/.test(ratio)) return true;
+    if (declared(img.style, 'width') && declared(img.style, 'height')) return true;
+    sizingSelectors ??= readSizingSelectors();
+    return sizingSelectors.some((selector) => {
+      try {
+        return img.matches(selector);
+      } catch {
+        return false;
+      }
+    });
+  };
+
   const [images, imageTotal] = firstOf(document.images, L.maxImages, (img) => {
     const box = isHidden(img) ? null : img.getBoundingClientRect();
     const rendered = box && px(box.width) > 0 && px(box.height) > 0 ? { width: px(box.width), height: px(box.height) } : null;
     const inFirstViewport =
       box !== null && rendered !== null && finite(box.top) + scrollY < viewHeight && finite(box.bottom) + scrollY > 0 && finite(box.left) + scrollX < viewWidth && finite(box.right) + scrollX > 0;
-    const natural = px(img.naturalWidth) > 0 && px(img.naturalHeight) > 0 ? { width: px(img.naturalWidth), height: px(img.naturalHeight) } : null;
+    const intrinsic = px(img.naturalWidth) > 0 && px(img.naturalHeight) > 0 ? { width: px(img.naturalWidth), height: px(img.naturalHeight) } : null;
+    const natural = intrinsic && fileSize(img, intrinsic);
     const alt = img.getAttribute('alt');
     const small = (name: string) => {
       const value = img.getAttribute(name);
@@ -294,6 +431,7 @@ export function extractPage(
       rendered,
       natural,
       inFirstViewport,
+      cssSized: rendered !== null && (small('width') === null || small('width') === '' || small('height') === null || small('height') === '') && cssSized(img),
     };
   });
 

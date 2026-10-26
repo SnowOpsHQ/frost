@@ -59,7 +59,8 @@ export const HeadingSchema = z.strictObject({
 });
 
 /**
- * Where a link goes: `internal` (an `http(s)` URL on the page's host, `www.` ignored), `external`
+ * Where a link goes: `internal` (an `http(s)` URL on the page's host: `URL.host`, so the port counts
+ * (`example.com:8080` is another host than `example.com`), one leading `www.` ignored), `external`
  * (any other `http(s)` URL), or `other` (`javascript:`, `mailto:`, `tel:` … or an `href` that does
  * not resolve).
  */
@@ -92,8 +93,18 @@ export const ImageSizeSchema = z.strictObject({ width: pixels, height: pixels })
  * `loading` attributes as written (`null` when absent). Measured in the page (Task 2):
  * - `rendered`: the size of its layout box (`getBoundingClientRect()`, rounded); `null` when it
  *   has none (hidden, see Hidden elements, or a box with no area);
- * - `natural`: its intrinsic size (`naturalWidth` × `naturalHeight`); `null` while it has none
- *   (not loaded yet, e.g. a lazy image below the fold, or broken);
+ * - `natural`: the size of the image file shown (`currentSrc`); `null` while it has none (not
+ *   loaded yet, e.g. a lazy image below the fold, or broken). `naturalWidth` × `naturalHeight` is
+ *   divided by the density the browser picked, so when `currentSrc` is a `srcset` candidate (the
+ *   image's own, or a `<source>`'s in its `<picture>`, matched by resolved URL) it is corrected:
+ *   a `w` descriptor gives the file's width, its height from the natural aspect ratio; an `x`
+ *   descriptor multiplies the natural size by it; otherwise the natural size is the file's. The
+ *   first candidate with that URL is used, so when the same URL is also the `src` (an implicit `1x`)
+ *   and a denser candidate, the browser's choice between them cannot be told apart;
+ * - `cssSized`: CSS fixes the image's box before it loads: its computed `aspect-ratio` has a ratio,
+ *   or its inline style or a same-origin stylesheet rule matching it declares both `width` and
+ *   `height` (other than `auto`; bounded by `maxSizingRules` / `maxSizingSelectors`). Only measured
+ *   for an image missing its `width` or `height` attribute (`false` otherwise);
  * - `inFirstViewport`: its box overlaps the first viewport, the top `innerHeight` × `innerWidth`
  *   CSS px of the document (wherever the page is scrolled to now); `false` without a box.
  */
@@ -106,6 +117,7 @@ export const ImageSchema = z.strictObject({
   rendered: ImageSizeSchema.nullable(),
   natural: ImageSizeSchema.nullable(),
   inFirstViewport: z.boolean(),
+  cssSized: z.boolean(),
 });
 
 const isUrlTag = (tag: SocialTag): boolean => (SOCIAL_URL_TAGS as readonly SocialTag[]).includes(tag);
@@ -209,15 +221,23 @@ export const LinkFilterSchema = z.strictObject({
 });
 export type LinkFilter = z.infer<typeof LinkFilterSchema>;
 
-/** `seo.copyLinksCsv` input: the tab, and the filter whose rows are copied (what the panel shows). */
-export const SeoLinksCsvInputSchema = z.strictObject({ tabId: z.int().positive(), filter: LinkFilterSchema });
+/**
+ * The audit a panel rendered (its `url` and `takenAt`): main copies only from that audit, so rows or
+ * URLs from an older or newer audit than the one on screen are never written.
+ */
+export const SeoAuditRefSchema = z.strictObject({ url: urlText.min(1), takenAt: z.number().nonnegative() });
+export type SeoAuditRef = z.infer<typeof SeoAuditRefSchema>;
+
+/** `seo.copyLinksCsv` input: the tab, the audit the panel shows, and the filter whose rows are copied (what the panel shows). */
+export const SeoLinksCsvInputSchema = z.strictObject({ tabId: z.int().positive(), audit: SeoAuditRefSchema, filter: LinkFilterSchema });
 export type SeoLinksCsvInput = z.infer<typeof SeoLinksCsvInputSchema>;
 
 /**
- * `seo.copyUrl` input: the tab and a URL its ready audit lists (a link's `href`, an image's `src`,
- * `og:url` or a social image). Any other value copies nothing.
+ * `seo.copyUrl` input: the tab, the audit the panel shows, and a URL that audit lists, parsed
+ * (`pageUrls`: a link's `href`, an image's `src`, the canonical, `og:url` or a social image, each
+ * as `URL.href`). Any other value copies nothing.
  */
-export const SeoCopyUrlInputSchema = z.strictObject({ tabId: z.int().positive(), url: urlText.min(1) });
+export const SeoCopyUrlInputSchema = z.strictObject({ tabId: z.int().positive(), audit: SeoAuditRefSchema, url: urlText.min(1) });
 export type SeoCopyUrlInput = z.infer<typeof SeoCopyUrlInputSchema>;
 
 /** `seo.setHighlight` input: the tab and the mode (`HIGHLIGHT_MODES`). */

@@ -1,6 +1,7 @@
 import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
 import type { LinkFilter } from '@app/seo-core';
+import type { SeoAuditRef } from '@app/ipc-contract';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
@@ -30,8 +31,8 @@ export const actions = {
   openBackgroundTab: (url: string) => ipc.browser.openBackgroundTab.mutate({ url }).catch(() => null),
   /** Sets the tab's highlight overlay (`seo.setHighlight`); resolves whether it was set. */
   setHighlight: (tabId: number, mode: HighlightMode) => ipc.seo.setHighlight.mutate({ tabId, mode }).catch(() => false),
-  /** Copies the filtered links as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
-  copyLinksCsv: (tabId: number, filter: LinkFilter) => ipc.seo.copyLinksCsv.mutate({ tabId, filter }).catch(() => null),
-  /** Copies a URL the audit lists through main's clipboard; resolves whether it was copied. */
-  copyUrl: (tabId: number, url: string) => ipc.seo.copyUrl.mutate({ tabId, url }).catch(() => false),
+  /** Copies the filtered links of the audit on screen as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
+  copyLinksCsv: (tabId: number, audit: SeoAuditRef, filter: LinkFilter) => ipc.seo.copyLinksCsv.mutate({ tabId, audit, filter }).catch(() => null),
+  /** Copies a URL the audit on screen lists through main's clipboard; resolves whether it was copied. */
+  copyUrl: (tabId: number, audit: SeoAuditRef, url: string) => ipc.seo.copyUrl.mutate({ tabId, audit, url }).catch(() => false),
 };

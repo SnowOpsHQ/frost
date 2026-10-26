@@ -13,7 +13,7 @@ import { installAppMenu, popupContextMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { runExtractor } from './seo/extract';
-import { runHighlight } from './seo/highlight';
+import { runHighlight, watchHighlight } from './seo/highlight';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
@@ -103,7 +103,7 @@ function start(): void {
     session: sessionStore.writer,
     contextMenu: showContextMenu,
     seo: { extract: runExtractor },
-    highlight: runHighlight,
+    highlight: { paint: runHighlight, ended: watchHighlight },
     clipboard,
   });
 

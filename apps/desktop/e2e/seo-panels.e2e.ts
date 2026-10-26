@@ -35,6 +35,11 @@ const IMAGES: Record<string, [number, number]> = {
   '/img/nosize.png': [120, 60],
   '/img/no-alt.png': [50, 50],
   '/img/below.png': [300, 150],
+  '/img/srcset-w.png': [1600, 800],
+  '/img/srcset-x.png': [900, 450],
+  '/img/picture.png': [1200, 600],
+  '/img/fallback.png': [40, 20],
+  '/img/css-sized.png': [64, 32],
 };
 
 const LINKS_PAGE = (origin: string, other: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Links on a page about tea and coffee</title></head>
@@ -52,12 +57,16 @@ const MANY_LINKS = SNAPSHOT_LIMITS.maxLinks + 100;
 const MANY_LINKS_PAGE = `<!doctype html><html lang="en"><head><title>A page with more links than frost lists</title></head><body><h1>Many</h1>${Array.from({ length: MANY_LINKS }, (_, i) => `<a href="/m/${i}">m${i}</a>`).join(' ')}</body></html>`;
 
 const IMAGES_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Images: sizes, alt text and lazy loading</title>
-<style>body { margin: 0; } img { display: block; } #hero { width: 100px; height: 50px; } .spacer { height: 3000px; }</style></head>
+<style>body { margin: 0; } img { display: block; } #hero { width: 100px; height: 50px; } .css-sized { width: 64px; height: 32px; } .spacer { height: 3000px; }</style></head>
 <body><h1>Images</h1>
 <img id="hero" src="/img/hero.png" alt="A hero picture" width="800" height="400">
 <img src="/img/top-lazy.png" alt="" loading="lazy" width="200" height="100">
 <img src="/img/nosize.png" alt="Without size attributes">
 <img src="/img/no-alt.png" width="50" height="50">
+<img src="/img/srcset-w.png" srcset="/img/srcset-w.png 1600w" sizes="400px" alt="A w-descriptor candidate" width="400" height="200">
+<img srcset="/img/srcset-x.png 3x" alt="An x-descriptor candidate" width="300" height="150">
+<picture><source srcset="/img/picture.png 1200w" sizes="300px"><img src="/img/fallback.png" alt="A picture source" width="300" height="150"></picture>
+<img class="css-sized" src="/img/css-sized.png" alt="Sized by CSS">
 <div class="spacer"></div>
 <img src="/img/below.png" alt="Far below" loading="lazy" width="300" height="150">
 </body></html>`;
@@ -71,6 +80,7 @@ const SOCIAL_PAGE = (origin: string) => `<!doctype html><html lang="en"><head><m
 <meta property="og:type" content="article"><meta property="og:site_name" content="Loopback Times">
 <meta property="og:url" content="${origin}/social">
 <meta name="twitter:site" content="@loopback"><meta name="twitter:image" content="${origin}/tw-image.png">
+<meta name="twitter:title" content="A shorter title for the summary card">
 </head><body><h1>Share me</h1><p>Some text.</p></body></html>`;
 
 /** Markup and bidi overrides in every value the new panels show. */
@@ -153,7 +163,7 @@ async function audit(url: string): Promise<number> {
 }
 
 /** The highlight overlay's state, read in the SEO isolated world (the page itself cannot see it). */
-function overlay(id: number): Promise<{ mode: string; boxes: number; style: Record<string, string> | null; kinds: string[] } | null> {
+function overlay(id: number): Promise<{ mode: string; boxes: number; draws: number; style: Record<string, string> | null; kinds: string[] } | null> {
   return app.evaluate(
     ({ webContents }, { id, world }) =>
       webContents.fromId(id)!.executeJavaScriptInIsolatedWorld(world, [
@@ -168,12 +178,13 @@ function overlay(id: number): Promise<{ mode: string; boxes: number; style: Reco
             return {
               mode: s.mode,
               boxes: s.boxes(),
+              draws: s.draws(),
               kinds: [...s.root.children].map((box) => box.textContent),
               style: cs && { position: cs.position, borderTopWidth: cs.borderTopWidth, borderTopStyle: cs.borderTopStyle, borderTopColor: cs.borderTopColor, labelColor: ls.color, labelBackground: ls.backgroundColor, labelFontSize: ls.fontSize },
             };
           })()`,
         },
-      ]) as Promise<{ mode: string; boxes: number; style: Record<string, string> | null; kinds: string[] } | null>,
+      ]) as Promise<{ mode: string; boxes: number; draws: number; style: Record<string, string> | null; kinds: string[] } | null>,
     { id, world: SEO_WORLD_ID },
   );
 }
@@ -296,7 +307,7 @@ test('images-table', async () => {
   await audit(url);
   await showPanel('images');
   const rows = page.getByTestId('seo-image-row');
-  await expect(rows).toHaveCount(5);
+  await expect(rows).toHaveCount(9);
   // The lazy image at the top may finish loading after the audit: audited again until it has a size.
   await expect
     .poll(
@@ -318,15 +329,27 @@ test('images-table', async () => {
   await expect(rows.nth(2)).toHaveAttribute('data-no-dimensions', 'true');
   await expect(rows.nth(2).getByTestId('seo-image-declared')).toHaveText('none');
   await expect(rows.nth(3)).toHaveAttribute('data-alt', 'missing');
+  // srcset: the browser reports a density-corrected natural size; frost shows the file's.
+  for (const [index, shown, file, ratio] of [
+    [4, '400 × 200', '1,600 × 800', '4×'],
+    [5, '300 × 150', '900 × 450', '3×'],
+    [6, '300 × 150', '1,200 × 600', '4×'],
+  ] as const) {
+    await expect(rows.nth(index).getByTestId('seo-image-rendered'), `row ${index}`).toHaveText(shown);
+    await expect(rows.nth(index).getByTestId('seo-image-natural'), `row ${index}`).toHaveText(file);
+    await expect(rows.nth(index).getByTestId('seo-image-oversized'), `row ${index}`).toHaveText(`oversized ${ratio}`);
+  }
+  // No width or height attribute, but CSS fixes its box: not flagged.
+  await expect(rows.nth(7)).toHaveAttribute('data-no-dimensions', 'false');
   // Far below the first screen: lazy is right there.
-  await expect(rows.nth(4)).toHaveAttribute('data-lazy-first-viewport', 'false');
-  await expect(rows.nth(4)).toHaveAttribute('data-oversized', 'false');
+  await expect(rows.nth(8)).toHaveAttribute('data-lazy-first-viewport', 'false');
+  await expect(rows.nth(8)).toHaveAttribute('data-oversized', 'false');
   for (const [filter, count] of [
-    ['oversized', 1],
+    ['oversized', 4],
     ['lazy-first-viewport', 1],
     ['no-dimensions', 1],
     ['missing-alt', 1],
-    ['all', 5],
+    ['all', 9],
   ] as const) {
     await page.locator(`[data-testid="seo-images-filter"][data-filter="${filter}"]`).click();
     await expect(rows, filter).toHaveCount(count);
@@ -348,10 +371,14 @@ test('social-fields-without-remote-requests', async () => {
   await expect(page.getByTestId('seo-social-og-url')).toHaveText(url);
   await expect(page.getByTestId('seo-social-twitter-card')).toHaveAttribute('data-missing', 'true');
   await expect(page.getByTestId('seo-social-twitter-image')).toHaveText(`${site.origin}/tw-image.png`);
-  // The cards are drawn from the text, with a placeholder image and its declared size.
-  await expect(page.getByTestId('seo-social-card-large')).toContainText('Share me: the open graph card');
+  // The cards are drawn from the text, each from its own chain, with a placeholder image and its declared size.
+  await expect(page.getByTestId('seo-social-card-title')).toHaveText('Share me: the open graph card');
   await expect(page.getByTestId('seo-social-card-large')).toContainText('What the card says under its headline.');
+  await expect(page.getByTestId('seo-social-large-sources')).toHaveText('Title from Open Graph · description from Open Graph');
+  await expect(page.getByTestId('seo-social-summary-title')).toHaveText('A shorter title for the summary card');
+  await expect(page.getByTestId('seo-social-summary-sources')).toHaveText('Title from Twitter tags · description from Open Graph');
   await expect(page.getByTestId('seo-social-card-summary')).toContainText('Loopback Times');
+  await expect(page.getByTestId('seo-social-summary-image-url')).toHaveText(`${site.origin}/tw-image.png`);
   await expect(page.getByTestId('seo-social-image-size')).toHaveText('Declared 1200 × 630 px');
   for (const rule of ['og-image-not-https', 'twitter-card-missing']) await expect(page.locator(`[data-rule-id="${rule}"]`), rule).toHaveCount(1);
   await expect(railItem('social')).toHaveAttribute('data-status', 'warn');
@@ -372,6 +399,11 @@ test('highlight-links-leaves-no-residue', async () => {
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(async () => (await overlay(id))?.boxes).toBe(7);
   expect((await overlay(id))!.kinds).toEqual(['int', 'int', 'nofollow', 'ext', 'int', 'other', 'other']);
+  // One toggle on a still page: one drawing pass (the observer's initial callback is skipped).
+  await page.waitForTimeout(400);
+  expect((await overlay(id))!.draws).toBe(1);
+  // Nothing of it reaches the page's own world.
+  expect(await run(id, "typeof window.__frostSeoHighlight === 'undefined'")).toBe(true);
   // The page sees one element of frost's own (a closed shadow root: nothing inside it), and none of its own changed.
   const on = await pageDom(id);
   expect(on.children).toBe(before.children + 1);
@@ -385,12 +417,13 @@ test('highlight-links-leaves-no-residue', async () => {
   await expect.poll(async () => (await pageDom(id)).html).toBe(before.html);
   expect(await overlay(id)).toBeNull();
 
-  // On again, then a navigation: the mode resets and nothing is left in the new page either.
+  // On again, then a navigation (the Links panel stays open): the mode resets and nothing is left in the new page either.
   await toggle.click();
   await expect.poll(async () => (await overlay(id))?.boxes).toBe(7);
-  const next = await audit(`${site.origin}/images`);
-  await showPanel('links');
+  await go(`${site.origin}/images`);
+  await expect(page.getByTestId('seo-links-total-count')).toHaveText('0', { timeout: AUDIT_WAIT });
   await expect(page.getByTestId('seo-highlight-links')).toHaveAttribute('aria-pressed', 'false');
+  const next = await contentsIdAt(`${site.origin}/images`);
   expect(await overlay(next)).toBeNull();
   expect((await pageDom(next)).html).not.toContain('aria-hidden');
 
@@ -406,6 +439,36 @@ test('highlight-links-leaves-no-residue', async () => {
   await menu('close-tab');
   await showPanel('links');
   await expect(page.getByTestId('seo-highlight-links')).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('highlight-follows-the-sidebar-and-the-page', async () => {
+  const id = await audit(`${site.origin}/links`);
+  await showPanel('links');
+  const clean = await pageDom(id);
+  const toggle = page.getByTestId('seo-highlight-links');
+  const on = async () => {
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(async () => (await overlay(id))?.boxes).toBe(7);
+  };
+  // Collapsing the sidebar turns it off and clears the page.
+  await on();
+  await page.getByTestId('seo-collapse').click();
+  await expect.poll(async () => (await pageDom(id)).html).toBe(clean.html);
+  await showPanel('links');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  // Leaving the panel that owns the toggle too.
+  await on();
+  await showPanel('overview');
+  await expect.poll(async () => (await pageDom(id)).html).toBe(clean.html);
+  await showPanel('links');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  // The page removes the overlay's host itself: the overlay stops and the toggle unpresses.
+  await on();
+  await run(id, "document.documentElement.lastElementChild.remove(); window.dispatchEvent(new Event('resize'))");
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  expect(await overlay(id)).toBeNull();
+  expect((await pageDom(id)).html).toBe(clean.html);
 });
 
 test('highlight-headings-on-strict-csp-page', async () => {

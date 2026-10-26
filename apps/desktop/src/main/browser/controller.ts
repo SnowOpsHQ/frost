@@ -4,7 +4,6 @@ import { filterLinks, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
-import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { createFullscreen } from './fullscreen';
@@ -12,7 +11,7 @@ import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
-import { createTabHighlights } from '../seo/highlights';
+import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
 import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
 import { wireTabView, type TabContextMenuRequest } from './tab-events';
@@ -142,15 +141,21 @@ export interface BrowserControllerOptions {
    */
   readonly seo?: TabAuditsOptions;
   /**
-   * Draws or removes the SEO highlight overlay in a tab's page (`runHighlight` in
-   * `../seo/highlight.ts`). Without it `seo.setHighlight` is a no-op answering `false`.
+   * Draws or removes the SEO highlight overlay in a tab's page and waits for it to end
+   * (`runHighlight` / `watchHighlight` in `../seo/highlight.ts`). Without it `seo.setHighlight` is a
+   * no-op answering `false`.
    */
-  readonly highlight?: (contents: TabView['webContents'], mode: HighlightMode) => Promise<unknown>;
+  readonly highlight?: HighlightPainter;
   /**
    * The system clipboard (Electron's `clipboard`, in main): "Copy as CSV" and "Copy URL" write
    * through it, so the chrome never needs clipboard access. Without it they copy nothing.
    */
   readonly clipboard?: { writeText(text: string): void };
+}
+
+/** Whether `audit` is the one the panel rendered (`SeoAuditRef`: its URL and when it was taken). */
+function sameAudit(audit: { readonly url: string; readonly takenAt: number }, shown: { readonly url: string; readonly takenAt: number }): boolean {
+  return audit.url === shown.url && audit.takenAt === shown.takenAt;
 }
 
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {
@@ -205,7 +210,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   // The SEO highlight overlay, on the active tab only (it goes when the page changes or the tab is left).
   const highlights = createTabHighlights({
-    paint: options.highlight,
+    painter: options.highlight,
     isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
     changed,
   });
@@ -726,17 +731,18 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         const tab = strip.tabs.find((t) => t.id === tabId);
         return tab !== undefined && highlights.set(tab, mode);
       },
-      // Both copy only what the tab's ready audit lists, through main's clipboard.
-      copyLinksCsv: (tabId, filter) => {
+      // Both copy only what the tab's ready audit lists, through main's clipboard, and only from the
+      // audit the panel shows (`SeoAuditRefSchema`).
+      copyLinksCsv: (tabId, shown, filter) => {
         const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
-        if (!options.clipboard || response.status !== 'ready') return null;
+        if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown)) return null;
         const rows = filterLinks(response.audit.page.linkList, filter);
         options.clipboard.writeText(linksCsv(rows));
         return rows.length;
       },
-      copyUrl: (tabId, url) => {
+      copyUrl: (tabId, shown, url) => {
         const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
-        if (!options.clipboard || response.status !== 'ready' || !pageUrls(response.audit.page).has(url)) return false;
+        if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown) || !pageUrls(response.audit.page).has(url)) return false;
         options.clipboard.writeText(url);
         return true;
       },

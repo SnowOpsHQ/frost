@@ -58,8 +58,25 @@ export function Flash({ message, testId }: { readonly message: string; readonly 
   );
 }
 
-/** A row's actions on `url`: open it in a background tab (only `http(s)`), copy it. */
-export function UrlActions({ tabId, url, openLabel = 'Open in new tab', flash }: { readonly tabId: number; readonly url: string; readonly openLabel?: string; readonly flash: (message: string) => void }) {
+/** The audit a panel shows, as main checks it before copying (`SeoAuditRef`). */
+export function auditRef(audit: SeoAudit): { url: string; takenAt: number } {
+  return { url: audit.url, takenAt: audit.takenAt };
+}
+
+/** A row's actions on `url` (from `audit`): open it in a background tab (only `http(s)`), copy it. */
+export function UrlActions({
+  tabId,
+  audit,
+  url,
+  openLabel = 'Open in new tab',
+  flash,
+}: {
+  readonly tabId: number;
+  readonly audit: SeoAudit;
+  readonly url: string;
+  readonly openLabel?: string;
+  readonly flash: (message: string) => void;
+}) {
   const openable = openableUrl(url);
   return (
     <div className="seo-row-actions" data-testid="seo-row-actions">
@@ -82,7 +99,7 @@ export function UrlActions({ tabId, url, openLabel = 'Open in new tab', flash }:
         data-testid="seo-copy-url"
         disabled={url === ''}
         onClick={() => {
-          void actions.copyUrl(tabId, url).then((ok) => flash(ok ? 'URL copied' : 'Nothing to copy'));
+          void actions.copyUrl(tabId, auditRef(audit), url).then((ok) => flash(ok ? 'URL copied' : 'Nothing to copy'));
         }}
       >
         <CopyIcon />

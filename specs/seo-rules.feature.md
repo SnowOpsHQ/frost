@@ -84,9 +84,11 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
 
 ## Image loading and size (Phase 2 Task 2)
 - **Scenario: images-missing-dimensions** — fails for a rendered image without a `width` or a
-  `height` attribute, or with an empty one (count, samples: sources); passes with both, and for an
-  image with no layout box (`rendered` `null`).
-- **Scenario: images-oversized** — fails when the natural width or height is more than
+  `height` attribute, or with an empty one (count, samples: sources); passes with both, for an image
+  CSS sizes (`cssSized`: a computed `aspect-ratio`, or `width` and `height` declared together), and
+  for an image with no layout box (`rendered` `null`).
+- **Scenario: images-oversized** — fails when the file's width or height (`natural`, corrected for
+  `srcset` density by the extractor) is more than
   `IMAGE_OVERSIZE_FACTOR` × the rendered one (samples: source, natural and rendered sizes); passes at
   exactly the factor, when either size is unknown, for a rendered size of 0, and for SVG images (by
   extension, any case, query ignored, or a `data:image/svg+xml` URL).

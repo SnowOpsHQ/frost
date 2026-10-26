@@ -337,7 +337,8 @@ export const SEO_RULE_SPECS = [
     category: 'images',
     severity: 'warning',
     title: 'Images without width and height',
-    condition: 'One or more rendered <img> elements (they have a layout box) lack a width or a height attribute (absent or empty).',
+    condition:
+      'One or more rendered <img> elements (they have a layout box) lack a width or a height attribute (absent or empty), and CSS does not fix their box either (no computed aspect-ratio, no width and height declared together: ImageSchema.cssSized).',
     why: 'Without both attributes the browser cannot reserve the image’s space before it loads, so the content below jumps when it arrives (layout shift, which hurts reading and Core Web Vitals).',
     fix: 'Add width and height attributes with the image’s intrinsic size (CSS can still scale it; the browser keeps the aspect ratio).',
   },
@@ -346,7 +347,7 @@ export const SEO_RULE_SPECS = [
     category: 'images',
     severity: 'warning',
     title: 'Images larger than they are shown',
-    condition: `One or more images have a natural size more than ${IMAGE_OVERSIZE_FACTOR}× their rendered size in either dimension (both sizes known; SVG images are vectors and never count).`,
+    condition: `One or more images have a file size more than ${IMAGE_OVERSIZE_FACTOR}× their rendered size in either dimension (both known; the file size corrected for srcset density). SVG images are vectors and never count; they are recognised by URL only (a .svg or .svgz path, or a data:image/svg+xml URL), so an SVG served from another URL is judged like a raster image.`,
     why: 'The browser downloads and decodes every pixel of the file, then throws most of them away. That costs bandwidth and memory and slows the page down, most of all on phones.',
     fix: 'Serve images close to the size they are shown at, using srcset and sizes for different screens.',
   },
@@ -355,7 +356,8 @@ export const SEO_RULE_SPECS = [
     category: 'images',
     severity: 'warning',
     title: 'Lazy-loaded images in the first screen',
-    condition: 'One or more images whose box overlaps the first viewport (the top of the page as it first appears) have loading="lazy".',
+    condition:
+      'One or more images whose box overlaps the first viewport (the top of the page as it first appears) have loading="lazy". The first viewport is the page area’s size when the audit ran (a narrower window or open sidebar changes it), and a lazy image that has not loaded and has no width and height has no box, so it is not seen.',
     why: 'Lazy loading waits until layout to start fetching, so images people see first arrive late. When one of them is the largest element on screen, it delays Largest Contentful Paint.',
     fix: 'Remove loading="lazy" from images near the top of the page (keep it for those further down), and consider fetchpriority="high" for the main one.',
   },

@@ -18,14 +18,21 @@ const B = 'https://example.com/b';
 interface Paint {
   readonly contents: FakeTabContents;
   readonly mode: HighlightMode;
-  resolve(): void;
+  resolve(answer?: unknown): void;
   reject(error: unknown): void;
+}
+
+/** One wait for an overlay to end (`watchHighlight`). */
+interface Watch {
+  readonly contents: FakeTabContents;
+  resolve(reason: unknown): void;
 }
 
 let views: FakeTabView[];
 let win: FakeHostWindow;
 let controller: BrowserController;
 let paints: Paint[];
+let watches: Watch[];
 let clipboard: { writeText: ReturnType<typeof vi.fn<(text: string) => void>> };
 /** What each extraction answers for the tab's URL. */
 let snapshotOf: (url: string) => unknown;
@@ -34,6 +41,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   views = [];
   paints = [];
+  watches = [];
   clipboard = { writeText: vi.fn<(text: string) => void>() };
   snapshotOf = (url) => rawSnapshot(url);
   win = new FakeHostWindow();
@@ -46,10 +54,16 @@ beforeEach(() => {
     platform: 'linux',
     // Every extraction answers at once with a snapshot of the tab's URL.
     seo: { extract: async (contents) => snapshotOf((contents as unknown as FakeTabContents).url) },
-    highlight: (contents, mode) =>
-      new Promise<void>((resolve, reject) => {
-        paints.push({ contents: contents as unknown as FakeTabContents, mode, resolve, reject });
-      }),
+    highlight: {
+      paint: (contents, mode) =>
+        new Promise<unknown>((resolve, reject) => {
+          paints.push({ contents: contents as unknown as FakeTabContents, mode, resolve: (answer = { mode, boxes: 1 }) => resolve(answer), reject });
+        }),
+      ended: (contents) =>
+        new Promise<unknown>((resolve) => {
+          watches.push({ contents: contents as unknown as FakeTabContents, resolve });
+        }),
+    },
     clipboard,
   });
   controller.attach(win as unknown as HostWindow);
@@ -129,6 +143,38 @@ describe('highlight', () => {
     paints[0]!.reject(new Error('page gone'));
     await flush();
     expect(tabState().highlight).toBe('off');
+    // The script answered that nothing is drawn (the page took the host away at once).
+    controller.seo.setHighlight(activeId(), 'links');
+    paints[1]!.resolve({ mode: 'off', boxes: 0 });
+    await flush();
+    expect(tabState().highlight).toBe('off');
+  });
+
+  test('highlight-removed-by-page-turns-off', async () => {
+    const contents = load(A);
+    controller.seo.setHighlight(activeId(), 'links');
+    paints[0]!.resolve();
+    await flush();
+    // Once drawn, main waits for the overlay to end.
+    expect(watches.map((w) => w.contents)).toEqual([contents]);
+    const version = controller.getState().version;
+    watches[0]!.resolve('removed');
+    await flush();
+    expect(tabState().highlight).toBe('off');
+    expect(controller.getState().version).toBeGreaterThan(version);
+    // An end it caused itself (off, replaced, the page going) changes nothing.
+    controller.seo.setHighlight(activeId(), 'headings');
+    paints[1]!.resolve();
+    await flush();
+    controller.seo.setHighlight(activeId(), 'links');
+    watches[1]!.resolve('removed');
+    await flush();
+    expect(tabState().highlight).toBe('links');
+    paints[2]!.resolve();
+    await flush();
+    watches[2]!.resolve('replaced');
+    await flush();
+    expect(tabState().highlight).toBe('links');
   });
 
   test('highlight-resets-on-navigation', async () => {
@@ -240,34 +286,43 @@ describe('copy', () => {
   test('copy-links-csv', async () => {
     snapshotOf = (url) => rawSnapshot(url, { links: LINKS, linkTotal: 2 });
     load(A);
+    const shown = { url: A, takenAt: rawSnapshot(A).extractedAt };
     // No ready audit yet: nothing is written.
-    expect(controller.seo.copyLinksCsv(activeId(), { type: 'all', rel: 'all', query: '' })).toBeNull();
+    expect(controller.seo.copyLinksCsv(activeId(), shown, { type: 'all', rel: 'all', query: '' })).toBeNull();
     expect(clipboard.writeText).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
     await flush();
     const tabId = activeId();
-    expect(controller.seo.copyLinksCsv(tabId, { type: 'all', rel: 'all', query: '' })).toBe(2);
+    // Not the audit on screen (another URL or another run): nothing is written.
+    expect(controller.seo.copyLinksCsv(tabId, { ...shown, takenAt: shown.takenAt + 1 }, { type: 'all', rel: 'all', query: '' })).toBeNull();
+    expect(controller.seo.copyLinksCsv(tabId, { ...shown, url: B }, { type: 'all', rel: 'all', query: '' })).toBeNull();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'all', rel: 'all', query: '' })).toBe(2);
     expect(clipboard.writeText).toHaveBeenLastCalledWith(linksCsv(LINKS));
     // The rows the panel's filter shows.
-    expect(controller.seo.copyLinksCsv(tabId, { type: 'external', rel: 'nofollow', query: 'other' })).toBe(1);
+    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'external', rel: 'nofollow', query: 'other' })).toBe(1);
     expect(clipboard.writeText).toHaveBeenLastCalledWith(linksCsv([LINKS[1]!]));
     // The formula guard is on: page text never reaches a spreadsheet as a formula.
     expect(clipboard.writeText.mock.lastCall![0]).toContain(",'=SUM(1),");
-    expect(controller.seo.copyLinksCsv(tabId, { type: 'internal', rel: 'ugc', query: '' })).toBe(0);
-    expect(controller.seo.copyLinksCsv(999, { type: 'all', rel: 'all', query: '' })).toBeNull();
+    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'internal', rel: 'ugc', query: '' })).toBe(0);
+    expect(controller.seo.copyLinksCsv(999, shown, { type: 'all', rel: 'all', query: '' })).toBeNull();
   });
 
   test('copy-url-only-copies-audit-urls', async () => {
+    snapshotOf = (url) => rawSnapshot(url, { social: { ...rawSnapshot(url).social, 'twitter:image': ' /t.png ' } });
     await audited(A);
     const id = activeId();
-    // The fixture's link, image, og:image and page URL.
-    for (const url of ['https://example.com/other', 'https://example.com/a.png', 'https://example.com/share.png', A]) {
-      expect(controller.seo.copyUrl(id, url), url).toBe(true);
+    const shown = { url: A, takenAt: rawSnapshot(A).extractedAt };
+    // The fixture's link, image, og:image, the parsed twitter:image and the page URL.
+    for (const url of ['https://example.com/other', 'https://example.com/a.png', 'https://example.com/share.png', 'https://example.com/t.png', A]) {
+      expect(controller.seo.copyUrl(id, shown, url), url).toBe(true);
       expect(clipboard.writeText).toHaveBeenLastCalledWith(url);
     }
     const calls = clipboard.writeText.mock.calls.length;
-    for (const url of ['https://evil.example/', 'javascript:alert(1)', `${A}?x`]) expect(controller.seo.copyUrl(id, url), url).toBe(false);
-    expect(controller.seo.copyUrl(999, A)).toBe(false);
+    // Anything else, a raw tag value, or another audit than the one on screen.
+    for (const url of ['https://evil.example/', 'javascript:alert(1)', `${A}?x`, ' /t.png ', '/t.png']) expect(controller.seo.copyUrl(id, shown, url), url).toBe(false);
+    expect(controller.seo.copyUrl(id, { ...shown, takenAt: 1 }, A)).toBe(false);
+    expect(controller.seo.copyUrl(999, shown, A)).toBe(false);
     expect(clipboard.writeText).toHaveBeenCalledTimes(calls);
   });
 });

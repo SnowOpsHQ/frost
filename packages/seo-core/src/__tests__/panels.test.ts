@@ -3,7 +3,7 @@
 // Acceptance: specs/seo-panels.feature.md (Links, Images and Social helpers)
 import { describe, expect, test } from 'vitest';
 import { CSV_FORMULA_PREFIXES, LINKS_CSV_COLUMNS } from '@app/specs/seo-sidebar.spec';
-import { altState, csvCell, filterImages, filterLinks, imageCounts, linkCounts, linksCsv, NO_LINK_FILTER, pageFacts, relFlags, socialPreview, type PageImage, type PageLink } from '../index';
+import { altState, csvCell, filterImages, filterLinks, imageCounts, linkCounts, linksCsv, NO_LINK_FILTER, pageFacts, pageUrls, relFlags, socialPreview, type PageImage, type PageLink } from '../index';
 import { page, socialTags, text } from './fixtures';
 
 const link = (changes: Partial<PageLink> = {}): PageLink => ({ href: 'https://example.com/a', scheme: 'https:', rel: '', text: 'A page', kind: 'internal', target: null, ...changes });
@@ -16,6 +16,7 @@ const image = (changes: Partial<PageImage> = {}): PageImage => ({
   rendered: { width: 100, height: 50 },
   natural: { width: 100, height: 50 },
   inFirstViewport: false,
+  cssSized: false,
   ...changes,
 });
 
@@ -117,21 +118,51 @@ describe('social', () => {
   test('social-preview-falls-back', () => {
     const full = socialPreview(pageFacts(page()));
     expect(full).toMatchObject({
-      title: { value: 'SEO basics: a practical guide', source: 'og' },
-      description: { value: 'The handful of on-page fixes that make the biggest difference.', source: 'og' },
-      image: { raw: 'https://example.com/img/share.png', resolved: 'https://example.com/img/share.png', source: 'og' },
+      large: {
+        title: { value: 'SEO basics: a practical guide', source: 'og' },
+        description: { value: 'The handful of on-page fixes that make the biggest difference.', source: 'og' },
+        image: { raw: 'https://example.com/img/share.png', resolved: 'https://example.com/img/share.png', source: 'og' },
+      },
+      // No twitter:title or twitter:image in the fixture: the summary card falls back to Open Graph.
+      summary: { title: { value: 'SEO basics: a practical guide', source: 'og' }, image: { raw: 'https://example.com/img/share.png', source: 'og' } },
       imageSize: '1200 × 630',
       domain: 'example.com',
       siteName: 'Example Guides',
       card: 'summary_large_image',
     });
-    // Twitter tags, then the page's own title and description.
-    const twitter = socialPreview(pageFacts(page({ social: socialTags({ 'og:title': null, 'twitter:title': 'From twitter', 'og:description': null, 'og:image': null, 'twitter:image': '/t.png', 'og:image:width': null }) })));
-    expect(twitter.title).toEqual({ value: 'From twitter', source: 'twitter' });
-    expect(twitter.description).toEqual({ value: 'Learn how search engines read your pages, and the handful of on-page fixes that make the biggest difference.', source: 'page' });
-    expect(twitter.image).toEqual({ raw: '/t.png', resolved: 'https://example.com/t.png', source: 'twitter' });
-    expect(twitter.imageSize).toBeNull();
-    const bare = socialPreview(pageFacts(page({ titles: [], titleTotal: 0, metaDescriptions: [], metaDescriptionTotal: 0, ogUrl: null, url: 'https://www.example.org/x', social: socialTags(Object.fromEntries(Object.keys(socialTags()).map((k) => [k, null]))) })));
-    expect(bare).toMatchObject({ title: { value: '', source: 'none' }, description: { source: 'none' }, image: null, domain: 'example.org', siteName: null, card: null });
+    // Each card has its own chain: the large card never reads Twitter tags.
+    const both = socialPreview(
+      pageFacts(page({ social: socialTags({ 'og:title': 'OG title', 'twitter:title': 'Twitter title', 'twitter:description': 'Twitter description', 'og:image': null, 'twitter:image': '/t.png', 'og:image:width': null }) })),
+    );
+    expect(both.large.title).toEqual({ value: 'OG title', source: 'og' });
+    expect(both.large.description).toEqual({ value: 'The handful of on-page fixes that make the biggest difference.', source: 'og' });
+    expect(both.large.image).toBeNull();
+    expect(both.summary.title).toEqual({ value: 'Twitter title', source: 'twitter' });
+    expect(both.summary.description).toEqual({ value: 'Twitter description', source: 'twitter' });
+    expect(both.summary.image).toEqual({ raw: '/t.png', resolved: 'https://example.com/t.png', source: 'twitter' });
+    expect(both.imageSize).toBeNull();
+    // Without Open Graph either, both cards use the page.
+    const pageOnly = socialPreview(pageFacts(page({ social: socialTags({ 'og:title': null, 'og:description': null }) })));
+    expect(pageOnly.large.title).toEqual({ value: 'SEO basics: a practical guide for beginners', source: 'page' });
+    expect(pageOnly.summary.title.source).toBe('page');
+    expect(pageOnly.large.description.source).toBe('page');
+    const bare = socialPreview(
+      pageFacts(page({ titles: [], titleTotal: 0, metaDescriptions: [], metaDescriptionTotal: 0, ogUrl: null, url: 'https://www.example.org/x', social: socialTags(Object.fromEntries(Object.keys(socialTags()).map((k) => [k, null]))) })),
+    );
+    expect(bare).toMatchObject({ large: { title: { value: '', source: 'none' }, description: { source: 'none' }, image: null }, summary: { image: null }, domain: 'example.org', siteName: null, card: null });
+  });
+
+  test('page-urls-are-parsed-hrefs', () => {
+    const facts = pageFacts(page({ social: socialTags({ 'og:image': ' /img/share.png ', 'twitter:image': 'HTTPS://Example.com/T.png' }) }));
+    const urls = pageUrls(facts);
+    // Social images are allowed only as their parsed href, never as written.
+    expect(urls.has('https://example.com/img/share.png')).toBe(true);
+    expect(urls.has(' /img/share.png ')).toBe(false);
+    expect(urls.has('/img/share.png')).toBe(false);
+    expect(urls.has('https://example.com/T.png')).toBe(true);
+    expect(urls.has('HTTPS://Example.com/T.png')).toBe(false);
+    // The page, its links and images.
+    for (const url of ['https://example.com/guides/seo-basics', 'https://example.com/guides/', 'mailto:hello@example.com', 'https://example.com/img/crawler.png']) expect(urls.has(url), url).toBe(true);
+    for (const url of urls) expect(new URL(url).href).toBe(url);
   });
 });

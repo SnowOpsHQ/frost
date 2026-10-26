@@ -30,7 +30,7 @@ describe('audit', () => {
           { level: 1, text: 'Two' },
         ],
         headingTotal: 2,
-        images: [{ src: 'https://example.com/a.png', alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false }],
+        images: [{ src: 'https://example.com/a.png', alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false, cssSized: false }],
         imageTotal: 1,
         metaRobots: [robots('noindex')],
         canonicals: [],
@@ -77,8 +77,8 @@ describe('audit', () => {
   });
 
   test('score-counts-each-rule-once', () => {
-    const one = runAudit(page({ images: [{ src: 'a', alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false }], imageTotal: 1 }));
-    const fifty = runAudit(page({ images: Array.from({ length: 50 }, (_, i) => ({ src: `${i}`, alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false })), imageTotal: 50 }));
+    const one = runAudit(page({ images: [{ src: 'a', alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false, cssSized: false }], imageTotal: 1 }));
+    const fifty = runAudit(page({ images: Array.from({ length: 50 }, (_, i) => ({ src: `${i}`, alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false, cssSized: false })), imageTotal: 50 }));
     expect(fifty.score).toBe(one.score);
     expect(scoreAudit([ofSeverity('warning'), ofSeverity('warning')])).toBe(93);
   });
@@ -123,8 +123,8 @@ describe('audit', () => {
         ],
         linkTotal: 100_000,
         images: [
-          { src: 'a', alt: null, width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false },
-          { src: 'b', alt: text(''), width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false },
+          { src: 'a', alt: null, width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false, cssSized: false },
+          { src: 'b', alt: text(''), width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false, cssSized: false },
         ],
         imageTotal: 2,
         metaRobots: [robots('noindex'), robots('nofollow', 'googlebot')],

@@ -58,9 +58,10 @@ export function cleanSnapshot(): PageSnapshot {
         rendered: { width: 640, height: 360 },
         natural: { width: 1280, height: 720 },
         inFirstViewport: false,
+        cssSized: false,
       },
       // Not rendered (no box): it needs no width and height.
-      { src: 'https://example.com/img/divider.svg', alt: text(''), width: null, height: null, loading: null, rendered: null, natural: { width: 4000, height: 10 }, inFirstViewport: false },
+      { src: 'https://example.com/img/divider.svg', alt: text(''), width: null, height: null, loading: null, rendered: null, natural: { width: 4000, height: 10 }, inFirstViewport: false, cssSized: false },
     ],
     imageTotal: 2,
   };

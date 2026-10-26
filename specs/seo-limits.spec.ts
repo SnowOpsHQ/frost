@@ -72,11 +72,17 @@ export const SOCIAL_URL_TAGS = ['og:image', 'twitter:image'] as const satisfies 
 /**
  * Highlight mode (Phase 2 Task 2; acceptance `seo-panels.feature.md`, Highlight): the overlay
  * script runs in the same isolated world as the extractor (`SEO_WORLD_ID`) and draws at most
- * `maxLinks` link boxes or `maxHeadings` heading boxes (the snapshot's caps), stopping at
- * `HIGHLIGHT_BUDGET_MS`. Its boxes follow layout changes (a `ResizeObserver` and the window's
- * `resize`), redrawn at most once per animation frame.
+ * `maxLinks` link boxes or `maxHeadings` heading boxes (the snapshot's caps). A drawing pass
+ * measures the elements a slice at a time, at most `HIGHLIGHT_FRAME_MS` per animation frame, and
+ * gives up measuring after `HIGHLIGHT_BUDGET_MS` in all (it draws what it measured). Boxes follow
+ * layout changes (a `ResizeObserver`, whose first, initial callback is skipped, and the window's
+ * `resize`) and scrolling (a passive capture-phase `scroll` listener on the document, so inner
+ * scroll containers and fixed elements are followed too): requests while a pass runs coalesce into
+ * one more pass after it, never more than one pass per frame. A redraw reuses the box elements and
+ * only writes what moved.
  */
 export const HIGHLIGHT_BUDGET_MS = 500;
+export const HIGHLIGHT_FRAME_MS = 8;
 
 /**
  * Caps on the snapshot. Lists keep their **first** `max…` entries in document order and report the
@@ -115,6 +121,19 @@ export const SNAPSHOT_LIMITS = {
   maxImagePixels: 100_000,
   /** A link's `target` attribute value (Phase 2 Task 2). */
   maxTargetChars: 64,
+  /** An image's `srcset` (its own, and each `<picture><source>`'s) is read up to this many characters … */
+  maxSrcsetChars: 4_096,
+  /** … and up to this many candidates each. */
+  maxSrcsetCandidates: 32,
+  /** `<source>` elements of an image's `<picture>` looked at. */
+  maxPictureSources: 8,
+  /**
+   * Stylesheet rules scanned, once per extraction, for ones that declare both `width` and `height`
+   * (same-origin sheets only; nested `@media` / `@supports` / `@layer` rules count), and how many
+   * such rules' selectors are kept to match images against (`ImageSchema.cssSized`).
+   */
+  maxSizingRules: 5_000,
+  maxSizingSelectors: 100,
   /**
    * Text values of the social tags (`SOCIAL_TAGS`: titles, descriptions, types, names, sizes);
    * their URL values (`SOCIAL_URL_TAGS`) are cut to `maxUrlChars` instead (Phase 2 Task 2).

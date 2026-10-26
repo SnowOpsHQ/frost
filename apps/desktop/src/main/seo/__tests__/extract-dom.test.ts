@@ -260,4 +260,75 @@ describe('extractor on a DOM', () => {
     // None at all: every tag null.
     expect(Object.values(extract({}).social)).toEqual(SOCIAL_TAGS.map(() => null));
   });
+
+  test('extractor-corrects-srcset-density', () => {
+    const snapshot = extract({
+      body: `<img id="w" src="/small.png" srcset="/small.png 400w, /big.png 1600w" sizes="400px" alt="w">
+        <img id="x" src="/one.png" srcset="/one.png 1x, /three.png 3x" alt="x">
+        <picture><source srcset="/wide.webp 1200w, /narrow.webp 600w" sizes="300px"><img id="pic" src="/fallback.png" alt="picture"></picture>
+        <img id="plain" src="/plain.png" alt="plain">
+        <img id="data" src="/d.png" srcset="data:image/png;base64,AAAA 2x, /d.png 1x" alt="data">`,
+      prepare(document) {
+        const img = (id: string) => document.getElementById(id)!;
+        const shows = (id: string, current: string, natural: [number, number], box: [number, number]) => {
+          Object.defineProperty(img(id), 'currentSrc', { value: new URL(current, PAGE).href });
+          loaded(img(id), ...natural);
+          place(img(id), { width: box[0], height: box[1] });
+        };
+        // The browser picked the 1600w file for a 400px slot: it reports the density-corrected 400 × 200.
+        shows('w', '/big.png', [400, 200], [400, 200]);
+        // 3x: the file is three times the reported size.
+        shows('x', '/three.png', [300, 150], [300, 150]);
+        // A <picture> source's candidate.
+        shows('pic', '/wide.webp', [300, 150], [300, 150]);
+        // No srcset: the natural size is the file's.
+        shows('plain', '/plain.png', [640, 320], [320, 160]);
+        // A data: candidate (commas inside it) is parsed whole.
+        shows('data', 'data:image/png;base64,AAAA', [50, 25], [50, 25]);
+      },
+    });
+    expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(snapshot.images.map((image) => [image.alt?.text, image.natural])).toEqual([
+      ['w', { width: 1600, height: 800 }],
+      ['x', { width: 900, height: 450 }],
+      ['picture', { width: 1200, height: 600 }],
+      ['plain', { width: 640, height: 320 }],
+      ['data', { width: 100, height: 50 }],
+    ]);
+  });
+
+  test('extractor-reads-css-sizing', () => {
+    const snapshot = extract({
+      head: '<style>.fixed { width: 120px; height: 80px } .half { width: 50% } @media screen { .nested { height: 10px; width: 20px } }</style>',
+      body: `<img id="inline" src="/a.png" style="width: 100px; height: 50px"><img id="sheet" class="fixed" src="/b.png"><img id="nested" class="nested" src="/c.png">
+        <img id="ratio" src="/d.png"><img id="half" class="half" src="/e.png"><img id="auto" src="/f.png" style="width: auto; height: auto"><img id="attrs" src="/g.png" width="10" height="10" class="fixed">`,
+      prepare(document, window) {
+        for (const img of document.images) place(img, { width: 10, height: 10 });
+        const computed = window.getComputedStyle.bind(window);
+        window.getComputedStyle = ((el: Element) => {
+          const style = computed(el);
+          if (el.id !== 'ratio') return style;
+          return Object.assign(Object.create(style), { getPropertyValue: (name: string) => (name === 'aspect-ratio' ? '16 / 9' : style.getPropertyValue(name)) });
+        }) as typeof window.getComputedStyle;
+      },
+    });
+    expect(Object.fromEntries(snapshot.images.map((image) => [new URL(image.src).pathname, image.cssSized]))).toEqual({
+      '/a.png': true,
+      '/b.png': true,
+      '/c.png': true,
+      '/d.png': true,
+      '/e.png': false,
+      '/f.png': false,
+      // Both attributes present: not measured.
+      '/g.png': false,
+    });
+    // The sizing scan is bounded.
+    const bounded = extract({ head: '<style>.fixed { width: 1px; height: 1px }</style>', body: '<img class="fixed" src="/b.png">', limits: { maxSizingSelectors: 0 }, prepare: (document) => place(document.images[0]!, { width: 1, height: 1 }) });
+    expect(bounded.images[0]!.cssSized).toBe(false);
+  });
+
+  test('extractor-link-kind-counts-the-port', () => {
+    const snapshot = extract({ body: '<a href="https://example.com:8443/x">Other port</a><a href="https://example.com:443/y">Default port</a><a href="https://www.example.com/z">www</a>' });
+    expect(snapshot.links.map((link) => link.kind)).toEqual(['external', 'internal', 'internal']);
+  });
 });

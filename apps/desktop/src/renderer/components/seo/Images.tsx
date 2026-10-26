@@ -25,7 +25,21 @@ function sourceLabel(src: string): string {
   return src.startsWith('data:') ? `${src.slice(0, 40)}…` : src;
 }
 
-function ImageRow({ image, open, onToggle, tabId, flash }: { readonly image: PageImage; readonly open: boolean; readonly onToggle: () => void; readonly tabId: number; readonly flash: (message: string) => void }) {
+function ImageRow({
+  image,
+  audit,
+  open,
+  onToggle,
+  tabId,
+  flash,
+}: {
+  readonly image: PageImage;
+  readonly audit: SeoAudit;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly tabId: number;
+  readonly flash: (message: string) => void;
+}) {
   const alt = altState(image);
   const oversized = isOversized(image);
   const lazyFirst = isLazyInFirstViewport(image);
@@ -83,7 +97,7 @@ function ImageRow({ image, open, onToggle, tabId, flash }: { readonly image: Pag
           ) : null}
         </span>
       </button>
-      {open ? <UrlActions tabId={tabId} url={image.src} openLabel="Open image in new tab" flash={flash} /> : null}
+      {open ? <UrlActions tabId={tabId} audit={audit} url={image.src} openLabel="Open image in new tab" flash={flash} /> : null}
     </li>
   );
 }
@@ -169,7 +183,7 @@ export function Images({ audit, tab }: { readonly audit: SeoAudit; readonly tab:
         ) : (
           <ul className="seo-table" data-testid="seo-images-table" aria-label="Images">
             {rows.map((image, index) => (
-              <ImageRow key={index} image={image} open={openRow === index} onToggle={() => setOpenRow(openRow === index ? null : index)} tabId={tab.id} flash={flash} />
+              <ImageRow key={index} image={image} audit={audit} open={openRow === index} onToggle={() => setOpenRow(openRow === index ? null : index)} tabId={tab.id} flash={flash} />
             ))}
           </ul>
         )}

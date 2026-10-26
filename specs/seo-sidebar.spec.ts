@@ -160,7 +160,11 @@ export const IMAGE_FILTERS = ['all', 'missing-alt', 'no-dimensions', 'oversized'
 export type ImageFilter = (typeof IMAGE_FILTERS)[number];
 
 /**
- * Social previews are drawn by frost from the tags' text. Remote images are never loaded into the
+ * Social previews are drawn by frost from the tags' text, one fallback chain per card, as the apps
+ * that draw them read the tags: the large-image card from Open Graph, then the page (`og:title` →
+ * `<title>`, `og:description` → meta description, `og:image`); the summary card from the Twitter
+ * card tags, then Open Graph, then the page (`twitter:title` → `og:title` → `<title>` …,
+ * `twitter:image` → `og:image`). Remote images are never loaded into the
  * chrome (its CSP stays `img-src 'self' data:`): the preview shows a neutral placeholder graphic,
  * and the image's URL and declared size (`og:image:width` × `og:image:height`) as text. A proxied
  * thumbnail (fetched by main through the browse session, size-capped, re-encoded) could come later.
@@ -176,6 +180,14 @@ export const SOCIAL_REMOTE_IMAGES = false;
  */
 export const HIGHLIGHT_MODES = ['off', 'links', 'headings'] as const;
 export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
+
+/**
+ * The panel whose toggle owns each mode. The chrome turns the overlay off when the sidebar
+ * collapses and when the user leaves that panel, so an overlay never stays on the page without the
+ * toggle that removes it in view. If the page removes the overlay's host itself, the overlay stops
+ * and the tab's mode goes back to `off` too.
+ */
+export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = { links: 'links', headings: 'on-page' };
 
 /**
  * What the overlay draws (frost's own palette): a link's box by kind (a link whose `rel` has
