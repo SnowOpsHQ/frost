@@ -14,7 +14,7 @@ const WINDOW_ID = 7;
 function stateAt(version: number): BrowserState {
   return {
     version,
-    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false }],
+    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false }],
     activeTabId: 1,
     focusAddressBarSeq: 0,
     notice: null,

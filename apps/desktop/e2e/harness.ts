@@ -1,6 +1,8 @@
-import { readdir } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron, type ElectronApplication, type Page } from '@playwright/test';
@@ -17,14 +19,44 @@ export const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url))
  * `ELECTRON_RUN_AS_NODE` is stripped from the child environment: when inherited (some shells and
  * agent harnesses export it) Electron would start as plain Node and never open a window.
  */
-export async function launchApp(extraArgs: readonly string[] = []): Promise<{ app: ElectronApplication; page: Page }> {
+export async function launchApp(
+  extraArgs: readonly string[] = [],
+  options: { coreDumps?: boolean } = {},
+): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
   }
-  const app = await _electron.launch({ args: [APP_DIR, ...extraArgs], env, cwd: APP_DIR });
+  const wrapper = options.coreDumps === false ? await noCoreDumpsLauncher() : undefined;
+  let app: ElectronApplication;
+  try {
+    app = await _electron.launch({
+      args: [APP_DIR, ...extraArgs],
+      env,
+      cwd: APP_DIR,
+      ...(wrapper ? { executablePath: wrapper.path } : {}),
+    });
+  } finally {
+    // The script `exec`s Electron, so it is not needed once the launch returned.
+    await wrapper?.remove();
+  }
   const page = await app.firstWindow();
   return { app, page };
+}
+
+/**
+ * A launcher script that starts Electron with core dumps disabled (`ulimit -c 0`, inherited by its
+ * renderers), for tests that crash a renderer on purpose: where core dumps go to a slow handler
+ * (systemd-coredump), a crashed renderer lingers until its dump is written and
+ * `render-process-gone` arrives tens of seconds late. POSIX only (the suite runs on Linux/macOS).
+ */
+async function noCoreDumpsLauncher(): Promise<{ path: string; remove(): Promise<void> }> {
+  const electron = createRequire(import.meta.url)('electron') as unknown as string;
+  const dir = await mkdtemp(path.join(tmpdir(), 'frost-e2e-'));
+  const script = path.join(dir, 'electron-no-core-dumps.sh');
+  await writeFile(script, `#!/bin/sh\nulimit -c 0\nexec ${JSON.stringify(electron)} "$@"\n`);
+  await chmod(script, 0o755);
+  return { path: script, remove: () => rm(dir, { recursive: true, force: true }) };
 }
 
 /** The built renderer's entry script, as `app://` serves it (`/assets/index-<hash>.js`). */

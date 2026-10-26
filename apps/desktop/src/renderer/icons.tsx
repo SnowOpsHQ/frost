@@ -149,3 +149,102 @@ export function FrostMark(props: IconProps) {
     </svg>
   );
 }
+
+/** A small warning triangle: the tab glyph of a tab showing its error or crash panel. */
+export function AlertIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10.3 4.9a2 2 0 0 1 3.4 0l7 12.2A2 2 0 0 1 19 20H5a2 2 0 0 1-1.7-2.9z" />
+      <path d="M12 9.5v4.2" />
+      <path d="M12 16.6h.01" />
+    </Icon>
+  );
+}
+
+/**
+ * The panels' illustrations: 48×48, the same rounded stroke as frost's mark. A `panel-art-gap`
+ * stroke is drawn in the page colour (styles.css) to cut a clean gap where a slash crosses a shape.
+ */
+function PanelArt({ className, children }: IconProps & { readonly children: ReactNode }) {
+  return (
+    <svg
+      className={className ? `panel-art ${className}` : 'panel-art'}
+      viewBox="0 0 48 48"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+/** Certificate refused: a shield with an exclamation mark. */
+export function ShieldAlertArt(props: IconProps) {
+  return (
+    <PanelArt {...props}>
+      <path d="M24 5.5l14.5 5.2v10.6c0 9.4-6 17.2-14.5 21.2C15.5 38.5 9.5 30.7 9.5 21.3V10.7z" />
+      <path d="M24 15.5v11" />
+      <path d="M24 32.5h.01" />
+    </PanelArt>
+  );
+}
+
+/** Site unreachable: frost's globe (two meridians, two parallels), struck through. */
+export function UnreachableArt(props: IconProps) {
+  return (
+    <PanelArt {...props}>
+      <circle cx="24" cy="24" r="15" />
+      <path d="M24 9c-4.4 4.1-6.5 9.1-6.5 15s2.1 10.9 6.5 15" />
+      <path d="M24 9c4.4 4.1 6.5 9.1 6.5 15s-2.1 10.9-6.5 15" />
+      <path d="M10.2 18.5h27.6" />
+      <path d="M10.2 29.5h27.6" />
+      <path className="panel-art-gap" d="M8.5 8.5l31 31" strokeWidth="6" />
+      <path d="M8.5 8.5l31 31" />
+    </PanelArt>
+  );
+}
+
+/** Offline: three signal arcs and a dot, struck through. */
+export function OfflineArt(props: IconProps) {
+  return (
+    <PanelArt {...props}>
+      <path d="M6.5 19.5a25 25 0 0 1 35 0" />
+      <path d="M12.5 25.8a16.5 16.5 0 0 1 23 0" />
+      <path d="M18.6 32a8 8 0 0 1 10.8 0" />
+      <path d="M24 38h.01" />
+      <path className="panel-art-gap" d="M9 9l30 30" strokeWidth="6" />
+      <path d="M9 9l30 30" />
+    </PanelArt>
+  );
+}
+
+/** Generic load failure: a page with an exclamation mark. */
+export function PageAlertArt(props: IconProps) {
+  return (
+    <PanelArt {...props}>
+      <path d="M13 5.5h15.5L37 14v26.5a2 2 0 0 1-2 2H13a2 2 0 0 1-2-2v-33a2 2 0 0 1 2-2z" />
+      <path d="M28.5 5.5V14H37" />
+      <path d="M24 21v9" />
+      <path d="M24 35h.01" />
+    </PanelArt>
+  );
+}
+
+/** Crashed page: a browser frame split top to bottom by a jagged crack, its halves pushed apart. */
+export function CrashArt(props: IconProps) {
+  return (
+    <PanelArt {...props}>
+      <path d="M22 8.5H10a4 4 0 0 0-4 4v23a4 4 0 0 0 4 4h11.5l-3-6.5 4.5-6-5-4.5z" />
+      <path d="M27.5 8.5H38a4 4 0 0 1 4 4v23a4 4 0 0 1-4 4H27l-3-6.5 4.5-6-5-4.5z" />
+      <path d="M6 16h13" />
+      <path d="M26.2 16H42" />
+      <path d="M10.5 12.3h.01" />
+      <path d="M14.5 12.3h.01" />
+    </PanelArt>
+  );
+}

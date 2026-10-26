@@ -111,7 +111,8 @@ type DevicePermissionHandler = (details: DevicePermissionHandlerHandlerDetails) 
 type HeadersReceivedListener = (details: OnHeadersReceivedListenerDetails, callback: (response: HeadersReceivedResponse) => void) => void;
 type BeforeRequestListener = (details: OnBeforeRequestListenerDetails, callback: (response: CallbackResponse) => void) => void;
 
-export class FakeSession {
+/** A session: an EventEmitter (as in Electron, e.g. `will-download`) that stores its handlers as-is. */
+export class FakeSession extends EventEmitter {
   permissionRequestHandler: PermissionRequestHandler | null | undefined;
   permissionCheckHandler: PermissionCheckHandler | null | undefined;
   devicePermissionHandler: DevicePermissionHandler | null | undefined;

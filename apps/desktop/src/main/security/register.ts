@@ -1,16 +1,8 @@
-import { app, session as electronSession, shell, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { app, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
-import { guardBrowseContents } from '../browser/guard';
-import {
-  hasTransientActivation,
-  isActivationInput,
-  isAllowedAppNavigation,
-  isAppUrl,
-  isPermissionGranted,
-  parseExternalUrl,
-  resolveExternalOpen,
-  withAppCsp,
-} from './policy';
+import { guardBrowseContents, type BrowseGuardHooks } from '../browser/guard';
+import { openExternalIfAllowed, trackUserGesture } from './gesture';
+import { isAllowedAppNavigation, isAppUrl, isPermissionGranted, withAppCsp } from './policy';
 
 // Electron wiring for `specs/security-policy.spec.ts` (acceptance: `specs/external-url.feature.md`).
 
@@ -19,15 +11,22 @@ export interface SecurityOptions {
   devServerUrl?: string | undefined;
   /** Monotonic clock in ms for gesture timing; injectable for tests. */
   now?: () => number;
+  /**
+   * What the browse guard (tabs' WebContents) asks of the browser controller: gesture-backed popups
+   * become background tabs (`browse-guard.feature.md`). Without it, popups open nothing.
+   */
+  browse?: BrowseGuardHooks | undefined;
 }
 
 const guarded = new WeakSet<WebContents>();
+/** Sessions whose downloads `registerSecurity` already cancels (its listener is added once). */
+const downloadsRefused = new WeakSet<Session>();
 
 /** The installed app-wide guard: the one source of WebContents guard options. */
 let appWide: { options: SecurityOptions; listener: (event: unknown, contents: WebContents) => void } | undefined;
 
 function sameOptions(a: SecurityOptions, b: SecurityOptions): boolean {
-  return a.devServerUrl === b.devServerUrl && a.now === b.now;
+  return a.devServerUrl === b.devServerUrl && a.now === b.now && a.browse === b.browse;
 }
 
 /** The installed app-wide guard, if its listener is still attached to `app`. */
@@ -73,6 +72,15 @@ export function registerSecurity(session: Session, win: BrowserWindow, options?:
     callback({ responseHeaders: withAppCsp(details.responseHeaders) });
   });
 
+  // The chrome never downloads anything (spec `browse-guard.feature.md`, app-session-cancels-downloads).
+  if (!downloadsRefused.has(session)) {
+    downloadsRefused.add(session);
+    session.on('will-download', (event, item) => {
+      event.preventDefault();
+      item.cancel();
+    });
+  }
+
   registerAppWideGuards(resolved);
   guardWebContents(win.webContents, resolved);
 }
@@ -90,11 +98,29 @@ export function registerAppWideGuards(options: SecurityOptions = {}): void {
     return;
   }
   const listener = (_event: unknown, contents: WebContents) => {
-    if (isBrowseContents(contents)) guardBrowseOnce(contents);
+    if (isBrowseContents(contents)) guardBrowseOnce(contents, options);
     else guardWebContents(contents, options);
   };
   appWide = { options, listener };
   app.on('web-contents-created', listener);
+  refuseBadCertificates();
+}
+
+/**
+ * Certificates (spec `browse-guard.feature.md`): a certificate error is always refused, for every
+ * WebContents (`preventDefault` + `callback(false)`, never `true`; Electron's default also refuses,
+ * this makes it explicit), and no client certificate is ever sent (Electron's default picks the
+ * first one from the store).
+ */
+function refuseBadCertificates(): void {
+  app.on('certificate-error', (event, _contents, _url, _error, _certificate, callback) => {
+    event.preventDefault();
+    callback(false);
+  });
+  app.on('select-client-certificate', (event, _contents, _url, _list, callback) => {
+    event.preventDefault();
+    callback();
+  });
 }
 
 /**
@@ -111,10 +137,10 @@ function isBrowseContents(contents: WebContents): boolean {
   }
 }
 
-function guardBrowseOnce(contents: WebContents): void {
+function guardBrowseOnce(contents: WebContents, options: SecurityOptions): void {
   if (guarded.has(contents)) return;
   guarded.add(contents);
-  guardBrowseContents(contents);
+  guardBrowseContents(contents, { now: options.now ?? (() => performance.now()), hooks: options.browse });
 }
 
 /**
@@ -131,23 +157,10 @@ function guardWebContents(contents: WebContents, options: SecurityOptions): void
   if (guarded.has(contents)) return;
   guarded.add(contents);
 
-  const now = options.now ?? (() => performance.now());
-  let lastActivationAt: number | undefined;
-  contents.on('input-event', (_event, input) => {
-    if (isActivationInput(input.type)) lastActivationAt = now();
-  });
-  const consumeUserGesture = (): boolean => {
-    const userGesture = hasTransientActivation(lastActivationAt, now());
-    lastActivationAt = undefined;
-    return userGesture;
-  };
+  const gesture = trackUserGesture(contents, options.now ?? (() => performance.now()));
 
   contents.setWindowOpenHandler(({ url }) => {
-    const userGesture = consumeUserGesture();
-    const target = parseExternalUrl(url);
-    if (target && resolveExternalOpen(url, { userGesture }) === 'allow') {
-      shell.openExternal(target.href).catch((err: unknown) => console.error('openExternal failed', err));
-    }
+    openExternalIfAllowed(url, gesture.consume());
     return { action: 'deny' };
   });
 

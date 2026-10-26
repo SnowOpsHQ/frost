@@ -1,44 +1,127 @@
 import type { Session, WebContents } from 'electron';
 import { BROWSABLE_SCHEMES, BROWSE_BLANK_URL } from '@app/specs/browser.spec';
+import { SUBFRAME_ONLY_URLS } from '@app/specs/browse-guard.spec';
+import { resolveExternalOpen } from '../security/policy';
+import { openExternalIfAllowed, trackUserGesture } from '../security/gesture';
 
-// The browse guard for tab WebContents (`specs/browser-chrome.feature.md`, "Session-classified
-// guard"). Installed by the app-wide `web-contents-created` guard in `security/register.ts` for
-// WebContents on the browse partition's session; Task 3 extends it.
+// The browse guard for tab WebContents (`specs/browse-guard.feature.md`; the session-classified
+// install is `browser-chrome.feature.md`). Installed by the app-wide `web-contents-created` guard
+// in `security/register.ts` for WebContents on the browse partition's session.
 
-/** Whether a tab may navigate or be redirected to `url`: `BROWSABLE_SCHEMES` or `about:blank`. */
-export function isBrowsableNavigation(url: string): boolean {
-  if (url === BROWSE_BLANK_URL) return true;
+function includes(list: readonly string[], value: string): boolean {
+  return list.includes(value);
+}
+
+/** Whether `url` is an `http(s)` URL (`BROWSABLE_SCHEMES`), the only kind a tab loads as a page. */
+export function isWebUrl(url: string): boolean {
   try {
-    return (BROWSABLE_SCHEMES as readonly string[]).includes(new URL(url).protocol);
+    return includes(BROWSABLE_SCHEMES, new URL(url).protocol);
   } catch {
     return false;
   }
 }
 
 /**
- * Guards one browse-session WebContents:
- * - `will-frame-navigate` (any frame) and `will-redirect`: only `http:`/`https:`/`about:blank`;
- *   anything else is dropped, never opened externally.
- * - `window.open` / `target=_blank`: denied (Task 3 turns gesture-backed web opens into tabs).
+ * Whether a tab's frame may navigate or be redirected to `url`: `BROWSABLE_SCHEMES` or
+ * `about:blank` in any frame, plus `SUBFRAME_ONLY_URLS` (`about:srcdoc`) in subframes. `data:`,
+ * `blob:` and every other scheme are denied in every frame.
+ */
+export function isAllowedBrowseNavigation(url: string, { isMainFrame }: { isMainFrame: boolean }): boolean {
+  if (url === BROWSE_BLANK_URL) return true;
+  if (!isMainFrame && includes(SUBFRAME_ONLY_URLS, url)) return true;
+  return isWebUrl(url);
+}
+
+export type BrowseVerdict = 'allow' | 'open-externally' | 'drop';
+
+/**
+ * What to do with a renderer navigation (`will-frame-navigate`) or redirect (`will-redirect`) of a
+ * tab's frame. Browsable → `allow` (the gesture is not read). A non-browsable navigation is
+ * dropped, and handed to the Phase 0 external-open policy (`resolveExternalOpen`, which reads the
+ * gesture); a non-browsable redirect is dropped without reading it (the server chose it).
+ */
+export function judgeBrowseNavigation(
+  url: string,
+  ctx: { isMainFrame: boolean; isRedirect: boolean; userGesture: () => boolean },
+): BrowseVerdict {
+  if (isAllowedBrowseNavigation(url, ctx)) return 'allow';
+  if (ctx.isRedirect) return 'drop';
+  return resolveExternalOpen(url, { userGesture: ctx.userGesture() }) === 'allow' ? 'open-externally' : 'drop';
+}
+
+export type PopupVerdict = 'tab' | 'open-externally' | 'drop';
+
+/**
+ * What to do with a tab's `window.open` / `target=_blank` (never an Electron window): with a real
+ * gesture an `http(s)` URL becomes a background tab and an allowlisted external URL (`mailto:`)
+ * goes to the Phase 0 external-open policy; anything else, or no gesture, is dropped.
+ */
+export function judgeBrowsePopup(url: string, userGesture: boolean): PopupVerdict {
+  if (!userGesture) return 'drop';
+  if (isWebUrl(url)) return 'tab';
+  if (url === BROWSE_BLANK_URL) return 'drop';
+  return resolveExternalOpen(url, { userGesture }) === 'allow' ? 'open-externally' : 'drop';
+}
+
+/** What the browse guard asks of the rest of main (the browser controller). */
+export interface BrowseGuardHooks {
+  /** Opens `url` in a new background tab next to the tab whose WebContents is `opener`. */
+  openTab?(opener: WebContents, url: string): void;
+}
+
+/**
+ * Guards one browse-session WebContents (spec `browse-guard.feature.md`):
+ * - `will-frame-navigate` (any frame) and `will-redirect`: pinned by `judgeBrowseNavigation`; a
+ *   dropped navigation to an allowlisted external scheme on a real gesture is opened externally.
+ * - `window.open` / `target=_blank`: always `{ action: 'deny' }`; `judgeBrowsePopup` decides
+ *   whether a background tab opens (through `hooks.openTab`) or the URL is opened externally.
  * - `<webview>`: refused.
  */
-export function guardBrowseContents(contents: WebContents): void {
-  const pinToWeb = (details: { url: string; preventDefault(): void }): void => {
-    if (!isBrowsableNavigation(details.url)) details.preventDefault();
-  };
-  contents.on('will-frame-navigate', pinToWeb);
-  contents.on('will-redirect', pinToWeb);
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+export function guardBrowseContents(contents: WebContents, options: { now: () => number; hooks?: BrowseGuardHooks | undefined }): void {
+  const gesture = trackUserGesture(contents, options.now);
+
+  const pin =
+    (isRedirect: boolean) =>
+    (details: { url: string; isMainFrame: boolean; preventDefault(): void }): void => {
+      const verdict = judgeBrowseNavigation(details.url, { isMainFrame: details.isMainFrame, isRedirect, userGesture: gesture.consume });
+      if (verdict === 'allow') return;
+      details.preventDefault();
+      // The verdict already consumed the gesture; the shared flow re-checks the URL before opening.
+      if (verdict === 'open-externally') openExternalIfAllowed(details.url, true);
+    };
+  contents.on('will-frame-navigate', pin(false));
+  contents.on('will-redirect', pin(true));
+
+  contents.setWindowOpenHandler(({ url }) => {
+    const verdict = judgeBrowsePopup(url, gesture.consume());
+    if (verdict === 'tab') options.hooks?.openTab?.(contents, url);
+    else if (verdict === 'open-externally') openExternalIfAllowed(url, true);
+    return { action: 'deny' };
+  });
+
   contents.on('will-attach-webview', (event) => event.preventDefault());
+}
+
+/** What the browse session reports to the rest of main. */
+export interface BrowseSessionHooks {
+  /** A download was cancelled (raise the `download-blocked` notice). */
+  onDownloadBlocked?(contents: WebContents | null | undefined): void;
 }
 
 /**
  * Session-wide policy of the browse partition: every permission request, check and device
- * permission is denied (Phase 0's deny-by-default; Task 4 adds per-origin prompts). The session's
- * `webRequest` slots are left free for Task 3.
+ * permission is denied (Phase 0's deny-by-default, incl. Electron's `openExternal` permission;
+ * Task 4 adds per-origin prompts), and every download is cancelled (no download manager in
+ * Phase 1). No certificate-verify proc is installed: Chromium's verifier decides, and the app-wide
+ * `certificate-error` handler never overrides it (`security/register.ts`).
  */
-export function hardenBrowseSession(session: Session): void {
+export function hardenBrowseSession(session: Session, hooks: BrowseSessionHooks = {}): void {
   session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.setPermissionCheckHandler(() => false);
   session.setDevicePermissionHandler(() => false);
+  session.on('will-download', (event, item, contents) => {
+    event.preventDefault();
+    item.cancel();
+    hooks.onDownloadBlocked?.(contents);
+  });
 }
