@@ -1,11 +1,28 @@
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type KeyboardEvent } from 'react';
 import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
-import type { BrowserState, TabState } from '@app/specs/browser.spec';
+// Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types);
+// runtime constants come from the Zod-free tabs.spec.
+import type { BrowserState, Notice, TabState } from '@app/specs/browser.spec';
+import { NOTICE_DISPLAY_MS, NOTICE_MESSAGES, type NoticeKind } from '@app/specs/tabs.spec';
 import { addressFieldReducer, addressFieldText, initialAddressField } from './address-field';
-import { BackIcon, ForwardIcon, FrostMark, LockIcon, NotSecureIcon, ReloadIcon, SearchIcon, StopIcon } from './icons';
+import { tabLabel } from './tab-label';
+import {
+  BackIcon,
+  CloseIcon,
+  ForwardIcon,
+  FrostMark,
+  GlobeIcon,
+  LockIcon,
+  NotSecureIcon,
+  PlusIcon,
+  ReloadIcon,
+  SearchIcon,
+  StopIcon,
+} from './icons';
 
-// The browser chrome (spec `browser-chrome.feature.md`, Layout): toolbar, page area, status bar.
+// The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`): tab strip,
+// toolbar, page area, status bar.
 // All browser state lives in main; this page renders it and sends user intents over the
 // sender-guarded `browser.*` procedures. Styling is the bundled styles.css only (strict CSP).
 
@@ -65,11 +82,45 @@ function ignore(): void {}
 const actions = {
   /** Resolves whether a navigation started (`false` on a no-op or an IPC failure). */
   navigate: (input: string) => ipc.browser.navigate.mutate({ input }).catch(() => false),
+  newTab: () => ipc.browser.newTab.mutate().catch(ignore),
+  closeTab: (tabId: number) => ipc.browser.closeTab.mutate({ tabId }).catch(ignore),
+  activateTab: (tabId: number) => ipc.browser.activateTab.mutate({ tabId }).catch(ignore),
   back: () => ipc.browser.back.mutate().catch(ignore),
   forward: () => ipc.browser.forward.mutate().catch(ignore),
   reload: () => ipc.browser.reload.mutate().catch(ignore),
   stop: () => ipc.browser.stop.mutate().catch(ignore),
 };
+
+/**
+ * Calls `onChange` whenever `seq` changes after the first value seen (main's focus requests and
+ * notices are counters; the value at load time is history, not a request).
+ */
+function useSeqChange(seq: number | undefined, onChange: () => void): void {
+  const seen = useRef<number | undefined>(undefined);
+  const latest = useRef(onChange);
+  latest.current = onChange;
+  useEffect(() => {
+    if (seq === undefined) return;
+    if (seen.current !== undefined && seq !== seen.current) latest.current();
+    seen.current = seq;
+  }, [seq]);
+}
+
+/** The status-bar notice to show: the latest one main raised, for `NOTICE_DISPLAY_MS`. */
+function useNotice(notice: Notice | null | undefined): NoticeKind | null {
+  const [shown, setShown] = useState<NoticeKind | null>(null);
+  const kind = notice?.kind;
+  useSeqChange(notice === undefined ? undefined : (notice?.seq ?? 0), () => {
+    if (kind) setShown(kind);
+  });
+  const seq = notice?.seq;
+  useEffect(() => {
+    if (shown === null) return;
+    const timer = setTimeout(() => setShown(null), NOTICE_DISPLAY_MS);
+    return () => clearTimeout(timer);
+  }, [shown, seq]);
+  return shown;
+}
 
 type Security = 'secure' | 'insecure' | 'none';
 
@@ -87,14 +138,23 @@ function hostOf(url: string): string {
   }
 }
 
-function AddressBar({ tab }: { readonly tab: TabState | undefined }) {
+function AddressBar({ tab, focusSeq }: { readonly tab: TabState | undefined; readonly focusSeq: number | undefined }) {
   const input = useRef<HTMLInputElement>(null);
   const [field, dispatch] = useReducer(addressFieldReducer, initialAddressField);
   const selectOnMouseUp = useRef(false);
   const url = tab?.url ?? '';
   const loading = tab?.loading === true;
   const empty = url === '';
+  const tabId = tab?.id;
 
+  /** Focus with everything selected (no click follows, so no mouseup to protect). */
+  const focusAll = () => {
+    input.current?.focus();
+    input.current?.select();
+    selectOnMouseUp.current = false;
+  };
+
+  useEffect(() => dispatch({ type: 'tab-switched' }), [tabId]);
   useEffect(() => dispatch({ type: 'url-changed' }), [url]);
   useEffect(() => {
     if (!loading) dispatch({ type: 'load-ended' });
@@ -102,8 +162,10 @@ function AddressBar({ tab }: { readonly tab: TabState | undefined }) {
 
   // An empty tab puts the caret in the address bar.
   useEffect(() => {
-    if (empty && tab) input.current?.focus();
-  }, [empty, tab?.id]);
+    if (empty && tabId !== undefined) focusAll();
+  }, [empty, tabId]);
+  // Main asked for the address bar (new tab, Cmd/Ctrl+L, switching to an empty tab).
+  useSeqChange(focusSeq, focusAll);
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -161,7 +223,86 @@ function AddressBar({ tab }: { readonly tab: TabState | undefined }) {
   );
 }
 
-function Toolbar({ tab }: { readonly tab: TabState | undefined }) {
+/** One tab in the strip: glyph or loading indicator, label (tooltip: the full label), close button. */
+function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const label = tabLabel(tab);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [active]);
+  const activate = () => void actions.activateTab(tab.id);
+  const close = () => void actions.closeTab(tab.id);
+  return (
+    <div
+      ref={ref}
+      role="tab"
+      className="tab"
+      data-testid="tab"
+      data-tab-id={tab.id}
+      aria-selected={active}
+      tabIndex={active ? 0 : -1}
+      title={label}
+      onMouseDown={(event) => {
+        // Browsers switch on press; the middle button closes instead (and must not autoscroll).
+        if (event.button === 1) event.preventDefault();
+        if (event.button === 0) activate();
+      }}
+      onAuxClick={(event) => {
+        if (event.button === 1) close();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          activate();
+        }
+      }}
+    >
+      <span className="tab-glyph" aria-hidden="true">
+        {tab.loading ? (
+          <span className="tab-spinner" data-testid="tab-loading" />
+        ) : tab.url === '' ? (
+          <FrostMark className="tab-mark" />
+        ) : (
+          <GlobeIcon className="tab-icon" />
+        )}
+      </span>
+      <span className="tab-label" data-testid="tab-label">
+        {label}
+      </span>
+      <button
+        type="button"
+        className="tab-close"
+        data-testid="tab-close"
+        aria-label={`Close ${label}`}
+        title="Close tab"
+        tabIndex={-1}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          close();
+        }}
+      >
+        <CloseIcon />
+      </button>
+    </div>
+  );
+}
+
+/** The tab strip above the toolbar; it scrolls sideways when the tabs no longer fit. */
+function TabStrip({ state }: { readonly state: BrowserState | null }) {
+  return (
+    <div className="tabstrip" data-testid="tab-strip">
+      <div className="tabs" role="tablist" aria-label="Tabs">
+        {state?.tabs.map((tab) => <Tab key={tab.id} tab={tab} active={tab.id === state.activeTabId} />)}
+      </div>
+      <button type="button" className="new-tab" data-testid="new-tab" aria-label="New tab" title="New tab" onClick={() => void actions.newTab()}>
+        <PlusIcon />
+      </button>
+    </div>
+  );
+}
+
+function Toolbar({ tab, focusSeq }: { readonly tab: TabState | undefined; readonly focusSeq: number | undefined }) {
   const loading = tab?.loading === true;
   return (
     <header className="toolbar">
@@ -192,7 +333,7 @@ function Toolbar({ tab }: { readonly tab: TabState | undefined }) {
           {loading ? <StopIcon /> : <ReloadIcon />}
         </button>
       </nav>
-      <AddressBar tab={tab} />
+      <AddressBar tab={tab} focusSeq={focusSeq} />
       <div className={loading ? 'progress progress-active' : 'progress'} aria-hidden="true" />
     </header>
   );
@@ -238,7 +379,17 @@ function PageArea({ empty }: { readonly empty: boolean }) {
   );
 }
 
-function StatusBar({ tab, ping, connection }: { readonly tab: TabState | undefined; readonly ping: string; readonly connection: Connection }) {
+function StatusBar({
+  tab,
+  notice,
+  ping,
+  connection,
+}: {
+  readonly tab: TabState | undefined;
+  readonly notice: NoticeKind | null;
+  readonly ping: string;
+  readonly connection: Connection;
+}) {
   const url = tab?.url ?? '';
   const host = hostOf(url);
   const security = securityOf(url);
@@ -247,9 +398,15 @@ function StatusBar({ tab, ping, connection }: { readonly tab: TabState | undefin
   else if (host) status = security === 'secure' ? `${host} · Secure connection` : `${host} · Not secure`;
   return (
     <footer className="status-bar" data-testid="status-bar">
-      <span className="status-text" data-security={tab?.loading ? undefined : security}>
-        {status}
-      </span>
+      {notice !== null ? (
+        <span className="status-text status-notice" data-testid="status-notice" role="status">
+          {NOTICE_MESSAGES[notice]}
+        </span>
+      ) : (
+        <span className="status-text" data-security={tab?.loading ? undefined : security}>
+          {status}
+        </span>
+      )}
       <span className="connection" data-state={connection} title="Connection to the frost main process">
         <span className="connection-dot" aria-hidden="true" />
         <span className="connection-label" aria-hidden="true">
@@ -268,11 +425,13 @@ export function App() {
   const { ping, connection } = usePing();
   const tab = state?.tabs.find((t) => t.id === state.activeTabId);
   const empty = !tab || (tab.url === '' && !tab.loading);
+  const notice = useNotice(state === null ? undefined : state.notice);
   return (
     <div className="chrome">
-      <Toolbar tab={tab} />
+      <TabStrip state={state} />
+      <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} />
       <PageArea empty={state !== null && empty} />
-      <StatusBar tab={tab} ping={ping} connection={connection} />
+      <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />
     </div>
   );
 }

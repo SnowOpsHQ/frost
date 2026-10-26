@@ -1,4 +1,4 @@
-// Acceptance: specs/browser-chrome.feature.md (Address field)
+// Acceptance: specs/browser-chrome.feature.md (Address field), specs/tabs.feature.md (Renderer)
 import { describe, expect, test } from 'vitest';
 import { addressFieldReducer, addressFieldText, initialAddressField, type AddressField, type AddressFieldEvent } from '../address-field';
 
@@ -34,5 +34,13 @@ describe('address field', () => {
     // A failure report never discards what the user has typed since.
     const retyping = addressFieldReducer(submitted, { type: 'edit', text: 'c' });
     expect(addressFieldText(addressFieldReducer(retyping, { type: 'navigate-failed' }), URL_A)).toBe('c');
+  });
+
+  test('address-field-resets-on-tab-switch', () => {
+    const typing = run({ type: 'edit', text: 'half-typed' });
+    expect(addressFieldReducer(typing, { type: 'tab-switched' })).toEqual(initialAddressField);
+    const pending = run({ type: 'edit', text: 'b.example' }, { type: 'submit', text: 'b.example' });
+    const switched = addressFieldReducer(pending, { type: 'tab-switched' });
+    expect(addressFieldText(switched, 'https://other.example/')).toBe('https://other.example/');
   });
 });

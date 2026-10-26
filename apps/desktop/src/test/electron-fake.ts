@@ -177,6 +177,15 @@ export function electronFake() {
   const session = { defaultSession: new FakeSession(), fromPartition: vi.fn(fromPartition) };
   const protocol = { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() };
   const ipcMain = { handle: vi.fn(), removeHandler: vi.fn() };
-  const electron = { app, BrowserWindow: FakeBrowserWindow, WebContentsView: FakeWebContentsView, shell, session, protocol, ipcMain };
+  // `Menu`: a built menu is just its template; the application menu is remembered.
+  let applicationMenu: { template: unknown } | null = null;
+  const Menu = {
+    buildFromTemplate: vi.fn((template: unknown) => ({ template })),
+    setApplicationMenu: vi.fn((menu: { template: unknown } | null) => {
+      applicationMenu = menu;
+    }),
+    getApplicationMenu: vi.fn(() => applicationMenu),
+  };
+  const electron = { app, BrowserWindow: FakeBrowserWindow, WebContentsView: FakeWebContentsView, Menu, shell, session, protocol, ipcMain };
   return { ...electron, default: electron };
 }

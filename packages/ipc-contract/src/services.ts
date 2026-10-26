@@ -4,13 +4,30 @@ import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 // implementations through the IPC context (`IpcHandlerOptions.services`); this package only knows
 // the interfaces, so it stays free of Electron.
 
-/** The browser controller as the `browser.*` procedures see it (acceptance: `browser-chrome.feature.md`). */
+/**
+ * The browser controller as the `browser.*` procedures see it (acceptance: `browser-chrome.feature.md`,
+ * `tabs.feature.md`). `navigate`, `back`, `forward`, `reload` and `stop` act on the active tab.
+ */
 export interface BrowserService {
   /**
    * Resolves `input` like the address bar (`resolveAddressInput`) and loads it. `true` if a
    * navigation started; `false` for a no-op (empty input, no tab or window).
    */
   navigate(input: string): boolean;
+  /**
+   * Opens an empty tab at the end of the strip, activates it and asks the chrome to focus the
+   * address bar. Answers its id, or `null` when `MAX_TABS` are open (the `tab-limit` notice is
+   * raised instead). Acceptance: `tabs.feature.md`.
+   */
+  newTab(): number | null;
+  /**
+   * Closes the tab (its view detached, its WebContents closed); the right neighbour, else the left
+   * one, becomes active, and closing the last tab leaves one fresh empty tab. `false` (a no-op)
+   * for an id that names no open tab.
+   */
+  closeTab(tabId: number): boolean;
+  /** Shows the tab (only the active tab's view is attached). `false` for an id that names no open tab. */
+  activateTab(tabId: number): boolean;
   back(): void;
   forward(): void;
   reload(): void;

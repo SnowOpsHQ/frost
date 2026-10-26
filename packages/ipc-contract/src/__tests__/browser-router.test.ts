@@ -1,5 +1,5 @@
 // Spec: specs/browser.spec.ts (WATCH_TIMEOUT_MS, schemas), specs/ipc-sender.spec.ts
-// Acceptance: specs/browser-chrome.feature.md (Router)
+// Acceptance: specs/browser-chrome.feature.md (Router), specs/tabs.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ADDRESS_INPUT_MAX_LENGTH, WATCH_TIMEOUT_MS, type BrowserState } from '@app/specs/browser.spec';
@@ -16,6 +16,8 @@ function stateAt(version: number): BrowserState {
     version,
     tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false }],
     activeTabId: 1,
+    focusAddressBarSeq: 0,
+    notice: null,
   };
 }
 
@@ -24,6 +26,9 @@ function fakeService(version = 3) {
   let release: ((state: BrowserState) => void) | undefined;
   const service = {
     navigate: vi.fn((input: string) => input.trim() !== ''),
+    newTab: vi.fn((): number | null => 2),
+    closeTab: vi.fn((tabId: number) => tabId === 1),
+    activateTab: vi.fn((tabId: number) => tabId === 1),
     back: vi.fn(),
     forward: vi.fn(),
     reload: vi.fn(),
@@ -77,6 +82,9 @@ async function errorOf(run: Promise<unknown>): Promise<TRPCError> {
 
 const VALID_INPUT: Record<string, unknown> = {
   navigate: { input: 'example.com' },
+  newTab: undefined,
+  closeTab: { tabId: 1 },
+  activateTab: { tabId: 1 },
   back: undefined,
   forward: undefined,
   reload: undefined,
@@ -150,6 +158,47 @@ describe('browser router', () => {
     const { service } = fakeService();
     await expect(procedure(ctxFor(service), 'navigate')({ input: 'example.com' })).resolves.toBe(true);
     await expect(procedure(ctxFor(service), 'navigate')({ input: '   ' })).resolves.toBe(false);
+  });
+
+  test('tab-procedures-validate-tab-id', async () => {
+    const malformed = [
+      undefined,
+      1,
+      {},
+      { tabId: 0 },
+      { tabId: -1 },
+      { tabId: 1.5 },
+      { tabId: '1' },
+      { tabId: Number.MAX_SAFE_INTEGER + 1 },
+      { tabId: Number.NaN },
+      { tabId: 1, extra: true },
+      { id: 1 },
+    ];
+    for (const name of ['closeTab', 'activateTab']) {
+      for (const input of malformed) {
+        const { service } = fakeService();
+        const error = await errorOf(procedure(ctxFor(service), name)(input));
+        expect(error.code, `${name} ${String(JSON.stringify(input))}`).toBe('BAD_REQUEST');
+        for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  test('tab-procedures-call-service', async () => {
+    const { service } = fakeService();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'newTab')()).resolves.toBe(2);
+    expect(service.newTab).toHaveBeenCalledTimes(1);
+    service.newTab.mockReturnValueOnce(null);
+    await expect(procedure(ctx, 'newTab')()).resolves.toBeNull();
+
+    for (const name of ['closeTab', 'activateTab'] as const) {
+      await expect(procedure(ctx, name)({ tabId: 1 }), name).resolves.toBe(true);
+      expect(service[name]).toHaveBeenLastCalledWith(1);
+      // An id that names no open tab is the service's no-op: `false`, not an error.
+      await expect(procedure(ctx, name)({ tabId: 99 }), name).resolves.toBe(false);
+      expect(service[name]).toHaveBeenLastCalledWith(99);
+    }
   });
 
   test('missing-browser-service-is-internal-error', async () => {

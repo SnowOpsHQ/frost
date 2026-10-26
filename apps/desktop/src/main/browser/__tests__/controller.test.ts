@@ -1,10 +1,12 @@
-// Spec: specs/browser.spec.ts (BrowserStateSchema, APP_WINDOW_TITLE) · Acceptance: specs/browser-chrome.feature.md (Controller)
+// Spec: specs/browser.spec.ts (BrowserStateSchema, APP_WINDOW_TITLE, MAX_TABS)
+// Acceptance: specs/browser-chrome.feature.md (Controller), specs/tabs.feature.md (Controller)
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   APP_WINDOW_TITLE,
   BrowserStateSchema,
   MAX_PENDING_WATCHES,
+  MAX_TABS,
   SEARCH_URL_TEMPLATE,
   WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH,
 } from '@app/specs/browser.spec';
@@ -27,7 +29,10 @@ class FakeTabContents extends EventEmitter {
   stop = vi.fn();
   focus = vi.fn();
   destroyed = false;
-  close = vi.fn();
+  /** Like Electron's `webContents.close()` (no beforeunload wait): the WebContents is destroyed. */
+  close = vi.fn(() => {
+    if (!this.destroyed) this.destroy();
+  });
   isDestroyed = () => this.destroyed;
   /** What Electron does when the page calls `window.close()`: the WebContents is destroyed. */
   destroy() {
@@ -51,7 +56,18 @@ class FakeTabView {
 class FakeHostWindow extends EventEmitter {
   size: [number, number] = [1280, 800];
   title = '';
-  readonly contentView = { addChildView: vi.fn(), removeChildView: vi.fn(), children: [] as unknown[] };
+  /** Like Electron's `View`: tracks its children (adding a child again moves it to the top). */
+  readonly contentView = {
+    children: [] as unknown[],
+    addChildView: vi.fn((child: unknown) => {
+      this.contentView.children = [...this.contentView.children.filter((c) => c !== child), child];
+    }),
+    removeChildView: vi.fn((child: unknown) => {
+      this.contentView.children = this.contentView.children.filter((c) => c !== child);
+    }),
+  };
+  /** The chrome's own WebContents. */
+  readonly webContents = { focus: vi.fn() };
   getContentSize = () => [...this.size];
   setTitle = vi.fn((title: string) => {
     this.title = title;
@@ -369,5 +385,288 @@ describe('browser controller', () => {
     controller.navigate('example.org');
     expect(views).toHaveLength(2);
     expect(next.contentView.addChildView).toHaveBeenCalledExactlyOnceWith(views[1]);
+  });
+});
+
+describe('tabs', () => {
+  const ids = () => controller.getState().tabs.map((tab) => tab.id);
+  const active = () => controller.getState().activeTabId;
+  const attached = () => [...win.contentView.children];
+  /** Opens a new tab and loads `url` in it; answers the tab id and its view. */
+  function openPage(url: string, title = url) {
+    const id = controller.newTab();
+    if (id === null) throw new Error('newTab refused');
+    controller.navigate(url);
+    const created = views.at(-1)!;
+    commit(created.webContents, url, title);
+    return { id, view: created };
+  }
+  /** Loads `url` in the (empty) first tab; answers its id and view. */
+  function loadFirst(url: string, title = url) {
+    controller.navigate(url);
+    const created = views.at(-1)!;
+    commit(created.webContents, url, title);
+    return { id: ids()[0]!, view: created };
+  }
+
+  test('new-tab-opens-empty-tab-at-end', () => {
+    const first = loadFirst('https://a.test/', 'A');
+    expect(attached()).toEqual([first.view]);
+
+    const id = controller.newTab();
+    expect(id).not.toBeNull();
+    expect(ids()).toEqual([first.id, id]);
+    expect(active()).toBe(id);
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false });
+    // No view for the empty tab; the previous tab's view is no longer attached.
+    expect(views).toHaveLength(1);
+    expect(attached()).toEqual([]);
+    expect(win.title).toBe(APP_WINDOW_TITLE);
+    expect(BrowserStateSchema.safeParse(controller.getState()).success).toBe(true);
+  });
+
+  test('new-tab-focuses-address-bar', () => {
+    const { focusAddressBarSeq, version } = controller.getState();
+    controller.newTab();
+    expect(win.webContents.focus).toHaveBeenCalledTimes(1);
+    expect(controller.getState().focusAddressBarSeq).toBe(focusAddressBarSeq + 1);
+    expect(controller.getState().version).toBeGreaterThan(version);
+  });
+
+  test('close-tab-closes-its-contents', () => {
+    const first = loadFirst('https://a.test/');
+    const second = openPage('https://b.test/');
+    expect(attached()).toEqual([second.view]);
+
+    expect(controller.closeTab(second.id)).toBe(true);
+    expect(ids()).toEqual([first.id]);
+    expect(win.contentView.removeChildView).toHaveBeenCalledWith(second.view);
+    expect(second.view.webContents.close).toHaveBeenCalledTimes(1);
+    expect(first.view.webContents.close).not.toHaveBeenCalled();
+    expect(attached()).toEqual([first.view]);
+  });
+
+  test('close-activates-right-neighbour-else-left', () => {
+    const a = loadFirst('https://a.test/');
+    const b = openPage('https://b.test/');
+    const c = openPage('https://c.test/');
+
+    // Middle tab active → its right neighbour.
+    controller.activateTab(b.id);
+    controller.closeTab(b.id);
+    expect(ids()).toEqual([a.id, c.id]);
+    expect(active()).toBe(c.id);
+    expect(attached()).toEqual([c.view]);
+
+    // Rightmost tab active → its left neighbour.
+    controller.closeTab(c.id);
+    expect(active()).toBe(a.id);
+    expect(attached()).toEqual([a.view]);
+    expect(win.title).toBe('https://a.test/ — frost');
+  });
+
+  test('close-inactive-tab-keeps-active', () => {
+    const a = loadFirst('https://a.test/');
+    const b = openPage('https://b.test/');
+    const c = openPage('https://c.test/');
+    controller.activateTab(a.id);
+    controller.closeTab(b.id);
+    expect(ids()).toEqual([a.id, c.id]);
+    expect(active()).toBe(a.id);
+    expect(attached()).toEqual([a.view]);
+    expect(b.view.webContents.close).toHaveBeenCalledTimes(1);
+  });
+
+  test('close-last-tab-leaves-fresh-empty-tab', () => {
+    const only = loadFirst('https://a.test/', 'A');
+    const { focusAddressBarSeq } = controller.getState();
+    expect(controller.closeTab(only.id)).toBe(true);
+    const state = controller.getState();
+    expect(state.tabs).toHaveLength(1);
+    expect(state.tabs[0]).toMatchObject({ url: '', title: '', loading: false });
+    expect(state.tabs[0]!.id).not.toBe(only.id);
+    expect(state.activeTabId).toBe(state.tabs[0]!.id);
+    expect(state.focusAddressBarSeq).toBe(focusAddressBarSeq + 1);
+    expect(only.view.webContents.close).toHaveBeenCalledTimes(1);
+    expect(attached()).toEqual([]);
+    expect(win.title).toBe(APP_WINDOW_TITLE);
+
+    // An empty only tab closes the same way.
+    const emptyId = state.tabs[0]!.id;
+    expect(controller.closeTab(emptyId)).toBe(true);
+    expect(ids()).toHaveLength(1);
+    expect(ids()[0]).not.toBe(emptyId);
+  });
+
+  test('only-active-view-is-attached', () => {
+    const a = loadFirst('https://a.test/');
+    expect(attached()).toEqual([a.view]);
+    const empty = controller.newTab()!;
+    expect(attached()).toEqual([]);
+    const b = openPage('https://b.test/');
+    expect(attached()).toEqual([b.view]);
+    controller.activateTab(a.id);
+    expect(attached()).toEqual([a.view]);
+    controller.activateTab(empty);
+    expect(attached()).toEqual([]);
+    controller.activateTab(b.id);
+    expect(attached()).toEqual([b.view]);
+    // The newly attached view gets the page bounds.
+    controller.setPageBounds({ x: 0, y: 90, width: 1280, height: 680 });
+    controller.activateTab(a.id);
+    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1280, height: 680 });
+    expect(attached()).toEqual([a.view]);
+    controller.closeTab(a.id);
+    // `a` was active and is closed: its right neighbour (the empty tab) shows; nothing attached.
+    expect(active()).toBe(empty);
+    expect(attached()).toEqual([]);
+  });
+
+  test('tabs-keep-their-own-state', () => {
+    const a = loadFirst('https://a.test/1', 'A1');
+    commit(a.view.webContents, 'https://a.test/2', 'A2', { back: true });
+    const b = openPage('https://b.test/', 'B');
+    b.view.webContents.loading = true;
+    b.view.webContents.emit('did-start-loading');
+
+    const [tabA, tabB] = controller.getState().tabs;
+    expect(tabA).toMatchObject({ id: a.id, url: 'https://a.test/2', title: 'A2', canGoBack: true, loading: false });
+    expect(tabB).toMatchObject({ id: b.id, url: 'https://b.test/', title: 'B', canGoBack: false, loading: true });
+
+    // A background tab's events update only that tab.
+    a.view.webContents.title = 'A2 renamed';
+    a.view.webContents.emit('page-title-updated', fakeEvent(), 'A2 renamed', false);
+    expect(controller.getState().tabs[0]?.title).toBe('A2 renamed');
+    expect(controller.getState().tabs[1]?.title).toBe('B');
+    expect(win.title).toBe('B — frost');
+
+    // Navigation commands act on the active tab only.
+    b.view.webContents.back = true;
+    controller.back();
+    controller.reload();
+    controller.stop();
+    expect(b.view.webContents.navigationHistory.goBack).toHaveBeenCalledTimes(1);
+    expect(a.view.webContents.navigationHistory.goBack).not.toHaveBeenCalled();
+    expect(a.view.webContents.reload).not.toHaveBeenCalled();
+    expect(a.view.webContents.stop).not.toHaveBeenCalled();
+    controller.navigate('c.test');
+    expect(b.view.webContents.loadURL).toHaveBeenLastCalledWith('https://c.test/');
+    expect(a.view.webContents.loadURL).toHaveBeenCalledTimes(1);
+
+    controller.activateTab(a.id);
+    expect(win.title).toBe('A2 renamed — frost');
+    controller.back();
+    expect(a.view.webContents.navigationHistory.goBack).toHaveBeenCalledTimes(1);
+  });
+
+  test('tab-shortcuts-select-by-position', () => {
+    const a = loadFirst('https://a.test/');
+    const b = openPage('https://b.test/');
+    const c = openPage('https://c.test/');
+    expect(controller.activateTabAt(0)).toBe(true);
+    expect(active()).toBe(a.id);
+    expect(controller.activateTabAt(1)).toBe(true);
+    expect(active()).toBe(b.id);
+    const version = controller.getState().version;
+    expect(controller.activateTabAt(3)).toBe(false);
+    expect(controller.activateTabAt(-1)).toBe(false);
+    expect(active()).toBe(b.id);
+    expect(controller.getState().version).toBe(version);
+    expect(controller.activateLastTab()).toBe(true);
+    expect(active()).toBe(c.id);
+    expect(controller.closeActiveTab()).toBe(true);
+    expect(ids()).toEqual([a.id, b.id]);
+    expect(active()).toBe(b.id);
+  });
+
+  test('activate-focuses-page-or-address-bar', () => {
+    const a = loadFirst('https://a.test/');
+    const empty = controller.newTab()!;
+    a.view.webContents.focus.mockClear();
+    controller.activateTab(a.id);
+    expect(a.view.webContents.focus).toHaveBeenCalledTimes(1);
+
+    win.webContents.focus.mockClear();
+    const { focusAddressBarSeq } = controller.getState();
+    controller.activateTab(empty);
+    expect(win.webContents.focus).toHaveBeenCalledTimes(1);
+    expect(controller.getState().focusAddressBarSeq).toBe(focusAddressBarSeq + 1);
+
+    // Activating the active tab changes nothing.
+    const { version } = controller.getState();
+    expect(controller.activateTab(empty)).toBe(true);
+    expect(controller.getState().version).toBe(version);
+  });
+
+  test('focus-address-bar-request', () => {
+    loadFirst('https://a.test/');
+    const { focusAddressBarSeq, version } = controller.getState();
+    controller.focusAddressBar();
+    controller.focusAddressBar();
+    expect(win.webContents.focus).toHaveBeenCalledTimes(2);
+    expect(controller.getState()).toMatchObject({ focusAddressBarSeq: focusAddressBarSeq + 2, version: version + 2 });
+  });
+
+  test('max-tabs-enforced', () => {
+    for (let i = 1; i < MAX_TABS; i++) expect(controller.newTab()).not.toBeNull();
+    expect(controller.getState().tabs).toHaveLength(MAX_TABS);
+    expect(controller.getState().notice).toBeNull();
+    const lastId = active();
+
+    expect(controller.newTab()).toBeNull();
+    const refused = controller.getState();
+    expect(refused.tabs).toHaveLength(MAX_TABS);
+    expect(refused.activeTabId).toBe(lastId);
+    expect(refused.notice).toMatchObject({ kind: 'tab-limit' });
+    expect(BrowserStateSchema.safeParse(refused).success).toBe(true);
+
+    // Each refusal is a new notice.
+    expect(controller.newTab()).toBeNull();
+    expect(controller.getState().notice?.seq).toBe(refused.notice!.seq + 1);
+
+    controller.closeTab(ids()[0]!);
+    expect(controller.newTab()).not.toBeNull();
+    expect(controller.getState().tabs).toHaveLength(MAX_TABS);
+  });
+
+  test('closed-tab-events-are-ignored', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    const b = openPage('https://b.test/', 'B');
+    controller.closeTab(b.id);
+    const before = controller.getState();
+
+    const contents = b.view.webContents;
+    contents.url = 'https://late.test/';
+    contents.title = 'Late';
+    contents.loading = true;
+    contents.emit('did-start-loading');
+    contents.emit('did-navigate', fakeEvent(), contents.url, 200, 'OK');
+    contents.emit('did-navigate-in-page', fakeEvent(), contents.url, true);
+    contents.emit('page-title-updated', fakeEvent(), 'Late', false);
+    contents.emit('did-fail-load', fakeEvent(), -3, 'ERR_ABORTED', contents.url, true);
+    contents.emit('did-stop-loading');
+    contents.emit('render-process-gone', fakeEvent(), { reason: 'crashed', exitCode: 1 });
+    contents.emit('destroyed');
+
+    expect(controller.getState()).toEqual(before);
+    expect(controller.getState().tabs).toEqual([expect.objectContaining({ id: a.id, url: 'https://a.test/', title: 'A' })]);
+    expect(attached()).toEqual([a.view]);
+    // Our listeners are gone from the closed WebContents.
+    for (const event of ['did-start-loading', 'did-navigate', 'page-title-updated', 'did-stop-loading', 'render-process-gone']) {
+      expect(contents.listenerCount(event), event).toBe(0);
+    }
+  });
+
+  test('unknown-tab-id-is-a-no-op', () => {
+    const a = loadFirst('https://a.test/');
+    const b = openPage('https://b.test/');
+    controller.closeTab(b.id);
+    const before = controller.getState();
+    for (const id of [b.id, 999, 0, -1, 1.5, Number.NaN]) {
+      expect(controller.closeTab(id), String(id)).toBe(false);
+      expect(controller.activateTab(id), String(id)).toBe(false);
+    }
+    expect(controller.getState()).toEqual(before);
+    expect(a.view.webContents.close).not.toHaveBeenCalled();
   });
 });

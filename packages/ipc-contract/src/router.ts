@@ -3,6 +3,7 @@ import {
   BrowserStateSchema,
   NavigateInputSchema,
   PageBoundsSchema,
+  TabIdInputSchema,
   WATCH_TIMEOUT_MS,
   WatchInputSchema,
   type BrowserState,
@@ -51,8 +52,10 @@ async function watchState(browser: BrowserService, sinceVersion: number): Promis
 }
 
 /**
- * Browser chrome ↔ main (spec `browser-chrome.feature.md`, Router). `navigate` answers whether a
- * navigation started; the other mutations answer `null`.
+ * Browser chrome ↔ main (spec `browser-chrome.feature.md` and `tabs.feature.md`, Router). `navigate`
+ * answers whether a navigation started; `newTab` the new tab's id (`null` at `MAX_TABS`);
+ * `closeTab` / `activateTab` whether the id named an open tab; the other mutations answer `null`.
+ * `navigate`, `back`, `forward`, `reload` and `stop` act on the active tab.
  */
 const browserRouter = router({
   navigate: publicProcedure
@@ -60,6 +63,20 @@ const browserRouter = router({
     .use(requireBrowser)
     .input(NavigateInputSchema)
     .mutation(({ ctx, input }) => ctx.browser.navigate(input.input) === true),
+  newTab: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .mutation(({ ctx }) => ctx.browser.newTab()),
+  closeTab: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(TabIdInputSchema)
+    .mutation(({ ctx, input }) => ctx.browser.closeTab(input.tabId) === true),
+  activateTab: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(TabIdInputSchema)
+    .mutation(({ ctx, input }) => ctx.browser.activateTab(input.tabId) === true),
   back: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)

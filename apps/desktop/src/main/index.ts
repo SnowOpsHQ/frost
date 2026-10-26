@@ -6,6 +6,7 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { createWindowRegistry } from './app-windows';
 import { createBrowserController } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
+import { installAppMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { remoteDebuggingRefusal } from './security/policy';
@@ -75,6 +76,9 @@ void app.whenReady().then(() => {
     fromWebContents: (contents) => BrowserWindow.fromWebContents(contents),
     services: { browser },
   });
+  // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) are menu accelerators calling the controller directly
+  // (specs/tabs.feature.md).
+  installAppMenu(browser);
   openMainWindow();
 
   // macOS: re-create a window when the dock icon is clicked and none are open.
