@@ -14,7 +14,7 @@ import {
   type TabState,
 } from '@app/specs/browser.spec';
 import { IGNORED_LOAD_ERROR_CODES } from '@app/specs/browse-guard.spec';
-import type { PermissionDecision } from '@app/specs/permissions.spec';
+import { FULLSCREEN_BANNER_HEIGHT, FULLSCREEN_EXIT_KEY, FULLSCREEN_NOTICE_MS, type PermissionDecision } from '@app/specs/permissions.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { isWebUrl } from './guard';
 import { pageTitle } from './page-title';
@@ -34,7 +34,10 @@ import { matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 /** A tab's page view (`createTabView()`); it is attached to the window's `contentView`. */
 export type TabView = WebContentsView;
 /** The parts of the app window the controller uses. */
-export type HostWindow = Pick<BrowserWindow, 'contentView' | 'webContents' | 'getContentSize' | 'setTitle' | 'on' | 'once' | 'isDestroyed'>;
+export type HostWindow = Pick<
+  BrowserWindow,
+  'contentView' | 'webContents' | 'getContentSize' | 'setTitle' | 'on' | 'once' | 'isDestroyed' | 'isFullScreen' | 'setFullScreen'
+>;
 
 export interface BrowserController extends BrowserService {
   /**
@@ -71,6 +74,8 @@ export interface BrowserController extends BrowserService {
    * permission handlers attribute a request to its tab with it (`permissions.feature.md`).
    */
   tabIdOf(contents: unknown): number | null;
+  /** Whether the tab is in HTML fullscreen (its new permission requests are denied). */
+  isFullscreen(tabId: number): boolean;
   /**
    * A download from `contents` was cancelled (spec `browse-guard.feature.md`): raises the
    * `download-blocked` notice, and closes the tab of `contents` if it is a popup tab that has
@@ -103,6 +108,14 @@ export type TabPermissions = Pick<PermissionBroker, 'promptFor' | 'answer' | 'de
 
 /** A tab's own state; its `permissionPrompt` comes from the broker when the state is read. */
 type PageState = Omit<TabState, 'permissionPrompt'>;
+type FullscreenMode = NonNullable<TabState['fullscreen']>;
+
+/**
+ * The isolated world main leaves HTML fullscreen from (`document.exitFullscreen()`): the page's own
+ * scripts cannot replace the DOM methods seen there.
+ */
+const FULLSCREEN_EXIT_WORLD_ID = 1_001;
+const EXIT_FULLSCREEN_SCRIPT = 'document.exitFullscreen().catch(() => undefined)';
 
 interface Tab {
   readonly id: number;
@@ -119,8 +132,13 @@ interface Tab {
   error: LoadError | null;
   /** The page stopped responding (`unresponsive`) and has not responded since. */
   unresponsive: boolean;
-  /** The page is in HTML fullscreen (`enter-html-full-screen`): its view covers the whole window. */
-  fullscreen: boolean;
+  /**
+   * HTML fullscreen (`enter-html-full-screen`): `notice` while the chrome's fullscreen banner shows
+   * above the view, then `full` (the view covers the whole window); `null` when not fullscreen.
+   */
+  fullscreen: FullscreenMode | null;
+  /** Ends the `notice` phase. */
+  fullscreenTimer: ReturnType<typeof setTimeout> | undefined;
   /** The tab whose page opened this one (popup placement), if any. */
   readonly openerId: number | null;
   state: PageState;
@@ -133,7 +151,7 @@ interface Tab {
 const STATE_EVENTS = ['did-stop-loading', 'did-navigate-in-page', 'page-title-updated'] as const;
 
 function emptyTabState(id: number): PageState {
-  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false };
+  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, fullscreen: null };
 }
 
 function sameError(a: LoadError | null, b: LoadError | null): boolean {
@@ -149,6 +167,7 @@ function sameTabState(a: PageState, b: PageState): boolean {
     a.canGoForward === b.canGoForward &&
     a.crashed === b.crashed &&
     a.unresponsive === b.unresponsive &&
+    a.fullscreen === b.fullscreen &&
     sameError(a.error, b.error)
   );
 }
@@ -235,7 +254,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   /** A new empty tab, not yet in the strip. */
   const createTab = (openerId: number | null = null): Tab => {
     const id = nextTabId++;
-    return { id, view: null, unlisten: noop, crashed: false, error: null, unresponsive: false, fullscreen: false, openerId, state: emptyTabState(id) };
+    return { id, view: null, unlisten: noop, crashed: false, error: null, unresponsive: false, fullscreen: null, fullscreenTimer: undefined, openerId, state: emptyTabState(id) };
   };
 
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
@@ -292,7 +311,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.crashed = false;
     tab.error = null;
     tab.unresponsive = false;
-    tab.fullscreen = false;
+    // Its WebContents is going: nothing will leave HTML fullscreen, so the window leaves OS fullscreen.
+    if (clearFullscreen(tab)) leaveWindowFullscreen();
     denyPrompts(tab);
     if (view) detach(view);
     return view;
@@ -317,12 +337,71 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return tab.view;
   };
 
-  /** Lays `tab`'s view over the page area, or over the whole content area in HTML fullscreen. */
+  /**
+   * Lays `tab`'s view over the page area; in HTML fullscreen over the whole content area, below
+   * the chrome's notice banner while it shows (`FULLSCREEN_BANNER_HEIGHT`).
+   */
   const applyBounds = (tab: Tab): void => {
     if (!tab.view || !win) return;
     const [width = 0, height = 0] = win.getContentSize();
-    if (tab.fullscreen) tab.view.setBounds({ x: 0, y: 0, width, height });
-    else if (pageBounds !== null) tab.view.setBounds(clampPageBounds(pageBounds, [width, height]));
+    if (tab.fullscreen) {
+      const top = tab.fullscreen === 'notice' ? Math.min(FULLSCREEN_BANNER_HEIGHT, height) : 0;
+      tab.view.setBounds({ x: 0, y: top, width, height: height - top });
+    } else if (pageBounds !== null) {
+      tab.view.setBounds(clampPageBounds(pageBounds, [width, height]));
+    }
+  };
+
+  /** Reports a change of `tab.fullscreen` in its state. */
+  const reportFullscreen = (tab: Tab): void => {
+    if (tab.state.fullscreen === tab.fullscreen) return;
+    tab.state = { ...tab.state, fullscreen: tab.fullscreen };
+    changed();
+  };
+
+  /** Forgets `tab`'s HTML fullscreen (no bounds or state update); answers whether it had one. */
+  function clearFullscreen(tab: Tab): boolean {
+    clearTimeout(tab.fullscreenTimer);
+    tab.fullscreenTimer = undefined;
+    const was = tab.fullscreen !== null;
+    tab.fullscreen = null;
+    return was;
+  }
+
+  /** Takes the window out of OS fullscreen (which Electron entered for a page). */
+  function leaveWindowFullscreen(): void {
+    if (win && !win.isDestroyed() && win.isFullScreen()) win.setFullScreen(false);
+  }
+
+  /** `tab` entered (`notice` first, then `full`) or left HTML fullscreen. */
+  const setFullscreen = (tab: Tab, mode: FullscreenMode | null): void => {
+    clearFullscreen(tab);
+    tab.fullscreen = mode;
+    if (mode === 'notice') {
+      tab.fullscreenTimer = setTimeout(() => {
+        if (tab.fullscreen === 'notice' && tabs.includes(tab)) setFullscreen(tab, 'full');
+      }, FULLSCREEN_NOTICE_MS);
+    }
+    applyBounds(tab);
+    reportFullscreen(tab);
+  };
+
+  /** Asks `tab`'s page to leave HTML fullscreen, from an isolated world the page cannot tamper with. */
+  const exitHtmlFullscreen = (tab: Tab): void => {
+    const contents = tab.view ? aliveContents(tab.view) : undefined;
+    contents?.executeJavaScriptInIsolatedWorld(FULLSCREEN_EXIT_WORLD_ID, [{ code: EXIT_FULLSCREEN_SCRIPT }]).catch(() => {
+      // The page is gone or navigating; nothing is fullscreen any more.
+    });
+  };
+
+  /** `tab` stops being shown while fullscreen: its page leaves fullscreen, and the window too. */
+  const leaveFullscreen = (tab: Tab): void => {
+    if (tab.fullscreen === null) return;
+    exitHtmlFullscreen(tab);
+    clearFullscreen(tab);
+    leaveWindowFullscreen();
+    applyBounds(tab);
+    reportFullscreen(tab);
   };
 
   /** Makes the window show exactly the active tab's view (none for an empty tab, or behind a panel). */
@@ -331,7 +410,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const live = tab ? liveView(tab) : null;
     const want = tab && showsPage(tab) ? live : null;
     if (attached === want) return;
+    const hidden = attached ? tabs.find((t) => t.view === attached) : undefined;
     if (attached) detach(attached);
+    // A fullscreen page that is no longer shown leaves fullscreen.
+    if (hidden) leaveFullscreen(hidden);
     if (!want || !tab || !win || win.isDestroyed()) return;
     win.contentView.addChildView(want);
     attached = want;
@@ -372,6 +454,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       error: tab.error && { ...tab.error },
       crashed: tab.crashed,
       unresponsive: tab.unresponsive,
+      fullscreen: tab.fullscreen,
     };
     if (sameTabState(tab.state, next)) return;
     tab.state = next;
@@ -408,10 +491,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     listen('did-navigate', () => {
       tab.error = null;
       if (denyPrompts(tab)) changed();
-      if (tab.fullscreen) {
-        tab.fullscreen = false;
-        applyBounds(tab);
-      }
+      if (clearFullscreen(tab)) applyBounds(tab);
       refresh(tab);
     });
     // Main-frame load failures show the error panel; `ERR_ABORTED` (a dropped navigation, a stop,
@@ -431,14 +511,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       refresh(tab);
     });
     // HTML fullscreen (granted without a prompt, `permissions.spec.ts`): the window goes
-    // fullscreen and the page's view covers all of it until the page leaves fullscreen.
-    listen('enter-html-full-screen', () => {
-      tab.fullscreen = true;
-      applyBounds(tab);
-    });
-    listen('leave-html-full-screen', () => {
-      tab.fullscreen = false;
-      applyBounds(tab);
+    // fullscreen; the chrome's notice banner shows first, then the page's view covers it all.
+    listen('enter-html-full-screen', () => setFullscreen(tab, 'notice'));
+    listen('leave-html-full-screen', () => setFullscreen(tab, null));
+    // Esc always leaves fullscreen: taken before the page can see (and swallow) it.
+    listen('before-input-event', (event: { preventDefault(): void }, input: KeyInput) => {
+      if (tab.fullscreen === null || input.key !== FULLSCREEN_EXIT_KEY) return;
+      event.preventDefault();
+      if (input.type === 'keyDown') exitHtmlFullscreen(tab);
     });
     // A hang is the tab's own state: the status bar reports it while the tab is shown.
     listen('unresponsive', () => {
@@ -561,6 +641,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     raiseNotice('download-blocked');
   };
 
+  const isFullscreen = (tabId: number): boolean => tabs.some((tab) => tab.id === tabId && tab.fullscreen !== null);
+
   const tabIdOf = (contents: unknown): number | null => {
     if (contents === null || contents === undefined) return null;
     return tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === contents)?.id ?? null;
@@ -671,6 +753,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       target.webContents.on('before-input-event', takeShortcut);
       // The chrome page's own <title> must not replace `<page title> — frost`.
       target.on('page-title-updated', (event) => event.preventDefault());
+      // The content size changes without the chrome reporting a new page area (a fullscreen view
+      // fills the window): lay the shown view out again.
+      const relayout = (): void => {
+        const tab = activeTab();
+        if (win === target && tab) applyBounds(tab);
+      };
+      target.on('resize', relayout);
+      target.on('enter-full-screen', relayout);
+      target.on('leave-full-screen', relayout);
       target.once('closed', () => {
         if (win !== target) return;
         closeAll();
@@ -719,6 +810,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     notify: raiseNotice,
 
     tabIdOf,
+
+    isFullscreen,
 
     answerPermission,
 

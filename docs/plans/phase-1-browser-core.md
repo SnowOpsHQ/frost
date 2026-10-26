@@ -59,8 +59,11 @@ owning task.
   `app://app/`): dropped — Task 3 (`page-cannot-navigate-to-non-web-scheme`).
 - **`window.open` from a page without a user gesture**: no new tab — Task 3
   (`popup-without-gesture-is-blocked`).
-- **A permission request from a subframe of another origin**: prompted for (and remembered against)
-  the requesting origin, not the top-level page's — Task 4 (`prompt-names-requesting-origin`).
+- **A permission request from a subframe of another origin**: prompted for the requesting frame's
+  own origin (named as embedded in the top-level site), and remembered against the pair
+  (requesting origin, top-level origin) — never the top-level page's origin alone, and never
+  following the iframe to other sites; an opaque (sandboxed) frame is never attributed its URL's
+  origin — Task 4 (`prompt-names-requesting-origin`, `sandboxed-document-denied`).
 - **A restored tab whose stored URL is no longer browsable** (tampered DB row `file:///…`): skipped
   on restore — Task 5 (`restore-skips-non-browsable-urls`).
 
@@ -147,9 +150,10 @@ strip). Test: unit + `e2e/tabs.e2e.ts`.
 prompt bar. Test: unit + `e2e/permissions.e2e.ts`.
 
 - [ ] **Step 1 (spec):** browse-session requests for a promptable permission show a prompt naming the
-  *requesting* origin; Allow/Block answers it and is remembered per (origin, permission) for the
-  session; dismissing, closing the tab, or navigating away denies; non-promptable permissions are
-  denied silently; the app UI's default session stays deny-all (Phase 0).
+  *requesting* frame's origin (and the top-level site when it is embedded); Allow/Block answers it
+  and is remembered per (requesting origin, top-level origin, permission) for the session;
+  dismissing, closing the tab, or navigating away denies; non-promptable permissions are denied
+  silently; the app UI's default session stays deny-all (Phase 0).
 - [ ] **Steps 2–5:** red → green.
 - [ ] **Step 6: commit** — `feat(browser): per-origin permission prompts`.
 

@@ -79,7 +79,11 @@ void app.whenReady().then(() => {
   // permission prompts (everything not promptable denied), and every download cancelled with a notice.
   hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), {
     onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
-    permissions: createBrowsePermissionHandlers({ broker: permissions, tabIdOf: (contents) => browser.tabIdOf(contents) }),
+    permissions: createBrowsePermissionHandlers({
+      broker: permissions,
+      tabIdOf: (contents) => browser.tabIdOf(contents),
+      isFullscreen: (tabId) => browser.isFullscreen(tabId),
+    }),
   });
   // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
   handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));

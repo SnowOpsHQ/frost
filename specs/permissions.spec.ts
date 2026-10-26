@@ -43,10 +43,13 @@ export type PromptablePermission = (typeof PROMPTABLE_PERMISSIONS)[number];
 /**
  * Electron permission names granted **without a prompt**, as mainstream browsers do:
  * - `fullscreen` — `Element.requestFullscreen()`. Chromium only lets a page ask from a user
- *   gesture, and Esc always leaves it (Electron handles Esc for HTML fullscreen). While a tab is in
- *   HTML fullscreen its view covers the whole window content area (the window itself goes
- *   fullscreen); it returns to the page area when the page leaves fullscreen.
- *   `automatic-fullscreen` (no gesture) stays denied.
+ *   gesture. Against UI spoofing, frost keeps its own notice on screen first: for
+ *   `FULLSCREEN_NOTICE_MS` the chrome shows a banner (`FULLSCREEN_BANNER_HEIGHT` high, "<host>
+ *   `FULLSCREEN_NOTICE_TEXT`") above the page, then the page's view covers the whole window. Esc
+ *   (`FULLSCREEN_EXIT_KEY`) always leaves fullscreen: main takes it in `before-input-event`, so a
+ *   page cannot swallow it. Switching away from, or closing, a fullscreen tab leaves fullscreen
+ *   too. While a tab is fullscreen, its permission requests are denied at once (a prompt would be
+ *   hidden behind the page). `automatic-fullscreen` (no gesture) stays denied.
  * - `clipboard-sanitized-write` — `navigator.clipboard.writeText()` / `write()` of sanitized
  *   data ("copy" buttons). Chromium only allows it from a focused document; writing what the page
  *   chose is what every copy button does, and reading it back stays behind `clipboard-read`.
@@ -61,8 +64,11 @@ export const MEDIA_TYPES = ['video', 'audio'] as const;
 export type MediaType = (typeof MEDIA_TYPES)[number];
 
 /**
- * What a decision is remembered against, per origin: one entry per promptable permission, with
- * `media` split per device. A `media` request for both devices asks once and an Allow / Block
+ * What a decision is remembered against, per **scope** — (requesting origin, top-level origin), as
+ * Chrome keys embedded permissions: a third-party iframe's decision applies only under the same
+ * top-level site, never wherever that iframe is embedded. A top-level page (or a same-origin frame)
+ * has scope (origin, origin). Per scope, one entry per promptable permission, with `media` split
+ * per device. A `media` request for both devices asks once and an Allow / Block
  * remembers both; a later request is answered from what is remembered for each device it asks for
  * (any device Blocked → denied; every device Allowed → granted; otherwise the prompt names only the
  * devices still undecided).
@@ -92,6 +98,27 @@ export type RememberedDecision = (typeof REMEMBERED_DECISIONS)[number];
 export const PERMISSION_PROMPT_TIMEOUT_MS = 5 * 60_000;
 
 /**
+ * Back-off: once a (scope, permission) prompt has been dismissed or has timed out this many times
+ * in the app session, further requests for it are denied silently for the rest of the session
+ * (nothing is remembered beyond the session).
+ */
+export const MAX_PROMPT_IGNORES = 3;
+
+/**
+ * At most this many identical requests coalesce into one pending prompt; more are denied at once,
+ * so a page calling `Notification.requestPermission()` in a loop cannot grow main's memory.
+ */
+export const MAX_COALESCED_REQUESTS = 16;
+
+/**
+ * Against clickjacking, the prompt bar's Allow and Block ignore activation for this long after the
+ * bar appears, after the shown tab (or prompt) changes, and after the chrome's window regains focus
+ * or becomes visible. The buttons are rendered but disabled meanwhile; the dismiss × (which only
+ * denies) is always live.
+ */
+export const PROMPT_ARMING_DELAY_MS = 750;
+
+/**
  * At most this many distinct prompts wait per tab (duplicates coalesce into one); a request beyond
  * it is denied at once, so a page cannot grow main's queue without bound.
  */
@@ -99,9 +126,11 @@ export const MAX_PENDING_PROMPTS_PER_TAB = 8;
 
 /**
  * Origins that may be prompted for: the requesting frame's origin must be `http:` or `https:`
- * (`BROWSABLE_SCHEMES`). Opaque origins (`about:blank`, `data:`, sandboxed frames) and anything
- * else are denied silently. Chromium itself only lets secure contexts (`https:`, loopback `http:`)
- * ask for these permissions.
+ * (`BROWSABLE_SCHEMES`). Opaque origins (`about:blank`, `data:`, documents sandboxed by a CSP
+ * `sandbox` header or an `<iframe sandbox>`) and anything else are denied silently. The origin is
+ * the **requesting frame's own** (`WebFrameMain.origin`), never just its URL's: a sandboxed
+ * document at `https://a.example/` has an opaque origin and gets none of `https://a.example`'s
+ * decisions. Chromium itself only lets secure contexts (`https:`, loopback `http:`) ask.
  */
 export const PROMPTABLE_ORIGIN_SCHEMES = ['http:', 'https:'] as const;
 
@@ -121,3 +150,17 @@ export type PromptKind = keyof typeof PERMISSION_PROMPT_ACTIONS;
 
 /** Button labels of the prompt bar (the dismiss × is labelled for assistive technology). */
 export const PERMISSION_PROMPT_LABELS = { allow: 'Allow', block: 'Block', dismiss: 'Dismiss' } as const;
+
+/**
+ * How the prompt names an embedded requester: "<host> (embedded in <top-level host>) wants to …".
+ */
+export const PERMISSION_PROMPT_EMBEDDED_IN = 'embedded in' as const;
+
+/** How long the fullscreen notice stays above a page that just entered HTML fullscreen. */
+export const FULLSCREEN_NOTICE_MS = 3_000;
+/** Height in DIP of the chrome's fullscreen notice banner (the view sits below it meanwhile). */
+export const FULLSCREEN_BANNER_HEIGHT = 40;
+/** The notice follows the page's host: "<host> is now full screen — press Esc to exit". */
+export const FULLSCREEN_NOTICE_TEXT = 'is now full screen \u2014 press Esc to exit' as const;
+/** The key that always leaves HTML fullscreen (`before-input-event` `input.key`). */
+export const FULLSCREEN_EXIT_KEY = 'Escape' as const;

@@ -3,6 +3,7 @@
 // specs/browse-guard.feature.md (Controller)
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { FULLSCREEN_BANNER_HEIGHT, FULLSCREEN_NOTICE_MS } from '@app/specs/permissions.spec';
 import {
   APP_WINDOW_TITLE,
   BrowserStateSchema,
@@ -30,6 +31,7 @@ class FakeTabContents extends EventEmitter {
   reload = vi.fn();
   stop = vi.fn();
   focus = vi.fn();
+  executeJavaScriptInIsolatedWorld = vi.fn(async (_worldId: number, _scripts: { code: string }[]) => undefined);
   destroyed = false;
   /** Like Electron's `webContents.close()` (no beforeunload wait): the WebContents is destroyed. */
   close = vi.fn(() => {
@@ -78,6 +80,12 @@ class FakeHostWindow extends EventEmitter {
   getContentSize = () => [...this.size];
   setTitle = vi.fn((title: string) => {
     this.title = title;
+  });
+  /** OS fullscreen, as Electron sets it when a page enters HTML fullscreen. */
+  fullScreen = false;
+  isFullScreen = () => this.fullScreen;
+  setFullScreen = vi.fn((flag: boolean) => {
+    this.fullScreen = flag;
   });
   isDestroyed = () => false;
 }
@@ -447,7 +455,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);
@@ -1053,7 +1061,7 @@ describe('permissions', () => {
   const ids = () => controller.getState().tabs.map((tab) => tab.id);
   const tabState = (id: number) => controller.getState().tabs.find((tab) => tab.id === id)!;
   const promptOf = (id: number) => tabState(id).permissionPrompt;
-  const notifications = (origin: string) => ({ origin, permission: 'notifications' as const });
+  const notifications = (origin: string) => ({ origin, topLevelOrigin: origin, permission: 'notifications' as const });
 
   /** Opens a tab with a committed page; answers its id and view. */
   function openPage(url: string) {
@@ -1162,24 +1170,128 @@ describe('permissions', () => {
     expect(destroyed).toHaveBeenCalledExactlyOnceWith(false);
     expect(ids()).toEqual([a.id]);
     expect(broker.pendingCount()).toBe(0);
-    expect(broker.check('https://a.test', 'notifications')).toBe(false);
+    expect(broker.check({ origin: 'https://a.test', topLevelOrigin: 'https://a.test' }, 'notifications')).toBe(false);
   });
 
+  /** Electron's `before-input-event` for a key (Linux). */
+  function press(contents: FakeTabContents, keyName: string, type = 'keyDown') {
+    const event = fakeEvent();
+    contents.emit('before-input-event', event, key(keyName, {}, type));
+    return event;
+  }
+
+  /** What Electron does when the page enters HTML fullscreen: the window goes OS-fullscreen first. */
+  function enterFullscreen(tabView: FakeTabView, size: [number, number] = [1920, 1080]) {
+    win.fullScreen = true;
+    win.size = size;
+    tabView.webContents.emit('enter-html-full-screen');
+  }
+
   test('html-fullscreen-fills-window', () => {
+    vi.useFakeTimers();
+    try {
+      controller.setPageBounds({ x: 0, y: 90, width: 1280, height: 684 });
+      const a = openPage('https://a.test/');
+      expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1280, height: 684 });
+      expect(tabState(a.id).fullscreen).toBeNull();
+      enterFullscreen(a.view);
+      // First the notice: the view sits below the chrome's banner.
+      expect(tabState(a.id).fullscreen).toBe('notice');
+      expect(BrowserStateSchema.parse(controller.getState())).toEqual(controller.getState());
+      expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: FULLSCREEN_BANNER_HEIGHT, width: 1920, height: 1080 - FULLSCREEN_BANNER_HEIGHT });
+      // The chrome reports its new page area meanwhile: the view keeps its fullscreen bounds.
+      controller.setPageBounds({ x: 0, y: 90, width: 1920, height: 964 });
+      expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: FULLSCREEN_BANNER_HEIGHT, width: 1920, height: 1080 - FULLSCREEN_BANNER_HEIGHT });
+      vi.advanceTimersByTime(FULLSCREEN_NOTICE_MS - 1);
+      expect(tabState(a.id).fullscreen).toBe('notice');
+      const before = controller.getState().version;
+      vi.advanceTimersByTime(1);
+      expect(tabState(a.id).fullscreen).toBe('full');
+      expect(controller.getState().version).toBe(before + 1);
+      expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1920, height: 1080 });
+      a.view.webContents.emit('leave-html-full-screen');
+      expect(tabState(a.id).fullscreen).toBeNull();
+      expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1920, height: 964 });
+      // A new document is never fullscreen, and a stale notice timer changes nothing.
+      enterFullscreen(a.view);
+      commit(a.view.webContents, 'https://a.test/next', 'Next');
+      expect(tabState(a.id).fullscreen).toBeNull();
+      expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1920, height: 964 });
+      vi.advanceTimersByTime(FULLSCREEN_NOTICE_MS);
+      expect(tabState(a.id).fullscreen).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('tab-fullscreen-state', () => {
+    const a = openPage('https://a.test/');
+    const b = openPage('https://b.test/');
+    expect(controller.isFullscreen(a.id)).toBe(false);
+    enterFullscreen(b.view);
+    expect(controller.isFullscreen(b.id)).toBe(true);
+    expect(controller.isFullscreen(a.id)).toBe(false);
+    expect(controller.isFullscreen(999)).toBe(false);
+    b.view.webContents.emit('leave-html-full-screen');
+    expect(controller.isFullscreen(b.id)).toBe(false);
+  });
+
+  test('esc-always-leaves-fullscreen', () => {
+    const a = openPage('https://a.test/');
+    const contents = a.view.webContents;
+    // Not fullscreen: Escape is the page's.
+    expect(press(contents, 'Escape').defaultPrevented).toBe(false);
+    expect(contents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
+    enterFullscreen(a.view);
+    const down = press(contents, 'Escape');
+    expect(down.defaultPrevented).toBe(true);
+    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
+    const [worldId, scripts] = contents.executeJavaScriptInIsolatedWorld.mock.calls[0]!;
+    expect(worldId).toBeGreaterThan(0);
+    expect(scripts.map((script) => script.code).join('')).toContain('document.exitFullscreen()');
+    // The key-up is kept from the page as well, and does not exit twice.
+    expect(press(contents, 'Escape', 'keyUp').defaultPrevented).toBe(true);
+    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
+    // Other keys still reach the page.
+    expect(press(contents, 'a').defaultPrevented).toBe(false);
+  });
+
+  test('leaving-fullscreen-tab-restores-window', () => {
+    const a = openPage('https://a.test/');
+    const b = openPage('https://b.test/');
+    // Switching away from a fullscreen tab.
+    enterFullscreen(b.view);
+    controller.activateTab(a.id);
+    expect(b.view.contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1);
+    expect(controller.isFullscreen(b.id)).toBe(false);
+    expect(win.setFullScreen).toHaveBeenLastCalledWith(false);
+    expect(win.fullScreen).toBe(false);
+    // Closing a fullscreen tab.
+    controller.activateTab(b.id);
+    enterFullscreen(b.view);
+    controller.closeTab(b.id);
+    expect(win.fullScreen).toBe(false);
+    expect(win.setFullScreen).toHaveBeenCalledTimes(2);
+    // Nothing to restore when no tab was fullscreen.
+    controller.closeTab(a.id);
+    expect(win.setFullScreen).toHaveBeenCalledTimes(2);
+  });
+
+  test('window-events-reapply-bounds', () => {
     controller.setPageBounds({ x: 0, y: 90, width: 1280, height: 684 });
     const a = openPage('https://a.test/');
-    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1280, height: 684 });
-    a.view.webContents.emit('enter-html-full-screen');
-    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1280, height: 800 });
-    // The window goes fullscreen; the chrome reports its new page area, the view keeps filling it.
-    win.size = [1920, 1080];
-    controller.setPageBounds({ x: 0, y: 90, width: 1920, height: 964 });
-    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1920, height: 1080 });
+    enterFullscreen(a.view, [1280, 800]);
+    a.view.setBounds.mockClear();
+    // The window's size changes after the page entered fullscreen; no new page-area report.
+    for (const event of ['resize', 'enter-full-screen', 'leave-full-screen'] as const) {
+      win.size = event === 'resize' ? [1600, 900] : event === 'enter-full-screen' ? [1920, 1080] : [1700, 950];
+      win.emit(event);
+      expect(a.view.setBounds, event).toHaveBeenLastCalledWith({ x: 0, y: FULLSCREEN_BANNER_HEIGHT, width: win.size[0], height: win.size[1] - FULLSCREEN_BANNER_HEIGHT });
+    }
     a.view.webContents.emit('leave-html-full-screen');
-    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1920, height: 964 });
-    // A new document is never fullscreen.
-    a.view.webContents.emit('enter-html-full-screen');
-    commit(a.view.webContents, 'https://a.test/next', 'Next');
-    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1920, height: 964 });
+    win.size = [1000, 700];
+    win.emit('resize');
+    expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1000, height: 610 });
   });
 });

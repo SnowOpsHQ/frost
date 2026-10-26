@@ -2,10 +2,12 @@
 
 Spec: `specs/permissions.spec.ts` (`PROMPTABLE_PERMISSIONS`, `SILENTLY_ALLOWED_PERMISSIONS`,
 `MEDIA_TYPES`, `SITE_PERMISSIONS`, `MEDIA_TYPE_PERMISSION`, `PERMISSION_DECISIONS`,
-`PERMISSION_PROMPT_TIMEOUT_MS`, `MAX_PENDING_PROMPTS_PER_TAB`, `PROMPTABLE_ORIGIN_SCHEMES`,
-`PERMISSION_PROMPT_ACTIONS`, `PERMISSION_PROMPT_LABELS`; Zod-free so the chrome can import it) and
-`specs/browser.spec.ts` (`PermissionPromptSchema`, `TabStateSchema.permissionPrompt`,
-`AnswerPermissionInputSchema`). Design doc §3. Phase 1 Task 4; builds on `browser-chrome.feature.md`
+`PERMISSION_PROMPT_TIMEOUT_MS`, `MAX_PROMPT_IGNORES`, `MAX_COALESCED_REQUESTS`,
+`PROMPT_ARMING_DELAY_MS`, `MAX_PENDING_PROMPTS_PER_TAB`, `PROMPTABLE_ORIGIN_SCHEMES`,
+`PERMISSION_PROMPT_ACTIONS`, `PERMISSION_PROMPT_LABELS`, `PERMISSION_PROMPT_EMBEDDED_IN`,
+`FULLSCREEN_NOTICE_MS`, `FULLSCREEN_BANNER_HEIGHT`, `FULLSCREEN_NOTICE_TEXT`, `FULLSCREEN_EXIT_KEY`;
+Zod-free so the chrome can import it) and `specs/browser.spec.ts` (`PermissionPromptSchema`,
+`TabStateSchema.permissionPrompt` / `.fullscreen`, `AnswerPermissionInputSchema`). Design doc §3. Phase 1 Task 4; builds on `browser-chrome.feature.md`
 (the browse session), `tabs.feature.md` and `browse-guard.feature.md`. Each scenario maps to one
 named test.
 
@@ -15,30 +17,43 @@ named test.
   `SILENTLY_ALLOWED_PERMISSIONS` (`fullscreen`, `clipboard-sanitized-write`) are granted without a
   prompt; **every other permission is denied silently** (no prompt, nothing remembered). Device
   permissions (`setDevicePermissionHandler`: HID, serial, USB) stay deny-all.
-- **Requesting origin.** A prompt names, and a decision is remembered against, the origin of the
-  **frame that asked**: `details.requestingUrl` (its last committed URL), else
-  `details.securityOrigin` (media requests), parsed to a serialized origin. A cross-origin iframe's
-  request names the iframe's origin, never the top-level page's. A requesting origin that is not
-  `http:` / `https:` (`PROMPTABLE_ORIGIN_SCHEMES`: opaque `about:blank`, `data:`, `file:` …), or
-  that cannot be parsed, is denied silently. A request whose WebContents is not an open tab's is
+- **Requesting frame.** A request is attributed to the **frame that asked**, by its own origin
+  (`WebFrameMain.origin`), not merely its URL's: for a main-frame request the tab's
+  `mainFrame.origin` must equal the origin of `details.requestingUrl`; for a subframe request the
+  frames of the tab whose URL is `details.requestingUrl` must exist and **all** have that URL's
+  origin (several frames may share a URL). Anything else is denied silently: an opaque origin (a
+  document sandboxed by a CSP `sandbox` header or `<iframe sandbox>`, `about:blank`, `data:`), a
+  non-`http(s)` origin (`PROMPTABLE_ORIGIN_SCHEMES`), a frame that is gone or has navigated, an
+  opaque top-level page, an unparsable URL. A request whose WebContents is not an open tab's is
   denied.
+- **Scope.** Decisions are keyed by (requesting origin, top-level origin) — the tab's
+  `mainFrame.origin` — as Chrome keys embedded permissions: a third-party iframe's decision applies
+  only under the same top-level site. A top-level request has scope (origin, origin). The prompt
+  names the requester and, when it is embedded, the top-level site: "widget.example (embedded in
+  site.example) wants to …".
 - **Media.** A `media` request is split by `details.mediaTypes`: `video` → camera, `audio` →
   microphone (`MEDIA_TYPE_PERMISSION`). The prompt names exactly the devices asked for (and still
   undecided); a `media` request with no known media type is denied.
-- **Remembered decisions.** Allow and Block are remembered per (origin, `SitePermission`) for the
+- **Remembered decisions.** Allow and Block are remembered per (scope, `SitePermission`) for the
   app session, in memory (`createMemoryDecisionStore`; Task 5 swaps in a persistent store behind
   the same `PermissionDecisionStore` interface). A request is answered from what is remembered,
   with no prompt: any asked-for permission Blocked → denied; all Allowed → granted; otherwise the
   prompt asks for the undecided ones only.
 - **Queue.** Each tab has its own queue; the chrome shows its head. Identical requests (same tab,
-  origin, permission and devices) **coalesce** into the pending prompt and get the same answer. An
-  Allow / Block also settles every other pending request it now decides, in any tab. At most
-  `MAX_PENDING_PROMPTS_PER_TAB` distinct prompts wait per tab; one more is denied at once.
+  scope, permission and devices) **coalesce** into the pending prompt and get the same answer, up
+  to `MAX_COALESCED_REQUESTS` per prompt (more are denied at once). An Allow / Block also settles
+  every other pending request it now decides, in any tab. At most `MAX_PENDING_PROMPTS_PER_TAB`
+  distinct prompts wait per tab; one more is denied at once.
+- **Back-off.** After `MAX_PROMPT_IGNORES` dismissals or timeouts of the same (scope,
+  `SitePermission`) in the app session, requests for it are denied silently for the rest of the
+  session.
 - **Answers** (`browser.answerPermission({ promptId, decision })`): `allow` grants, `block` denies;
   both are remembered. `dismiss` (the × or Esc) denies this request only, remembering nothing, so
   the page may ask again. Only the prompt the **active** tab shows can be answered: another tab's
   prompt id, a queued (not yet shown) one, an answered one (ids are single-use), a timed-out one or
-  an unknown one is a no-op answering `false`. Prompt ids are opaque, unguessable UUIDs
+  an unknown one is a no-op answering `false`. When answered, each waiting request's frame is
+  checked again: one whose frame has gone or navigated to another origin is denied (the decision
+  itself is still remembered for the scope the prompt named). Prompt ids are opaque, unguessable UUIDs
   (`crypto.randomUUID`), validated by `AnswerPermissionInputSchema` (a malformed one is
   `BAD_REQUEST`).
 - **Lifetime.** A tab's pending prompts are all **denied** (nothing remembered) when the tab
@@ -47,20 +62,43 @@ named test.
   same-document navigation (`did-navigate-in-page`) keeps them. A prompt nobody answers is denied
   after `PERMISSION_PROMPT_TIMEOUT_MS` (5 minutes).
 - **Check handler.** `setPermissionCheckHandler` on the browse session answers `true` only for
-  `SILENTLY_ALLOWED_PERMISSIONS` and for a remembered Allow of (origin, permission). Electron
+  `SILENTLY_ALLOWED_PERMISSIONS` and for a remembered Allow of (scope, permission). Electron
   passes the checking frame's origin as `requestingOrigin` (with a trailing `/`), and for `media`
-  `details.securityOrigin` and `details.mediaType` (`video` / `audio`; `unknown` → `false`). Note
-  that Electron's check is two-state: before any decision, a page reads `denied` (not `default`)
-  from `Notification.permission` and `navigator.permissions.query`, though a request still prompts.
+  `details.securityOrigin` and `details.mediaType` (`video` / `audio`; `unknown` → `false`). The
+  scope's top-level origin is `details.embeddingOrigin` (Electron 45 sets it to the **top-level**
+  origin, also for nested frames), else the requesting origin for a main-frame check, else the
+  tab's `mainFrame.origin` (media checks carry no `embeddingOrigin`). Chromium does not consult the
+  check for opaque origins (they read `denied`). Known limit: Electron's check is two-state, so
+  before any decision a page reads `denied` (not `default`) from `Notification.permission` and
+  `navigator.permissions.query`, though a request still prompts.
+- **Notifications (known limit).** An allowed site's notifications are shown by Electron as the
+  app's own OS notifications: the OS shows frost as their source and nothing names the site.
+  Electron 45 has no session-level hook to rewrite a web notification's title or body (no
+  notification handler), so frost cannot add the origin cheaply; revisit with a notification
+  manager.
 - **App session.** The app UI's default session stays deny-all (Phase 0 `isPermissionGranted`,
   `GRANTED_PERMISSIONS = []`): no request from the chrome ever prompts.
-- **HTML fullscreen.** While a tab is in HTML fullscreen (`enter-html-full-screen` until
-  `leave-html-full-screen`), its view covers the whole window content area; otherwise the page
-  area.
+- **HTML fullscreen.** Granted without a prompt (gesture-gated by Chromium). On
+  `enter-html-full-screen` the tab's `fullscreen` is `notice`: the chrome shows a frost-owned
+  banner across the top ("<host> `FULLSCREEN_NOTICE_TEXT`", `FULLSCREEN_BANNER_HEIGHT` high) and
+  the view covers the rest of the window below it; after `FULLSCREEN_NOTICE_MS` it is `full` and
+  the view covers the whole window. `FULLSCREEN_EXIT_KEY` (Esc) on a fullscreen tab is taken in
+  `before-input-event` (the page never sees it) and leaves fullscreen by running
+  `document.exitFullscreen()` in an isolated world (a page cannot override it there). Switching to
+  another tab, or a tab showing its error/crash panel, leaves fullscreen the same way and takes
+  the window out of OS fullscreen at once (Chromium completes a hidden page's own exit only when
+  its view is shown again, where it then sits in the page area); closing the tab (its WebContents
+  gone) takes the window out of OS fullscreen. A cross-document commit or `leave-html-full-screen` ends it. While a tab is
+  fullscreen its new permission requests are denied at once (a prompt would be hidden). Bounds are
+  re-applied on the window's `resize`, `enter-full-screen` and `leave-full-screen`, not only when
+  the chrome reports its page area. No new WebContents is involved.
 - **Prompt bar.** For the active tab's prompt the chrome shows a bar under the toolbar (the page
   area, and so the tab's view, moves down to make room): a frost-drawn icon per permission,
-  "<origin's host> wants to <`PERMISSION_PROMPT_ACTIONS`>" (the full origin as its tooltip), then
-  **Allow**, **Block** and a dismiss **×** (`PERMISSION_PROMPT_LABELS`). It is a labelled
+  "<origin's host> wants to <`PERMISSION_PROMPT_ACTIONS`>", or for an embedded requester "<host>
+  (`PERMISSION_PROMPT_EMBEDDED_IN` <top-level host>) wants to …" (the full origins as its tooltip),
+  then **Allow**, **Block** and a dismiss **×** (`PERMISSION_PROMPT_LABELS`). Allow and Block stay
+  disabled for `PROMPT_ARMING_DELAY_MS` after the bar appears, after the shown prompt or tab
+  changes, and after the chrome's window regains focus or becomes visible (clickjacking). It is a labelled
   `role="dialog"` (non-modal) that does not take focus from the page; Tab reaches its buttons and
   Esc inside it dismisses. A background tab with a pending prompt shows a small indicator dot in the
   strip (and says so to assistive technology). Light and dark follow `styles.css`; no `style=`
@@ -68,8 +106,8 @@ named test.
 
 ## Decisions (`apps/desktop/src/main/browser/__tests__/permissions.test.ts`, "decisions")
 - **Scenario: promptable-permissions-prompt** — `classifyPermissionRequest(permission, details)`
-  for `geolocation`, `notifications`, `clipboard-read` and `media` (with media types) from an
-  `https:` frame → `prompt` with that permission and origin.
+  for `geolocation`, `notifications`, `clipboard-read` and `media` (with media types) → `prompt`
+  with that permission.
 - **Scenario: silently-allowed-permissions** — `fullscreen` and `clipboard-sanitized-write` →
   `allow`, from any origin.
 - **Scenario: other-permissions-denied-silently** — `midi`, `midiSysex`, `hid`, `serial`, `usb`,
@@ -79,9 +117,13 @@ named test.
 - **Scenario: media-split-into-camera-and-microphone** — `mediaTypes: ['audio', 'video']` →
   permissions `camera`, `microphone` and prompt media types `['video', 'audio']`; `['video']` →
   camera only; `['audio']` → microphone only; missing or empty media types → `deny`.
-- **Scenario: requesting-origin-from-requesting-url** — the origin is `requestingUrl`'s (a
-  subframe's own, path and query dropped), else `securityOrigin`'s; `about:blank`, `data:`,
-  `file:`, `app:`, an unparseable or missing URL → `deny`.
+- **Scenario: requesting-frame-decides-scope** — `requestScope(contents, details)` with a fake
+  frame tree: a main-frame request whose `mainFrame.origin` matches `requestingUrl`'s origin →
+  (origin, origin); a subframe request whose matching frames all have the URL's origin →
+  (frame origin, top-level origin). `null` for: an opaque (`'null'`) main frame (CSP sandbox), a
+  main frame whose origin differs from the URL's (it navigated), a subframe URL with no frame, or
+  with one opaque (`<iframe sandbox>`) among same-URL frames, an opaque top-level page, `about:`,
+  `data:`, `file:`, `app:`, unparsable or missing URLs, a missing or throwing `mainFrame`.
 
 ## Broker (`permissions.test.ts`, "broker")
 - **Scenario: prompt-queues-per-tab** — two different requests in a tab: the first is its prompt,
@@ -112,7 +154,17 @@ named test.
 - **Scenario: pending-prompts-capped-per-tab** — beyond `MAX_PENDING_PROMPTS_PER_TAB` distinct
   prompts a request is denied at once.
 - **Scenario: decision-store-is-swappable** — a broker given another `PermissionDecisionStore`
-  reads and writes decisions through it only.
+  reads and writes decisions (scope, permission) through it only.
+- **Scenario: decisions-keyed-by-top-level-origin** — an Allow for (W embedded in S) answers W's
+  requests under S only: (W under T) and W as a top-level page prompt; the prompt reports
+  `topLevelOrigin` S for an embedded requester and `null` for a top-level one.
+- **Scenario: coalesced-requests-capped** — beyond `MAX_COALESCED_REQUESTS` identical requests,
+  each further one is denied at once; the coalesced ones get the answer.
+- **Scenario: repeated-dismissals-back-off** — after `MAX_PROMPT_IGNORES` dismissals / timeouts
+  of a (scope, permission), its requests are denied silently; other scopes and permissions still
+  prompt; Allow / Block answers do not count.
+- **Scenario: answer-rechecks-requesting-frame** — a request whose frame check fails by the time
+  the prompt is allowed is denied, while a coalesced request whose frame is still there is granted.
 
 ## Session wiring (`permissions.test.ts`, "browse session", via the Electron fake)
 - **Scenario: browse-session-prompts-for-tabs** — with the handlers installed by
@@ -120,11 +172,22 @@ named test.
   prompt; one from a WebContents that is no tab's is denied; `fullscreen` is granted and `midi`
   denied with no prompt.
 - **Scenario: prompt-names-requesting-origin** (Review Focus) — a subframe request
-  (`isMainFrame: false`, `requestingUrl` on another origin) prompts for the subframe's origin;
-  after Allow, a check for that origin is `true` and for the top-level page's origin `false`.
+  (`isMainFrame: false`, `requestingUrl` on another origin) prompts for the subframe's origin,
+  embedded in the top-level page's; after Allow, a check for that origin embedded in that page is
+  `true`, for the top-level page's own origin `false`, and for the same origin under another
+  top-level page (or as a top-level page) `false`.
+- **Scenario: sandboxed-document-denied** — with the URL's origin already allowed, a request from
+  a CSP-sandboxed main frame (`mainFrame.origin === 'null'`) and from an `<iframe sandbox>` (opaque
+  frame at an allowed URL) is denied with no prompt.
+- **Scenario: answered-prompt-rechecks-frame** — a subframe's pending prompt whose frame has
+  navigated away by the time it is allowed: that request is denied.
+- **Scenario: fullscreen-tab-denies-new-prompts** — while `isFullscreen(tabId)` holds, a promptable
+  request from that tab is denied at once, with no prompt.
 - **Scenario: check-handler-uses-requesting-origin** — `requestingOrigin` with a trailing `/` is
-  normalized; `media` checks use `securityOrigin` and `mediaType` (`unknown` → `false`); silently
-  allowed permissions check `true`; everything else `false`.
+  normalized; the scope's top-level origin is `embeddingOrigin`, else the requesting origin for a
+  main-frame check, else the tab's `mainFrame.origin`; `media` checks use `securityOrigin` and
+  `mediaType` (`unknown` → `false`); silently allowed permissions check `true`; everything else
+  `false`.
 - **Scenario: device-permissions-stay-denied** — the device permission handler answers `false`
   for HID, serial and USB, with or without permission handlers.
 - **Scenario: app-session-stays-deny-all** — `registerSecurity`'s (default) session denies
@@ -142,9 +205,21 @@ named test.
 - **Scenario: prompts-denied-when-tab-goes** — closing the tab, its WebContents being destroyed,
   a main-frame `did-navigate`, a main-frame load failure and `render-process-gone` each deny the
   tab's pending prompts; `did-navigate-in-page` does not.
-- **Scenario: html-fullscreen-fills-window** — after `enter-html-full-screen` the active tab's
-  view gets the whole content area (also on later bounds reports); after
-  `leave-html-full-screen` the page area again.
+- **Scenario: html-fullscreen-fills-window** — after `enter-html-full-screen` the tab is
+  `notice` and its view covers the content area below `FULLSCREEN_BANNER_HEIGHT` (also on later
+  bounds reports); after `FULLSCREEN_NOTICE_MS` it is `full` and covers the whole content area;
+  after `leave-html-full-screen` the page area again (`fullscreen: null`).
+- **Scenario: esc-always-leaves-fullscreen** — on a fullscreen tab, an Escape `before-input-event`
+  is `preventDefault`ed and runs `document.exitFullscreen()` in an isolated world; on a tab that is
+  not fullscreen, Escape passes through untouched.
+- **Scenario: leaving-fullscreen-tab-restores-window** — switching away from a fullscreen tab runs
+  the isolated-world exit, clears its `fullscreen` and takes the window out of OS fullscreen;
+  closing a fullscreen tab takes the window out of OS fullscreen.
+- **Scenario: window-events-reapply-bounds** — the window's `resize`, `enter-full-screen` and
+  `leave-full-screen` re-apply the active view's bounds (fullscreen or page area) from the
+  window's current content size.
+- **Scenario: tab-fullscreen-state** — `isFullscreen(tabId)` is `true` only for a tab between
+  `enter-html-full-screen` and leaving it.
 
 ## Router (`packages/ipc-contract/src/__tests__/browser-router.test.ts`)
 - **Scenario: answer-permission-enforces-sender** — a rejected sender is refused before the
@@ -156,7 +231,11 @@ named test.
 
 ## Renderer (`apps/desktop/src/renderer/__tests__/permission-prompt.test.ts`)
 - **Scenario: prompt-copy-per-permission** — `promptView(prompt)`: the host (with port) of the
-  origin and `PERMISSION_PROMPT_ACTIONS` by kind (`media` → camera, microphone, or both).
+  origin, the top-level host for an embedded requester (else `null`), and
+  `PERMISSION_PROMPT_ACTIONS` by kind (`media` → camera, microphone, or both).
+- **Scenario: prompt-buttons-arm-after-delay** (`prompt-arming.test.ts`, fake timers) — a fresh
+  arming is disarmed, armed after `PROMPT_ARMING_DELAY_MS` (not before); `disarm()` (focus,
+  visibility) restarts the delay; `dispose()` leaves no timer.
 
 ## End to end (`apps/desktop/e2e/permissions.e2e.ts`, real Electron, loopback pages)
 Each scenario uses fresh loopback origins (decisions are remembered for the app session).
@@ -170,8 +249,16 @@ Each scenario uses fresh loopback origins (decisions are remembered for the app 
   again.
 - **Scenario: prompt-names-requesting-origin-e2e** (Review Focus) — a cross-origin iframe (second
   loopback port, `allow="geolocation"`) asking for geolocation: the prompt names the iframe's
-  origin, not the page's; Block fails the iframe's request with `PERMISSION_DENIED`; the page's own
-  geolocation request then still prompts (nothing was remembered for it).
+  origin embedded in the page's ("<frame host> (embedded in <page host>) wants to use your
+  location"); Block fails the iframe's request with `PERMISSION_DENIED` and a second iframe request
+  is denied with no prompt; the page's own request, and the iframe's origin loaded as a top-level
+  page, still prompt (the decision was scoped to the pair).
+- **Scenario: sandboxed-document-denied** — with the site's origin allowed notifications and
+  geolocation, a same-origin page served with CSP `sandbox allow-scripts` gets `denied` from
+  `Notification.requestPermission()`, and an `<iframe sandbox="allow-scripts" allow="geolocation">`
+  of a same-origin URL gets `PERMISSION_DENIED`, with no prompt.
+- **Scenario: prompt-buttons-arm-after-delay-e2e** — a click on Allow right after the bar appears
+  does nothing (the request stays pending); a click after `PROMPT_ARMING_DELAY_MS` grants.
 - **Scenario: navigate-away-denies-pending-e2e** — with a prompt showing, the page navigates
   elsewhere: the prompt bar goes away, and the new page's request prompts afresh (a new id).
 - **Scenario: non-promptable-denied-without-prompt-e2e** — `navigator.requestMIDIAccess()` rejects
@@ -182,5 +269,12 @@ Each scenario uses fresh loopback origins (decisions are remembered for the app 
   `Notification.requestPermission()` resolves `denied`, its notifications permission queries
   `denied`, and no prompt bar appears.
 - **Scenario: html-fullscreen-fills-window-e2e** — a real click calling `requestFullscreen()` is
-  granted with no prompt; the tab's view then covers the whole content area; after
+  granted with no prompt; the notice banner names the host while the view sits below it; after
+  `FULLSCREEN_NOTICE_MS` the view covers the whole content area and the banner is gone; after
   `exitFullscreen()` it is back under the toolbar and the window is no longer fullscreen.
+- **Scenario: esc-leaves-fullscreen-e2e** — on a page that swallows every Escape keydown, Esc
+  leaves fullscreen (the page never sees it) and the window leaves OS fullscreen; a notification
+  request made while fullscreen resolves `denied` with no prompt.
+- **Scenario: leaving-fullscreen-tab-restores-window-e2e** — switching to another tab, and
+  closing a fullscreen tab, each take the window out of OS fullscreen; switching back shows the
+  page out of fullscreen, in the page area, with no notice.

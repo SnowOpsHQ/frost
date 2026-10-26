@@ -4,12 +4,19 @@ import { createIpcClient } from '@app/ipc-contract/renderer';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types);
 // runtime constants come from the Zod-free tabs.spec.
 import type { BrowserState, Notice, PermissionPrompt, TabState } from '@app/specs/browser.spec';
-import { PERMISSION_PROMPT_LABELS, type PermissionDecision, type PromptKind } from '@app/specs/permissions.spec';
+import {
+  FULLSCREEN_NOTICE_TEXT,
+  PERMISSION_PROMPT_EMBEDDED_IN,
+  PERMISSION_PROMPT_LABELS,
+  type PermissionDecision,
+  type PromptKind,
+} from '@app/specs/permissions.spec';
 import { NOTICE_MESSAGES, UNRESPONSIVE_STATUS, type NoticeKind } from '@app/specs/tabs.spec';
 import { addressFieldReducer, addressFieldText, initialAddressField } from './address-field';
 import { createNoticeTracker, type NoticeTracker } from './notice';
 import { crashView, isCertificateErrorCode, loadErrorView, panelHost, type LoadErrorView } from './page-error';
 import { promptView } from './permission-prompt';
+import { createPromptArming } from './prompt-arming';
 import { tabLabel } from './tab-label';
 import { tablistFocusTarget } from './tablist-keys';
 import {
@@ -425,16 +432,42 @@ const PROMPT_ICONS: Record<PromptKind, typeof BellIcon> = {
 };
 
 /**
+ * Allow / Block arming (clickjacking): disarmed on mount (a new bar, prompt or shown tab: the bar
+ * is keyed by both) and whenever the chrome's window regains focus or becomes visible.
+ */
+function usePromptArmed(): boolean {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const arming = createPromptArming(setArmed);
+    const disarm = () => arming.disarm();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') arming.disarm();
+    };
+    window.addEventListener('focus', disarm);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', disarm);
+      document.removeEventListener('visibilitychange', onVisibility);
+      arming.dispose();
+    };
+  }, []);
+  return armed;
+}
+
+/**
  * The active tab's permission prompt (`permissions.feature.md`, Prompt bar): a non-modal dialog
  * under the toolbar. It never takes focus from the page; Tab reaches its buttons, Esc inside it
  * dismisses. The page area below shrinks to make room, so the tab's view moves down with it.
+ * Allow and Block stay disabled until armed (`PROMPT_ARMING_DELAY_MS`); dismissing only denies,
+ * so the × is always live.
  */
 function PromptBar({ prompt }: { readonly prompt: PermissionPrompt }) {
   const view = promptView(prompt);
   const Icon = PROMPT_ICONS[view.kind];
+  const armed = usePromptArmed();
   const [answered, setAnswered] = useState(false);
   const answer = (decision: PermissionDecision) => {
-    if (answered) return;
+    if (answered || (decision !== 'dismiss' && !armed)) return;
     setAnswered(true);
     void actions.answerPermission(prompt.id, decision).then(() => setAnswered(false));
   };
@@ -447,6 +480,8 @@ function PromptBar({ prompt }: { readonly prompt: PermissionPrompt }) {
       data-testid="permission-prompt"
       data-permission={view.kind}
       data-origin={view.origin}
+      data-top-level-origin={view.embedderOrigin ?? undefined}
+      data-armed={armed}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault();
@@ -457,17 +492,28 @@ function PromptBar({ prompt }: { readonly prompt: PermissionPrompt }) {
       <span className="prompt-icon" aria-hidden="true">
         <Icon />
       </span>
-      <p className="prompt-text" id="permission-prompt-text" data-testid="permission-prompt-text" title={view.origin}>
+      <p
+        className="prompt-text"
+        id="permission-prompt-text"
+        data-testid="permission-prompt-text"
+        title={view.embedderOrigin === null ? view.origin : `${view.origin} ${PERMISSION_PROMPT_EMBEDDED_IN} ${view.embedderOrigin}`}
+      >
         <strong className="prompt-origin" data-testid="permission-prompt-origin">
           {view.host}
-        </strong>{' '}
+        </strong>
+        {view.embedderHost !== null ? (
+          <span className="prompt-embedder" data-testid="permission-prompt-embedder">
+            {' '}
+            ({PERMISSION_PROMPT_EMBEDDED_IN} <strong className="prompt-origin">{view.embedderHost}</strong>)
+          </span>
+        ) : null}{' '}
         wants to {view.action}
       </p>
       <div className="prompt-actions">
-        <button type="button" className="prompt-button" data-testid="permission-allow" disabled={answered} onClick={() => answer('allow')}>
+        <button type="button" className="prompt-button" data-testid="permission-allow" disabled={answered || !armed} onClick={() => answer('allow')}>
           {PERMISSION_PROMPT_LABELS.allow}
         </button>
-        <button type="button" className="prompt-button" data-testid="permission-block" disabled={answered} onClick={() => answer('block')}>
+        <button type="button" className="prompt-button" data-testid="permission-block" disabled={answered || !armed} onClick={() => answer('block')}>
           {PERMISSION_PROMPT_LABELS.block}
         </button>
       </div>
@@ -483,6 +529,21 @@ function PromptBar({ prompt }: { readonly prompt: PermissionPrompt }) {
         <CloseIcon />
       </button>
     </section>
+  );
+}
+
+/**
+ * The fullscreen notice (`permissions.feature.md`, HTML fullscreen): while the active tab's page has
+ * just entered fullscreen, a frost-owned banner across the top of the window, above the page's
+ * view, names the page's host and how to leave.
+ */
+function FullscreenNotice({ tab }: { readonly tab: TabState }) {
+  return (
+    <div className="fullscreen-notice" role="status" data-testid="fullscreen-notice">
+      <span className="fullscreen-notice-text">
+        <strong>{hostOf(tab.url) || tab.url}</strong> {FULLSCREEN_NOTICE_TEXT}
+      </span>
+    </div>
   );
 }
 
@@ -673,10 +734,11 @@ export function App() {
       <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} />
       {/* Always present (empty without a prompt), so the grid rows stay put; polite, not focus-taking. */}
       <div className="prompt-slot" aria-live="polite">
-        {tab?.permissionPrompt ? <PromptBar key={tab.permissionPrompt.id} prompt={tab.permissionPrompt} /> : null}
+        {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} /> : null}
       </div>
       <PageArea tab={tab} empty={state !== null && empty} />
       <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />
+      {tab?.fullscreen === 'notice' ? <FullscreenNotice tab={tab} /> : null}
     </div>
   );
 }
