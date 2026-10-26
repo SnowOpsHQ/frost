@@ -5,7 +5,9 @@ import { session } from 'electron';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { BROWSE_PARTITION, PermissionPromptSchema } from '@app/specs/browser.spec';
 import {
+  MAX_COALESCED_REQUESTS,
   MAX_PENDING_PROMPTS_PER_TAB,
+  MAX_PROMPT_IGNORES,
   PERMISSION_PROMPT_TIMEOUT_MS,
   PROMPTABLE_PERMISSIONS,
   SILENTLY_ALLOWED_PERMISSIONS,
@@ -19,9 +21,10 @@ import {
   createBrowsePermissionHandlers,
   createMemoryDecisionStore,
   createPermissionBroker,
-  requestingOrigin,
+  requestScope,
   type PermissionBroker,
   type PermissionDecisionStore,
+  type PermissionScope,
 } from '../permissions';
 
 vi.mock('electron', async () => (await import('../../../test/electron-fake')).electronFake());
@@ -30,9 +33,10 @@ const A = 'https://a.example';
 const B = 'https://b.example:8443';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-const notifications = (origin = A) => ({ origin, permission: 'notifications' as const });
-const geolocation = (origin = A) => ({ origin, permission: 'geolocation' as const });
-const media = (mediaTypes: ('video' | 'audio')[], origin = A) => ({ origin, permission: 'media' as const, mediaTypes });
+const notifications = (origin = A, topLevelOrigin = origin) => ({ origin, topLevelOrigin, permission: 'notifications' as const });
+const geolocation = (origin = A, topLevelOrigin = origin) => ({ origin, topLevelOrigin, permission: 'geolocation' as const });
+const media = (mediaTypes: ('video' | 'audio')[], origin = A) => ({ origin, topLevelOrigin: origin, permission: 'media' as const, mediaTypes });
+const scope = (origin: string, topLevelOrigin = origin): PermissionScope => ({ origin, topLevelOrigin });
 
 /** A permission callback that records its answers. */
 const answerSpy = () => vi.fn<(granted: boolean) => void>();
@@ -43,19 +47,27 @@ function headId(broker: PermissionBroker, tabId: number): string {
   return prompt.id;
 }
 
-describe('decisions', () => {
-  const frame = (requestingUrl: string, extra: object = {}) => ({ isMainFrame: true, requestingUrl, ...extra });
+interface FakeFrame {
+  url: string;
+  origin: string;
+}
 
+/** A tab's WebContents as the permission code reads it: its main frame and every frame below. */
+function frameTree(main: FakeFrame, ...subframes: FakeFrame[]) {
+  const mainFrame = { ...main, framesInSubtree: [] as FakeFrame[] };
+  mainFrame.framesInSubtree = [mainFrame, ...subframes];
+  return { mainFrame };
+}
+
+describe('decisions', () => {
   test('promptable-permissions-prompt', () => {
     for (const permission of ['geolocation', 'notifications', 'clipboard-read'] as const) {
-      expect(classifyPermissionRequest(permission, frame('https://a.example/page?q=1')), permission).toEqual({
-        kind: 'prompt',
-        ask: { origin: A, permission },
-      });
+      expect(classifyPermissionRequest(permission, { isMainFrame: true, requestingUrl: `${A}/` }), permission).toEqual({ kind: 'prompt', permission });
     }
-    expect(classifyPermissionRequest('media', frame('https://a.example/', { mediaTypes: ['video'] }))).toEqual({
+    expect(classifyPermissionRequest('media', { isMainFrame: true, requestingUrl: `${A}/`, mediaTypes: ['video'] })).toEqual({
       kind: 'prompt',
-      ask: { origin: A, permission: 'media', mediaTypes: ['video'] },
+      permission: 'media',
+      mediaTypes: ['video'],
     });
     expect(PROMPTABLE_PERMISSIONS).toEqual(['geolocation', 'notifications', 'media', 'clipboard-read']);
   });
@@ -63,8 +75,8 @@ describe('decisions', () => {
   test('silently-allowed-permissions', () => {
     expect(SILENTLY_ALLOWED_PERMISSIONS).toEqual(['fullscreen', 'clipboard-sanitized-write']);
     for (const permission of SILENTLY_ALLOWED_PERMISSIONS) {
-      expect(classifyPermissionRequest(permission, frame('https://a.example/')), permission).toEqual({ kind: 'allow' });
-      expect(classifyPermissionRequest(permission, frame('about:blank')), permission).toEqual({ kind: 'allow' });
+      expect(classifyPermissionRequest(permission, { isMainFrame: true, requestingUrl: `${A}/` }), permission).toEqual({ kind: 'allow' });
+      expect(classifyPermissionRequest(permission, undefined), permission).toEqual({ kind: 'allow' });
     }
   });
 
@@ -92,32 +104,61 @@ describe('decisions', () => {
       '__proto__',
     ];
     for (const permission of denied) {
-      expect(classifyPermissionRequest(permission, frame('https://a.example/')), permission).toEqual({ kind: 'deny' });
+      expect(classifyPermissionRequest(permission, { isMainFrame: true, requestingUrl: `${A}/` }), permission).toEqual({ kind: 'deny' });
     }
   });
 
   test('media-split-into-camera-and-microphone', () => {
-    const ask = (mediaTypes: unknown) => classifyPermissionRequest('media', frame('https://a.example/', { mediaTypes }));
-    expect(ask(['audio', 'video'])).toEqual({ kind: 'prompt', ask: media(['video', 'audio']) });
-    expect(ask(['video', 'audio', 'video'])).toEqual({ kind: 'prompt', ask: media(['video', 'audio']) });
-    expect(ask(['video'])).toEqual({ kind: 'prompt', ask: media(['video']) });
-    expect(ask(['audio'])).toEqual({ kind: 'prompt', ask: media(['audio']) });
+    const ask = (mediaTypes: unknown) => classifyPermissionRequest('media', { isMainFrame: true, requestingUrl: `${A}/`, mediaTypes });
+    expect(ask(['audio', 'video'])).toEqual({ kind: 'prompt', permission: 'media', mediaTypes: ['video', 'audio'] });
+    expect(ask(['video', 'audio', 'video'])).toEqual({ kind: 'prompt', permission: 'media', mediaTypes: ['video', 'audio'] });
+    expect(ask(['video'])).toEqual({ kind: 'prompt', permission: 'media', mediaTypes: ['video'] });
+    expect(ask(['audio'])).toEqual({ kind: 'prompt', permission: 'media', mediaTypes: ['audio'] });
     for (const none of [undefined, [], ['screen'], 'video', null]) expect(ask(none), String(none)).toEqual({ kind: 'deny' });
   });
 
-  test('requesting-origin-from-requesting-url', () => {
-    expect(requestingOrigin({ requestingUrl: 'https://frame.example:4443/a/b?c#d' })).toBe('https://frame.example:4443');
-    expect(requestingOrigin({ requestingUrl: 'HTTP://127.0.0.1:8080/x' })).toBe('http://127.0.0.1:8080');
-    // Media requests also carry the security origin; the requesting URL wins when present.
-    expect(requestingOrigin({ requestingUrl: 'https://frame.example/', securityOrigin: 'https://other.example/' })).toBe('https://frame.example');
-    expect(requestingOrigin({ securityOrigin: 'https://frame.example/' })).toBe('https://frame.example');
-    for (const url of ['about:blank', 'about:srcdoc', 'data:text/html,x', 'file:///etc/passwd', 'app://app/', 'blob:https://a.example/x', 'not a url', '']) {
-      expect(requestingOrigin({ requestingUrl: url }), url).toBeNull();
-      expect(classifyPermissionRequest('notifications', frame(url)), url).toEqual({ kind: 'deny' });
-    }
-    expect(requestingOrigin(undefined)).toBeNull();
-    expect(requestingOrigin({})).toBeNull();
-    expect(classifyPermissionRequest('geolocation', undefined)).toEqual({ kind: 'deny' });
+  test('requesting-frame-decides-scope', () => {
+    const top = { url: `${A}/page?q=1`, origin: A };
+    const widget = { url: `${B}/embed?x=1`, origin: B };
+    // A main frame asking for itself.
+    expect(requestScope(frameTree(top), { isMainFrame: true, requestingUrl: top.url })).toEqual(scope(A));
+    // A cross-origin subframe: its own origin, scoped to the top-level page.
+    expect(requestScope(frameTree(top, widget), { isMainFrame: false, requestingUrl: widget.url })).toEqual(scope(B, A));
+    // Several frames at the same URL, all on that origin.
+    expect(requestScope(frameTree(top, widget, { ...widget }), { isMainFrame: false, requestingUrl: widget.url })).toEqual(scope(B, A));
+    // Media requests carry the same requestingUrl.
+    expect(requestScope(frameTree(top, widget), { isMainFrame: false, requestingUrl: widget.url, securityOrigin: `${B}/` })).toEqual(scope(B, A));
+
+    const denied: [string, unknown, unknown][] = [
+      // CSP `sandbox`: the document at an http(s) URL has an opaque origin.
+      ['csp-sandboxed main frame', frameTree({ url: `${A}/sandboxed`, origin: 'null' }), { isMainFrame: true, requestingUrl: `${A}/sandboxed` }],
+      // The main frame has moved on to another origin since the request was made.
+      ['navigated main frame', frameTree({ url: `${B}/`, origin: B }), { isMainFrame: true, requestingUrl: `${A}/` }],
+      // `<iframe sandbox>` at an allowed URL.
+      ['sandboxed iframe', frameTree(top, { url: `${A}/plain`, origin: 'null' }), { isMainFrame: false, requestingUrl: `${A}/plain` }],
+      ['one sandboxed among same-URL frames', frameTree(top, widget, { url: widget.url, origin: 'null' }), { isMainFrame: false, requestingUrl: widget.url }],
+      ['no frame at that URL', frameTree(top, widget), { isMainFrame: false, requestingUrl: `${B}/elsewhere` }],
+      ['opaque top-level page', frameTree({ url: `${A}/sandboxed`, origin: 'null' }, widget), { isMainFrame: false, requestingUrl: widget.url }],
+      ['about:blank frame', frameTree(top, { url: 'about:blank', origin: A }), { isMainFrame: false, requestingUrl: 'about:blank' }],
+      ['data: frame', frameTree(top, { url: 'data:text/html,x', origin: 'null' }), { isMainFrame: false, requestingUrl: 'data:text/html,x' }],
+      ['file: page', frameTree({ url: 'file:///etc/passwd', origin: 'file://' }), { isMainFrame: true, requestingUrl: 'file:///etc/passwd' }],
+      ['app: page', frameTree({ url: 'app://app/', origin: 'app://app' }), { isMainFrame: true, requestingUrl: 'app://app/' }],
+      ['unparsable URL', frameTree(top), { isMainFrame: true, requestingUrl: 'not a url' }],
+      ['missing URL', frameTree(top), { isMainFrame: true }],
+      ['no details', frameTree(top), undefined],
+      ['no contents', null, { isMainFrame: true, requestingUrl: top.url }],
+      ['no main frame', {}, { isMainFrame: true, requestingUrl: top.url }],
+      [
+        'throwing main frame',
+        Object.defineProperty({}, 'mainFrame', {
+          get() {
+            throw new Error('destroyed');
+          },
+        }),
+        { isMainFrame: true, requestingUrl: top.url },
+      ],
+    ];
+    for (const [name, contents, details] of denied) expect(requestScope(contents, details), name).toBeNull();
   });
 });
 
@@ -146,7 +187,7 @@ describe('broker', () => {
     broker.request(2, notifications(B), other);
     const prompt = broker.promptFor(1);
     expect(PermissionPromptSchema.parse(prompt)).toEqual(prompt);
-    expect(prompt).toMatchObject({ origin: A, permission: 'notifications' });
+    expect(prompt).toMatchObject({ origin: A, topLevelOrigin: null, permission: 'notifications' });
     expect(prompt).not.toHaveProperty('mediaTypes');
     expect(broker.promptFor(2)).toMatchObject({ origin: B, permission: 'notifications' });
     expect(changes).toBe(3);
@@ -173,6 +214,18 @@ describe('broker', () => {
     expect(broker.promptFor(1)).toBeNull();
   });
 
+  test('coalesced-requests-capped', () => {
+    const coalesced = Array.from({ length: MAX_COALESCED_REQUESTS }, () => answerSpy());
+    for (const callback of coalesced) broker.request(1, notifications(), callback);
+    const extra = Array.from({ length: 50 }, () => answerSpy());
+    for (const callback of extra) broker.request(1, notifications(), callback);
+    for (const callback of extra) expect(callback).toHaveBeenCalledExactlyOnceWith(false);
+    for (const callback of coalesced) expect(callback).not.toHaveBeenCalled();
+    expect(broker.pendingCount()).toBe(1);
+    broker.answer(1, headId(broker, 1), 'allow');
+    for (const callback of coalesced) expect(callback).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
   test('allow-is-remembered', () => {
     const asked = answerSpy();
     const elsewhere = answerSpy();
@@ -180,7 +233,7 @@ describe('broker', () => {
     broker.request(2, notifications(), elsewhere);
     expect(broker.answer(1, headId(broker, 1), 'allow')).toBe(true);
     expect(asked).toHaveBeenCalledExactlyOnceWith(true);
-    // The same (origin, permission) pending in another tab is settled by the remembered Allow.
+    // The same (scope, permission) pending in another tab is settled by the remembered Allow.
     expect(elsewhere).toHaveBeenCalledExactlyOnceWith(true);
     expect(broker.promptFor(2)).toBeNull();
     const again = answerSpy();
@@ -198,7 +251,7 @@ describe('broker', () => {
     broker.request(1, geolocation(), again);
     expect(again).toHaveBeenCalledExactlyOnceWith(false);
     expect(broker.promptFor(1)).toBeNull();
-    expect(broker.check(A, 'geolocation')).toBe(false);
+    expect(broker.check(scope(A), 'geolocation')).toBe(false);
   });
 
   test('dismiss-denies-once', () => {
@@ -213,6 +266,40 @@ describe('broker', () => {
     expect(headId(broker, 1)).not.toBe(id);
   });
 
+  test('repeated-dismissals-back-off', () => {
+    vi.useFakeTimers();
+    broker = createPermissionBroker();
+    // Dismissals and timeouts both count.
+    for (let i = 0; i < MAX_PROMPT_IGNORES; i++) {
+      broker.request(1, notifications(), answerSpy());
+      expect(broker.promptFor(1), `ignore ${i}`).not.toBeNull();
+      if (i === 0) vi.advanceTimersByTime(PERMISSION_PROMPT_TIMEOUT_MS);
+      else broker.answer(1, headId(broker, 1), 'dismiss');
+    }
+    const silenced = answerSpy();
+    broker.request(1, notifications(), silenced);
+    expect(silenced).toHaveBeenCalledExactlyOnceWith(false);
+    expect(broker.promptFor(1)).toBeNull();
+    // In every tab, for the rest of the session.
+    const otherTab = answerSpy();
+    broker.request(2, notifications(), otherTab);
+    expect(otherTab).toHaveBeenCalledExactlyOnceWith(false);
+    // Another permission, another scope (the same origin embedded elsewhere) still prompt.
+    broker.request(1, geolocation(), answerSpy());
+    expect(broker.promptFor(1)).toMatchObject({ permission: 'geolocation' });
+    broker.answer(1, headId(broker, 1), 'dismiss');
+    broker.request(1, notifications(A, B), answerSpy());
+    expect(broker.promptFor(1)).toMatchObject({ origin: A, topLevelOrigin: B });
+    // Allow / Block answers never count as ignoring.
+    const decided = createPermissionBroker();
+    for (let i = 0; i < MAX_PROMPT_IGNORES + 1; i++) {
+      decided.request(1, notifications(`https://s${i}.example`), answerSpy());
+      decided.answer(1, headId(decided, 1), i % 2 === 0 ? 'allow' : 'block');
+    }
+    decided.request(1, geolocation(), answerSpy());
+    expect(decided.promptFor(1)).not.toBeNull();
+  });
+
   test('remembered-per-origin-and-permission', () => {
     broker.request(1, notifications(A), answerSpy());
     broker.answer(1, headId(broker, 1), 'allow');
@@ -223,8 +310,32 @@ describe('broker', () => {
     expect(otherOrigin).not.toHaveBeenCalled();
     expect(otherPermission).not.toHaveBeenCalled();
     expect(broker.promptFor(1)).toMatchObject({ origin: B, permission: 'notifications' });
-    expect(broker.check(B, 'notifications')).toBe(false);
-    expect(broker.check(A, 'geolocation')).toBe(false);
+    expect(broker.check(scope(B), 'notifications')).toBe(false);
+    expect(broker.check(scope(A), 'geolocation')).toBe(false);
+  });
+
+  test('decisions-keyed-by-top-level-origin', () => {
+    const W = 'https://widget.example';
+    const S = 'https://site.example';
+    const T = 'https://other-site.example';
+    broker.request(1, geolocation(W, S), answerSpy());
+    expect(broker.promptFor(1)).toMatchObject({ origin: W, topLevelOrigin: S });
+    broker.answer(1, headId(broker, 1), 'allow');
+    expect(broker.check(scope(W, S), 'geolocation')).toBe(true);
+    expect(broker.check(scope(W, T), 'geolocation')).toBe(false);
+    expect(broker.check(scope(W), 'geolocation')).toBe(false);
+    expect(broker.check(scope(S), 'geolocation')).toBe(false);
+    const underS = answerSpy();
+    broker.request(2, geolocation(W, S), underS);
+    expect(underS).toHaveBeenCalledExactlyOnceWith(true);
+    // Under another site, or as a top-level page, the widget asks again.
+    const underT = answerSpy();
+    broker.request(2, geolocation(W, T), underT);
+    expect(underT).not.toHaveBeenCalled();
+    expect(broker.promptFor(2)).toMatchObject({ origin: W, topLevelOrigin: T });
+    broker.answer(2, headId(broker, 2), 'dismiss');
+    broker.request(2, geolocation(W), answerSpy());
+    expect(broker.promptFor(2)).toMatchObject({ origin: W, topLevelOrigin: null });
   });
 
   test('media-remembers-each-device', () => {
@@ -234,8 +345,8 @@ describe('broker', () => {
     const cameraOnly = answerSpy();
     broker.request(1, media(['video']), cameraOnly);
     expect(cameraOnly).toHaveBeenCalledExactlyOnceWith(true);
-    expect(broker.check(A, 'camera')).toBe(true);
-    expect(broker.check(A, 'microphone')).toBe(true);
+    expect(broker.check(scope(A), 'camera')).toBe(true);
+    expect(broker.check(scope(A), 'microphone')).toBe(true);
 
     // Block one device of another origin: asking for both is denied at once.
     broker.request(1, media(['audio'], B), answerSpy());
@@ -257,17 +368,41 @@ describe('broker', () => {
 
   test('check-reflects-remembered-allow', () => {
     const decide = (origin: string, permission: 'notifications' | 'geolocation', decision: 'allow' | 'block' | 'dismiss') => {
-      broker.request(1, { origin, permission }, answerSpy());
+      broker.request(1, { origin, topLevelOrigin: origin, permission }, answerSpy());
       broker.answer(1, headId(broker, 1), decision);
     };
-    expect(broker.check(A, 'notifications')).toBe(false);
+    expect(broker.check(scope(A), 'notifications')).toBe(false);
     decide(A, 'notifications', 'dismiss');
-    expect(broker.check(A, 'notifications')).toBe(false);
+    expect(broker.check(scope(A), 'notifications')).toBe(false);
     decide(A, 'notifications', 'allow');
-    expect(broker.check(A, 'notifications')).toBe(true);
+    expect(broker.check(scope(A), 'notifications')).toBe(true);
     decide(B, 'geolocation', 'block');
-    expect(broker.check(B, 'geolocation')).toBe(false);
-    expect(broker.check(B, 'notifications')).toBe(false);
+    expect(broker.check(scope(B), 'geolocation')).toBe(false);
+    expect(broker.check(scope(B), 'notifications')).toBe(false);
+  });
+
+  test('answer-rechecks-requesting-frame', () => {
+    let frameStillThere = true;
+    const gone = answerSpy();
+    const present = answerSpy();
+    broker.request(1, notifications(), gone, { isCurrent: () => frameStillThere });
+    broker.request(1, notifications(), present, { isCurrent: () => true });
+    frameStillThere = false;
+    broker.answer(1, headId(broker, 1), 'allow');
+    expect(gone).toHaveBeenCalledExactlyOnceWith(false);
+    expect(present).toHaveBeenCalledExactlyOnceWith(true);
+    // The user's answer for the scope the prompt named is still remembered.
+    expect(broker.check(scope(A), 'notifications')).toBe(true);
+    // A remembered decision answering at request time does not need a recheck later.
+    const later = answerSpy();
+    broker.request(1, notifications(), later, { isCurrent: () => false });
+    expect(later).toHaveBeenCalledExactlyOnceWith(true);
+    // Not allowed to prompt (a fullscreen tab): an undecided request is denied, pending ones stay.
+    broker.request(1, geolocation(B), answerSpy());
+    const hidden = answerSpy();
+    broker.request(1, notifications(B), hidden, { mayPrompt: false });
+    expect(hidden).toHaveBeenCalledExactlyOnceWith(false);
+    expect(broker.promptFor(1)).toMatchObject({ origin: B, permission: 'geolocation' });
   });
 
   test('prompt-times-out', () => {
@@ -282,7 +417,7 @@ describe('broker', () => {
     expect(first).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(first).toHaveBeenCalledExactlyOnceWith(false);
-    expect(broker.check(A, 'notifications')).toBe(false);
+    expect(broker.check(scope(A), 'notifications')).toBe(false);
     expect(broker.promptFor(1)).toMatchObject({ permission: 'geolocation' });
     // The timed-out prompt asks again next time (nothing remembered).
     const again = answerSpy();
@@ -312,7 +447,7 @@ describe('broker', () => {
     expect(broker.answer(21, id, 'allow')).toBe(false);
     expect(broker.answer(21, crypto.randomUUID(), 'allow')).toBe(false);
     expect(asked).toHaveBeenCalledExactlyOnceWith(false);
-    expect(broker.check(A, 'geolocation')).toBe(false);
+    expect(broker.check(scope(A), 'geolocation')).toBe(false);
   });
 
   test('answer-needs-the-tabs-shown-prompt', () => {
@@ -342,8 +477,8 @@ describe('broker', () => {
     for (const callback of [one, queued, two]) expect(callback).not.toHaveBeenCalled();
     expect(headId(broker, 1)).toBe(head1);
     expect(headId(broker, 2)).toBe(head2);
-    expect(broker.check(A, 'geolocation')).toBe(false);
-    expect(broker.check(B, 'notifications')).toBe(false);
+    expect(broker.check(scope(A), 'geolocation')).toBe(false);
+    expect(broker.check(scope(B), 'notifications')).toBe(false);
     // Once it is the head, the queued prompt can be answered.
     expect(broker.answer(1, head1, 'dismiss')).toBe(true);
     expect(broker.answer(1, queuedId, 'allow')).toBe(true);
@@ -368,7 +503,14 @@ describe('broker', () => {
     broker.denyTab(1);
     broker.denyTab(99);
     expect(changes).toBe(before + 1);
-    expect(broker.check(A, 'notifications')).toBe(false);
+    expect(broker.check(scope(A), 'notifications')).toBe(false);
+    // Tab-gone denials are not the user ignoring a prompt: no back-off.
+    for (let i = 0; i < MAX_PROMPT_IGNORES; i++) {
+      broker.request(3, notifications('https://c.example'), answerSpy());
+      broker.denyTab(3);
+    }
+    broker.request(3, notifications('https://c.example'), answerSpy());
+    expect(broker.promptFor(3)).not.toBeNull();
   });
 
   test('pending-prompts-capped-per-tab', () => {
@@ -389,42 +531,52 @@ describe('broker', () => {
   });
 
   test('decision-store-is-swappable', () => {
-    const saved = new Map<string, 'allow' | 'block'>([[`${B} notifications`, 'allow']]);
+    const key = (s: PermissionScope, permission: SitePermission) => `${s.origin} ${s.topLevelOrigin} ${permission}`;
+    const saved = new Map<string, 'allow' | 'block'>([[key(scope(B), 'notifications'), 'allow']]);
     const store: PermissionDecisionStore = {
-      get: vi.fn((origin: string, permission: SitePermission) => saved.get(`${origin} ${permission}`)),
-      set: vi.fn((origin: string, permission: SitePermission, decision: 'allow' | 'block') => {
-        saved.set(`${origin} ${permission}`, decision);
+      get: vi.fn((s: PermissionScope, permission: SitePermission) => saved.get(key(s, permission))),
+      set: vi.fn((s: PermissionScope, permission: SitePermission, decision: 'allow' | 'block') => {
+        saved.set(key(s, permission), decision);
       }),
     };
     const custom = createPermissionBroker({ store });
     const remembered = answerSpy();
     custom.request(1, notifications(B), remembered);
     expect(remembered).toHaveBeenCalledExactlyOnceWith(true);
-    expect(custom.check(B, 'notifications')).toBe(true);
-    custom.request(1, geolocation(A), answerSpy());
+    expect(custom.check(scope(B), 'notifications')).toBe(true);
+    custom.request(1, geolocation(A, B), answerSpy());
     custom.answer(1, headId(custom, 1), 'block');
-    expect(store.set).toHaveBeenCalledExactlyOnceWith(A, 'geolocation', 'block');
-    expect(saved.get(`${A} geolocation`)).toBe('block');
-    // The memory store is that same interface.
+    expect(store.set).toHaveBeenCalledExactlyOnceWith(scope(A, B), 'geolocation', 'block');
+    expect(saved.get(key(scope(A, B), 'geolocation'))).toBe('block');
+    // The memory store is that same interface, keyed by the whole scope.
     const memory = createMemoryDecisionStore();
-    expect(memory.get(A, 'camera')).toBeUndefined();
-    memory.set(A, 'camera', 'allow');
-    expect(memory.get(A, 'camera')).toBe('allow');
-    expect(memory.get(B, 'camera')).toBeUndefined();
+    expect(memory.get(scope(A), 'camera')).toBeUndefined();
+    memory.set(scope(A), 'camera', 'allow');
+    expect(memory.get(scope(A), 'camera')).toBe('allow');
+    expect(memory.get(scope(A, B), 'camera')).toBeUndefined();
+    expect(memory.get(scope(B), 'camera')).toBeUndefined();
   });
 });
 
 describe('browse session', () => {
-  const TAB_CONTENTS = { id: 'tab' };
   const TOP = 'https://top.example';
   const FRAME = 'https://frame.example:4443';
   let broker: PermissionBroker;
   let ses: FakeSession;
+  let fullscreenTabs: Set<number>;
+  /** The tab's frames: the top page and a cross-origin iframe. */
+  let tab: ReturnType<typeof frameTree>;
 
   beforeEach(() => {
     broker = createPermissionBroker();
     ses = new FakeSession();
-    const handlers = createBrowsePermissionHandlers({ broker, tabIdOf: (contents) => (contents === TAB_CONTENTS ? 7 : null) });
+    fullscreenTabs = new Set();
+    tab = frameTree({ url: `${TOP}/page`, origin: TOP }, { url: `${FRAME}/embed?x=1`, origin: FRAME });
+    const handlers = createBrowsePermissionHandlers({
+      broker,
+      tabIdOf: (contents) => (contents === tab ? 7 : null),
+      isFullscreen: (tabId) => fullscreenTabs.has(tabId),
+    });
     hardenBrowseSession(ses as unknown as Session, { permissions: handlers });
   });
 
@@ -433,46 +585,94 @@ describe('browse session', () => {
     ses.permissionRequestHandler?.(contents, permission, callback, details);
     return callback;
   };
-  const check = (permission: string, origin: string, details: object = { isMainFrame: true }) =>
-    ses.permissionCheckHandler?.(TAB_CONTENTS, permission, origin, details);
+  const top = { isMainFrame: true, requestingUrl: `${TOP}/page` };
+  const framed = { isMainFrame: false, requestingUrl: `${FRAME}/embed?x=1` };
+  const check = (permission: string, origin: string, details: object = { isMainFrame: true }, contents: unknown = tab) =>
+    ses.permissionCheckHandler?.(contents, permission, origin, details);
 
   test('browse-session-prompts-for-tabs', () => {
-    const asked = request(TAB_CONTENTS, 'notifications', { isMainFrame: true, requestingUrl: `${TOP}/page` });
+    const asked = request(tab, 'notifications', top);
     expect(asked).not.toHaveBeenCalled();
-    expect(broker.promptFor(7)).toMatchObject({ origin: TOP, permission: 'notifications' });
-    expect(request({ id: 'not a tab' }, 'notifications', { isMainFrame: true, requestingUrl: `${TOP}/` })).toHaveBeenCalledExactlyOnceWith(false);
-    expect(request(null, 'geolocation', { isMainFrame: true, requestingUrl: `${TOP}/` })).toHaveBeenCalledExactlyOnceWith(false);
-    expect(request(TAB_CONTENTS, 'fullscreen', { isMainFrame: true, requestingUrl: `${TOP}/` })).toHaveBeenCalledExactlyOnceWith(true);
-    expect(request(TAB_CONTENTS, 'midi', { isMainFrame: true, requestingUrl: `${TOP}/` })).toHaveBeenCalledExactlyOnceWith(false);
+    expect(broker.promptFor(7)).toMatchObject({ origin: TOP, topLevelOrigin: null, permission: 'notifications' });
+    const stranger = frameTree({ url: `${TOP}/`, origin: TOP });
+    expect(request(stranger, 'notifications', top)).toHaveBeenCalledExactlyOnceWith(false);
+    expect(request(null, 'geolocation', top)).toHaveBeenCalledExactlyOnceWith(false);
+    expect(request(tab, 'fullscreen', top)).toHaveBeenCalledExactlyOnceWith(true);
+    expect(request(tab, 'midi', top)).toHaveBeenCalledExactlyOnceWith(false);
     expect(broker.pendingCount()).toBe(1);
   });
 
   test('prompt-names-requesting-origin', () => {
-    const asked = request(TAB_CONTENTS, 'geolocation', { isMainFrame: false, requestingUrl: `${FRAME}/embed?x=1` });
+    const asked = request(tab, 'geolocation', framed);
     const prompt = broker.promptFor(7);
-    expect(prompt).toMatchObject({ origin: FRAME, permission: 'geolocation' });
+    expect(prompt).toMatchObject({ origin: FRAME, topLevelOrigin: TOP, permission: 'geolocation' });
     broker.answer(7, prompt!.id, 'allow');
     expect(asked).toHaveBeenCalledExactlyOnceWith(true);
-    expect(check('geolocation', `${FRAME}/`, { isMainFrame: false, embeddingOrigin: `${TOP}/` })).toBe(true);
-    expect(check('geolocation', `${TOP}/`)).toBe(false);
+    expect(check('geolocation', `${FRAME}/`, { isMainFrame: false, embeddingOrigin: `${TOP}/`, requestingUrl: `${FRAME}/embed?x=1` })).toBe(true);
+    // Not for the top-level page itself, nor the same origin under another site or on its own.
+    expect(check('geolocation', `${TOP}/`, { isMainFrame: true, embeddingOrigin: `${TOP}/` })).toBe(false);
+    expect(check('geolocation', `${FRAME}/`, { isMainFrame: false, embeddingOrigin: 'https://elsewhere.example/' })).toBe(false);
+    expect(check('geolocation', `${FRAME}/`, { isMainFrame: true, embeddingOrigin: `${FRAME}/` })).toBe(false);
     // The top-level page asking for itself still prompts.
-    request(TAB_CONTENTS, 'geolocation', { isMainFrame: true, requestingUrl: `${TOP}/` });
-    expect(broker.promptFor(7)).toMatchObject({ origin: TOP });
+    request(tab, 'geolocation', top);
+    expect(broker.promptFor(7)).toMatchObject({ origin: TOP, topLevelOrigin: null });
+  });
+
+  test('sandboxed-document-denied', () => {
+    // The site's origin, as a top-level page, is allowed notifications and geolocation.
+    for (const permission of ['notifications', 'geolocation']) {
+      request(tab, permission, top);
+      broker.answer(7, broker.promptFor(7)!.id, 'allow');
+    }
+    expect(request(tab, 'notifications', top)).toHaveBeenCalledExactlyOnceWith(true);
+    // The same URL served with CSP `sandbox allow-scripts`: an opaque main frame.
+    tab = frameTree({ url: `${TOP}/page`, origin: 'null' });
+    expect(request(tab, 'notifications', top)).toHaveBeenCalledExactlyOnceWith(false);
+    // `<iframe sandbox>` at a same-origin URL.
+    tab = frameTree({ url: `${TOP}/page`, origin: TOP }, { url: `${TOP}/plain`, origin: 'null' });
+    expect(request(tab, 'geolocation', { isMainFrame: false, requestingUrl: `${TOP}/plain` })).toHaveBeenCalledExactlyOnceWith(false);
+    expect(broker.pendingCount()).toBe(0);
+  });
+
+  test('fullscreen-tab-denies-new-prompts', () => {
+    fullscreenTabs.add(7);
+    expect(request(tab, 'notifications', top)).toHaveBeenCalledExactlyOnceWith(false);
+    expect(broker.promptFor(7)).toBeNull();
+    // A remembered decision still answers (no prompt involved).
+    fullscreenTabs.delete(7);
+    request(tab, 'geolocation', top);
+    broker.answer(7, broker.promptFor(7)!.id, 'allow');
+    fullscreenTabs.add(7);
+    expect(request(tab, 'geolocation', top)).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  test('answered-prompt-rechecks-frame', () => {
+    const asked = request(tab, 'geolocation', framed);
+    // The iframe navigates away before the prompt is answered.
+    tab.mainFrame.framesInSubtree = [tab.mainFrame];
+    broker.answer(7, broker.promptFor(7)!.id, 'allow');
+    expect(asked).toHaveBeenCalledExactlyOnceWith(false);
   });
 
   test('check-handler-uses-requesting-origin', () => {
-    request(TAB_CONTENTS, 'media', { isMainFrame: false, requestingUrl: `${FRAME}/`, securityOrigin: `${FRAME}/`, mediaTypes: ['video'] });
+    request(tab, 'media', { ...framed, securityOrigin: `${FRAME}/`, mediaTypes: ['video'] });
     broker.answer(7, broker.promptFor(7)!.id, 'allow');
-    request(TAB_CONTENTS, 'notifications', { isMainFrame: true, requestingUrl: `${TOP}/` });
+    request(tab, 'notifications', top);
     broker.answer(7, broker.promptFor(7)!.id, 'allow');
 
-    expect(check('notifications', `${TOP}/`)).toBe(true);
+    expect(check('notifications', `${TOP}/`, { isMainFrame: true, embeddingOrigin: `${TOP}/` })).toBe(true);
     expect(check('notifications', TOP)).toBe(true);
+    expect(check('notifications', `${TOP}/`, { isMainFrame: true }, null)).toBe(true);
     expect(check('notifications', `${FRAME}/`)).toBe(false);
-    expect(check('media', `${FRAME}/`, { isMainFrame: false, securityOrigin: `${FRAME}/`, mediaType: 'video' })).toBe(true);
-    expect(check('media', `${FRAME}/`, { isMainFrame: false, securityOrigin: `${FRAME}/`, mediaType: 'audio' })).toBe(false);
-    expect(check('media', `${FRAME}/`, { isMainFrame: false, securityOrigin: `${FRAME}/`, mediaType: 'unknown' })).toBe(false);
-    expect(check('media', `${FRAME}/`, { isMainFrame: false })).toBe(false);
+    // Media checks carry no embeddingOrigin: the tab's top-level origin scopes them.
+    const mediaCheck = (mediaType: string | undefined, contents: unknown = tab) =>
+      check('media', `${FRAME}/`, { isMainFrame: false, securityOrigin: `${FRAME}/`, ...(mediaType ? { mediaType } : {}) }, contents);
+    expect(mediaCheck('video')).toBe(true);
+    expect(mediaCheck('audio')).toBe(false);
+    expect(mediaCheck('unknown')).toBe(false);
+    expect(mediaCheck(undefined)).toBe(false);
+    expect(mediaCheck('video', frameTree({ url: 'https://elsewhere.example/', origin: 'https://elsewhere.example' }))).toBe(false);
+    expect(mediaCheck('video', null)).toBe(false);
     for (const permission of SILENTLY_ALLOWED_PERMISSIONS) expect(check(permission, `${TOP}/`), permission).toBe(true);
     for (const permission of ['midi', 'hid', 'openExternal', 'automatic-fullscreen', 'unknown', 'camera', 'microphone']) {
       expect(check(permission, `${TOP}/`), permission).toBe(false);

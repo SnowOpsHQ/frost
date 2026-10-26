@@ -102,11 +102,14 @@ export type LoadError = z.infer<typeof LoadErrorSchema>;
  * The permission prompt a tab shows (`permissions.feature.md`): the head of that tab's queue.
  * `id` is an opaque, unguessable, single-use UUID (`crypto.randomUUID`); `origin` is the
  * **requesting** frame's serialized origin (`https://example.com`, never the top-level page's when
- * a subframe asked); `mediaTypes` (only for `media`) the devices still to decide, camera first.
+ * a subframe asked); `topLevelOrigin` the top-level page's origin when it differs (the requester
+ * is embedded; the decision is scoped to that pair), else `null`; `mediaTypes` (only for `media`)
+ * the devices still to decide, camera first.
  */
 export const PermissionPromptSchema = z.strictObject({
   id: z.uuid(),
   origin: z.string(),
+  topLevelOrigin: z.string().nullable(),
   permission: z.enum(PROMPTABLE_PERMISSIONS),
   mediaTypes: z.array(z.enum(MEDIA_TYPES)).min(1).max(MEDIA_TYPES.length).optional(),
 });
@@ -153,6 +156,12 @@ export const TabStateSchema = z.strictObject({
    * only while the tab is active; a background tab with one gets an indicator in the strip.
    */
   permissionPrompt: PermissionPromptSchema.nullable(),
+  /**
+   * HTML fullscreen (`permissions.spec.ts`, `fullscreen`): `notice` while the chrome's notice
+   * banner shows above the page (`FULLSCREEN_NOTICE_MS`), then `full` (the view covers the whole
+   * window); `null` when not fullscreen.
+   */
+  fullscreen: z.enum(['notice', 'full']).nullable(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

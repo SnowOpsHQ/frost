@@ -1,7 +1,8 @@
 import type { PermissionPrompt } from '@app/specs/browser.spec';
 import { PERMISSION_PROMPT_ACTIONS, type PromptKind } from '@app/specs/permissions.spec';
 
-// The prompt bar's copy (spec `permissions.feature.md`, Prompt bar): "<host> wants to <action>".
+// The prompt bar's copy (spec `permissions.feature.md`, Prompt bar): "<host> wants to <action>",
+// or "<host> (embedded in <top-level host>) wants to <action>".
 
 export interface PromptView {
   /** Which icon and sentence: the permission, with `media` named by its devices. */
@@ -10,6 +11,9 @@ export interface PromptView {
   readonly host: string;
   /** The full requesting origin (the tooltip). */
   readonly origin: string;
+  /** For an embedded requester: the top-level page's host (and full origin); else `null`. */
+  readonly embedderHost: string | null;
+  readonly embedderOrigin: string | null;
   readonly action: string;
 }
 
@@ -33,5 +37,13 @@ function hostOf(origin: string): string {
 
 export function promptView(prompt: PermissionPrompt): PromptView {
   const kind = kindOf(prompt);
-  return { kind, host: hostOf(prompt.origin), origin: prompt.origin, action: PERMISSION_PROMPT_ACTIONS[kind] };
+  const embedder = prompt.topLevelOrigin;
+  return {
+    kind,
+    host: hostOf(prompt.origin),
+    origin: prompt.origin,
+    embedderHost: embedder === null ? null : hostOf(embedder),
+    embedderOrigin: embedder,
+    action: PERMISSION_PROMPT_ACTIONS[kind],
+  };
 }

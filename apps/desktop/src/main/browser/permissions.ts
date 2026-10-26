@@ -1,6 +1,8 @@
 import type { PermissionPrompt } from '@app/specs/browser.spec';
 import {
+  MAX_COALESCED_REQUESTS,
   MAX_PENDING_PROMPTS_PER_TAB,
+  MAX_PROMPT_IGNORES,
   MEDIA_TYPE_PERMISSION,
   MEDIA_TYPES,
   PERMISSION_PROMPT_TIMEOUT_MS,
@@ -15,24 +17,34 @@ import {
 } from '@app/specs/permissions.spec';
 
 // Per-origin permission prompts for the browse session (spec `permissions.feature.md`). Pure
-// decisions, the prompt broker (queues, remembered decisions, timeouts) and the session handlers
-// `hardenBrowseSession` installs. No Electron imports: the handlers take Electron's arguments as
-// plain values, so this runs under Vitest with fakes.
+// decisions, the requesting-frame check, the prompt broker (queues, remembered decisions,
+// timeouts, back-off) and the session handlers `hardenBrowseSession` installs. No Electron
+// imports: the handlers take Electron's arguments as plain values, so this runs under Vitest.
 
 function includes(list: readonly string[], value: unknown): boolean {
   return typeof value === 'string' && list.includes(value);
 }
 
-/** What a tab asks for, attributed to the requesting frame's origin. */
-export interface PermissionAsk {
-  /** Serialized `http(s)` origin of the frame that asked (`https://example.com`). */
+/**
+ * What a decision is remembered against: the requesting frame's origin and the tab's top-level
+ * origin (equal for a top-level request). Both are serialized `http(s)` origins.
+ */
+export interface PermissionScope {
   readonly origin: string;
+  readonly topLevelOrigin: string;
+}
+
+/** What a tab asks for, in its scope. */
+export interface PermissionAsk extends PermissionScope {
   readonly permission: PromptablePermission;
   /** `media` only: the devices asked for, deduplicated, in `MEDIA_TYPES` order (camera first). */
   readonly mediaTypes?: readonly MediaType[];
 }
 
-export type PermissionVerdict = { kind: 'allow' } | { kind: 'deny' } | { kind: 'prompt'; ask: PermissionAsk };
+export type PermissionVerdict =
+  | { kind: 'allow' }
+  | { kind: 'deny' }
+  | { kind: 'prompt'; permission: PromptablePermission; mediaTypes?: MediaType[] };
 
 /** `url`'s serialized origin if it is `http(s)` (`PROMPTABLE_ORIGIN_SCHEMES`), else `null`. */
 function webOrigin(url: unknown): string | null {
@@ -45,19 +57,13 @@ function webOrigin(url: unknown): string | null {
   }
 }
 
-function field(details: unknown, key: string): unknown {
-  return typeof details === 'object' && details !== null ? (details as Record<string, unknown>)[key] : undefined;
+/** `origin` if it already is a serialized `http(s)` origin (a frame's `origin`), else `null`. */
+function exactWebOrigin(origin: unknown): string | null {
+  return typeof origin === 'string' && webOrigin(origin) === origin ? origin : null;
 }
 
-/**
- * The origin a permission request is attributed to: the requesting frame's last committed URL
- * (`details.requestingUrl`, a subframe's own), else `details.securityOrigin` (media requests).
- * `null` when neither is an `http(s)` URL (opaque `about:blank`, `data:`, `file:`, `app:` …).
- */
-export function requestingOrigin(details: unknown): string | null {
-  const url = field(details, 'requestingUrl');
-  if (typeof url === 'string' && url !== '') return webOrigin(url);
-  return webOrigin(field(details, 'securityOrigin'));
+function field(value: unknown, key: string): unknown {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[key] : undefined;
 }
 
 /** The media types of a `media` request, deduplicated, camera first; `[]` if none is known. */
@@ -68,20 +74,53 @@ function mediaTypesOf(details: unknown): MediaType[] {
 }
 
 /**
- * How a browse-session permission request is answered (spec `permissions.spec.ts`):
- * `SILENTLY_ALLOWED_PERMISSIONS` → `allow`; `PROMPTABLE_PERMISSIONS` from an `http(s)` frame →
- * `prompt` (attributed to the requesting frame's origin; `media` needs a known media type);
- * everything else → `deny`.
+ * How a browse-session permission request is answered by kind (spec `permissions.spec.ts`):
+ * `SILENTLY_ALLOWED_PERMISSIONS` → `allow`; `PROMPTABLE_PERMISSIONS` → `prompt` (`media` needs a
+ * known media type); everything else → `deny`. Who asked is `requestScope`'s question.
  */
 export function classifyPermissionRequest(permission: string, details: unknown): PermissionVerdict {
   if (includes(SILENTLY_ALLOWED_PERMISSIONS, permission)) return { kind: 'allow' };
   if (!includes(PROMPTABLE_PERMISSIONS, permission)) return { kind: 'deny' };
-  const origin = requestingOrigin(details);
-  if (origin === null) return { kind: 'deny' };
   const promptable = permission as PromptablePermission;
-  if (promptable !== 'media') return { kind: 'prompt', ask: { origin, permission: promptable } };
+  if (promptable !== 'media') return { kind: 'prompt', permission: promptable };
   const mediaTypes = mediaTypesOf(details);
-  return mediaTypes.length === 0 ? { kind: 'deny' } : { kind: 'prompt', ask: { origin, permission: 'media', mediaTypes } };
+  return mediaTypes.length === 0 ? { kind: 'deny' } : { kind: 'prompt', permission: 'media', mediaTypes };
+}
+
+interface FrameLike {
+  readonly url: unknown;
+  readonly origin: unknown;
+}
+
+/**
+ * The scope of a request, judged from the **requesting frame's own origin** (spec
+ * `permissions.feature.md`, Requesting frame), or `null` (deny): the tab's main frame for a
+ * main-frame request (its origin must be `requestingUrl`'s), else every frame of the tab at
+ * `requestingUrl` (at least one, all on that URL's origin). Opaque origins (CSP / iframe
+ * `sandbox`), non-`http(s)` ones, frames that are gone or navigated, and an opaque top-level page
+ * are all `null`. `contents` is the tab's WebContents (its `mainFrame` may throw once destroyed).
+ */
+export function requestScope(contents: unknown, details: unknown): PermissionScope | null {
+  const origin = webOrigin(field(details, 'requestingUrl'));
+  if (origin === null) return null;
+  const url = field(details, 'requestingUrl');
+  try {
+    const mainFrame = field(contents, 'mainFrame') as (FrameLike & { readonly framesInSubtree?: unknown }) | undefined;
+    if (!mainFrame) return null;
+    const topLevelOrigin = exactWebOrigin(mainFrame.origin);
+    if (topLevelOrigin === null) return null;
+    if (field(details, 'isMainFrame') === true) return mainFrame.origin === origin ? { origin, topLevelOrigin } : null;
+    const frames = Array.isArray(mainFrame.framesInSubtree) ? (mainFrame.framesInSubtree as FrameLike[]) : [];
+    const requesting = frames.filter((frame) => frame !== mainFrame && frame.url === url);
+    if (requesting.length === 0 || !requesting.every((frame) => frame.origin === origin)) return null;
+    return { origin, topLevelOrigin };
+  } catch {
+    return null;
+  }
+}
+
+function sameScope(a: PermissionScope | null, b: PermissionScope): boolean {
+  return a !== null && a.origin === b.origin && a.topLevelOrigin === b.topLevelOrigin;
 }
 
 /** What `ask` is remembered against (`media` split per device). */
@@ -91,23 +130,24 @@ function sitePermissionsOf(ask: PermissionAsk): SitePermission[] {
 }
 
 /**
- * Where Allow / Block decisions are remembered, per (origin, `SitePermission`). Synchronous: the
+ * Where Allow / Block decisions are remembered, per (scope, `SitePermission`). Synchronous: the
  * permission handlers answer from it inline. Task 5's persistent store keeps the same shape
  * (loaded into memory at startup, written through).
  */
 export interface PermissionDecisionStore {
-  get(origin: string, permission: SitePermission): RememberedDecision | undefined;
-  set(origin: string, permission: SitePermission, decision: RememberedDecision): void;
+  get(scope: PermissionScope, permission: SitePermission): RememberedDecision | undefined;
+  set(scope: PermissionScope, permission: SitePermission, decision: RememberedDecision): void;
 }
+
+const scopeKey = (scope: PermissionScope, permission: SitePermission): string => JSON.stringify([scope.origin, scope.topLevelOrigin, permission]);
 
 /** The app session's in-memory decision store (nothing survives a restart until Task 5). */
 export function createMemoryDecisionStore(): PermissionDecisionStore {
   const decisions = new Map<string, RememberedDecision>();
-  const key = (origin: string, permission: SitePermission) => JSON.stringify([origin, permission]);
   return {
-    get: (origin, permission) => decisions.get(key(origin, permission)),
-    set: (origin, permission, decision) => {
-      decisions.set(key(origin, permission), decision);
+    get: (scope, permission) => decisions.get(scopeKey(scope, permission)),
+    set: (scope, permission, decision) => {
+      decisions.set(scopeKey(scope, permission), decision);
     },
   };
 }
@@ -115,11 +155,15 @@ export function createMemoryDecisionStore(): PermissionDecisionStore {
 /** Pending prompts per tab and the remembered decisions behind them (spec `permissions.feature.md`, Broker). */
 export interface PermissionBroker {
   /**
-   * A tab's request: answered at once from remembered decisions, coalesced into an identical
-   * pending prompt of that tab, denied beyond `MAX_PENDING_PROMPTS_PER_TAB`, or queued as a new
-   * prompt (denied after `PERMISSION_PROMPT_TIMEOUT_MS`). `callback` is called exactly once.
+   * A tab's request: answered at once from remembered decisions (or the back-off), coalesced into
+   * an identical pending prompt of that tab (up to `MAX_COALESCED_REQUESTS`), denied beyond
+   * `MAX_PENDING_PROMPTS_PER_TAB`, or queued as a new prompt (denied after
+   * `PERMISSION_PROMPT_TIMEOUT_MS`). `callback` is called exactly once. `options.isCurrent` (the
+   * requesting-frame check, run again) must still hold when the prompt is allowed, else that
+   * request is denied. With `options.mayPrompt: false` (a fullscreen tab) a request that would
+   * prompt is denied instead.
    */
-  request(tabId: number, ask: PermissionAsk, callback: (granted: boolean) => void): void;
+  request(tabId: number, ask: PermissionAsk, callback: (granted: boolean) => void, options?: RequestOptions): void;
   /** The prompt `tabId` shows: the head of its queue, or `null`. A fresh copy. */
   promptFor(tabId: number): PermissionPrompt | null;
   /**
@@ -127,14 +171,19 @@ export interface PermissionBroker {
    * other id: another tab's, a queued one, an answered or timed-out one, an unknown one.
    */
   answer(tabId: number, promptId: string, decision: PermissionDecision): boolean;
-  /** Denies every pending request of `tabId` (nothing remembered). */
+  /** Denies every pending request of `tabId` (nothing remembered, no back-off). */
   denyTab(tabId: number): void;
-  /** Whether (origin, permission) has a remembered Allow (the session's permission check). */
-  check(origin: string, permission: SitePermission): boolean;
+  /** Whether (scope, permission) has a remembered Allow (the session's permission check). */
+  check(scope: PermissionScope, permission: SitePermission): boolean;
   /** Calls `listener` after every change of any tab's prompt; answers the unsubscribe. */
   subscribe(listener: () => void): () => void;
   /** How many prompts are pending, over all tabs. */
   pendingCount(): number;
+}
+
+export interface RequestOptions {
+  readonly isCurrent?: () => boolean;
+  readonly mayPrompt?: boolean;
 }
 
 export interface PermissionBrokerOptions {
@@ -143,14 +192,19 @@ export interface PermissionBrokerOptions {
   readonly randomId?: () => string;
 }
 
+interface Waiter {
+  readonly callback: (granted: boolean) => void;
+  readonly isCurrent: () => boolean;
+}
+
 interface Pending {
   readonly id: string;
   readonly tabId: number;
-  readonly origin: string;
+  readonly scope: PermissionScope;
   readonly permission: PromptablePermission;
   /** What is still undecided (the prompt names these); narrowed as other answers settle some. */
   undecided: SitePermission[];
-  readonly callbacks: ((granted: boolean) => void)[];
+  readonly waiters: Waiter[];
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
@@ -160,12 +214,16 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value) => b.includes(value));
 }
 
+const always = (): boolean => true;
+
 export function createPermissionBroker(options: PermissionBrokerOptions = {}): PermissionBroker {
   const store = options.store ?? createMemoryDecisionStore();
   const randomId = options.randomId ?? (() => crypto.randomUUID());
   /** Each tab's queue, head first. */
   const queues = new Map<number, Pending[]>();
   const listeners = new Set<() => void>();
+  /** Dismissals and timeouts per (scope, permission), for the back-off. */
+  const ignores = new Map<string, number>();
 
   const notify = (): void => {
     for (const listener of [...listeners]) listener();
@@ -180,14 +238,24 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
   };
 
   /** What remembered decisions say about `permissions`: `true`/`false`, or the undecided ones. */
-  const evaluate = (origin: string, permissions: readonly SitePermission[]): boolean | SitePermission[] => {
-    const decisions = permissions.map((permission) => store.get(origin, permission));
+  const evaluate = (scope: PermissionScope, permissions: readonly SitePermission[]): boolean | SitePermission[] => {
+    const decisions = permissions.map((permission) => store.get(scope, permission));
     if (decisions.includes('block')) return false;
     const undecided = permissions.filter((_, i) => decisions[i] === undefined);
     return undecided.length === 0 ? true : undecided;
   };
 
-  /** Removes `entry` from its queue and answers every callback coalesced into it. */
+  const silenced = (scope: PermissionScope, permissions: readonly SitePermission[]): boolean =>
+    permissions.some((permission) => (ignores.get(scopeKey(scope, permission)) ?? 0) >= MAX_PROMPT_IGNORES);
+
+  const countIgnored = (entry: Pending): void => {
+    for (const permission of entry.undecided) {
+      const key = scopeKey(entry.scope, permission);
+      ignores.set(key, (ignores.get(key) ?? 0) + 1);
+    }
+  };
+
+  /** Removes `entry` from its queue and answers every request coalesced into it. */
   const settle = (entry: Pending, granted: boolean): void => {
     clearTimeout(entry.timer);
     const queue = queues.get(entry.tabId);
@@ -196,20 +264,32 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
       if (index >= 0) queue.splice(index, 1);
       if (queue.length === 0) queues.delete(entry.tabId);
     }
-    for (const callback of entry.callbacks) call(callback, granted);
+    for (const waiter of entry.waiters) {
+      // A grant reaches only requests whose frame is still the one that asked.
+      let current = false;
+      if (granted) {
+        try {
+          current = waiter.isCurrent();
+        } catch {
+          current = false;
+        }
+      }
+      call(waiter.callback, granted && current);
+    }
   };
 
   /** After a remembered decision: answer, or narrow, every pending prompt it now decides. */
   const resettle = (): void => {
     for (const entry of [...queues.values()].flat()) {
-      const verdict = evaluate(entry.origin, entry.undecided);
+      const verdict = evaluate(entry.scope, entry.undecided);
       if (typeof verdict === 'boolean') settle(entry, verdict);
       else entry.undecided = verdict;
     }
   };
 
   const toPrompt = (entry: Pending): PermissionPrompt => {
-    const prompt: PermissionPrompt = { id: entry.id, origin: entry.origin, permission: entry.permission };
+    const { origin, topLevelOrigin } = entry.scope;
+    const prompt: PermissionPrompt = { id: entry.id, origin, topLevelOrigin: topLevelOrigin === origin ? null : topLevelOrigin, permission: entry.permission };
     if (entry.permission === 'media') {
       prompt.mediaTypes = MEDIA_TYPES.filter((type) => entry.undecided.some((p) => SITE_TO_MEDIA_TYPE[p] === type));
     }
@@ -217,26 +297,30 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
   };
 
   return {
-    request(tabId, ask, callback) {
+    request(tabId, ask, callback, { isCurrent = always, mayPrompt = true } = {}) {
+      const scope: PermissionScope = { origin: ask.origin, topLevelOrigin: ask.topLevelOrigin };
       const permissions = sitePermissionsOf(ask);
       if (permissions.length === 0) return call(callback, false);
-      const verdict = evaluate(ask.origin, permissions);
+      const verdict = evaluate(scope, permissions);
       if (typeof verdict === 'boolean') return call(callback, verdict);
+      if (!mayPrompt || silenced(scope, verdict)) return call(callback, false);
       const queue = queues.get(tabId) ?? [];
-      const same = queue.find((entry) => entry.origin === ask.origin && entry.permission === ask.permission && sameSet(entry.undecided, verdict));
+      const same = queue.find((entry) => sameScope(entry.scope, scope) && entry.permission === ask.permission && sameSet(entry.undecided, verdict));
       if (same) {
-        same.callbacks.push(callback);
+        if (same.waiters.length >= MAX_COALESCED_REQUESTS) return call(callback, false);
+        same.waiters.push({ callback, isCurrent });
         return;
       }
       if (queue.length >= MAX_PENDING_PROMPTS_PER_TAB) return call(callback, false);
       const entry: Pending = {
         id: randomId(),
         tabId,
-        origin: ask.origin,
+        scope,
         permission: ask.permission,
         undecided: verdict,
-        callbacks: [callback],
+        waiters: [{ callback, isCurrent }],
         timer: setTimeout(() => {
+          countIgnored(entry);
           settle(entry, false);
           notify();
         }, PERMISSION_PROMPT_TIMEOUT_MS),
@@ -255,9 +339,10 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
       const head = queues.get(tabId)?.[0];
       if (!head || head.id !== promptId) return false;
       if (decision === 'dismiss') {
+        countIgnored(head);
         settle(head, false);
       } else {
-        for (const permission of head.undecided) store.set(head.origin, permission, decision);
+        for (const permission of head.undecided) store.set(head.scope, permission, decision);
         settle(head, decision === 'allow');
         resettle();
       }
@@ -272,7 +357,7 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
       notify();
     },
 
-    check: (origin, permission) => store.get(origin, permission) === 'allow',
+    check: (scope, permission) => store.get(scope, permission) === 'allow',
 
     subscribe(listener) {
       listeners.add(listener);
@@ -292,14 +377,33 @@ export interface BrowsePermissionHandlers {
 }
 
 /**
- * Wires the broker to the browse session (spec `permissions.feature.md`, Session wiring): requests
- * from a tab's WebContents (`tabIdOf`) are classified and, if promptable, queued for that tab;
- * from anything else denied. Checks answer `true` for silently allowed permissions and remembered
- * Allows of the checking frame's origin only.
+ * The top-level origin of a permission check: `details.embeddingOrigin` (Electron 45 sets the
+ * top-level origin there), else the checking origin itself for a main-frame check, else the tab's
+ * `mainFrame.origin` (media checks carry no `embeddingOrigin`).
+ */
+function checkTopLevelOrigin(contents: unknown, origin: string, details: unknown): string | null {
+  const embedding = field(details, 'embeddingOrigin');
+  if (typeof embedding === 'string' && embedding !== '') return webOrigin(embedding);
+  if (field(details, 'isMainFrame') === true) return origin;
+  try {
+    return exactWebOrigin(field(field(contents, 'mainFrame'), 'origin'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wires the broker to the browse session (spec `permissions.feature.md`, Session wiring): a
+ * promptable request from a tab's WebContents (`tabIdOf`) whose requesting frame checks out
+ * (`requestScope`) is queued for that tab, unless the tab is fullscreen (denied: the prompt would
+ * be hidden); anything else is denied. Checks answer `true` for silently allowed permissions and
+ * remembered Allows of the checking frame's scope only.
  */
 export function createBrowsePermissionHandlers(options: {
   readonly broker: PermissionBroker;
   readonly tabIdOf: (contents: unknown) => number | null;
+  /** Whether the tab is in HTML fullscreen (its new requests are denied). */
+  readonly isFullscreen?: (tabId: number) => boolean;
 }): BrowsePermissionHandlers {
   const { broker, tabIdOf } = options;
   return {
@@ -307,21 +411,29 @@ export function createBrowsePermissionHandlers(options: {
       const verdict = classifyPermissionRequest(permission, details);
       if (verdict.kind !== 'prompt') return callback(verdict.kind === 'allow');
       const tabId = tabIdOf(contents);
-      if (tabId === null) return callback(false);
-      broker.request(tabId, verdict.ask, callback);
+      const scope = tabId === null ? null : requestScope(contents, details);
+      if (tabId === null || scope === null) return callback(false);
+      const ask: PermissionAsk = { ...scope, permission: verdict.permission, ...(verdict.mediaTypes ? { mediaTypes: verdict.mediaTypes } : {}) };
+      broker.request(tabId, ask, callback, {
+        isCurrent: () => sameScope(requestScope(contents, details), scope),
+        // No prompt can show over a fullscreen page: only what is already remembered answers.
+        mayPrompt: options.isFullscreen?.(tabId) !== true,
+      });
     },
 
-    check(_contents, permission, origin, details) {
+    check(contents, permission, requestingOrigin, details) {
       if (includes(SILENTLY_ALLOWED_PERMISSIONS, permission)) return true;
       if (!includes(PROMPTABLE_PERMISSIONS, permission)) return false;
       if (permission === 'media') {
         const mediaType = field(details, 'mediaType');
-        const checked = webOrigin(field(details, 'securityOrigin')) ?? webOrigin(origin);
-        if (checked === null || !includes(MEDIA_TYPES, mediaType)) return false;
-        return broker.check(checked, MEDIA_TYPE_PERMISSION[mediaType as MediaType]);
+        const origin = webOrigin(field(details, 'securityOrigin')) ?? webOrigin(requestingOrigin);
+        if (origin === null || !includes(MEDIA_TYPES, mediaType)) return false;
+        const topLevelOrigin = checkTopLevelOrigin(contents, origin, details);
+        return topLevelOrigin !== null && broker.check({ origin, topLevelOrigin }, MEDIA_TYPE_PERMISSION[mediaType as MediaType]);
       }
-      const checked = webOrigin(origin);
-      return checked !== null && broker.check(checked, permission as Exclude<PromptablePermission, 'media'>);
+      const origin = webOrigin(requestingOrigin);
+      const topLevelOrigin = origin === null ? null : checkTopLevelOrigin(contents, origin, details);
+      return origin !== null && topLevelOrigin !== null && broker.check({ origin, topLevelOrigin }, permission as Exclude<PromptablePermission, 'media'>);
     },
   };
 }

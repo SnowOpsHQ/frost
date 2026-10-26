@@ -585,6 +585,11 @@ input {
   font-weight: 600;
 }
 
+/* "(embedded in site.example)": the top-level site, a step quieter than the requester. */
+.prompt-embedder .prompt-origin {
+  font-weight: 500;
+}
+
 .prompt-actions {
   display: flex;
   flex: none;
@@ -659,6 +664,37 @@ input {
     opacity: 1;
     transform: none;
   }
+}
+
+/* ---- Fullscreen notice -------------------------------------------------------------------- */
+
+/* Across the top of the window while a page has just entered HTML fullscreen; main keeps the page's
+   view below it (FULLSCREEN_BANNER_HEIGHT in specs/permissions.spec.ts: keep the height equal). */
+.fullscreen-notice {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 16px;
+  background: #15181d;
+  color: #e7eaf0;
+  font-size: 13px;
+  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.08);
+}
+
+.fullscreen-notice-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fullscreen-notice strong {
+  font-weight: 600;
 }
 
 /* ---- Page area ---------------------------------------------------------------------------- */
