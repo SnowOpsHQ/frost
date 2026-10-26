@@ -61,8 +61,13 @@ function isValidPort(port: string | undefined): boolean {
   return n >= 1 && n <= 65_535;
 }
 
+/** The `SEARCH_URL_TEMPLATE` search for `query` (only ever its `q` parameter). */
+export function searchUrl(query: string): string {
+  return SEARCH_URL_TEMPLATE.replace('{q}', encodeURIComponent(query));
+}
+
 function searchFor(query: string): ResolvedAddress {
-  return { kind: 'search', url: SEARCH_URL_TEMPLATE.replace('{q}', encodeURIComponent(query)) };
+  return { kind: 'search', url: searchUrl(query) };
 }
 
 /** Input typed with an explicit `http://`/`https://`: any URL with a non-empty host and a valid port. */

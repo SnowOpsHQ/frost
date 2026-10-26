@@ -167,9 +167,10 @@ describe('decisions', () => {
 
   test('judge-navigation-routes-non-web-to-external', () => {
     const gesture = vi.fn(() => true);
-    const ctx = (over: { isMainFrame?: boolean; isRedirect?: boolean; userGesture?: () => boolean } = {}) => ({
+    const ctx = (over: { isMainFrame?: boolean; isRedirect?: boolean; mainFrameInitiated?: boolean; userGesture?: () => boolean } = {}) => ({
       isMainFrame: true,
       isRedirect: false,
+      mainFrameInitiated: true,
       userGesture: gesture,
       ...over,
     });
@@ -188,7 +189,12 @@ describe('decisions', () => {
     gesture.mockClear();
     expect(judgeBrowseNavigation('mailto:a@b.c', ctx({ isRedirect: true }))).toBe('drop');
     expect(judgeBrowseNavigation('app://app/', ctx({ isRedirect: true }))).toBe('drop');
+    // Not started by the main frame: dropped, the gesture left unread (and unspent).
+    expect(judgeBrowseNavigation('mailto:a@b.c', ctx({ mainFrameInitiated: false }))).toBe('drop');
+    expect(judgeBrowseNavigation('mailto:a@b.c', ctx({ isMainFrame: false, mainFrameInitiated: false }))).toBe('drop');
     expect(gesture).not.toHaveBeenCalled();
+    // Browsable stays allowed whoever started it.
+    expect(judgeBrowseNavigation('https://example.com/', ctx({ isMainFrame: false, mainFrameInitiated: false }))).toBe('allow');
   });
 
   test('judge-popup', () => {
@@ -242,10 +248,28 @@ describe('browse guard', () => {
     // The gesture is consumed.
     expect(contents.simulateNavigation('mailto:x@y.z')).toBe(true);
     expect(shell.openExternal).toHaveBeenCalledTimes(1);
-    // A fresh activation backs a subframe's open as well (per-WebContents attribution).
+    // A fresh activation backs a main-frame-initiated navigation of a subframe as well.
     activate(contents, 'keyDown');
-    expect(contents.simulateNavigation('mailto:x@y.z', { isMainFrame: false })).toBe(true);
+    expect(contents.simulateNavigation('mailto:x@y.z', { isMainFrame: false, initiator: 'main' })).toBe(true);
     expect(shell.openExternal).toHaveBeenLastCalledWith('mailto:x@y.z');
+    expect(shell.openExternal).toHaveBeenCalledTimes(2);
+  });
+
+  test('external-open-needs-main-frame-initiator', () => {
+    const contents = created(browseSession());
+    activate(contents);
+    // A subframe navigating itself, a subframe navigating the top (`_top`), no initiator at all.
+    expect(contents.simulateNavigation('mailto:a@b.c', { isMainFrame: false })).toBe(true);
+    expect(contents.simulateNavigation('mailto:a@b.c', { isMainFrame: true, initiator: 'subframe' })).toBe(true);
+    expect(contents.simulateNavigation('mailto:a@b.c', { isMainFrame: true, initiator: null })).toBe(true);
+    // A frame that only looks like the main frame (no parent, another frame tree node) is not it.
+    const lookalike = fakeEvent({ url: 'mailto:a@b.c', isMainFrame: true, isSameDocument: false, frame: contents.mainFrame, initiator: { frameTreeNodeId: 99, parent: null } });
+    contents.emit('will-frame-navigate', lookalike);
+    expect(lookalike.defaultPrevented).toBe(true);
+    expect(shell.openExternal).not.toHaveBeenCalled();
+    // The activation is still unspent: the main frame's own open right after uses it, once.
+    expect(contents.simulateNavigation('mailto:a@b.c')).toBe(true);
+    expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith('mailto:a@b.c');
   });
 
   test('external-scheme-without-gesture-is-dropped', () => {

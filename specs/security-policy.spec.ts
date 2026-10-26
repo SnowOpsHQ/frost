@@ -49,10 +49,14 @@ export const ALLOWED_MAILTO_PARAMS = ['to', 'cc', 'bcc', 'subject', 'body'] as c
  * types arrived within the window below. Like Chromium's transient activation, each activation is
  * consumed by the first window-open that reads it.
  *
- * Known limit (revisit in Phase 1, browsing tabs): activation is tracked per `webContents`, not per
- * frame — `HandlerDetails` carries no frame, so a click in one frame can back a `window.open` from
- * another frame of the same `webContents`. Acceptable while app windows host only the app's own
- * page; untrusted subframes (tabs) need per-frame attribution.
+ * Known limit: activation is tracked per `webContents`, not per frame — Electron 45 reports
+ * `input-event` per WebContents and `HandlerDetails` carries no frame, so a click in one frame can
+ * back a `window.open` from another frame of the same `webContents`. App windows host only the
+ * app's own page, so there it does not matter. For tabs (untrusted subframes) the accepted risk and
+ * its mitigations are in `browse-guard.feature.md` (Gesture attribution): a navigation is offered
+ * to the external-open flow only when the tab's **main frame** initiated it
+ * (`will-frame-navigate`'s `initiator`), and the popup path, which has no frame to check, stays
+ * per WebContents.
  */
 export const USER_ACTIVATION_INPUT_TYPES = ['mouseDown', 'rawKeyDown', 'keyDown', 'touchEnd', 'gestureTap'] as const;
 /** Matches Chromium's transient user-activation lifespan. */

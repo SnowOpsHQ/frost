@@ -66,6 +66,9 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   `destroyed` listeners Electron has already cleared `view.webContents`, which the test fake
   mirrors, so it is never read bare). (With several tabs,
   `tabs.feature.md` `background-page-close-closes-its-tab`.)
+- **Scenario: destroyed-contents-count-as-no-view** — a tab whose WebContents reports
+  `isDestroyed()` before (or without) its `destroyed` event is treated as having no view: the next
+  `navigate` creates a fresh view and never loads anything into the destroyed one.
 - **Scenario: renderer-crash-stops-loading** — after `render-process-gone` the tab reports
   `loading: false` (even if the WebContents still claims to load) until the next load starts; the
   crash panel is `browse-guard.feature.md`.
@@ -93,6 +96,10 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   `BAD_REQUEST` and the service is never called.
 - **Scenario: browser-procedures-call-service** — a valid app sender's calls reach the matching
   `BrowserService` method with the parsed input.
+- **Scenario: browser-procedures-call-service-over-transport** — through the real main-side IPC
+  request handler (`createIpcRequestHandler`, sender policy included), `browser.watch` answers the
+  service's state, `browser.navigate` its boolean, and a mutation without a result answers `null`
+  (never `undefined`, which a structured clone could drop).
 - **Scenario: missing-browser-service-is-internal-error** — without a service in the IPC context a
   valid call fails `INTERNAL_SERVER_ERROR` (masked).
 - **Scenario: watch-returns-immediately-when-newer** — `sinceVersion` below the current version

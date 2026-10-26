@@ -18,7 +18,14 @@ export class FakeTabContents extends EventEmitter {
   getTitle = () => this.title;
   isLoading = () => this.loading;
   reload = vi.fn();
+  reloadIgnoringCache = vi.fn();
   stop = vi.fn();
+  /** Like Chromium, the zoom factor (per host there: tests set it on each tab of a host). */
+  zoomFactor = 1;
+  getZoomFactor = () => this.zoomFactor;
+  setZoomFactor = vi.fn((factor: number) => {
+    this.zoomFactor = factor;
+  });
   focus = vi.fn();
   executeJavaScriptInIsolatedWorld = vi.fn(async (_worldId: number, _scripts: { code: string }[]) => undefined);
   destroyed = false;

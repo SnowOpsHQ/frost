@@ -44,7 +44,8 @@ Phase 1 Task 2. Each scenario maps to one named test.
   WebContents and on the chrome's, which takes a reserved shortcut before the page sees it (a page
   that `preventDefault`s every keydown cannot block it), runs the command once and consumes the key
   (`preventDefault`, which also suppresses the menu accelerator, so one press never runs twice).
-  Other keys pass through untouched. The menu keeps the standard Edit roles (undo, redo, cut,
+  Other keys pass through untouched. Page commands (reload, back / forward, zoom, stop) are
+  reserved the same way (`page-commands.feature.md`). The menu keeps the standard Edit roles (undo, redo, cut,
   copy, paste, select all) so the address bar's clipboard works on macOS, and nothing else claims
   Cmd/Ctrl+W. Close Window is Cmd/Ctrl+Shift+W; Quit is Cmd+Q on macOS and Ctrl+Shift+Q elsewhere.
   On Linux/Windows the menu bar auto-hides (Alt reveals it).

@@ -10,6 +10,13 @@ Runs on every pull request and on pushes to `main`; a superseded PR run is cance
 never is.
 - **Gate: lint-test-build** — `pnpm turbo run lint test build` (strict TypeScript, vitest suites,
   Forge package).
+  - **Scenario: turbo-cache-follows-dependencies** (`ci-workflows.test.ts`) — Turbo's cache never
+    replays a package's `lint` or `test` after a workspace dependency's sources changed: both
+    depend on the package's `transit` task, which depends on its dependencies' `transit`
+    (`^transit`; no package has a `transit` script, so it only carries the dependencies' source
+    hashes). Checked with `pnpm turbo run lint test --dry=json`: a change under `packages/db/src`
+    changes the hashes of `@app/desktop#lint` and `#test`, and likewise for `@app/ipc-contract` and
+    `@app/specs`.
 - **Gate: electronegativity** — `pnpm security:electronegativity`
   (`scripts/electronegativity.mjs`): Electronegativity (pinned devDependency) over
   `apps/desktop/src`, `apps/desktop/forge.config.ts` and `packages`, for the installed Electron

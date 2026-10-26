@@ -117,7 +117,10 @@ named test.
   (`PERMISSION_PROMPT_EMBEDDED_IN` <top-level host>) wants to …" (the full origins as its tooltip),
   then **Allow**, **Block** and a dismiss **×** (`PERMISSION_PROMPT_LABELS`). Allow and Block stay
   disabled for `PROMPT_ARMING_DELAY_MS` after the bar appears, after the shown prompt or tab
-  changes, and after the chrome's window regains focus or becomes visible (clickjacking). It is a labelled
+  changes, after the chrome's window regains focus or becomes visible, and after the active tab
+  leaves HTML fullscreen (clickjacking). While the active tab is fullscreen its page covers the
+  bar: the bar is marked covered (`data-covered`) and stays disarmed, so it never comes back from
+  under the page already armed. It is a labelled
   `role="dialog"` (non-modal) that does not take focus from the page; Tab reaches its buttons and
   Esc inside it dismisses. A background tab with a pending prompt shows a small indicator dot in the
   strip (and says so to assistive technology). Light and dark follow `styles.css`; no `style=`
@@ -265,6 +268,10 @@ named test.
 - **Scenario: prompt-buttons-arm-after-delay** (`prompt-arming.test.ts`, fake timers) — a fresh
   arming is disarmed, armed after `PROMPT_ARMING_DELAY_MS` (not before); `disarm()` (focus,
   visibility) restarts the delay; `dispose()` leaves no timer.
+- **Scenario: prompt-disarms-while-covered** (`prompt-arming.test.ts`, fake timers) —
+  `setCovered(true)` disarms at once and keeps it disarmed however long it lasts (no timer);
+  `setCovered(false)` after that arms only `PROMPT_ARMING_DELAY_MS` later; `setCovered(false)`
+  when not covered changes nothing.
 
 ## End to end (`apps/desktop/e2e/permissions.e2e.ts`, real Electron, loopback pages)
 Each scenario uses fresh loopback origins (decisions are remembered for the app session).
@@ -287,7 +294,14 @@ Each scenario uses fresh loopback origins (decisions are remembered for the app 
   `Notification.requestPermission()`, and an `<iframe sandbox="allow-scripts" allow="geolocation">`
   of a same-origin URL gets `PERMISSION_DENIED`, with no prompt.
 - **Scenario: prompt-buttons-arm-after-delay-e2e** — a click on Allow right after the bar appears
-  does nothing (the request stays pending); a click after `PROMPT_ARMING_DELAY_MS` grants.
+  does nothing (the request stays pending); a click after `PROMPT_ARMING_DELAY_MS` grants. The
+  delay is measured in the chrome's renderer (`performance.now()` when the bar mounts and when
+  `data-armed` turns `true`, recorded by a test-only `MutationObserver`), never from the test
+  process.
+- **Scenario: prompt-disarms-after-fullscreen-e2e** — with an armed prompt showing, the page goes
+  fullscreen (a real click): the bar is covered and disarmed; after Esc it is uncovered and armed
+  again only `PROMPT_ARMING_DELAY_MS` after that (measured in the renderer), and Allow then
+  grants.
 - **Scenario: navigate-away-denies-pending-e2e** — with a prompt showing, the page navigates
   elsewhere: the prompt bar goes away, and the new page's request prompts afresh (a new id).
 - **Scenario: non-promptable-denied-without-prompt-e2e** — `navigator.requestMIDIAccess()` rejects

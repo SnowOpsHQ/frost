@@ -1,7 +1,9 @@
+import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { TabCommand } from '@app/specs/tabs.spec';
 
 // Matches `before-input-event` input against `RESERVED_TAB_SHORTCUTS` (`specs/tabs.spec.ts`;
-// acceptance `tabs.feature.md`, Shortcut matching). Pure, no Electron import.
+// acceptance `tabs.feature.md`, Shortcut matching) and `RESERVED_PAGE_SHORTCUTS`
+// (`specs/page-commands.spec.ts`; `page-commands.feature.md`). Pure, no Electron import.
 
 /** A matched shortcut: its command, and for `select-tab` the tab index (0…7). */
 export type TabShortcut = { readonly command: Exclude<TabCommand, 'select-tab'> } | { readonly command: 'select-tab'; readonly index: number };
@@ -24,6 +26,8 @@ function physicalKey({ code, key }: KeyInput): string {
   if (/^\d$/.test(key)) return `Digit${key}`;
   if (key === ']' || key === '}') return 'BracketRight';
   if (key === '[' || key === '{') return 'BracketLeft';
+  if (key === '=' || key === '+') return 'Equal';
+  if (key === '-' || key === '_') return 'Minus';
   return key;
 }
 
@@ -69,4 +73,50 @@ export function matchTabShortcut(input: KeyInput, platform: NodeJS.Platform): Ta
   const digit = /^Digit([1-8])$/.exec(code);
   if (digit) return { command: 'select-tab', index: Number(digit[1]) - 1 };
   return null;
+}
+
+/** Mod+<key> (no Shift) page commands, by physical key, on every platform. */
+const MOD_PAGE_KEYS: Readonly<Record<string, PageCommand>> = {
+  KeyR: 'reload',
+  Equal: 'zoom-in',
+  NumpadAdd: 'zoom-in',
+  Minus: 'zoom-out',
+  NumpadSubtract: 'zoom-out',
+  Digit0: 'zoom-reset',
+  Numpad0: 'zoom-reset',
+};
+
+/**
+ * The reserved page shortcut `input` is (key-down or key-up), or `null`: Mod+R / F5 reload,
+ * Mod+Shift+R hard reload, Mod+= (also Mod+Shift+= and the keypad +) / Mod+- / Mod+0 zoom, and
+ * back / forward as Cmd+[ / Cmd+] on macOS and Alt+Left / Alt+Right elsewhere. Mod is Meta on
+ * macOS and Control elsewhere; the other one of the two must not be held. Not here (not reserved):
+ * Cmd+Left / Cmd+Right and Esc (`UNRESERVED_PAGE_SHORTCUTS`).
+ */
+export function matchPageShortcut(input: KeyInput, platform: NodeJS.Platform): PageCommand | null {
+  if (input.type !== 'keyDown' && input.type !== 'keyUp') return null;
+  const mac = platform === 'darwin';
+  const code = physicalKey(input);
+  const mod = mac ? input.meta : input.control;
+  const other = mac ? input.control : input.meta;
+
+  if (code === 'F5') return !input.control && !input.meta && !input.alt && !input.shift ? 'reload' : null;
+
+  if (input.alt) {
+    // Alt+Left / Alt+Right, alone (never on macOS, where Option+arrows move by word).
+    if (mac || input.control || input.meta || input.shift) return null;
+    if (code === 'ArrowLeft') return 'back';
+    if (code === 'ArrowRight') return 'forward';
+    return null;
+  }
+
+  if (!mod || other) return null;
+  if (input.shift) {
+    if (code === 'KeyR') return 'hard-reload';
+    if (code === 'Equal') return 'zoom-in';
+    return null;
+  }
+  if (mac && code === 'BracketLeft') return 'back';
+  if (mac && code === 'BracketRight') return 'forward';
+  return MOD_PAGE_KEYS[code] ?? null;
 }

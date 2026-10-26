@@ -49,7 +49,10 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Single instance.** One frost per profile: main takes `app.requestSingleInstanceLock()` before
   it opens anything; a second launch on the same `userData` quits (the first instance, on
   `second-instance`, restores and focuses its window, or opens one if it has none), so two
-  instances never save over each other's session.
+  instances never save over each other's session. **Startup first:** a `second-instance` or
+  (macOS) `activate` is acted on only once startup is complete (the saved session restored and the
+  first window opened); one arriving earlier, even after the app is ready, waits for that, so it can
+  never open a window before the restore or a second window next to the first.
 - **Tabs.** The saved session is the window's tab strip: each tab's URL and title in strip order,
   and which one is active. Saved whenever that projection changes while a window is attached; what
   a window starts with is not a change (a macOS window reopened on an empty tab keeps the saved
@@ -265,9 +268,15 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 ## Single instance (`apps/desktop/src/main/__tests__/single-instance.test.ts`)
 - **Scenario: second-instance-quits** — without the lock, `claimSingleInstance` quits the app and
   answers `false` (main then starts nothing).
-- **Scenario: second-instance-shows-existing-window** — with the lock, a `second-instance` event
-  restores (if minimized), shows and focuses the first live window; with none it opens one;
-  before the app is ready it does nothing.
+- **Scenario: second-instance-shows-existing-window** — with the lock, once startup is complete,
+  a `second-instance` event restores (if minimized), shows and focuses the first live window; with
+  none it opens one.
+- **Scenario: second-instance-waits-for-startup** — a `second-instance` that arrives before
+  startup is complete (`started` still pending, the app possibly already ready) does nothing yet;
+  once `started` resolves it shows the window startup opened and opens none.
+- **Scenario: activate-waits-for-startup** — `reopenOnActivate`: an `activate` before startup is
+  complete opens nothing, and once it is, sees the window startup opened (no second one); an
+  `activate` after startup with no live window opens one.
 
 ## Main wiring (`apps/desktop/src/main/__tests__/session-store.test.ts`, real `node:sqlite`, temp dir)
 - **Scenario: session-persists-across-reopen** — tabs, visits and Blocks saved through one

@@ -42,4 +42,33 @@ describe('prompt arming', () => {
     expect(arming.armed()).toBe(false);
     expect(seen).toEqual([true, false, true, false]);
   });
+
+  test('prompt-disarms-while-covered', () => {
+    const seen: boolean[] = [];
+    const arming = createPromptArming((armed) => seen.push(armed));
+    vi.advanceTimersByTime(PROMPT_ARMING_DELAY_MS);
+    expect(arming.armed()).toBe(true);
+    // Not covered: uncovering changes nothing.
+    arming.setCovered(false);
+    expect(arming.armed()).toBe(true);
+    expect(seen).toEqual([true]);
+
+    // Covered (the fullscreen page lies over the bar): disarmed at once, for as long as it lasts.
+    arming.setCovered(true);
+    expect(arming.armed()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    arming.disarm();
+    vi.advanceTimersByTime(PROMPT_ARMING_DELAY_MS * 10);
+    expect(arming.armed()).toBe(false);
+
+    // Uncovered: a whole new delay before it arms.
+    arming.setCovered(false);
+    vi.advanceTimersByTime(PROMPT_ARMING_DELAY_MS - 1);
+    expect(arming.armed()).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(arming.armed()).toBe(true);
+    expect(seen).toEqual([true, false, true]);
+    arming.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

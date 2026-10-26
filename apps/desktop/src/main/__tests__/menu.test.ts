@@ -1,4 +1,5 @@
-// Spec: specs/browser.spec.ts (TAB_SHORTCUT_COUNT) · Acceptance: specs/tabs.feature.md (Menu)
+// Spec: specs/browser.spec.ts (TAB_SHORTCUT_COUNT), specs/page-commands.spec.ts
+// Acceptance: specs/tabs.feature.md (Menu), specs/page-commands.feature.md (Menu)
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
@@ -18,6 +19,7 @@ function fakeCommands() {
     activateLastTab: vi.fn(),
     activateNextTab: vi.fn(),
     activatePreviousTab: vi.fn(),
+    runPageCommand: vi.fn(),
     clearBrowsingData: vi.fn(),
   } satisfies AppMenuCommands;
 }
@@ -150,6 +152,54 @@ describe('application menu', () => {
     expect(new Set(accelerators).size).toBe(accelerators.length);
     // Nothing reloads or inspects the chrome page itself.
     for (const role of ['reload', 'forceReload', 'toggleDevTools'] as const) expect(roles).not.toContain(role);
+  });
+
+  test.each(PLATFORMS)('menu-page-commands (%s)', (platform) => {
+    const mac = platform === 'darwin';
+    const commands = fakeCommands();
+    const template = appMenuTemplate(commands, platform);
+    // [id, accelerator, visible, command]
+    const items: [string, string, boolean, string][] = [
+      ['reload', 'CmdOrCtrl+R', true, 'reload'],
+      ['reload-f5', 'F5', false, 'reload'],
+      ['hard-reload', 'CmdOrCtrl+Shift+R', true, 'hard-reload'],
+      ['stop', 'Escape', true, 'stop'],
+      ['zoom-in', 'CmdOrCtrl+=', true, 'zoom-in'],
+      ['zoom-in-plus', 'CmdOrCtrl+Plus', false, 'zoom-in'],
+      ['zoom-in-keypad', 'CmdOrCtrl+numadd', false, 'zoom-in'],
+      ['zoom-out', 'CmdOrCtrl+-', true, 'zoom-out'],
+      ['zoom-out-keypad', 'CmdOrCtrl+numsub', false, 'zoom-out'],
+      ['zoom-reset', 'CmdOrCtrl+0', true, 'zoom-reset'],
+      ['zoom-reset-keypad', 'CmdOrCtrl+num0', false, 'zoom-reset'],
+      ['back', mac ? 'Cmd+[' : 'Alt+Left', true, 'back'],
+      ['forward', mac ? 'Cmd+]' : 'Alt+Right', true, 'forward'],
+      ...(mac
+        ? ([
+            ['back-arrow', 'Cmd+Left', false, 'back'],
+            ['forward-arrow', 'Cmd+Right', false, 'forward'],
+          ] as [string, string, boolean, string][])
+        : []),
+    ];
+    for (const [id, accelerator, visible, command] of items) {
+      const item = itemById(template, id);
+      expect(item.accelerator, id).toBe(accelerator);
+      expect(item.visible ?? true, id).toBe(visible);
+      if (!visible) expect(item.acceleratorWorksWhenHidden ?? true, id).toBe(true);
+      expect(item.role, id).toBeUndefined();
+      commands.runPageCommand.mockClear();
+      click(item);
+      expect(commands.runPageCommand, id).toHaveBeenCalledExactlyOnceWith(command);
+    }
+    // Esc is shown on Stop but never registered (the chrome and the page keep their own Esc).
+    expect(itemById(template, 'stop').registerAccelerator).toBe(false);
+    for (const item of allItems(template)) {
+      if (item.id !== 'stop') expect(item.registerAccelerator ?? true, item.id ?? item.label).toBe(true);
+    }
+    expect(allItems(template).some((item) => item.id === 'back-arrow')).toBe(mac);
+    const view = template.find((item) => item.label === 'View');
+    const history = template.find((item) => item.label === 'History');
+    expect(allItems(view?.submenu as MenuItemConstructorOptions[]).map((item) => item.id).filter(Boolean)).toEqual(expect.arrayContaining(['reload', 'hard-reload', 'stop', 'zoom-in', 'zoom-out', 'zoom-reset']));
+    expect(allItems(history?.submenu as MenuItemConstructorOptions[]).map((item) => item.id).filter(Boolean)).toEqual(expect.arrayContaining(['back', 'forward']));
   });
 
   test('install-app-menu-sets-application-menu', async () => {

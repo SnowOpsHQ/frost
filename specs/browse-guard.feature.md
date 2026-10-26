@@ -28,7 +28,9 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
     panel for it (better than a blank tab). Redirects to `app:`, `mailto:` and custom schemes do
     reach `will-redirect` and are dropped by the guard.
 - **External protocols.** A renderer-initiated navigation (any frame) to a non-browsable scheme is
-  dropped and, only then, offered to the Phase 0 external-open flow unchanged
+  dropped and, only if the tab's **main frame** initiated it (`will-frame-navigate`'s `initiator`
+  is the main frame: not a subframe navigating itself or `_top`, and not a navigation with no
+  initiator), offered to the Phase 0 external-open flow unchanged
   (`parseExternalUrl` / `resolveExternalOpen`, `security/gesture.ts`): it reaches
   `shell.openExternal` only if allowlisted (`mailto:` here, since `http(s)` stay in the tab) **and**
   backed by a live, unconsumed trusted activation input of that WebContents, which it consumes.
@@ -49,8 +51,15 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   - otherwise (no gesture, `about:blank`, `javascript:` → `about:blank`, `file:`, custom schemes)
     nothing happens.
 - **Gesture attribution** stays per WebContents (Phase 0 known limit): Electron 45 reports neither
-  `input-event` nor `setWindowOpenHandler` per frame, so a click in the top frame can back an open
-  from a subframe of the same tab. Each activation backs at most one open, and **ends with its
+  `input-event` nor `setWindowOpenHandler` per frame. **Navigations** carry their initiating frame,
+  so an external open (above) needs the main frame to have started it: a subframe can no longer
+  spend a click in the top frame on a `mailto:` navigation (it is dropped, and the click stays
+  unspent). **Popups** carry no frame (`HandlerDetails` has only the URL, frame name, features,
+  disposition, referrer and POST body; the referrer is the opener's to choose or strip, so it is no
+  frame signal), so there the accepted risk remains: within `USER_ACTIVATION_WINDOW_MS` of a click
+  in the top frame that nothing else spent, a subframe's `window.open` can open **one** background
+  `http(s)` tab (no opener, no referrer) or one allowlisted external URL (`mailto:` with
+  `ALLOWED_MAILTO_PARAMS` only). Each activation backs at most one open, and **ends with its
   document**: a main-frame cross-document commit (`did-navigate`) clears it, so the page a click
   navigated to (directly or through a redirect chain) cannot spend that click on a popup or an
   external open. It is not cleared when a navigation merely starts (a click on a `mailto:` link
@@ -113,9 +122,10 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
 - **Scenario: data-urls-denied-in-subframes** — `data:` (HTML, image, any media type) is denied
   for subframes as well as the main frame.
 - **Scenario: judge-navigation-routes-non-web-to-external** — `judgeBrowseNavigation(url, ctx)`:
-  browsable → `allow` (the gesture is not read); a non-browsable navigation → `open-externally`
-  only when `resolveExternalOpen(url, { userGesture })` allows it (so `mailto:` with a gesture),
-  else `drop`; a non-browsable **redirect** → `drop` without reading the gesture.
+  browsable → `allow` (the gesture is not read); a non-browsable navigation the main frame
+  initiated → `open-externally` only when `resolveExternalOpen(url, { userGesture })` allows it
+  (so `mailto:` with a gesture), else `drop`; a non-browsable **redirect**, or a navigation the
+  main frame did not initiate, → `drop` without reading the gesture.
 - **Scenario: judge-popup** — `judgeBrowsePopup(url, userGesture)`: no gesture → `drop` (any
   URL); gesture + `http(s)` → `tab`; gesture + allowlisted external → `open-externally`; gesture
   + `about:blank` / `file:` / `vscode:` / `javascript:` → `drop`.
@@ -129,6 +139,11 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
 - **Scenario: external-scheme-on-gesture-opens-externally** — after an activation input a
   `mailto:` navigation is prevented and `shell.openExternal` is called once with the parsed
   `href`; the gesture is consumed, so a second one opens nothing.
+- **Scenario: external-open-needs-main-frame-initiator** — after an activation input, a `mailto:`
+  navigation whose `initiator` is a subframe (a subframe navigating itself, or the main frame via
+  `_top`) or `null` is prevented and opens nothing, and leaves the activation unspent: a
+  main-frame-initiated `mailto:` right after opens once. A main-frame initiator is recognised by
+  its `frameTreeNodeId` being the main frame's (`parent === null`).
 - **Scenario: external-scheme-without-gesture-is-dropped** — with no activation input, or one older
   than `USER_ACTIVATION_WINDOW_MS`, a `mailto:` navigation is prevented and nothing is opened.
 - **Scenario: never-forwards-non-allowlisted-schemes** — `file:`, `app:`, `vscode:`, a custom
@@ -231,6 +246,10 @@ allowed.
   from a script-dispatched click opens no tab and creates no WebContents.
 - **Scenario: mailto-on-gesture-opens-externally-e2e** — a real click on a `mailto:` link reaches
   the (stubbed) `shell.openExternal` once; a script-set `location = 'mailto:…'` does not.
+- **Scenario: subframe-cannot-open-externally-e2e** — right after a real click in the top frame,
+  a same-origin iframe setting its own `location`, and then `top.location`, to `mailto:…` is
+  dropped by the guard and opens nothing; the click is still unspent, so the top frame's own
+  `location = 'mailto:…'` then opens it once.
 - **Scenario: download-is-cancelled-with-notice-e2e** — a link to an attachment: the download item
   ends `cancelled`, the status bar shows `NOTICE_MESSAGES['download-blocked']`, no error panel.
 - **Scenario: connection-refused-shows-error-panel-e2e** — loading a closed loopback port shows the

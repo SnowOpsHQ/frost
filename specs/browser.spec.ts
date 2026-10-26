@@ -165,6 +165,11 @@ export const TabStateSchema = z.strictObject({
    * window); `null` when not fullscreen.
    */
   fullscreen: z.enum(['notice', 'full']).nullable(),
+  /**
+   * The page's zoom factor (`page-commands.spec.ts`, `ZOOM_FACTORS`; `1` is 100 %, also for an
+   * empty tab). Per host in Chromium: tabs on the same host share it.
+   */
+  zoom: z.number().min(0.25).max(5),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 
