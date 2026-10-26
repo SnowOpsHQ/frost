@@ -1,4 +1,9 @@
 {
   "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // `URL` (web-url.spec.ts): a WHATWG global in main (Node) and the renderer alike; its types
+    // come from the DOM lib here, as the specs depend on neither runtime's own types.
+    "lib": ["ES2023", "DOM"]
+  },
   "include": ["*.ts"]
 }

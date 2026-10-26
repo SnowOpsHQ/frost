@@ -1,38 +1,27 @@
-import type { BrowserWindow, ContextMenuParams, WebContentsView } from 'electron';
 import type { SavedSession } from '@app/db';
 import type { BrowserService } from '@app/ipc-contract';
-import {
-  APP_WINDOW_TITLE,
-  MAX_PENDING_WATCHES,
-  MAX_TABS,
-  WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH,
-  WINDOW_TITLE_SEPARATOR,
-  type BrowserState,
-  type LoadError,
-  type Notice,
-  type NoticeKind,
-  type PageBounds,
-  type TabState,
-} from '@app/specs/browser.spec';
-import { IGNORED_LOAD_ERROR_CODES } from '@app/specs/browse-guard.spec';
-import {
-  FULLSCREEN_BANNER_HEIGHT,
-  FULLSCREEN_EXIT_KEY,
-  FULLSCREEN_EXIT_SETTLE_MS,
-  FULLSCREEN_NOTICE_MS,
-  type PermissionDecision,
-} from '@app/specs/permissions.spec';
-import { DEFAULT_ZOOM, ZOOM_FACTORS, type PageCommand } from '@app/specs/page-commands.spec';
+import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
+import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
+import type { PageCommand } from '@app/specs/page-commands.spec';
+import { isWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl, resolveAddressInput } from './address';
-import { isWebUrl } from './guard';
+import { createFullscreen } from './fullscreen';
+import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
-import type { PermissionBroker } from './permissions';
+import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { matchPageShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
-import { stepZoom, type ZoomDirection } from './zoom';
+import { createStateWatch } from './state-watch';
+import { wireTabView, type TabContextMenuRequest } from './tab-events';
+import { aliveContents, capTitle, clampPageBounds, createTab, emptyTabState, noop, sameTabState, showsPage, zoomOf, type HostWindow, type PageState, type StripState, type Tab, type TabView } from './tab-model';
+import { createTabPrompts, type TabPermissions } from './tab-permissions';
 
 // Main-process owner of all browser state (spec `browser-chrome.feature.md` and `tabs.feature.md`,
 // Controller). Only Electron *types* are imported: the view factory and the window are injected, so
-// this runs under Vitest with plain fakes.
+// this runs under Vitest with plain fakes. Its parts: the tab model (`tab-model.ts`), each tab
+// view's events (`tab-events.ts`), HTML fullscreen (`fullscreen.ts`), the session database's side
+// (`session-sync.ts`), state versioning and `watch` (`state-watch.ts`), the permission broker's
+// side (`tab-permissions.ts`) and the page commands (`page-commands.ts`); this file holds the strip
+// and its commands.
 //
 // Only the active tab's view is ever attached to the window's `contentView`, and only while it shows
 // a page: a tab whose last load failed or whose renderer crashed shows the chrome's error / crash
@@ -46,13 +35,10 @@ import { stepZoom, type ZoomDirection } from './zoom';
 // (each tab's URL and title, the active tab) is handed to the session sink, and committed pages
 // are recorded as visits.
 
-/** A tab's page view (`createTabView()`); it is attached to the window's `contentView`. */
-export type TabView = WebContentsView;
-/** The parts of the app window the controller uses. */
-export type HostWindow = Pick<
-  BrowserWindow,
-  'contentView' | 'webContents' | 'getContentSize' | 'setTitle' | 'on' | 'once' | 'isDestroyed' | 'isFullScreen' | 'setFullScreen'
->;
+export { clampPageBounds, type HostWindow, type TabView } from './tab-model';
+export type { SessionSink } from './session-sync';
+export type { TabContextMenuRequest } from './tab-events';
+export type { TabPermissions } from './tab-permissions';
 
 export interface BrowserController extends BrowserService {
   /**
@@ -111,16 +97,6 @@ export interface BrowserController extends BrowserService {
   restoreSession(saved: SavedSession): void;
 }
 
-/** Where the controller hands what the session database keeps (`browser-session-db.feature.md`). */
-export interface SessionSink {
-  /** The tab strip changed (only while a window is attached). */
-  saveSession(session: SavedSession): void;
-  /** A main-frame `http(s)` page committed at `url`. */
-  recordVisit(url: string): void;
-  /** The page at `url` (no error page) reported `title`. */
-  updateVisitTitle(url: string, title: string): void;
-}
-
 export interface BrowserControllerOptions {
   /** The allowlisted tab-view factory (`createTabView` in `window.ts`). */
   readonly createView: () => TabView;
@@ -147,263 +123,53 @@ export interface BrowserControllerOptions {
   readonly contextMenu?: (request: TabContextMenuRequest) => void;
 }
 
-/** A right-click in a tab's page, as handed to `BrowserControllerOptions.contextMenu`. */
-export interface TabContextMenuRequest {
-  /** The tab's WebContents (its page was clicked). */
-  readonly contents: TabView['webContents'];
-  readonly params: ContextMenuParams;
-  readonly window: HostWindow;
-  readonly canGoBack: boolean;
-  readonly canGoForward: boolean;
-}
-
-/** What the controller uses of the permission broker. */
-export type TabPermissions = Pick<PermissionBroker, 'promptFor' | 'answer' | 'denyTab' | 'subscribe'>;
-
-/** A tab's own state; its `permissionPrompt` comes from the broker when the state is read. */
-type PageState = Omit<TabState, 'permissionPrompt'>;
-type FullscreenMode = NonNullable<TabState['fullscreen']>;
-
-/**
- * The isolated world main leaves HTML fullscreen from (`document.exitFullscreen()`): the page's own
- * scripts cannot replace the DOM methods seen there.
- */
-const FULLSCREEN_EXIT_WORLD_ID = 1_001;
-const EXIT_FULLSCREEN_SCRIPT = 'document.fullscreenElement && document.exitFullscreen().catch(() => undefined)';
-
-interface Tab {
-  readonly id: number;
-  /**
-   * Created on the first navigation; an empty tab has none (nothing to show or guard). Dropped
-   * again when its WebContents is destroyed (the page called `window.close()`).
-   */
-  view: TabView | null;
-  /** Removes this controller's listeners from `view`'s WebContents (a no-op without a view). */
-  unlisten: () => void;
-  /** The renderer died (`render-process-gone`); reported as not loading until the next load starts. */
-  crashed: boolean;
-  /** The last main-frame load failed (`did-fail-load`); cleared by the next main-frame commit. */
-  error: LoadError | null;
-  /** The page stopped responding (`unresponsive`) and has not responded since. */
-  unresponsive: boolean;
-  /**
-   * HTML fullscreen (`enter-html-full-screen`): `notice` while the chrome's fullscreen banner shows
-   * above the view, then `full` (the view covers the whole window); `null` when not fullscreen.
-   */
-  fullscreen: FullscreenMode | null;
-  /** Ends the `notice` phase. */
-  fullscreenTimer: ReturnType<typeof setTimeout> | undefined;
-  /**
-   * The tab left HTML fullscreen (frost took it out, or Electron reported `leave-html-full-screen`)
-   * but its document may still hold a fullscreen element: Electron can report leaving while the
-   * renderer is still entering (macOS, Esc during the native animation), and a hidden page
-   * completes its exit only once shown. The page is asked to leave once the window settled
-   * (`schedulePageExits`), and again whenever the view is shown, until it enters fullscreen again
-   * or a new document commits (asking a page that is not fullscreen does nothing).
-   */
-  exitRequested: boolean;
-  /** The tab whose page opened this one (popup placement), if any. */
-  readonly openerId: number | null;
-  /**
-   * A restored tab's saved URL and title: loaded when the tab is first shown, and reported as its
-   * state until its view commits something (a load in flight has no URL yet).
-   */
-  restored: { readonly url: string; readonly title: string } | null;
-  state: PageState;
-}
-
-/**
- * WebContents events after which a tab's state is re-read (plus `did-start-loading`, `did-navigate`,
- * `did-fail-load` and `render-process-gone`, below).
- */
-const STATE_EVENTS = ['did-stop-loading', 'did-navigate-in-page', 'page-title-updated'] as const;
-
-function emptyTabState(id: number): PageState {
-  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, fullscreen: null, zoom: DEFAULT_ZOOM };
-}
-
-function sameError(a: LoadError | null, b: LoadError | null): boolean {
-  return a === b || (a !== null && b !== null && a.code === b.code && a.description === b.description && a.url === b.url);
-}
-
-function sameTabState(a: PageState, b: PageState): boolean {
-  return (
-    a.url === b.url &&
-    a.title === b.title &&
-    a.loading === b.loading &&
-    a.canGoBack === b.canGoBack &&
-    a.canGoForward === b.canGoForward &&
-    a.crashed === b.crashed &&
-    a.unresponsive === b.unresponsive &&
-    a.fullscreen === b.fullscreen &&
-    a.zoom === b.zoom &&
-    sameError(a.error, b.error)
-  );
-}
-
-/** Whether a tab's page view is shown: not while its error or crash panel is. */
-function showsPage(tab: { error: LoadError | null; crashed: boolean }): boolean {
-  return tab.error === null && !tab.crashed;
-}
-
-/** `title` cut to `WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH` characters, the last one an ellipsis. */
-function capTitle(title: string): string {
-  const chars = [...title];
-  if (chars.length <= WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH) return title;
-  return `${chars.slice(0, WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH - 1).join('')}…`;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-/** A WebContents' zoom factor, inside `ZOOM_FACTORS`' range (`DEFAULT_ZOOM` if it is no number). */
-function zoomOf(contents: TabView['webContents']): number {
-  const factor = contents.getZoomFactor();
-  return Number.isFinite(factor) ? clamp(factor, ZOOM_FACTORS[0], ZOOM_FACTORS[ZOOM_FACTORS.length - 1]!) : DEFAULT_ZOOM;
-}
-
-/** Whether no modifier key is held. */
-function unmodified(input: KeyInput): boolean {
-  return !input.control && !input.meta && !input.alt && !input.shift;
-}
-
-/** Rounds `bounds` to integers and clamps them inside a `width`×`height` content area. */
-export function clampPageBounds(bounds: PageBounds, [width, height]: readonly [number, number]): PageBounds {
-  const x = clamp(Math.round(bounds.x), 0, width);
-  const y = clamp(Math.round(bounds.y), 0, height);
-  return {
-    x,
-    y,
-    width: clamp(Math.round(bounds.width), 0, width - x),
-    height: clamp(Math.round(bounds.height), 0, height - y),
-  };
-}
-
-function noop(): void {}
-
-/**
- * `view`'s WebContents while it is alive, else `undefined`. Electron clears `view.webContents` once
- * the contents are destroyed (already inside their `destroyed` listeners), so never read it bare.
- */
-function aliveContents(view: TabView): TabView['webContents'] | undefined {
-  const contents = view.webContents as TabView['webContents'] | undefined;
-  return contents && !contents.isDestroyed() ? contents : undefined;
-}
-
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {
   let nextTabId = 1;
-  let version = 1;
-  let win: HostWindow | null = null;
-  let tabs: Tab[] = [];
-  let activeTabId: number | null = null;
-  let pageBounds: PageBounds | null = null;
-  /** The one view attached to the window: the active tab's, or none. */
-  let attached: TabView | null = null;
+  const strip: StripState = { tabs: [], activeTabId: null, win: null, attached: null, pageBounds: null };
   let focusAddressBarSeq = 0;
-  /** Asks pending pages to leave HTML fullscreen once the window settled (`schedulePageExits`). */
-  let pageExitTimer: ReturnType<typeof setTimeout> | undefined;
   let notice: Notice | null = null;
-  /** Pending watches, oldest first: their wake-up check → their early finish. */
-  const waiters = new Map<() => void, () => void>();
-  const permissions = options.permissions;
-  const session = options.session;
   /** A window was attached once: the restore point has passed. */
   let everAttached = false;
-  /** The window is closing: its final strip is saved, and nothing after it until the next attach. */
-  let sessionPaused = false;
-  /** The strip last handed to `session` (serialized), to save only real changes. */
-  let lastSavedSession = '';
+  const platform = options.platform ?? process.platform;
 
   const snapshot = (): BrowserState => ({
-    version,
-    tabs: tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: permissions?.promptFor(tab.id) ?? null })),
-    activeTabId,
+    version: stateWatch.version(),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id) })),
+    activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     notice: notice && { ...notice },
   });
+  const stateWatch = createStateWatch(snapshot);
 
-  const activeTab = (): Tab | undefined => tabs.find((tab) => tab.id === activeTabId);
-  const hasWindow = (): boolean => win !== null && !win.isDestroyed();
-  const platform = options.platform ?? process.platform;
+  const activeTab = (): Tab | undefined => strip.tabs.find((tab) => tab.id === strip.activeTabId);
+  const hasWindow = (): boolean => strip.win !== null && !strip.win.isDestroyed();
+  const sessionSync = createSessionSync(options.session, strip, hasWindow);
 
   const updateWindowTitle = (): void => {
+    const win = strip.win;
     if (!win || win.isDestroyed()) return;
     const tab = activeTab();
     const title = tab && tab.state.url !== '' ? tab.state.title || tab.state.url : '';
     win.setTitle(title === '' ? APP_WINDOW_TITLE : `${capTitle(title)}${WINDOW_TITLE_SEPARATOR}${APP_WINDOW_TITLE}`);
   };
 
-  /** The strip as saved: each tab's URL and title, in order, and the active tab's index. */
-  const sessionSnapshot = (): SavedSession => ({
-    tabs: tabs.map((tab) => ({ url: tab.state.url, title: tab.state.title })),
-    activeIndex: Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId)),
-  });
-
-  /**
-   * Hands the strip to the session sink if it changed since the last save (or since the window
-   * was attached), while a window shows it.
-   */
-  const saveSession = (): void => {
-    if (!session || sessionPaused || !hasWindow()) return;
-    const snapshot = sessionSnapshot();
-    const serialized = JSON.stringify(snapshot);
-    if (serialized === lastSavedSession) return;
-    lastSavedSession = serialized;
-    session.saveSession(snapshot);
-  };
-
   const changed = (): void => {
-    version += 1;
+    stateWatch.bump();
     updateWindowTitle();
-    saveSession();
-    for (const wake of [...waiters.keys()]) wake();
+    sessionSync.save();
+    stateWatch.wake();
   };
 
-  /** A new empty tab, not yet in the strip. */
-  const createTab = (openerId: number | null = null): Tab => {
-    const id = nextTabId++;
-    return {
-      id,
-      view: null,
-      unlisten: noop,
-      crashed: false,
-      error: null,
-      unresponsive: false,
-      fullscreen: null,
-      fullscreenTimer: undefined,
-      exitRequested: false,
-      openerId,
-      restored: null,
-      state: emptyTabState(id),
-    };
-  };
+  // A prompt appeared, was answered or timed out (denials the controller causes are reported by
+  // the operation that caused them).
+  const prompts = createTabPrompts(options.permissions, changed);
 
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
   const openEmptyTab = (): number => {
-    const tab = createTab();
-    tabs.push(tab);
-    activeTabId = tab.id;
+    const tab = createTab(nextTabId++);
+    strip.tabs.push(tab);
+    strip.activeTabId = tab.id;
     return tab.id;
-  };
-
-  // A prompt appeared, was answered or timed out. Denials the controller itself causes are muted:
-  // the operation that caused them reports its own change once it is complete.
-  let muted = false;
-  permissions?.subscribe(() => {
-    if (!muted) changed();
-  });
-
-  /** Denies `tab`'s pending prompts (its document is going); answers whether it had any. */
-  const denyPrompts = (tab: Tab): boolean => {
-    if (!permissions || permissions.promptFor(tab.id) === null) return false;
-    muted = true;
-    try {
-      permissions.denyTab(tab.id);
-    } finally {
-      muted = false;
-    }
-    return true;
   };
 
   const raiseNotice = (kind: NoticeKind): void => {
@@ -411,8 +177,27 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed();
   };
 
+  /**
+   * Lays `tab`'s view over the page area; in HTML fullscreen over the whole content area, below
+   * the chrome's notice banner while it shows (`FULLSCREEN_BANNER_HEIGHT`).
+   */
+  const applyBounds = (tab: Tab): void => {
+    const win = strip.win;
+    if (!tab.view || !win) return;
+    const [width = 0, height = 0] = win.getContentSize();
+    if (tab.fullscreen) {
+      const top = tab.fullscreen === 'notice' ? Math.min(FULLSCREEN_BANNER_HEIGHT, height) : 0;
+      tab.view.setBounds({ x: 0, y: top, width, height: height - top });
+    } else if (strip.pageBounds !== null) {
+      tab.view.setBounds(clampPageBounds(strip.pageBounds, [width, height]));
+    }
+  };
+
+  const fullscreen = createFullscreen({ strip, applyBounds, changed });
+
   const detach = (view: TabView): void => {
-    if (attached === view) attached = null;
+    if (strip.attached === view) strip.attached = null;
+    const win = strip.win;
     if (!win || win.isDestroyed()) return;
     try {
       win.contentView.removeChildView(view);
@@ -436,8 +221,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.unresponsive = false;
     tab.exitRequested = false;
     // Its WebContents is going: nothing will leave HTML fullscreen, so the window leaves OS fullscreen.
-    if (clearFullscreen(tab)) leaveWindowFullscreen();
-    denyPrompts(tab);
+    if (fullscreen.clear(tab)) fullscreen.leaveWindowFullscreen();
+    prompts.deny(tab);
     if (view) detach(view);
     return view;
   };
@@ -461,106 +246,6 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return tab.view;
   };
 
-  /**
-   * Lays `tab`'s view over the page area; in HTML fullscreen over the whole content area, below
-   * the chrome's notice banner while it shows (`FULLSCREEN_BANNER_HEIGHT`).
-   */
-  const applyBounds = (tab: Tab): void => {
-    if (!tab.view || !win) return;
-    const [width = 0, height = 0] = win.getContentSize();
-    if (tab.fullscreen) {
-      const top = tab.fullscreen === 'notice' ? Math.min(FULLSCREEN_BANNER_HEIGHT, height) : 0;
-      tab.view.setBounds({ x: 0, y: top, width, height: height - top });
-    } else if (pageBounds !== null) {
-      tab.view.setBounds(clampPageBounds(pageBounds, [width, height]));
-    }
-  };
-
-  /** Reports a change of `tab.fullscreen` in its state. */
-  const reportFullscreen = (tab: Tab): void => {
-    if (tab.state.fullscreen === tab.fullscreen) return;
-    tab.state = { ...tab.state, fullscreen: tab.fullscreen };
-    changed();
-  };
-
-  /** Forgets `tab`'s HTML fullscreen (no bounds or state update); answers whether it had one. */
-  function clearFullscreen(tab: Tab): boolean {
-    clearTimeout(tab.fullscreenTimer);
-    tab.fullscreenTimer = undefined;
-    const was = tab.fullscreen !== null;
-    tab.fullscreen = null;
-    return was;
-  }
-
-  /**
-   * Takes the window out of OS fullscreen (which Electron entered for a page). Called only when a
-   * tab was fullscreen, and unconditionally then: on macOS `isFullScreen()` is still `false` during
-   * the native enter animation, and Electron queues a leave requested mid-transition.
-   */
-  function leaveWindowFullscreen(): void {
-    if (win && !win.isDestroyed()) win.setFullScreen(false);
-  }
-
-  /** `tab` entered (`notice` first, then `full`) or left HTML fullscreen. */
-  const setFullscreen = (tab: Tab, mode: FullscreenMode | null): void => {
-    clearFullscreen(tab);
-    tab.fullscreen = mode;
-    if (mode === 'notice') {
-      tab.fullscreenTimer = setTimeout(() => {
-        if (tab.fullscreen === 'notice' && tabs.includes(tab)) setFullscreen(tab, 'full');
-      }, FULLSCREEN_NOTICE_MS);
-    }
-    applyBounds(tab);
-    reportFullscreen(tab);
-  };
-
-  /** Asks `tab`'s page to leave HTML fullscreen, from an isolated world the page cannot tamper with. */
-  function exitHtmlFullscreen(tab: Tab): void {
-    const contents = tab.view ? aliveContents(tab.view) : undefined;
-    contents?.executeJavaScriptInIsolatedWorld(FULLSCREEN_EXIT_WORLD_ID, [{ code: EXIT_FULLSCREEN_SCRIPT }]).catch(() => {
-      // The page is gone or navigating; nothing is fullscreen any more.
-    });
-  }
-
-  /** `tab` left HTML fullscreen: its page is asked to leave once the window settled, and again later. */
-  function requestPageExit(tab: Tab): void {
-    tab.exitRequested = true;
-    schedulePageExits();
-  }
-
-  /**
-   * (Re)starts the wait after which the pages of tabs with `exitRequested` are asked to leave HTML
-   * fullscreen: `FULLSCREEN_EXIT_SETTLE_MS` with no window or tab fullscreen event, the window out
-   * of OS fullscreen (still in it, its `leave-full-screen` restarts the wait). On macOS a request
-   * made while the native animation runs, or is queued to run (`isFullScreen()` does not tell), is
-   * never completed and blocks every later one.
-   */
-  function schedulePageExits(): void {
-    clearTimeout(pageExitTimer);
-    pageExitTimer = undefined;
-    if (!tabs.some((tab) => tab.exitRequested)) return;
-    pageExitTimer = setTimeout(() => {
-      pageExitTimer = undefined;
-      if (!win || win.isDestroyed() || win.isFullScreen()) return;
-      for (const tab of tabs) if (tab.exitRequested) exitHtmlFullscreen(tab);
-    }, FULLSCREEN_EXIT_SETTLE_MS);
-  }
-
-  /**
-   * frost takes `tab` out of HTML fullscreen (Esc, or the tab stops being shown), from main and at
-   * once: its state (the notice goes), the window's OS fullscreen and the view's bounds (the page
-   * area under the chrome). This state is authoritative: it holds even if the page never leaves
-   * its own fullscreen (it hangs, or Chromium ignores the request mid-transition). Only then is the
-   * page asked to leave, and asked again later (`exitRequested`).
-   */
-  const leaveFullscreen = (tab: Tab): void => {
-    if (!clearFullscreen(tab)) return;
-    leaveWindowFullscreen();
-    applyBounds(tab);
-    reportFullscreen(tab);
-    requestPageExit(tab);
-  };
-
   /** Loads a restored tab's saved URL the first time it is shown. */
   const loadRestored = (tab: Tab): void => {
     if (!tab.restored || tab.view || !hasWindow()) return;
@@ -576,23 +261,26 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (tab) loadRestored(tab);
     const live = tab ? liveView(tab) : null;
     const want = tab && showsPage(tab) ? live : null;
-    if (attached === want) return;
-    const hidden = attached ? tabs.find((t) => t.view === attached) : undefined;
-    if (attached) detach(attached);
+    if (strip.attached === want) return;
+    const shown = strip.attached;
+    const hidden = shown ? strip.tabs.find((t) => t.view === shown) : undefined;
+    if (shown) detach(shown);
     // A fullscreen page that is no longer shown leaves fullscreen.
-    if (hidden) leaveFullscreen(hidden);
+    if (hidden) fullscreen.leave(hidden);
+    const win = strip.win;
     if (!want || !tab || !win || win.isDestroyed()) return;
     win.contentView.addChildView(want);
-    attached = want;
+    strip.attached = want;
     applyBounds(tab);
     want.setVisible(true);
     // Chromium completes a hidden page's exit only once it is shown: ask again (once settled).
-    if (tab.exitRequested) schedulePageExits();
+    if (tab.exitRequested) fullscreen.schedulePageExits();
   };
 
   /** Asks the chrome to focus its address bar (it watches `focusAddressBarSeq`). */
   const requestAddressFocus = (): void => {
     focusAddressBarSeq += 1;
+    const win = strip.win;
     if (win && !win.isDestroyed()) win.webContents.focus();
   };
 
@@ -603,6 +291,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const focusActive = (): void => {
     const tab = activeTab();
     const view = tab ? liveView(tab) : null;
+    const win = strip.win;
     if (!view) requestAddressFocus();
     else if (tab && showsPage(tab)) view.webContents.focus();
     else if (win && !win.isDestroyed()) win.webContents.focus();
@@ -638,158 +327,47 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const ensureView = (tab: Tab): TabView | null => {
     const live = liveView(tab);
     if (live) return live;
-    if (!win || win.isDestroyed()) return null;
+    if (!hasWindow()) return null;
     const view = options.createView();
     tab.view = view;
-    // Events count only while `view` is still this open tab's: a closed tab's (or a dropped view's)
-    // pending or late events are ignored, and its listeners are removed on release as well.
-    const owns = (): boolean => tab.view === view && tabs.includes(tab);
-    const emitter = view.webContents as unknown as NodeJS.EventEmitter;
-    const listeners: [string, (...args: unknown[]) => void][] = [];
-    const listen = <A extends unknown[]>(event: string, listener: (...args: A) => void): void => {
-      const guarded = (...args: A): void => {
-        if (owns()) listener(...args);
-      };
-      emitter.on(event, guarded);
-      listeners.push([event, guarded as (...args: unknown[]) => void]);
-    };
-    for (const event of STATE_EVENTS) listen(event, () => refresh(tab));
-    // Visits (`browser-session-db.feature.md`): main-frame `http(s)` commits; a page's title
-    // updates its visit, never an error page's.
-    const recordVisit = (url: unknown): void => {
-      if (typeof url === 'string' && isWebUrl(url)) session?.recordVisit(url);
-    };
-    listen('did-navigate-in-page', (_event: unknown, url: unknown, isMainFrame: unknown) => {
-      if (isMainFrame === true) recordVisit(url);
+    tab.unlisten = wireTabView(tab, view, {
+      isOpen: (t) => strip.tabs.includes(t),
+      window: () => strip.win,
+      refresh,
+      changed,
+      denyPrompts: prompts.deny,
+      fullscreen,
+      applyBounds,
+      session: options.session,
+      stopLoading: (t) => pageCommands.stopLoading(t),
+      takeShortcut,
+      removeTab,
+      contextMenu: options.contextMenu,
     });
-    listen('page-title-updated', () => {
-      const url = view.webContents.getURL();
-      if (session && tab.error === null && !tab.crashed && tab.state.title !== '' && isWebUrl(url)) session.updateVisitTitle(url, tab.state.title);
-    });
-    listen('did-start-loading', () => {
-      tab.crashed = false;
-      refresh(tab);
-    });
-    // A main-frame page committed (Electron emits `did-navigate` only for non-error pages): the
-    // old document's permission prompts are denied, and the new one is not fullscreen.
-    listen('did-navigate', (_event: unknown, url: unknown) => {
-      // Loading what was open at the last launch (its saved URL) is not a new visit.
-      const restoring = tab.restored !== null && url === tab.restored.url;
-      tab.error = null;
-      tab.restored = null;
-      tab.exitRequested = false;
-      if (denyPrompts(tab)) changed();
-      if (clearFullscreen(tab)) applyBounds(tab);
-      refresh(tab);
-      if (!restoring) recordVisit(url);
-    });
-    // Main-frame load failures show the error panel; `ERR_ABORTED` (a dropped navigation, a stop,
-    // a download) and subframe failures do not.
-    listen('did-fail-load', (_event: unknown, code: number, description: string, validatedUrl: string, isMainFrame: boolean) => {
-      if (isMainFrame && Number.isInteger(code) && code < 0 && !(IGNORED_LOAD_ERROR_CODES as readonly number[]).includes(code)) {
-        tab.error = { code, description: String(description), url: displayUrl(String(validatedUrl)) };
-        tab.restored = null;
-        // An error page replaces the document that asked.
-        if (denyPrompts(tab)) changed();
-      }
-      refresh(tab);
-    });
-    listen('render-process-gone', () => {
-      tab.crashed = true;
-      tab.unresponsive = false;
-      if (denyPrompts(tab)) changed();
-      refresh(tab);
-    });
-    // HTML fullscreen (granted without a prompt, `permissions.spec.ts`): the window goes
-    // fullscreen; the chrome's notice banner shows first, then the page's view covers it all.
-    listen('enter-html-full-screen', () => {
-      tab.exitRequested = false;
-      setFullscreen(tab, 'notice');
-      schedulePageExits();
-    });
-    // Electron leaves HTML fullscreen on its own too (it handles Esc before `before-input-event`):
-    // the page is asked to leave as well, since its document may still be entering.
-    listen('leave-html-full-screen', () => {
-      setFullscreen(tab, null);
-      requestPageExit(tab);
-    });
-    // Esc always leaves fullscreen: taken before the page can see (and swallow) it, and left from
-    // main at once, whether or not the page cooperates.
-    // The key-up of that Esc is kept from the page too (frost already left fullscreen on key-down).
-    let escapeTaken = false;
-    listen('before-input-event', (event: { preventDefault(): void }, input: KeyInput) => {
-      if (input.key !== FULLSCREEN_EXIT_KEY) return;
-      if (input.type === 'keyUp' && escapeTaken) {
-        escapeTaken = false;
-        event.preventDefault();
-        return;
-      }
-      if (tab.fullscreen === null) {
-        // Not fullscreen: Esc stops a loading page (`page-commands.feature.md`) and still reaches it.
-        if (input.type === 'keyDown' && unmodified(input)) stopLoading(tab);
-        return;
-      }
-      event.preventDefault();
-      if (input.type !== 'keyDown') return;
-      escapeTaken = true;
-      leaveFullscreen(tab);
-    });
-    // A hang is the tab's own state: the status bar reports it while the tab is shown.
-    listen('unresponsive', () => {
-      tab.unresponsive = true;
-      refresh(tab);
-    });
-    listen('responsive', () => {
-      tab.unresponsive = false;
-      refresh(tab);
-    });
-    // The page closed itself (`window.close()`): its tab closes like any other.
-    listen('destroyed', () => removeTab(tab.id));
-    // Reserved tab and page shortcuts are taken before the page can see (and cancel) them.
-    listen('before-input-event', takeShortcut);
-    // A right-click in the page: main shows the context menu for it.
-    listen('context-menu', (_event: unknown, params: ContextMenuParams) => {
-      const contents = aliveContents(view);
-      if (!contents || !options.contextMenu || !win || win.isDestroyed()) return;
-      options.contextMenu({
-        contents,
-        params,
-        window: win,
-        canGoBack: contents.navigationHistory.canGoBack(),
-        canGoForward: contents.navigationHistory.canGoForward(),
-      });
-    });
-    tab.unlisten = () => {
-      for (const [event, listener] of listeners) emitter.off(event, listener);
-    };
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
     applyBounds(tab);
     syncAttached();
     return view;
   };
 
-  /** Runs `act` on the active tab's live WebContents, if it has one. */
-  const withActiveContents = (act: (contents: TabView['webContents']) => void): void => {
-    const tab = activeTab();
-    const view = tab ? liveView(tab) : null;
-    if (view) act(view.webContents);
-  };
+  const pageCommands = createPageCommands({ strip, activeTab, liveView, ensureView, refresh });
+  const runPageCommand = pageCommands.run;
 
   openEmptyTab();
 
   const closeAll = (): void => {
     // Each view is released before its WebContents closes, so its `destroyed` event finds nothing.
-    for (const tab of tabs) closeView(tab);
-    tabs = [];
-    activeTabId = null;
-    attached = null;
+    for (const tab of strip.tabs) closeView(tab);
+    strip.tabs = [];
+    strip.activeTabId = null;
+    strip.attached = null;
   };
 
   const activateTab = (tabId: number): boolean => {
-    const tab = tabs.find((t) => t.id === tabId);
+    const tab = strip.tabs.find((t) => t.id === tabId);
     if (!tab || !hasWindow()) return false;
-    if (tab.id === activeTabId) return true;
-    activeTabId = tab.id;
+    if (tab.id === strip.activeTabId) return true;
+    strip.activeTabId = tab.id;
     syncAttached();
     focusActive();
     changed();
@@ -798,19 +376,19 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   /** Closes the tab (no window check: also for a page that closed itself). */
   function removeTab(tabId: number): boolean {
-    const index = tabs.findIndex((t) => t.id === tabId);
-    const tab = tabs[index];
+    const index = strip.tabs.findIndex((t) => t.id === tabId);
+    const tab = strip.tabs[index];
     if (!tab) return false;
     closeView(tab);
-    tabs.splice(index, 1);
-    if (tabs.length === 0) {
+    strip.tabs.splice(index, 1);
+    if (strip.tabs.length === 0) {
       // The window never goes tab-less: a fresh empty tab takes the last one's place.
       openEmptyTab();
       requestAddressFocus();
-    } else if (tab.id === activeTabId) {
+    } else if (tab.id === strip.activeTabId) {
       // The right neighbour (now at `index`), else the left one.
-      const next = tabs[index] ?? tabs[index - 1];
-      activeTabId = next ? next.id : null;
+      const next = strip.tabs[index] ?? strip.tabs[index - 1];
+      strip.activeTabId = next ? next.id : null;
       syncAttached();
       focusActive();
     }
@@ -824,9 +402,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (!hasWindow()) {
       // Never a hidden tab: open the window (which starts with one empty tab) instead.
       options.openWindow?.();
-      return hasWindow() ? activeTabId : null;
+      return hasWindow() ? strip.activeTabId : null;
     }
-    if (tabs.length >= MAX_TABS) {
+    if (strip.tabs.length >= MAX_TABS) {
       raiseNotice('tab-limit');
       return null;
     }
@@ -838,13 +416,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   };
 
   const activateTabAt = (index: number): boolean => {
-    const tab = Number.isInteger(index) ? tabs[index] : undefined;
+    const tab = Number.isInteger(index) ? strip.tabs[index] : undefined;
     return tab ? activateTab(tab.id) : false;
   };
 
   /** Activates the tab `step` places from the active one, wrapping; a no-op with one tab. */
   const cycle = (step: 1 | -1): boolean => {
-    const index = tabs.findIndex((t) => t.id === activeTabId);
+    const { tabs } = strip;
+    const index = tabs.findIndex((t) => t.id === strip.activeTabId);
     if (index < 0 || tabs.length < 2) return false;
     return activateTabAt((index + step + tabs.length) % tabs.length);
   };
@@ -855,46 +434,49 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     while (openerId !== null) {
       if (openerId === ancestorId) return true;
       const id: number = openerId;
-      openerId = tabs.find((t) => t.id === id)?.openerId ?? null;
+      openerId = strip.tabs.find((t) => t.id === id)?.openerId ?? null;
     }
     return false;
   };
 
+  /** The open tab whose live view's WebContents is `contents`. */
+  const tabOfContents = (contents: unknown): Tab | undefined => strip.tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === contents);
+
   const downloadBlocked = (contents: unknown): void => {
-    const tab = tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
+    const tab = tabOfContents(contents);
     const live = tab?.view ? aliveContents(tab.view) : undefined;
     if (tab && live && tab.openerId !== null && live.getURL() === '') removeTab(tab.id);
     raiseNotice('download-blocked');
   };
 
-  const isFullscreen = (tabId: number): boolean => tabs.some((tab) => tab.id === tabId && tab.fullscreen !== null);
+  const isFullscreen = (tabId: number): boolean => strip.tabs.some((tab) => tab.id === tabId && tab.fullscreen !== null);
 
   const tabIdOf = (contents: unknown): number | null => {
     if (contents === null || contents === undefined) return null;
-    return tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === contents)?.id ?? null;
+    return tabOfContents(contents)?.id ?? null;
   };
 
   /** Answers the active tab's prompt; any other id (another tab's, stale, unknown) is a no-op. */
   const answerPermission = (promptId: string, decision: PermissionDecision): boolean => {
     const tab = activeTab();
-    if (!tab || !permissions || !hasWindow()) return false;
-    return permissions.answer(tab.id, promptId, decision);
+    if (!tab || !hasWindow()) return false;
+    return prompts.answer(tab.id, promptId, decision);
   };
 
   const openTabFromPage = (opener: unknown, url: string): number | null => {
     if (!hasWindow() || !isWebUrl(url)) return null;
-    const index = tabs.findIndex((tab) => tab.view !== null && aliveContents(tab.view) === opener);
-    const openerTab = tabs[index];
+    const index = strip.tabs.findIndex((tab) => tab.view !== null && aliveContents(tab.view) === opener);
+    const openerTab = strip.tabs[index];
     if (!openerTab) return null;
-    if (tabs.length >= MAX_TABS) {
+    if (strip.tabs.length >= MAX_TABS) {
       raiseNotice('tab-limit');
       return null;
     }
     // Right of the opener, after the run of tabs it opened and their own popups (its descendants).
     let at = index + 1;
-    while (descendsFrom(tabs[at], openerTab.id)) at += 1;
-    const tab = createTab(openerTab.id);
-    tabs.splice(at, 0, tab);
+    while (descendsFrom(strip.tabs[at], openerTab.id)) at += 1;
+    const tab = createTab(nextTabId++, openerTab.id);
+    strip.tabs.splice(at, 0, tab);
     const view = ensureView(tab);
     // No opener link, referrer or POST body: the new tab loads the URL on its own.
     view?.webContents.loadURL(url).catch(() => {
@@ -904,99 +486,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return tab.id;
   };
 
-  /**
-   * Reloads the active tab. A crashed (or errored) tab reloads its WebContents, which restarts the
-   * renderer; if that WebContents is gone, a fresh view loads the tab's URL instead.
-   */
-  const reload = ({ ignoreCache = false }: { ignoreCache?: boolean } = {}): void => {
-    const tab = activeTab();
-    if (!tab) return;
-    const url = tab.state.url;
-    const view = liveView(tab);
-    if (view) {
-      // A restored tab whose first load never committed (aborted) has no entry to reload: load
-      // its saved URL again.
-      if (tab.restored && view.webContents.getURL() === '') {
-        view.webContents.loadURL(tab.restored.url).catch(() => {
-          // Failures surface through `did-fail-load` / the tab state.
-        });
-      } else if (ignoreCache) {
-        view.webContents.reloadIgnoringCache();
-      } else {
-        view.webContents.reload();
-      }
-      return;
-    }
-    if (!isWebUrl(url)) return;
-    ensureView(tab)?.webContents.loadURL(url).catch(() => {
-      // Failures surface through `did-fail-load` / the tab state.
-    });
-  };
-
   const focusAddressBar = (): void => {
     if (!hasWindow()) return;
     requestAddressFocus();
     changed();
-  };
-
-  /** Stops `tab`'s page while it loads, unless it is in HTML fullscreen (Esc leaves that). */
-  function stopLoading(tab: Tab): void {
-    const contents = tab.view ? aliveContents(tab.view) : undefined;
-    if (contents && tab.fullscreen === null && !tab.crashed && contents.isLoading()) contents.stop();
-  }
-
-  /**
-   * Zooms the active tab's page one step (`stepZoom`). Chromium keeps zoom per host, so every
-   * tab's state is re-read afterwards (those on the same host followed).
-   */
-  const zoom = (direction: ZoomDirection): void => {
-    const tab = activeTab();
-    const view = tab ? liveView(tab) : null;
-    if (!view) return;
-    view.webContents.setZoomFactor(stepZoom(view.webContents.getZoomFactor(), direction));
-    for (const each of tabs) refresh(each);
-  };
-
-  const back = (): void => {
-    withActiveContents((contents) => {
-      if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
-    });
-  };
-
-  const forward = (): void => {
-    withActiveContents((contents) => {
-      if (contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
-    });
-  };
-
-  const runPageCommand = (command: PageCommand): void => {
-    switch (command) {
-      case 'reload':
-        reload();
-        return;
-      case 'hard-reload':
-        reload({ ignoreCache: true });
-        return;
-      case 'stop': {
-        const tab = activeTab();
-        if (tab) stopLoading(tab);
-        return;
-      }
-      case 'back':
-        back();
-        return;
-      case 'forward':
-        forward();
-        return;
-      case 'zoom-in':
-        zoom('in');
-        return;
-      case 'zoom-out':
-        zoom('out');
-        return;
-      case 'zoom-reset':
-        zoom('reset');
-    }
   };
 
   const runShortcut = (shortcut: TabShortcut): void => {
@@ -1005,7 +498,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         newTab();
         return;
       case 'close-tab':
-        if (activeTabId !== null) closeTab(activeTabId);
+        if (strip.activeTabId !== null) closeTab(strip.activeTabId);
         return;
       case 'focus-address-bar':
         focusAddressBar();
@@ -1014,7 +507,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         activateTabAt(shortcut.index);
         return;
       case 'select-last-tab':
-        activateTabAt(tabs.length - 1);
+        activateTabAt(strip.tabs.length - 1);
         return;
       case 'next-tab':
         cycle(1);
@@ -1025,9 +518,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   };
 
   /**
-   * `before-input-event` of a tab's or the chrome's WebContents: a reserved shortcut is consumed
-   * (`preventDefault` keeps it from the page and from the menu accelerator, so it runs once) and
-   * run on key-down; every other key passes through.
+   * `before-input-event` of a tab's or the chrome's WebContents: a reserved tab or page shortcut
+   * is consumed (`preventDefault` keeps it from the page and from the menu accelerator, so it runs
+   * once) and run on key-down; every other key passes through.
    */
   function takeShortcut(event: { preventDefault(): void }, input: KeyInput): void {
     const shortcut = matchTabShortcut(input, platform);
@@ -1040,27 +533,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   }
 
   const restoreSession = (saved: SavedSession): void => {
-    if (everAttached || tabs.length !== 1 || tabs[0]?.view !== null || tabs[0]?.state.url !== '') return;
-    const restored: Tab[] = [];
-    let activeIndex = -1;
-    saved.tabs.forEach((entry, index) => {
-      const raw = typeof entry.url === 'string' ? entry.url : null;
-      // Defence in depth: the database already dropped these (and stripped userinfo).
-      if (raw === null || (raw !== '' && !isWebUrl(raw)) || restored.length >= MAX_TABS) return;
-      const url = raw === '' ? '' : displayUrl(raw);
-      // The saved active tab, else (skipped) the next kept tab to its right.
-      if (activeIndex < 0 && index >= saved.activeIndex) activeIndex = restored.length;
-      const tab = createTab();
-      const title = typeof entry.title === 'string' ? entry.title : '';
-      if (url !== '') {
-        tab.restored = { url, title };
-        tab.state = { ...tab.state, url, title };
-      }
-      restored.push(tab);
-    });
-    if (restored.length === 0) return;
-    tabs = restored;
-    activeTabId = (restored[activeIndex] ?? restored[restored.length - 1])!.id;
+    const [only] = strip.tabs;
+    if (everAttached || strip.tabs.length !== 1 || only?.view !== null || only.state.url !== '') return;
+    const restored = restoredStrip(saved, () => createTab(nextTabId++));
+    if (!restored) return;
+    strip.tabs = restored.tabs;
+    strip.activeTabId = restored.activeTabId;
     changed();
   };
 
@@ -1068,18 +546,17 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     restoreSession,
 
     attach(target) {
-      if (win === target) return;
-      if (win !== null) {
+      if (strip.win === target) return;
+      if (strip.win !== null) {
         // Another window took over (Phase 1 shows one window): start it on a fresh empty tab.
         closeAll();
         openEmptyTab();
         changed();
       }
-      win = target;
+      strip.win = target;
       everAttached = true;
-      sessionPaused = false;
       // What this window starts with is not a change: only later changes are saved.
-      lastSavedSession = JSON.stringify(sessionSnapshot());
+      sessionSync.resume();
       target.webContents.on('before-input-event', takeShortcut);
       // The chrome page's own <title> must not replace `<page title> — frost`.
       target.on('page-title-updated', (event) => event.preventDefault());
@@ -1087,13 +564,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       // fills the window): lay the shown view out again.
       const relayout = (): void => {
         const tab = activeTab();
-        if (win === target && tab) applyBounds(tab);
+        if (strip.win === target && tab) applyBounds(tab);
       };
       target.on('resize', relayout);
       // A window fullscreen transition ended: pending page exits wait for the window to settle.
       const transitioned = (): void => {
         relayout();
-        if (win === target) schedulePageExits();
+        if (strip.win === target) fullscreen.schedulePageExits();
       };
       target.on('enter-full-screen', transitioned);
       target.on('leave-full-screen', transitioned);
@@ -1101,18 +578,17 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       // are not. A window closed as it started (a macOS window reopened on an empty tab) saves
       // nothing, so the session saved before it is kept.
       target.once('close', () => {
-        if (win !== target) return;
-        saveSession();
-        sessionPaused = true;
+        if (strip.win !== target) return;
+        sessionSync.save();
+        sessionSync.pause();
       });
       target.once('closed', () => {
-        if (win !== target) return;
-        clearTimeout(pageExitTimer);
-        pageExitTimer = undefined;
+        if (strip.win !== target) return;
+        fullscreen.cancelPageExits();
         closeAll();
-        win = null;
-        pageBounds = null;
-        attached = null;
+        strip.win = null;
+        strip.pageBounds = null;
+        strip.attached = null;
         openEmptyTab();
         changed();
       });
@@ -1142,11 +618,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     activateTab,
 
-    closeActiveTab: () => activeTabId !== null && closeTab(activeTabId),
+    closeActiveTab: () => strip.activeTabId !== null && closeTab(strip.activeTabId),
 
     activateTabAt,
 
-    activateLastTab: () => activateTabAt(tabs.length - 1),
+    activateLastTab: () => activateTabAt(strip.tabs.length - 1),
 
     activateNextTab: () => cycle(1),
 
@@ -1166,53 +642,30 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     downloadBlocked,
 
-    back,
+    back: pageCommands.back,
 
-    forward,
+    forward: pageCommands.forward,
 
-    reload: () => reload(),
+    reload: () => pageCommands.reload(),
 
     runPageCommand,
 
     stop() {
-      withActiveContents((contents) => contents.stop());
+      const tab = activeTab();
+      const view = tab ? liveView(tab) : null;
+      view?.webContents.stop();
     },
 
     setPageBounds(bounds) {
-      pageBounds = { ...bounds };
+      strip.pageBounds = { ...bounds };
       const tab = activeTab();
       if (tab) applyBounds(tab);
     },
 
     getState: snapshot,
 
-    watch(sinceVersion, signal) {
-      // A version from the future is clamped: wait for the next change, not forever.
-      const since = Math.min(sinceVersion, version);
-      return new Promise((resolve) => {
-        if (version > since || signal?.aborted) {
-          resolve(snapshot());
-          return;
-        }
-        const finish = (): void => {
-          waiters.delete(wake);
-          signal?.removeEventListener('abort', finish);
-          resolve(snapshot());
-        };
-        const wake = (): void => {
-          if (version > since) finish();
-        };
-        // At the cap the oldest waiter is answered early with the current state.
-        while (waiters.size >= MAX_PENDING_WATCHES) {
-          const oldest = waiters.values().next().value;
-          if (!oldest) break;
-          oldest();
-        }
-        waiters.set(wake, finish);
-        signal?.addEventListener('abort', finish, { once: true });
-      });
-    },
+    watch: (sinceVersion, signal) => stateWatch.watch(sinceVersion, signal),
 
-    pendingWatches: () => waiters.size,
+    pendingWatches: () => stateWatch.pending(),
   };
 }

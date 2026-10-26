@@ -10,8 +10,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { CRASH_TITLE, LOAD_ERROR_TITLES } from '@app/specs/browse-guard.spec';
-import { BROWSE_PARTITION, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
+import { BROWSE_PARTITION, NOTICE_MESSAGES } from '@app/specs/browser.spec';
 import { closeApp, launchApp, launchUndrivenApp } from './harness';
+import { chromeHelpers } from './helpers';
 
 const MAILTO = 'mailto:someone@example.com?subject=hello';
 
@@ -288,6 +289,10 @@ async function expectNeverAllowed(target: Matcher): Promise<void> {
 
 let app: ElectronApplication;
 let page: Page;
+const { browseContents, attachedViewIds, contentsIdAt, urlOf, run, realClick, menu, strip, activeTab, address, chromeCaughtUp, go, closeAllTabs } = chromeHelpers(
+  () => app,
+  () => page,
+);
 let site: Awaited<ReturnType<typeof startSite>>;
 const extraServers: Server[] = [];
 
@@ -304,74 +309,6 @@ test.afterAll(async () => {
   for (const server of extraServers) await closeServer(server);
 });
 
-/** Every live browse-session WebContents (the tabs' pages), as main sees them. */
-async function browseContents(): Promise<{ id: number; url: string }[]> {
-  return app.evaluate(({ session, webContents }, partition) => {
-    const browse = session.fromPartition(partition);
-    return webContents
-      .getAllWebContents()
-      .filter((c) => !c.isDestroyed() && c.session === browse)
-      .map((c) => ({ id: c.id, url: c.getURL() }));
-  }, BROWSE_PARTITION);
-}
-
-async function attachedViewIds(): Promise<number[]> {
-  return app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0]!.contentView.children.map((child) => (child as Electron.WebContentsView).webContents.id),
-  );
-}
-
-async function contentsIdAt(url: string): Promise<number> {
-  await expect.poll(async () => (await browseContents()).filter((c) => c.url === url).length).toBe(1);
-  return (await browseContents()).find((c) => c.url === url)!.id;
-}
-
-const urlOf = async (id: number) => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.getURL(), id);
-const run = (id: number, script: string) =>
-  app.evaluate(({ webContents }, { id, script }) => webContents.fromId(id)!.executeJavaScript(script) as Promise<unknown>, { id, script });
-
-/** A real click (trusted `input-event`s, so a user gesture) at the centre of `selector` in a tab. */
-async function realClick(id: number, selector: string): Promise<void> {
-  const [x, y] = (await run(id, `(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`)) as [number, number];
-  await app.evaluate(
-    ({ webContents }, { id, x, y }) => {
-      const contents = webContents.fromId(id)!;
-      contents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
-      contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
-    },
-    { id, x, y },
-  );
-}
-
-async function menu(id: string): Promise<void> {
-  await app.evaluate(({ Menu }, id) => {
-    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
-    if (!item) throw new Error(`no menu item ${id}`);
-    item.click();
-  }, id);
-}
-
-const strip = () => page.getByTestId('tab');
-const activeTab = () => page.locator('[data-testid="tab"][aria-selected="true"]');
-const address = () => page.getByTestId('address');
-
-/**
- * A barrier: once this returns, the chrome has rendered a browser state main took after
- * everything that happened before the call (it asks main to focus the address bar, which bumps the
- * state's version, and waits for the chrome to do it).
- */
-async function chromeCaughtUp(): Promise<void> {
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await menu('focus-address-bar');
-  await expect(address()).toBeFocused();
-}
-
-async function go(input: string): Promise<void> {
-  await address().click();
-  await address().fill(input);
-  await address().press('Enter');
-}
-
 /** Loads `path` of the site in the active tab; answers its WebContents id once it committed. */
 async function open(path: string, title: string): Promise<number> {
   await go(`${site.origin}${path}`);
@@ -380,11 +317,7 @@ async function open(path: string, title: string): Promise<number> {
 }
 
 test.beforeEach(async () => {
-  const count = await strip().count();
-  for (let i = 0; i < count; i++) await menu('close-tab');
-  await expect(strip()).toHaveCount(1);
-  await expect(activeTab()).toHaveAttribute('title', NEW_TAB_LABEL);
-  await expect.poll(browseContents).toEqual([]);
+  await closeAllTabs();
   await resetMainRecord();
 });
 

@@ -11,6 +11,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { CLEAR_BROWSING_DATA, DB_FILE_NAME } from '@app/specs/browser-session-db.spec';
 import { BROWSE_PARTITION, NEW_TAB_LABEL } from '@app/specs/browser.spec';
 import { APP_DIR, closeApp, launchApp } from './harness';
+import { chromeHelpers } from './helpers';
 
 /**
  * One loopback site for the whole file, so its port (and the restored tabs' URLs) stay the same
@@ -38,6 +39,10 @@ let site: Awaited<ReturnType<typeof startSite>>;
 let profile: string;
 let app: ElectronApplication | undefined;
 let page: Page;
+const { browseContents, contentsIdAt, runInFrame: run, menu, strip, activeTab, address } = chromeHelpers(
+  () => app!,
+  () => page,
+);
 
 test.beforeAll(async () => {
   site = await startSite();
@@ -82,9 +87,6 @@ async function quit(): Promise<void> {
   app = undefined;
 }
 
-const strip = () => page.getByTestId('tab');
-const activeTab = () => page.locator('[data-testid="tab"][aria-selected="true"]');
-const address = () => page.getByTestId('address');
 const prompt = () => page.getByTestId('permission-prompt');
 const promptsShown = () => page.evaluate(() => (globalThis as unknown as { __promptsShown: number }).__promptsShown);
 
@@ -93,26 +95,6 @@ async function go(url: string, title: string): Promise<void> {
   await address().fill(url);
   await address().press('Enter');
   await expect(activeTab()).toHaveAttribute('title', title);
-}
-
-/** Every live browse-session WebContents (the tabs' pages), as main sees them. */
-async function browseContents(): Promise<{ id: number; url: string }[]> {
-  return app!.evaluate(({ session, webContents }, partition) => {
-    const browse = session.fromPartition(partition);
-    return webContents
-      .getAllWebContents()
-      .filter((c) => !c.isDestroyed() && c.session === browse)
-      .map((c) => ({ id: c.id, url: c.getURL() }));
-  }, BROWSE_PARTITION);
-}
-
-async function contentsIdAt(url: string): Promise<number> {
-  await expect.poll(async () => (await browseContents()).filter((c) => c.url === url).length).toBe(1);
-  return (await browseContents()).find((c) => c.url === url)!.id;
-}
-
-function run(id: number, script: string): Promise<unknown> {
-  return app!.evaluate(({ webContents }, { id, script }) => webContents.fromId(id)!.mainFrame.executeJavaScript(script) as Promise<unknown>, { id, script });
 }
 
 /** Replaces the saved strip with `rows`, straight in the database file, as something other than frost could. */
@@ -200,14 +182,6 @@ test('all-invalid-session-restores-empty-tab-e2e', async () => {
 
 const ASK_NOTIFICATIONS = 'Notification.requestPermission()';
 const ASK_GEOLOCATION = 'new Promise((resolve) => navigator.geolocation.getCurrentPosition(() => resolve("position"), (error) => resolve(`error ${error.code}`)))';
-
-async function menu(id: string): Promise<void> {
-  await app!.evaluate(({ Menu }, id) => {
-    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
-    if (!item) throw new Error(`no menu item ${id}`);
-    item.click();
-  }, id);
-}
 
 /** Reads `sql` from the database file with a connection of its own (the app may have it open). */
 function query(sql: string): Record<string, unknown>[] {

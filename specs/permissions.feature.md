@@ -3,7 +3,7 @@
 Spec: `specs/permissions.spec.ts` (`PROMPTABLE_PERMISSIONS`, `SILENTLY_ALLOWED_PERMISSIONS`,
 `MEDIA_TYPES`, `SITE_PERMISSIONS`, `MEDIA_TYPE_PERMISSION`, `PERMISSION_DECISIONS`,
 `PERMISSION_PROMPT_TIMEOUT_MS`, `MAX_PROMPT_IGNORES`, `MAX_COALESCED_REQUESTS`,
-`PROMPT_ARMING_DELAY_MS`, `MAX_PENDING_PROMPTS_PER_TAB`, `PROMPTABLE_ORIGIN_SCHEMES`,
+`PROMPT_ARMING_DELAY_MS`, `MAX_PENDING_PROMPTS_PER_TAB`,
 `PERMISSION_PROMPT_ACTIONS`, `PERMISSION_PROMPT_LABELS`, `PERMISSION_PROMPT_EMBEDDED_IN`,
 `FULLSCREEN_NOTICE_MS`, `FULLSCREEN_BANNER_HEIGHT`, `FULLSCREEN_NOTICE_TEXT`, `FULLSCREEN_EXIT_KEY`;
 Zod-free so the chrome can import it) and `specs/browser.spec.ts` (`PermissionPromptSchema`,
@@ -23,7 +23,7 @@ named test.
   frames of the tab whose URL is `details.requestingUrl` must exist and **all** have that URL's
   origin (several frames may share a URL). Anything else is denied silently: an opaque origin (a
   document sandboxed by a CSP `sandbox` header or `<iframe sandbox>`, `about:blank`, `data:`), a
-  non-`http(s)` origin (`PROMPTABLE_ORIGIN_SCHEMES`), a frame that is gone or has navigated, an
+  non-`http(s)` origin (`webOrigin`, `web-url.spec.ts`), a frame that is gone or has navigated, an
   opaque top-level page, an unparsable URL. A request whose WebContents is not an open tab's is
   denied.
 - **Scope.** Decisions are keyed by (requesting origin, top-level origin) — the tab's

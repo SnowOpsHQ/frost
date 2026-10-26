@@ -1,6 +1,6 @@
-import { BROWSABLE_SCHEMES } from '@app/specs/browser.spec';
 import { MAX_STORED_TITLE_LENGTH, MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import { PERSISTED_DECISIONS, SITE_PERMISSIONS, type PersistedDecision, type SitePermission } from '@app/specs/permissions.spec';
+import { parseWebUrl } from '@app/specs/web-url.spec';
 
 // What may be stored, and what a stored value must look like to be loaded (spec
 // `browser-session-db.feature.md`). Every value is checked both ways: the database is a file in
@@ -17,13 +17,8 @@ function includes(list: readonly string[], value: unknown): boolean {
 export function storableUrl(url: unknown): string | null {
   // Too long before parsing is too long after (removing userinfo aside): never parse a huge value.
   if (typeof url !== 'string' || url === '' || url.length > MAX_STORED_URL_LENGTH) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (!includes(BROWSABLE_SCHEMES, parsed.protocol) || parsed.host === '') return null;
+  const parsed = parseWebUrl(url);
+  if (!parsed) return null;
   parsed.username = '';
   parsed.password = '';
   return parsed.href.length <= MAX_STORED_URL_LENGTH ? parsed.href : null;

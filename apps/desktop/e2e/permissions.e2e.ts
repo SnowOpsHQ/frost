@@ -13,6 +13,7 @@ import {
   PROMPT_ARMING_DELAY_MS,
 } from '@app/specs/permissions.spec';
 import { closeApp, launchApp } from './harness';
+import { chromeHelpers } from './helpers';
 
 /**
  * A loopback site: `/frame-host?frame=<origin>` embeds `<origin>/frame` in an iframe delegated
@@ -68,6 +69,10 @@ async function startSite(): Promise<{ origin: string; host: string; close(): Pro
 
 let app: ElectronApplication;
 let page: Page;
+const { contentsIdAt, runInFrame: run, menu, strip, activeTab, address, chromeCaughtUp, closeAllTabs } = chromeHelpers(
+  () => app,
+  () => page,
+);
 /** Sites opened by the current test (fresh origins per test: decisions last the app session). */
 let sites: Awaited<ReturnType<typeof startSite>>[] = [];
 
@@ -152,66 +157,12 @@ async function latestBarLog(): Promise<PromptLogEntry[]> {
   return log.filter((entry) => entry.bar === bar);
 }
 
-async function browseContents(): Promise<{ id: number; url: string }[]> {
-  return app.evaluate(({ session, webContents }, partition) => {
-    const browse = session.fromPartition(partition);
-    return webContents
-      .getAllWebContents()
-      .filter((c) => !c.isDestroyed() && c.session === browse)
-      .map((c) => ({ id: c.id, url: c.getURL() }));
-  }, BROWSE_PARTITION);
-}
-
-async function contentsIdAt(url: string): Promise<number> {
-  await expect.poll(async () => (await browseContents()).filter((c) => c.url === url).length).toBe(1);
-  return (await browseContents()).find((c) => c.url === url)!.id;
-}
-
-/**
- * Runs `script` in a tab's main frame, or in its first subframe whose URL starts with `framePrefix`;
- * resolves its (awaited) value.
- */
-function run(id: number, script: string, framePrefix?: string): Promise<unknown> {
-  return app.evaluate(
-    ({ webContents }, { id, script, framePrefix }) => {
-      const main = webContents.fromId(id)!.mainFrame;
-      const frame = framePrefix === undefined ? main : main.frames.find((f) => f.url.startsWith(framePrefix));
-      if (!frame) throw new Error(`no frame at ${framePrefix}`);
-      return frame.executeJavaScript(script) as Promise<unknown>;
-    },
-    { id, script, framePrefix },
-  );
-}
-
 /** Resolves `'pending'` if `promise` has not settled within `ms`. */
 function settledWithin<T>(promise: Promise<T>, ms: number): Promise<T | 'pending'> {
   return Promise.race([promise, new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), ms))]);
 }
 
-async function menu(id: string): Promise<void> {
-  await app.evaluate(({ Menu }, id) => {
-    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
-    if (!item) throw new Error(`no menu item ${id}`);
-    item.click();
-  }, id);
-}
-
-const strip = () => page.getByTestId('tab');
-const activeTab = () => page.locator('[data-testid="tab"][aria-selected="true"]');
 const prompt = () => page.getByTestId('permission-prompt');
-const address = () => page.getByTestId('address');
-
-/**
- * A barrier: once this returns, the chrome has rendered a browser state main took after
- * everything that happened before the call (it asks main to focus the address bar, which bumps the
- * state's version, and waits for the chrome to do it).
- */
-async function chromeCaughtUp(): Promise<void> {
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await menu('focus-address-bar');
-  await expect(address()).toBeFocused();
-}
-
 /** Loads `url` in the active tab; answers its WebContents id once it committed with `title`. */
 async function open(url: string, title: string): Promise<number> {
   await address().click();
@@ -256,11 +207,7 @@ async function allowGeolocation(id: number, origin: string, host: string): Promi
 }
 
 test.beforeEach(async () => {
-  const count = await strip().count();
-  for (let i = 0; i < count; i++) await menu('close-tab');
-  await expect(strip()).toHaveCount(1);
-  await expect(activeTab()).toHaveAttribute('title', NEW_TAB_LABEL);
-  await expect.poll(browseContents).toEqual([]);
+  await closeAllTabs();
   await expect(prompt()).toHaveCount(0);
 });
 
