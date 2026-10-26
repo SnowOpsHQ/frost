@@ -15,6 +15,8 @@ function fakeCommands() {
     focusAddressBar: vi.fn(),
     activateTabAt: vi.fn(),
     activateLastTab: vi.fn(),
+    activateNextTab: vi.fn(),
+    activatePreviousTab: vi.fn(),
   } satisfies TabCommands;
 }
 
@@ -61,6 +63,45 @@ describe('application menu', () => {
       expect(commands.activateTabAt).toHaveBeenLastCalledWith(n - 1);
     }
     expect(commands.activateTabAt).toHaveBeenCalledTimes(TAB_SHORTCUT_COUNT - 1);
+
+    // Next / previous tab: Ctrl+Tab everywhere (hidden on macOS, where Cmd+Shift+] / [ are shown).
+    const cycle: [id: string, accelerator: string, visible: boolean, fn: 'activateNextTab' | 'activatePreviousTab'][] =
+      platform === 'darwin'
+        ? [
+            ['next-tab', 'Cmd+Shift+]', true, 'activateNextTab'],
+            ['previous-tab', 'Cmd+Shift+[', true, 'activatePreviousTab'],
+            ['next-tab-ctrl', 'Ctrl+Tab', false, 'activateNextTab'],
+            ['previous-tab-ctrl', 'Ctrl+Shift+Tab', false, 'activatePreviousTab'],
+          ]
+        : [
+            ['next-tab', 'Ctrl+Tab', true, 'activateNextTab'],
+            ['previous-tab', 'Ctrl+Shift+Tab', true, 'activatePreviousTab'],
+          ];
+    for (const [id, accelerator, visible, fn] of cycle) {
+      const item = itemById(template, id);
+      expect(item.accelerator, id).toBe(accelerator);
+      expect(item.visible ?? true, id).toBe(visible);
+      if (!visible) expect(item.acceleratorWorksWhenHidden ?? true, id).toBe(true);
+      commands[fn].mockClear();
+      click(item);
+      expect(commands[fn], id).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  test.each(PLATFORMS)('menu-window-and-quit-items (%s)', (platform) => {
+    const items = allItems(appMenuTemplate(fakeCommands(), platform));
+    const close = items.filter((item) => item.role === 'close');
+    expect(close).toHaveLength(1);
+    expect(close[0]!.accelerator).toBe('CmdOrCtrl+Shift+W');
+    const quit = items.filter((item) => item.role === 'quit');
+    if (platform === 'darwin') {
+      // The app menu role carries Quit (Cmd+Q) on macOS.
+      expect(quit).toHaveLength(0);
+      expect(items.some((item) => item.role === 'appMenu')).toBe(true);
+    } else {
+      expect(quit).toHaveLength(1);
+      expect(quit[0]!.accelerator).toBe('Ctrl+Shift+Q');
+    }
   });
 
   test.each(PLATFORMS)('menu-keeps-edit-roles (%s)', (platform) => {

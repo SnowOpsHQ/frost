@@ -259,10 +259,13 @@ test('non-web-input-becomes-search-e2e', async () => {
   }
 });
 
-test('page-close-resets-tab', async () => {
+test('page-close-closes-tab', async () => {
   await go(`${site.origin}/a`);
   await expect.poll(async () => (await tab()).url).toBe(`${site.origin}/a`);
   const { id } = await tab();
+  const stripTab = page.getByTestId('tab');
+  await expect(stripTab).toHaveCount(1);
+  const tabIdBefore = await stripTab.getAttribute('data-tab-id');
   // The page closes itself; Electron destroys the tab's WebContents.
   await app.evaluate(({ webContents }, id) => {
     void webContents.fromId(id)!.executeJavaScript('window.close()').catch(() => {});
@@ -271,8 +274,12 @@ test('page-close-resets-tab', async () => {
   await expect.poll(attachedViews).toEqual([]);
   await expect(page.getByTestId('start-view')).toBeVisible();
   await expect.poll(windowTitle).toBe(APP_WINDOW_TITLE);
+  // The only tab closed: one fresh empty tab (a new id) replaced it.
+  await expect(stripTab).toHaveCount(1);
+  await expect(stripTab).toHaveAttribute('title', 'New Tab');
+  expect(await stripTab.getAttribute('data-tab-id')).not.toBe(tabIdBefore);
 
-  // The tab works again: a new view loads the next address.
+  // A new view loads the next address.
   await go(`${site.origin}/b`);
   await expect.poll(async () => (await tab()).url).toBe(`${site.origin}/b`);
   expect((await tab()).id).not.toBe(id);

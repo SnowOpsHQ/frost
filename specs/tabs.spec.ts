@@ -33,3 +33,22 @@ export const NOTICE_DISPLAY_MS = 6_000;
 
 /** Number keys of the tab-switching shortcuts: Cmd/Ctrl+1…8 select that tab, 9 the last tab. */
 export const TAB_SHORTCUT_COUNT = 9;
+
+/**
+ * Tab shortcuts main reserves (`tabs.feature.md`, Keyboard shortcuts). `Mod` is Cmd on macOS and
+ * Ctrl elsewhere; `Ctrl` is Control everywhere; `mac:` entries exist only on macOS. They are menu
+ * accelerators (when the chrome or nothing has focus) **and** are taken from every tab's and the
+ * chrome's WebContents in `before-input-event`, before the page sees the key, so a page cannot
+ * block them; the key is then consumed (`preventDefault`, which also stops the menu accelerator),
+ * so one press runs its command once. `Mod+1`…`Mod+8` select that tab, `Mod+9` the last one.
+ */
+export const RESERVED_TAB_SHORTCUTS = {
+  'new-tab': ['Mod+T'],
+  'close-tab': ['Mod+W'],
+  'focus-address-bar': ['Mod+L'],
+  'select-tab': ['Mod+1', 'Mod+2', 'Mod+3', 'Mod+4', 'Mod+5', 'Mod+6', 'Mod+7', 'Mod+8'],
+  'select-last-tab': ['Mod+9'],
+  'next-tab': ['Ctrl+Tab', 'mac:Mod+Shift+]'],
+  'previous-tab': ['Ctrl+Shift+Tab', 'mac:Mod+Shift+['],
+} as const;
+export type TabCommand = keyof typeof RESERVED_TAB_SHORTCUTS;

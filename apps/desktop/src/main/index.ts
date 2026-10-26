@@ -47,7 +47,8 @@ const senderPolicy = createSenderPolicy({ knownWindowIds: windows.knownWindowIds
 
 // Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
 // procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
-const browser = createBrowserController({ createView: createTabView });
+// New Tab with no window open (macOS) opens the window instead of adding a hidden tab.
+const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow() });
 
 function openMainWindow(): void {
   const win = createMainWindow();

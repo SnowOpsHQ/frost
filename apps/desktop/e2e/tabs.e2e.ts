@@ -1,17 +1,25 @@
-// Spec: specs/browser.spec.ts (MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES) · Acceptance: specs/tabs.feature.md (End to end)
+// Spec: specs/tabs.spec.ts (MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, RESERVED_TAB_SHORTCUTS) · Acceptance: specs/tabs.feature.md (End to end)
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { BROWSE_PARTITION, MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
 import { launchApp } from './harness';
 
-/** Loopback pages: `/a` … `/c` (titled), `/untitled` (no <title>), `/slow` (held until released). */
+/**
+ * Loopback pages: `/a` … `/c` (titled), `/untitled` (no <title>), `/slow` (held until released),
+ * `/greedy` (cancels every keydown in the capture phase and counts the keys it saw).
+ */
 async function startSiteServer() {
   const held: ServerResponse[] = [];
   const server = createServer((request, response) => {
     const html = (body: string) => response.writeHead(200, { 'Content-Type': 'text/html' }).end(`<!doctype html>${body}`);
     const path = new URL(request.url ?? '/', 'http://x').pathname;
     if (path === '/untitled') html('<p>no title here</p>');
+    else if (path === '/greedy')
+      html(`<title>Greedy</title><input id="field" autofocus><script>
+        window.seen = [];
+        addEventListener('keydown', (event) => { seen.push(event.key); event.preventDefault(); event.stopImmediatePropagation(); }, true);
+      </script>`);
     else if (path === '/slow') held.push(response);
     else {
       const name = path.slice(1).toUpperCase() || 'ROOT';
@@ -84,6 +92,8 @@ async function menu(id: string): Promise<void> {
 }
 
 const strip = () => page.getByTestId('tab');
+/** A tab's close button: a sibling of the `role="tab"` element, inside the same strip item. */
+const closeOf = (tab: Locator) => tab.locator('xpath=..').getByTestId('tab-close');
 const activeTab = () => page.locator('[data-testid="tab"][aria-selected="true"]');
 const address = () => page.getByTestId('address');
 
@@ -213,14 +223,14 @@ test('close-tab-releases-webcontents', async () => {
   // Close the active middle tab → its right neighbour.
   await strip().nth(1).click();
   await expect.poll(attachedViewIds).toEqual([b]);
-  await strip().nth(1).getByTestId('tab-close').click();
+  await closeOf(strip().nth(1)).click();
   await expect(strip()).toHaveCount(2);
   await expect.poll(async () => (await browseContents()).map((x) => x.id)).not.toContain(b);
   await expect(activeTab()).toHaveAttribute('title', 'Page C');
   await expect.poll(attachedViewIds).toEqual([c]);
 
   // Close the active rightmost tab → its left neighbour.
-  await activeTab().getByTestId('tab-close').click();
+  await closeOf(activeTab()).click();
   await expect(strip()).toHaveCount(1);
   await expect.poll(async () => (await browseContents()).map((x) => x.id)).toEqual([a]);
   await expect(activeTab()).toHaveAttribute('title', 'Page A');
@@ -231,7 +241,7 @@ test('close-tab-releases-webcontents', async () => {
 test('close-last-tab-leaves-empty-tab', async () => {
   await go(`${site.origin}/a`);
   await contentsIdAt(`${site.origin}/a`);
-  await activeTab().getByTestId('tab-close').click();
+  await closeOf(activeTab()).click();
   await expect(strip()).toHaveCount(1);
   await expect(activeTab()).toHaveAttribute('title', NEW_TAB_LABEL);
   await expect.poll(browseContents).toEqual([]);
@@ -245,8 +255,8 @@ test('keyboard-shortcuts-drive-tabs', async () => {
   await go(`${site.origin}/a`);
   const a = await contentsIdAt(`${site.origin}/a`);
 
-  // Synthetic key events (Playwright's keyboard, `webContents.sendInputEvent`) never reach native
-  // menu accelerators, so the items are clicked in main, exactly what their accelerators do. The
+  // The menu items are clicked in main, which is what their accelerators do (synthetic key events
+  // do not reach native menu accelerators; the key path is `page-cannot-block-tab-shortcuts`). The
   // page view has focus, as when a user presses the shortcut on a page.
   await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), a);
   await menu('new-tab');
@@ -269,6 +279,11 @@ test('keyboard-shortcuts-drive-tabs', async () => {
   await menu('select-tab-8');
   await expect(strip().nth(1)).toHaveAttribute('aria-selected', 'true');
   await menu('select-last-tab');
+  await expect(strip().nth(2)).toHaveAttribute('aria-selected', 'true');
+  // Next / previous wrap around.
+  await menu('next-tab');
+  await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
+  await menu('previous-tab');
   await expect(strip().nth(2)).toHaveAttribute('aria-selected', 'true');
 
   // Cmd/Ctrl+L focuses (and selects) the address bar, even while the page has focus.
@@ -300,4 +315,122 @@ test('max-tabs-shows-notice', async () => {
   await expect(strip()).toHaveCount(MAX_TABS);
   // The active tab stays in view in the scrolled strip.
   await expect(activeTab()).toBeInViewport();
+});
+
+/** Sends a real key press (down + up) to a WebContents; it passes through `before-input-event`. */
+async function press(contentsId: number | 'chrome', keyCode: string, modifiers: ('mod' | 'control' | 'shift')[] = []): Promise<void> {
+  await app.evaluate(
+    ({ BrowserWindow, webContents }, { contentsId, keyCode, modifiers }) => {
+      const target = contentsId === 'chrome' ? BrowserWindow.getAllWindows()[0]!.webContents : webContents.fromId(contentsId)!;
+      const mods = modifiers.map((m) => (m === 'mod' ? (process.platform === 'darwin' ? 'meta' : 'control') : m));
+      target.sendInputEvent({ type: 'keyDown', keyCode, modifiers: mods });
+      target.sendInputEvent({ type: 'keyUp', keyCode, modifiers: mods });
+    },
+    { contentsId, keyCode, modifiers },
+  );
+}
+
+/** The keys the greedy page's keydown listener saw (lower-cased). */
+const pageSaw = (id: number) =>
+  app.evaluate(
+    ({ webContents }, id) => webContents.fromId(id)!.executeJavaScript('window.seen.map((k) => k.toLowerCase())') as Promise<string[]>,
+    id,
+  );
+
+test('page-cannot-block-tab-shortcuts', async () => {
+  await go(`${site.origin}/greedy`);
+  const greedy = await contentsIdAt(`${site.origin}/greedy`);
+  await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), greedy);
+  // Control: the page really does swallow ordinary keys.
+  await press(greedy, 'A');
+  await expect.poll(() => pageSaw(greedy)).toEqual(['a']);
+
+  // Mod+T from the greedy page: exactly one new tab (never twice), and the page never saw it.
+  await press(greedy, 'T', ['mod']);
+  await expect(strip()).toHaveCount(2);
+  await expect(strip().nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect(address()).toBeFocused();
+  await page.waitForTimeout(300);
+  await expect(strip()).toHaveCount(2);
+  expect(await pageSaw(greedy)).toEqual(['a']);
+
+  // The chrome's own WebContents: Mod+1 back to the greedy tab.
+  await press('chrome', '1', ['mod']);
+  await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(attachedViewIds).toEqual([greedy]);
+
+  // Ctrl+Tab from the page: next tab; Ctrl+Shift+Tab from the chrome: back.
+  await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), greedy);
+  await press(greedy, 'Tab', ['control']);
+  await expect(strip().nth(1)).toHaveAttribute('aria-selected', 'true');
+  await press('chrome', 'Tab', ['control', 'shift']);
+  await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
+
+  // Mod+W from the page closes its tab.
+  await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), greedy);
+  await press(greedy, 'W', ['mod']);
+  await expect(strip()).toHaveCount(1);
+  await expect.poll(browseContents).toEqual([]);
+  await expect(activeTab()).toHaveAttribute('title', NEW_TAB_LABEL);
+});
+
+test('middle-click-closes-tab', async () => {
+  await go(`${site.origin}/a`);
+  const a = await contentsIdAt(`${site.origin}/a`);
+  await page.getByTestId('new-tab').click();
+  await go(`${site.origin}/b`);
+  const b = await contentsIdAt(`${site.origin}/b`);
+  await strip().nth(0).click({ button: 'middle' });
+  await expect(strip()).toHaveCount(1);
+  await expect.poll(async () => (await browseContents()).map((c) => c.id)).toEqual([b]);
+  expect((await browseContents()).map((c) => c.id)).not.toContain(a);
+  await expect(activeTab()).toHaveAttribute('title', 'Page B');
+  await expect.poll(attachedViewIds).toEqual([b]);
+});
+
+test('tablist-keyboard-navigation', async () => {
+  await page.getByTestId('new-tab').click();
+  await page.getByTestId('new-tab').click();
+  await expect(strip()).toHaveCount(3);
+  // Roving tabindex: only the active tab is in the Tab order.
+  expect(await strip().evaluateAll((tabs) => tabs.map((t) => t.getAttribute('tabindex')))).toEqual(['-1', '-1', '0']);
+  // The close buttons are siblings of the tabs, never inside them.
+  await expect(page.locator('[role="tab"] button')).toHaveCount(0);
+  await expect(page.getByTestId('tab-close').first()).toHaveAttribute('aria-hidden', 'true');
+
+  await strip().nth(2).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(strip().nth(0)).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(strip().nth(2)).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(strip().nth(0)).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(strip().nth(2)).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(strip().nth(1)).toBeFocused();
+  // Moving focus does not activate; Enter does.
+  await expect(strip().nth(2)).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Enter');
+  await expect(strip().nth(1)).toHaveAttribute('aria-selected', 'true');
+  // Delete closes the focused tab.
+  await strip().nth(0).focus();
+  await page.keyboard.press('Delete');
+  await expect(strip()).toHaveCount(2);
+});
+
+test('background-page-close-closes-tab-e2e', async () => {
+  await go(`${site.origin}/a`);
+  const a = await contentsIdAt(`${site.origin}/a`);
+  await page.getByTestId('new-tab').click();
+  await go(`${site.origin}/b`);
+  const b = await contentsIdAt(`${site.origin}/b`);
+  await app.evaluate(({ webContents }, id) => {
+    void webContents.fromId(id)!.executeJavaScript('window.close()').catch(() => {});
+  }, a);
+  await expect(strip()).toHaveCount(1);
+  await expect.poll(async () => (await browseContents()).map((c) => c.id)).toEqual([b]);
+  await expect(activeTab()).toHaveAttribute('title', 'Page B');
+  await expect.poll(attachedViewIds).toEqual([b]);
+  await expect(address()).toHaveValue(`${site.origin}/b`);
 });

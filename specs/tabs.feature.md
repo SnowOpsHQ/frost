@@ -1,7 +1,7 @@
 # Feature: tabs
 
 Spec: `specs/tabs.spec.ts` (`MAX_TABS`, `NEW_TAB_LABEL`, `NOTICE_MESSAGES`, `NOTICE_DISPLAY_MS`,
-`TAB_SHORTCUT_COUNT`; Zod-free so the chrome can import it) and `specs/browser.spec.ts`
+`TAB_SHORTCUT_COUNT`, `RESERVED_TAB_SHORTCUTS`; Zod-free so the chrome can import it) and `specs/browser.spec.ts`
 (`TabIdInputSchema`, `BrowserStateSchema.focusAddressBarSeq` / `.notice`, `NoticeSchema`).
 Builds on `browser-chrome.feature.md` (one tab, its view, the controller).
 Phase 1 Task 2. Each scenario maps to one named test.
@@ -9,6 +9,13 @@ Phase 1 Task 2. Each scenario maps to one named test.
 ## Behaviour
 - The **tab strip** is a row above the toolbar: one tab per open tab, in order, then a "+" (new
   tab) button. Each tab shows a glyph or the loading indicator, its label and a × (close) button.
+- **Accessible structure:** a `tablist` of `tab` elements (roving tabindex: only the active tab is
+  in the Tab order). Each tab's × is a sibling of the `tab` element, never inside it (a `tab`'s
+  children are presentational), and is a mouse affordance only (`aria-hidden`, never focused); the
+  keyboard closes a tab with Delete on the focused tab or Cmd/Ctrl+W. In the tablist,
+  Left/Right move focus to the previous/next tab (wrapping), Home/End to the first/last; Enter or
+  Space activates the focused tab.
+- **Middle-click** on a tab closes it.
 - **Labels:** `tabLabel(tab)` (`renderer/tab-label.ts`): the page title, else the URL's host,
   else `NEW_TAB_LABEL`. Long labels are truncated by CSS (ellipsis); the full label is the tab's
   tooltip (`title`).
@@ -20,7 +27,11 @@ Phase 1 Task 2. Each scenario maps to one named test.
   window and its WebContents closed (`webContents.close()`), so nothing leaks. Closing the active
   tab activates its right neighbour, else its left one; closing another tab keeps the active one.
 - **Last tab:** closing the only tab leaves one fresh empty tab (a new id); the window stays open.
-- **Switching** (click a tab, Cmd/Ctrl+1…8 = that tab, Cmd/Ctrl+9 = the last tab): exactly one
+- **A page closing itself** (`window.close()`, its WebContents destroyed) closes its tab by the same
+  rules: a background tab disappears and the active tab stays; the only tab is replaced by a fresh
+  empty one.
+- **Switching** (click a tab, Cmd/Ctrl+1…8 = that tab, Cmd/Ctrl+9 = the last tab, Ctrl+Tab /
+  Ctrl+Shift+Tab = next/previous tab, wrapping, also Cmd+Shift+] / Cmd+Shift+[ on macOS): exactly one
   view is shown — only the active tab's view is attached to the window's `contentView` (an empty
   tab has none). Every tab keeps its own URL, title, back/forward history and loading state.
   Switching to a page focuses the page; switching to an empty tab focuses the address bar.
@@ -28,10 +39,17 @@ Phase 1 Task 2. Each scenario maps to one named test.
 - Main focuses chrome inputs only through state: `focusAddressBarSeq` increases by one per focus
   request and the chrome focuses the address bar when the value it last saw changes. There is no
   push channel.
-- **Keyboard shortcuts** are application-menu accelerators handled in main (a focused page view
-  would swallow renderer key handlers). The menu keeps the standard Edit roles (undo, redo, cut,
+- **Keyboard shortcuts** (`RESERVED_TAB_SHORTCUTS`) are handled in main, never by renderer key
+  hooks: application-menu accelerators, plus a `before-input-event` handler on every tab's
+  WebContents and on the chrome's, which takes a reserved shortcut before the page sees it (a page
+  that `preventDefault`s every keydown cannot block it), runs the command once and consumes the key
+  (`preventDefault`, which also suppresses the menu accelerator, so one press never runs twice).
+  Other keys pass through untouched. The menu keeps the standard Edit roles (undo, redo, cut,
   copy, paste, select all) so the address bar's clipboard works on macOS, and nothing else claims
-  Cmd/Ctrl+W.
+  Cmd/Ctrl+W. Close Window is Cmd/Ctrl+Shift+W; Quit is Cmd+Q on macOS and Ctrl+Shift+Q elsewhere.
+  On Linux/Windows the menu bar auto-hides (Alt reveals it).
+- **No window** (macOS, after the last window closed): tab commands do not touch hidden tabs. New
+  Tab opens the window (which starts with one empty tab); the other tab commands are no-ops.
 - **`MAX_TABS`:** with `MAX_TABS` tabs open a new-tab request is refused (no tab opens) and raises
   the `tab-limit` notice; the status bar shows `NOTICE_MESSAGES['tab-limit']` for
   `NOTICE_DISPLAY_MS`.
@@ -71,8 +89,29 @@ Phase 1 Task 2. Each scenario maps to one named test.
   and sets `notice` to `{ kind: 'tab-limit' }` with a new `seq` (each refusal a new `seq`); after a
   close, `newTab()` works again. The state always parses with `BrowserStateSchema`.
 - **Scenario: closed-tab-events-are-ignored** — after `closeTab`, navigation / title / loading /
-  crash / `destroyed` events from the closed tab's WebContents change no tab's state and do not
-  bump the version.
+  crash / `destroyed` / input events from the closed tab's WebContents change no tab's state and do
+  not bump the version; none of the controller's listeners (`did-start-loading`, `did-navigate`,
+  `did-navigate-in-page`, `did-fail-load`, `page-title-updated`, `did-stop-loading`,
+  `render-process-gone`, `destroyed`, `before-input-event`) remain on it.
+- **Scenario: background-page-close-closes-its-tab** — a background tab whose WebContents is
+  destroyed (the page called `window.close()`) is removed; the active tab and its attached view
+  stay.
+- **Scenario: next-previous-tab-wraps** — `activateNextTab()` / `activatePreviousTab()` move to the
+  neighbour, wrapping at the ends; with one tab they change nothing.
+- **Scenario: page-cannot-block-tab-shortcuts-unit** — a reserved shortcut arriving as
+  `before-input-event` on a tab's WebContents or the chrome's runs its command once and is
+  `preventDefault`ed (its key-up is consumed too, without running again); other keys are not
+  touched; a closed tab's WebContents no longer triggers anything.
+- **Scenario: no-window-tab-commands** — after the window closed, `newTab()` asks the app to open
+  a window (the injected `openWindow`) instead of adding a hidden tab, and answers the new window's
+  empty tab; `closeTab` / `activateTab` / `closeActiveTab` / `activateTabAt` / `activateLastTab` /
+  next / previous / `focusAddressBar` change nothing.
+
+## Shortcut matching (`apps/desktop/src/main/browser/__tests__/shortcuts.test.ts`)
+- **Scenario: shortcut-matcher-follows-spec** — `matchTabShortcut(input, platform)` maps every
+  `RESERVED_TAB_SHORTCUTS` entry to its command on macOS (Mod = Meta) and Linux/Windows (Mod =
+  Control), and nothing else: other keys, extra modifiers (Alt, the other platform's Mod, Shift on
+  Mod+T), and `mac:` entries off macOS answer `null`.
 - **Scenario: untitled-page-has-empty-title** (`page-title.test.ts`) — for a page without a
   <title>, Chromium's `getTitle()` is a display form of the URL (no scheme, no `www.`, no bare
   root `/`, unescaped, Unicode host); `pageTitle` reports it as `''`, so the strip shows the host.
@@ -92,7 +131,12 @@ Phase 1 Task 2. Each scenario maps to one named test.
 ## Menu (`apps/desktop/src/main/__tests__/menu.test.ts`)
 - **Scenario: menu-accelerators-call-controller** — New Tab `CmdOrCtrl+T` → `newTab()`, Close Tab
   `CmdOrCtrl+W` → `closeActiveTab()`, Open Location `CmdOrCtrl+L` → `focusAddressBar()`,
-  `CmdOrCtrl+1`…`8` → `activateTabAt(0…7)`, `CmdOrCtrl+9` → `activateLastTab()`.
+  `CmdOrCtrl+1`…`8` → `activateTabAt(0…7)`, `CmdOrCtrl+9` → `activateLastTab()`, Next / Previous
+  Tab `Ctrl+Tab` / `Ctrl+Shift+Tab` → `activateNextTab()` / `activatePreviousTab()` (on macOS
+  also `Cmd+Shift+]` / `Cmd+Shift+[`, the Ctrl+Tab items hidden but working).
+- **Scenario: menu-window-and-quit-items** — Close Window is the `close` role on
+  `CmdOrCtrl+Shift+W` on every platform; Quit is the `quit` role, on `Ctrl+Shift+Q` on
+  Linux/Windows (macOS keeps the app menu's Cmd+Q).
 - **Scenario: menu-keeps-edit-roles** — an Edit menu with the undo, redo, cut, copy, paste and
   selectAll roles, on every platform.
 - **Scenario: menu-accelerators-are-unique** — no two items share an accelerator; no default role
@@ -106,6 +150,15 @@ Phase 1 Task 2. Each scenario maps to one named test.
   `NEW_TAB_LABEL`.
 - **Scenario: address-field-resets-on-tab-switch** — switching tabs drops the draft and the
   submitted text, so the field shows the new tab's URL.
+- **Scenario: notice-shows-then-clears** (`notice.test.ts`, fake timers) — the notice tracker
+  ignores the notice present when it starts (history), shows a notice with a new `seq` and clears
+  it after exactly `NOTICE_DISPLAY_MS`; a newer notice restarts the timer.
+- **Scenario: tablist-keys-move-focus** (`tablist-keys.test.ts`) — Left/Right move to the
+  previous/next index (wrapping), Home/End to the first/last; other keys answer `null`.
+
+## Window (`apps/desktop/src/main/__tests__/boot.test.ts`)
+- **Scenario: menu-bar-auto-hides-off-macos** — `createMainWindow()` sets `autoHideMenuBar: true`
+  on Linux/Windows and `false` on macOS; the webPreferences are unchanged.
 
 ## End to end (`apps/desktop/e2e/tabs.e2e.ts`, real Electron, loopback pages)
 - **Scenario: new-tab-button-opens-empty-tab** — "+" adds a tab at the end labelled `New Tab`,
@@ -124,8 +177,18 @@ Phase 1 Task 2. Each scenario maps to one named test.
   window stays open.
 - **Scenario: keyboard-shortcuts-drive-tabs** — with a page view focused, the application menu's
   items (clicked in main via `Menu.getApplicationMenu()`, which is what their accelerators do)
-  open, switch (1, 2, 8 past the end = no-op, 9 = last) and close tabs and focus the address bar.
-  Synthetic key events (Playwright, `sendInputEvent`) do not reach native menu accelerators, so a
-  real key press is checked by hand, not here.
+  open, switch (1, 2, 8 past the end = no-op, 9 = last, next/previous) and close tabs and focus the
+  address bar.
+- **Scenario: page-cannot-block-tab-shortcuts** — a page that `preventDefault`s every keydown (in
+  the capture phase) has focus; real key input sent to its WebContents (`sendInputEvent`, which
+  passes through `before-input-event`) still runs Mod+T (exactly one new tab), Ctrl+Tab and Mod+W;
+  the same keys sent to the chrome's WebContents work too; an ordinary key still reaches the page.
+- **Scenario: middle-click-closes-tab** — a middle click on an inactive tab closes it (its
+  WebContents released); the active tab stays.
+- **Scenario: tablist-keyboard-navigation** — with a tab focused, ArrowRight / ArrowLeft / End /
+  Home move focus between tabs (only the active tab is in the Tab order), Enter activates the
+  focused tab and Delete closes it; no `button` is inside any `role="tab"` element.
+- **Scenario: background-page-close-closes-tab-e2e** — a background tab whose page calls
+  `window.close()` disappears from the strip; the active tab and its view stay.
 - **Scenario: max-tabs-shows-notice** — at `MAX_TABS` tabs one more new tab is refused and the
   status bar shows the `tab-limit` message.
