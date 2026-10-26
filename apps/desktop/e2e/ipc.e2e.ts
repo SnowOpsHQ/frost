@@ -49,6 +49,15 @@ test('close-app-kills-wedged-app', async () => {
   await expect.poll(() => [mainPid, ...rendererPids].filter(processExists)).toEqual([]);
 });
 
+test('close-app-tolerates-app-that-quit', async () => {
+  const quitting = await launchApp();
+  const closed = new Promise<void>((resolve) => quitting.app.once('close', () => resolve()));
+  // Quits on its own (as closing the last window does on Linux); the evaluate may lose its answer.
+  await quitting.app.evaluate(({ app: electronApp }) => void setTimeout(() => electronApp.quit(), 50)).catch(() => undefined);
+  await closed;
+  await expect(closeApp(quitting.app)).resolves.toBeUndefined();
+});
+
 test('loads-app-from-app-scheme', async () => {
   await page.waitForLoadState('domcontentloaded');
   expect(page.url().startsWith(APP_ENTRY_URL)).toBe(true);

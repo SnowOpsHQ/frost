@@ -79,14 +79,21 @@ export const APP_CLOSE_TIMEOUT_MS = 10_000;
  * Closes `app` (spec `ipc-e2e.feature.md`, Harness): Playwright's `close()` (the app quits, so
  * pending writes are flushed); if that has not finished within `timeoutMs`, the app's whole
  * process tree is killed, so a wedged app fails only its own test and never hangs the worker's
- * teardown. A no-op for `undefined`.
+ * teardown. A no-op for `undefined` and for an app that already quit by itself (Playwright no
+ * longer answers `process()` for it once its `close` event fired).
  */
 export async function closeApp(app: ElectronApplication | undefined, options: { timeoutMs?: number } = {}): Promise<void> {
   if (!app) return;
-  const pid = app.process().pid;
+  let child: ReturnType<ElectronApplication['process']>;
+  try {
+    child = app.process();
+  } catch {
+    return;
+  }
+  const pid = child.pid;
   const exited = new Promise<void>((resolve) => {
-    if (app.process().exitCode !== null || app.process().signalCode !== null) resolve();
-    else app.process().once('exit', () => resolve());
+    if (child.exitCode !== null || child.signalCode !== null) resolve();
+    else child.once('exit', () => resolve());
   });
   const closed = app.close().catch(() => undefined);
   const timeout = (ms: number) => new Promise<'timeout'>((resolve) => setTimeout(resolve, ms, 'timeout').unref());
