@@ -345,6 +345,16 @@ describe('browse guard', () => {
     }
   });
 
+  test('page-cannot-block-unload', () => {
+    const contents = created(browseSession());
+    activate(contents);
+    for (let i = 0; i < 2; i++) {
+      const event = fakeEvent();
+      contents.emit('will-prevent-unload', event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+  });
+
   test('browse-session-refuses-file-scheme', async () => {
     const ses = new FakeSession();
     hardenBrowseSession(ses as unknown as Session);

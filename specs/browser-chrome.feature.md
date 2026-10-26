@@ -19,6 +19,8 @@ Electronegativity sees them.
   `toEqual(TAB_VIEW_WEB_PREFERENCES)`.
 - **Scenario: tab-view-uses-browse-partition** — `partition` is `BROWSE_PARTITION`.
 - **Scenario: tab-view-has-no-preload** — no `preload` key at all.
+- **Scenario: tab-view-disables-dialogs** — `disableDialogs` is `true` (`browse-guard.feature.md`,
+  JavaScript dialogs).
 
 ## Session-classified guard (`apps/desktop/src/main/browser/__tests__/guard.test.ts`)
 The app-wide `web-contents-created` guard classifies each WebContents **at creation** by session:

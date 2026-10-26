@@ -27,4 +27,8 @@ describe('createTabView', () => {
   test('tab-view-has-no-preload', () => {
     expect(Object.hasOwn(webPreferencesOf(), 'preload')).toBe(false);
   });
+
+  test('tab-view-disables-dialogs', () => {
+    expect(webPreferencesOf()['disableDialogs']).toBe(true);
+  });
 });

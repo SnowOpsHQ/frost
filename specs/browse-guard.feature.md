@@ -57,6 +57,18 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   must still back it) nor on a same-document navigation (`did-navigate-in-page`). The app window's
   gesture tracking (Phase 0) is the same code (`security/gesture.ts`).
 - **`<webview>`** stays refused (`will-attach-webview` prevented; tab views have no `webviewTag`).
+- **JavaScript dialogs (deliberate Phase 1 limit).** Tab views are created with
+  `disableDialogs: true` (`TAB_VIEW_WEB_PREFERENCES`), so a page gets the dialog-less behaviour:
+  `alert()` returns at once, `confirm()` returns `false`, and nothing is shown. `prompt()` throws
+  (`Error: prompt() is not supported.`): Electron never implements it, in any renderer. Electron would otherwise show them as native dialogs owned by frost with no origin on
+  them, which a page could use to pass its text off as frost's own. Chrome-rendered dialogs that
+  name the asking origin come in a later phase.
+- **Unload cannot be blocked.** A page's `beforeunload` handler never keeps the user on it, and no
+  "leave site?" dialog is shown: the browse guard `preventDefault`s every `will-prevent-unload`
+  (without that, Electron cancels the unload, so a page with a recent activation could block
+  navigating away from it, including from the address bar, and reloading). Closing a tab closes
+  its WebContents without running `beforeunload` (`webContents.close()`), and closing the window
+  closes every tab that way, so neither waits on a page.
 - **No `file:` on the browse session** (backstop): the browse partition's own `file:` protocol
   handler fails every `file:` request with a network error, so even a load main starts itself
   (`loadURL`, which no navigation guard sees) never commits a local file in a tab. The app UI's
@@ -138,6 +150,8 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   `did-navigate-in-page` still backs a popup.
 - **Scenario: webview-stays-refused** — `will-attach-webview` is prevented, also for a request that
   asks for `nodeIntegration` or a preload.
+- **Scenario: page-cannot-block-unload** — every `will-prevent-unload` of a tab's WebContents is
+  prevented (the page unloads).
 - **Scenario: browse-session-refuses-file-scheme** — `hardenBrowseSession` registers the browse
   session's own `file:` protocol handler, which answers every request with a network error
   (`Response.error()`): a backstop for loads no navigation guard sees (started by main).
@@ -234,3 +248,9 @@ allowed.
   nothing (`did-navigate` never fires) and the tab's document never contains the file's content.
 - **Scenario: webview-tag-creates-nothing-e2e** — a page with `<webview src=…>` creates no
   WebContents.
+- **Scenario: page-dialogs-are-disabled-e2e** — from page script and from a real click,
+  `alert()` returns `undefined` and `confirm()` `false` at once, and `prompt()` throws; the page
+  keeps running.
+- **Scenario: page-cannot-block-unload-e2e** — a page whose `beforeunload` asks to stay, after a
+  real click (activation): typing another URL navigates away, Reload reloads, Close Tab closes its
+  WebContents, and closing the window (a second app) closes it.

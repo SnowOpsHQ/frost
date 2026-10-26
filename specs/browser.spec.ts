@@ -72,8 +72,10 @@ export const MAX_PENDING_WATCHES = 4;
 
 /**
  * webPreferences of every tab view, set **explicitly** by `createTabView()`: the four hardened
- * values of `HARDENED_WEB_PREFERENCES` plus the browse partition, and **no `preload`** (browsed
- * content never gets the IPC bridge). Exactly these keys: nothing that loosens the view
+ * values of `HARDENED_WEB_PREFERENCES` plus the browse partition, **no `preload`** (browsed
+ * content never gets the IPC bridge), and `disableDialogs` (a page's `alert` / `confirm` /
+ * `prompt` never open a native dialog owned by frost with no origin on it; a deliberate Phase 1
+ * limit, `browse-guard.feature.md`). Exactly these keys: nothing that loosens the view
  * (`webviewTag`, `nodeIntegrationInSubFrames`, `allowRunningInsecureContent` …) may be added
  * without changing this spec.
  */
@@ -83,6 +85,7 @@ export const TAB_VIEW_WEB_PREFERENCES = {
   nodeIntegration: false,
   webSecurity: true,
   partition: BROWSE_PARTITION,
+  disableDialogs: true,
 } as const;
 
 /**
