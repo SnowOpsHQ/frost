@@ -10,6 +10,14 @@
  */
 
 /**
+ * `about:` documents a tab may navigate to, compared on the parsed URL's path (so any query or
+ * fragment is allowed: `about:blank#x` is `about:blank`, as in Chromium, whose renderer commits it
+ * without reporting a `will-frame-navigate` at all). `about:blank` in any frame; besides it, the
+ * only `about:` URL a **subframe** may navigate to is `<iframe srcdoc>` (`SUBFRAME_ONLY_URLS`).
+ */
+export const BLANK_ABOUT_PATH = 'blank' as const;
+
+/**
  * Besides `BROWSABLE_SCHEMES` and `about:blank`, the only URL a **subframe** may navigate to:
  * `<iframe srcdoc>`. Its document is written by the embedding page and inherits that page's
  * origin, so it grants nothing the page cannot already do with an `about:blank` frame. Never a
@@ -25,7 +33,10 @@ export const SUBFRAME_ONLY_URLS = ['about:srcdoc'] as const;
 
 /**
  * Load failures the chrome does not report: `ERR_ABORTED` (a navigation the guard dropped, a stop,
- * a superseded load, a link that turned into a download).
+ * a superseded load, a link that turned into a download). `ERR_UNSAFE_REDIRECT` (-311) **is**
+ * reported: Chromium refuses a server redirect to `data:`, `file:` or `about:` itself (the guard's
+ * `will-redirect` never sees it) and commits an error page, so the chrome shows the generic panel
+ * rather than a blank tab.
  */
 export const IGNORED_LOAD_ERROR_CODES = [-3] as const;
 

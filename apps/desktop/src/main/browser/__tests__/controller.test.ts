@@ -442,7 +442,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);
@@ -688,6 +688,7 @@ describe('tabs', () => {
       'did-stop-loading',
       'render-process-gone',
       'unresponsive',
+      'responsive',
       'destroyed',
       'before-input-event',
     ]) {
@@ -979,13 +980,66 @@ describe('guards', () => {
     expect(BrowserStateSchema.safeParse(controller.getState()).success).toBe(true);
   });
 
-  test('unresponsive-raises-notice', () => {
+  test('unresponsive-is-per-tab', () => {
     const a = loadFirst('https://a.test/', 'A');
+    const b = controller.openTabFromPage(a.view.webContents, 'https://a.test/b')!;
+    const bView = views[1]!;
+    commit(bView.webContents, 'https://a.test/b', 'B');
+
+    bView.webContents.emit('unresponsive');
+    expect(tabState(b).unresponsive).toBe(true);
+    expect(tabState(a.id).unresponsive).toBe(false);
+    expect(controller.getState().notice).toBeNull();
+    expect(BrowserStateSchema.parse(controller.getState())).toEqual(controller.getState());
+    bView.webContents.emit('responsive');
+    expect(tabState(b).unresponsive).toBe(false);
+
     a.view.webContents.emit('unresponsive');
-    expect(controller.getState().notice).toEqual({ seq: 1, kind: 'page-unresponsive' });
-    const version = controller.getState().version;
-    a.view.webContents.emit('responsive');
-    expect(controller.getState().version).toBe(version);
-    expect(controller.getState().notice).toEqual({ seq: 1, kind: 'page-unresponsive' });
+    expect(tabState(a.id).unresponsive).toBe(true);
+    a.view.webContents.emit('render-process-gone', fakeEvent(), { reason: 'killed', exitCode: 9 });
+    expect(tabState(a.id)).toMatchObject({ unresponsive: false, crashed: true });
+  });
+
+  test('popup-placement-skips-descendants', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    const p1 = controller.openTabFromPage(a.view.webContents, 'https://a.test/p1')!;
+    const p1View = views.at(-1)!;
+    const n = controller.openTabFromPage(p1View.webContents, 'https://a.test/n')!;
+    const nView = views.at(-1)!;
+    const nn = controller.openTabFromPage(nView.webContents, 'https://a.test/nn')!;
+    const p2 = controller.openTabFromPage(a.view.webContents, 'https://a.test/p2')!;
+    expect(ids()).toEqual([a.id, p1, n, nn, p2]);
+  });
+
+  test('popup-download-closes-blank-popup-tab', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    const blank = controller.openTabFromPage(a.view.webContents, 'https://a.test/file.zip')!;
+    const blankView = views.at(-1)!;
+    const loaded = controller.openTabFromPage(a.view.webContents, 'https://a.test/page')!;
+    const loadedView = views.at(-1)!;
+    commit(loadedView.webContents, 'https://a.test/page', 'Page');
+
+    // The popup's navigation turned into a download: nothing committed, so its tab goes.
+    controller.downloadBlocked(blankView.webContents);
+    expect(ids()).toEqual([a.id, loaded]);
+    expect(blankView.contents.close).toHaveBeenCalledTimes(1);
+    expect(controller.getState().notice).toMatchObject({ kind: 'download-blocked' });
+    expect(active()).toBe(a.id);
+    expect(attached()).toEqual([a.view]);
+
+    // A popup with a page, the user's own tab, an unknown WebContents: notice only.
+    controller.downloadBlocked(loadedView.webContents);
+    controller.downloadBlocked(a.view.webContents);
+    controller.downloadBlocked(new FakeTabContents());
+    controller.downloadBlocked(null);
+    expect(ids()).toEqual([a.id, loaded]);
+    expect(controller.getState().notice?.seq).toBe(5);
+
+    // A tab the user opened and typed a file URL into stays (an empty tab), too.
+    const own = controller.newTab()!;
+    controller.navigate('https://a.test/other.zip');
+    controller.downloadBlocked(views.at(-1)!.webContents);
+    expect(ids()).toEqual([a.id, loaded, own]);
+    expect(blank).not.toBe(own);
   });
 });

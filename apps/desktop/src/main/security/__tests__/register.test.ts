@@ -108,6 +108,14 @@ describe('window-open handler', () => {
     expect(shell.openExternal).toHaveBeenCalledWith('https://x.com/1');
   });
 
+  test('app-gesture-ends-with-navigation', () => {
+    const contents = setup();
+    userInput(contents, 'mouseDown');
+    contents.emit('did-navigate', fakeEvent(), 'app://app/', 200, 'OK');
+    openWindow(contents, 'https://x.com');
+    expect(shell.openExternal).not.toHaveBeenCalled();
+  });
+
   test('ignores-expired-gesture', () => {
     const contents = setup();
     userInput(contents, 'mouseDown');

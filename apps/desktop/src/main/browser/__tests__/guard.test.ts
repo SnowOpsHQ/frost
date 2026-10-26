@@ -124,7 +124,7 @@ describe('decisions', () => {
 
   test('browse-navigation-allows-web-and-blank', () => {
     for (const frame of both) {
-      for (const url of ['https://example.com/', 'HTTP://127.0.0.1:8080/x', 'HtTpS://example.com/a?b#c', 'about:blank']) {
+      for (const url of ['https://example.com/', 'HTTP://127.0.0.1:8080/x', 'HtTpS://example.com/a?b#c', 'about:blank', 'about:blank#x', 'about:blank?x']) {
         expect(isAllowedBrowseNavigation(url, frame), `${url} ${frame.isMainFrame}`).toBe(true);
       }
     }
@@ -148,9 +148,8 @@ describe('decisions', () => {
       'mailto:a@b.c',
       'vscode://x',
       'frost-test:x',
-      'about:blank#x',
-      'about:blank?x',
       'about:config',
+      'about:blanket',
       '',
       'not a url',
       '//example.com/',
@@ -315,6 +314,25 @@ describe('browse guard', () => {
     openWindow(contents, 'mailto:a@b.c');
     expect(openTab).toHaveBeenCalledExactlyOnceWith(contents, 'https://example.com/1');
     expect(shell.openExternal).not.toHaveBeenCalled();
+  });
+
+  test('gesture-ends-with-navigation', () => {
+    const contents = created(browseSession());
+    // A real click navigated the tab (here: the landing page of a redirect chain committed).
+    activate(contents);
+    contents.emit('did-navigate', fakeEvent(), 'https://landing.test/', 200, 'OK');
+    expect(openWindow(contents, 'https://landing.test/popup')).toEqual({ action: 'deny' });
+    activate(contents);
+    contents.emit('did-navigate', fakeEvent(), 'https://landing.test/', 200, 'OK');
+    expect(contents.simulateNavigation('mailto:a@b.c')).toBe(true);
+    expect(openTab).not.toHaveBeenCalled();
+    expect(shell.openExternal).not.toHaveBeenCalled();
+
+    // A same-document navigation (hash, pushState) keeps it.
+    activate(contents);
+    contents.emit('did-navigate-in-page', fakeEvent(), 'https://landing.test/#x', true, 1, 1);
+    openWindow(contents, 'https://landing.test/popup');
+    expect(openTab).toHaveBeenCalledExactlyOnceWith(contents, 'https://landing.test/popup');
   });
 
   test('webview-stays-refused', () => {

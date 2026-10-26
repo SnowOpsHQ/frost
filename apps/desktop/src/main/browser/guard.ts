@@ -1,6 +1,6 @@
 import type { Session, WebContents } from 'electron';
 import { BROWSABLE_SCHEMES, BROWSE_BLANK_URL } from '@app/specs/browser.spec';
-import { SUBFRAME_ONLY_URLS } from '@app/specs/browse-guard.spec';
+import { BLANK_ABOUT_PATH, SUBFRAME_ONLY_URLS } from '@app/specs/browse-guard.spec';
 import { resolveExternalOpen } from '../security/policy';
 import { openExternalIfAllowed, trackUserGesture } from '../security/gesture';
 
@@ -21,13 +21,24 @@ export function isWebUrl(url: string): boolean {
   }
 }
 
+/** Whether `url` is `about:blank`, with any query or fragment (`BLANK_ABOUT_PATH`). */
+function isAboutBlank(url: string): boolean {
+  if (url === BROWSE_BLANK_URL) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'about:' && parsed.pathname === BLANK_ABOUT_PATH;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Whether a tab's frame may navigate or be redirected to `url`: `BROWSABLE_SCHEMES` or
- * `about:blank` in any frame, plus `SUBFRAME_ONLY_URLS` (`about:srcdoc`) in subframes. `data:`,
- * `blob:` and every other scheme are denied in every frame.
+ * `about:blank` (any query/fragment) in any frame, plus `SUBFRAME_ONLY_URLS` (`about:srcdoc`) in
+ * subframes. `data:`, `blob:` and every other scheme are denied in every frame.
  */
 export function isAllowedBrowseNavigation(url: string, { isMainFrame }: { isMainFrame: boolean }): boolean {
-  if (url === BROWSE_BLANK_URL) return true;
+  if (isAboutBlank(url)) return true;
   if (!isMainFrame && includes(SUBFRAME_ONLY_URLS, url)) return true;
   return isWebUrl(url);
 }
@@ -59,7 +70,7 @@ export type PopupVerdict = 'tab' | 'open-externally' | 'drop';
 export function judgeBrowsePopup(url: string, userGesture: boolean): PopupVerdict {
   if (!userGesture) return 'drop';
   if (isWebUrl(url)) return 'tab';
-  if (url === BROWSE_BLANK_URL) return 'drop';
+  if (isAboutBlank(url)) return 'drop';
   return resolveExternalOpen(url, { userGesture }) === 'allow' ? 'open-externally' : 'drop';
 }
 
@@ -83,19 +94,23 @@ export function guardBrowseContents(contents: WebContents, options: { now: () =>
   const pin =
     (isRedirect: boolean) =>
     (details: { url: string; isMainFrame: boolean; preventDefault(): void }): void => {
-      const verdict = judgeBrowseNavigation(details.url, { isMainFrame: details.isMainFrame, isRedirect, userGesture: gesture.consume });
+      // The verdict reads (and consumes) the gesture only if it needs it; keep what it read.
+      let userGesture = false;
+      const consume = (): boolean => (userGesture = gesture.consume());
+      const verdict = judgeBrowseNavigation(details.url, { isMainFrame: details.isMainFrame, isRedirect, userGesture: consume });
       if (verdict === 'allow') return;
       details.preventDefault();
-      // The verdict already consumed the gesture; the shared flow re-checks the URL before opening.
-      if (verdict === 'open-externally') openExternalIfAllowed(details.url, true);
+      // The shared flow re-checks the URL and that gesture before opening.
+      if (verdict === 'open-externally') openExternalIfAllowed(details.url, userGesture);
     };
   contents.on('will-frame-navigate', pin(false));
   contents.on('will-redirect', pin(true));
 
   contents.setWindowOpenHandler(({ url }) => {
-    const verdict = judgeBrowsePopup(url, gesture.consume());
+    const userGesture = gesture.consume();
+    const verdict = judgeBrowsePopup(url, userGesture);
     if (verdict === 'tab') options.hooks?.openTab?.(contents, url);
-    else if (verdict === 'open-externally') openExternalIfAllowed(url, true);
+    else if (verdict === 'open-externally') openExternalIfAllowed(url, userGesture);
     return { action: 'deny' };
   });
 

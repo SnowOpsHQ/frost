@@ -3,14 +3,16 @@
 Spec: `specs/browse-guard.spec.ts` (`SUBFRAME_ONLY_URLS`, `IGNORED_LOAD_ERROR_CODES`,
 `CERT_ERROR_CODE_RANGE`, `LOAD_ERROR_TITLES`, `CRASH_TITLE`, `POPUP_TAB_DISPOSITION`),
 `specs/browser.spec.ts` (`BROWSABLE_SCHEMES`, `BROWSE_BLANK_URL`, `TabStateSchema.error` /
-`.crashed`, `LoadErrorSchema`), `specs/tabs.spec.ts` (`NOTICE_KINDS`, `NOTICE_MESSAGES`) and the
+`.crashed` / `.unresponsive`, `LoadErrorSchema`), `specs/tabs.spec.ts` (`NOTICE_KINDS`,
+`NOTICE_MESSAGES`, `UNRESPONSIVE_STATUS`) and the
 Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERNAL_SCHEMES`,
 `USER_ACTIVATION_*`). Design doc §3. Phase 1 Task 3; builds on `browser-chrome.feature.md`
 (the session-classified guard) and `tabs.feature.md`. Each scenario maps to one named test.
 
 ## Behaviour
 - **Navigation pin.** A tab's frames navigate, and are redirected, only to `BROWSABLE_SCHEMES`
-  (`http:`, `https:`) or `about:blank`; a subframe may also be `about:srcdoc`
+  (`http:`, `https:`) or `about:blank` (any query or fragment: `about:blank#x` is `about:blank`,
+  and Chromium commits it without asking the guard); a subframe may also be `about:srcdoc`
   (`SUBFRAME_ONLY_URLS`, whose document the embedding page wrote). Everything else is dropped
   (`preventDefault` on `will-frame-navigate` / `will-redirect`), in every frame.
   - **`data:` is denied in subframes too.** Chromium blocks top-level `data:` navigations itself
@@ -20,7 +22,11 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   - `javascript:` URLs never reach main: Chromium runs them in the page's own context (no
     privilege the page did not have). The tab's URL does not change.
   - `file:`, `chrome:` and `data:` top-level navigations from a web page are refused by Chromium
-    before the guard sees them; the guard refuses them as well (defense in depth).
+    before the guard sees them; the guard refuses them as well (defense in depth). Likewise a
+    server **redirect** to `data:`, `file:` or `about:` is refused by Chromium itself with
+    `ERR_UNSAFE_REDIRECT` (-311), which commits an error page: the chrome shows the generic error
+    panel for it (better than a blank tab). Redirects to `app:`, `mailto:` and custom schemes do
+    reach `will-redirect` and are dropped by the guard.
 - **External protocols.** A renderer-initiated navigation (any frame) to a non-browsable scheme is
   dropped and, only then, offered to the Phase 0 external-open flow unchanged
   (`parseExternalUrl` / `resolveExternalOpen`, `security/gesture.ts`): it reaches
@@ -35,7 +41,8 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   WebContents' activation:
   - with a gesture and an `http(s)` URL, the controller opens a new **background** tab
     (`POPUP_TAB_DISPOSITION`) with its own view from `createTabView()`, placed right of the opener
-    after the tabs that opener already opened; the opener stays active. No opener link, no
+    after the tabs that opener already opened **and their own popups** (all its descendants); the
+    opener stays active. No opener link, no
     referrer, no POST body (`noopener` + `noreferrer` semantics). `MAX_TABS` applies (the
     `tab-limit` notice);
   - with a gesture and an allowlisted external URL (`mailto:`), it is opened externally;
@@ -43,11 +50,18 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
     nothing happens.
 - **Gesture attribution** stays per WebContents (Phase 0 known limit): Electron 45 reports neither
   `input-event` nor `setWindowOpenHandler` per frame, so a click in the top frame can back an open
-  from a subframe of the same tab. Each activation backs at most one open.
+  from a subframe of the same tab. Each activation backs at most one open, and **ends with its
+  document**: a main-frame cross-document commit (`did-navigate`) clears it, so the page a click
+  navigated to (directly or through a redirect chain) cannot spend that click on a popup or an
+  external open. It is not cleared when a navigation merely starts (a click on a `mailto:` link
+  must still back it) nor on a same-document navigation (`did-navigate-in-page`). The app window's
+  gesture tracking (Phase 0) is the same code (`security/gesture.ts`).
 - **`<webview>`** stays refused (`will-attach-webview` prevented; tab views have no `webviewTag`).
 - **Downloads.** Phase 1 has no download manager: every `will-download` on the browse session is
   cancelled (`preventDefault` + `item.cancel()`) and raises the `download-blocked` notice
-  ("Downloads aren't supported yet"). The app UI's default session cancels every download too,
+  ("Downloads aren't supported yet"). A **popup tab** whose page has not committed anything (a
+  gesture-backed `target=_blank` link to a file) is closed then, rather than left empty; a tab the
+  user opened keeps its page (or stays an empty tab). The app UI's default session cancels every download too,
   silently (the chrome never downloads anything). A link that turns into a download shows no
   error panel (`ERR_ABORTED` is ignored).
 - **Certificates.** `app.on('certificate-error')` always refuses (`preventDefault` +
@@ -66,18 +80,19 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   the **crash panel** (`CRASH_TITLE`, Reload). Reload reloads the same WebContents (Chromium
   restarts its renderer); if that WebContents is gone, a fresh view from `createTabView()` loads
   the tab's URL. The next load start clears `crashed` and shows the view again.
-- **Unresponsive pages.** `unresponsive` raises the `page-unresponsive` notice; `responsive`
-  changes nothing.
+- **Unresponsive pages.** `unresponsive` sets the tab's `unresponsive` flag; `responsive`, a
+  renderer crash or a new view clears it. While the **active** tab is unresponsive the status bar
+  shows `UNRESPONSIVE_STATUS` (a background tab's hang says nothing until it is shown).
 - The panels follow `styles.css` (light and dark), use frost-drawn inline SVG, and no `style=`
   attribute or `innerHTML`.
 
 ## Decisions (`apps/desktop/src/main/browser/__tests__/guard.test.ts`, "decisions")
 - **Scenario: browse-navigation-allows-web-and-blank** — `isAllowedBrowseNavigation(url,
-  { isMainFrame })`: `http:` / `https:` (any letter case) and `about:blank` in any frame;
-  `about:srcdoc` in subframes only.
+  { isMainFrame })`: `http:` / `https:` (any letter case) and `about:blank` (also with a query or
+  fragment) in any frame; `about:srcdoc` in subframes only.
 - **Scenario: browse-navigation-denies-non-web-schemes** — `file:`, `app://app/`, `chrome://gpu`,
   `devtools://…`, `javascript:`, `data:text/html,…`, `blob:…`, `filesystem:…`, `mailto:`,
-  `vscode:`, `about:blank#x`, `about:srcdoc` in the main frame, `''` and unparseable strings →
+  `vscode:`, `about:config`, `about:srcdoc` in the main frame, `''` and unparseable strings →
   `false` (both frames, except srcdoc as above).
 - **Scenario: data-urls-denied-in-subframes** — `data:` (HTML, image, any media type) is denied
   for subframes as well as the main frame.
@@ -114,6 +129,9 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   input opens it externally (once) and opens no tab.
 - **Scenario: popup-consumes-gesture** — one activation input backs one open: a second
   `window.open` right after opens nothing.
+- **Scenario: gesture-ends-with-navigation** — an activation input followed by a main-frame
+  `did-navigate` backs neither a `window.open` nor a `mailto:` navigation; one followed only by
+  `did-navigate-in-page` still backs a popup.
 - **Scenario: webview-stays-refused** — `will-attach-webview` is prevented, also for a request that
   asks for `nodeIntegration` or a preload.
 - **Scenario: browse-session-cancels-downloads** — `hardenBrowseSession`'s `will-download`
@@ -125,6 +143,8 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   error) is `preventDefault`ed and its callback called exactly once with `false`.
 - **Scenario: client-certificates-are-not-sent** — `select-client-certificate` is
   `preventDefault`ed and its callback called with no certificate.
+- **Scenario: app-gesture-ends-with-navigation** — in an app window, an activation input followed
+  by a main-frame `did-navigate` no longer backs an external open (same tracking as tabs).
 - **Scenario: app-session-cancels-downloads** — `registerSecurity`'s session cancels every
   `will-download` (`preventDefault` + `item.cancel()`); registering the same session again adds no
   second listener.
@@ -142,13 +162,18 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
 - **Scenario: popup-opens-background-tab-in-controller** — `openTabFromPage(opener, url)` inserts
   a tab right of the opener (after the opener's earlier popups), creates its view without
   attaching it, loads the URL and answers its id; the opener stays active and attached.
+- **Scenario: popup-placement-skips-descendants** — A opens P1, P1 opens N, then A opens P2: the
+  strip is A, P1, N, P2.
+- **Scenario: popup-download-closes-blank-popup-tab** — `downloadBlocked(contents)` raises the
+  `download-blocked` notice and closes the tab of `contents` if it is a popup tab with nothing
+  committed; a popup tab with a page, a user-opened empty tab and an unknown WebContents stay.
 - **Scenario: popup-respects-max-tabs** — at `MAX_TABS` `openTabFromPage` answers `null`, opens
   nothing and raises the `tab-limit` notice.
 - **Scenario: popup-needs-a-known-opener-and-web-url** — an opener that is no tab's WebContents,
   a non-`http(s)` URL, or no window → `null`, nothing opens.
 - **Scenario: notify-raises-notice** — `notify('download-blocked')` sets `notice` with a new `seq`.
-- **Scenario: unresponsive-raises-notice** — a tab's `unresponsive` raises `page-unresponsive`;
-  `responsive` changes nothing.
+- **Scenario: unresponsive-is-per-tab** — a tab's `unresponsive` sets only that tab's
+  `unresponsive` (no notice); `responsive` clears it, and so does `render-process-gone`.
 
 ## Renderer (`apps/desktop/src/renderer/__tests__/page-error.test.ts`)
 - **Scenario: load-error-copy-by-class** — `loadErrorView(error)`: codes in `CERT_ERROR_CODE_RANGE`
@@ -159,12 +184,25 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   `back` first when the tab can go back; never anything else, for every class.
 
 ## End to end (`apps/desktop/e2e/browse-guard.e2e.ts`, real Electron, loopback pages)
+The e2e records every `will-frame-navigate` / `will-redirect` of a tab with whether it was
+`defaultPrevented` (a listener added after the guard's), so a "dropped" case asserts **the guard**
+dropped it, not Chromium; targets Chromium refuses before the guard sees them are asserted as never
+allowed.
 - **Scenario: page-cannot-navigate-to-non-web-scheme-e2e** (Review Focus) — a tab page setting
-  `location` to `file:///…`, `app://app/`, `chrome://gpu`, `javascript:void 0`,
-  `data:text/html,…` stays on its URL; no WebContents is created and nothing is opened externally.
-- **Scenario: subframe-and-redirect-dropped-e2e** — an iframe pointing at `data:` or `app://app/`
-  never commits that URL, and a server redirect to `app://app/` or `mailto:` leaves the tab where
-  it was; nothing is opened externally.
+  `location` to `app://app/`, `vscode://x`, a `blob:` URL of its own, `file:///…`, `chrome://gpu`,
+  `javascript:void 0`, `data:text/html,…` stays on its URL; the first three are dropped by the
+  guard, none is ever allowed; no WebContents is created and nothing is opened externally.
+  `about:blank#x` commits (allowed as `about:blank`).
+- **Scenario: subframe-and-redirect-dropped-e2e** — iframes pointing at `data:`, `app://app/` and a
+  `blob:` URL are dropped by the guard and never commit; server redirects to `app://app/` and (on a
+  real click) `mailto:` are dropped by the guard, leaving the tab where it was, nothing opened
+  externally; a redirect to `data:` is refused by Chromium (`ERR_UNSAFE_REDIRECT` panel, generic).
+- **Scenario: gesture-does-not-survive-navigation-e2e** — a real click on a link that goes through
+  a two-hop, cross-origin redirect chain to a landing page: 500 ms after load (no input) the
+  landing page's `window.open` opens no tab, and (from another click) its `location = 'mailto:…'`
+  opens nothing externally.
+- **Scenario: popup-download-leaves-no-blank-tab-e2e** — a real click on a `target=_blank` link to
+  an attachment: the download is cancelled with the notice and no extra tab remains.
 - **Scenario: popup-with-gesture-opens-background-tab-e2e** — a real click (`sendInputEvent`) on a
   `window.open` button and on a `target=_blank` link opens two background tabs right of the
   opener, in order, loading their pages; the opener stays active and is the only attached view.

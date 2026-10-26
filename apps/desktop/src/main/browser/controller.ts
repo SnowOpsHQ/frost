@@ -64,6 +64,12 @@ export interface BrowserController extends BrowserService {
   openTabFromPage(opener: unknown, url: string): number | null;
   /** Raises a status-bar notice (a new `seq`). */
   notify(kind: NoticeKind): void;
+  /**
+   * A download from `contents` was cancelled (spec `browse-guard.feature.md`): raises the
+   * `download-blocked` notice, and closes the tab of `contents` if it is a popup tab that has
+   * committed nothing (a `target=_blank` link to a file would otherwise leave an empty tab).
+   */
+  downloadBlocked(contents: unknown): void;
 }
 
 export interface BrowserControllerOptions {
@@ -91,6 +97,8 @@ interface Tab {
   crashed: boolean;
   /** The last main-frame load failed (`did-fail-load`); cleared by the next main-frame commit. */
   error: LoadError | null;
+  /** The page stopped responding (`unresponsive`) and has not responded since. */
+  unresponsive: boolean;
   /** The tab whose page opened this one (popup placement), if any. */
   readonly openerId: number | null;
   state: TabState;
@@ -103,7 +111,7 @@ interface Tab {
 const STATE_EVENTS = ['did-stop-loading', 'did-navigate-in-page', 'page-title-updated'] as const;
 
 function emptyTabState(id: number): TabState {
-  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false };
+  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false };
 }
 
 function sameError(a: LoadError | null, b: LoadError | null): boolean {
@@ -118,6 +126,7 @@ function sameTabState(a: TabState, b: TabState): boolean {
     a.canGoBack === b.canGoBack &&
     a.canGoForward === b.canGoForward &&
     a.crashed === b.crashed &&
+    a.unresponsive === b.unresponsive &&
     sameError(a.error, b.error)
   );
 }
@@ -203,7 +212,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   /** A new empty tab, not yet in the strip. */
   const createTab = (openerId: number | null = null): Tab => {
     const id = nextTabId++;
-    return { id, view: null, unlisten: noop, crashed: false, error: null, openerId, state: emptyTabState(id) };
+    return { id, view: null, unlisten: noop, crashed: false, error: null, unresponsive: false, openerId, state: emptyTabState(id) };
   };
 
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
@@ -240,6 +249,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.view = null;
     tab.crashed = false;
     tab.error = null;
+    tab.unresponsive = false;
     if (view) detach(view);
     return view;
   };
@@ -315,6 +325,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       canGoForward: contents.navigationHistory.canGoForward(),
       error: tab.error && { ...tab.error },
       crashed: tab.crashed,
+      unresponsive: tab.unresponsive,
     };
     if (sameTabState(tab.state, next)) return;
     tab.state = next;
@@ -361,9 +372,18 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     });
     listen('render-process-gone', () => {
       tab.crashed = true;
+      tab.unresponsive = false;
       refresh(tab);
     });
-    listen('unresponsive', () => raiseNotice('page-unresponsive'));
+    // A hang is the tab's own state: the status bar reports it while the tab is shown.
+    listen('unresponsive', () => {
+      tab.unresponsive = true;
+      refresh(tab);
+    });
+    listen('responsive', () => {
+      tab.unresponsive = false;
+      refresh(tab);
+    });
     // The page closed itself (`window.close()`): its tab closes like any other.
     listen('destroyed', () => removeTab(tab.id));
     // Reserved tab shortcuts are taken before the page can see (and cancel) them.
@@ -458,6 +478,24 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return activateTabAt((index + step + tabs.length) % tabs.length);
   };
 
+  /** Whether `tab` was opened, directly or through other popups, by the tab `ancestorId`. */
+  const descendsFrom = (tab: Tab | undefined, ancestorId: number): boolean => {
+    let openerId = tab?.openerId ?? null;
+    while (openerId !== null) {
+      if (openerId === ancestorId) return true;
+      const id: number = openerId;
+      openerId = tabs.find((t) => t.id === id)?.openerId ?? null;
+    }
+    return false;
+  };
+
+  const downloadBlocked = (contents: unknown): void => {
+    const tab = tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
+    const live = tab?.view ? aliveContents(tab.view) : undefined;
+    if (tab && live && tab.openerId !== null && live.getURL() === '') removeTab(tab.id);
+    raiseNotice('download-blocked');
+  };
+
   const openTabFromPage = (opener: unknown, url: string): number | null => {
     if (!hasWindow() || !isWebUrl(url)) return null;
     const index = tabs.findIndex((tab) => tab.view !== null && aliveContents(tab.view) === opener);
@@ -467,9 +505,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       raiseNotice('tab-limit');
       return null;
     }
-    // Right of the opener, after the run of tabs it already opened.
+    // Right of the opener, after the run of tabs it opened and their own popups (its descendants).
     let at = index + 1;
-    while (tabs[at]?.openerId === openerTab.id) at += 1;
+    while (descendsFrom(tabs[at], openerTab.id)) at += 1;
     const tab = createTab(openerTab.id);
     tabs.splice(at, 0, tab);
     const view = ensureView(tab);
@@ -602,6 +640,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     openTabFromPage,
 
     notify: raiseNotice,
+
+    downloadBlocked,
 
     back() {
       withActiveContents((contents) => {
