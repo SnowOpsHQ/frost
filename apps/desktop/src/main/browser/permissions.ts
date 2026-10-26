@@ -7,7 +7,6 @@ import {
   MEDIA_TYPE_PERMISSION,
   MEDIA_TYPES,
   PERMISSION_PROMPT_TIMEOUT_MS,
-  PROMPTABLE_ORIGIN_SCHEMES,
   PROMPTABLE_PERMISSIONS,
   SILENTLY_ALLOWED_PERMISSIONS,
   type MediaType,
@@ -16,6 +15,7 @@ import {
   type RememberedDecision,
   type SitePermission,
 } from '@app/specs/permissions.spec';
+import { webOrigin } from '@app/specs/web-url.spec';
 
 // Per-origin permission prompts for the browse session (spec `permissions.feature.md`). Pure
 // decisions, the requesting-frame check, the prompt broker (queues, remembered decisions,
@@ -46,17 +46,6 @@ export type PermissionVerdict =
   | { kind: 'allow' }
   | { kind: 'deny' }
   | { kind: 'prompt'; permission: PromptablePermission; mediaTypes?: MediaType[] };
-
-/** `url`'s serialized origin if it is `http(s)` (`PROMPTABLE_ORIGIN_SCHEMES`), else `null`. */
-function webOrigin(url: unknown): string | null {
-  if (typeof url !== 'string' || url === '') return null;
-  try {
-    const parsed = new URL(url);
-    return includes(PROMPTABLE_ORIGIN_SCHEMES, parsed.protocol) && parsed.host !== '' ? parsed.origin : null;
-  } catch {
-    return null;
-  }
-}
 
 /** `origin` if it already is a serialized `http(s)` origin (a frame's `origin`), else `null`. */
 function exactWebOrigin(origin: unknown): string | null {

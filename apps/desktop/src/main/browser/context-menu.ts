@@ -1,8 +1,8 @@
 import type { ContextMenuParams, MenuItemConstructorOptions } from 'electron';
 import { ADDRESS_INPUT_MAX_LENGTH } from '@app/specs/browser.spec';
 import { CONTEXT_MENU_LABELS, CONTEXT_MENU_SEARCH_LABEL, CONTEXT_MENU_SELECTION_MAX } from '@app/specs/page-commands.spec';
+import { isWebUrl } from '@app/specs/web-url.spec';
 import { searchUrl } from './address';
-import { isWebUrl } from './guard';
 
 // The page's context menu (spec `page-commands.feature.md`, Context menu): a pure function of a
 // tab's `context-menu` params and history flags; main builds and pops up the native menu from it

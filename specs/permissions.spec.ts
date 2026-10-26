@@ -2,10 +2,11 @@
  * Per-origin permission prompts for browsed content (design doc §3 "deny-by-default permissions
  * with per-origin prompts"; Phase 1 Task 4). Acceptance: `permissions.feature.md`. Implemented by
  * `apps/desktop/src/main/browser/permissions.ts` (decisions, the prompt broker and the browse
- * session's handlers), `browser/controller.ts` (per-tab prompt state and its lifetime),
- * `browser/guard.ts` (`hardenBrowseSession` installs the handlers) and the chrome's prompt bar
- * (`renderer/permission-prompt.ts`, `App.tsx`). The schemas that use these values
- * (`PermissionPromptSchema`, `AnswerPermissionInputSchema`) are in `browser.spec.ts`.
+ * session's handlers), `browser/controller.ts` and `browser/tab-permissions.ts` (per-tab prompt
+ * state and its lifetime), `browser/guard.ts` (`hardenBrowseSession` installs the handlers) and the
+ * chrome's prompt bar (`renderer/permission-prompt.ts`, `renderer/components/PermissionBar.tsx`).
+ * The schemas that use these values (`PermissionPromptSchema`, `AnswerPermissionInputSchema`) are
+ * in `browser.spec.ts`.
  *
  * Plain values with no imports, so the chrome renderer can use them without bundling Zod (whose
  * eval probe the app's strict Trusted Types CSP blocks).
@@ -130,15 +131,15 @@ export const PROMPT_ARMING_DELAY_MS = 750;
  */
 export const MAX_PENDING_PROMPTS_PER_TAB = 8;
 
-/**
- * Origins that may be prompted for: the requesting frame's origin must be `http:` or `https:`
- * (`BROWSABLE_SCHEMES`). Opaque origins (`about:blank`, `data:`, documents sandboxed by a CSP
- * `sandbox` header or an `<iframe sandbox>`) and anything else are denied silently. The origin is
+/*
+ * Origins that may be prompted for: the requesting frame's origin must be an `http:` or `https:`
+ * origin (`webOrigin` in `web-url.spec.ts`, `BROWSABLE_SCHEMES`). Opaque origins (`about:blank`,
+ * `data:`, documents sandboxed by a CSP `sandbox` header or an `<iframe sandbox>`) and anything
+ * else are denied silently. The origin is
  * the **requesting frame's own** (`WebFrameMain.origin`), never just its URL's: a sandboxed
  * document at `https://a.example/` has an opaque origin and gets none of `https://a.example`'s
  * decisions. Chromium itself only lets secure contexts (`https:`, loopback `http:`) ask.
  */
-export const PROMPTABLE_ORIGIN_SCHEMES = ['http:', 'https:'] as const;
 
 /**
  * The prompt bar's sentence: `<origin> wants to <action>`. `media` names the devices asked for

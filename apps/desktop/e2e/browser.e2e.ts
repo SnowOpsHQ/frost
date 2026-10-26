@@ -6,6 +6,7 @@ import { APP_WINDOW_TITLE, BROWSE_PARTITION, SEARCH_URL_TEMPLATE, TAB_VIEW_WEB_P
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_BRIDGE_KEY, IPC_CHANNEL } from '@app/specs/ipc-transport.spec';
 import { appEntryScriptUrl, closeApp, launchApp } from './harness';
+import { chromeHelpers } from './helpers';
 
 /** Loopback pages for the tab: `/a`, `/b` (titled), `/count` (counts its loads), `/slow` (held until released), `/ok.js`. */
 async function startSiteServer() {
@@ -40,6 +41,10 @@ async function startSiteServer() {
 
 let app: ElectronApplication;
 let page: Page;
+const { go } = chromeHelpers(
+  () => app,
+  () => page,
+);
 let site: Awaited<ReturnType<typeof startSiteServer>>;
 
 test.beforeAll(async () => {
@@ -84,13 +89,6 @@ async function attachedViews() {
 }
 
 const windowTitle = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getTitle());
-
-async function go(input: string): Promise<void> {
-  const address = page.getByTestId('address');
-  await address.click();
-  await address.fill(input);
-  await address.press('Enter');
-}
 
 test('empty-tab-shows-start-view', async () => {
   await expect(page.getByTestId('start-view')).toBeVisible();

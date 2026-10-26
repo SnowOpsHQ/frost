@@ -20,9 +20,8 @@ import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './per
  */
 export const BROWSE_PARTITION = 'persist:frost-browser' as const;
 
-/** Schemes a tab may load or navigate to (parsed, lowercased `URL.protocol`). */
-export const BROWSABLE_SCHEMES = ['http:', 'https:'] as const;
-export type BrowsableScheme = (typeof BROWSABLE_SCHEMES)[number];
+// Schemes a tab may load or navigate to, and the shared `http(s)` checks: Zod-free in `web-url.spec.ts`.
+export { BROWSABLE_SCHEMES, type BrowsableScheme } from './web-url.spec';
 
 /**
  * Besides `BROWSABLE_SCHEMES`, the only URL a tab may navigate (or be redirected) to: the empty

@@ -1,6 +1,7 @@
 import type { Session, WebContents } from 'electron';
-import { BROWSABLE_SCHEMES, BROWSE_BLANK_URL } from '@app/specs/browser.spec';
+import { BROWSE_BLANK_URL } from '@app/specs/browser.spec';
 import { BLANK_ABOUT_PATH, SUBFRAME_ONLY_URLS } from '@app/specs/browse-guard.spec';
+import { isWebUrl } from '@app/specs/web-url.spec';
 import { resolveExternalOpen } from '../security/policy';
 import { openExternalIfAllowed, trackUserGesture } from '../security/gesture';
 import type { BrowsePermissionHandlers } from './permissions';
@@ -11,15 +12,6 @@ import type { BrowsePermissionHandlers } from './permissions';
 
 function includes(list: readonly string[], value: string): boolean {
   return list.includes(value);
-}
-
-/** Whether `url` is an `http(s)` URL (`BROWSABLE_SCHEMES`), the only kind a tab loads as a page. */
-export function isWebUrl(url: string): boolean {
-  try {
-    return includes(BROWSABLE_SCHEMES, new URL(url).protocol);
-  } catch {
-    return false;
-  }
 }
 
 /** Whether `url` is `about:blank`, with any query or fragment (`BLANK_ABOUT_PATH`). */

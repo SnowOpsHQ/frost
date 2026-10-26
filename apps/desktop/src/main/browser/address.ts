@@ -1,9 +1,5 @@
-import {
-  BROWSABLE_SCHEMES,
-  LOOPBACK_HTTP_HOSTS,
-  LOOPBACK_IPV4_PATTERN,
-  SEARCH_URL_TEMPLATE,
-} from '@app/specs/browser.spec';
+import { LOOPBACK_HTTP_HOSTS, LOOPBACK_IPV4_PATTERN, SEARCH_URL_TEMPLATE } from '@app/specs/browser.spec';
+import { BROWSABLE_SCHEMES, parseWebUrl } from '@app/specs/web-url.spec';
 
 // Pure address-bar resolution for `specs/address-bar.feature.md`. No Electron import.
 
@@ -72,8 +68,8 @@ function searchFor(query: string): ResolvedAddress {
 
 /** Input typed with an explicit `http://`/`https://`: any URL with a non-empty host and a valid port. */
 function explicitWebUrl(text: string): string | null {
-  const parsed = tryParseUrl(text);
-  if (!parsed || !includes(BROWSABLE_SCHEMES, parsed.protocol) || parsed.hostname === '') return null;
+  const parsed = parseWebUrl(text);
+  if (!parsed || parsed.hostname === '') return null;
   // WHATWG serializes any zero port (`:0`, `:00`) as `'0'`.
   return parsed.port === '0' ? null : parsed.href;
 }
@@ -86,8 +82,7 @@ function schemelessWebUrl(text: string): string | null {
   if (!match) return null;
   const host = (match[1] ?? '').toLowerCase().replace(/\.$/, '');
   if (!isValidPort(match[2]) || !isTypedWebHost(host)) return null;
-  const parsed = tryParseUrl(`${isLoopbackHost(host) ? 'http' : 'https'}://${text}`);
-  return parsed && includes(BROWSABLE_SCHEMES, parsed.protocol) ? parsed.href : null;
+  return parseWebUrl(`${isLoopbackHost(host) ? 'http' : 'https'}://${text}`)?.href ?? null;
 }
 
 /**

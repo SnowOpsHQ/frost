@@ -2,8 +2,9 @@
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
-import { BROWSE_PARTITION, MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
+import { MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
 import { closeApp, launchApp } from './harness';
+import { chromeHelpers } from './helpers';
 
 /**
  * Loopback pages: `/a` … `/c` (titled), `/untitled` (no <title>), `/slow` (held until released),
@@ -44,6 +45,10 @@ async function startSiteServer() {
 
 let app: ElectronApplication;
 let page: Page;
+const { browseContents, attachedViewIds, contentsIdAt, menu, strip, activeTab, address, chromeCaughtUp, go, closeAllTabs, press } = chromeHelpers(
+  () => app,
+  () => page,
+);
 let site: Awaited<ReturnType<typeof startSiteServer>>;
 
 test.beforeAll(async () => {
@@ -58,73 +63,10 @@ test.afterAll(async () => {
   await site?.close();
 });
 
-/** Every live browse-session WebContents (the tabs' pages), as main sees them. */
-async function browseContents(): Promise<{ id: number; url: string }[]> {
-  return app.evaluate(({ session, webContents }, partition) => {
-    const browse = session.fromPartition(partition);
-    return webContents
-      .getAllWebContents()
-      .filter((c) => !c.isDestroyed() && c.session === browse)
-      .map((c) => ({ id: c.id, url: c.getURL() }));
-  }, BROWSE_PARTITION);
-}
-
-/** WebContents ids of the views attached to the app window's contentView (all visible ones). */
-async function attachedViewIds(): Promise<number[]> {
-  return app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0]!.contentView.children.map((child) => (child as Electron.WebContentsView).webContents.id),
-  );
-}
-
-/** The WebContents id showing `url`, once exactly one does. */
-async function contentsIdAt(url: string): Promise<number> {
-  await expect.poll(async () => (await browseContents()).filter((c) => c.url === url).length).toBe(1);
-  return (await browseContents()).find((c) => c.url === url)!.id;
-}
-
-/** Clicks an application-menu item in main, as its accelerator would. */
-async function menu(id: string): Promise<void> {
-  await app.evaluate(({ Menu }, id) => {
-    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
-    if (!item) throw new Error(`no menu item ${id}`);
-    item.click();
-  }, id);
-}
-
-const strip = () => page.getByTestId('tab');
 /** A tab's close button: a sibling of the `role="tab"` element, inside the same strip item. */
 const closeOf = (tab: Locator) => tab.locator('xpath=..').getByTestId('tab-close');
-const activeTab = () => page.locator('[data-testid="tab"][aria-selected="true"]');
-const address = () => page.getByTestId('address');
-
-/**
- * A barrier: once this returns, the chrome has rendered a browser state main took after
- * everything that happened before the call (it asks main to focus the address bar, which bumps the
- * state's version, and waits for the chrome to do it).
- */
-async function chromeCaughtUp(): Promise<void> {
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await menu('focus-address-bar');
-  await expect(address()).toBeFocused();
-}
-
-async function go(input: string): Promise<void> {
-  await address().click();
-  await address().fill(input);
-  await address().press('Enter');
-}
-
-/** Closes every tab (the last close leaves one fresh empty tab). */
-async function resetTabs(): Promise<void> {
-  const count = await strip().count();
-  for (let i = 0; i < count; i++) await menu('close-tab');
-  await expect(strip()).toHaveCount(1);
-  await expect(activeTab()).toHaveAttribute('title', NEW_TAB_LABEL);
-  await expect.poll(browseContents).toEqual([]);
-}
-
 test.beforeEach(async () => {
-  await resetTabs();
+  await closeAllTabs();
 });
 
 test('new-tab-button-opens-empty-tab', async () => {
@@ -327,19 +269,6 @@ test('max-tabs-shows-notice', async () => {
   // The active tab stays in view in the scrolled strip.
   await expect(activeTab()).toBeInViewport();
 });
-
-/** Sends a real key press (down + up) to a WebContents; it passes through `before-input-event`. */
-async function press(contentsId: number | 'chrome', keyCode: string, modifiers: ('mod' | 'control' | 'shift')[] = []): Promise<void> {
-  await app.evaluate(
-    ({ BrowserWindow, webContents }, { contentsId, keyCode, modifiers }) => {
-      const target = contentsId === 'chrome' ? BrowserWindow.getAllWindows()[0]!.webContents : webContents.fromId(contentsId)!;
-      const mods = modifiers.map((m) => (m === 'mod' ? (process.platform === 'darwin' ? 'meta' : 'control') : m));
-      target.sendInputEvent({ type: 'keyDown', keyCode, modifiers: mods });
-      target.sendInputEvent({ type: 'keyUp', keyCode, modifiers: mods });
-    },
-    { contentsId, keyCode, modifiers },
-  );
-}
 
 /** The keys the greedy page's keydown listener saw (lower-cased). */
 const pageSaw = (id: number) =>
