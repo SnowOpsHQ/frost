@@ -1,7 +1,8 @@
-import { SCORE_BANDS, SEO_SEVERITIES, SEVERITY_WEIGHTS, type ScoreBand, type SeoCategory, type SeoSeverity } from '@app/specs/seo-rules.spec';
+import { NOINDEX_SCORE_CAP, SCORE_BANDS, SEO_SEVERITIES, SEVERITY_WEIGHTS, type ScoreBand, type SeoCategory, type SeoSeverity } from '@app/specs/seo-rules.spec';
 import type { PanelStatus } from '@app/specs/seo-sidebar.spec';
 import { RULES } from './rules';
 import type { Finding, PageFacts, PageSnapshot, SeoAudit, SeoRule, SeverityCounts } from './types';
+import { described, robotsWith } from './rules/head';
 import { tokens } from './util';
 
 // Running the rules over a snapshot, ranking the findings and scoring them (spec
@@ -11,7 +12,8 @@ const SEVERITY_RANK: Readonly<Record<SeoSeverity, number>> = { error: 0, warning
 
 /**
  * The health score of `findings` (0–100): `round(100 × Π (1 − SEVERITY_WEIGHTS[severity]))` over
- * the failing rules, each rule once however many findings it has.
+ * the failing rules, each rule once however many findings it has; at most `NOINDEX_SCORE_CAP` while
+ * `robots-noindex` fails.
  */
 export function scoreAudit(findings: readonly Pick<Finding, 'ruleId' | 'severity'>[]): number {
   const seen = new Set<string>();
@@ -21,7 +23,8 @@ export function scoreAudit(findings: readonly Pick<Finding, 'ruleId' | 'severity
     seen.add(finding.ruleId);
     remaining *= 1 - SEVERITY_WEIGHTS[finding.severity];
   }
-  return Math.min(100, Math.max(0, Math.round(100 * remaining)));
+  const score = Math.min(100, Math.max(0, Math.round(100 * remaining)));
+  return seen.has('robots-noindex') ? Math.min(score, NOINDEX_SCORE_CAP) : score;
 }
 
 /** The band a score falls in (`SCORE_BANDS`, first match). */
@@ -59,11 +62,12 @@ export function pageFacts(s: PageSnapshot): PageFacts {
     url: s.url,
     title: s.titles[0] ?? null,
     titleTotal: s.titleTotal,
-    description: s.metaDescriptions[0] ?? null,
+    description: described(s),
     descriptionTotal: s.metaDescriptionTotal,
     canonical: s.canonicals[0] ? (s.canonicals[0].resolved ?? s.canonicals[0].href) : null,
     canonicalTotal: s.canonicalTotal,
-    robots: s.metaRobots.length > 0 ? s.metaRobots.join(', ') : null,
+    robots: s.metaRobots.length > 0 ? s.metaRobots.map((meta) => `${meta.name}: ${meta.content}`).join(' · ') : null,
+    noindexFor: [...new Set(robotsWith(s, ['noindex', 'none']).map((meta) => meta.name))],
     ogUrl: s.ogUrl,
     lang: s.lang,
     viewport: s.viewport,
@@ -71,6 +75,7 @@ export function pageFacts(s: PageSnapshot): PageFacts {
     headingTotal: s.headingTotal,
     wordCount: s.wordCount,
     textTruncated: s.textTruncated,
+    partial: s.partial,
     links: {
       analysed: s.links.length,
       total: s.linkTotal,
@@ -99,6 +104,7 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
     durationMs: snapshot.durationMs,
     score,
     band: scoreBand(score),
+    indexable: !ranked.some((finding) => finding.ruleId === 'robots-noindex'),
     counts: countSeverities(ranked),
     findings: ranked,
     page: pageFacts(snapshot),

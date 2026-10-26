@@ -12,7 +12,8 @@ to one named test.
   `maxLinks`, `maxImages`) is rejected; exactly at the cap is accepted.
 - **Scenario: snapshot-caps-strings** — one character over any string cap (URL, title text, heading,
   anchor, alt, attribute, lang) is rejected; exactly at the cap is accepted.
-- **Scenario: snapshot-is-strict** — an extra key anywhere, a missing key, a wrong type, a negative,
+- **Scenario: snapshot-is-strict** — a non-`http(s)` `url`, a robots meta with a name outside
+  `ROBOTS_META_NAMES`, an extra key anywhere, a missing key, a wrong type, a negative,
   fractional or non-finite count, a heading level outside 1–6, an unknown link kind, or a total
   below its list's length is rejected.
 - **Scenario: parse-snapshot-never-throws** — `parseSnapshot` answers `invalid-snapshot` for
@@ -22,12 +23,37 @@ to one named test.
 The extractor is one self-contained function in `extract.ts`, serialised with its limits into a
 script string and run with `executeJavaScriptInIsolatedWorld(SEO_WORLD_ID, [{ code }])`: never in
 the main world, never changing the page's DOM, CSP or globals. It applies every cap while it reads
-(lists stop at their cap, strings are cut before they are normalised, the word count walks text
-nodes with a node, character and time budget and never reads `innerText`).
+(lists stop at their cap, strings are cut before they are normalised, an element's text is read
+with at most `maxElementTextVisits` node visits, the word count walks text nodes with a node and
+character budget, skipping `script`, `style`, `noscript`, `template`, `svg`, `math`, `iframe` and
+`object` subtrees and hidden elements exactly as `seo-snapshot.spec.ts` (`wordCount`) lists, and
+never reads `innerText`; headings skip the same hidden elements), and one deadline (`EXTRACT_BUDGET_MS`) stops every
+list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
 - **Scenario: extractor-runs-in-seo-world** — `runExtractor(contents)` calls
   `executeJavaScriptInIsolatedWorld` once, with `SEO_WORLD_ID` and one script, and answers its result.
 - **Scenario: extractor-source-is-self-contained** — the script parses as JavaScript, embeds
-  `SNAPSHOT_LIMITS` and `EXTRACT_TEXT_BUDGET_MS`, and names no Node or Electron global.
+  `SNAPSHOT_LIMITS` and `EXTRACT_BUDGET_MS`, and names no Node or Electron global.
+
+### Against a DOM (`extract-dom.test.ts`: `extractPage` on jsdom, with small limits)
+- **Scenario: extractor-output-parses** — a full page's snapshot parses with `PageSnapshotSchema`
+  and has every field the page sets (titles, descriptions, robots with their names, canonical,
+  og:url, lang, viewport, headings, links by kind, images and their alt).
+- **Scenario: extractor-caps-lists** — titles, descriptions, robots metas, canonicals, headings,
+  links and images one past their cap keep exactly the cap, totals report the page's counts.
+- **Scenario: extractor-caps-strings** — URL, title, description, heading, anchor, alt, lang,
+  attribute and image-attribute values one past their cap are cut to it; measured texts keep their
+  full length.
+- **Scenario: extractor-element-text-is-bounded** — a link wrapping many more than
+  `maxElementTextVisits` empty elements before its text reads no further than that cap.
+- **Scenario: extractor-deadline-gives-partial** — with a budget already spent the snapshot is
+  `partial`, `textTruncated`, its lists are empty or short, and it still parses; the word count stops
+  at `maxTextNodes` and at `maxTextScanChars` too.
+- **Scenario: extractor-counts-words-without-spaces** — Japanese and Thai text without spaces counts
+  several words per sentence (`Intl.Segmenter`), not one.
+- **Scenario: extractor-skips-hidden-headings** — an `h1` inside `[hidden]` is not listed (and its
+  text is not counted as words) but is in `headingTotal`.
+- **Scenario: extractor-reads-bot-robots** — `GoogleBot`, `bingbot` and `robots` metas are read with
+  lowercased names; `otherbot` is not.
 
 ## Auditor (`apps/desktop/src/main/seo/__tests__/auditor.test.ts`; the controller with fakes)
 - **Scenario: audit-runs-after-load** — `did-finish-load` on the active tab extracts once, after
@@ -35,13 +61,23 @@ nodes with a node, character and time budget and never reads `innerText`).
   URL; `auditVersion` increased at each change, waking `watch`.
 - **Scenario: audit-debounced** — `did-finish-load` and main-frame `did-navigate-in-page` events
   less than `AUDIT_DEBOUNCE_MS` apart extract once; subframe in-page navigations extract nothing.
+- **Scenario: audit-max-wait** — route changes every 300 ms without pause (a `replaceState` storm)
+  still extract once `AUDIT_MAX_WAIT_MS` after the first.
+- **Scenario: audit-ignores-fragment-changes** — a `#fragment`-only in-page navigation keeps the
+  ready audit (no extraction, still `ready` for the new URL); a reload of the same URL audits again.
 - **Scenario: audit-active-tab-only** — events of a background tab extract nothing; when it becomes
   active its audit runs if it has none or it is for another URL, and does not rerun when it is
-  still current.
+  still current. A tab whose debounce is pending when another tab is activated does not extract
+  when its timer fires; it is audited when it is shown again.
 - **Scenario: audit-matches-current-url** — a result that settles after the tab moved to another
   URL (`pushState`, or a new page) is dropped; `getAudit` never answers it for the new URL (it is
   `pending` until the new URL's own audit is ready), and a superseded run's late result never
-  replaces a newer one.
+  replaces a newer one. A cross-document commit (`did-navigate`) before the new page's
+  `did-finish-load` makes the answer `pending` for the new URL at once, and the old page's result
+  is dropped. A snapshot whose own `url` (fragment aside) is not the URL the run was for is dropped.
+- **Scenario: audit-runs-coalesce** — while an extraction is in flight in a tab (even past its
+  timeout), page events and reruns start no second one; it runs once, after the first settles. A
+  new document (`did-navigate`) releases the wait.
 - **Scenario: audit-timeout-is-unavailable** — an extraction that has not settled after
   `EXTRACT_TIMEOUT_MS` is `unavailable` (`timeout`); its late result is ignored.
 - **Scenario: audit-invalid-snapshot-is-unavailable** — garbage, a snapshot over a cap, or one with
@@ -49,7 +85,8 @@ nodes with a node, character and time budget and never reads `innerText`).
 - **Scenario: audit-skips-non-pages** — an empty tab is `unavailable` (`no-page`), a load error
   `load-error`, a crashed tab `crashed`, an unknown id `no-tab`; none of them extracts.
 - **Scenario: audit-rerun** — `rerun` extracts again at once (no debounce) and is `pending` until
-  it settles; it answers `false` (and does nothing) for a tab that is not auditable.
+  it settles; it answers `false` (and does nothing) for a tab that is not auditable or is not the
+  active tab (`RERUN_ACTIVE_TAB_ONLY`).
 - **Scenario: closed-tab-audit-is-forgotten** — closing a tab clears its pending timer; a late
   result for it changes nothing.
 
@@ -78,6 +115,7 @@ nodes with a node, character and time budget and never reads `innerText`).
   missing `missing`.
 - **Scenario: rail-statuses** — each available panel's dot comes from `panelStatus`; unavailable
   panels have none; nothing without a ready audit.
+- **Scenario: tooltip-is-bidi-isolated** — a page value's tooltip is wrapped in U+2068 … U+2069.
 - **Scenario: response-matches-tab** — an answer is shown only for the tab it was fetched for and
   only while its `url` is the tab's URL; otherwise the sidebar shows `pending`.
 
@@ -100,7 +138,10 @@ nodes with a node, character and time budget and never reads `innerText`).
   empty tab a hint. The audit is fetched while the panel is collapsed too, so the rail's dots stay
   current.
 - Page-derived strings are React text only: no `innerHTML`, no `dangerouslySetInnerHTML`, no
-  `style=` props and no links in Task 1. Long values are cut with CSS, the full value in `title`.
+  `style=` props and no links in Task 1. Long values are cut with CSS, the full value in `title`,
+  wrapped in U+2068 … U+2069 so a bidi override in it cannot reorder the tooltip.
+- A noindexed page's score card says `NOT_INDEXABLE_LABEL` in place of the band and names the tags.
+- Collapsing the panel from inside it moves focus to the open panel's rail item.
 
 ## End to end (`apps/desktop/e2e/seo-sidebar.e2e.ts`, loopback pages)
 - **Scenario: good-page-scores-high** — a well-formed page scores at least 90 (band `good`) with no
@@ -110,7 +151,7 @@ nodes with a node, character and time budget and never reads `innerText`).
   `noindex` lists `title-missing`, `h1-multiple`, `images-missing-alt` and `robots-noindex`, scores
   below 60, and the rail's On-Page dot is `error`; an issue expands to its why and fix.
 - **Scenario: sidebar-toggle-resizes-page** — the toolbar button, the menu item and `Ctrl+Shift+S` in
-  the page each toggle the panel; the tab's view widens by `SIDEBAR_PANEL_WIDTH` when it closes and
+  the page each toggle the panel (collapsing from the panel's own button leaves focus on the rail); the tab's view widens by `SIDEBAR_PANEL_WIDTH` when it closes and
   narrows again when it opens; the state survives a relaunch on the same profile.
 - **Scenario: spa-pushstate-reaudits** — `history.pushState` to a new path (with a new title) shows
   `pending` or the new audit, then an audit whose URL is the new one and whose title fact is the new
@@ -128,6 +169,16 @@ nodes with a node, character and time budget and never reads `innerText`).
 - **Scenario: busy-page-times-out-then-retries** — a page whose main thread is busy past
   `EXTRACT_TIMEOUT_MS` shows `unavailable` with the timeout message and Retry; Retry after it is
   idle gives a ready audit.
+- **Scenario: deep-nested-anchors-is-bounded-not-timeout** — 1000 nested links around many empty
+  spans (each link's subtree the whole rest of the page; sized so reading every subtree in full
+  would take longer than `EXTRACT_TIMEOUT_MS`) give a ready audit, read well within it thanks to
+  `maxElementTextVisits`. (A page that still outruns `EXTRACT_BUDGET_MS` is `partial`:
+  `extractor-deadline-gives-partial`.)
+- **Scenario: cjk-page-is-not-thin** — a Japanese page of a few hundred words without spaces is not
+  `content-thin` (the isolated world has `Intl.Segmenter`).
+- **Scenario: noindex-page-is-not-indexable** — a page whose only problem is
+  `<meta name="googlebot" content="noindex">` scores at most `NOINDEX_SCORE_CAP` and its score
+  card says "Not indexable" and names googlebot.
 - **Scenario: empty-tab-shows-hint** — an empty tab shows the sidebar's hint, no score; the rail
   lists all six panels, the four not built yet disabled and without a status.
 - **Scenario: narrow-window-keeps-page-usable** — with the chrome 500 px wide the tab's view keeps

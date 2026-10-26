@@ -75,6 +75,7 @@ export const BODY_CHECKS = {
     const length = url ? [...withoutFragment(url)].length : 0;
     return length > URL_MAX_CHARS ? details([fact('URL', url!.href), fact('Length', characters(length)), fact('Recommended', `at most ${URL_MAX_CHARS} characters`)]) : null;
   },
-  'url-uppercase': (s) => (/[A-Z]/.test(pagePath(s)) ? details([fact('Path', pagePath(s))]) : null),
+  // Percent-escapes (`%E6`) are encoded bytes, not letters of the path.
+  'url-uppercase': (s) => (/[A-Z]/.test(pagePath(s).replace(/%[0-9A-Fa-f]{2}/g, '')) ? details([fact('Path', pagePath(s))]) : null),
   'url-underscores': (s) => (pagePath(s).includes('_') ? details([fact('Path', pagePath(s))]) : null),
 } as const satisfies Record<string, Check>;

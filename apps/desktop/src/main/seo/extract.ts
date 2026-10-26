@@ -1,4 +1,4 @@
-import { EXTRACT_TEXT_BUDGET_MS, SEO_WORLD_ID, SNAPSHOT_LIMITS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
+import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 
 // The SEO extractor (spec `seo-snapshot.spec.ts`, `seo-limits.spec.ts`; acceptance
 // `seo-sidebar.feature.md`, Extraction). `extractPage` is one self-contained function: it is
@@ -8,9 +8,11 @@ import { EXTRACT_TEXT_BUDGET_MS, SEO_WORLD_ID, SNAPSHOT_LIMITS, type SnapshotLim
 //
 // It references nothing outside its own body (no imports, no module scope): `document` and the
 // limits are its arguments. Every list stops at its cap while it is read, strings are cut before
-// they are normalised, element text is read node by node with `substringData` (never `innerText`
-// or `textContent` of an unbounded subtree), and the word count walks text nodes with a node,
-// character and time budget. Main still validates the answer (`snapshot.ts`): it is page data.
+// they are normalised, element text is read node by node with `substringData` and at most
+// `maxElementTextVisits` node visits (never `innerText` or `textContent` of an unbounded subtree),
+// the word count walks text nodes with a node and character budget, and everything stops at one
+// deadline (`EXTRACT_BUDGET_MS`): a huge DOM gives a `partial` snapshot, not a timeout. Main still
+// validates the answer (`snapshot.ts`): it is page data.
 
 /** The parts of a DOM node the extractor reads (structural, so main needs no DOM lib). */
 interface PageNode {
@@ -25,7 +27,9 @@ interface PageElement extends PageNode {
   readonly namespaceURI: string | null;
   getAttribute(name: string): string | null;
   hasAttribute(name: string): boolean;
-  querySelector(selectors: string): PageElement | null;
+  closest(selectors: string): PageElement | null;
+  /** Chromium has it; some test DOMs do not (then only `[hidden]` hides). */
+  checkVisibility?(): boolean;
 }
 interface PageImageElement extends PageElement {
   readonly currentSrc: string;
@@ -53,10 +57,12 @@ export interface PageDocument {
 
 /**
  * Reads the page into a snapshot (`PageSnapshotSchema`'s shape). Runs in the isolated world only.
- * Self-contained: it must not reference anything outside this function.
+ * Self-contained: it must not reference anything outside this function. Everything stops at one
+ * deadline, `budgetMs` after it starts (`partial`).
  */
-export function extractPage(document: PageDocument, L: SnapshotLimits, textBudgetMs: number): unknown {
+export function extractPage(document: PageDocument, L: SnapshotLimits, budgetMs: number, robotsNames: readonly string[]): unknown {
   const started = performance.now();
+  const deadline = started + budgetMs;
   const XHTML = 'http://www.w3.org/1999/xhtml';
   // NodeFilter values (the isolated world has `NodeFilter`, but literals keep this self-contained).
   const SHOW_ELEMENT = 0x1;
@@ -69,6 +75,15 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
   const SCAN = 65_536;
   /** Most `<title>` elements looked at (SVG titles included) when counting HTML ones. */
   const TITLE_SCAN = 10_000;
+  /** Thrown from a walker's filter to stop it (a cap or the deadline). */
+  const STOP = {};
+  /** Set once anything stopped at the deadline. */
+  let partial = false;
+  const late = (): boolean => {
+    if (performance.now() <= deadline) return false;
+    partial = true;
+    return true;
+  };
 
   const total = (n: number): number => Math.min(n, L.maxCount);
   /** `s` cut to at most `max` UTF-16 code units, never splitting a surrogate pair. */
@@ -94,21 +109,39 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
     const value = el ? el.getAttribute(name) : null;
     return value === null ? null : cut(squash(cut(value, max * 4)), max);
   };
-  /** Up to `limit` code units of `root`'s text, read node by node (at most `nodeLimit` text nodes), and the code units seen. */
-  const textOf = (root: PageNode, limit: number, nodeLimit: number) => {
-    const walker = document.createTreeWalker(root, SHOW_TEXT);
+  /** Hidden: the `hidden` attribute on it or an ancestor, or no box (`checkVisibility()` false, where it exists). */
+  const isHidden = (el: PageElement): boolean => el.closest('[hidden]') !== null || (typeof el.checkVisibility === 'function' && !el.checkVisibility());
+  /**
+   * Up to `limit` code units of `root`'s text, read node by node, visiting at most `visits` nodes
+   * (elements too) and stopping at the deadline; the code units seen, and the first `img[alt]`.
+   */
+  const textOf = (root: PageNode, limit: number, visits: number) => {
     let text = '';
     let units = 0;
-    let nodes = 0;
-    for (let node = walker.nextNode(); node !== null && nodes < nodeLimit; node = walker.nextNode()) {
-      nodes += 1;
-      const data = node as PageText;
-      units += data.length;
-      if (text.length < limit) text += data.substringData(0, Math.min(data.length, limit - text.length));
+    let seen = 0;
+    let imageAlt: string | null = null;
+    const walker = document.createTreeWalker(root, SHOW_ELEMENT | SHOW_TEXT, {
+      acceptNode(node) {
+        seen += 1;
+        if (seen > visits || ((seen & 63) === 0 && late())) throw STOP;
+        if (node.nodeType !== ELEMENT_NODE) return FILTER_ACCEPT;
+        const el = node as PageElement;
+        if (imageAlt === null && el.localName === 'img') imageAlt = el.getAttribute('alt');
+        return FILTER_SKIP;
+      },
+    });
+    try {
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const data = node as PageText;
+        units += data.length;
+        if (text.length < limit) text += data.substringData(0, Math.min(data.length, limit - text.length));
+      }
+    } catch (error) {
+      if (error !== STOP) throw error;
     }
-    return { text, units };
+    return { text, units, imageAlt: imageAlt as string | null };
   };
-  const shortText = (root: PageNode, max: number): string => cut(squash(textOf(root, max * 4, 500).text), max);
+  const shortText = (root: PageNode, max: number): string => cut(squash(textOf(root, max * 4, L.maxElementTextVisits).text), max);
   /** A site's host: lowercased, one leading `www.` dropped. */
   const site = (host: string): string => {
     const lower = host.toLowerCase();
@@ -122,13 +155,14 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
       return null;
     }
   };
-  /** The first `max` elements of `list` mapped, and the list's length. */
-  const firstOf = <T, R>(list: PageList<T>, max: number, map: (item: T) => R): [R[], number] => {
+  /** The first `max` elements of `list` that `keep` (default: all), mapped, until the deadline; and the list's length. */
+  const firstOf = <T, R>(list: PageList<T>, max: number, map: (item: T) => R, keep: (item: T) => boolean = () => true): [R[], number] => {
     const length = list.length;
     const out: R[] = [];
     for (let i = 0; i < length && out.length < max; i++) {
+      if (late()) break;
       const item = list[i];
-      if (item !== undefined) out.push(map(item));
+      if (item !== undefined && keep(item)) out.push(map(item));
     }
     return [out, total(length)];
   };
@@ -145,15 +179,20 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
     const el = titleElements[i];
     if (!el || el.namespaceURI !== XHTML) continue;
     titleTotal += 1;
-    if (titles.length < L.maxRepeated) {
-      const read = textOf(el, SCAN, 1_000);
+    if (titles.length < L.maxRepeated && !late()) {
+      const read = textOf(el, SCAN, L.maxElementTextVisits);
       titles.push(measure(read.text, read.units, L.maxTextChars));
     }
   }
   const [metaDescriptions, metaDescriptionTotal] = firstOf(document.querySelectorAll('meta[name="description" i]'), L.maxRepeated, (el) =>
     measureAttribute(el.getAttribute('content') ?? '', L.maxTextChars),
   );
-  const [metaRobots] = firstOf(document.querySelectorAll('meta[name="robots" i]'), L.maxRepeated, (el) => (attribute(el, 'content', L.maxAttributeChars) ?? '').toLowerCase());
+  // Generic and crawler-specific robots metas, in document order, with their (lowercased) names.
+  const robotsSelector = robotsNames.map((name) => `meta[name="${name}" i]`).join(', ');
+  const [metaRobots] = firstOf(document.querySelectorAll(robotsSelector), L.maxRepeated, (el) => ({
+    name: (el.getAttribute('name') ?? '').trim().toLowerCase(),
+    content: (attribute(el, 'content', L.maxAttributeChars) ?? '').toLowerCase(),
+  }));
   const [canonicals, canonicalTotal] = firstOf(document.querySelectorAll('link[rel~="canonical" i]'), L.maxRepeated, (el) => {
     const href = cut((el.getAttribute('href') ?? '').trim(), L.maxUrlChars);
     return { href, resolved: resolve(href)?.href ?? null };
@@ -163,19 +202,25 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
   const ogUrl = ogContent === null ? null : cut(ogContent.trim(), L.maxUrlChars);
   const viewport = attribute(document.querySelectorAll('meta[name="viewport" i]')[0], 'content', L.maxAttributeChars);
 
-  // Headings.
-  const [headings, headingTotal] = firstOf(document.querySelectorAll('h1, h2, h3, h4, h5, h6'), L.maxHeadings, (el) => ({
-    level: Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1)),
-    text: shortText(el, L.maxHeadingChars),
-  }));
+  // Headings that are shown (hidden ones are counted in the total only).
+  const [headings, headingTotal] = firstOf(
+    document.querySelectorAll('h1, h2, h3, h4, h5, h6'),
+    L.maxHeadings,
+    (el) => ({
+      level: Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1)),
+      text: shortText(el, L.maxHeadingChars),
+    }),
+    (el) => !isHidden(el),
+  );
 
   // Links.
   const [links, linkTotal] = firstOf(document.links, L.maxLinks, (el) => {
     const target = resolve(el.getAttribute('href') ?? '');
     const web = target !== null && (target.scheme === 'http:' || target.scheme === 'https:');
-    let text = shortText(el, L.maxAnchorChars);
+    const read = textOf(el, L.maxAnchorChars * 4, L.maxElementTextVisits);
+    let text = cut(squash(read.text), L.maxAnchorChars);
     if (text === '') text = attribute(el, 'aria-label', L.maxAnchorChars) ?? '';
-    if (text === '') text = attribute(el.querySelector('img[alt]'), 'alt', L.maxAnchorChars) ?? '';
+    if (text === '' && read.imageAlt !== null) text = cut(squash(cut(read.imageAlt, L.maxAnchorChars * 4)), L.maxAnchorChars);
     if (text === '') text = attribute(el, 'title', L.maxAnchorChars) ?? '';
     return {
       href: target ? target.href : '',
@@ -202,11 +247,18 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
     };
   });
 
-  // Words in the body's rendered text (script, style, template, SVG and [hidden] subtrees skipped),
-  // within the node, character and time budget.
+  // Words in the body's shown text (script, style, template, SVG … subtrees and hidden elements
+  // skipped), within the node and character budgets and the deadline. `Intl.Segmenter` finds words
+  // in scripts written without spaces (Chinese, Japanese, Thai); without it, runs of letters or digits.
   const SKIP = ['script', 'style', 'noscript', 'template', 'svg', 'math', 'iframe', 'object'];
   const WORD = /[\p{L}\p{N}]+/gu;
-  const STOP = {};
+  const segmenter = typeof Intl === 'object' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'word' }) : null;
+  const countWords = (text: string): number => {
+    if (!segmenter) return (text.match(WORD) ?? []).length;
+    let n = 0;
+    for (const segment of segmenter.segment(text)) if (segment.isWordLike) n += 1;
+    return n;
+  };
   let wordCount = 0;
   let textTruncated = false;
   if (document.body) {
@@ -216,10 +268,10 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
     const walker = document.createTreeWalker(document.body, SHOW_ELEMENT | SHOW_TEXT, {
       acceptNode(node) {
         visited += 1;
-        if (textNodes >= L.maxTextNodes || scanned >= L.maxTextScanChars || visited > L.maxTextNodes * 4 || ((visited & 255) === 0 && performance.now() - started > textBudgetMs)) throw STOP;
+        if (textNodes >= L.maxTextNodes || scanned >= L.maxTextScanChars || visited > L.maxTextNodes * 4 || ((visited & 255) === 1 && late())) throw STOP;
         if (node.nodeType !== ELEMENT_NODE) return FILTER_ACCEPT;
         const el = node as PageElement;
-        return SKIP.includes(el.localName) || el.hasAttribute('hidden') ? FILTER_REJECT : FILTER_SKIP;
+        return SKIP.includes(el.localName) || el.hasAttribute('hidden') || (typeof el.checkVisibility === 'function' && !el.checkVisibility()) ? FILTER_REJECT : FILTER_SKIP;
       },
     });
     try {
@@ -228,8 +280,7 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
         const data = node as PageText;
         const take = Math.min(data.length, L.maxTextScanChars - scanned);
         scanned += take;
-        const words = data.substringData(0, take).match(WORD);
-        if (words) wordCount += words.length;
+        wordCount += countWords(data.substringData(0, take));
       }
     } catch (error) {
       if (error !== STOP) throw error;
@@ -255,6 +306,7 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
     headingTotal,
     wordCount: total(wordCount),
     textTruncated,
+    partial,
     links,
     linkTotal,
     images,
@@ -262,8 +314,11 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, textBudge
   };
 }
 
-/** The script run in the isolated world: `extractPage` called on its `document` with the spec's limits. */
-export const EXTRACTOR_SCRIPT = `(${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_TEXT_BUDGET_MS})`;
+/**
+ * The script run in the isolated world: `extractPage` called on its `document` with the spec's
+ * limits, deadline and robots meta names.
+ */
+export const EXTRACTOR_SCRIPT = `(${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)})`;
 
 /** The part of a tab's WebContents the extractor needs. */
 export interface ExtractTarget {

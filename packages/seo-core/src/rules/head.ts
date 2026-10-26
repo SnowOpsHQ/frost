@@ -13,9 +13,9 @@ function titled(s: PageSnapshot): CappedText | null {
   return first && first.text !== '' ? first : null;
 }
 
-function described(s: PageSnapshot): CappedText | null {
-  const first = s.metaDescriptions[0];
-  return first && first.text !== '' ? first : null;
+/** The first meta description with text (an empty tag before it changes nothing). */
+export function described(s: PageSnapshot): CappedText | null {
+  return s.metaDescriptions.find((d) => d.text !== '') ?? null;
 }
 
 /** Facts for a measured text: the value and its length against the recommended range. */
@@ -23,8 +23,14 @@ function lengthFacts(label: string, value: CappedText, min: number, max: number)
   return [fact(label, value.text), fact('Length', characters(value.length)), fact('Recommended', `${min}–${max} characters`)];
 }
 
-function robotsTokens(s: PageSnapshot): Set<string> {
-  return new Set(s.metaRobots.flatMap(tokens));
+/** The robots metas (generic or crawler-specific) carrying any of `directives`. */
+export function robotsWith(s: PageSnapshot, directives: readonly string[]): PageSnapshot['metaRobots'] {
+  return s.metaRobots.filter((meta) => tokens(meta.content).some((token) => directives.includes(token)));
+}
+
+/** A fact per robots meta, named after its crawler (`Meta robots (googlebot)`); the generic tag is plain `Meta robots`. */
+function robotsFacts(metas: PageSnapshot['metaRobots']) {
+  return metas.map((meta) => fact(meta.name === 'robots' ? 'Meta robots' : `Meta robots (${meta.name})`, meta.content));
 }
 
 /** The first canonical's resolved URL, if it parses. */
@@ -83,12 +89,12 @@ export const HEAD_CHECKS = {
   },
 
   'robots-noindex': (s) => {
-    const robots = robotsTokens(s);
-    return robots.has('noindex') || robots.has('none') ? details([fact('Meta robots', s.metaRobots.join(', '))]) : null;
+    const metas = robotsWith(s, ['noindex', 'none']);
+    return metas.length > 0 ? details(robotsFacts(metas)) : null;
   },
   'robots-nofollow': (s) => {
-    const robots = robotsTokens(s);
-    return robots.has('nofollow') || robots.has('none') ? details([fact('Meta robots', s.metaRobots.join(', '))]) : null;
+    const metas = robotsWith(s, ['nofollow', 'none']);
+    return metas.length > 0 ? details(robotsFacts(metas)) : null;
   },
 
   'lang-missing': (s) => (s.lang === null || s.lang.trim() === '' ? details([fact('lang', 'None')]) : null),

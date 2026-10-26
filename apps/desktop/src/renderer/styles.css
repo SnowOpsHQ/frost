@@ -1473,6 +1473,21 @@ input {
   font-size: 12px;
 }
 
+.seo-not-indexable {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.seo-partial {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--caution) 12%, transparent);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .seo-counts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

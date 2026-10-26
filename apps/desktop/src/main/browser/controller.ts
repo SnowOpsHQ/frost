@@ -368,6 +368,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       removeTab,
       contextMenu: options.contextMenu,
       pageSettled: audits.schedule,
+      pageCommitted: audits.navigated,
     });
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
     applyBounds(tab);
@@ -669,9 +670,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     seo: {
       getAudit: (tabId) => audits.response(strip.tabs.find((tab) => tab.id === tabId)),
+      // Only the active tab is ever audited (`RERUN_ACTIVE_TAB_ONLY`).
       rerun: (tabId) => {
-        const tab = strip.tabs.find((t) => t.id === tabId);
-        return tab !== undefined && hasWindow() && audits.rerun(tab);
+        const tab = activeTab();
+        return tab !== undefined && tab.id === tabId && hasWindow() && audits.rerun(tab);
       },
     },
 

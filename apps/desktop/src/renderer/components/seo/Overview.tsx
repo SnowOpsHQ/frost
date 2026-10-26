@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Finding, SeoAudit } from '@app/seo-core';
-import { SCORE_BANDS, SEO_CATEGORIES, SEO_CATEGORY_LABELS, SEO_RULE_SPECS, SEO_SEVERITIES, type SeoCategory } from '@app/specs/seo-rules.spec';
+import { NOT_INDEXABLE_LABEL, SCORE_BANDS, SEO_CATEGORIES, SEO_CATEGORY_LABELS, SEO_RULE_SPECS, SEO_SEVERITIES, type SeoCategory } from '@app/specs/seo-rules.spec';
 import { OVERVIEW_TOP_ISSUES } from '@app/specs/seo-sidebar.spec';
 import { CheckCircleIcon, ChevronIcon } from '../../icons';
 import { formatCount } from '../../seo-view';
@@ -160,14 +160,24 @@ export function Overview({ audit }: { readonly audit: SeoAudit }) {
         <ScoreRing score={audit.score} band={audit.band} />
         <div className="seo-score-text">
           <span className="seo-eyebrow">Health score</span>
-          <span className="seo-band" data-band={audit.band} data-testid="seo-band">
-            {band.label}
+          <span className="seo-band" data-band={audit.band} data-testid="seo-band" data-indexable={audit.indexable}>
+            {audit.indexable ? band.label : NOT_INDEXABLE_LABEL}
           </span>
+          {audit.indexable ? null : (
+            <span className="seo-score-summary seo-not-indexable" data-testid="seo-not-indexable">
+              Asks not to be indexed: {audit.page.noindexFor.join(', ')}
+            </span>
+          )}
           <span className="seo-score-summary">
             {blocking === 0 ? 'No errors or warnings' : `${plural(blocking, ['issue', 'issues'])} to fix`} · {plural(passed, ['check', 'checks'])} passed
           </span>
         </div>
       </section>
+      {audit.page.partial ? (
+        <p className="seo-partial" data-testid="seo-partial">
+          This page is very large: frost read part of it before its time limit, so some lists are incomplete.
+        </p>
+      ) : null}
       <div className="seo-counts" role="list" aria-label="Issues by severity">
         {SEO_SEVERITIES.map((severity) => (
           <span key={severity} className="seo-count" role="listitem" data-severity={severity} data-testid={`seo-count-${severity}`} data-count={audit.counts[severity]}>

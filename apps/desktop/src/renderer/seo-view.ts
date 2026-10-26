@@ -48,3 +48,11 @@ export function shownResponse(tab: { readonly id: number; readonly url: string }
 export function formatCount(n: number): string {
   return n.toLocaleString('en-US');
 }
+
+/**
+ * A page value as tooltip text, wrapped in FIRST STRONG ISOLATE … POP DIRECTIONAL ISOLATE
+ * (U+2068 … U+2069), so a bidi override in it cannot reorder the rest of the tooltip.
+ */
+export function isolatedTooltip(value: string): string {
+  return `⁨${value}⁩`;
+}

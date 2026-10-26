@@ -2,7 +2,7 @@
 // (SEO_AUDIT_STATUSES, SEO_UNAVAILABLE_REASONS), specs/browser.spec.ts (TabState.auditVersion)
 // Acceptance: specs/seo-sidebar.feature.md (Auditor)
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
+import { AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../test/controller-fakes';
 import { fakeEvent } from '../../../test/electron-fake';
 import { rawSnapshot } from '../../../test/seo-fakes';
@@ -107,14 +107,14 @@ describe('auditor', () => {
   test('audit-debounced', async () => {
     const contents = load(A);
     await vi.advanceTimersByTimeAsync(200);
-    pushState(contents, `${A}#one`);
+    pushState(contents, `${A}/one`);
     await vi.advanceTimersByTimeAsync(200);
-    pushState(contents, `${A}#two`);
+    pushState(contents, `${A}/two`);
     await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS - 1);
     expect(runs).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(runs).toHaveLength(1);
-    runs[0]!.resolve(rawSnapshot(`${A}#two`));
+    runs[0]!.resolve(rawSnapshot(`${A}/two`));
     await flush();
     expect(audit().status).toBe('ready');
     // A subframe's in-page navigation audits nothing.
@@ -160,6 +160,20 @@ describe('auditor', () => {
     controller.activateTab(backgroundId);
     await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
     expect(runs).toHaveLength(3);
+    runs[2]!.resolve(rawSnapshot(B));
+    await flush();
+
+    // It reloads while shown, and another tab is activated before its debounce ends: its timer
+    // finds it in the background and extracts nothing; it is audited when shown again.
+    background.emit('did-finish-load');
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS / 2);
+    controller.activateTab(firstId);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS * 3);
+    expect(runs).toHaveLength(3);
+    controller.activateTab(backgroundId);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    expect(runs).toHaveLength(4);
+    expect(runs[3]!.contents).toBe(background);
   });
 
   test('audit-matches-current-url', async () => {
@@ -179,20 +193,103 @@ describe('auditor', () => {
     expect(answer.status).toBe('ready');
     expect(answer.status === 'ready' && answer.audit.url).toBe(B);
 
-    // A superseded run's late result never replaces a newer one.
+    // A superseded run's late result never replaces a newer one (the second rerun waits for the
+    // first extraction, then runs once).
     expect(controller.seo.rerun(activeId())).toBe(true);
     expect(controller.seo.rerun(activeId())).toBe(true);
+    expect(runs).toHaveLength(3);
+    runs[2]!.resolve(rawSnapshot(B, { titles: [{ text: 'Older run title for this page', length: 29 }] }));
+    await flush();
+    expect(audit().status).toBe('pending');
     expect(runs).toHaveLength(4);
     runs[3]!.resolve(rawSnapshot(B, { titles: [{ text: 'Newer run title for this page', length: 29 }] }));
-    await flush();
-    runs[2]!.resolve(rawSnapshot(B, { titles: [{ text: 'Older run title for this page', length: 29 }] }));
     await flush();
     const latest = audit();
     expect(latest.status === 'ready' && latest.audit.page.title?.text).toBe('Newer run title for this page');
 
-    // A new page commits: the old audit is never answered for it.
+    // A snapshot of another URL than the run was for is dropped.
+    controller.seo.rerun(activeId());
+    runs[4]!.resolve(rawSnapshot('https://example.com/elsewhere'));
+    await flush();
+    expect(audit()).toEqual({ status: 'pending', url: B });
+
+    // A new page commits (did-navigate) before its did-finish-load: pending for it at once, and the
+    // old page's result (still in flight) is dropped.
+    controller.seo.rerun(activeId());
+    expect(runs).toHaveLength(6);
     commit(contents, A, 'A again');
     expect(audit()).toEqual({ status: 'pending', url: A });
+    runs[5]!.resolve(rawSnapshot(B));
+    await flush();
+    expect(audit()).toEqual({ status: 'pending', url: A });
+    contents.emit('did-finish-load');
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    expect(runs).toHaveLength(7);
+    runs[6]!.resolve(rawSnapshot(A));
+    await flush();
+    expect(audit().status).toBe('ready');
+  });
+
+  test('audit-runs-coalesce', async () => {
+    const contents = load(A);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    expect(runs).toHaveLength(1);
+    // A reload's event and a rerun while the extraction is in flight start no second one…
+    contents.emit('did-finish-load');
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS * 2);
+    expect(controller.seo.rerun(activeId())).toBe(true);
+    expect(runs).toHaveLength(1);
+    // …not even past its timeout (the page is still busy with it).
+    await vi.advanceTimersByTimeAsync(EXTRACT_TIMEOUT_MS);
+    expect(audit()).toMatchObject({ status: 'unavailable', reason: 'timeout' });
+    expect(controller.seo.rerun(activeId())).toBe(true);
+    expect(audit().status).toBe('pending');
+    expect(runs).toHaveLength(1);
+    // Once it settles, one trailing run.
+    runs[0]!.resolve(rawSnapshot(A));
+    await flush();
+    expect(runs).toHaveLength(2);
+    runs[1]!.resolve(rawSnapshot(A));
+    await flush();
+    expect(audit().status).toBe('ready');
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS * 4);
+    expect(runs).toHaveLength(2);
+
+    // A new document releases the wait.
+    controller.seo.rerun(activeId());
+    expect(runs).toHaveLength(3);
+    load(B, contents);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    expect(runs).toHaveLength(4);
+  });
+
+  test('audit-max-wait', async () => {
+    const contents = load(A);
+    // Route changes every 300 ms, never pausing for the debounce.
+    for (let i = 0; i * 300 < AUDIT_MAX_WAIT_MS - 300; i++) {
+      pushState(contents, `${A}/r${i}`);
+      await vi.advanceTimersByTimeAsync(300);
+    }
+    expect(runs).toHaveLength(0);
+    pushState(contents, `${A}/last`);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(runs).toHaveLength(1);
+  });
+
+  test('audit-ignores-fragment-changes', async () => {
+    const contents = load(A);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    runs[0]!.resolve(rawSnapshot(A));
+    await flush();
+    pushState(contents, `${A}#section-2`);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS * 4);
+    expect(runs).toHaveLength(1);
+    const answer = audit();
+    expect(answer).toMatchObject({ status: 'ready', url: `${A}#section-2` });
+    // A reload of the same URL audits again.
+    contents.emit('did-finish-load');
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    expect(runs).toHaveLength(2);
   });
 
   test('audit-timeout-is-unavailable', async () => {
@@ -279,6 +376,12 @@ describe('auditor', () => {
     runs[1]!.resolve(rawSnapshot(A));
     await flush();
     expect(audit().status).toBe('ready');
+
+    // Only the active tab: a background tab is never audited, not even on request.
+    const firstId = activeId();
+    controller.newTab();
+    expect(controller.seo.rerun(firstId)).toBe(false);
+    expect(runs).toHaveLength(2);
   });
 
   test('closed-tab-audit-is-forgotten', async () => {

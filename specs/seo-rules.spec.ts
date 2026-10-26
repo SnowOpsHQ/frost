@@ -134,7 +134,7 @@ export const SEO_RULE_SPECS = [
     category: 'meta-description',
     severity: 'warning',
     title: 'No meta description',
-    condition: 'The document has no meta description, or the first one is empty.',
+    condition: 'The document has no meta description with text (none at all, or only empty ones).',
     why: 'The meta description is the usual source of the snippet under a result. Without one, search engines pick text from the page, which may not sell the click.',
     fix: 'Add <meta name="description" content="…"> with a one- or two-sentence summary of the page.',
   },
@@ -143,7 +143,7 @@ export const SEO_RULE_SPECS = [
     category: 'meta-description',
     severity: 'info',
     title: 'Meta description is short',
-    condition: `The meta description has fewer than ${DESCRIPTION_MIN_CHARS} characters.`,
+    condition: `The first meta description with text has fewer than ${DESCRIPTION_MIN_CHARS} characters.`,
     why: 'A very short description rarely summarises the page well, so search engines often replace it with text of their own.',
     fix: `Expand it to a useful summary of about ${DESCRIPTION_MIN_CHARS}–${DESCRIPTION_MAX_CHARS} characters.`,
   },
@@ -152,7 +152,7 @@ export const SEO_RULE_SPECS = [
     category: 'meta-description',
     severity: 'warning',
     title: 'Meta description is too long',
-    condition: `The meta description has more than ${DESCRIPTION_MAX_CHARS} characters.`,
+    condition: `The first meta description with text has more than ${DESCRIPTION_MAX_CHARS} characters.`,
     why: 'Long descriptions are cut off in results, so the end of the message is lost.',
     fix: `Lead with the key point and trim the description to ${DESCRIPTION_MAX_CHARS} characters or fewer.`,
   },
@@ -263,16 +263,16 @@ export const SEO_RULE_SPECS = [
     category: 'indexing',
     severity: 'warning',
     title: 'Page asks not to be indexed',
-    condition: 'A <meta name="robots"> contains "noindex" or "none".',
-    why: 'Search engines drop a noindex page from their results. That is often deliberate (staging, thank-you pages) but costly when it is left on by mistake.',
-    fix: 'If this page should be found in search, remove noindex from the robots meta tag.',
+    condition: 'A robots meta tag for all crawlers ("robots") or for one ("googlebot", "googlebot-news", "bingbot") contains "noindex" or "none". The finding names each tag that does. While it fails, the health score is capped (NOINDEX_SCORE_CAP).',
+    why: 'Search engines drop a noindex page from their results. That is often deliberate (staging, thank-you pages) but costly when it is left on by mistake, and a crawler-specific tag is easy to miss.',
+    fix: 'If this page should be found in search, remove noindex from the robots meta tags (including googlebot or bingbot ones).',
   },
   {
     id: 'robots-nofollow',
     category: 'indexing',
     severity: 'warning',
     title: 'Page asks crawlers not to follow its links',
-    condition: 'A <meta name="robots"> contains "nofollow" or "none".',
+    condition: 'A robots meta tag ("robots", "googlebot", "googlebot-news" or "bingbot") contains "nofollow" or "none". The finding names each tag that does.',
     why: 'A page-wide nofollow stops crawlers from discovering pages through this one and passing value along its links.',
     fix: 'Remove nofollow from the robots meta tag; mark individual links rel="nofollow" where needed instead.',
   },
@@ -367,7 +367,7 @@ export const SEO_RULE_SPECS = [
     category: 'url',
     severity: 'info',
     title: 'URL path has uppercase letters',
-    condition: 'The page URL’s path contains an uppercase letter.',
+    condition: 'The page URL’s path contains an uppercase letter outside percent-escapes (the hex digits of %E6 are not letters of the path).',
     why: 'Paths are case-sensitive on most servers, so mixed case invites duplicate URLs and broken links when people type them.',
     fix: 'Use lowercase paths and redirect mixed-case variants to them.',
   },
@@ -393,14 +393,24 @@ export type SeoRuleId = (typeof SEO_RULE_SPECS)[number]['id'];
  *     score = round(100 × Π over failing rules (1 − SEVERITY_WEIGHTS[severity]))
  *
  * So no issues is 100, one error is 80, one warning 93, one info 99, an error and three warnings
- * 64. The score only ever goes down as issues are added, never below 0, and does not depend on the
- * order of the findings.
+ * 64. When `robots-noindex` fails the result is then capped at `NOINDEX_SCORE_CAP`. The score only
+ * ever goes down as issues are added, never below 0, and does not depend on the order of the
+ * findings.
  */
 export const SEVERITY_WEIGHTS: Readonly<Record<SeoSeverity, number>> = {
   error: 0.2,
   warning: 0.07,
   info: 0.01,
 };
+
+/**
+ * A page that asks not to be indexed (`robots-noindex`) gets at most this score, so it always
+ * lands in the `poor` band and the score card says "Not indexable". The rule stays a warning, since
+ * noindex is often intentional, but whatever else is right about the page, it will not appear in
+ * search results while the tag is there, and a "Good" score would hide that.
+ */
+export const NOINDEX_SCORE_CAP = 59;
+export const NOT_INDEXABLE_LABEL = 'Not indexable' as const;
 
 /** The score's band (the ring's colour and label): at least `min`, the first match wins. */
 export const SCORE_BANDS = [

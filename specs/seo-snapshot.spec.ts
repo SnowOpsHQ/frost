@@ -10,7 +10,8 @@
  * renderer imports this module for its types only.
  */
 import { z } from 'zod';
-import { SNAPSHOT_LIMITS as L } from './seo-limits.spec';
+import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L } from './seo-limits.spec';
+import { isWebUrl } from './web-url.spec';
 
 export * from './seo-limits.spec';
 
@@ -32,10 +33,25 @@ function cappedText(maxChars: number) {
 const urlText = z.string().max(L.maxUrlChars);
 const attribute = z.string().max(L.maxAttributeChars);
 
+/** A robots meta tag: its (lowercased) `name`, one of `ROBOTS_META_NAMES`, and its `content` (lowercased, normalised). */
+export const RobotsMetaSchema = z.strictObject({ name: z.enum(ROBOTS_META_NAMES), content: attribute });
+
+/*
+ * Hidden elements (headings and the word count both skip them): an element with the `hidden`
+ * attribute or inside one, and, where `Element.checkVisibility` exists (Chromium; not every test
+ * DOM), an element for which `checkVisibility()` is false (no box: `display: none` on it or an
+ * ancestor, or inside `content-visibility: hidden`). `visibility: hidden` and off-screen text count
+ * as shown (they still take part in layout).
+ */
+
 /** `link[rel=canonical]`: the `href` attribute as written, and resolved against the document (`null` if it does not parse). */
 export const CanonicalSchema = z.strictObject({ href: urlText, resolved: urlText.nullable() });
 
-/** `h1`…`h6`, in document order: its level and text (`textContent`, normalised, capped; `''` if empty). */
+/**
+ * `h1`…`h6` that are not hidden (see Hidden elements above), in document order: the level and text
+ * (its text nodes read in order, normalised, capped; `''` if empty). `headingTotal` counts every
+ * heading element, hidden ones too.
+ */
 export const HeadingSchema = z.strictObject({
   level: z.int().min(1).max(6),
   text: z.string().max(L.maxHeadingChars),
@@ -80,22 +96,30 @@ export const ImageSchema = z.strictObject({
  * The snapshot. Lists hold the first entries in document order (at most their `SNAPSHOT_LIMITS`
  * cap); each `…Total` is the page's full count (at least the list's length).
  *
- * - `url`: `document.URL` (an `http(s)` URL; the auditor never runs on anything else).
+ * - `url`: `document.URL`, cut to `maxUrlChars`; it must be an `http(s)` URL (the auditor only
+ *   runs on those, and checks it is the URL it expected).
  * - `extractedAt`: when the extractor ran (epoch ms); `durationMs`: how long it took.
  * - `lang`: `<html lang>` as written (trimmed; `null` when absent or empty).
  * - `titles`: each HTML `<title>` element's text (SVG titles are not page titles).
  * - `metaDescriptions`: each `meta[name=description]`'s `content`.
- * - `metaRobots`: each `meta[name=robots]`'s `content` (lowercased).
+ * - `metaRobots`: each robots meta (`ROBOTS_META_NAMES`, together at most `maxRepeated`), in
+ *   document order, with its name.
  * - `canonicals`: each `link[rel~=canonical]`.
  * - `ogUrl`: the first `meta[property="og:url"]`'s `content` (`null` when absent).
  * - `viewport`: the first `meta[name=viewport]`'s `content` (`null` when absent).
- * - `wordCount`: words (runs of letters or digits) in the body's text nodes outside `script`,
- *   `style`, `noscript`, `template`, `svg` and `[hidden]` subtrees; `textTruncated` when the walk
- *   stopped at `maxTextNodes`, `maxTextScanChars` or `EXTRACT_TEXT_BUDGET_MS`.
+ * - `wordCount`: words in the body's text nodes outside `script`, `style`, `noscript`,
+ *   `template`, `svg`, `math`, `iframe` and `object` subtrees and hidden elements
+ *   (see Hidden elements above). A word is an `Intl.Segmenter` (`granularity: 'word'`) segment that is
+ *   `isWordLike`, so Chinese, Japanese and Thai text without spaces is counted word by word; where
+ *   `Intl.Segmenter` is missing, a run of letters or digits. Words split across text nodes count
+ *   once per node. `textTruncated` when the walk stopped at `maxTextNodes`, `maxTextScanChars` or
+ *   the deadline (`EXTRACT_BUDGET_MS`).
+ * - `partial`: the extractor reached `EXTRACT_BUDGET_MS` and stopped early: some lists may hold
+ *   fewer entries than their cap allows (their totals are still the page's).
  */
 export const PageSnapshotSchema = z
   .strictObject({
-    url: urlText.min(1),
+    url: urlText.min(1).refine(isWebUrl, { message: 'not an http(s) URL' }),
     extractedAt: z.number().nonnegative(),
     durationMs: z.number().nonnegative(),
     lang: z.string().max(L.maxLangChars).nullable(),
@@ -103,7 +127,7 @@ export const PageSnapshotSchema = z
     titleTotal: count,
     metaDescriptions: z.array(cappedText(L.maxTextChars)).max(L.maxRepeated),
     metaDescriptionTotal: count,
-    metaRobots: z.array(attribute).max(L.maxRepeated),
+    metaRobots: z.array(RobotsMetaSchema).max(L.maxRepeated),
     canonicals: z.array(CanonicalSchema).max(L.maxRepeated),
     canonicalTotal: count,
     ogUrl: urlText.nullable(),
@@ -112,6 +136,7 @@ export const PageSnapshotSchema = z
     headingTotal: count,
     wordCount: count,
     textTruncated: z.boolean(),
+    partial: z.boolean(),
     links: z.array(LinkSchema).max(L.maxLinks),
     linkTotal: count,
     images: z.array(ImageSchema).max(L.maxImages),
@@ -131,6 +156,7 @@ export type PageSnapshot = z.infer<typeof PageSnapshotSchema>;
 export type PageLink = z.infer<typeof LinkSchema>;
 export type PageImage = z.infer<typeof ImageSchema>;
 export type PageHeading = z.infer<typeof HeadingSchema>;
+export type RobotsMeta = z.infer<typeof RobotsMetaSchema>;
 export type CappedText = PageSnapshot['titles'][number];
 
 /** `seo.getAudit` / `seo.rerun` input: a tab's id (as `browser.closeTab`'s `TabIdInputSchema`). */

@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest';
 import type { Finding, SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { TITLE_MAX_CHARS, TITLE_MIN_CHARS } from '@app/specs/seo-rules.spec';
 import { SEO_PANELS, SIDEBAR_DEFAULT_OPEN } from '@app/specs/seo-sidebar.spec';
-import { lengthIndicator, railStatuses, shownResponse, sidebarOpenFromStorage } from '../seo-view';
+import { isolatedTooltip, lengthIndicator, railStatuses, shownResponse, sidebarOpenFromStorage } from '../seo-view';
 
 function finding(severity: Finding['severity'], category: Finding['category']): Finding {
   return { ruleId: 'title-missing', category, severity, title: 't', why: 'w', fix: 'f', details: { facts: [], samples: [] } };
@@ -51,5 +51,11 @@ describe('seo view helpers', () => {
     expect(shownResponse(tab, { tabId: 4, response: answer })).toEqual({ status: 'pending', url: tab.url });
     expect(shownResponse({ ...tab, url: 'https://a.example/c' }, { tabId: 3, response: answer })).toEqual({ status: 'pending', url: 'https://a.example/c' });
     expect(shownResponse(tab, null)).toEqual({ status: 'pending', url: tab.url });
+  });
+
+  test('tooltip-is-bidi-isolated', () => {
+    expect(isolatedTooltip('plain')).toBe('\u2068plain\u2069');
+    // An override inside stays inside: the tooltip text ends with the isolate's close.
+    expect(isolatedTooltip('\u202Eevil')).toBe('\u2068\u202Eevil\u2069');
   });
 });

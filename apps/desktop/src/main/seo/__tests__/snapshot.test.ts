@@ -32,8 +32,9 @@ describe('snapshot schema', () => {
       expect(ok(rawSnapshot(URL_A, { [list]: many(cap, make), [total]: 100_000 })), `${list} at cap`).toBe(true);
       expect(ok(rawSnapshot(URL_A, { [list]: many(cap + 1, make), [total]: 100_000 })), `${list} over cap`).toBe(false);
     }
-    expect(ok(rawSnapshot(URL_A, { metaRobots: many(L.maxRepeated, () => 'noindex') }))).toBe(true);
-    expect(ok(rawSnapshot(URL_A, { metaRobots: many(L.maxRepeated + 1, () => 'noindex') }))).toBe(false);
+    const noindex = { name: 'googlebot' as const, content: 'noindex' };
+    expect(ok(rawSnapshot(URL_A, { metaRobots: many(L.maxRepeated, () => noindex) }))).toBe(true);
+    expect(ok(rawSnapshot(URL_A, { metaRobots: many(L.maxRepeated + 1, () => noindex) }))).toBe(false);
   });
 
   test('snapshot-caps-strings', () => {
@@ -43,7 +44,7 @@ describe('snapshot schema', () => {
       ['url', (n) => ({ url: url(n) }), L.maxUrlChars],
       ['title', (n) => ({ titles: [capped(x(n))] }), L.maxTextChars],
       ['description', (n) => ({ metaDescriptions: [capped(x(n))] }), L.maxTextChars],
-      ['robots', (n) => ({ metaRobots: [x(n)] }), L.maxAttributeChars],
+      ['robots', (n) => ({ metaRobots: [{ name: 'robots', content: x(n) }] }), L.maxAttributeChars],
       ['viewport', (n) => ({ viewport: x(n) }), L.maxAttributeChars],
       ['lang', (n) => ({ lang: x(n) }), L.maxLangChars],
       ['og:url', (n) => ({ ogUrl: url(n) }), L.maxUrlChars],
@@ -67,6 +68,11 @@ describe('snapshot schema', () => {
 
   test('snapshot-is-strict', () => {
     const bad: unknown[] = [
+      rawSnapshot('ftp://example.com/a'),
+      rawSnapshot('javascript:alert(1)'),
+      rawSnapshot(URL_A, { metaRobots: [{ name: 'otherbot' as never, content: 'noindex' }] }),
+      rawSnapshot(URL_A, { metaRobots: ['noindex' as never] }),
+      rawSnapshot(URL_A, { partial: 'yes' as never }),
       { ...rawSnapshot(URL_A), extra: 1 },
       (() => {
         const { lang: _lang, ...rest } = rawSnapshot(URL_A);

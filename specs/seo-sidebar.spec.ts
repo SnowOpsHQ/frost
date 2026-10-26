@@ -20,6 +20,13 @@ export const SEO_AUDIT_STATUSES = ['pending', 'ready', 'unavailable'] as const;
 export type SeoAuditStatus = (typeof SEO_AUDIT_STATUSES)[number];
 
 /**
+ * `seo.rerun` audits a tab again only while it is the **active** tab of the window (background tabs
+ * are never audited); for any other tab it answers `false` and does nothing. A run already in flight
+ * in the tab is never doubled: the rerun waits for it and then runs once (`audit-runs-coalesce`).
+ */
+export const RERUN_ACTIVE_TAB_ONLY = true;
+
+/**
  * Why there is no audit. `no-page`: the tab is empty or shows a non-`http(s)` page; `load-error` /
  * `crashed`: the tab shows its error or crash panel; `timeout`: the extractor did not answer
  * within `EXTRACT_TIMEOUT_MS`; `invalid-snapshot`: what it answered does not parse as a snapshot

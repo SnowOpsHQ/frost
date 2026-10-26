@@ -46,13 +46,16 @@ export interface PageFacts {
   /** The first title, `null` when there is none. */
   readonly title: CappedText | null;
   readonly titleTotal: number;
+  /** The first meta description with text, `null` when there is none. */
   readonly description: CappedText | null;
   readonly descriptionTotal: number;
   /** The first canonical, resolved (else as written); `null` when there is none. */
   readonly canonical: string | null;
   readonly canonicalTotal: number;
-  /** Every meta robots value, joined with `, `; `null` when there is none. */
+  /** Every robots meta as `name: content`, joined with ` · `; `null` when there is none. */
   readonly robots: string | null;
+  /** The robots metas (`robots`, `googlebot` …) that ask not to index the page; empty when it may be indexed. */
+  readonly noindexFor: readonly string[];
   readonly ogUrl: string | null;
   readonly lang: string | null;
   readonly viewport: string | null;
@@ -60,6 +63,8 @@ export interface PageFacts {
   readonly headingTotal: number;
   readonly wordCount: number;
   readonly textTruncated: boolean;
+  /** The extractor hit its deadline: lists may be shorter than their caps. */
+  readonly partial: boolean;
   /** Counted over the first `analysed` links (`SNAPSHOT_LIMITS.maxLinks`) of `total`. */
   readonly links: { readonly analysed: number; readonly total: number; readonly internal: number; readonly external: number; readonly other: number; readonly nofollow: number };
   /** Counted over the first `analysed` images of `total`. */
@@ -73,6 +78,8 @@ export interface SeoAudit {
   readonly durationMs: number;
   readonly score: number;
   readonly band: ScoreBand;
+  /** `false` when `robots-noindex` fails: the score is capped (`NOINDEX_SCORE_CAP`) and the card says "Not indexable". */
+  readonly indexable: boolean;
   readonly counts: SeverityCounts;
   readonly findings: readonly Finding[];
   readonly page: PageFacts;

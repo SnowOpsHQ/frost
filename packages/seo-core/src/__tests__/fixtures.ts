@@ -25,7 +25,7 @@ export function cleanSnapshot(): PageSnapshot {
     titleTotal: 1,
     metaDescriptions: [text('Learn how search engines read your pages, and the handful of on-page fixes that make the biggest difference.')],
     metaDescriptionTotal: 1,
-    metaRobots: ['index, follow'],
+    metaRobots: [{ name: 'robots', content: 'index, follow' }],
     canonicals: [{ href: PAGE_URL, resolved: PAGE_URL }],
     canonicalTotal: 1,
     ogUrl: PAGE_URL,
@@ -40,6 +40,7 @@ export function cleanSnapshot(): PageSnapshot {
     headingTotal: 5,
     wordCount: 850,
     textTruncated: false,
+    partial: false,
     links: [
       { href: 'https://example.com/guides/', scheme: 'https:', rel: '', text: 'All guides', kind: 'internal' },
       { href: 'https://developer.mozilla.org/', scheme: 'https:', rel: 'noopener', text: 'MDN', kind: 'external' },
@@ -52,6 +53,11 @@ export function cleanSnapshot(): PageSnapshot {
     ],
     imageTotal: 2,
   };
+}
+
+/** Robots metas: `robots('noindex')` is the generic tag, `robots('noindex', 'googlebot')` a crawler's. */
+export function robots(content: string, name: PageSnapshot['metaRobots'][number]['name'] = 'robots'): PageSnapshot['metaRobots'][number] {
+  return { name, content };
 }
 
 /** The clean snapshot with `changes` applied. */

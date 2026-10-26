@@ -12,7 +12,8 @@ A rule is `{ id, category, severity, title, why, fix, check(snapshot) }`; `check
 `FINDING_SAMPLE_LIMIT` `samples` (the offending values: image sources, link targets …), plus `count`
 where the rule counts elements. Lengths are code points of the normalised value
 (`CappedText.length`). Rules about "the title", "the meta description" and "the canonical" look at
-the first of each; rules over images and links look at the snapshot's (capped) lists.
+the first of each (for the description: the first one **with text**, so an empty tag before it
+changes nothing); rules over images and links look at the snapshot's (capped) lists.
 
 ## Catalog (`rules.test.ts`)
 - **Scenario: catalog-matches-spec** — `RULES` has exactly the ids of `SEO_RULE_SPECS`, in the same
@@ -32,9 +33,13 @@ the first of each; rules over images and links look at the snapshot's (capped) l
   when the kept text is capped; passes at exactly `TITLE_MAX_CHARS`.
 
 ## Meta description
-- **Scenario: meta-description-missing** — fails with none, or an empty first one; passes with text.
-- **Scenario: meta-description-too-short** — fails below `DESCRIPTION_MIN_CHARS`; passes at it.
-- **Scenario: meta-description-too-long** — fails above `DESCRIPTION_MAX_CHARS`; passes at it.
+- **Scenario: meta-description-missing** — fails with none, or only empty ones; passes with text,
+  also when an empty one comes first.
+- **Scenario: meta-description-too-short** — fails below `DESCRIPTION_MIN_CHARS`; passes at it;
+  measures the first description with text (an empty one before a short one still fails, an empty
+  one before a good one passes).
+- **Scenario: meta-description-too-long** — fails above `DESCRIPTION_MAX_CHARS`; passes at it;
+  measures the first description with text.
 - **Scenario: meta-description-multiple** — fails with two; passes with one.
 
 ## Headings
@@ -56,9 +61,12 @@ the first of each; rules over images and links look at the snapshot's (capped) l
 - **Scenario: canonical-has-query** — fails for a canonical with `?query`; passes without one.
 
 ## Indexing
-- **Scenario: robots-noindex** — fails for `noindex` (any case, among other tokens) and `none`;
-  passes for `index, follow` and with no robots meta.
-- **Scenario: robots-nofollow** — fails for `nofollow` and `none`; passes for `noindex` alone.
+- **Scenario: robots-noindex** — fails for `noindex` (any case, among other tokens) and `none` in
+  the generic `robots` tag, and in a `googlebot`, `googlebot-news` or `bingbot` tag alone; the
+  finding's facts name each tag (`Meta robots (googlebot)` → `noindex`); passes for `index, follow`,
+  with no robots meta, and for `noindex` in a tag frost does not read.
+- **Scenario: robots-nofollow** — fails for `nofollow` and `none` (generic or crawler-specific,
+  named likewise); passes for `noindex` alone.
 
 ## Language and mobile
 - **Scenario: lang-missing** — fails for `lang` `null`; passes for `en`.
@@ -85,7 +93,8 @@ the first of each; rules over images and links look at the snapshot's (capped) l
 - **Scenario: url-too-long** — fails above `URL_MAX_CHARS` without the fragment; passes at it, and
   a long `#fragment` alone never fails.
 - **Scenario: url-uppercase** — fails for an uppercase letter in the path; passes when only the host
-  or query has one.
+  or query has one, and for percent-escapes (`/wiki/%E6%9D%B1%E4%BA%AC`), but fails when a letter
+  outside them is uppercase (`/Wiki/%E6`).
 - **Scenario: url-underscores** — fails for `_` in the path; passes when only the query has one.
 
 ## Audit and score (`audit.test.ts`)
@@ -97,6 +106,9 @@ the first of each; rules over images and links look at the snapshot's (capped) l
 - **Scenario: score-counts-each-rule-once** — fifty images without alt weigh the same as one.
 - **Scenario: score-is-monotonic** — adding a finding never raises the score; it stays in 0–100.
 - **Scenario: score-bands** — 90 → `good`, 89 and 60 → `fair`, 59 and 0 → `poor`.
+- **Scenario: score-caps-noindex** — `robots-noindex` alone scores `NOINDEX_SCORE_CAP` (59, band
+  `poor`) instead of 93, the audit is `indexable: false` and its page facts name the tags that ask
+  (`noindexFor`); a lower score with noindex stays lower; without it the audit is `indexable`.
 - **Scenario: panel-status** — `panelStatus` is `error` with an error in the panel's categories,
   `warn` with a warning and no error, `pass` with only info findings or none.
 - **Scenario: page-facts-summarise-links-and-images** — the audit's facts count internal, external,

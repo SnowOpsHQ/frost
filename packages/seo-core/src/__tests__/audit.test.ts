@@ -1,9 +1,9 @@
 // Spec: specs/seo-rules.spec.ts (SEVERITY_WEIGHTS, SCORE_BANDS), specs/seo-sidebar.spec.ts (PanelStatus)
 // Acceptance: specs/seo-rules.feature.md (Audit and score)
 import { describe, expect, test } from 'vitest';
-import { SEO_RULE_SPECS, type SeoRuleId, type SeoSeverity } from '@app/specs/seo-rules.spec';
+import { NOINDEX_SCORE_CAP, SEO_RULE_SPECS, type SeoRuleId, type SeoSeverity } from '@app/specs/seo-rules.spec';
 import { pageFacts, panelStatus, runAudit, scoreAudit, scoreBand, type Finding } from '../index';
-import { cleanSnapshot, page, text } from './fixtures';
+import { cleanSnapshot, page, robots, text } from './fixtures';
 
 /** A finding of rule `id` as the catalog defines it. */
 function finding(id: SeoRuleId): Finding {
@@ -32,7 +32,7 @@ describe('audit', () => {
         headingTotal: 2,
         images: [{ src: 'https://example.com/a.png', alt: null, width: null, height: null, loading: null }],
         imageTotal: 1,
-        metaRobots: ['noindex'],
+        metaRobots: [robots('noindex')],
         canonicals: [],
         canonicalTotal: 0,
         ogUrl: null,
@@ -61,6 +61,19 @@ describe('audit', () => {
     expect(scoreAudit([ofSeverity('warning')])).toBe(93);
     expect(scoreAudit([ofSeverity('info')])).toBe(99);
     expect(scoreAudit([ofSeverity('error'), ofSeverity('warning', 0), ofSeverity('warning', 1), ofSeverity('warning', 2)])).toBe(64);
+  });
+
+  test('score-caps-noindex', () => {
+    expect(scoreAudit([finding('robots-noindex')])).toBe(NOINDEX_SCORE_CAP);
+    expect(scoreBand(scoreAudit([finding('robots-noindex')]))).toBe('poor');
+    // Lower stays lower.
+    const many = ['title-missing', 'h1-missing', 'canonical-multiple', 'robots-noindex'] as const;
+    expect(scoreAudit(many.map(finding))).toBe(Math.round(100 * 0.8 ** 3 * 0.93));
+    const audit = runAudit(page({ metaRobots: [robots('noindex', 'googlebot')] }));
+    expect(audit).toMatchObject({ score: NOINDEX_SCORE_CAP, band: 'poor', indexable: false });
+    expect(audit.page.noindexFor).toEqual(['googlebot']);
+    expect(runAudit(cleanSnapshot())).toMatchObject({ indexable: true });
+    expect(runAudit(cleanSnapshot()).page.noindexFor).toEqual([]);
   });
 
   test('score-counts-each-rule-once', () => {
@@ -114,14 +127,17 @@ describe('audit', () => {
           { src: 'b', alt: text(''), width: null, height: null, loading: null },
         ],
         imageTotal: 2,
-        metaRobots: ['noindex', 'nofollow'],
+        metaRobots: [robots('noindex'), robots('nofollow', 'googlebot')],
       }),
     );
     expect(facts.links).toEqual({ analysed: 4, total: 100_000, internal: 2, external: 1, other: 1, nofollow: 2 });
     expect(facts.images).toEqual({ analysed: 2, total: 2, missingAlt: 1 });
-    expect(facts.robots).toBe('noindex, nofollow');
+    expect(facts.robots).toBe('robots: noindex · googlebot: nofollow');
+    expect(facts.noindexFor).toEqual(['robots']);
     expect(facts.title?.text).toBe('SEO basics: a practical guide for beginners');
     expect(facts.canonical).toBe('https://example.com/guides/seo-basics');
     expect(pageFacts(page({ titles: [], titleTotal: 0, metaRobots: [], canonicals: [], canonicalTotal: 0 }))).toMatchObject({ title: null, robots: null, canonical: null });
+    // The description shown is the first one with text.
+    expect(pageFacts(page({ metaDescriptions: [text(''), text('Second')], metaDescriptionTotal: 2 })).description?.text).toBe('Second');
   });
 });

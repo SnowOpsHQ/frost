@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { SeoSeverity } from '@app/specs/seo-rules.spec';
 import { ErrorGlyph, InfoGlyph, WarningGlyph } from '../../icons';
-import type { LengthIndicator } from '../../seo-view';
+import { isolatedTooltip, type LengthIndicator } from '../../seo-view';
 
 // Small building blocks of the SEO panels. Every page-derived string is rendered as React text
 // inside a `<bdi>` (so a bidi override in it cannot reorder the chrome's own labels), never as
@@ -11,7 +11,7 @@ import type { LengthIndicator } from '../../seo-view';
 export function PageText({ value, className, testId, lines }: { readonly value: string; readonly className?: string; readonly testId?: string; readonly lines?: 1 | 2 | 3 }) {
   const clamp = lines && lines > 1 ? ` seo-clamp-${lines}` : ' seo-ellipsis';
   return (
-    <bdi className={`seo-page-text${clamp}${className ? ` ${className}` : ''}`} title={value} data-testid={testId} dir="auto">
+    <bdi className={`seo-page-text${clamp}${className ? ` ${className}` : ''}`} title={isolatedTooltip(value)} data-testid={testId} dir="auto">
       {value}
     </bdi>
   );

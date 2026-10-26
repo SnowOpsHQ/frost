@@ -14,7 +14,7 @@ import {
   type SeoRuleId,
 } from '@app/specs/seo-rules.spec';
 import { RULES, runAudit, type FindingDetails, type PageSnapshot } from '../index';
-import { chars, cleanSnapshot, page, PAGE_URL, text } from './fixtures';
+import { chars, cleanSnapshot, page, PAGE_URL, robots, text } from './fixtures';
 
 function rule(id: SeoRuleId) {
   const found = RULES.find((r) => r.id === id);
@@ -127,17 +127,24 @@ describe('meta description', () => {
   test('meta-description-missing', () => {
     expect(factOf(fails('meta-description-missing', page({ metaDescriptions: [], metaDescriptionTotal: 0 })), 'Meta description')).toBe('None');
     expect(factOf(fails('meta-description-missing', page({ metaDescriptions: [text('')], metaDescriptionTotal: 1 })), 'Meta description')).toBe('Empty');
+    expect(factOf(fails('meta-description-missing', page({ metaDescriptions: [text(''), text('')], metaDescriptionTotal: 2 })), 'Meta description')).toBe('Empty');
     passes('meta-description-missing', cleanSnapshot());
+    // An empty tag before one with text changes nothing.
+    passes('meta-description-missing', page({ metaDescriptions: [text(''), text(chars(100))], metaDescriptionTotal: 2 }));
   });
 
   test('meta-description-too-short', () => {
     fails('meta-description-too-short', page({ metaDescriptions: [text(chars(DESCRIPTION_MIN_CHARS - 1))] }));
     passes('meta-description-too-short', page({ metaDescriptions: [text(chars(DESCRIPTION_MIN_CHARS))] }));
+    // The first description with text is measured, whatever comes before it.
+    fails('meta-description-too-short', page({ metaDescriptions: [text(''), text(chars(10))], metaDescriptionTotal: 2 }));
+    passes('meta-description-too-short', page({ metaDescriptions: [text(''), text(chars(100))], metaDescriptionTotal: 2 }));
   });
 
   test('meta-description-too-long', () => {
     fails('meta-description-too-long', page({ metaDescriptions: [text(chars(DESCRIPTION_MAX_CHARS + 1))] }));
     passes('meta-description-too-long', page({ metaDescriptions: [text(chars(DESCRIPTION_MAX_CHARS))] }));
+    fails('meta-description-too-long', page({ metaDescriptions: [text(''), text(chars(DESCRIPTION_MAX_CHARS + 1))], metaDescriptionTotal: 2 }));
   });
 
   test('meta-description-multiple', () => {
@@ -215,17 +222,24 @@ describe('canonical', () => {
 
 describe('indexing', () => {
   test('robots-noindex', () => {
-    fails('robots-noindex', page({ metaRobots: ['noindex'] }));
-    fails('robots-noindex', page({ metaRobots: ['max-snippet:50, NOINDEX'] }));
-    fails('robots-noindex', page({ metaRobots: ['none'] }));
+    expect(fails('robots-noindex', page({ metaRobots: [robots('noindex')] })).facts).toEqual([{ label: 'Meta robots', value: 'noindex' }]);
+    fails('robots-noindex', page({ metaRobots: [robots('max-snippet:50, NOINDEX')] }));
+    fails('robots-noindex', page({ metaRobots: [robots('none')] }));
+    // A crawler-specific tag alone is enough, and the finding names it.
+    const google = fails('robots-noindex', page({ metaRobots: [robots('index, follow'), robots('noindex', 'googlebot')] }));
+    expect(google.facts).toEqual([{ label: 'Meta robots (googlebot)', value: 'noindex' }]);
+    expect(factOf(fails('robots-noindex', page({ metaRobots: [robots('noindex', 'bingbot')] })), 'Meta robots (bingbot)')).toBe('noindex');
+    expect(factOf(fails('robots-noindex', page({ metaRobots: [robots('none', 'googlebot-news')] })), 'Meta robots (googlebot-news)')).toBe('none');
     passes('robots-noindex', cleanSnapshot());
     passes('robots-noindex', page({ metaRobots: [] }));
+    passes('robots-noindex', page({ metaRobots: [robots('index'), robots('nofollow', 'googlebot')] }));
   });
 
   test('robots-nofollow', () => {
-    fails('robots-nofollow', page({ metaRobots: ['index,nofollow'] }));
-    fails('robots-nofollow', page({ metaRobots: ['none'] }));
-    passes('robots-nofollow', page({ metaRobots: ['noindex'] }));
+    fails('robots-nofollow', page({ metaRobots: [robots('index,nofollow')] }));
+    fails('robots-nofollow', page({ metaRobots: [robots('none')] }));
+    expect(factOf(fails('robots-nofollow', page({ metaRobots: [robots('nofollow', 'bingbot')] })), 'Meta robots (bingbot)')).toBe('nofollow');
+    passes('robots-nofollow', page({ metaRobots: [robots('noindex')] }));
   });
 });
 
@@ -306,6 +320,9 @@ describe('url', () => {
   test('url-uppercase', () => {
     expect(factOf(fails('url-uppercase', page({ url: 'https://example.com/Guides/SEO' })), 'Path')).toBe('/Guides/SEO');
     passes('url-uppercase', page({ url: 'https://EXAMPLE.com/guides?Q=Upper' }));
+    // Percent-escapes are not letters of the path.
+    passes('url-uppercase', page({ url: 'https://ja.wikipedia.org/wiki/%E6%9D%B1%E4%BA%AC' }));
+    fails('url-uppercase', page({ url: 'https://ja.wikipedia.org/Wiki/%E6%9D%B1' }));
   });
 
   test('url-underscores', () => {

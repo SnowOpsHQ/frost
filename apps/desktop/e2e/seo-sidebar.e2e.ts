@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
+import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_LABEL } from '@app/specs/seo-rules.spec';
 import { PAGE_MIN_WIDTH, SEO_UNAVAILABLE_MESSAGES, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH, SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
@@ -26,6 +27,27 @@ JSON.stringify = function () { hit(); return '{}'; };
 Object.defineProperty(Object.prototype, 'text', { set() { hit(); }, get() { hit(); return 'polluted'; }, configurable: true });
 </script>`;
 
+/**
+ * Links nested 1000 deep around a large hidden subtree: every link's subtree is the rest of the page.
+ * Sized so that reading each link's whole subtree (the extractor before its per-element visit cap)
+ * takes longer than EXTRACT_TIMEOUT_MS on its own (about 4.8 s measured on Linux), while the capped
+ * extractor reads it in a few hundred ms.
+ */
+const NESTED_LINKS = 1_000;
+const NESTED_SPANS = 600_000;
+const NESTED_PAGE = `<!doctype html><html lang="en"><head><title>Deeply nested links around a large subtree</title></head><body><script>
+let parent = document.body;
+for (let i = 0; i < ${NESTED_LINKS}; i++) { const a = document.createElement('a'); a.href = '/n/' + i; parent.appendChild(a); parent = a; }
+const box = document.createElement('span'); box.style.display = 'none';
+const many = document.createDocumentFragment();
+for (let i = 0; i < ${NESTED_SPANS}; i++) many.appendChild(document.createElement('i'));
+box.appendChild(many); parent.appendChild(box);
+</script></body></html>`;
+
+/** About 480 Japanese words written without spaces. */
+const JAPANESE_PAGE = `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>東京で毎日働く人のための通勤ガイドと便利な情報</title></head>
+<body><h1>通勤ガイド</h1><p>${'私は毎日東京の会社で働いています。'.repeat(60)}</p></body></html>`;
+
 const words = (n: number) => Array.from({ length: n }, (_, i) => ['cold', 'brew', 'coffee', 'water', 'grind', 'steep', 'filter', 'jar'][i % 8]).join(' ');
 
 /** Loopback pages for the sidebar: a good one, a bad one, an SPA, a hostile one, one with markup in its text, a busy one. */
@@ -36,7 +58,7 @@ async function startSeoServer() {
 <meta name="description" content="How to make smooth cold-brew coffee at home: the ratio, the grind, steeping times and storage, with no special kit.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="canonical" href="${origin}/guides/cold-brew"><meta property="og:url" content="${origin}/guides/cold-brew"></head>
-<body><h1>Cold-brew coffee at home</h1><p>${words(420)}</p><h2>What you need</h2><h3>Grind</h3><h3>Ratio</h3><h2>Storing it</h2>
+<body><div hidden><h1>Hidden duplicate headline</h1></div><h1 style="display:none">Hidden by CSS</h1><h1>Cold-brew coffee at home</h1><p>${words(420)}</p><h2>What you need</h2><h3>Grind</h3><h3>Ratio</h3><h2>Storing it</h2>
 <p><a href="/guides/">All guides</a> <a href="https://example.org/coffee">Coffee science</a> <a href="/ads" rel="sponsored">Sponsor</a></p>
 <img src="/jar.png" alt="A jar of cold brew" width="320" height="200"></body></html>`;
   const badPage = `<!doctype html><html><head><meta name="robots" content="noindex"></head>
@@ -72,6 +94,9 @@ async function startSeoServer() {
     else if (pathname === '/hostile') html(hostilePage());
     else if (pathname === '/inert') html(inertPage);
     else if (pathname === '/busy') html(busyPage);
+    else if (pathname === '/nested') html(NESTED_PAGE);
+    else if (pathname === '/ja') html(JAPANESE_PAGE);
+    else if (pathname === '/googlebot-noindex') html(goodPage().replace('<meta name="viewport"', '<meta name="googlebot" content="noindex"><meta name="viewport"'));
     else if (pathname.endsWith('.png')) response.writeHead(404).end();
     else html('<!doctype html><title>loopback</title><p>loopback</p>');
   });
@@ -241,6 +266,33 @@ test('hostile-page-snapshot-is-bounded', async () => {
   await expect(page.getByTestId('ping')).toHaveText('pong');
 });
 
+test('deep-nested-anchors-is-bounded-not-timeout', async () => {
+  const url = `${site.origin}/nested`;
+  await audit(url);
+  await expect(page.getByTestId('seo-links-total')).toContainText(`${NESTED_LINKS.toLocaleString('en-US')}`);
+  expect(Number(await page.getByTestId('seo-duration').getAttribute('data-ms'))).toBeLessThan(EXTRACT_TIMEOUT_MS);
+  await showPanel('overview');
+  await expect(page.getByTestId('seo-unavailable')).toHaveCount(0);
+});
+
+test('cjk-page-is-not-thin', async () => {
+  await audit(`${site.origin}/ja`);
+  expect(Number((await page.getByTestId('seo-fact-words').textContent())!.replace(/,/g, ''))).toBeGreaterThan(300);
+  expect(await issueIds()).not.toContain('content-thin');
+});
+
+test('noindex-page-is-not-indexable', async () => {
+  await audit(`${site.origin}/googlebot-noindex`);
+  await showPanel('overview');
+  expect(Number(await score().textContent())).toBeLessThanOrEqual(NOINDEX_SCORE_CAP);
+  await expect(score()).toHaveAttribute('data-band', 'poor');
+  await expect(page.getByTestId('seo-band')).toHaveText(NOT_INDEXABLE_LABEL);
+  await expect(page.getByTestId('seo-not-indexable')).toContainText('googlebot');
+  const noindex = page.locator('[data-testid="seo-issue"][data-rule-id="robots-noindex"]');
+  await noindex.getByTestId('seo-issue-toggle').click();
+  await expect(noindex.getByTestId('seo-issue-facts')).toContainText('Meta robots (googlebot)');
+});
+
 test('page-text-is-inert-in-sidebar', async () => {
   await audit(`${site.origin}/inert`);
   const before = await sidebar().evaluate((root) => ({ img: root.querySelectorAll('img').length, script: root.querySelectorAll('script').length, a: root.querySelectorAll('a').length }));
@@ -315,6 +367,12 @@ test('sidebar-toggle-resizes-page', async () => {
     await expect.poll(async () => (await viewBounds()).width).toBe(open.width + SIDEBAR_PANEL_WIDTH);
     // The persistent rail keeps the page's status.
     await expect(railItem('on-page')).toHaveAttribute('data-status', 'pass');
+    // Collapsing from the panel's own button leaves focus on its rail item.
+    await page.getByTestId('seo-toggle').click();
+    await expect(panel).toBeVisible();
+    await page.getByTestId('seo-collapse').click();
+    await expect(panel).toHaveCount(0);
+    await expect(railItem('on-page')).toBeFocused();
 
     // The View menu item (its accelerator, Mod+Shift+S).
     await menu(SIDEBAR_TOGGLE_MENU_ID);

@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SeoAuditResponse } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import { COMING_SOON_LABEL, DEFAULT_SEO_PANEL, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { AuditArt, ChevronIcon, ComplianceIcon, IndexabilityIcon, OnPageIcon, OverviewIcon, ReloadIcon, SchemaIcon, SpeedIcon } from '../icons';
 import { actions } from '../ipc';
-import { railStatuses } from '../seo-view';
+import { isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
 import { OnPage } from './seo/OnPage';
 import { Overview } from './seo/Overview';
@@ -31,7 +31,19 @@ const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   compliance: ComplianceIcon,
 };
 
-function Rail({ open, panel, response, onSelect }: { readonly open: boolean; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null; readonly onSelect: (panel: SeoPanelId) => void }) {
+function Rail({
+  open,
+  panel,
+  response,
+  onSelect,
+  itemRefs,
+}: {
+  readonly open: boolean;
+  readonly panel: SeoPanelId;
+  readonly response: SeoAuditResponse | null;
+  readonly onSelect: (panel: SeoPanelId) => void;
+  readonly itemRefs: Map<SeoPanelId, HTMLButtonElement>;
+}) {
   const statuses = railStatuses(response);
   return (
     <nav className="seo-rail" aria-label="SEO panels" data-testid="seo-rail">
@@ -43,6 +55,10 @@ function Rail({ open, panel, response, onSelect }: { readonly open: boolean; rea
         return (
           <button
             key={item.id}
+            ref={(el) => {
+              if (el) itemRefs.set(item.id, el);
+              else itemRefs.delete(item.id);
+            }}
             type="button"
             className="seo-rail-item"
             data-testid="seo-rail-item"
@@ -116,6 +132,17 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
 
 export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab: TabState | undefined; readonly open: boolean; readonly response: SeoAuditResponse | null; readonly onOpenChange: (open: boolean) => void }) {
   const [panel, setPanel] = useState<SeoPanelId>(DEFAULT_SEO_PANEL);
+  const railItems = useRef(new Map<SeoPanelId, HTMLButtonElement>()).current;
+  const wasOpen = useRef(open);
+  // Collapsing from inside the panel (its button, or the shortcut while focus was in it) would drop
+  // focus with the panel: it moves to the open panel's rail item instead.
+  useEffect(() => {
+    if (wasOpen.current && !open) {
+      const active = document.activeElement;
+      if (active === null || active === document.body || !document.contains(active)) railItems.get(panel)?.focus();
+    }
+    wasOpen.current = open;
+  }, [open, panel, railItems]);
   const current = SEO_PANELS.find((p) => p.id === panel)!;
   const ready = response?.status === 'ready' ? response : null;
   const host = tab ? hostOf(tab.url) : '';
@@ -134,7 +161,7 @@ export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab
           <header className="seo-head">
             <div className="seo-head-text">
               <h2 className="seo-head-title">{current.label}</h2>
-              <span className="seo-head-sub" data-testid="seo-audit-url" title={ready?.url ?? tab?.url ?? ''}>
+              <span className="seo-head-sub" data-testid="seo-audit-url" title={isolatedTooltip(ready?.url ?? tab?.url ?? '')}>
                 {host || 'SEO audit'}
               </span>
             </div>
@@ -149,7 +176,10 @@ export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab
             >
               <ReloadIcon />
             </button>
-            <button type="button" className="tool seo-head-tool" data-testid="seo-collapse" aria-label="Collapse the SEO sidebar" title="Collapse (Ctrl/⌘+Shift+S)" onClick={() => onOpenChange(false)}>
+            <button type="button" className="tool seo-head-tool" data-testid="seo-collapse" aria-label="Collapse the SEO sidebar" title="Collapse (Ctrl/⌘+Shift+S)" onClick={() => {
+                onOpenChange(false);
+                railItems.get(panel)?.focus();
+              }}>
               <ChevronIcon className="seo-collapse-icon" />
             </button>
           </header>
@@ -163,7 +193,7 @@ export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab
           ) : null}
         </div>
       ) : null}
-      <Rail open={open} panel={panel} response={response} onSelect={select} />
+      <Rail open={open} panel={panel} response={response} onSelect={select} itemRefs={railItems} />
     </aside>
   );
 }
