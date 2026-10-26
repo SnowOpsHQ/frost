@@ -8,8 +8,9 @@ import { parseSnapshot } from '../snapshot';
 const URL_A = 'https://example.com/a';
 const ok = (s: unknown) => PageSnapshotSchema.safeParse(s).success;
 const many = <T>(n: number, make: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => make(i));
-const link = (i: number) => ({ href: `https://example.com/${i}`, scheme: 'https:', rel: '', text: 'x', kind: 'internal' as const });
-const image = (i: number) => ({ src: `https://example.com/${i}.png`, alt: null, width: null, height: null, loading: null });
+const link = (i: number) => ({ href: `https://example.com/${i}`, scheme: 'https:', rel: '', text: 'x', kind: 'internal' as const, target: null });
+const image = (i: number) => ({ src: `https://example.com/${i}.png`, alt: null, width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false });
+const social = (changes: Partial<PageSnapshot['social']>) => ({ social: { ...rawSnapshot(URL_A).social, ...changes } });
 const capped = (text: string) => ({ text, length: text.length });
 
 describe('snapshot schema', () => {
@@ -56,10 +57,20 @@ describe('snapshot schema', () => {
       ['alt', (n) => ({ images: [{ ...image(0), alt: capped(x(n)) }] }), L.maxAltChars],
       ['img src', (n) => ({ images: [{ ...image(0), src: url(n) }] }), L.maxUrlChars],
       ['img width', (n) => ({ images: [{ ...image(0), width: x(n) }] }), L.maxImageAttributeChars],
+      ['link target', (n) => ({ links: [{ ...link(0), target: x(n) }] }), L.maxTargetChars],
+      ['og:title', (n) => social({ 'og:title': x(n) }), L.maxSocialChars],
+      ['twitter:site', (n) => social({ 'twitter:site': x(n) }), L.maxSocialChars],
+      ['og:image', (n) => social({ 'og:image': url(n) }), L.maxUrlChars],
+      ['twitter:image', (n) => social({ 'twitter:image': url(n) }), L.maxUrlChars],
     ];
     for (const [name, make, cap] of cases) {
       expect(ok(rawSnapshot(URL_A, make(cap))), `${name} at cap`).toBe(true);
       expect(ok(rawSnapshot(URL_A, make(cap + 1))), `${name} over cap`).toBe(false);
+    }
+    // Image sizes are integers up to maxImagePixels.
+    for (const key of ['rendered', 'natural'] as const) {
+      expect(ok(rawSnapshot(URL_A, { images: [{ ...image(0), [key]: { width: L.maxImagePixels, height: 0 } }] })), `${key} at cap`).toBe(true);
+      expect(ok(rawSnapshot(URL_A, { images: [{ ...image(0), [key]: { width: L.maxImagePixels + 1, height: 1 } }] })), `${key} over cap`).toBe(false);
     }
     // A capped text may report a longer full length (a 10 MB title), never a shorter one.
     expect(ok(rawSnapshot(URL_A, { titles: [{ text: 'abc', length: 10_485_760 }] }))).toBe(true);
@@ -93,6 +104,17 @@ describe('snapshot schema', () => {
       rawSnapshot(URL_A, { links: [link(0), link(1)], linkTotal: 1 }),
       rawSnapshot(URL_A, { titles: [capped('a'), capped('b')], titleTotal: 1 }),
       rawSnapshot(URL_A, { textTruncated: 'no' as never }),
+      rawSnapshot(URL_A, { images: [{ ...image(0), rendered: { width: 1.5, height: 2 } }] }),
+      rawSnapshot(URL_A, { images: [{ ...image(0), natural: { width: -1, height: 2 } }] }),
+      rawSnapshot(URL_A, { images: [{ ...image(0), natural: { width: 1, height: 2, depth: 3 } as never }] }),
+      rawSnapshot(URL_A, { images: [{ ...image(0), inFirstViewport: 1 as never }] }),
+      rawSnapshot(URL_A, { links: [{ ...link(0), target: 5 as never }] }),
+      rawSnapshot(URL_A, social({ 'og:audio': 'x' } as never)),
+      rawSnapshot(URL_A, social({ 'og:title': 1 as never })),
+      (() => {
+        const { 'og:type': _type, ...rest } = rawSnapshot(URL_A).social;
+        return rawSnapshot(URL_A, { social: rest as never });
+      })(),
     ];
     for (const value of bad) expect(ok(value), JSON.stringify(value).slice(0, 120)).toBe(false);
   });

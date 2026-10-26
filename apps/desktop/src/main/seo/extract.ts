@@ -1,4 +1,4 @@
-import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
+import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 
 // The SEO extractor (spec `seo-snapshot.spec.ts`, `seo-limits.spec.ts`; acceptance
 // `seo-sidebar.feature.md`, Extraction). `extractPage` is one self-contained function: it is
@@ -31,9 +31,27 @@ interface PageElement extends PageNode {
   /** Chromium has it; some test DOMs do not (then only `[hidden]` hides). */
   checkVisibility?(): boolean;
 }
+interface PageRect {
+  readonly top: number;
+  readonly left: number;
+  readonly bottom: number;
+  readonly right: number;
+  readonly width: number;
+  readonly height: number;
+}
 interface PageImageElement extends PageElement {
   readonly currentSrc: string;
   readonly src: string;
+  readonly naturalWidth: number;
+  readonly naturalHeight: number;
+  getBoundingClientRect(): PageRect;
+}
+/** The parts of the page's window the extractor reads (the first viewport's size and the scroll offset). */
+interface PageView {
+  readonly innerWidth: number;
+  readonly innerHeight: number;
+  readonly scrollX: number;
+  readonly scrollY: number;
 }
 interface PageList<T> {
   readonly length: number;
@@ -50,6 +68,7 @@ export interface PageDocument {
   readonly body: PageElement | null;
   readonly links: PageList<PageElement>;
   readonly images: PageList<PageImageElement>;
+  readonly defaultView: PageView | null;
   getElementsByTagName(name: string): PageList<PageElement>;
   querySelectorAll(selectors: string): PageList<PageElement>;
   createTreeWalker(root: PageNode, whatToShow: number, filter?: { acceptNode(node: PageNode): number } | null): PageTreeWalker;
@@ -60,7 +79,14 @@ export interface PageDocument {
  * Self-contained: it must not reference anything outside this function. Everything stops at one
  * deadline, `budgetMs` after it starts (`partial`).
  */
-export function extractPage(document: PageDocument, L: SnapshotLimits, budgetMs: number, robotsNames: readonly string[]): unknown {
+export function extractPage(
+  document: PageDocument,
+  L: SnapshotLimits,
+  budgetMs: number,
+  robotsNames: readonly string[],
+  socialTags: readonly string[],
+  socialUrlTags: readonly string[],
+): unknown {
   const started = performance.now();
   const deadline = started + budgetMs;
   const XHTML = 'http://www.w3.org/1999/xhtml';
@@ -201,6 +227,13 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, budgetMs:
   const ogContent = ogElement ? ogElement.getAttribute('content') : null;
   const ogUrl = ogContent === null ? null : cut(ogContent.trim(), L.maxUrlChars);
   const viewport = attribute(document.querySelectorAll('meta[name="viewport" i]')[0], 'content', L.maxAttributeChars);
+  // Social tags: the first meta whose `property` or `name` is the tag. URLs as written (trimmed, cut).
+  const social: Record<string, string | null> = {};
+  for (const tag of socialTags) {
+    const el = document.querySelectorAll(`meta[property="${tag}" i], meta[name="${tag}" i]`)[0];
+    const content = el ? el.getAttribute('content') : null;
+    social[tag] = content === null ? null : socialUrlTags.includes(tag) ? cut(content.trim(), L.maxUrlChars) : cut(squash(cut(content, L.maxSocialChars * 4)), L.maxSocialChars);
+  }
 
   // Headings that are shown (hidden ones are counted in the total only).
   const [headings, headingTotal] = firstOf(
@@ -228,11 +261,25 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, budgetMs:
       rel: (attribute(el, 'rel', L.maxAttributeChars) ?? '').toLowerCase(),
       text,
       kind: web ? (site(target.host) === pageSite ? 'internal' : 'external') : 'other',
+      target: attribute(el, 'target', L.maxTargetChars),
     };
   });
 
-  // Images.
+  // Images, with their rendered and natural sizes. The first viewport is the top
+  // `innerHeight` × `innerWidth` of the document, wherever it is scrolled to now.
+  const view = document.defaultView;
+  const finite = (n: number): number => (Number.isFinite(n) ? n : 0);
+  const viewWidth = view ? finite(view.innerWidth) : 0;
+  const viewHeight = view ? finite(view.innerHeight) : 0;
+  const scrollX = view ? finite(view.scrollX) : 0;
+  const scrollY = view ? finite(view.scrollY) : 0;
+  const px = (n: number): number => Math.min(L.maxImagePixels, Math.max(0, Math.round(finite(n))));
   const [images, imageTotal] = firstOf(document.images, L.maxImages, (img) => {
+    const box = isHidden(img) ? null : img.getBoundingClientRect();
+    const rendered = box && px(box.width) > 0 && px(box.height) > 0 ? { width: px(box.width), height: px(box.height) } : null;
+    const inFirstViewport =
+      box !== null && rendered !== null && finite(box.top) + scrollY < viewHeight && finite(box.bottom) + scrollY > 0 && finite(box.left) + scrollX < viewWidth && finite(box.right) + scrollX > 0;
+    const natural = px(img.naturalWidth) > 0 && px(img.naturalHeight) > 0 ? { width: px(img.naturalWidth), height: px(img.naturalHeight) } : null;
     const alt = img.getAttribute('alt');
     const small = (name: string) => {
       const value = img.getAttribute(name);
@@ -244,6 +291,9 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, budgetMs:
       width: small('width'),
       height: small('height'),
       loading: small('loading'),
+      rendered,
+      natural,
+      inFirstViewport,
     };
   });
 
@@ -301,6 +351,7 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, budgetMs:
     canonicals,
     canonicalTotal,
     ogUrl,
+    social,
     viewport,
     headings,
     headingTotal,
@@ -316,9 +367,9 @@ export function extractPage(document: PageDocument, L: SnapshotLimits, budgetMs:
 
 /**
  * The script run in the isolated world: `extractPage` called on its `document` with the spec's
- * limits, deadline and robots meta names.
+ * limits, deadline, robots meta names and social tags.
  */
-export const EXTRACTOR_SCRIPT = `(${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)})`;
+export const EXTRACTOR_SCRIPT = `(${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)})`;
 
 /** The part of a tab's WebContents the extractor needs. */
 export interface ExtractTarget {

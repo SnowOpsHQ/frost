@@ -1,6 +1,6 @@
 // Spec: specs/browser.spec.ts (WATCH_TIMEOUT_MS, schemas), specs/ipc-sender.spec.ts
 // Acceptance: specs/browser-chrome.feature.md (Router), specs/tabs.feature.md (Router),
-// specs/permissions.feature.md (Router)
+// specs/permissions.feature.md (Router), specs/seo-panels.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ADDRESS_INPUT_MAX_LENGTH, WATCH_TIMEOUT_MS, type BrowserState } from '@app/specs/browser.spec';
@@ -16,7 +16,7 @@ const PROMPT_ID = '0f8b2f63-3b7e-4b0e-9d43-7f1f0d6f2a11';
 function stateAt(version: number): BrowserState {
   return {
     version,
-    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0 }],
+    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0, highlight: 'off' }],
     activeTabId: 1,
     focusAddressBarSeq: 0,
     toggleSidebarSeq: 0,
@@ -32,6 +32,7 @@ function fakeService(version = 3) {
     newTab: vi.fn((): number | null => 2),
     closeTab: vi.fn((tabId: number) => tabId === 1),
     activateTab: vi.fn((tabId: number) => tabId === 1),
+    openBackgroundTab: vi.fn((url: string): number | null => (url.startsWith('https:') ? 5 : null)),
     back: vi.fn(),
     forward: vi.fn(),
     reload: vi.fn(),
@@ -89,6 +90,7 @@ const VALID_INPUT: Record<string, unknown> = {
   newTab: undefined,
   closeTab: { tabId: 1 },
   activateTab: { tabId: 1 },
+  openBackgroundTab: { url: 'https://example.com/a' },
   back: undefined,
   forward: undefined,
   reload: undefined,
@@ -131,6 +133,7 @@ describe('browser router', () => {
         { x: 0, y: 0, width: 1, height: 1, z: 1 },
       ],
       watch: [undefined, { sinceVersion: -1 }, { sinceVersion: 1.5 }, { sinceVersion: '1' }, { sinceVersion: 1, extra: true }],
+      openBackgroundTab: [undefined, 'https://example.com/', {}, { url: '' }, { url: 1 }, { url: 'https://example.com/', extra: true }, { url: `https://example.com/${'x'.repeat(ADDRESS_INPUT_MAX_LENGTH)}` }],
     };
     for (const [name, inputs] of Object.entries(malformed)) {
       for (const input of inputs) {
@@ -204,6 +207,16 @@ describe('browser router', () => {
       await expect(procedure(ctx, name)({ tabId: 99 }), name).resolves.toBe(false);
       expect(service[name]).toHaveBeenLastCalledWith(99);
     }
+  });
+
+  test('open-background-tab-calls-service', async () => {
+    const { service } = fakeService();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'openBackgroundTab')({ url: 'https://example.com/a' })).resolves.toBe(5);
+    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('https://example.com/a');
+    // The service decides what opens (http(s) only): anything else answers null.
+    await expect(procedure(ctx, 'openBackgroundTab')({ url: 'javascript:alert(1)' })).resolves.toBeNull();
+    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('javascript:alert(1)');
   });
 
   test('missing-browser-service-is-internal-error', async () => {

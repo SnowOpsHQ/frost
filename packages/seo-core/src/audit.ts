@@ -85,6 +85,9 @@ export function pageFacts(s: PageSnapshot): PageFacts {
       nofollow: s.links.filter((link) => tokens(link.rel).includes('nofollow')).length,
     },
     images: { analysed: s.images.length, total: s.imageTotal, missingAlt: s.images.filter((image) => image.alt === null).length },
+    linkList: s.links,
+    imageList: s.images,
+    social: s.social,
   };
 }
 

@@ -45,6 +45,40 @@ export const ROBOTS_META_NAMES = ['robots', 'googlebot', 'googlebot-news', 'bing
 export type RobotsMetaName = (typeof ROBOTS_META_NAMES)[number];
 
 /**
+ * The social sharing tags read (Phase 2 Task 2): Open Graph properties and Twitter card fields.
+ * Each is the first `<meta>` whose `property` **or** `name` attribute is the tag
+ * (case-insensitive; sites use both for either family), its `content` trimmed and
+ * whitespace-normalised. `og:url` is not in this list: it is the snapshot's own `ogUrl`
+ * (Task 1), read the same way from `property` only.
+ */
+export const SOCIAL_TAGS = [
+  'og:title',
+  'og:description',
+  'og:image',
+  'og:image:width',
+  'og:image:height',
+  'og:type',
+  'og:site_name',
+  'twitter:card',
+  'twitter:title',
+  'twitter:description',
+  'twitter:image',
+  'twitter:site',
+] as const;
+export type SocialTag = (typeof SOCIAL_TAGS)[number];
+/** The social tags whose value is a URL (cut to `maxUrlChars`, not normalised). */
+export const SOCIAL_URL_TAGS = ['og:image', 'twitter:image'] as const satisfies readonly SocialTag[];
+
+/**
+ * Highlight mode (Phase 2 Task 2; acceptance `seo-panels.feature.md`, Highlight): the overlay
+ * script runs in the same isolated world as the extractor (`SEO_WORLD_ID`) and draws at most
+ * `maxLinks` link boxes or `maxHeadings` heading boxes (the snapshot's caps), stopping at
+ * `HIGHLIGHT_BUDGET_MS`. Its boxes follow layout changes (a `ResizeObserver` and the window's
+ * `resize`), redrawn at most once per animation frame.
+ */
+export const HIGHLIGHT_BUDGET_MS = 500;
+
+/**
  * Caps on the snapshot. Lists keep their **first** `max…` entries in document order and report the
  * page's full count beside them (`…Total`); strings keep their first `max…Chars` characters and,
  * where a rule measures the value, its full length too (`CappedText.length`).
@@ -74,6 +108,18 @@ export const SNAPSHOT_LIMITS = {
   maxAltChars: 500,
   /** `width` / `height` / `loading` attribute values of an image. */
   maxImageAttributeChars: 32,
+  /**
+   * An image's rendered and natural sizes (CSS px, integers) are reported up to this; a larger
+   * value is reported as this (Phase 2 Task 2).
+   */
+  maxImagePixels: 100_000,
+  /** A link's `target` attribute value (Phase 2 Task 2). */
+  maxTargetChars: 64,
+  /**
+   * Text values of the social tags (`SOCIAL_TAGS`: titles, descriptions, types, names, sizes);
+   * their URL values (`SOCIAL_URL_TAGS`) are cut to `maxUrlChars` instead (Phase 2 Task 2).
+   */
+  maxSocialChars: 1_024,
   /**
    * Nodes (elements and text) visited at most when reading one element's text (a heading, a
    * link's anchor, a title): a link wrapping a huge subtree costs no more than this.

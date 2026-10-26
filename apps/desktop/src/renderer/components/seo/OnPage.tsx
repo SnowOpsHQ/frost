@@ -1,6 +1,8 @@
 import type { SeoAudit } from '@app/seo-core';
+import type { TabState } from '@app/specs/browser.spec';
 import { DESCRIPTION_MAX_CHARS, DESCRIPTION_MIN_CHARS, TITLE_MAX_CHARS, TITLE_MIN_CHARS, type SeoCategory } from '@app/specs/seo-rules.spec';
 import { formatCount, lengthIndicator } from '../../seo-view';
+import { HighlightToggle } from './actions';
 import { FactRow, LengthMeter, PageText, Section } from './parts';
 
 // On-Page (spec `seo-sidebar.feature.md`, Sidebar): what search engines read from the page —
@@ -51,7 +53,7 @@ function Stat({ label, value, testId, tone }: { readonly label: string; readonly
   );
 }
 
-export function OnPage({ audit }: { readonly audit: SeoAudit }) {
+export function OnPage({ audit, tab }: { readonly audit: SeoAudit; readonly tab: TabState }) {
   const page = audit.page;
   const levels = [1, 2, 3, 4, 5, 6].map((level) => page.headings.filter((h) => h.level === level).length);
   return (
@@ -80,6 +82,11 @@ export function OnPage({ audit }: { readonly audit: SeoAudit }) {
             </span>
           ))}
         </div>
+        {page.headings.length > 0 ? (
+          <div className="seo-panel-tools">
+            <HighlightToggle tab={tab} mode="headings" label="Highlight on page" testId="seo-highlight-headings" />
+          </div>
+        ) : null}
         {page.headings.length === 0 ? (
           <p className="seo-empty-line">No headings on this page.</p>
         ) : (

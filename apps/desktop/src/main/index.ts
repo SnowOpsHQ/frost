@@ -13,6 +13,7 @@ import { installAppMenu, popupContextMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { runExtractor } from './seo/extract';
+import { runHighlight } from './seo/highlight';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
@@ -92,7 +93,9 @@ function start(): void {
     popupContextMenu(template, window as BrowserWindow);
   };
   // The active tab is audited after each load and SPA route change (specs/seo-sidebar.feature.md):
-  // the extractor runs in the tab's isolated SEO world, and main validates what it answers.
+  // the extractor runs in the tab's isolated SEO world, and main validates what it answers. The
+  // highlight overlay is drawn from the same world (specs/seo-panels.feature.md), and the SEO
+  // panels' "Copy" commands write through main's clipboard (the chrome has no clipboard access).
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
@@ -100,6 +103,8 @@ function start(): void {
     session: sessionStore.writer,
     contextMenu: showContextMenu,
     seo: { extract: runExtractor },
+    highlight: runHighlight,
+    clipboard,
   });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs

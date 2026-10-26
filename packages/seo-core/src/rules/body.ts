@@ -1,5 +1,6 @@
-import { IMAGE_ALT_MAX_CHARS, THIN_CONTENT_WORDS, URL_MAX_CHARS } from '@app/specs/seo-rules.spec';
-import type { FindingDetails, PageSnapshot } from '../types';
+import { IMAGE_ALT_MAX_CHARS, IMAGE_OVERSIZE_FACTOR, THIN_CONTENT_WORDS, URL_MAX_CHARS } from '@app/specs/seo-rules.spec';
+import { isLazyInFirstViewport, isOversized, lacksDimensions } from '../images';
+import type { FindingDetails, PageImage, PageSnapshot } from '../types';
 import { characters, details, fact, formatCount, parseUrl, tokens, withoutFragment } from '../util';
 
 // Checks on the document's body (headings, text, images, links) and on the page URL (catalog:
@@ -14,6 +15,12 @@ function ofAnalysed(n: number, analysed: number, total: number): string {
 
 /** A sample's label for an element without a usable URL. */
 const orNone = (value: string) => value || '(none)';
+
+/** `w × h` of a measured size. */
+const size = (value: { width: number; height: number }) => `${formatCount(value.width)} × ${formatCount(value.height)}`;
+
+/** A sample for an oversized image: its source, natural and rendered sizes. */
+const oversizedSample = (image: PageImage) => `${orNone(image.src)} (${size(image.natural!)} shown at ${size(image.rendered!)})`;
 
 function pagePath(s: PageSnapshot): string {
   return parseUrl(s.url)?.pathname ?? '';
@@ -55,6 +62,23 @@ export const BODY_CHECKS = {
       long.map((image) => image.alt!.text),
       long.length,
     );
+  },
+
+  'images-missing-dimensions': (s) => {
+    const missing = s.images.filter(lacksDimensions);
+    return missing.length > 0
+      ? details([fact('Images without width and height', ofAnalysed(missing.length, s.images.length, s.imageTotal))], missing.map((image) => orNone(image.src)), missing.length)
+      : null;
+  },
+  'images-oversized': (s) => {
+    const oversized = s.images.filter(isOversized);
+    return oversized.length > 0
+      ? details([fact('Oversized images', ofAnalysed(oversized.length, s.images.length, s.imageTotal)), fact('Threshold', `natural size over ${IMAGE_OVERSIZE_FACTOR}× the size shown`)], oversized.map(oversizedSample), oversized.length)
+      : null;
+  },
+  'images-lazy-in-first-viewport': (s) => {
+    const lazy = s.images.filter(isLazyInFirstViewport);
+    return lazy.length > 0 ? details([fact('Lazy images in the first viewport', formatCount(lazy.length))], lazy.map((image) => orNone(image.src)), lazy.length) : null;
   },
 
   'links-empty-anchor': (s) => {

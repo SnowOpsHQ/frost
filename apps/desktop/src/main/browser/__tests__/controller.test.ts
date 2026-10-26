@@ -372,7 +372,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0 });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0, highlight: 'off' });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);

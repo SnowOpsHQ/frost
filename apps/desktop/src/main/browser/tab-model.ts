@@ -1,6 +1,7 @@
 import type { BrowserWindow, WebContentsView } from 'electron';
 import { WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH, type LoadError, type PageBounds, type TabState } from '@app/specs/browser.spec';
 import { DEFAULT_ZOOM, ZOOM_FACTORS } from '@app/specs/page-commands.spec';
+import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
 // The browser controller's tab model (`controller.ts`): what it keeps per tab and the strip state
 // its parts share, plus pure helpers over them. Only Electron *types* are imported.
@@ -14,10 +15,10 @@ export type HostWindow = Pick<
 >;
 
 /**
- * A tab's own state; its `permissionPrompt` comes from the broker and its `auditVersion` from the
- * SEO auditor when the state is read.
+ * A tab's own state; its `permissionPrompt` comes from the broker, its `auditVersion` from the SEO
+ * auditor and its `highlight` from `Tab.highlight` when the state is read.
  */
-export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion'>;
+export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion' | 'highlight'>;
 export type FullscreenMode = NonNullable<TabState['fullscreen']>;
 
 export interface Tab {
@@ -58,6 +59,12 @@ export interface Tab {
    * state until its view commits something (a load in flight has no URL yet).
    */
   restored: { readonly url: string; readonly title: string } | null;
+  /**
+   * The SEO highlight overlay on its page (`seo.setHighlight`), and the URL (without its
+   * `#fragment`) it was drawn on: an in-page navigation to another URL turns it off.
+   */
+  highlight: HighlightMode;
+  highlightKey: string;
   state: PageState;
 }
 
@@ -91,6 +98,8 @@ export function createTab(id: number, openerId: number | null = null): Tab {
     exitRequested: false,
     openerId,
     restored: null,
+    highlight: 'off',
+    highlightKey: '',
     state: emptyTabState(id),
   };
 }

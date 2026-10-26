@@ -117,7 +117,12 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   session, and are not tracking-capable from the chrome. Decide: show the image URL only, or proxy it.
 - Highlight mode: an isolated-world overlay outlining links by type and the heading outline on the page,
   toggled from the panel. It is removed cleanly.
-- [ ] commit `feat(seo): links, images, social and highlight mode`
+- Decisions (`specs/seo-panels.feature.md`): CSV and "Copy URL" are written by main
+  (`seo.copyLinksCsv`, `seo.copyUrl`: only what the audit lists); remote images are never loaded
+  into the chrome (URL, declared size and a placeholder; a proxied thumbnail could come later); the
+  overlay lives in a closed shadow root styled through the CSSOM, so a page's CSP does not affect it;
+  links open through `browser.openBackgroundTab` (`http(s)` only).
+- [x] commit `feat(seo): links, images, social and highlight mode`
 
 ### Task 3: Schema panel
 

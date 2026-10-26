@@ -6,6 +6,7 @@ import {
   DESCRIPTION_MIN_CHARS,
   FINDING_SAMPLE_LIMIT,
   IMAGE_ALT_MAX_CHARS,
+  IMAGE_OVERSIZE_FACTOR,
   SEO_RULE_SPECS,
   THIN_CONTENT_WORDS,
   TITLE_MAX_CHARS,
@@ -14,7 +15,7 @@ import {
   type SeoRuleId,
 } from '@app/specs/seo-rules.spec';
 import { RULES, runAudit, type FindingDetails, type PageSnapshot } from '../index';
-import { chars, cleanSnapshot, page, PAGE_URL, robots, text } from './fixtures';
+import { chars, cleanSnapshot, page, PAGE_URL, robots, socialTags, text } from './fixtures';
 
 function rule(id: SeoRuleId) {
   const found = RULES.find((r) => r.id === id);
@@ -45,14 +46,18 @@ const link = (changes: Partial<PageSnapshot['links'][number]> = {}): PageSnapsho
   rel: '',
   text: 'A page',
   kind: 'internal',
+  target: null,
   ...changes,
 });
 const image = (changes: Partial<PageSnapshot['images'][number]> = {}): PageSnapshot['images'][number] => ({
   src: 'https://example.com/a.png',
   alt: text('An image'),
-  width: null,
-  height: null,
+  width: '100',
+  height: '50',
   loading: null,
+  rendered: { width: 100, height: 50 },
+  natural: { width: 200, height: 100 },
+  inFirstViewport: false,
   ...changes,
 });
 const canonical = (href: string, resolved: string | null = new URL(href, PAGE_URL).href) => ({ canonicals: [{ href, resolved }], canonicalTotal: 1 });
@@ -286,6 +291,42 @@ describe('images', () => {
   });
 });
 
+describe('image loading and size', () => {
+  test('images-missing-dimensions', () => {
+    const result = fails(
+      'images-missing-dimensions',
+      page({ images: [image(), image({ src: 'https://example.com/w.png', height: null }), image({ src: 'https://example.com/h.png', width: ' ' }), image({ src: 'https://example.com/none.png', width: null, height: null })], imageTotal: 4 }),
+    );
+    expect(result.count).toBe(3);
+    expect(result.samples).toEqual(['https://example.com/w.png', 'https://example.com/h.png', 'https://example.com/none.png']);
+    expect(factOf(result, 'Images without width and height')).toBe('3 of 4');
+    passes('images-missing-dimensions', page({ images: [image()], imageTotal: 1 }));
+    // An image with no layout box (hidden) shifts nothing.
+    passes('images-missing-dimensions', page({ images: [image({ width: null, height: null, rendered: null })], imageTotal: 1 }));
+  });
+
+  test('images-oversized', () => {
+    const factor = IMAGE_OVERSIZE_FACTOR;
+    const result = fails('images-oversized', page({ images: [image({ rendered: { width: 100, height: 50 }, natural: { width: 100 * factor + 1, height: 50 } })], imageTotal: 1 }));
+    expect(result.samples).toEqual([`https://example.com/a.png (${100 * factor + 1} × 50 shown at 100 × 50)`]);
+    fails('images-oversized', page({ images: [image({ rendered: { width: 100, height: 50 }, natural: { width: 100, height: 50 * factor + 1 } })], imageTotal: 1 }));
+    // Exactly the factor is fine (a high-density screen needs it).
+    passes('images-oversized', page({ images: [image({ rendered: { width: 100, height: 50 }, natural: { width: 100 * factor, height: 50 * factor } })], imageTotal: 1 }));
+    // Unknown sizes (not loaded, no box) and vectors never count.
+    passes('images-oversized', page({ images: [image({ natural: null }), image({ rendered: null, natural: { width: 9_000, height: 9_000 } })], imageTotal: 2 }));
+    passes('images-oversized', page({ images: [image({ src: 'https://example.com/logo.SVG?v=2', natural: { width: 9_000, height: 9_000 } })], imageTotal: 1 }));
+    passes('images-oversized', page({ images: [image({ src: 'data:image/svg+xml,<svg/>', natural: { width: 9_000, height: 9_000 } })], imageTotal: 1 }));
+    passes('images-oversized', page({ images: [image({ rendered: { width: 0, height: 0 }, natural: { width: 9_000, height: 9_000 } })], imageTotal: 1 }));
+  });
+
+  test('images-lazy-in-first-viewport', () => {
+    const result = fails('images-lazy-in-first-viewport', page({ images: [image({ loading: 'LAZY', inFirstViewport: true }), image({ loading: 'lazy' })], imageTotal: 2 }));
+    expect(result.count).toBe(1);
+    // Lazy below the fold, and eager in the first viewport, are right.
+    passes('images-lazy-in-first-viewport', page({ images: [image({ loading: 'lazy', inFirstViewport: false }), image({ loading: 'eager', inFirstViewport: true }), image({ inFirstViewport: true })], imageTotal: 3 }));
+  });
+});
+
 describe('links', () => {
   test('links-empty-anchor', () => {
     const result = fails('links-empty-anchor', page({ links: [link(), link({ href: 'https://example.com/icon', text: '' })], linkTotal: 2 }));
@@ -328,5 +369,44 @@ describe('url', () => {
   test('url-underscores', () => {
     fails('url-underscores', page({ url: 'https://example.com/seo_basics' }));
     passes('url-underscores', page({ url: 'https://example.com/seo-basics?utm_source=x' }));
+  });
+});
+
+describe('social', () => {
+  const social = (changes: Partial<PageSnapshot['social']>) => page({ social: socialTags(changes) });
+
+  test('og-title-missing', () => {
+    expect(factOf(fails('og-title-missing', social({ 'og:title': null })), 'og:title')).toBe('None');
+    expect(factOf(fails('og-title-missing', social({ 'og:title': ' ' })), 'og:title')).toBe('Empty');
+    passes('og-title-missing', cleanSnapshot());
+  });
+
+  test('og-description-missing', () => {
+    fails('og-description-missing', social({ 'og:description': null }));
+    fails('og-description-missing', social({ 'og:description': '' }));
+    passes('og-description-missing', cleanSnapshot());
+  });
+
+  test('og-image-missing', () => {
+    fails('og-image-missing', social({ 'og:image': null }));
+    fails('og-image-missing', social({ 'og:image': '' }));
+    // A twitter:image alone does not make an Open Graph image.
+    fails('og-image-missing', social({ 'og:image': null, 'twitter:image': 'https://example.com/t.png' }));
+    passes('og-image-missing', cleanSnapshot());
+  });
+
+  test('og-image-not-https', () => {
+    expect(factOf(fails('og-image-not-https', social({ 'og:image': '/img/share.png' })), 'Problem')).toBe('Relative URL');
+    expect(factOf(fails('og-image-not-https', social({ 'og:image': '//cdn.example.com/share.png' })), 'Problem')).toBe('Relative URL');
+    expect(factOf(fails('og-image-not-https', social({ 'og:image': 'http://example.com/share.png' })), 'Problem')).toBe('http: URL');
+    fails('og-image-not-https', social({ 'og:image': 'img/share.png' }));
+    passes('og-image-not-https', social({ 'og:image': 'HTTPS://example.com/share.png' }));
+    // A missing image is og-image-missing, not this.
+    passes('og-image-not-https', social({ 'og:image': null }));
+  });
+
+  test('twitter-card-missing', () => {
+    fails('twitter-card-missing', social({ 'twitter:card': null }));
+    passes('twitter-card-missing', social({ 'twitter:card': 'summary' }));
   });
 });

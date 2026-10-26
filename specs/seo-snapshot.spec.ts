@@ -10,7 +10,8 @@
  * renderer imports this module for its types only.
  */
 import { z } from 'zod';
-import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L } from './seo-limits.spec';
+import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
+import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
 import { isWebUrl } from './web-url.spec';
 
 export * from './seo-limits.spec';
@@ -68,8 +69,9 @@ export type LinkKind = (typeof LINK_KINDS)[number];
 /**
  * `a[href]` / `area[href]`, in document order: `href` resolved against the document (`''` if it
  * does not parse), its `scheme` (lowercased `URL.protocol`, `''` if none), `rel` (lowercased,
- * whitespace-normalised tokens), and the anchor text: its text content, else `aria-label`, else the
- * `alt` of an image inside it, else `title` (normalised, capped; `''` when there is none).
+ * whitespace-normalised tokens), the anchor text: its text content, else `aria-label`, else the
+ * `alt` of an image inside it, else `title` (normalised, capped; `''` when there is none), and its
+ * `target` attribute as written (trimmed, capped at `maxTargetChars`; `null` when absent).
  */
 export const LinkSchema = z.strictObject({
   href: urlText,
@@ -77,12 +79,23 @@ export const LinkSchema = z.strictObject({
   rel: attribute,
   text: z.string().max(L.maxAnchorChars),
   kind: z.enum(LINK_KINDS),
+  target: z.string().max(L.maxTargetChars).nullable(),
 });
+
+const pixels = z.int().nonnegative().max(L.maxImagePixels);
+/** A width × height in CSS pixels (integers, each at most `maxImagePixels`). */
+export const ImageSizeSchema = z.strictObject({ width: pixels, height: pixels });
 
 /**
  * `img`, in document order: `src` resolved (`currentSrc` if set; `''` if none), its `alt` (`null`
  * when the attribute is absent; `alt=""` marks a decorative image), and the `width`, `height` and
- * `loading` attributes as written (`null` when absent).
+ * `loading` attributes as written (`null` when absent). Measured in the page (Task 2):
+ * - `rendered`: the size of its layout box (`getBoundingClientRect()`, rounded); `null` when it
+ *   has none (hidden, see Hidden elements, or a box with no area);
+ * - `natural`: its intrinsic size (`naturalWidth` × `naturalHeight`); `null` while it has none
+ *   (not loaded yet, e.g. a lazy image below the fold, or broken);
+ * - `inFirstViewport`: its box overlaps the first viewport, the top `innerHeight` × `innerWidth`
+ *   CSS px of the document (wherever the page is scrolled to now); `false` without a box.
  */
 export const ImageSchema = z.strictObject({
   src: urlText,
@@ -90,7 +103,24 @@ export const ImageSchema = z.strictObject({
   width: z.string().max(L.maxImageAttributeChars).nullable(),
   height: z.string().max(L.maxImageAttributeChars).nullable(),
   loading: z.string().max(L.maxImageAttributeChars).nullable(),
+  rendered: ImageSizeSchema.nullable(),
+  natural: ImageSizeSchema.nullable(),
+  inFirstViewport: z.boolean(),
 });
+
+const isUrlTag = (tag: SocialTag): boolean => (SOCIAL_URL_TAGS as readonly SocialTag[]).includes(tag);
+/**
+ * The social sharing tags (`SOCIAL_TAGS`, Task 2): each tag's first value (see `SOCIAL_TAGS`), or
+ * `null` when the page has none. URL values (`SOCIAL_URL_TAGS`) are kept as written (trimmed, cut
+ * to `maxUrlChars`), so a rule can tell a relative one; the others are normalised and cut to
+ * `maxSocialChars`.
+ */
+export const SocialSchema = z.strictObject(
+  Object.fromEntries(SOCIAL_TAGS.map((tag) => [tag, z.string().max(isUrlTag(tag) ? L.maxUrlChars : L.maxSocialChars).nullable()])) as Record<
+    SocialTag,
+    z.ZodNullable<z.ZodString>
+  >,
+);
 
 /**
  * The snapshot. Lists hold the first entries in document order (at most their `SNAPSHOT_LIMITS`
@@ -106,6 +136,7 @@ export const ImageSchema = z.strictObject({
  *   document order, with its name.
  * - `canonicals`: each `link[rel~=canonical]`.
  * - `ogUrl`: the first `meta[property="og:url"]`'s `content` (`null` when absent).
+ * - `social`: the Open Graph and Twitter card tags (`SocialSchema`).
  * - `viewport`: the first `meta[name=viewport]`'s `content` (`null` when absent).
  * - `wordCount`: words in the body's text nodes outside `script`, `style`, `noscript`,
  *   `template`, `svg`, `math`, `iframe` and `object` subtrees and hidden elements
@@ -131,6 +162,7 @@ export const PageSnapshotSchema = z
     canonicals: z.array(CanonicalSchema).max(L.maxRepeated),
     canonicalTotal: count,
     ogUrl: urlText.nullable(),
+    social: SocialSchema,
     viewport: attribute.nullable(),
     headings: z.array(HeadingSchema).max(L.maxHeadings),
     headingTotal: count,
@@ -156,9 +188,38 @@ export type PageSnapshot = z.infer<typeof PageSnapshotSchema>;
 export type PageLink = z.infer<typeof LinkSchema>;
 export type PageImage = z.infer<typeof ImageSchema>;
 export type PageHeading = z.infer<typeof HeadingSchema>;
+export type ImageSize = z.infer<typeof ImageSizeSchema>;
+export type PageSocial = z.infer<typeof SocialSchema>;
 export type RobotsMeta = z.infer<typeof RobotsMetaSchema>;
 export type CappedText = PageSnapshot['titles'][number];
 
 /** `seo.getAudit` / `seo.rerun` input: a tab's id (as `browser.closeTab`'s `TabIdInputSchema`). */
 export const SeoTabInputSchema = z.strictObject({ tabId: z.int().positive() });
 export type SeoTabInput = z.infer<typeof SeoTabInputSchema>;
+
+/**
+ * The Links panel's filter (Task 2; `seo-sidebar.spec.ts`, `LINK_TYPE_FILTERS`, `LINK_REL_FILTERS`):
+ * by type, by rel, and a case-insensitive text search over the href and the anchor text (at most
+ * `LINK_FILTER_QUERY_MAX_CHARS`; `''` matches every link).
+ */
+export const LinkFilterSchema = z.strictObject({
+  type: z.enum(LINK_TYPE_FILTERS),
+  rel: z.enum(LINK_REL_FILTERS),
+  query: z.string().max(LINK_FILTER_QUERY_MAX_CHARS),
+});
+export type LinkFilter = z.infer<typeof LinkFilterSchema>;
+
+/** `seo.copyLinksCsv` input: the tab, and the filter whose rows are copied (what the panel shows). */
+export const SeoLinksCsvInputSchema = z.strictObject({ tabId: z.int().positive(), filter: LinkFilterSchema });
+export type SeoLinksCsvInput = z.infer<typeof SeoLinksCsvInputSchema>;
+
+/**
+ * `seo.copyUrl` input: the tab and a URL its ready audit lists (a link's `href`, an image's `src`,
+ * `og:url` or a social image). Any other value copies nothing.
+ */
+export const SeoCopyUrlInputSchema = z.strictObject({ tabId: z.int().positive(), url: urlText.min(1) });
+export type SeoCopyUrlInput = z.infer<typeof SeoCopyUrlInputSchema>;
+
+/** `seo.setHighlight` input: the tab and the mode (`HIGHLIGHT_MODES`). */
+export const SeoHighlightInputSchema = z.strictObject({ tabId: z.int().positive(), mode: z.enum(HIGHLIGHT_MODES) });
+export type SeoHighlightInput = z.infer<typeof SeoHighlightInputSchema>;

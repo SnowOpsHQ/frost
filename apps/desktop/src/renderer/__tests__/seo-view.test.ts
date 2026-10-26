@@ -1,10 +1,10 @@
 // Spec: specs/seo-sidebar.spec.ts (SIDEBAR_DEFAULT_OPEN, SEO_PANELS), specs/seo-rules.spec.ts (thresholds)
-// Acceptance: specs/seo-sidebar.feature.md (Renderer helpers)
+// Acceptance: specs/seo-sidebar.feature.md (Renderer helpers), specs/seo-panels.feature.md (Renderer helpers)
 import { describe, expect, test } from 'vitest';
 import type { Finding, SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { TITLE_MAX_CHARS, TITLE_MIN_CHARS } from '@app/specs/seo-rules.spec';
-import { SEO_PANELS, SIDEBAR_DEFAULT_OPEN } from '@app/specs/seo-sidebar.spec';
-import { isolatedTooltip, lengthIndicator, railStatuses, shownResponse, sidebarOpenFromStorage } from '../seo-view';
+import { LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN } from '@app/specs/seo-sidebar.spec';
+import { declaredSize, formatSize, isolatedTooltip, lengthIndicator, linkQuery, openableUrl, oversizeRatio, railStatuses, shownResponse, sidebarOpenFromStorage } from '../seo-view';
 
 function finding(severity: Finding['severity'], category: Finding['category']): Finding {
   return { ruleId: 'title-missing', category, severity, title: 't', why: 'w', fix: 'f', details: { facts: [], samples: [] } };
@@ -34,11 +34,14 @@ describe('seo view helpers', () => {
     expect(railStatuses(null)).toEqual({});
     expect(railStatuses({ status: 'pending', url: 'https://a.example/' })).toEqual({});
     expect(railStatuses({ status: 'unavailable', url: 'https://a.example/', reason: 'timeout' })).toEqual({});
-    const statuses = railStatuses(ready('https://a.example/', [finding('warning', 'links'), finding('error', 'title')]));
+    const statuses = railStatuses(ready('https://a.example/', [finding('warning', 'links'), finding('error', 'title'), finding('warning', 'social')]));
+    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', links: 'warn', images: 'pass', social: 'warn' };
     for (const panel of SEO_PANELS) {
-      if (panel.available) expect(statuses[panel.id], panel.id).toBe('error');
+      if (panel.available) expect(statuses[panel.id], panel.id).toBe(expected[panel.id]);
       else expect(statuses[panel.id], panel.id).toBeUndefined();
     }
+    // Social findings colour Overview and Social, not On-Page.
+    expect(railStatuses(ready('https://a.example/', [finding('error', 'social')]))).toMatchObject({ overview: 'error', 'on-page': 'pass', social: 'error', links: 'pass', images: 'pass' });
     expect(railStatuses(ready('https://a.example/', [finding('info', 'url')]))['on-page']).toBe('pass');
     expect(railStatuses(ready('https://a.example/', [finding('warning', 'url')]))['on-page']).toBe('warn');
   });
@@ -57,5 +60,29 @@ describe('seo view helpers', () => {
     expect(isolatedTooltip('plain')).toBe('\u2068plain\u2069');
     // An override inside stays inside: the tooltip text ends with the isolate's close.
     expect(isolatedTooltip('\u202Eevil')).toBe('\u2068\u202Eevil\u2069');
+  });
+
+  test('only-web-urls-are-openable', () => {
+    for (const url of ['https://example.com/', 'http://127.0.0.1:8080/x']) expect(openableUrl(url), url).toBe(true);
+    for (const url of ['javascript:alert(1)', 'data:image/png;base64,AAAA', 'mailto:a@example.com', 'file:///etc/passwd', '/relative', '', 'app://app/']) expect(openableUrl(url), url).toBe(false);
+  });
+
+  test('image-size-labels', () => {
+    expect(formatSize({ width: 1200, height: 630 })).toBe('1,200 × 630');
+    expect(formatSize(null)).toBeNull();
+    expect(declaredSize('640', ' 360 ')).toBe('640 × 360');
+    expect(declaredSize('640', null)).toBe('640 × ?');
+    expect(declaredSize(null, '')).toBeNull();
+    expect(oversizeRatio({ width: 100, height: 50 }, { width: 250, height: 50 })).toBe('2.5×');
+    expect(oversizeRatio({ width: 100, height: 50 }, null)).toBeNull();
+    expect(oversizeRatio({ width: 0, height: 50 }, { width: 10, height: 10 })).toBeNull();
+  });
+
+  test('link-query-is-capped', () => {
+    expect(linkQuery('coffee')).toBe('coffee');
+    expect(linkQuery('x'.repeat(LINK_FILTER_QUERY_MAX_CHARS + 5))).toHaveLength(LINK_FILTER_QUERY_MAX_CHARS);
+    // A surrogate pair at the cut is dropped whole.
+    const emoji = `${'x'.repeat(LINK_FILTER_QUERY_MAX_CHARS - 1)}😀`;
+    expect(linkQuery(emoji)).toBe('x'.repeat(LINK_FILTER_QUERY_MAX_CHARS - 1));
   });
 });

@@ -1,15 +1,18 @@
 import type { SavedSession } from '@app/db';
 import type { BrowserService, SeoService } from '@app/ipc-contract';
+import { filterLinks, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
-import { isWebUrl } from '@app/specs/web-url.spec';
+import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { createFullscreen } from './fullscreen';
 import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
+import { createTabHighlights } from '../seo/highlights';
 import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
 import { wireTabView, type TabContextMenuRequest } from './tab-events';
@@ -101,7 +104,10 @@ export interface BrowserController extends BrowserService {
    * `seo-sidebar.feature.md`): bumps `toggleSidebarSeq`. A no-op without a window.
    */
   toggleSidebar(): void;
-  /** The tabs' SEO audits, as the `seo.*` procedures see them (`seo-sidebar.feature.md`, Auditor). */
+  /**
+   * The tabs' SEO audits, highlight overlays and copy commands, as the `seo.*` procedures see them
+   * (`seo-sidebar.feature.md`, Auditor; `seo-panels.feature.md`).
+   */
   readonly seo: SeoService;
 }
 
@@ -135,6 +141,16 @@ export interface BrowserControllerOptions {
    * page's audit stays `pending`).
    */
   readonly seo?: TabAuditsOptions;
+  /**
+   * Draws or removes the SEO highlight overlay in a tab's page (`runHighlight` in
+   * `../seo/highlight.ts`). Without it `seo.setHighlight` is a no-op answering `false`.
+   */
+  readonly highlight?: (contents: TabView['webContents'], mode: HighlightMode) => Promise<unknown>;
+  /**
+   * The system clipboard (Electron's `clipboard`, in main): "Copy as CSV" and "Copy URL" write
+   * through it, so the chrome never needs clipboard access. Without it they copy nothing.
+   */
+  readonly clipboard?: { writeText(text: string): void };
 }
 
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {
@@ -149,7 +165,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id), highlight: tab.highlight })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
@@ -187,9 +203,18 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed,
   });
 
+  // The SEO highlight overlay, on the active tab only (it goes when the page changes or the tab is left).
+  const highlights = createTabHighlights({
+    paint: options.highlight,
+    isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    changed,
+  });
+
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
   const openEmptyTab = (): number => {
     const tab = createTab(nextTabId++);
+    const left = activeTab();
+    if (left) highlights.deactivated(left);
     strip.tabs.push(tab);
     strip.activeTabId = tab.id;
     return tab.id;
@@ -247,6 +272,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (fullscreen.clear(tab)) fullscreen.leaveWindowFullscreen();
     prompts.deny(tab);
     audits.forget(tab);
+    highlights.dropped(tab);
     if (view) detach(view);
     return view;
   };
@@ -325,6 +351,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const refresh = (tab: Tab): void => {
     const contents = tab.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
+    // An error or crash panel replaced the page: its overlay went with it.
+    if (!showsPage(tab)) highlights.dropped(tab);
     const url = contents.getURL();
     // A restored tab's first load has no URL until it commits: it keeps showing what was saved.
     const shown = url === '' ? tab.restored : null;
@@ -367,8 +395,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       takeShortcut,
       removeTab,
       contextMenu: options.contextMenu,
-      pageSettled: audits.schedule,
-      pageCommitted: audits.navigated,
+      pageSettled: (t, kind) => {
+        if (kind === 'in-page') highlights.navigatedInPage(t);
+        audits.schedule(t, kind);
+      },
+      pageCommitted: (t) => {
+        highlights.dropped(t);
+        audits.navigated(t);
+      },
     });
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
     applyBounds(tab);
@@ -393,6 +427,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const tab = strip.tabs.find((t) => t.id === tabId);
     if (!tab || !hasWindow()) return false;
     if (tab.id === strip.activeTabId) return true;
+    // The tab left behind loses its overlay.
+    const left = activeTab();
+    if (left) highlights.deactivated(left);
     strip.activeTabId = tab.id;
     syncAttached();
     focusActive();
@@ -493,9 +530,22 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const openTabFromPage = (opener: unknown, url: string): number | null => {
     if (!hasWindow() || !isWebUrl(url)) return null;
-    const index = strip.tabs.findIndex((tab) => tab.view !== null && aliveContents(tab.view) === opener);
-    const openerTab = strip.tabs[index];
-    if (!openerTab) return null;
+    const openerTab = strip.tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === opener);
+    return openerTab ? openTabRightOf(openerTab, url) : null;
+  };
+
+  /** A link from the SEO sidebar: opened in a background tab right of the active tab (as its popup would be). */
+  const openBackgroundTab = (url: string): number | null => {
+    const parsed = parseWebUrl(url);
+    const opener = activeTab();
+    if (!hasWindow() || !parsed || !opener) return null;
+    return openTabRightOf(opener, parsed.href);
+  };
+
+  /** Opens the `http(s)` `url` in a new background tab right of `openerTab`, after the tabs it opened. */
+  const openTabRightOf = (openerTab: Tab, url: string): number | null => {
+    const index = strip.tabs.indexOf(openerTab);
+    if (index < 0) return null;
     if (strip.tabs.length >= MAX_TABS) {
       raiseNotice('tab-limit');
       return null;
@@ -668,8 +718,28 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     toggleSidebar,
 
+    openBackgroundTab,
+
     seo: {
       getAudit: (tabId) => audits.response(strip.tabs.find((tab) => tab.id === tabId)),
+      setHighlight: (tabId, mode) => {
+        const tab = strip.tabs.find((t) => t.id === tabId);
+        return tab !== undefined && highlights.set(tab, mode);
+      },
+      // Both copy only what the tab's ready audit lists, through main's clipboard.
+      copyLinksCsv: (tabId, filter) => {
+        const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
+        if (!options.clipboard || response.status !== 'ready') return null;
+        const rows = filterLinks(response.audit.page.linkList, filter);
+        options.clipboard.writeText(linksCsv(rows));
+        return rows.length;
+      },
+      copyUrl: (tabId, url) => {
+        const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
+        if (!options.clipboard || response.status !== 'ready' || !pageUrls(response.audit.page).has(url)) return false;
+        options.clipboard.writeText(url);
+        return true;
+      },
       // Only the active tab is ever audited (`RERUN_ACTIVE_TAB_ONLY`).
       rerun: (tabId) => {
         const tab = activeTab();

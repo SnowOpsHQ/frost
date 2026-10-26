@@ -1,9 +1,12 @@
 import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
+import type { LinkFilter } from '@app/seo-core';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
+import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
-// the user intents it sends. All browser state, and every SEO audit, lives in main.
+// the user intents it sends. All browser state, and every SEO audit, lives in main. The chrome never
+// touches the system clipboard itself: "Copy" commands ask main to write it.
 
 export const ipc = createIpcClient<AppRouter>();
 
@@ -23,4 +26,12 @@ export const actions = {
   setPageBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipc.browser.setPageBounds.mutate(bounds).catch(ignore),
   /** Audits the tab again (`seo.rerun`). */
   rerunAudit: (tabId: number) => ipc.seo.rerun.mutate({ tabId }).catch(ignore),
+  /** Opens an `http(s)` URL from a panel in a background tab (main checks the scheme); resolves the tab's id or `null`. */
+  openBackgroundTab: (url: string) => ipc.browser.openBackgroundTab.mutate({ url }).catch(() => null),
+  /** Sets the tab's highlight overlay (`seo.setHighlight`); resolves whether it was set. */
+  setHighlight: (tabId: number, mode: HighlightMode) => ipc.seo.setHighlight.mutate({ tabId, mode }).catch(() => false),
+  /** Copies the filtered links as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
+  copyLinksCsv: (tabId: number, filter: LinkFilter) => ipc.seo.copyLinksCsv.mutate({ tabId, filter }).catch(() => null),
+  /** Copies a URL the audit lists through main's clipboard; resolves whether it was copied. */
+  copyUrl: (tabId: number, url: string) => ipc.seo.copyUrl.mutate({ tabId, url }).catch(() => false),
 };

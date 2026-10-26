@@ -2,12 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import type { SeoAuditResponse } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import { COMING_SOON_LABEL, DEFAULT_SEO_PANEL, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
-import { AuditArt, ChevronIcon, ComplianceIcon, IndexabilityIcon, OnPageIcon, OverviewIcon, ReloadIcon, SchemaIcon, SpeedIcon } from '../icons';
+import { AuditArt, ChevronIcon, ComplianceIcon, ImagesIcon, IndexabilityIcon, LinksIcon, OnPageIcon, OverviewIcon, ReloadIcon, SchemaIcon, SocialIcon, SpeedIcon } from '../icons';
 import { actions } from '../ipc';
 import { isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
+import { Images } from './seo/Images';
+import { Links } from './seo/Links';
 import { OnPage } from './seo/OnPage';
 import { Overview } from './seo/Overview';
+import { Social } from './seo/Social';
 
 // The SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance `seo-sidebar.feature.md`, Sidebar): docked
 // right of the page area, the open panel and then the persistent rail at the window's edge. The
@@ -25,6 +28,9 @@ function canRerun(response: SeoAuditResponse | null): boolean {
 const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   overview: OverviewIcon,
   'on-page': OnPageIcon,
+  links: LinksIcon,
+  images: ImagesIcon,
+  social: SocialIcon,
   schema: SchemaIcon,
   indexability: IndexabilityIcon,
   speed: SpeedIcon,
@@ -127,7 +133,18 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
     const retry = RETRYABLE.has(response.reason) ? () => void actions.rerunAudit(tab.id) : undefined;
     return <Hint testId="seo-unavailable" reason={response.reason} title="Audit unavailable" message={SEO_UNAVAILABLE_MESSAGES[response.reason]} retry={retry} />;
   }
-  return panel === 'on-page' ? <OnPage audit={response.audit} /> : <Overview audit={response.audit} />;
+  switch (panel) {
+    case 'on-page':
+      return <OnPage audit={response.audit} tab={tab} />;
+    case 'links':
+      return <Links audit={response.audit} tab={tab} />;
+    case 'images':
+      return <Images audit={response.audit} tab={tab} />;
+    case 'social':
+      return <Social audit={response.audit} tab={tab} />;
+    default:
+      return <Overview audit={response.audit} />;
+  }
 }
 
 export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab: TabState | undefined; readonly open: boolean; readonly response: SeoAuditResponse | null; readonly onOpenChange: (open: boolean) => void }) {

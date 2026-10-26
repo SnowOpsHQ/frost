@@ -82,7 +82,7 @@ interface Entry {
 type Auditable = { readonly ok: true; readonly contents: TabContents; readonly url: string; readonly key: string } | { readonly ok: false; readonly reason: SeoUnavailableReason };
 
 /** `url` without its `#fragment`. */
-function withoutFragment(url: string): string {
+export function withoutFragment(url: string): string {
   const hash = url.indexOf('#');
   return hash < 0 ? url : url.slice(0, hash);
 }

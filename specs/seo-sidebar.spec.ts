@@ -54,9 +54,15 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  * `error` if any of them fails with severity `error`, `warn` if any fails with `warning`, else
  * `pass` (info findings never colour a dot).
  */
+/** On-Page covers every category except the ones with a panel of their own beyond it (Social). */
+const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => category !== 'social');
+
 export const SEO_PANELS = [
   { id: 'overview', label: 'Overview', available: true, categories: SEO_CATEGORIES },
-  { id: 'on-page', label: 'On-Page', available: true, categories: SEO_CATEGORIES },
+  { id: 'on-page', label: 'On-Page', available: true, categories: ON_PAGE_CATEGORIES },
+  { id: 'links', label: 'Links', available: true, categories: ['links'] },
+  { id: 'images', label: 'Images', available: true, categories: ['images'] },
+  { id: 'social', label: 'Social', available: true, categories: ['social'] },
   { id: 'schema', label: 'Schema', available: false, categories: [] },
   { id: 'indexability', label: 'Indexability', available: false, categories: [] },
   { id: 'speed', label: 'Page Speed', available: false, categories: [] },
@@ -103,3 +109,88 @@ export const SIDEBAR_TOGGLE_MENU_ID = 'toggle-seo-sidebar' as const;
  */
 export const SIDEBAR_STORAGE_KEY = 'frost.seo-sidebar.open' as const;
 export const SIDEBAR_DEFAULT_OPEN = true;
+
+// ---- Links, Images and Social panels (Phase 2 Task 2; acceptance `seo-panels.feature.md`) -----
+
+/**
+ * The Links panel's type filter: every link, or one `LinkKind` (`internal`, `external`, `other`:
+ * `seo-snapshot.spec.ts`).
+ */
+export const LINK_TYPE_FILTERS = ['all', 'internal', 'external', 'other'] as const;
+export type LinkTypeFilter = (typeof LINK_TYPE_FILTERS)[number];
+
+/**
+ * The `rel` tokens the Links panel flags: each says the link should not pass ranking credit (paid,
+ * user-generated, or not vouched for).
+ */
+export const LINK_REL_FLAGS = ['nofollow', 'sponsored', 'ugc'] as const;
+export type LinkRelFlag = (typeof LINK_REL_FLAGS)[number];
+
+/**
+ * The rel filter: every link, the links whose `rel` has that token, or `followed`: none of
+ * `LINK_REL_FLAGS`.
+ */
+export const LINK_REL_FILTERS = ['all', ...LINK_REL_FLAGS, 'followed'] as const;
+export type LinkRelFilter = (typeof LINK_REL_FILTERS)[number];
+
+/** The longest text search the Links panel sends (longer input is cut in the chrome). */
+export const LINK_FILTER_QUERY_MAX_CHARS = 200;
+
+/**
+ * Copy as CSV (`seo.copyLinksCsv`): main formats the rows the filter selects from the tab's ready
+ * audit (the panel's rows) and writes them with Electron's `clipboard` in main; the chrome never
+ * touches the system clipboard (it has no clipboard permission). Columns, in order (header row
+ * first), with `\r\n` line ends (RFC 4180):
+ * - `URL`: the resolved `href`;
+ * - `Anchor text`;
+ * - `Type`: `internal`, `external` or `other`;
+ * - `Rel`: the `rel` value as read;
+ * - `nofollow`, `sponsored`, `ugc`: `yes` or `no`;
+ * - `Target`: the `target` attribute (empty when absent).
+ *
+ * A cell holding `"`, `,`, `\r` or `\n` is quoted, its `"` doubled. A cell starting with one of
+ * `CSV_FORMULA_PREFIXES` gets a leading `'` (before quoting), so a spreadsheet opening the file
+ * never evaluates page text as a formula.
+ */
+export const LINKS_CSV_COLUMNS = ['URL', 'Anchor text', 'Type', 'Rel', 'nofollow', 'sponsored', 'ugc', 'Target'] as const;
+export const CSV_FORMULA_PREFIXES = ['=', '+', '-', '@', '\t', '\r'] as const;
+
+/** The Images panel's filter. */
+export const IMAGE_FILTERS = ['all', 'missing-alt', 'no-dimensions', 'oversized', 'lazy-first-viewport'] as const;
+export type ImageFilter = (typeof IMAGE_FILTERS)[number];
+
+/**
+ * Social previews are drawn by frost from the tags' text. Remote images are never loaded into the
+ * chrome (its CSP stays `img-src 'self' data:`): the preview shows a neutral placeholder graphic,
+ * and the image's URL and declared size (`og:image:width` × `og:image:height`) as text. A proxied
+ * thumbnail (fetched by main through the browse session, size-capped, re-encoded) could come later.
+ */
+export const SOCIAL_REMOTE_IMAGES = false;
+
+/**
+ * Highlight mode (`seo.setHighlight`): `links` outlines every link by type, `headings` every
+ * heading by level, `off` removes the overlay. One mode at a time per tab; it is part of the tab's
+ * state (`TabState.highlight`) and goes back to `off` when the tab's page changes (a new document,
+ * an in-page navigation to another URL, a load error, a crash) and when another tab becomes active.
+ * Only the active tab showing a web page can be highlighted.
+ */
+export const HIGHLIGHT_MODES = ['off', 'links', 'headings'] as const;
+export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
+
+/**
+ * What the overlay draws (frost's own palette): a link's box by kind (a link whose `rel` has
+ * `nofollow` is `nofollow` whatever its kind), a heading's by level, each with a small label.
+ */
+export const HIGHLIGHT_STYLES = {
+  internal: { color: '#1f6feb', label: 'int' },
+  external: { color: '#d4670c', label: 'ext' },
+  nofollow: { color: '#c42b5c', label: 'nofollow' },
+  other: { color: '#6b7280', label: 'other' },
+  h1: { color: '#7c3aed', label: 'H1' },
+  h2: { color: '#2563eb', label: 'H2' },
+  h3: { color: '#0d9488', label: 'H3' },
+  h4: { color: '#65a30d', label: 'H4' },
+  h5: { color: '#ca8a04', label: 'H5' },
+  h6: { color: '#9a3412', label: 'H6' },
+} as const;
+export type HighlightKind = keyof typeof HIGHLIGHT_STYLES;

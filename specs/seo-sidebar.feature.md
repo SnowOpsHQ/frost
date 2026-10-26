@@ -138,7 +138,8 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   empty tab a hint. The audit is fetched while the panel is collapsed too, so the rail's dots stay
   current.
 - Page-derived strings are React text only: no `innerHTML`, no `dangerouslySetInnerHTML`, no
-  `style=` props and no links in Task 1. Long values are cut with CSS, the full value in `title`,
+  `style=` props and no links (page URLs open through `browser.openBackgroundTab`, Task 2:
+  `seo-panels.feature.md`). Long values are cut with CSS, the full value in `title`,
   wrapped in U+2068 … U+2069 so a bidi override in it cannot reorder the tooltip.
 - A noindexed page's score card says `NOT_INDEXABLE_LABEL` in place of the band and names the tags.
 - Collapsing the panel from inside it moves focus to the open panel's rail item.
@@ -180,6 +181,6 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   `<meta name="googlebot" content="noindex">` scores at most `NOINDEX_SCORE_CAP` and its score
   card says "Not indexable" and names googlebot.
 - **Scenario: empty-tab-shows-hint** — an empty tab shows the sidebar's hint, no score; the rail
-  lists all six panels, the four not built yet disabled and without a status.
+  lists all nine panels (`SEO_PANELS`), the four not built yet disabled and without a status.
 - **Scenario: narrow-window-keeps-page-usable** — with the chrome 500 px wide the tab's view keeps
   `PAGE_MIN_WIDTH`, the sidebar narrows (the rail stays), and a click in the page still lands.

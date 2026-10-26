@@ -3,6 +3,7 @@ import {
   AnswerPermissionInputSchema,
   BrowserStateSchema,
   NavigateInputSchema,
+  OpenBackgroundTabInputSchema,
   PageBoundsSchema,
   TabIdInputSchema,
   WATCH_TIMEOUT_MS,
@@ -10,7 +11,7 @@ import {
   type BrowserState,
 } from '@app/specs/browser.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import { SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
+import { SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -64,7 +65,8 @@ async function watchState(browser: BrowserService, sinceVersion: number): Promis
  * Browser chrome ↔ main (spec `browser-chrome.feature.md`, `tabs.feature.md` and
  * `permissions.feature.md`, Router). `navigate` answers whether a navigation started; `newTab` the
  * new tab's id (`null` at `MAX_TABS`); `closeTab` / `activateTab` whether the id named an open
- * tab; `answerPermission` whether the id was the active tab's prompt; the other mutations answer
+ * tab; `openBackgroundTab` the new background tab's id (`null` when nothing opened);
+ * `answerPermission` whether the id was the active tab's prompt; the other mutations answer
  * `null`.
  * `navigate`, `back`, `forward`, `reload` and `stop` act on the active tab.
  */
@@ -88,6 +90,14 @@ const browserRouter = router({
     .use(requireBrowser)
     .input(TabIdInputSchema)
     .mutation(({ ctx, input }) => ctx.browser.activateTab(input.tabId) === true),
+  openBackgroundTab: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(OpenBackgroundTabInputSchema)
+    .mutation(({ ctx, input }) => {
+      const id = ctx.browser.openBackgroundTab(input.url);
+      return typeof id === 'number' ? id : null;
+    }),
   back: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)
@@ -140,7 +150,9 @@ const browserRouter = router({
 /**
  * SEO sidebar ↔ main (spec `seo-sidebar.feature.md`, Router). `getAudit` answers the tab's audit
  * state (`SeoAuditResponse`: `pending` / `ready` / `unavailable`); `rerun` whether a fresh audit
- * started. The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
+ * started; `setHighlight` whether the overlay was set (`seo-panels.feature.md`); `copyLinksCsv`
+ * how many rows it wrote to main's clipboard (`null`: none, no ready audit); `copyUrl` whether it
+ * wrote the URL (only one the audit lists). The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
  */
 const seoRouter = router({
   getAudit: publicProcedure
@@ -153,6 +165,24 @@ const seoRouter = router({
     .use(requireSeo)
     .input(SeoTabInputSchema)
     .mutation(({ ctx, input }) => ctx.seo.rerun(input.tabId) === true),
+  setHighlight: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoHighlightInputSchema)
+    .mutation(({ ctx, input }) => ctx.seo.setHighlight(input.tabId, input.mode) === true),
+  copyLinksCsv: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoLinksCsvInputSchema)
+    .mutation(({ ctx, input }) => {
+      const rows = ctx.seo.copyLinksCsv(input.tabId, input.filter);
+      return typeof rows === 'number' ? rows : null;
+    }),
+  copyUrl: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoCopyUrlInputSchema)
+    .mutation(({ ctx, input }) => ctx.seo.copyUrl(input.tabId, input.url) === true),
 });
 
 export const appRouter = router({

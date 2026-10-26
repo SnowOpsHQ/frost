@@ -30,7 +30,7 @@ describe('audit', () => {
           { level: 1, text: 'Two' },
         ],
         headingTotal: 2,
-        images: [{ src: 'https://example.com/a.png', alt: null, width: null, height: null, loading: null }],
+        images: [{ src: 'https://example.com/a.png', alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false }],
         imageTotal: 1,
         metaRobots: [robots('noindex')],
         canonicals: [],
@@ -77,8 +77,8 @@ describe('audit', () => {
   });
 
   test('score-counts-each-rule-once', () => {
-    const one = runAudit(page({ images: [{ src: 'a', alt: null, width: null, height: null, loading: null }], imageTotal: 1 }));
-    const fifty = runAudit(page({ images: Array.from({ length: 50 }, (_, i) => ({ src: `${i}`, alt: null, width: null, height: null, loading: null })), imageTotal: 50 }));
+    const one = runAudit(page({ images: [{ src: 'a', alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false }], imageTotal: 1 }));
+    const fifty = runAudit(page({ images: Array.from({ length: 50 }, (_, i) => ({ src: `${i}`, alt: null, width: '1', height: '1', loading: null, rendered: null, natural: null, inFirstViewport: false })), imageTotal: 50 }));
     expect(fifty.score).toBe(one.score);
     expect(scoreAudit([ofSeverity('warning'), ofSeverity('warning')])).toBe(93);
   });
@@ -112,19 +112,19 @@ describe('audit', () => {
     expect(panelStatus([finding('title-missing')], [])).toBe('pass');
   });
 
-  test('page-facts-summarise-links-and-images', () => {
+  test('page-facts-summarise-links-images-and-social', () => {
     const facts = pageFacts(
       page({
         links: [
-          { href: 'https://example.com/a', scheme: 'https:', rel: 'nofollow', text: 'a', kind: 'internal' },
-          { href: 'https://example.com/b', scheme: 'https:', rel: '', text: 'b', kind: 'internal' },
-          { href: 'https://other.org/', scheme: 'https:', rel: 'NoFollow noopener', text: 'c', kind: 'external' },
-          { href: 'javascript:void(0)', scheme: 'javascript:', rel: '', text: 'd', kind: 'other' },
+          { href: 'https://example.com/a', scheme: 'https:', rel: 'nofollow', text: 'a', kind: 'internal', target: null },
+          { href: 'https://example.com/b', scheme: 'https:', rel: '', text: 'b', kind: 'internal', target: null },
+          { href: 'https://other.org/', scheme: 'https:', rel: 'NoFollow noopener', text: 'c', kind: 'external', target: '_blank' },
+          { href: 'javascript:void(0)', scheme: 'javascript:', rel: '', text: 'd', kind: 'other', target: null },
         ],
         linkTotal: 100_000,
         images: [
-          { src: 'a', alt: null, width: null, height: null, loading: null },
-          { src: 'b', alt: text(''), width: null, height: null, loading: null },
+          { src: 'a', alt: null, width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false },
+          { src: 'b', alt: text(''), width: null, height: null, loading: null, rendered: null, natural: null, inFirstViewport: false },
         ],
         imageTotal: 2,
         metaRobots: [robots('noindex'), robots('nofollow', 'googlebot')],
@@ -132,6 +132,10 @@ describe('audit', () => {
     );
     expect(facts.links).toEqual({ analysed: 4, total: 100_000, internal: 2, external: 1, other: 1, nofollow: 2 });
     expect(facts.images).toEqual({ analysed: 2, total: 2, missingAlt: 1 });
+    // The lists themselves are the Links and Images panels' rows; the social tags the Social panel's.
+    expect(facts.linkList.map((link) => link.text)).toEqual(['a', 'b', 'c', 'd']);
+    expect(facts.imageList.map((image) => image.src)).toEqual(['a', 'b']);
+    expect(facts.social['og:title']).toBe('SEO basics: a practical guide');
     expect(facts.robots).toBe('robots: noindex · googlebot: nofollow');
     expect(facts.noindexFor).toEqual(['robots']);
     expect(facts.title?.text).toBe('SEO basics: a practical guide for beginners');

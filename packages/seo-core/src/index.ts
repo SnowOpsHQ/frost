@@ -3,9 +3,13 @@
 // runtime, so main and the chrome renderer can both import it.
 export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreAudit, scoreBand } from './audit';
 export { RULES } from './rules';
+export { altState, filterImages, imageCounts, isLazyInFirstViewport, isOversized, isSvg, lacksDimensions, type AltState } from './images';
+export { csvCell, filterLinks, linkCounts, linksCsv, NO_LINK_FILTER, relFlags, type LinkCounts, type LinkFilter } from './links';
+export { pageUrls, socialPreview, type SocialPreview, type SocialSource, type SocialValue } from './social';
 export type {
   CappedText,
   Finding,
+  ImageSize,
   FindingDetails,
   FindingFact,
   PageFacts,
@@ -13,6 +17,7 @@ export type {
   PageImage,
   PageLink,
   PageSnapshot,
+  PageSocial,
   SeoAudit,
   SeoAuditResponse,
   SeoRule,

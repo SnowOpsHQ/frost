@@ -8,7 +8,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_LABEL } from '@app/specs/seo-rules.spec';
-import { PAGE_MIN_WIDTH, SEO_UNAVAILABLE_MESSAGES, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH, SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
+import { PAGE_MIN_WIDTH, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH, SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -57,7 +57,9 @@ async function startSeoServer() {
 <title>Cold-brew coffee at home: a simple guide</title>
 <meta name="description" content="How to make smooth cold-brew coffee at home: the ratio, the grind, steeping times and storage, with no special kit.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="canonical" href="${origin}/guides/cold-brew"><meta property="og:url" content="${origin}/guides/cold-brew"></head>
+<link rel="canonical" href="${origin}/guides/cold-brew"><meta property="og:url" content="${origin}/guides/cold-brew">
+<meta property="og:title" content="Cold-brew coffee at home"><meta property="og:description" content="The ratio, the grind and the steeping time.">
+<meta property="og:image" content="https://example.org/cold-brew.png"><meta name="twitter:card" content="summary_large_image"></head>
 <body><div hidden><h1>Hidden duplicate headline</h1></div><h1 style="display:none">Hidden by CSS</h1><h1>Cold-brew coffee at home</h1><p>${words(420)}</p><h2>What you need</h2><h3>Grind</h3><h3>Ratio</h3><h2>Storing it</h2>
 <p><a href="/guides/">All guides</a> <a href="https://example.org/coffee">Coffee science</a> <a href="/ads" rel="sponsored">Sponsor</a></p>
 <img src="/jar.png" alt="A jar of cold brew" width="320" height="200"></body></html>`;
@@ -169,7 +171,8 @@ test('empty-tab-shows-hint', async () => {
   await expect(page.getByTestId('seo-empty')).toBeVisible();
   await expect(score()).toHaveCount(0);
   // The rail lists every panel; the ones not built yet are disabled, with no status.
-  await expect(page.getByTestId('seo-rail-item')).toHaveCount(6);
+  await expect(page.getByTestId('seo-rail-item')).toHaveCount(SEO_PANELS.length);
+  await expect(page.getByTestId('seo-rail-item')).toHaveCount(9);
   for (const soon of ['schema', 'indexability', 'speed', 'compliance']) {
     await expect(railItem(soon)).toBeDisabled();
     await expect(railItem(soon)).not.toHaveAttribute('data-status');

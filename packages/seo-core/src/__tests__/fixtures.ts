@@ -29,6 +29,7 @@ export function cleanSnapshot(): PageSnapshot {
     canonicals: [{ href: PAGE_URL, resolved: PAGE_URL }],
     canonicalTotal: 1,
     ogUrl: PAGE_URL,
+    social: socialTags(),
     viewport: 'width=device-width, initial-scale=1',
     headings: [
       { level: 1, text: 'SEO basics' },
@@ -42,16 +43,45 @@ export function cleanSnapshot(): PageSnapshot {
     textTruncated: false,
     partial: false,
     links: [
-      { href: 'https://example.com/guides/', scheme: 'https:', rel: '', text: 'All guides', kind: 'internal' },
-      { href: 'https://developer.mozilla.org/', scheme: 'https:', rel: 'noopener', text: 'MDN', kind: 'external' },
-      { href: 'mailto:hello@example.com', scheme: 'mailto:', rel: '', text: 'Email us', kind: 'other' },
+      { href: 'https://example.com/guides/', scheme: 'https:', rel: '', text: 'All guides', kind: 'internal', target: null },
+      { href: 'https://developer.mozilla.org/', scheme: 'https:', rel: 'noopener', text: 'MDN', kind: 'external', target: '_blank' },
+      { href: 'mailto:hello@example.com', scheme: 'mailto:', rel: '', text: 'Email us', kind: 'other', target: null },
     ],
     linkTotal: 3,
     images: [
-      { src: 'https://example.com/img/crawler.png', alt: text('A crawler reading a page'), width: '640', height: '360', loading: 'lazy' },
-      { src: 'https://example.com/img/divider.svg', alt: text(''), width: null, height: null, loading: null },
+      {
+        src: 'https://example.com/img/crawler.png',
+        alt: text('A crawler reading a page'),
+        width: '640',
+        height: '360',
+        loading: 'lazy',
+        rendered: { width: 640, height: 360 },
+        natural: { width: 1280, height: 720 },
+        inFirstViewport: false,
+      },
+      // Not rendered (no box): it needs no width and height.
+      { src: 'https://example.com/img/divider.svg', alt: text(''), width: null, height: null, loading: null, rendered: null, natural: { width: 4000, height: 10 }, inFirstViewport: false },
     ],
     imageTotal: 2,
+  };
+}
+
+/** Every social tag set, as a well-shared page has them (`changes` override). */
+export function socialTags(changes: Partial<PageSnapshot['social']> = {}): PageSnapshot['social'] {
+  return {
+    'og:title': 'SEO basics: a practical guide',
+    'og:description': 'The handful of on-page fixes that make the biggest difference.',
+    'og:image': 'https://example.com/img/share.png',
+    'og:image:width': '1200',
+    'og:image:height': '630',
+    'og:type': 'article',
+    'og:site_name': 'Example Guides',
+    'twitter:card': 'summary_large_image',
+    'twitter:title': null,
+    'twitter:description': null,
+    'twitter:image': null,
+    'twitter:site': '@example',
+    ...changes,
   };
 }
 

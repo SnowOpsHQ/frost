@@ -1,7 +1,8 @@
 # Feature: on-page SEO rules and the health score
 
 Spec: `specs/seo-rules.spec.ts` (`SEO_RULE_SPECS`, thresholds, `SEVERITY_WEIGHTS`, `SCORE_BANDS`)
-and `specs/seo-snapshot.spec.ts` (`PageSnapshot`). Phase 2 Task 1. Implemented by
+and `specs/seo-snapshot.spec.ts` (`PageSnapshot`). Phase 2 Task 1; the image loading and size and
+the social rules are Task 2 (`seo-panels.feature.md`). Implemented by
 `packages/seo-core` (`@app/seo-core`): pure TypeScript, no Electron, DOM or Zod. Each rule scenario
 maps to one named test in `packages/seo-core/src/__tests__/rules.test.ts` with a **passing** and a
 **failing** fixture snapshot (`fixtures.ts`: a clean page every rule passes on, changed as each
@@ -81,6 +82,17 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
   samples: their sources); passes when every image has an alt, including `alt=""`.
 - **Scenario: image-alt-too-long** — fails above `IMAGE_ALT_MAX_CHARS` (by full length); passes at it.
 
+## Image loading and size (Phase 2 Task 2)
+- **Scenario: images-missing-dimensions** — fails for a rendered image without a `width` or a
+  `height` attribute, or with an empty one (count, samples: sources); passes with both, and for an
+  image with no layout box (`rendered` `null`).
+- **Scenario: images-oversized** — fails when the natural width or height is more than
+  `IMAGE_OVERSIZE_FACTOR` × the rendered one (samples: source, natural and rendered sizes); passes at
+  exactly the factor, when either size is unknown, for a rendered size of 0, and for SVG images (by
+  extension, any case, query ignored, or a `data:image/svg+xml` URL).
+- **Scenario: images-lazy-in-first-viewport** — fails for `loading="lazy"` (any case) on an image in
+  the first viewport (count); passes for lazy images below it and eager or unset ones in it.
+
 ## Links
 - **Scenario: links-empty-anchor** — fails when a link's text is `''` (count, samples: targets);
   passes when every link has text.
@@ -88,6 +100,17 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
   `mailto:` links.
 - **Scenario: links-nofollow** — fails when a link's `rel` has the token `nofollow` (count); passes
   for `noopener` and `sponsored` only.
+
+## Social (Phase 2 Task 2)
+- **Scenario: og-title-missing** — fails for no `og:title` (`None`) or an empty one (`Empty`);
+  passes with text.
+- **Scenario: og-description-missing** — fails for none or an empty one; passes with text.
+- **Scenario: og-image-missing** — fails for none or an empty one, also when only `twitter:image`
+  is set; passes with one.
+- **Scenario: og-image-not-https** — fails for a relative value (`/img.png`, `img.png`,
+  `//cdn/img.png`: `Relative URL`) and for another scheme (`http:`: `http: URL`); passes for
+  `https://` (any case); not reported when there is no `og:image`.
+- **Scenario: twitter-card-missing** — fails for no `twitter:card`; passes with one.
 
 ## URL
 - **Scenario: url-too-long** — fails above `URL_MAX_CHARS` without the fragment; passes at it, and
@@ -111,6 +134,7 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
   (`noindexFor`); a lower score with noindex stays lower; without it the audit is `indexable`.
 - **Scenario: panel-status** — `panelStatus` is `error` with an error in the panel's categories,
   `warn` with a warning and no error, `pass` with only info findings or none.
-- **Scenario: page-facts-summarise-links-and-images** — the audit's facts count internal, external,
-  other and nofollow links, images and images without alt over the snapshot's lists, and carry the
-  page's totals.
+- **Scenario: page-facts-summarise-links-images-and-social** — the audit's facts count internal,
+  external, other and nofollow links, images and images without alt over the snapshot's lists, and
+  carry the page's totals, the lists themselves (the Links and Images panels' rows) and the social
+  tags.

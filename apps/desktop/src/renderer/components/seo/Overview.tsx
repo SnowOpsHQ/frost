@@ -86,7 +86,7 @@ function CategoryGrid({ audit }: { readonly audit: SeoAudit }) {
 }
 
 /** One ranked issue: its heading row toggles the details. */
-function Issue({ finding }: { readonly finding: Finding }) {
+export function Issue({ finding }: { readonly finding: Finding }) {
   const [open, setOpen] = useState(false);
   const detailsId = `seo-issue-${finding.ruleId}`;
   const lead = finding.details.facts[0];

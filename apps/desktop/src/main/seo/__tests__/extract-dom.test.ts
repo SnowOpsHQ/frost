@@ -1,18 +1,49 @@
 // Spec: specs/seo-limits.spec.ts (SNAPSHOT_LIMITS, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES),
-// specs/seo-snapshot.spec.ts (PageSnapshotSchema, hidden elements, wordCount)
-// Acceptance: specs/seo-sidebar.feature.md (Extraction, Against a DOM)
+// specs/seo-snapshot.spec.ts (PageSnapshotSchema, hidden elements, wordCount, ImageSchema, SocialSchema)
+// Acceptance: specs/seo-sidebar.feature.md (Extraction, Against a DOM), specs/seo-panels.feature.md (Extraction)
 import { JSDOM } from 'jsdom';
 import { describe, expect, test } from 'vitest';
-import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SNAPSHOT_LIMITS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
+import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { PageSnapshotSchema, type PageSnapshot } from '@app/specs/seo-snapshot.spec';
 import { extractPage, type PageDocument } from '../extract';
 
 const PAGE = 'https://example.com/guides/page';
 
-/** Runs the extractor on `body` (and `head`) in a jsdom document at `url`. */
-function extract({ head = '', body = '', limits = {}, budget = EXTRACT_BUDGET_MS, url = PAGE }: { head?: string; body?: string; limits?: Partial<SnapshotLimits>; budget?: number; url?: string }): PageSnapshot {
+/** Runs the extractor on `document` with the spec's limits (overridden by `limits`). */
+function run(document: unknown, limits: Partial<SnapshotLimits> = {}, budget = EXTRACT_BUDGET_MS): PageSnapshot {
+  return extractPage(document as PageDocument, { ...SNAPSHOT_LIMITS, ...limits }, budget, ROBOTS_META_NAMES, SOCIAL_TAGS, SOCIAL_URL_TAGS) as PageSnapshot;
+}
+
+/** Runs the extractor on `body` (and `head`) in a jsdom document at `url`, after `prepare` (stubs layout values jsdom lacks). */
+function extract({
+  head = '',
+  body = '',
+  limits = {},
+  budget = EXTRACT_BUDGET_MS,
+  url = PAGE,
+  prepare,
+}: {
+  head?: string;
+  body?: string;
+  limits?: Partial<SnapshotLimits>;
+  budget?: number;
+  url?: string;
+  prepare?: (document: Document, window: JSDOM['window']) => void;
+}): PageSnapshot {
   const dom = new JSDOM(`<!doctype html><html lang="en"><head>${head}</head><body>${body}</body></html>`, { url });
-  return extractPage(dom.window.document as unknown as PageDocument, { ...SNAPSHOT_LIMITS, ...limits }, budget, ROBOTS_META_NAMES) as PageSnapshot;
+  prepare?.(dom.window.document, dom.window);
+  return run(dom.window.document, limits, budget);
+}
+
+/** Gives `el` a layout box at document position (`left`, `top`) of `width` × `height` (jsdom has no layout). */
+function place(el: Element, { left = 0, top = 0, width, height }: { left?: number; top?: number; width: number; height: number }): void {
+  el.getBoundingClientRect = () => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+}
+
+/** Gives the image `el` an intrinsic size (as once it has loaded). */
+function loaded(el: Element, width: number, height: number): void {
+  Object.defineProperty(el, 'naturalWidth', { value: width });
+  Object.defineProperty(el, 'naturalHeight', { value: height });
 }
 
 const times = (n: number, make: (i: number) => string) => Array.from({ length: n }, (_, i) => make(i)).join('');
@@ -90,7 +121,7 @@ describe('extractor on a DOM', () => {
        <body><h1>${long}</h1><a href="/${long}${long}">${long}</a><img src="/${long}.png" alt="${long}" width="12345"></body></html>`,
       { url: `https://example.com/${long}` },
     );
-    const s = extractPage(dom.window.document as unknown as PageDocument, { ...SNAPSHOT_LIMITS, ...limits }, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES) as PageSnapshot;
+    const s = run(dom.window.document, limits);
     expect(s.url).toHaveLength(40);
     expect(s.lang).toBe('en-');
     expect(s.titles[0]).toEqual({ text: 'x'.repeat(10), length: 30 });
@@ -155,5 +186,78 @@ describe('extractor on a DOM', () => {
       { name: 'robots', content: 'index' },
       { name: 'googlebot-news', content: 'none' },
     ]);
+  });
+
+  test('extractor-reads-link-targets', () => {
+    const snapshot = extract({ body: '<a href="/a" target=" _blank ">A</a><a href="/b">B</a><a href="/c" target="">C</a>', limits: { maxTargetChars: 4 } });
+    expect(snapshot.links.map((link) => link.target)).toEqual(['_bla', null, '']);
+  });
+
+  test('extractor-measures-images', () => {
+    const snapshot = extract({
+      limits: { maxImagePixels: 5_000 },
+      body: `<img id="top" src="/top.jpg" loading="lazy"><img id="below" src="/below.jpg" loading="lazy"><img id="hidden" src="/h.png" hidden>
+        <img id="unloaded" src="/u.png"><img id="huge" src="/huge.png"><img id="flat" src="/flat.png"><img id="side" src="/side.png">`,
+      prepare(document, window) {
+        const img = (id: string) => document.getElementById(id)!;
+        // Scrolled down 2 000 px: the first viewport is still the top of the document.
+        Object.defineProperty(window, 'scrollY', { value: 2_000 });
+        Object.defineProperty(window, 'innerHeight', { value: 800 });
+        Object.defineProperty(window, 'innerWidth', { value: 1_200 });
+        place(img('top'), { top: 100 - 2_000, width: 600.4, height: 299.6 });
+        loaded(img('top'), 1_800, 900);
+        place(img('below'), { top: 900 - 2_000, width: 300, height: 200 });
+        place(img('hidden'), { width: 10, height: 10 });
+        loaded(img('hidden'), 10, 10);
+        place(img('unloaded'), { top: -2_000, width: 50, height: 50 });
+        place(img('huge'), { top: 5_000, width: 9_999_999, height: 20 });
+        loaded(img('huge'), 9_999_999, 20);
+        place(img('flat'), { top: -2_000, width: 100, height: 0 });
+        place(img('side'), { top: -2_000, left: 1_300, width: 100, height: 100 });
+      },
+    });
+    expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    const byId = Object.fromEntries(snapshot.images.map((image) => [new URL(image.src).pathname, image]));
+    expect(byId['/top.jpg']).toMatchObject({ rendered: { width: 600, height: 300 }, natural: { width: 1_800, height: 900 }, inFirstViewport: true, loading: 'lazy' });
+    expect(byId['/below.jpg']).toMatchObject({ rendered: { width: 300, height: 200 }, natural: null, inFirstViewport: false });
+    // Hidden: no box (and so not in the first viewport), even if it reports one.
+    expect(byId['/h.png']).toMatchObject({ rendered: null, natural: { width: 10, height: 10 }, inFirstViewport: false });
+    expect(byId['/u.png']).toMatchObject({ rendered: { width: 50, height: 50 }, natural: null, inFirstViewport: true });
+    // Sizes are capped at maxImagePixels.
+    expect(byId['/huge.png']).toMatchObject({ rendered: { width: 5_000, height: 20 }, natural: { width: 5_000, height: 20 } });
+    // A box with no area is no box; one right of the first viewport is not in it.
+    expect(byId['/flat.png']).toMatchObject({ rendered: null, inFirstViewport: false });
+    expect(byId['/side.png']).toMatchObject({ rendered: { width: 100, height: 100 }, inFirstViewport: false });
+  });
+
+  test('extractor-reads-social-tags', () => {
+    const long = 'd'.repeat(40);
+    const snapshot = extract({
+      limits: { maxSocialChars: 20, maxUrlChars: 30 },
+      head: `<meta property="og:title" content="  First   title "><meta property="og:title" content="Second title">
+        <meta name="OG:Description" content="${long}"><meta property="og:image" content=" /img/share.png?x=${long} ">
+        <meta property="og:image:width" content="1200"><meta property="og:type" content="article"><meta property="og:site_name" content="Example">
+        <meta name="twitter:card" content="summary_large_image"><meta property="twitter:title" content="Tw title"><meta name="twitter:image" content="https://example.com/t.png">
+        <meta name="twitter:site" content="@example"><meta property="og:url" content="${PAGE}">`,
+    });
+    expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(snapshot.social).toEqual({
+      'og:title': 'First title',
+      'og:description': 'd'.repeat(20),
+      'og:image': `/img/share.png?x=${'d'.repeat(13)}`,
+      'og:image:width': '1200',
+      'og:image:height': null,
+      'og:type': 'article',
+      'og:site_name': 'Example',
+      'twitter:card': 'summary_large_image',
+      'twitter:title': 'Tw title',
+      'twitter:description': null,
+      'twitter:image': 'https://example.com/t.png',
+      'twitter:site': '@example',
+    });
+    // og:url stays the snapshot's own field (cut to maxUrlChars like every URL).
+    expect(snapshot.ogUrl).toBe(PAGE.slice(0, 30));
+    // None at all: every tag null.
+    expect(Object.values(extract({}).social)).toEqual(SOCIAL_TAGS.map(() => null));
   });
 });

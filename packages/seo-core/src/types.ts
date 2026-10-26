@@ -1,9 +1,9 @@
 import type { ScoreBand, SeoCategory, SeoRuleId, SeoRuleSpec, SeoSeverity } from '@app/specs/seo-rules.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 // Types only: the snapshot's Zod schema stays in main (it is the untrusted page's data).
-import type { CappedText, PageHeading, PageSnapshot } from '@app/specs/seo-snapshot.spec';
+import type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
 
-export type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot } from '@app/specs/seo-snapshot.spec';
+export type { CappedText, ImageSize, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
 
 /** One labelled value a finding shows (e.g. `Length` → `72 characters`). Plain text, never markup. */
 export interface FindingFact {
@@ -69,6 +69,12 @@ export interface PageFacts {
   readonly links: { readonly analysed: number; readonly total: number; readonly internal: number; readonly external: number; readonly other: number; readonly nofollow: number };
   /** Counted over the first `analysed` images of `total`. */
   readonly images: { readonly analysed: number; readonly total: number; readonly missingAlt: number };
+  /** The snapshot's links (at most `SNAPSHOT_LIMITS.maxLinks`, of `links.total`): the Links panel's rows. */
+  readonly linkList: readonly PageLink[];
+  /** The snapshot's images (at most `SNAPSHOT_LIMITS.maxImages`, of `images.total`): the Images panel's rows. */
+  readonly imageList: readonly PageImage[];
+  /** The Open Graph and Twitter card tags (`og:url` is `ogUrl`). */
+  readonly social: PageSocial;
 }
 
 /** One page's audit. `findings` are ranked: errors, then warnings, then info, each in catalog order. */

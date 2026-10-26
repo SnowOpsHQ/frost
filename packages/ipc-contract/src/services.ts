@@ -1,6 +1,7 @@
-import type { SeoAuditResponse } from '@app/seo-core';
+import type { LinkFilter, SeoAuditResponse } from '@app/seo-core';
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
+import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
 // Main-process services the procedures call (spec `specs/browser.spec.ts`). Main supplies the
 // implementations through the IPC context (`IpcHandlerOptions.services`); this package only knows
@@ -30,6 +31,13 @@ export interface BrowserService {
   closeTab(tabId: number): boolean;
   /** Shows the tab (only the active tab's view is attached). `false` for an id that names no open tab. */
   activateTab(tabId: number): boolean;
+  /**
+   * Opens the `http(s)` `url` in a new background tab right of the active tab (after the tabs it
+   * already opened); the active tab stays active (`browser.spec.ts`, `OpenBackgroundTabInputSchema`).
+   * Answers the new tab's id, or `null` for any other URL, no window or tab, or `MAX_TABS` (the
+   * `tab-limit` notice is raised).
+   */
+  openBackgroundTab(url: string): number | null;
   back(): void;
   forward(): void;
   reload(): void;
@@ -65,6 +73,19 @@ export interface SeoService {
   getAudit(tabId: number): SeoAuditResponse;
   /** Audits the tab again at once; `false` (a no-op) when it shows nothing auditable or names no tab. */
   rerun(tabId: number): boolean;
+  /**
+   * Sets the tab's highlight overlay (`seo-sidebar.spec.ts`, `HIGHLIGHT_MODES`): only the active
+   * tab showing a web page; `false` (a no-op) otherwise.
+   */
+  setHighlight(tabId: number, mode: HighlightMode): boolean;
+  /**
+   * Writes the links `filter` selects from the tab's ready audit to the system clipboard as CSV
+   * (`seo-sidebar.spec.ts`, `LINKS_CSV_COLUMNS`); answers how many rows, or `null` (nothing
+   * written) without a ready audit.
+   */
+  copyLinksCsv(tabId: number, filter: LinkFilter): number | null;
+  /** Writes `url` to the system clipboard if the tab's ready audit lists it (`pageUrls`); else `false`, nothing written. */
+  copyUrl(tabId: number, url: string): boolean;
 }
 
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */

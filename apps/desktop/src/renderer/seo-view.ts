@@ -1,5 +1,6 @@
 import { panelStatus, type SeoAuditResponse } from '@app/seo-core';
-import { SEO_PANELS, SIDEBAR_DEFAULT_OPEN, type PanelStatus, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
+import { LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN, type PanelStatus, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
+import { isWebUrl } from '@app/specs/web-url.spec';
 
 // Pure helpers behind the SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance
 // `seo-sidebar.feature.md`, Renderer helpers).
@@ -55,4 +56,39 @@ export function formatCount(n: number): string {
  */
 export function isolatedTooltip(value: string): string {
   return `⁨${value}⁩`;
+}
+
+/**
+ * Whether a page-derived URL may be offered as "Open in new tab": `http(s)` only (main checks it
+ * again). Every other URL is shown as text, never as a link.
+ */
+export function openableUrl(url: string): boolean {
+  return isWebUrl(url);
+}
+
+/** `w × h` (CSS px), or `null` for no size. */
+export function formatSize(size: { readonly width: number; readonly height: number } | null): string | null {
+  return size ? `${formatCount(size.width)} × ${formatCount(size.height)}` : null;
+}
+
+/** The declared `width` / `height` attributes as `w × h` (`?` for a missing one), or `null` when neither is set. */
+export function declaredSize(width: string | null, height: string | null): string | null {
+  const w = width?.trim() || null;
+  const h = height?.trim() || null;
+  return w === null && h === null ? null : `${w ?? '?'} × ${h ?? '?'}`;
+}
+
+/** How many times larger than shown an image's file is (the larger of the two ratios, one decimal), or `null`. */
+export function oversizeRatio(rendered: { width: number; height: number } | null, natural: { width: number; height: number } | null): string | null {
+  if (!rendered || !natural || rendered.width === 0 || rendered.height === 0) return null;
+  const ratio = Math.max(natural.width / rendered.width, natural.height / rendered.height);
+  return `${(Math.round(ratio * 10) / 10).toLocaleString('en-US')}×`;
+}
+
+/** The search box's value as sent to main: cut to `LINK_FILTER_QUERY_MAX_CHARS` UTF-16 code units, never splitting a surrogate pair. */
+export function linkQuery(value: string): string {
+  if (value.length <= LINK_FILTER_QUERY_MAX_CHARS) return value;
+  const end = LINK_FILTER_QUERY_MAX_CHARS;
+  const code = value.charCodeAt(end - 1);
+  return value.slice(0, code >= 0xd800 && code <= 0xdbff ? end - 1 : end);
 }

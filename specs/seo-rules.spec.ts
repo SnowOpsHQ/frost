@@ -17,7 +17,7 @@ export const SEO_SEVERITIES = ['error', 'warning', 'info'] as const;
 export type SeoSeverity = (typeof SEO_SEVERITIES)[number];
 
 /** What a rule is about (the On-Page panel groups facts the same way). */
-export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'language', 'mobile', 'content', 'images', 'links', 'url'] as const;
+export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social'] as const;
 export type SeoCategory = (typeof SEO_CATEGORIES)[number];
 
 export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
@@ -32,6 +32,7 @@ export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
   images: 'Images',
   links: 'Links',
   url: 'URL',
+  social: 'Social',
 };
 
 // ---- Thresholds ------------------------------------------------------------------------------
@@ -58,6 +59,13 @@ export const THIN_CONTENT_WORDS = 300;
 
 /** Alt text longer than this is hard to listen to in a screen reader and reads as keyword stuffing. */
 export const IMAGE_ALT_MAX_CHARS = 125;
+
+/**
+ * An image is oversized for display when its natural (intrinsic) size is more than this many times
+ * its rendered size in either dimension. The factor leaves room for high-density screens, which
+ * need up to about twice the CSS size; past it, the page downloads pixels nobody sees.
+ */
+export const IMAGE_OVERSIZE_FACTOR = 2;
 
 /** A page URL (without its `#fragment`) longer than this is hard to read, share and remember. */
 export const URL_MAX_CHARS = 100;
@@ -324,6 +332,33 @@ export const SEO_RULE_SPECS = [
     why: 'Long alt text is tiring to listen to and often reads as keyword stuffing.',
     fix: 'Keep alt text to a short description; put longer explanations in a caption or the surrounding text.',
   },
+  {
+    id: 'images-missing-dimensions',
+    category: 'images',
+    severity: 'warning',
+    title: 'Images without width and height',
+    condition: 'One or more rendered <img> elements (they have a layout box) lack a width or a height attribute (absent or empty).',
+    why: 'Without both attributes the browser cannot reserve the image’s space before it loads, so the content below jumps when it arrives (layout shift, which hurts reading and Core Web Vitals).',
+    fix: 'Add width and height attributes with the image’s intrinsic size (CSS can still scale it; the browser keeps the aspect ratio).',
+  },
+  {
+    id: 'images-oversized',
+    category: 'images',
+    severity: 'warning',
+    title: 'Images larger than they are shown',
+    condition: `One or more images have a natural size more than ${IMAGE_OVERSIZE_FACTOR}× their rendered size in either dimension (both sizes known; SVG images are vectors and never count).`,
+    why: 'The browser downloads and decodes every pixel of the file, then throws most of them away. That costs bandwidth and memory and slows the page down, most of all on phones.',
+    fix: 'Serve images close to the size they are shown at, using srcset and sizes for different screens.',
+  },
+  {
+    id: 'images-lazy-in-first-viewport',
+    category: 'images',
+    severity: 'warning',
+    title: 'Lazy-loaded images in the first screen',
+    condition: 'One or more images whose box overlaps the first viewport (the top of the page as it first appears) have loading="lazy".',
+    why: 'Lazy loading waits until layout to start fetching, so images people see first arrive late. When one of them is the largest element on screen, it delays Largest Contentful Paint.',
+    fix: 'Remove loading="lazy" from images near the top of the page (keep it for those further down), and consider fetchpriority="high" for the main one.',
+  },
   // Links
   {
     id: 'links-empty-anchor',
@@ -379,6 +414,52 @@ export const SEO_RULE_SPECS = [
     condition: 'The page URL’s path contains an underscore.',
     why: 'Hyphens are the conventional word separator in URLs; underscores can join words together for search engines.',
     fix: 'Separate words in paths with hyphens.',
+  },
+  // Social
+  {
+    id: 'og-title-missing',
+    category: 'social',
+    severity: 'warning',
+    title: 'No Open Graph title',
+    condition: 'The page has no og:title tag with text.',
+    why: 'Social networks and chat apps build a shared link’s card from Open Graph tags. Without og:title they guess a headline, often the bare <title> with the site name, or the URL.',
+    fix: 'Add <meta property="og:title" content="…"> with the headline the card should show.',
+  },
+  {
+    id: 'og-description-missing',
+    category: 'social',
+    severity: 'info',
+    title: 'No Open Graph description',
+    condition: 'The page has no og:description tag with text.',
+    why: 'The description is the line under a shared link’s headline. Without it, apps take any text from the page or show none.',
+    fix: 'Add <meta property="og:description" content="…"> with a one-sentence summary.',
+  },
+  {
+    id: 'og-image-missing',
+    category: 'social',
+    severity: 'warning',
+    title: 'No Open Graph image',
+    condition: 'The page has no og:image tag with a value.',
+    why: 'Shared links with an image get far more attention than text-only cards, and without og:image apps either pick an image from the page or show none.',
+    fix: 'Add <meta property="og:image" content="https://…"> pointing at an image made for sharing (about 1200×630 px).',
+  },
+  {
+    id: 'og-image-not-https',
+    category: 'social',
+    severity: 'warning',
+    title: 'Open Graph image is not an absolute https URL',
+    condition: 'The og:image value is relative (it has no scheme) or uses a scheme other than https.',
+    why: 'Apps fetch og:image on their own, without the page around it, so a relative URL has nothing to resolve against. Many of them refuse plain http images.',
+    fix: 'Use the image’s full https:// URL in og:image.',
+  },
+  {
+    id: 'twitter-card-missing',
+    category: 'social',
+    severity: 'info',
+    title: 'No Twitter card type',
+    condition: 'The page has no twitter:card tag with a value.',
+    why: 'twitter:card picks the card layout (a small summary, or a large image) in apps that read Twitter card tags. Without it they fall back to their default, usually the small card.',
+    fix: 'Add <meta name="twitter:card" content="summary_large_image"> (or "summary").',
   },
 ] as const satisfies readonly SeoRuleSpec[];
 
