@@ -11,11 +11,12 @@
  */
 import { z } from 'zod';
 import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
+import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './permissions.spec';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
  * `app:` protocol handler (so browsed content cannot load `app://`), its own cookies/storage, and
- * deny-by-default permissions until per-origin prompts arrive (Task 4).
+ * deny-by-default permissions with per-origin prompts (`permissions.spec.ts`, Task 4).
  */
 export const BROWSE_PARTITION = 'persist:frost-browser' as const;
 
@@ -97,6 +98,31 @@ export const LoadErrorSchema = z.strictObject({
 });
 export type LoadError = z.infer<typeof LoadErrorSchema>;
 
+/**
+ * The permission prompt a tab shows (`permissions.feature.md`): the head of that tab's queue.
+ * `id` is an opaque, unguessable, single-use UUID (`crypto.randomUUID`); `origin` is the
+ * **requesting** frame's serialized origin (`https://example.com`, never the top-level page's when
+ * a subframe asked); `mediaTypes` (only for `media`) the devices still to decide, camera first.
+ */
+export const PermissionPromptSchema = z.strictObject({
+  id: z.uuid(),
+  origin: z.string(),
+  permission: z.enum(PROMPTABLE_PERMISSIONS),
+  mediaTypes: z.array(z.enum(MEDIA_TYPES)).min(1).max(MEDIA_TYPES.length).optional(),
+});
+export type PermissionPrompt = z.infer<typeof PermissionPromptSchema>;
+
+/**
+ * `browser.answerPermission` input. Answers the prompt the **active** tab shows; an id that is not
+ * that prompt's (another tab's, a queued one, an answered, timed-out or unknown one) is a no-op
+ * answering `false`. A malformed id or decision is rejected (`BAD_REQUEST`).
+ */
+export const AnswerPermissionInputSchema = z.strictObject({
+  promptId: z.uuid(),
+  decision: z.enum(PERMISSION_DECISIONS),
+});
+export type AnswerPermissionInput = z.infer<typeof AnswerPermissionInputSchema>;
+
 /** One tab as the chrome sees it. An empty tab (nothing loaded yet) has `url === ''`. */
 export const TabStateSchema = z.strictObject({
   id: z.int().positive(),
@@ -122,6 +148,11 @@ export const TabStateSchema = z.strictObject({
    * status bar says so while this tab is active (`UNRESPONSIVE_STATUS`).
    */
   unresponsive: z.boolean(),
+  /**
+   * The permission prompt this tab shows (the head of its queue), or `null`. The chrome shows it
+   * only while the tab is active; a background tab with one gets an indicator in the strip.
+   */
+  permissionPrompt: PermissionPromptSchema.nullable(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

@@ -3,22 +3,30 @@ import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types);
 // runtime constants come from the Zod-free tabs.spec.
-import type { BrowserState, Notice, TabState } from '@app/specs/browser.spec';
+import type { BrowserState, Notice, PermissionPrompt, TabState } from '@app/specs/browser.spec';
+import { PERMISSION_PROMPT_LABELS, type PermissionDecision, type PromptKind } from '@app/specs/permissions.spec';
 import { NOTICE_MESSAGES, UNRESPONSIVE_STATUS, type NoticeKind } from '@app/specs/tabs.spec';
 import { addressFieldReducer, addressFieldText, initialAddressField } from './address-field';
 import { createNoticeTracker, type NoticeTracker } from './notice';
 import { crashView, isCertificateErrorCode, loadErrorView, panelHost, type LoadErrorView } from './page-error';
+import { promptView } from './permission-prompt';
 import { tabLabel } from './tab-label';
 import { tablistFocusTarget } from './tablist-keys';
 import {
   AlertIcon,
   BackIcon,
+  BellIcon,
+  CameraIcon,
+  CameraMicrophoneIcon,
+  ClipboardIcon,
   CloseIcon,
   CrashArt,
   ForwardIcon,
   FrostMark,
   GlobeIcon,
+  LocationIcon,
   LockIcon,
+  MicrophoneIcon,
   NotSecureIcon,
   OfflineArt,
   PageAlertArt,
@@ -98,6 +106,7 @@ const actions = {
   forward: () => ipc.browser.forward.mutate().catch(ignore),
   reload: () => ipc.browser.reload.mutate().catch(ignore),
   stop: () => ipc.browser.stop.mutate().catch(ignore),
+  answerPermission: (promptId: string, decision: PermissionDecision) => ipc.browser.answerPermission.mutate({ promptId, decision }).catch(ignore),
 };
 
 /**
@@ -309,6 +318,12 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
         <span className="tab-label" data-testid="tab-label">
           {label}
         </span>
+        {tab.permissionPrompt && !active ? (
+          <span className="tab-attention" data-testid="tab-permission-dot">
+            <span className="tab-attention-dot" aria-hidden="true" />
+            <span className="visually-hidden">, asking for a permission</span>
+          </span>
+        ) : null}
       </div>
       <button
         type="button"
@@ -397,6 +412,77 @@ function Toolbar({ tab, focusSeq }: { readonly tab: TabState | undefined; readon
       <AddressBar tab={tab} focusSeq={focusSeq} />
       <div className={loading ? 'progress progress-active' : 'progress'} aria-hidden="true" />
     </header>
+  );
+}
+
+const PROMPT_ICONS: Record<PromptKind, typeof BellIcon> = {
+  geolocation: LocationIcon,
+  notifications: BellIcon,
+  camera: CameraIcon,
+  microphone: MicrophoneIcon,
+  'camera-microphone': CameraMicrophoneIcon,
+  'clipboard-read': ClipboardIcon,
+};
+
+/**
+ * The active tab's permission prompt (`permissions.feature.md`, Prompt bar): a non-modal dialog
+ * under the toolbar. It never takes focus from the page; Tab reaches its buttons, Esc inside it
+ * dismisses. The page area below shrinks to make room, so the tab's view moves down with it.
+ */
+function PromptBar({ prompt }: { readonly prompt: PermissionPrompt }) {
+  const view = promptView(prompt);
+  const Icon = PROMPT_ICONS[view.kind];
+  const [answered, setAnswered] = useState(false);
+  const answer = (decision: PermissionDecision) => {
+    if (answered) return;
+    setAnswered(true);
+    void actions.answerPermission(prompt.id, decision).then(() => setAnswered(false));
+  };
+  return (
+    <section
+      className="prompt-bar"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="permission-prompt-text"
+      data-testid="permission-prompt"
+      data-permission={view.kind}
+      data-origin={view.origin}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          answer('dismiss');
+        }
+      }}
+    >
+      <span className="prompt-icon" aria-hidden="true">
+        <Icon />
+      </span>
+      <p className="prompt-text" id="permission-prompt-text" data-testid="permission-prompt-text" title={view.origin}>
+        <strong className="prompt-origin" data-testid="permission-prompt-origin">
+          {view.host}
+        </strong>{' '}
+        wants to {view.action}
+      </p>
+      <div className="prompt-actions">
+        <button type="button" className="prompt-button" data-testid="permission-allow" disabled={answered} onClick={() => answer('allow')}>
+          {PERMISSION_PROMPT_LABELS.allow}
+        </button>
+        <button type="button" className="prompt-button" data-testid="permission-block" disabled={answered} onClick={() => answer('block')}>
+          {PERMISSION_PROMPT_LABELS.block}
+        </button>
+      </div>
+      <button
+        type="button"
+        className="prompt-dismiss"
+        data-testid="permission-dismiss"
+        aria-label={PERMISSION_PROMPT_LABELS.dismiss}
+        title={PERMISSION_PROMPT_LABELS.dismiss}
+        disabled={answered}
+        onClick={() => answer('dismiss')}
+      >
+        <CloseIcon />
+      </button>
+    </section>
   );
 }
 
@@ -585,6 +671,10 @@ export function App() {
     <div className="chrome">
       <TabStrip state={state} />
       <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} />
+      {/* Always present (empty without a prompt), so the grid rows stay put; polite, not focus-taking. */}
+      <div className="prompt-slot" aria-live="polite">
+        {tab?.permissionPrompt ? <PromptBar key={tab.permissionPrompt.id} prompt={tab.permissionPrompt} /> : null}
+      </div>
       <PageArea tab={tab} empty={state !== null && empty} />
       <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />
     </div>

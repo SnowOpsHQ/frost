@@ -1,5 +1,6 @@
 // Spec: specs/browser.spec.ts (WATCH_TIMEOUT_MS, schemas), specs/ipc-sender.spec.ts
-// Acceptance: specs/browser-chrome.feature.md (Router), specs/tabs.feature.md (Router)
+// Acceptance: specs/browser-chrome.feature.md (Router), specs/tabs.feature.md (Router),
+// specs/permissions.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ADDRESS_INPUT_MAX_LENGTH, WATCH_TIMEOUT_MS, type BrowserState } from '@app/specs/browser.spec';
@@ -10,11 +11,12 @@ import { appRouter, createSenderPolicy, type BrowserService, type IpcContext } f
 import { createIpcRequestHandler } from '../transport/main';
 
 const WINDOW_ID = 7;
+const PROMPT_ID = '0f8b2f63-3b7e-4b0e-9d43-7f1f0d6f2a11';
 
 function stateAt(version: number): BrowserState {
   return {
     version,
-    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false }],
+    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null }],
     activeTabId: 1,
     focusAddressBarSeq: 0,
     notice: null,
@@ -34,6 +36,7 @@ function fakeService(version = 3) {
     reload: vi.fn(),
     stop: vi.fn(),
     setPageBounds: vi.fn(),
+    answerPermission: vi.fn((promptId: string, _decision: 'allow' | 'block' | 'dismiss') => promptId === PROMPT_ID),
     getState: vi.fn(() => current),
     watch: vi.fn(
       (_since: number, _signal?: AbortSignal) =>
@@ -91,6 +94,7 @@ const VALID_INPUT: Record<string, unknown> = {
   stop: undefined,
   setPageBounds: { x: 0, y: 48, width: 1280, height: 720 },
   watch: { sinceVersion: 0 },
+  answerPermission: { promptId: PROMPT_ID, decision: 'allow' },
 };
 const BROWSER_PROCEDURES = Object.keys(VALID_INPUT);
 
@@ -206,6 +210,54 @@ describe('browser router', () => {
       const error = await errorOf(procedure(ctxFor(undefined), name)(VALID_INPUT[name]));
       expect(error.code, name).toBe(IPC_INTERNAL_ERROR_CODE);
     }
+  });
+});
+
+describe('browser.answerPermission', () => {
+  test('answer-permission-enforces-sender', async () => {
+    for (const origin of ['https://evil.com', 'http://127.0.0.1:8080', 'null']) {
+      const { service } = fakeService();
+      const error = await errorOf(procedure(ctxFor(service, origin), 'answerPermission')({ promptId: PROMPT_ID, decision: 'allow' }));
+      expect(error.code, origin).toBe(IPC_SENDER_ERROR_CODE);
+      expect(service.answerPermission).not.toHaveBeenCalled();
+    }
+  });
+
+  test('answer-permission-validates-input', async () => {
+    const malformed = [
+      undefined,
+      PROMPT_ID,
+      {},
+      { promptId: PROMPT_ID },
+      { decision: 'allow' },
+      { promptId: 'prompt-1', decision: 'allow' },
+      { promptId: '', decision: 'allow' },
+      { promptId: `${PROMPT_ID} `, decision: 'allow' },
+      { promptId: 1, decision: 'allow' },
+      { promptId: PROMPT_ID, decision: 'grant' },
+      { promptId: PROMPT_ID, decision: 'ALLOW' },
+      { promptId: PROMPT_ID, decision: true },
+      { promptId: PROMPT_ID, decision: 'allow', tabId: 1 },
+    ];
+    for (const input of malformed) {
+      const { service } = fakeService();
+      const error = await errorOf(procedure(ctxFor(service), 'answerPermission')(input));
+      expect(error.code, String(JSON.stringify(input))).toBe('BAD_REQUEST');
+      for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled();
+    }
+  });
+
+  test('answer-permission-calls-service', async () => {
+    const { service } = fakeService();
+    const ctx = ctxFor(service);
+    for (const decision of ['allow', 'block', 'dismiss'] as const) {
+      await expect(procedure(ctx, 'answerPermission')({ promptId: PROMPT_ID, decision }), decision).resolves.toBe(true);
+      expect(service.answerPermission).toHaveBeenLastCalledWith(PROMPT_ID, decision);
+    }
+    // A stale or unknown (well-formed) id is the service's no-op: `false`, not an error.
+    const stale = crypto.randomUUID();
+    await expect(procedure(ctx, 'answerPermission')({ promptId: stale, decision: 'allow' })).resolves.toBe(false);
+    expect(service.answerPermission).toHaveBeenLastCalledWith(stale, 'allow');
   });
 });
 

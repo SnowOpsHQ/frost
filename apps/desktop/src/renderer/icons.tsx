@@ -248,3 +248,71 @@ export function CrashArt(props: IconProps) {
     </PanelArt>
   );
 }
+
+// ---- Permission prompt icons (24×24, the toolbar's stroke) -------------------------------------
+
+/** Location: a map pin with a hollow centre. */
+export function LocationIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 20.5s-6.2-5.6-6.2-10.6a6.2 6.2 0 0 1 12.4 0c0 5-6.2 10.6-6.2 10.6z" />
+      <circle cx="12" cy="9.9" r="2.3" />
+    </Icon>
+  );
+}
+
+/** Notifications: a bell with its clapper. */
+export function BellIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6.2 16.5V11a5.8 5.8 0 0 1 11.6 0v5.5l1.5 1.6H4.7z" />
+      <path d="M10.2 20.2a2 2 0 0 0 3.6 0" />
+    </Icon>
+  );
+}
+
+/** Camera: a video camera body with its lens wedge. */
+export function CameraIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.5" y="7" width="12" height="10" rx="2.2" />
+      <path d="M15.5 10.6l5-2.8v8.4l-5-2.8" />
+    </Icon>
+  );
+}
+
+/** Microphone: a capsule on a stand. */
+export function MicrophoneIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="9" y="3.8" width="6" height="10.4" rx="3" />
+      <path d="M6 11.2a6 6 0 0 0 12 0" />
+      <path d="M12 17.2v3" />
+    </Icon>
+  );
+}
+
+/** Camera and microphone: the camera with a small capsule beside it. */
+export function CameraMicrophoneIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2.8" y="8" width="10" height="8.4" rx="2" />
+      <path d="M12.8 11l3.4-1.9v6.2l-3.4-1.9" />
+      <rect x="18.3" y="5.6" width="3.2" height="6.4" rx="1.6" />
+      <path d="M17.2 13.6a2.7 2.7 0 0 0 5.4 0" />
+      <path d="M19.9 16.4v2" />
+    </Icon>
+  );
+}
+
+/** Clipboard read: a clipboard with two lines of text on it. */
+export function ClipboardIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8.5 5.5H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-11a2 2 0 0 0-2-2h-1.5" />
+      <rect x="8.5" y="3.5" width="7" height="3.6" rx="1.2" />
+      <path d="M8.6 12h6.8" />
+      <path d="M8.6 15.6h4.4" />
+    </Icon>
+  );
+}

@@ -3,6 +3,7 @@ import { BROWSABLE_SCHEMES, BROWSE_BLANK_URL } from '@app/specs/browser.spec';
 import { BLANK_ABOUT_PATH, SUBFRAME_ONLY_URLS } from '@app/specs/browse-guard.spec';
 import { resolveExternalOpen } from '../security/policy';
 import { openExternalIfAllowed, trackUserGesture } from '../security/gesture';
+import type { BrowsePermissionHandlers } from './permissions';
 
 // The browse guard for tab WebContents (`specs/browse-guard.feature.md`; the session-classified
 // install is `browser-chrome.feature.md`). Installed by the app-wide `web-contents-created` guard
@@ -117,22 +118,36 @@ export function guardBrowseContents(contents: WebContents, options: { now: () =>
   contents.on('will-attach-webview', (event) => event.preventDefault());
 }
 
-/** What the browse session reports to the rest of main. */
+/** What the browse session reports to, and asks of, the rest of main. */
 export interface BrowseSessionHooks {
   /** A download was cancelled (raise the `download-blocked` notice). */
   onDownloadBlocked?(contents: WebContents | null | undefined): void;
+  /**
+   * Per-origin permission prompts (`permissions.feature.md`, `createBrowsePermissionHandlers`).
+   * Without them every permission request and check is denied.
+   */
+  permissions?: BrowsePermissionHandlers | undefined;
 }
 
 /**
- * Session-wide policy of the browse partition: every permission request, check and device
- * permission is denied (Phase 0's deny-by-default, incl. Electron's `openExternal` permission;
- * Task 4 adds per-origin prompts), and every download is cancelled (no download manager in
- * Phase 1). No certificate-verify proc is installed: Chromium's verifier decides, and the app-wide
- * `certificate-error` handler never overrides it (`security/register.ts`).
+ * Session-wide policy of the browse partition: permission requests and checks go to the
+ * per-origin prompt handlers (`hooks.permissions`; deny-all without them, which also keeps
+ * Electron's `openExternal` permission denied); device permissions (HID, serial, USB) are always
+ * denied; every download is cancelled (no download manager in Phase 1). No certificate-verify proc
+ * is installed: Chromium's verifier decides, and the app-wide `certificate-error` handler never
+ * overrides it (`security/register.ts`).
  */
 export function hardenBrowseSession(session: Session, hooks: BrowseSessionHooks = {}): void {
-  session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  session.setPermissionCheckHandler(() => false);
+  const permissions = hooks.permissions;
+  if (permissions) {
+    session.setPermissionRequestHandler((contents, permission, callback, details) => permissions.request(contents, permission, callback, details));
+    session.setPermissionCheckHandler((contents, permission, requestingOrigin, details) =>
+      permissions.check(contents, permission, requestingOrigin, details),
+    );
+  } else {
+    session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    session.setPermissionCheckHandler(() => false);
+  }
   session.setDevicePermissionHandler(() => false);
   session.on('will-download', (event, item, contents) => {
     event.preventDefault();

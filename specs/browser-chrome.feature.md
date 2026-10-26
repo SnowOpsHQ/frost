@@ -36,8 +36,10 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
 - **Scenario: browse-guard-refuses-webview** — `will-attach-webview` is prevented.
 - **Scenario: other-sessions-keep-app-pin** — default-session contents, another partition's, and
   contents whose `session` is missing or throws are pinned to `app://` as in Phase 0.
-- **Scenario: browse-session-denies-permissions** — the browse session's permission request,
-  permission check and device-permission handlers deny everything (until Task 4).
+- **Scenario: browse-session-denies-permissions** — without permission handlers
+  (`hardenBrowseSession`'s `permissions` hook), the browse session's permission request,
+  permission check and device-permission handlers deny everything. With them, requests become
+  per-origin prompts (`permissions.feature.md`); device permissions stay denied either way.
 
 ## Controller (`apps/desktop/src/main/browser/__tests__/controller.test.ts`)
 - **Scenario: starts-with-one-empty-tab** — state version 1, one tab with `url: ''`, it is active;

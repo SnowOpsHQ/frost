@@ -14,9 +14,11 @@ import {
   type TabState,
 } from '@app/specs/browser.spec';
 import { IGNORED_LOAD_ERROR_CODES } from '@app/specs/browse-guard.spec';
+import type { PermissionDecision } from '@app/specs/permissions.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { isWebUrl } from './guard';
 import { pageTitle } from './page-title';
+import type { PermissionBroker } from './permissions';
 import { matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 
 // Main-process owner of all browser state (spec `browser-chrome.feature.md` and `tabs.feature.md`,
@@ -65,6 +67,11 @@ export interface BrowserController extends BrowserService {
   /** Raises a status-bar notice (a new `seq`). */
   notify(kind: NoticeKind): void;
   /**
+   * The id of the open tab whose (live) page view's WebContents is `contents`, else `null`: the
+   * permission handlers attribute a request to its tab with it (`permissions.feature.md`).
+   */
+  tabIdOf(contents: unknown): number | null;
+  /**
    * A download from `contents` was cancelled (spec `browse-guard.feature.md`): raises the
    * `download-blocked` notice, and closes the tab of `contents` if it is a popup tab that has
    * committed nothing (a `target=_blank` link to a file would otherwise leave an empty tab).
@@ -82,7 +89,20 @@ export interface BrowserControllerOptions {
    * tab nobody can see. Without it, New Tab with no window is a no-op.
    */
   readonly openWindow?: () => void;
+  /**
+   * The permission broker whose prompts the tabs show (`permissions.feature.md`). The controller
+   * reports each tab's head prompt in its state, answers only the active tab's, and denies a tab's
+   * pending prompts when its document goes (close, destroyed, cross-document commit, failed load,
+   * crash). Without it no tab ever has a prompt.
+   */
+  readonly permissions?: TabPermissions;
 }
+
+/** What the controller uses of the permission broker. */
+export type TabPermissions = Pick<PermissionBroker, 'promptFor' | 'answer' | 'denyTab' | 'subscribe'>;
+
+/** A tab's own state; its `permissionPrompt` comes from the broker when the state is read. */
+type PageState = Omit<TabState, 'permissionPrompt'>;
 
 interface Tab {
   readonly id: number;
@@ -99,9 +119,11 @@ interface Tab {
   error: LoadError | null;
   /** The page stopped responding (`unresponsive`) and has not responded since. */
   unresponsive: boolean;
+  /** The page is in HTML fullscreen (`enter-html-full-screen`): its view covers the whole window. */
+  fullscreen: boolean;
   /** The tab whose page opened this one (popup placement), if any. */
   readonly openerId: number | null;
-  state: TabState;
+  state: PageState;
 }
 
 /**
@@ -110,7 +132,7 @@ interface Tab {
  */
 const STATE_EVENTS = ['did-stop-loading', 'did-navigate-in-page', 'page-title-updated'] as const;
 
-function emptyTabState(id: number): TabState {
+function emptyTabState(id: number): PageState {
   return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false };
 }
 
@@ -118,7 +140,7 @@ function sameError(a: LoadError | null, b: LoadError | null): boolean {
   return a === b || (a !== null && b !== null && a.code === b.code && a.description === b.description && a.url === b.url);
 }
 
-function sameTabState(a: TabState, b: TabState): boolean {
+function sameTabState(a: PageState, b: PageState): boolean {
   return (
     a.url === b.url &&
     a.title === b.title &&
@@ -183,10 +205,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   let notice: Notice | null = null;
   /** Pending watches, oldest first: their wake-up check → their early finish. */
   const waiters = new Map<() => void, () => void>();
+  const permissions = options.permissions;
 
   const snapshot = (): BrowserState => ({
     version,
-    tabs: tabs.map((tab) => ({ ...tab.state })),
+    tabs: tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: permissions?.promptFor(tab.id) ?? null })),
     activeTabId,
     focusAddressBarSeq,
     notice: notice && { ...notice },
@@ -212,7 +235,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   /** A new empty tab, not yet in the strip. */
   const createTab = (openerId: number | null = null): Tab => {
     const id = nextTabId++;
-    return { id, view: null, unlisten: noop, crashed: false, error: null, unresponsive: false, openerId, state: emptyTabState(id) };
+    return { id, view: null, unlisten: noop, crashed: false, error: null, unresponsive: false, fullscreen: false, openerId, state: emptyTabState(id) };
   };
 
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
@@ -221,6 +244,25 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tabs.push(tab);
     activeTabId = tab.id;
     return tab.id;
+  };
+
+  // A prompt appeared, was answered or timed out. Denials the controller itself causes are muted:
+  // the operation that caused them reports its own change once it is complete.
+  let muted = false;
+  permissions?.subscribe(() => {
+    if (!muted) changed();
+  });
+
+  /** Denies `tab`'s pending prompts (its document is going); answers whether it had any. */
+  const denyPrompts = (tab: Tab): boolean => {
+    if (!permissions || permissions.promptFor(tab.id) === null) return false;
+    muted = true;
+    try {
+      permissions.denyTab(tab.id);
+    } finally {
+      muted = false;
+    }
+    return true;
   };
 
   const raiseNotice = (kind: NoticeKind): void => {
@@ -250,6 +292,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.crashed = false;
     tab.error = null;
     tab.unresponsive = false;
+    tab.fullscreen = false;
+    denyPrompts(tab);
     if (view) detach(view);
     return view;
   };
@@ -273,10 +317,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return tab.view;
   };
 
+  /** Lays `tab`'s view over the page area, or over the whole content area in HTML fullscreen. */
   const applyBounds = (tab: Tab): void => {
-    if (!tab.view || !win || pageBounds === null) return;
+    if (!tab.view || !win) return;
     const [width = 0, height = 0] = win.getContentSize();
-    tab.view.setBounds(clampPageBounds(pageBounds, [width, height]));
+    if (tab.fullscreen) tab.view.setBounds({ x: 0, y: 0, width, height });
+    else if (pageBounds !== null) tab.view.setBounds(clampPageBounds(pageBounds, [width, height]));
   };
 
   /** Makes the window show exactly the active tab's view (none for an empty tab, or behind a panel). */
@@ -316,7 +362,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const contents = tab.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
     const url = contents.getURL();
-    const next: TabState = {
+    const next: PageState = {
       id: tab.id,
       url: displayUrl(url),
       title: pageTitle(contents.getTitle(), url),
@@ -357,9 +403,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       tab.crashed = false;
       refresh(tab);
     });
-    // A main-frame page committed (Electron emits `did-navigate` only for non-error pages).
+    // A main-frame page committed (Electron emits `did-navigate` only for non-error pages): the
+    // old document's permission prompts are denied, and the new one is not fullscreen.
     listen('did-navigate', () => {
       tab.error = null;
+      if (denyPrompts(tab)) changed();
+      if (tab.fullscreen) {
+        tab.fullscreen = false;
+        applyBounds(tab);
+      }
       refresh(tab);
     });
     // Main-frame load failures show the error panel; `ERR_ABORTED` (a dropped navigation, a stop,
@@ -367,13 +419,26 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     listen('did-fail-load', (_event: unknown, code: number, description: string, validatedUrl: string, isMainFrame: boolean) => {
       if (isMainFrame && Number.isInteger(code) && code < 0 && !(IGNORED_LOAD_ERROR_CODES as readonly number[]).includes(code)) {
         tab.error = { code, description: String(description), url: displayUrl(String(validatedUrl)) };
+        // An error page replaces the document that asked.
+        if (denyPrompts(tab)) changed();
       }
       refresh(tab);
     });
     listen('render-process-gone', () => {
       tab.crashed = true;
       tab.unresponsive = false;
+      if (denyPrompts(tab)) changed();
       refresh(tab);
+    });
+    // HTML fullscreen (granted without a prompt, `permissions.spec.ts`): the window goes
+    // fullscreen and the page's view covers all of it until the page leaves fullscreen.
+    listen('enter-html-full-screen', () => {
+      tab.fullscreen = true;
+      applyBounds(tab);
+    });
+    listen('leave-html-full-screen', () => {
+      tab.fullscreen = false;
+      applyBounds(tab);
     });
     // A hang is the tab's own state: the status bar reports it while the tab is shown.
     listen('unresponsive', () => {
@@ -494,6 +559,18 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const live = tab?.view ? aliveContents(tab.view) : undefined;
     if (tab && live && tab.openerId !== null && live.getURL() === '') removeTab(tab.id);
     raiseNotice('download-blocked');
+  };
+
+  const tabIdOf = (contents: unknown): number | null => {
+    if (contents === null || contents === undefined) return null;
+    return tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === contents)?.id ?? null;
+  };
+
+  /** Answers the active tab's prompt; any other id (another tab's, stale, unknown) is a no-op. */
+  const answerPermission = (promptId: string, decision: PermissionDecision): boolean => {
+    const tab = activeTab();
+    if (!tab || !permissions || !hasWindow()) return false;
+    return permissions.answer(tab.id, promptId, decision);
   };
 
   const openTabFromPage = (opener: unknown, url: string): number | null => {
@@ -640,6 +717,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     openTabFromPage,
 
     notify: raiseNotice,
+
+    tabIdOf,
+
+    answerPermission,
 
     downloadBlocked,
 

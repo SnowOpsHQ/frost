@@ -1,4 +1,5 @@
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
+import type { PermissionDecision } from '@app/specs/permissions.spec';
 
 // Main-process services the procedures call (spec `specs/browser.spec.ts`). Main supplies the
 // implementations through the IPC context (`IpcHandlerOptions.services`); this package only knows
@@ -6,7 +7,7 @@ import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 
 /**
  * The browser controller as the `browser.*` procedures see it (acceptance: `browser-chrome.feature.md`,
- * `tabs.feature.md`). `navigate`, `back`, `forward`, `reload` and `stop` act on the active tab.
+ * `tabs.feature.md`, `permissions.feature.md`). `navigate`, `back`, `forward`, `reload` and `stop` act on the active tab.
  */
 export interface BrowserService {
   /**
@@ -34,6 +35,12 @@ export interface BrowserService {
   stop(): void;
   /** The chrome's page area; main rounds and clamps it to the window before applying it. */
   setPageBounds(bounds: PageBounds): void;
+  /**
+   * Answers the permission prompt the **active** tab shows (acceptance: `permissions.feature.md`):
+   * `true` if `promptId` is that prompt's id; `false` (a no-op) for any other id (another tab's, a
+   * queued, answered, timed-out or unknown one).
+   */
+  answerPermission(promptId: string, decision: PermissionDecision): boolean;
   getState(): BrowserState;
   /**
    * Resolves with the state once its `version` exceeds `sinceVersion` (at once if it already
