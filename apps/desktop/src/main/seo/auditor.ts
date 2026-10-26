@@ -1,14 +1,16 @@
-import { runAudit, type SeoAudit, type SeoAuditResponse } from '@app/seo-core';
+import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl } from '../browser/address';
 import { aliveContents, type Tab, type TabView } from '../browser/tab-model';
-import { parseSnapshot } from './snapshot';
+import type { AnalysisResult } from './analysis';
 
 // The SEO auditor: a part of the browser controller (spec `seo-sidebar.spec.ts`; acceptance
 // `seo-sidebar.feature.md`, Auditor). It keeps the latest audit of each tab, keyed by the URL it
-// was taken for without its `#fragment`, and audits only the **active** tab: `did-finish-load` and
+// was taken for without its `#fragment`, and audits only the **active** tab. The extractor's answer
+// is never parsed or audited here, on the main thread: it goes to `analyse` (the analysis worker,
+// `analysis.ts`), which answers the audit or why there is none: `did-finish-load` and
 // main-frame `did-navigate-in-page` (SPA routes; a fragment-only change is ignored) schedule a run
 // after `AUDIT_DEBOUNCE_MS` of quiet, or at most `AUDIT_MAX_WAIT_MS` after the first event of a
 // burst; a background tab's events only mark its audit stale, and it is audited when it is shown.
@@ -25,6 +27,11 @@ export type TabContents = TabView['webContents'];
 export interface TabAuditsOptions {
   /** Runs the extractor in the tab (`runExtractor`); resolves its raw, unvalidated answer. */
   readonly extract: (contents: TabContents) => Promise<unknown>;
+  /**
+   * Validates and audits an extractor answer off the main thread (main: the analysis worker,
+   * `createAnalyzer`; it enforces `ANALYSIS_TIMEOUT_MS`). Never rejects.
+   */
+  readonly analyse: (raw: unknown) => Promise<AnalysisResult>;
   readonly debounceMs?: number;
   readonly maxWaitMs?: number;
   readonly timeoutMs?: number;
@@ -127,22 +134,47 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
 
   const live = (tab: Tab, entry: Entry): boolean => entries.get(tab.id) === entry && ctx.isOpen(tab);
 
-  /** The result of the run that was for `key` (it is the latest run and has not timed out). */
-  const settle = (tab: Tab, entry: Entry, key: string, result: unknown): void => {
+  /** Whether the page still shows `key` (else a result for it is dropped: its own event schedules the new URL's audit). */
+  const stillAt = (tab: Tab, entry: Entry, key: string): boolean => {
     const now = auditable(tab);
-    // The page moved on: dropped (its own event schedules the new URL's audit).
-    if (!now.ok || now.key !== key || entry.key !== key) return;
-    if (result instanceof Error) {
-      entry.state = { status: 'unavailable', reason: 'extraction-failed' };
-    } else {
-      const parsed = parseSnapshot(result);
-      // A snapshot of another URL (the document changed under the run): dropped.
-      if (parsed.ok && withoutFragment(parsed.snapshot.url) !== key) return;
-      entry.state = parsed.ok ? { status: 'ready', audit: runAudit(parsed.snapshot) } : { status: 'unavailable', reason: parsed.reason };
-    }
+    return now.ok && now.key === key && entry.key === key;
+  };
+
+  /** The outcome of the run that was for `key` (it is the latest run and has not timed out). */
+  const settle = (entry: Entry, state: Entry['state']): void => {
+    entry.state = state;
     clearTimeout(entry.deadline);
     entry.deadline = undefined;
     bump(entry);
+  };
+
+  /** The extraction of run `run` (for `key`) answered: an error settles now; an answer is analysed in the worker first. */
+  const extracted = (tab: Tab, entry: Entry, key: string, run: number, result: unknown): void => {
+    if (!stillAt(tab, entry, key)) return;
+    if (result instanceof Error) {
+      settle(entry, { status: 'unavailable', reason: 'extraction-failed' });
+      return;
+    }
+    // Extracted: the extraction deadline is met; the analysis has its own (`ANALYSIS_TIMEOUT_MS`).
+    clearTimeout(entry.deadline);
+    entry.deadline = undefined;
+    let analysis: Promise<AnalysisResult>;
+    try {
+      analysis = options!.analyse(result);
+    } catch {
+      analysis = Promise.resolve({ ok: false, reason: 'analysis-failed' });
+    }
+    void analysis.then((answer) => {
+      // A newer run, a closed tab or a page that moved on: dropped.
+      if (entries.get(tab.id) !== entry || entry.run !== run || !stillAt(tab, entry, key)) return;
+      if (!answer.ok) {
+        settle(entry, { status: 'unavailable', reason: answer.reason });
+        return;
+      }
+      // An audit of another URL (the document changed under the run): dropped.
+      if (withoutFragment(answer.audit.url) !== key) return;
+      settle(entry, { status: 'ready', audit: answer.audit });
+    });
   };
 
   /** Starts the extraction for the latest request now (no other one is in flight). */
@@ -169,7 +201,7 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
       .then((result) => {
         if (entries.get(tab.id) !== entry) return;
         if (entry.inflight === token) entry.inflight = null;
-        if (entry.run === run && entry.timedOut !== run) settle(tab, entry, key, result);
+        if (entry.run === run && entry.timedOut !== run) extracted(tab, entry, key, run, result);
         // One trailing run for whatever was requested meanwhile.
         if (entry.queued && entry.inflight === null) {
           entry.queued = false;

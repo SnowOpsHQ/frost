@@ -3263,6 +3263,41 @@ input {
   min-width: 0.6em;
 }
 
+/* A bidi or control character in the raw view, shown as its code point instead of itself. */
+.seo-raw-marker {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 0 3px;
+  border: 1px solid color-mix(in srgb, var(--caution) 55%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--caution) 14%, transparent);
+  color: var(--caution);
+  font-size: 9.5px;
+  line-height: 14px;
+  vertical-align: 1px;
+}
+
+.seo-show-more {
+  align-self: flex-start;
+  margin: 4px 0 2px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.seo-show-more:hover {
+  background: var(--bg-hover);
+}
+
+.seo-show-more:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .seo-raw-error {
   display: flex;
   flex-direction: column;

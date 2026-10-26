@@ -481,6 +481,8 @@ export function extractPage(
     if (el.localName === 'time' && el.hasAttribute('datetime')) return attributeValue(el, 'datetime');
     return valueText(el);
   };
+  /** Characters of markup values kept so far, microdata and RDFa together (`maxMarkupTotalChars`). */
+  let markupChars = 0;
   type MarkupProperty = { name: string; value: string } | { name: string; item: number };
   type MarkupItem = { types: string[]; id: string | null; vocab: string | null; properties: MarkupProperty[] };
   /**
@@ -529,7 +531,12 @@ export function extractPage(
         const holder = items[owner]!;
         if (holder.properties.length >= L.maxItemProperties) continue;
         const value = rdfa ? rdfaValue(el) : microdataValue(el);
-        for (const name of props) if (holder.properties.length < L.maxItemProperties) holder.properties.push({ name, value });
+        for (const name of props) {
+          if (holder.properties.length >= L.maxItemProperties) break;
+          const kept = cut(value, Math.max(0, L.maxMarkupTotalChars - markupChars));
+          markupChars += kept.length;
+          holder.properties.push({ name, value: kept });
+        }
       }
     }
     // Every item the page has, also past the elements looked at (or the deadline).

@@ -30,10 +30,11 @@ export const RERUN_ACTIVE_TAB_ONLY = true;
  * Why there is no audit. `no-page`: the tab is empty or shows a non-`http(s)` page; `load-error` /
  * `crashed`: the tab shows its error or crash panel; `timeout`: the extractor did not answer
  * within `EXTRACT_TIMEOUT_MS`; `invalid-snapshot`: what it answered does not parse as a snapshot
- * (wrong shape, or over a cap); `extraction-failed`: running it threw; `no-tab`: no open tab has
- * this id.
+ * (wrong shape, or over a cap); `extraction-failed`: running it threw; `analysis-timeout`: the
+ * analysis worker did not answer within `ANALYSIS_TIMEOUT_MS` (it was terminated); `analysis-failed`:
+ * the worker failed (it crashed or could not start); `no-tab`: no open tab has this id.
  */
-export const SEO_UNAVAILABLE_REASONS = ['no-page', 'load-error', 'crashed', 'timeout', 'invalid-snapshot', 'extraction-failed', 'no-tab'] as const;
+export const SEO_UNAVAILABLE_REASONS = ['no-page', 'load-error', 'crashed', 'timeout', 'invalid-snapshot', 'extraction-failed', 'analysis-timeout', 'analysis-failed', 'no-tab'] as const;
 export type SeoUnavailableReason = (typeof SEO_UNAVAILABLE_REASONS)[number];
 
 /** What the sidebar says for each reason (frost's own strings; page text is never part of them). */
@@ -44,6 +45,8 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
   timeout: 'The page took too long to answer the audit. It may be busy or very large.',
   'invalid-snapshot': 'The page returned data frost could not read safely.',
   'extraction-failed': 'The audit could not read this page.',
+  'analysis-timeout': 'This page’s data took too long to analyse. It may hold very large or tangled structured data.',
+  'analysis-failed': 'The audit could not analyse this page’s data.',
   'no-tab': 'This tab is gone.',
 };
 

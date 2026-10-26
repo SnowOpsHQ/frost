@@ -201,6 +201,13 @@ const markupItems = z
     { message: 'items do not form a forest' },
   );
 
+/** Characters of the items' text values together. */
+function markupChars(items: readonly { readonly properties: readonly ({ readonly value: string } | { readonly item: number })[] }[]): number {
+  let sum = 0;
+  for (const item of items) for (const property of item.properties) if ('value' in property) sum += property.value.length;
+  return sum;
+}
+
 /**
  * The snapshot. Lists hold the first entries in document order (at most their `SNAPSHOT_LIMITS`
  * cap); each `…Total` is the page's full count (at least the list's length).
@@ -227,8 +234,9 @@ const markupItems = z
  * - `partial`: the extractor reached `EXTRACT_BUDGET_MS` and stopped early: some lists may hold
  *   fewer entries than their cap allows (their totals are still the page's).
  * - `jsonLd`: each JSON-LD block (`JsonLdBlockSchema`), their text together at most
- *   `maxJsonLdTotalChars`; `microdata` / `rdfa`: the markup items (`MarkupItemSchema`), with
- *   `microdataTotal` / `rdfaTotal` the items the page has (Task 3).
+ *   `maxJsonLdTotalChars`; `microdata` / `rdfa`: the markup items (`MarkupItemSchema`), their text
+ *   values together at most `maxMarkupTotalChars`, with `microdataTotal` / `rdfaTotal` the items the
+ *   page has (Task 3).
  */
 export const PageSnapshotSchema = z
   .strictObject({
@@ -275,7 +283,8 @@ export const PageSnapshotSchema = z
       s.rdfaTotal >= s.rdfa.length,
     { message: 'a total is below its list' },
   )
-  .refine((s) => s.jsonLd.reduce((sum, block) => sum + block.text.length, 0) <= L.maxJsonLdTotalChars, { message: 'JSON-LD over its total cap' });
+  .refine((s) => s.jsonLd.reduce((sum, block) => sum + block.text.length, 0) <= L.maxJsonLdTotalChars, { message: 'JSON-LD over its total cap' })
+  .refine((s) => markupChars(s.microdata) + markupChars(s.rdfa) <= L.maxMarkupTotalChars, { message: 'markup values over their total cap' });
 export type PageSnapshot = z.infer<typeof PageSnapshotSchema>;
 export type PageLink = z.infer<typeof LinkSchema>;
 export type PageImage = z.infer<typeof ImageSchema>;

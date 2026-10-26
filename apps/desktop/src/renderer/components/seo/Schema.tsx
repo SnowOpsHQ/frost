@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { formatJson, panelStatus, type SchemaBlock, type SchemaEntity, type SchemaIssue, type SchemaValue, type SeoAudit } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
-import { SCHEMA_SYNTAX_LABELS, SCHEMA_URL_PROPERTIES, type SchemaView } from '@app/specs/schema-types.spec';
+import { SCHEMA_PANEL_LIMITS, SCHEMA_SYNTAX_LABELS, SCHEMA_URL_PROPERTIES, type SchemaView } from '@app/specs/schema-types.spec';
 import { SEO_RULE_SPECS, SEO_SEVERITIES, type SeoSeverity } from '@app/specs/seo-rules.spec';
 import { ChevronIcon, CodeIcon, CopyIcon, OpenTabIcon, RefIcon, SchemaArt, TreeIcon } from '../../icons';
 import { actions } from '../../ipc';
-import { entityIndex, errorExcerpt, formatCount, openableUrl, schemaTypeSummary, UNTYPED_LABEL } from '../../seo-view';
+import { entityIndex, errorExcerpt, firstShown, formatCount, moreShown, openableUrl, openByDefault, rawSegments, schemaTypeSummary, UNTYPED_LABEL } from '../../seo-view';
 import { auditRef, Flash, PanelIssues, useFlash } from './actions';
 import { PageText, SEVERITY_LABEL, SeverityGlyph } from './parts';
 
@@ -42,6 +42,38 @@ function nameOf(entity: SchemaEntity): string | null {
     }
   }
   return entity.id;
+}
+
+/** The first rows of a long list, and "Show more" for the next `step` (`SCHEMA_PANEL_LIMITS`). */
+function useShown(total: number, step: number): [number, () => void] {
+  const [shown, setShown] = useState(() => firstShown(total, step));
+  return [Math.min(shown, total), () => setShown(moreShown(shown, total, step))];
+}
+
+function ShowMore({ shown, total, onMore, noun }: { readonly shown: number; readonly total: number; readonly onMore: () => void; readonly noun: string }) {
+  if (shown >= total) return null;
+  return (
+    <button type="button" className="seo-show-more" data-testid="seo-schema-show-more" onClick={onMore}>
+      Show more {noun} ({formatCount(total - shown)} hidden)
+    </button>
+  );
+}
+
+/** Raw-view text: `RAW_VIEW_MARKED` characters (bidi and control characters) shown as visible markers. */
+function RawText({ text }: { readonly text: string }) {
+  return (
+    <>
+      {rawSegments(text).map((segment, i) =>
+        segment.kind === 'text' ? (
+          segment.text
+        ) : (
+          <span key={i} className="seo-raw-marker" data-testid="seo-raw-marker" title={`Invisible character ${segment.code}`}>
+            {segment.code}
+          </span>
+        ),
+      )}
+    </>
+  );
 }
 
 function TypeBadges({ types }: { readonly types: readonly string[] }) {
@@ -127,6 +159,27 @@ function RefValue({ value, path }: { readonly value: Extract<SchemaValue, { kind
   );
 }
 
+/** A property's values (`valuesShown` at first): text, references, and nested entities (closed). */
+function PropValues({ name, values, path }: { readonly name: string; readonly values: readonly SchemaValue[]; readonly path: readonly number[] }) {
+  const [shown, more] = useShown(values.length, SCHEMA_PANEL_LIMITS.valuesShown);
+  return (
+    <dd className="seo-prop-values">
+      {values.slice(0, shown).map((value, j) =>
+        value.kind === 'text' ? (
+          <TextValue key={j} property={name} value={value} />
+        ) : value.kind === 'ref' ? (
+          <RefValue key={j} value={value} path={path} />
+        ) : (
+          <ul key={j} className="seo-entity-list seo-entity-nested">
+            <EntityNode entity={value.entity} path={path} defaultOpen={false} />
+          </ul>
+        ),
+      )}
+      <ShowMore shown={shown} total={values.length} onMore={more} noun="values" />
+    </dd>
+  );
+}
+
 function EntityNode({ entity, path, defaultOpen }: { readonly entity: SchemaEntity; readonly path: readonly number[]; readonly defaultOpen: boolean }) {
   const { issues: byNode, index } = useTree();
   const [open, setOpen] = useState(defaultOpen);
@@ -135,6 +188,7 @@ function EntityNode({ entity, path, defaultOpen }: { readonly entity: SchemaEnti
   // A node describing part of a typed one (the same @id) is shown as adding to it.
   const extended = entity.extends === null ? undefined : index.get(entity.extends);
   const name = nameOf(entity) ?? (extended ? nameOf(extended) : null);
+  const [rows, moreRows] = useShown(entity.properties.length, SCHEMA_PANEL_LIMITS.rowsShown);
   const inner = [...path, entity.key];
   return (
     <li className="seo-entity" data-testid="seo-entity" data-key={entity.key} data-types={entity.types.join(' ')} data-extends={entity.extends ?? undefined} data-syntax={entity.syntax} data-top={entity.topLevel} data-open={open} data-status={worst ?? 'pass'}>
@@ -172,28 +226,17 @@ function EntityNode({ entity, path, defaultOpen }: { readonly entity: SchemaEnti
                 </dd>
               </div>
             ) : null}
-            {entity.properties.map((property, i) => (
+            {entity.properties.slice(0, rows).map((property, i) => (
               <div key={i} className="seo-prop" data-testid="seo-prop" data-name={property.name}>
                 <dt className="seo-prop-name seo-mono">
                   <PageText value={property.name} />
                   {property.values.length > 1 ? <span className="seo-prop-count">{formatCount(property.values.length)}</span> : null}
                 </dt>
-                <dd className="seo-prop-values">
-                  {property.values.map((value, j) =>
-                    value.kind === 'text' ? (
-                      <TextValue key={j} property={property.name} value={value} />
-                    ) : value.kind === 'ref' ? (
-                      <RefValue key={j} value={value} path={inner} />
-                    ) : (
-                      <ul key={j} className="seo-entity-list seo-entity-nested">
-                        <EntityNode entity={value.entity} path={inner} defaultOpen={false} />
-                      </ul>
-                    ),
-                  )}
-                </dd>
+                <PropValues name={property.name} values={property.values} path={inner} />
               </div>
             ))}
           </dl>
+          <ShowMore shown={rows} total={entity.properties.length} onMore={moreRows} noun="properties" />
           {entity.properties.length === 0 && entity.id === null ? <p className="seo-empty-line">No properties.</p> : null}
         </div>
       ) : null}
@@ -201,14 +244,19 @@ function EntityNode({ entity, path, defaultOpen }: { readonly entity: SchemaEnti
   );
 }
 
+/** A card's top-level nodes: the first `entitiesShown` (the first `openTopLevel` of them open), then "Show more". */
 function EntityList({ entities, testId }: { readonly entities: readonly SchemaEntity[]; readonly testId?: string }) {
+  const [shown, more] = useShown(entities.length, SCHEMA_PANEL_LIMITS.entitiesShown);
   if (entities.length === 0) return <p className="seo-empty-line">No nodes in it.</p>;
   return (
-    <ul className="seo-entity-list" data-testid={testId}>
-      {entities.map((entity) => (
-        <EntityNode key={entity.key} entity={entity} path={[]} defaultOpen />
-      ))}
-    </ul>
+    <>
+      <ul className="seo-entity-list" data-testid={testId}>
+        {entities.slice(0, shown).map((entity, i) => (
+          <EntityNode key={entity.key} entity={entity} path={[]} defaultOpen={openByDefault(i)} />
+        ))}
+      </ul>
+      <ShowMore shown={shown} total={entities.length} onMore={more} noun="nodes" />
+    </>
   );
 }
 
@@ -226,7 +274,7 @@ function RawView({ block }: { readonly block: SchemaBlock }) {
     return (
       <>
         <pre className="seo-raw" data-testid="seo-schema-raw" ref={pre}>
-          {pretty.text}
+          <RawText text={pretty.text} />
         </pre>
         {pretty.cut ? <p className="seo-note">Shortened for display; Copy JSON copies the same text.</p> : null}
       </>
@@ -243,12 +291,12 @@ function RawView({ block }: { readonly block: SchemaBlock }) {
           <PageText value={error.message} lines={2} />
         </p>
         <pre className="seo-raw" data-testid="seo-schema-raw" data-invalid="true" ref={pre}>
-          {excerpt.before}
+          <RawText text={excerpt.before} />
           <mark className="seo-raw-mark" data-testid="seo-schema-error-mark" data-end={excerpt.at === '' || excerpt.at === '\n'} ref={mark}>
-            {excerpt.at === '' || excerpt.at === '\n' ? ' ' : excerpt.at}
+            {excerpt.at === '' || excerpt.at === '\n' ? ' ' : <RawText text={excerpt.at} />}
           </mark>
           {excerpt.at === '\n' ? '\n' : null}
-          {excerpt.after}
+          <RawText text={excerpt.after} />
         </pre>
       </>
     );
@@ -258,7 +306,7 @@ function RawView({ block }: { readonly block: SchemaBlock }) {
       <p className="seo-note">frost read the first {formatCount(block.text.length)} of its {formatCount(block.length)} characters and did not parse it.</p>
       {block.text !== '' ? (
         <pre className="seo-raw" data-testid="seo-schema-raw" ref={pre}>
-          {block.text}
+          <RawText text={block.text} />
         </pre>
       ) : null}
     </>
@@ -299,7 +347,9 @@ function BlockCard({ block, entities, issues, tab, audit }: { readonly block: Sc
           className="seo-toggle"
           data-testid="seo-schema-copy"
           disabled={block.text === ''}
-          onClick={() => void actions.copySchemaJson(tab.id, auditRef(audit), block.index).then((ok) => flash(ok ? 'JSON copied' : 'Nothing to copy'))}
+          onClick={() =>
+            void actions.copySchemaJson(tab.id, auditRef(audit), block.index).then((ok) => flash(!ok ? 'Nothing to copy' : block.status === 'cut' ? 'Partial text copied (the block was cut)' : 'JSON copied'))
+          }
         >
           <CopyIcon />
           <span>Copy JSON</span>

@@ -1,6 +1,7 @@
 import { panelStatus, type SchemaEntity, type SeoAuditResponse } from '@app/seo-core';
 import { HIGHLIGHT_PANELS, LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN, type HighlightMode, type PanelStatus, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
+import { RAW_VIEW_MARKED, SCHEMA_PANEL_LIMITS } from '@app/specs/schema-types.spec';
 
 // Pure helpers behind the SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance
 // `seo-sidebar.feature.md`, Renderer helpers).
@@ -141,4 +142,37 @@ export function entityIndex(entities: readonly SchemaEntity[]): Map<number, Sche
     for (const property of entity.properties) for (const value of property.values) if (value.kind === 'entity') stack.push(value.entity);
   }
   return index;
+}
+
+/** Whether the top-level node at `index` of a card starts open (`SCHEMA_PANEL_LIMITS.openTopLevel`). */
+export function openByDefault(index: number): boolean {
+  return index < SCHEMA_PANEL_LIMITS.openTopLevel;
+}
+
+/** How many of `total` rows a list shows at first (`step` of them at most). */
+export function firstShown(total: number, step: number): number {
+  return Math.min(total, step);
+}
+
+/** How many rows a list shows after "Show more": `step` more, at most `total`. */
+export function moreShown(shown: number, total: number, step: number): number {
+  return Math.min(total, shown + step);
+}
+
+/** A run of raw-view text, or one marked character (`U+202E`) shown as a marker instead of itself. */
+export type RawSegment = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'mark'; readonly code: string };
+
+const MARKED = new RegExp(RAW_VIEW_MARKED.source, 'g');
+
+/** `text` split into runs of plain text and `RAW_VIEW_MARKED` characters (bidi controls, C0 controls but tab and line feed, DEL). Linear. */
+export function rawSegments(text: string): RawSegment[] {
+  const out: RawSegment[] = [];
+  let from = 0;
+  for (const match of text.matchAll(MARKED)) {
+    if (match.index > from) out.push({ kind: 'text', text: text.slice(from, match.index) });
+    out.push({ kind: 'mark', code: `U+${match[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}` });
+    from = match.index + 1;
+  }
+  if (from < text.length) out.push({ kind: 'text', text: text.slice(from) });
+  return out;
 }

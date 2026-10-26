@@ -22,6 +22,8 @@ export type ReadLimit = 'depth' | 'nodes' | 'entities';
 
 export interface SchemaReading {
   readonly blocks: readonly SchemaBlock[];
+  /** Where reading markup stopped at a bound: the last entity read, and which bound (`null`: all was read). */
+  readonly markupCut: { readonly at: number; readonly limit: ReadLimit } | null;
   /** Per block (by index), the bounds it reached. */
   readonly limits: ReadonlyMap<number, ReadonlySet<ReadLimit>>;
   /** Top-level entities, in order. */
@@ -36,7 +38,7 @@ type MutableEntity = { -readonly [K in keyof SchemaEntity]: SchemaEntity[K] } & 
 type MutableRef = { kind: 'ref'; id: string; target: number | null };
 
 const DROPPED: ReadonlySet<string> = new Set(SCHEMA_DROPPED_KEYS);
-const L = SCHEMA_PARSE_LIMITS;
+export type SchemaParseLimits = { readonly [K in keyof typeof SCHEMA_PARSE_LIMITS]: number };
 
 const hasOwn = (value: object, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 /** `value[key]` if it is the object's own property (never an inherited one). */
@@ -130,10 +132,10 @@ function rdfaTypes(item: MarkupItem): { types: string[]; note: VocabularyNote | 
   return { types, note };
 }
 
-const text = (value: string, json: 'string' | 'number' | 'boolean' | 'null'): SchemaValue => ({ kind: 'text', text: cutText(value, L.maxValueChars), length: value.length, json });
-
-/** Reads the snapshot's JSON-LD blocks and markup items (bounded). Pure; never throws on page data. */
-export function readSchema(snapshot: PageSnapshot): SchemaReading {
+/** Reads the snapshot's JSON-LD blocks and markup items (bounded by `L`). Pure; never throws on page data. */
+export function readSchema(snapshot: PageSnapshot, L: SchemaParseLimits = SCHEMA_PARSE_LIMITS): SchemaReading {
+  const text = (value: string, json: 'string' | 'number' | 'boolean' | 'null'): SchemaValue => ({ kind: 'text', text: cutText(value, L.maxValueChars), length: value.length, json });
+  let markupCut: { at: number; limit: ReadLimit } | null = null;
   let nextKey = 0;
   let nodes = 0;
   const all: MutableEntity[] = [];
@@ -262,6 +264,26 @@ export function readSchema(snapshot: PageSnapshot): SchemaReading {
       vocabulary.set(entity.key, contextNote(context));
     };
 
+    /** A container: a node, or one holding a `@graph` (the members top-level nodes, with its `@context` unless they have their own). */
+    const container = (value: object, depth: number): void => {
+      const graph = own(value, '@graph');
+      const context = own(value, '@context');
+      if (graph === undefined) {
+        top(value, context, depth);
+        return;
+      }
+      // It is a node of its own only if it says more than its graph.
+      if (Object.keys(value).some((key) => key !== '@context' && key !== '@graph' && key !== '@id' && !DROPPED.has(key))) top(value, context, depth);
+      else dropped += Object.keys(value).filter((key) => DROPPED.has(key)).length;
+      for (const member of Array.isArray(graph) ? graph : [graph]) {
+        if (nodes >= L.maxNodes) {
+          reached.add('nodes');
+          break;
+        }
+        if (isObject(member)) top(member, own(member, '@context') ?? context, depth + 2);
+      }
+    };
+
     const root = parsed.value;
     if (Array.isArray(root)) {
       for (const item of root) {
@@ -269,27 +291,9 @@ export function readSchema(snapshot: PageSnapshot): SchemaReading {
           reached.add('nodes');
           break;
         }
-        if (isObject(item)) top(item, own(item, '@context'), 1);
+        if (isObject(item)) container(item, 1);
       }
-    } else if (isObject(root)) {
-      const graph = own(root, '@graph');
-      const context = own(root, '@context');
-      if (graph === undefined) {
-        top(root, context, 0);
-      } else {
-        // The root holds the graph; it is a node of its own only if it says more than that.
-        if (Object.keys(root).some((key) => key !== '@context' && key !== '@graph' && key !== '@id' && !DROPPED.has(key))) top(root, context, 0);
-        else dropped += Object.keys(root).filter((key) => DROPPED.has(key)).length;
-        const members = Array.isArray(graph) ? graph : [graph];
-        for (const member of members) {
-          if (nodes >= L.maxNodes) {
-            reached.add('nodes');
-            break;
-          }
-          if (isObject(member)) top(member, own(member, '@context') ?? context, 2);
-        }
-      }
-    }
+    } else if (isObject(root)) container(root, 0);
     if (reached.size > 0) limits.set(index, reached);
     return { ...base, status: 'valid', error: null, entities: tops, droppedKeys: dropped, overLimit: reached.size > 0 };
   };
@@ -316,7 +320,11 @@ export function readSchema(snapshot: PageSnapshot): SchemaReading {
       }
       const id = item.id?.trim() ? cutText(item.id.trim(), L.maxValueChars) : null;
       const entity = newEntity(syntax, null, types, id, topLevel);
-      if (!entity) return null;
+      if (!entity) {
+        const last = all[all.length - 1];
+        if (last) markupCut ??= { at: last.key, limit: 'entities' };
+        return null;
+      }
       if (topLevel) {
         entities.push(entity);
         if (note) vocabulary.set(entity.key, note);
@@ -325,6 +333,12 @@ export function readSchema(snapshot: PageSnapshot): SchemaReading {
       for (const property of item.properties) {
         const name = shortTerm(property.name);
         if (name === '') continue;
+        // Markup values share the page's value budget with JSON-LD.
+        if (nodes >= L.maxNodes) {
+          markupCut ??= { at: entity.key, limit: 'nodes' };
+          break;
+        }
+        nodes += 1;
         if ('item' in property) {
           const nested = build(property.item, false);
           if (nested) addValues(entity, names, name, [{ kind: 'entity', entity: nested }]);
@@ -346,5 +360,5 @@ export function readSchema(snapshot: PageSnapshot): SchemaReading {
   for (const entity of all) if (entity.id !== null && entity.types.length > 0 && !typedById.has(entity.id)) typedById.set(entity.id, entity.key);
   for (const entity of all) if (entity.types.length === 0 && entity.id !== null) entity.extends = typedById.get(entity.id) ?? null;
 
-  return { blocks, limits, entities, all, vocabulary };
+  return { blocks, markupCut, limits, entities, all, vocabulary };
 }

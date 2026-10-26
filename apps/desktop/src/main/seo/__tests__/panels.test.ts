@@ -10,6 +10,7 @@ import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../t
 import { fakeEvent } from '../../../test/electron-fake';
 import { rawSnapshot } from '../../../test/seo-fakes';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../../browser/controller';
+import { analyseSnapshot } from '../analyse';
 
 const A = 'https://example.com/a';
 const B = 'https://example.com/b';
@@ -53,7 +54,7 @@ beforeEach(() => {
     },
     platform: 'linux',
     // Every extraction answers at once with a snapshot of the tab's URL.
-    seo: { extract: async (contents) => snapshotOf((contents as unknown as FakeTabContents).url) },
+    seo: { extract: async (contents) => snapshotOf((contents as unknown as FakeTabContents).url), analyse: async (raw) => analyseSnapshot(raw) },
     highlight: {
       paint: (contents, mode) =>
         new Promise<unknown>((resolve, reject) => {

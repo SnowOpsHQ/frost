@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, ipcMain, session } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
@@ -12,6 +13,7 @@ import { clearBrowseStorage, confirmClearBrowsingData, createClearBrowsingData }
 import { installAppMenu, popupContextMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
+import { createAnalyzer } from './seo/analysis';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
 import { remoteDebuggingRefusal } from './security/policy';
@@ -93,16 +95,23 @@ function start(): void {
     popupContextMenu(template, window as BrowserWindow);
   };
   // The active tab is audited after each load and SPA route change (specs/seo-sidebar.feature.md):
-  // the extractor runs in the tab's isolated SEO world, and main validates what it answers. The
+  // the extractor runs in the tab's isolated SEO world, and what it answers is validated and audited
+  // in the analysis worker, never on this thread (specs/seo-schema.feature.md). The worker is the
+  // Forge Vite main build's `seo-analysis` entry, bundled beside main.cjs (in the ASAR when
+  // packaged); it gets no Electron APIs, only the extractor's answer, and a capped heap. The
   // highlight overlay is drawn from the same world (specs/seo-panels.feature.md), and the SEO
   // panels' "Copy" commands write through main's clipboard (the chrome has no clipboard access).
+  const analyzer = createAnalyzer({
+    spawn: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }),
+  });
+  app.once('will-quit', () => analyzer.dispose());
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
     permissions,
     session: sessionStore.writer,
     contextMenu: showContextMenu,
-    seo: { extract: runExtractor },
+    seo: { extract: runExtractor, analyse: (raw) => analyzer.analyse(raw) },
     highlight: { paint: runHighlight, ended: watchHighlight },
     clipboard,
   });

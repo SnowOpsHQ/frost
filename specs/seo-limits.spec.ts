@@ -29,6 +29,16 @@ export const EXTRACT_TIMEOUT_MS = 3_000;
 export const EXTRACT_BUDGET_MS = 1_500;
 
 /**
+ * Everything derived from the page (the snapshot's Zod parse and `runAudit`, the structured-data
+ * analysis included) runs in one long-lived `worker_threads` Worker spawned by main, never on the
+ * Electron main thread (`apps/desktop/src/main/seo/analysis.ts`; acceptance `seo-schema.feature.md`,
+ * Analysis off the main thread). The worker has no Electron APIs and receives only the extractor's
+ * answer. An analysis not answered within this long is abandoned: the worker is terminated, that
+ * audit is "unavailable" (`analysis-timeout`), and a fresh worker is spawned for the next one.
+ */
+export const ANALYSIS_TIMEOUT_MS = 2_000;
+
+/**
  * Page events (`did-finish-load`, a main-frame `did-navigate-in-page` that changes more than the
  * `#fragment`) start an audit of the active tab only after this long without another one: a burst
  * of SPA route changes audits once. A burst that never pauses (a `replaceState` storm) still audits
@@ -168,6 +178,11 @@ export const SNAPSHOT_LIMITS = {
   maxSchemaNameChars: 256,
   /** Characters of a property value (text, or a resolved URL) and of an item id. */
   maxSchemaValueChars: 2_048,
+  /**
+   * Characters of property values kept across all microdata and RDFa items together: once used up,
+   * later values are kept empty (so a page of long values costs no more than this, however many items).
+   */
+  maxMarkupTotalChars: 262_144,
   /** Text nodes the word count walks at most (it then reports `textTruncated`; it visits at most four times as many nodes in all). */
   maxTextNodes: 50_000,
   /** Characters of visible text the word count reads at most (then `textTruncated`). */

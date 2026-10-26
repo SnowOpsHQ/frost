@@ -4,6 +4,7 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { SCHEMA_PANEL_LIMITS } from '@app/specs/schema-types.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
@@ -66,8 +67,13 @@ const HOSTILE_PAGE = page_(
   'A page whose structured data fights the extractor',
   `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Thing","name":"${'x'.repeat(FIVE_MB)}"}</script>` +
     `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Thing","name":"Deep","a":${'['.repeat(DEEP)}${']'.repeat(DEEP)}}</script>` +
-    '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"Proto","__proto__":{"polluted":"yes"},"constructor":{"prototype":{"polluted":"yes"}},"offers":{"@type":"Offer","price":"1","priceCurrency":"USD","__proto__":{"polluted":"yes"}}}</script>',
-  `<h1>Hostile</h1>${'<div itemscope itemtype="https://schema.org/Thing" itemprop="part">'.repeat(DEEP)}${'</div>'.repeat(DEEP)}`,
+    '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"Proto","__proto__":{"polluted":"yes"},"constructor":{"prototype":{"polluted":"yes"}},"offers":{"@type":"Offer","price":"1","priceCurrency":"USD","__proto__":{"polluted":"yes"}}}</script>' +
+    // Nodes sharing one @id, each referencing it: inside every cap, quadratic for a naive check (600
+    // of them leave room in the page's node budget for the markup below).
+    ld({ '@context': 'https://schema.org', '@graph': Array.from({ length: 600 }, () => ({ '@id': 'a', '@type': 'ListItem', position: 1, item: { '@id': 'a' } })) }),
+  // 400 items of long values (the markup text cap bounds them together), then 10 000 nested items.
+  `<h1>Hostile</h1>${Array.from({ length: 400 }, (_, i) => `<div itemscope itemtype="https://schema.org/Thing"><p itemprop="name">Item ${i}</p><p itemprop="description">${'long text '.repeat(200)}</p></div>`).join('')}` +
+    `${'<div itemscope itemtype="https://schema.org/Thing" itemprop="part">'.repeat(DEEP)}${'</div>'.repeat(DEEP)}`,
 );
 
 /** Markup, bidi overrides and javascript: URLs in JSON-LD values, types and names (`</script>` written `<\/script>`, valid JSON). */
@@ -250,8 +256,22 @@ test('schema-microdata-product-tree', async () => {
 
 test('schema-hostile-page-is-bounded', async () => {
   const url = `${site.origin}/hostile`;
+  // Main answers round trips throughout: the page's data is analysed in the worker, never here.
+  let polling = true;
+  let worst = 0;
+  const poll = (async () => {
+    while (polling) {
+      const sent = Date.now();
+      await app.evaluate(() => 1);
+      worst = Math.max(worst, Date.now() - sent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  })();
   const started = Date.now();
   await audit(url, 30_000);
+  polling = false;
+  await poll;
+  expect(worst).toBeLessThan(250);
   expect(Date.now() - started).toBeLessThan(30_000);
   expect(Number(await page.getByTestId('seo-duration').getAttribute('data-ms'))).toBeLessThan(EXTRACT_TIMEOUT_MS);
   expect(await issueIds()).toContain('schema-over-limit');
@@ -268,10 +288,21 @@ test('schema-hostile-page-is-bounded', async () => {
   await overLimit.getByTestId('seo-issue-toggle').click();
   await expect(overLimit.getByTestId('seo-issue-samples')).toContainText(`characters (frost reads blocks of up to ${SNAPSHOT_LIMITS.maxJsonLdChars.toLocaleString('en-US')}): not read`);
   await expect(overLimit.getByTestId('seo-issue-samples')).toContainText('nested deeper than 32 levels');
-  // The deep microdata is counted, and only the first levels are kept.
+  // The 1 000 shared-@id nodes are one group: its issues sit on its first node only.
+  expect(await block(3).locator('[data-testid="seo-entity"][data-status="error"], [data-testid="seo-entity"][data-status="warning"]').count()).toBeLessThanOrEqual(1);
+  // The markup is counted, bounded and rendered bounded: the first nodes open, then "Show more".
   const markup = page.locator('[data-testid="seo-schema-markup"][data-syntax="microdata"]');
-  await expect(markup).toContainText(`${DEEP.toLocaleString('en-US')} items`);
-  expect(await markup.locator('[data-testid="seo-entity"]').count()).toBeLessThanOrEqual(SNAPSHOT_LIMITS.maxMarkupDepth + 1);
+  await expect(markup).toContainText(`${(DEEP + 400).toLocaleString('en-US')} items`);
+  const tops = markup.locator('[data-testid="seo-schema-tree-microdata"] > [data-testid="seo-entity"]');
+  await expect(tops).toHaveCount(SCHEMA_PANEL_LIMITS.entitiesShown);
+  await expect(markup.locator('[data-testid="seo-schema-tree-microdata"] > [data-testid="seo-entity"][data-open="true"]')).toHaveCount(SCHEMA_PANEL_LIMITS.openTopLevel);
+  await markup.locator(':scope > [data-testid="seo-schema-show-more"]').click();
+  await expect(tops).toHaveCount(2 * SCHEMA_PANEL_LIMITS.entitiesShown);
+  const markupChars = await markup.getByTestId('seo-prop-value').evaluateAll((values) => values.reduce((sum, v) => sum + (v.textContent ?? '').length, 0));
+  expect(markupChars).toBeLessThanOrEqual(SNAPSHOT_LIMITS.maxMarkupTotalChars);
+  // Copy JSON on the cut block copies what was kept, and says so.
+  await block(0).getByTestId('seo-schema-copy').click();
+  await expect(page.getByTestId('seo-schema-flash')).toHaveText('Partial text copied (the block was cut)');
   // Nothing polluted: main, the chrome, and the page's own world.
   expect(await app.evaluate(() => (({}) as Record<string, unknown>)['polluted'])).toBeUndefined();
   expect(await page.evaluate(() => (({}) as Record<string, unknown>)['polluted'])).toBeUndefined();
@@ -304,6 +335,9 @@ test('schema-values-are-inert', async () => {
   expect(await sidebarElements()).toEqual({ img: 0, script: 0, a: 0, iframe: 0, style: 0 });
   await block(0).locator('[data-testid="seo-schema-view"][data-view="raw"]').click();
   await expect(block(0).getByTestId('seo-schema-raw')).toContainText('"description": "<script>top.__pwned=3<\\/script>"');
+  // The bidi override shows as a marker in the raw view, never as itself.
+  await expect(block(0).getByTestId('seo-raw-marker')).toHaveText(['U+202E']);
+  expect(await rawText(0)).not.toContain('\u202E');
   expect(await sidebarElements()).toEqual({ img: 0, script: 0, a: 0, iframe: 0, style: 0 });
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
 });

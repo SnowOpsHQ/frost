@@ -474,4 +474,17 @@ describe('extractor on a DOM', () => {
     expect(capped.microdataTotal).toBe(5);
     for (const snapshot of [deep, many, long, capped]) expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
   });
+
+  test('extractor-caps-markup-text', () => {
+    const value = 'v'.repeat(40);
+    const body =
+      times(3, () => `<div itemscope itemtype="https://schema.org/Thing"><span itemprop="a">${value}</span><span itemprop="b">${value}</span></div>`) +
+      `<div vocab="https://schema.org/" typeof="Thing"><span property="name">${value}</span></div>`;
+    const snapshot = extract({ body, limits: { maxMarkupTotalChars: 100 } });
+    expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    const lengths = [...snapshot.microdata, ...snapshot.rdfa].flatMap((item) => item.properties.map((p) => ('value' in p ? p.value.length : 0)));
+    // 40 + 40 + 20, then nothing: microdata and RDFa share the cap.
+    expect(lengths).toEqual([40, 40, 20, 0, 0, 0, 0]);
+    expect(lengths.reduce((a, b) => a + b, 0)).toBe(100);
+  });
 });

@@ -149,6 +149,25 @@ describe('schema rules', () => {
     fails('schema-required-missing', withJsonLd(node('Person', { name: '  ' })));
   });
 
+  test('schema-required-scope', () => {
+    const carousel = (item: Record<string, unknown>) => withJsonLd(node('ItemList', { itemListElement: [{ '@type': 'ListItem', position: 1, ...item }] }));
+    // An item list's ListItem needs a position and one of url / item / name.
+    passes('schema-required-missing', carousel({ url: 'https://a.example/1' }));
+    passes('schema-required-missing', carousel({ item: { '@id': 'https://a.example/1' } }));
+    expect(fails('schema-required-missing', carousel({ description: 'x' })).samples[0]).toBe('ListItem: Missing url, item or name');
+    // A breadcrumb trail's ListItem needs a name (its own or its item's).
+    expect(fails('schema-required-missing', withJsonLd(node('BreadcrumbList', { itemListElement: [{ '@type': 'ListItem', position: 1, url: 'https://a.example/' }] }))).samples[0]).toBe('ListItem: Missing name or item.name');
+    // A Product a Review is about is not held to offers; it still needs a name.
+    const review = (product: Record<string, unknown>) => withJsonLd(node('Review', { author: 'A', reviewBody: 'Good', itemReviewed: { '@type': 'Product', ...product } }));
+    passes('schema-required-missing', review({ name: 'Shoe' }));
+    expect(fails('schema-required-missing', review({ sku: 'S' })).samples[0]).toBe('Product: Missing name');
+    // Nested authors need a name; a nested Article needs nothing it does not identify itself by.
+    passes('schema-required-missing', withJsonLd(node('WebPage', { name: 'P', mainEntity: { '@type': 'Article', image: 'https://a.example/i.png' } })));
+    fails('schema-required-missing', withJsonLd(node('Article', { headline: 'H', author: { '@type': 'Person', url: 'https://a.example/' } })));
+    // FAQ questions and answers keep their full sets when nested.
+    fails('schema-required-missing', withJsonLd(node('FAQPage', { mainEntity: { '@type': 'Question', name: 'Q', acceptedAnswer: { '@type': 'Answer' } } })));
+  });
+
   test('schema-recommended-missing', () => {
     expect(fails('schema-recommended-missing', withJsonLd(node('Organization', { name: 'Acme' }))).samples[0]).toBe('Organization “Acme”: Could add url; logo; sameAs');
     expect(fails('schema-recommended-missing', product({ sku: undefined, image: undefined })).samples[0]).toBe('Product “Trail shoe”: Could add image; sku, gtin, gtin8, gtin12, gtin13, gtin14 or mpn');
@@ -175,7 +194,7 @@ describe('schema rules', () => {
     fails('schema-date-invalid', withJsonLd(node('Recipe', { name: 'Soup', image: 'https://a.example/s.png', cookTime: '90 minutes' })));
     fails('schema-date-invalid', withJsonLd(node('VideoObject', { name: 'V', thumbnailUrl: 'https://a.example/t.png', uploadDate: '2024-05-01', duration: 'PT' })));
     passes('schema-date-invalid', cleanSnapshot());
-    for (const good of ['2024', '2024-05', '2024-02-29', '2024-05-01T09:30', '2024-05-01T09:30:15.250Z', '2024-05-01T09:30:00+02:00', '2024-05-01T09:30-0500']) passes('schema-date-invalid', article({ dateModified: good }));
+    for (const good of ['2024', '2024-05', '2024-02-29', '2024-05-01T09:30', '2024-05-01T09:30:15.250Z', '2024-05-01T09:30:00+02:00', '2024-05-01T09:30-0500', '2024-05-01t09:30:00z']) passes('schema-date-invalid', article({ dateModified: good }));
     for (const duration of ['PT1H30M', 'P1D', 'P1Y2M3DT4H5M6S', 'PT0.5S', 'P2W']) passes('schema-date-invalid', withJsonLd(node('Recipe', { name: 'Soup', image: 'https://a.example/s.png', totalTime: duration })));
   });
 
@@ -210,10 +229,15 @@ describe('schema rules', () => {
   });
 
   test('schema-entity-conflict', () => {
-    expect(fails('schema-entity-conflict', withJsonLd(node('Organization', ORG), node('Organization', { ...ORG, name: 'Acme Inc' }))).samples[0]).toBe('Organization “Acme Inc”: Its name “Acme Inc” differs from another Organization’s “Acme”');
-    fails('schema-entity-conflict', withJsonLd(node('WebSite', { name: 'S', url: 'https://a.example/' }), node('WebSite', { name: 'S', url: 'https://b.example/' })));
+    expect(fails('schema-entity-conflict', withJsonLd(node('Organization', ORG), node('Organization', { ...ORG, name: 'Acme Inc' }))).samples[0]).toBe('Organization “Acme Inc”: Its name “Acme Inc” differs from another Organization’s “Acme” for the same site');
+    // The same host with www., and a node without a URL, claim the same site.
+    fails('schema-entity-conflict', withJsonLd(node('WebSite', { name: 'Shop', url: 'https://www.a.example/' }), node('WebSite', { name: 'Shop online', url: 'https://a.example/about' })));
+    fails('schema-entity-conflict', withJsonLd(node('Organization', ORG), node('Organization', { name: 'Other name' })));
     passes('schema-entity-conflict', cleanSnapshot());
-    passes('schema-entity-conflict', withJsonLd(node('Organization', ORG), node('Organization', { ...ORG, url: 'https://ACME.example' })));
+    // Different hosts are different sites (a partner, a parent company).
+    passes('schema-entity-conflict', withJsonLd(node('Organization', ORG), node('Organization', { name: 'Partner Co', url: 'https://partner.example/' })));
+    passes('schema-entity-conflict', withJsonLd(node('WebSite', { name: 'S', url: 'https://a.example/' }), node('WebSite', { name: 'S', url: 'https://b.example/' })));
+    passes('schema-entity-conflict', withJsonLd(node('Organization', ORG), node('Organization', { ...ORG, name: 'ACME', url: 'https://acme.example/x' })));
     passes('schema-entity-conflict', withJsonLd(node('Organization', { ...ORG, '@id': '#o' }), node('Organization', { '@id': '#o', name: 'Other' })));
     passes('schema-entity-conflict', withJsonLd(node('Organization', ORG), node('Organization', { logo: 'https://acme.example/l2.png' })));
   });

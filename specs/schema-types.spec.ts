@@ -24,6 +24,11 @@ export const SCHEMA_SYNTAX_LABELS: Readonly<Record<SchemaSyntax, string>> = { 'j
  *   the rest are not read (`schema-over-limit`).
  * - `maxEntities`: entities (typed or untyped objects, markup items) in the page's tree in all.
  * - `maxValueChars`: characters of one text value kept in the tree (its full length is kept too).
+ * - `maxWork`: steps the checks may take for one page (each value, property and requirement looked
+ *   at counts one). Every check is linear in nodes plus values (an `@id` group's merged properties
+ *   are indexed once, references deduplicated by target, results cached per group), so an ordinary
+ *   page uses a small fraction; past it the checks stop, the analysis is `partial`, and
+ *   `schema-over-limit` says so.
  * - `maxPrettyChars`: the longest pretty-printed JSON the raw view and "Copy JSON" produce; a
  *   longer one is cut there.
  * - `maxPrettyIndent`: nesting levels the pretty printer indents; deeper levels share its indent.
@@ -33,6 +38,7 @@ export const SCHEMA_PARSE_LIMITS = {
   maxNodes: 5_000,
   maxEntities: 1_000,
   maxValueChars: 1_024,
+  maxWork: 250_000,
   maxPrettyChars: 1_000_000,
   maxPrettyIndent: 24,
 } as const;
@@ -440,7 +446,11 @@ export const SCHEMA_TYPE_PARENTS: Readonly<Record<string, string>> = {
 export type SchemaRequirement = string | readonly string[];
 
 export interface SchemaTypeRule {
-  /** Missing any of these: `schema-required-missing` (checked on every node of the type). */
+  /**
+   * Missing any of these: `schema-required-missing`. Checked on top-level nodes of the type, and on
+   * nodes of a structural type (`SCHEMA_STRUCTURAL_TYPES`) wherever they are; a nested node of any
+   * other checked type only needs its identity (`SCHEMA_NESTED_IDENTITY`).
+   */
   readonly required: readonly SchemaRequirement[];
   /** Missing any of these: `schema-recommended-missing` (checked on top-level nodes only, so a nested author or publisher is not held to a full profile). */
   readonly recommended: readonly SchemaRequirement[];
@@ -467,7 +477,7 @@ export const SCHEMA_TYPE_RULES: Readonly<Record<string, SchemaTypeRule>> = {
   Organization: { required: ['name'], recommended: ['url', 'logo', 'sameAs'] },
   WebSite: { required: ['name', 'url'], recommended: ['publisher'] },
   BreadcrumbList: { required: ['itemListElement'], recommended: [] },
-  ListItem: { required: ['position', ['name', 'item.name']], recommended: [] },
+  ListItem: { required: ['position', ['url', 'item', 'name']], recommended: [] },
   Article: { required: ['headline'], recommended: ['image', 'author', 'datePublished', 'dateModified'] },
   Product: {
     required: ['name', ['offers', 'review', 'aggregateRating']],
@@ -482,6 +492,26 @@ export const SCHEMA_TYPE_RULES: Readonly<Record<string, SchemaTypeRule>> = {
   VideoObject: { required: ['name', 'thumbnailUrl', 'uploadDate'], recommended: ['description', 'duration', ['contentUrl', 'embedUrl']] },
   Person: { required: ['name'], recommended: ['url', 'sameAs'] },
 };
+
+/**
+ * Types that are parts of another node's structure (a list's items, an FAQ's questions and answers):
+ * held to their full required set wherever they appear, nested or not.
+ */
+export const SCHEMA_STRUCTURAL_TYPES = ['ListItem', 'Question', 'Answer'] as const;
+
+/**
+ * A breadcrumb trail's items (the ListItems in a BreadcrumbList's `itemListElement`, nested or
+ * referenced) are named steps: they need a position and a name (their own, or their item's), in place
+ * of `ListItem`'s set (an item list, such as a carousel, may give only a URL).
+ */
+export const SCHEMA_BREADCRUMB_ITEM_RULE: SchemaTypeRule = { required: ['position', ['name', 'item.name']], recommended: [] };
+
+/**
+ * What a nested node of a checked, non-structural type needs (an author `Person`, a `Product` a review
+ * is about): of its type's required properties, only these, which say which thing it is. Rich-result
+ * requirements (offers, an address, dates) apply to top-level nodes only.
+ */
+export const SCHEMA_NESTED_IDENTITY = ['name'] as const;
 
 /**
  * Properties whose text values must be absolute `http(s)` URLs (`schema-url-not-absolute`). A value
@@ -515,12 +545,27 @@ export const SCHEMA_DATE_PROPERTIES = [
 export const SCHEMA_DURATION_PROPERTIES = ['duration', 'prepTime', 'cookTime', 'totalTime', 'performTime', 'timeRequired'] as const;
 
 /**
- * Types a site should describe once (`schema-entity-conflict`): two top-level nodes of the same one
- * of these types (other than the same `@id`) whose `SCHEMA_IDENTITY_PROPERTIES` both have a value
- * and differ (case and a trailing `/` aside) conflict.
+ * Types a site should describe once (`schema-entity-conflict`). Two top-level nodes of the same one
+ * of these types (not sharing an `@id`) conflict when they claim the same site under different
+ * names (case aside): both URLs on the same host (a leading `www.` aside), or at least one of them
+ * without a URL. Nodes whose URLs are on different hosts describe different sites (a partner, a
+ * parent company) and never conflict.
  */
 export const SCHEMA_SINGLETON_TYPES = ['Organization', 'WebSite'] as const;
-export const SCHEMA_IDENTITY_PROPERTIES = ['name', 'url'] as const;
+
+/**
+ * The Schema panel's rendering bounds: the first `openTopLevel` top-level nodes of each card start
+ * open (the rest closed); a card lists `entitiesShown` top-level nodes, an open node `rowsShown`
+ * properties and a property `valuesShown` values, each with "Show more" for the next as many.
+ */
+export const SCHEMA_PANEL_LIMITS = { openTopLevel: 3, entitiesShown: 50, rowsShown: 24, valuesShown: 10 } as const;
+
+/**
+ * Characters the raw view shows as visible markers (`⟦U+202E⟧`) instead of as themselves: bidi
+ * embeddings, overrides and isolates (U+202A–U+202E, U+2066–U+2069) and C0 controls other than tab
+ * and line feed (and DEL), so page text cannot reorder or hide parts of the JSON on screen.
+ */
+export const RAW_VIEW_MARKED = /[\u0000-\u0008\u000B-\u001F\u007F\u202A-\u202E\u2066-\u2069]/;
 
 /** The Schema panel's raw view of a JSON-LD block, and "Copy JSON" (`seo.copySchemaJson`). */
 export const SCHEMA_VIEWS = ['tree', 'raw'] as const;

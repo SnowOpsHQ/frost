@@ -1,12 +1,14 @@
 // Spec: specs/seo-limits.spec.ts (AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS), specs/seo-sidebar.spec.ts
 // (SEO_AUDIT_STATUSES, SEO_UNAVAILABLE_REASONS), specs/browser.spec.ts (TabState.auditVersion)
-// Acceptance: specs/seo-sidebar.feature.md (Auditor)
+// Acceptance: specs/seo-sidebar.feature.md (Auditor), specs/seo-schema.feature.md (Analysis off the main thread)
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../test/controller-fakes';
 import { fakeEvent } from '../../../test/electron-fake';
 import { rawSnapshot } from '../../../test/seo-fakes';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../../browser/controller';
+import { analyseSnapshot } from '../analyse';
+import type { AnalysisResult } from '../analysis';
 
 const A = 'https://example.com/a';
 const B = 'https://example.com/b';
@@ -22,8 +24,11 @@ let views: FakeTabView[];
 let win: FakeHostWindow;
 let controller: BrowserController;
 let runs: Run[];
+/** How the analysis answers (in-process here; main runs it in the worker). */
+let analyse: (raw: unknown) => Promise<AnalysisResult>;
 
 beforeEach(() => {
+  analyse = async (raw) => analyseSnapshot(raw);
   vi.useFakeTimers();
   views = [];
   runs = [];
@@ -40,6 +45,7 @@ beforeEach(() => {
         new Promise((resolve, reject) => {
           runs.push({ contents: contents as unknown as FakeTabContents, resolve, reject });
         }),
+      analyse: (raw) => analyse(raw),
     },
   });
   controller.attach(win as unknown as HostWindow);
@@ -306,6 +312,44 @@ describe('auditor', () => {
     runs[0]!.resolve(rawSnapshot(A));
     await flush();
     expect(audit()).toEqual({ status: 'unavailable', url: A, reason: 'timeout' });
+  });
+
+  test('audit-analysis-timeout-is-unavailable', async () => {
+    let settle: (result: AnalysisResult) => void = () => {};
+    analyse = () => new Promise((resolve) => (settle = resolve));
+    load(A);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    runs[0]!.resolve(rawSnapshot(A));
+    await flush();
+    // Extracted, now analysing: still pending (the extraction deadline no longer applies).
+    await vi.advanceTimersByTimeAsync(EXTRACT_TIMEOUT_MS);
+    expect(audit().status).toBe('pending');
+    const version = tabState().auditVersion;
+    settle({ ok: false, reason: 'analysis-timeout' });
+    await flush();
+    expect(audit()).toEqual({ status: 'unavailable', url: A, reason: 'analysis-timeout' });
+    expect(tabState().auditVersion).toBeGreaterThan(version);
+    // The next audit works.
+    analyse = async (raw) => analyseSnapshot(raw);
+    expect(controller.seo.rerun(activeId())).toBe(true);
+    runs.at(-1)!.resolve(rawSnapshot(A));
+    await flush();
+    expect(audit()).toMatchObject({ status: 'ready', url: A });
+    // A failed worker is its own reason; an analysis for a page the tab left is dropped.
+    analyse = async () => ({ ok: false, reason: 'analysis-failed' });
+    controller.seo.rerun(activeId());
+    runs.at(-1)!.resolve(rawSnapshot(A));
+    await flush();
+    expect(audit()).toEqual({ status: 'unavailable', url: A, reason: 'analysis-failed' });
+    analyse = () => new Promise((resolve) => (settle = resolve));
+    controller.seo.rerun(activeId());
+    runs.at(-1)!.resolve(rawSnapshot(A));
+    await flush();
+    const contents = views.at(-1)!.contents;
+    load(B, contents);
+    settle(analyseSnapshot(rawSnapshot(A)));
+    await flush();
+    expect(audit().status).toBe('pending');
   });
 
   test('audit-invalid-snapshot-is-unavailable', async () => {

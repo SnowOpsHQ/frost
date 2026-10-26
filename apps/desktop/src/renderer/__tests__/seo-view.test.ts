@@ -4,7 +4,8 @@ import { describe, expect, test } from 'vitest';
 import type { Finding, SchemaEntity, SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { TITLE_MAX_CHARS, TITLE_MIN_CHARS } from '@app/specs/seo-rules.spec';
 import { LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN } from '@app/specs/seo-sidebar.spec';
-import { declaredSize, entityIndex, errorExcerpt, formatSize, highlightToClear, isolatedTooltip, lengthIndicator, linkQuery, openableUrl, oversizeRatio, railStatuses, schemaTypeSummary, shownResponse, sidebarOpenFromStorage, UNTYPED_LABEL } from '../seo-view';
+import { SCHEMA_PANEL_LIMITS } from '@app/specs/schema-types.spec';
+import { declaredSize, entityIndex, errorExcerpt, firstShown, formatSize, moreShown, openByDefault, rawSegments, highlightToClear, isolatedTooltip, lengthIndicator, linkQuery, openableUrl, oversizeRatio, railStatuses, schemaTypeSummary, shownResponse, sidebarOpenFromStorage, UNTYPED_LABEL } from '../seo-view';
 
 function finding(severity: Finding['severity'], category: Finding['category']): Finding {
   return { ruleId: 'title-missing', category, severity, title: 't', why: 'w', fix: 'f', details: { facts: [], samples: [] } };
@@ -128,5 +129,29 @@ describe('seo view helpers', () => {
     const leaf = { key: 2, syntax: 'json-ld', block: 0, types: ['Offer'], id: null, properties: [], topLevel: false, extends: null } as SchemaEntity;
     const top = { key: 1, syntax: 'json-ld', block: 0, types: ['Product'], id: null, properties: [{ name: 'offers', values: [{ kind: 'entity', entity: leaf }, { kind: 'ref', id: '#x', target: 9 }] }], topLevel: true, extends: null } as SchemaEntity;
     expect([...entityIndex([top]).keys()].sort()).toEqual([1, 2]);
+  });
+
+  test('schema-panel-bounds', () => {
+    const open = Array.from({ length: 10 }, (_, i) => openByDefault(i));
+    expect(open.filter(Boolean)).toHaveLength(SCHEMA_PANEL_LIMITS.openTopLevel);
+    expect(open.slice(0, SCHEMA_PANEL_LIMITS.openTopLevel).every(Boolean)).toBe(true);
+    expect(firstShown(400, SCHEMA_PANEL_LIMITS.entitiesShown)).toBe(SCHEMA_PANEL_LIMITS.entitiesShown);
+    expect(firstShown(7, SCHEMA_PANEL_LIMITS.rowsShown)).toBe(7);
+    expect(moreShown(SCHEMA_PANEL_LIMITS.rowsShown, 30, SCHEMA_PANEL_LIMITS.rowsShown)).toBe(30);
+    expect(moreShown(10, 100, 10)).toBe(20);
+  });
+
+  test('raw-view-marks-controls', () => {
+    expect(rawSegments('{"a": 1}')).toEqual([{ kind: 'text', text: '{"a": 1}' }]);
+    expect(rawSegments('a\u202Eb\tc\nd\u0000e\u2066\u007F')).toEqual([
+      { kind: 'text', text: 'a' },
+      { kind: 'mark', code: 'U+202E' },
+      { kind: 'text', text: 'b\tc\nd' },
+      { kind: 'mark', code: 'U+0000' },
+      { kind: 'text', text: 'e' },
+      { kind: 'mark', code: 'U+2066' },
+      { kind: 'mark', code: 'U+007F' },
+    ]);
+    expect(rawSegments('')).toEqual([]);
   });
 });

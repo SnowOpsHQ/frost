@@ -98,4 +98,6 @@ export interface SchemaReport {
   readonly markup: { readonly microdata: { readonly read: number; readonly total: number }; readonly rdfa: { readonly read: number; readonly total: number } };
   /** Issues in rule-catalog order, each rule's in tree order. */
   readonly issues: readonly SchemaIssue[];
+  /** The checks stopped at the step budget (`SCHEMA_PARSE_LIMITS.maxWork`): some issues may be missing. */
+  readonly partial: boolean;
 }

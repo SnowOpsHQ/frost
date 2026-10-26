@@ -2,6 +2,7 @@
 // Acceptance: specs/seo-schema.feature.md (Parsing)
 import { describe, expect, test } from 'vitest';
 import { SCHEMA_PARSE_LIMITS } from '@app/specs/schema-types.spec';
+import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { analyseSchema, formatJson, locateJsonError, parseJson, type SchemaEntity, type SchemaValue } from '../index';
 import { item, jsonLd, page, withJsonLd } from './fixtures';
 
@@ -112,13 +113,19 @@ describe('JSON parsing', () => {
             { '@context': 'https://schema.org', '@type': 'Thing', name: 'T' },
             'not a node',
           ]),
+          // A top-level array of @graph containers keeps each graph (with its own context).
+          jsonLd([
+            { '@context': 'https://schema.org', '@graph': [{ '@type': 'Brand', name: 'B1' }, { '@type': 'Brand', name: 'B2' }] },
+            { '@context': 'https://schema.org', '@graph': { '@type': 'Place', name: 'P1' } },
+          ]),
         ],
-        jsonLdTotal: 2,
+        jsonLdTotal: 3,
       }),
     );
-    expect(report.entities.map((e) => e.types)).toEqual([['Organization', 'Corporation'], ['WebSite'], ['Person'], ['Thing']]);
+    expect(report.entities.map((e) => e.types)).toEqual([['Organization', 'Corporation'], ['WebSite'], ['Person'], ['Thing'], ['Brand'], ['Brand'], ['Place']]);
+    expect(report.issues.filter((issue) => issue.block === 2 && /context|type-missing/.test(issue.ruleId))).toEqual([]);
     expect(report.entities.every((e) => e.topLevel && e.syntax === 'json-ld')).toBe(true);
-    expect(report.blocks.map((b) => b.entities.length)).toEqual([2, 2]);
+    expect(report.blocks.map((b) => b.entities.length)).toEqual([2, 2, 3]);
     expect(report.entities[0]!.block).toBe(0);
     expect(report.entities[2]!.block).toBe(1);
     // Nested objects are untyped nested entities.
@@ -128,7 +135,7 @@ describe('JSON parsing', () => {
     expect(texts(report.entities[1]!, 'url')).toEqual(['https://a.example/']);
     expect(texts(report.entities[2]!, 'knowsAbout')).toEqual(['x', 'y']);
     expect(texts(report.entities[2]!, 'jobTitle')).toEqual(['Chef']);
-    expect(report.entityCount).toBe(5);
+    expect(report.entityCount).toBe(8);
   });
 
   test('json-ld-cyclic-ids-terminate', () => {
@@ -155,6 +162,49 @@ describe('JSON parsing', () => {
     expect(report.blocks[0]!.overLimit).toBe(true);
     expect(values(report.entities[0]!, 'itemListElement').length).toBeLessThan(SCHEMA_PARSE_LIMITS.maxNodes);
     expect(report.issues.find((issue) => issue.ruleId === 'schema-over-limit')!.detail).toMatch(/more than 5,000 values/);
+  });
+
+  test('shared-id-graph-is-linear', () => {
+    const node = { '@id': 'a', '@type': 'ListItem', position: 1, item: { '@id': 'a' } };
+    const text = JSON.stringify({ '@context': 'https://schema.org', '@graph': Array.from({ length: 1_000 }, () => node) });
+    expect(text.length).toBeLessThan(SNAPSHOT_LIMITS.maxJsonLdChars);
+    const snapshot = page({ jsonLd: [jsonLd(text)], jsonLdTotal: 1 });
+    const started = performance.now();
+    const report = analyseSchema(snapshot);
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(report.entityCount).toBe(1_000);
+    expect(report.partial).toBe(false);
+    // The group is checked once: its issues sit on its first node.
+    const keys = new Set(report.issues.filter((issue) => issue.entity !== null).map((issue) => issue.entity));
+    expect(keys.size).toBeLessThanOrEqual(1);
+  });
+
+  test('schema-work-budget', () => {
+    const many = withJsonLd({ '@context': 'https://schema.org', '@graph': Array.from({ length: 40 }, (_, i) => ({ '@type': 'Organization', name: `O${i}`, url: `https://o${i}.example/` })) });
+    const full = analyseSchema(many);
+    expect(full.partial).toBe(false);
+    const cut = analyseSchema(many, { ...SCHEMA_PARSE_LIMITS, maxWork: 50 });
+    expect(cut.partial).toBe(true);
+    const issue = cut.issues.find((i) => i.ruleId === 'schema-over-limit')!;
+    expect(issue.detail).toMatch(/Checked in part/);
+    expect(issue.entity).not.toBeNull();
+    // The default analysis is memoised; one with other limits is not.
+    expect(analyseSchema(many)).toBe(full);
+  });
+
+  test('markup-values-count-against-nodes', () => {
+    const props = Array.from({ length: SNAPSHOT_LIMITS.maxItemProperties }, (_, i) => ({ name: `p${i}`, value: 'v' }));
+    const items = Array.from({ length: Math.ceil(SCHEMA_PARSE_LIMITS.maxNodes / props.length) + 5 }, () => item(['https://schema.org/Thing'], props));
+    const report = analyseSchema(page({ jsonLd: [], jsonLdTotal: 0, microdata: items, microdataTotal: items.length }));
+    const values = allEntities(report.entities).reduce((sum, e) => sum + e.properties.reduce((n, p) => n + p.values.length, 0), 0);
+    expect(values).toBeLessThanOrEqual(SCHEMA_PARSE_LIMITS.maxNodes);
+    expect(report.issues.some((issue) => issue.ruleId === 'schema-over-limit' && /values on the page/.test(issue.detail))).toBe(true);
+    // Markup cut by the page's node budget (JSON-LD used it up) is reported too, on the last node read.
+    const crowded = analyseSchema(withJsonLd({ '@context': 'https://schema.org', '@type': 'Thing', name: 'T' }, { '@context': 'https://schema.org', '@type': 'Thing', name: 'U' }), { ...SCHEMA_PARSE_LIMITS, maxEntities: 2 });
+    expect(crowded.issues.some((issue) => issue.ruleId === 'schema-over-limit')).toBe(false);
+    const cut = analyseSchema(page({ microdata: [item(['https://schema.org/Thing'], [])], microdataTotal: 1, jsonLd: [jsonLd({ '@context': 'https://schema.org', '@graph': [{ '@type': 'Thing' }, { '@type': 'Thing' }] })], jsonLdTotal: 1 }), { ...SCHEMA_PARSE_LIMITS, maxEntities: 2 });
+    expect(cut.entities.filter((e) => e.syntax === 'microdata')).toEqual([]);
+    expect(cut.issues.find((issue) => issue.ruleId === 'schema-over-limit')).toMatchObject({ detail: 'Read in part: more than 2 nodes on the page' });
   });
 
   test('markup-normalises-to-entities', () => {

@@ -142,7 +142,12 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   `constructor` / `prototype` keys dropped, no page key ever indexes a plain object); `@id` references
   stay references (no cycles); 14 `schema` rules feed the score, each issue tied to its node; "Copy
   JSON" is written by main (`seo.copySchemaJson`) from its own audit.
+- Review follow-up: no page-derived analysis on the main thread. The snapshot parse and `runAudit` run in
+  one long-lived `worker_threads` Worker (Forge Vite main build entry `seo-analysis`, loaded from the
+  ASAR), with a hard `ANALYSIS_TIMEOUT_MS` (terminate, `analysis-timeout`, respawn); checks are linear
+  per `@id` group with a step budget; markup text has a page-wide cap; rendering is bounded.
 - [x] commit `feat(seo): schema extraction and validation`
+- [x] commit `fix(seo): address schema review findings`
 
 ### Task 4: Indexability panel
 

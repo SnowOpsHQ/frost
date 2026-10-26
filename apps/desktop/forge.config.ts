@@ -98,9 +98,12 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
     plugins: [
       new VitePlugin({
         // Object entries name the bundles (.vite/build/main.cjs, .vite/build/preload.cjs) so the two
-        // `index.ts` entry files don't collide in the shared output dir.
+        // `index.ts` entry files don't collide in the shared output dir. The SEO analysis worker is a
+        // bundle of its own beside them (.vite/build/seo-analysis.cjs): main starts it with
+        // `new Worker(path.join(__dirname, 'seo-analysis.cjs'))` (specs/seo-schema.feature.md).
         build: [
           { entry: { main: 'src/main/index.ts' }, config: 'vite.main.config.ts', target: 'main' },
+          { entry: { 'seo-analysis': 'src/main/seo/analysis-worker.ts' }, config: 'vite.main.config.ts', target: 'main' },
           { entry: { preload: 'src/preload/index.ts' }, config: 'vite.preload.config.ts', target: 'preload' },
         ],
         renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],

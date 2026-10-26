@@ -183,6 +183,12 @@ describe('snapshot schema', () => {
     for (const property of [{ name: 'a' }, { name: 'a', value: 'v', item: 1 }, { name: '', value: 'v' }, { name: 'a', value: 1 }, { name: 'a', item: -1 }, { name: 'a', item: 0.5 }, { name: 'a', value: 'v', extra: 1 }]) {
       expect(ok(markup('rdfa', [item([property as never]), item()])), JSON.stringify(property)).toBe(false);
     }
+    // Markup values together stay within maxMarkupTotalChars (microdata and RDFa share it).
+    const long = (n: number) => item(many(n, () => ({ name: 'a', value: x(L.maxSchemaValueChars) })));
+    const per = L.maxItemProperties * L.maxSchemaValueChars;
+    const half = Math.floor(L.maxMarkupTotalChars / 2 / per);
+    expect(ok(rawSnapshot(URL_A, { microdata: many(half, () => long(L.maxItemProperties)), microdataTotal: half, rdfa: many(half, () => long(L.maxItemProperties)), rdfaTotal: half }))).toBe(true);
+    expect(ok(rawSnapshot(URL_A, { microdata: many(half + 1, () => long(L.maxItemProperties)), microdataTotal: half + 1, rdfa: many(half, () => long(L.maxItemProperties)), rdfaTotal: half }))).toBe(false);
     // Totals are at least their lists.
     expect(ok(rawSnapshot(URL_A, { jsonLd: [block('{}')], jsonLdTotal: 0 }))).toBe(false);
     expect(ok(rawSnapshot(URL_A, { microdata: [item()], microdataTotal: 0 }))).toBe(false);

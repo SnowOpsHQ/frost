@@ -19,7 +19,7 @@ import { Social } from './seo/Social';
 // (strict CSP); page-derived text is React text only (`seo/parts.tsx`).
 
 /** Reasons a fresh run may fix (the page was slow or answered garbage); the others need the page itself to change. */
-const RETRYABLE: ReadonlySet<string> = new Set(['timeout', 'invalid-snapshot', 'extraction-failed']);
+const RETRYABLE: ReadonlySet<string> = new Set(['timeout', 'invalid-snapshot', 'extraction-failed', 'analysis-timeout', 'analysis-failed']);
 
 /** Whether the audit can be run again now (a page is shown and no run is pending). */
 function canRerun(response: SeoAuditResponse | null): boolean {
