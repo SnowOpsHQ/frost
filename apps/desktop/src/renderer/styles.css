@@ -16,7 +16,7 @@
   --bg-chrome: #f3f5f8;
   --bg-chrome-edge: #e2e6ec;
   --bg-strip: #e4e8ee;
-  --bg-tab-hover: rgb(255 255 255 / 0.55);
+  --bg-tab-hover: rgb(255 255 255 / 0.3);
   --bg-field: #ffffff;
   --bg-field-hover: #ffffff;
   --border-field: #d7dce4;
@@ -179,27 +179,27 @@ input {
   transition: opacity 120ms ease;
 }
 
-.tab[aria-selected='true']::before,
-.tab[aria-selected='true'] + .tab::before,
+.tab[data-active='true']::before,
+.tab[data-active='true'] + .tab::before,
 .tab:hover::before,
 .tab:hover + .tab::before {
   opacity: 0;
 }
 
-.tab:hover:not([aria-selected='true']) {
+.tab:hover:not([data-active='true']) {
   --tab-bg: var(--bg-tab-hover);
   color: var(--text);
 }
 
-.tab[aria-selected='true'] {
+.tab[data-active='true'] {
   --tab-bg: var(--bg-chrome);
   z-index: 1;
   color: var(--text);
 }
 
 /* The flared corners where the active tab meets the toolbar. */
-.tab[aria-selected='true']::after,
-.tab[aria-selected='true'] .tab-glyph::after {
+.tab[data-active='true']::after,
+.tab[data-active='true'] .tab-glyph::after {
   content: '';
   position: absolute;
   bottom: 0;
@@ -208,17 +208,28 @@ input {
   pointer-events: none;
 }
 
-.tab[aria-selected='true']::after {
+.tab[data-active='true']::after {
   right: -10px;
   background: radial-gradient(circle at 100% 0, transparent 9.5px, var(--bg-chrome) 10px);
 }
 
-.tab[aria-selected='true'] .tab-glyph::after {
+.tab[data-active='true'] .tab-glyph::after {
   left: -10px;
   background: radial-gradient(circle at 0 0, transparent 9.5px, var(--bg-chrome) 10px);
 }
 
-.tab:focus-visible {
+/* The focusable part is the inner role="tab"; the ring goes around the whole tab. */
+.tab-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  outline: none;
+}
+
+.tab:has(.tab-main:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -232,7 +243,7 @@ input {
   color: var(--text-faint);
 }
 
-.tab[aria-selected='true'] .tab-glyph {
+.tab[data-active='true'] .tab-glyph {
   color: var(--icon);
 }
 
@@ -286,7 +297,7 @@ input {
 }
 
 /* Inactive tabs show × only on hover, so narrow tabs keep room for their label. */
-.tab:not([aria-selected='true']):not(:hover) .tab-close {
+.tab:not([data-active='true']):not(:hover) .tab-close {
   display: none;
 }
 

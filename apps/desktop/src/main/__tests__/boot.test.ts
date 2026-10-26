@@ -30,6 +30,21 @@ describe('main window hardening', () => {
   });
 });
 
+describe('main window', () => {
+  // Acceptance: specs/tabs.feature.md (Window)
+  test.each(['darwin', 'linux', 'win32'] as const)('menu-bar-auto-hides-off-macos (%s)', (platform) => {
+    const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: platform });
+    try {
+      const win = createMainWindow() as unknown as FakeBrowserWindow;
+      expect(win.options.autoHideMenuBar).toBe(platform !== 'darwin');
+      expect(win.options.webPreferences).toMatchObject(HARDENED_WEB_PREFERENCES);
+    } finally {
+      Object.defineProperty(process, 'platform', original);
+    }
+  });
+});
+
 describe('loading the renderer', () => {
   test('loads-renderer-from-app-scheme', async () => {
     const win = createMainWindow() as unknown as FakeBrowserWindow;

@@ -3,13 +3,17 @@ import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
 import type { BrowserController } from './browser/controller';
 
 // The application menu (spec `tabs.feature.md`, Menu). Tab shortcuts are menu accelerators handled
-// here in main: a focused page view (a separate WebContents) would swallow key handlers in the
-// chrome renderer. No default role menus are used, since they bring their own accelerators (the
-// window menu's close is Cmd/Ctrl+W, Close Tab's here) and items that reload or inspect the chrome
-// page itself.
+// here in main (a focused page view would swallow key handlers in the chrome renderer); the
+// controller also takes them in `before-input-event`, so a page cannot cancel them first, and
+// consumes them there, so an accelerator never runs a second time. No default role menus are used,
+// since they bring their own accelerators (the window menu's close is Cmd/Ctrl+W, Close Tab's here)
+// and items that reload or inspect the chrome page itself.
 
 /** The controller calls the menu makes. */
-export type TabCommands = Pick<BrowserController, 'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab'>;
+export type TabCommands = Pick<
+  BrowserController,
+  'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab'
+>;
 
 /** The menu template for `platform` (pure; `installAppMenu` builds and installs it). */
 export function appMenuTemplate(commands: TabCommands, platform: NodeJS.Platform = process.platform): MenuItemConstructorOptions[] {
@@ -27,9 +31,9 @@ export function appMenuTemplate(commands: TabCommands, platform: NodeJS.Platform
       { type: 'separator' },
       { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => void commands.closeActiveTab() },
       // Cmd/Ctrl+W belongs to Close Tab; closing the window takes Shift as well.
-      ...(mac
-        ? [{ role: 'close', label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W' } satisfies MenuItemConstructorOptions]
-        : [{ type: 'separator' } satisfies MenuItemConstructorOptions, { role: 'quit' } satisfies MenuItemConstructorOptions]),
+      { role: 'close', label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W' },
+      // Quit: the app menu's Cmd+Q on macOS; Ctrl+Shift+Q elsewhere (Linux/Windows convention).
+      ...(mac ? [] : [{ type: 'separator' } satisfies MenuItemConstructorOptions, { role: 'quit', accelerator: 'Ctrl+Shift+Q' } satisfies MenuItemConstructorOptions]),
     ],
   };
 
@@ -50,9 +54,27 @@ export function appMenuTemplate(commands: TabCommands, platform: NodeJS.Platform
     ],
   };
 
+  // Next / previous tab: Ctrl+Tab everywhere; macOS shows Cmd+Shift+] / [ and keeps the Ctrl+Tab
+  // items hidden (their accelerators still work there: `acceleratorWorksWhenHidden`).
+  const next = () => void commands.activateNextTab();
+  const previous = () => void commands.activatePreviousTab();
+  const cycle: MenuItemConstructorOptions[] = mac
+    ? [
+        { id: 'next-tab', label: 'Next Tab', accelerator: 'Cmd+Shift+]', click: next },
+        { id: 'previous-tab', label: 'Previous Tab', accelerator: 'Cmd+Shift+[', click: previous },
+        { id: 'next-tab-ctrl', label: 'Next Tab', accelerator: 'Ctrl+Tab', visible: false, acceleratorWorksWhenHidden: true, click: next },
+        { id: 'previous-tab-ctrl', label: 'Previous Tab', accelerator: 'Ctrl+Shift+Tab', visible: false, acceleratorWorksWhenHidden: true, click: previous },
+      ]
+    : [
+        { id: 'next-tab', label: 'Next Tab', accelerator: 'Ctrl+Tab', click: next },
+        { id: 'previous-tab', label: 'Previous Tab', accelerator: 'Ctrl+Shift+Tab', click: previous },
+      ];
+
   const tab: MenuItemConstructorOptions = {
     label: 'Tab',
     submenu: [
+      ...cycle,
+      { type: 'separator' },
       ...selectTab,
       { id: 'select-last-tab', label: 'Last Tab', accelerator: `CmdOrCtrl+${TAB_SHORTCUT_COUNT}`, click: () => void commands.activateLastTab() },
     ],

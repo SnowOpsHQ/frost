@@ -16,6 +16,8 @@ export function createMainWindow(): BrowserWindow {
     width: 1280,
     height: 800,
     title: 'frost',
+    // Linux/Windows: the menu bar stays out of the way until Alt (spec `tabs.feature.md`, Window).
+    autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
       sandbox: true,
       contextIsolation: true,

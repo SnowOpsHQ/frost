@@ -13,13 +13,15 @@ import {
 } from '@app/specs/browser.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { pageTitle } from './page-title';
+import { matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 
 // Main-process owner of all browser state (spec `browser-chrome.feature.md` and `tabs.feature.md`,
 // Controller). Only Electron *types* are imported: the view factory and the window are injected, so
 // this runs under Vitest with plain fakes.
 //
 // Only the active tab's view is ever attached to the window's `contentView`; other tabs' views stay
-// alive (each keeps its own page and history) but detached.
+// alive (each keeps its own page and history) but detached. Tab commands need a window: without one
+// (macOS, after the last window closed) they change nothing, and New Tab asks the app to open one.
 
 /** A tab's page view (`createTabView()`); it is attached to the window's `contentView`. */
 export type TabView = WebContentsView;
@@ -41,6 +43,10 @@ export interface BrowserController extends BrowserService {
   activateTabAt(index: number): boolean;
   /** Activates the last tab (Cmd/Ctrl+9). */
   activateLastTab(): boolean;
+  /** Activates the next tab, wrapping (Ctrl+Tab). */
+  activateNextTab(): boolean;
+  /** Activates the previous tab, wrapping (Ctrl+Shift+Tab). */
+  activatePreviousTab(): boolean;
   /** Focuses the chrome and asks it to focus the address bar (Cmd/Ctrl+L): bumps `focusAddressBarSeq`. */
   focusAddressBar(): void;
 }
@@ -48,6 +54,13 @@ export interface BrowserController extends BrowserService {
 export interface BrowserControllerOptions {
   /** The allowlisted tab-view factory (`createTabView` in `window.ts`). */
   readonly createView: () => TabView;
+  /** Whose shortcut modifier applies (Cmd on macOS, Ctrl elsewhere); defaults to `process.platform`. */
+  readonly platform?: NodeJS.Platform;
+  /**
+   * Opens (and attaches) the app window: New Tab with no window open calls it instead of adding a
+   * tab nobody can see. Without it, New Tab with no window is a no-op.
+   */
+  readonly openWindow?: () => void;
 }
 
 interface Tab {
@@ -106,6 +119,15 @@ export function clampPageBounds(bounds: PageBounds, [width, height]: readonly [n
 
 function noop(): void {}
 
+/**
+ * `view`'s WebContents while it is alive, else `undefined`. Electron clears `view.webContents` once
+ * the contents are destroyed (already inside their `destroyed` listeners), so never read it bare.
+ */
+function aliveContents(view: TabView): TabView['webContents'] | undefined {
+  const contents = view.webContents as TabView['webContents'] | undefined;
+  return contents && !contents.isDestroyed() ? contents : undefined;
+}
+
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {
   let nextTabId = 1;
   let version = 1;
@@ -129,6 +151,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   });
 
   const activeTab = (): Tab | undefined => tabs.find((tab) => tab.id === activeTabId);
+  const hasWindow = (): boolean => win !== null && !win.isDestroyed();
+  const platform = options.platform ?? process.platform;
 
   const updateWindowTitle = (): void => {
     if (!win || win.isDestroyed()) return;
@@ -178,7 +202,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   /** Closes `tab`'s page for good: released, and its WebContents closed (no leak). */
   const closeView = (tab: Tab): void => {
     const view = releaseView(tab);
-    if (view && !view.webContents.isDestroyed()) view.webContents.close();
+    if (view) aliveContents(view)?.close();
   };
 
   /** Forgets `tab`'s view (its WebContents is gone): off the window, and the tab is empty again. */
@@ -190,7 +214,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   /** `tab`'s view if its WebContents is still alive; a destroyed one is dropped, never used. */
   const liveView = (tab: Tab): TabView | null => {
-    if (tab.view && tab.view.webContents.isDestroyed()) dropView(tab);
+    if (tab.view && !aliveContents(tab.view)) dropView(tab);
     return tab.view;
   };
 
@@ -255,13 +279,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // pending or late events are ignored, and its listeners are removed on release as well.
     const owns = (): boolean => tab.view === view && tabs.includes(tab);
     const emitter = view.webContents as unknown as NodeJS.EventEmitter;
-    const listeners: [string, () => void][] = [];
-    const listen = (event: string, listener: () => void): void => {
-      const guarded = (): void => {
-        if (owns()) listener();
+    const listeners: [string, (...args: unknown[]) => void][] = [];
+    const listen = <A extends unknown[]>(event: string, listener: (...args: A) => void): void => {
+      const guarded = (...args: A): void => {
+        if (owns()) listener(...args);
       };
       emitter.on(event, guarded);
-      listeners.push([event, guarded]);
+      listeners.push([event, guarded as (...args: unknown[]) => void]);
     };
     for (const event of STATE_EVENTS) listen(event, () => refresh(tab));
     listen('did-start-loading', () => {
@@ -272,7 +296,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       tab.crashed = true;
       refresh(tab);
     });
-    listen('destroyed', () => dropView(tab));
+    // The page closed itself (`window.close()`): its tab closes like any other.
+    listen('destroyed', () => removeTab(tab.id));
+    // Reserved tab shortcuts are taken before the page can see (and cancel) them.
+    listen('before-input-event', takeShortcut);
     tab.unlisten = () => {
       for (const [event, listener] of listeners) emitter.off(event, listener);
     };
@@ -299,7 +326,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const activateTab = (tabId: number): boolean => {
     const tab = tabs.find((t) => t.id === tabId);
-    if (!tab) return false;
+    if (!tab || !hasWindow()) return false;
     if (tab.id === activeTabId) return true;
     activeTabId = tab.id;
     syncAttached();
@@ -308,7 +335,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return true;
   };
 
-  const closeTab = (tabId: number): boolean => {
+  /** Closes the tab (no window check: also for a page that closed itself). */
+  function removeTab(tabId: number): boolean {
     const index = tabs.findIndex((t) => t.id === tabId);
     const tab = tabs[index];
     if (!tab) return false;
@@ -327,7 +355,82 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     }
     changed();
     return true;
+  }
+
+  const closeTab = (tabId: number): boolean => hasWindow() && removeTab(tabId);
+
+  const newTab = (): number | null => {
+    if (!hasWindow()) {
+      // Never a hidden tab: open the window (which starts with one empty tab) instead.
+      options.openWindow?.();
+      return hasWindow() ? activeTabId : null;
+    }
+    if (tabs.length >= MAX_TABS) {
+      notice = { seq: (notice?.seq ?? 0) + 1, kind: 'tab-limit' };
+      changed();
+      return null;
+    }
+    const id = openEmptyTab();
+    syncAttached();
+    requestAddressFocus();
+    changed();
+    return id;
   };
+
+  const activateTabAt = (index: number): boolean => {
+    const tab = Number.isInteger(index) ? tabs[index] : undefined;
+    return tab ? activateTab(tab.id) : false;
+  };
+
+  /** Activates the tab `step` places from the active one, wrapping; a no-op with one tab. */
+  const cycle = (step: 1 | -1): boolean => {
+    const index = tabs.findIndex((t) => t.id === activeTabId);
+    if (index < 0 || tabs.length < 2) return false;
+    return activateTabAt((index + step + tabs.length) % tabs.length);
+  };
+
+  const focusAddressBar = (): void => {
+    if (!hasWindow()) return;
+    requestAddressFocus();
+    changed();
+  };
+
+  const runShortcut = (shortcut: TabShortcut): void => {
+    switch (shortcut.command) {
+      case 'new-tab':
+        newTab();
+        return;
+      case 'close-tab':
+        if (activeTabId !== null) closeTab(activeTabId);
+        return;
+      case 'focus-address-bar':
+        focusAddressBar();
+        return;
+      case 'select-tab':
+        activateTabAt(shortcut.index);
+        return;
+      case 'select-last-tab':
+        activateTabAt(tabs.length - 1);
+        return;
+      case 'next-tab':
+        cycle(1);
+        return;
+      case 'previous-tab':
+        cycle(-1);
+    }
+  };
+
+  /**
+   * `before-input-event` of a tab's or the chrome's WebContents: a reserved shortcut is consumed
+   * (`preventDefault` keeps it from the page and from the menu accelerator, so it runs once) and
+   * run on key-down; every other key passes through.
+   */
+  function takeShortcut(event: { preventDefault(): void }, input: KeyInput): void {
+    const shortcut = matchTabShortcut(input, platform);
+    if (!shortcut) return;
+    event.preventDefault();
+    if (input.type === 'keyDown') runShortcut(shortcut);
+  }
 
   return {
     attach(target) {
@@ -339,6 +442,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         changed();
       }
       win = target;
+      target.webContents.on('before-input-event', takeShortcut);
       // The chrome page's own <title> must not replace `<page title> — frost`.
       target.on('page-title-updated', (event) => event.preventDefault());
       target.once('closed', () => {
@@ -366,18 +470,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       return true;
     },
 
-    newTab() {
-      if (tabs.length >= MAX_TABS) {
-        notice = { seq: (notice?.seq ?? 0) + 1, kind: 'tab-limit' };
-        changed();
-        return null;
-      }
-      const id = openEmptyTab();
-      syncAttached();
-      requestAddressFocus();
-      changed();
-      return id;
-    },
+    newTab,
 
     closeTab,
 
@@ -385,20 +478,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     closeActiveTab: () => activeTabId !== null && closeTab(activeTabId),
 
-    activateTabAt(index) {
-      const tab = Number.isInteger(index) ? tabs[index] : undefined;
-      return tab ? activateTab(tab.id) : false;
-    },
+    activateTabAt,
 
-    activateLastTab() {
-      const tab = tabs.at(-1);
-      return tab ? activateTab(tab.id) : false;
-    },
+    activateLastTab: () => activateTabAt(tabs.length - 1),
 
-    focusAddressBar() {
-      requestAddressFocus();
-      changed();
-    },
+    activateNextTab: () => cycle(1),
+
+    activatePreviousTab: () => cycle(-1),
+
+    focusAddressBar,
 
     back() {
       withActiveContents((contents) => {

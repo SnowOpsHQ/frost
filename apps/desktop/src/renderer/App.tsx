@@ -4,9 +4,11 @@ import { createIpcClient } from '@app/ipc-contract/renderer';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types);
 // runtime constants come from the Zod-free tabs.spec.
 import type { BrowserState, Notice, TabState } from '@app/specs/browser.spec';
-import { NOTICE_DISPLAY_MS, NOTICE_MESSAGES, type NoticeKind } from '@app/specs/tabs.spec';
+import { NOTICE_MESSAGES, type NoticeKind } from '@app/specs/tabs.spec';
 import { addressFieldReducer, addressFieldText, initialAddressField } from './address-field';
+import { createNoticeTracker, type NoticeTracker } from './notice';
 import { tabLabel } from './tab-label';
+import { tablistFocusTarget } from './tablist-keys';
 import {
   BackIcon,
   CloseIcon,
@@ -106,19 +108,22 @@ function useSeqChange(seq: number | undefined, onChange: () => void): void {
   }, [seq]);
 }
 
-/** The status-bar notice to show: the latest one main raised, for `NOTICE_DISPLAY_MS`. */
+/** The status-bar notice to show: the latest one main raised, for `NOTICE_DISPLAY_MS` (`notice.ts`). */
 function useNotice(notice: Notice | null | undefined): NoticeKind | null {
   const [shown, setShown] = useState<NoticeKind | null>(null);
-  const kind = notice?.kind;
-  useSeqChange(notice === undefined ? undefined : (notice?.seq ?? 0), () => {
-    if (kind) setShown(kind);
-  });
-  const seq = notice?.seq;
+  const tracker = useRef<NoticeTracker | null>(null);
   useEffect(() => {
-    if (shown === null) return;
-    const timer = setTimeout(() => setShown(null), NOTICE_DISPLAY_MS);
-    return () => clearTimeout(timer);
-  }, [shown, seq]);
+    const created = createNoticeTracker(setShown);
+    tracker.current = created;
+    return () => {
+      created.dispose();
+      tracker.current = null;
+    };
+  }, []);
+  const seq = notice === undefined ? undefined : (notice?.seq ?? 0);
+  useEffect(() => {
+    if (notice !== undefined) tracker.current?.update(notice);
+  }, [seq]);
   return shown;
 }
 
@@ -223,7 +228,12 @@ function AddressBar({ tab, focusSeq }: { readonly tab: TabState | undefined; rea
   );
 }
 
-/** One tab in the strip: glyph or loading indicator, label (tooltip: the full label), close button. */
+/**
+ * One tab in the strip: the `role="tab"` element (glyph or loading indicator, label; tooltip: the
+ * full label) and, as its sibling, the close button. A tab's children are presentational, so the ×
+ * is a mouse affordance outside it (`aria-hidden`, never focused); the keyboard closes the focused
+ * tab with Delete, or the active one with Cmd/Ctrl+W.
+ */
 function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const label = tabLabel(tab);
@@ -234,14 +244,10 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
   const close = () => void actions.closeTab(tab.id);
   return (
     <div
-      ref={ref}
-      role="tab"
+      role="presentation"
       className="tab"
-      data-testid="tab"
-      data-tab-id={tab.id}
-      aria-selected={active}
-      tabIndex={active ? 0 : -1}
-      title={label}
+      data-testid="tab-item"
+      data-active={active}
       onMouseDown={(event) => {
         // Browsers switch on press; the middle button closes instead (and must not autoscroll).
         if (event.button === 1) event.preventDefault();
@@ -250,33 +256,56 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
       onAuxClick={(event) => {
         if (event.button === 1) close();
       }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          activate();
-        }
-      }}
     >
-      <span className="tab-glyph" aria-hidden="true">
-        {tab.loading ? (
-          <span className="tab-spinner" data-testid="tab-loading" />
-        ) : tab.url === '' ? (
-          <FrostMark className="tab-mark" />
-        ) : (
-          <GlobeIcon className="tab-icon" />
-        )}
-      </span>
-      <span className="tab-label" data-testid="tab-label">
-        {label}
-      </span>
+      <div
+        ref={ref}
+        role="tab"
+        className="tab-main"
+        data-testid="tab"
+        data-tab-id={tab.id}
+        aria-selected={active}
+        aria-keyshortcuts="Delete"
+        tabIndex={active ? 0 : -1}
+        title={label}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            activate();
+          } else if (event.key === 'Delete') {
+            event.preventDefault();
+            // Keep keyboard focus in the strip: on the neighbour that remains.
+            const items = [...(event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
+            const index = items.indexOf(event.currentTarget);
+            (items[index + 1] ?? items[index - 1])?.focus();
+            close();
+          }
+        }}
+      >
+        <span className="tab-glyph" aria-hidden="true">
+          {tab.loading ? (
+            <span className="tab-spinner" data-testid="tab-loading" />
+          ) : tab.url === '' ? (
+            <FrostMark className="tab-mark" />
+          ) : (
+            <GlobeIcon className="tab-icon" />
+          )}
+        </span>
+        <span className="tab-label" data-testid="tab-label">
+          {label}
+        </span>
+      </div>
       <button
         type="button"
         className="tab-close"
         data-testid="tab-close"
-        aria-label={`Close ${label}`}
-        title="Close tab"
+        aria-hidden="true"
         tabIndex={-1}
-        onMouseDown={(event) => event.stopPropagation()}
+        title="Close tab"
+        onMouseDown={(event) => {
+          // Neither activates the tab nor takes focus.
+          event.stopPropagation();
+          event.preventDefault();
+        }}
         onClick={(event) => {
           event.stopPropagation();
           close();
@@ -288,11 +317,27 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
   );
 }
 
-/** The tab strip above the toolbar; it scrolls sideways when the tabs no longer fit. */
+/**
+ * The tab strip above the toolbar; it scrolls sideways when the tabs no longer fit. Roving tabindex:
+ * only the active tab is in the Tab order; Left/Right/Home/End move focus inside the tablist.
+ */
 function TabStrip({ state }: { readonly state: BrowserState | null }) {
   return (
     <div className="tabstrip" data-testid="tab-strip">
-      <div className="tabs" role="tablist" aria-label="Tabs">
+      <div
+        className="tabs"
+        role="tablist"
+        aria-label="Tabs"
+        onKeyDown={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.getAttribute('role') !== 'tab') return;
+          const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
+          const next = tablistFocusTarget(event.key, items.indexOf(target), items.length);
+          if (next === null) return;
+          event.preventDefault();
+          items[next]?.focus();
+        }}
+      >
         {state?.tabs.map((tab) => <Tab key={tab.id} tab={tab} active={tab.id === state.activeTabId} />)}
       </div>
       <button type="button" className="new-tab" data-testid="new-tab" aria-label="New tab" title="New tab" onClick={() => void actions.newTab()}>

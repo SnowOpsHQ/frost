@@ -53,10 +53,13 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   (state and window title) as `https://example.com/`.
 - **Scenario: attach-same-window-twice-is-a-no-op** — attaching the same window again registers no
   second listener and resets nothing.
-- **Scenario: page-close-resets-tab** — when the tab's WebContents is destroyed (the page called
-  `window.close()`), its view is removed from the window, the tab returns to the empty state (the
-  version bumps), and the next `navigate` creates a fresh view; a destroyed WebContents is never
-  used.
+- **Scenario: page-close-closes-tab** — when the only tab's WebContents is destroyed (the page
+  called `window.close()`), its view is removed from the window and the tab is closed: one fresh
+  empty tab (a new id) takes its place (the version bumps; `tabs.feature.md` "Last tab"), and the
+  next `navigate` creates a fresh view; a destroyed WebContents is never used (and inside its
+  `destroyed` listeners Electron has already cleared `view.webContents`, which the test fake
+  mirrors, so it is never read bare). (With several tabs,
+  `tabs.feature.md` `background-page-close-closes-its-tab`.)
 - **Scenario: renderer-crash-stops-loading** — after `render-process-gone` the tab reports
   `loading: false` (even if the WebContents still claims to load) until the next load starts; the
   crash UI is Task 3.
@@ -123,8 +126,9 @@ The address bar's text is a pure reducer (`renderer/address-field.ts`): what the
   (`not-window-contents`).
 - **Scenario: tab-cannot-load-app-scheme** — `loadURL('app://app/')` in the tab fails, and the
   app's script cannot be loaded as a subresource from a page in the tab.
-- **Scenario: page-close-resets-tab** — a page calling `window.close()` destroys the tab's
-  WebContents: the view is gone from the window, the start view and the `frost` title return, and
-  typing an address loads it in a new view.
+- **Scenario: page-close-closes-tab** — a page calling `window.close()` destroys the tab's
+  WebContents: the view is gone from the window and the tab is closed; as it was the only tab, one
+  fresh empty `New Tab` remains, with the start view and the `frost` title, and typing an address
+  loads it in a new view.
 - **Scenario: non-web-input-becomes-search-e2e** — typing `app://app/` or `javascript:alert(1)`
   loads the search URL (the test stubs `https:` in the browse session, so nothing leaves the host).
