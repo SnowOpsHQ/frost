@@ -203,8 +203,8 @@ describe('decisions', () => {
     }
     expect(judgeBrowsePopup('https://example.com/', true)).toBe('tab');
     expect(judgeBrowsePopup('HTTP://127.0.0.1:9/x', true)).toBe('tab');
-    expect(judgeBrowsePopup('mailto:a@b.c?subject=hi', true)).toBe('open-externally');
-    for (const url of ['about:blank', 'file:///etc/passwd', 'vscode://x', 'javascript:1', 'app://app/', 'data:text/html,x', 'mailto:a@b.c?attach=x']) {
+    // Never an external handler from a popup, whatever the scheme.
+    for (const url of ['mailto:a@b.c?subject=hi', 'mailto:a@b.c', 'about:blank', 'file:///etc/passwd', 'vscode://x', 'javascript:1', 'app://app/', 'data:text/html,x', 'mailto:a@b.c?attach=x']) {
       expect(judgeBrowsePopup(url, true), url).toBe('drop');
     }
   });
@@ -322,12 +322,18 @@ describe('browse guard', () => {
     expect(shell.openExternal).not.toHaveBeenCalled();
   });
 
-  test('popup-external-scheme-on-gesture', () => {
+  test('popup-never-opens-externally', () => {
     const contents = created(browseSession());
-    activate(contents);
-    expect(openWindow(contents, 'mailto:a@b.c')).toEqual({ action: 'deny' });
-    expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith('mailto:a@b.c');
+    for (const url of ['mailto:a@b.c', 'mailto:a@b.c?subject=hi&cc=x@y.z', 'MAILTO:a@b.c', 'vscode://x', 'frost-test:x']) {
+      activate(contents);
+      expect(openWindow(contents, url), url).toEqual({ action: 'deny' });
+    }
+    expect(shell.openExternal).not.toHaveBeenCalled();
     expect(openTab).not.toHaveBeenCalled();
+    // A main-frame navigation to mailto: on a fresh gesture keeps working.
+    activate(contents);
+    expect(contents.simulateNavigation('mailto:a@b.c')).toBe(true);
+    expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith('mailto:a@b.c');
   });
 
   test('popup-consumes-gesture', () => {

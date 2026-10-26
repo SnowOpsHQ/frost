@@ -220,8 +220,9 @@ named tests):
 - **Navigation guards:** JavaScript dialogs are disabled in tabs (`disableDialogs`; origin-labelled
   chrome dialogs come later), `beforeunload` cannot block leaving, `file:` is refused on the browse
   session, and an external open (`mailto:`) needs a gesture **and** the tab's main frame as the
-  navigation's initiator. Popups carry no frame in Electron 45, so their gesture stays per
-  WebContents (accepted risk, `browse-guard.feature.md`).
+  navigation's initiator. Popups carry no frame in Electron 45, so a tab's popup never opens an
+  external handler (`mailto:` included): with a gesture it only ever becomes a background `http(s)`
+  tab (`browse-guard.feature.md`).
 - **Page commands** (not in the original plan; `page-commands.feature.md`): View / History menus
   and reserved shortcuts for Reload, Hard Reload, Stop (Esc), Back / Forward and per-host Zoom (the
   status bar shows a zoom other than 100 %), and a native page context menu built from the

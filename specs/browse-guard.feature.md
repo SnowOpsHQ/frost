@@ -47,7 +47,10 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
     opener stays active. No opener link, no
     referrer, no POST body (`noopener` + `noreferrer` semantics). `MAX_TABS` applies (the
     `tab-limit` notice);
-  - with a gesture and an allowlisted external URL (`mailto:`), it is opened externally;
+  - **a popup never opens an external handler:** a non-browsable URL (`mailto:` included, and every
+    other scheme) is dropped and never handed to `openExternal`, with or without a gesture. Only a
+    main-frame-initiated **navigation** reaches the external-open flow (above), where the initiating
+    frame is known; a popup's is not;
   - otherwise (no gesture, `about:blank`, `javascript:` → `about:blank`, `file:`, custom schemes)
     nothing happens.
 - **Gesture attribution** stays per WebContents (Phase 0 known limit): Electron 45 reports neither
@@ -56,10 +59,8 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   spend a click in the top frame on a `mailto:` navigation (it is dropped, and the click stays
   unspent). **Popups** carry no frame (`HandlerDetails` has only the URL, frame name, features,
   disposition, referrer and POST body; the referrer is the opener's to choose or strip, so it is no
-  frame signal), so there the accepted risk remains: within `USER_ACTIVATION_WINDOW_MS` of a click
-  in the top frame that nothing else spent, a subframe's `window.open` can open **one** background
-  `http(s)` tab (no opener, no referrer) or one allowlisted external URL (`mailto:` with
-  `ALLOWED_MAILTO_PARAMS` only). Each activation backs at most one open, and **ends with its
+  frame signal), which is why they never open an external handler (above); a gesture-backed popup
+  only ever becomes a background `http(s)` tab. Each activation backs at most one open, and **ends with its
   document**: a main-frame cross-document commit (`did-navigate`) clears it, so the page a click
   navigated to (directly or through a redirect chain) cannot spend that click on a popup or an
   external open. It is not cleared when a navigation merely starts (a click on a `mailto:` link
@@ -127,8 +128,9 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   (so `mailto:` with a gesture), else `drop`; a non-browsable **redirect**, or a navigation the
   main frame did not initiate, → `drop` without reading the gesture.
 - **Scenario: judge-popup** — `judgeBrowsePopup(url, userGesture)`: no gesture → `drop` (any
-  URL); gesture + `http(s)` → `tab`; gesture + allowlisted external → `open-externally`; gesture
-  + `about:blank` / `file:` / `vscode:` / `javascript:` → `drop`.
+  URL); gesture + `http(s)` → `tab`; gesture + anything else (`mailto:` and every other external
+  scheme, `about:blank`, `file:`, `vscode:`, `javascript:`) → `drop`. It has no `open-externally`
+  verdict.
 
 ## Wiring (`guard.test.ts`, "browse guard", via the Electron fake)
 - **Scenario: page-cannot-navigate-to-non-web-scheme** (Review Focus) — main-frame
@@ -156,8 +158,10 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
 - **Scenario: popup-without-gesture-is-blocked** (Review Focus) — with no activation input (or a
   non-activation input such as `mouseMove`), `window.open` of any URL answers deny and neither
   opens a tab nor anything external.
-- **Scenario: popup-external-scheme-on-gesture** — `window.open('mailto:…')` after an activation
-  input opens it externally (once) and opens no tab.
+- **Scenario: popup-never-opens-externally** — after an activation input, `window.open` of
+  `mailto:…` (also with only allowed keys) and of other external schemes answers deny and opens
+  nothing externally and no tab; a main-frame `mailto:` navigation on a fresh activation still opens
+  externally.
 - **Scenario: popup-consumes-gesture** — one activation input backs one open: a second
   `window.open` right after opens nothing.
 - **Scenario: gesture-ends-with-navigation** — an activation input followed by a main-frame
@@ -246,6 +250,9 @@ allowed.
   from a script-dispatched click opens no tab and creates no WebContents.
 - **Scenario: mailto-on-gesture-opens-externally-e2e** — a real click on a `mailto:` link reaches
   the (stubbed) `shell.openExternal` once; a script-set `location = 'mailto:…'` does not.
+- **Scenario: popup-to-external-scheme-is-dropped-e2e** — a real click on a `target=_blank`
+  `mailto:` link and on a button calling `window.open('mailto:…')` opens nothing externally and
+  no tab.
 - **Scenario: subframe-cannot-open-externally-e2e** — right after a real click in the top frame,
   a same-origin iframe setting its own `location`, and then `top.location`, to `mailto:…` is
   dropped by the guard and opens nothing; the click is still unspent, so the top frame's own

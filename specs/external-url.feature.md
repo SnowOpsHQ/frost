@@ -38,9 +38,9 @@ not describe end-to-end `window.open` behaviour (see `window-open-judges-chromiu
   `USER_ACTIVATION_WINDOW_MS` (inclusive) and not after; no activation → no gesture.
 - **Known limit (not a scenario):** activation is tracked per `webContents`, not per frame —
   `HandlerDetails` has no frame info, so a click in one frame can back a `window.open` from another
-  frame of the same `webContents`. App windows host only the app's own page. For tabs, the accepted
-  risk and what limits it (external opens from navigations need a main-frame initiator) are in
-  `browse-guard.feature.md`, Gesture attribution.
+  frame of the same `webContents`. App windows host only the app's own page, so their popups keep
+  this flow. Tabs never open an external handler from a popup, and from a navigation only when the
+  main frame initiated it (`browse-guard.feature.md`, Popups and Gesture attribution).
 
 ## Navigation pinning — `isAllowedAppNavigation(url, { devServerUrl })` (policy.test.ts)
 - **Scenario: pins-app-navigation-to-app-origin** — only `APP_ORIGIN` (`app://app`, any path) is an
