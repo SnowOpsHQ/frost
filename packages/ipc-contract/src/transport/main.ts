@@ -20,6 +20,7 @@ import {
   type WebContentsLike,
   type WindowLike,
 } from '../sender';
+import type { IpcServices } from '../services';
 
 // Main-process end of the IPC transport (spec `specs/ipc-transport.spec.ts`). No runtime `electron`
 // import: the caller injects `ipcMain` and `BrowserWindow.fromWebContents`, so this runs under Node.
@@ -41,6 +42,8 @@ export interface IpcHandlerOptions<E extends IpcInvokeEventLike> {
   readonly policy: SenderPolicy;
   /** `BrowserWindow.fromWebContents`. */
   readonly fromWebContents: (sender: E['sender']) => WindowLike | null;
+  /** Main-process services handed to procedures through the context (after the sender check). */
+  readonly services?: IpcServices;
 }
 
 const envelopeSchema = z.strictObject({
@@ -64,7 +67,7 @@ const INTERNAL_ERROR: IpcResponseEnvelope = {
 export function createIpcRequestHandler<E extends IpcInvokeEventLike>(
   opts: IpcHandlerOptions<E>,
 ): (event: E, envelope: unknown) => Promise<IpcResponseEnvelope> {
-  const { router, policy, fromWebContents } = opts;
+  const { router, policy, fromWebContents, services } = opts;
   return (event, envelope) => {
     let ctx: IpcContext | undefined;
     try {
@@ -73,6 +76,7 @@ export function createIpcRequestHandler<E extends IpcInvokeEventLike>(
         senderFrame: event.senderFrame,
         window: fromWebContents(event.sender),
         policy,
+        ...(services === undefined ? {} : { services }),
       });
     } catch {
       ctx = undefined; // fails closed below (`no-context`)

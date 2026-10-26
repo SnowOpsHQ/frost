@@ -14,7 +14,7 @@ rules:
     message: >-
       WebContents created outside an allowlisted factory. Create windows and views through a factory
       that sets sandbox/contextIsolation/nodeIntegration/webSecurity explicitly and is covered by the
-      window-hardening tests (today: createMainWindow in apps/desktop/src/main/window.ts); a new
+      window-hardening tests (today: createMainWindow and createTabView in apps/desktop/src/main/window.ts); a new
       factory joins the allowlist in semgrep/webcontents-factory.yml in a reviewed PR.
     paths:
       exclude:

@@ -64,8 +64,8 @@ Electronegativity cannot see a `WebContentsView` and only resolves literal optio
 hardening of new WebContents is pinned structurally: every WebContents is created by an allowlisted
 factory that sets the hardened webPreferences explicitly (`window-hardening.spec.ts`) and is unit
 tested for them. Allowlist (the rule's `paths.exclude`): `apps/desktop/src/main/window.ts`
-(`createMainWindow`). Phase 1 adds its tab-view factory to the allowlist, with its own
-window-hardening tests. Test-only code (`__tests__/`, `*.test.ts`, `apps/desktop/src/test/`,
+(`createMainWindow`; and, since Phase 1, the tab-view factory `createTabView`, whose prefs are
+pinned to `TAB_VIEW_WEB_PREFERENCES` by `browser/__tests__/tab-view.test.ts`). Test-only code (`__tests__/`, `*.test.ts`, `apps/desktop/src/test/`,
 `apps/desktop/e2e/`) is excluded.
 - **Scenario: semgrep-flags-webcontents-outside-factory** — `webcontents-outside-factory`:
   `new BrowserWindow(…)`, `new BrowserView(…)` or `new WebContentsView(…)` (bare, `electron.X`, an

@@ -23,6 +23,9 @@ const t = initTRPC.context<IpcContext>().create({
 
 export const router = t.router;
 
+/** Middleware builder. Chain middlewares only after `.use(enforceSender)`. */
+export const middleware = t.middleware;
+
 /** Unguarded base procedure. Never end a chain on it without `.use(enforceSender)` first. */
 export const publicProcedure = t.procedure;
 

@@ -1,4 +1,6 @@
-import { app, shell, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { app, session as electronSession, shell, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { guardBrowseContents } from '../browser/guard';
 import {
   hasTransientActivation,
   isActivationInput,
@@ -76,22 +78,47 @@ export function registerSecurity(session: Session, win: BrowserWindow, options?:
 }
 
 /**
- * Guards every WebContents created from now on, so none is ever left on Electron defaults. This is
- * the only place WebContents guard options come from: calling it again with equal options is a
- * no-op, with different options it throws.
+ * Guards every WebContents created from now on, so none is ever left on Electron defaults. Each is
+ * classified at creation by session: browse-partition contents (tabs) get the browse guard
+ * (`browser/guard.ts`), everything else the app pin below. This is the only place WebContents
+ * guard options come from: calling it again with equal options is a no-op, with different options
+ * it throws.
  */
 export function registerAppWideGuards(options: SecurityOptions = {}): void {
   if (installedAppWide()) {
     resolveOptions(options);
     return;
   }
-  const listener = (_event: unknown, contents: WebContents) => guardWebContents(contents, options);
+  const listener = (_event: unknown, contents: WebContents) => {
+    if (isBrowseContents(contents)) guardBrowseOnce(contents);
+    else guardWebContents(contents, options);
+  };
   appWide = { options, listener };
   app.on('web-contents-created', listener);
 }
 
 /**
- * Per-WebContents guards (idempotent; only reached via the app-wide options above):
+ * Classifies a new WebContents by its session (spec `browser-chrome.feature.md`): `true` only for
+ * the browse partition's session. Anything else — the default session, another partition, a
+ * missing or throwing `session` — is app content and keeps the app pin (fail closed).
+ */
+function isBrowseContents(contents: WebContents): boolean {
+  try {
+    const ses: unknown = contents.session;
+    return ses !== undefined && ses !== null && ses === electronSession.fromPartition(BROWSE_PARTITION);
+  } catch {
+    return false;
+  }
+}
+
+function guardBrowseOnce(contents: WebContents): void {
+  if (guarded.has(contents)) return;
+  guarded.add(contents);
+  guardBrowseContents(contents);
+}
+
+/**
+ * Per-WebContents guards for app content (idempotent; only reached via the app-wide options above):
  * - `window.open` / `target=_blank` never creates a window; the URL goes to `shell.openExternal`
  *   only if allowlisted and backed by a live, unconsumed trusted activation input. Activation is
  *   per-WebContents, not per-frame (spec known limit, revisit in Phase 1).
