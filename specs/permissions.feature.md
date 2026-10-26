@@ -84,12 +84,26 @@ named test.
   banner across the top ("<host> `FULLSCREEN_NOTICE_TEXT`", `FULLSCREEN_BANNER_HEIGHT` high) and
   the view covers the rest of the window below it; after `FULLSCREEN_NOTICE_MS` it is `full` and
   the view covers the whole window. `FULLSCREEN_EXIT_KEY` (Esc) on a fullscreen tab is taken in
-  `before-input-event` (the page never sees it) and leaves fullscreen by running
-  `document.exitFullscreen()` in an isolated world (a page cannot override it there). Switching to
-  another tab, or a tab showing its error/crash panel, leaves fullscreen the same way and takes
-  the window out of OS fullscreen at once (Chromium completes a hidden page's own exit only when
-  its view is shown again, where it then sits in the page area); closing the tab (its WebContents
-  gone) takes the window out of OS fullscreen. A cross-document commit or `leave-html-full-screen` ends it. While a tab is
+  `before-input-event` (the page never sees it) and **always** leaves fullscreen (anti-spoofing),
+  from main, at once, whatever the page does: the tab's `fullscreen` is cleared (the notice goes),
+  the window leaves OS fullscreen (`setFullScreen(false)`), and the view goes back into the page
+  area under the visible chrome. frost's state is authoritative: the chrome stays visible even if
+  the page never leaves its own fullscreen (it hangs, or Chromium ignores the request). Only then
+  is the page asked to leave, by running `document.exitFullscreen()` in an isolated world (a page
+  cannot override it there). Electron may leave HTML fullscreen on its own first (it handles Esc
+  itself and reports `leave-html-full-screen`), so that event, too, asks the page to leave: on
+  macOS Electron can report it while the renderer is still entering (Esc during the native
+  fullscreen animation), and the document then holds its fullscreen element with nothing to end
+  it. The page is asked only once the window is out of OS fullscreen and has had no fullscreen
+  event (the window's `enter-full-screen` / `leave-full-screen`, a tab's `enter-html-full-screen`
+  / `leave-html-full-screen`) for `FULLSCREEN_EXIT_SETTLE_MS`: on macOS a request made while the
+  native animation runs, or is queued to run, is never completed and blocks every later one. It is
+  asked again whenever the tab's view is shown again (Chromium completes a hidden page's exit only
+  then; after the same settle wait), until the page enters fullscreen again or a new document
+  commits; it does nothing on a page that is not fullscreen (`document.fullscreenElement` is
+  checked first). Switching to another tab, or a tab showing
+  its error/crash panel, leaves fullscreen the same way; closing the tab (its WebContents gone)
+  takes the window out of OS fullscreen. A cross-document commit or `leave-html-full-screen` ends it. While a tab is
   fullscreen its new permission requests are denied at once (a prompt would be hidden). Bounds are
   re-applied on the window's `resize`, `enter-full-screen` and `leave-full-screen`, not only when
   the chrome reports its page area. No new WebContents is involved.
@@ -211,10 +225,20 @@ named test.
   bounds reports); after `FULLSCREEN_NOTICE_MS` it is `full` and covers the whole content area;
   after `leave-html-full-screen` the page area again (`fullscreen: null`).
 - **Scenario: esc-always-leaves-fullscreen** — on a fullscreen tab, an Escape `before-input-event`
-  is `preventDefault`ed and runs `document.exitFullscreen()` in an isolated world; on a tab that is
-  not fullscreen, Escape passes through untouched.
-- **Scenario: leaving-fullscreen-tab-restores-window** — switching away from a fullscreen tab runs
-  the isolated-world exit, clears its `fullscreen` and takes the window out of OS fullscreen;
+  is `preventDefault`ed (key-down and key-up); the key-down at once clears the tab's `fullscreen`
+  (a state change), calls `setFullScreen(false)` and lays the view over the page area; then,
+  `FULLSCREEN_EXIT_SETTLE_MS` later, `document.exitFullscreen()` runs in an isolated world. This
+  holds when that script never settles (a hung page) and when the page never reports
+  `leave-html-full-screen`. On a tab that is not fullscreen, Escape passes through untouched.
+- **Scenario: page-exit-waits-for-window-to-settle** — after frost left a tab's fullscreen, or
+  after `leave-html-full-screen`, the isolated-world exit runs only once the window is out of OS
+  fullscreen and `FULLSCREEN_EXIT_SETTLE_MS` passed with no window or tab fullscreen event (each
+  one restarts the wait; a window still fullscreen waits for its `leave-full-screen`). It runs
+  again each time the tab's view is shown again (after the same wait); once the page enters
+  fullscreen again, or a new document commits, it does not run.
+- **Scenario: leaving-fullscreen-tab-restores-window** — switching away from a fullscreen tab
+  clears its `fullscreen`, takes the window out of OS fullscreen and (after the settle wait) runs
+  the isolated-world exit;
   closing a fullscreen tab takes the window out of OS fullscreen.
 - **Scenario: window-events-reapply-bounds** — the window's `resize`, `enter-full-screen` and
   `leave-full-screen` re-apply the active view's bounds (fullscreen or page area) from the
@@ -276,6 +300,9 @@ Each scenario uses fresh loopback origins (decisions are remembered for the app 
 - **Scenario: esc-leaves-fullscreen-e2e** — on a page that swallows every Escape keydown, Esc
   leaves fullscreen (the page never sees it) and the window leaves OS fullscreen; a notification
   request made while fullscreen resolves `denied` with no prompt.
+- **Scenario: esc-leaves-fullscreen-on-hung-page-e2e** — a fullscreen page that then hangs (a
+  busy loop) cannot hold the window: Esc takes the window out of OS fullscreen and puts the view
+  back in the page area under the chrome, with no notice.
 - **Scenario: leaving-fullscreen-tab-restores-window-e2e** — switching to another tab, and
   closing a fullscreen tab, each take the window out of OS fullscreen; switching back shows the
   page out of fullscreen, in the page area, with no notice.

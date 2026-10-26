@@ -47,7 +47,7 @@ export type PromptablePermission = (typeof PROMPTABLE_PERMISSIONS)[number];
  *   `FULLSCREEN_NOTICE_MS` the chrome shows a banner (`FULLSCREEN_BANNER_HEIGHT` high, "<host>
  *   `FULLSCREEN_NOTICE_TEXT`") above the page, then the page's view covers the whole window. Esc
  *   (`FULLSCREEN_EXIT_KEY`) always leaves fullscreen: main takes it in `before-input-event`, so a
- *   page cannot swallow it. Switching away from, or closing, a fullscreen tab leaves fullscreen
+ *   page cannot swallow it, and leaves at once from main, whether or not the page cooperates. Switching away from, or closing, a fullscreen tab leaves fullscreen
  *   too. While a tab is fullscreen, its permission requests are denied at once (a prompt would be
  *   hidden behind the page). `automatic-fullscreen` (no gesture) stays denied.
  * - `clipboard-sanitized-write` — `navigator.clipboard.writeText()` / `write()` of sanitized
@@ -165,3 +165,11 @@ export const FULLSCREEN_BANNER_HEIGHT = 40;
 export const FULLSCREEN_NOTICE_TEXT = 'is now full screen \u2014 press Esc to exit' as const;
 /** The key that always leaves HTML fullscreen (`before-input-event` `input.key`). */
 export const FULLSCREEN_EXIT_KEY = 'Escape' as const;
+/**
+ * After frost or Electron leaves a tab's HTML fullscreen, its page is asked to leave too
+ * (`document.exitFullscreen()`), but only once the window is out of OS fullscreen and has had no
+ * fullscreen event (its own or a tab's) for this long. On macOS a request made while the native
+ * fullscreen animation is running, or about to run, is never completed and blocks every later
+ * one; the animation takes about 600 ms and queued transitions follow each other at that pace.
+ */
+export const FULLSCREEN_EXIT_SETTLE_MS = 1_000;
