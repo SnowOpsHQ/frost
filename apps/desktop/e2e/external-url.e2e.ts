@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { USER_ACTIVATION_INPUT_TYPES } from '@app/specs/security-policy.spec';
-import { destroyWindows, launchApp, openUntrackedWindow, pageAt } from './harness';
+import { closeApp, destroyWindows, launchApp, openUntrackedWindow, pageAt } from './harness';
 
 const ALLOWED_URL = 'https://example.com/';
 const NON_WEB_URLS = ['reaprobe://x', 'vscode://x', 'file:///etc/passwd', 'javascript:void(0)'] as const;
@@ -117,7 +117,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  await closeApp(app);
   await server?.close();
 });
 

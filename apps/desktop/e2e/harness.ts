@@ -1,7 +1,7 @@
+import { execFileSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
-import { chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -28,7 +28,7 @@ export const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url))
  */
 export async function launchApp(
   extraArgs: readonly string[] = [],
-  options: { coreDumps?: boolean; userDataDir?: string } = {},
+  options: { userDataDir?: string } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -36,21 +36,12 @@ export async function launchApp(
   }
   const ownProfile = options.userDataDir === undefined ? await mkdtemp(path.join(tmpdir(), 'frost-e2e-profile-')) : null;
   const userDataDir = options.userDataDir ?? ownProfile!;
-  const wrapper = options.coreDumps === false ? await noCoreDumpsLauncher() : undefined;
   let app: ElectronApplication;
   try {
-    app = await _electron.launch({
-      args: [APP_DIR, `--user-data-dir=${userDataDir}`, ...extraArgs],
-      env,
-      cwd: APP_DIR,
-      ...(wrapper ? { executablePath: wrapper.path } : {}),
-    });
+    app = await _electron.launch({ args: [APP_DIR, `--user-data-dir=${userDataDir}`, ...extraArgs], env, cwd: APP_DIR });
   } catch (error) {
     if (ownProfile !== null) await rm(ownProfile, { recursive: true, force: true });
     throw error;
-  } finally {
-    // The script `exec`s Electron, so it is not needed once the launch returned.
-    await wrapper?.remove();
   }
   // Synchronous: the worker may exit right after the app closes, before an async removal ran.
   if (ownProfile !== null) app.once('close', () => rmSync(ownProfile, { recursive: true, force: true }));
@@ -60,21 +51,60 @@ export async function launchApp(
   return { app, page };
 }
 
+/** How long `closeApp` waits for the app to quit before it kills the app's process tree. */
+export const APP_CLOSE_TIMEOUT_MS = 10_000;
+
 /**
- * A launcher script that starts Electron with core dumps disabled (`ulimit -c 0`, inherited by its
- * renderers), for tests that crash a renderer on purpose: where core dumps go to a slow handler
- * (systemd-coredump), a crashed renderer lingers until its dump is written and
- * `render-process-gone` arrives tens of seconds late. POSIX only (the suite runs on Linux/macOS).
+ * Closes `app` (spec `ipc-e2e.feature.md`, Harness): Playwright's `close()` (the app quits, so
+ * pending writes are flushed); if that has not finished within `timeoutMs`, the app's whole
+ * process tree is killed, so a wedged app fails only its own test and never hangs the worker's
+ * teardown. A no-op for `undefined`.
  */
-async function noCoreDumpsLauncher(): Promise<{ path: string; remove(): Promise<void> }> {
-  const electron = createRequire(import.meta.url)('electron') as unknown as string;
-  const dir = await mkdtemp(path.join(tmpdir(), 'frost-e2e-'));
-  const script = path.join(dir, 'electron-no-core-dumps.sh');
-  // Single-quoted for sh (no expansion of `$`, backticks or backslashes); a `'` in the path is closed, escaped and reopened.
-  const quoted = `'${electron.replaceAll("'", `'\\''`)}'`;
-  await writeFile(script, `#!/bin/sh\nulimit -c 0\nexec ${quoted} "$@"\n`);
-  await chmod(script, 0o755);
-  return { path: script, remove: () => rm(dir, { recursive: true, force: true }) };
+export async function closeApp(app: ElectronApplication | undefined, options: { timeoutMs?: number } = {}): Promise<void> {
+  if (!app) return;
+  const pid = app.process().pid;
+  const exited = new Promise<void>((resolve) => {
+    if (app.process().exitCode !== null || app.process().signalCode !== null) resolve();
+    else app.process().once('exit', () => resolve());
+  });
+  const closed = app.close().catch(() => undefined);
+  const timeout = (ms: number) => new Promise<'timeout'>((resolve) => setTimeout(resolve, ms, 'timeout').unref());
+  if ((await Promise.race([closed, timeout(options.timeoutMs ?? APP_CLOSE_TIMEOUT_MS)])) !== 'timeout') return;
+  if (pid !== undefined) killProcessTree(pid);
+  // Playwright's close() settles once the process is gone; neither waits forever.
+  await Promise.race([Promise.all([closed, exited]), timeout(5_000)]);
+}
+
+/**
+ * SIGKILLs `pid`, its process group (Playwright starts Electron as a group leader) and every
+ * descendant `ps` lists (renderers, GPU and zygote processes). POSIX only, like the suite.
+ */
+function killProcessTree(pid: number): void {
+  const children = new Map<number, number[]>();
+  try {
+    for (const line of execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }).split('\n')) {
+      const [child, parent] = line.trim().split(/\s+/).map(Number);
+      if (child === undefined || parent === undefined || !Number.isInteger(child) || !Number.isInteger(parent)) continue;
+      children.set(parent, [...(children.get(parent) ?? []), child]);
+    }
+  } catch {
+    // No `ps`: the group kill below still takes most of the tree.
+  }
+  const tree: number[] = [];
+  for (const queue = [pid]; queue.length > 0; ) {
+    const next = queue.shift()!;
+    tree.push(next);
+    queue.push(...(children.get(next) ?? []));
+  }
+  const kill = (target: number): void => {
+    try {
+      process.kill(target, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  };
+  kill(-pid);
+  for (const target of tree) kill(target);
 }
 
 /** The built renderer's entry script, as `app://` serves it (`/assets/index-<hash>.js`). */

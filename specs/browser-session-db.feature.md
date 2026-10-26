@@ -242,7 +242,8 @@ launch passes the same temporary `--user-data-dir`.
 - **Scenario: permission-decision-persists-e2e** — notifications allowed for a loopback origin is
   still `granted` after relaunch, with no prompt.
 - **Scenario: db-file-in-user-data-e2e** — `app.getPath('userData')` is the directory passed with
-  `--user-data-dir` and `DB_FILE_NAME` exists there.
+  `--user-data-dir` (compared by real path: on macOS the temporary directory `/var/…` is
+  `/private/var/…`) and `DB_FILE_NAME` exists there.
 - **Scenario: main-bundle-keeps-node-sqlite-external** — `.vite/build/main.cjs` requires
   `node:sqlite` and requires nothing from `drizzle-orm` (it is bundled).
 

@@ -10,8 +10,14 @@ launched with `electron <apps/desktop>`; that bundle has no dev-server URL, so i
 refuses to run against a missing bundle or a dev bundle left by `electron-forge start` (which bakes
 in the dev-server URL). The packaged binary cannot be driven: its fuses disable the Node inspector
 arguments Playwright needs, and they stay on. Entry points: `pnpm test:e2e` (Turbo, builds first) or
-`pnpm --filter @app/desktop test:e2e` after a build; both need a display.
+`pnpm --filter @app/desktop test:e2e` after a build; both need a display. Every suite closes its
+app with the harness's `closeApp`: Playwright's `close()` (the app quits), and if that has not
+finished within `APP_CLOSE_TIMEOUT_MS` (10 s) the app's whole process tree is killed (`SIGKILL`), so
+a wedged app fails only its own test, never the worker's teardown.
 
+- **Scenario: close-app-kills-wedged-app** — an app whose main process refuses to quit
+  (`before-quit` prevented) is still closed by `closeApp`: after its timeout the main process and
+  every renderer it had are gone, and the app's `close` event fired.
 - **Scenario: loads-app-from-app-scheme** — the main window's URL starts with `app://app/`.
 - **Scenario: renders-pong-over-ipc** — the renderer's `<output data-testid="ping">` shows `pong`,
   i.e. a real sender-validated `ping` round trip through preload and main.

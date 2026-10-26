@@ -11,7 +11,7 @@ import {
   PERMISSION_PROMPT_ACTIONS,
   PROMPT_ARMING_DELAY_MS,
 } from '@app/specs/permissions.spec';
-import { launchApp } from './harness';
+import { closeApp, launchApp } from './harness';
 
 /**
  * A loopback site: `/frame-host?frame=<origin>` embeds `<origin>/frame` in an iframe delegated
@@ -96,7 +96,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  await closeApp(app);
 });
 
 const promptsShown = () => page.evaluate(() => (globalThis as unknown as { __promptsShown: number }).__promptsShown);

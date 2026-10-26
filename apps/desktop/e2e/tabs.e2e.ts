@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { BROWSE_PARTITION, MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
-import { launchApp } from './harness';
+import { closeApp, launchApp } from './harness';
 
 /**
  * Loopback pages: `/a` … `/c` (titled), `/untitled` (no <title>), `/slow` (held until released),
@@ -54,7 +54,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   site?.releaseSlow();
-  await app?.close();
+  await closeApp(app);
   await site?.close();
 });
 

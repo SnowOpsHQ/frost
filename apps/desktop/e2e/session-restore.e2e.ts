@@ -1,7 +1,7 @@
 // Specs: specs/browser-session-db.spec.ts (DB_FILE_NAME), specs/browser.spec.ts (BROWSE_PARTITION, NEW_TAB_LABEL)
 // Acceptance: specs/browser-session-db.feature.md (End to end)
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { DB_FILE_NAME } from '@app/specs/browser-session-db.spec';
 import { BROWSE_PARTITION, NEW_TAB_LABEL } from '@app/specs/browser.spec';
-import { APP_DIR, launchApp } from './harness';
+import { APP_DIR, closeApp, launchApp } from './harness';
 
 /**
  * One loopback site for the whole file, so its port (and the restored tabs' URLs) stay the same
@@ -52,7 +52,7 @@ test.beforeEach(async () => {
 });
 
 test.afterEach(async () => {
-  await app?.close();
+  await closeApp(app);
   app = undefined;
   await rm(profile, { recursive: true, force: true });
 });
@@ -78,7 +78,7 @@ async function launch(): Promise<void> {
 
 /** Quits the app the way a user does (`app.quit()`: pending writes are flushed first). */
 async function quit(): Promise<void> {
-  await app?.close();
+  await closeApp(app);
   app = undefined;
 }
 
@@ -219,7 +219,9 @@ test('permission-decision-persists-e2e', async () => {
 
 test('db-file-in-user-data-e2e', async () => {
   await launch();
-  expect(await app!.evaluate(({ app: electronApp }) => electronApp.getPath('userData'))).toBe(profile);
+  // By real path: on macOS the temporary directory `/var/…` is `/private/var/…`.
+  const userData = await app!.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+  expect(await realpath(userData)).toBe(await realpath(profile));
   expect(existsSync(path.join(profile, DB_FILE_NAME))).toBe(true);
 });
 
