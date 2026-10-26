@@ -17,7 +17,9 @@ export type AddressFieldEvent =
   | { readonly type: 'url-changed' }
   | { readonly type: 'load-ended' }
   /** `browser.navigate` rejected or answered `false` (a no-op). */
-  | { readonly type: 'navigate-failed' };
+  | { readonly type: 'navigate-failed' }
+  /** Another tab became active: nothing typed or pending carries over (spec `tabs.feature.md`). */
+  | { readonly type: 'tab-switched' };
 
 export const initialAddressField: AddressField = { draft: null, submitted: null };
 
@@ -27,6 +29,8 @@ export function addressFieldReducer(state: AddressField, event: AddressFieldEven
       return { ...state, draft: event.text };
     case 'submit':
       return { draft: null, submitted: event.text };
+    case 'tab-switched':
+      return initialAddressField;
     case 'cancel':
       return state.draft === null ? state : { ...state, draft: null };
     case 'url-changed':

@@ -89,6 +89,41 @@ export function SearchIcon(props: IconProps) {
   );
 }
 
+export function PlusIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 5.5v13" />
+      <path d="M5.5 12h13" />
+    </Icon>
+  );
+}
+
+/** The tab close button's ×: shorter arms than `StopIcon`, for a small hit target. */
+export function CloseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7.75 7.75l8.5 8.5" />
+      <path d="M16.25 7.75l-8.5 8.5" />
+    </Icon>
+  );
+}
+
+/**
+ * The tab glyph for a loaded page, in place of a favicon (the chrome never shows page-supplied
+ * images): a globe of two meridians and two parallels.
+ */
+export function GlobeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 4c-2.4 2.2-3.5 4.9-3.5 8s1.1 5.8 3.5 8" />
+      <path d="M12 4c2.4 2.2 3.5 4.9 3.5 8s-1.1 5.8-3.5 8" />
+      <path d="M4.6 9.3h14.8" />
+      <path d="M4.6 14.7h14.8" />
+    </Icon>
+  );
+}
+
 /** frost's mark: a six-armed ice crystal, each arm with one pair of short branches. */
 export function FrostMark(props: IconProps) {
   const arms = [0, 60, 120, 180, 240, 300];

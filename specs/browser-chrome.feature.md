@@ -6,8 +6,8 @@ Spec: `specs/browser.spec.ts` (`BROWSE_PARTITION`, `BROWSABLE_SCHEMES`, `BROWSE_
 named test.
 
 ## Layout
-The app window shows the chrome (`app://app`): a toolbar (back, forward, reload ⇄ stop, the address
-bar), the **page area**, and a slim status bar holding the IPC connection indicator
+The app window shows the chrome (`app://app`): the tab strip (`tabs.feature.md`), a toolbar (back,
+forward, reload ⇄ stop, the address bar), the **page area**, and a slim status bar holding the IPC connection indicator
 (`data-testid="ping"`, Phase 0). The active tab's `WebContentsView` is attached to the window's
 `contentView` exactly over the page area. An empty tab has no visible view: the page area shows
 frost's start view (wordmark + "Search or enter address") and the address bar is focused.

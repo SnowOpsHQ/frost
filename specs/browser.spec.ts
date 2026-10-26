@@ -7,9 +7,10 @@
  * chrome drives it only through the sender-guarded `browser.*` tRPC procedures and long-polls
  * `browser.watch` for changes. Implemented by `apps/desktop/src/main/browser/*` and
  * `packages/ipc-contract/src/router.ts`; acceptance lists: `address-bar.feature.md`,
- * `browser-chrome.feature.md`.
+ * `browser-chrome.feature.md`, `tabs.feature.md` (Task 2).
  */
 import { z } from 'zod';
+import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
@@ -88,7 +89,10 @@ export const TabStateSchema = z.strictObject({
   id: z.int().positive(),
   /** Last committed URL, without userinfo (`user:pass@` is never shown); `''` while the tab is empty. */
   url: z.string(),
-  /** Page title (`''` while empty). */
+  /**
+   * Page title (`''` while empty, and for a page without a <title>: Chromium's URL-derived display
+   * title is not reported as one).
+   */
   title: z.string(),
   loading: z.boolean(),
   canGoBack: z.boolean(),
@@ -96,17 +100,43 @@ export const TabStateSchema = z.strictObject({
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 
+// Tab constants the chrome renderer needs at runtime live in the Zod-free `tabs.spec.ts` (Zod in the
+// renderer bundle would trip the app's strict Trusted Types CSP); re-exported here for main.
+export * from './tabs.spec';
+
+export const NoticeSchema = z.strictObject({
+  /** Increases by one with every notice raised (so the same kind twice is two notices). */
+  seq: z.int().positive(),
+  kind: z.enum(NOTICE_KINDS),
+});
+export type Notice = z.infer<typeof NoticeSchema>;
+
 /**
  * The whole browser state of the app window. `version` starts at 1 and increases by one on every
- * change, so `watch({ sinceVersion: 0 })` returns the current state at once. Task 1 keeps exactly
- * one tab; the shape is `tabs[]` + `activeTabId` for Task 2.
+ * change, so `watch({ sinceVersion: 0 })` returns the current state at once. `tabs` is in strip
+ * order (left to right) and never empty; `activeTabId` is one of their ids.
+ *
+ * Main cannot focus a renderer input, so it asks the chrome to: `focusAddressBarSeq` increases by
+ * one each time the address bar should take focus (new tab, Cmd/Ctrl+L, switching to an empty tab)
+ * and the chrome focuses it whenever the value it last saw changes. `notice` is the latest
+ * status-bar notice (`null` until one is raised).
  */
 export const BrowserStateSchema = z.strictObject({
   version: z.int().positive(),
-  tabs: z.array(TabStateSchema),
+  tabs: z.array(TabStateSchema).max(MAX_TABS),
   activeTabId: z.int().positive().nullable(),
+  focusAddressBarSeq: z.int().nonnegative(),
+  notice: NoticeSchema.nullable(),
 });
 export type BrowserState = z.infer<typeof BrowserStateSchema>;
+
+/**
+ * `browser.closeTab` / `browser.activateTab` input: an existing tab's id (a positive safe integer;
+ * an id that names no open tab is a no-op answering `false`, never an error).
+ */
+export const TabIdInputSchema = z.strictObject({ tabId: z.int().positive() });
+export type TabIdInput = z.infer<typeof TabIdInputSchema>;
+
 
 /**
  * `browser.setPageBounds` input: the chrome's page area in window content (CSS = DIP) pixels.

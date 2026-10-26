@@ -7,13 +7,16 @@
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Inter', Roboto, Ubuntu, Cantarell, 'Noto Sans',
     'Helvetica Neue', Arial, sans-serif;
 
-  --toolbar-height: 52px;
+  --tabstrip-height: 40px;
+  --toolbar-height: 50px;
   --status-height: 26px;
   --radius-control: 9px;
   --radius-field: 11px;
 
   --bg-chrome: #f3f5f8;
   --bg-chrome-edge: #e2e6ec;
+  --bg-strip: #e4e8ee;
+  --bg-tab-hover: rgb(255 255 255 / 0.55);
   --bg-field: #ffffff;
   --bg-field-hover: #ffffff;
   --border-field: #d7dce4;
@@ -41,6 +44,8 @@
   :root {
     --bg-chrome: #1d2026;
     --bg-chrome-edge: #2c3038;
+    --bg-strip: #131519;
+    --bg-tab-hover: rgb(255 255 255 / 0.06);
     --bg-field: #2a2e36;
     --bg-field-hover: #30353e;
     --border-field: #3a3f49;
@@ -110,8 +115,222 @@ input {
 
 .chrome {
   display: grid;
-  grid-template-rows: var(--toolbar-height) minmax(0, 1fr) var(--status-height);
+  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) minmax(0, 1fr) var(--status-height);
   height: 100%;
+}
+
+/* ---- Tab strip ---------------------------------------------------------------------------- */
+
+/* The active tab is cut from the toolbar's colour and flows into it; the others sit on the darker
+   strip. The row scrolls sideways (no scrollbar) once the tabs reach their minimum width. */
+.tabstrip {
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+  padding: 0 8px 0 4px;
+  background: var(--bg-strip);
+}
+
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+  /* Room for the active tab's flared corners at both ends. */
+  padding: 0 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  --tab-bg: transparent;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* An explicit width too: the scrolling row sizes itself from its tabs' intrinsic widths. */
+  flex: 0 1 224px;
+  width: 224px;
+  min-width: 84px;
+  height: 32px;
+  padding: 0 6px 0 11px;
+  border-radius: 10px 10px 0 0;
+  background: var(--tab-bg);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+/* Hairline dividers between inactive tabs (hidden next to the active or a hovered one). */
+.tab + .tab::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 1px;
+  background: var(--border-field);
+  transition: opacity 120ms ease;
+}
+
+.tab[aria-selected='true']::before,
+.tab[aria-selected='true'] + .tab::before,
+.tab:hover::before,
+.tab:hover + .tab::before {
+  opacity: 0;
+}
+
+.tab:hover:not([aria-selected='true']) {
+  --tab-bg: var(--bg-tab-hover);
+  color: var(--text);
+}
+
+.tab[aria-selected='true'] {
+  --tab-bg: var(--bg-chrome);
+  z-index: 1;
+  color: var(--text);
+}
+
+/* The flared corners where the active tab meets the toolbar. */
+.tab[aria-selected='true']::after,
+.tab[aria-selected='true'] .tab-glyph::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.tab[aria-selected='true']::after {
+  right: -10px;
+  background: radial-gradient(circle at 100% 0, transparent 9.5px, var(--bg-chrome) 10px);
+}
+
+.tab[aria-selected='true'] .tab-glyph::after {
+  left: -10px;
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--bg-chrome) 10px);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tab-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+}
+
+.tab[aria-selected='true'] .tab-glyph {
+  color: var(--icon);
+}
+
+.tab-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.tab-mark {
+  width: 15px;
+  height: 15px;
+  color: var(--start-mark);
+}
+
+/* Loading indicator: a small ring with a sweeping accent arc. */
+.tab-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--accent-soft);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tab-spin 0.8s linear infinite;
+}
+
+@keyframes tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tab-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tab-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+/* Inactive tabs show × only on hover, so narrow tabs keep room for their label. */
+.tab:not([aria-selected='true']):not(:hover) .tab-close {
+  display: none;
+}
+
+.tab-close:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.tab-close .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.new-tab {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 3px 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--icon);
+  transition: background-color 120ms ease;
+}
+
+.new-tab:hover {
+  background: var(--bg-tab-hover);
+}
+
+.new-tab:active {
+  background: var(--bg-active);
+}
+
+.new-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.new-tab .icon {
+  width: 17px;
+  height: 17px;
 }
 
 /* ---- Toolbar ------------------------------------------------------------------------------ */
@@ -372,9 +591,16 @@ input {
   background: var(--danger);
 }
 
+/* A notice (e.g. the tab limit) replaces the status text while it shows. */
+.status-notice {
+  color: var(--warn);
+  font-weight: 500;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .progress-active::after,
-  .start-mark {
+  .start-mark,
+  .tab-spinner {
     animation: none;
   }
 }
