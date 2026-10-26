@@ -1,5 +1,5 @@
 import type { SavedSession } from '@app/db';
-import type { BrowserService } from '@app/ipc-contract';
+import type { BrowserService, SeoService } from '@app/ipc-contract';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
@@ -9,7 +9,8 @@ import { createFullscreen } from './fullscreen';
 import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
-import { matchPageShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
+import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
+import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
 import { wireTabView, type TabContextMenuRequest } from './tab-events';
 import { aliveContents, capTitle, clampPageBounds, createTab, emptyTabState, noop, sameTabState, showsPage, zoomOf, type HostWindow, type PageState, type StripState, type Tab, type TabView } from './tab-model';
@@ -20,8 +21,8 @@ import { createTabPrompts, type TabPermissions } from './tab-permissions';
 // this runs under Vitest with plain fakes. Its parts: the tab model (`tab-model.ts`), each tab
 // view's events (`tab-events.ts`), HTML fullscreen (`fullscreen.ts`), the session database's side
 // (`session-sync.ts`), state versioning and `watch` (`state-watch.ts`), the permission broker's
-// side (`tab-permissions.ts`) and the page commands (`page-commands.ts`); this file holds the strip
-// and its commands.
+// side (`tab-permissions.ts`), the page commands (`page-commands.ts`) and the SEO auditor
+// (`../seo/auditor.ts`); this file holds the strip and its commands.
 //
 // Only the active tab's view is ever attached to the window's `contentView`, and only while it shows
 // a page: a tab whose last load failed or whose renderer crashed shows the chrome's error / crash
@@ -95,6 +96,13 @@ export interface BrowserController extends BrowserService {
    * Only before the first window is attached; a no-op afterwards.
    */
   restoreSession(saved: SavedSession): void;
+  /**
+   * Asks the chrome to toggle the SEO sidebar (its menu item and reserved shortcut,
+   * `seo-sidebar.feature.md`): bumps `toggleSidebarSeq`. A no-op without a window.
+   */
+  toggleSidebar(): void;
+  /** The tabs' SEO audits, as the `seo.*` procedures see them (`seo-sidebar.feature.md`, Auditor). */
+  readonly seo: SeoService;
 }
 
 export interface BrowserControllerOptions {
@@ -121,12 +129,19 @@ export interface BrowserControllerOptions {
    * main builds it from the params and pops it up on `window`. Without it there is none.
    */
   readonly contextMenu?: (request: TabContextMenuRequest) => void;
+  /**
+   * The SEO auditor's extractor (`runExtractor` in `../seo/extract.ts`) and timings: the active
+   * tab is audited after each load and SPA route change. Without it no tab is ever audited (every
+   * page's audit stays `pending`).
+   */
+  readonly seo?: TabAuditsOptions;
 }
 
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {
   let nextTabId = 1;
   const strip: StripState = { tabs: [], activeTabId: null, win: null, attached: null, pageBounds: null };
   let focusAddressBarSeq = 0;
+  let toggleSidebarSeq = 0;
   let notice: Notice | null = null;
   /** A window was attached once: the restore point has passed. */
   let everAttached = false;
@@ -134,9 +149,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id) })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
+    toggleSidebarSeq,
     notice: notice && { ...notice },
   });
   const stateWatch = createStateWatch(snapshot);
@@ -163,6 +179,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // A prompt appeared, was answered or timed out (denials the controller causes are reported by
   // the operation that caused them).
   const prompts = createTabPrompts(options.permissions, changed);
+
+  // The SEO auditor audits only the active tab of an attached window.
+  const audits = createTabAudits(options.seo, {
+    isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    isOpen: (tab) => strip.tabs.includes(tab),
+    changed,
+  });
 
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
   const openEmptyTab = (): number => {
@@ -223,6 +246,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // Its WebContents is going: nothing will leave HTML fullscreen, so the window leaves OS fullscreen.
     if (fullscreen.clear(tab)) fullscreen.leaveWindowFullscreen();
     prompts.deny(tab);
+    audits.forget(tab);
     if (view) detach(view);
     return view;
   };
@@ -343,6 +367,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       takeShortcut,
       removeTab,
       contextMenu: options.contextMenu,
+      pageSettled: audits.schedule,
     });
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
     applyBounds(tab);
@@ -370,6 +395,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     strip.activeTabId = tab.id;
     syncAttached();
     focusActive();
+    audits.activated(tab);
     changed();
     return true;
   };
@@ -391,6 +417,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       strip.activeTabId = next ? next.id : null;
       syncAttached();
       focusActive();
+      if (next) audits.activated(next);
     }
     changed();
     return true;
@@ -492,6 +519,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed();
   };
 
+  const toggleSidebar = (): void => {
+    if (!hasWindow()) return;
+    toggleSidebarSeq += 1;
+    changed();
+  };
+
   const runShortcut = (shortcut: TabShortcut): void => {
     switch (shortcut.command) {
       case 'new-tab':
@@ -525,11 +558,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   function takeShortcut(event: { preventDefault(): void }, input: KeyInput): void {
     const shortcut = matchTabShortcut(input, platform);
     const page = shortcut ? null : matchPageShortcut(input, platform);
-    if (!shortcut && !page) return;
+    const sidebar = !shortcut && !page && matchSidebarShortcut(input, platform);
+    if (!shortcut && !page && !sidebar) return;
     event.preventDefault();
     if (input.type !== 'keyDown') return;
     if (shortcut) runShortcut(shortcut);
     else if (page) runPageCommand(page);
+    else toggleSidebar();
   }
 
   const restoreSession = (saved: SavedSession): void => {
@@ -629,6 +664,16 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     activatePreviousTab: () => cycle(-1),
 
     focusAddressBar,
+
+    toggleSidebar,
+
+    seo: {
+      getAudit: (tabId) => audits.response(strip.tabs.find((tab) => tab.id === tabId)),
+      rerun: (tabId) => {
+        const tab = strip.tabs.find((t) => t.id === tabId);
+        return tab !== undefined && hasWindow() && audits.rerun(tab);
+      },
+    },
 
     openTabFromPage,
 

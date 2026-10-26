@@ -372,7 +372,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1 });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0 });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);
@@ -1449,3 +1449,35 @@ describe('page commands', () => {
     expect(contextMenu).toHaveBeenCalledOnce();
   });
 });
+
+describe('seo sidebar toggle', () => {
+  test('sidebar-shortcut-is-reserved', () => {
+    const chrome = win.webContents as unknown as EventEmitter;
+    const start = controller.getState().toggleSidebarSeq;
+    expect(start).toBe(0);
+    for (const target of ['chrome', 'tab'] as const) {
+      if (target === 'tab') {
+        controller.navigate('example.com');
+        commit(view().contents, 'https://example.com/', 'Example');
+      }
+      const emitter = target === 'chrome' ? chrome : (view().contents as unknown as EventEmitter);
+      const before = controller.getState().toggleSidebarSeq;
+      const down = fakeEvent();
+      emitter.emit('before-input-event', down, key('s', { control: true, shift: true }));
+      expect(down.defaultPrevented, target).toBe(true);
+      expect(controller.getState().toggleSidebarSeq).toBe(before + 1);
+      const up = fakeEvent();
+      emitter.emit('before-input-event', up, key('s', { control: true, shift: true }, 'keyUp'));
+      expect(up.defaultPrevented, target).toBe(true);
+      expect(controller.getState().toggleSidebarSeq).toBe(before + 1);
+      // Ctrl+S alone is the page's.
+      const plain = fakeEvent();
+      emitter.emit('before-input-event', plain, key('s', { control: true }));
+      expect(plain.defaultPrevented, target).toBe(false);
+    }
+    const version = controller.getState().version;
+    controller.toggleSidebar();
+    expect(controller.getState()).toMatchObject({ toggleSidebarSeq: start + 3, version: version + 1 });
+  });
+});
+

@@ -1,12 +1,22 @@
 import type { TabState } from '@app/specs/browser.spec';
-import { BackIcon, ForwardIcon, ReloadIcon, StopIcon } from '../icons';
+import { BackIcon, ForwardIcon, ReloadIcon, SidebarIcon, StopIcon } from '../icons';
 import { actions } from '../ipc';
 import { AddressBar } from './AddressBar';
 
 // The toolbar of the browser chrome (`App.tsx`; spec `browser-chrome.feature.md`, Layout). Styling is the
 // bundled styles.css only (strict CSP).
 
-export function Toolbar({ tab, focusSeq }: { readonly tab: TabState | undefined; readonly focusSeq: number | undefined }) {
+export function Toolbar({
+  tab,
+  focusSeq,
+  sidebarOpen,
+  onToggleSidebar,
+}: {
+  readonly tab: TabState | undefined;
+  readonly focusSeq: number | undefined;
+  readonly sidebarOpen: boolean;
+  readonly onToggleSidebar: () => void;
+}) {
   const loading = tab?.loading === true;
   return (
     <header className="toolbar">
@@ -38,6 +48,18 @@ export function Toolbar({ tab, focusSeq }: { readonly tab: TabState | undefined;
         </button>
       </nav>
       <AddressBar tab={tab} focusSeq={focusSeq} />
+      {/* The SEO sidebar's panel (spec `seo-sidebar.feature.md`): also View › SEO Sidebar, Mod+Shift+S. */}
+      <button
+        type="button"
+        className="tool seo-toggle"
+        data-testid="seo-toggle"
+        aria-pressed={sidebarOpen}
+        aria-label="SEO sidebar"
+        title={sidebarOpen ? 'Hide the SEO sidebar (Ctrl/⌘+Shift+S)' : 'Show the SEO sidebar (Ctrl/⌘+Shift+S)'}
+        onClick={onToggleSidebar}
+      >
+        <SidebarIcon />
+      </button>
       <div className={loading ? 'progress progress-active' : 'progress'} aria-hidden="true" />
     </header>
   );

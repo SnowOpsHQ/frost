@@ -2,8 +2,8 @@ import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 
-// The chrome's one IPC client (the sender-guarded `browser.*` procedures, `ping`) and the user
-// intents it sends. All browser state lives in main.
+// The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
+// the user intents it sends. All browser state, and every SEO audit, lives in main.
 
 export const ipc = createIpcClient<AppRouter>();
 
@@ -21,4 +21,6 @@ export const actions = {
   stop: () => ipc.browser.stop.mutate().catch(ignore),
   answerPermission: (promptId: string, decision: PermissionDecision) => ipc.browser.answerPermission.mutate({ promptId, decision }).catch(ignore),
   setPageBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipc.browser.setPageBounds.mutate(bounds).catch(ignore),
+  /** Audits the tab again (`seo.rerun`). */
+  rerunAudit: (tabId: number) => ipc.seo.rerun.mutate({ tabId }).catch(ignore),
 };

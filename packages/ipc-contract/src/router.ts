@@ -10,6 +10,7 @@ import {
   type BrowserState,
 } from '@app/specs/browser.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
+import { SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -25,6 +26,13 @@ const requireBrowser = middleware(({ ctx, next }) => {
   const browser = ctx.services?.browser;
   if (!browser) throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'browser service unavailable' });
   return next({ ctx: { ...ctx, browser } });
+});
+
+/** Hands the procedure main's `SeoService`, like `requireBrowser` (after `enforceSender`; fails closed). */
+const requireSeo = middleware(({ ctx, next }) => {
+  const seo = ctx.services?.seo;
+  if (!seo) throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'seo service unavailable' });
+  return next({ ctx: { ...ctx, seo } });
 });
 
 /**
@@ -129,9 +137,28 @@ const browserRouter = router({
     .query(({ ctx, input }) => watchState(ctx.browser, input.sinceVersion)),
 });
 
+/**
+ * SEO sidebar ↔ main (spec `seo-sidebar.feature.md`, Router). `getAudit` answers the tab's audit
+ * state (`SeoAuditResponse`: `pending` / `ready` / `unavailable`); `rerun` whether a fresh audit
+ * started. The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
+ */
+const seoRouter = router({
+  getAudit: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoTabInputSchema)
+    .query(({ ctx, input }) => ctx.seo.getAudit(input.tabId)),
+  rerun: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoTabInputSchema)
+    .mutation(({ ctx, input }) => ctx.seo.rerun(input.tabId) === true),
+});
+
 export const appRouter = router({
   ping: publicProcedure.use(enforceSender).query(() => 'pong' as const),
   browser: browserRouter,
+  seo: seoRouter,
 });
 
 export type AppRouter = typeof appRouter;

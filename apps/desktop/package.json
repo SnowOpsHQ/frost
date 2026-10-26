@@ -20,6 +20,7 @@
   "dependencies": {
     "@app/db": "workspace:*",
     "@app/ipc-contract": "workspace:*",
+    "@app/seo-core": "workspace:*",
     "@app/specs": "workspace:*",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

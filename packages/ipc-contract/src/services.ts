@@ -1,3 +1,4 @@
+import type { SeoAuditResponse } from '@app/seo-core';
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 
@@ -51,7 +52,23 @@ export interface BrowserService {
   watch(sinceVersion: number, signal?: AbortSignal): Promise<BrowserState>;
 }
 
+/**
+ * The SEO auditor as the `seo.*` procedures see it (acceptance: `seo-sidebar.feature.md`, Router;
+ * statuses and reasons: `seo-sidebar.spec.ts`).
+ */
+export interface SeoService {
+  /**
+   * The tab's audit state: `ready` with the audit of exactly its current URL, `pending` while that
+   * audit is scheduled or running, `unavailable` with a reason (`no-tab` for an id that names no
+   * open tab: never an error).
+   */
+  getAudit(tabId: number): SeoAuditResponse;
+  /** Audits the tab again at once; `false` (a no-op) when it shows nothing auditable or names no tab. */
+  rerun(tabId: number): boolean;
+}
+
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */
 export interface IpcServices {
   readonly browser?: BrowserService;
+  readonly seo?: SeoService;
 }

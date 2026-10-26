@@ -12,6 +12,7 @@ import { clearBrowseStorage, confirmClearBrowsingData, createClearBrowsingData }
 import { installAppMenu, popupContextMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
+import { runExtractor } from './seo/extract';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
@@ -90,12 +91,15 @@ function start(): void {
     });
     popupContextMenu(template, window as BrowserWindow);
   };
+  // The active tab is audited after each load and SPA route change (specs/seo-sidebar.feature.md):
+  // the extractor runs in the tab's isolated SEO world, and main validates what it answers.
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
     permissions,
     session: sessionStore.writer,
     contextMenu: showContextMenu,
+    seo: { extract: runExtractor },
   });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
@@ -145,7 +149,7 @@ function start(): void {
       policy: senderPolicy,
       ipcMain,
       fromWebContents: (contents) => BrowserWindow.fromWebContents(contents),
-      services: { browser },
+      services: { browser, seo: browser.seo },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
     // to the focused window (else the app's), then clears visits, decisions and site storage.

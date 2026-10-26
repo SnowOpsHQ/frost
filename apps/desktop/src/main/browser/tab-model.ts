@@ -13,8 +13,11 @@ export type HostWindow = Pick<
   'contentView' | 'webContents' | 'getContentSize' | 'setTitle' | 'on' | 'once' | 'isDestroyed' | 'isFullScreen' | 'setFullScreen'
 >;
 
-/** A tab's own state; its `permissionPrompt` comes from the broker when the state is read. */
-export type PageState = Omit<TabState, 'permissionPrompt'>;
+/**
+ * A tab's own state; its `permissionPrompt` comes from the broker and its `auditVersion` from the
+ * SEO auditor when the state is read.
+ */
+export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion'>;
 export type FullscreenMode = NonNullable<TabState['fullscreen']>;
 
 export interface Tab {

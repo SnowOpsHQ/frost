@@ -50,6 +50,11 @@ export interface TabEventContext {
   /** Closes the tab (its page closed itself). */
   removeTab(tabId: number): void;
   readonly contextMenu: ((request: TabContextMenuRequest) => void) | undefined;
+  /**
+   * The page finished loading or changed its URL in place (a main-frame `did-navigate-in-page`):
+   * the SEO auditor audits it soon if it is the active tab (`seo-sidebar.feature.md`, Auditor).
+   */
+  pageSettled(tab: Tab): void;
 }
 
 /** Whether no modifier key is held. */
@@ -82,8 +87,12 @@ export function wireTabView(tab: Tab, view: TabView, ctx: TabEventContext): () =
     if (typeof url === 'string' && isWebUrl(url)) session?.recordVisit(url);
   };
   listen('did-navigate-in-page', (_event: unknown, url: unknown, isMainFrame: unknown) => {
-    if (isMainFrame === true) recordVisit(url);
+    if (isMainFrame !== true) return;
+    recordVisit(url);
+    // An SPA route change: a new URL to audit (after the state refresh above saw it).
+    ctx.pageSettled(tab);
   });
+  listen('did-finish-load', () => ctx.pageSettled(tab));
   listen('page-title-updated', () => {
     const url = view.webContents.getURL();
     if (session && tab.error === null && !tab.crashed && tab.state.title !== '' && isWebUrl(url)) session.updateVisitTitle(url, tab.state.title);

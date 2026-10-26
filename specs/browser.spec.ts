@@ -169,6 +169,12 @@ export const TabStateSchema = z.strictObject({
    * empty tab). Per host in Chromium: tabs on the same host share it.
    */
   zoom: z.number().min(0.25).max(5),
+  /**
+   * Increases each time the tab's SEO audit changes (`seo-sidebar.spec.ts`: it became pending,
+   * ready or unavailable); `0` before its first. The chrome asks `seo.getAudit` again whenever the
+   * active tab's `auditVersion` (or URL) changes, so `browser.watch` is what wakes the sidebar.
+   */
+  auditVersion: z.int().nonnegative(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 
@@ -198,6 +204,12 @@ export const BrowserStateSchema = z.strictObject({
   tabs: z.array(TabStateSchema).max(MAX_TABS),
   activeTabId: z.int().positive().nullable(),
   focusAddressBarSeq: z.int().nonnegative(),
+  /**
+   * Increases by one each time the SEO sidebar should be toggled from main (its menu item and
+   * reserved shortcut, `seo-sidebar.spec.ts` `SIDEBAR_TOGGLE_SHORTCUT`); the chrome, which owns
+   * whether the sidebar is open, toggles whenever the value it last saw changes.
+   */
+  toggleSidebarSeq: z.int().nonnegative(),
   notice: NoticeSchema.nullable(),
 });
 export type BrowserState = z.infer<typeof BrowserStateSchema>;

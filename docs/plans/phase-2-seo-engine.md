@@ -105,7 +105,7 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
 
 **Health score:** weighted by severity (error/warn/info), normalised 0–100, documented in the spec.
 
-- [ ] Spec → red → green → commit `feat(seo): seo-core, isolated extraction and the SEO sidebar`
+- [x] Spec → red → green → commit `feat(seo): seo-core, isolated extraction and the SEO sidebar`
 
 ### Task 2: On-Page detail — Links, Images, Social
 

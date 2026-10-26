@@ -1,9 +1,10 @@
 // Spec: specs/browser.spec.ts (TAB_SHORTCUT_COUNT), specs/page-commands.spec.ts
-// Acceptance: specs/tabs.feature.md (Menu), specs/page-commands.feature.md (Menu)
+// Acceptance: specs/tabs.feature.md (Menu), specs/page-commands.feature.md (Menu), specs/seo-sidebar.feature.md (Toggle)
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
+import { SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
 import { appMenuTemplate, installAppMenu, type AppMenuCommands } from '../menu';
 
 vi.mock('electron', async () => (await import('../../test/electron-fake')).electronFake());
@@ -20,6 +21,7 @@ function fakeCommands() {
     activateNextTab: vi.fn(),
     activatePreviousTab: vi.fn(),
     runPageCommand: vi.fn(),
+    toggleSidebar: vi.fn(),
     clearBrowsingData: vi.fn(),
   } satisfies AppMenuCommands;
 }
@@ -43,6 +45,20 @@ function click(item: MenuItemConstructorOptions): void {
 }
 
 describe('application menu', () => {
+  test.each(PLATFORMS)('menu-toggles-sidebar (%s)', (platform) => {
+    const commands = fakeCommands();
+    const template = appMenuTemplate(commands, platform);
+    const item = itemById(template, SIDEBAR_TOGGLE_MENU_ID);
+    expect(item.accelerator).toBe('CmdOrCtrl+Shift+S');
+    expect(item.label).toBe('SEO Sidebar');
+    // In the View menu.
+    const view = template.find((menu) => menu.label === 'View')!;
+    expect(allItems(view.submenu as MenuItemConstructorOptions[])).toContain(item);
+    click(item);
+    expect(commands.toggleSidebar).toHaveBeenCalledTimes(1);
+    for (const [name, fn] of Object.entries(commands)) if (name !== 'toggleSidebar') expect(fn, name).not.toHaveBeenCalled();
+  });
+
   test.each(PLATFORMS)('clear-browsing-data-menu-item (%s)', (platform) => {
     const commands = fakeCommands();
     const template = appMenuTemplate(commands, platform);

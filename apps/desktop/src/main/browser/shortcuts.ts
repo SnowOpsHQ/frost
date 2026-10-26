@@ -120,3 +120,16 @@ export function matchPageShortcut(input: KeyInput, platform: NodeJS.Platform): P
   if (mac && code === 'BracketRight') return 'forward';
   return MOD_PAGE_KEYS[code] ?? null;
 }
+
+/**
+ * Whether `input` (key-down or key-up) is the SEO sidebar toggle, `Mod+Shift+S` (spec
+ * `seo-sidebar.spec.ts`, `SIDEBAR_TOGGLE_SHORTCUT`): Mod is Meta on macOS and Control elsewhere,
+ * the other one of the two and Alt not held; `S` by its physical key.
+ */
+export function matchSidebarShortcut(input: KeyInput, platform: NodeJS.Platform): boolean {
+  if (input.type !== 'keyDown' && input.type !== 'keyUp') return false;
+  const mac = platform === 'darwin';
+  const mod = mac ? input.meta : input.control;
+  const other = mac ? input.control : input.meta;
+  return mod && !other && !input.alt && input.shift && physicalKey(input) === 'KeyS';
+}

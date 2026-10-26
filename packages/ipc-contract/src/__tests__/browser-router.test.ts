@@ -16,9 +16,10 @@ const PROMPT_ID = '0f8b2f63-3b7e-4b0e-9d43-7f1f0d6f2a11';
 function stateAt(version: number): BrowserState {
   return {
     version,
-    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1 }],
+    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0 }],
     activeTabId: 1,
     focusAddressBarSeq: 0,
+    toggleSidebarSeq: 0,
     notice: null,
   };
 }

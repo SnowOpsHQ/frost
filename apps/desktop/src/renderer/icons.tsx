@@ -316,3 +316,147 @@ export function ClipboardIcon(props: IconProps) {
     </Icon>
   );
 }
+
+// ---- SEO sidebar ------------------------------------------------------------------------------
+
+/** The toolbar's sidebar toggle: a window with a docked right-hand panel. */
+export function SidebarIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.5" y="5" width="17" height="14" rx="2.6" />
+      <path d="M14.5 5v14" />
+      <path d="M16.8 9h1.4" />
+      <path d="M16.8 12h1.4" />
+    </Icon>
+  );
+}
+
+/** Overview: a gauge with its needle. */
+export function OverviewIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4.2 16.5a8 8 0 1 1 15.6 0" />
+      <path d="M12 14.2l3.6-4.4" />
+      <circle cx="12" cy="14.6" r="1.4" />
+      <path d="M6.9 18.5h10.2" />
+    </Icon>
+  );
+}
+
+/** On-Page: a page with a headline and text lines. */
+export function OnPageIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6.5 3.8h7.6l4.4 4.4v11a1.6 1.6 0 0 1-1.6 1.6H6.5a1.6 1.6 0 0 1-1.6-1.6V5.4a1.6 1.6 0 0 1 1.6-1.6z" />
+      <path d="M14 3.9v4.4h4.4" />
+      <path d="M8.2 12h7.2" />
+      <path d="M8.2 15.2h7.2" />
+      <path d="M8.2 8.8h3" />
+    </Icon>
+  );
+}
+
+/** Schema: curly braces around a dot. */
+export function SchemaIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8.5 4.5c-2 0-2.6 1-2.6 2.6v2.2c0 1.2-.8 2.2-2.1 2.7 1.3.5 2.1 1.5 2.1 2.7v2.2c0 1.6.6 2.6 2.6 2.6" />
+      <path d="M15.5 4.5c2 0 2.6 1 2.6 2.6v2.2c0 1.2.8 2.2 2.1 2.7-1.3.5-2.1 1.5-2.1 2.7v2.2c0 1.6-.6 2.6-2.6 2.6" />
+      <path d="M12 12h.01" />
+    </Icon>
+  );
+}
+
+/** Indexability: a magnifier over a page line. */
+export function IndexabilityIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="10.5" cy="10.5" r="6" />
+      <path d="M15 15l5 5" />
+      <path d="M8 10.5h5" />
+    </Icon>
+  );
+}
+
+/** Page Speed: a lightning bolt. */
+export function SpeedIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M13.2 3.5L5.8 13.3h5.6l-1 7.2 7.4-9.8h-5.6z" />
+    </Icon>
+  );
+}
+
+/** Compliance: a shield with a check mark. */
+export function ComplianceIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3.6l7 2.6v5.3c0 4.6-2.9 8.3-7 10.2-4.1-1.9-7-5.6-7-10.2V6.2z" />
+      <path d="M8.8 12.2l2.2 2.2 4.2-4.4" />
+    </Icon>
+  );
+}
+
+/** An expander's chevron (points down; rotated by styles.css when collapsed). */
+export function ChevronIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7 10l5 5 5-5" />
+    </Icon>
+  );
+}
+
+/** Severity glyphs of the issue list. */
+export function ErrorGlyph(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M9.2 9.2l5.6 5.6" />
+      <path d="M14.8 9.2l-5.6 5.6" />
+    </Icon>
+  );
+}
+
+export function WarningGlyph(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10.3 4.9a2 2 0 0 1 3.4 0l7 12.2A2 2 0 0 1 19 20H5a2 2 0 0 1-1.7-2.9z" />
+      <path d="M12 9.8v3.8" />
+      <path d="M12 16.6h.01" />
+    </Icon>
+  );
+}
+
+export function InfoGlyph(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M12 11.2v4.8" />
+      <path d="M12 8h.01" />
+    </Icon>
+  );
+}
+
+export function CheckCircleIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M8.4 12.3l2.5 2.5 4.8-5" />
+    </Icon>
+  );
+}
+
+/** The sidebar's empty-tab hint: a magnifier over a page. */
+export function AuditArt(props: IconProps) {
+  return (
+    <PanelArt {...props}>
+      <path d="M12 6h15l7 7v15" />
+      <path d="M27 6v7h7" />
+      <path d="M12 6a2 2 0 0 0-2 2v30a2 2 0 0 0 2 2h12" />
+      <path d="M16 16h7" />
+      <path d="M16 22h12" />
+      <circle cx="32" cy="33" r="6" />
+      <path d="M36.4 37.4l4.1 4.1" />
+    </PanelArt>
+  );
+}
