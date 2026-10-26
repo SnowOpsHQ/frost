@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { vi } from 'vitest';
 import type {
   BrowserWindowConstructorOptions,
+  WebContentsViewConstructorOptions,
   DevicePermissionHandlerHandlerDetails,
   HandlerDetails,
   CallbackResponse,
@@ -32,10 +33,13 @@ export class FakeWebContents extends EventEmitter {
     this.windowOpenHandler = handler;
   });
   readonly getLastWebPreferences: () => WebPreferences;
+  /** The WebContents' session, as `contents.session` (undefined unless a test gives one). */
+  readonly session: FakeSession | undefined;
 
-  constructor(webPreferences: WebPreferences = {}) {
+  constructor(webPreferences: WebPreferences = {}, session?: FakeSession) {
     super();
     this.getLastWebPreferences = () => ({ ...webPreferences });
+    this.session = session;
     FakeWebContents.instances.push(this);
   }
 
@@ -80,6 +84,24 @@ export class FakeBrowserWindow {
     this.options = options;
     this.webContents = new FakeWebContents(options.webPreferences);
     FakeBrowserWindow.instances.push(this);
+  }
+}
+
+/** `WebContentsView`: records its constructor options; its WebContents is on the partition's session. */
+export class FakeWebContentsView {
+  static instances: FakeWebContentsView[] = [];
+
+  readonly options: WebContentsViewConstructorOptions;
+  readonly webContents: FakeWebContents;
+  setBounds = vi.fn();
+  setVisible = vi.fn();
+  setBackgroundColor = vi.fn();
+
+  constructor(options: WebContentsViewConstructorOptions = {}) {
+    this.options = options;
+    const partition = options.webPreferences?.partition;
+    this.webContents = new FakeWebContents(options.webPreferences, partition === undefined ? undefined : fromPartition(partition));
+    FakeWebContentsView.instances.push(this);
   }
 }
 
@@ -128,9 +150,23 @@ export function fakeEvent<T extends object>(fields: T = {} as T): T & { preventD
   return event;
 }
 
+const partitions = new Map<string, FakeSession>();
+
+/** `session.fromPartition`: one FakeSession per partition name, for the life of the fake. */
+export function fromPartition(partition: string): FakeSession {
+  let found = partitions.get(partition);
+  if (!found) {
+    found = new FakeSession();
+    partitions.set(partition, found);
+  }
+  return found;
+}
+
 export function electronFake() {
   FakeBrowserWindow.instances = [];
   FakeWebContents.instances = [];
+  FakeWebContentsView.instances = [];
+  partitions.clear();
   const app = Object.assign(new EventEmitter(), {
     whenReady: vi.fn(() => Promise.resolve()),
     quit: vi.fn(),
@@ -138,9 +174,9 @@ export function electronFake() {
     isPackaged: false,
   });
   const shell = { openExternal: vi.fn(async (_url: string) => {}) };
-  const session = { defaultSession: new FakeSession() };
+  const session = { defaultSession: new FakeSession(), fromPartition: vi.fn(fromPartition) };
   const protocol = { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() };
   const ipcMain = { handle: vi.fn(), removeHandler: vi.fn() };
-  const electron = { app, BrowserWindow: FakeBrowserWindow, shell, session, protocol, ipcMain };
+  const electron = { app, BrowserWindow: FakeBrowserWindow, WebContentsView: FakeWebContentsView, shell, session, protocol, ipcMain };
   return { ...electron, default: electron };
 }

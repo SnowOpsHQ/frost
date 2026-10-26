@@ -1,0 +1,380 @@
+/* frost browser chrome. Bundled by Vite and served from app:// (CSP style-src 'self'): no inline
+   styles anywhere. Light and dark follow the OS (prefers-color-scheme). */
+
+:root {
+  color-scheme: light dark;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Inter', Roboto, Ubuntu, Cantarell, 'Noto Sans',
+    'Helvetica Neue', Arial, sans-serif;
+
+  --toolbar-height: 52px;
+  --status-height: 26px;
+  --radius-control: 9px;
+  --radius-field: 11px;
+
+  --bg-chrome: #f3f5f8;
+  --bg-chrome-edge: #e2e6ec;
+  --bg-field: #ffffff;
+  --bg-field-hover: #ffffff;
+  --border-field: #d7dce4;
+  --bg-page: #fbfcfd;
+  --bg-hover: rgb(20 30 50 / 0.07);
+  --bg-active: rgb(20 30 50 / 0.12);
+
+  --text: #1b2230;
+  --text-muted: #5f6b7d;
+  --text-faint: #8d97a6;
+  --icon: #3a4556;
+
+  --accent: #2f6fe4;
+  --accent-soft: rgb(47 111 228 / 0.22);
+  --ok: #1f9d63;
+  --warn: #c2410c;
+  --danger: #d23f3f;
+
+  --start-glow: rgb(82 145 255 / 0.13);
+  --start-mark: #5b8def;
+  --shadow-field: 0 1px 2px rgb(16 24 40 / 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-chrome: #1d2026;
+    --bg-chrome-edge: #2c3038;
+    --bg-field: #2a2e36;
+    --bg-field-hover: #30353e;
+    --border-field: #3a3f49;
+    --bg-page: #16181d;
+    --bg-hover: rgb(255 255 255 / 0.07);
+    --bg-active: rgb(255 255 255 / 0.12);
+
+    --text: #e7eaf0;
+    --text-muted: #a3acba;
+    --text-faint: #737d8c;
+    --icon: #c9d0db;
+
+    --accent: #6c9dff;
+    --accent-soft: rgb(108 157 255 / 0.28);
+    --ok: #4cc38a;
+    --warn: #f0995a;
+    --danger: #f07171;
+
+    --start-glow: rgb(108 157 255 / 0.12);
+    --start-mark: #7ea8ff;
+    --shadow-field: none;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--bg-chrome);
+  color: var(--text);
+  font: 13px/1.4 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Layout ------------------------------------------------------------------------------- */
+
+.chrome {
+  display: grid;
+  grid-template-rows: var(--toolbar-height) minmax(0, 1fr) var(--status-height);
+  height: 100%;
+}
+
+/* ---- Toolbar ------------------------------------------------------------------------------ */
+
+.toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 0 10px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.nav-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--icon);
+  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.tool:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.tool:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.tool:disabled {
+  opacity: 0.32;
+}
+
+.tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+/* ---- Address bar -------------------------------------------------------------------------- */
+
+.address {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px 0 11px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+  background: var(--bg-field);
+  box-shadow: var(--shadow-field);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.address:hover {
+  background: var(--bg-field-hover);
+}
+
+.address:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.address-badge {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.address-badge .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.address[data-security='secure'] .address-badge {
+  color: var(--ok);
+}
+
+.address[data-security='insecure'] .address-badge {
+  color: var(--warn);
+}
+
+.address-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 13.5px;
+  letter-spacing: 0.005em;
+  user-select: text;
+  cursor: text;
+}
+
+.address-input::placeholder {
+  color: var(--text-faint);
+}
+
+.address-input::selection {
+  background: var(--accent-soft);
+}
+
+/* Loading indicator: a slim bar sliding along the toolbar's bottom edge. */
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.progress-active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 32%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: progress-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+/* ---- Page area ---------------------------------------------------------------------------- */
+
+/* The tab's WebContentsView is laid over exactly this box by main. */
+.page-area {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-page);
+}
+
+.start {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-bottom: 8vh;
+  background: radial-gradient(ellipse 60% 48% at 50% 42%, var(--start-glow), transparent 70%), var(--bg-page);
+  text-align: center;
+}
+
+.mark {
+  display: block;
+}
+
+.start-mark {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 10px;
+  color: var(--start-mark);
+  animation: mark-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.start-wordmark {
+  margin: 0;
+  font-size: 44px;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
+}
+
+.start-hint {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+@keyframes mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9) rotate(-20deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Status bar --------------------------------------------------------------------------- */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  border-top: 1px solid var(--bg-chrome-edge);
+  background: var(--bg-chrome);
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--text-faint);
+}
+
+.connection-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.connection[data-state='connected'] .connection-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 22%, transparent);
+}
+
+.connection[data-state='error'] .connection-dot {
+  background: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-active::after,
+  .start-mark {
+    animation: none;
+  }
+}

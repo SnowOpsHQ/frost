@@ -2,12 +2,15 @@ import path from 'node:path';
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
+import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { createWindowRegistry } from './app-windows';
+import { createBrowserController } from './browser/controller';
+import { hardenBrowseSession } from './browser/guard';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
-import { createMainWindow, loadRenderer } from './window';
+import { createMainWindow, createTabView, loadRenderer } from './window';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -41,10 +44,15 @@ registerAppWideGuards(securityOptions);
 const windows = createWindowRegistry();
 const senderPolicy = createSenderPolicy({ knownWindowIds: windows.knownWindowIds, devServerUrl });
 
+// Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
+// procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
+const browser = createBrowserController({ createView: createTabView });
+
 function openMainWindow(): void {
   const win = createMainWindow();
   windows.track(win);
   registerSecurity(session.defaultSession, win, securityOptions);
+  browser.attach(win);
   loadRenderer(win, { devServerUrl }).catch((err: unknown) => {
     console.error('failed to load renderer', err);
     app.quit();
@@ -55,6 +63,9 @@ void app.whenReady().then(() => {
   // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
   // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
   restrictAppRequests(session.defaultSession, windows.isAppWebContents);
+  // Tabs' session: no `app:` handler (protocol.handle below is the default session's), and
+  // deny-by-default permissions until Task 4's prompts.
+  hardenBrowseSession(session.fromPartition(BROWSE_PARTITION));
   // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
   handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
   attachIpcHandler({
@@ -62,6 +73,7 @@ void app.whenReady().then(() => {
     policy: senderPolicy,
     ipcMain,
     fromWebContents: (contents) => BrowserWindow.fromWebContents(contents),
+    services: { browser },
   });
   openMainWindow();
 

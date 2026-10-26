@@ -4,6 +4,7 @@ import {
   IPC_DEV_SERVER_PROTOCOL,
   type IpcSenderRejection,
 } from '@app/specs/ipc-sender.spec';
+import type { IpcServices } from './services';
 
 // Pure sender policy for `specs/ipc-sender.spec.ts`. No runtime `electron` import: the shapes below
 // are structural subsets of Electron 45's `WebContents`, `WebFrameMain` and `BrowserWindow`, so the
@@ -59,6 +60,11 @@ export interface IpcContext {
   /** `null` when the message carried no live sender frame (`event.senderFrame === null`). */
   readonly sender: SenderFacts | null;
   readonly policy: SenderPolicy;
+  /**
+   * Main-process services (`IpcHandlerOptions.services`). Passed through untouched; procedures
+   * reach them only after `enforceSender` has accepted the sender.
+   */
+  readonly services?: IpcServices;
 }
 
 /** Inputs to `createContext`; Task 4 passes the real Electron objects unchanged. */
@@ -70,6 +76,7 @@ export interface CreateContextOptions {
   /** `BrowserWindow.fromWebContents(event.sender)`. */
   readonly window: WindowLike | null;
   readonly policy: SenderPolicy;
+  readonly services?: IpcServices;
 }
 
 const DESTROYED: SenderFacts = { origin: '', live: false, windowId: null, isWindowContents: false, isMainFrame: false };
@@ -114,10 +121,11 @@ function devServerOrigin(url: string): string {
  */
 export function createContext(opts: CreateContextOptions): IpcContext {
   const { sender, senderFrame: frame, window, policy } = opts;
-  if (frame === null) return { sender: null, policy };
+  const services = opts.services === undefined ? {} : { services: opts.services };
+  if (frame === null) return { sender: null, policy, ...services };
   try {
     if (frame.isDestroyed() || frame.detached || sender.isDestroyed() || (window !== null && window.isDestroyed())) {
-      return { sender: DESTROYED, policy };
+      return { sender: DESTROYED, policy, ...services };
     }
     return {
       sender: {
@@ -128,9 +136,10 @@ export function createContext(opts: CreateContextOptions): IpcContext {
         isMainFrame: frame.parent === null && frame.frameTreeNodeId === sender.mainFrame.frameTreeNodeId,
       },
       policy,
+      ...services,
     };
   } catch {
-    return { sender: DESTROYED, policy };
+    return { sender: DESTROYED, policy, ...services };
   }
 }
 
