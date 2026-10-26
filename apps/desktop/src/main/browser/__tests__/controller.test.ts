@@ -1,7 +1,7 @@
 // Spec: specs/browser.spec.ts (BrowserStateSchema, APP_WINDOW_TITLE, MAX_TABS), specs/browse-guard.spec.ts
 // Acceptance: specs/browser-chrome.feature.md (Controller), specs/tabs.feature.md (Controller),
 // specs/browse-guard.feature.md (Controller)
-import { EventEmitter } from 'node:events';
+import type { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { FULLSCREEN_BANNER_HEIGHT, FULLSCREEN_NOTICE_MS } from '@app/specs/permissions.spec';
 import {
@@ -12,83 +12,10 @@ import {
   SEARCH_URL_TEMPLATE,
   WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH,
 } from '@app/specs/browser.spec';
+import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../test/controller-fakes';
 import { fakeEvent } from '../../../test/electron-fake';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../controller';
 import { createPermissionBroker, type PermissionBroker } from '../permissions';
-
-/** A tab's WebContents: tests set the fields, then emit the Electron event that reports them. */
-class FakeTabContents extends EventEmitter {
-  url = '';
-  title = '';
-  loading = false;
-  back = false;
-  forward = false;
-  // Like Electron, the URL changes only when a navigation commits (tests emit `did-navigate`).
-  loadURL = vi.fn(async (_url: string) => {});
-  getURL = () => this.url;
-  getTitle = () => this.title;
-  isLoading = () => this.loading;
-  reload = vi.fn();
-  stop = vi.fn();
-  focus = vi.fn();
-  executeJavaScriptInIsolatedWorld = vi.fn(async (_worldId: number, _scripts: { code: string }[]) => undefined);
-  destroyed = false;
-  /** Like Electron's `webContents.close()` (no beforeunload wait): the WebContents is destroyed. */
-  close = vi.fn(() => {
-    if (!this.destroyed) this.destroy();
-  });
-  isDestroyed = () => this.destroyed;
-  /** What Electron does when the page calls `window.close()`: the WebContents is destroyed. */
-  destroy() {
-    this.destroyed = true;
-    this.emit('destroyed');
-  }
-  readonly navigationHistory = {
-    canGoBack: () => this.back,
-    canGoForward: () => this.forward,
-    goBack: vi.fn(),
-    goForward: vi.fn(),
-  };
-}
-
-class FakeTabView {
-  /** The view's WebContents, kept for tests after it is destroyed. */
-  readonly contents = new FakeTabContents();
-  /** Like Electron: a view's `webContents` is gone once it is destroyed (already in `destroyed` listeners). */
-  get webContents(): FakeTabContents {
-    return (this.contents.destroyed ? undefined : this.contents) as FakeTabContents;
-  }
-  setBounds = vi.fn();
-  setVisible = vi.fn();
-}
-
-class FakeHostWindow extends EventEmitter {
-  size: [number, number] = [1280, 800];
-  title = '';
-  /** Like Electron's `View`: tracks its children (adding a child again moves it to the top). */
-  readonly contentView = {
-    children: [] as unknown[],
-    addChildView: vi.fn((child: unknown) => {
-      this.contentView.children = [...this.contentView.children.filter((c) => c !== child), child];
-    }),
-    removeChildView: vi.fn((child: unknown) => {
-      this.contentView.children = this.contentView.children.filter((c) => c !== child);
-    }),
-  };
-  /** The chrome's own WebContents. */
-  readonly webContents = Object.assign(new EventEmitter(), { focus: vi.fn() });
-  getContentSize = () => [...this.size];
-  setTitle = vi.fn((title: string) => {
-    this.title = title;
-  });
-  /** OS fullscreen, as Electron sets it when a page enters HTML fullscreen. */
-  fullScreen = false;
-  isFullScreen = () => this.fullScreen;
-  setFullScreen = vi.fn((flag: boolean) => {
-    this.fullScreen = flag;
-  });
-  isDestroyed = () => false;
-}
 
 let views: FakeTabView[];
 let win: FakeHostWindow;
@@ -102,20 +29,6 @@ function view(): FakeTabView {
   const [only] = views;
   if (!only) throw new Error('no view was created');
   return only;
-}
-
-/** Navigates and commits `url` with `title` as Electron reports it. */
-function commit(contents: FakeTabContents, url: string, title: string, { back = false, forward = false } = {}) {
-  contents.loading = true;
-  contents.emit('did-start-loading');
-  contents.url = url;
-  contents.back = back;
-  contents.forward = forward;
-  contents.emit('did-navigate', fakeEvent(), url, 200, 'OK');
-  contents.title = title;
-  contents.emit('page-title-updated', fakeEvent(), title, false);
-  contents.loading = false;
-  contents.emit('did-stop-loading');
 }
 
 beforeEach(() => {

@@ -35,8 +35,9 @@ named test.
   microphone (`MEDIA_TYPE_PERMISSION`). The prompt names exactly the devices asked for (and still
   undecided); a `media` request with no known media type is denied.
 - **Remembered decisions.** Allow and Block are remembered per (scope, `SitePermission`) for the
-  app session, in memory (`createMemoryDecisionStore`; Task 5 swaps in a persistent store behind
-  the same `PermissionDecisionStore` interface). A request is answered from what is remembered,
+  app session, in memory (`createMemoryDecisionStore`); the app uses the persistent store behind
+  the same `PermissionDecisionStore` interface (`createPersistentDecisionStore`, Task 5,
+  `browser-session-db.feature.md`), so Allow / Block also survive a relaunch. A request is answered from what is remembered,
   with no prompt: any asked-for permission Blocked → denied; all Allowed → granted; otherwise the
   prompt asks for the undecided ones only.
 - **Queue.** Each tab has its own queue; the chrome shows its head. Identical requests (same tab,

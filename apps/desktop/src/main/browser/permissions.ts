@@ -1,3 +1,4 @@
+import type { StoredDecision } from '@app/db';
 import type { PermissionPrompt } from '@app/specs/browser.spec';
 import {
   MAX_COALESCED_REQUESTS,
@@ -131,8 +132,8 @@ function sitePermissionsOf(ask: PermissionAsk): SitePermission[] {
 
 /**
  * Where Allow / Block decisions are remembered, per (scope, `SitePermission`). Synchronous: the
- * permission handlers answer from it inline. Task 5's persistent store keeps the same shape
- * (loaded into memory at startup, written through).
+ * permission handlers answer from it inline. The persistent store (`createPersistentDecisionStore`)
+ * keeps the same shape (loaded into memory at startup, written through).
  */
 export interface PermissionDecisionStore {
   get(scope: PermissionScope, permission: SitePermission): RememberedDecision | undefined;
@@ -141,13 +142,39 @@ export interface PermissionDecisionStore {
 
 const scopeKey = (scope: PermissionScope, permission: SitePermission): string => JSON.stringify([scope.origin, scope.topLevelOrigin, permission]);
 
-/** The app session's in-memory decision store (nothing survives a restart until Task 5). */
+/** An in-memory decision store: nothing survives a restart. */
 export function createMemoryDecisionStore(): PermissionDecisionStore {
   const decisions = new Map<string, RememberedDecision>();
   return {
     get: (scope, permission) => decisions.get(scopeKey(scope, permission)),
     set: (scope, permission, decision) => {
       decisions.set(scopeKey(scope, permission), decision);
+    },
+  };
+}
+
+/** The app's decision store: in memory, loaded at startup and written through (Task 5). */
+export interface PersistentDecisionStore extends PermissionDecisionStore {
+  /** Adds the decisions saved at the last launch (startup, before any request). Not written back. */
+  load(decisions: Iterable<StoredDecision>): void;
+}
+
+/**
+ * Remembered decisions that persist (spec `browser-session-db.feature.md`, Permission decisions):
+ * answered from memory (the handlers are synchronous); every `set` is also handed to `persist`
+ * with its full key. Only Allow / Block ever reach a store: dismissals and the back-off stay in
+ * the broker, for the app session.
+ */
+export function createPersistentDecisionStore(persist: (decision: StoredDecision) => void): PersistentDecisionStore {
+  const memory = createMemoryDecisionStore();
+  return {
+    get: memory.get,
+    set(scope, permission, decision) {
+      memory.set(scope, permission, decision);
+      persist({ origin: scope.origin, topLevelOrigin: scope.topLevelOrigin, permission, decision });
+    },
+    load(decisions) {
+      for (const { origin, topLevelOrigin, permission, decision } of decisions) memory.set({ origin, topLevelOrigin }, permission, decision);
     },
   };
 }

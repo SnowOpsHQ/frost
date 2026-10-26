@@ -81,7 +81,8 @@ export const MEDIA_TYPE_PERMISSION = { video: 'camera', audio: 'microphone' } as
  * The chrome's answers to a prompt (`browser.answerPermission`):
  * - `allow` / `block` — grant / deny this request, every coalesced duplicate, and every other
  *   pending request (any tab) this decision now settles; remembered per (origin, `SitePermission`)
- *   for the rest of the app session (`REMEMBERED_DECISIONS`).
+ *   for the rest of the app session, and across relaunches (`REMEMBERED_DECISIONS`; persisted by
+ *   Task 5, `browser-session-db.feature.md`).
  * - `dismiss` (the prompt's ×, or Esc in the bar) — deny this request only; nothing is
  *   remembered, so the page may ask again.
  */

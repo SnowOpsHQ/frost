@@ -1,0 +1,58 @@
+/**
+ * Local browser-session database constants (Phase 1 Task 5; acceptance:
+ * `browser-session-db.feature.md`). Plain values with no imports beyond other Zod-free specs. A
+ * stored tab or visit URL must have one of `BROWSABLE_SCHEMES` (`browser.spec.ts`).
+ *
+ * Storage: Node's built-in `node:sqlite` (`DatabaseSync`) in Electron's main process, queried
+ * through Drizzle's SQLite dialect (`drizzle-orm/sqlite-proxy`), so moving to libSQL when sync
+ * lands (design §2, Data) is a driver swap. Implemented by `packages/db` (`@app/db`).
+ */
+import { MAX_TABS } from './tabs.spec';
+
+/** The database file, directly in `app.getPath('userData')`. */
+export const DB_FILE_NAME = 'frost-browser.db' as const;
+
+/**
+ * A database file that cannot be opened, is not a database, fails `PRAGMA quick_check`, or fails
+ * its migrations is renamed to `<DB_FILE_NAME><CORRUPT_FILE_INFIX><timestamp>` (with any
+ * `DB_SIDECAR_SUFFIXES` sidecar still beside it renamed alongside), and a fresh database is created.
+ * `<timestamp>` is the Unix time in milliseconds.
+ */
+export const CORRUPT_FILE_INFIX = '.corrupt-' as const;
+
+/**
+ * SQLite sidecar files of a database file, moved aside with it if still present (SQLite itself
+ * deletes the sidecars of a file it rejects when it closes it).
+ */
+export const DB_SIDECAR_SUFFIXES = ['-journal', '-wal', '-shm'] as const;
+
+/** The table the forward-only migration runner records applied migration ids in. */
+export const MIGRATIONS_TABLE = 'schema_migrations' as const;
+
+/** The tables migration `0001` creates (besides `MIGRATIONS_TABLE`). */
+export const SESSION_TABLES = ['browser_tabs', 'recent_visits', 'site_permissions'] as const;
+
+/** At most this many tabs are saved, and restored (the window holds no more). */
+export const MAX_RESTORED_TABS = MAX_TABS;
+
+/**
+ * At most this many `recent_visits` rows are kept: after each batch of visits the rows with the
+ * oldest `last_visit_at` beyond this count are deleted.
+ */
+export const MAX_RECENT_VISITS = 1_000;
+
+/**
+ * Longest URL stored (UTF-16 code units, as serialized). A longer tab URL is saved as an empty tab;
+ * a longer visit URL is not recorded.
+ */
+export const MAX_STORED_URL_LENGTH = 16_384;
+
+/** Longest title stored (characters, i.e. code points); longer titles are cut to this length. */
+export const MAX_STORED_TITLE_LENGTH = 512;
+
+/**
+ * Session and visit writes are batched: the first change after a write schedules one write this
+ * long later, which carries every change made meanwhile (the latest tab list, all visits). Pending
+ * writes are flushed when the app quits. Permission decisions are written at once.
+ */
+export const SESSION_WRITE_BATCH_MS = 1_000;
