@@ -198,7 +198,9 @@ the main bundle, applied at startup by a small forward-only runner (`schema_migr
 
 - [x] Rebuild and package on macOS; `pnpm verify:mac` passes; the full e2e suite passes on macOS and
   Linux (locally and in CI: `ci.yml` on ubuntu, `macos.yml` with `make:mac` + `verify:mac`).
-- [ ] Screenshots of the chrome with a page loaded attached to the PR (not committed).
+- [x] Screenshots of the chrome with a page loaded attached to the PR (not committed). macOS
+  screenshots captured from the packaged-equivalent build on a Mac (2026-10-26) and shared with
+  the owner; not committed, per clean-room/IP hygiene.
 - [x] Update `apps/desktop/README.md` (what the app does now) and this plan's checkboxes.
 - [x] **Commit** — `docs: phase 1 browser core`.
 
