@@ -1,10 +1,10 @@
 import { asc, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { MAX_RECENT_VISITS, MAX_RESTORED_TABS, MAX_STORED_TITLE_LENGTH, MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
-import type { RememberedDecision, SitePermission } from '@app/specs/permissions.spec';
+import type { PersistedDecision, SitePermission } from '@app/specs/permissions.spec';
 import type { SessionDatabase } from './client';
 import { browserTabs, recentVisits, sitePermissions } from './schema';
-import { isRememberedDecision, isSitePermission, storableOrigin, storableTitle, storableUrl } from './values';
+import { isPersistedDecision, isSitePermission, storableOrigin, storableTitle, storableUrl } from './values';
 
 // The browser-session repository (spec `browser-session-db.feature.md`, Repository): the only
 // reads and writes of the session tables. Values are normalized on the way in (`values.ts`) and
@@ -40,12 +40,12 @@ export interface Visit {
   readonly lastVisitAt: number;
 }
 
-/** A remembered decision, keyed as the permission broker keys it. */
+/** A remembered decision that persists (a Block), keyed as the permission broker keys it. */
 export interface StoredDecision {
   readonly origin: string;
   readonly topLevelOrigin: string;
   readonly permission: SitePermission;
-  readonly decision: RememberedDecision;
+  readonly decision: PersistedDecision;
 }
 
 /** What one write carries: the latest tab strip (if it changed) and the visits since the last write. */
@@ -67,9 +67,12 @@ export interface SessionRepository {
   write(write: SessionWrite): Promise<void>;
   /** The most recently visited URLs first. */
   recentVisits(limit?: number): Promise<Visit[]>;
+  /** The stored Blocks; any other row (an Allow, a tampered one) is skipped. */
   loadPermissionDecisions(): Promise<StoredDecision[]>;
-  /** Remembers `decision` (replacing any earlier one for its key). Invalid keys are ignored. */
+  /** Remembers a Block (one row per key). Anything but a Block, or an invalid key, is ignored. */
   savePermissionDecision(decision: StoredDecision, at: number): Promise<void>;
+  /** Deletes every visit and every stored decision in one transaction (Clear Browsing Data); the tab strip is kept. */
+  clearBrowsingData(): Promise<void>;
 }
 
 const EMPTY_SESSION: SavedSession = { tabs: [{ url: '', title: '' }], activeIndex: 0 };
@@ -190,14 +193,14 @@ export function createSessionRepository(db: SessionDatabase): SessionRepository 
       for (const row of rows) {
         const origin = storableOrigin(row.origin);
         const topLevelOrigin = storableOrigin(row.topLevelOrigin);
-        if (origin === null || topLevelOrigin === null || !isSitePermission(row.permission) || !isRememberedDecision(row.decision)) continue;
+        if (origin === null || topLevelOrigin === null || !isSitePermission(row.permission) || !isPersistedDecision(row.decision)) continue;
         decisions.push({ origin, topLevelOrigin, permission: row.permission, decision: row.decision });
       }
       return decisions;
     },
 
     async savePermissionDecision({ origin, topLevelOrigin, permission, decision }, at) {
-      if (storableOrigin(origin) === null || storableOrigin(topLevelOrigin) === null || !isSitePermission(permission) || !isRememberedDecision(decision)) return;
+      if (storableOrigin(origin) === null || storableOrigin(topLevelOrigin) === null || !isSitePermission(permission) || !isPersistedDecision(decision)) return;
       await db
         .insert(sitePermissions)
         .values({ origin, topLevelOrigin, permission, decision, updatedAt: at })
@@ -206,5 +209,7 @@ export function createSessionRepository(db: SessionDatabase): SessionRepository 
           set: { decision, updatedAt: at },
         });
     },
+
+    clearBrowsingData: () => batch([db.delete(recentVisits), db.delete(sitePermissions)]),
   };
 }

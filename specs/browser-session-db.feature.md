@@ -3,9 +3,9 @@
 Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 `DB_SIDECAR_SUFFIXES`, `MIGRATIONS_TABLE`, `SESSION_TABLES`, `MAX_RESTORED_TABS`,
 `MAX_RECENT_VISITS`, `MAX_STORED_URL_LENGTH`, `MAX_STORED_TITLE_LENGTH`, `SESSION_WRITE_BATCH_MS`,
-`DB_BUSY_TIMEOUT_MS`, `DB_FILE_MODE`, `CORRUPTION_RESULT_CODES`),
-`specs/browser.spec.ts` (`BROWSABLE_SCHEMES`) and `specs/permissions.spec.ts` (`SITE_PERMISSIONS`,
-`REMEMBERED_DECISIONS`). Design doc §2 (Data). Phase 1 Task 5; builds on `tabs.feature.md`
+`DB_BUSY_TIMEOUT_MS`, `DB_FILE_MODE`, `CORRUPTION_RESULT_CODES`, `CLEAR_BROWSING_DATA`),
+`specs/browser.spec.ts` (`BROWSABLE_SCHEMES`, `BROWSE_PARTITION`) and `specs/permissions.spec.ts`
+(`SITE_PERMISSIONS`, `REMEMBERED_DECISIONS`, `PERSISTED_DECISIONS`). Design doc §2 (Data). Phase 1 Task 5; builds on `tabs.feature.md`
 (the controller's tabs), `browse-guard.feature.md` (error / crash state, popups) and
 `permissions.feature.md` (the decision store). Each scenario maps to one named test.
 
@@ -24,7 +24,9 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   `recent_visits` (`url` primary key, `title`, `visit_count`, `last_visit_at` ms, indexed),
   `site_permissions` (`origin`, `top_level_origin`, `permission` composite primary key, `decision`,
   `updated_at` ms), plus `MIGRATIONS_TABLE` (`id` primary key, `applied_at` ms). The Drizzle schema
-  in `packages/db/src/schema.ts` and the migration SQL agree column for column.
+  in `packages/db/src/schema.ts` and the migration SQL agree column for column. Migration `0002`
+  changes no table: it deletes every stored decision that is not a Block (the Allows earlier builds
+  persisted), since only Blocks persist now.
 - **Migrations** are numbered SQL strings compiled into the main bundle (nothing is read from disk
   or `node_modules` at runtime). At startup the runner applies, in id order, each migration whose id
   `MIGRATIONS_TABLE` lacks, each in its own transaction together with its id row. Forward-only:
@@ -80,11 +82,27 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   (Electron emits no `did-navigate` for them). A later title of that page updates the visit's
   title (capped); a title never creates a visit. After each batch the table is pruned to the
   `MAX_RECENT_VISITS` most recent rows.
-- **Permission decisions.** Allow / Block decisions, keyed as `permissions.feature.md` keys them
-  (requesting origin, top-level origin, `SitePermission`), are loaded into memory at startup and
-  written through on each answer (an Allow replaced by a Block overwrites it). Rows with a
-  non-`http(s)`-origin, an unknown permission or an unknown decision are skipped on load.
-  Dismissals, timeouts and the prompt back-off stay in memory for the app session only.
+- **Permission decisions.** Only **Block** decisions persist (`PERSISTED_DECISIONS`), keyed as
+  `permissions.feature.md` keys them (requesting origin, top-level origin, `SitePermission`): they
+  are loaded into memory at startup and written through when answered. An **Allow** is remembered
+  in memory for the app session only (never written; the next launch asks again), so a grant never
+  outlives the session the user gave it in. Rows with a non-`http(s)`-origin, an unknown
+  permission, or any decision but Block (an Allow, a tampered value) are skipped on load, and the
+  repository writes nothing but Blocks. An Allow given after a stored Block is in memory only: the
+  Block is back after a relaunch. Dismissals, timeouts and the prompt back-off stay in memory for
+  the app session only.
+- **Clear browsing data.** The application menu has **Clear Browsing Data…**
+  (`CLEAR_BROWSING_DATA`; the File menu, the app menu on macOS). Main asks first with a native
+  message box (`dialog.showMessageBox`, parented to the focused window, else the app's window;
+  Cancel is the default). Cancelling changes nothing. Confirming clears, in this order: every
+  permission decision in memory (Allows and Blocks) and the prompt back-off; then, in one
+  transaction after every earlier write, every `recent_visits` and `site_permissions` row (visits
+  still pending in the writer are dropped, so none is written back; the tab strip is kept); then
+  the browse partition's storage (`session.fromPartition(BROWSE_PARTITION).clearStorageData()`:
+  cookies, local storage, IndexedDB, service workers, cache storage …) and its HTTP cache
+  (`clearCache()`). One part failing is logged and the others still run. No tab is closed or
+  reloaded, and the app UI's own session is untouched. Pending prompts stay pending (they are
+  undecided).
 - **Batched writes.** Tab and visit writes are batched by `SESSION_WRITE_BATCH_MS`: a navigation
   storm writes at most once per batch window (the latest tab list, all its visits, in one
   transaction). Pending writes are flushed on quit: the first `will-quit` is held until the flush
@@ -102,6 +120,8 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   recorded is not run again even if its SQL would now fail; an unknown recorded id is left alone.
 - **Scenario: failed-migration-rolls-back** — a migration that fails part-way leaves neither its
   tables nor its id behind, and the runner throws.
+- **Scenario: migration-0002-drops-stored-allows** — a database migrated to `0001` holding Allow
+  and Block rows keeps only the Block rows after the migrations run (`0002` recorded once).
 
 ## Opening (`packages/db/src/__tests__/open.test.ts`, a temp directory on disk)
 - **Scenario: db-file-in-given-dir** — opening creates `<dir>/DB_FILE_NAME` (and the directory),
@@ -155,10 +175,14 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   is stripped; titles are capped; a title for a URL never visited creates nothing.
 - **Scenario: visits-pruned-to-max** — beyond `MAX_RECENT_VISITS` rows, the least recently visited
   are deleted.
-- **Scenario: permission-decisions-round-trip** — saved decisions load back per (origin,
-  top-level origin, permission); a later decision for the same key overwrites the earlier one.
+- **Scenario: permission-decisions-round-trip** — saved Blocks load back per (origin, top-level
+  origin, permission); saving one again for the same key keeps one row.
+- **Scenario: only-blocks-are-stored** — saving an Allow writes nothing (a stored Block for its
+  key stays); an Allow row planted in the file is not loaded.
 - **Scenario: tampered-permission-rows-skipped** — rows with a non-origin, an unknown permission
   or an unknown decision are not loaded.
+- **Scenario: clear-browsing-data-in-repository** — `clearBrowsingData()` deletes every visit and
+  every stored decision and keeps the saved tab strip.
 
 ## Writer (`packages/db/src/__tests__/writer.test.ts`, fake timers)
 - **Scenario: writes-are-batched** — a storm of tab saves and visits within
@@ -170,6 +194,9 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Scenario: write-failures-logged-once-per-kind** — writes that throw never reject into the
   caller; the same kind of failure (disk full, three times) is logged once, and each new kind (an
   I/O error, counted once with its extended codes; a non-SQLite error) once more.
+- **Scenario: clear-drops-pending-visits** — `clearBrowsingData()` runs after every earlier write
+  (a decision written just before it is cleared too), drops visits still pending in the batch (they
+  are never written), and keeps a pending tab strip, which is still written.
 - **Scenario: close-flushes-then-closes** — `close()` writes what is pending, then the database is
   closed (`isOpen` false); a second `close()` is a no-op, and a reopened store reads what was
   pending.
@@ -207,9 +234,33 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   loads record none; the page's title updates its visit, but not while an error page shows.
 
 ## Permissions (`apps/desktop/src/main/browser/__tests__/permissions.test.ts`, "persistent store")
-- **Scenario: persistent-decision-store** — decisions loaded at startup answer requests with no
-  prompt; an Allow / Block is written through with its key; a dismissal and the back-off are not
-  written and are gone after a "relaunch" (a new broker over the same saved decisions).
+- **Scenario: persistent-decision-store** — Blocks loaded at startup answer requests with no
+  prompt (an Allow handed to `load` is ignored); a Block is written through with its key, an Allow
+  is not written; after a "relaunch" (a new broker over the same saved decisions) the Blocks
+  still answer and the Allows, dismissals and back-off are gone (the next request prompts).
+- **Scenario: forget-decisions** — `forgetDecisions()` forgets every remembered Allow and Block
+  (memory and store) and the back-off: the next request prompts again, also for a scope that was
+  silenced; `check` answers `false`; pending prompts are kept.
+
+## Clear browsing data (`apps/desktop/src/main/__tests__/clear-browsing-data.test.ts`, fakes)
+- **Scenario: clear-asks-first** — the action asks for confirmation before anything; when it is
+  not confirmed nothing is cleared and it answers `false`.
+- **Scenario: clear-clears-everything** — confirmed, it forgets the in-memory decisions, then
+  clears the stored visits and decisions, then the browse storage and cache, and answers `true`;
+  it closes no tab.
+- **Scenario: clear-goes-on-after-a-failure** — a part that throws or rejects is logged once and
+  the other parts still run.
+- **Scenario: clear-dialog-options** — the confirmation is `dialog.showMessageBox` with
+  `CLEAR_BROWSING_DATA.dialog`, parented to the given window (none: an app-modal box); only
+  `confirmIndex` confirms.
+- **Scenario: clear-browse-storage** — the browse partition's session (`BROWSE_PARTITION`) has
+  `clearStorageData()` then `clearCache()` called; the default session is not touched.
+
+## Menu (`apps/desktop/src/main/__tests__/menu.test.ts`)
+- **Scenario: clear-browsing-data-menu-item** — `CLEAR_BROWSING_DATA.menuItemId` is in the File
+  menu on Linux / Windows and in the app menu on macOS (which keeps About, Services, Hide and Quit),
+  labelled `CLEAR_BROWSING_DATA.menuLabel`, with no accelerator; clicking it runs the clear action
+  once.
 
 ## Single instance (`apps/desktop/src/main/__tests__/single-instance.test.ts`)
 - **Scenario: second-instance-quits** — without the lock, `claimSingleInstance` quits the app and
@@ -219,7 +270,7 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   before the app is ready it does nothing.
 
 ## Main wiring (`apps/desktop/src/main/__tests__/session-store.test.ts`, real `node:sqlite`, temp dir)
-- **Scenario: session-persists-across-reopen** — tabs, visits and decisions saved through one
+- **Scenario: session-persists-across-reopen** — tabs, visits and Blocks saved through one
   opened store load back from a second one on the same directory after the quit flush
   (`flushBeforeQuit`: the first `will-quit` is prevented, the app quits again once flushed, and that
   second `will-quit` passes).
@@ -239,8 +290,19 @@ launch passes the same temporary `--user-data-dir`.
   non-`http(s)` URL.
 - **Scenario: all-invalid-session-restores-empty-tab-e2e** — with only invalid rows the app starts
   with one empty tab.
-- **Scenario: permission-decision-persists-e2e** — notifications allowed for a loopback origin is
-  still `granted` after relaunch, with no prompt.
+- **Scenario: allow-is-session-only-e2e** — notifications allowed for a loopback origin are
+  `granted` for the rest of that launch; after relaunch `Notification.permission` is no longer
+  `granted` (Electron reports a check the app answers `false` as `denied`), a request prompts
+  again, and no decision is stored.
+- **Scenario: block-decision-persists-e2e** — notifications blocked for a loopback origin are still
+  `denied` after relaunch, with no prompt.
+- **Scenario: clear-browsing-data-e2e** — with visits recorded, notifications allowed and
+  geolocation blocked on loopback origins, and a cookie and local storage set by a page: the menu
+  item (triggered through `Menu.getApplicationMenu()`, with `dialog.showMessageBox` stubbed in main
+  to record its arguments) first answered Cancel clears nothing; answered with the confirm button
+  it asks once more, parented to the app window, and then the tabs are all still open on their
+  pages, a reloaded page has no cookie or local storage, both permissions prompt again, and after
+  quitting the database has no visit and no decision but still the tab strip.
 - **Scenario: db-file-in-user-data-e2e** — `app.getPath('userData')` is the directory passed with
   `--user-data-dir` (compared by real path: on macOS the temporary directory `/var/…` is
   `/private/var/…`) and `DB_FILE_NAME` exists there.

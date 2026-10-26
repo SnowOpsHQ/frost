@@ -13,8 +13,14 @@ export interface SessionWriter {
   recordVisit(url: string): void;
   /** The latest title of `url`'s page (updates its visit only; never creates one). */
   updateVisitTitle(url: string, title: string): void;
-  /** Remembers a decision (written at once). */
+  /** Remembers a Block (written at once). */
   savePermissionDecision(decision: StoredDecision): void;
+  /**
+   * Clear Browsing Data: drops the visits still pending (never written), then, after every earlier
+   * write, deletes every stored visit and decision. A pending tab strip is kept (and written as
+   * usual). Resolves once done; never rejects.
+   */
+  clearBrowsingData(): Promise<void>;
   /** Writes everything pending now; resolves once it (and every earlier write) is done. */
   flush(): Promise<void>;
 }
@@ -130,6 +136,11 @@ export function createSessionWriter(repository: SessionRepository, options: Writ
     savePermissionDecision(decision) {
       const at = now();
       void enqueue(() => repository.savePermissionDecision(decision, at));
+    },
+
+    clearBrowsingData() {
+      visits.clear();
+      return enqueue(() => repository.clearBrowsingData());
     },
 
     flush: writeBatch,

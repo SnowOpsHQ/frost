@@ -38,6 +38,12 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    // Only Blocks persist (`PERSISTED_DECISIONS`): an Allow is for the app session it was given in.
+    // Drops what earlier builds stored besides Blocks.
+    id: '0002_block_only_permissions',
+    sql: `DELETE FROM site_permissions WHERE decision <> 'block';`,
+  },
 ];
 
 /**

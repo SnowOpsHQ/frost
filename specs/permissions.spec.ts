@@ -81,8 +81,10 @@ export const MEDIA_TYPE_PERMISSION = { video: 'camera', audio: 'microphone' } as
  * The chrome's answers to a prompt (`browser.answerPermission`):
  * - `allow` / `block` — grant / deny this request, every coalesced duplicate, and every other
  *   pending request (any tab) this decision now settles; remembered per (origin, `SitePermission`)
- *   for the rest of the app session, and across relaunches (`REMEMBERED_DECISIONS`; persisted by
- *   Task 5, `browser-session-db.feature.md`).
+ *   for the rest of the app session (`REMEMBERED_DECISIONS`). Only a Block also survives a
+ *   relaunch (`PERSISTED_DECISIONS`, `browser-session-db.feature.md`): an Allow is asked for again
+ *   in the next app session, so a grant never lasts longer than the user is around to see it.
+ *   Clear Browsing Data forgets both.
  * - `dismiss` (the prompt's ×, or Esc in the bar) — deny this request only; nothing is
  *   remembered, so the page may ask again.
  */
@@ -90,6 +92,9 @@ export const PERMISSION_DECISIONS = ['allow', 'block', 'dismiss'] as const;
 export type PermissionDecision = (typeof PERMISSION_DECISIONS)[number];
 export const REMEMBERED_DECISIONS = ['allow', 'block'] as const;
 export type RememberedDecision = (typeof REMEMBERED_DECISIONS)[number];
+/** The remembered decisions that are written to the browser-session database: Block only. */
+export const PERSISTED_DECISIONS = ['block'] as const satisfies readonly RememberedDecision[];
+export type PersistedDecision = (typeof PERSISTED_DECISIONS)[number];
 
 /**
  * A prompt nobody answers is denied after this long (nothing remembered), so a page's request

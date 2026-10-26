@@ -107,13 +107,34 @@ describe('writer', () => {
 
   test('permission-decisions-written-at-once', async () => {
     const writer = createSessionWriter(repo, { now: () => clock });
-    const decision = { origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'geolocation', decision: 'allow' } as const;
+    const decision = { origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'geolocation', decision: 'block' } as const;
     writer.savePermissionDecision(decision);
     expect(repo.savePermissionDecision).toHaveBeenCalledTimes(0);
     // No batch window: the next microtasks write it.
     await vi.advanceTimersByTimeAsync(0);
     expect(repo.savePermissionDecision).toHaveBeenCalledExactlyOnceWith(decision, clock);
     expect(await repo.loadPermissionDecisions()).toEqual([decision]);
+  });
+
+  test('clear-drops-pending-visits', async () => {
+    const writer = createSessionWriter(repo, { now: () => clock });
+    writer.recordVisit('https://old.example/');
+    await writer.flush();
+    expect(await repo.recentVisits()).toHaveLength(1);
+    // Pending: a strip, visits, a title; and a decision written just before the clear.
+    writer.saveSession(tabs(2));
+    writer.recordVisit('https://a.example/');
+    writer.updateVisitTitle('https://old.example/', 'Old');
+    writer.savePermissionDecision({ origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'geolocation', decision: 'block' });
+    await writer.clearBrowsingData();
+    expect(await repo.recentVisits()).toEqual([]);
+    expect(await repo.loadPermissionDecisions()).toEqual([]);
+    // The pending visits are never written; the pending strip still is.
+    await vi.advanceTimersByTimeAsync(SESSION_WRITE_BATCH_MS * 2);
+    await writer.flush();
+    expect(await repo.recentVisits()).toEqual([]);
+    expect(await repo.loadSession()).toEqual(tabs(2));
+    expect(writes.flatMap((write) => write.visits ?? []).map((visit) => visit.url)).toEqual(['https://old.example/']);
   });
 
   test('write-failures-logged-once-per-kind', async () => {
@@ -130,7 +151,7 @@ describe('writer', () => {
     await expect(writer.flush()).resolves.toBeUndefined();
     writer.recordVisit('https://a.example/');
     await expect(writer.flush()).resolves.toBeUndefined();
-    writer.savePermissionDecision({ origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'geolocation', decision: 'allow' });
+    writer.savePermissionDecision({ origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'geolocation', decision: 'block' });
     await expect(writer.flush()).resolves.toBeUndefined();
     expect(failing.write).toHaveBeenCalledTimes(2);
     // The same kind (disk full) three times: one line.

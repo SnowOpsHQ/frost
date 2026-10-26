@@ -37,7 +37,11 @@ named test.
 - **Remembered decisions.** Allow and Block are remembered per (scope, `SitePermission`) for the
   app session, in memory (`createMemoryDecisionStore`); the app uses the persistent store behind
   the same `PermissionDecisionStore` interface (`createPersistentDecisionStore`, Task 5,
-  `browser-session-db.feature.md`), so Allow / Block also survive a relaunch. A request is answered from what is remembered,
+  `browser-session-db.feature.md`), which writes **only Blocks** (`PERSISTED_DECISIONS`): a Block
+  survives a relaunch, an Allow lasts for the app session only and is asked for again after a
+  relaunch. **Clear Browsing Data…** (the application menu, `browser-session-db.feature.md`)
+  forgets every remembered Allow and Block, stored and in memory, and the back-off
+  (`forgetDecisions`); nothing else revokes a decision in Phase 1 (no site-settings UI yet). A request is answered from what is remembered,
   with no prompt: any asked-for permission Blocked → denied; all Allowed → granted; otherwise the
   prompt asks for the undecided ones only.
 - **Queue.** Each tab has its own queue; the chrome shows its head. Identical requests (same tab,
@@ -47,7 +51,7 @@ named test.
   distinct prompts wait per tab; one more is denied at once.
 - **Back-off.** After `MAX_PROMPT_IGNORES` dismissals or timeouts of the same (scope,
   `SitePermission`) in the app session, requests for it are denied silently for the rest of the
-  session.
+  session (or until Clear Browsing Data).
 - **Answers** (`browser.answerPermission({ promptId, decision })`): `allow` grants, `block` denies;
   both are remembered. `dismiss` (the × or Esc) denies this request only, remembering nothing, so
   the page may ask again. Only the prompt the **active** tab shows can be answered: another tab's

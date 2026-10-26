@@ -138,6 +138,8 @@ function sitePermissionsOf(ask: PermissionAsk): SitePermission[] {
 export interface PermissionDecisionStore {
   get(scope: PermissionScope, permission: SitePermission): RememberedDecision | undefined;
   set(scope: PermissionScope, permission: SitePermission, decision: RememberedDecision): void;
+  /** Forgets every decision (Clear Browsing Data). */
+  clear(): void;
 }
 
 const scopeKey = (scope: PermissionScope, permission: SitePermission): string => JSON.stringify([scope.origin, scope.topLevelOrigin, permission]);
@@ -150,20 +152,23 @@ export function createMemoryDecisionStore(): PermissionDecisionStore {
     set: (scope, permission, decision) => {
       decisions.set(scopeKey(scope, permission), decision);
     },
+    clear: () => decisions.clear(),
   };
 }
 
-/** The app's decision store: in memory, loaded at startup and written through (Task 5). */
+/** The app's decision store: in memory, Blocks loaded at startup and written through (Task 5). */
 export interface PersistentDecisionStore extends PermissionDecisionStore {
-  /** Adds the decisions saved at the last launch (startup, before any request). Not written back. */
+  /** Adds the Blocks saved at the last launch (startup, before any request). Not written back. */
   load(decisions: Iterable<StoredDecision>): void;
 }
 
 /**
- * Remembered decisions that persist (spec `browser-session-db.feature.md`, Permission decisions):
- * answered from memory (the handlers are synchronous); every `set` is also handed to `persist`
- * with its full key. Only Allow / Block ever reach a store: dismissals and the back-off stay in
- * the broker, for the app session.
+ * Remembered decisions, of which only Blocks persist (spec `browser-session-db.feature.md`,
+ * Permission decisions; `PERSISTED_DECISIONS`): answered from memory (the handlers are
+ * synchronous); a Block `set` is also handed to `persist` with its full key, an Allow stays in
+ * memory for the app session. `load` takes Blocks only. Dismissals and the back-off never reach a
+ * store: they stay in the broker, for the app session. `clear` forgets the memory only (the
+ * database is cleared on its own).
  */
 export function createPersistentDecisionStore(persist: (decision: StoredDecision) => void): PersistentDecisionStore {
   const memory = createMemoryDecisionStore();
@@ -171,10 +176,13 @@ export function createPersistentDecisionStore(persist: (decision: StoredDecision
     get: memory.get,
     set(scope, permission, decision) {
       memory.set(scope, permission, decision);
-      persist({ origin: scope.origin, topLevelOrigin: scope.topLevelOrigin, permission, decision });
+      if (decision === 'block') persist({ origin: scope.origin, topLevelOrigin: scope.topLevelOrigin, permission, decision });
     },
+    clear: memory.clear,
     load(decisions) {
-      for (const { origin, topLevelOrigin, permission, decision } of decisions) memory.set({ origin, topLevelOrigin }, permission, decision);
+      for (const { origin, topLevelOrigin, permission, decision } of decisions) {
+        if (decision === 'block') memory.set({ origin, topLevelOrigin }, permission, decision);
+      }
     },
   };
 }
@@ -202,6 +210,11 @@ export interface PermissionBroker {
   denyTab(tabId: number): void;
   /** Whether (scope, permission) has a remembered Allow (the session's permission check). */
   check(scope: PermissionScope, permission: SitePermission): boolean;
+  /**
+   * Forgets every remembered Allow and Block (the store's) and the back-off (Clear Browsing
+   * Data): the next request asks again. Pending prompts stay (they are undecided).
+   */
+  forgetDecisions(): void;
   /** Calls `listener` after every change of any tab's prompt; answers the unsubscribe. */
   subscribe(listener: () => void): () => void;
   /** How many prompts are pending, over all tabs. */
@@ -385,6 +398,11 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
     },
 
     check: (scope, permission) => store.get(scope, permission) === 'allow',
+
+    forgetDecisions() {
+      store.clear();
+      ignores.clear();
+    },
 
     subscribe(listener) {
       listeners.add(listener);

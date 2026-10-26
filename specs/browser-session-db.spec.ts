@@ -74,3 +74,26 @@ export const DB_FILE_MODE = 0o600;
  * the app runs on an in-memory database for that session.
  */
 export const CORRUPTION_RESULT_CODES = [11, 26] as const;
+
+/**
+ * **Clear Browsing Data…** (`browser-session-db.feature.md`, Clear browsing data): an application
+ * menu item (the File menu; the app menu on macOS) that asks first, in a native message box main
+ * shows parented to the window, and on confirmation clears the visits, every permission decision
+ * (stored and in memory) with the prompt back-off, and the browse partition's storage and cache.
+ * It closes no tab. `buttons[confirmIndex]` clears; Cancel is the default and the cancel answer.
+ */
+export const CLEAR_BROWSING_DATA = {
+  menuItemId: 'clear-browsing-data',
+  menuLabel: 'Clear Browsing Data\u2026',
+  dialog: {
+    type: 'warning',
+    message: 'Clear browsing data?',
+    detail:
+      'This clears your recent visits, every site permission you allowed or blocked, and the cookies, site data and cache of every site. Open tabs stay open.',
+    buttons: ['Clear Browsing Data', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  },
+  confirmIndex: 0,
+} as const;

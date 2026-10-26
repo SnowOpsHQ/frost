@@ -1,4 +1,4 @@
-// Specs: specs/browser-session-db.spec.ts (DB_FILE_NAME), specs/browser.spec.ts (BROWSE_PARTITION, NEW_TAB_LABEL)
+// Specs: specs/browser-session-db.spec.ts (DB_FILE_NAME, CLEAR_BROWSING_DATA), specs/browser.spec.ts (BROWSE_PARTITION, NEW_TAB_LABEL)
 // Acceptance: specs/browser-session-db.feature.md (End to end)
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { DB_FILE_NAME } from '@app/specs/browser-session-db.spec';
+import { CLEAR_BROWSING_DATA, DB_FILE_NAME } from '@app/specs/browser-session-db.spec';
 import { BROWSE_PARTITION, NEW_TAB_LABEL } from '@app/specs/browser.spec';
 import { APP_DIR, closeApp, launchApp } from './harness';
 
@@ -198,23 +198,153 @@ test('all-invalid-session-restores-empty-tab-e2e', async () => {
   expect(await browseContents()).toEqual([]);
 });
 
-test('permission-decision-persists-e2e', async () => {
+const ASK_NOTIFICATIONS = 'Notification.requestPermission()';
+const ASK_GEOLOCATION = 'new Promise((resolve) => navigator.geolocation.getCurrentPosition(() => resolve("position"), (error) => resolve(`error ${error.code}`)))';
+
+async function menu(id: string): Promise<void> {
+  await app!.evaluate(({ Menu }, id) => {
+    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+    if (!item) throw new Error(`no menu item ${id}`);
+    item.click();
+  }, id);
+}
+
+/** Reads `sql` from the database file with a connection of its own (the app may have it open). */
+function query(sql: string): Record<string, unknown>[] {
+  const db = new DatabaseSync(path.join(profile, DB_FILE_NAME), { readOnly: true });
+  try {
+    return db.prepare(sql).all().map((row) => ({ ...row }));
+  } finally {
+    db.close();
+  }
+}
+
+test('allow-is-session-only-e2e', async () => {
   await launch();
   await go(`${site.origin}/notify`, 'Page NOTIFY');
   const id = await contentsIdAt(`${site.origin}/notify`);
-  const asked = run(id, 'Notification.requestPermission()');
+  const asked = run(id, ASK_NOTIFICATIONS);
   await expect(prompt()).toHaveAttribute('data-origin', site.origin);
   await page.getByTestId('permission-allow').click();
   await expect(asked).resolves.toBe('granted');
+  // Granted for the rest of this launch, with no prompt.
+  await expect(run(id, ASK_NOTIFICATIONS)).resolves.toBe('granted');
+  expect(await promptsShown()).toBe(1);
   await quit();
 
   await launch();
-  // The restored tab is the page that asked; it is granted with no prompt.
+  // The restored tab is the page that asked: no longer granted (Electron reports an unanswered
+  // check as `denied`), and asked again.
   const again = await contentsIdAt(`${site.origin}/notify`);
-  await expect(run(again, 'Notification.permission')).resolves.toBe('granted');
-  await expect(run(again, 'Notification.requestPermission()')).resolves.toBe('granted');
+  await expect(run(again, 'Notification.permission')).resolves.toBe('denied');
+  const reasked = run(again, ASK_NOTIFICATIONS);
+  await expect(prompt()).toHaveAttribute('data-permission', 'notifications');
+  await page.getByTestId('permission-dismiss').click();
+  await expect(reasked).resolves.toBe('denied');
+  expect(query('SELECT COUNT(*) AS n FROM site_permissions')).toEqual([{ n: 0 }]);
+});
+
+test('block-decision-persists-e2e', async () => {
+  await launch();
+  await go(`${site.origin}/notify`, 'Page NOTIFY');
+  const id = await contentsIdAt(`${site.origin}/notify`);
+  const asked = run(id, ASK_NOTIFICATIONS);
+  await expect(prompt()).toHaveAttribute('data-origin', site.origin);
+  await page.getByTestId('permission-block').click();
+  await expect(asked).resolves.toBe('denied');
+  await quit();
+
+  await launch();
+  const again = await contentsIdAt(`${site.origin}/notify`);
+  await expect(run(again, ASK_NOTIFICATIONS)).resolves.toBe('denied');
   expect(await promptsShown()).toBe(0);
   await expect(prompt()).toHaveCount(0);
+});
+
+test('clear-browsing-data-e2e', async () => {
+  await launch();
+  // Visits, then a cookie and local storage set by the page.
+  await go(`${site.origin}/a`, 'Page A');
+  await go(`${site.origin}/b`, 'Page B');
+  const id = await contentsIdAt(`${site.origin}/b`);
+  await run(id, `document.cookie = 'frost=1; max-age=3600'; localStorage.setItem('frost', '1'); 0`);
+  // Notifications allowed (this launch), geolocation blocked (stored).
+  const notifications = run(id, ASK_NOTIFICATIONS);
+  await expect(prompt()).toHaveAttribute('data-permission', 'notifications');
+  await page.getByTestId('permission-allow').click();
+  await expect(notifications).resolves.toBe('granted');
+  const geolocation = run(id, ASK_GEOLOCATION);
+  await expect(prompt()).toHaveAttribute('data-permission', 'geolocation');
+  await page.getByTestId('permission-block').click();
+  await expect(geolocation).resolves.toBe('error 1');
+  // A second tab.
+  await menu('new-tab');
+  await go(`${site.origin}/c`, 'Page C');
+  await expect.poll(() => query('SELECT COUNT(*) AS n FROM recent_visits')[0]!['n']).toBe(3);
+  await expect.poll(() => query("SELECT COUNT(*) AS n FROM site_permissions WHERE decision = 'block'")).toEqual([{ n: 1 }]);
+
+  // Main's message box, stubbed: records each call and answers from a queue (Cancel when empty).
+  await app!.evaluate(({ dialog }) => {
+    const record = { calls: [] as { parentId: number | null; options: unknown }[], answers: [] as number[] };
+    (globalThis as unknown as { __clearDialog: typeof record }).__clearDialog = record;
+    if (!Object.getOwnPropertyDescriptor(dialog, 'showMessageBox')?.writable) throw new Error('e2e: dialog.showMessageBox is not writable; cannot stub it');
+    Object.assign(dialog, {
+      showMessageBox: async (...args: unknown[]) => {
+        const [first, second] = args;
+        const parent = typeof (first as { id?: unknown }).id === 'number' && second !== undefined ? (first as { id: number }) : null;
+        record.calls.push({ parentId: parent?.id ?? null, options: parent ? second : first });
+        return { response: record.answers.shift() ?? 1, checkboxChecked: false };
+      },
+    });
+  });
+  const dialogCalls = () =>
+    app!.evaluate(() => (globalThis as unknown as { __clearDialog: { calls: { parentId: number | null; options: unknown }[] } }).__clearDialog.calls);
+  const appWindowId = await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.id);
+  const expectedCall = { parentId: appWindowId, options: { ...CLEAR_BROWSING_DATA.dialog, buttons: [...CLEAR_BROWSING_DATA.dialog.buttons] } };
+
+  // Cancel: nothing is cleared.
+  await menu(CLEAR_BROWSING_DATA.menuItemId);
+  await expect.poll(dialogCalls).toEqual([expectedCall]);
+  await page.waitForTimeout(500);
+  await expect(run(id, 'Notification.permission')).resolves.toBe('granted');
+  await expect(run(id, 'document.cookie')).resolves.toBe('frost=1');
+  expect(query('SELECT COUNT(*) AS n FROM recent_visits')).toEqual([{ n: 3 }]);
+
+  // Confirmed: asked once more, then everything clears.
+  await app!.evaluate(({ dialog: _dialog }, confirm) => {
+    (globalThis as unknown as { __clearDialog: { answers: number[] } }).__clearDialog.answers.push(confirm);
+  }, CLEAR_BROWSING_DATA.confirmIndex);
+  await menu(CLEAR_BROWSING_DATA.menuItemId);
+  await expect.poll(dialogCalls).toEqual([expectedCall, expectedCall]);
+  // Site storage goes last: once the cookie is gone, every part ran.
+  await expect.poll(() => run(id, 'document.cookie')).toBe('');
+  await expect(run(id, 'Notification.permission')).resolves.toBe('denied');
+  expect(query('SELECT COUNT(*) AS n FROM recent_visits')).toEqual([{ n: 0 }]);
+  expect(query('SELECT COUNT(*) AS n FROM site_permissions')).toEqual([{ n: 0 }]);
+  // No tab closed: both still show their pages, and the strip is still saved.
+  await expect(strip()).toHaveCount(2);
+  await expect(strip().nth(0)).toHaveAttribute('title', 'Page B');
+  await expect(strip().nth(1)).toHaveAttribute('title', 'Page C');
+  expect((await browseContents()).map((c) => c.url).sort()).toEqual([`${site.origin}/b`, `${site.origin}/c`]);
+  expect(query('SELECT url FROM browser_tabs ORDER BY position')).toEqual([{ url: `${site.origin}/b` }, { url: `${site.origin}/c` }]);
+  // Both permissions prompt again.
+  await strip().nth(0).click();
+  for (const [ask, permission, denied] of [
+    [ASK_NOTIFICATIONS, 'notifications', 'denied'],
+    [ASK_GEOLOCATION, 'geolocation', 'error 1'],
+  ] as const) {
+    const again = run(id, ask);
+    await expect(prompt()).toHaveAttribute('data-permission', permission);
+    await page.getByTestId('permission-dismiss').click();
+    await expect(again).resolves.toBe(denied);
+  }
+  // A reloaded page (its title marked, so the reload is seen to commit) finds no cookie and no local storage.
+  await run(id, 'document.title = "marked"; 0');
+  await expect(activeTab()).toHaveAttribute('title', 'marked');
+  await page.getByTestId('reload').click();
+  await expect(activeTab()).toHaveAttribute('title', 'Page B');
+  await expect.poll(() => run(id, 'JSON.stringify([document.cookie, localStorage.getItem("frost")])')).toBe(JSON.stringify(['', null]));
+  await expect(strip()).toHaveCount(2);
 });
 
 test('db-file-in-user-data-e2e', async () => {

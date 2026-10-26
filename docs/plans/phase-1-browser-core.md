@@ -155,7 +155,8 @@ prompt bar. Test: unit + `e2e/permissions.e2e.ts`.
 
 - [ ] **Step 1 (spec):** browse-session requests for a promptable permission show a prompt naming the
   *requesting* frame's origin (and the top-level site when it is embedded); Allow/Block answers it
-  and is remembered per (requesting origin, top-level origin, permission) for the session;
+  and is remembered per (requesting origin, top-level origin, permission) for the app session
+  (only Block also persists, Task 5);
   dismissing, closing the tab, or navigating away denies; non-promptable permissions are denied
   silently; the app UI's default session stays deny-all (Phase 0).
 - [ ] **Steps 2–5:** red → green.
@@ -180,9 +181,13 @@ the main bundle, applied at startup by a small forward-only runner (`schema_migr
 
 - [ ] **Step 1 (spec):** open tabs (URL, order, active) persist and restore on relaunch;
   `restore-skips-non-browsable-urls`; visits are recorded (url, title, count, last visit) for
-  committed browsable navigations only; remembered permission decisions persist; the DB file lives in
+  committed browsable navigations only; remembered **Block** decisions persist (an Allow is for the
+  app session only; migration `0002` drops Allows stored by earlier builds); the DB file lives in
   `userData`; migrations run at startup and are forward-only; a corrupt DB is moved aside; writes
-  are batched and flushed on quit.
+  are batched and flushed on quit. **Clear Browsing Data…** (application menu: File, or the app
+  menu on macOS) asks in a native message box from main, then clears `recent_visits`, every stored
+  and in-memory permission decision and the prompt back-off, and the browse partition's storage
+  and cache, without closing tabs.
 - [ ] **Steps 2–5:** red → green. The packaged app must still pass `verify:mac` (no native module:
   `node:sqlite` is built into Electron; the fuses stay as they are).
 - [ ] **Step 6: commit** — `feat(db): local browser-session store with tab restore`.

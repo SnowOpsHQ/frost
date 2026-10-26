@@ -34,6 +34,7 @@ vi.mock('electron', async () => (await import('../../../test/electron-fake')).el
 
 const A = 'https://a.example';
 const B = 'https://b.example:8443';
+const C = 'http://127.0.0.1:8080';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 const notifications = (origin = A, topLevelOrigin = origin) => ({ origin, topLevelOrigin, permission: 'notifications' as const });
@@ -541,6 +542,7 @@ describe('broker', () => {
       set: vi.fn((s: PermissionScope, permission: SitePermission, decision: 'allow' | 'block') => {
         saved.set(key(s, permission), decision);
       }),
+      clear: vi.fn(() => saved.clear()),
     };
     const custom = createPermissionBroker({ store });
     const remembered = answerSpy();
@@ -712,9 +714,9 @@ describe('persistent store', () => {
   test('persistent-decision-store', () => {
     vi.useFakeTimers();
     try {
-      // What the last launch saved.
+      // What the last launch saved (an Allow among them, as an older file could hold: ignored).
       const saved: StoredDecision[] = [
-        { ...scope(A), permission: 'notifications', decision: 'allow' },
+        { ...scope(A), permission: 'notifications', decision: 'allow' } as unknown as StoredDecision,
         { ...scope(B, A), permission: 'geolocation', decision: 'block' },
       ];
       const persist = vi.fn<(decision: StoredDecision) => void>((decision) => {
@@ -729,28 +731,27 @@ describe('persistent store', () => {
       };
 
       const broker = launch();
-      // Loaded decisions answer at once, with no prompt.
-      const granted = answerSpy();
-      broker.request(1, notifications(A), granted);
-      expect(granted).toHaveBeenCalledExactlyOnceWith(true);
-      expect(broker.check(scope(A), 'notifications')).toBe(true);
+      // A loaded Block answers at once, with no prompt; the loaded Allow is not used.
       const blocked = answerSpy();
       broker.request(1, geolocation(B, A), blocked);
       expect(blocked).toHaveBeenCalledExactlyOnceWith(false);
-      expect(broker.promptFor(1)).toBeNull();
-      expect(persist).not.toHaveBeenCalled();
-
-      // An answer is written through with its key; media is written per device.
+      expect(broker.check(scope(A), 'notifications')).toBe(false);
+      broker.request(1, notifications(A), answerSpy());
+      expect(broker.promptFor(1)).toMatchObject({ origin: A, permission: 'notifications' });
+      // An Allow answers for the app session but is never written.
+      broker.answer(1, headId(broker, 1), 'allow');
+      expect(broker.check(scope(A), 'notifications')).toBe(true);
       broker.request(1, media(['video', 'audio'], B), answerSpy());
       broker.answer(1, headId(broker, 1), 'allow');
-      expect(persist.mock.calls.map(([d]) => d)).toEqual([
-        { ...scope(B), permission: 'camera', decision: 'allow' },
-        { ...scope(B), permission: 'microphone', decision: 'allow' },
-      ]);
-      // A Block replaces an Allow.
-      broker.request(1, geolocation(A), answerSpy());
+      expect(broker.check(scope(B), 'camera')).toBe(true);
+      expect(persist).not.toHaveBeenCalled();
+      // A Block is written through with its key (media per device).
+      broker.request(1, media(['video', 'audio'], C), answerSpy());
       broker.answer(1, headId(broker, 1), 'block');
-      expect(persist).toHaveBeenLastCalledWith({ ...scope(A), permission: 'geolocation', decision: 'block' });
+      expect(persist.mock.calls.map(([d]) => d)).toEqual([
+        { ...scope(C), permission: 'camera', decision: 'block' },
+        { ...scope(C), permission: 'microphone', decision: 'block' },
+      ]);
 
       // Dismissals (up to the back-off) are not written...
       persist.mockClear();
@@ -763,13 +764,56 @@ describe('persistent store', () => {
       expect(silenced).toHaveBeenCalledExactlyOnceWith(false);
       expect(persist).not.toHaveBeenCalled();
 
-      // ... and are gone after a relaunch, while what was answered stays.
+      // ... and after a relaunch only the Blocks are still remembered.
       const relaunched = launch();
       relaunched.request(1, notifications(B), answerSpy());
       expect(relaunched.promptFor(1)).toMatchObject({ origin: B, permission: 'notifications' });
-      expect(relaunched.check(scope(B), 'camera')).toBe(true);
-      expect(relaunched.check(scope(A), 'geolocation')).toBe(false);
-      expect(relaunched.check(scope(A), 'notifications')).toBe(true);
+      expect(relaunched.check(scope(A), 'notifications')).toBe(false);
+      expect(relaunched.check(scope(B), 'camera')).toBe(false);
+      const stillBlocked = answerSpy();
+      relaunched.request(2, media(['audio'], C), stillBlocked);
+      expect(stillBlocked).toHaveBeenCalledExactlyOnceWith(false);
+      const stillBlockedGeo = answerSpy();
+      relaunched.request(2, geolocation(B, A), stillBlockedGeo);
+      expect(stillBlockedGeo).toHaveBeenCalledExactlyOnceWith(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('forget-decisions', () => {
+    vi.useFakeTimers();
+    try {
+      const persist = vi.fn<(decision: StoredDecision) => void>();
+      const store = createPersistentDecisionStore(persist);
+      store.load([{ ...scope(C), permission: 'geolocation', decision: 'block' }]);
+      const broker = createPermissionBroker({ store });
+      // Remembered: an Allow, a Block (loaded), and a silenced scope.
+      broker.request(1, notifications(A), answerSpy());
+      broker.answer(1, headId(broker, 1), 'allow');
+      for (let i = 0; i < MAX_PROMPT_IGNORES; i++) {
+        broker.request(1, notifications(B), answerSpy());
+        broker.answer(1, headId(broker, 1), 'dismiss');
+      }
+      // A prompt still pending in another tab.
+      const pending = answerSpy();
+      broker.request(2, geolocation(A), pending);
+      const pendingId = headId(broker, 2);
+
+      broker.forgetDecisions();
+      expect(broker.check(scope(A), 'notifications')).toBe(false);
+      // Each asks again (the silenced scope too), the Block is gone, and the pending prompt stays.
+      for (const ask of [notifications(A), notifications(B), geolocation(C)]) {
+        const asked = answerSpy();
+        broker.request(3, ask, asked);
+        expect(asked).not.toHaveBeenCalled();
+        expect(broker.promptFor(3)).toMatchObject({ origin: ask.origin, permission: ask.permission });
+        broker.denyTab(3);
+      }
+      expect(broker.promptFor(2)?.id).toBe(pendingId);
+      expect(pending).not.toHaveBeenCalled();
+      // Nothing is written by forgetting (the database is cleared on its own).
+      expect(persist).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
