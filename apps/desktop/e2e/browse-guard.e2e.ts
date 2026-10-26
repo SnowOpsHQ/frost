@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { CRASH_TITLE, LOAD_ERROR_TITLES } from '@app/specs/browse-guard.spec';
 import { BROWSE_PARTITION, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
-import { launchApp } from './harness';
+import { closeApp, launchApp } from './harness';
 
 const MAILTO = 'mailto:someone@example.com?subject=hello';
 
@@ -258,14 +258,13 @@ const extraServers: Server[] = [];
 
 test.beforeAll(async () => {
   site = await startSite();
-  // Core dumps off: the crash test's renderer must die at once (see `launchApp`).
-  ({ app, page } = await launchApp([], { coreDumps: false }));
+  ({ app, page } = await launchApp());
   await page.waitForLoadState('domcontentloaded');
   await instrumentMain(app);
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  await closeApp(app);
   await site?.close();
   for (const server of extraServers) await closeServer(server);
 });
@@ -595,7 +594,9 @@ test('certificate-error-shows-error-panel-e2e', async () => {
 
 test('crash-shows-panel-and-reload-recovers-e2e', async () => {
   const id = await open('/a', 'Page A');
-  await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.forcefullyCrashRenderer(), id);
+  // SIGKILL from main: the renderer dies at once and writes no core dump (a crash would, and where
+  // core dumps go to a slow pipe handler `render-process-gone` arrives far too late).
+  await app.evaluate(({ webContents }, id) => process.kill(webContents.fromId(id)!.getOSProcessId(), 'SIGKILL'), id);
   const panel = page.getByTestId('page-crashed');
   await expect(panel).toBeVisible();
   await expect(page.getByTestId('page-crashed-title')).toHaveText(CRASH_TITLE);

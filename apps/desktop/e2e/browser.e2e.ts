@@ -5,7 +5,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { APP_WINDOW_TITLE, BROWSE_PARTITION, SEARCH_URL_TEMPLATE, TAB_VIEW_WEB_PREFERENCES } from '@app/specs/browser.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_BRIDGE_KEY, IPC_CHANNEL } from '@app/specs/ipc-transport.spec';
-import { appEntryScriptUrl, launchApp } from './harness';
+import { appEntryScriptUrl, closeApp, launchApp } from './harness';
 
 /** Loopback pages for the tab: `/a`, `/b` (titled), `/count` (counts its loads), `/slow` (held until released), `/ok.js`. */
 async function startSiteServer() {
@@ -50,7 +50,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   site?.releaseSlow();
-  await app?.close();
+  await closeApp(app);
   await site?.close();
 });
 

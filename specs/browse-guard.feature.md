@@ -225,8 +225,10 @@ allowed.
 - **Scenario: certificate-error-shows-error-panel-e2e** — a loopback HTTPS server with a
   self-signed certificate generated in the test: `certificate-error` fires, the panel shows the
   certificate title with Try again only (no proceed), and the page never loads.
-- **Scenario: crash-shows-panel-and-reload-recovers-e2e** — `forcefullyCrashRenderer()` shows the
-  crash panel (view detached); Reload brings the page back in the same WebContents.
+- **Scenario: crash-shows-panel-and-reload-recovers-e2e** — main kills the tab's renderer process
+  (`process.kill(contents.getOSProcessId(), 'SIGKILL')`: it dies at once and writes no core dump,
+  whatever the host's core-dump handler, and `render-process-gone` still fires) and the crash panel
+  shows (view detached); Reload brings the page back in the same WebContents.
 - **Scenario: browse-session-refuses-file-scheme-e2e** — main calling `loadURL` with a readable
   temporary file's `file:` URL directly on a tab's WebContents fails with `ERR_FAILED`, commits
   nothing (`did-navigate` never fires) and the tab's document never contains the file's content.
