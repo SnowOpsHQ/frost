@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -51,7 +52,8 @@ export async function launchApp(
     // The script `exec`s Electron, so it is not needed once the launch returned.
     await wrapper?.remove();
   }
-  if (ownProfile !== null) app.once('close', () => void rm(ownProfile, { recursive: true, force: true }).catch(() => undefined));
+  // Synchronous: the worker may exit right after the app closes, before an async removal ran.
+  if (ownProfile !== null) app.once('close', () => rmSync(ownProfile, { recursive: true, force: true }));
   // The chrome (`app://app`), not a tab: a restored tab's page can be the first page Playwright sees.
   await app.firstWindow();
   const page = await pageAt(app, 'app://app/');

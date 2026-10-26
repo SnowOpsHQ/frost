@@ -56,3 +56,21 @@ export const MAX_STORED_TITLE_LENGTH = 512;
  * writes are flushed when the app quits. Permission decisions are written at once.
  */
 export const SESSION_WRITE_BATCH_MS = 1_000;
+
+/**
+ * How long opening the database waits for another connection's lock (SQLite busy timeout,
+ * `DatabaseSync`'s `timeout`) before it gives up and the app runs on an in-memory database.
+ */
+export const DB_BUSY_TIMEOUT_MS = 1_000;
+
+/** The database file's permissions on POSIX: readable and writable by the user only. */
+export const DB_FILE_MODE = 0o600;
+
+/**
+ * The SQLite primary result codes that mean the file is broken (`SQLITE_CORRUPT`,
+ * `SQLITE_NOTADB`): only these, a failed `PRAGMA quick_check`, or a path that is not a regular
+ * file (a directory, a symlink — never followed) move the file aside. Every other failure (busy,
+ * I/O error, disk full, out of memory, cannot open, a failed migration, …) leaves it in place and
+ * the app runs on an in-memory database for that session.
+ */
+export const CORRUPTION_RESULT_CODES = [11, 26] as const;

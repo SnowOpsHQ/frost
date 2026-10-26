@@ -12,6 +12,8 @@ export interface SessionStore {
   readonly repository: SessionRepository;
   /** Batched writes while the app runs. */
   readonly writer: SessionWriter;
+  /** Whether the database is still open (`close()` closes it). */
+  readonly isOpen: boolean;
   /** Flushes pending writes, then closes the database (idempotent; never rejects). */
   close(): Promise<void>;
 }
@@ -27,6 +29,9 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     file,
     repository,
     writer,
+    get isOpen() {
+      return db.isOpen;
+    },
     close() {
       closing ??= writer.flush().then(() => {
         try {

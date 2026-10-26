@@ -57,6 +57,10 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   must still back it) nor on a same-document navigation (`did-navigate-in-page`). The app window's
   gesture tracking (Phase 0) is the same code (`security/gesture.ts`).
 - **`<webview>`** stays refused (`will-attach-webview` prevented; tab views have no `webviewTag`).
+- **No `file:` on the browse session** (backstop): the browse partition's own `file:` protocol
+  handler fails every `file:` request with a network error, so even a load main starts itself
+  (`loadURL`, which no navigation guard sees) never commits a local file in a tab. The app UI's
+  default session is unaffected.
 - **Downloads.** Phase 1 has no download manager: every `will-download` on the browse session is
   cancelled (`preventDefault` + `item.cancel()`) and raises the `download-blocked` notice
   ("Downloads aren't supported yet"). A **popup tab** whose page has not committed anything (a
@@ -134,6 +138,9 @@ Phase 0 external-open policy in `specs/security-policy.spec.ts` (`ALLOWED_EXTERN
   `did-navigate-in-page` still backs a popup.
 - **Scenario: webview-stays-refused** — `will-attach-webview` is prevented, also for a request that
   asks for `nodeIntegration` or a preload.
+- **Scenario: browse-session-refuses-file-scheme** — `hardenBrowseSession` registers the browse
+  session's own `file:` protocol handler, which answers every request with a network error
+  (`Response.error()`): a backstop for loads no navigation guard sees (started by main).
 - **Scenario: browse-session-cancels-downloads** — `hardenBrowseSession`'s `will-download`
   listener prevents the event, calls `item.cancel()` and reports the initiating WebContents to the
   injected `onDownloadBlocked`.
@@ -220,5 +227,8 @@ allowed.
   certificate title with Try again only (no proceed), and the page never loads.
 - **Scenario: crash-shows-panel-and-reload-recovers-e2e** — `forcefullyCrashRenderer()` shows the
   crash panel (view detached); Reload brings the page back in the same WebContents.
+- **Scenario: browse-session-refuses-file-scheme-e2e** — main calling `loadURL` with a readable
+  temporary file's `file:` URL directly on a tab's WebContents fails with `ERR_FAILED`, commits
+  nothing (`did-navigate` never fires) and the tab's document never contains the file's content.
 - **Scenario: webview-tag-creates-nothing-e2e** — a page with `<webview src=…>` creates no
   WebContents.

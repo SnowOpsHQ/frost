@@ -1,6 +1,6 @@
 import { asc, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
-import { MAX_RECENT_VISITS, MAX_RESTORED_TABS } from '@app/specs/browser-session-db.spec';
+import { MAX_RECENT_VISITS, MAX_RESTORED_TABS, MAX_STORED_TITLE_LENGTH, MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import type { RememberedDecision, SitePermission } from '@app/specs/permissions.spec';
 import type { SessionDatabase } from './client';
 import { browserTabs, recentVisits, sitePermissions } from './schema';
@@ -156,7 +156,19 @@ export function createSessionRepository(db: SessionDatabase): SessionRepository 
 
   return {
     async loadSession() {
-      const rows = await db.select().from(browserTabs).orderBy(asc(browserTabs.position));
+      // A tampered file may hold any number of rows and values of any size: read no more rows than
+      // can be restored, and no more of each value than can be stored (`substr` counts characters:
+      // one over the URL cap, so an over-long URL is still seen as one; twice the title cap).
+      const rows = await db
+        .select({
+          position: browserTabs.position,
+          url: sql<unknown>`substr(${browserTabs.url}, 1, ${MAX_STORED_URL_LENGTH + 1})`,
+          title: sql<unknown>`substr(${browserTabs.title}, 1, ${MAX_STORED_TITLE_LENGTH * 2})`,
+          active: browserTabs.active,
+        })
+        .from(browserTabs)
+        .orderBy(asc(browserTabs.position))
+        .limit(MAX_RESTORED_TABS);
       return sessionFromRows(rows);
     },
 

@@ -2,7 +2,8 @@
 
 Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 `DB_SIDECAR_SUFFIXES`, `MIGRATIONS_TABLE`, `SESSION_TABLES`, `MAX_RESTORED_TABS`,
-`MAX_RECENT_VISITS`, `MAX_STORED_URL_LENGTH`, `MAX_STORED_TITLE_LENGTH`, `SESSION_WRITE_BATCH_MS`),
+`MAX_RECENT_VISITS`, `MAX_STORED_URL_LENGTH`, `MAX_STORED_TITLE_LENGTH`, `SESSION_WRITE_BATCH_MS`,
+`DB_BUSY_TIMEOUT_MS`, `DB_FILE_MODE`, `CORRUPTION_RESULT_CODES`),
 `specs/browser.spec.ts` (`BROWSABLE_SCHEMES`) and `specs/permissions.spec.ts` (`SITE_PERMISSIONS`,
 `REMEMBERED_DECISIONS`). Design doc §2 (Data). Phase 1 Task 5; builds on `tabs.feature.md`
 (the controller's tabs), `browse-guard.feature.md` (error / crash state, popups) and
@@ -30,14 +31,23 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   there are no down migrations, an applied migration never runs again, and ids are strictly
   increasing. Running them again is a no-op. Ids the database has but the app does not know (a
   newer build's) are left alone.
-- **Corrupt or unreadable file.** If the file cannot be opened, is not a database, fails
-  `PRAGMA quick_check`, or fails its migrations, it is renamed to
-  `<file>CORRUPT_FILE_INFIX<ms timestamp>` with any `DB_SIDECAR_SUFFIXES` sidecar left beside it
-  (SQLite itself drops the sidecars of a file it rejects), a fresh
-  database is created in its place, and one line is logged. If even that fails, the app runs on an
-  in-memory database (nothing persists this run), logged once. A file that is only **busy**
-  (locked by another process) is never moved aside: the app runs on an in-memory database. The app
-  always starts.
+- **Corrupt or unusable file.** Opening waits up to `DB_BUSY_TIMEOUT_MS` for another
+  connection's lock. On POSIX the file is narrowed to `DB_FILE_MODE` (0600) whenever it is opened.
+  Only a file known to be broken is moved aside: a path that is not a regular file (checked with
+  `lstat`: a directory, or a symlink, which is never followed), an error whose SQLite primary
+  result code is one of `CORRUPTION_RESULT_CODES` (`SQLITE_CORRUPT`, `SQLITE_NOTADB`), or a failed
+  `PRAGMA quick_check`. It is renamed to `<file>CORRUPT_FILE_INFIX<ms timestamp>` with any
+  `DB_SIDECAR_SUFFIXES` sidecar left beside it (SQLite itself drops the sidecars of a file it
+  rejects), a fresh database is created in its place, and one line is logged saying what really
+  happened. **Any other failure** — busy or locked past the timeout, I/O error, disk full, out of
+  memory, cannot open (permissions), a failed migration — leaves the file in place for the next
+  launch: the app runs on an in-memory database (nothing persists this run), logged once. If the
+  fresh file cannot be created either, or the directory cannot be, the same in-memory fallback
+  applies. The app always starts.
+- **Single instance.** One frost per profile: main takes `app.requestSingleInstanceLock()` before
+  it opens anything; a second launch on the same `userData` quits (the first instance, on
+  `second-instance`, restores and focuses its window, or opens one if it has none), so two
+  instances never save over each other's session.
 - **Tabs.** The saved session is the window's tab strip: each tab's URL and title in strip order,
   and which one is active. Saved whenever that projection changes while a window is attached; what
   a window starts with is not a change (a macOS window reopened on an empty tab keeps the saved
@@ -48,16 +58,22 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   - **Not stored:** load error and crash state (the URL is kept, so the tab loads it again), the
     unresponsive and fullscreen state, back/forward history, and popup opener links (a restored
     popup is an ordinary tab).
-  - When the window closes (`close`), its session is saved one last time; the empty tab the
-    controller is left with afterwards is not saved, so the next launch restores the window that
-    was closed.
+  - When the window closes (`close`), a last change of its strip is saved (none if it is already
+    saved, or the window is closed as it started: a macOS window reopened from the dock on an
+    empty tab keeps the session saved before it); the empty tab the controller is left with
+    afterwards is never saved, so the next launch restores the window that was closed.
 - **Restore.** At startup, before the first window is attached (so the chrome's first state
   already has them), the saved tabs replace the controller's initial empty tab. A row whose URL is
   not a browsable `http(s)` URL — `file:`, `app:`, `javascript:`, `data:`, garbage — is **skipped**
-  (`restore-skips-non-browsable-urls`); the controller checks again before loading. The active
+  (`restore-skips-non-browsable-urls`); the controller checks again (and strips userinfo again)
+  before loading. Loading reads at most `MAX_RESTORED_TABS` rows and, in SQL, at most what can be
+  stored of each value, so a tampered file with huge rows cannot slow startup. The active
   tab is the saved active one, else (it was skipped) the next surviving tab to its right, else the
   last one. No rows, or no valid rows, restore one empty tab. Only the active tab loads at once; a
-  background tab shows its saved title and URL and loads when first activated.
+  background tab shows its saved title and URL and loads when first activated. A restored tab
+  keeps its saved URL until its view commits something: if that first load is aborted, Reload
+  loads the saved URL again; a typed navigation replaces it. Loading a restored tab's saved URL is
+  not a visit.
 - **Visits.** A committed main-frame navigation to an `http(s)` URL (`did-navigate`, and
   main-frame `did-navigate-in-page`) records a visit: `visit_count` + 1 and `last_visit_at` = now
   for its URL (userinfo stripped; over-long URLs not recorded). Error pages record nothing
@@ -73,8 +89,8 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   storm writes at most once per batch window (the latest tab list, all its visits, in one
   transaction). Pending writes are flushed on quit: the first `will-quit` is held until the flush
   is done and the database closed, then the app quits again (from a task of its own: Electron
-  ignores a quit made while it is still dispatching `will-quit`). A failed write is logged once and
-  never throws into the app.
+  ignores a quit made while it is still dispatching `will-quit`). A failed write never throws into
+  the app; each kind of failure (SQLite primary result code, else message) is logged once.
 
 ## Migrations (`packages/db/src/__tests__/migrations.test.ts`, in-memory `DatabaseSync`)
 - **Scenario: migrations-create-schema** — on an empty database, every `SESSION_TABLES` table and
@@ -93,12 +109,26 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Scenario: corrupt-db-moved-aside** — a garbage file (with stale sidecars) is renamed to
   `DB_FILE_NAME + CORRUPT_FILE_INFIX + <now>`, no stale sidecar is left next to the fresh migrated
   database, and exactly one line is logged.
-- **Scenario: unreadable-db-moved-aside** — a path that cannot be opened as a file (a directory in
-  its place) is moved aside the same way and a fresh database opens.
-- **Scenario: busy-db-not-moved-aside** — a database exclusively locked by another connection is
-  left in place; an in-memory database is used and one line is logged.
-- **Scenario: memory-fallback-when-nothing-opens** — when the fresh file cannot be created either
-  (its directory is a file), an in-memory database is used; the app still gets a working store.
+- **Scenario: non-regular-file-moved-aside** — a directory in the file's place, a symlink to a
+  valid database elsewhere, and a dangling symlink are each moved aside (the link itself, never
+  its target, which stays untouched and is never created) and a fresh regular file opens.
+- **Scenario: unreadable-db-left-in-place** (POSIX, not root) — a database file that cannot be
+  opened (mode 000) is left in place with its data; an in-memory database is used, and the one
+  log line claims no move.
+- **Scenario: only-corruption-moves-aside** — `shouldMoveAside` is true for
+  `CORRUPTION_RESULT_CODES` (primary and extended codes) and a failed `quick_check`
+  (`CorruptDatabaseError`), and false for everything else: `SQLITE_ERROR`, `BUSY`, `LOCKED`,
+  `NOMEM`, `READONLY`, `IOERR` (and its extended codes), `FULL`, `CANTOPEN`, `AUTH`, a plain error.
+- **Scenario: db-file-is-private** (POSIX) — a fresh file has mode `DB_FILE_MODE`; an existing
+  0644 file is narrowed to it when opened.
+- **Scenario: busy-db-waits-for-lock** — a lock another process holds for a quarter of
+  `DB_BUSY_TIMEOUT_MS` is waited out: the file itself is opened, nothing is logged.
+- **Scenario: busy-db-not-moved-aside** — a database exclusively locked by another connection
+  past the timeout is left in place; an in-memory database is used and one line, claiming no
+  move, is logged.
+- **Scenario: memory-fallback-when-nothing-opens** — when the directory cannot be created (it is
+  a file), an in-memory database is used; the app still gets a working store, and the log line
+  claims no move.
 
 ## Repository (`packages/db/src/__tests__/repository.test.ts`, in-memory `DatabaseSync`)
 - **Scenario: session-round-trip** — saved tabs load back with the same URLs, titles, order and
@@ -114,6 +144,9 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   neighbour, else the last tab.
 - **Scenario: all-invalid-session-yields-one-empty-tab** — no rows, or only invalid rows, load as
   one empty tab, active.
+- **Scenario: oversized-tampered-rows-skipped** — a planted 40 MB URL and 40 MB title before
+  300k more rows load in well under 100 ms: the URL row is skipped, the title is capped, and only
+  `MAX_RESTORED_TABS` rows are read.
 - **Scenario: restore-is-capped** — more than `MAX_RESTORED_TABS` rows load as the first
   `MAX_RESTORED_TABS`.
 - **Scenario: visits-recorded** — recording a URL twice gives one row with `visit_count` 2 and the
@@ -134,15 +167,20 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   and resolves after it is on disk; `close()` flushes, then closes the database.
 - **Scenario: permission-decisions-written-at-once** — a decision is written without waiting for
   the batch window.
-- **Scenario: write-failure-logged-once** — a write that throws is logged once (not per failure)
-  and never rejects into the caller.
+- **Scenario: write-failures-logged-once-per-kind** — writes that throw never reject into the
+  caller; the same kind of failure (disk full, three times) is logged once, and each new kind (an
+  I/O error, counted once with its extended codes; a non-SQLite error) once more.
+- **Scenario: close-flushes-then-closes** — `close()` writes what is pending, then the database is
+  closed (`isOpen` false); a second `close()` is a no-op, and a reopened store reads what was
+  pending.
 
 ## Controller (`apps/desktop/src/main/browser/__tests__/session.test.ts`)
 - **Scenario: restore-recreates-tabs** — restored before the first attach, the first state has
   the saved tabs, order and active tab; only the active tab's view is created and loads its URL; a
   background tab loads its URL when first activated.
 - **Scenario: restore-skips-non-web-urls-in-controller** — a non-`http(s)` URL handed to
-  `restoreSession` is skipped (defence in depth); none left restores one empty tab.
+  `restoreSession` is skipped and userinfo is stripped (defence in depth); none left restores one
+  empty tab.
 - **Scenario: restore-only-before-first-attach** — `restoreSession` after a window was attached
   changes nothing.
 - **Scenario: tab-changes-are-saved** — attaching a window saves nothing; opening, closing,
@@ -152,8 +190,18 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   crashed, is saved with its URL only, and restores as a page that loads again.
 - **Scenario: popup-opener-not-saved** — a popup tab is saved as a plain tab; restored, it has no
   opener (the opener's next popup lands right of the opener).
-- **Scenario: window-close-keeps-saved-session** — closing the window saves its tabs once more and
-  never saves the empty tab left behind.
+- **Scenario: window-close-keeps-saved-session** — closing a window whose strip is already saved
+  saves nothing more, and the empty tab left behind is never saved; a window reopened from the
+  dock and closed untouched keeps that session saved; a change made while a window closes is
+  saved, nothing after its `close`.
+- **Scenario: restored-tab-reload-after-aborted-load** — a restored tab whose first load is
+  aborted (`ERR_ABORTED`) keeps its saved URL and title with no error; Reload loads the saved URL
+  again (not a `webContents.reload()`); once a page committed, Reload is a plain reload.
+- **Scenario: typed-navigation-replaces-restored-url** — after a typed navigation in a restored
+  tab, its saved URL is no longer shown or reloaded.
+- **Scenario: restore-load-records-no-visit** — committing a restored tab's saved URL (the active
+  one at launch, a background one when activated) records no visit; later commits in those tabs
+  do.
 - **Scenario: visits-recorded-on-commit** — `did-navigate` to an `http(s)` URL and main-frame
   `did-navigate-in-page` record a visit; subframe in-page navigations, non-web URLs and failed
   loads record none; the page's title updates its visit, but not while an error page shows.
@@ -162,6 +210,13 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Scenario: persistent-decision-store** — decisions loaded at startup answer requests with no
   prompt; an Allow / Block is written through with its key; a dismissal and the back-off are not
   written and are gone after a "relaunch" (a new broker over the same saved decisions).
+
+## Single instance (`apps/desktop/src/main/__tests__/single-instance.test.ts`)
+- **Scenario: second-instance-quits** — without the lock, `claimSingleInstance` quits the app and
+  answers `false` (main then starts nothing).
+- **Scenario: second-instance-shows-existing-window** — with the lock, a `second-instance` event
+  restores (if minimized), shows and focuses the first live window; with none it opens one;
+  before the app is ready it does nothing.
 
 ## Main wiring (`apps/desktop/src/main/__tests__/session-store.test.ts`, real `node:sqlite`, temp dir)
 - **Scenario: session-persists-across-reopen** — tabs, visits and decisions saved through one

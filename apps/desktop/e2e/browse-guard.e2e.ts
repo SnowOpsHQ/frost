@@ -1,9 +1,13 @@
 // Specs: specs/browse-guard.spec.ts (LOAD_ERROR_TITLES, CRASH_TITLE), specs/tabs.spec.ts (NOTICE_MESSAGES),
 // specs/browser.spec.ts (BROWSE_PARTITION) · Acceptance: specs/browse-guard.feature.md (End to end)
-import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { CRASH_TITLE, LOAD_ERROR_TITLES } from '@app/specs/browse-guard.spec';
 import { BROWSE_PARTITION, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
@@ -370,6 +374,42 @@ test('page-cannot-navigate-to-non-web-scheme-e2e', async () => {
   const record = await mainRecord();
   expect(record.openExternal).toEqual([]);
   expect(record.browseContentsCreated).toBe(1);
+});
+
+test('browse-session-refuses-file-scheme-e2e', async () => {
+  const id = await open('/a', 'Page A');
+  // A readable file with content the page must never see.
+  const dir = await mkdtemp(path.join(tmpdir(), 'frost-e2e-file-'));
+  const marker = `frost-secret-${randomUUID()}`;
+  const file = path.join(dir, 'secret.txt');
+  await writeFile(file, marker);
+  try {
+    const target = pathToFileURL(file).href;
+    // Main loads it directly into the tab (no navigation guard sees a main-initiated load).
+    const result = await app.evaluate(
+      async ({ webContents }, { id, target }) => {
+        const contents = webContents.fromId(id)!;
+        const committed: string[] = [];
+        const onNavigate = (_event: unknown, url: string) => committed.push(url);
+        contents.on('did-navigate', onNavigate);
+        let error: string | null = null;
+        try {
+          await contents.loadURL(target);
+        } catch (failure) {
+          error = (failure as { code?: string }).code ?? String(failure);
+        }
+        contents.off('did-navigate', onNavigate);
+        return { error, committed };
+      },
+      { id, target },
+    );
+    expect(result.error).toBe('ERR_FAILED');
+    expect(result.committed).toEqual([]);
+    const text = (await run(id, 'document.documentElement ? document.documentElement.innerText : ""')) as string;
+    expect(text).not.toContain(marker);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('subframe-and-redirect-dropped-e2e', async () => {

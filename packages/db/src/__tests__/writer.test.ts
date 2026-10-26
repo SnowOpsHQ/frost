@@ -1,11 +1,15 @@
 // Spec: specs/browser-session-db.spec.ts (SESSION_WRITE_BATCH_MS)
 // Acceptance: specs/browser-session-db.feature.md (Writer)
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { SESSION_WRITE_BATCH_MS } from '@app/specs/browser-session-db.spec';
 import { createDrizzle } from '../client';
 import { runMigrations } from '../migrations';
 import { createSessionRepository, type SessionRepository, type SessionWrite } from '../repository';
+import { openSessionStore } from '../store';
 import { createSessionWriter } from '../writer';
 
 let repo: SessionRepository;
@@ -81,6 +85,26 @@ describe('writer', () => {
     expect(writes).toHaveLength(1);
   });
 
+  test('close-flushes-then-closes', async () => {
+    vi.useRealTimers();
+    const dir = mkdtempSync(path.join(tmpdir(), 'frost-db-close-'));
+    try {
+      const store = openSessionStore({ dir });
+      expect(store.isOpen).toBe(true);
+      store.writer.saveSession(tabs(3));
+      await store.close();
+      expect(store.isOpen).toBe(false);
+      // Idempotent; the pending strip was written before the database closed.
+      await store.close();
+      const again = openSessionStore({ dir });
+      expect(await again.repository.loadSession()).toEqual(tabs(3));
+      await again.close();
+      expect(again.isOpen).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('permission-decisions-written-at-once', async () => {
     const writer = createSessionWriter(repo, { now: () => clock });
     const decision = { origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'geolocation', decision: 'allow' } as const;
@@ -92,9 +116,15 @@ describe('writer', () => {
     expect(await repo.loadPermissionDecisions()).toEqual([decision]);
   });
 
-  test('write-failure-logged-once', async () => {
+  test('write-failures-logged-once-per-kind', async () => {
     const log = vi.fn();
-    const failing: SessionRepository = { ...repo, write: vi.fn(async () => Promise.reject(new Error('disk full'))), savePermissionDecision: vi.fn(async () => Promise.reject(new Error('disk full'))) };
+    const sqliteError = (errcode: number, message: string) => Object.assign(new Error(message), { code: 'ERR_SQLITE_ERROR', errcode });
+    let next: Error = sqliteError(13, 'database or disk is full');
+    const failing: SessionRepository = {
+      ...repo,
+      write: vi.fn(async () => Promise.reject(next)),
+      savePermissionDecision: vi.fn(async () => Promise.reject(next)),
+    };
     const writer = createSessionWriter(failing, { now: () => clock, log });
     writer.saveSession(tabs(1));
     await expect(writer.flush()).resolves.toBeUndefined();
@@ -103,7 +133,23 @@ describe('writer', () => {
     writer.savePermissionDecision({ origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'geolocation', decision: 'allow' });
     await expect(writer.flush()).resolves.toBeUndefined();
     expect(failing.write).toHaveBeenCalledTimes(2);
+    // The same kind (disk full) three times: one line.
     expect(log).toHaveBeenCalledOnce();
-    expect(log.mock.calls[0]?.[0]).toContain('disk full');
+    expect(log.mock.calls[0]?.[0]).toContain('database or disk is full');
+    // Another kind (an I/O error, an extended code of it too) is reported once more.
+    next = sqliteError(10, 'disk I/O error');
+    writer.recordVisit('https://b.example/');
+    await writer.flush();
+    next = sqliteError(10 | (3 << 8), 'disk I/O error (read)');
+    writer.recordVisit('https://c.example/');
+    await writer.flush();
+    next = new Error('something else entirely');
+    writer.recordVisit('https://d.example/');
+    await writer.flush();
+    expect(log.mock.calls.map(([message]) => message)).toEqual([
+      expect.stringContaining('database or disk is full'),
+      expect.stringContaining('disk I/O error'),
+      expect.stringContaining('something else entirely'),
+    ]);
   });
 });

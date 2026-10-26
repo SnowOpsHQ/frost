@@ -79,16 +79,18 @@ describe('session restore', () => {
     controller.restoreSession({
       tabs: [
         { url: 'file:///etc/passwd', title: 'x' },
-        { url: 'https://a.test/', title: 'A' },
+        { url: 'https://user:secret@a.test/', title: 'A' },
         { url: 'app://app/', title: 'y' },
         { url: 'javascript:alert(1)', title: 'z' },
       ],
       activeIndex: 2,
     });
     attach();
+    // Userinfo is stripped too (defence in depth): never shown, loaded or saved.
     expect(urls()).toEqual(['https://a.test/']);
     expect(activeIndex()).toBe(0);
     expect(views.flatMap((v) => v.webContents.loadURL.mock.calls.map(([url]) => url))).toEqual(['https://a.test/']);
+    expect(JSON.stringify(state())).not.toContain('secret');
 
     const other = createBrowserController({ createView: () => new FakeTabView() as unknown as TabView, platform: 'linux' });
     other.restoreSession({ tabs: [{ url: 'file:///etc/passwd', title: '' }, { url: 'data:text/html,x', title: '' }], activeIndex: 0 });
@@ -102,6 +104,59 @@ describe('session restore', () => {
     controller.restoreSession(saved);
     expect(state()).toEqual(before);
     expect(views).toHaveLength(0);
+  });
+});
+
+describe('restored loads', () => {
+  test('restored-tab-reload-after-aborted-load', () => {
+    controller.restoreSession({ tabs: [{ url: 'https://a.test/page', title: 'A' }], activeIndex: 0 });
+    attach();
+    const contents = views[0]!.webContents;
+    expect(contents.loadURL).toHaveBeenCalledExactlyOnceWith('https://a.test/page');
+    // The first load is aborted (Stop, a dropped navigation): nothing committed, no error panel.
+    contents.loading = true;
+    contents.emit('did-start-loading');
+    contents.emit('did-fail-load', fakeEvent(), -3, 'ERR_ABORTED', 'https://a.test/page', true, 1, 1);
+    contents.loading = false;
+    contents.emit('did-stop-loading');
+    expect(state().tabs[0]).toMatchObject({ url: 'https://a.test/page', title: 'A', error: null, loading: false });
+    // Reload loads the saved URL again (a WebContents reload with no committed entry does nothing).
+    controller.reload();
+    expect(contents.reload).not.toHaveBeenCalled();
+    expect(contents.loadURL).toHaveBeenCalledTimes(2);
+    expect(contents.loadURL).toHaveBeenLastCalledWith('https://a.test/page');
+    // Once a page committed, Reload is a plain reload.
+    commit(contents, 'https://a.test/page', 'A');
+    controller.reload();
+    expect(contents.reload).toHaveBeenCalledOnce();
+    expect(contents.loadURL).toHaveBeenCalledTimes(2);
+  });
+
+  test('typed-navigation-replaces-restored-url', () => {
+    controller.restoreSession({ tabs: [{ url: 'https://a.test/', title: 'A' }], activeIndex: 0 });
+    attach();
+    const contents = views[0]!.webContents;
+    controller.navigate('https://b.test/');
+    // The aborted typed load leaves the tab as the user left it; Reload does not go back to A.
+    contents.emit('did-fail-load', fakeEvent(), -3, 'ERR_ABORTED', 'https://b.test/', true, 1, 1);
+    contents.emit('did-stop-loading');
+    expect(state().tabs[0]?.url).toBe('');
+    controller.reload();
+    expect(contents.loadURL.mock.calls.map(([url]) => url)).toEqual(['https://a.test/', 'https://b.test/']);
+  });
+
+  test('restore-load-records-no-visit', () => {
+    controller.restoreSession({ tabs: [{ url: 'https://a.test/', title: 'A' }, { url: 'https://b.test/', title: 'B' }], activeIndex: 0 });
+    attach();
+    // Loading what was already open is not a visit, at launch or when a background tab is shown.
+    commit(views[0]!.webContents, 'https://a.test/', 'A');
+    controller.activateTab(state().tabs[1]!.id);
+    commit(views[1]!.webContents, 'https://b.test/', 'B');
+    expect(sink.recordVisit).not.toHaveBeenCalled();
+    // Later navigations in those tabs are.
+    commit(views[0]!.webContents, 'https://a.test/next', 'Next');
+    commit(views[1]!.webContents, 'https://b.test/', 'B');
+    expect(sink.recordVisit.mock.calls).toEqual([['https://a.test/next'], ['https://b.test/']]);
   });
 });
 
@@ -193,21 +248,44 @@ describe('session saving', () => {
     controller.navigate('https://a.test/');
     commit(views[0]!.webContents, 'https://a.test/', 'A');
     controller.newTab();
-    sink.saveSession.mockClear();
+    const closedStrip = { tabs: [{ url: 'https://a.test/', title: 'A' }, { url: '', title: '' }], activeIndex: 1 };
+    // Each change was saved as it happened: closing has nothing new to save.
+    expect(lastSaved()).toEqual(closedStrip);
+    const saves = sink.saveSession.mock.calls.length;
     win.emit('close', fakeEvent());
-    expect(sink.saveSession).toHaveBeenCalledOnce();
-    expect(lastSaved()).toEqual({ tabs: [{ url: 'https://a.test/', title: 'A' }, { url: '', title: '' }], activeIndex: 1 });
     // Tear-down and the empty tab left behind are never saved.
     views[0]!.webContents.destroy();
     win.emit('closed');
     expect(state().tabs).toHaveLength(1);
-    expect(sink.saveSession).toHaveBeenCalledOnce();
-    // A new window's tabs are saved again.
+    expect(sink.saveSession).toHaveBeenCalledTimes(saves);
+
+    // A window reopened from the dock (macOS) starts on one empty tab: closing it untouched, or
+    // quitting, keeps the session saved from the window before.
+    const reopened = new FakeHostWindow();
+    attach(reopened);
+    controller.focusAddressBar();
+    reopened.emit('close', fakeEvent());
+    reopened.emit('closed');
+    expect(sink.saveSession).toHaveBeenCalledTimes(saves);
+    expect(lastSaved()).toEqual(closedStrip);
+
+    // A new window's tabs are saved again once something happens in it.
     const next = new FakeHostWindow();
     attach(next);
     controller.navigate('https://b.test/');
     commit(views[1]!.webContents, 'https://b.test/', 'B');
     expect(lastSaved()).toEqual({ tabs: [{ url: 'https://b.test/', title: 'B' }], activeIndex: 0 });
+    const afterB = sink.saveSession.mock.calls.length;
+    // A change made while closing (a page's last title) is still saved, then nothing after it.
+    next.title = '';
+    views[1]!.webContents.title = 'B (closing)';
+    views[1]!.webContents.emit('page-title-updated', fakeEvent(), 'B (closing)', false);
+    expect(sink.saveSession).toHaveBeenCalledTimes(afterB + 1);
+    next.emit('close', fakeEvent());
+    expect(sink.saveSession).toHaveBeenCalledTimes(afterB + 1);
+    views[1]!.webContents.title = 'after close';
+    views[1]!.webContents.emit('page-title-updated', fakeEvent(), 'after close', false);
+    expect(sink.saveSession).toHaveBeenCalledTimes(afterB + 1);
   });
 });
 

@@ -13,6 +13,7 @@ import { restrictAppRequests } from './protocol/requests';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
+import { claimSingleInstance } from './single-instance';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
@@ -26,100 +27,110 @@ const debugRefusal = remoteDebuggingRefusal({
 if (debugRefusal !== null) {
   console.error(`frost: ${debugRefusal}`);
   app.exit(1);
+} else {
+  start();
 }
 
-// Global backstop: every renderer is sandboxed even if a future WebContents forgets the explicit pref.
-app.enableSandbox();
+/** Everything else main does, for the one instance that runs (never with a refused switch). */
+function start(): void {
+  // One frost per profile (specs/browser-session-db.feature.md, Single instance): a second launch
+  // on the same `userData` shows this instance's window and quits before it opens anything, so
+  // two instances never save over each other's session.
+  if (!claimSingleInstance(app, { windows: () => BrowserWindow.getAllWindows(), openWindow: () => openMainWindow() })) return;
 
-// Privileged schemes must be registered before the app is ready.
-registerAppScheme();
+  // Global backstop: every renderer is sandboxed even if a future WebContents forgets the explicit pref.
+  app.enableSandbox();
 
-// The Vite dev-server origin is trusted (navigation, IPC sender, renderer source) only when
-// unpackaged under `electron-forge start` (specs/security-policy.spec.ts, ipc-sender.spec.ts).
-const devServerUrl = app.isPackaged ? undefined : MAIN_WINDOW_VITE_DEV_SERVER_URL;
+  // Privileged schemes must be registered before the app is ready.
+  registerAppScheme();
 
-// The browser-session database (specs/browser-session-db.feature.md): one file in `userData`,
-// opened synchronously here, in main only (a corrupt or unusable file never stops the app). Tab
-// and visit writes are batched; whatever is pending is flushed before the app quits.
-const logSession = (message: string): void => console.warn(`frost: ${message}`);
-const sessionStore = openBrowserSessionStore(app.getPath('userData'), logSession);
-flushBeforeQuit(app, sessionStore);
+  // The Vite dev-server origin is trusted (navigation, IPC sender, renderer source) only when
+  // unpackaged under `electron-forge start` (specs/security-policy.spec.ts, ipc-sender.spec.ts).
+  const devServerUrl = app.isPackaged ? undefined : MAIN_WINDOW_VITE_DEV_SERVER_URL;
 
-// Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
-// procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
-// New Tab with no window open (macOS) opens the window instead of adding a hidden tab.
-// Tabs' permission requests become per-origin prompts (specs/permissions.feature.md); Allow /
-// Block decisions are loaded at startup and written through to the session database.
-const decisions = createPersistentDecisionStore((decision) => sessionStore.writer.savePermissionDecision(decision));
-const permissions = createPermissionBroker({ store: decisions });
-const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow(), permissions, session: sessionStore.writer });
+  // The browser-session database (specs/browser-session-db.feature.md): one file in `userData`,
+  // opened synchronously here, in main only (a corrupt or unusable file never stops the app). Tab
+  // and visit writes are batched; whatever is pending is flushed before the app quits.
+  const logSession = (message: string): void => console.warn(`frost: ${message}`);
+  const sessionStore = openBrowserSessionStore(app.getPath('userData'), logSession);
+  flushBeforeQuit(app, sessionStore);
 
-// The browse guard turns a tab's gesture-backed popups into background tabs
-// (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
-const securityOptions: SecurityOptions = {
-  devServerUrl,
-  browse: { openTab: (opener, url) => void browser.openTabFromPage(opener, url) },
-};
+  // Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
+  // procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
+  // New Tab with no window open (macOS) opens the window instead of adding a hidden tab.
+  // Tabs' permission requests become per-origin prompts (specs/permissions.feature.md); Allow /
+  // Block decisions are loaded at startup and written through to the session database.
+  const decisions = createPersistentDecisionStore((decision) => sessionStore.writer.savePermissionDecision(decision));
+  const permissions = createPermissionBroker({ store: decisions });
+  const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow(), permissions, session: sessionStore.writer });
 
-// Installed before any WebContents exists, so none is ever left unguarded.
-registerAppWideGuards(securityOptions);
+  // The browse guard turns a tab's gesture-backed popups into background tabs
+  // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
+  const securityOptions: SecurityOptions = {
+    devServerUrl,
+    browse: { openTab: (opener, url) => void browser.openTabFromPage(opener, url) },
+  };
 
-// IPC is accepted only from the app's own windows (a live set) on an accepted origin; the same
-// registry decides who may load app://.
-const windows = createWindowRegistry();
-const senderPolicy = createSenderPolicy({ knownWindowIds: windows.knownWindowIds, devServerUrl });
+  // Installed before any WebContents exists, so none is ever left unguarded.
+  registerAppWideGuards(securityOptions);
 
-function openMainWindow(): void {
-  const win = createMainWindow();
-  windows.track(win);
-  registerSecurity(session.defaultSession, win, securityOptions);
-  browser.attach(win);
-  loadRenderer(win, { devServerUrl }).catch((err: unknown) => {
-    console.error('failed to load renderer', err);
-    app.quit();
+  // IPC is accepted only from the app's own windows (a live set) on an accepted origin; the same
+  // registry decides who may load app://.
+  const windows = createWindowRegistry();
+  const senderPolicy = createSenderPolicy({ knownWindowIds: windows.knownWindowIds, devServerUrl });
+
+  function openMainWindow(): void {
+    const win = createMainWindow();
+    windows.track(win);
+    registerSecurity(session.defaultSession, win, securityOptions);
+    browser.attach(win);
+    loadRenderer(win, { devServerUrl }).catch((err: unknown) => {
+      console.error('failed to load renderer', err);
+      app.quit();
+    });
+  }
+
+  void app.whenReady().then(async () => {
+    // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
+    // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
+    restrictAppRequests(session.defaultSession, windows.isAppWebContents);
+    // Tabs' session: no `app:` handler (protocol.handle below is the default session's), per-origin
+    // permission prompts (everything not promptable denied), and every download cancelled with a notice.
+    hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), {
+      onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
+      permissions: createBrowsePermissionHandlers({
+        broker: permissions,
+        tabIdOf: (contents) => browser.tabIdOf(contents),
+        isFullscreen: (tabId) => browser.isFullscreen(tabId),
+      }),
+    });
+    // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
+    handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
+    attachIpcHandler({
+      router: appRouter,
+      policy: senderPolicy,
+      ipcMain,
+      fromWebContents: (contents) => BrowserWindow.fromWebContents(contents),
+      services: { browser },
+    });
+    // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) are menu accelerators calling the controller directly
+    // (specs/tabs.feature.md).
+    installAppMenu(browser);
+    // What the last launch saved, after the sessions are hardened and before any tab or window
+    // exists: remembered decisions answer the first requests, and the chrome's first state already
+    // has the restored tabs.
+    const saved = await loadSavedState(sessionStore, logSession);
+    decisions.load(saved.decisions);
+    browser.restoreSession(saved.session);
+    openMainWindow();
+
+    // macOS: re-create a window when the dock icon is clicked and none are open.
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) openMainWindow();
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
   });
 }
-
-void app.whenReady().then(async () => {
-  // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
-  // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
-  restrictAppRequests(session.defaultSession, windows.isAppWebContents);
-  // Tabs' session: no `app:` handler (protocol.handle below is the default session's), per-origin
-  // permission prompts (everything not promptable denied), and every download cancelled with a notice.
-  hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), {
-    onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
-    permissions: createBrowsePermissionHandlers({
-      broker: permissions,
-      tabIdOf: (contents) => browser.tabIdOf(contents),
-      isFullscreen: (tabId) => browser.isFullscreen(tabId),
-    }),
-  });
-  // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
-  handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
-  attachIpcHandler({
-    router: appRouter,
-    policy: senderPolicy,
-    ipcMain,
-    fromWebContents: (contents) => BrowserWindow.fromWebContents(contents),
-    services: { browser },
-  });
-  // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) are menu accelerators calling the controller directly
-  // (specs/tabs.feature.md).
-  installAppMenu(browser);
-  // What the last launch saved, after the sessions are hardened and before any tab or window
-  // exists: remembered decisions answer the first requests, and the chrome's first state already
-  // has the restored tabs.
-  const saved = await loadSavedState(sessionStore, logSession);
-  decisions.load(saved.decisions);
-  browser.restoreSession(saved.session);
-  openMainWindow();
-
-  // macOS: re-create a window when the dock icon is clicked and none are open.
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) openMainWindow();
-  });
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});

@@ -133,7 +133,7 @@ export interface BrowseSessionHooks {
  * Session-wide policy of the browse partition: permission requests and checks go to the
  * per-origin prompt handlers (`hooks.permissions`; deny-all without them, which also keeps
  * Electron's `openExternal` permission denied); device permissions (HID, serial, USB) are always
- * denied; every download is cancelled (no download manager in Phase 1). No certificate-verify proc
+ * denied; every `file:` request fails; every download is cancelled (no download manager in Phase 1). No certificate-verify proc
  * is installed: Chromium's verifier decides, and the app-wide `certificate-error` handler never
  * overrides it (`security/register.ts`).
  */
@@ -149,6 +149,11 @@ export function hardenBrowseSession(session: Session, hooks: BrowseSessionHooks 
     session.setPermissionCheckHandler(() => false);
   }
   session.setDevicePermissionHandler(() => false);
+  // Backstop for `file:` (`browse-guard.feature.md`): the navigation guards and Chromium already
+  // keep pages off it, but a load main starts (`loadURL`, e.g. a future bug in restore) passes no
+  // navigation guard. This session's own `file:` handler fails every such request; other sessions
+  // (the app UI's) keep theirs.
+  session.protocol.handle('file', () => Response.error());
   session.on('will-download', (event, item, contents) => {
     event.preventDefault();
     item.cancel();

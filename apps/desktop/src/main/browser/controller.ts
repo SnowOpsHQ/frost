@@ -288,12 +288,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     activeIndex: Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId)),
   });
 
-  /** Hands the strip to the session sink if it changed (or `force`), while a window shows it. */
-  const saveSession = (force = false): void => {
+  /**
+   * Hands the strip to the session sink if it changed since the last save (or since the window
+   * was attached), while a window shows it.
+   */
+  const saveSession = (): void => {
     if (!session || sessionPaused || !hasWindow()) return;
     const snapshot = sessionSnapshot();
     const serialized = JSON.stringify(snapshot);
-    if (!force && serialized === lastSavedSession) return;
+    if (serialized === lastSavedSession) return;
     lastSavedSession = serialized;
     session.saveSession(snapshot);
   };
@@ -580,12 +583,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // A main-frame page committed (Electron emits `did-navigate` only for non-error pages): the
     // old document's permission prompts are denied, and the new one is not fullscreen.
     listen('did-navigate', (_event: unknown, url: unknown) => {
+      // Loading what was open at the last launch (its saved URL) is not a new visit.
+      const restoring = tab.restored !== null && url === tab.restored.url;
       tab.error = null;
       tab.restored = null;
       if (denyPrompts(tab)) changed();
       if (clearFullscreen(tab)) applyBounds(tab);
       refresh(tab);
-      recordVisit(url);
+      if (!restoring) recordVisit(url);
     });
     // Main-frame load failures show the error panel; `ERR_ABORTED` (a dropped navigation, a stop,
     // a download) and subframe failures do not.
@@ -782,7 +787,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const url = tab.state.url;
     const view = liveView(tab);
     if (view) {
-      view.webContents.reload();
+      // A restored tab whose first load never committed (aborted) has no entry to reload: load
+      // its saved URL again.
+      if (tab.restored && view.webContents.getURL() === '') {
+        view.webContents.loadURL(tab.restored.url).catch(() => {
+          // Failures surface through `did-fail-load` / the tab state.
+        });
+      } else {
+        view.webContents.reload();
+      }
       return;
     }
     if (!isWebUrl(url)) return;
@@ -839,9 +852,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const restored: Tab[] = [];
     let activeIndex = -1;
     saved.tabs.forEach((entry, index) => {
-      const url = typeof entry.url === 'string' ? entry.url : null;
-      // Defence in depth: the database already dropped these.
-      if (url === null || (url !== '' && !isWebUrl(url)) || restored.length >= MAX_TABS) return;
+      const raw = typeof entry.url === 'string' ? entry.url : null;
+      // Defence in depth: the database already dropped these (and stripped userinfo).
+      if (raw === null || (raw !== '' && !isWebUrl(raw)) || restored.length >= MAX_TABS) return;
+      const url = raw === '' ? '' : displayUrl(raw);
       // The saved active tab, else (skipped) the next kept tab to its right.
       if (activeIndex < 0 && index >= saved.activeIndex) activeIndex = restored.length;
       const tab = createTab();
@@ -886,10 +900,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       target.on('resize', relayout);
       target.on('enter-full-screen', relayout);
       target.on('leave-full-screen', relayout);
-      // Closing: the strip is saved one last time; the tear-down and the empty tab left behind are not.
+      // Closing: a last change of the strip is saved; the tear-down and the empty tab left behind
+      // are not. A window closed as it started (a macOS window reopened on an empty tab) saves
+      // nothing, so the session saved before it is kept.
       target.once('close', () => {
         if (win !== target) return;
-        saveSession(true);
+        saveSession();
         sessionPaused = true;
       });
       target.once('closed', () => {
@@ -912,6 +928,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       if (resolved === null || !tab) return false;
       const view = ensureView(tab);
       if (!view) return false;
+      // What the user typed replaces a restored tab's saved URL (as shown, and for Reload).
+      tab.restored = null;
       view.webContents.loadURL(resolved.url).catch(() => {
         // Superseded or failed loads surface through `did-fail-load` / the tab state.
       });

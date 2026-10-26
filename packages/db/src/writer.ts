@@ -3,7 +3,8 @@ import type { SavedSession, SessionRepository, StoredDecision, VisitUpdate } fro
 
 // Batched writes (spec `browser-session-db.feature.md`, Batched writes). The tab strip and visits
 // are held in memory and written together at most once per `SESSION_WRITE_BATCH_MS`; permission
-// decisions are written at once. Writes never throw into the caller: a failure is logged once.
+// decisions are written at once. Writes never throw into the caller: each kind of failure is
+// logged once.
 
 export interface SessionWriter {
   /** The latest tab strip (replaces any pending one). */
@@ -21,7 +22,7 @@ export interface SessionWriter {
 export interface WriterOptions {
   readonly now?: () => number;
   readonly batchMs?: number;
-  /** Reports the first failed write (later failures are not reported again). */
+  /** Reports a failed write, once per kind of failure (`failureKind`). */
   readonly log?: (message: string) => void;
   readonly setTimer?: (callback: () => void, ms: number) => unknown;
   readonly clearTimer?: (timer: unknown) => void;
@@ -32,6 +33,19 @@ interface PendingVisit {
   lastVisitAt: number;
   title: string;
 }
+
+/**
+ * What kind of failure `error` is, for logging each kind once: SQLite's primary result code
+ * (disk full, I/O error, busy, …), else the message.
+ */
+function failureKind(error: unknown): string {
+  const code = typeof error === 'object' && error !== null ? (error as { errcode?: unknown }).errcode : undefined;
+  if (typeof code === 'number') return `sqlite:${code & 0xff}`;
+  return `error:${error instanceof Error ? error.message : String(error)}`;
+}
+
+/** At most this many distinct failure kinds are reported (a flood of distinct messages stays bounded). */
+const MAX_REPORTED_FAILURE_KINDS = 20;
 
 export function createSessionWriter(repository: SessionRepository, options: WriterOptions = {}): SessionWriter {
   const now = options.now ?? Date.now;
@@ -46,14 +60,16 @@ export function createSessionWriter(repository: SessionRepository, options: Writ
   let timer: unknown = null;
   /** Every write started and not yet settled (they run one after another). */
   let tail: Promise<void> = Promise.resolve();
-  let failed = false;
+  /** Failure kinds already reported. */
+  const reported = new Set<string>();
 
   /** Runs `write` after every earlier one; it never rejects. */
   const enqueue = (write: () => Promise<void>): Promise<void> => {
     tail = tail.then(write).catch((error: unknown) => {
-      if (failed) return;
-      failed = true;
-      log(`browser-session write failed (${error instanceof Error ? error.message : String(error)}); later failures are not reported`);
+      const kind = failureKind(error);
+      if (reported.has(kind) || reported.size >= MAX_REPORTED_FAILURE_KINDS) return;
+      reported.add(kind);
+      log(`browser-session write failed (${error instanceof Error ? error.message : String(error)}); further failures of this kind are not reported`);
     });
     return tail;
   };

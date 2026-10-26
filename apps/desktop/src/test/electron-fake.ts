@@ -128,6 +128,13 @@ export class FakeSession extends EventEmitter {
   setDevicePermissionHandler = vi.fn((handler: DevicePermissionHandler | null) => {
     this.devicePermissionHandler = handler;
   });
+  /** `session.protocol.handle` registrations, by scheme. */
+  readonly protocolHandlers = new Map<string, (request: Request) => Response | Promise<Response>>();
+  readonly protocol = {
+    handle: vi.fn((scheme: string, handler: (request: Request) => Response | Promise<Response>) => {
+      this.protocolHandlers.set(scheme, handler);
+    }),
+  };
   // Like Electron, a session holds one listener per webRequest event; registering again replaces it.
   readonly webRequest = {
     onHeadersReceived: vi.fn((listener: HeadersReceivedListener | null) => {
