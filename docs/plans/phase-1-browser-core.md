@@ -92,29 +92,30 @@ owning task.
   `null` for empty/whitespace input (a no-op).
 - `createTabView(): WebContentsView` — allowlisted factory; prefs equal `TAB_VIEW_WEB_PREFERENCES`.
 - `BrowserService` (in `@app/ipc-contract`): `navigate(input)`, `back()`, `forward()`, `reload()`,
-  `stop()`, `setPageBounds(rect)`, `getState()`, `watch(sinceVersion): Promise<BrowserState>`.
+  `stop()`, `setPageBounds(rect)`, `getState()`, `watch(sinceVersion, signal?): Promise<BrowserState>`
+  (the router aborts `signal` when it answers on its own timeout, so the controller drops the waiter).
 - Procedures (each `publicProcedure.use(enforceSender)` first, Zod-validated input):
   `browser.navigate`, `browser.back`, `browser.forward`, `browser.reload`, `browser.stop`,
   `browser.setPageBounds`, `browser.watch` (resolves when `version > sinceVersion` or after
   `WATCH_TIMEOUT_MS` with the current state).
 
-- [ ] **Step 1 (spec):** `address-bar.feature.md` — `example.com` → `https://example.com/`;
+- [x] **Step 1 (spec):** `address-bar.feature.md` — `example.com` → `https://example.com/`;
   `localhost:5173` and `127.0.0.1:8080/x` → `http://…`; explicit `http://`/`https://` kept;
   `hello world` → search; non-web inputs (Review Focus list) → search; empty/whitespace → no-op.
   `browser-chrome.feature.md` — typing a URL + Enter loads it in the page view; the address bar shows
   the committed URL and the window title the page title; back/forward/reload/stop enable and act
   correctly; the page view tracks the page-area bounds on resize; an empty tab shows frost's start
   view (page view hidden); `tab-has-no-ipc`; tab cannot load `app://`.
-- [ ] **Step 2: failing tests** — unit tests for `resolveAddressInput` (every scenario), the factory's
+- [x] **Step 2: failing tests** — unit tests for `resolveAddressInput` (every scenario), the factory's
   prefs (`toEqual(TAB_VIEW_WEB_PREFERENCES)`, partition, no preload), the session-classified guard,
   router procedures (sender rejection first, Zod rejects malformed input, `watch` timing with fake
   timers); e2e `browser.e2e.ts` against a loopback server.
-- [ ] **Step 3: run → FAIL.**
-- [ ] **Step 4: implement.** Keep the existing `data-testid="ping"` element (Phase 0 e2e) as a
+- [x] **Step 3: run → FAIL.**
+- [x] **Step 4: implement.** Keep the existing `data-testid="ping"` element (Phase 0 e2e) as a
   status-bar connection indicator. Chrome layout: toolbar (back, forward, reload/stop, address bar),
   page area (measured with `ResizeObserver`, reported via `browser.setPageBounds`), status bar.
-- [ ] **Step 5: run unit + e2e + Semgrep + Electronegativity → PASS.**
-- [ ] **Step 6: commit** — `feat(browser): browser chrome with address bar and a hardened page view`.
+- [x] **Step 5: run unit + e2e + Semgrep + Electronegativity → PASS.**
+- [x] **Step 6: commit** — `feat(browser): browser chrome with address bar and a hardened page view`.
 
 ### Task 2: Tabs
 
@@ -122,18 +123,19 @@ owning task.
 controller, router (`browser.newTab`, `browser.closeTab`, `browser.activateTab`), and renderer (tab
 strip). Test: unit + `e2e/tabs.e2e.ts`.
 
-- [ ] **Step 1 (spec):** new tab (button, Cmd/Ctrl+T) opens an empty tab and focuses the address bar;
+- [x] **Step 1 (spec):** new tab (button, Cmd/Ctrl+T) opens an empty tab and focuses the address bar;
   close (button, Cmd/Ctrl+W) destroys its view (`webContents.close()`), activating the neighbour;
   closing the last tab leaves one empty tab (window stays open); switching shows exactly one view;
   tab titles/favicons-free labels and loading indicator; `MAX_TABS` enforced.
-- [ ] **Steps 2–5:** red → green as above; menu accelerators via the app menu, not renderer key hooks.
-- [ ] **Step 6: commit** — `feat(browser): tabs`.
+- [x] **Steps 2–5:** red → green as above; menu accelerators via the app menu, not renderer key hooks
+  (also taken in `before-input-event` of every tab and the chrome, so a page cannot block them).
+- [x] **Step 6: commit** — `feat(browser): tabs`.
 
 ### Task 3: Browsed-content navigation guards
 
 **Files:** `specs/browse-guard.feature.md`; modify `browser/guard.ts`. Test: unit + `e2e/browse-guard.e2e.ts`.
 
-- [ ] **Step 1 (spec):** main-frame and subframe navigations and redirects allowed only to
+- [x] **Step 1 (spec):** main-frame and subframe navigations and redirects allowed only to
   `BROWSABLE_SCHEMES` (+ `about:blank`); a non-web scheme (`mailto:`, `vscode:` …) on a real gesture
   goes through the Phase 0 `openExternal` allowlist flow, else dropped;
   `window.open`/`target=_blank` with a gesture → new background tab for browsable URLs, without a
@@ -143,8 +145,8 @@ strip). Test: unit + `e2e/tabs.e2e.ts`.
   dialogs are off in tabs (`disableDialogs`: no origin-less native dialog owned by frost;
   chrome-rendered, origin-labelled dialogs come later) and a page's `beforeunload` never blocks
   navigating away, reloading, or closing its tab or the window (`will-prevent-unload` prevented).
-- [ ] **Steps 2–5:** red → green, including every Review Focus item owned by this task.
-- [ ] **Step 6: commit** — `feat(security): browsed-content navigation guards`.
+- [x] **Steps 2–5:** red → green, including every Review Focus item owned by this task.
+- [x] **Step 6: commit** — `feat(security): browsed-content navigation guards`.
 
 ### Task 4: Permission prompts
 
@@ -153,14 +155,14 @@ strip). Test: unit + `e2e/tabs.e2e.ts`.
 `specs/permissions.feature.md`; `browser/permissions.ts`; router `browser.answerPermission`; renderer
 prompt bar. Test: unit + `e2e/permissions.e2e.ts`.
 
-- [ ] **Step 1 (spec):** browse-session requests for a promptable permission show a prompt naming the
+- [x] **Step 1 (spec):** browse-session requests for a promptable permission show a prompt naming the
   *requesting* frame's origin (and the top-level site when it is embedded); Allow/Block answers it
-  and is remembered per (requesting origin, top-level origin, permission) for the app session
-  (only Block also persists, Task 5);
+  and is remembered per (requesting origin, top-level origin, permission): **Block** persists
+  (Task 5), **Allow** lasts for the app session only;
   dismissing, closing the tab, or navigating away denies; non-promptable permissions are denied
   silently; the app UI's default session stays deny-all (Phase 0).
-- [ ] **Steps 2–5:** red → green.
-- [ ] **Step 6: commit** — `feat(browser): per-origin permission prompts`.
+- [x] **Steps 2–5:** red → green.
+- [x] **Step 6: commit** — `feat(browser): per-origin permission prompts`.
 
 ### Task 5: Local browser-session database
 
@@ -179,7 +181,7 @@ unchanged. Drizzle stays: Drizzle 0.45 has no `node:sqlite` driver, so queries g
 libSQL when sync lands (Phase 7) is a driver swap. Migrations are numbered SQL strings compiled into
 the main bundle, applied at startup by a small forward-only runner (`schema_migrations`).
 
-- [ ] **Step 1 (spec):** open tabs (URL, order, active) persist and restore on relaunch;
+- [x] **Step 1 (spec):** open tabs (URL, order, active) persist and restore on relaunch;
   `restore-skips-non-browsable-urls`; visits are recorded (url, title, count, last visit) for
   committed browsable navigations only; remembered **Block** decisions persist (an Allow is for the
   app session only; migration `0002` drops Allows stored by earlier builds); the DB file lives in
@@ -188,16 +190,51 @@ the main bundle, applied at startup by a small forward-only runner (`schema_migr
   menu on macOS) asks in a native message box from main, then clears `recent_visits`, every stored
   and in-memory permission decision and the prompt back-off, and the browse partition's storage
   and cache, without closing tabs.
-- [ ] **Steps 2–5:** red → green. The packaged app must still pass `verify:mac` (no native module:
+- [x] **Steps 2–5:** red → green. The packaged app must still pass `verify:mac` (no native module:
   `node:sqlite` is built into Electron; the fuses stay as they are).
-- [ ] **Step 6: commit** — `feat(db): local browser-session store with tab restore`.
+- [x] **Step 6: commit** — `feat(db): local browser-session store with tab restore`.
 
 ### Task 6: Release check
 
-- [ ] Rebuild and package on macOS; `pnpm verify:mac` passes; the full e2e suite passes on macOS and
-  Linux; screenshots of the chrome with a page loaded attached to the PR (not committed).
-- [ ] Update `apps/desktop/README.md` (what the app does now) and this plan's checkboxes.
-- [ ] **Commit** — `docs: phase 1 browser core`.
+- [x] Rebuild and package on macOS; `pnpm verify:mac` passes; the full e2e suite passes on macOS and
+  Linux (locally and in CI: `ci.yml` on ubuntu, `macos.yml` with `make:mac` + `verify:mac`).
+- [ ] Screenshots of the chrome with a page loaded attached to the PR (not committed).
+- [x] Update `apps/desktop/README.md` (what the app does now) and this plan's checkboxes.
+- [x] **Commit** — `docs: phase 1 browser core`.
+
+## As built
+
+What shipped differs from the plan above in these ways (each is specced under `specs/`, with
+named tests):
+- **Storage:** `node:sqlite` (`DatabaseSync`, built into Electron 45's main process) behind
+  Drizzle's `sqlite-proxy` driver and an async repository, instead of libSQL (Task 5, Storage
+  decision): no native module to package or unpack from the ASAR; libSQL comes with sync (Phase 7).
+- **IPC:** the in-repo tRPC v11 transport from Phase 0 carries the `browser.*` procedures;
+  `browser.watch` takes an `AbortSignal` (the router's own timeout aborts it, so no waiter
+  leaks), and at most `MAX_PENDING_WATCHES` watches wait.
+- **Permissions:** Block persists, Allow is session-only (migration `0002` dropped Allows stored by
+  earlier builds); the prompt's Allow / Block arm after `PROMPT_ARMING_DELAY_MS`, after focus or
+  visibility changes, and after the tab leaves HTML fullscreen (the bar is covered meanwhile).
+  HTML fullscreen is granted without a prompt, with a frost-owned notice, and Esc always leaves it.
+  **Clear Browsing Data…** clears visits, decisions and site storage after a confirmation.
+- **Navigation guards:** JavaScript dialogs are disabled in tabs (`disableDialogs`; origin-labelled
+  chrome dialogs come later), `beforeunload` cannot block leaving, `file:` is refused on the browse
+  session, and an external open (`mailto:`) needs a gesture **and** the tab's main frame as the
+  navigation's initiator. Popups carry no frame in Electron 45, so their gesture stays per
+  WebContents (accepted risk, `browse-guard.feature.md`).
+- **Page commands** (not in the original plan; `page-commands.feature.md`): View / History menus
+  and reserved shortcuts for Reload, Hard Reload, Stop (Esc), Back / Forward and per-host Zoom (the
+  status bar shows a zoom other than 100 %), and a native page context menu built from the
+  `context-menu` params (links, images, editing, search for the selection; no Inspect / Save As).
+- **Single instance:** one frost per profile; a second launch, and the macOS dock icon, wait for
+  startup (restore + first window) before showing or opening a window.
+- **Code shape:** the controller is split into parts (`browser/tab-model.ts`, `tab-events.ts`,
+  `fullscreen.ts`, `session-sync.ts`, `state-watch.ts`, `tab-permissions.ts`, `page-commands.ts`)
+  and the chrome into `renderer/components/` and `renderer/hooks/`; one Zod-free definition of an
+  `http(s)` URL (`specs/web-url.spec.ts`) serves main, the database and the renderer.
+- **Known limits:** zoom levels are persisted per host by Electron in the browse partition's
+  preferences and are not cleared by Clear Browsing Data; no download manager (downloads are
+  cancelled with a notice); no find bar.
 
 ## Self-review notes
 - **Deliverable coverage (design §4 Phase 1):** tabbed browsing → Tasks 1–2; address bar → 1;
@@ -205,4 +242,5 @@ the main bundle, applied at startup by a small forward-only runner (`schema_migr
 - **Security model (design §3):** every WebContentsView hardened explicitly (1); deny-by-default
   permissions with per-origin prompts (4); `window.open` allowlist + gesture kept and extended to
   tabs (3); the app frame stays pinned to `app://` (1, guard classification).
-- **Out of scope:** SEO sidebar (Phase 2), new-tab widgets, downloads manager, history UI, bookmarks.
+- **Out of scope:** SEO sidebar (Phase 2), new-tab widgets, downloads manager, history UI, bookmarks,
+  find in page.
