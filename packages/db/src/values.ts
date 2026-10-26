@@ -15,7 +15,8 @@ function includes(list: readonly string[], value: unknown): boolean {
  * most `MAX_STORED_URL_LENGTH` long; anything else is `null`.
  */
 export function storableUrl(url: unknown): string | null {
-  if (typeof url !== 'string' || url === '') return null;
+  // Too long before parsing is too long after (removing userinfo aside): never parse a huge value.
+  if (typeof url !== 'string' || url === '' || url.length > MAX_STORED_URL_LENGTH) return null;
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -31,8 +32,10 @@ export function storableUrl(url: unknown): string | null {
 /** `title` cut to `MAX_STORED_TITLE_LENGTH` characters (code points); a non-string is `''`. */
 export function storableTitle(title: unknown): string {
   if (typeof title !== 'string') return '';
-  const chars = [...title];
-  return chars.length <= MAX_STORED_TITLE_LENGTH ? title : chars.slice(0, MAX_STORED_TITLE_LENGTH).join('');
+  // At most as many code points as UTF-16 units: a short string needs no splitting, and a long
+  // one is split only as far as the cap can reach (two units per code point at most).
+  if (title.length <= MAX_STORED_TITLE_LENGTH) return title;
+  return [...title.slice(0, MAX_STORED_TITLE_LENGTH * 2)].slice(0, MAX_STORED_TITLE_LENGTH).join('');
 }
 
 /** `origin` if it is a serialized `http(s)` origin (`https://example.com`, `http://127.0.0.1:8080`). */

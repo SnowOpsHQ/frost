@@ -114,6 +114,23 @@ describe('session', () => {
     expect(await repo.loadSession()).toEqual(empty);
   });
 
+  test('oversized-tampered-rows-skipped', async () => {
+    // A planted 40 MB URL and title, then 300k rows: only `MAX_RESTORED_TABS` rows are read, and
+    // values are cut in SQL (never read whole). The URL is skipped, the title capped.
+    raw.exec('DELETE FROM browser_tabs');
+    raw.exec(`INSERT INTO browser_tabs (position, url, title, active) VALUES
+      (0, 'https://a.example/' || replace(hex(zeroblob(20000000)), '00', 'ab'), 'A', 0),
+      (1, 'https://b.example/', replace(hex(zeroblob(20000000)), '00', 'tt'), 1)`);
+    raw.exec(`WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i + 1 FROM n WHERE i < 300001)
+      INSERT INTO browser_tabs (position, url, title, active) SELECT i, 'https://t' || i || '.example/', '', 0 FROM n`);
+    const started = performance.now();
+    const session = await repo.loadSession();
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(session.tabs).toHaveLength(MAX_RESTORED_TABS - 1);
+    expect(session.tabs[0]).toEqual({ url: 'https://b.example/', title: 't'.repeat(MAX_STORED_TITLE_LENGTH) });
+    expect(session.activeIndex).toBe(0);
+  });
+
   test('restore-is-capped', async () => {
     plantTabs(Array.from({ length: MAX_RESTORED_TABS + 3 }, (_, i) => ({ url: `https://t${i}.example/` })));
     const session = await repo.loadSession();

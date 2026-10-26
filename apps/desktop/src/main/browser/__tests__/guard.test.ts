@@ -345,6 +345,19 @@ describe('browse guard', () => {
     }
   });
 
+  test('browse-session-refuses-file-scheme', async () => {
+    const ses = new FakeSession();
+    hardenBrowseSession(ses as unknown as Session);
+    // A session-level backstop: whatever starts a `file:` load in a tab (main included), the
+    // browse partition's own `file:` handler fails it with a network error.
+    expect(ses.protocol.handle).toHaveBeenCalledExactlyOnceWith('file', expect.any(Function));
+    const handler = ses.protocolHandlers.get('file')!;
+    for (const url of ['file:///etc/passwd', 'file://host/share/x', 'file:///C:/Windows/win.ini']) {
+      const response = await handler(new Request(url));
+      expect(response.type, url).toBe('error');
+    }
+  });
+
   test('browse-session-cancels-downloads', () => {
     const ses = new FakeSession();
     const onDownloadBlocked = vi.fn();
