@@ -147,7 +147,8 @@ function guardBrowseOnce(contents: WebContents, options: SecurityOptions): void 
  * Per-WebContents guards for app content (idempotent; only reached via the app-wide options above):
  * - `window.open` / `target=_blank` never creates a window; the URL goes to `shell.openExternal`
  *   only if allowlisted and backed by a live, unconsumed trusted activation input. Activation is
- *   per-WebContents, not per-frame (spec known limit, revisit in Phase 1).
+ *   per-WebContents, not per-frame (spec known limit: app windows host only the app's own page;
+ *   for tabs see `browse-guard.feature.md`, Gesture attribution).
  * - `will-frame-navigate` (main frame and subframes; `will-navigate` is main-frame-only) and
  *   `will-redirect` are pinned to the app origin (plus the dev server in dev). Off-origin
  *   navigations are dropped, not forwarded to `openExternal`.

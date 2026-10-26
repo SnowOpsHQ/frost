@@ -80,19 +80,36 @@ async function site(): Promise<Awaited<ReturnType<typeof startSite>>> {
 test.beforeAll(async () => {
   ({ app, page } = await launchApp());
   await page.waitForLoadState('domcontentloaded');
-  // Counts every prompt bar the chrome ever renders (so "no prompt" means none, not "none now").
+  // Counts every prompt bar the chrome ever renders (so "no prompt" means none, not "none now"),
+  // and logs, with the renderer's own clock, each bar's mount and every change of its arming.
   await page.evaluate(() => {
-    const counter = globalThis as unknown as { __promptsShown: number };
-    counter.__promptsShown = 0;
+    const record = globalThis as unknown as { __promptsShown: number; __promptLog: PromptLogEntry[] };
+    record.__promptsShown = 0;
+    record.__promptLog = [];
+    const log = (bar: Element, event: 'mount' | 'change') =>
+      record.__promptLog.push({
+        at: performance.now(),
+        event,
+        bar: record.__promptsShown,
+        armed: bar.getAttribute('data-armed') === 'true',
+        covered: bar.getAttribute('data-covered') === 'true',
+      });
     new MutationObserver((records) => {
-      for (const record of records) {
-        for (const node of record.addedNodes) {
-          if (node instanceof Element && (node.matches('[data-testid="permission-prompt"]') || node.querySelector('[data-testid="permission-prompt"]'))) {
-            counter.__promptsShown += 1;
+      for (const mutation of records) {
+        if (mutation.type === 'attributes') {
+          if (mutation.target instanceof Element && mutation.target.matches('[data-testid="permission-prompt"]')) log(mutation.target, 'change');
+          continue;
+        }
+        for (const node of mutation.addedNodes) {
+          const bar = node instanceof Element ? (node.matches('[data-testid="permission-prompt"]') ? node : node.querySelector('[data-testid="permission-prompt"]')) : null;
+          if (bar) {
+            record.__promptsShown += 1;
+            log(bar, 'mount');
           }
         }
       }
-    }).observe(document.body, { childList: true, subtree: true });
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-armed', 'data-covered'] });
+    addEventListener('pointerdown', () => ((globalThis as unknown as { __pointerDownAt: number }).__pointerDownAt = performance.now()), true);
   });
   // When the window or a tab last had a fullscreen event (see `windowSettled`).
   await app.evaluate(({ app: electronApp, BrowserWindow }) => {
@@ -116,6 +133,24 @@ test.afterAll(async () => {
 });
 
 const promptsShown = () => page.evaluate(() => (globalThis as unknown as { __promptsShown: number }).__promptsShown);
+
+/** A prompt bar's mount or a change of its `data-armed` / `data-covered`, at the renderer's `performance.now()`. */
+interface PromptLogEntry {
+  at: number;
+  event: 'mount' | 'change';
+  /** Which bar (the `__promptsShown` count when it mounted). */
+  bar: number;
+  armed: boolean;
+  covered: boolean;
+}
+const promptLog = () => page.evaluate(() => (globalThis as unknown as { __promptLog: PromptLogEntry[] }).__promptLog);
+
+/** The latest bar's log (its mount and every arming change since). */
+async function latestBarLog(): Promise<PromptLogEntry[]> {
+  const log = await promptLog();
+  const bar = log.at(-1)?.bar;
+  return log.filter((entry) => entry.bar === bar);
+}
 
 async function browseContents(): Promise<{ id: number; url: string }[]> {
   return app.evaluate(({ session, webContents }, partition) => {
@@ -165,6 +200,17 @@ const strip = () => page.getByTestId('tab');
 const activeTab = () => page.locator('[data-testid="tab"][aria-selected="true"]');
 const prompt = () => page.getByTestId('permission-prompt');
 const address = () => page.getByTestId('address');
+
+/**
+ * A barrier: once this returns, the chrome has rendered a browser state main took after
+ * everything that happened before the call (it asks main to focus the address bar, which bumps the
+ * state's version, and waits for the chrome to do it).
+ */
+async function chromeCaughtUp(): Promise<void> {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await menu('focus-address-bar');
+  await expect(address()).toBeFocused();
+}
 
 /** Loads `url` in the active tab; answers its WebContents id once it committed with `title`. */
 async function open(url: string, title: string): Promise<number> {
@@ -331,7 +377,7 @@ test('sandboxed-document-denied', async () => {
   await expect.poll(() => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.mainFrame.frames.map((f) => f.url), host)).toEqual([`${a.origin}/plain`]);
   await expect(run(host, 'self.origin', `${a.origin}/plain`)).resolves.toBe('null');
   await expect(run(host, ASK_GEOLOCATION, `${a.origin}/plain`)).resolves.toBe('error 1');
-  await page.waitForTimeout(300);
+  await chromeCaughtUp();
   expect(await promptsShown()).toBe(shown);
   await expect(prompt()).toHaveCount(0);
 });
@@ -341,19 +387,24 @@ test('prompt-buttons-arm-after-delay-e2e', async () => {
   const id = await open(`${a.origin}/notify`, 'Page NOTIFY');
   const asked = run(id, ASK_NOTIFICATIONS);
   await expect(prompt()).toBeVisible();
-  const shownAt = Date.now();
-  // An immediate click on Allow (e.g. a click the page lured onto where the bar appears) does nothing.
-  await expect(prompt()).toHaveAttribute('data-armed', 'false');
+  // A click on Allow while it is still disarmed (e.g. a click the page lured onto where the bar
+  // appears) does nothing. When it landed is read from the renderer's clock (its pointerdown).
   await expect(page.getByTestId('permission-allow')).toBeDisabled();
   await expect(page.getByTestId('permission-block')).toBeDisabled();
   const box = (await page.getByTestId('permission-allow').boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  expect(Date.now() - shownAt).toBeLessThan(PROMPT_ARMING_DELAY_MS);
-  await expect(settledWithin(asked, 200)).resolves.toBe('pending');
-  await expect(prompt()).toBeVisible();
-  // Once armed, the same click answers.
+  const clickedAt = await page.evaluate(() => (globalThis as unknown as { __pointerDownAt: number }).__pointerDownAt);
+  // Once armed, the same click answers (nothing answered the early one: the bar is still there).
   await expect(prompt()).toHaveAttribute('data-armed', 'true');
-  expect(Date.now() - shownAt).toBeGreaterThanOrEqual(PROMPT_ARMING_DELAY_MS - 100);
+  const log = await latestBarLog();
+  const mounted = log.find((entry) => entry.event === 'mount')!;
+  const armed = log.find((entry) => entry.armed)!;
+  expect(mounted.armed).toBe(false);
+  expect(clickedAt).toBeGreaterThan(mounted.at);
+  expect(clickedAt).toBeLessThan(armed.at);
+  // setTimeout never fires early; the observer reports both changes alike (a few ms of slack).
+  expect(armed.at - mounted.at).toBeGreaterThanOrEqual(PROMPT_ARMING_DELAY_MS - 20);
+  await expect(prompt()).toBeVisible();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(asked).resolves.toBe('granted');
 });
@@ -383,7 +434,7 @@ test('non-promptable-denied-without-prompt-e2e', async () => {
   await expect(run(id, 'navigator.requestMIDIAccess().then(() => "granted", (error) => error.name)')).resolves.toBe('NotAllowedError');
   await expect(run(id, 'navigator.requestMIDIAccess({ sysex: true }).then(() => "granted", (error) => error.name)')).resolves.toBe('NotAllowedError');
   await expect(run(id, 'navigator.storage.persist()')).resolves.toBe(false);
-  await page.waitForTimeout(300);
+  await chromeCaughtUp();
   expect(await promptsShown()).toBe(shown);
   await expect(prompt()).toHaveCount(0);
 });
@@ -411,7 +462,7 @@ test('app-session-stays-deny-all-e2e', async () => {
   const shown = await promptsShown();
   await expect(page.evaluate(() => Notification.requestPermission())).resolves.toBe('denied');
   await expect(page.evaluate(() => navigator.permissions.query({ name: 'notifications' }).then((status) => status.state))).resolves.toBe('denied');
-  await page.waitForTimeout(300);
+  await chromeCaughtUp();
   expect(await promptsShown()).toBe(shown);
   await expect(prompt()).toHaveCount(0);
 });
@@ -517,6 +568,37 @@ test('esc-leaves-fullscreen-e2e', async () => {
   await expectPrompt(a.origin, a.host, 'notifications');
   await page.getByTestId('permission-dismiss').click();
   await expect(asked).resolves.toBe('denied');
+});
+
+test('prompt-disarms-after-fullscreen-e2e', async () => {
+  const a = await site();
+  const id = await open(`${a.origin}/fullscreen`, 'Fullscreen');
+  const asked = run(id, ASK_NOTIFICATIONS);
+  await expectPrompt(a.origin, a.host, 'notifications');
+  await expect(prompt()).toHaveAttribute('data-armed', 'true');
+  // The page goes fullscreen over the bar: covered, and disarmed.
+  await enterFullscreen(id);
+  await expect(prompt()).toHaveAttribute('data-covered', 'true');
+  await expect(prompt()).toHaveAttribute('data-armed', 'false');
+  await app.evaluate(({ webContents }, id) => {
+    const contents = webContents.fromId(id)!;
+    contents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    contents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  }, id);
+  // Back from under the page: armed again only a whole delay after it was uncovered.
+  await expect(prompt()).toHaveAttribute('data-covered', 'false');
+  await expect(prompt()).toHaveAttribute('data-armed', 'true');
+  const log = await latestBarLog();
+  const coveredAt = log.findIndex((entry) => entry.covered);
+  expect(coveredAt).toBeGreaterThan(0);
+  expect(log.slice(coveredAt).some((entry) => entry.armed && entry.covered)).toBe(false);
+  const uncovered = log.findIndex((entry, index) => index > coveredAt && !entry.covered);
+  expect(log[uncovered]!.armed).toBe(false);
+  const rearmed = log.find((entry, index) => index > uncovered && entry.armed)!;
+  expect(rearmed.at - log[uncovered]!.at).toBeGreaterThanOrEqual(PROMPT_ARMING_DELAY_MS - 20);
+  await windowSettled();
+  await allow();
+  await expect(asked).resolves.toBe('granted');
 });
 
 test('esc-leaves-fullscreen-on-hung-page-e2e', async () => {

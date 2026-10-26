@@ -1,15 +1,20 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": [".vite/**", "out/**"]
     },
     "test": {
+      "dependsOn": ["transit"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/specs/*.ts", "$TURBO_ROOT$/specs/*.md", "$TURBO_ROOT$/.github/workflows/*.yml"],
       "outputs": []
     },
     "lint": {
+      "dependsOn": ["transit"],
       "outputs": []
     },
     "test:e2e": {

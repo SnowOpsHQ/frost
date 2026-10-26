@@ -305,7 +305,9 @@ test('clear-browsing-data-e2e', async () => {
   // Cancel: nothing is cleared.
   await menu(CLEAR_BROWSING_DATA.menuItemId);
   await expect.poll(dialogCalls).toEqual([expectedCall]);
-  await page.waitForTimeout(500);
+  // The flow continues in promise callbacks once the (stubbed) dialog answers: after main's next
+  // macrotask, a confirmed clear would already have forgotten the decisions in memory.
+  await app!.evaluate(() => new Promise<void>((resolve) => setImmediate(resolve)));
   await expect(run(id, 'Notification.permission')).resolves.toBe('granted');
   await expect(run(id, 'document.cookie')).resolves.toBe('frost=1');
   expect(query('SELECT COUNT(*) AS n FROM recent_visits')).toEqual([{ n: 3 }]);

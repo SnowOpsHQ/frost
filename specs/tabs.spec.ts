@@ -49,6 +49,8 @@ export const TAB_SHORTCUT_COUNT = 9;
  * chrome's WebContents in `before-input-event`, before the page sees the key, so a page cannot
  * block them; the key is then consumed (`preventDefault`, which also stops the menu accelerator),
  * so one press runs its command once. `Mod+1`…`Mod+8` select that tab, `Mod+9` the last one.
+ * The page commands' reserved keys (reload, back / forward, zoom) are `RESERVED_PAGE_SHORTCUTS` in
+ * `page-commands.spec.ts`.
  */
 export const RESERVED_TAB_SHORTCUTS = {
   'new-tab': ['Mod+T'],

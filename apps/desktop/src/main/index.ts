@@ -1,20 +1,21 @@
 import path from 'node:path';
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, session } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { createWindowRegistry } from './app-windows';
-import { createBrowserController } from './browser/controller';
+import { contextMenuTemplate } from './browser/context-menu';
+import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
 import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
 import { clearBrowseStorage, confirmClearBrowsingData, createClearBrowsingData } from './clear-browsing-data';
-import { installAppMenu } from './menu';
+import { installAppMenu, popupContextMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
-import { claimSingleInstance } from './single-instance';
+import { claimSingleInstance, reopenOnActivate } from './single-instance';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
@@ -37,7 +38,11 @@ function start(): void {
   // One frost per profile (specs/browser-session-db.feature.md, Single instance): a second launch
   // on the same `userData` shows this instance's window and quits before it opens anything, so
   // two instances never save over each other's session.
-  if (!claimSingleInstance(app, { windows: () => BrowserWindow.getAllWindows(), openWindow: () => openMainWindow() })) return;
+  // A second launch, and (macOS) the dock icon, act only once startup is complete (`started`).
+  let markStarted: () => void = () => undefined;
+  const started = new Promise<void>((resolve) => (markStarted = resolve));
+  const windowOptions = { windows: () => BrowserWindow.getAllWindows(), openWindow: () => openMainWindow(), started };
+  if (!claimSingleInstance(app, windowOptions)) return;
 
   // Global backstop: every renderer is sandboxed even if a future WebContents forgets the explicit pref.
   app.enableSandbox();
@@ -63,7 +68,35 @@ function start(): void {
   // loaded at startup and written through to the session database (an Allow lasts for this run).
   const decisions = createPersistentDecisionStore((decision) => sessionStore.writer.savePermissionDecision(decision));
   const permissions = createPermissionBroker({ store: decisions });
-  const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow(), permissions, session: sessionStore.writer });
+  // A right-click in a tab's page pops up frost's own context menu (specs/page-commands.feature.md),
+  // its items bound to that tab's WebContents.
+  const showContextMenu = ({ contents, params, window, canGoBack, canGoForward }: TabContextMenuRequest): void => {
+    const live = () => !contents.isDestroyed();
+    const template = contextMenuTemplate(params, { canGoBack, canGoForward }, {
+      back: () => {
+        if (live() && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+      },
+      forward: () => {
+        if (live() && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
+      },
+      reload: () => {
+        if (live()) contents.reload();
+      },
+      openInNewTab: (url) => void browser.openTabFromPage(contents, url),
+      copyText: (text) => clipboard.writeText(text),
+      edit: (command) => {
+        if (live()) contents[command]();
+      },
+    });
+    popupContextMenu(template, window as BrowserWindow);
+  };
+  const browser = createBrowserController({
+    createView: createTabView,
+    openWindow: () => openMainWindow(),
+    permissions,
+    session: sessionStore.writer,
+    contextMenu: showContextMenu,
+  });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
@@ -123,8 +156,8 @@ function start(): void {
       clearBrowseStorage,
       log: logSession,
     });
-    // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) are menu accelerators calling the controller directly
-    // (specs/tabs.feature.md).
+    // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
+    // accelerators calling the controller directly (specs/tabs.feature.md, page-commands.feature.md).
     installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData() });
     // What the last launch saved, after the sessions are hardened and before any tab or window
     // exists: remembered decisions answer the first requests, and the chrome's first state already
@@ -133,12 +166,11 @@ function start(): void {
     decisions.load(saved.decisions);
     browser.restoreSession(saved.session);
     openMainWindow();
-
-    // macOS: re-create a window when the dock icon is clicked and none are open.
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) openMainWindow();
-    });
+    markStarted();
   });
+
+  // macOS: re-create a window when the dock icon is clicked and none are open.
+  reopenOnActivate(app, windowOptions);
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

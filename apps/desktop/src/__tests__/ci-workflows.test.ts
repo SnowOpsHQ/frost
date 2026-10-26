@@ -117,3 +117,19 @@ describe('CI workflows (macOS package)', () => {
     for (const { name, command } of gates) expect(stepNamed(steps, name).run, name).toContain(command);
   });
 });
+
+describe('turbo', () => {
+  test('turbo-cache-follows-dependencies', () => {
+    const turbo = JSON.parse(read('turbo.json')) as { tasks: Record<string, { dependsOn?: string[]; cache?: boolean }> };
+    expect(turbo.tasks.transit?.dependsOn).toEqual(['^transit']);
+    for (const task of ['lint', 'test']) {
+      expect(turbo.tasks[task]?.dependsOn, task).toContain('transit');
+      expect(turbo.tasks[task]?.cache, task).not.toBe(false);
+    }
+    // No package runs anything as `transit`: it exists only to carry its dependencies' hashes.
+    for (const pkg of ['apps/desktop', 'packages/db', 'packages/ipc-contract', 'specs']) {
+      const scripts = (JSON.parse(read(`${pkg}/package.json`)) as { scripts?: Record<string, string> }).scripts ?? {};
+      expect(Object.keys(scripts), pkg).not.toContain('transit');
+    }
+  });
+});

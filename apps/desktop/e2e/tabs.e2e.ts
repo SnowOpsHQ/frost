@@ -97,6 +97,17 @@ const closeOf = (tab: Locator) => tab.locator('xpath=..').getByTestId('tab-close
 const activeTab = () => page.locator('[data-testid="tab"][aria-selected="true"]');
 const address = () => page.getByTestId('address');
 
+/**
+ * A barrier: once this returns, the chrome has rendered a browser state main took after
+ * everything that happened before the call (it asks main to focus the address bar, which bumps the
+ * state's version, and waits for the chrome to do it).
+ */
+async function chromeCaughtUp(): Promise<void> {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await menu('focus-address-bar');
+  await expect(address()).toBeFocused();
+}
+
 async function go(input: string): Promise<void> {
   await address().click();
   await address().fill(input);
@@ -350,7 +361,9 @@ test('page-cannot-block-tab-shortcuts', async () => {
   await expect(strip()).toHaveCount(2);
   await expect(strip().nth(1)).toHaveAttribute('aria-selected', 'true');
   await expect(address()).toBeFocused();
-  await page.waitForTimeout(300);
+  // Never a second one: the shortcut runs inside main's handling of the key events, so a state
+  // taken after them still has two tabs.
+  await chromeCaughtUp();
   await expect(strip()).toHaveCount(2);
   expect(await pageSaw(greedy)).toEqual(['a']);
 

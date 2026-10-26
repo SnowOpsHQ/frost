@@ -49,10 +49,11 @@ function route(request: IncomingMessage, response: ServerResponse, origin: () =>
     case '/landing':
       return html(`<title>Landing</title><script>
         const act = new URL(location.href).searchParams.get('do');
+        // It acts first, then retitles: once the chrome shows the title, main has handled the act.
         setTimeout(() => {
-          document.title = 'landing-acted';
           if (act === 'popup') window.open('/b');
           if (act === 'mailto') location = ${JSON.stringify(MAILTO)};
+          document.title = 'landing-acted';
         }, 500);
       </script>`);
     case '/frames':
@@ -65,6 +66,11 @@ function route(request: IncomingMessage, response: ServerResponse, origin: () =>
           blob.src = URL.createObjectURL(new Blob(['<p>blob frame</p>'], { type: 'text/html' }));
           document.body.append(blob);
         </script>`);
+    // A big click target in the top frame, and a same-origin iframe.
+    case '/subframes':
+      return html(`<title>Subframes</title><style>button { display: block; margin: 8px; padding: 30px; font-size: 18px; }</style>
+        <button id="target">top frame</button>
+        <iframe id="frame" src="/a"></iframe>`);
     case '/redirect-app':
       response.writeHead(302, { Location: 'app://app/' }).end();
       return;
@@ -349,6 +355,17 @@ const strip = () => page.getByTestId('tab');
 const activeTab = () => page.locator('[data-testid="tab"][aria-selected="true"]');
 const address = () => page.getByTestId('address');
 
+/**
+ * A barrier: once this returns, the chrome has rendered a browser state main took after
+ * everything that happened before the call (it asks main to focus the address bar, which bumps the
+ * state's version, and waits for the chrome to do it).
+ */
+async function chromeCaughtUp(): Promise<void> {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await menu('focus-address-bar');
+  await expect(address()).toBeFocused();
+}
+
 async function go(input: string): Promise<void> {
   await address().click();
   await address().fill(input);
@@ -375,16 +392,18 @@ test('page-cannot-navigate-to-non-web-scheme-e2e', async () => {
   const id = await open('/a', 'Page A');
   const stays = async (script: string) => {
     await run(id, `${script}; 0`);
+    // Nothing in main marks a navigation Chromium refused before the guard saw it: a short wait.
     await page.waitForTimeout(250);
     expect(await urlOf(id), script).toBe(`${site.origin}/a`);
   };
-  // Seen and dropped by the guard.
-  for (const target of ['app://app/', 'vscode://x']) {
-    await stays(`location = ${JSON.stringify(target)}`);
+  // Seen and dropped by the guard (a dropped navigation never commits, so no wait is needed).
+  const dropped = async (script: string, target: string | RegExp) => {
+    await run(id, `${script}; 0`);
     await expectGuardDropped('navigate', target);
-  }
-  await stays(`location = URL.createObjectURL(new Blob(['<h1>blob</h1>'], { type: 'text/html' }))`);
-  await expectGuardDropped('navigate', /^blob:/);
+    expect(await urlOf(id), script).toBe(`${site.origin}/a`);
+  };
+  for (const target of ['app://app/', 'vscode://x']) await dropped(`location = ${JSON.stringify(target)}`, target);
+  await dropped(`location = URL.createObjectURL(new Blob(['<h1>blob</h1>'], { type: 'text/html' }))`, /^blob:/);
   // Refused by Chromium before the guard sees them (or, for javascript:, run in the page itself).
   for (const target of ['file:///etc/passwd', 'chrome://gpu', 'javascript:void 0', 'data:text/html,<h1>data</h1>']) {
     await stays(`location = ${JSON.stringify(target)}`);
@@ -458,10 +477,12 @@ test('subframe-and-redirect-dropped-e2e', async () => {
   await expectGuardDropped('redirect', 'app://app/');
   expect(await urlOf(opener)).toBe(`${site.origin}/opener`);
   await realClick(opener, '#redirect-mailto');
+  // The guard decides (and would open) inside the redirect event; the cancelled navigation commits nothing.
   await expectGuardDropped('redirect', MAILTO);
-  await page.waitForTimeout(300);
-  expect(await urlOf(opener)).toBe(`${site.origin}/opener`);
   expect((await mainRecord()).openExternal).toEqual([]);
+  await expect.poll(() => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.isLoading(), opener)).toBe(false);
+  expect(await urlOf(opener)).toBe(`${site.origin}/opener`);
+  await chromeCaughtUp();
   await expect(page.getByTestId('page-error')).toHaveCount(0);
 
   // A redirect to data: never reaches the guard: Chromium refuses it (ERR_UNSAFE_REDIRECT) and the
@@ -477,8 +498,9 @@ test('gesture-does-not-survive-navigation-e2e', async () => {
     const id = await open('/opener', 'Opener');
     await resetMainRecord();
     await realClick(id, `#chain-${which}`);
+    // The landing page acts, then retitles: by the time the chrome shows the title, main handled the act.
     await expect(activeTab()).toHaveAttribute('title', 'landing-acted');
-    await page.waitForTimeout(400);
+    if (which === 'mailto') await expectGuardDropped('navigate', MAILTO);
     // The click really went through a two-hop, cross-origin redirect chain.
     const redirects = (await mainRecord()).navigations.filter((n) => n.event === 'redirect');
     expect(redirects.map((n) => [new URL(n.url).origin, n.prevented])).toEqual([
@@ -525,7 +547,9 @@ test('popup-without-gesture-is-blocked-e2e', async () => {
     id,
     `(() => { const b = document.getElementById('open'); b.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); b.dispatchEvent(new MouseEvent('click', { bubbles: true })); return 0; })()`,
   );
-  await page.waitForTimeout(500);
+  // Then a retitle from the same frame: once the chrome shows it, main has handled those opens.
+  await run(id, `document.title = 'scripted-done'; 0`);
+  await expect(activeTab()).toHaveAttribute('title', 'scripted-done');
   await expect(strip()).toHaveCount(1);
   expect(await browseContents()).toEqual([{ id, url: `${site.origin}/opener?auto` }]);
   const record = await mainRecord();
@@ -535,17 +559,39 @@ test('popup-without-gesture-is-blocked-e2e', async () => {
 
 test('mailto-on-gesture-opens-externally-e2e', async () => {
   const id = await open('/opener', 'Opener');
-  // No gesture: a script-set location is dropped.
+  // No gesture: a script-set location is dropped (the guard decides inside the event).
   await run(id, `location = ${JSON.stringify(MAILTO)}; 0`);
-  await page.waitForTimeout(400);
+  await expectGuardDropped('navigate', MAILTO);
   expect((await mainRecord()).openExternal).toEqual([]);
-  // A real click on the link reaches the external-open flow, once.
+  // A real click on the link reaches the external-open flow, once: one more navigation, one open.
   await realClick(id, '#mailto');
   await expect.poll(async () => (await mainRecord()).openExternal).toEqual([MAILTO]);
-  await page.waitForTimeout(300);
-  expect((await mainRecord()).openExternal).toEqual([MAILTO]);
+  expect((await mainRecord()).navigations.filter((n) => n.url === MAILTO).map((n) => n.prevented)).toEqual([true, true]);
   expect(await urlOf(id)).toBe(`${site.origin}/opener`);
   await expect(strip()).toHaveCount(1);
+});
+
+test('subframe-cannot-open-externally-e2e', async () => {
+  const id = await open('/subframes', 'Subframes');
+  const frameUrl = `${site.origin}/a`;
+  await expect.poll(() => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.mainFrame.frames.map((f) => f.url), id)).toEqual([frameUrl]);
+  const inFrame = (script: string) =>
+    app.evaluate(
+      ({ webContents }, { id, frameUrl, script }) => webContents.fromId(id)!.mainFrame.frames.find((f) => f.url === frameUrl)!.executeJavaScript(script) as Promise<unknown>,
+      { id, frameUrl, script },
+    );
+  await resetMainRecord();
+  // A real click in the top frame, then the iframe tries to spend it: on itself, then on the top.
+  await realClick(id, '#target');
+  await inFrame(`location = ${JSON.stringify(MAILTO)}; 0`);
+  await expectGuardDropped('navigate', MAILTO, false);
+  await inFrame(`top.location = ${JSON.stringify(MAILTO)}; 0`);
+  await expectGuardDropped('navigate', MAILTO, true);
+  expect((await mainRecord()).openExternal).toEqual([]);
+  // The click is still unspent: the top frame's own navigation uses it, once.
+  await run(id, `location = ${JSON.stringify(MAILTO)}; 0`);
+  await expect.poll(async () => (await mainRecord()).openExternal).toEqual([MAILTO]);
+  expect(await urlOf(id)).toBe(`${site.origin}/subframes`);
 });
 
 test('download-is-cancelled-with-notice-e2e', async () => {
@@ -640,7 +686,8 @@ test('crash-shows-panel-and-reload-recovers-e2e', async () => {
 
 test('webview-tag-creates-nothing-e2e', async () => {
   const id = await open('/webview', 'Webview');
-  await page.waitForTimeout(500);
+  // A <webview> would attach while the page loads.
+  await expect.poll(() => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.isLoading(), id)).toBe(false);
   expect(await run(id, `document.querySelector('webview') !== null`)).toBe(true);
   expect(await browseContents()).toEqual([{ id, url: `${site.origin}/webview` }]);
   const record = await mainRecord();

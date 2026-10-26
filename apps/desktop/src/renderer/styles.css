@@ -939,6 +939,17 @@ input {
   white-space: nowrap;
 }
 
+/* The active page's zoom while it is not 100 % (page-commands.feature.md), next to the indicator. */
+.status-zoom {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
 .connection {
   display: inline-flex;
   align-items: center;

@@ -1,4 +1,4 @@
-import type { BrowserWindow, WebContentsView } from 'electron';
+import type { BrowserWindow, ContextMenuParams, WebContentsView } from 'electron';
 import type { SavedSession } from '@app/db';
 import type { BrowserService } from '@app/ipc-contract';
 import {
@@ -22,11 +22,13 @@ import {
   FULLSCREEN_NOTICE_MS,
   type PermissionDecision,
 } from '@app/specs/permissions.spec';
+import { DEFAULT_ZOOM, ZOOM_FACTORS, type PageCommand } from '@app/specs/page-commands.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { isWebUrl } from './guard';
 import { pageTitle } from './page-title';
 import type { PermissionBroker } from './permissions';
-import { matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
+import { matchPageShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
+import { stepZoom, type ZoomDirection } from './zoom';
 
 // Main-process owner of all browser state (spec `browser-chrome.feature.md` and `tabs.feature.md`,
 // Controller). Only Electron *types* are imported: the view factory and the window are injected, so
@@ -71,6 +73,12 @@ export interface BrowserController extends BrowserService {
   activateNextTab(): boolean;
   /** Activates the previous tab, wrapping (Ctrl+Shift+Tab). */
   activatePreviousTab(): boolean;
+  /**
+   * Runs a page command on the active tab (spec `page-commands.feature.md`): reload, hard reload,
+   * stop (only while loading and not fullscreen), back / forward, zoom in / out / reset. No-ops
+   * without a page.
+   */
+  runPageCommand(command: PageCommand): void;
   /** Focuses the chrome and asks it to focus the address bar (Cmd/Ctrl+L): bumps `focusAddressBarSeq`. */
   focusAddressBar(): void;
   /**
@@ -132,6 +140,21 @@ export interface BrowserControllerOptions {
   readonly permissions?: TabPermissions;
   /** Receives the tab strip and visits to persist; without it nothing is saved. */
   readonly session?: SessionSink;
+  /**
+   * Shows the page context menu for a tab's `context-menu` event (`page-commands.feature.md`):
+   * main builds it from the params and pops it up on `window`. Without it there is none.
+   */
+  readonly contextMenu?: (request: TabContextMenuRequest) => void;
+}
+
+/** A right-click in a tab's page, as handed to `BrowserControllerOptions.contextMenu`. */
+export interface TabContextMenuRequest {
+  /** The tab's WebContents (its page was clicked). */
+  readonly contents: TabView['webContents'];
+  readonly params: ContextMenuParams;
+  readonly window: HostWindow;
+  readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
 }
 
 /** What the controller uses of the permission broker. */
@@ -196,7 +219,7 @@ interface Tab {
 const STATE_EVENTS = ['did-stop-loading', 'did-navigate-in-page', 'page-title-updated'] as const;
 
 function emptyTabState(id: number): PageState {
-  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, fullscreen: null };
+  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, fullscreen: null, zoom: DEFAULT_ZOOM };
 }
 
 function sameError(a: LoadError | null, b: LoadError | null): boolean {
@@ -213,6 +236,7 @@ function sameTabState(a: PageState, b: PageState): boolean {
     a.crashed === b.crashed &&
     a.unresponsive === b.unresponsive &&
     a.fullscreen === b.fullscreen &&
+    a.zoom === b.zoom &&
     sameError(a.error, b.error)
   );
 }
@@ -231,6 +255,17 @@ function capTitle(title: string): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+/** A WebContents' zoom factor, inside `ZOOM_FACTORS`' range (`DEFAULT_ZOOM` if it is no number). */
+function zoomOf(contents: TabView['webContents']): number {
+  const factor = contents.getZoomFactor();
+  return Number.isFinite(factor) ? clamp(factor, ZOOM_FACTORS[0], ZOOM_FACTORS[ZOOM_FACTORS.length - 1]!) : DEFAULT_ZOOM;
+}
+
+/** Whether no modifier key is held. */
+function unmodified(input: KeyInput): boolean {
+  return !input.control && !input.meta && !input.alt && !input.shift;
 }
 
 /** Rounds `bounds` to integers and clamps them inside a `width`×`height` content area. */
@@ -591,6 +626,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       crashed: tab.crashed,
       unresponsive: tab.unresponsive,
       fullscreen: tab.fullscreen,
+      zoom: zoomOf(contents),
     };
     if (sameTabState(tab.state, next)) return;
     tab.state = next;
@@ -688,7 +724,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         event.preventDefault();
         return;
       }
-      if (tab.fullscreen === null) return;
+      if (tab.fullscreen === null) {
+        // Not fullscreen: Esc stops a loading page (`page-commands.feature.md`) and still reaches it.
+        if (input.type === 'keyDown' && unmodified(input)) stopLoading(tab);
+        return;
+      }
       event.preventDefault();
       if (input.type !== 'keyDown') return;
       escapeTaken = true;
@@ -705,8 +745,20 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     });
     // The page closed itself (`window.close()`): its tab closes like any other.
     listen('destroyed', () => removeTab(tab.id));
-    // Reserved tab shortcuts are taken before the page can see (and cancel) them.
+    // Reserved tab and page shortcuts are taken before the page can see (and cancel) them.
     listen('before-input-event', takeShortcut);
+    // A right-click in the page: main shows the context menu for it.
+    listen('context-menu', (_event: unknown, params: ContextMenuParams) => {
+      const contents = aliveContents(view);
+      if (!contents || !options.contextMenu || !win || win.isDestroyed()) return;
+      options.contextMenu({
+        contents,
+        params,
+        window: win,
+        canGoBack: contents.navigationHistory.canGoBack(),
+        canGoForward: contents.navigationHistory.canGoForward(),
+      });
+    });
     tab.unlisten = () => {
       for (const [event, listener] of listeners) emitter.off(event, listener);
     };
@@ -856,7 +908,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
    * Reloads the active tab. A crashed (or errored) tab reloads its WebContents, which restarts the
    * renderer; if that WebContents is gone, a fresh view loads the tab's URL instead.
    */
-  const reload = (): void => {
+  const reload = ({ ignoreCache = false }: { ignoreCache?: boolean } = {}): void => {
     const tab = activeTab();
     if (!tab) return;
     const url = tab.state.url;
@@ -868,6 +920,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         view.webContents.loadURL(tab.restored.url).catch(() => {
           // Failures surface through `did-fail-load` / the tab state.
         });
+      } else if (ignoreCache) {
+        view.webContents.reloadIgnoringCache();
       } else {
         view.webContents.reload();
       }
@@ -883,6 +937,66 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (!hasWindow()) return;
     requestAddressFocus();
     changed();
+  };
+
+  /** Stops `tab`'s page while it loads, unless it is in HTML fullscreen (Esc leaves that). */
+  function stopLoading(tab: Tab): void {
+    const contents = tab.view ? aliveContents(tab.view) : undefined;
+    if (contents && tab.fullscreen === null && !tab.crashed && contents.isLoading()) contents.stop();
+  }
+
+  /**
+   * Zooms the active tab's page one step (`stepZoom`). Chromium keeps zoom per host, so every
+   * tab's state is re-read afterwards (those on the same host followed).
+   */
+  const zoom = (direction: ZoomDirection): void => {
+    const tab = activeTab();
+    const view = tab ? liveView(tab) : null;
+    if (!view) return;
+    view.webContents.setZoomFactor(stepZoom(view.webContents.getZoomFactor(), direction));
+    for (const each of tabs) refresh(each);
+  };
+
+  const back = (): void => {
+    withActiveContents((contents) => {
+      if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+    });
+  };
+
+  const forward = (): void => {
+    withActiveContents((contents) => {
+      if (contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
+    });
+  };
+
+  const runPageCommand = (command: PageCommand): void => {
+    switch (command) {
+      case 'reload':
+        reload();
+        return;
+      case 'hard-reload':
+        reload({ ignoreCache: true });
+        return;
+      case 'stop': {
+        const tab = activeTab();
+        if (tab) stopLoading(tab);
+        return;
+      }
+      case 'back':
+        back();
+        return;
+      case 'forward':
+        forward();
+        return;
+      case 'zoom-in':
+        zoom('in');
+        return;
+      case 'zoom-out':
+        zoom('out');
+        return;
+      case 'zoom-reset':
+        zoom('reset');
+    }
   };
 
   const runShortcut = (shortcut: TabShortcut): void => {
@@ -917,9 +1031,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
    */
   function takeShortcut(event: { preventDefault(): void }, input: KeyInput): void {
     const shortcut = matchTabShortcut(input, platform);
-    if (!shortcut) return;
+    const page = shortcut ? null : matchPageShortcut(input, platform);
+    if (!shortcut && !page) return;
     event.preventDefault();
-    if (input.type === 'keyDown') runShortcut(shortcut);
+    if (input.type !== 'keyDown') return;
+    if (shortcut) runShortcut(shortcut);
+    else if (page) runPageCommand(page);
   }
 
   const restoreSession = (saved: SavedSession): void => {
@@ -1049,19 +1166,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     downloadBlocked,
 
-    back() {
-      withActiveContents((contents) => {
-        if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
-      });
-    },
+    back,
 
-    forward() {
-      withActiveContents((contents) => {
-        if (contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
-      });
-    },
+    forward,
 
-    reload,
+    reload: () => reload(),
+
+    runPageCommand,
 
     stop() {
       withActiveContents((contents) => contents.stop());

@@ -49,16 +49,38 @@ export type BrowseVerdict = 'allow' | 'open-externally' | 'drop';
 /**
  * What to do with a renderer navigation (`will-frame-navigate`) or redirect (`will-redirect`) of a
  * tab's frame. Browsable → `allow` (the gesture is not read). A non-browsable navigation is
- * dropped, and handed to the Phase 0 external-open policy (`resolveExternalOpen`, which reads the
- * gesture); a non-browsable redirect is dropped without reading it (the server chose it).
+ * dropped, and, if the tab's main frame started it, handed to the Phase 0 external-open policy
+ * (`resolveExternalOpen`, which reads the gesture). A non-browsable redirect (the server chose it)
+ * or a navigation a subframe or nothing started is dropped without reading the gesture, so a
+ * click in the top frame cannot be spent by a subframe.
  */
 export function judgeBrowseNavigation(
   url: string,
-  ctx: { isMainFrame: boolean; isRedirect: boolean; userGesture: () => boolean },
+  ctx: { isMainFrame: boolean; isRedirect: boolean; mainFrameInitiated: boolean; userGesture: () => boolean },
 ): BrowseVerdict {
   if (isAllowedBrowseNavigation(url, ctx)) return 'allow';
-  if (ctx.isRedirect) return 'drop';
+  if (ctx.isRedirect || !ctx.mainFrameInitiated) return 'drop';
   return resolveExternalOpen(url, { userGesture: ctx.userGesture() }) === 'allow' ? 'open-externally' : 'drop';
+}
+
+/** The fields of a `WebFrameMain` used to recognise the main frame. */
+interface FrameRef {
+  readonly frameTreeNodeId: number;
+  readonly parent: unknown;
+}
+
+/**
+ * Whether `initiator` (`will-frame-navigate`'s) is `contents`' main frame: no parent and the main
+ * frame's frame tree node. `null` / `undefined` (no initiating frame, or it is gone) is not.
+ */
+function isMainFrameOf(contents: WebContents, initiator: FrameRef | null | undefined): boolean {
+  if (!initiator) return false;
+  try {
+    return initiator.parent === null && initiator.frameTreeNodeId === contents.mainFrame.frameTreeNodeId;
+  } catch {
+    // The WebContents or its main frame is gone.
+    return false;
+  }
 }
 
 export type PopupVerdict = 'tab' | 'open-externally' | 'drop';
@@ -84,7 +106,10 @@ export interface BrowseGuardHooks {
 /**
  * Guards one browse-session WebContents (spec `browse-guard.feature.md`):
  * - `will-frame-navigate` (any frame) and `will-redirect`: pinned by `judgeBrowseNavigation`; a
- *   dropped navigation to an allowlisted external scheme on a real gesture is opened externally.
+ *   dropped navigation the main frame started, to an allowlisted external scheme, on a real gesture
+ *   is opened externally.
+ * - Popups carry no frame (`HandlerDetails`), so their gesture stays per WebContents (accepted
+ *   risk, `browse-guard.feature.md`, Gesture attribution).
  * - `window.open` / `target=_blank`: always `{ action: 'deny' }`; `judgeBrowsePopup` decides
  *   whether a background tab opens (through `hooks.openTab`) or the URL is opened externally.
  * - `<webview>`: refused.
@@ -95,11 +120,12 @@ export function guardBrowseContents(contents: WebContents, options: { now: () =>
 
   const pin =
     (isRedirect: boolean) =>
-    (details: { url: string; isMainFrame: boolean; preventDefault(): void }): void => {
+    (details: { url: string; isMainFrame: boolean; initiator?: FrameRef | null; preventDefault(): void }): void => {
       // The verdict reads (and consumes) the gesture only if it needs it; keep what it read.
       let userGesture = false;
       const consume = (): boolean => (userGesture = gesture.consume());
-      const verdict = judgeBrowseNavigation(details.url, { isMainFrame: details.isMainFrame, isRedirect, userGesture: consume });
+      const mainFrameInitiated = !isRedirect && isMainFrameOf(contents, details.initiator);
+      const verdict = judgeBrowseNavigation(details.url, { isMainFrame: details.isMainFrame, isRedirect, mainFrameInitiated, userGesture: consume });
       if (verdict === 'allow') return;
       details.preventDefault();
       // The shared flow re-checks the URL and that gesture before opening.

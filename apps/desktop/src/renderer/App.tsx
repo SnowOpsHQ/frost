@@ -19,6 +19,7 @@ import { promptView } from './permission-prompt';
 import { createPromptArming } from './prompt-arming';
 import { tabLabel } from './tab-label';
 import { tablistFocusTarget } from './tablist-keys';
+import { zoomLabel } from './zoom-label';
 import {
   AlertIcon,
   BackIcon,
@@ -433,25 +434,31 @@ const PROMPT_ICONS: Record<PromptKind, typeof BellIcon> = {
 
 /**
  * Allow / Block arming (clickjacking): disarmed on mount (a new bar, prompt or shown tab: the bar
- * is keyed by both) and whenever the chrome's window regains focus or becomes visible.
+ * is keyed by both), whenever the chrome's window regains focus or becomes visible, and for as
+ * long as the bar is `covered` (the tab's fullscreen page lies over it), restarting once it is not.
  */
-function usePromptArmed(): boolean {
+function usePromptArmed(covered: boolean): boolean {
   const [armed, setArmed] = useState(false);
+  const arming = useRef<ReturnType<typeof createPromptArming> | null>(null);
   useEffect(() => {
-    const arming = createPromptArming(setArmed);
-    const disarm = () => arming.disarm();
+    const created = createPromptArming(setArmed);
+    arming.current = created;
+    const disarm = () => created.disarm();
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') arming.disarm();
+      if (document.visibilityState === 'visible') created.disarm();
     };
     window.addEventListener('focus', disarm);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.removeEventListener('focus', disarm);
       document.removeEventListener('visibilitychange', onVisibility);
-      arming.dispose();
+      created.dispose();
+      arming.current = null;
     };
   }, []);
-  return armed;
+  useEffect(() => arming.current?.setCovered(covered), [covered]);
+  // Covered counts at once (the effect above disarms only after this render).
+  return armed && !covered;
 }
 
 /**
@@ -461,10 +468,10 @@ function usePromptArmed(): boolean {
  * Allow and Block stay disabled until armed (`PROMPT_ARMING_DELAY_MS`); dismissing only denies,
  * so the × is always live.
  */
-function PromptBar({ prompt }: { readonly prompt: PermissionPrompt }) {
+function PromptBar({ prompt, covered }: { readonly prompt: PermissionPrompt; readonly covered: boolean }) {
   const view = promptView(prompt);
   const Icon = PROMPT_ICONS[view.kind];
-  const armed = usePromptArmed();
+  const armed = usePromptArmed(covered);
   const [answered, setAnswered] = useState(false);
   const answer = (decision: PermissionDecision) => {
     if (answered || (decision !== 'dismiss' && !armed)) return;
@@ -482,6 +489,7 @@ function PromptBar({ prompt }: { readonly prompt: PermissionPrompt }) {
       data-origin={view.origin}
       data-top-level-origin={view.embedderOrigin ?? undefined}
       data-armed={armed}
+      data-covered={covered}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault();
@@ -694,6 +702,7 @@ function StatusBar({
   else if (tab?.crashed) status = `${panelHost(url)} · Page crashed`;
   else if (tab?.error) status = `Couldn\u2019t load ${panelHost(tab.error.url)}`;
   else if (host) status = security === 'secure' ? `${host} · Secure connection` : `${host} · Not secure`;
+  const zoom = tab && tab.url !== '' ? zoomLabel(tab.zoom) : null;
   return (
     <footer className="status-bar" data-testid="status-bar">
       {notice !== null ? (
@@ -709,6 +718,11 @@ function StatusBar({
           {status}
         </span>
       )}
+      {zoom !== null ? (
+        <span className="status-zoom" data-testid="status-zoom" title="Page zoom">
+          {zoom}
+        </span>
+      ) : null}
       <span className="connection" data-state={connection} title="Connection to the frost main process">
         <span className="connection-dot" aria-hidden="true" />
         <span className="connection-label" aria-hidden="true">
@@ -734,7 +748,7 @@ export function App() {
       <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} />
       {/* Always present (empty without a prompt), so the grid rows stay put; polite, not focus-taking. */}
       <div className="prompt-slot" aria-live="polite">
-        {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} /> : null}
+        {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} covered={tab.fullscreen !== null} /> : null}
       </div>
       <PageArea tab={tab} empty={state !== null && empty} />
       <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />

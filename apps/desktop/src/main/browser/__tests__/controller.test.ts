@@ -1,6 +1,6 @@
 // Spec: specs/browser.spec.ts (BrowserStateSchema, APP_WINDOW_TITLE, MAX_TABS), specs/browse-guard.spec.ts
 // Acceptance: specs/browser-chrome.feature.md (Controller), specs/tabs.feature.md (Controller),
-// specs/browse-guard.feature.md (Controller)
+// specs/browse-guard.feature.md (Controller), specs/page-commands.feature.md (Controller)
 import type { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { FULLSCREEN_BANNER_HEIGHT, FULLSCREEN_EXIT_SETTLE_MS, FULLSCREEN_NOTICE_MS } from '@app/specs/permissions.spec';
@@ -24,6 +24,8 @@ let controller: BrowserController;
 let broker: PermissionBroker;
 /** The injected `openWindow` (the app opens and attaches a new window). */
 let openWindow: ReturnType<typeof vi.fn<() => void>>;
+/** The injected `contextMenu` (main pops up the native menu). */
+let contextMenu: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof createBrowserController>[0]['contextMenu']>>>;
 
 function view(): FakeTabView {
   const [only] = views;
@@ -39,8 +41,10 @@ beforeEach(() => {
     controller.attach(win as unknown as HostWindow);
   });
   broker = createPermissionBroker();
+  contextMenu = vi.fn();
   controller = createBrowserController({
     permissions: broker,
+    contextMenu,
     createView: () => {
       const created = new FakeTabView();
       views.push(created);
@@ -368,7 +372,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1 });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);
@@ -1288,5 +1292,160 @@ describe('permissions', () => {
     win.size = [1000, 700];
     win.emit('resize');
     expect(a.view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1000, height: 610 });
+  });
+});
+
+describe('page commands', () => {
+  const ids = () => controller.getState().tabs.map((tab) => tab.id);
+  const tabState = (id: number) => controller.getState().tabs.find((tab) => tab.id === id)!;
+  function openPage(url: string, title = url) {
+    const id = controller.newTab();
+    if (id === null) throw new Error('newTab refused');
+    controller.navigate(url);
+    const created = views.at(-1)!;
+    commit(created.webContents, url, title);
+    return { id, view: created };
+  }
+  const send = (target: EventEmitter, input: ReturnType<typeof key>) => {
+    const event = fakeEvent();
+    target.emit('before-input-event', event, input);
+    return event.defaultPrevented;
+  };
+
+  test('page-commands-act-on-active-tab', () => {
+    // An empty tab: nothing to act on.
+    for (const command of ['reload', 'hard-reload', 'stop', 'back', 'forward', 'zoom-in', 'zoom-out', 'zoom-reset'] as const) {
+      expect(() => controller.runPageCommand(command)).not.toThrow();
+    }
+    expect(views).toHaveLength(0);
+
+    const a = openPage('https://a.test/');
+    const b = openPage('https://b.test/');
+    const contents = b.view.webContents;
+    controller.runPageCommand('reload');
+    expect(contents.reload).toHaveBeenCalledOnce();
+    controller.runPageCommand('hard-reload');
+    expect(contents.reloadIgnoringCache).toHaveBeenCalledOnce();
+    expect(contents.reload).toHaveBeenCalledOnce();
+    // History only when possible.
+    controller.runPageCommand('back');
+    controller.runPageCommand('forward');
+    expect(contents.navigationHistory.goBack).not.toHaveBeenCalled();
+    expect(contents.navigationHistory.goForward).not.toHaveBeenCalled();
+    contents.back = true;
+    contents.forward = true;
+    controller.runPageCommand('back');
+    controller.runPageCommand('forward');
+    expect(contents.navigationHistory.goBack).toHaveBeenCalledOnce();
+    expect(contents.navigationHistory.goForward).toHaveBeenCalledOnce();
+    // Stop: only while loading.
+    controller.runPageCommand('stop');
+    expect(contents.stop).not.toHaveBeenCalled();
+    contents.loading = true;
+    contents.emit('did-start-loading');
+    controller.runPageCommand('stop');
+    expect(contents.stop).toHaveBeenCalledOnce();
+    // Never in HTML fullscreen (Esc there leaves fullscreen).
+    win.fullScreen = true;
+    contents.emit('enter-html-full-screen');
+    controller.runPageCommand('stop');
+    expect(contents.stop).toHaveBeenCalledOnce();
+    // The other tab was never touched.
+    const other = a.view.webContents;
+    for (const fn of [other.reload, other.reloadIgnoringCache, other.stop, other.navigationHistory.goBack, other.navigationHistory.goForward]) expect(fn).not.toHaveBeenCalled();
+  });
+
+  test('zoom-commands-set-zoom-and-state', () => {
+    const a = openPage('https://a.test/');
+    const b = openPage('https://b.test/');
+    expect(tabState(b.id).zoom).toBe(1);
+    const before = controller.getState().version;
+    controller.runPageCommand('zoom-in');
+    expect(b.view.webContents.setZoomFactor).toHaveBeenLastCalledWith(1.1);
+    expect(tabState(b.id).zoom).toBe(1.1);
+    expect(controller.getState().version).toBeGreaterThan(before);
+    controller.runPageCommand('zoom-in');
+    expect(tabState(b.id).zoom).toBe(1.25);
+    controller.runPageCommand('zoom-out');
+    controller.runPageCommand('zoom-out');
+    controller.runPageCommand('zoom-out');
+    expect(tabState(b.id).zoom).toBe(0.9);
+    // Chromium shares a host's zoom: another tab whose factor changed is re-read after a zoom.
+    a.view.webContents.zoomFactor = 0.9;
+    controller.runPageCommand('zoom-reset');
+    expect(tabState(b.id).zoom).toBe(1);
+    expect(tabState(a.id).zoom).toBe(0.9);
+    expect(a.view.webContents.setZoomFactor).not.toHaveBeenCalled();
+    // Clamped at the ends.
+    for (let i = 0; i < 30; i++) controller.runPageCommand('zoom-in');
+    expect(tabState(b.id).zoom).toBe(5);
+    for (let i = 0; i < 30; i++) controller.runPageCommand('zoom-out');
+    expect(tabState(b.id).zoom).toBe(0.25);
+    expect(BrowserStateSchema.safeParse(controller.getState()).success).toBe(true);
+    // An empty tab: no view, nothing zooms.
+    controller.newTab();
+    const version = controller.getState().version;
+    controller.runPageCommand('zoom-in');
+    expect(controller.getState().version).toBe(version);
+    expect(controller.getState().tabs.at(-1)!.zoom).toBe(1);
+  });
+
+  test('page-shortcuts-are-reserved', () => {
+    const a = openPage('https://a.test/');
+    const contents = a.view.webContents;
+    expect(send(contents, key('r', { control: true }))).toBe(true);
+    expect(contents.reload).toHaveBeenCalledOnce();
+    expect(send(contents, key('r', { control: true }, 'keyUp'))).toBe(true);
+    expect(contents.reload).toHaveBeenCalledOnce();
+    expect(send(contents, key('F5'))).toBe(true);
+    expect(contents.reload).toHaveBeenCalledTimes(2);
+    expect(send(win.webContents, key('r', { control: true, shift: true }))).toBe(true);
+    expect(contents.reloadIgnoringCache).toHaveBeenCalledOnce();
+    contents.back = true;
+    expect(send(contents, { ...key('ArrowLeft', { alt: true }), code: 'ArrowLeft' })).toBe(true);
+    expect(contents.navigationHistory.goBack).toHaveBeenCalledOnce();
+    expect(send(win.webContents, { ...key('=', { control: true }), code: 'Equal' })).toBe(true);
+    expect(tabState(a.id).zoom).toBe(1.1);
+    expect(send(contents, { ...key('0', { control: true }), code: 'Digit0' })).toBe(true);
+    expect(tabState(a.id).zoom).toBe(1);
+    // Not ours.
+    expect(send(contents, key('r'))).toBe(false);
+    expect(send(contents, { ...key('[', { control: true }), code: 'BracketLeft' })).toBe(false);
+  });
+
+  test('esc-stops-loading-without-consuming', () => {
+    const a = openPage('https://a.test/');
+    const contents = a.view.webContents;
+    // Not loading: nothing to stop.
+    expect(send(contents, key('Escape'))).toBe(false);
+    expect(contents.stop).not.toHaveBeenCalled();
+    contents.loading = true;
+    contents.emit('did-start-loading');
+    // With a modifier, or the key-up: not a stop.
+    expect(send(contents, key('Escape', { shift: true }))).toBe(false);
+    expect(send(contents, key('Escape', {}, 'keyUp'))).toBe(false);
+    expect(contents.stop).not.toHaveBeenCalled();
+    // Loading: stopped, and the page still gets its Esc.
+    expect(send(contents, key('Escape'))).toBe(false);
+    expect(contents.stop).toHaveBeenCalledOnce();
+    // Fullscreen: Esc leaves fullscreen (consumed) and does not stop.
+    win.fullScreen = true;
+    contents.emit('enter-html-full-screen');
+    expect(send(contents, key('Escape'))).toBe(true);
+    expect(tabState(a.id).fullscreen).toBeNull();
+    expect(contents.stop).toHaveBeenCalledOnce();
+  });
+
+  test('context-menu-event-reaches-handler', () => {
+    const a = openPage('https://a.test/');
+    const contents = a.view.webContents;
+    contents.back = true;
+    const params = { x: 1, y: 2, linkURL: 'https://b.test/' };
+    contents.emit('context-menu', fakeEvent(), params);
+    expect(contextMenu).toHaveBeenCalledExactlyOnceWith({ contents, params, window: win, canGoBack: true, canGoForward: false });
+    // A closed tab's late event reaches nothing.
+    controller.closeTab(a.id);
+    contents.emit('context-menu', fakeEvent(), params);
+    expect(contextMenu).toHaveBeenCalledOnce();
   });
 });

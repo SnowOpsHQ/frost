@@ -36,6 +36,10 @@ export class FakeWebContents extends EventEmitter {
   /** The WebContents' session, as `contents.session` (undefined unless a test gives one). */
   readonly session: FakeSession | undefined;
 
+  /** The main frame and one subframe, as `will-frame-navigate`'s `frame` / `initiator`. */
+  readonly mainFrame = { frameTreeNodeId: 1, parent: null };
+  readonly subFrame = { frameTreeNodeId: 2, parent: this.mainFrame };
+
   constructor(webPreferences: WebPreferences = {}, session?: FakeSession) {
     super();
     this.getLastWebPreferences = () => ({ ...webPreferences });
@@ -47,12 +51,16 @@ export class FakeWebContents extends EventEmitter {
    * Simulates a renderer-initiated navigation as Electron 45 emits it: `will-frame-navigate` for any
    * frame (details object only), then — main frame only, and only if not prevented —
    * `will-navigate` (details plus the deprecated positional args). Returns whether it was prevented.
+   * The navigated frame starts it (`initiator`: the main frame, or the subframe) unless the test
+   * names another initiator (`'main'`, `'subframe'`, or `null`: none).
    */
-  simulateNavigation(url: string, { isMainFrame = true }: { isMainFrame?: boolean } = {}): boolean {
-    const frameDetails = navigationDetails(url, isMainFrame);
+  simulateNavigation(url: string, { isMainFrame = true, initiator }: { isMainFrame?: boolean; initiator?: 'main' | 'subframe' | null } = {}): boolean {
+    const frame = isMainFrame ? this.mainFrame : this.subFrame;
+    const by = initiator === undefined ? frame : initiator === null ? null : initiator === 'main' ? this.mainFrame : this.subFrame;
+    const frameDetails = navigationDetails(url, isMainFrame, frame, by);
     this.emit('will-frame-navigate', frameDetails);
     if (frameDetails.defaultPrevented || !isMainFrame) return frameDetails.defaultPrevented;
-    const details = navigationDetails(url, isMainFrame);
+    const details = navigationDetails(url, isMainFrame, frame, by);
     this.emit('will-navigate', details, url, false, isMainFrame, 1, 1);
     return details.defaultPrevented;
   }
@@ -65,8 +73,8 @@ export class FakeWebContents extends EventEmitter {
   }
 }
 
-function navigationDetails(url: string, isMainFrame: boolean) {
-  return fakeEvent({ url, isMainFrame, isSameDocument: false, frame: null, initiator: null });
+function navigationDetails(url: string, isMainFrame: boolean, frame: object | null = null, initiator: object | null = null) {
+  return fakeEvent({ url, isMainFrame, isSameDocument: false, frame, initiator });
 }
 
 export class FakeBrowserWindow {
