@@ -10,6 +10,7 @@ import { Images } from './seo/Images';
 import { Links } from './seo/Links';
 import { OnPage } from './seo/OnPage';
 import { Overview } from './seo/Overview';
+import { Schema } from './seo/Schema';
 import { Social } from './seo/Social';
 
 // The SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance `seo-sidebar.feature.md`, Sidebar): docked
@@ -142,6 +143,8 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
       return <Images audit={response.audit} tab={tab} />;
     case 'social':
       return <Social audit={response.audit} tab={tab} />;
+    case 'schema':
+      return <Schema audit={response.audit} tab={tab} />;
     default:
       return <Overview audit={response.audit} />;
   }

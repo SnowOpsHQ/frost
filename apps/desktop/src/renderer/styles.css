@@ -2761,6 +2761,526 @@ input {
   display: contents;
 }
 
+/* ---- Schema ---------------------------------------------------------------------------------- */
+
+.seo-schema {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.seo-schema-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.seo-status-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
+.seo-status-dot[data-status='warn'] {
+  background: var(--caution);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--caution) 20%, transparent);
+}
+
+.seo-status-dot[data-status='error'] {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.seo-schema-verdict-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.seo-type-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-type-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--seo-card-edge));
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.seo-type-count .seo-type-badge {
+  border-radius: 0;
+}
+
+.seo-type-count-n {
+  padding: 0 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A node's type: accent-tinted, monospaced, cut when long. */
+.seo-type-badge {
+  display: inline-block;
+  flex: none;
+  max-width: 150px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent);
+  font: 600 10.5px/19px ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seo-type-extends {
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  background: transparent;
+  line-height: 17px;
+}
+
+.seo-type-badge[data-untyped='true'],
+.seo-type-more {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+.seo-schema-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--seo-card-edge);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seo-schema-severities {
+  display: inline-flex;
+  gap: 10px;
+}
+
+.seo-schema-severity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.seo-schema-severity .seo-severity .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.seo-schema-severity[data-count='0'] {
+  opacity: 0.55;
+}
+
+.seo-schema-empty {
+  padding-top: 24px;
+}
+
+/* A JSON-LD block or a markup syntax. */
+.seo-block-status {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.seo-block-status[data-status='invalid'] {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.seo-block-status[data-status='cut'] {
+  background: color-mix(in srgb, var(--caution) 16%, transparent);
+  color: var(--caution);
+}
+
+.seo-block-types {
+  margin: -4px 0 10px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.seo-section-head + .seo-panel-tools.seo-block-tools,
+.seo-block-types + .seo-panel-tools.seo-block-tools {
+  justify-content: space-between;
+  margin: 0 0 10px;
+}
+
+.seo-view-switch {
+  grid-auto-columns: 74px;
+}
+
+.seo-view-switch .seo-segment .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.seo-view-switch .seo-segment:disabled {
+  opacity: 0.45;
+}
+
+.seo-block-note {
+  margin: -4px 0 8px;
+}
+
+/* A node's issues, inline. */
+.seo-node-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-node-issue {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--info-tone) 8%, transparent);
+}
+
+.seo-node-issue[data-severity='error'] {
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+
+.seo-node-issue[data-severity='warning'] {
+  background: color-mix(in srgb, var(--caution) 10%, transparent);
+}
+
+.seo-node-issue .seo-severity .icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+.seo-node-issue-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.seo-node-issue-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.seo-node-issue-detail {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+/* The entity tree. */
+.seo-entity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-entity-nested {
+  margin: 2px 0 2px 2px;
+  padding-left: 9px;
+  border-left: 1px solid var(--seo-card-edge);
+}
+
+.seo-entity-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px 5px 2px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.seo-entity-head:hover {
+  background: var(--bg-hover);
+}
+
+.seo-entity-head:focus-visible,
+.seo-ref-head:focus-visible,
+.seo-icon-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.seo-entity-head .seo-chevron {
+  width: 14px;
+  height: 14px;
+  margin-top: 0;
+}
+
+.seo-entity[data-open='true'] > .seo-entity-head .seo-chevron {
+  transform: none;
+}
+
+.seo-entity-types {
+  display: inline-flex;
+  flex: none;
+  gap: 3px;
+  max-width: 60%;
+  overflow: hidden;
+}
+
+.seo-entity-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.seo-entity-body {
+  margin: 2px 0 6px 9px;
+  padding: 2px 0 0 10px;
+  border-left: 1px solid var(--seo-card-edge);
+}
+
+.seo-props {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+}
+
+.seo-prop {
+  display: grid;
+  grid-template-columns: minmax(64px, 32%) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* A property holding nodes gets the full width for them. */
+.seo-prop:has(> .seo-prop-values > .seo-entity-list, > .seo-prop-values > .seo-ref) {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+}
+
+.seo-prop-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+}
+
+.seo-prop-name > .seo-page-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seo-prop-count {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.seo-prop-values {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
+}
+
+.seo-value {
+  font-size: 12.5px;
+}
+
+.seo-value.seo-mono {
+  font-size: 11.5px;
+}
+
+.seo-value-literal {
+  color: var(--info-tone);
+}
+
+.seo-value-url {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.seo-value-url .seo-value {
+  flex: 1;
+  color: var(--accent);
+}
+
+.seo-icon-action {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--icon);
+}
+
+.seo-icon-action .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.seo-icon-action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.seo-icon-action:disabled {
+  opacity: 0.35;
+}
+
+/* A reference by @id. */
+.seo-ref {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.seo-ref-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--seo-card-edge));
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.seo-ref-head:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.seo-ref-head:disabled {
+  border-style: dotted;
+  color: var(--text-muted);
+}
+
+.seo-ref-head .icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.seo-ref-id {
+  flex: 0 1 auto;
+  max-width: 55%;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seo-ref-target {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The raw view: page text in a <pre>, escaped by React; the error's character marked. */
+.seo-raw {
+  position: relative;
+  max-height: 340px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 9px;
+  background: var(--seo-bg);
+  color: var(--text);
+  font: 11.5px/1.55 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  scrollbar-width: thin;
+  unicode-bidi: isolate;
+  tab-size: 2;
+}
+
+.seo-raw[data-invalid='true'] {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--seo-card-edge));
+}
+
+.seo-raw-mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--danger);
+  color: #ffffff;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.seo-raw-mark[data-end='true'] {
+  display: inline-block;
+  min-width: 0.6em;
+}
+
+.seo-raw-error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.seo-raw-error-at {
+  color: var(--danger);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .progress-active::after,
   .start-mark,

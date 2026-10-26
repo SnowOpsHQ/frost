@@ -95,6 +95,12 @@ export interface SeoService {
    * (`audit`) and lists it (`pageUrls`, parsed hrefs); else `false`, nothing written.
    */
   copyUrl(tabId: number, audit: SeoAuditRef, url: string): boolean;
+  /**
+   * Writes JSON-LD block `block` of the tab's ready audit to the system clipboard, if that audit is
+   * the one the panel shows (`audit`): pretty-printed (`formatJson`) when it parsed, its text as kept
+   * otherwise (`seo-schema.feature.md`). `false`, nothing written, for anything else.
+   */
+  copySchemaJson(tabId: number, audit: SeoAuditRef, block: number): boolean;
 }
 
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */

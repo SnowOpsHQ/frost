@@ -5,6 +5,29 @@ export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreA
 export { RULES } from './rules';
 export { altState, filterImages, imageCounts, isLazyInFirstViewport, isOversized, isSvg, lacksDimensions, type AltState } from './images';
 export { csvCell, filterLinks, linkCounts, linksCsv, NO_LINK_FILTER, relFlags, type LinkCounts, type LinkFilter } from './links';
+export {
+  analyseSchema,
+  formatJson,
+  isAbsoluteWebUrl,
+  isIsoDate,
+  isIsoDuration,
+  isSchemaOrgIri,
+  lineAndColumn,
+  locateJsonError,
+  parseJson,
+  ruleTypesOf,
+  shortTerm,
+  typeChain,
+  type JsonError,
+  type JsonParse,
+  type SchemaBlock,
+  type SchemaBlockStatus,
+  type SchemaEntity,
+  type SchemaIssue,
+  type SchemaProperty,
+  type SchemaReport,
+  type SchemaValue,
+} from './schema';
 export { pageUrls, socialPreview, type SocialCard, type SocialImage, type SocialPreview, type SocialSource, type SocialValue } from './social';
 export type {
   CappedText,

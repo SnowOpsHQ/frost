@@ -31,6 +31,12 @@ export function rawSnapshot(url: string, changes: Partial<PageSnapshot> = {}): P
     linkTotal: 1,
     images: [{ src: 'https://example.com/a.png', alt: { text: 'An image', length: 8 }, width: '10', height: '10', loading: null, rendered: { width: 10, height: 10 }, natural: { width: 10, height: 10 }, inFirstViewport: true, cssSized: false }],
     imageTotal: 1,
+    jsonLd: [{ text: '{"@context":"https://schema.org","@type":"WebSite","name":"Example","url":"https://example.com/","publisher":{"@type":"Organization","name":"Example"}}', length: 151 }],
+    jsonLdTotal: 1,
+    microdata: [],
+    microdataTotal: 0,
+    rdfa: [],
+    rdfaTotal: 0,
     ...changes,
   };
 }

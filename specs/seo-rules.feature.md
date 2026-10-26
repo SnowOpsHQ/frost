@@ -2,7 +2,8 @@
 
 Spec: `specs/seo-rules.spec.ts` (`SEO_RULE_SPECS`, thresholds, `SEVERITY_WEIGHTS`, `SCORE_BANDS`)
 and `specs/seo-snapshot.spec.ts` (`PageSnapshot`). Phase 2 Task 1; the image loading and size and
-the social rules are Task 2 (`seo-panels.feature.md`). Implemented by
+the social rules are Task 2 (`seo-panels.feature.md`); the structured-data rules (category `schema`)
+are Task 3, with their scenarios in `seo-schema.feature.md` (tests in `schema-rules.test.ts`). Implemented by
 `packages/seo-core` (`@app/seo-core`): pure TypeScript, no Electron, DOM or Zod. Each rule scenario
 maps to one named test in `packages/seo-core/src/__tests__/rules.test.ts` with a **passing** and a
 **failing** fixture snapshot (`fixtures.ts`: a clean page every rule passes on, changed as each
@@ -20,7 +21,8 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
 - **Scenario: catalog-matches-spec** — `RULES` has exactly the ids of `SEO_RULE_SPECS`, in the same
   order, each with the spec's category, severity, title, why and fix.
 - **Scenario: clean-fixture-passes-every-rule** — the clean fixture fails no rule (`runAudit` has no
-  findings, score 100).
+  findings, score 100). Its structured data (an Organization, its WebSite and the Article in one
+  `@graph`) passes every `schema` rule.
 - **Scenario: title-matching-h1-is-fine** — a title equal to the H1 fails no title or heading rule.
 
 ## Title

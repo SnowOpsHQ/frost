@@ -133,4 +133,59 @@ describe('snapshot schema', () => {
       expect(parseSnapshot(value)).toEqual({ ok: false, reason: 'invalid-snapshot' });
     }
   });
+
+  test('snapshot-validates-structured-data', () => {
+    const block = (text: string, length = text.length) => ({ text, length });
+    const item = (properties: PageSnapshot['microdata'][number]['properties'] = []) => ({ types: ['https://schema.org/Thing'], id: null, vocab: null, properties });
+    const markup = (key: 'microdata' | 'rdfa', items: unknown[]) => rawSnapshot(URL_A, { [key]: items, [`${key}Total`]: 100_000 } as Partial<PageSnapshot>);
+    // Lists at their caps parse; one over is rejected.
+    expect(ok(rawSnapshot(URL_A, { jsonLd: many(L.maxJsonLdBlocks, () => block('{}')), jsonLdTotal: 1_000 }))).toBe(true);
+    expect(ok(rawSnapshot(URL_A, { jsonLd: many(L.maxJsonLdBlocks + 1, () => block('{}')), jsonLdTotal: 1_000 }))).toBe(false);
+    for (const key of ['microdata', 'rdfa'] as const) {
+      expect(ok(markup(key, many(L.maxMarkupItems, () => item()))), `${key} at cap`).toBe(true);
+      expect(ok(markup(key, many(L.maxMarkupItems + 1, () => item()))), `${key} over cap`).toBe(false);
+      expect(ok(markup(key, [item(many(L.maxItemProperties, () => ({ name: 'a', value: 'b' })))]))).toBe(true);
+      expect(ok(markup(key, [item(many(L.maxItemProperties + 1, () => ({ name: 'a', value: 'b' })))]))).toBe(false);
+      expect(ok(markup(key, [{ ...item(), types: many(L.maxItemTypes + 1, () => 'T') }]))).toBe(false);
+    }
+    // Strings at their caps parse; one over is rejected.
+    const x = (n: number) => 'x'.repeat(n);
+    const strings: [string, (n: number) => Partial<PageSnapshot>, number][] = [
+      ['json-ld text', (n) => ({ jsonLd: [block(x(n))] }), L.maxJsonLdChars],
+      ['property value', (n) => ({ microdata: [item([{ name: 'a', value: x(n) }])] }), L.maxSchemaValueChars],
+      ['property name', (n) => ({ microdata: [item([{ name: x(n), value: 'v' }])] }), L.maxSchemaNameChars],
+      ['type', (n) => ({ rdfa: [{ ...item(), types: [x(n)] }] }), L.maxSchemaNameChars],
+      ['vocab', (n) => ({ rdfa: [{ ...item(), vocab: x(n) }] }), L.maxSchemaNameChars],
+      ['id', (n) => ({ microdata: [{ ...item(), id: x(n) }] }), L.maxSchemaValueChars],
+    ];
+    for (const [name, make, cap] of strings) {
+      expect(ok(rawSnapshot(URL_A, { jsonLdTotal: 1, microdataTotal: 1, rdfaTotal: 1, ...make(cap) })), `${name} at cap`).toBe(true);
+      expect(ok(rawSnapshot(URL_A, { jsonLdTotal: 1, microdataTotal: 1, rdfaTotal: 1, ...make(cap + 1) })), `${name} over cap`).toBe(false);
+    }
+    // A cut block may report a longer length, never a shorter one; the page's JSON-LD has a total cap.
+    expect(ok(rawSnapshot(URL_A, { jsonLd: [block('{', 5_000_000)] }))).toBe(true);
+    expect(ok(rawSnapshot(URL_A, { jsonLd: [block('{}', 1)] }))).toBe(false);
+    const full = Math.ceil(L.maxJsonLdTotalChars / L.maxJsonLdChars);
+    expect(ok(rawSnapshot(URL_A, { jsonLd: many(full, () => block(x(L.maxJsonLdChars))), jsonLdTotal: full }))).toBe(true);
+    expect(ok(rawSnapshot(URL_A, { jsonLd: [...many(full, () => block(x(L.maxJsonLdChars))), block('x')], jsonLdTotal: full + 1 }))).toBe(false);
+    // Nested items point forward, within the list, and are held once: a forest.
+    expect(ok(markup('microdata', [item([{ name: 'a', item: 1 }]), item([{ name: 'b', item: 2 }]), item()]))).toBe(true);
+    for (const items of [
+      [item([{ name: 'a', item: 0 }])],
+      [item(), item([{ name: 'a', item: 0 }])],
+      [item([{ name: 'a', item: 1 }])],
+      [item([{ name: 'a', item: 1 }, { name: 'b', item: 1 }]), item()],
+      [item([{ name: 'a', item: 2 }]), item([{ name: 'b', item: 2 }]), item()],
+    ]) {
+      expect(ok(markup('microdata', items)), JSON.stringify(items)).toBe(false);
+    }
+    // Strict properties: exactly one of value / item, a name, nothing else.
+    for (const property of [{ name: 'a' }, { name: 'a', value: 'v', item: 1 }, { name: '', value: 'v' }, { name: 'a', value: 1 }, { name: 'a', item: -1 }, { name: 'a', item: 0.5 }, { name: 'a', value: 'v', extra: 1 }]) {
+      expect(ok(markup('rdfa', [item([property as never]), item()])), JSON.stringify(property)).toBe(false);
+    }
+    // Totals are at least their lists.
+    expect(ok(rawSnapshot(URL_A, { jsonLd: [block('{}')], jsonLdTotal: 0 }))).toBe(false);
+    expect(ok(rawSnapshot(URL_A, { microdata: [item()], microdataTotal: 0 }))).toBe(false);
+    expect(ok(rawSnapshot(URL_A, { rdfa: [item()], rdfaTotal: 0 }))).toBe(false);
+  });
 });

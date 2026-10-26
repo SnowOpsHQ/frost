@@ -11,7 +11,7 @@ import {
   type BrowserState,
 } from '@app/specs/browser.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import { SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
+import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -152,7 +152,8 @@ const browserRouter = router({
  * state (`SeoAuditResponse`: `pending` / `ready` / `unavailable`); `rerun` whether a fresh audit
  * started; `setHighlight` whether the overlay was set (`seo-panels.feature.md`); `copyLinksCsv`
  * how many rows it wrote to main's clipboard (`null`: none, no ready audit); `copyUrl` whether it
- * wrote the URL (only one the audit lists). The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
+ * wrote the URL (only one the audit lists); `copySchemaJson` whether it wrote the JSON-LD block
+ * (`seo-schema.feature.md`). The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
  */
 const seoRouter = router({
   getAudit: publicProcedure
@@ -183,6 +184,11 @@ const seoRouter = router({
     .use(requireSeo)
     .input(SeoCopyUrlInputSchema)
     .mutation(({ ctx, input }) => ctx.seo.copyUrl(input.tabId, input.audit, input.url) === true),
+  copySchemaJson: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoCopySchemaInputSchema)
+    .mutation(({ ctx, input }) => ctx.seo.copySchemaJson(input.tabId, input.audit, input.block) === true),
 });
 
 export const appRouter = router({

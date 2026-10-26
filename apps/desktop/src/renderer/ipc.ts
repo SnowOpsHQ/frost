@@ -35,4 +35,6 @@ export const actions = {
   copyLinksCsv: (tabId: number, audit: SeoAuditRef, filter: LinkFilter) => ipc.seo.copyLinksCsv.mutate({ tabId, audit, filter }).catch(() => null),
   /** Copies a URL the audit on screen lists through main's clipboard; resolves whether it was copied. */
   copyUrl: (tabId: number, audit: SeoAuditRef, url: string) => ipc.seo.copyUrl.mutate({ tabId, audit, url }).catch(() => false),
+  /** Copies one JSON-LD block of the audit on screen through main's clipboard (main formats it); resolves whether it was copied. */
+  copySchemaJson: (tabId: number, audit: SeoAuditRef, block: number) => ipc.seo.copySchemaJson.mutate({ tabId, audit, block }).catch(() => false),
 };

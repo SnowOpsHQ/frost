@@ -1,4 +1,4 @@
-import { panelStatus, type SeoAuditResponse } from '@app/seo-core';
+import { panelStatus, type SchemaEntity, type SeoAuditResponse } from '@app/seo-core';
 import { HIGHLIGHT_PANELS, LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN, type HighlightMode, type PanelStatus, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 
@@ -99,4 +99,46 @@ export function linkQuery(value: string): string {
   const end = LINK_FILTER_QUERY_MAX_CHARS;
   const code = value.charCodeAt(end - 1);
   return value.slice(0, code >= 0xd800 && code <= 0xdbff ? end - 1 : end);
+}
+
+// ---- Schema panel (Task 3; acceptance `seo-schema.feature.md`, Renderer helpers) ---------------
+
+/** What a top-level entity without a type is called in the summary. */
+export const UNTYPED_LABEL = 'Untyped';
+
+/**
+ * Top-level entities counted by type (an entity with two types counts for both), most first, ties in
+ * first-seen order. A node that only extends another (`extends`) is part of that one, not counted.
+ */
+export function schemaTypeSummary(entities: readonly Pick<SchemaEntity, 'types' | 'extends'>[]): { type: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const entity of entities) {
+    if (entity.extends !== null) continue;
+    for (const type of entity.types.length > 0 ? entity.types : [UNTYPED_LABEL]) counts.set(type, (counts.get(type) ?? 0) + 1);
+  }
+  return [...counts].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count);
+}
+
+/**
+ * `text` split around the error at `offset` (clamped to the text): what comes before, the character
+ * at it (a whole code point; `''` at the end), and what comes after.
+ */
+export function errorExcerpt(text: string, offset: number): { before: string; at: string; after: string } {
+  const at = Math.max(0, Math.min(Number.isFinite(offset) ? Math.floor(offset) : 0, text.length));
+  const code = text.codePointAt(at);
+  const width = code === undefined ? 0 : code > 0xffff ? 2 : 1;
+  return { before: text.slice(0, at), at: text.slice(at, at + width), after: text.slice(at + width) };
+}
+
+/** Every entity of the tree (nested ones too) by key, so a reference can be opened where it is. */
+export function entityIndex(entities: readonly SchemaEntity[]): Map<number, SchemaEntity> {
+  const index = new Map<number, SchemaEntity>();
+  const stack = [...entities];
+  while (stack.length > 0) {
+    const entity = stack.pop()!;
+    if (index.has(entity.key)) continue;
+    index.set(entity.key, entity);
+    for (const property of entity.properties) for (const value of property.values) if (value.kind === 'entity') stack.push(value.entity);
+  }
+  return index;
 }

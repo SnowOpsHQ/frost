@@ -331,4 +331,147 @@ describe('extractor on a DOM', () => {
     const snapshot = extract({ body: '<a href="https://example.com:8443/x">Other port</a><a href="https://example.com:443/y">Default port</a><a href="https://www.example.com/z">www</a>' });
     expect(snapshot.links.map((link) => link.kind)).toEqual(['external', 'internal', 'internal']);
   });
+
+  // ---- Structured data (Task 3; seo-schema.feature.md, Extraction) ----------------------------
+
+  test('extractor-reads-json-ld-text', () => {
+    const first = '{\n  "@context": "https://schema.org",\n  "@type": "Organization"\n}';
+    const snapshot = extract({
+      head: `<script type="application/ld+json">${first}</script><script type="text/javascript">var x = 1;</script>`,
+      body: '<script type="APPLICATION/LD+JSON">[{"@type":"Thing"}]</script><script type="application/json">{"no":1}</script><script type="application/ld+json">{oops</script>',
+    });
+    expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(snapshot.jsonLd).toEqual([
+      { text: first, length: first.length },
+      { text: '[{"@type":"Thing"}]', length: 19 },
+      { text: '{oops', length: 5 },
+    ]);
+    expect(snapshot.jsonLdTotal).toBe(3);
+  });
+
+  test('extractor-caps-json-ld', () => {
+    const block = (n: number) => `<script type="application/ld+json">${'x'.repeat(n)}</script>`;
+    // One block over its cap is cut, its full length kept.
+    const cut = extract({ body: block(150), limits: { maxJsonLdChars: 100 } });
+    expect(cut.jsonLd).toEqual([{ text: 'x'.repeat(100), length: 150 }]);
+    // Once the total is used, later blocks are kept empty with their length.
+    const used = extract({ body: block(80) + block(80) + block(30), limits: { maxJsonLdChars: 100, maxJsonLdTotalChars: 120 } });
+    expect(used.jsonLd.map((b) => [b.text.length, b.length])).toEqual([
+      [80, 80],
+      [40, 80],
+      [0, 30],
+    ]);
+    // Past the block cap, blocks are only counted.
+    const many = extract({ body: times(5, () => block(3)), limits: { maxJsonLdBlocks: 2 } });
+    expect(many.jsonLd).toHaveLength(2);
+    expect(many.jsonLdTotal).toBe(5);
+    expect(PageSnapshotSchema.safeParse(extract({ body: block(SNAPSHOT_LIMITS.maxJsonLdChars + 10) })).success).toBe(true);
+  });
+
+  test('extractor-reads-microdata', () => {
+    const snapshot = extract({
+      body: `<div itemscope itemtype="https://schema.org/Product" itemid="urn:sku:1">
+          <h2 itemprop="name"> Trail   shoe </h2>
+          <img itemprop="image" src="/shoe.png" alt="">
+          <a itemprop="url" href="/p/1">Link</a>
+          <span itemprop="sku" content="TS-1">ignored text</span>
+          <div itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+            <span itemprop="price" content="19.99">$19.99</span><meta itemprop="priceCurrency" content="USD">
+            <time itemprop="priceValidUntil" datetime="2026-12-31">end of year</time>
+            <data itemprop="inventoryLevel" value="7">seven</data>
+          </div>
+          <span itemprop="color material">Red</span>
+        </div>
+        <p itemprop="orphan">No item</p>
+        <div itemscope><span itemprop="name">Untyped</span></div>`,
+    });
+    expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(snapshot.microdataTotal).toBe(3);
+    expect(snapshot.microdata).toEqual([
+      {
+        types: ['https://schema.org/Product'],
+        id: 'urn:sku:1',
+        vocab: null,
+        properties: [
+          { name: 'name', value: 'Trail shoe' },
+          { name: 'image', value: 'https://example.com/shoe.png' },
+          { name: 'url', value: 'https://example.com/p/1' },
+          { name: 'sku', value: 'TS-1' },
+          { name: 'offers', item: 1 },
+          { name: 'color', value: 'Red' },
+          { name: 'material', value: 'Red' },
+        ],
+      },
+      {
+        types: ['https://schema.org/Offer'],
+        id: null,
+        vocab: null,
+        properties: [
+          { name: 'price', value: '19.99' },
+          { name: 'priceCurrency', value: 'USD' },
+          { name: 'priceValidUntil', value: '2026-12-31' },
+          { name: 'inventoryLevel', value: '7' },
+        ],
+      },
+      { types: [], id: null, vocab: null, properties: [{ name: 'name', value: 'Untyped' }] },
+    ]);
+    expect(snapshot.rdfa).toEqual([]);
+  });
+
+  test('extractor-reads-rdfa', () => {
+    const snapshot = extract({
+      body: `<main vocab="https://schema.org/">
+          <article typeof="Recipe" resource="#soup">
+            <h1 property="name">Soup</h1>
+            <meta property="totalTime" content="PT30M">
+            <a property="url" href="/soup">Permalink</a>
+            <div property="author" typeof="Person" about="#cook"><span property="name">Cook</span></div>
+          </article>
+        </main>
+        <div typeof="schema:Thing"><span property="schema:name">Prefixed</span></div>`,
+    });
+    expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(snapshot.rdfaTotal).toBe(3);
+    expect(snapshot.rdfa).toEqual([
+      {
+        types: ['Recipe'],
+        id: '#soup',
+        vocab: 'https://schema.org/',
+        properties: [
+          { name: 'name', value: 'Soup' },
+          { name: 'totalTime', value: 'PT30M' },
+          { name: 'url', value: 'https://example.com/soup' },
+          { name: 'author', item: 1 },
+        ],
+      },
+      { types: ['Person'], id: '#cook', vocab: 'https://schema.org/', properties: [{ name: 'name', value: 'Cook' }] },
+      { types: ['schema:Thing'], id: null, vocab: null, properties: [{ name: 'schema:name', value: 'Prefixed' }] },
+    ]);
+  });
+
+  test('extractor-bounds-markup', () => {
+    const nested = (depth: number) => `${'<div itemprop="part" itemscope itemtype="https://schema.org/Thing">'.repeat(depth)}${'</div>'.repeat(depth)}`;
+    const deep = extract({ body: `<div itemscope itemtype="https://schema.org/Thing">${nested(10)}</div>`, limits: { maxMarkupDepth: 3 } });
+    // The top-level item and three levels below it.
+    expect(deep.microdata).toHaveLength(4);
+    expect(deep.microdataTotal).toBe(11);
+    const many = extract({ body: times(6, () => '<div itemscope itemtype="https://schema.org/Thing"><span itemprop="a">1</span><span itemprop="b">2</span><span itemprop="c">3</span></div>'), limits: { maxMarkupItems: 4, maxItemProperties: 2 } });
+    expect(many.microdata).toHaveLength(4);
+    expect(many.microdataTotal).toBe(6);
+    expect(many.microdata.every((item) => item.properties.length === 2)).toBe(true);
+    // A nested item its holder has no room for is dropped, not turned into a top-level item.
+    const full = extract({
+      body: '<div itemscope itemtype="https://schema.org/Thing"><span itemprop="a">1</span><span itemprop="b">2</span><div itemprop="c" itemscope itemtype="https://schema.org/Thing"><span itemprop="d">3</span></div></div>',
+      limits: { maxItemProperties: 2 },
+    });
+    expect(full.microdata).toHaveLength(1);
+    expect(full.microdataTotal).toBe(2);
+    const long = extract({ body: `<div itemscope itemtype="https://schema.org/Thing"><p itemprop="description">${'word '.repeat(100)}</p></div>`, limits: { maxSchemaValueChars: 20 } });
+    expect((long.microdata[0]!.properties[0] as { value: string }).value).toHaveLength(20);
+    // Elements past maxMarkupElements are not looked at; the items are still counted.
+    const capped = extract({ body: times(5, () => '<div itemscope itemtype="https://schema.org/Thing"></div>'), limits: { maxMarkupElements: 2 } });
+    expect(capped.microdata).toHaveLength(2);
+    expect(capped.microdataTotal).toBe(5);
+    for (const snapshot of [deep, many, long, capped]) expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+  });
 });

@@ -144,6 +144,30 @@ export const SNAPSHOT_LIMITS = {
    * link's anchor, a title): a link wrapping a huge subtree costs no more than this.
    */
   maxElementTextVisits: 500,
+  /**
+   * Structured data (Phase 2 Task 3; `seo-schema.feature.md`). JSON-LD blocks
+   * (`script[type="application/ld+json"]`, the type matched case-insensitively) kept, in document
+   * order. Their text is only ever read here, never parsed: main parses it (`@app/seo-core`).
+   */
+  maxJsonLdBlocks: 32,
+  /** UTF-16 code units of one block's text kept; its full length is reported beside it (a cut block is not parsed). */
+  maxJsonLdChars: 131_072,
+  /** Code units of JSON-LD kept across all blocks: once used up, later blocks are kept empty (with their full length). */
+  maxJsonLdTotalChars: 524_288,
+  /** Microdata items (`[itemscope]`) and, separately, RDFa items (`[typeof]`) kept, in document order. */
+  maxMarkupItems: 300,
+  /** Elements with `itemscope` or `itemprop` (and, separately, `typeof` or `property`) looked at. */
+  maxMarkupElements: 10_000,
+  /** Properties kept per item. */
+  maxItemProperties: 64,
+  /** How deep items nest: a top-level item is depth 0; items deeper than this (and what they hold) are dropped. */
+  maxMarkupDepth: 12,
+  /** Types (`itemtype` / `typeof` tokens) kept per item, and property names per element. */
+  maxItemTypes: 8,
+  /** Characters of an item type, a property name or a vocabulary. */
+  maxSchemaNameChars: 256,
+  /** Characters of a property value (text, or a resolved URL) and of an item id. */
+  maxSchemaValueChars: 2_048,
   /** Text nodes the word count walks at most (it then reports `textTruncated`; it visits at most four times as many nodes in all). */
   maxTextNodes: 50_000,
   /** Characters of visible text the word count reads at most (then `textTruncated`). */

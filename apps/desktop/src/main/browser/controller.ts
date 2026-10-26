@@ -1,6 +1,6 @@
 import type { SavedSession } from '@app/db';
 import type { BrowserService, SeoService } from '@app/ipc-contract';
-import { filterLinks, linksCsv, pageUrls } from '@app/seo-core';
+import { filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
@@ -731,8 +731,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         const tab = strip.tabs.find((t) => t.id === tabId);
         return tab !== undefined && highlights.set(tab, mode);
       },
-      // Both copy only what the tab's ready audit lists, through main's clipboard, and only from the
-      // audit the panel shows (`SeoAuditRefSchema`).
+      // All three copy only what the tab's ready audit holds, through main's clipboard, and only from
+      // the audit the panel shows (`SeoAuditRefSchema`).
       copyLinksCsv: (tabId, shown, filter) => {
         const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
         if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown)) return null;
@@ -744,6 +744,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
         if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown) || !pageUrls(response.audit.page).has(url)) return false;
         options.clipboard.writeText(url);
+        return true;
+      },
+      copySchemaJson: (tabId, shown, index) => {
+        const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
+        if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown)) return false;
+        const block = response.audit.schema.blocks.find((b) => b.index === index);
+        if (!block || block.text === '') return false;
+        options.clipboard.writeText(block.status === 'valid' ? formatJson(block.text).text : block.text);
         return true;
       },
       // Only the active tab is ever audited (`RERUN_ACTIVE_TAB_ONLY`).

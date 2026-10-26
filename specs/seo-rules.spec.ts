@@ -9,15 +9,18 @@
  * principles (how search engines read titles, descriptions, headings, canonicals, robots directives
  * and links, and how people see them in results). Nothing is taken from another product's catalog.
  *
- * Plain values with no imports, so the chrome renderer can use them without bundling Zod.
+ * Plain values (importing only other plain specs), so the chrome renderer can use them without
+ * bundling Zod.
  */
+import { SNAPSHOT_LIMITS } from './seo-limits.spec';
+import { SCHEMA_PARSE_LIMITS, SCHEMA_SINGLETON_TYPES } from './schema-types.spec';
 
 /** How bad a failing rule is. Ordered: the sidebar ranks issues by it (then by catalog order). */
 export const SEO_SEVERITIES = ['error', 'warning', 'info'] as const;
 export type SeoSeverity = (typeof SEO_SEVERITIES)[number];
 
 /** What a rule is about (the On-Page panel groups facts the same way). */
-export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social'] as const;
+export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social', 'schema'] as const;
 export type SeoCategory = (typeof SEO_CATEGORIES)[number];
 
 export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
@@ -33,6 +36,7 @@ export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
   links: 'Links',
   url: 'URL',
   social: 'Social',
+  schema: 'Structured data',
 };
 
 // ---- Thresholds ------------------------------------------------------------------------------
@@ -462,6 +466,137 @@ export const SEO_RULE_SPECS = [
     condition: 'The page has no twitter:card tag with a value.',
     why: 'twitter:card picks the card layout (a small summary, or a large image) in apps that read Twitter card tags. Without it they fall back to their default, usually the small card.',
     fix: 'Add <meta name="twitter:card" content="summary_large_image"> (or "summary").',
+  },
+  // Structured data (Phase 2 Task 3; acceptance `seo-schema.feature.md`). The type and property
+  // sets the checks use are `schema-types.spec.ts`. Each finding lists the nodes it is about; the
+  // Schema panel shows the same issues on the nodes themselves.
+  {
+    id: 'schema-none',
+    category: 'schema',
+    severity: 'info',
+    title: 'No structured data',
+    condition: 'The page has no JSON-LD block, no microdata item and no RDFa item.',
+    why: 'Structured data tells search engines in plain terms what a page is (a product, a recipe, an article, a business) and is what makes it eligible for richer results such as ratings, prices and breadcrumbs.',
+    fix: 'Describe the page’s main entity with schema.org JSON-LD in a <script type="application/ld+json"> block.',
+  },
+  {
+    id: 'schema-json-invalid',
+    category: 'schema',
+    severity: 'error',
+    title: 'JSON-LD block is not valid JSON',
+    condition: 'A JSON-LD block (kept whole) does not parse as JSON, or is empty. The finding gives the block, the line and column of the first error, and what was wrong there.',
+    why: 'A block with a syntax error is thrown away whole: none of the structured data in it is read.',
+    fix: 'Fix the JSON at the reported position (often a trailing comma, a missing comma or quote, or an unescaped quote inside a string), or generate the block with a JSON serialiser instead of by hand.',
+  },
+  {
+    id: 'schema-over-limit',
+    category: 'schema',
+    severity: 'warning',
+    title: 'Structured data too large to check fully',
+    condition: `A JSON-LD block is longer than ${SNAPSHOT_LIMITS.maxJsonLdChars.toLocaleString('en-US')} characters (or past the page’s ${SNAPSHOT_LIMITS.maxJsonLdTotalChars.toLocaleString('en-US')} in all), nests objects and arrays deeper than ${SCHEMA_PARSE_LIMITS.maxDepth} levels, or the page’s JSON-LD holds more than ${SCHEMA_PARSE_LIMITS.maxNodes.toLocaleString('en-US')} values. frost checks what fits within these bounds and skips the rest.`,
+    why: 'Very large or deeply nested structured data adds weight to every page view and is easy to get wrong; search engines may not read all of it either.',
+    fix: 'Keep each block to what describes this page: move long lists (all reviews, every product variant) to their own pages and flatten needless nesting.',
+  },
+  {
+    id: 'schema-context-missing',
+    category: 'schema',
+    severity: 'warning',
+    title: 'Structured data names no vocabulary',
+    condition: 'A top-level JSON-LD node has no @context (its own or its block’s), or an RDFa item uses a bare type (such as "Product") with no vocab in effect.',
+    why: 'Without a vocabulary, "Product" or "name" are just words: the data cannot be read as schema.org.',
+    fix: 'Add "@context": "https://schema.org" to the block’s top-level object (for RDFa, vocab="https://schema.org/" on an enclosing element).',
+  },
+  {
+    id: 'schema-context-not-schema-org',
+    category: 'schema',
+    severity: 'warning',
+    title: 'Structured data is not schema.org',
+    condition: 'A top-level JSON-LD node’s @context, a microdata item’s itemtype, or an RDFa item’s vocabulary names no schema.org IRI (http or https, with or without www.).',
+    why: 'Search engines read structured data in the schema.org vocabulary. Data in another vocabulary, or a mistyped schema.org address, is ignored for search features.',
+    fix: 'Use https://schema.org as the @context (or itemtype prefix, or RDFa vocab), spelled exactly.',
+  },
+  {
+    id: 'schema-type-missing',
+    category: 'schema',
+    severity: 'warning',
+    title: 'Structured data without a type',
+    condition: 'A top-level node (a JSON-LD block’s object, an entry of its @graph or top-level array, a top-level microdata or RDFa item) has no @type, itemtype or typeof. A node that only references another by @id is not one, nor is one that adds properties to a typed node with the same @id.',
+    why: 'The type is what says what a node is. An untyped node cannot be matched to any search feature.',
+    fix: 'Give the node the most specific schema.org type that fits, for example "@type": "Product".',
+  },
+  {
+    id: 'schema-type-unknown',
+    category: 'schema',
+    severity: 'info',
+    title: 'Uncommon schema.org type',
+    condition: 'A node’s schema.org type is not one of the common types frost recognises (SCHEMA_COMMON_TYPES and their known subtypes). The list is not all of schema.org, so this is a prompt to check the spelling, not an error.',
+    why: 'Types are case-sensitive and a misspelt type ("product", "Organisation") is not recognised by search engines, so the data is ignored.',
+    fix: 'Check the type’s exact spelling and capitalisation against schema.org; keep it if it is a real, more specific type.',
+  },
+  {
+    id: 'schema-required-missing',
+    category: 'schema',
+    severity: 'error',
+    title: 'Structured data lacks required properties',
+    condition: 'A node of a type frost checks (SCHEMA_TYPE_RULES, subtypes included) lacks one of its required properties, or every alternative of a required choice. Properties of other nodes with the same @id count.',
+    why: 'Without these properties the node does not describe its thing well enough to be used: a product with nothing to buy and no rating, an event without a date, a business without an address.',
+    fix: 'Add the listed properties with real values from the page.',
+  },
+  {
+    id: 'schema-recommended-missing',
+    category: 'schema',
+    severity: 'info',
+    title: 'Structured data could say more',
+    condition: 'A top-level node of a type frost checks lacks one of its recommended properties (SCHEMA_TYPE_RULES).',
+    why: 'Recommended properties are optional, but they are what richer results show (images, dates, authors, prices) and help search engines tell similar entities apart.',
+    fix: 'Add the listed properties where the page has the information.',
+  },
+  {
+    id: 'schema-url-not-absolute',
+    category: 'schema',
+    severity: 'warning',
+    title: 'Structured data URL is not absolute',
+    condition: 'A text value of a URL property (SCHEMA_URL_PROPERTIES: url, image, logo, sameAs, item …) is not an absolute http or https URL.',
+    why: 'Structured data is often read apart from the page, so a relative URL may be resolved wrongly or not at all, and other schemes (javascript:, data:) are useless to a crawler.',
+    fix: 'Write the full https:// URL, host included.',
+  },
+  {
+    id: 'schema-date-invalid',
+    category: 'schema',
+    severity: 'warning',
+    title: 'Date or duration is not ISO 8601',
+    condition:
+      'A date property (SCHEMA_DATE_PROPERTIES: datePublished, startDate, uploadDate …) is not an ISO 8601 date or date-time (2024-05-01, 2024-05-01T09:30, 2024-05-01T09:30:00+02:00), or a duration property (SCHEMA_DURATION_PROPERTIES: duration, cookTime …) is not an ISO 8601 duration (PT1H30M).',
+    why: 'Dates written for people ("May 1st", "01/05/2024") are ambiguous to a machine, so dates in results may be wrong or left out.',
+    fix: 'Write dates as YYYY-MM-DD, with a time and a time zone where it matters (YYYY-MM-DDThh:mm+hh:mm), and durations as P…T…H…M.',
+  },
+  {
+    id: 'schema-breadcrumb-positions',
+    category: 'schema',
+    severity: 'warning',
+    title: 'Breadcrumb positions are out of order',
+    condition: 'A BreadcrumbList’s items do not have the positions 1, 2, 3 … one each, with no gap or repeat (a missing or non-integer position fails too).',
+    why: 'The positions order the trail. Gaps, repeats or missing positions make the trail ambiguous, so it may be shown wrongly or not at all.',
+    fix: 'Number the ListItems 1 to n in the order of the trail, starting from the home page.',
+  },
+  {
+    id: 'schema-price-invalid',
+    category: 'schema',
+    severity: 'warning',
+    title: 'Product price is not machine-readable',
+    condition:
+      'A Product’s offer (an Offer: price, or its priceSpecification’s price; an AggregateOffer: lowPrice) has no numeric price (digits with an optional decimal point: no currency sign, no thousands separator), or no priceCurrency.',
+    why: 'Prices in results are read from these two values. "$1,299" or a missing currency cannot be shown reliably, so the price is dropped.',
+    fix: 'Give each offer "price": "1299.00" and "priceCurrency": "USD" (a three-letter ISO 4217 code).',
+  },
+  {
+    id: 'schema-entity-conflict',
+    category: 'schema',
+    severity: 'info',
+    title: `More than one ${SCHEMA_SINGLETON_TYPES.join(' or ')} that disagree`,
+    condition: `Two top-level nodes of the same type (${SCHEMA_SINGLETON_TYPES.join(' or ')}), not sharing an @id, have different names or URLs (case and a trailing / aside).`,
+    why: 'A site is one organisation and one website. Conflicting descriptions (often from a theme and a plugin both adding them) leave search engines to guess which is right.',
+    fix: 'Describe the organisation and the website once, and refer to them from other nodes by @id.',
   },
 ] as const satisfies readonly SeoRuleSpec[];
 

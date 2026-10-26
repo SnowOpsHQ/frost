@@ -1,8 +1,8 @@
 // Spec: specs/seo-sidebar.spec.ts (HIGHLIGHT_MODES, LINKS_CSV_COLUMNS), specs/browser.spec.ts (TabState.highlight,
 // OpenBackgroundTabInputSchema), specs/seo-snapshot.spec.ts (LinkFilterSchema)
-// Acceptance: specs/seo-panels.feature.md (Controller)
+// Acceptance: specs/seo-panels.feature.md (Controller), specs/seo-schema.feature.md (Controller and router)
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { linksCsv } from '@app/seo-core';
+import { formatJson, linksCsv } from '@app/seo-core';
 import { AUDIT_DEBOUNCE_MS } from '@app/specs/seo-limits.spec';
 import { MAX_TABS } from '@app/specs/tabs.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
@@ -323,6 +323,42 @@ describe('copy', () => {
     for (const url of ['https://evil.example/', 'javascript:alert(1)', `${A}?x`, ' /t.png ', '/t.png']) expect(controller.seo.copyUrl(id, shown, url), url).toBe(false);
     expect(controller.seo.copyUrl(id, { ...shown, takenAt: 1 }, A)).toBe(false);
     expect(controller.seo.copyUrl(999, shown, A)).toBe(false);
+    expect(clipboard.writeText).toHaveBeenCalledTimes(calls);
+  });
+
+  test('copy-schema-json', async () => {
+    const valid = '{"@context":"https://schema.org","@type":"Organization","name":"Acme"}';
+    const invalid = '{"@type": "Thing",}';
+    snapshotOf = (url) =>
+      rawSnapshot(url, {
+        jsonLd: [
+          { text: valid, length: valid.length },
+          { text: invalid, length: invalid.length },
+          { text: '{"cut', length: 9_000_000 },
+        ],
+        jsonLdTotal: 3,
+      });
+    load(A);
+    const shown = { url: A, takenAt: rawSnapshot(A).extractedAt };
+    // No ready audit yet.
+    expect(controller.seo.copySchemaJson(activeId(), shown, 0)).toBe(false);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    await flush();
+    const id = activeId();
+    // A block that parsed: pretty-printed; one that did not: as written; a cut one: what was kept.
+    expect(controller.seo.copySchemaJson(id, shown, 0)).toBe(true);
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(formatJson(valid).text);
+    expect(clipboard.writeText.mock.lastCall![0]).toBe('{\n  "@context": "https://schema.org",\n  "@type": "Organization",\n  "name": "Acme"\n}');
+    expect(controller.seo.copySchemaJson(id, shown, 1)).toBe(true);
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(invalid);
+    expect(controller.seo.copySchemaJson(id, shown, 2)).toBe(true);
+    expect(clipboard.writeText).toHaveBeenLastCalledWith('{"cut');
+    const calls = clipboard.writeText.mock.calls.length;
+    // A block the audit does not have, another audit, another tab: nothing.
+    expect(controller.seo.copySchemaJson(id, shown, 3)).toBe(false);
+    expect(controller.seo.copySchemaJson(id, { ...shown, takenAt: 1 }, 0)).toBe(false);
+    expect(controller.seo.copySchemaJson(id, { ...shown, url: B }, 0)).toBe(false);
+    expect(controller.seo.copySchemaJson(999, shown, 0)).toBe(false);
     expect(clipboard.writeText).toHaveBeenCalledTimes(calls);
   });
 });

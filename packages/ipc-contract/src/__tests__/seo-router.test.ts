@@ -1,6 +1,6 @@
 // Spec: specs/seo-snapshot.spec.ts (SeoTabInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema,
-// SeoCopyUrlInputSchema), specs/seo-sidebar.spec.ts (statuses, HIGHLIGHT_MODES, link filters), specs/ipc-sender.spec.ts
-// Acceptance: specs/seo-sidebar.feature.md (Router), specs/seo-panels.feature.md (Router)
+// SeoCopyUrlInputSchema, SeoCopySchemaInputSchema), specs/seo-sidebar.spec.ts (statuses, HIGHLIGHT_MODES, link filters), specs/ipc-sender.spec.ts
+// Acceptance: specs/seo-sidebar.feature.md (Router), specs/seo-panels.feature.md (Router), specs/seo-schema.feature.md (Controller and router)
 import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import type { SeoAuditResponse } from '@app/seo-core';
@@ -22,6 +22,7 @@ function fakeSeo() {
     setHighlight: vi.fn((tabId: number, _mode: 'off' | 'links' | 'headings') => tabId === 1),
     copyLinksCsv: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _filter: { type: string; rel: string; query: string }): number | null => (tabId === 1 ? 4 : null)),
     copyUrl: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _url: string) => tabId === 1),
+    copySchemaJson: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _block: number) => tabId === 1),
   } satisfies SeoService;
 }
 
@@ -57,6 +58,7 @@ const VALID_INPUT: Record<string, unknown> = {
   setHighlight: { tabId: 1, mode: 'links' },
   copyLinksCsv: { tabId: 1, audit: AUDIT, filter: FILTER },
   copyUrl: { tabId: 1, audit: AUDIT, url: 'https://example.com/a' },
+  copySchemaJson: { tabId: 1, audit: AUDIT, block: 0 },
 };
 const SEO_PROCEDURES = Object.keys(VALID_INPUT);
 /** No service method was called. */
@@ -110,6 +112,16 @@ describe('seo router', () => {
         { tabId: 1, audit: AUDIT, url: `https://example.com/${'x'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}` },
         { tabId: 1, audit: AUDIT, url: 'https://example.com/', extra: 1 },
       ],
+      copySchemaJson: [
+        { tabId: 1, audit: AUDIT },
+        { tabId: 1, block: 0 },
+        { tabId: 1, audit: AUDIT, block: -1 },
+        { tabId: 1, audit: AUDIT, block: 0.5 },
+        { tabId: 1, audit: AUDIT, block: '0' },
+        { tabId: 1, audit: AUDIT, block: SNAPSHOT_LIMITS.maxJsonLdBlocks },
+        { tabId: 1, audit: { ...AUDIT, takenAt: 'now' }, block: 0 },
+        { tabId: 1, audit: AUDIT, block: 0, text: '{}' },
+      ],
     };
     for (const name of SEO_PROCEDURES) {
       const valid = VALID_INPUT[name] as Record<string, unknown>;
@@ -141,6 +153,9 @@ describe('seo router', () => {
     await expect(procedure(ctxFor(seo), 'copyUrl')({ tabId: 1, audit: AUDIT, url: 'https://example.com/a' })).resolves.toBe(true);
     expect(seo.copyUrl).toHaveBeenLastCalledWith(1, AUDIT, 'https://example.com/a');
     await expect(procedure(ctxFor(seo), 'copyUrl')({ tabId: 2, audit: AUDIT, url: 'https://example.com/a' })).resolves.toBe(false);
+    await expect(procedure(ctxFor(seo), 'copySchemaJson')({ tabId: 1, audit: AUDIT, block: SNAPSHOT_LIMITS.maxJsonLdBlocks - 1 })).resolves.toBe(true);
+    expect(seo.copySchemaJson).toHaveBeenLastCalledWith(1, AUDIT, SNAPSHOT_LIMITS.maxJsonLdBlocks - 1);
+    await expect(procedure(ctxFor(seo), 'copySchemaJson')({ tabId: 2, audit: AUDIT, block: 0 })).resolves.toBe(false);
 
     // Over the transport too: getAudit is a query, rerun a mutation.
     const sender = { id: 1, mainFrame: { frameTreeNodeId: 100 }, isDestroyed: () => false };

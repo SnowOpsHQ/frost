@@ -3,6 +3,7 @@ import type { PanelStatus } from '@app/specs/seo-sidebar.spec';
 import { RULES } from './rules';
 import type { Finding, PageFacts, PageSnapshot, SeoAudit, SeoRule, SeverityCounts } from './types';
 import { described, robotsWith } from './rules/head';
+import { analyseSchema } from './schema';
 import { tokens } from './util';
 
 // Running the rules over a snapshot, ranking the findings and scoring them (spec
@@ -111,5 +112,6 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
     counts: countSeverities(ranked),
     findings: ranked,
     page: pageFacts(snapshot),
+    schema: analyseSchema(snapshot),
   };
 }

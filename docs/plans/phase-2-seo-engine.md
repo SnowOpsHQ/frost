@@ -135,7 +135,14 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   sets for common types (Organization, WebSite, BreadcrumbList, Article, Product, FAQPage, LocalBusiness,
   Event, Recipe, VideoObject).
 - Tree UI with per-node issues.
-- [ ] commit `feat(seo): schema extraction and validation`
+- Decisions (`specs/seo-schema.feature.md`, `specs/schema-types.spec.ts`): the page only hands over
+  JSON-LD text (bounded reads, never parsed in the page) and flat microdata / RDFa item lists that the
+  snapshot schema checks form a forest; main parses in `@app/seo-core` (`JSON.parse` in try/catch, frost's
+  own scanner for the error's line and column, bounded depth, values and entities, `__proto__` /
+  `constructor` / `prototype` keys dropped, no page key ever indexes a plain object); `@id` references
+  stay references (no cycles); 14 `schema` rules feed the score, each issue tied to its node; "Copy
+  JSON" is written by main (`seo.copySchemaJson`) from its own audit.
+- [x] commit `feat(seo): schema extraction and validation`
 
 ### Task 4: Indexability panel
 

@@ -54,8 +54,8 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  * `error` if any of them fails with severity `error`, `warn` if any fails with `warning`, else
  * `pass` (info findings never colour a dot).
  */
-/** On-Page covers every category except the ones with a panel of their own beyond it (Social). */
-const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => category !== 'social');
+/** On-Page covers every category except the ones with a panel of their own beyond it (Social, Schema). */
+const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => category !== 'social' && category !== 'schema');
 
 export const SEO_PANELS = [
   { id: 'overview', label: 'Overview', available: true, categories: SEO_CATEGORIES },
@@ -63,7 +63,7 @@ export const SEO_PANELS = [
   { id: 'links', label: 'Links', available: true, categories: ['links'] },
   { id: 'images', label: 'Images', available: true, categories: ['images'] },
   { id: 'social', label: 'Social', available: true, categories: ['social'] },
-  { id: 'schema', label: 'Schema', available: false, categories: [] },
+  { id: 'schema', label: 'Schema', available: true, categories: ['schema'] },
   { id: 'indexability', label: 'Indexability', available: false, categories: [] },
   { id: 'speed', label: 'Page Speed', available: false, categories: [] },
   { id: 'compliance', label: 'Compliance', available: false, categories: [] },

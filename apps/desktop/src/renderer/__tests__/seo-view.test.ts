@@ -1,10 +1,10 @@
 // Spec: specs/seo-sidebar.spec.ts (SIDEBAR_DEFAULT_OPEN, SEO_PANELS), specs/seo-rules.spec.ts (thresholds)
-// Acceptance: specs/seo-sidebar.feature.md (Renderer helpers), specs/seo-panels.feature.md (Renderer helpers)
+// Acceptance: specs/seo-sidebar.feature.md (Renderer helpers), specs/seo-panels.feature.md (Renderer helpers), specs/seo-schema.feature.md (Renderer helpers)
 import { describe, expect, test } from 'vitest';
-import type { Finding, SeoAudit, SeoAuditResponse } from '@app/seo-core';
+import type { Finding, SchemaEntity, SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { TITLE_MAX_CHARS, TITLE_MIN_CHARS } from '@app/specs/seo-rules.spec';
 import { LINK_FILTER_QUERY_MAX_CHARS, SEO_PANELS, SIDEBAR_DEFAULT_OPEN } from '@app/specs/seo-sidebar.spec';
-import { declaredSize, formatSize, highlightToClear, isolatedTooltip, lengthIndicator, linkQuery, openableUrl, oversizeRatio, railStatuses, shownResponse, sidebarOpenFromStorage } from '../seo-view';
+import { declaredSize, entityIndex, errorExcerpt, formatSize, highlightToClear, isolatedTooltip, lengthIndicator, linkQuery, openableUrl, oversizeRatio, railStatuses, schemaTypeSummary, shownResponse, sidebarOpenFromStorage, UNTYPED_LABEL } from '../seo-view';
 
 function finding(severity: Finding['severity'], category: Finding['category']): Finding {
   return { ruleId: 'title-missing', category, severity, title: 't', why: 'w', fix: 'f', details: { facts: [], samples: [] } };
@@ -35,13 +35,16 @@ describe('seo view helpers', () => {
     expect(railStatuses({ status: 'pending', url: 'https://a.example/' })).toEqual({});
     expect(railStatuses({ status: 'unavailable', url: 'https://a.example/', reason: 'timeout' })).toEqual({});
     const statuses = railStatuses(ready('https://a.example/', [finding('warning', 'links'), finding('error', 'title'), finding('warning', 'social')]));
-    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', links: 'warn', images: 'pass', social: 'warn' };
+    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass' };
     for (const panel of SEO_PANELS) {
       if (panel.available) expect(statuses[panel.id], panel.id).toBe(expected[panel.id]);
       else expect(statuses[panel.id], panel.id).toBeUndefined();
     }
     // Social findings colour Overview and Social, not On-Page.
     expect(railStatuses(ready('https://a.example/', [finding('error', 'social')]))).toMatchObject({ overview: 'error', 'on-page': 'pass', social: 'error', links: 'pass', images: 'pass' });
+    // Schema findings colour Overview and Schema, not On-Page.
+    expect(railStatuses(ready('https://a.example/', [finding('error', 'schema')]))).toMatchObject({ overview: 'error', 'on-page': 'pass', schema: 'error', social: 'pass' });
+    expect(railStatuses(ready('https://a.example/', [finding('warning', 'schema')])).schema).toBe('warn');
     expect(railStatuses(ready('https://a.example/', [finding('info', 'url')]))['on-page']).toBe('pass');
     expect(railStatuses(ready('https://a.example/', [finding('warning', 'url')]))['on-page']).toBe('warn');
   });
@@ -97,5 +100,33 @@ describe('seo view helpers', () => {
     expect(highlightToClear('headings', 'on-page', false)).toBe(true);
     // Nothing on: nothing to do.
     expect(highlightToClear('off', 'overview', false)).toBe(false);
+  });
+
+  test('schema-type-summary', () => {
+    const entity = (types: string[], extended: number | null = null) => ({ types, extends: extended });
+    expect(schemaTypeSummary([entity(['Organization']), entity(['Product']), entity(['Product', 'Thing']), entity([]), entity(['Product']), entity([], 1)])).toEqual([
+      { type: 'Product', count: 3 },
+      { type: 'Organization', count: 1 },
+      { type: 'Thing', count: 1 },
+      { type: UNTYPED_LABEL, count: 1 },
+    ]);
+    expect(schemaTypeSummary([])).toEqual([]);
+  });
+
+  test('schema-error-excerpt', () => {
+    expect(errorExcerpt('{"a": 1,}', 7)).toEqual({ before: '{"a": 1', at: ',', after: '}' });
+    // Clamped to the text; the end has no character.
+    expect(errorExcerpt('abc', 3)).toEqual({ before: 'abc', at: '', after: '' });
+    expect(errorExcerpt('abc', 99)).toEqual({ before: 'abc', at: '', after: '' });
+    expect(errorExcerpt('abc', -4)).toEqual({ before: '', at: 'a', after: 'bc' });
+    expect(errorExcerpt('abc', Number.NaN)).toEqual({ before: '', at: 'a', after: 'bc' });
+    // A whole code point, never half a surrogate pair.
+    expect(errorExcerpt('x😀y', 1)).toEqual({ before: 'x', at: '😀', after: 'y' });
+  });
+
+  test('schema-entity-index', () => {
+    const leaf = { key: 2, syntax: 'json-ld', block: 0, types: ['Offer'], id: null, properties: [], topLevel: false, extends: null } as SchemaEntity;
+    const top = { key: 1, syntax: 'json-ld', block: 0, types: ['Product'], id: null, properties: [{ name: 'offers', values: [{ kind: 'entity', entity: leaf }, { kind: 'ref', id: '#x', target: 9 }] }], topLevel: true, extends: null } as SchemaEntity;
+    expect([...entityIndex([top]).keys()].sort()).toEqual([1, 2]);
   });
 });

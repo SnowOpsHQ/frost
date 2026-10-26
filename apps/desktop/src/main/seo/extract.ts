@@ -25,6 +25,7 @@ interface PageText extends PageNode {
 interface PageElement extends PageNode {
   readonly localName: string;
   readonly namespaceURI: string | null;
+  readonly parentElement: PageElement | null;
   getAttribute(name: string): string | null;
   hasAttribute(name: string): boolean;
   closest(selectors: string): PageElement | null;
@@ -435,6 +436,108 @@ export function extractPage(
     };
   });
 
+  // Structured data (Task 3). JSON-LD: each block's text as written, read with bounded
+  // `substringData` (a 5 MB block costs no more than its cap), never parsed here. Microdata and RDFa
+  // Lite: flat item lists, a nested item being a property that holds its (later) index.
+  let jsonLdChars = 0;
+  const [jsonLd, jsonLdTotal] = firstOf(document.querySelectorAll('script[type="application/ld+json" i]'), L.maxJsonLdBlocks, (el) => {
+    const room = Math.max(0, Math.min(L.maxJsonLdChars, L.maxJsonLdTotalChars - jsonLdChars));
+    const read = textOf(el, room + 1, 64);
+    const text = cut(read.text, room);
+    jsonLdChars += text.length;
+    return { text, length: total(Math.max(read.units, text.length)) };
+  });
+  const names = (value: string | null): string[] => {
+    const out: string[] = [];
+    if (value === null) return out;
+    for (const token of cut(value, L.maxSchemaNameChars * L.maxItemTypes).split(/\s+/)) {
+      if (token !== '' && out.length < L.maxItemTypes) out.push(cut(token, L.maxSchemaNameChars));
+    }
+    return out;
+  };
+  const valueText = (el: PageElement): string => shortText(el, L.maxSchemaValueChars);
+  const urlValue = (raw: string | null): string => {
+    const resolved = raw === null ? null : resolve(raw);
+    return cut(resolved ? resolved.href : (raw ?? '').trim(), L.maxSchemaValueChars);
+  };
+  const attributeValue = (el: PageElement, name: string): string => cut(squash(cut(el.getAttribute(name) ?? '', L.maxSchemaValueChars * 4)), L.maxSchemaValueChars);
+  const SRC = ['audio', 'embed', 'iframe', 'img', 'source', 'track', 'video'];
+  const HREF = ['a', 'area', 'link'];
+  /** A microdata property's value (`MarkupItemSchema`). */
+  const microdataValue = (el: PageElement): string => {
+    const tag = el.localName;
+    if (el.hasAttribute('content')) return attributeValue(el, 'content');
+    if (SRC.includes(tag)) return urlValue(el.getAttribute('src'));
+    if (HREF.includes(tag)) return urlValue(el.getAttribute('href'));
+    if (tag === 'object') return urlValue(el.getAttribute('data'));
+    if ((tag === 'data' || tag === 'meter') && el.hasAttribute('value')) return attributeValue(el, 'value');
+    if (tag === 'time' && el.hasAttribute('datetime')) return attributeValue(el, 'datetime');
+    return valueText(el);
+  };
+  /** An RDFa property's value. */
+  const rdfaValue = (el: PageElement): string => {
+    if (el.hasAttribute('content')) return attributeValue(el, 'content');
+    for (const name of ['resource', 'href', 'src']) if (el.hasAttribute(name)) return urlValue(el.getAttribute(name));
+    if (el.localName === 'time' && el.hasAttribute('datetime')) return attributeValue(el, 'datetime');
+    return valueText(el);
+  };
+  type MarkupProperty = { name: string; value: string } | { name: string; item: number };
+  type MarkupItem = { types: string[]; id: string | null; vocab: string | null; properties: MarkupProperty[] };
+  /**
+   * Items (elements with `scope`) and their properties (elements with `prop`), in document order:
+   * at most `maxMarkupElements` looked at, `maxMarkupItems` kept, `maxMarkupDepth` deep. An
+   * element's owner is the nearest item above it; an item with a property name is its owner's value.
+   */
+  const readMarkup = (rdfa: boolean): [MarkupItem[], number] => {
+    const scope = rdfa ? 'typeof' : 'itemscope';
+    const prop = rdfa ? 'property' : 'itemprop';
+    const items: MarkupItem[] = [];
+    const depthOf: number[] = [];
+    const indexOf = new Map<PageElement, number>();
+    let count = 0;
+    const list = document.querySelectorAll(`[${scope}], [${prop}]`);
+    const n = Math.min(list.length, L.maxMarkupElements);
+    for (let i = 0; i < n; i++) {
+      if ((i & 15) === 0 && late()) break;
+      const el = list[i];
+      if (!el) continue;
+      const isItem = el.hasAttribute(scope);
+      if (isItem) count += 1;
+      const props = names(el.getAttribute(prop));
+      const ownerEl = el.parentElement ? el.parentElement.closest(`[${scope}]`) : null;
+      const owner = ownerEl ? indexOf.get(ownerEl) : undefined;
+      if (isItem) {
+        const nested = props.length > 0 && ownerEl !== null;
+        const holder = owner === undefined ? undefined : items[owner];
+        // Held by an item that was not kept, or that cannot hold another property (over a cap): dropped.
+        if (nested && (holder === undefined || holder.properties.length >= L.maxItemProperties)) continue;
+        const depth = nested && owner !== undefined ? (depthOf[owner] ?? 0) + 1 : 0;
+        if (depth > L.maxMarkupDepth || items.length >= L.maxMarkupItems) continue;
+        const index = items.length;
+        const id = rdfa ? (el.getAttribute('resource') ?? el.getAttribute('about')) : el.getAttribute('itemid');
+        const vocabEl = rdfa ? el.closest('[vocab]') : null;
+        items.push({
+          types: names(el.getAttribute(rdfa ? 'typeof' : 'itemtype')),
+          id: id === null || id.trim() === '' ? null : cut(id.trim(), L.maxSchemaValueChars),
+          vocab: vocabEl ? cut((vocabEl.getAttribute('vocab') ?? '').trim(), L.maxSchemaNameChars) || null : null,
+          properties: [],
+        });
+        depthOf.push(depth);
+        indexOf.set(el, index);
+        if (nested && holder) holder.properties.push({ name: props[0]!, item: index });
+      } else if (owner !== undefined) {
+        const holder = items[owner]!;
+        if (holder.properties.length >= L.maxItemProperties) continue;
+        const value = rdfa ? rdfaValue(el) : microdataValue(el);
+        for (const name of props) if (holder.properties.length < L.maxItemProperties) holder.properties.push({ name, value });
+      }
+    }
+    // Every item the page has, also past the elements looked at (or the deadline).
+    return [items, total(Math.max(count, document.querySelectorAll(`[${scope}]`).length))];
+  };
+  const [microdata, microdataTotal] = readMarkup(false);
+  const [rdfa, rdfaTotal] = readMarkup(true);
+
   // Words in the body's shown text (script, style, template, SVG … subtrees and hidden elements
   // skipped), within the node and character budgets and the deadline. `Intl.Segmenter` finds words
   // in scripts written without spaces (Chinese, Japanese, Thai); without it, runs of letters or digits.
@@ -500,6 +603,12 @@ export function extractPage(
     linkTotal,
     images,
     imageTotal,
+    jsonLd,
+    jsonLdTotal,
+    microdata,
+    microdataTotal,
+    rdfa,
+    rdfaTotal,
   };
 }
 

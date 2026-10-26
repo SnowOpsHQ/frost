@@ -64,7 +64,47 @@ export function cleanSnapshot(): PageSnapshot {
       { src: 'https://example.com/img/divider.svg', alt: text(''), width: null, height: null, loading: null, rendered: null, natural: { width: 4000, height: 10 }, inFirstViewport: false, cssSized: false },
     ],
     imageTotal: 2,
+    jsonLd: [jsonLd(CLEAN_GRAPH)],
+    jsonLdTotal: 1,
+    microdata: [],
+    microdataTotal: 0,
+    rdfa: [],
+    rdfaTotal: 0,
   };
+}
+
+/** A JSON-LD block as the extractor keeps it: `value` serialised (or a string as written), whole. */
+export function jsonLd(value: unknown, length?: number): PageSnapshot['jsonLd'][number] {
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return { text, length: length ?? text.length };
+}
+
+/** The clean page's structured data: an organisation, its website and the article, with every recommended property. */
+export const CLEAN_GRAPH = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    { '@type': 'Organization', '@id': 'https://example.com/#org', name: 'Example Guides', url: 'https://example.com/', logo: 'https://example.com/logo.png', sameAs: ['https://social.example/example-guides'] },
+    { '@type': 'WebSite', '@id': 'https://example.com/#site', name: 'Example Guides', url: 'https://example.com/', publisher: { '@id': 'https://example.com/#org' } },
+    {
+      '@type': 'Article',
+      headline: 'SEO basics: a practical guide',
+      image: 'https://example.com/img/share.png',
+      author: { '@type': 'Person', name: 'Ada Example' },
+      datePublished: '2025-01-05',
+      dateModified: '2025-02-01T10:00:00Z',
+      publisher: { '@id': 'https://example.com/#org' },
+    },
+  ],
+};
+
+/** The clean page with only these JSON-LD blocks (and no markup) as its structured data. */
+export function withJsonLd(...blocks: unknown[]): PageSnapshot {
+  return page({ jsonLd: blocks.map((block) => jsonLd(block)), jsonLdTotal: blocks.length });
+}
+
+/** A markup item (`MarkupItemSchema`). */
+export function item(types: string[], properties: PageSnapshot['microdata'][number]['properties'], changes: Partial<PageSnapshot['microdata'][number]> = {}): PageSnapshot['microdata'][number] {
+  return { types, id: null, vocab: null, properties, ...changes };
 }
 
 /** Every social tag set, as a well-shared page has them (`changes` override). */

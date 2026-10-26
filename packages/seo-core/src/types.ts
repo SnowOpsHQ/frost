@@ -2,6 +2,7 @@ import type { ScoreBand, SeoCategory, SeoRuleId, SeoRuleSpec, SeoSeverity } from
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 // Types only: the snapshot's Zod schema stays in main (it is the untrusted page's data).
 import type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
+import type { SchemaReport } from './schema/model';
 
 export type { CappedText, ImageSize, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
 
@@ -89,6 +90,8 @@ export interface SeoAudit {
   readonly counts: SeverityCounts;
   readonly findings: readonly Finding[];
   readonly page: PageFacts;
+  /** The page's structured data, read into one tree with its issues (the Schema panel, Task 3). */
+  readonly schema: SchemaReport;
 }
 
 /** `seo.getAudit`'s answer (`seo-sidebar.spec.ts`, `SEO_AUDIT_STATUSES`). */

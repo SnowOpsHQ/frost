@@ -204,7 +204,8 @@ image and social rules: `seo-rules.feature.md`) and `specs/browser.spec.ts` (`Ta
   splitting a surrogate pair.
 
 ## Panels (renderer)
-- The rail lists Overview, On-Page, Links, Images, Social, then the four panels still to come.
+- The rail lists Overview, On-Page, Links, Images, Social, Schema (Task 3: `seo-schema.feature.md`), then the panels
+  still to come.
   Links, Images and Social each start with their own ranked issues (expandable, as in Overview).
 - Links: counts (internal, external, other; nofollow, sponsored, ugc), the highlight toggle, Copy as
   CSV (the rows shown), a search box, type buttons with counts, a rel select; each row shows the

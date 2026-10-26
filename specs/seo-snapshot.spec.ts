@@ -135,6 +135,73 @@ export const SocialSchema = z.strictObject(
 );
 
 /**
+ * A JSON-LD block (Task 3): its text exactly as written (no normalising), the first
+ * `maxJsonLdChars` UTF-16 code units (fewer, down to none, once the page's `maxJsonLdTotalChars`
+ * are used up), and the full text's length in code units. A block whose `length` is above its
+ * text's was cut: main does not parse it (`schema-over-limit`). The page never parses it either.
+ */
+export const JsonLdBlockSchema = z
+  .strictObject({ text: z.string().max(L.maxJsonLdChars), length: count })
+  .refine((block) => block.length >= block.text.length, { message: 'length is below the text kept' });
+
+const schemaName = z.string().max(L.maxSchemaNameChars);
+
+/**
+ * A property of a markup item: its name as written (one `itemprop` / `property` token) with a text
+ * value (`maxSchemaValueChars`), or with a nested item (`item`: that item's index in the same list).
+ */
+export const MarkupPropertySchema = z.union([
+  z.strictObject({ name: schemaName.min(1), value: z.string().max(L.maxSchemaValueChars) }),
+  z.strictObject({ name: schemaName.min(1), item: z.int().nonnegative().max(L.maxMarkupItems - 1) }),
+]);
+
+/**
+ * A microdata item (`[itemscope]`) or an RDFa item (`[typeof]`), Task 3:
+ * - `types`: its `itemtype` / `typeof` tokens as written (at most `maxItemTypes`);
+ * - `id`: `itemid` (microdata) or `resource`, else `about` (RDFa), trimmed; `null` when absent;
+ * - `vocab`: the RDFa `vocab` in effect (the nearest `[vocab]` at or above it); always `null` for
+ *   microdata, whose `itemtype` is a full IRI;
+ * - `properties`: in document order, at most `maxItemProperties`.
+ *
+ * A property's value: microdata reads a `content` attribute when the element has one (any element:
+ * pages put it on spans too), else `src` (`audio`, `embed`, `iframe`, `img`, `source`, `track`,
+ * `video`), `href` (`a`, `area`, `link`) or `data` (`object`) resolved, `value` (`data`, `meter`),
+ * `datetime` (`time`), else the element's text (normalised, bounded like other element text). RDFa
+ * reads `content`, else `resource`, `href` or `src` (resolved), else `datetime` (`time`), else the
+ * text. `itemref` is not followed; a nested item is the value of its first property name only.
+ */
+export const MarkupItemSchema = z.strictObject({
+  types: z.array(schemaName).max(L.maxItemTypes),
+  id: z.string().max(L.maxSchemaValueChars).nullable(),
+  vocab: schemaName.nullable(),
+  properties: z.array(MarkupPropertySchema).max(L.maxItemProperties),
+});
+
+/**
+ * Markup items in document order, at most `maxMarkupItems`. A nested item comes after the item that
+ * holds it (`item` above its holder's index, within the list), and is held by one property at most,
+ * so the items form a forest: never a cycle, never a shared subtree. An item no property holds is a
+ * top-level item.
+ */
+const markupItems = z
+  .array(MarkupItemSchema)
+  .max(L.maxMarkupItems)
+  .refine(
+    (items) => {
+      const held = new Set<number>();
+      for (let i = 0; i < items.length; i++) {
+        for (const property of items[i]!.properties) {
+          if (!('item' in property)) continue;
+          if (property.item <= i || property.item >= items.length || held.has(property.item)) return false;
+          held.add(property.item);
+        }
+      }
+      return true;
+    },
+    { message: 'items do not form a forest' },
+  );
+
+/**
  * The snapshot. Lists hold the first entries in document order (at most their `SNAPSHOT_LIMITS`
  * cap); each `…Total` is the page's full count (at least the list's length).
  *
@@ -159,6 +226,9 @@ export const SocialSchema = z.strictObject(
  *   the deadline (`EXTRACT_BUDGET_MS`).
  * - `partial`: the extractor reached `EXTRACT_BUDGET_MS` and stopped early: some lists may hold
  *   fewer entries than their cap allows (their totals are still the page's).
+ * - `jsonLd`: each JSON-LD block (`JsonLdBlockSchema`), their text together at most
+ *   `maxJsonLdTotalChars`; `microdata` / `rdfa`: the markup items (`MarkupItemSchema`), with
+ *   `microdataTotal` / `rdfaTotal` the items the page has (Task 3).
  */
 export const PageSnapshotSchema = z
   .strictObject({
@@ -185,6 +255,12 @@ export const PageSnapshotSchema = z
     linkTotal: count,
     images: z.array(ImageSchema).max(L.maxImages),
     imageTotal: count,
+    jsonLd: z.array(JsonLdBlockSchema).max(L.maxJsonLdBlocks),
+    jsonLdTotal: count,
+    microdata: markupItems,
+    microdataTotal: count,
+    rdfa: markupItems,
+    rdfaTotal: count,
   })
   .refine(
     (s) =>
@@ -193,9 +269,13 @@ export const PageSnapshotSchema = z
       s.canonicalTotal >= s.canonicals.length &&
       s.headingTotal >= s.headings.length &&
       s.linkTotal >= s.links.length &&
-      s.imageTotal >= s.images.length,
+      s.imageTotal >= s.images.length &&
+      s.jsonLdTotal >= s.jsonLd.length &&
+      s.microdataTotal >= s.microdata.length &&
+      s.rdfaTotal >= s.rdfa.length,
     { message: 'a total is below its list' },
-  );
+  )
+  .refine((s) => s.jsonLd.reduce((sum, block) => sum + block.text.length, 0) <= L.maxJsonLdTotalChars, { message: 'JSON-LD over its total cap' });
 export type PageSnapshot = z.infer<typeof PageSnapshotSchema>;
 export type PageLink = z.infer<typeof LinkSchema>;
 export type PageImage = z.infer<typeof ImageSchema>;
@@ -204,6 +284,9 @@ export type ImageSize = z.infer<typeof ImageSizeSchema>;
 export type PageSocial = z.infer<typeof SocialSchema>;
 export type RobotsMeta = z.infer<typeof RobotsMetaSchema>;
 export type CappedText = PageSnapshot['titles'][number];
+export type JsonLdBlock = z.infer<typeof JsonLdBlockSchema>;
+export type MarkupItem = z.infer<typeof MarkupItemSchema>;
+export type MarkupProperty = z.infer<typeof MarkupPropertySchema>;
 
 /** `seo.getAudit` / `seo.rerun` input: a tab's id (as `browser.closeTab`'s `TabIdInputSchema`). */
 export const SeoTabInputSchema = z.strictObject({ tabId: z.int().positive() });
@@ -239,6 +322,14 @@ export type SeoLinksCsvInput = z.infer<typeof SeoLinksCsvInputSchema>;
  */
 export const SeoCopyUrlInputSchema = z.strictObject({ tabId: z.int().positive(), audit: SeoAuditRefSchema, url: urlText.min(1) });
 export type SeoCopyUrlInput = z.infer<typeof SeoCopyUrlInputSchema>;
+
+/**
+ * `seo.copySchemaJson` input (Task 3): the tab, the audit the Schema panel shows, and the index of
+ * one of that audit's JSON-LD blocks. Main writes that block from its own ready audit: pretty-printed
+ * when it parsed, its text as kept otherwise. Any other block index copies nothing.
+ */
+export const SeoCopySchemaInputSchema = z.strictObject({ tabId: z.int().positive(), audit: SeoAuditRefSchema, block: z.int().nonnegative().max(L.maxJsonLdBlocks - 1) });
+export type SeoCopySchemaInput = z.infer<typeof SeoCopySchemaInputSchema>;
 
 /** `seo.setHighlight` input: the tab and the mode (`HIGHLIGHT_MODES`). */
 export const SeoHighlightInputSchema = z.strictObject({ tabId: z.int().positive(), mode: z.enum(HIGHLIGHT_MODES) });

@@ -537,3 +537,50 @@ export function ImagePlaceholderArt({ className }: IconProps) {
     </svg>
   );
 }
+
+/** The Schema panel's tree view: a root with two indented branches. */
+export function TreeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.5" y="4" width="6" height="4.5" rx="1.2" />
+      <rect x="13" y="10" width="7.5" height="4" rx="1.2" />
+      <rect x="13" y="16.5" width="7.5" height="4" rx="1.2" />
+      <path d="M6.5 8.5v10h6.5" />
+      <path d="M6.5 12h6.5" />
+    </Icon>
+  );
+}
+
+/** The Schema panel's raw view: angle brackets around a slash. */
+export function CodeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 7.5L3.8 12 8 16.5" />
+      <path d="M16 7.5l4.2 4.5-4.2 4.5" />
+      <path d="M13.6 5.5l-3.2 13" />
+    </Icon>
+  );
+}
+
+/** A reference to another node by `@id`: a hooked arrow. */
+export function RefIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 5.5v5.5a3 3 0 0 0 3 3h11" />
+      <path d="M15.5 10.5L19 14l-3.5 3.5" />
+    </Icon>
+  );
+}
+
+/** The Schema panel when a page has no structured data: a page with braces and an empty node. */
+export function SchemaArt(props: IconProps) {
+  return (
+    <PanelArt {...props}>
+      <path d="M12 6h15l7 7v25a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+      <path d="M27 6v7h7" />
+      <path d="M18.5 18c-2 0-2.6 1-2.6 2.4v1.8c0 1-.6 1.8-1.7 2.2 1.1.4 1.7 1.2 1.7 2.2v1.8c0 1.4.6 2.4 2.6 2.4" />
+      <path d="M25.5 18c2 0 2.6 1 2.6 2.4v1.8c0 1 .6 1.8 1.7 2.2-1.1.4-1.7 1.2-1.7 2.2v1.8c0 1.4-.6 2.4-2.6 2.4" />
+      <circle cx="22" cy="24.4" r="1.6" />
+    </PanelArt>
+  );
+}
