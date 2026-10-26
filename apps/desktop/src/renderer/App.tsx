@@ -4,7 +4,7 @@ import { createIpcClient } from '@app/ipc-contract/renderer';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types);
 // runtime constants come from the Zod-free tabs.spec.
 import type { BrowserState, Notice, TabState } from '@app/specs/browser.spec';
-import { NOTICE_MESSAGES, type NoticeKind } from '@app/specs/tabs.spec';
+import { NOTICE_MESSAGES, UNRESPONSIVE_STATUS, type NoticeKind } from '@app/specs/tabs.spec';
 import { addressFieldReducer, addressFieldText, initialAddressField } from './address-field';
 import { createNoticeTracker, type NoticeTracker } from './notice';
 import { crashView, isCertificateErrorCode, loadErrorView, panelHost, type LoadErrorView } from './page-error';
@@ -552,6 +552,10 @@ function StatusBar({
       {notice !== null ? (
         <span className="status-text status-notice" data-testid="status-notice" role="status">
           {NOTICE_MESSAGES[notice]}
+        </span>
+      ) : tab?.unresponsive ? (
+        <span className="status-text status-notice" data-testid="status-unresponsive" role="status">
+          {UNRESPONSIVE_STATUS}
         </span>
       ) : (
         <span className="status-text" data-security={tab?.loading ? undefined : security}>

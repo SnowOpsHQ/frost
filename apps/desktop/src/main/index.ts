@@ -73,7 +73,7 @@ void app.whenReady().then(() => {
   restrictAppRequests(session.defaultSession, windows.isAppWebContents);
   // Tabs' session: no `app:` handler (protocol.handle below is the default session's),
   // deny-by-default permissions until Task 4's prompts, and every download cancelled with a notice.
-  hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), { onDownloadBlocked: () => browser.notify('download-blocked') });
+  hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), { onDownloadBlocked: (contents) => browser.downloadBlocked(contents) });
   // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
   handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
   attachIpcHandler({

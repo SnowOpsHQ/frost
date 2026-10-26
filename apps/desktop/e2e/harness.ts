@@ -54,7 +54,9 @@ async function noCoreDumpsLauncher(): Promise<{ path: string; remove(): Promise<
   const electron = createRequire(import.meta.url)('electron') as unknown as string;
   const dir = await mkdtemp(path.join(tmpdir(), 'frost-e2e-'));
   const script = path.join(dir, 'electron-no-core-dumps.sh');
-  await writeFile(script, `#!/bin/sh\nulimit -c 0\nexec ${JSON.stringify(electron)} "$@"\n`);
+  // Single-quoted for sh (no expansion of `$`, backticks or backslashes); a `'` in the path is closed, escaped and reopened.
+  const quoted = `'${electron.replaceAll("'", `'\\''`)}'`;
+  await writeFile(script, `#!/bin/sh\nulimit -c 0\nexec ${quoted} "$@"\n`);
   await chmod(script, 0o755);
   return { path: script, remove: () => rm(dir, { recursive: true, force: true }) };
 }

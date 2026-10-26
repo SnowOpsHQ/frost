@@ -117,6 +117,11 @@ export const TabStateSchema = z.strictObject({
    * crash panel until the next load starts (Reload).
    */
   crashed: z.boolean(),
+  /**
+   * The page stopped responding (`unresponsive`) and has not responded since (`responsive`); the
+   * status bar says so while this tab is active (`UNRESPONSIVE_STATUS`).
+   */
+  unresponsive: z.boolean(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

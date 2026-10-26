@@ -17,11 +17,19 @@ export interface UserGesture {
  * Tracks trusted activation inputs (`input-event`: OS/browser input only, never page-synthesized)
  * on `contents`. Per WebContents, not per frame (spec known limit: Electron reports neither input
  * nor window-open per frame).
+ *
+ * An activation belongs to the document it was given to: a main-frame cross-document commit
+ * (`did-navigate`) ends it, so the page a click navigated to (directly or through redirects) cannot
+ * spend it (`browse-guard.feature.md`, gesture-ends-with-navigation). Not cleared when a navigation
+ * starts (a click on a `mailto:` link must still back that navigation) nor on a same-document one.
  */
 export function trackUserGesture(contents: WebContents, now: () => number): UserGesture {
   let lastActivationAt: number | undefined;
   contents.on('input-event', (_event, input) => {
     if (isActivationInput(input.type)) lastActivationAt = now();
+  });
+  contents.on('did-navigate', () => {
+    lastActivationAt = undefined;
   });
   return {
     consume() {

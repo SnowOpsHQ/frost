@@ -20,18 +20,23 @@ export const MAX_TABS = 50;
 export const NEW_TAB_LABEL = 'New Tab' as const;
 
 /**
- * Status-bar notices main raises for things the user asked for but did not get, or should know
- * about: the tab limit (Task 2), a cancelled download and a page that stopped responding (Task 3,
- * `browse-guard.feature.md`). The chrome shows `NOTICE_MESSAGES[kind]` for `NOTICE_DISPLAY_MS`
- * after a notice with a new `seq` arrives.
+ * Status-bar notices main raises for things the user asked for but did not get: the tab limit
+ * (Task 2) and a cancelled download (Task 3, `browse-guard.feature.md`). The chrome shows
+ * `NOTICE_MESSAGES[kind]` for `NOTICE_DISPLAY_MS` after a notice with a new `seq` arrives.
  */
-export const NOTICE_KINDS = ['tab-limit', 'download-blocked', 'page-unresponsive'] as const;
+export const NOTICE_KINDS = ['tab-limit', 'download-blocked'] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 export const NOTICE_MESSAGES: Readonly<Record<NoticeKind, string>> = {
   'tab-limit': `Tab limit reached: at most ${MAX_TABS} tabs can be open`,
   'download-blocked': 'Downloads aren\u2019t supported yet',
-  'page-unresponsive': 'A page isn\u2019t responding',
 };
+
+/**
+ * Status-bar text while the **active** tab's page is unresponsive (`TabState.unresponsive`, Task 3):
+ * shown for as long as it lasts (not a timed notice), and gone once the page responds again, its
+ * renderer is gone, or another tab is shown.
+ */
+export const UNRESPONSIVE_STATUS = 'This page isn\u2019t responding' as const;
 export const NOTICE_DISPLAY_MS = 6_000;
 
 /** Number keys of the tab-switching shortcuts: Cmd/Ctrl+1…8 select that tab, 9 the last tab. */
