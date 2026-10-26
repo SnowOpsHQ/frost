@@ -258,3 +258,25 @@ test('non-web-input-becomes-search-e2e', async () => {
     await app.evaluate(({ session }, partition) => session.fromPartition(partition).protocol.unhandle('https'), BROWSE_PARTITION);
   }
 });
+
+test('page-close-resets-tab', async () => {
+  await go(`${site.origin}/a`);
+  await expect.poll(async () => (await tab()).url).toBe(`${site.origin}/a`);
+  const { id } = await tab();
+  // The page closes itself; Electron destroys the tab's WebContents.
+  await app.evaluate(({ webContents }, id) => {
+    void webContents.fromId(id)!.executeJavaScript('window.close()').catch(() => {});
+  }, id);
+  await expect.poll(async () => (await tabs()).length).toBe(0);
+  await expect.poll(attachedViews).toEqual([]);
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  await expect.poll(windowTitle).toBe(APP_WINDOW_TITLE);
+
+  // The tab works again: a new view loads the next address.
+  await go(`${site.origin}/b`);
+  await expect.poll(async () => (await tab()).url).toBe(`${site.origin}/b`);
+  expect((await tab()).id).not.toBe(id);
+  await expect.poll(windowTitle).toBe('Page B — frost');
+  const [view] = await attachedViews();
+  expect(view).toMatchObject({ visible: true });
+});

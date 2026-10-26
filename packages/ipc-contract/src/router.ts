@@ -33,11 +33,13 @@ const requireBrowser = middleware(({ ctx, next }) => {
 async function watchState(browser: BrowserService, sinceVersion: number): Promise<BrowserState> {
   const current = browser.getState();
   if (current.version > sinceVersion) return current;
+  // A version from the future (a stale or forged poll) waits for the next change, not forever.
+  const since = Math.min(sinceVersion, current.version);
   const release = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      browser.watch(sinceVersion, release.signal),
+      browser.watch(since, release.signal),
       new Promise<BrowserState>((resolve) => {
         timer = setTimeout(() => resolve(browser.getState()), WATCH_TIMEOUT_MS);
       }),
@@ -48,16 +50,16 @@ async function watchState(browser: BrowserService, sinceVersion: number): Promis
   }
 }
 
-/** Browser chrome ↔ main (spec `browser-chrome.feature.md`, Router). Mutations answer `null`. */
+/**
+ * Browser chrome ↔ main (spec `browser-chrome.feature.md`, Router). `navigate` answers whether a
+ * navigation started; the other mutations answer `null`.
+ */
 const browserRouter = router({
   navigate: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)
     .input(NavigateInputSchema)
-    .mutation(({ ctx, input }) => {
-      ctx.browser.navigate(input.input);
-      return null;
-    }),
+    .mutation(({ ctx, input }) => ctx.browser.navigate(input.input) === true),
   back: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type KeyboardEvent } from 'react';
 import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
+import { addressFieldReducer, addressFieldText, initialAddressField } from './address-field';
 import { BackIcon, ForwardIcon, FrostMark, LockIcon, NotSecureIcon, ReloadIcon, SearchIcon, StopIcon } from './icons';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout): toolbar, page area, status bar.
@@ -62,7 +63,8 @@ function usePing(): { ping: string; connection: Connection } {
 function ignore(): void {}
 
 const actions = {
-  navigate: (input: string) => ipc.browser.navigate.mutate({ input }).catch(ignore),
+  /** Resolves whether a navigation started (`false` on a no-op or an IPC failure). */
+  navigate: (input: string) => ipc.browser.navigate.mutate({ input }).catch(() => false),
   back: () => ipc.browser.back.mutate().catch(ignore),
   forward: () => ipc.browser.forward.mutate().catch(ignore),
   reload: () => ipc.browser.reload.mutate().catch(ignore),
@@ -87,18 +89,15 @@ function hostOf(url: string): string {
 
 function AddressBar({ tab }: { readonly tab: TabState | undefined }) {
   const input = useRef<HTMLInputElement>(null);
-  /** What the user is typing; `null` when not editing. */
-  const [draft, setDraft] = useState<string | null>(null);
-  /** Text the user submitted, shown until its navigation commits or the load ends. */
-  const [submitted, setSubmitted] = useState<string | null>(null);
+  const [field, dispatch] = useReducer(addressFieldReducer, initialAddressField);
   const selectOnMouseUp = useRef(false);
   const url = tab?.url ?? '';
   const loading = tab?.loading === true;
   const empty = url === '';
 
-  useEffect(() => setSubmitted(null), [url]);
+  useEffect(() => dispatch({ type: 'url-changed' }), [url]);
   useEffect(() => {
-    if (!loading) setSubmitted(null);
+    if (!loading) dispatch({ type: 'load-ended' });
   }, [loading]);
 
   // An empty tab puts the caret in the address bar.
@@ -111,19 +110,20 @@ function AddressBar({ tab }: { readonly tab: TabState | undefined }) {
       event.preventDefault();
       const typed = event.currentTarget.value;
       if (typed.trim() === '') return;
-      setSubmitted(typed);
-      setDraft(null);
+      dispatch({ type: 'submit', text: typed });
       // Focus moves to the page (main focuses the tab's WebContents).
       event.currentTarget.blur();
-      void actions.navigate(typed);
+      void actions.navigate(typed).then((navigated) => {
+        if (!navigated) dispatch({ type: 'navigate-failed' });
+      });
     } else if (event.key === 'Escape') {
       event.preventDefault();
-      setDraft(null);
+      dispatch({ type: 'cancel' });
       requestAnimationFrame(() => input.current?.select());
     }
   };
 
-  const security = draft !== null || submitted !== null ? 'none' : securityOf(url);
+  const security = field.draft !== null || field.submitted !== null ? 'none' : securityOf(url);
   return (
     <div className="address" data-security={security}>
       <span className="address-badge" title={security === 'secure' ? 'Secure connection' : security === 'insecure' ? 'Not secure' : undefined}>
@@ -140,8 +140,8 @@ function AddressBar({ tab }: { readonly tab: TabState | undefined }) {
         autoCapitalize="off"
         aria-label="Address and search bar"
         placeholder="Search or enter address"
-        value={draft ?? submitted ?? url}
-        onChange={(event) => setDraft(event.target.value)}
+        value={addressFieldText(field, url)}
+        onChange={(event) => dispatch({ type: 'edit', text: event.target.value })}
         onFocus={(event) => {
           event.currentTarget.select();
           selectOnMouseUp.current = true;
@@ -152,7 +152,7 @@ function AddressBar({ tab }: { readonly tab: TabState | undefined }) {
           selectOnMouseUp.current = false;
         }}
         onBlur={() => {
-          setDraft(null);
+          dispatch({ type: 'cancel' });
           selectOnMouseUp.current = false;
         }}
         onKeyDown={onKeyDown}

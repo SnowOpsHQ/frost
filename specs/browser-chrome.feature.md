@@ -47,7 +47,19 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   `title`, `loading`, `canGoBack`, `canGoForward`; each change bumps `version` by one; an event
   that changes nothing does not.
 - **Scenario: sets-window-title** — `<page title> — frost`; the app page's own title updates are
-  prevented from overriding it.
+  prevented from overriding it; a page title longer than `WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH` is
+  cut to that length, ending in `…`.
+- **Scenario: state-url-hides-userinfo** — a committed `https://user:pw@example.com/` is reported
+  (state and window title) as `https://example.com/`.
+- **Scenario: attach-same-window-twice-is-a-no-op** — attaching the same window again registers no
+  second listener and resets nothing.
+- **Scenario: page-close-resets-tab** — when the tab's WebContents is destroyed (the page called
+  `window.close()`), its view is removed from the window, the tab returns to the empty state (the
+  version bumps), and the next `navigate` creates a fresh view; a destroyed WebContents is never
+  used.
+- **Scenario: renderer-crash-stops-loading** — after `render-process-gone` the tab reports
+  `loading: false` (even if the WebContents still claims to load) until the next load starts; the
+  crash UI is Task 3.
 - **Scenario: history-and-reload-act-on-active-tab** — `back`/`forward` call
   `navigationHistory.goBack/goForward` only when possible; `reload`/`stop` act on the view; all
   are no-ops on an empty tab.
@@ -55,7 +67,11 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   to the window content size (no negative origin, no overflow); bounds given before the view exists
   are applied when it is created.
 - **Scenario: watch-resolves-on-change** — `watch(v)` resolves at once if `version > v`, otherwise
-  on the next change; an aborted watch is released.
+  on the next change; an aborted watch is released (no pending waiter remains).
+- **Scenario: watch-caps-pending-waiters** — with `MAX_PENDING_WATCHES` waiting, one more resolves
+  the oldest at once with the current state; never more than `MAX_PENDING_WATCHES` wait.
+- **Scenario: watch-clamps-future-version** — `watch(v)` with `v` above the current version waits
+  only for the next change.
 - **Scenario: window-close-closes-tab-contents** — when the window closes, every tab's
   `webContents.close()` is called and the controller returns to one empty tab.
 
@@ -74,7 +90,20 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   resolves the current state without waiting.
 - **Scenario: watch-resolves-on-version-change** — resolves when the service's watch resolves.
 - **Scenario: watch-times-out-with-current-state** — with no change it resolves after exactly
-  `WATCH_TIMEOUT_MS` (fake timers) with the current state, and releases the service's watcher.
+  `WATCH_TIMEOUT_MS` (fake timers) with the state current *then* (not the one at call time), and
+  releases the service's watcher.
+- **Scenario: watch-clamps-future-version-in-router** — a `sinceVersion` above the current version
+  is passed to the service clamped to the current version.
+- **Scenario: navigate-reports-whether-it-navigated** — `browser.navigate` answers the service's
+  boolean (`false` for a no-op).
+
+## Address field (`apps/desktop/src/renderer/__tests__/address-field.test.ts`)
+The address bar's text is a pure reducer (`renderer/address-field.ts`): what the user is typing
+(`draft`), else the text just submitted (`submitted`), else the tab's URL.
+- **Scenario: address-field-shows-typed-text-while-pending** — after Enter the submitted text stays
+  until the URL changes or the load ends; Escape and blur drop the draft.
+- **Scenario: address-field-reverts-when-navigate-fails** — a `navigate` that rejects or answers
+  `false` (a no-op) clears the submitted text, so the field shows the tab's URL again.
 
 ## End to end (`apps/desktop/e2e/browser.e2e.ts`, real Electron, loopback server)
 - **Scenario: empty-tab-shows-start-view** — at launch the start view is visible, the address bar
@@ -94,5 +123,8 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   (`not-window-contents`).
 - **Scenario: tab-cannot-load-app-scheme** — `loadURL('app://app/')` in the tab fails, and the
   app's script cannot be loaded as a subresource from a page in the tab.
+- **Scenario: page-close-resets-tab** — a page calling `window.close()` destroys the tab's
+  WebContents: the view is gone from the window, the start view and the `frost` title return, and
+  typing an address loads it in a new view.
 - **Scenario: non-web-input-becomes-search-e2e** — typing `app://app/` or `javascript:alert(1)`
   loads the search URL (the test stubs `https:` in the browse session, so nothing leaves the host).
