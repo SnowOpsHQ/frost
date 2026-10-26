@@ -1,5 +1,6 @@
-// Spec: specs/browser.spec.ts (BrowserStateSchema, APP_WINDOW_TITLE, MAX_TABS)
-// Acceptance: specs/browser-chrome.feature.md (Controller), specs/tabs.feature.md (Controller)
+// Spec: specs/browser.spec.ts (BrowserStateSchema, APP_WINDOW_TITLE, MAX_TABS), specs/browse-guard.spec.ts
+// Acceptance: specs/browser-chrome.feature.md (Controller), specs/tabs.feature.md (Controller),
+// specs/browse-guard.feature.md (Controller)
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -441,7 +442,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);
@@ -669,7 +670,9 @@ describe('tabs', () => {
     contents.emit('page-title-updated', fakeEvent(), 'Late', false);
     contents.emit('did-fail-load', fakeEvent(), -3, 'ERR_ABORTED', contents.url, true);
     contents.emit('did-stop-loading');
+    contents.emit('did-fail-load', fakeEvent(), -102, 'ERR_CONNECTION_REFUSED', contents.url, true);
     contents.emit('render-process-gone', fakeEvent(), { reason: 'crashed', exitCode: 1 });
+    contents.emit('unresponsive');
     contents.emit('destroyed');
 
     expect(controller.getState()).toEqual(before);
@@ -684,6 +687,7 @@ describe('tabs', () => {
       'page-title-updated',
       'did-stop-loading',
       'render-process-gone',
+      'unresponsive',
       'destroyed',
       'before-input-event',
     ]) {
@@ -809,5 +813,179 @@ describe('tabs', () => {
     expect(state.tabs).toHaveLength(1);
     expect(id).toBe(state.tabs[0]!.id);
     expect(state.activeTabId).toBe(id);
+  });
+});
+
+describe('guards', () => {
+  const ids = () => controller.getState().tabs.map((tab) => tab.id);
+  const active = () => controller.getState().activeTabId;
+  const attached = () => [...win.contentView.children];
+  const tabState = (id: number) => controller.getState().tabs.find((tab) => tab.id === id)!;
+  /** Loads `url` in the (empty) first tab; answers its id and view. */
+  function loadFirst(url: string, title = url) {
+    controller.navigate(url);
+    const created = views.at(-1)!;
+    commit(created.webContents, url, title);
+    return { id: ids()[0]!, view: created };
+  }
+  /** Electron's `did-fail-load` (event, errorCode, errorDescription, validatedURL, isMainFrame). */
+  function fail(contents: FakeTabContents, code: number, description: string, url: string, isMainFrame = true) {
+    contents.loading = true;
+    contents.emit('did-start-loading');
+    contents.url = url;
+    contents.emit('did-fail-load', fakeEvent(), code, description, url, isMainFrame, 1, 1);
+    contents.loading = false;
+    contents.emit('did-stop-loading');
+  }
+
+  test('load-failure-shows-error', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    const contents = a.view.webContents;
+    expect(tabState(a.id).error).toBeNull();
+
+    // Ignored: a subframe's failure, and ERR_ABORTED (a dropped navigation, a stop, a download).
+    const before = controller.getState().version;
+    contents.emit('did-fail-load', fakeEvent(), -105, 'ERR_NAME_NOT_RESOLVED', 'https://ads.test/', false, 1, 2);
+    contents.emit('did-fail-load', fakeEvent(), -3, 'ERR_ABORTED', 'https://a.test/file.zip', true, 1, 1);
+    expect(controller.getState().version).toBe(before);
+    expect(attached()).toEqual([a.view]);
+
+    contents.back = true;
+    fail(contents, -102, 'ERR_CONNECTION_REFUSED', 'http://user:pw@127.0.0.1:9/x');
+    expect(tabState(a.id)).toMatchObject({
+      error: { code: -102, description: 'ERR_CONNECTION_REFUSED', url: 'http://127.0.0.1:9/x' },
+      crashed: false,
+      loading: false,
+      canGoBack: true,
+    });
+    expect(attached()).toEqual([]);
+    expect(BrowserStateSchema.parse(controller.getState())).toEqual(controller.getState());
+
+    // The next main-frame commit clears it and shows the page again.
+    commit(contents, 'https://a.test/', 'A', { back: true });
+    expect(tabState(a.id).error).toBeNull();
+    expect(attached()).toEqual([a.view]);
+    expect(a.view.setVisible).toHaveBeenLastCalledWith(true);
+  });
+
+  test('error-retry-reloads', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    fail(a.view.webContents, -105, 'ERR_NAME_NOT_RESOLVED', 'https://nowhere.test/');
+    controller.reload();
+    expect(a.view.webContents.reload).toHaveBeenCalledTimes(1);
+    // The panel stays while the retry loads (no flash of the blank error page).
+    a.view.webContents.loading = true;
+    a.view.webContents.emit('did-start-loading');
+    expect(tabState(a.id)).toMatchObject({ loading: true, error: { code: -105 } });
+    expect(attached()).toEqual([]);
+  });
+
+  test('crash-shows-crash-state', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    const contents = a.view.webContents;
+    contents.emit('render-process-gone', fakeEvent(), { reason: 'crashed', exitCode: 1 });
+    expect(tabState(a.id)).toMatchObject({ crashed: true, loading: false, url: 'https://a.test/' });
+    expect(attached()).toEqual([]);
+    expect(BrowserStateSchema.parse(controller.getState())).toEqual(controller.getState());
+
+    contents.loading = true;
+    contents.emit('did-start-loading');
+    expect(tabState(a.id)).toMatchObject({ crashed: false, loading: true });
+    expect(attached()).toEqual([a.view]);
+  });
+
+  test('crash-reload-recovers', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    a.view.webContents.emit('render-process-gone', fakeEvent(), { reason: 'killed', exitCode: 9 });
+    controller.reload();
+    expect(a.view.webContents.reload).toHaveBeenCalledTimes(1);
+
+    // The crashed WebContents is gone (no `destroyed` event reached us): a fresh view loads the URL.
+    a.view.contents.destroyed = true;
+    controller.reload();
+    expect(views).toHaveLength(2);
+    const fresh = views[1]!;
+    expect(fresh.webContents.loadURL).toHaveBeenCalledExactlyOnceWith('https://a.test/');
+    expect(ids()).toEqual([a.id]);
+    commit(fresh.webContents, 'https://a.test/', 'A');
+    expect(tabState(a.id)).toMatchObject({ crashed: false, error: null, url: 'https://a.test/', title: 'A' });
+    expect(attached()).toEqual([fresh]);
+  });
+
+  test('popup-opens-background-tab-in-controller', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    const other = controller.newTab()!;
+    controller.activateTab(a.id);
+    controller.setPageBounds({ x: 0, y: 90, width: 1280, height: 684 });
+
+    const first = controller.openTabFromPage(a.view.webContents, 'https://a.test/popup-1');
+    const second = controller.openTabFromPage(a.view.webContents, 'https://a.test/popup-2');
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    // Right of the opener, in the order opened, before the tab that was already there.
+    expect(ids()).toEqual([a.id, first, second, other]);
+    expect(active()).toBe(a.id);
+    expect(attached()).toEqual([a.view]);
+    expect(views).toHaveLength(3);
+    const [, v1, v2] = views;
+    expect(v1!.webContents.loadURL).toHaveBeenCalledExactlyOnceWith('https://a.test/popup-1');
+    expect(v2!.webContents.loadURL).toHaveBeenCalledExactlyOnceWith('https://a.test/popup-2');
+    // Laid out at the page area's size while in the background.
+    expect(v1!.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 1280, height: 684 });
+    commit(v1!.webContents, 'https://a.test/popup-1', 'Popup 1');
+    expect(tabState(first!)).toMatchObject({ url: 'https://a.test/popup-1', title: 'Popup 1' });
+    expect(active()).toBe(a.id);
+    expect(BrowserStateSchema.safeParse(controller.getState()).success).toBe(true);
+
+    // A popup's own popup goes right of it.
+    const nested = controller.openTabFromPage(v1!.webContents, 'https://a.test/popup-3');
+    expect(ids()).toEqual([a.id, first, nested, second, other]);
+  });
+
+  test('popup-respects-max-tabs', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    for (let i = 1; i < MAX_TABS; i++) controller.newTab();
+    controller.activateTab(a.id);
+    const notice = controller.getState().notice;
+    expect(controller.openTabFromPage(a.view.webContents, 'https://a.test/popup')).toBeNull();
+    expect(controller.getState().tabs).toHaveLength(MAX_TABS);
+    expect(views).toHaveLength(1);
+    expect(controller.getState().notice).toEqual({ seq: (notice?.seq ?? 0) + 1, kind: 'tab-limit' });
+  });
+
+  test('popup-needs-a-known-opener-and-web-url', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    const version = controller.getState().version;
+    expect(controller.openTabFromPage(new FakeTabContents(), 'https://a.test/x')).toBeNull();
+    for (const url of ['about:blank', 'file:///etc/passwd', 'app://app/', 'javascript:1', 'mailto:a@b.c']) {
+      expect(controller.openTabFromPage(a.view.webContents, url), url).toBeNull();
+    }
+    expect(controller.getState().version).toBe(version);
+    expect(views).toHaveLength(1);
+    // No window: nothing either.
+    win.emit('closed');
+    const after = controller.getState().version;
+    expect(controller.openTabFromPage(a.view.contents, 'https://a.test/x')).toBeNull();
+    expect(controller.getState().version).toBe(after);
+  });
+
+  test('notify-raises-notice', () => {
+    expect(controller.getState().notice).toBeNull();
+    const version = controller.getState().version;
+    controller.notify('download-blocked');
+    expect(controller.getState()).toMatchObject({ version: version + 1, notice: { seq: 1, kind: 'download-blocked' } });
+    controller.notify('download-blocked');
+    expect(controller.getState().notice).toEqual({ seq: 2, kind: 'download-blocked' });
+    expect(BrowserStateSchema.safeParse(controller.getState()).success).toBe(true);
+  });
+
+  test('unresponsive-raises-notice', () => {
+    const a = loadFirst('https://a.test/', 'A');
+    a.view.webContents.emit('unresponsive');
+    expect(controller.getState().notice).toEqual({ seq: 1, kind: 'page-unresponsive' });
+    const version = controller.getState().version;
+    a.view.webContents.emit('responsive');
+    expect(controller.getState().version).toBe(version);
+    expect(controller.getState().notice).toEqual({ seq: 1, kind: 'page-unresponsive' });
   });
 });

@@ -7,7 +7,7 @@
  * chrome drives it only through the sender-guarded `browser.*` tRPC procedures and long-polls
  * `browser.watch` for changes. Implemented by `apps/desktop/src/main/browser/*` and
  * `packages/ipc-contract/src/router.ts`; acceptance lists: `address-bar.feature.md`,
- * `browser-chrome.feature.md`, `tabs.feature.md` (Task 2).
+ * `browser-chrome.feature.md`, `tabs.feature.md` (Task 2), `browse-guard.feature.md` (Task 3).
  */
 import { z } from 'zod';
 import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
@@ -84,6 +84,19 @@ export const TAB_VIEW_WEB_PREFERENCES = {
   partition: BROWSE_PARTITION,
 } as const;
 
+/**
+ * Why the tab's last main-frame load failed (`did-fail-load`, `browse-guard.feature.md`): Chromium's
+ * net error `code` (negative; never `IGNORED_LOAD_ERROR_CODES`), its short `description`
+ * (`ERR_CONNECTION_REFUSED` …) and the URL that failed, without userinfo. Set until a main-frame
+ * page commits; while set, the tab's view is hidden and the chrome shows its error panel.
+ */
+export const LoadErrorSchema = z.strictObject({
+  code: z.int().negative(),
+  description: z.string(),
+  url: z.string(),
+});
+export type LoadError = z.infer<typeof LoadErrorSchema>;
+
 /** One tab as the chrome sees it. An empty tab (nothing loaded yet) has `url === ''`. */
 export const TabStateSchema = z.strictObject({
   id: z.int().positive(),
@@ -97,6 +110,13 @@ export const TabStateSchema = z.strictObject({
   loading: z.boolean(),
   canGoBack: z.boolean(),
   canGoForward: z.boolean(),
+  /** The last main-frame load failed (error panel); `null` once a page commits. */
+  error: LoadErrorSchema.nullable(),
+  /**
+   * The tab's renderer is gone (`render-process-gone`): the view is hidden and the chrome shows the
+   * crash panel until the next load starts (Reload).
+   */
+  crashed: z.boolean(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

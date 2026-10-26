@@ -7,20 +7,27 @@ import type { BrowserState, Notice, TabState } from '@app/specs/browser.spec';
 import { NOTICE_MESSAGES, type NoticeKind } from '@app/specs/tabs.spec';
 import { addressFieldReducer, addressFieldText, initialAddressField } from './address-field';
 import { createNoticeTracker, type NoticeTracker } from './notice';
+import { crashView, isCertificateErrorCode, loadErrorView, panelHost, type LoadErrorView } from './page-error';
 import { tabLabel } from './tab-label';
 import { tablistFocusTarget } from './tablist-keys';
 import {
+  AlertIcon,
   BackIcon,
   CloseIcon,
+  CrashArt,
   ForwardIcon,
   FrostMark,
   GlobeIcon,
   LockIcon,
   NotSecureIcon,
+  OfflineArt,
+  PageAlertArt,
   PlusIcon,
   ReloadIcon,
   SearchIcon,
+  ShieldAlertArt,
   StopIcon,
+  UnreachableArt,
 } from './icons';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`): tab strip,
@@ -135,6 +142,13 @@ function securityOf(url: string): Security {
   return 'none';
 }
 
+/** A tab's badge: never the lock for a failed load (a refused certificate is "not secure"). */
+function tabSecurity(tab: TabState | undefined): Security {
+  if (!tab) return 'none';
+  if (tab.error) return isCertificateErrorCode(tab.error.code) ? 'insecure' : 'none';
+  return securityOf(tab.url);
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).host;
@@ -190,7 +204,7 @@ function AddressBar({ tab, focusSeq }: { readonly tab: TabState | undefined; rea
     }
   };
 
-  const security = field.draft !== null || field.submitted !== null ? 'none' : securityOf(url);
+  const security = field.draft !== null || field.submitted !== null ? 'none' : tabSecurity(tab);
   return (
     <div className="address" data-security={security}>
       <span className="address-badge" title={security === 'secure' ? 'Secure connection' : security === 'insecure' ? 'Not secure' : undefined}>
@@ -284,6 +298,8 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
         <span className="tab-glyph" aria-hidden="true">
           {tab.loading ? (
             <span className="tab-spinner" data-testid="tab-loading" />
+          ) : tab.error || tab.crashed ? (
+            <AlertIcon className="tab-icon tab-icon-alert" />
           ) : tab.url === '' ? (
             <FrostMark className="tab-mark" />
           ) : (
@@ -394,8 +410,96 @@ function StartView() {
   );
 }
 
+const ERROR_ART: Record<LoadErrorView['errorClass'], typeof ShieldAlertArt> = {
+  certificate: ShieldAlertArt,
+  unreachable: UnreachableArt,
+  offline: OfflineArt,
+  generic: PageAlertArt,
+};
+
+/** The panel buttons: Try again / Reload (primary) and Go back. */
+function PanelButton({ testId, primary, label, busy, onClick }: { readonly testId: string; readonly primary?: boolean; readonly label: string; readonly busy?: boolean; readonly onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={primary ? 'panel-button panel-button-primary' : 'panel-button'}
+      data-testid={testId}
+      data-busy={busy === true}
+      aria-busy={busy === true}
+      onClick={onClick}
+    >
+      {primary ? <ReloadIcon /> : <BackIcon />}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+/**
+ * The tab's last load failed (`browse-guard.feature.md`): main has hidden its view, so this panel
+ * fills the page area. A refused certificate offers no way to proceed.
+ */
+function ErrorPanel({ tab }: { readonly tab: TabState & { readonly error: NonNullable<TabState['error']> } }) {
+  const view = loadErrorView(tab.error, tab.canGoBack);
+  const Art = ERROR_ART[view.errorClass];
+  return (
+    <section className="panel" data-testid="page-error" data-error-class={view.errorClass} aria-labelledby="page-error-title">
+      <div className="panel-card">
+        <span className="panel-badge" aria-hidden="true">
+          <Art />
+        </span>
+        <h1 className="panel-title" id="page-error-title" data-testid="page-error-title">
+          {view.title}
+        </h1>
+        <p className="panel-message" data-testid="page-error-message">
+          {view.message}
+        </p>
+        <p className="panel-detail" data-testid="page-error-detail">
+          {view.detail}
+        </p>
+        <div className="panel-actions" data-testid="page-error-actions">
+          {view.actions.map((action) =>
+            action === 'back' ? (
+              <PanelButton key={action} testId="page-error-back" label="Go back" onClick={() => void actions.back()} />
+            ) : (
+              <PanelButton key={action} testId="page-error-retry" primary label="Try again" busy={tab.loading} onClick={() => void actions.reload()} />
+            ),
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** The tab's renderer is gone: main has hidden its view; Reload restarts it. */
+function CrashPanel({ tab }: { readonly tab: TabState }) {
+  const view = crashView(tab.url);
+  return (
+    <section className="panel" data-testid="page-crashed" data-error-class="crashed" aria-labelledby="page-crashed-title">
+      <div className="panel-card">
+        <span className="panel-badge" aria-hidden="true">
+          <CrashArt />
+        </span>
+        <h1 className="panel-title" id="page-crashed-title" data-testid="page-crashed-title">
+          {view.title}
+        </h1>
+        <p className="panel-message">{view.message}</p>
+        <div className="panel-actions">
+          <PanelButton testId="page-crashed-reload" primary label="Reload" onClick={() => void actions.reload()} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** What fills the page area instead of the view: the crash or error panel, the start view, or nothing. */
+function PageContent({ tab, empty }: { readonly tab: TabState | undefined; readonly empty: boolean }) {
+  if (tab?.crashed) return <CrashPanel tab={tab} />;
+  if (tab?.error) return <ErrorPanel tab={{ ...tab, error: tab.error }} />;
+  return empty ? <StartView /> : null;
+}
+
 /** The area the tab's page view covers; its rectangle is reported to main on every resize. */
-function PageArea({ empty }: { readonly empty: boolean }) {
+function PageArea({ tab, empty }: { readonly tab: TabState | undefined; readonly empty: boolean }) {
   const area = useRef<HTMLElement>(null);
   const report = useCallback(() => {
     const el = area.current;
@@ -419,7 +523,7 @@ function PageArea({ empty }: { readonly empty: boolean }) {
 
   return (
     <main ref={area} className="page-area" data-testid="page-area">
-      {empty ? <StartView /> : null}
+      <PageContent tab={tab} empty={empty} />
     </main>
   );
 }
@@ -437,9 +541,11 @@ function StatusBar({
 }) {
   const url = tab?.url ?? '';
   const host = hostOf(url);
-  const security = securityOf(url);
+  const security = tabSecurity(tab);
   let status = 'Ready';
   if (tab?.loading) status = host ? `Loading ${host}…` : 'Loading…';
+  else if (tab?.crashed) status = `${panelHost(url)} · Page crashed`;
+  else if (tab?.error) status = `Couldn\u2019t load ${panelHost(tab.error.url)}`;
   else if (host) status = security === 'secure' ? `${host} · Secure connection` : `${host} · Not secure`;
   return (
     <footer className="status-bar" data-testid="status-bar">
@@ -475,7 +581,7 @@ export function App() {
     <div className="chrome">
       <TabStrip state={state} />
       <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} />
-      <PageArea empty={state !== null && empty} />
+      <PageArea tab={tab} empty={state !== null && empty} />
       <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />
     </div>
   );

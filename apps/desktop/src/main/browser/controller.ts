@@ -7,11 +7,15 @@ import {
   WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH,
   WINDOW_TITLE_SEPARATOR,
   type BrowserState,
+  type LoadError,
   type Notice,
+  type NoticeKind,
   type PageBounds,
   type TabState,
 } from '@app/specs/browser.spec';
+import { IGNORED_LOAD_ERROR_CODES } from '@app/specs/browse-guard.spec';
 import { displayUrl, resolveAddressInput } from './address';
+import { isWebUrl } from './guard';
 import { pageTitle } from './page-title';
 import { matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 
@@ -19,8 +23,10 @@ import { matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 // Controller). Only Electron *types* are imported: the view factory and the window are injected, so
 // this runs under Vitest with plain fakes.
 //
-// Only the active tab's view is ever attached to the window's `contentView`; other tabs' views stay
-// alive (each keeps its own page and history) but detached. Tab commands need a window: without one
+// Only the active tab's view is ever attached to the window's `contentView`, and only while it shows
+// a page: a tab whose last load failed or whose renderer crashed shows the chrome's error / crash
+// panel instead (`browse-guard.feature.md`), so its view is detached. Other tabs' views stay alive
+// (each keeps its own page and history) but detached. Tab commands need a window: without one
 // (macOS, after the last window closed) they change nothing, and New Tab asks the app to open one.
 
 /** A tab's page view (`createTabView()`); it is attached to the window's `contentView`. */
@@ -49,6 +55,15 @@ export interface BrowserController extends BrowserService {
   activatePreviousTab(): boolean;
   /** Focuses the chrome and asks it to focus the address bar (Cmd/Ctrl+L): bumps `focusAddressBarSeq`. */
   focusAddressBar(): void;
+  /**
+   * A gesture-backed popup from the page in `opener` (spec `browse-guard.feature.md`): opens `url`
+   * (`http(s)` only) in a new background tab right of the opener's tab, after the tabs it already
+   * opened. Answers the new tab's id, or `null` (opener is no tab's WebContents, not a web URL, no
+   * window, or `MAX_TABS`, which raises the `tab-limit` notice).
+   */
+  openTabFromPage(opener: unknown, url: string): number | null;
+  /** Raises a status-bar notice (a new `seq`). */
+  notify(kind: NoticeKind): void;
 }
 
 export interface BrowserControllerOptions {
@@ -74,14 +89,25 @@ interface Tab {
   unlisten: () => void;
   /** The renderer died (`render-process-gone`); reported as not loading until the next load starts. */
   crashed: boolean;
+  /** The last main-frame load failed (`did-fail-load`); cleared by the next main-frame commit. */
+  error: LoadError | null;
+  /** The tab whose page opened this one (popup placement), if any. */
+  readonly openerId: number | null;
   state: TabState;
 }
 
-/** WebContents events after which a tab's state is re-read (plus `did-start-loading` and `render-process-gone`, below). */
-const STATE_EVENTS = ['did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'did-fail-load', 'page-title-updated'] as const;
+/**
+ * WebContents events after which a tab's state is re-read (plus `did-start-loading`, `did-navigate`,
+ * `did-fail-load` and `render-process-gone`, below).
+ */
+const STATE_EVENTS = ['did-stop-loading', 'did-navigate-in-page', 'page-title-updated'] as const;
 
 function emptyTabState(id: number): TabState {
-  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false };
+  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false };
+}
+
+function sameError(a: LoadError | null, b: LoadError | null): boolean {
+  return a === b || (a !== null && b !== null && a.code === b.code && a.description === b.description && a.url === b.url);
 }
 
 function sameTabState(a: TabState, b: TabState): boolean {
@@ -90,8 +116,15 @@ function sameTabState(a: TabState, b: TabState): boolean {
     a.title === b.title &&
     a.loading === b.loading &&
     a.canGoBack === b.canGoBack &&
-    a.canGoForward === b.canGoForward
+    a.canGoForward === b.canGoForward &&
+    a.crashed === b.crashed &&
+    sameError(a.error, b.error)
   );
+}
+
+/** Whether a tab's page view is shown: not while its error or crash panel is. */
+function showsPage(tab: { error: LoadError | null; crashed: boolean }): boolean {
+  return tab.error === null && !tab.crashed;
 }
 
 /** `title` cut to `WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH` characters, the last one an ellipsis. */
@@ -167,12 +200,23 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     for (const wake of [...waiters.keys()]) wake();
   };
 
+  /** A new empty tab, not yet in the strip. */
+  const createTab = (openerId: number | null = null): Tab => {
+    const id = nextTabId++;
+    return { id, view: null, unlisten: noop, crashed: false, error: null, openerId, state: emptyTabState(id) };
+  };
+
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
   const openEmptyTab = (): number => {
-    const id = nextTabId++;
-    tabs.push({ id, view: null, unlisten: noop, crashed: false, state: emptyTabState(id) });
-    activeTabId = id;
-    return id;
+    const tab = createTab();
+    tabs.push(tab);
+    activeTabId = tab.id;
+    return tab.id;
+  };
+
+  const raiseNotice = (kind: NoticeKind): void => {
+    notice = { seq: (notice?.seq ?? 0) + 1, kind };
+    changed();
   };
 
   const detach = (view: TabView): void => {
@@ -195,6 +239,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.unlisten = noop;
     tab.view = null;
     tab.crashed = false;
+    tab.error = null;
     if (view) detach(view);
     return view;
   };
@@ -224,10 +269,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.view.setBounds(clampPageBounds(pageBounds, [width, height]));
   };
 
-  /** Makes the window show exactly the active tab's view (none for an empty tab). */
+  /** Makes the window show exactly the active tab's view (none for an empty tab, or behind a panel). */
   const syncAttached = (): void => {
     const tab = activeTab();
-    const want = tab ? liveView(tab) : null;
+    const live = tab ? liveView(tab) : null;
+    const want = tab && showsPage(tab) ? live : null;
     if (attached === want) return;
     if (attached) detach(attached);
     if (!want || !tab || !win || win.isDestroyed()) return;
@@ -243,12 +289,16 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (win && !win.isDestroyed()) win.webContents.focus();
   };
 
-  /** After a switch: focus the active tab's page, or the address bar for an empty tab. */
+  /**
+   * After a switch: focus the active tab's page, the chrome for a tab showing a panel (its buttons
+   * are there), or the address bar for an empty tab.
+   */
   const focusActive = (): void => {
     const tab = activeTab();
     const view = tab ? liveView(tab) : null;
-    if (view) view.webContents.focus();
-    else requestAddressFocus();
+    if (!view) requestAddressFocus();
+    else if (tab && showsPage(tab)) view.webContents.focus();
+    else if (win && !win.isDestroyed()) win.webContents.focus();
   };
 
   /** Re-reads `tab`'s state from its WebContents; bumps the version only on a real change. */
@@ -263,9 +313,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       loading: !tab.crashed && contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
+      error: tab.error && { ...tab.error },
+      crashed: tab.crashed,
     };
     if (sameTabState(tab.state, next)) return;
     tab.state = next;
+    // A panel appeared or went away: the view is attached only while it shows a page.
+    syncAttached();
     changed();
   };
 
@@ -292,10 +346,24 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       tab.crashed = false;
       refresh(tab);
     });
+    // A main-frame page committed (Electron emits `did-navigate` only for non-error pages).
+    listen('did-navigate', () => {
+      tab.error = null;
+      refresh(tab);
+    });
+    // Main-frame load failures show the error panel; `ERR_ABORTED` (a dropped navigation, a stop,
+    // a download) and subframe failures do not.
+    listen('did-fail-load', (_event: unknown, code: number, description: string, validatedUrl: string, isMainFrame: boolean) => {
+      if (isMainFrame && Number.isInteger(code) && code < 0 && !(IGNORED_LOAD_ERROR_CODES as readonly number[]).includes(code)) {
+        tab.error = { code, description: String(description), url: displayUrl(String(validatedUrl)) };
+      }
+      refresh(tab);
+    });
     listen('render-process-gone', () => {
       tab.crashed = true;
       refresh(tab);
     });
+    listen('unresponsive', () => raiseNotice('page-unresponsive'));
     // The page closed itself (`window.close()`): its tab closes like any other.
     listen('destroyed', () => removeTab(tab.id));
     // Reserved tab shortcuts are taken before the page can see (and cancel) them.
@@ -303,6 +371,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.unlisten = () => {
       for (const [event, listener] of listeners) emitter.off(event, listener);
     };
+    // Sized now, so a background tab (a popup) lays its page out at the page area's size.
+    applyBounds(tab);
     syncAttached();
     return view;
   };
@@ -366,8 +436,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       return hasWindow() ? activeTabId : null;
     }
     if (tabs.length >= MAX_TABS) {
-      notice = { seq: (notice?.seq ?? 0) + 1, kind: 'tab-limit' };
-      changed();
+      raiseNotice('tab-limit');
       return null;
     }
     const id = openEmptyTab();
@@ -387,6 +456,48 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const index = tabs.findIndex((t) => t.id === activeTabId);
     if (index < 0 || tabs.length < 2) return false;
     return activateTabAt((index + step + tabs.length) % tabs.length);
+  };
+
+  const openTabFromPage = (opener: unknown, url: string): number | null => {
+    if (!hasWindow() || !isWebUrl(url)) return null;
+    const index = tabs.findIndex((tab) => tab.view !== null && aliveContents(tab.view) === opener);
+    const openerTab = tabs[index];
+    if (!openerTab) return null;
+    if (tabs.length >= MAX_TABS) {
+      raiseNotice('tab-limit');
+      return null;
+    }
+    // Right of the opener, after the run of tabs it already opened.
+    let at = index + 1;
+    while (tabs[at]?.openerId === openerTab.id) at += 1;
+    const tab = createTab(openerTab.id);
+    tabs.splice(at, 0, tab);
+    const view = ensureView(tab);
+    // No opener link, referrer or POST body: the new tab loads the URL on its own.
+    view?.webContents.loadURL(url).catch(() => {
+      // Failures surface through `did-fail-load` / the tab state.
+    });
+    changed();
+    return tab.id;
+  };
+
+  /**
+   * Reloads the active tab. A crashed (or errored) tab reloads its WebContents, which restarts the
+   * renderer; if that WebContents is gone, a fresh view loads the tab's URL instead.
+   */
+  const reload = (): void => {
+    const tab = activeTab();
+    if (!tab) return;
+    const url = tab.state.url;
+    const view = liveView(tab);
+    if (view) {
+      view.webContents.reload();
+      return;
+    }
+    if (!isWebUrl(url)) return;
+    ensureView(tab)?.webContents.loadURL(url).catch(() => {
+      // Failures surface through `did-fail-load` / the tab state.
+    });
   };
 
   const focusAddressBar = (): void => {
@@ -488,6 +599,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     focusAddressBar,
 
+    openTabFromPage,
+
+    notify: raiseNotice,
+
     back() {
       withActiveContents((contents) => {
         if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
@@ -500,9 +615,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       });
     },
 
-    reload() {
-      withActiveContents((contents) => contents.reload());
-    },
+    reload,
 
     stop() {
       withActiveContents((contents) => contents.stop());

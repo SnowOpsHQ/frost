@@ -35,7 +35,18 @@ registerAppScheme();
 // The Vite dev-server origin is trusted (navigation, IPC sender, renderer source) only when
 // unpackaged under `electron-forge start` (specs/security-policy.spec.ts, ipc-sender.spec.ts).
 const devServerUrl = app.isPackaged ? undefined : MAIN_WINDOW_VITE_DEV_SERVER_URL;
-const securityOptions: SecurityOptions = { devServerUrl };
+
+// Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
+// procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
+// New Tab with no window open (macOS) opens the window instead of adding a hidden tab.
+const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow() });
+
+// The browse guard turns a tab's gesture-backed popups into background tabs
+// (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
+const securityOptions: SecurityOptions = {
+  devServerUrl,
+  browse: { openTab: (opener, url) => void browser.openTabFromPage(opener, url) },
+};
 
 // Installed before any WebContents exists, so none is ever left unguarded.
 registerAppWideGuards(securityOptions);
@@ -44,11 +55,6 @@ registerAppWideGuards(securityOptions);
 // registry decides who may load app://.
 const windows = createWindowRegistry();
 const senderPolicy = createSenderPolicy({ knownWindowIds: windows.knownWindowIds, devServerUrl });
-
-// Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
-// procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
-// New Tab with no window open (macOS) opens the window instead of adding a hidden tab.
-const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow() });
 
 function openMainWindow(): void {
   const win = createMainWindow();
@@ -65,9 +71,9 @@ void app.whenReady().then(() => {
   // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
   // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
   restrictAppRequests(session.defaultSession, windows.isAppWebContents);
-  // Tabs' session: no `app:` handler (protocol.handle below is the default session's), and
-  // deny-by-default permissions until Task 4's prompts.
-  hardenBrowseSession(session.fromPartition(BROWSE_PARTITION));
+  // Tabs' session: no `app:` handler (protocol.handle below is the default session's),
+  // deny-by-default permissions until Task 4's prompts, and every download cancelled with a notice.
+  hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), { onDownloadBlocked: () => browser.notify('download-blocked') });
   // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
   handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
   attachIpcHandler({

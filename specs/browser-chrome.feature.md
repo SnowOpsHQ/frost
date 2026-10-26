@@ -27,10 +27,12 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
 - **Scenario: browse-contents-get-browse-guard** — a WebContents on `BROWSE_PARTITION`'s session
   may navigate (any frame) and be redirected to `http:`/`https:`/`about:blank`.
 - **Scenario: browse-guard-drops-non-web-navigation** — `file:`, `app://app/`, `javascript:`,
-  `data:`, `chrome:`, `mailto:` navigations and redirects are prevented (main frame and subframes);
-  nothing is opened externally.
-- **Scenario: browse-guard-denies-window-open** — `window.open` is denied for every URL (Task 3
-  adds background tabs), nothing is opened externally.
+  `data:`, `chrome:`, `vscode:` navigations and redirects are prevented (main frame and subframes),
+  even after an activation input; nothing is opened externally. (`mailto:` on a gesture goes to the
+  external-open flow: `browse-guard.feature.md`.)
+- **Scenario: browse-guard-denies-window-open** — without an activation input `window.open` is
+  denied for every URL and opens neither a tab nor anything external (gesture-backed popups:
+  `browse-guard.feature.md`).
 - **Scenario: browse-guard-refuses-webview** — `will-attach-webview` is prevented.
 - **Scenario: other-sessions-keep-app-pin** — default-session contents, another partition's, and
   contents whose `session` is missing or throws are pinned to `app://` as in Phase 0.
@@ -62,7 +64,7 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   `tabs.feature.md` `background-page-close-closes-its-tab`.)
 - **Scenario: renderer-crash-stops-loading** — after `render-process-gone` the tab reports
   `loading: false` (even if the WebContents still claims to load) until the next load starts; the
-  crash UI is Task 3.
+  crash panel is `browse-guard.feature.md`.
 - **Scenario: history-and-reload-act-on-active-tab** — `back`/`forward` call
   `navigationHistory.goBack/goForward` only when possible; `reload`/`stop` act on the view; all
   are no-ops on an empty tab.
