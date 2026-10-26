@@ -135,6 +135,9 @@ export class FakeSession extends EventEmitter {
       this.protocolHandlers.set(scheme, handler);
     }),
   };
+  /** Clear Browsing Data (`clear-browsing-data.ts`). */
+  clearStorageData = vi.fn(async () => {});
+  clearCache = vi.fn(async () => {});
   // Like Electron, a session holds one listener per webRequest event; registering again replaces it.
   readonly webRequest = {
     onHeadersReceived: vi.fn((listener: HeadersReceivedListener | null) => {
@@ -194,6 +197,8 @@ export function electronFake() {
     }),
     getApplicationMenu: vi.fn(() => applicationMenu),
   };
-  const electron = { app, BrowserWindow: FakeBrowserWindow, WebContentsView: FakeWebContentsView, Menu, shell, session, protocol, ipcMain };
+  // `dialog.showMessageBox`: answers Cancel (button 1) unless a test says otherwise.
+  const dialog = { showMessageBox: vi.fn(async (..._args: unknown[]) => ({ response: 1, checkboxChecked: false })) };
+  const electron = { app, BrowserWindow: FakeBrowserWindow, WebContentsView: FakeWebContentsView, Menu, shell, session, protocol, ipcMain, dialog };
   return { ...electron, default: electron };
 }

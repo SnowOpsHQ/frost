@@ -7,6 +7,7 @@ import { createWindowRegistry } from './app-windows';
 import { createBrowserController } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
 import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
+import { clearBrowseStorage, confirmClearBrowsingData, createClearBrowsingData } from './clear-browsing-data';
 import { installAppMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
@@ -58,8 +59,8 @@ function start(): void {
   // Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
   // procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
   // New Tab with no window open (macOS) opens the window instead of adding a hidden tab.
-  // Tabs' permission requests become per-origin prompts (specs/permissions.feature.md); Allow /
-  // Block decisions are loaded at startup and written through to the session database.
+  // Tabs' permission requests become per-origin prompts (specs/permissions.feature.md); Blocks are
+  // loaded at startup and written through to the session database (an Allow lasts for this run).
   const decisions = createPersistentDecisionStore((decision) => sessionStore.writer.savePermissionDecision(decision));
   const permissions = createPermissionBroker({ store: decisions });
   const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow(), permissions, session: sessionStore.writer });
@@ -113,9 +114,18 @@ function start(): void {
       fromWebContents: (contents) => BrowserWindow.fromWebContents(contents),
       services: { browser },
     });
+    // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
+    // to the focused window (else the app's), then clears visits, decisions and site storage.
+    const clearBrowsingData = createClearBrowsingData({
+      confirm: () => confirmClearBrowsingData(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
+      forgetPermissionDecisions: () => permissions.forgetDecisions(),
+      clearStoredData: () => sessionStore.writer.clearBrowsingData(),
+      clearBrowseStorage,
+      log: logSession,
+    });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) are menu accelerators calling the controller directly
     // (specs/tabs.feature.md).
-    installAppMenu(browser);
+    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData() });
     // What the last launch saved, after the sessions are hardened and before any tab or window
     // exists: remembered decisions answer the first requests, and the chrome's first state already
     // has the restored tabs.

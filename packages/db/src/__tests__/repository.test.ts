@@ -1,5 +1,5 @@
 // Spec: specs/browser-session-db.spec.ts (MAX_RESTORED_TABS, MAX_RECENT_VISITS, MAX_STORED_URL_LENGTH,
-// MAX_STORED_TITLE_LENGTH), specs/permissions.spec.ts (SITE_PERMISSIONS, REMEMBERED_DECISIONS)
+// MAX_STORED_TITLE_LENGTH), specs/permissions.spec.ts (SITE_PERMISSIONS, PERSISTED_DECISIONS)
 // Acceptance: specs/browser-session-db.feature.md (Repository)
 import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, test } from 'vitest';
@@ -178,36 +178,60 @@ describe('visits', () => {
 });
 
 describe('permission decisions', () => {
-  const allow: StoredDecision = { origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'notifications', decision: 'allow' };
+  const block: StoredDecision = { origin: 'https://a.example', topLevelOrigin: 'https://a.example', permission: 'notifications', decision: 'block' };
   const embedded: StoredDecision = { origin: 'https://widget.example', topLevelOrigin: 'http://127.0.0.1:8080', permission: 'camera', decision: 'block' };
+  const countRows = () => raw.prepare('SELECT COUNT(*) AS n FROM site_permissions').get();
 
   test('permission-decisions-round-trip', async () => {
-    await repo.savePermissionDecision(allow, 1);
+    await repo.savePermissionDecision(block, 1);
     await repo.savePermissionDecision(embedded, 2);
-    expect(await repo.loadPermissionDecisions()).toEqual(expect.arrayContaining([allow, embedded]));
+    expect(await repo.loadPermissionDecisions()).toEqual(expect.arrayContaining([block, embedded]));
     expect(await repo.loadPermissionDecisions()).toHaveLength(2);
-    // A later decision for the same key replaces the earlier one.
-    await repo.savePermissionDecision({ ...allow, decision: 'block' }, 3);
-    const loaded = await repo.loadPermissionDecisions();
-    expect(loaded).toHaveLength(2);
-    expect(loaded).toContainEqual({ ...allow, decision: 'block' });
+    // The same key saved again stays one row.
+    await repo.savePermissionDecision(block, 3);
+    expect(await repo.loadPermissionDecisions()).toHaveLength(2);
     // Keys never mix: the same origin under another top-level site is its own entry.
-    await repo.savePermissionDecision({ ...allow, topLevelOrigin: 'https://b.example' }, 4);
+    await repo.savePermissionDecision({ ...block, topLevelOrigin: 'https://b.example' }, 4);
     expect(await repo.loadPermissionDecisions()).toHaveLength(3);
   });
 
+  test('only-blocks-are-stored', async () => {
+    // An Allow is never written, and does not replace a stored Block.
+    await repo.savePermissionDecision({ ...block, decision: 'allow' } as unknown as StoredDecision, 1);
+    expect(countRows()).toEqual({ n: 0 });
+    await repo.savePermissionDecision(block, 2);
+    await repo.savePermissionDecision({ ...block, decision: 'allow' } as unknown as StoredDecision, 3);
+    expect(await repo.loadPermissionDecisions()).toEqual([block]);
+    // An Allow row in the file (an earlier build's, or planted) is not loaded.
+    raw.prepare("INSERT INTO site_permissions (origin, top_level_origin, permission, decision, updated_at) VALUES ('https://c.example', 'https://c.example', 'geolocation', 'allow', 1)").run();
+    expect(await repo.loadPermissionDecisions()).toEqual([block]);
+  });
+
+  test('clear-browsing-data-in-repository', async () => {
+    const session = { tabs: [{ url: 'https://a.example/', title: 'A' }, { url: 'https://b.example/', title: 'B' }], activeIndex: 1 };
+    await repo.write({ session, visits: [{ url: 'https://a.example/', visits: 2, lastVisitAt: 5, title: 'A' }] });
+    await repo.savePermissionDecision(block, 1);
+    await repo.savePermissionDecision(embedded, 2);
+    await repo.clearBrowsingData();
+    expect(await repo.recentVisits()).toEqual([]);
+    expect(await repo.loadPermissionDecisions()).toEqual([]);
+    expect(countRows()).toEqual({ n: 0 });
+    // The tab strip is kept.
+    expect(await repo.loadSession()).toEqual(session);
+  });
+
   test('tampered-permission-rows-skipped', async () => {
-    await repo.savePermissionDecision(allow, 1);
+    await repo.savePermissionDecision(block, 1);
     const insert = raw.prepare('INSERT INTO site_permissions (origin, top_level_origin, permission, decision, updated_at) VALUES (?, ?, ?, ?, 1)');
     insert.run('file://', 'https://a.example', 'geolocation', 'allow');
     insert.run('https://a.example/path', 'https://a.example', 'geolocation', 'allow');
     insert.run('https://a.example', 'app://app', 'geolocation', 'allow');
     insert.run('https://a.example', 'https://a.example', 'midi', 'allow');
     insert.run('https://a.example', 'https://a.example', 'camera', 'dismiss');
-    expect(await repo.loadPermissionDecisions()).toEqual([allow]);
+    expect(await repo.loadPermissionDecisions()).toEqual([block]);
     // Invalid keys are not written either.
-    await repo.savePermissionDecision({ ...allow, origin: 'javascript:alert(1)' }, 2);
-    await repo.savePermissionDecision({ ...allow, permission: 'midi' as never }, 2);
+    await repo.savePermissionDecision({ ...block, origin: 'javascript:alert(1)' }, 2);
+    await repo.savePermissionDecision({ ...block, permission: 'midi' as never }, 2);
     expect(raw.prepare('SELECT COUNT(*) AS n FROM site_permissions').get()).toEqual({ n: 6 });
   });
 });

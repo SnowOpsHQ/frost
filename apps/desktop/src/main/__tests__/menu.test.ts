@@ -1,8 +1,9 @@
 // Spec: specs/browser.spec.ts (TAB_SHORTCUT_COUNT) · Acceptance: specs/tabs.feature.md (Menu)
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
+import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
-import { appMenuTemplate, installAppMenu, type TabCommands } from '../menu';
+import { appMenuTemplate, installAppMenu, type AppMenuCommands } from '../menu';
 
 vi.mock('electron', async () => (await import('../../test/electron-fake')).electronFake());
 
@@ -17,7 +18,8 @@ function fakeCommands() {
     activateLastTab: vi.fn(),
     activateNextTab: vi.fn(),
     activatePreviousTab: vi.fn(),
-  } satisfies TabCommands;
+    clearBrowsingData: vi.fn(),
+  } satisfies AppMenuCommands;
 }
 
 /** Every item of the template, depth first. */
@@ -39,6 +41,26 @@ function click(item: MenuItemConstructorOptions): void {
 }
 
 describe('application menu', () => {
+  test.each(PLATFORMS)('clear-browsing-data-menu-item (%s)', (platform) => {
+    const commands = fakeCommands();
+    const template = appMenuTemplate(commands, platform);
+    const item = itemById(template, CLEAR_BROWSING_DATA.menuItemId);
+    expect(item.label).toBe(CLEAR_BROWSING_DATA.menuLabel);
+    expect(item.label).toBe('Clear Browsing Data\u2026');
+    expect(item.accelerator).toBeUndefined();
+    // In the File menu, or the app menu on macOS (which keeps its standard items).
+    const host = template.find((menu) => Array.isArray(menu.submenu) && menu.submenu.includes(item))!;
+    if (platform === 'darwin') {
+      expect(host.role).toBe('appMenu');
+      expect((host.submenu as MenuItemConstructorOptions[]).map((entry) => entry.role).filter(Boolean)).toEqual(['about', 'services', 'hide', 'hideOthers', 'unhide', 'quit']);
+    } else {
+      expect(host.label).toBe('File');
+    }
+    expect(allItems(template).filter((entry) => entry.id === CLEAR_BROWSING_DATA.menuItemId)).toHaveLength(1);
+    click(item);
+    expect(commands.clearBrowsingData).toHaveBeenCalledOnce();
+  });
+
   test.each(PLATFORMS)('menu-accelerators-call-controller (%s)', (platform) => {
     const commands = fakeCommands();
     const template = appMenuTemplate(commands, platform);
@@ -95,9 +117,11 @@ describe('application menu', () => {
     expect(close[0]!.accelerator).toBe('CmdOrCtrl+Shift+W');
     const quit = items.filter((item) => item.role === 'quit');
     if (platform === 'darwin') {
-      // The app menu role carries Quit (Cmd+Q) on macOS.
-      expect(quit).toHaveLength(0);
-      expect(items.some((item) => item.role === 'appMenu')).toBe(true);
+      // The app menu carries Quit, on the role's own Cmd+Q.
+      expect(quit).toHaveLength(1);
+      expect(quit[0]!.accelerator).toBeUndefined();
+      const appMenu = items.find((item) => item.role === 'appMenu');
+      expect((appMenu?.submenu as MenuItemConstructorOptions[]).includes(quit[0]!)).toBe(true);
     } else {
       expect(quit).toHaveLength(1);
       expect(quit[0]!.accelerator).toBe('Ctrl+Shift+Q');

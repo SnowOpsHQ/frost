@@ -1,4 +1,5 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron';
+import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
 import type { BrowserController } from './browser/controller';
 
@@ -15,13 +16,25 @@ export type TabCommands = Pick<
   'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab'
 >;
 
+/** Everything the menu runs: the tab commands and Clear Browsing Data… (`clear-browsing-data.ts`). */
+export interface AppMenuCommands extends TabCommands {
+  clearBrowsingData(): void;
+}
+
 /** The menu template for `platform` (pure; `installAppMenu` builds and installs it). */
-export function appMenuTemplate(commands: TabCommands, platform: NodeJS.Platform = process.platform): MenuItemConstructorOptions[] {
+export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Platform = process.platform): MenuItemConstructorOptions[] {
   const mac = platform === 'darwin';
   const selectTab: MenuItemConstructorOptions[] = [];
   for (let n = 1; n < TAB_SHORTCUT_COUNT; n++) {
     selectTab.push({ id: `select-tab-${n}`, label: `Tab ${n}`, accelerator: `CmdOrCtrl+${n}`, click: () => void commands.activateTabAt(n - 1) });
   }
+
+  // Clear Browsing Data… (spec `browser-session-db.feature.md`): no accelerator, it asks first.
+  const clearBrowsingData: MenuItemConstructorOptions = {
+    id: CLEAR_BROWSING_DATA.menuItemId,
+    label: CLEAR_BROWSING_DATA.menuLabel,
+    click: () => commands.clearBrowsingData(),
+  };
 
   const file: MenuItemConstructorOptions = {
     label: 'File',
@@ -32,8 +45,16 @@ export function appMenuTemplate(commands: TabCommands, platform: NodeJS.Platform
       { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => void commands.closeActiveTab() },
       // Cmd/Ctrl+W belongs to Close Tab; closing the window takes Shift as well.
       { role: 'close', label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W' },
-      // Quit: the app menu's Cmd+Q on macOS; Ctrl+Shift+Q elsewhere (Linux/Windows convention).
-      ...(mac ? [] : [{ type: 'separator' } satisfies MenuItemConstructorOptions, { role: 'quit', accelerator: 'Ctrl+Shift+Q' } satisfies MenuItemConstructorOptions]),
+      // Clear Browsing Data… is in the app menu on macOS. Quit: the app menu's Cmd+Q on macOS;
+      // Ctrl+Shift+Q elsewhere (Linux/Windows convention).
+      ...(mac
+        ? []
+        : [
+            { type: 'separator' } satisfies MenuItemConstructorOptions,
+            clearBrowsingData,
+            { type: 'separator' } satisfies MenuItemConstructorOptions,
+            { role: 'quit', accelerator: 'Ctrl+Shift+Q' } satisfies MenuItemConstructorOptions,
+          ]),
     ],
   };
 
@@ -81,8 +102,25 @@ export function appMenuTemplate(commands: TabCommands, platform: NodeJS.Platform
   };
 
   if (!mac) return [file, edit, tab];
+  // The app menu written out (the role's own submenu has no place for Clear Browsing Data…).
+  const appMenu: MenuItemConstructorOptions = {
+    role: 'appMenu',
+    submenu: [
+      { role: 'about' },
+      { type: 'separator' },
+      clearBrowsingData,
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' },
+    ],
+  };
   return [
-    { role: 'appMenu' },
+    appMenu,
     file,
     edit,
     tab,
@@ -91,6 +129,6 @@ export function appMenuTemplate(commands: TabCommands, platform: NodeJS.Platform
 }
 
 /** Builds the template for this platform and installs it as the application menu. */
-export function installAppMenu(commands: TabCommands): void {
+export function installAppMenu(commands: AppMenuCommands): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(commands)));
 }

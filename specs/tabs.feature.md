@@ -136,7 +136,9 @@ Phase 1 Task 2. Each scenario maps to one named test.
   also `Cmd+Shift+]` / `Cmd+Shift+[`, the Ctrl+Tab items hidden but working).
 - **Scenario: menu-window-and-quit-items** — Close Window is the `close` role on
   `CmdOrCtrl+Shift+W` on every platform; Quit is the `quit` role, on `Ctrl+Shift+Q` on
-  Linux/Windows (macOS keeps the app menu's Cmd+Q).
+  Linux/Windows; on macOS it is the app menu's `quit` role with its own Cmd+Q (the app menu is
+  written out, About · Clear Browsing Data… · Services · Hide · Hide Others · Show All · Quit, to
+  hold Clear Browsing Data…, `browser-session-db.feature.md`).
 - **Scenario: menu-keeps-edit-roles** — an Edit menu with the undo, redo, cut, copy, paste and
   selectAll roles, on every platform.
 - **Scenario: menu-accelerators-are-unique** — no two items share an accelerator; no default role

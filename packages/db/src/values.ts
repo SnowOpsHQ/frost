@@ -1,6 +1,6 @@
 import { BROWSABLE_SCHEMES } from '@app/specs/browser.spec';
 import { MAX_STORED_TITLE_LENGTH, MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
-import { REMEMBERED_DECISIONS, SITE_PERMISSIONS, type RememberedDecision, type SitePermission } from '@app/specs/permissions.spec';
+import { PERSISTED_DECISIONS, SITE_PERMISSIONS, type PersistedDecision, type SitePermission } from '@app/specs/permissions.spec';
 
 // What may be stored, and what a stored value must look like to be loaded (spec
 // `browser-session-db.feature.md`). Every value is checked both ways: the database is a file in
@@ -47,4 +47,5 @@ export function storableOrigin(origin: unknown): string | null {
 }
 
 export const isSitePermission = (value: unknown): value is SitePermission => includes(SITE_PERMISSIONS, value);
-export const isRememberedDecision = (value: unknown): value is RememberedDecision => includes(REMEMBERED_DECISIONS, value);
+/** Only a Block is stored or loaded (`PERSISTED_DECISIONS`); an Allow is for the app session. */
+export const isPersistedDecision = (value: unknown): value is PersistedDecision => includes(PERSISTED_DECISIONS, value);

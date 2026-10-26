@@ -36,7 +36,7 @@ describe('main session store', () => {
     const first = openBrowserSessionStore(dir, log);
     expect(first.file).toBe(path.join(dir, DB_FILE_NAME));
     const session = { tabs: [{ url: 'https://a.test/', title: 'A' }, { url: 'https://b.test/', title: 'B' }], activeIndex: 1 };
-    const decision = { origin: 'https://a.test', topLevelOrigin: 'https://a.test', permission: 'notifications', decision: 'allow' } as const;
+    const decision = { origin: 'https://a.test', topLevelOrigin: 'https://a.test', permission: 'notifications', decision: 'block' } as const;
     first.writer.saveSession(session);
     first.writer.recordVisit('https://a.test/');
     first.writer.savePermissionDecision(decision);
