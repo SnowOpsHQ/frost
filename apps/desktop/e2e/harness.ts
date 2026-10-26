@@ -18,29 +18,43 @@ export const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url))
  *
  * `ELECTRON_RUN_AS_NODE` is stripped from the child environment: when inherited (some shells and
  * agent harnesses export it) Electron would start as plain Node and never open a window.
+ *
+ * Every launch gets its own profile (Chromium's `--user-data-dir`, which `app.getPath('userData')`
+ * follows): the browser-session database, the browse partition and the rest never touch the real
+ * frost profile, and no launch sees another's tabs or permission decisions. Pass `userDataDir` to
+ * relaunch on the same profile (the caller then owns that directory); otherwise a temporary one is
+ * created and removed when the app closes.
  */
 export async function launchApp(
   extraArgs: readonly string[] = [],
-  options: { coreDumps?: boolean } = {},
+  options: { coreDumps?: boolean; userDataDir?: string } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
   }
+  const ownProfile = options.userDataDir === undefined ? await mkdtemp(path.join(tmpdir(), 'frost-e2e-profile-')) : null;
+  const userDataDir = options.userDataDir ?? ownProfile!;
   const wrapper = options.coreDumps === false ? await noCoreDumpsLauncher() : undefined;
   let app: ElectronApplication;
   try {
     app = await _electron.launch({
-      args: [APP_DIR, ...extraArgs],
+      args: [APP_DIR, `--user-data-dir=${userDataDir}`, ...extraArgs],
       env,
       cwd: APP_DIR,
       ...(wrapper ? { executablePath: wrapper.path } : {}),
     });
+  } catch (error) {
+    if (ownProfile !== null) await rm(ownProfile, { recursive: true, force: true });
+    throw error;
   } finally {
     // The script `exec`s Electron, so it is not needed once the launch returned.
     await wrapper?.remove();
   }
-  const page = await app.firstWindow();
+  if (ownProfile !== null) app.once('close', () => void rm(ownProfile, { recursive: true, force: true }).catch(() => undefined));
+  // The chrome (`app://app`), not a tab: a restored tab's page can be the first page Playwright sees.
+  await app.firstWindow();
+  const page = await pageAt(app, 'app://app/');
   return { app, page };
 }
 

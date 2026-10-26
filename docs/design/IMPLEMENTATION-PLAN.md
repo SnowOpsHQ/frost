@@ -40,7 +40,7 @@ change-history store, and an AI agent that can drive the browser and run SEO ski
 | Language/UI | **TypeScript + React** | Matches the domain; large ecosystem. |
 | Monorepo | **pnpm workspaces + Turborepo** | Desktop app, shared packages, backend in one repo. |
 | IPC | **tRPC v11 + Zod** over a small in-repo link in `@app/ipc-contract` (one `ipcMain.handle` channel `app:trpc`; preload `exposeIpcBridge()` → `window.frostIpc.invoke`), every procedure typed, one central `enforceSender` middleware | Root-cause fix for the IPC/sender findings. In-repo because electron-trpc supports tRPC v10 only, and trpc-electron crashes main on a null `senderFrame`. |
-| Data | **SQLite + Drizzle**, built on **libSQL** | Local-first now; sync later with no rewrite. |
+| Data | **SQLite + Drizzle**: Node's built-in **`node:sqlite`** now (Phase 1), **libSQL** when sync lands (Phase 7) | Local-first now; sync later with no rewrite. `node:sqlite` (`DatabaseSync`, in Electron's main-process Node) ships no native binary, so packaging, ASAR integrity and the fuses are untouched; libSQL's native `.node` module would need unpacking from the ASAR. Drizzle (schema + queries, over its `sqlite-proxy` driver) and an async repository API make the move to libSQL a driver swap. |
 | AI | **Vercel AI SDK** + **AI Gateway** (`provider/model` strings); agent loop in a locked-down utility process | Provider-agnostic, observable, no shipped keys. |
 | On-device ML | **ONNX Runtime native** with Core ML EP (Apple Silicon) | SERP intent classifier; faster/lower-power than WASM. |
 | Backend | **Separate service**: API + **better-auth** + Postgres; billing via Stripe (server-side) | Keep entitlement enforcement off the client. |

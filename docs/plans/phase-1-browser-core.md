@@ -16,7 +16,8 @@ state in a `BrowserController`; the chrome reads it and drives it only through t
 tRPC procedures. Main pushes nothing: the chrome long-polls `browser.watch`, which resolves when the
 state version advances, so the single `app:trpc` invoke channel stays the only IPC path.
 
-**Tech Stack:** As Phase 0, plus `WebContentsView` (Electron 45), libSQL + Drizzle (Task 5).
+**Tech Stack:** As Phase 0, plus `WebContentsView` (Electron 45), `node:sqlite` + Drizzle (Task 5;
+libSQL when sync lands).
 
 **Spec:** `docs/design/IMPLEMENTATION-PLAN.md` §3 (security model) and §4 (Phase 1 deliverable).
 UI direction: `docs/ui-reference/README.md` (direction only; frost's look is its own).
@@ -159,16 +160,28 @@ prompt bar. Test: unit + `e2e/permissions.e2e.ts`.
 
 ### Task 5: Local browser-session database
 
-**Files:** `packages/db` (`@app/db`: Drizzle schema + migrations on libSQL — tables `browser_tabs`,
-`recent_visits`, `site_permissions`), `specs/browser-session-db.feature.md`; wire into main
-(`app.getPath('userData')`). Test: `packages/db` unit tests (in-memory libSQL) + `e2e/session-restore.e2e.ts`.
+**Files:** `packages/db` (`@app/db`: Drizzle schema, forward-only migrations and a small repository
+on Node's built-in `node:sqlite` — tables `browser_tabs`, `recent_visits`, `site_permissions`),
+`specs/browser-session-db.spec.ts`, `specs/browser-session-db.feature.md`; wire into main
+(`app.getPath('userData')`). Test: `packages/db` unit tests (in-memory `DatabaseSync(':memory:')`) +
+`e2e/session-restore.e2e.ts`.
+
+**Storage decision:** `node:sqlite` (`DatabaseSync`, available in Electron 45's main process, Node
+24) instead of libSQL for Phase 1. libSQL needs a native `.node` binary that the Forge Vite plugin
+does not package and that would have to be unpacked from the ASAR-integrity build; `node:sqlite` is
+a builtin (left external by the main bundle), so packaging, `verify:mac` and the fuses are
+unchanged. Drizzle stays: Drizzle 0.45 has no `node:sqlite` driver, so queries go through
+`drizzle-orm/sqlite-proxy` backed by `DatabaseSync`, behind an async repository API, so moving to
+libSQL when sync lands (Phase 7) is a driver swap. Migrations are numbered SQL strings compiled into
+the main bundle, applied at startup by a small forward-only runner (`schema_migrations`).
 
 - [ ] **Step 1 (spec):** open tabs (URL, order, active) persist and restore on relaunch;
   `restore-skips-non-browsable-urls`; visits are recorded (url, title, count, last visit) for
   committed browsable navigations only; remembered permission decisions persist; the DB file lives in
-  `userData`; migrations run at startup and are forward-only.
-- [ ] **Steps 2–5:** red → green. The packaged app must still pass `verify:mac` (native libSQL binary
-  inside the ASAR-integrity build: unpack it if required, and keep the fuses).
+  `userData`; migrations run at startup and are forward-only; a corrupt DB is moved aside; writes
+  are batched and flushed on quit.
+- [ ] **Steps 2–5:** red → green. The packaged app must still pass `verify:mac` (no native module:
+  `node:sqlite` is built into Electron; the fuses stay as they are).
 - [ ] **Step 6: commit** — `feat(db): local browser-session store with tab restore`.
 
 ### Task 6: Release check

@@ -1,8 +1,10 @@
 // Spec: specs/permissions.spec.ts, specs/browser.spec.ts (PermissionPromptSchema)
-// Acceptance: specs/permissions.feature.md (Decisions, Broker, Session wiring)
+// Acceptance: specs/permissions.feature.md (Decisions, Broker, Session wiring),
+// specs/browser-session-db.feature.md (Permissions)
 import type { BrowserWindow, Session } from 'electron';
 import { session } from 'electron';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { StoredDecision } from '@app/db';
 import { BROWSE_PARTITION, PermissionPromptSchema } from '@app/specs/browser.spec';
 import {
   MAX_COALESCED_REQUESTS,
@@ -21,6 +23,7 @@ import {
   createBrowsePermissionHandlers,
   createMemoryDecisionStore,
   createPermissionBroker,
+  createPersistentDecisionStore,
   requestScope,
   type PermissionBroker,
   type PermissionDecisionStore,
@@ -701,5 +704,74 @@ describe('browse session', () => {
       expect(appSession.permissionCheckHandler?.({}, permission, 'app://app/', { isMainFrame: true }), permission).toBe(false);
     }
     expect(broker.pendingCount()).toBe(0);
+  });
+});
+
+// Acceptance: specs/browser-session-db.feature.md (Permissions)
+describe('persistent store', () => {
+  test('persistent-decision-store', () => {
+    vi.useFakeTimers();
+    try {
+      // What the last launch saved.
+      const saved: StoredDecision[] = [
+        { ...scope(A), permission: 'notifications', decision: 'allow' },
+        { ...scope(B, A), permission: 'geolocation', decision: 'block' },
+      ];
+      const persist = vi.fn<(decision: StoredDecision) => void>((decision) => {
+        const index = saved.findIndex((d) => d.origin === decision.origin && d.topLevelOrigin === decision.topLevelOrigin && d.permission === decision.permission);
+        if (index >= 0) saved.splice(index, 1, decision);
+        else saved.push(decision);
+      });
+      const launch = () => {
+        const store = createPersistentDecisionStore(persist);
+        store.load(saved);
+        return createPermissionBroker({ store });
+      };
+
+      const broker = launch();
+      // Loaded decisions answer at once, with no prompt.
+      const granted = answerSpy();
+      broker.request(1, notifications(A), granted);
+      expect(granted).toHaveBeenCalledExactlyOnceWith(true);
+      expect(broker.check(scope(A), 'notifications')).toBe(true);
+      const blocked = answerSpy();
+      broker.request(1, geolocation(B, A), blocked);
+      expect(blocked).toHaveBeenCalledExactlyOnceWith(false);
+      expect(broker.promptFor(1)).toBeNull();
+      expect(persist).not.toHaveBeenCalled();
+
+      // An answer is written through with its key; media is written per device.
+      broker.request(1, media(['video', 'audio'], B), answerSpy());
+      broker.answer(1, headId(broker, 1), 'allow');
+      expect(persist.mock.calls.map(([d]) => d)).toEqual([
+        { ...scope(B), permission: 'camera', decision: 'allow' },
+        { ...scope(B), permission: 'microphone', decision: 'allow' },
+      ]);
+      // A Block replaces an Allow.
+      broker.request(1, geolocation(A), answerSpy());
+      broker.answer(1, headId(broker, 1), 'block');
+      expect(persist).toHaveBeenLastCalledWith({ ...scope(A), permission: 'geolocation', decision: 'block' });
+
+      // Dismissals (up to the back-off) are not written...
+      persist.mockClear();
+      for (let i = 0; i < MAX_PROMPT_IGNORES; i++) {
+        broker.request(1, notifications(B), answerSpy());
+        broker.answer(1, headId(broker, 1), 'dismiss');
+      }
+      const silenced = answerSpy();
+      broker.request(1, notifications(B), silenced);
+      expect(silenced).toHaveBeenCalledExactlyOnceWith(false);
+      expect(persist).not.toHaveBeenCalled();
+
+      // ... and are gone after a relaunch, while what was answered stays.
+      const relaunched = launch();
+      relaunched.request(1, notifications(B), answerSpy());
+      expect(relaunched.promptFor(1)).toMatchObject({ origin: B, permission: 'notifications' });
+      expect(relaunched.check(scope(B), 'camera')).toBe(true);
+      expect(relaunched.check(scope(A), 'geolocation')).toBe(false);
+      expect(relaunched.check(scope(A), 'notifications')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -18,6 +18,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@app/db": "workspace:*",
     "@app/ipc-contract": "workspace:*",
     "@app/specs": "workspace:*",
     "react": "^19.3.1",

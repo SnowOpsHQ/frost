@@ -6,12 +6,13 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { createWindowRegistry } from './app-windows';
 import { createBrowserController } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
-import { createBrowsePermissionHandlers, createMemoryDecisionStore, createPermissionBroker } from './browser/permissions';
+import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
 import { installAppMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
+import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
@@ -37,13 +38,21 @@ registerAppScheme();
 // unpackaged under `electron-forge start` (specs/security-policy.spec.ts, ipc-sender.spec.ts).
 const devServerUrl = app.isPackaged ? undefined : MAIN_WINDOW_VITE_DEV_SERVER_URL;
 
+// The browser-session database (specs/browser-session-db.feature.md): one file in `userData`,
+// opened synchronously here, in main only (a corrupt or unusable file never stops the app). Tab
+// and visit writes are batched; whatever is pending is flushed before the app quits.
+const logSession = (message: string): void => console.warn(`frost: ${message}`);
+const sessionStore = openBrowserSessionStore(app.getPath('userData'), logSession);
+flushBeforeQuit(app, sessionStore);
+
 // Main owns all browser state; the chrome drives it only through the sender-guarded `browser.*`
 // procedures (specs/browser-chrome.feature.md). Tab views come from the allowlisted factory.
 // New Tab with no window open (macOS) opens the window instead of adding a hidden tab.
-// Tabs' permission requests become per-origin prompts (specs/permissions.feature.md); decisions
-// are remembered in memory for the app session (Task 5 persists them).
-const permissions = createPermissionBroker({ store: createMemoryDecisionStore() });
-const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow(), permissions });
+// Tabs' permission requests become per-origin prompts (specs/permissions.feature.md); Allow /
+// Block decisions are loaded at startup and written through to the session database.
+const decisions = createPersistentDecisionStore((decision) => sessionStore.writer.savePermissionDecision(decision));
+const permissions = createPermissionBroker({ store: decisions });
+const browser = createBrowserController({ createView: createTabView, openWindow: () => openMainWindow(), permissions, session: sessionStore.writer });
 
 // The browse guard turns a tab's gesture-backed popups into background tabs
 // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
@@ -71,7 +80,7 @@ function openMainWindow(): void {
   });
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
   // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
   restrictAppRequests(session.defaultSession, windows.isAppWebContents);
@@ -97,6 +106,12 @@ void app.whenReady().then(() => {
   // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) are menu accelerators calling the controller directly
   // (specs/tabs.feature.md).
   installAppMenu(browser);
+  // What the last launch saved, after the sessions are hardened and before any tab or window
+  // exists: remembered decisions answer the first requests, and the chrome's first state already
+  // has the restored tabs.
+  const saved = await loadSavedState(sessionStore, logSession);
+  decisions.load(saved.decisions);
+  browser.restoreSession(saved.session);
   openMainWindow();
 
   // macOS: re-create a window when the dock icon is clicked and none are open.

@@ -1,4 +1,5 @@
 import type { BrowserWindow, WebContentsView } from 'electron';
+import type { SavedSession } from '@app/db';
 import type { BrowserService } from '@app/ipc-contract';
 import {
   APP_WINDOW_TITLE,
@@ -30,6 +31,12 @@ import { matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 // panel instead (`browse-guard.feature.md`), so its view is detached. Other tabs' views stay alive
 // (each keeps its own page and history) but detached. Tab commands need a window: without one
 // (macOS, after the last window closed) they change nothing, and New Tab asks the app to open one.
+//
+// Session (spec `browser-session-db.feature.md`): the tab strip saved at the last launch replaces
+// the initial empty tab before the first window is attached; only the active restored tab loads
+// at once, the others when first activated. While a window is attached, every change of the strip
+// (each tab's URL and title, the active tab) is handed to the session sink, and committed pages
+// are recorded as visits.
 
 /** A tab's page view (`createTabView()`); it is attached to the window's `contentView`. */
 export type TabView = WebContentsView;
@@ -82,6 +89,22 @@ export interface BrowserController extends BrowserService {
    * committed nothing (a `target=_blank` link to a file would otherwise leave an empty tab).
    */
   downloadBlocked(contents: unknown): void;
+  /**
+   * Replaces the initial empty tab with the saved strip (`browser-session-db.feature.md`,
+   * Restore): non-`http(s)` URLs are skipped, at most `MAX_TABS` tabs, none left → one empty tab.
+   * Only before the first window is attached; a no-op afterwards.
+   */
+  restoreSession(saved: SavedSession): void;
+}
+
+/** Where the controller hands what the session database keeps (`browser-session-db.feature.md`). */
+export interface SessionSink {
+  /** The tab strip changed (only while a window is attached). */
+  saveSession(session: SavedSession): void;
+  /** A main-frame `http(s)` page committed at `url`. */
+  recordVisit(url: string): void;
+  /** The page at `url` (no error page) reported `title`. */
+  updateVisitTitle(url: string, title: string): void;
 }
 
 export interface BrowserControllerOptions {
@@ -101,6 +124,8 @@ export interface BrowserControllerOptions {
    * crash). Without it no tab ever has a prompt.
    */
   readonly permissions?: TabPermissions;
+  /** Receives the tab strip and visits to persist; without it nothing is saved. */
+  readonly session?: SessionSink;
 }
 
 /** What the controller uses of the permission broker. */
@@ -141,6 +166,11 @@ interface Tab {
   fullscreenTimer: ReturnType<typeof setTimeout> | undefined;
   /** The tab whose page opened this one (popup placement), if any. */
   readonly openerId: number | null;
+  /**
+   * A restored tab's saved URL and title: loaded when the tab is first shown, and reported as its
+   * state until its view commits something (a load in flight has no URL yet).
+   */
+  restored: { readonly url: string; readonly title: string } | null;
   state: PageState;
 }
 
@@ -225,6 +255,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   /** Pending watches, oldest first: their wake-up check → their early finish. */
   const waiters = new Map<() => void, () => void>();
   const permissions = options.permissions;
+  const session = options.session;
+  /** A window was attached once: the restore point has passed. */
+  let everAttached = false;
+  /** The window is closing: its final strip is saved, and nothing after it until the next attach. */
+  let sessionPaused = false;
+  /** The strip last handed to `session` (serialized), to save only real changes. */
+  let lastSavedSession = '';
 
   const snapshot = (): BrowserState => ({
     version,
@@ -245,16 +282,45 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     win.setTitle(title === '' ? APP_WINDOW_TITLE : `${capTitle(title)}${WINDOW_TITLE_SEPARATOR}${APP_WINDOW_TITLE}`);
   };
 
+  /** The strip as saved: each tab's URL and title, in order, and the active tab's index. */
+  const sessionSnapshot = (): SavedSession => ({
+    tabs: tabs.map((tab) => ({ url: tab.state.url, title: tab.state.title })),
+    activeIndex: Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId)),
+  });
+
+  /** Hands the strip to the session sink if it changed (or `force`), while a window shows it. */
+  const saveSession = (force = false): void => {
+    if (!session || sessionPaused || !hasWindow()) return;
+    const snapshot = sessionSnapshot();
+    const serialized = JSON.stringify(snapshot);
+    if (!force && serialized === lastSavedSession) return;
+    lastSavedSession = serialized;
+    session.saveSession(snapshot);
+  };
+
   const changed = (): void => {
     version += 1;
     updateWindowTitle();
+    saveSession();
     for (const wake of [...waiters.keys()]) wake();
   };
 
   /** A new empty tab, not yet in the strip. */
   const createTab = (openerId: number | null = null): Tab => {
     const id = nextTabId++;
-    return { id, view: null, unlisten: noop, crashed: false, error: null, unresponsive: false, fullscreen: null, fullscreenTimer: undefined, openerId, state: emptyTabState(id) };
+    return {
+      id,
+      view: null,
+      unlisten: noop,
+      crashed: false,
+      error: null,
+      unresponsive: false,
+      fullscreen: null,
+      fullscreenTimer: undefined,
+      openerId,
+      restored: null,
+      state: emptyTabState(id),
+    };
   };
 
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
@@ -308,6 +374,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     tab.unlisten();
     tab.unlisten = noop;
     tab.view = null;
+    tab.restored = null;
     tab.crashed = false;
     tab.error = null;
     tab.unresponsive = false;
@@ -404,9 +471,19 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     reportFullscreen(tab);
   };
 
+  /** Loads a restored tab's saved URL the first time it is shown. */
+  const loadRestored = (tab: Tab): void => {
+    if (!tab.restored || tab.view || !hasWindow()) return;
+    const { url } = tab.restored;
+    ensureView(tab)?.webContents.loadURL(url).catch(() => {
+      // Failures surface through `did-fail-load` / the tab state.
+    });
+  };
+
   /** Makes the window show exactly the active tab's view (none for an empty tab, or behind a panel). */
   const syncAttached = (): void => {
     const tab = activeTab();
+    if (tab) loadRestored(tab);
     const live = tab ? liveView(tab) : null;
     const want = tab && showsPage(tab) ? live : null;
     if (attached === want) return;
@@ -444,10 +521,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const contents = tab.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
     const url = contents.getURL();
+    // A restored tab's first load has no URL until it commits: it keeps showing what was saved.
+    const shown = url === '' ? tab.restored : null;
     const next: PageState = {
       id: tab.id,
-      url: displayUrl(url),
-      title: pageTitle(contents.getTitle(), url),
+      url: shown ? shown.url : displayUrl(url),
+      title: shown ? shown.title : pageTitle(contents.getTitle(), url),
       loading: !tab.crashed && contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
@@ -482,23 +561,38 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       listeners.push([event, guarded as (...args: unknown[]) => void]);
     };
     for (const event of STATE_EVENTS) listen(event, () => refresh(tab));
+    // Visits (`browser-session-db.feature.md`): main-frame `http(s)` commits; a page's title
+    // updates its visit, never an error page's.
+    const recordVisit = (url: unknown): void => {
+      if (typeof url === 'string' && isWebUrl(url)) session?.recordVisit(url);
+    };
+    listen('did-navigate-in-page', (_event: unknown, url: unknown, isMainFrame: unknown) => {
+      if (isMainFrame === true) recordVisit(url);
+    });
+    listen('page-title-updated', () => {
+      const url = view.webContents.getURL();
+      if (session && tab.error === null && !tab.crashed && tab.state.title !== '' && isWebUrl(url)) session.updateVisitTitle(url, tab.state.title);
+    });
     listen('did-start-loading', () => {
       tab.crashed = false;
       refresh(tab);
     });
     // A main-frame page committed (Electron emits `did-navigate` only for non-error pages): the
     // old document's permission prompts are denied, and the new one is not fullscreen.
-    listen('did-navigate', () => {
+    listen('did-navigate', (_event: unknown, url: unknown) => {
       tab.error = null;
+      tab.restored = null;
       if (denyPrompts(tab)) changed();
       if (clearFullscreen(tab)) applyBounds(tab);
       refresh(tab);
+      recordVisit(url);
     });
     // Main-frame load failures show the error panel; `ERR_ABORTED` (a dropped navigation, a stop,
     // a download) and subframe failures do not.
     listen('did-fail-load', (_event: unknown, code: number, description: string, validatedUrl: string, isMainFrame: boolean) => {
       if (isMainFrame && Number.isInteger(code) && code < 0 && !(IGNORED_LOAD_ERROR_CODES as readonly number[]).includes(code)) {
         tab.error = { code, description: String(description), url: displayUrl(String(validatedUrl)) };
+        tab.restored = null;
         // An error page replaces the document that asked.
         if (denyPrompts(tab)) changed();
       }
@@ -740,7 +834,33 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (input.type === 'keyDown') runShortcut(shortcut);
   }
 
+  const restoreSession = (saved: SavedSession): void => {
+    if (everAttached || tabs.length !== 1 || tabs[0]?.view !== null || tabs[0]?.state.url !== '') return;
+    const restored: Tab[] = [];
+    let activeIndex = -1;
+    saved.tabs.forEach((entry, index) => {
+      const url = typeof entry.url === 'string' ? entry.url : null;
+      // Defence in depth: the database already dropped these.
+      if (url === null || (url !== '' && !isWebUrl(url)) || restored.length >= MAX_TABS) return;
+      // The saved active tab, else (skipped) the next kept tab to its right.
+      if (activeIndex < 0 && index >= saved.activeIndex) activeIndex = restored.length;
+      const tab = createTab();
+      const title = typeof entry.title === 'string' ? entry.title : '';
+      if (url !== '') {
+        tab.restored = { url, title };
+        tab.state = { ...tab.state, url, title };
+      }
+      restored.push(tab);
+    });
+    if (restored.length === 0) return;
+    tabs = restored;
+    activeTabId = (restored[activeIndex] ?? restored[restored.length - 1])!.id;
+    changed();
+  };
+
   return {
+    restoreSession,
+
     attach(target) {
       if (win === target) return;
       if (win !== null) {
@@ -750,6 +870,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         changed();
       }
       win = target;
+      everAttached = true;
+      sessionPaused = false;
+      // What this window starts with is not a change: only later changes are saved.
+      lastSavedSession = JSON.stringify(sessionSnapshot());
       target.webContents.on('before-input-event', takeShortcut);
       // The chrome page's own <title> must not replace `<page title> — frost`.
       target.on('page-title-updated', (event) => event.preventDefault());
@@ -762,6 +886,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       target.on('resize', relayout);
       target.on('enter-full-screen', relayout);
       target.on('leave-full-screen', relayout);
+      // Closing: the strip is saved one last time; the tear-down and the empty tab left behind are not.
+      target.once('close', () => {
+        if (win !== target) return;
+        saveSession(true);
+        sessionPaused = true;
+      });
       target.once('closed', () => {
         if (win !== target) return;
         closeAll();
@@ -772,6 +902,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         changed();
       });
       updateWindowTitle();
+      // A restored active tab loads now (the chrome's first state already lists every tab).
+      syncAttached();
     },
 
     navigate(input) {
