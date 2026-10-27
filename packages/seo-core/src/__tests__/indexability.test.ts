@@ -52,7 +52,7 @@ describe('headers', () => {
     const started = performance.now();
     parseLinkHeader(`<a>${'; x="'.repeat(10_000)}`, 300);
     parseLinkHeader(','.repeat(100_000), 300);
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 });
 

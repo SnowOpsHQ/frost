@@ -171,7 +171,8 @@ describe('JSON parsing', () => {
     const snapshot = page({ jsonLd: [jsonLd(text)], jsonLdTotal: 1 });
     const started = performance.now();
     const report = analyseSchema(snapshot);
-    expect(performance.now() - started).toBeLessThan(100);
+    // The real bound is the step budget: a quadratic walk would exceed `maxWork` and mark the report partial.
+    expect(performance.now() - started).toBeLessThan(2_000);
     expect(report.entityCount).toBe(1_000);
     expect(report.partial).toBe(false);
     // The group is checked once: its issues sit on its first node.

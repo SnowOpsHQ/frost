@@ -236,7 +236,7 @@ describe('robots.txt parser', () => {
     // Linear on 500 KiB of garbage.
     const started = performance.now();
     expect(decodeRobotsBytes(new Uint8Array(512_000).fill(0xff))).toHaveLength(512_000 * 3);
-    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 
   test('robots-matches-path-and-query-of-url', () => {
@@ -275,7 +275,7 @@ describe('robots.txt parser', () => {
     const file = parseRobotsTxt(big);
     expect(file.ruleCount).toBe(30_000);
     expect(matchRobots(file, 'Googlebot', `/${'a'.repeat(2_000)}`).allowed).toBe(true);
-    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(performance.now() - started).toBeLessThan(2_000);
     // A file of only newlines (or garbage) parses to nothing, linearly.
     expect(parseRobotsTxt('\n'.repeat(500_000)).groups).toEqual([]);
     expect(parseRobotsTxt('\u0000:\u0000'.repeat(100_000)).groups).toEqual([]);

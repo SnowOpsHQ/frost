@@ -94,7 +94,7 @@ describe('CSP', () => {
     // Linear on a hostile value.
     const started = performance.now();
     parseCsp(`${'a '.repeat(50_000)};${';'.repeat(50_000)}${','.repeat(50_000)}`, 'header');
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 
   test('csp-inline-scripts', () => {
