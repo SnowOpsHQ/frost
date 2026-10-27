@@ -115,4 +115,28 @@ describe('content notes', () => {
     // The confirmation says so.
     expect(CLEAR_BROWSING_DATA.dialog.detail).toMatch(/target queries and snippet drafts are kept/);
   });
+
+  // Phase 2.5 Task 3 review.
+  test('clear-all-notes', async () => {
+    for (const url of [PAGE, 'https://example.org/other']) {
+      await notes.setTargetQuery(url, 'tea', 1);
+      await notes.saveVariant(url, { slot: 0, title: 'T', description: 'D' }, 1);
+    }
+    await notes.clearAll();
+    expect(count('seo_target_queries')).toBe(0);
+    expect(count('seo_snippet_variants')).toBe(0);
+    expect(await notes.notes(PAGE)).toEqual(EMPTY_NOTES);
+  });
+
+  test('migration-tolerates-pre-merge-tables', () => {
+    // A dev profile from before the merge: the tables exist, recorded under the old id.
+    const old = new DatabaseSync(':memory:');
+    const pre = MIGRATIONS.filter((m) => m.id < '0003');
+    runMigrations(old, pre);
+    old.exec(MIGRATIONS.find((m) => m.id === '0004_seo_content_notes')!.sql);
+    old.prepare("INSERT INTO schema_migrations (id, applied_at) VALUES ('0003_seo_content_notes', 1)").run();
+    old.prepare("INSERT INTO seo_target_queries (url, query, updated_at) VALUES (?, 'kept', 1)").run(PAGE);
+    expect(runMigrations(old)).toEqual(['0003_render_profile_pins', '0004_seo_content_notes']);
+    expect(old.prepare('SELECT query FROM seo_target_queries').all().map((row) => row['query'])).toEqual(['kept']);
+  });
 });

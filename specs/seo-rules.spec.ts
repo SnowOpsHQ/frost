@@ -52,7 +52,9 @@ export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
 // Lengths are Unicode code points of the whitespace-normalised value (`CappedText.length`).
 
 /**
- * A title shorter than this says too little to rank on or to be chosen in results. Result pages
+ * A title shorter than this says too little to rank on or to be chosen in results. Measured as a
+ * width since the Phase 2.5 Task 3 review: this many average lowercase Latin letters
+ * (`seo-content.spec.ts`, `TITLE_WIDTH_RULE`), so a full-width title has a passing range too. Result pages
  * show about 50–60 characters of a title before cutting it: `TITLE_MAX_CHARS` is now only the
  * On-Page meter's guide range. Since Phase 2.5 Task 3 the cut is measured as a width
  * (`title-too-wide`, `seo-content.spec.ts`), which replaced the character rule.
@@ -138,7 +140,7 @@ export const SEO_RULE_SPECS = [
     category: 'title',
     severity: 'warning',
     title: 'Title is too short',
-    condition: `The title has fewer than ${TITLE_MIN_CHARS} characters.`,
+    condition: `The first title with text is narrower than ${TITLE_MIN_CHARS} average lowercase Latin letters at the result title size (frost’s width table: about 15 full-width characters), so short titles in every script are measured alike.`,
     why: 'A very short title rarely says enough to match what people search for or to stand out among other results.',
     fix: `Describe the page’s main topic more fully, in about ${TITLE_MIN_CHARS}–${TITLE_MAX_CHARS} characters.`,
   },
@@ -159,7 +161,7 @@ export const SEO_RULE_SPECS = [
     category: 'meta-description',
     severity: 'info',
     title: 'Meta description is short',
-    condition: `The first meta description with text has fewer than ${DESCRIPTION_MIN_CHARS} characters.`,
+    condition: `The first meta description with text is narrower than ${DESCRIPTION_MIN_CHARS} average lowercase Latin letters at the result description size (frost’s width table: about 35 full-width characters).`,
     why: 'A very short description rarely summarises the page well, so search engines often replace it with text of their own.',
     fix: `Expand it to a useful summary of about ${DESCRIPTION_MIN_CHARS}–${DESCRIPTION_MAX_CHARS} characters.`,
   },

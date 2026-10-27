@@ -10,6 +10,19 @@ import { ipc } from '../ipc';
 
 export const SAVE_DELAY_MS = 400;
 
+/** The panels showing notes, told when every note was deleted ("Delete all notes"). */
+const clearedListeners = new Set<() => void>();
+
+/**
+ * "Delete all notes" through main (`content.clearAllNotes`: it asks first); resolves whether they
+ * were deleted. When they were, every open notes view drops its pending edits and reloads.
+ */
+export async function clearAllContentNotes(): Promise<boolean> {
+  const cleared = await ipc.content.clearAllNotes.mutate().catch(() => false);
+  if (cleared) for (const listener of [...clearedListeners]) listener();
+  return cleared;
+}
+
 export interface Draft {
   readonly slot: number;
   readonly title: string;
@@ -34,6 +47,13 @@ export interface ContentNotesApi extends NotesState {
 }
 
 const ignore = (): void => undefined;
+
+function registerCleared(listener: () => void): () => void {
+  clearedListeners.add(listener);
+  return () => {
+    clearedListeners.delete(listener);
+  };
+}
 const toDraft = (variant: ContentVariant): Draft => ({ slot: variant.slot, title: variant.title, description: variant.description });
 
 export function useContentNotes(url: string): ContentNotesApi {
@@ -57,6 +77,18 @@ export function useContentNotes(url: string): ContentNotesApi {
     pending.current.set(key, { timer, run });
   }, []);
 
+  const [generation, setGeneration] = useState(0);
+  useEffect(
+    () =>
+      // Every note was deleted: edits not yet saved would bring some back, so they go too.
+      registerCleared(() => {
+        for (const entry of pending.current.values()) clearTimeout(entry.timer);
+        pending.current.clear();
+        setGeneration((n) => n + 1);
+      }),
+    [],
+  );
+
   useEffect(() => {
     let live = true;
     setState({ url, loaded: false, query: '', drafts: [] });
@@ -73,7 +105,7 @@ export function useContentNotes(url: string): ContentNotesApi {
       // Edits made for this URL are saved for it, not lost.
       void flush();
     };
-  }, [url, flush]);
+  }, [url, flush, generation]);
 
   const setQuery = (query: string) => {
     setState((s) => ({ ...s, query }));

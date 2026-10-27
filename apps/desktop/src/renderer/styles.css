@@ -6345,4 +6345,8 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+.seo-notes-line {
+  margin-top: 0;
+}
+
 /* End of Content panel */

@@ -17,6 +17,8 @@ export interface ContentServiceOptions {
   readonly now?: () => number;
   /** Where a failed database call is reported (it never reaches the chrome). */
   readonly log?: (message: string) => void;
+  /** Asks before "Delete all notes" (main: `confirmClearContentNotes`); without it nothing is deleted. */
+  readonly confirmClearAll?: () => Promise<boolean>;
 }
 
 const NONE: ContentNotes = { query: '', variants: [] };
@@ -41,6 +43,18 @@ export function createContentService(options: ContentServiceOptions): ContentSer
     setTargetQuery: (url, query) => guarded('write', () => options.notes.setTargetQuery(url, query, now()), false),
     saveVariant: (url, variant) => guarded('write', () => options.notes.saveVariant(url, variant, now()), false),
     deleteVariant: (url, slot) => guarded('delete', () => options.notes.deleteVariant(url, slot), false),
+    async clearAllNotes() {
+      const confirmed = await guarded('confirmation', () => options.confirmClearAll?.() ?? Promise.resolve(false), false);
+      if (!confirmed) return false;
+      return guarded(
+        'delete all',
+        async () => {
+          await options.notes.clearAll();
+          return true;
+        },
+        false,
+      );
+    },
     async copySnippetHtml(tabId, shown, source) {
       const audit = readyAudit(tabId, shown);
       if (audit === null) return false;

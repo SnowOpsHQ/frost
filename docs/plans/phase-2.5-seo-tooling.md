@@ -169,10 +169,10 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
   - widths come from a character-width table generated in Electron
     (`apps/desktop/scripts/measure-snippet-font.mjs`) and committed as data;
   - `title-too-wide` (warning) and `meta-description-too-wide` (info) replace `title-too-long` and
-    `meta-description-too-long`; the character minimums stay;
+    `meta-description-too-long`; the minimums became widths in the review (so CJK titles have a passing range);
   - target queries and drafts are stored locally per URL (migration `0004_seo_content_notes`,
-    renumbered from `0003` at integration). Clear Browsing Data keeps them on purpose (the user's own
-    work), and its dialog says so;
+    renumbered from `0003` at integration). Clear Browsing Data keeps them (the user's own work)
+    unless its unchecked-by-default checkbox is ticked, and the panel and palette can delete all of them;
   - `content.*` procedures are `enforceSender`-first; Copy as HTML goes through main.
 - [x] commit `feat(seo): content analysis and snippet editor`
 

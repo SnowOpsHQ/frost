@@ -1,5 +1,5 @@
 import { CONTENT_LIMITS, NGRAM_MIN_COUNT, NGRAM_PLACES, NGRAM_SIZES, type NgramPlace, type NgramSize } from '@app/specs/seo-content.spec';
-import { hasSequence, joinTerms, type Word } from './words';
+import { hasPhrase, joinTerms, type Word } from './words';
 
 // n-grams of the visible text (spec `seo-content.spec.ts`, n-grams): counts only, never scored.
 
@@ -14,8 +14,8 @@ export interface NgramRow {
 
 export type NgramTables = Readonly<Record<NgramSize, readonly NgramRow[]>>;
 
-/** The page fields an n-gram is looked up in (normalised words, in order). */
-export type NgramFields = Readonly<Record<NgramPlace, readonly string[]>>;
+/** The page fields an n-gram is looked up in: each a list of runs of normalised words (`fieldRuns`). */
+export type NgramFields = Readonly<Record<NgramPlace, readonly (readonly string[])[]>>;
 
 /**
  * The `ngramRows` most frequent n-grams of each size in `runs` (ties: first seen first), with at
@@ -47,7 +47,7 @@ export function ngramTables(runs: readonly (readonly Word[])[], fields: NgramFie
         text: joinTerms(entry.terms),
         terms: entry.terms,
         count: entry.count,
-        in: Object.fromEntries(NGRAM_PLACES.map((place) => [place, hasSequence(fields[place], entry.terms)])) as Record<NgramPlace, boolean>,
+        in: Object.fromEntries(NGRAM_PLACES.map((place) => [place, hasPhrase(fields[place], entry.terms)])) as Record<NgramPlace, boolean>,
       }));
   }
   return tables;

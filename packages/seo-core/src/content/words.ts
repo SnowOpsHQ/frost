@@ -48,9 +48,25 @@ function segmenterFor(lang: string | null, granularity: 'word' | 'sentence'): In
   return segmenter;
 }
 
-/** A word's normalised form: NFKC, lowercased, a typographic apostrophe (`’`) as `'`. */
-export function normaliseTerm(word: string): string {
-  return word.normalize('NFKC').toLowerCase().replace(/\u2019/g, "'");
+/** `value` lowercased for `lang` (`toLocaleLowerCase`; an unknown or invalid tag: `toLowerCase`). */
+function lowerFor(value: string, lang: string | null): string {
+  if (lang === null) return value.toLowerCase();
+  try {
+    return value.toLocaleLowerCase(lang);
+  } catch {
+    return value.toLowerCase();
+  }
+}
+
+/**
+ * A word's normalised form (spec `seo-content.spec.ts`, n-grams): NFKC, case-folded for `lang`
+ * (`toLocaleLowerCase`, so Turkish `I` is `ı`), a combining dot above after `i` dropped (`İ` read
+ * without its language), `ß` as `ss`, a typographic apostrophe (`’`) as `'`, cut to `maxWordChars`
+ * code points.
+ */
+export function normaliseTerm(word: string, lang: string | null = null): string {
+  const folded = lowerFor(word.normalize('NFKC'), lang).replace(/i\u0307/g, 'i').replace(/ß/g, 'ss').replace(/\u2019/g, "'");
+  return folded.length <= CONTENT_LIMITS.maxWordChars ? folded : [...folded].slice(0, CONTENT_LIMITS.maxWordChars).join('');
 }
 
 /** Whether `term` is written in a script without spaces between words. */
@@ -82,9 +98,11 @@ export function wordRuns(text: string, lang: string | null, stop: ReadonlySet<st
     run = [];
   };
   const add = (raw: string) => {
-    const term = normaliseTerm(raw);
+    const term = normaliseTerm(raw, lang);
     const unspaced = isUnspaced(term);
-    const weak = DIGITS.test(term) || (stop?.has(term) ?? false) || (!unspaced && [...term].length === 1);
+    // A word cut to `maxWordChars` is never an n-gram's edge either.
+    const long = raw.length > CONTENT_LIMITS.maxWordChars && [...raw].length > CONTENT_LIMITS.maxWordChars;
+    const weak = long || DIGITS.test(term) || (stop?.has(term) ?? false) || (!unspaced && [...term].length === 1);
     run.push({ term, weak });
   };
   const segmenter = segmenterFor(lang, 'word');
@@ -108,16 +126,22 @@ export function wordsOf(text: string, lang: string | null, stop: ReadonlySet<str
   return wordRuns(text, lang, stop).flat();
 }
 
-/** The normalised words of `text`, at most `max`. */
-export function termsOf(text: string, lang: string | null, max: number = CONTENT_LIMITS.maxFieldWords): string[] {
-  const terms: string[] = [];
-  for (const run of wordRuns(text, lang, null)) {
-    for (const word of run) {
-      if (terms.length >= max) return terms;
-      terms.push(word.term);
+/**
+ * The normalised words of `texts` (each a separate element: a heading, a URL path segment …) as
+ * runs (`wordRuns`: a run never spans punctuation or two texts), at most `max` words in all.
+ */
+export function fieldRuns(texts: string | readonly string[], lang: string | null, max: number = CONTENT_LIMITS.maxFieldWords): string[][] {
+  const runs: string[][] = [];
+  let left = max;
+  for (const text of typeof texts === 'string' ? [texts] : texts) {
+    for (const run of wordRuns(text, lang, null)) {
+      if (left <= 0) return runs;
+      const terms = run.slice(0, left).map((word) => word.term);
+      runs.push(terms);
+      left -= terms.length;
     }
   }
-  return terms;
+  return runs;
 }
 
 /** The sentences of `text` (segmented for `lang`): `Intl.Segmenter` sentence segments; without it, lines. */
@@ -154,6 +178,11 @@ export function joinTerms(terms: readonly string[]): string {
     out += term;
   });
   return out;
+}
+
+/** Whether `needle` occurs as consecutive terms within one of `runs`. */
+export function hasPhrase(runs: readonly (readonly string[])[], needle: readonly string[]): boolean {
+  return runs.some((run) => hasSequence(run, needle));
 }
 
 /** Whether `needle` occurs in `haystack` as consecutive terms. */

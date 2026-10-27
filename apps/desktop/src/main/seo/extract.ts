@@ -34,7 +34,6 @@ interface PageElement extends PageNode {
   getAttribute(name: string): string | null;
   hasAttribute(name: string): boolean;
   closest(selectors: string): PageElement | null;
-  contains(other: PageNode | null): boolean;
   /** Chromium has it; some test DOMs do not (then only `[hidden]` hides). */
   checkVisibility?(): boolean;
 }
@@ -591,20 +590,24 @@ export function extractPage(
   let wordCount = 0;
   let textTruncated = false;
   // The same walk keeps the visible text for the content analysis (Phase 2.5 Task 3,
-  // `seo-content.spec.ts`): each node's white space collapsed, a `\n` at a block boundary (entering
-  // a block element, or leaving one: the next text is outside the previous text's block parent), the
+  // `seo-content.spec.ts`): each node's white space collapsed, a `\n` at a block boundary (a `<br>`,
+  // entering a block element, or a text whose nearest block ancestor is another than the previous
+  // text's: `closest` of the block elements, so `<div><p><span>a</span></p>b</div>` is `a\nb`), the
   // first `maxVisibleText` code units.
   const keptText: string[] = [];
   let kept = 0;
   let keptCut = false;
   let blockBreak = false;
-  let lastParent: PageElement | null = null;
+  const blockSelector = blocks.filter((name) => name !== 'br' && name !== 'hr').join(',');
+  let lastBlock: PageElement | null | undefined;
   const keep = (raw: string, node: PageText): void => {
-    const parent = node.parentElement;
-    if (lastParent !== null && parent !== lastParent && blocks.includes(lastParent.localName) && !lastParent.contains(node)) blockBreak = true;
-    lastParent = parent;
     const text = raw.replace(/\s+/g, ' ');
     if (text === '') return;
+    if (text !== ' ' && blockSelector !== '') {
+      const block = node.parentElement ? node.parentElement.closest(blockSelector) : null;
+      if (lastBlock !== undefined && block !== lastBlock) blockBreak = true;
+      lastBlock = block;
+    }
     if (kept >= maxVisibleText) {
       keptCut = true;
       return;

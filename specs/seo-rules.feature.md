@@ -30,15 +30,18 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
 - **Scenario: title-empty** — fails when the first title's text is `''`; passes with text. Not
   reported with `title-missing`.
 - **Scenario: title-multiple** — fails with two titles (facts: the count); passes with one.
-- **Scenario: title-too-short** — fails below `TITLE_MIN_CHARS` (facts: the title and its length);
-  passes at exactly `TITLE_MIN_CHARS`; not reported for a missing or empty title.
+- **Scenario: title-too-short** — fails when narrower than `TITLE_MIN_CHARS` average lowercase Latin
+  letters (since the Phase 2.5 Task 3 review; facts: the title, its length, its width and the
+  minimum); passes at `TITLE_MIN_CHARS` `x`; 40 narrow `i` fail; not reported for a missing or empty
+  title. Full-width titles: `seo-content.feature.md`, `cjk-title-has-a-passing-range`.
 - **Scenario: title-too-wide** — replaced `title-too-long` in Phase 2.5 Task 3: fails when the title is
   wider than the desktop budget (`seo-content.feature.md`, Rules, which has its scenarios).
 
 ## Meta description
 - **Scenario: meta-description-missing** — fails with none, or only empty ones; passes with text,
   also when an empty one comes first.
-- **Scenario: meta-description-too-short** — fails below `DESCRIPTION_MIN_CHARS`; passes at it;
+- **Scenario: meta-description-too-short** — fails when narrower than `DESCRIPTION_MIN_CHARS` average
+  lowercase Latin letters (a width since the Phase 2.5 Task 3 review); passes at `DESCRIPTION_MIN_CHARS` `x`;
   measures the first description with text (an empty one before a short one still fails, an empty
   one before a good one passes).
 - **Scenario: meta-description-too-wide** — replaced `meta-description-too-long` in Phase 2.5 Task 3:

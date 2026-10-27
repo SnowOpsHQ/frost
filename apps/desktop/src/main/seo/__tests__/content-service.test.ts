@@ -33,8 +33,9 @@ function setup(snapshot = rawSnapshot(URL_A, { titles: [{ text: 'Tea & "biscuits
   const audit = runAudit({ ...PageSnapshotSchema.parse(snapshot), ...NO_PAGE_CONTEXT });
   let response: SeoAuditResponse = { status: 'ready', url: URL_A, audit };
   const clipboard = { writeText: vi.fn((_text: string) => undefined) };
-  const service = createContentService({ notes, audit: (tabId) => (tabId === 1 ? response : { status: 'unavailable', url: '', reason: 'no-tab' }), clipboard, now: () => 42 });
-  return { service, clipboard, audit, notes, opened, set: (next: SeoAuditResponse) => (response = next) };
+  const confirmClearAll = vi.fn(async () => true);
+  const service = createContentService({ notes, audit: (tabId) => (tabId === 1 ? response : { status: 'unavailable', url: '', reason: 'no-tab' }), clipboard, now: () => 42, confirmClearAll });
+  return { service, clipboard, audit, notes, opened, confirmClearAll, set: (next: SeoAuditResponse) => (response = next) };
 }
 
 describe('content service', () => {
@@ -50,6 +51,25 @@ describe('content service', () => {
     set({ status: 'pending', url: URL_A });
     expect(await service.copySnippetHtml(1, shown, 'page')).toBe(false);
     expect(clipboard.writeText).toHaveBeenCalledTimes(1);
+  });
+
+  // Phase 2.5 Task 3 review: "Delete all notes" asks first (CLEAR_CONTENT_NOTES), in main.
+  test('clear-all-notes-asks-first', async () => {
+    const { service, confirmClearAll } = setup();
+    await service.setTargetQuery(URL_A, 'green tea');
+    await service.saveVariant('https://example.org/b', { slot: 0, title: 'Draft', description: '' });
+    confirmClearAll.mockResolvedValueOnce(false);
+    expect(await service.clearAllNotes()).toBe(false);
+    expect((await service.notes(URL_A)).query).toBe('green tea');
+    expect(await service.clearAllNotes()).toBe(true);
+    expect(confirmClearAll).toHaveBeenCalledTimes(2);
+    expect(await service.notes(URL_A)).toEqual({ query: '', variants: [] });
+    expect(await service.notes('https://example.org/b')).toEqual({ query: '', variants: [] });
+    // A confirmation that fails deletes nothing.
+    await service.setTargetQuery(URL_A, 'oolong');
+    confirmClearAll.mockRejectedValueOnce(new Error('no window'));
+    expect(await service.clearAllNotes()).toBe(false);
+    expect((await service.notes(URL_A)).query).toBe('oolong');
   });
 
   test('copy-snippet-html-variant', async () => {

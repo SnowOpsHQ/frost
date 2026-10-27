@@ -27,7 +27,7 @@ function ready(page: { title?: string | null; description?: string | null } = {}
 }
 
 function setup(context: Partial<PaletteContext> = {}, answer = true) {
-  const api = { copySnippetHtml: vi.fn(async () => answer) } satisfies ContentPaletteApi;
+  const api = { copySnippetHtml: vi.fn(async () => answer), clearAllNotes: vi.fn(async () => answer) } satisfies ContentPaletteApi;
   const registry = createPaletteRegistry();
   registry.register(...contentPaletteSources(api));
   const active = 'tab' in context ? context.tab : tab();
@@ -42,7 +42,7 @@ function setup(context: Partial<PaletteContext> = {}, answer = true) {
 describe('content palette actions', () => {
   test('palette-content-actions', async () => {
     const { api, ctx, ids, get, chrome } = setup();
-    expect(ids()).toEqual(['panel.content', 'content.target-query', 'copy.snippet-html']);
+    expect(ids()).toEqual(['panel.content', 'content.target-query', 'copy.snippet-html', 'content.delete-all-notes']);
     expect(get('panel.content')).toMatchObject({ label: 'Open Content panel', group: 'panels', focus: 'handler' });
     expect(get('content.target-query')).toMatchObject({ label: 'Set target query…', group: 'panels', focus: 'handler' });
     expect(get('copy.snippet-html')).toMatchObject({ label: 'Copy snippet as HTML', group: 'copy' });
@@ -64,14 +64,14 @@ describe('content palette actions', () => {
 
   test('palette-content-availability', () => {
     // The jump is always offered (as every panel jump).
-    expect(setup({ tab: undefined, audit: null }).ids()).toEqual(['panel.content']);
-    expect(setup({ tab: tab({ url: '', title: '' }), audit: null }).ids()).toEqual(['panel.content']);
+    expect(setup({ tab: undefined, audit: null }).ids()).toEqual(['panel.content', 'content.delete-all-notes']);
+    expect(setup({ tab: tab({ url: '', title: '' }), audit: null }).ids()).toEqual(['panel.content', 'content.delete-all-notes']);
     // A web page whose audit is not ready yet, an error page, a non-web page: no query, no copy.
-    expect(setup({ audit: { status: 'pending', url: URL_A } }).ids()).toEqual(['panel.content']);
-    expect(setup({ tab: tab({ error: { code: -105, description: 'NAME_NOT_RESOLVED', url: URL_A } }) }).ids()).toEqual(['panel.content']);
-    expect(setup({ tab: tab({ url: 'app://app/start' }) }).ids()).toEqual(['panel.content']);
+    expect(setup({ audit: { status: 'pending', url: URL_A } }).ids()).toEqual(['panel.content', 'content.delete-all-notes']);
+    expect(setup({ tab: tab({ error: { code: -105, description: 'NAME_NOT_RESOLVED', url: URL_A } }) }).ids()).toEqual(['panel.content', 'content.delete-all-notes']);
+    expect(setup({ tab: tab({ url: 'app://app/start' }) }).ids()).toEqual(['panel.content', 'content.delete-all-notes']);
     // The copy needs a title or a description.
-    expect(setup({ audit: ready({ title: null, description: null }) }).ids()).toEqual(['panel.content', 'content.target-query']);
+    expect(setup({ audit: ready({ title: null, description: null }) }).ids()).toEqual(['panel.content', 'content.target-query', 'content.delete-all-notes']);
     expect(setup({ audit: ready({ title: '', description: null }) }).ids()).not.toContain('copy.snippet-html');
     expect(setup({ audit: ready({ title: null }) }).ids()).toContain('copy.snippet-html');
     expect(setup({ audit: ready({ description: null }) }).ids()).toContain('copy.snippet-html');
@@ -84,6 +84,17 @@ describe('content palette actions', () => {
     const { registry, ctx } = setup();
     registry.register(...builtinPaletteSources(new Proxy({}, { get: () => vi.fn(async () => undefined) }) as PaletteApi));
     expect(registry.resolve(ctx).filter((a) => a.id === 'panel.content').map((a) => a.label)).toEqual(['Open Content panel']);
+  });
+
+  // Phase 2.5 Task 3 review: "Delete all content notes…" (main confirms, then deletes).
+  test('palette-delete-all-notes', async () => {
+    const { api, ctx, get } = setup();
+    const action = get('content.delete-all-notes');
+    expect(action).toMatchObject({ label: 'Delete all content notes…', group: 'browser' });
+    expect(await action.run(ctx)).toBe('Content notes deleted');
+    expect(api.clearAllNotes).toHaveBeenCalledOnce();
+    const kept = setup({ tab: undefined, audit: null }, false);
+    expect(await kept.get('content.delete-all-notes').run(kept.ctx)).toBe('Nothing was deleted');
   });
 
   test('target-query-focus-request', () => {

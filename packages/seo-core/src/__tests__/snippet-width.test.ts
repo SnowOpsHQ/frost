@@ -78,4 +78,44 @@ describe('widths', () => {
     // A script in the title stays text.
     expect(snippetHtml('</title><script>alert(1)</script>', '')).toBe('<title>&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>');
   });
+
+  // Phase 2.5 Task 3 review.
+  test('width-fallback-by-grapheme', () => {
+    const em = SNIPPET_FONT.titlePx * SNIPPET_FONT.wideEm;
+    const average = SNIPPET_FONT_TABLE.averageLower.title / 100;
+    // Emoji and flags are one em.
+    expect(textWidth('😀', 'title')).toBe(em);
+    expect(textWidth('🇫🇷', 'title')).toBe(em);
+    // An emoji ZWJ sequence (family) and an emoji with a skin tone and a variation selector are one glyph.
+    expect(textWidth('👨‍👩‍👧', 'title')).toBe(em);
+    expect(textWidth('👍🏽', 'title')).toBe(em);
+    expect(textWidth('❤️', 'title')).toBe(em);
+    // Nonspacing (Mn) and enclosing (Me) marks take no width; a spacing mark (Mc) the average.
+    expect(textWidth('é', 'title')).toBe(textWidth('e', 'title'));
+    expect(textWidth('1⃣', 'title')).toBe(textWidth('1', 'title'));
+    // Devanagari: क (a letter, not in the table: the average) + ि (Mc) = two averages.
+    expect(textWidth('कि', 'title')).toBeCloseTo(2 * average, 5);
+    // A cut never splits a grapheme.
+    const cut = truncateToWidth('👨‍👩‍👧'.repeat(40), 100, 'title');
+    expect(cut.truncated).toBe(true);
+    expect(cut.shown.slice(0, -1)).toBe('👨‍👩‍👧'.repeat(4));
+  });
+
+  test('exact-budget-fits', () => {
+    // A full-width character is 20 px at the title size: 29 are exactly 580 px.
+    const exact = truncateToWidth('漢'.repeat(29), SNIPPET_BUDGETS_PX.titleDesktop, 'title');
+    expect(exact).toMatchObject({ truncated: false, width: SNIPPET_BUDGETS_PX.titleDesktop });
+    expect(truncateToWidth('漢'.repeat(30), SNIPPET_BUDGETS_PX.titleDesktop, 'title').truncated).toBe(true);
+  });
+
+  test('snippet-html-controls', () => {
+    // C0 and C1 controls are removed (white space ones become a space first).
+    expect(snippetHtml('A\u0000B\u0007C\u0085D\u009fE', 'x\u001by')).toBe('<title>ABCDE</title>\n<meta name="description" content="xy">');
+    expect(snippetHtml('tab\there', '')).toBe('<title>tab here</title>');
+    // Bidi controls are written as numeric character references, so they show in the markup.
+    expect(snippetHtml('‮evil‬ ⁦x⁩ ‏', '‪‫‭⁧⁨‎')).toBe(
+      '<title>&#x202E;evil&#x202C; &#x2066;x&#x2069; &#x200F;</title>\n<meta name="description" content="&#x202A;&#x202B;&#x202D;&#x2067;&#x2068;&#x200E;">',
+    );
+    expect(snippetHtml('\u0000\u0001', ' ')).toBe('');
+  });
 });

@@ -35,14 +35,18 @@ export const VISIBLE_TEXT_BLOCKS = [
 /**
  * Words: `Intl.Segmenter` word segments that are `isWordLike`, segmented for the page's language
  * (`<html lang>`, else the runtime's default), so Chinese, Japanese and Thai text without spaces is
- * split word by word. Each word is NFKC-normalised and lowercased (`toLowerCase`, not
- * locale-specific). A run of words stops at a block boundary (`\n`) and at punctuation between
+ * split word by word. Each word is NFKC-normalised, then case-folded for matching: lowercased for the
+ * page's language when it is known (`toLocaleLowerCase(lang)`, so Turkish `I` is `ı`), else
+ * `toLowerCase`; a combining dot above (U+0307) after `i` is dropped (Turkish `İ` read without its
+ * language) and `ß` is `ss`. The target query is folded the same way, for the same language. A run of words stops at a block boundary (`\n`) and at punctuation between
  * words (any non-word segment with a character other than white space, a hyphen or an apostrophe),
  * so an n-gram never spans a sentence, a list item or a heading.
  *
  * n-grams are 1, 2 and 3 consecutive words of one run. A word that is only digits, a stop-word
  * (`STOP_WORD_LANGUAGES`), or a single letter of a script written with spaces never starts or ends
- * an n-gram, and is never a 1-gram on its own (it can sit inside a 3-gram: "state of play").
+ * an n-gram, and is never a 1-gram on its own (it can sit inside a 3-gram: "state of play"). A word
+ * longer than `CONTENT_LIMITS.maxWordChars` code points is cut to that length and is weak too (a
+ * run of letters that long is not a word anyone searches for).
  * Words of scripts written without spaces (Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar) are
  * joined with no space when shown; the others with one space.
  *
@@ -64,6 +68,8 @@ export const CONTENT_LIMITS = {
   maxQueryTerms: 10,
   /** Fewer words than this and readability is "not available" (`too-short`). */
   readabilityMinWords: 100,
+  /** Code points of a word kept (longer ones are cut and weak). */
+  maxWordChars: 64,
 } as const;
 
 /**
@@ -127,7 +133,10 @@ export const READABILITY_UNAVAILABLE_MESSAGES: Readonly<Record<ReadabilityUnavai
  * are its words as above, stop-words dropped (unless that leaves none), duplicates dropped, at most
  * `maxQueryTerms`. The checklist says, for each place, which terms it holds (a term is present when
  * the place has the same word) and whether it holds the whole query as one phrase (its words, stop
- * words included, in order). Status: `all` terms, `some`, or `none`. It is a checklist, not a
+ * words included, in order) within one of its runs: a field is read as runs of words that end at
+ * punctuation and between separate elements (each H1, each subheading, each URL path segment), so
+ * "Foo | Bar" never holds the phrase "foo bar" and a phrase never spans two headings. Status: `all`
+ * terms, `some`, or `none`. It is a checklist, not a
  * score: frost never passes or fails a page on it.
  */
 export const TARGET_QUERY_MAX_CHARS = 200;
@@ -170,6 +179,15 @@ export const SNIPPET_BUDGETS_PX = {
  * advances (no kerning). A character missing from the table is `wideEm` em wide when it is a
  * full-width one (CJK ideographs, kana, Hangul, full-width forms), else the table's average
  * lowercase Latin letter. On Linux the family resolves to a metric-compatible face.
+ *
+ * Widths are summed per grapheme (`Intl.Segmenter`, `granularity: 'grapheme'`): a grapheme is as
+ * wide as its first character, plus `averageLower` for each spacing mark (`Mc`, such as Devanagari
+ * vowel signs) after it; everything else after the first character takes no width (nonspacing and
+ * enclosing marks `Mn` / `Me`, joiners, variation selectors, the rest of an emoji ZWJ sequence: one
+ * glyph). A first character missing from the table is `wideEm` em wide when it is full-width (CJK
+ * ideographs, kana, Hangul, full-width forms), an emoji (`Extended_Pictographic`) or a regional
+ * indicator (a flag), takes no width when it is `Mn` / `Me` or a format character, and is
+ * `averageLower` wide otherwise. Cuts never split a grapheme.
  */
 export const SNIPPET_FONT = {
   family: 'Arial',
@@ -190,8 +208,13 @@ export const SNIPPET_ELLIPSIS = '…';
 /**
  * The width rules (Phase 2.5 Task 3) **replace** Phase 2's `title-too-long` and
  * `meta-description-too-long` (characters were the proxy until widths were measured): a long title
- * or description fails once, on its width. The character minimums (`title-too-short`,
- * `meta-description-too-short`) stay: a short text is about saying too little, not about space.
+ * or description fails once, on its width. The minimums (`title-too-short`,
+ * `meta-description-too-short`) are widths too: narrower than `TITLE_MIN_CHARS` (or
+ * `DESCRIPTION_MIN_CHARS`) average lowercase Latin letters at the result size (`minSnippetWidth` in
+ * seo-core, from the table's `averageLower`: about 294 px for a title, 480 px for a description).
+ * So every script has a passing range between the two: about 30–59 Latin letters, or 15–29
+ * full-width characters, make a title that is neither too short nor too wide. The budget itself
+ * fits (`width <= budget`).
  * The kept text (at most `SNAPSHOT_LIMITS.maxTextChars`) is measured; a text cut by that cap is far
  * wider than any budget.
  */
@@ -227,10 +250,27 @@ export const SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS = 1_000;
 
 /**
  * Target queries and drafts are kept for at most this many page URLs each (the least recently
- * changed beyond it are deleted after each write). They are the user's own work, so Clear Browsing
- * Data keeps them; each one is deleted from the panel (clear the query, delete a draft).
+ * changed beyond it are deleted after each write). They are the user's own work: Clear Browsing
+ * Data keeps them unless its checkbox (`CLEAR_BROWSING_DATA.dialog.checkboxLabel`, unchecked by
+ * default) is ticked. The panel deletes each one (clear the query, delete a draft), and "Delete all
+ * notes" (`content.clearAllNotes`, also in the command palette) deletes every one after
+ * `CLEAR_CONTENT_NOTES` confirms, in a native message box main shows.
  */
 export const MAX_CONTENT_NOTE_URLS = 500;
+
+/** "Delete all notes": the confirmation main shows (Cancel is the default and the cancel answer). */
+export const CLEAR_CONTENT_NOTES = {
+  dialog: {
+    type: 'warning',
+    message: 'Delete all content notes?',
+    detail: 'This deletes every target query and snippet draft frost has stored, for every page. It cannot be undone.',
+    buttons: ['Delete All Notes', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  },
+  confirmIndex: 0,
+} as const;
 
 /** The `@app/db` tables of this task (migration `0004_seo_content_notes`; also in `SESSION_TABLES`). */
 export const CONTENT_TABLES = ['seo_snippet_variants', 'seo_target_queries'] as const;
@@ -242,7 +282,10 @@ export const CONTENT_TABLES = ['seo_snippet_variants', 'seo_target_queries'] as 
  *     <title>…</title>
  *     <meta name="description" content="…">
  *
- * each value's white space collapsed and trimmed, `& < > " '` escaped (`&amp; &lt; &gt; &quot; &#39;`);
- * a line whose value is empty is left out, and with both empty nothing is written.
+ * each value's white space collapsed and trimmed, C0 and C1 control characters removed, `& < > " '`
+ * escaped (`&amp; &lt; &gt; &quot; &#39;`) and the bidi controls (U+200E, U+200F, U+202A–U+202E,
+ * U+2066–U+2069) written as numeric character references (`&#x202E;`), so they are visible in the
+ * copied markup and cannot reorder it; a line whose value is empty is left out, and with both empty
+ * nothing is written.
  */
 export const SNIPPET_HTML_SOURCES = ['page', 'variant'] as const;

@@ -2,6 +2,7 @@ import { DESCRIPTION_MAX_CHARS, DESCRIPTION_MIN_CHARS, TITLE_MAX_CHARS, TITLE_MI
 import type { CappedText, FindingDetails, PageSnapshot } from '../types';
 import { inScope, type NoindexScope } from '../indexability/scope';
 import { characters, details, fact, formatCount, parseUrl, siteHost, tokens, withoutFragment } from '../util';
+import { formatPx, minSnippetWidth, snippetText, textWidth } from '../content/widths';
 
 // Checks on the document's head: title, meta description, canonical, meta robots, lang and
 // viewport (catalog: `specs/seo-rules.spec.ts`). Each answers `null` when the page passes.
@@ -22,6 +23,16 @@ export function described(s: PageSnapshot): CappedText | null {
 /** Facts for a measured text: the value and its length against the recommended range. */
 function lengthFacts(label: string, value: CappedText, min: number, max: number) {
   return [fact(label, value.text), fact('Length', characters(value.length)), fact('Recommended', `${min}–${max} characters`)];
+}
+
+/**
+ * Facts for a text narrower than its minimum (Phase 2.5 Task 3 review, `seo-content.spec.ts`): the
+ * length facts and its width against `minSnippetWidth`; `null` when it is wide enough.
+ */
+function tooNarrow(label: string, value: CappedText, kind: 'title' | 'description', min: number, max: number): FindingDetails | null {
+  const width = textWidth(snippetText(value.text), kind);
+  const least = minSnippetWidth(kind);
+  return width < least ? details([...lengthFacts(label, value, min, max), fact('Width', formatPx(width)), fact('At least', `about ${formatPx(least)}`)]) : null;
 }
 
 /** The robots metas (generic or crawler-specific, in `scope`) carrying any of `directives`. */
@@ -45,13 +56,13 @@ export const HEAD_CHECKS = {
   'title-multiple': (s) => (s.titleTotal > 1 ? details([fact('Titles', formatCount(s.titleTotal))], s.titles.map((t) => t.text || '(empty)'), s.titleTotal) : null),
   'title-too-short': (s) => {
     const title = titled(s);
-    return title && title.length < TITLE_MIN_CHARS ? details(lengthFacts('Title', title, TITLE_MIN_CHARS, TITLE_MAX_CHARS)) : null;
+    return title ? tooNarrow('Title', title, 'title', TITLE_MIN_CHARS, TITLE_MAX_CHARS) : null;
   },
 
   'meta-description-missing': (s) => (described(s) ? null : details([fact('Meta description', s.metaDescriptionTotal === 0 ? 'None' : 'Empty')])),
   'meta-description-too-short': (s) => {
     const description = described(s);
-    return description && description.length < DESCRIPTION_MIN_CHARS ? details(lengthFacts('Description', description, DESCRIPTION_MIN_CHARS, DESCRIPTION_MAX_CHARS)) : null;
+    return description ? tooNarrow('Description', description, 'description', DESCRIPTION_MIN_CHARS, DESCRIPTION_MAX_CHARS) : null;
   },
   'meta-description-multiple': (s) =>
     s.metaDescriptionTotal > 1 ? details([fact('Meta descriptions', formatCount(s.metaDescriptionTotal))], s.metaDescriptions.map((d) => d.text || '(empty)'), s.metaDescriptionTotal) : null,

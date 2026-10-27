@@ -162,13 +162,20 @@ test('snippet-editor-previews', async () => {
   await page.getByTestId('seo-snippet-copy-html').click();
   await expect(page.getByTestId('seo-content-flash')).toHaveText('Copied as HTML');
   expect(await app!.evaluate(({ clipboard }) => clipboard.readText())).toBe('<title>Green tea &amp; &lt;biscuits&gt;: a short guide</title>\n<meta name="description" content="Short &quot;quoted&quot; text.">');
-  // Back to the page's own snippet.
-  await page.locator('[data-testid="seo-snippet-source"][data-source="page"]').click();
+  // Deleting the draft goes back to the page's own snippet (and leaves no draft for later tests).
+  await page.getByTestId('seo-draft-delete').click();
+  await expect(page.locator('[data-testid="seo-snippet-source"][data-source="draft"]')).toHaveCount(0);
   await expect(desktopTitle).toHaveAttribute('data-truncated', 'true');
 });
 
 test('target-query-persists', async () => {
   await openContent(articleUrl());
+  // A draft of this test's own (no other test's state is relied on).
+  // A function: the page object changes with the relaunch below.
+  const draft = () => page.locator('[data-testid="seo-snippet-source"][data-source="draft"]');
+  await expect(draft()).toHaveCount(0);
+  await page.getByTestId('seo-snippet-add').click();
+  await page.getByTestId('seo-draft-title').fill('A draft that survives a relaunch');
   await page.getByTestId('seo-query-input').fill('green tea');
   const place = (name: string) => page.locator(`[data-testid="seo-query-place"][data-place="${name}"]`);
   await expect(place('title')).toHaveAttribute('data-presence', 'all');
@@ -186,6 +193,7 @@ test('target-query-persists', async () => {
   await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'overview');
   await railItem('content').click();
   await expect(page.getByTestId('seo-query-input')).toHaveValue('green tea kettle');
+  await expect(draft()).toHaveCount(1);
 
   // A relaunch on the same profile: the query and the draft are still there.
   await closeApp(app);
@@ -194,16 +202,83 @@ test('target-query-persists', async () => {
   await openContent(articleUrl());
   await expect(page.getByTestId('seo-query-input')).toHaveValue('green tea kettle');
   await expect(place('title')).toHaveAttribute('data-presence', 'some');
-  const draft = page.locator('[data-testid="seo-snippet-source"][data-source="draft"]');
-  await expect(draft).toHaveCount(1);
-  await draft.click();
-  await expect(page.getByTestId('seo-draft-title')).toHaveValue('Green tea & <biscuits>: a short guide');
+  await expect(draft()).toHaveCount(1);
+  await draft().click();
+  await expect(page.getByTestId('seo-draft-title')).toHaveValue('A draft that survives a relaunch');
   // Deleting the draft and clearing the query remove them.
   await page.getByTestId('seo-draft-delete').click();
-  await expect(draft).toHaveCount(0);
+  await expect(draft()).toHaveCount(0);
   await page.getByTestId('seo-query-clear').click();
   await expect(page.getByTestId('seo-query-input')).toHaveValue('');
   await expect(page.getByTestId('seo-query-checklist')).toHaveCount(0);
+});
+
+/** Answers main's next message boxes with `answers` (and records them), as the user would click. */
+async function stubMessageBoxes(answers: { response: number; checkboxChecked: boolean }[]): Promise<() => Promise<{ message: string; checkboxLabel?: string }[]>> {
+  await app!.evaluate(({ dialog }, queued) => {
+    const record = { calls: [] as unknown[], answers: queued };
+    (globalThis as unknown as { __contentDialogs: typeof record }).__contentDialogs = record;
+    Object.assign(dialog, {
+      showMessageBox: async (...args: unknown[]) => {
+        record.calls.push(args.length > 1 ? args[1] : args[0]);
+        return record.answers.shift() ?? { response: 1, checkboxChecked: false };
+      },
+    });
+  }, answers);
+  return () => app!.evaluate(() => (globalThis as unknown as { __contentDialogs: { calls: { message: string; checkboxLabel?: string }[] } }).__contentDialogs.calls);
+}
+
+/** Stores a query and a draft for the article (through the panel), and waits until main has them. */
+async function writeNotes(): Promise<void> {
+  await openContent(articleUrl());
+  await page.getByTestId('seo-query-input').fill('loose leaf');
+  await page.getByTestId('seo-snippet-add').click();
+  await page.getByTestId('seo-draft-title').fill('A note to delete');
+  await railItem('overview').click();
+  await railItem('content').click();
+  await expect(page.getByTestId('seo-query-input')).toHaveValue('loose leaf');
+  await expect(page.locator('[data-testid="seo-snippet-source"][data-source="draft"]')).toHaveCount(1);
+}
+
+/** The panel's notes as main has them now (opened again, so read back). */
+async function storedNotes(): Promise<{ query: string; drafts: number }> {
+  await railItem('overview').click();
+  await railItem('content').click();
+  await expect(page.getByTestId('seo-query-input')).toBeEnabled();
+  return { query: await page.getByTestId('seo-query-input').inputValue(), drafts: await page.locator('[data-testid="seo-snippet-source"][data-source="draft"]').count() };
+}
+
+test('delete-all-notes-and-clear-browsing-data', async () => {
+  const { menu } = chromeHelpers(
+    () => app!,
+    () => page,
+  );
+  await writeNotes();
+  // Clear Browsing Data with its box unticked (the default) keeps the notes …
+  let calls = await stubMessageBoxes([{ response: 0, checkboxChecked: false }]);
+  await menu('clear-browsing-data');
+  await expect.poll(async () => (await calls()).length).toBe(1);
+  expect((await calls())[0]).toMatchObject({ checkboxLabel: 'Also remove target queries and snippet drafts', checkboxChecked: false });
+  expect(await storedNotes()).toEqual({ query: 'loose leaf', drafts: 1 });
+  // … ticked, it removes them.
+  calls = await stubMessageBoxes([{ response: 0, checkboxChecked: true }]);
+  await menu('clear-browsing-data');
+  await expect.poll(async () => (await calls()).length).toBe(1);
+  await expect.poll(storedNotes).toEqual({ query: '', drafts: 0 });
+
+  // The panel's "Delete all notes": cancelled, nothing goes; confirmed, every note goes.
+  await writeNotes();
+  calls = await stubMessageBoxes([{ response: 1, checkboxChecked: false }, { response: 0, checkboxChecked: false }]);
+  await page.getByTestId('seo-notes-delete-all').click();
+  await expect(page.getByTestId('seo-content-flash')).toHaveText('Nothing was deleted');
+  expect((await calls())[0]).toMatchObject({ message: 'Delete all content notes?' });
+  expect(await storedNotes()).toEqual({ query: 'loose leaf', drafts: 1 });
+  await page.getByTestId('seo-notes-delete-all').click();
+  await expect(page.getByTestId('seo-content-flash')).toHaveText('Every content note deleted');
+  // The open panel drops them at once.
+  await expect(page.getByTestId('seo-query-input')).toHaveValue('');
+  await expect(page.locator('[data-testid="seo-snippet-source"][data-source="draft"]')).toHaveCount(0);
+  expect(await storedNotes()).toEqual({ query: '', drafts: 0 });
 });
 
 test('content-page-text-is-inert', async () => {

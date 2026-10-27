@@ -94,7 +94,8 @@ describe('words and n-grams', () => {
     expect(row.in).toEqual({ title: true, h1: false, description: true, url: true });
     expect(r.ngrams[1].find((n) => n.text === 'brewing')!.in).toEqual({ title: false, h1: true, description: false, url: false });
     expect(r.ngrams[1].find((n) => n.text === 'tea')!.in).toEqual({ title: true, h1: true, description: true, url: true });
-    expect(r.fields.url).toEqual(['example', 'com', 'guides', 'green', 'tea']);
+    // The URL's host and each path segment are runs of their own.
+    expect(r.fields.url).toEqual([['example', 'com'], ['guides'], ['green', 'tea']]);
   });
 
   test('ngrams-are-information', () => {
@@ -113,6 +114,59 @@ describe('words and n-grams', () => {
     expect(r.readability).toEqual({ status: 'not-available', reason: 'no-text' });
     // The snippet widths need no visible text.
     expect(r.snippet.title?.truncated).toBe(false);
+  });
+});
+
+describe('review fixes', () => {
+  test('phrases-stay-within-a-run', () => {
+    const r = report('Foo bar baz. Foo bar baz.', {
+      url: 'https://example.com/foo/bar-baz',
+      titles: [text('Foo | Bar baz')],
+      headings: [
+        { level: 1, text: 'Foo' },
+        { level: 1, text: 'Bar' },
+        { level: 2, text: 'Baz qux' },
+      ],
+    });
+    // Each place's runs end at punctuation and between elements.
+    expect(r.fields.title).toEqual([['foo'], ['bar', 'baz']]);
+    expect(r.fields.h1).toEqual([['foo'], ['bar']]);
+    const by = Object.fromEntries(queryChecklist('foo bar', r.fields, 'en').map((c) => [c.place, c]));
+    // Both words are there, but never as one phrase.
+    expect(by['title']).toMatchObject({ presence: 'all', phrase: false });
+    expect(by['h1']).toMatchObject({ presence: 'all', phrase: false });
+    expect(by['url']).toMatchObject({ presence: 'all', phrase: false });
+    expect(by['first-words']).toMatchObject({ presence: 'all', phrase: true });
+    expect(queryChecklist('bar baz', r.fields, 'en').find((c) => c.place === 'url')).toMatchObject({ phrase: true });
+    // n-gram rows are marked the same way.
+    const fooBar = r.ngrams[2].find((row) => row.text === 'foo bar')!;
+    expect(fooBar.in).toEqual({ title: false, h1: false, description: false, url: false });
+    expect(r.ngrams[2].find((row) => row.text === 'bar baz')!.in).toMatchObject({ title: true, url: true });
+  });
+
+  test('case-folding-follows-the-language', () => {
+    // Turkish, declared: İ → i and I → ı on both sides.
+    const tr = report('İstanbul rehberi. İstanbul gezisi.', { lang: 'tr', titles: [text('İSTANBUL REHBERİ')], url: 'https://example.com/' });
+    expect(texts(tr, 1)).toContain('istanbul');
+    expect(tr.fields.title).toEqual([['istanbul', 'rehberi']]);
+    expect(queryChecklist('istanbul', tr.fields, 'tr').find((c) => c.place === 'title')).toMatchObject({ presence: 'all' });
+    expect(queryChecklist('İSTANBUL', tr.fields, 'tr').find((c) => c.place === 'title')).toMatchObject({ presence: 'all' });
+    expect(queryTerms('ISPARTA', 'tr').terms).toEqual(['ısparta']);
+    // Without a language, İ is still i (its combining dot above dropped).
+    expect(queryTerms('İstanbul', null).terms).toEqual(['istanbul']);
+    // ß is ss, so either spelling matches.
+    const de = report('Die Straße am Fluss.', { lang: 'de', titles: [text('Die Strasse am Fluss')] });
+    expect(texts(de, 1)).toContain('strasse');
+    expect(queryChecklist('Straße', de.fields, 'de').find((c) => c.place === 'title')).toMatchObject({ presence: 'all', phrase: true });
+  });
+
+  test('long-words-are-capped', () => {
+    const long = 'a'.repeat(200);
+    const r = report(`${long} tea ${long} tea`, { titles: [text(long)] });
+    expect(r.fields.title).toEqual([['a'.repeat(CONTENT_LIMITS.maxWordChars)]]);
+    for (const size of NGRAM_SIZES) for (const row of r.ngrams[size]) for (const term of row.terms) expect([...term].length).toBeLessThanOrEqual(CONTENT_LIMITS.maxWordChars);
+    expect(texts(r, 1)).toEqual(['tea']);
+    expect(texts(r, 2)).toEqual([]);
   });
 });
 

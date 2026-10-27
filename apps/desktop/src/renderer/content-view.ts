@@ -81,13 +81,14 @@ export function countLabel(n: number, one: string, many: string): string {
 }
 
 /**
- * On-Page's length verdict since the width rules (`seo-content.spec.ts`): `missing`, `short` below
- * the character minimum, `long` when a result cuts it by width (`truncated`), else `ok`.
+ * On-Page's length verdict since the width rules (`seo-content.spec.ts`): `missing`, `long` when a
+ * result cuts it by width (`truncated`), `short` when it is narrower than `minWidth` px
+ * (`minSnippetWidth`, as the rules), else `ok`.
  */
-export function snippetIndicator(length: number | null | undefined, min: number, truncated: boolean): 'missing' | 'short' | 'ok' | 'long' {
-  if (length === null || length === undefined || length === 0) return 'missing';
-  if (truncated) return 'long';
-  return length < min ? 'short' : 'ok';
+export function snippetIndicator(length: number | null | undefined, cut: { readonly width: number; readonly truncated: boolean } | null, minWidth: number): 'missing' | 'short' | 'ok' | 'long' {
+  if (length === null || length === undefined || length === 0 || cut === null) return 'missing';
+  if (cut.truncated) return 'long';
+  return cut.width < minWidth ? 'short' : 'ok';
 }
 
 /** A ratio with one decimal (`0` for nothing to divide by). */

@@ -107,8 +107,9 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   (`clearCache()`); then the SEO auditor's per-origin robots.txt answers and recorded tab responses
   (`seo-indexability.feature.md`). One part failing is logged and the others still run. No tab is closed or
   reloaded, and the app UI's own session is untouched. The Content panel's target queries and
-  snippet drafts (`seo_target_queries`, `seo_snippet_variants`) are kept, as the dialog says
-  (`seo-content.spec.ts`, `MAX_CONTENT_NOTE_URLS`). Pending prompts stay pending (they are
+  snippet drafts (`seo_target_queries`, `seo_snippet_variants`) are kept, as the dialog says,
+  unless its checkbox "Also remove target queries and snippet drafts" (unchecked by default) is
+  ticked; then they are cleared last (`seo-content.spec.ts`, `MAX_CONTENT_NOTE_URLS`). Pending prompts stay pending (they are
   undecided); one that was narrowed by a now-forgotten decision grants only requests whose every
   permission is remembered Allowed when it is answered (`permissions.feature.md`, Remembered
   decisions).

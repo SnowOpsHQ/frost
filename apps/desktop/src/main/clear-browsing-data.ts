@@ -7,13 +7,13 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 // every permission decision (stored and in memory) with the prompt back-off, the render profiles
 // pinned to sites (stored and in memory), the browse partition's storage and cache, and the SEO
 // auditor's robots.txt answers and recorded responses. It keeps the Content panel's target queries
-// and snippet drafts (the user's own work; the dialog says so). It closes no tab and leaves the app
+// and snippet drafts (the user's own work; the dialog says so) unless its checkbox is ticked. It closes no tab and leaves the app
 // UI's session alone. The command palette's Clear Browsing Data runs this same action.
 
 /** What clearing is made of (injected, so the order and the failure handling are unit-tested). */
 export interface ClearBrowsingDataParts {
-  /** Asks the user; answers whether to clear. */
-  confirm(): Promise<boolean>;
+  /** Asks the user; answers whether to clear (`'with-content-notes'`: yes, and the dialog's checkbox was ticked). */
+  confirm(): Promise<boolean | 'with-content-notes'>;
   /** Every remembered permission decision and the back-off, in memory (the broker). */
   forgetPermissionDecisions(): void;
   /** Every stored visit and decision (the session writer, after its earlier writes). */
@@ -22,6 +22,8 @@ export interface ClearBrowsingDataParts {
   clearBrowseStorage(): Promise<void>;
   /** The SEO auditor's per-origin robots.txt answers and recorded tab responses (`seo-indexability.feature.md`). */
   forgetSeoCaches(): void;
+  /** Every target query and snippet draft (`seo-content.spec.ts`); only when the checkbox was ticked. */
+  clearContentNotes?(): Promise<void>;
   log(message: string): void;
 }
 
@@ -39,7 +41,7 @@ export function createClearBrowsingData(parts: ClearBrowsingDataParts): () => Pr
     }
   };
   const clear = async (): Promise<boolean> => {
-    let confirmed = false;
+    let confirmed: boolean | 'with-content-notes' = false;
     await attempt('(the confirmation)', async () => {
       confirmed = await parts.confirm();
     });
@@ -48,6 +50,7 @@ export function createClearBrowsingData(parts: ClearBrowsingDataParts): () => Pr
     await attempt('stored visits and decisions', () => parts.clearStoredData());
     await attempt('site storage and cache', () => parts.clearBrowseStorage());
     await attempt('robots.txt answers and recorded responses', () => parts.forgetSeoCaches());
+    if (confirmed === 'with-content-notes') await attempt('content notes', () => parts.clearContentNotes?.());
     return true;
   };
   let running: Promise<boolean> | null = null;
@@ -61,12 +64,14 @@ export function createClearBrowsingData(parts: ClearBrowsingDataParts): () => Pr
 
 /**
  * The confirmation: `dialog.showMessageBox` with `CLEAR_BROWSING_DATA.dialog`, parented to
- * `parent` (with none, an app-modal box). Only `CLEAR_BROWSING_DATA.confirmIndex` confirms.
+ * `parent` (with none, an app-modal box). Only `CLEAR_BROWSING_DATA.confirmIndex` confirms; with its
+ * checkbox ticked the answer is `'with-content-notes'`.
  */
-export async function confirmClearBrowsingData(parent: BaseWindow | null): Promise<boolean> {
+export async function confirmClearBrowsingData(parent: BaseWindow | null): Promise<boolean | 'with-content-notes'> {
   const options = { ...CLEAR_BROWSING_DATA.dialog, buttons: [...CLEAR_BROWSING_DATA.dialog.buttons] };
-  const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
-  return response === CLEAR_BROWSING_DATA.confirmIndex;
+  const { response, checkboxChecked } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+  if (response !== CLEAR_BROWSING_DATA.confirmIndex) return false;
+  return checkboxChecked ? 'with-content-notes' : true;
 }
 
 /** Clears the browse partition's storage (cookies, local storage, IndexedDB, service workers …), then its HTTP cache. */
