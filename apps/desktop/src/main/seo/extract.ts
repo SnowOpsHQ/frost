@@ -645,6 +645,8 @@ export function extractPage(
         textNodes += 1;
         const data = node as PageText;
         const take = Math.min(data.length, L.maxTextScanChars - scanned);
+        // A node cut by the budget is truncation even when no node follows it.
+        if (take < data.length) textTruncated = true;
         scanned += take;
         wordCount += countWords(data.substringData(0, take));
       }

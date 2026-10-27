@@ -180,6 +180,9 @@ describe('extractor on a DOM', () => {
     // The word count also stops at its node and character budgets.
     expect(extract({ body, limits: { maxTextNodes: 3 } })).toMatchObject({ textTruncated: true, partial: false });
     expect(extract({ body, limits: { maxTextScanChars: 10 } })).toMatchObject({ textTruncated: true, partial: false });
+    // Codex review: the last text node cut by the character budget is truncation too, with no node after it.
+    expect(extract({ body: `<p>${' '.repeat(40)}one two three</p>`, limits: { maxTextScanChars: 30 } })).toMatchObject({ wordCount: 0, textTruncated: true, partial: false });
+    expect(extract({ body: '<p>one two three</p>', limits: { maxTextScanChars: 13 } })).toMatchObject({ wordCount: 3, textTruncated: false });
   });
 
   test('extractor-counts-words-without-spaces', () => {
