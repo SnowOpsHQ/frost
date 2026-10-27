@@ -1,6 +1,7 @@
 {
   "name": "@app/seo-core",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "Pure SEO audit engine: the page snapshot model, frost's on-page rule catalog and the health score. No Electron, DOM or Zod.",

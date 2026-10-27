@@ -2,6 +2,7 @@
   "name": "@app/desktop",
   "productName": "frost",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "frost desktop app (Electron main, preload, renderer)",
