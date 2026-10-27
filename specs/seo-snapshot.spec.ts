@@ -44,8 +44,11 @@ export const RobotsMetaSchema = z.strictObject({ name: z.enum(ROBOTS_META_NAMES)
  * Hidden elements (headings and the word count both skip them): an element with the `hidden`
  * attribute or inside one, and, where `Element.checkVisibility` exists (Chromium; not every test
  * DOM), an element for which `checkVisibility()` is false (no box: `display: none` on it or an
- * ancestor, or inside `content-visibility: hidden`). `visibility: hidden` and off-screen text count
- * as shown (they still take part in layout).
+ * ancestor, or inside `content-visibility: hidden`). A layout wrapper (`display: contents`) has no
+ * box of its own but shows its content: it is hidden only when the nearest ancestor that is not one
+ * is hidden or skips its content (`content-visibility: hidden`, or a closed `<details>` the wrapper
+ * is not the summary of). `visibility: hidden` and off-screen text count as shown (they still take
+ * part in layout).
  */
 
 /** `link[rel=canonical]`: the `href` attribute as written, and resolved against the document (`null` if it does not parse). */

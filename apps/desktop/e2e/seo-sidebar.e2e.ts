@@ -50,6 +50,10 @@ const JAPANESE_PAGE = `<!doctype html><html lang="ja"><head><meta charset="utf-8
 
 const words = (n: number) => Array.from({ length: n }, (_, i) => ['cold', 'brew', 'coffee', 'water', 'grind', 'steep', 'filter', 'jar'][i % 8]).join(' ');
 
+/** Its text inside a layout wrapper (`display: contents`, no box of its own), and 50 words in a `display: none` one. */
+const WRAPPED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cold brew inside a layout wrapper element</title></head>
+<body><div style="display:contents"><h1>Cold brew in a wrapper</h1><p>${words(420)}</p></div><div style="display:none"><span style="display:contents">${words(50)}</span></div></body></html>`;
+
 /** Loopback pages for the sidebar: a good one, a bad one, an SPA, a hostile one, one with markup in its text, a busy one. */
 async function startSeoServer() {
   let origin = '';
@@ -98,6 +102,7 @@ async function startSeoServer() {
     else if (pathname === '/busy') html(busyPage);
     else if (pathname === '/nested') html(NESTED_PAGE);
     else if (pathname === '/ja') html(JAPANESE_PAGE);
+    else if (pathname === '/wrapped') html(WRAPPED_PAGE);
     else if (pathname === '/googlebot-noindex') html(goodPage().replace('<meta name="viewport"', '<meta name="googlebot" content="noindex"><meta name="viewport"'));
     else if (pathname.endsWith('.png')) response.writeHead(404).end();
     else html('<!doctype html><title>loopback</title><p>loopback</p>');
@@ -282,6 +287,15 @@ test('deep-nested-anchors-is-bounded-not-timeout', async () => {
 test('cjk-page-is-not-thin', async () => {
   await audit(`${site.origin}/ja`);
   expect(Number((await page.getByTestId('seo-fact-words').textContent())!.replace(/,/g, ''))).toBeGreaterThan(300);
+  expect(await issueIds()).not.toContain('content-thin');
+});
+
+test('wrapped-page-is-not-thin', async () => {
+  await audit(`${site.origin}/wrapped`);
+  // The wrapper's 420 words and its heading's count; the hidden wrapper's 50 do not.
+  const count = Number((await page.getByTestId('seo-fact-words').textContent())!.replace(/,/g, ''));
+  expect(count).toBeGreaterThanOrEqual(420);
+  expect(count).toBeLessThan(470);
   expect(await issueIds()).not.toContain('content-thin');
 });
 

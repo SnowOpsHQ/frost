@@ -52,6 +52,10 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   several words per sentence (`Intl.Segmenter`), not one.
 - **Scenario: extractor-skips-hidden-headings** — an `h1` inside `[hidden]` is not listed (and its
   text is not counted as words) but is in `headingTotal`.
+- **Scenario: extractor-reads-through-boxless-wrappers** — with `checkVisibility()` as Chromium
+  answers it, text and headings inside a `display: contents` wrapper (nested ones too) are counted
+  and listed; a wrapper inside `display: none`, `content-visibility: hidden` or a closed `<details>`
+  (but its summary) is not; a `display: none` subtree is still pruned whole.
 - **Scenario: extractor-reads-bot-robots** — `GoogleBot`, `bingbot` and `robots` metas are read with
   lowercased names; `otherbot` is not.
 
@@ -180,6 +184,9 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   `extractor-deadline-gives-partial`.)
 - **Scenario: cjk-page-is-not-thin** — a Japanese page of a few hundred words without spaces is not
   `content-thin` (the isolated world has `Intl.Segmenter`).
+- **Scenario: wrapped-page-is-not-thin** — a page whose text sits in a `display: contents` wrapper
+  (no box of its own in Chromium) has its words counted and is not `content-thin`; the words in a
+  wrapper inside `display: none` are not counted.
 - **Scenario: noindex-page-is-not-indexable** — a page whose only problem is
   `<meta name="googlebot" content="noindex">` scores at most `NOINDEX_SCORE_CAP` and its score
   card says "Not indexable" and names googlebot.
