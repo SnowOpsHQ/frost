@@ -87,7 +87,8 @@ const ruleCount = z.int().nonnegative().max(A.maxRuleCount);
  * - `axeVersion`; `ranAt` (epoch ms) and `durationMs`;
  * - `violations`: worst impact first, at most `maxRules` (`violationTotal` counts them all);
  * - `passes`, `incomplete`, `inapplicable`: how many rules passed, need a person to review, or had
- *   nothing to check.
+ *   nothing to check;
+ * - `partial`: the run stopped at its own deadline (`A11Y_PAGE_BUDGET_MS`) before every rule ran.
  */
 export const AccessibilityResultSchema = z
   .strictObject({
@@ -100,6 +101,7 @@ export const AccessibilityResultSchema = z
     passes: ruleCount,
     incomplete: ruleCount,
     inapplicable: ruleCount,
+    partial: z.boolean(),
   })
   .refine((r) => r.violationTotal >= r.violations.length, { message: 'a total is below its list' });
 export type AccessibilityResult = z.infer<typeof AccessibilityResultSchema>;

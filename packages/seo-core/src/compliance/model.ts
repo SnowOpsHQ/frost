@@ -20,10 +20,17 @@ export interface SecurityHeaderRow {
   readonly note: string | null;
 }
 
-/** http subresources of an https page, split by what browsers do with them (`ACTIVE_RESOURCE_KINDS`). */
+/**
+ * http subresources of an https page, split by what browsers do with them (`ACTIVE_RESOURCE_KINDS`),
+ * or all `upgraded` when an enforced policy has `upgrade-insecure-requests` (then `active` and
+ * `passive` are empty).
+ */
 export interface MixedContent {
   readonly active: readonly InsecureResource[];
   readonly passive: readonly InsecureResource[];
+  readonly upgraded: readonly InsecureResource[];
+  /** A cut CSP header might upgrade them: the mixed content rules do not fail (`CSP_CUT_IS_UNKNOWN`). */
+  readonly upgradeUnknown: boolean;
   /** Distinct http subresources the page asks for (at least `active.length + passive.length`). */
   readonly total: number;
   /** The extractor stopped scanning early (`resourcesTruncated`): there may be more. */
@@ -44,9 +51,14 @@ export interface SecurityFacts {
   readonly hsts: Hsts | null;
   /** Every enforced policy: the header's, then the meta tags'. */
   readonly cspPolicies: readonly CspPolicy[];
+  /** Inline scripts run (`false` when a cut CSP header leaves it unknown). */
   readonly inlineScriptsAllowed: boolean;
-  /** `frame-ancestors` is set by a header policy. */
+  /** A header policy's `frame-ancestors` keeps other sites from framing the page (`frameAncestorsProtect`). */
   readonly frameAncestors: boolean;
+  /** An enforced policy has `upgrade-insecure-requests`. */
+  readonly upgradeInsecure: boolean;
+  /** A Content-Security-Policy header was cut by main (`truncated`): what depends on it is unknown. */
+  readonly cspCut: boolean;
   readonly frameOptionsProtect: boolean;
   readonly nosniff: boolean;
   /** The document's referrer policy, and what set it (`null`: none known). */
@@ -86,6 +98,8 @@ export type AccessibilityReport =
       readonly passes: number;
       readonly incomplete: number;
       readonly inapplicable: number;
+      /** The check stopped at its own deadline before every rule ran. */
+      readonly partial: boolean;
     };
 
 /** The Compliance panel's data (`SeoAudit.compliance`). */

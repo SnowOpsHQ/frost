@@ -15,7 +15,7 @@ import {
 import type { A11yViolation, InsecureResource } from '@app/specs/seo-snapshot.spec';
 import { OpenTabIcon } from '../../icons';
 import { actions } from '../../ipc';
-import { a11yView, countLabel, elapsedSeconds, headersUnknownNote, headerTone, impactCounts, nodesShown, runButtonLabel, runProgress, securitySignals, securitySummary, type A11yView } from '../../compliance-view';
+import { a11yNote, a11yView, countLabel, mixedNote, elapsedSeconds, headersUnknownNote, headerTone, impactCounts, nodesShown, runButtonLabel, runProgress, securitySignals, securitySummary, type A11yView } from '../../compliance-view';
 import type { Tone } from '../../indexability-view';
 import { formatCount, openableUrl } from '../../seo-view';
 import { Flash, PanelIssues, useFlash } from './actions';
@@ -121,12 +121,12 @@ function HeadersCard({ security }: { readonly security: SecurityReport }) {
   );
 }
 
-function ResourceList({ resources, active }: { readonly resources: readonly InsecureResource[]; readonly active: boolean }) {
+function ResourceList({ resources, active = false, upgraded = false }: { readonly resources: readonly InsecureResource[]; readonly active?: boolean; readonly upgraded?: boolean }) {
   return (
     <ul className="seo-mixed-list">
       {resources.map((resource, index) => (
-        <li key={index} className="seo-mixed-row" data-testid="seo-mixed-row" data-kind={resource.kind} data-active={active}>
-          <span className="seo-flag-chip" data-tone={active ? 'error' : 'warn'}>
+        <li key={index} className="seo-mixed-row" data-testid="seo-mixed-row" data-kind={resource.kind} data-active={active} data-upgraded={upgraded}>
+          <span className="seo-flag-chip" data-tone={upgraded ? 'muted' : active ? 'error' : 'warn'}>
             {INSECURE_RESOURCE_LABELS[resource.kind]}
           </span>
           <PageText value={resource.url} className="seo-mono" testId="seo-mixed-url" />
@@ -140,13 +140,20 @@ function ResourceList({ resources, active }: { readonly resources: readonly Inse
 function MixedCard({ security }: { readonly security: SecurityReport }) {
   const { mixed } = security;
   const listed = mixed.active.length + mixed.passive.length;
-  const aside = security.https && listed > 0 ? <span className="seo-badge">{formatCount(mixed.total)}</span> : null;
+  const aside = security.https && listed + mixed.upgraded.length > 0 ? <span className="seo-badge">{formatCount(mixed.total)}</span> : null;
+  const note = mixedNote(mixed);
   return (
     <Card title="Mixed content" icon={<MixedContentIcon />} testId="seo-mixed" aside={aside}>
       {!security.https ? (
         <p className="seo-empty-line seo-index-empty" data-testid="seo-mixed-na">
           Only an https page can have mixed content.
         </p>
+      ) : mixed.upgraded.length > 0 ? (
+        <>
+          <p className="seo-row-label seo-index-sub">Upgraded by CSP</p>
+          <ResourceList resources={mixed.upgraded} upgraded />
+          {mixed.total > mixed.upgraded.length ? <p className="seo-note">and {formatCount(mixed.total - mixed.upgraded.length)} more.</p> : null}
+        </>
       ) : listed === 0 ? (
         <p className="seo-empty-line seo-index-empty seo-all-clear-line" data-testid="seo-mixed-none">
           Every subresource the page asks for is https.
@@ -162,12 +169,17 @@ function MixedCard({ security }: { readonly security: SecurityReport }) {
           {mixed.passive.length > 0 ? (
             <>
               <p className="seo-row-label seo-index-sub">Upgraded or blocked (images, media)</p>
-              <ResourceList resources={mixed.passive} active={false} />
+              <ResourceList resources={mixed.passive} />
             </>
           ) : null}
           {mixed.total > listed ? <p className="seo-note">and {formatCount(mixed.total - listed)} more.</p> : null}
         </>
       )}
+      {note ? (
+        <p className="seo-index-source" data-testid="seo-mixed-note">
+          {note}
+        </p>
+      ) : null}
       {mixed.truncated ? <p className="seo-note">The page is very large: frost stopped looking after the first elements.</p> : null}
     </Card>
   );
@@ -215,7 +227,11 @@ function NodeList({ rule }: { readonly rule: A11yViolation }) {
               <ElementIcon className="seo-inline-icon" />
               <PageText value={node.selector || '(no selector)'} className="seo-mono seo-a11y-selector" testId="seo-a11y-selector" />
             </span>
-            {node.summary ? <span className="seo-a11y-summary">{node.summary}</span> : null}
+            {node.summary ? (
+              <bdi className="seo-a11y-summary" dir="auto">
+                {node.summary}
+              </bdi>
+            ) : null}
           </li>
         ))}
       </ol>
@@ -250,7 +266,11 @@ function RuleRow({ rule, flash }: { readonly rule: A11yViolation; readonly flash
       </button>
       {open ? (
         <div className="seo-a11y-rule-body seo-issue-body" id={bodyId} data-testid="seo-a11y-rule-details">
-          {rule.description ? <p className="seo-issue-copy">{rule.description}</p> : null}
+          {rule.description ? (
+            <p className="seo-issue-copy">
+              <bdi dir="auto">{rule.description}</bdi>
+            </p>
+          ) : null}
           {rule.helpUrl !== '' ? (
             <div className="seo-a11y-help">
               <PageText value={rule.helpUrl} className="seo-mono" testId="seo-a11y-help-url" />
@@ -319,6 +339,11 @@ function Results({ report, flash }: { readonly report: Extract<AccessibilityRepo
       ) : (
         groups.map((group) => <ImpactGroup key={group.impact} group={group} flash={flash} />)
       )}
+      {a11yNote({ kind: 'results', report }) ? (
+        <p className="seo-index-source" data-testid="seo-a11y-partial">
+          {a11yNote({ kind: 'results', report })}
+        </p>
+      ) : null}
       {report.truncated ? <p className="seo-note">Showing {formatCount(groups.reduce((sum, g) => sum + g.rules.length, 0))} of {formatCount(report.violationTotal)} violated rules.</p> : null}
     </div>
   );
@@ -347,7 +372,7 @@ function AccessibilityCard({ tab, run, report, flash }: { readonly tab: TabState
         {view.kind === 'timed-out' ? (
           <p className="seo-a11y-problem" data-testid="seo-a11y-timed-out" role="status">
             <StopwatchIcon className="seo-inline-icon" />
-            <span>{A11Y_RUN_MESSAGES['timed-out']}</span>
+            <span>{a11yNote(view)}</span>
           </p>
         ) : null}
         {view.kind === 'failed' ? (

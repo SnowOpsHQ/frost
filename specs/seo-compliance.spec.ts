@@ -75,6 +75,12 @@ export const HSTS_MIN_MAX_AGE_SECONDS = 15_552_000;
  */
 export const REFERRER_POLICIES = ['no-referrer', 'no-referrer-when-downgrade', 'origin', 'origin-when-cross-origin', 'same-origin', 'strict-origin', 'strict-origin-when-cross-origin', 'unsafe-url'] as const;
 export type ReferrerPolicyValue = (typeof REFERRER_POLICIES)[number];
+/**
+ * The `<meta name="referrer">` values the extractor keeps (lowercased, trimmed): a known policy or a
+ * legacy one. A later tag with any other value changes nothing (HTML: an invalid value is ignored),
+ * so the last valid one is the document's.
+ */
+export const META_REFERRER_VALUES = ['no-referrer', 'no-referrer-when-downgrade', 'origin', 'origin-when-cross-origin', 'same-origin', 'strict-origin', 'strict-origin-when-cross-origin', 'unsafe-url', 'never', 'always', 'default', 'origin-when-crossorigin'] as const;
 export const LEGACY_META_REFERRER: Readonly<Record<string, ReferrerPolicyValue>> = {
   never: 'no-referrer',
   always: 'unsafe-url',
@@ -89,6 +95,42 @@ export const UNSAFE_REFERRER_POLICIES = ['unsafe-url', 'no-referrer-when-downgra
  * (CSP Level 3): a nonce, a hash, or `'strict-dynamic'`.
  */
 export const CSP_INLINE_OVERRIDES = ['nonce-', 'sha256-', 'sha384-', 'sha512-', 'strict-dynamic'] as const;
+
+/**
+ * The directives that decide inline `<script>` elements, in order of precedence (CSP Level 3's
+ * fallback list for script elements): `script-src-elem`, else `script-src`, else `default-src`.
+ */
+export const CSP_SCRIPT_ELEMENT_DIRECTIVES = ['script-src-elem', 'script-src', 'default-src'] as const;
+
+/**
+ * `frame-ancestors` sources that let any site frame the page: `*`, a bare scheme (`https:`,
+ * `http:` …) or a scheme with a wildcard host (`https://*`). A `frame-ancestors` made only of these
+ * (or holding one of them) does not protect against clickjacking.
+ */
+export const FRAME_ANCESTORS_OPEN = ['*', 'scheme:', 'scheme://*'] as const;
+
+/**
+ * X-Frame-Options, read as the HTML Standard does ("check a navigation response's adherence to
+ * X-Frame-Options"): the values of every header, split on commas, trimmed and lowercased, as a set.
+ * More than one distinct value blocks framing if any is `deny`, `sameorigin` or `allowall` (and is
+ * ignored otherwise); one value blocks it if it is `deny` or `sameorigin`; `allowall` and anything
+ * unknown allow it. A Content-Security-Policy header's `frame-ancestors` makes browsers ignore it.
+ */
+export const XFO_BLOCKING_VALUES = ['deny', 'sameorigin'] as const;
+
+/**
+ * `upgrade-insecure-requests` in any enforced policy (header or meta) makes the browser fetch every
+ * http subresource over https: those are not mixed content. The panel lists them as "Upgraded by
+ * CSP" and no mixed content rule fails for them.
+ */
+export const CSP_UPGRADE_DIRECTIVE = 'upgrade-insecure-requests' as const;
+
+/**
+ * A Content-Security-Policy value main had to cut (`ResponseHeader.truncated`, past
+ * `RESPONSE_LIMITS.maxLongHeaderValueChars`) cannot be read whole: what depends on it (inline
+ * scripts, frame-ancestors, upgrade-insecure-requests) is unknown, and no rule fails because of it.
+ */
+export const CSP_CUT_IS_UNKNOWN = true;
 
 /**
  * Subresources an https page loads over plain http (Mixed Content, W3C), by what the browser does.
@@ -171,6 +213,16 @@ export const A11Y_WORLD_ID = 1_216;
 
 /** A run not answered after this long is abandoned ("timed out"); its late answer is ignored. */
 export const A11Y_TIMEOUT_MS = 10_000;
+
+/**
+ * axe has no way to stop a run, so the run script splits the rules into `A11Y_RULE_CHUNKS` runs and
+ * checks its own deadline (`A11Y_PAGE_BUDGET_MS` from its start, below `A11Y_TIMEOUT_MS`) before each:
+ * past it, it answers what it has with `partial: true` and the rest never starts. A single chunk can
+ * still overrun on a huge page: then main's `A11Y_TIMEOUT_MS` reports "timed out", and the page may
+ * stay busy until that chunk ends (the panel says so).
+ */
+export const A11Y_RULE_CHUNKS = 4;
+export const A11Y_PAGE_BUDGET_MS = 8_000;
 
 /**
  * What runs: the `axe-core` rules tagged with one of these (WCAG 2.0, 2.1 and 2.2 level A and AA,
@@ -272,7 +324,7 @@ export const A11Y_RUN_MESSAGES: Readonly<Record<A11yRunStatus, string>> = {
   idle: 'Checks the page against WCAG 2.x level A and AA and accessibility best practices. It runs on request because it is heavy.',
   running: 'Checking the page…',
   done: 'Scoring the results…',
-  'timed-out': `The check took longer than ${A11Y_TIMEOUT_MS / 1_000} seconds and was stopped. Very large pages can take that long.`,
+  'timed-out': `The check took longer than ${A11Y_TIMEOUT_MS / 1_000} seconds and was stopped. Very large pages can take that long, and the page may stay busy for a little while as the last part of the check finishes.`,
   failed: 'The accessibility check could not run on this page.',
 };
 export const A11Y_FAIL_MESSAGES: Readonly<Record<A11yFailReason, string>> = {
@@ -315,7 +367,7 @@ export const COMPLIANCE_RULE_SPECS = [
     severity: 'error',
     title: 'Scripts, styles or frames load over HTTP',
     condition:
-      'The page is served over https and asks for a script, stylesheet, frame, embedded object or font from an http: URL (<script src>, <link rel="stylesheet">, <link rel="preload"> or "modulepreload" for a script, style or font, <iframe>, <frame>, <object data>, <embed src>).',
+      'The page is served over https and asks for a script, stylesheet, frame, embedded object or font from an http: URL (<script src>, <link rel="stylesheet">, <link rel="preload"> or "modulepreload" for a script, style or font, <iframe>, <frame>, <object data>, <embed src>), and no enforced Content Security Policy has upgrade-insecure-requests (which makes browsers fetch them over https; a policy main had to cut leaves that unknown, and the rule passes).',
     why: 'Browsers block these outright, so the page is broken where it relies on them: styles missing, scripts that never run, empty frames. Anything loaded over HTTP could be replaced on the way by code that takes over the whole page.',
     fix: 'Load each of them from an https:// URL (or host it on your own site), or remove it.',
   },
@@ -324,7 +376,7 @@ export const COMPLIANCE_RULE_SPECS = [
     category: 'security',
     severity: 'warning',
     title: 'Images or media load over HTTP',
-    condition: 'The page is served over https and asks for an image or media file from an http: URL (<img>, <input type="image">, <link rel="icon">, a video poster, <video>, <audio>, <source>, <track>).',
+    condition: 'The page is served over https and asks for an image or media file from an http: URL (<img>, <input type="image">, <link rel="icon">, a video poster, <video>, <audio>, <source>, <track>), and no enforced Content Security Policy has upgrade-insecure-requests (a policy main had to cut leaves that unknown, and the rule passes).',
     why: 'Browsers upgrade these requests to HTTPS, and the file is missing where the host has no HTTPS; where it does load over HTTP, it can be swapped on the way. Either way the page is no longer fully secure.',
     fix: 'Point each of them at its https:// URL.',
   },
@@ -361,7 +413,7 @@ export const COMPLIANCE_RULE_SPECS = [
     severity: 'info',
     title: 'Content Security Policy allows inline scripts',
     condition:
-      'Inline scripts are allowed by every policy the page sets: each policy that governs scripts (script-src, else default-src) lists \'unsafe-inline\' without a nonce, a hash or \'strict-dynamic\' (any of which make browsers ignore it), and any other policy does not restrict scripts.',
+      'Inline scripts are allowed by every policy the page sets: each policy that governs script elements (script-src-elem, else script-src, else default-src) lists \'unsafe-inline\' without a nonce, a hash or \'strict-dynamic\' (any of which make browsers ignore it), and any other policy does not restrict scripts. A policy main had to cut is unknown: the rule passes.',
     why: 'Inline script is how most cross-site scripting runs; allowing it removes most of what the policy protects.',
     fix: 'Move inline scripts into files, or allow them by nonce (\'nonce-…\') or hash (\'sha256-…\'), and drop \'unsafe-inline\'.',
   },
@@ -379,7 +431,8 @@ export const COMPLIANCE_RULE_SPECS = [
     category: 'security',
     severity: 'info',
     title: 'Any site can frame this page',
-    condition: 'The response headers are known, X-Frame-Options is not DENY or SAMEORIGIN, and no Content-Security-Policy header has a frame-ancestors directive (it is ignored in a <meta> policy).',
+    condition:
+      'The response headers are known, X-Frame-Options does not block framing (read as the HTML Standard does: one value DENY or SAMEORIGIN, or several distinct values one of which is DENY, SAMEORIGIN or ALLOWALL), and no Content-Security-Policy header has a frame-ancestors directive that restricts framing (one with *, a bare scheme such as https:, or a scheme with a wildcard host does not; frame-ancestors is ignored in a <meta> policy). A policy main had to cut is unknown: the rule passes.',
     why: 'Another site can load the page in an invisible frame and trick visitors into clicking its buttons (clickjacking).',
     fix: 'Send Content-Security-Policy: frame-ancestors \'self\' (and X-Frame-Options: SAMEORIGIN for older browsers).',
   },

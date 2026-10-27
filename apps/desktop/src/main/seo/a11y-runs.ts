@@ -19,8 +19,12 @@ import { withinSize } from './a11y';
 
 export type TabContents = TabView['webContents'];
 
-/** Runs the check in a page (`runAccessibilityCheck`); its answer is page data, checked here and validated in the worker. */
-export type A11yRunner = (contents: TabContents) => Promise<unknown>;
+/**
+ * Runs the check in a page (`runAccessibilityCheck`); its answer is page data, checked here and
+ * validated in the worker. `stillCurrent` says whether the run is still for the requested document
+ * and URL: the runner checks it before injecting and before running.
+ */
+export type A11yRunner = (contents: TabContents, stillCurrent: () => boolean) => Promise<unknown>;
 
 export interface TabA11yContext {
   /** The runner; `undefined`: the check is unavailable (`start` answers `false`). */
@@ -135,7 +139,7 @@ export function createTabA11y(ctx: TabA11yContext): TabA11y {
       const current = (): boolean => entries.get(tab.id) === owned && owned.run === run && owned.state.status === 'running' && ctx.isOpen(tab) && contentsOf(tab) === contents && withoutFragment(contents.getURL()) === key;
       let answer: Promise<unknown>;
       try {
-        answer = ctx.runner(contents);
+        answer = ctx.runner(contents, current);
       } catch (error) {
         answer = Promise.reject(error);
       }

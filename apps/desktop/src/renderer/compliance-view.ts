@@ -56,8 +56,8 @@ export function securitySignals(security: SecurityReport): { id: string; label: 
     {
       id: 'mixed',
       label: 'Mixed content',
-      value: !security.https ? 'N/A' : mixed === 0 ? 'None' : formatCount(security.mixed.total),
-      tone: !security.https ? 'muted' : security.mixed.active.length > 0 ? 'error' : mixed > 0 ? 'warn' : 'ok',
+      value: !security.https ? 'N/A' : security.mixed.upgradeUnknown ? 'Unknown' : mixed > 0 ? formatCount(security.mixed.total) : security.mixed.upgraded.length > 0 ? 'Upgraded' : 'None',
+      tone: !security.https || security.mixed.upgradeUnknown ? 'muted' : security.mixed.active.length > 0 ? 'error' : mixed > 0 ? 'warn' : 'ok',
     },
     {
       id: 'hsts',
@@ -66,6 +66,13 @@ export function securitySignals(security: SecurityReport): { id: string; label: 
       tone: !hsts ? 'muted' : headerTone(hsts),
     },
   ];
+}
+
+/** What the mixed content card adds under its list: upgraded by the CSP, or maybe (a cut CSP); `null` otherwise. */
+export function mixedNote(mixed: SecurityReport['mixed']): string | null {
+  if (mixed.upgraded.length > 0) return 'The page’s Content Security Policy has upgrade-insecure-requests: browsers fetch these over https, so they are not mixed content.';
+  if (mixed.upgradeUnknown) return 'The page’s Content Security Policy was cut (it is longer than frost reads), so whether it upgrades these to https is unknown: not counted as issues.';
+  return null;
 }
 
 /** What the accessibility section shows. */
@@ -119,6 +126,13 @@ export function nodesShown(kept: number, total: number, all: boolean): { shown: 
 /** `n rule(s)` / `n element(s)`. */
 export function countLabel(n: number, one: string, many: string): string {
   return `${formatCount(n)} ${n === 1 ? one : many}`;
+}
+
+/** A note under the accessibility section: a partial run, or a timed-out one that may keep the page busy; `null` otherwise. */
+export function a11yNote(view: A11yView): string | null {
+  if (view.kind === 'results' && view.report.partial) return 'The check reached its time limit before every rule ran: these are the results of the rules it ran. Not every rule was checked.';
+  if (view.kind === 'timed-out') return A11Y_RUN_MESSAGES['timed-out'];
+  return null;
 }
 
 /** The run button's label. */

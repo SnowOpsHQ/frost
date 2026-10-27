@@ -10,8 +10,10 @@ import {
   analyseSecurity,
   formatDuration,
   frameAncestors,
+  frameAncestorsProtect,
   frameOptionsProtect,
   headerReferrerPolicy,
+  scriptSources,
   isActiveKind,
   isLoopbackHost,
   isNosniff,
@@ -52,7 +54,7 @@ const withResources = (...resources: ReturnType<typeof resource>[]) => page({ se
 
 /** A validated accessibility answer for the clean page (`changes` override). */
 function a11yResult(changes: Partial<AccessibilityResult> = {}): AccessibilityResult {
-  return { url: PAGE_URL, axeVersion: '4.14.0', ranAt: 1_760_000_100_000, durationMs: 420, violations: [], violationTotal: 0, passes: 40, incomplete: 2, inapplicable: 30, ...changes };
+  return { url: PAGE_URL, axeVersion: '4.14.0', ranAt: 1_760_000_100_000, durationMs: 420, violations: [], violationTotal: 0, passes: 40, incomplete: 2, inapplicable: 30, partial: false, ...changes };
 }
 const violation = (id: string, impact: AccessibilityResult['violations'][number]['impact'], nodeTotal = 1): AccessibilityResult['violations'][number] => ({
   id,
@@ -111,6 +113,48 @@ describe('CSP', () => {
     expect(allowsInlineScripts([])).toBe(false);
   });
 
+  test('frame-ancestors-open-sources', () => {
+    expect(frameAncestorsProtect(["'none'"])).toBe(true);
+    expect(frameAncestorsProtect(["'self'", 'https://partner.example'])).toBe(true);
+    expect(frameAncestorsProtect(['https://*.example.com'])).toBe(true);
+    for (const open of [['*'], ['https:'], ['HTTP:'], ["'self'", 'https:'], ['https://*'], ['*://*'], []]) expect(frameAncestorsProtect(open), open.join(' ')).toBe(false);
+    // In the page: an open frame-ancestors is clickjacking-unprotected (without X-Frame-Options).
+    fails('clickjacking-unprotected', withOnly(header('content-security-policy', 'frame-ancestors https:')));
+    fails('clickjacking-unprotected', withOnly(header('content-security-policy', 'frame-ancestors *')));
+    passes('clickjacking-unprotected', withOnly(header('content-security-policy', "frame-ancestors 'self' https://partner.example")));
+  });
+
+  test('csp-script-src-elem-precedence', () => {
+    const [policy] = parseCsp("default-src 'unsafe-inline'; script-src 'unsafe-inline'; script-src-elem 'self'", 'header');
+    expect(scriptSources(policy!)).toEqual(["'self'"]);
+    expect(allowsInlineScripts(parseCsp("default-src 'self'; script-src-elem 'self' 'unsafe-inline'", 'header'))).toBe(true);
+    expect(allowsInlineScripts(parseCsp("script-src 'unsafe-inline'; script-src-elem 'self'", 'header'))).toBe(false);
+    fails('csp-unsafe-inline', withSecurityHeader('content-security-policy', "default-src 'self'; script-src-elem 'unsafe-inline'; frame-ancestors 'self'"));
+    passes('csp-unsafe-inline', withSecurityHeader('content-security-policy', "script-src 'unsafe-inline'; script-src-elem 'self'; frame-ancestors 'self'"));
+  });
+
+  test('csp-cut-is-unknown', () => {
+    const cut = (value: string, ...others: ReturnType<typeof header>[]) => withOnly(...others, { name: 'content-security-policy', value, truncated: true });
+    // Inline scripts: the rest of the policy could hold a nonce.
+    passes('csp-unsafe-inline', cut("script-src 'self' 'unsafe-inline'", header('x-frame-options', 'DENY')));
+    // frame-ancestors could come later in the cut policy.
+    passes('clickjacking-unprotected', cut("script-src 'self'"));
+    // upgrade-insecure-requests could come later: mixed content is unknown, not failing.
+    const mixed = page({ ...cut("script-src 'self'"), security: cleanSecurity({ insecureResources: [resource('script', 'http://cdn.example/a.js', 'script'), resource('image', 'http://cdn.example/a.png')], insecureResourceTotal: 2 }) });
+    passes('mixed-content-active', mixed);
+    passes('mixed-content-passive', mixed);
+    expect(analyseSecurity(mixed).cspCut).toBe(true);
+    // A CSP header was sent: it is not missing.
+    passes('csp-missing', cut("script-src 'self'"));
+    // Found before the cut, what is there still counts.
+    const found = page({ ...cut("frame-ancestors 'none'; upgrade-insecure-requests; script-src"), security: mixed.security });
+    expect(analyseSecurity(found)).toMatchObject({ frameAncestors: true, upgradeInsecure: true });
+    // The CSP row says it was cut.
+    const row = runAudit(cut("script-src 'self'")).compliance.security.headers.find((h) => h.name === 'content-security-policy')!;
+    expect(row).toMatchObject({ state: 'unknown' });
+    expect(row.note).toMatch(/cut/i);
+  });
+
   test('csp-frame-ancestors-header-only', () => {
     expect(frameAncestors(parseCsp("frame-ancestors 'self'", 'header'))).toEqual([["'self'"]]);
     expect(frameAncestors(parseCsp("frame-ancestors 'self'", 'meta'))).toEqual([]);
@@ -133,16 +177,28 @@ describe('headers', () => {
   });
 
   test('frame-options-and-nosniff', () => {
-    expect(frameOptionsProtect(['DENY'])).toBe(true);
-    expect(frameOptionsProtect([' sameorigin '])).toBe(true);
-    expect(frameOptionsProtect(['SAMEORIGIN, SAMEORIGIN'])).toBe(true);
-    expect(frameOptionsProtect(['DENY', 'SAMEORIGIN'])).toBe(false);
-    expect(frameOptionsProtect(['ALLOW-FROM https://example.com'])).toBe(false);
-    expect(frameOptionsProtect([])).toBe(false);
     expect(isNosniff(['nosniff'])).toBe(true);
     expect(isNosniff([' NoSniff, other'])).toBe(true);
     expect(isNosniff(['sniff'])).toBe(false);
     expect(isNosniff([])).toBe(false);
+  });
+
+  test('frame-options-html-algorithm', () => {
+    // One value: DENY or SAMEORIGIN block framing (case and spaces aside); repeats are one value.
+    expect(frameOptionsProtect(['DENY'])).toBe(true);
+    expect(frameOptionsProtect([' sameorigin '])).toBe(true);
+    expect(frameOptionsProtect(['SAMEORIGIN, SAMEORIGIN'])).toBe(true);
+    // ALLOWALL, obsolete ALLOW-FROM and unknown values allow it; so does nothing.
+    expect(frameOptionsProtect(['ALLOWALL'])).toBe(false);
+    expect(frameOptionsProtect(['ALLOW-FROM https://example.com'])).toBe(false);
+    expect(frameOptionsProtect(['bogus'])).toBe(false);
+    expect(frameOptionsProtect([])).toBe(false);
+    expect(frameOptionsProtect([' , '])).toBe(false);
+    // Several distinct values block if one of them is DENY, SAMEORIGIN or ALLOWALL; else they are ignored.
+    expect(frameOptionsProtect(['DENY', 'SAMEORIGIN'])).toBe(true);
+    expect(frameOptionsProtect(['SAMEORIGIN, ALLOWALL'])).toBe(true);
+    expect(frameOptionsProtect(['ALLOWALL', 'bogus'])).toBe(true);
+    expect(frameOptionsProtect(['bogus', 'other'])).toBe(false);
   });
 
   test('referrer-policy-reading', () => {
@@ -171,7 +227,24 @@ describe('mixed content', () => {
     expect(facts.mixed.total).toBe(4);
     // An http page has no mixed content to speak of.
     const http = page({ url: 'http://example.com/', security: cleanSecurity({ insecureResources: [resource('script', 'http://cdn.example/a.js', 'script')], insecureResourceTotal: 1 }) });
-    expect(analyseSecurity(http).mixed).toEqual({ active: [], passive: [], total: 0, truncated: false });
+    expect(analyseSecurity(http).mixed).toEqual({ active: [], passive: [], upgraded: [], upgradeUnknown: false, total: 0, truncated: false });
+  });
+
+  test('mixed-content-upgraded-by-csp', () => {
+    const resources = [resource('script', 'http://cdn.example/a.js', 'script'), resource('image', 'http://cdn.example/a.png')];
+    const upgradedBy = (csp: ReturnType<typeof header>[], metaCsp: string[] = []) => page({ response: okResponse({ headers: [header('content-type', 'text/html'), ...csp] }), security: cleanSecurity({ insecureResources: resources, insecureResourceTotal: 2, metaCsp }) });
+    for (const snapshot of [upgradedBy([header('content-security-policy', "upgrade-insecure-requests; default-src 'self'")]), upgradedBy([], ['upgrade-insecure-requests'])]) {
+      passes('mixed-content-active', snapshot);
+      passes('mixed-content-passive', snapshot);
+      const facts = analyseSecurity(snapshot);
+      expect(facts.upgradeInsecure).toBe(true);
+      expect(facts.mixed).toMatchObject({ active: [], passive: [], upgraded: resources, total: 2 });
+      expect(runAudit(snapshot).compliance.security.verdict).not.toBe('insecure');
+    }
+    // A report-only policy enforces nothing.
+    const reportOnly = upgradedBy([header('content-security-policy-report-only', 'upgrade-insecure-requests')]);
+    fails('mixed-content-active', reportOnly);
+    expect(analyseSecurity(reportOnly).mixed.upgraded).toEqual([]);
   });
 
   test('loopback-hosts', () => {
@@ -352,7 +425,9 @@ describe('security report', () => {
     expect(securityVerdict({ https: true, loopback: false }, ['warning', 'info'])).toBe('attention');
     expect(securityVerdict({ https: true, loopback: false }, ['error', 'warning'])).toBe('insecure');
     expect(securityVerdict({ https: false, loopback: true }, ['info'])).toBe('local');
-    expect(securityVerdict({ https: false, loopback: true }, ['warning'])).toBe('local');
+    // Local only while nothing above info fails.
+    expect(securityVerdict({ https: false, loopback: true }, ['warning'])).toBe('attention');
+    expect(runAudit(page({ url: 'http://127.0.0.1:8080/', response: okResponse({ url: 'http://127.0.0.1:8080/', headers: [header('referrer-policy', 'unsafe-url')] }) })).compliance.security.verdict).toBe('attention');
     expect(runAudit(cleanSnapshot()).compliance.security.verdict).toBe('secure');
     expect(runAudit(page({ url: 'http://example.com/' })).compliance.security.verdict).toBe('insecure');
     expect(runAudit(withResources(resource('image', 'http://a.example/i.png'))).compliance.security.verdict).toBe('attention');
@@ -379,6 +454,10 @@ describe('security report', () => {
     expect(unknown['content-security-policy']!.state).toBe('unknown');
     expect(unknown['x-frame-options']!.state).toBe('unknown');
     expect(unknown['referrer-policy']).toMatchObject({ state: 'good', fromMeta: true, values: ['same-origin'] });
+    // frame-ancestors protects: X-Frame-Options is not called weak, whatever it says.
+    const superseded = rows(withOnly(header('content-security-policy', "frame-ancestors 'self'"), header('x-frame-options', 'ALLOWALL')));
+    expect(superseded['x-frame-options']).toMatchObject({ state: 'good' });
+    expect(superseded['x-frame-options']!.note).toMatch(/frame-ancestors/);
     // HSTS on an http page does not apply.
     expect(rows(page({ url: 'http://example.com/' }))['strict-transport-security']!.state).toBe('not-applicable');
     // No response recorded at all: unknown too.

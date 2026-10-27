@@ -150,14 +150,16 @@ test('missing-headers-show-issues-e2e', async () => {
   await expect(headerRow('strict-transport-security')).toHaveAttribute('data-state', 'not-applicable');
 });
 
-test('mixed-content-is-detected-e2e', async () => {
-  const body = `<main><h1>Mixed</h1>
+/** A page asking for http subresources of another computer (and one of this computer, which is not mixed content). */
+const MIXED_BODY = `<main><h1>Mixed</h1>
     <script src="http://mixed.invalid/app.js"></script>
     <link rel="stylesheet" href="http://mixed.invalid/site.css">
     <iframe src="http://mixed.invalid/frame" title="A frame"></iframe>
     <audio src="http://mixed.invalid/sound.mp3" preload="none"></audio>
     <img src="http://127.0.0.1:9/local.png" alt="From this computer: not mixed content"></main>`;
-  const origin = await serve({ '/': page200(body, SECURE_HEADERS) }, true);
+
+test('mixed-content-is-detected-e2e', async () => {
+  const origin = await serve({ '/': page200(MIXED_BODY, SECURE_HEADERS) }, true);
   await compliance(`${origin}/`);
   // Chromium blocks the active ones; the snapshot still reports them all.
   await expect(verdict()).toHaveAttribute('data-verdict', 'insecure');
@@ -172,6 +174,24 @@ test('mixed-content-is-detected-e2e', async () => {
   await expect(railItem('compliance')).toHaveAttribute('data-status', 'error');
   // The page-derived URLs are text, never links.
   expect(await sidebar().evaluate((root) => root.querySelectorAll('a, img, script, [style]').length)).toBe(0);
+});
+
+test('mixed-content-upgraded-by-csp-e2e', async () => {
+  // The same page, with a policy that has upgrade-insecure-requests: browsers fetch them over https.
+  const origin = await serve({ '/': page200(MIXED_BODY, { ...SECURE_HEADERS, 'Content-Security-Policy': "default-src 'self'; frame-ancestors 'self'; upgrade-insecure-requests" }) }, true);
+  await compliance(`${origin}/`);
+  await expect(verdict()).toHaveAttribute('data-verdict', 'secure');
+  expect(await securityIssues()).toEqual([]);
+  const rows = await page.getByTestId('seo-mixed-row').evaluateAll((items) => items.map((item) => [item.getAttribute('data-kind'), item.getAttribute('data-upgraded')]));
+  expect(rows).toEqual([
+    ['script', 'true'],
+    ['stylesheet', 'true'],
+    ['frame', 'true'],
+    ['media', 'true'],
+  ]);
+  await expect(page.getByTestId('seo-mixed-note')).toContainText('upgrade-insecure-requests');
+  await expect(page.getByTestId('seo-security-signal-mixed')).toHaveAttribute('data-tone', 'ok');
+  await expect(railItem('compliance')).toHaveAttribute('data-status', 'pass');
 });
 
 test('accessibility-check-reports-violations-e2e', async () => {
@@ -212,9 +232,13 @@ test('accessibility-check-reports-violations-e2e', async () => {
   // Scored: critical and serious count (once each), and Overview lists them.
   await railItem('overview').click();
   await expect.poll(async () => Number(await page.getByTestId('seo-score').textContent()), { timeout: AUDIT_WAIT }).toBeLessThan(scoreBefore);
-  await page.getByTestId('seo-show-all').click();
-  const overviewIds = await page.getByTestId('seo-issue').evaluateAll((items) => items.map((item) => item.getAttribute('data-rule-id')));
-  expect(overviewIds).toEqual(expect.arrayContaining(['a11y-critical', 'a11y-serious']));
+  // The issue list settles (the re-scored audit, then its final one): open every issue, then find both rows.
+  await expect(async () => {
+    const showAll = page.getByTestId('seo-show-all');
+    if ((await showAll.getAttribute('aria-expanded')) !== 'true') await showAll.click({ timeout: 2_000 });
+    await expect(page.locator('[data-testid="seo-issue"][data-rule-id="a11y-critical"]')).toHaveCount(1, { timeout: 1_000 });
+    await expect(page.locator('[data-testid="seo-issue"][data-rule-id="a11y-serious"]')).toHaveCount(1, { timeout: 1_000 });
+  }).toPass({ timeout: AUDIT_WAIT });
   await expect(railItem('compliance')).toHaveAttribute('data-status', 'warn');
   // The tab still shows its page, unchanged.
   expect(await run(id, 'document.querySelectorAll("button").length')).toBe(1);
@@ -278,9 +302,16 @@ test('huge-dom-run-stays-bounded-e2e', async () => {
     await imageAlt.getByTestId('seo-a11y-rule-toggle').click();
     expect(await imageAlt.getByTestId('seo-a11y-node').count()).toBeLessThanOrEqual(A11Y_LIMITS.maxNodesPerRule);
   }
-  // A run in progress is cancelled by navigation: the next page starts idle.
+  // A run in progress is cancelled by navigation: the next page starts idle, and back on the huge
+  // page (a new document) the old run's answer never lands, however long it takes.
   await compliance(`${origin}/huge`);
   await page.getByTestId('seo-a11y-run').click();
+  await expect(a11yState()).toHaveAttribute('data-state', /running|scoring|results|timed-out/);
   await compliance(`${origin}/next`);
   await expect(a11yState()).toHaveAttribute('data-state', 'idle');
+  await compliance(`${origin}/huge`);
+  await expect(a11yState()).toHaveAttribute('data-state', 'idle');
+  await page.waitForTimeout(A11Y_TIMEOUT_MS + 1_000);
+  await expect(a11yState()).toHaveAttribute('data-state', 'idle');
+  await expect(page.getByTestId('seo-a11y-results')).toHaveCount(0);
 });

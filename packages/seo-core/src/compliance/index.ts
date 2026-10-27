@@ -13,11 +13,24 @@ import type { SeoRuleId, SeoSeverity } from '@app/specs/seo-rules.spec';
 import type { A11yViolation, PageSnapshot } from '@app/specs/seo-snapshot.spec';
 import { headerValues } from '../indexability';
 import { parseUrl, withoutFragment } from '../util';
-import { allowsInlineScripts, frameAncestors, parseCsp, scriptSources, type CspPolicy } from './csp';
+import { allowsInlineScripts, frameAncestors, frameAncestorsProtect, parseCsp, scriptSources, upgradesInsecureRequests, type CspPolicy } from './csp';
 import { formatDuration, frameOptionsProtect, headerReferrerPolicy, isNosniff, metaReferrerPolicy, parseHsts } from './headers';
 import type { A11yImpactGroup, AccessibilityReport, ComplianceReport, MixedContent, SecurityFacts, SecurityHeaderRow, SecurityReport } from './model';
 
-export { allowsInlineScripts, cspDirective, frameAncestors, parseCsp, parseCspPolicy, scriptSources, sourcesAllowInline, type CspDirective, type CspPolicy, type CspSource } from './csp';
+export {
+  allowsInlineScripts,
+  cspDirective,
+  frameAncestors,
+  frameAncestorsProtect,
+  parseCsp,
+  parseCspPolicy,
+  scriptSources,
+  sourcesAllowInline,
+  upgradesInsecureRequests,
+  type CspDirective,
+  type CspPolicy,
+  type CspSource,
+} from './csp';
 export { formatDuration, frameOptionsProtect, headerReferrerPolicy, isNosniff, metaReferrerPolicy, parseHsts, type Hsts } from './headers';
 export type { A11yImpactGroup, AccessibilityReport, ComplianceReport, MixedContent, SecurityFacts, SecurityHeaderRow, SecurityReport } from './model';
 
@@ -40,13 +53,20 @@ export function isLoopbackHost(hostname: string): boolean {
   return octets.length === 4 && octets[0] === '127' && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
 }
 
-/** The snapshot's http subresources split into active and passive (only on an https page). */
-export function mixedContent(s: PageSnapshot): MixedContent {
+/**
+ * The snapshot's http subresources (only on an https page): split into active and passive, or all
+ * `upgraded` when an enforced policy has `upgrade-insecure-requests` (`upgrade`); `upgradeUnknown`
+ * when a cut CSP header might have it (`cspCut`, and none was found).
+ */
+export function mixedContent(s: PageSnapshot, upgrade = false, cspCut = false): MixedContent {
   const https = parseUrl(s.url)?.protocol === 'https:';
   const list = https ? s.security.insecureResources : [];
+  const kept = upgrade ? [] : list;
   return {
-    active: list.filter((resource) => isActiveKind(resource.kind)),
-    passive: list.filter((resource) => !isActiveKind(resource.kind)),
+    active: kept.filter((resource) => isActiveKind(resource.kind)),
+    passive: kept.filter((resource) => !isActiveKind(resource.kind)),
+    upgraded: upgrade ? list : [],
+    upgradeUnknown: !upgrade && cspCut && list.length > 0,
     total: https ? s.security.insecureResourceTotal : 0,
     truncated: https && s.security.resourcesTruncated,
   };
@@ -62,6 +82,9 @@ export function analyseSecurity(s: PageSnapshot): SecurityFacts {
   const headersKnown = s.response?.headersAvailable === true;
   const hstsValue = headerValues(s, 'strict-transport-security')[0];
   const cspPolicies: CspPolicy[] = [...headerValues(s, 'content-security-policy').flatMap((value) => parseCsp(value, 'header')), ...s.security.metaCsp.flatMap((value) => parseCsp(value, 'meta'))];
+  // A CSP header main had to cut (`CSP_CUT_IS_UNKNOWN`): what it might say further on is unknown.
+  const cspCut = headersKnown && s.response!.headers.some((h) => h.name === 'content-security-policy' && h.truncated === true);
+  const upgradeInsecure = upgradesInsecureRequests(cspPolicies);
   const meta = metaReferrerPolicy(s.security.metaReferrer);
   const header = headerReferrerPolicy(headerValues(s, 'referrer-policy'));
   const result: SecurityFacts = {
@@ -72,13 +95,15 @@ export function analyseSecurity(s: PageSnapshot): SecurityFacts {
     responseSource: s.response?.source ?? null,
     hsts: hstsValue === undefined ? null : parseHsts(hstsValue),
     cspPolicies,
-    inlineScriptsAllowed: allowsInlineScripts(cspPolicies),
-    frameAncestors: frameAncestors(cspPolicies).length > 0,
+    inlineScriptsAllowed: !cspCut && allowsInlineScripts(cspPolicies),
+    frameAncestors: frameAncestors(cspPolicies).some(frameAncestorsProtect),
+    upgradeInsecure,
+    cspCut,
     frameOptionsProtect: frameOptionsProtect(headerValues(s, 'x-frame-options')),
     nosniff: isNosniff(headerValues(s, 'x-content-type-options')),
     referrerPolicy: meta ?? header,
     referrerFrom: meta !== null ? 'meta' : header !== null ? 'header' : null,
-    mixed: mixedContent(s),
+    mixed: mixedContent(s, upgradeInsecure, cspCut),
   };
   facts.set(s, result);
   return result;
@@ -111,6 +136,7 @@ function headerRows(s: PageSnapshot, f: SecurityFacts, failing: ReadonlySet<SeoR
       case 'strict-transport-security':
         return { ...base, values: shown, state: !hstsActive(f) ? 'weak' : failing.has('hsts-short-max-age') ? 'weak' : 'good', note: f.hsts ? hstsNote(f) : 'Not valid: browsers ignore it.' };
       case 'content-security-policy': {
+        if (f.cspCut && !fromMeta) return { ...base, values: shown, state: 'unknown', note: 'Cut: the policy is longer than frost keeps (16 KB), so what it says about inline scripts, framing and upgrades is unknown.' };
         const inline = failing.has('csp-unsafe-inline');
         const scripts = f.cspPolicies.some((policy) => scriptSources(policy) !== null);
         const note = inline ? "Allows inline scripts ('unsafe-inline')" : scripts ? 'Restricts scripts' : 'Does not restrict scripts';
@@ -119,7 +145,9 @@ function headerRows(s: PageSnapshot, f: SecurityFacts, failing: ReadonlySet<SeoR
       case 'x-content-type-options':
         return { ...base, values: shown, state: f.nosniff ? 'good' : 'weak', note: f.nosniff ? null : 'Only nosniff has an effect.' };
       case 'x-frame-options':
-        return { ...base, values: shown, state: f.frameOptionsProtect ? 'good' : 'weak', note: f.frameOptionsProtect ? null : 'Only DENY or SAMEORIGIN protect the page.' };
+        // A Content-Security-Policy frame-ancestors makes browsers ignore X-Frame-Options.
+        if (f.frameAncestors) return { ...base, values: shown, state: 'good', note: 'Ignored by browsers: CSP frame-ancestors protects the page.' };
+        return { ...base, values: shown, state: f.frameOptionsProtect ? 'good' : 'weak', note: f.frameOptionsProtect ? null : 'Does not block framing (DENY or SAMEORIGIN would).' };
       case 'referrer-policy': {
         const unsafe = f.referrerPolicy !== null && (UNSAFE_REFERRER_POLICIES as readonly string[]).includes(f.referrerPolicy);
         const plain = shown.length === 1 && shown[0]!.trim().toLowerCase() === f.referrerPolicy;
@@ -137,8 +165,9 @@ function headerRows(s: PageSnapshot, f: SecurityFacts, failing: ReadonlySet<SeoR
 /** The security card's verdict (`SECURITY_VERDICTS`) from the failing security rules' severities. */
 export function securityVerdict(f: Pick<SecurityFacts, 'https' | 'loopback'>, severities: readonly SeoSeverity[]): SecurityVerdict {
   if (severities.includes('error')) return 'insecure';
-  if (!f.https && f.loopback) return 'local';
   if (severities.includes('warning')) return 'attention';
+  // Local only while nothing above info fails.
+  if (!f.https && f.loopback) return 'local';
   return 'secure';
 }
 
@@ -168,6 +197,7 @@ export function accessibilityReport(s: PageSnapshot): AccessibilityReport {
     passes: result.passes,
     incomplete: result.incomplete,
     inapplicable: result.inapplicable,
+    partial: result.partial,
   };
 }
 

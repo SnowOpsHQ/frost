@@ -1,4 +1,4 @@
-import type { SecurityLimits } from '@app/specs/seo-compliance.spec';
+import { META_REFERRER_VALUES, type SecurityLimits } from '@app/specs/seo-compliance.spec';
 
 // The extractor's security read (spec `seo-compliance.spec.ts`, `SECURITY_LIMITS`,
 // `INSECURE_RESOURCE_KINDS`; `seo-compliance.schema.ts`, `PageSecuritySchema`; acceptance
@@ -31,7 +31,11 @@ export interface SecurityDocument {
 /** The elements that can load a subresource (by attribute), in one selector. */
 const RESOURCE_SELECTOR = 'script[src],link[href],img,input[src],iframe[src],frame[src],video,audio,source[src],track[src],object[data],embed[src]';
 
-export function extractSecurity(document: SecurityDocument, L: SecurityLimits, selector: string): unknown {
+/**
+ * `referrers`: the `<meta name="referrer">` values that set a policy (`META_REFERRER_VALUES`); a tag
+ * with any other value is ignored, so the last valid one is kept (without the list: the last one).
+ */
+export function extractSecurity(document: SecurityDocument, L: SecurityLimits, selector: string, referrers?: readonly string[]): unknown {
   const deadline = performance.now() + L.budgetMs;
   const cut = (s: string, max: number): string => {
     if (s.length <= max) return s;
@@ -54,7 +58,7 @@ export function extractSecurity(document: SecurityDocument, L: SecurityLimits, s
     if (lower(meta.getAttribute('http-equiv')) === 'content-security-policy') {
       if (metaCsp.length < L.maxMetaCsp) metaCsp.push(cut(content, L.maxMetaChars));
     } else if (lower(meta.getAttribute('name')) === 'referrer') {
-      metaReferrer = cut(content, L.maxMetaChars);
+      if (!referrers || referrers.includes(lower(content))) metaReferrer = cut(content, L.maxMetaChars);
     }
   }
 
@@ -166,7 +170,7 @@ export function extractSecurity(document: SecurityDocument, L: SecurityLimits, s
 
 /** The call the extractor's script makes (its answer is the snapshot's `security`). */
 export function securityCall(limits: SecurityLimits): string {
-  return `(${extractSecurity.toString()})(document, ${JSON.stringify(limits)}, ${JSON.stringify(RESOURCE_SELECTOR)})`;
+  return `(${extractSecurity.toString()})(document, ${JSON.stringify(limits)}, ${JSON.stringify(RESOURCE_SELECTOR)}, ${JSON.stringify(META_REFERRER_VALUES)})`;
 }
 
 export { RESOURCE_SELECTOR };
