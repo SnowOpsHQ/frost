@@ -19,7 +19,10 @@ import { runHighlight, watchHighlight } from './seo/highlight';
 import { createResponseRecorder } from './seo/responses';
 import { createRobotsFetcher, netHop, pendingRobots, type RobotsFetcher } from './seo/robots-fetch';
 import type { ContextSource } from './seo/auditor';
+import { contextSource, knownInput, laterInput } from './seo/context-source';
 import { observeMainFrames } from './browser/web-request';
+import { runVitals, withTimeout } from './seo/vitals';
+import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
@@ -116,23 +119,26 @@ function start(): void {
   // analysis worker beside the extractor's answer, where they are validated and read.
   const responses = createResponseRecorder();
   let robots: RobotsFetcher | null = null;
-  // The audit never waits for robots.txt: it is analysed with what is known now (robots.txt still
-  // `pending` the first time an origin is seen), and again once the fetch settles.
+  // Page speed (specs/seo-speed.feature.md): the collector runs in the tab's own isolated speed world
+  // (web-vitals and frost's observers, never the main world); its answer is validated and summarised
+  // in the analysis worker. The audit takes one measurement beside the snapshot (the health score's
+  // performance rules); the Speed panel polls `seo.measureSpeed` for live values.
+  const measureForAudit = (contents: WebContents): Promise<unknown> =>
+    withTimeout(
+      runVitals(contents).catch(() => null),
+      SPEED_MEASURE_TIMEOUT_MS,
+      null,
+    );
+  // The audit never waits for a slow input: it is analysed with what is known now (robots.txt still
+  // `pending` the first time an origin is seen, no speed measurement yet), and again once every
+  // input has settled (seo/context-source.ts).
   const collectContext = (contents: WebContents): ContextSource => {
     const url = contents.getURL();
-    const response = responses.responseFor(contents.id, url);
-    if (!robots) return { now: () => ({ context: { response, robots: null }, final: true }), later: null };
-    const fetcher = robots;
-    const fetching = fetcher.get(url);
-    let settled = fetcher.peek(url);
-    void fetching.then((fetched) => (settled = fetched));
-    return {
-      now: () => {
-        if (settled !== undefined) return { context: { response, robots: settled }, final: true };
-        return { context: { response, robots: pendingRobots(url) }, final: false };
-      },
-      later: fetching.then((fetched) => ({ response, robots: fetched })),
-    };
+    return contextSource({
+      response: knownInput(responses.responseFor(contents.id, url)),
+      robots: robots ? laterInput(robots.get(url), pendingRobots(url), robots.peek(url)) : knownInput(null),
+      performance: laterInput(measureForAudit(contents)),
+    });
   };
 
   app.on('web-contents-created', (_event, contents) => {
@@ -146,6 +152,7 @@ function start(): void {
     contextMenu: showContextMenu,
     seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
     highlight: { paint: runHighlight, ended: watchHighlight },
+    speed: { measure: runVitals, analyse: (raw) => analyzer.analyseSpeed(raw) },
     clipboard,
   });
 

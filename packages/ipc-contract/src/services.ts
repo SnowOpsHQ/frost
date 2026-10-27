@@ -1,4 +1,4 @@
-import type { LinkFilter, SeoAuditResponse } from '@app/seo-core';
+import type { LinkFilter, SeoAuditResponse, SpeedResponse } from '@app/seo-core';
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
@@ -101,6 +101,13 @@ export interface SeoService {
    * otherwise (`seo-schema.feature.md`). `false`, nothing written, for anything else.
    */
   copySchemaJson(tabId: number, audit: SeoAuditRef, block: number): boolean;
+  /**
+   * Measures the tab's page speed (`seo-speed.spec.ts`, `SPEED_STATUSES`): `ready` with the report of
+   * exactly its current URL, `pending` while it cannot answer yet, `unavailable` with a reason (only
+   * the active tab is measured; `no-tab` for an id that names no open tab). At most one collection
+   * per tab runs, none sooner than `SPEED_MIN_INTERVAL_MS` after the last. Never rejects.
+   */
+  measureSpeed(tabId: number): Promise<SpeedResponse>;
 }
 
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */

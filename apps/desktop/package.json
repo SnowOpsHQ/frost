@@ -23,7 +23,8 @@
     "@app/seo-core": "workspace:*",
     "@app/specs": "workspace:*",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "web-vitals": "^6.2.3"
   },
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",

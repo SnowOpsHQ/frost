@@ -1,3 +1,4 @@
+import { MAX_BLOCKING_SCRIPTS } from '@app/specs/seo-speed.spec';
 import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 
 // The SEO extractor (spec `seo-snapshot.spec.ts`, `seo-limits.spec.ts`; acceptance
@@ -102,6 +103,7 @@ export function extractPage(
   robotsNames: readonly string[],
   socialTags: readonly string[],
   socialUrlTags: readonly string[],
+  maxBlockingScripts = 20,
 ): unknown {
   const started = performance.now();
   const deadline = started + budgetMs;
@@ -245,6 +247,23 @@ export function extractPage(
     const href = cut((el.getAttribute('href') ?? '').trim(), L.maxUrlChars);
     return { hreflang: cut((el.getAttribute('hreflang') ?? '').trim(), L.maxHreflangChars), href, resolved: resolve(href)?.href ?? null };
   });
+  // Render-blocking scripts in the head (Task 5, `BlockingScriptsSchema`): classic, not async (the
+  // property: a script-inserted one is async by default), not defer, not nomodule.
+  const blockingUrls: string[] = [];
+  let blockingTotal = 0;
+  const headScripts = document.querySelectorAll('head script[src]');
+  for (let i = 0, n = headScripts.length; i < n && !late(); i++) {
+    const el = headScripts[i];
+    if (!el) continue;
+    const type = (el.getAttribute('type') ?? '').trim().toLowerCase();
+    const classic = type === '' || /^(text|application)\/(x-)?(java|ecma|j)script$/.test(type);
+    if (!classic || (el as { async?: unknown }).async === true || el.hasAttribute('async') || el.hasAttribute('defer') || el.hasAttribute('nomodule')) continue;
+    blockingTotal += 1;
+    if (blockingUrls.length < maxBlockingScripts) {
+      const src = cut((el.getAttribute('src') ?? '').trim(), L.maxUrlChars);
+      blockingUrls.push(resolve(src)?.href ?? src);
+    }
+  }
   const ogElement = document.querySelectorAll('meta[property="og:url" i]')[0];
   const ogContent = ogElement ? ogElement.getAttribute('content') : null;
   const ogUrl = ogContent === null ? null : cut(ogContent.trim(), L.maxUrlChars);
@@ -623,6 +642,7 @@ export function extractPage(
     rdfaTotal,
     hreflang,
     hreflangTotal,
+    blockingScripts: { urls: blockingUrls, total: total(blockingTotal) },
   };
 }
 
@@ -630,7 +650,7 @@ export function extractPage(
  * The script run in the isolated world: `extractPage` called on its `document` with the spec's
  * limits, deadline, robots meta names and social tags.
  */
-export const EXTRACTOR_SCRIPT = `(${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)})`;
+export const EXTRACTOR_SCRIPT = `(${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)}, ${MAX_BLOCKING_SCRIPTS})`;
 
 /** The part of a tab's WebContents the extractor needs. */
 export interface ExtractTarget {

@@ -34,14 +34,17 @@ Indexability panel). Phase 2 Task 4. Each line maps to one named test.
   have nothing to read and pass). When the URL changed in place (`pushState`) the record is
   `in-page`: no response of its own, status unknown.
 - **The record travels with the snapshot; the audit never waits for robots.txt.** The auditor
-  starts collecting the page's context (the record and the robots.txt fetch) with the extraction
+  starts collecting the page's context (the record, the robots.txt fetch and, Task 5, the speed
+  measurement; each a named input, `seo/context-source.ts`) with the extraction
   and, once the extraction answered, posts what is known by then to the analysis worker beside the
   extractor's answer. A robots.txt still being fetched (the first audit on an origin) goes as
   `pending`: every other panel is ready at once, the robots.txt card says "Fetching robots.txt…" and
   the verdict is `pending` (unless another reason already makes the page not indexable). When the
-  fetch settles (within `CONTEXT_TIMEOUT_MS`), the same extraction is analysed again with it, if that
-  run is still the tab's latest and the tab still shows its URL; the new audit replaces the first and
-  bumps the tab's `auditVersion`. The worker validates the context with `PageContextSchema` (strict,
+  fetch settles, and every other input with it (within `CONTEXT_TIMEOUT_MS`), the same extraction
+  is analysed again, once, if that run is still the tab's latest and the tab still shows its URL; the
+  new audit replaces the first and bumps the tab's `auditVersion`. The first audit is shown at once
+  only when no ready audit of the URL is on screen: a reload or a re-score keeps the shown one until
+  the final one (or until the final context is given up on), so the score does not flicker. The worker validates the context with `PageContextSchema` (strict,
   every cap, the header names an enum), so a bad context is `invalid-snapshot` like a bad snapshot;
   the snapshot schema stays strict, so the page can never supply a context of its own. The audit's
   rules read `snapshot + context`.

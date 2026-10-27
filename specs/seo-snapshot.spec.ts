@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SOURCES, ROBOTS_FETCH_LIMITS, ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
 import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
+import { BlockingScriptsSchema, type PerformanceContext } from './seo-speed.schema.spec';
 import { isWebUrl } from './web-url.spec';
 
 export * from './seo-limits.spec';
@@ -280,6 +281,8 @@ export const PageSnapshotSchema = z
     rdfaTotal: count,
     hreflang: z.array(HreflangLinkSchema).max(L.maxHreflang),
     hreflangTotal: count,
+    // Task 5 (`seo-speed.schema.spec.ts`): the head's render-blocking scripts.
+    blockingScripts: BlockingScriptsSchema.optional(),
   })
   .refine(
     (s) =>
@@ -366,8 +369,8 @@ export type HreflangLink = z.infer<typeof HreflangLinkSchema>;
 /** Nothing collected (`PageContext` with neither part). */
 export const NO_PAGE_CONTEXT: PageContext = { response: null, robots: null };
 
-/** What the rules read: the extractor's snapshot, and what main collected beside it. */
-export type PageSnapshot = ExtractedSnapshot & PageContext;
+/** What the rules read: the extractor's snapshot, and what main collected beside it (the speed measurement too, Task 5). */
+export type PageSnapshot = ExtractedSnapshot & PageContext & PerformanceContext;
 export type PageLink = z.infer<typeof LinkSchema>;
 export type PageImage = z.infer<typeof ImageSchema>;
 export type PageHeading = z.infer<typeof HeadingSchema>;

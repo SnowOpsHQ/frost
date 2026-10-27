@@ -1,5 +1,6 @@
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { ROBOTS_FETCH_LIMITS } from '@app/specs/seo-indexability.spec';
+import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
 import { AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
@@ -11,11 +12,14 @@ import type { AnalysisResult } from './analysis';
 // `seo-sidebar.feature.md`, Auditor). It keeps the latest audit of each tab, keyed by the URL it
 // was taken for without its `#fragment`, and audits only the **active** tab. The extractor's answer
 // is never parsed or audited here, on the main thread: it goes to `analyse` (the analysis worker,
-// `analysis.ts`) together with what `context` knows by then (the tab's response metadata and its
-// origin's robots.txt, `seo-indexability.feature.md`). The audit never waits for robots.txt: while
-// it is still being fetched the page is analysed without it, and analysed again once it settles
-// (within `CONTEXT_TIMEOUT_MS`), if that run is still the tab's latest and the tab still shows its
-// URL. The analysis answers the audit or why there is none: `did-finish-load` and
+// `analysis.ts`) together with what `context` knows by then (the tab's response metadata, its
+// origin's robots.txt, `seo-indexability.feature.md`, and its speed measurement, `seo-speed.feature.md`).
+// The audit never waits for a slow input: while one is still on its way the page is analysed with a
+// stand-in for it (robots.txt `pending`, no measurement), and analysed again once every input has
+// settled (within `CONTEXT_TIMEOUT_MS`), if that run is still the tab's latest and the tab still
+// shows its URL. That first, provisional audit is shown only when no ready audit of the URL is (a
+// reload or a re-score keeps the one on screen until the final one, so the score does not flicker).
+// The analysis answers the audit or why there is none: `did-finish-load` and
 // main-frame `did-navigate-in-page` (SPA routes; a fragment-only change is ignored) schedule a run
 // after `AUDIT_DEBOUNCE_MS` of quiet, or at most `AUDIT_MAX_WAIT_MS` after the first event of a
 // burst; a background tab's events only mark its audit stale, and it is audited when it is shown.
@@ -38,9 +42,9 @@ export interface TabAuditsOptions {
    */
   readonly analyse: (raw: unknown, context?: unknown) => Promise<AnalysisResult>;
   /**
-   * What main collects about the page beside the extractor (main: the tab's recorded response and
-   * its origin's robots.txt, a `PageContext`), started with each extraction. Without it nothing is
-   * collected.
+   * What main collects about the page beside the extractor (main: the tab's recorded response, its
+   * origin's robots.txt and the speed measurement, a `PageContext`; `context-source.ts`), started
+   * with each extraction. Without it nothing is collected.
    */
   readonly context?: (contents: TabContents) => ContextSource;
   readonly contextTimeoutMs?: number;
@@ -51,11 +55,12 @@ export interface TabAuditsOptions {
 
 /** What `context` collected for one run (`TabAuditsOptions.context`). */
 export interface ContextSource {
-  /** What is known once the extraction answered: the context, and whether it is final (robots.txt settled). */
+  /** What is known once the extraction answered: the context, and whether it is final (every input settled). */
   now(): { readonly context: unknown; readonly final: boolean };
   /**
-   * The final context, when `now()` is not final: it settles once robots.txt is fetched (it should
-   * within `ROBOTS_FETCH_LIMITS.timeoutMs`; the auditor gives up after `contextTimeoutMs`).
+   * The final context, when `now()` is not final: it settles once every input has (robots.txt within
+   * `ROBOTS_FETCH_LIMITS.timeoutMs`, the measurement within `SPEED_MEASURE_TIMEOUT_MS`; the auditor
+   * gives up after `contextTimeoutMs`).
    */
   readonly later: Promise<unknown> | null;
 }
@@ -113,9 +118,10 @@ type Auditable = { readonly ok: true; readonly contents: TabContents; readonly u
 
 /**
  * The longest the auditor waits for a run's final context (`ContextSource.later`) after its first
- * analysis: the robots.txt fetch's own deadline and a margin. Past it the first audit stays.
+ * analysis: the slowest input's own deadline (robots.txt, the speed measurement) and a margin. Past
+ * it the first audit stays.
  */
-export const CONTEXT_TIMEOUT_MS = ROBOTS_FETCH_LIMITS.timeoutMs + 1_000;
+export const CONTEXT_TIMEOUT_MS = Math.max(ROBOTS_FETCH_LIMITS.timeoutMs, SPEED_MEASURE_TIMEOUT_MS) + 1_000;
 
 /** `url` without its `#fragment`. */
 export function withoutFragment(url: string): string {
@@ -205,8 +211,10 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
 
   /**
    * The extraction of run `run` (for `key`) answered: an error settles now; an answer is analysed in
-   * the worker with what the run's context knows now, and again with the final context once it
-   * settles (robots.txt), if the run is still current.
+   * the worker with what the run's context knows now, and again with the final context once every
+   * input has settled, if the run is still current. The first answer is provisional when the context
+   * was not final: it is shown at once unless a ready audit of `key` already is (that one stays until
+   * the final answer, or until the final context is given up on).
    */
   const extracted = (tab: Tab, entry: Entry, key: string, run: number, result: unknown, source: ContextSource | undefined): void => {
     if (!stillAt(tab, entry, key)) return;
@@ -218,6 +226,9 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
     clearTimeout(entry.deadline);
     entry.deadline = undefined;
     const first = known(source);
+    const later = first.final ? null : (source?.later ?? null);
+    // A ready audit of this URL is on screen (a reload, a re-score): a provisional answer does not replace it.
+    const holding = later !== null && entry.state.status === 'ready';
     void analyseWith(result, first.context).then((answer) => {
       // A newer run, a closed tab or a page that moved on: dropped.
       if (!current(tab, entry, key, run)) return;
@@ -227,21 +238,29 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
       }
       // An audit of another URL (the document changed under the run): dropped.
       if (withoutFragment(answer.audit.url) !== key) return;
-      settle(entry, { status: 'ready', audit: answer.audit });
-      if (!first.final && source?.later) refine(tab, entry, key, run, result, source.later);
+      if (!holding) settle(entry, { status: 'ready', audit: answer.audit });
+      if (later) refine(tab, entry, key, run, result, later, holding ? answer.audit : null);
     });
   };
 
-  /** Analyses run `run` again once its final context settles (at most `contextTimeoutMs` from now), if it is still current. */
-  const refine = (tab: Tab, entry: Entry, key: string, run: number, result: unknown, later: Promise<unknown>): void => {
+  /**
+   * Analyses run `run` again once its final context settles (at most `contextTimeoutMs` from now), if
+   * it is still current. `held` is the provisional audit not shown yet: it is shown if there is no
+   * better answer (the final context never came, or its analysis failed).
+   */
+  const refine = (tab: Tab, entry: Entry, key: string, run: number, result: unknown, later: Promise<unknown>, held: SeoAudit | null): void => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const gaveUp = {};
     const settled = Promise.race([later.catch(() => gaveUp), new Promise<unknown>((resolve) => (timer = setTimeout(() => resolve(gaveUp), contextTimeoutMs)))]).finally(() => clearTimeout(timer));
+    const fallBack = (): void => {
+      if (held && current(tab, entry, key, run) && entry.state.status === 'ready') settle(entry, { status: 'ready', audit: held });
+    };
     void settled.then((context) => {
-      if (context === gaveUp || !current(tab, entry, key, run) || entry.state.status !== 'ready') return;
+      if (context === gaveUp) return fallBack();
+      if (!current(tab, entry, key, run) || entry.state.status !== 'ready') return;
       void analyseWith(result, context).then((answer) => {
         // Only a better answer for the same URL replaces the first one.
-        if (!answer.ok || !current(tab, entry, key, run) || withoutFragment(answer.audit.url) !== key) return;
+        if (!answer.ok || !current(tab, entry, key, run) || withoutFragment(answer.audit.url) !== key) return fallBack();
         settle(entry, { status: 'ready', audit: answer.audit });
       });
     });

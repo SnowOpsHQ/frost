@@ -185,7 +185,19 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
 - Resource summary from the Performance API: requests and transfer bytes by type, and the largest
   resources.
 - Thresholds (good / needs improvement / poor) as spec constants, with rules feeding the health score.
-- [ ] commit `feat(seo): page speed panel`
+- Decisions (`specs/seo-speed.feature.md`, `specs/seo-speed.spec.ts`, `specs/seo-speed.schema.spec.ts`):
+  web-vitals' IIFE is bundled into main as a string and injected into an isolated world of its own
+  (`SPEED_WORLD_ID`), wrapped so `webVitals` is a local; it runs unchanged there (verified in
+  Electron 45), with `reportAllChanges` and buffered observers, beside a buffered `resource` observer.
+  The collector caps everything in the page; the analysis worker validates (`PerformanceMeasurementSchema`)
+  and summarises it. The audit takes one measurement beside the snapshot (the health score and rail
+  dot), without waiting for it: like robots.txt it is an input that may arrive later, and the audit is
+  analysed again once every input has settled; the open Speed panel polls `seo.measureSpeed` (one at a time, every second, paused after 120,
+  ended by navigation, tab switch or leaving the panel). 15 `performance` rules: each vital poor
+  (warning) or needs improvement (info) on the published Core Web Vitals bands, page weight, request
+  count, DOM size, render-blocking head scripts (from the snapshot) and uncompressed text. Lab data,
+  said in the panel and every rule.
+- [x] commit `feat(seo): page speed panel`
 
 ### Task 6: Compliance panel
 

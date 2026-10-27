@@ -74,7 +74,7 @@ function CategoryGrid({ audit }: { readonly audit: SeoAudit }) {
       </header>
       <ul className="seo-categories" data-testid="seo-categories">
         {rows.map((row) => (
-          <li key={row.category} className="seo-category" data-status={row.worst ?? 'pass'} data-category={row.category}>
+          <li key={row.category} className="seo-category" data-status={row.worst ?? 'pass'} data-category={row.category} data-count={row.findings}>
             <span className="seo-category-dot" aria-hidden="true" />
             <span className="seo-category-name">{SEO_CATEGORY_LABELS[row.category]}</span>
             {row.worst ? <span className="seo-category-state">{plural(row.findings, ['issue', 'issues'])}</span> : <span className="visually-hidden">passed</span>}
