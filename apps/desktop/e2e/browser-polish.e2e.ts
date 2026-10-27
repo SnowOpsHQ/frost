@@ -135,10 +135,11 @@ test('find-counts-steps-and-clears', async () => {
   await press(id, 'F', ['mod']);
   await expect(findBar()).toBeVisible();
   await expect(findInput()).toBeFocused();
-  // The bar is a row above the page area: the view starts below it.
+  // The bar is a row above the page area: the view moves below it (once the chrome reported the
+  // new page area to main, which lays the view out: asynchronously).
   const bar = (await findBar().boundingBox())!;
-  const view = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children[0]!.getBounds());
-  expect(view.y).toBeGreaterThanOrEqual(Math.round(bar.y + bar.height) - 1);
+  const viewTop = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children[0]!.getBounds().y);
+  await expect.poll(viewTop).toBeGreaterThanOrEqual(Math.round(bar.y + bar.height) - 1);
 
   await findInput().fill('tea');
   await expect(findCount()).toHaveText('1 of 3');
@@ -187,6 +188,8 @@ test('find-shortcuts-beat-a-greedy-page', async () => {
   await go(`${site.origin}/greedy`);
   const greedy = await contentsIdAt(`${site.origin}/greedy`);
   await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), greedy);
+  // Its URL commits before its script runs: wait for the key listener, or the control key is lost.
+  await expect.poll(() => run(greedy, 'Array.isArray(window.seen)')).toBe(true);
   // Control: the page really does swallow ordinary keys.
   await press(greedy, 'A');
   await expect.poll(() => pageSaw(greedy)).toEqual(['a']);
@@ -217,10 +220,13 @@ test('reopen-closed-tab-restores-url-and-history', async () => {
   await expect.poll(async () => (await app.evaluate(({ webContents }) => webContents.getAllWebContents().map((c) => c.getURL()))).some((u) => u.endsWith('/two'))).toBe(false);
 
   await press('chrome', 'T', ['mod', 'shift']);
-  await contentsIdAt(`${site.origin}/two`);
+  const reopened = await contentsIdAt(`${site.origin}/two`);
   await expect(strip()).toHaveCount(2);
   await expect(activeTab()).toHaveAttribute('title', 'Plain /two');
-  // Its back / forward history came back with it.
+  // Its back / forward history came back with it. Back once the restored page has loaded, as a
+  // person would: on macOS, Back within the first few milliseconds of the history restore's own
+  // load can crash the renderer (a second later, mid-load, it does not).
+  await expect.poll(() => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.isLoading(), reopened)).toBe(false);
   await expect(page.getByTestId('back')).toBeEnabled();
   await page.getByTestId('back').click();
   await contentsIdAt(`${site.origin}/one`);
