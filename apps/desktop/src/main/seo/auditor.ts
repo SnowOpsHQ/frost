@@ -1,7 +1,8 @@
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { ROBOTS_FETCH_LIMITS } from '@app/specs/seo-indexability.spec';
+import { SERVED_FETCH_LIMITS, SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
-import { AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
+import { ANALYSIS_TIMEOUT_MS, AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl } from '../browser/address';
@@ -122,10 +123,10 @@ type Auditable = { readonly ok: true; readonly contents: TabContents; readonly u
 
 /**
  * The longest the auditor waits for a run's final context (`ContextSource.later`) after its first
- * analysis: the slowest input's own deadline (robots.txt, the speed measurement) and a margin. Past
- * it the first audit stays.
+ * analysis: the slowest input's own deadline (robots.txt, the speed measurement, the served HTML's
+ * fetch and its parse in the worker, Phase 2.5 Task 2) and a margin. Past it the first audit stays.
  */
-export const CONTEXT_TIMEOUT_MS = Math.max(ROBOTS_FETCH_LIMITS.timeoutMs, SPEED_MEASURE_TIMEOUT_MS) + 1_000;
+export const CONTEXT_TIMEOUT_MS = Math.max(ROBOTS_FETCH_LIMITS.timeoutMs, SPEED_MEASURE_TIMEOUT_MS, SERVED_FETCH_LIMITS.timeoutMs + SERVED_PARSE_LIMITS.timeoutMs) + 1_000;
 
 /** `url` without its `#fragment`. */
 export function withoutFragment(url: string): string {

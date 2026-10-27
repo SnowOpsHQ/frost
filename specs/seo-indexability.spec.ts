@@ -94,7 +94,7 @@ export type ResponseSource = (typeof RESPONSE_SOURCES)[number];
  *   `too-many-redirects`; a non-`http(s)` or unparsable `Location` is `bad-redirect`, a 3xx with no
  *   `Location` `no-location`, neither ever requested;
  * - private addresses: a redirect hop to a private host (`isPrivateHost` in
- *   `apps/desktop/src/main/seo/robots-fetch.ts`: `localhost` and `*.localhost`, `*.local`, and IP
+ *   `apps/desktop/src/main/seo/fetcher.ts`, the bounded fetcher of `fetcher.spec.ts` since Phase 2.5: `localhost` and `*.localhost`, `*.local`, and IP
  *   literals in loopback, RFC 1918, link-local, `0.0.0.0/8`, IPv6 loopback, unique-local
  *   `fc00::/7`, link-local `fe80::/10` and IPv4-mapped forms of those) is never requested
  *   (`private-redirect`), unless the page's own origin is itself a private host (a dev server).
@@ -247,9 +247,10 @@ export type HreflangSource = (typeof HREFLANG_SOURCES)[number];
 
 /**
  * Reciprocity (each alternate listing this page back) needs fetching every alternate: out of scope
- * for Phase 2. The panel says so.
+ * for Phase 2, and checked on request since Phase 2.5 Task 7 (`seo-checks.spec.ts`,
+ * `HREFLANG_CHECK_LIMITS`): the panel offers the check instead of saying it is not done.
  */
-export const HREFLANG_RECIPROCITY_CHECKED = false;
+export const HREFLANG_RECIPROCITY_CHECKED = true;
 
 // ---- Verdict --------------------------------------------------------------------------------------
 

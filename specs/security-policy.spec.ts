@@ -118,7 +118,15 @@ export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
  * exits with code `1`. Unpackaged runs (`electron-forge start`, the Playwright e2e harness, which
  * passes `--remote-debugging-port=0` / `--inspect`) are unaffected.
  */
-export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe'] as const;
+/*
+ * `host-resolver-rules` too (Phase 2.5 Task 4 review): it lets whoever starts the app point any
+ * host name at any address, which would defeat the "Open in" private-address check
+ * (`command-palette.spec.ts`, `browser.openTool`) and the robots.txt fetcher's private-host refusal.
+ * The e2e suite, unpackaged, uses it to give a loopback server a public-looking name.
+ * `frost-e2e-public-hosts` too (Phase 2.5 Task 2 review): the e2e seam that exempts those names
+ * from the bounded fetcher's DNS check (`E2E_PUBLIC_HOSTS_SWITCH`, `fetcher.spec.ts`).
+ */
+export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts'] as const;
 export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;
 
 /**

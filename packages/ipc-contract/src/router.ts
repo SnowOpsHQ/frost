@@ -10,8 +10,15 @@ import {
   WatchInputSchema,
   type BrowserState,
 } from '@app/specs/browser.spec';
+import { OpenToolInputSchema, PageCommandInputSchema, SeoCopyValueInputSchema } from '@app/specs/command-palette.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
+import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app/specs/render-profile.schema.spec';
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
+import { checksRouter } from './checks-router';
+import { contentRouter } from './content-router';
+import { javascriptRouter } from './javascript-router';
+import { devtoolsRouter } from './devtools-router';
+import { findRouter, historyRouter, settingsRouter } from './polish-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -95,7 +102,8 @@ const browserRouter = router({
     .use(requireBrowser)
     .input(OpenBackgroundTabInputSchema)
     .mutation(({ ctx, input }) => {
-      const id = ctx.browser.openBackgroundTab(input.url);
+      // Render profiles (`render-profile.feature.md`, Popups): only a page of the audited site inherits.
+      const id = ctx.browser.openBackgroundTab(input.url, input.inherit === true);
       return typeof id === 'number' ? id : null;
     }),
   back: publicProcedure
@@ -139,6 +147,50 @@ const browserRouter = router({
     .use(requireBrowser)
     .input(AnswerPermissionInputSchema)
     .mutation(({ ctx, input }) => ctx.browser.answerPermission(input.promptId, input.decision) === true),
+  // The command palette (`command-palette.feature.md`, Router): a page command (zoom …) as the menu
+  // runs it, focus back to the page, and the menu's confirming Clear Browsing Data…; each answers `null`
+  // but `focusPage` (whether a page took focus).
+  pageCommand: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(PageCommandInputSchema)
+    .mutation(({ ctx, input }) => {
+      ctx.browser.runPageCommand(input.command);
+      return null;
+    }),
+  focusPage: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .mutation(({ ctx }) => ctx.browser.focusPage() === true),
+  clearBrowsingData: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .mutation(({ ctx }) => {
+      ctx.browser.clearBrowsingData();
+      return null;
+    }),
+  // "Open in" a tool (`command-palette.feature.md`): only a table id; main builds the URL and checks
+  // where the page came from (`OpenToolResult`).
+  openTool: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(OpenToolInputSchema)
+    .mutation(({ ctx, input }) => {
+      if (!ctx.browser.openTool) throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'openTool unavailable' });
+      return ctx.browser.openTool(input.tool);
+    }),
+  // Render profiles (Phase 2.5 Task 1, `render-profile.feature.md`): whether the tab's profile was set /
+  // whether it had one to clear.
+  setRenderProfile: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(SetRenderProfileInputSchema)
+    .mutation(({ ctx, input }) => ctx.browser.setRenderProfile(input.tabId, input.profile, input.pin) === true),
+  clearRenderProfile: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(ClearRenderProfileInputSchema)
+    .mutation(({ ctx, input }) => ctx.browser.clearRenderProfile(input.tabId) === true),
   watch: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)
@@ -203,12 +255,30 @@ const seoRouter = router({
     .use(requireSeo)
     .input(SeoTabInputSchema)
     .mutation(({ ctx, input }) => ctx.seo.runAccessibility(input.tabId) === true),
+  // Command palette (Phase 2.5 Task 4, `command-palette.feature.md`): one allowlisted value of the shown audit.
+  copyValue: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoCopyValueInputSchema)
+    .mutation(({ ctx, input }) => ctx.seo.copyValue(input.tabId, input.audit, input.key) === true),
 });
 
 export const appRouter = router({
   ping: publicProcedure.use(enforceSender).query(() => 'pong' as const),
   browser: browserRouter,
   seo: seoRouter,
+  // Phase 2.5 Task 3 (`seo-content.feature.md`): the Content panel's notes and Copy as HTML.
+  content: contentRouter,
+  // Phase 2.5 Task 2 (`seo-javascript.feature.md`): the JavaScript panel's "Fetch again".
+  javascript: javascriptRouter,
+  // Phase 2.5 Task 5 (`devtools.feature.md`): the SEO devtools drawer (read-only; masked data).
+  devtools: devtoolsRouter,
+  // Phase 2.5 Task 6 (`browser-polish.feature.md`): find in page, history and reopen tab, settings.
+  find: findRouter,
+  history: historyRouter,
+  settings: settingsRouter,
+  // Phase 2.5 Task 7 (`seo-checks.feature.md`): link status, sitemap and hreflang reciprocity checks.
+  checks: checksRouter,
 });
 
 export type AppRouter = typeof appRouter;

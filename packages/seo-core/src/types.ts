@@ -1,10 +1,13 @@
+import type { AuditRenderProfile } from '@app/specs/render-profile.spec';
 import type { AccessibilityRunState } from '@app/specs/seo-compliance.spec';
 import type { ScoreBand, SeoCategory, SeoRuleId, SeoRuleSpec, SeoSeverity } from '@app/specs/seo-rules.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 // Types only: the snapshot's Zod schema stays in main (it is the untrusted page's data).
 import type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
 import type { ComplianceReport } from './compliance/model';
+import type { ContentReport } from './content/report';
 import type { IndexabilityReport } from './indexability/model';
+import type { JavascriptReport } from './javascript/report';
 import type { SpeedReport } from './performance/model';
 import type { SchemaReport } from './schema/model';
 
@@ -102,13 +105,18 @@ export interface SeoAudit {
   readonly performance: SpeedReport | null;
   /** The page's security (HTTPS, mixed content, headers) and its accessibility check, if one ran (the Compliance panel, Task 6). */
   readonly compliance: ComplianceReport;
+  /** The page's words, n-grams, readability and snippet widths (the Content panel, Phase 2.5 Task 3). */
+  readonly content: ContentReport;
+  /** The served HTML compared with the rendered page (the JavaScript panel, Phase 2.5 Task 2). */
+  readonly javascript: JavascriptReport;
 }
 
 /**
  * `seo.getAudit`'s answer (`seo-sidebar.spec.ts`, `SEO_AUDIT_STATUSES`). A ready answer carries the
- * tab's accessibility run (`seo-compliance.spec.ts`, `AccessibilityRunState`) when main has one.
+ * tab's accessibility run (`seo-compliance.spec.ts`, `AccessibilityRunState`) when main has one, and
+ * the render profile the audit ran under (`render-profile.spec.ts`, `AuditRenderProfile`; `null`: none).
  */
 export type SeoAuditResponse =
   | { readonly status: 'pending'; readonly url: string }
-  | { readonly status: 'ready'; readonly url: string; readonly audit: SeoAudit; readonly accessibilityRun?: AccessibilityRunState }
+  | { readonly status: 'ready'; readonly url: string; readonly audit: SeoAudit; readonly accessibilityRun?: AccessibilityRunState; readonly renderProfile?: AuditRenderProfile | null }
   | { readonly status: 'unavailable'; readonly url: string; readonly reason: SeoUnavailableReason };

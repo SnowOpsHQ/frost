@@ -44,3 +44,14 @@ export const sitePermissions = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.origin, table.topLevelOrigin, table.permission] })],
 );
+
+/** "Pin to this site" render profiles (`render-profile.feature.md`): one per origin, the profile as JSON. */
+export const renderProfilePins = sqliteTable(
+  'render_profile_pins',
+  {
+    origin: text('origin').primaryKey(),
+    profile: text('profile').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [index('render_profile_pins_updated_at').on(table.updatedAt)],
+);

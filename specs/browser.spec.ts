@@ -13,6 +13,10 @@ import { z } from 'zod';
 import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
 import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './permissions.spec';
 import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
+import { PALETTE_RETURN_FOCUS } from './command-palette.spec';
+import { TabRenderProfileSchema } from './render-profile.schema.spec';
+import { BrowserPolishStateShape } from './browser-polish.schema';
+import { DEFAULT_SEARCH_ENGINE, searchEngine } from './browser-polish.spec';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
@@ -32,9 +36,10 @@ export const BROWSE_BLANK_URL = 'about:blank' as const;
 
 /**
  * Address-bar input that is not a web address becomes a search: `{q}` is replaced by the trimmed
- * input, `encodeURIComponent`-encoded.
+ * input, `encodeURIComponent`-encoded. The engine is the user's choice from the typed table
+ * `SEARCH_ENGINES` (`browser-polish.spec.ts`, Phase 2.5 Task 6); this is the default engine's template.
  */
-export const SEARCH_URL_TEMPLATE = 'https://www.google.com/search?q={q}' as const;
+export const SEARCH_URL_TEMPLATE: string = searchEngine(DEFAULT_SEARCH_ENGINE).template;
 
 /** Longest address-bar input `browser.navigate` accepts (longer input is rejected, not truncated). */
 export const ADDRESS_INPUT_MAX_LENGTH = 8_192;
@@ -189,6 +194,12 @@ export const TabStateSchema = z.strictObject({
    * is no longer the active one.
    */
   highlight: z.enum(HIGHLIGHT_MODES),
+  /**
+   * The tab's render profile (`render-profile.spec.ts`, `TabRenderProfile`): its own, or its site's
+   * pin; `null` while it renders as frost does by default. Always shown on the tab, in the status bar
+   * and around the page area (`render-profile.feature.md`).
+   */
+  renderProfile: TabRenderProfileSchema.nullable(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 
@@ -224,7 +235,31 @@ export const BrowserStateSchema = z.strictObject({
    * whether the sidebar is open, toggles whenever the value it last saw changes.
    */
   toggleSidebarSeq: z.int().nonnegative(),
+  /**
+   * The SEO devtools drawer (`devtools.spec.ts`, `DEVTOOLS_TOGGLE_SHORTCUT`): increases by one each
+   * time main is asked to toggle it (its menu item and reserved shortcut); the chrome, which owns
+   * open / closed, toggles whenever the value it last saw changes. Main always sends it; optional
+   * only so that states built before the drawer existed (test fixtures) stay valid.
+   */
+  devtoolsToggleSeq: z.int().nonnegative().optional(),
+  /**
+   * The command palette (`command-palette.spec.ts`): `seq` increases by one each time main is asked
+   * to open it (its menu item and reserved shortcut); the chrome opens it whenever the value it last
+   * saw changes (or closes it, if open). `returnFocus` is where keyboard focus was at that request
+   * (`PALETTE_RETURN_FOCUS`), so closing the palette can put it back.
+   */
+  commandPalette: z.strictObject({ seq: z.int().nonnegative(), returnFocus: z.enum(PALETTE_RETURN_FOCUS) }),
   notice: NoticeSchema.nullable(),
+  /**
+   * The content notes' generation (`seo-content.feature.md`): main raises it by one each time every
+   * target query and snippet draft is deleted (Clear Browsing Data with its box ticked, or "Delete
+   * all notes"); an open Content panel drops its pending edits and reads its notes again whenever it
+   * changes. Main always sends it; optional so that older state fixtures stay valid.
+   */
+  contentNotesGeneration: z.int().nonnegative().optional(),
+  // Browser polish (Phase 2.5 Task 6, `browser-polish.schema.ts`): the active tab's find bar, the
+  // History view request, the closed-tab count and the search engine.
+  ...BrowserPolishStateShape,
 });
 export type BrowserState = z.infer<typeof BrowserStateSchema>;
 
@@ -256,7 +291,15 @@ export type PageBounds = z.infer<typeof PageBoundsSchema>;
  * `MAX_TABS` (which raises the `tab-limit` notice) opens nothing and answers `null`; otherwise
  * the new tab's id. The URL is loaded as is (no address-bar resolution, no referrer).
  */
-export const OpenBackgroundTabInputSchema = z.strictObject({ url: z.string().min(1).max(ADDRESS_INPUT_MAX_LENGTH) });
+export const OpenBackgroundTabInputSchema = z.strictObject({
+  url: z.string().min(1).max(ADDRESS_INPUT_MAX_LENGTH),
+  /**
+   * Whether the new tab starts with the active tab's own render profile (`render-profile.feature.md`,
+   * Popups): only for a page of the audited site; tools, help pages, robots.txt and sitemaps leave it
+   * out (no profile).
+   */
+  inherit: z.boolean().optional(),
+});
 export type OpenBackgroundTabInput = z.infer<typeof OpenBackgroundTabInputSchema>;
 
 /** Window title while a page is shown: `<page title> — frost`; an empty tab shows `APP_WINDOW_TITLE`. */

@@ -113,6 +113,10 @@ Phase 1 Task 2. Each scenario maps to one named test.
   `RESERVED_TAB_SHORTCUTS` entry to its command on macOS (Mod = Meta) and Linux/Windows (Mod =
   Control), and nothing else: other keys, extra modifiers (Alt, the other platform's Mod, Shift on
   Mod+T), and `mac:` entries off macOS answer `null`.
+- **Scenario: reserved-shortcuts-never-collide** — on macOS, Linux and Windows each reserved chrome
+  shortcut (Mod+K, Mod+F, Mod+Shift+T, Mod+L, Mod+T, Mod+Shift+S, Mod+Shift+D, Mod+G and
+  Mod+Shift+G with the find bar open, Mod+R, Mod+Shift+R) is taken by exactly one matcher (tab, page,
+  sidebar, devtools or find step), so none runs twice or shadows another.
 - **Scenario: untitled-page-has-empty-title** (`page-title.test.ts`) — for a page without a
   <title>, Chromium's `getTitle()` is a display form of the URL (no scheme, no `www.`, no bare
   root `/`, unescaped, Unicode host); `pageTitle` reports it as `''`, so the strip shows the host.

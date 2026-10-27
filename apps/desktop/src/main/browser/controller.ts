@@ -1,25 +1,34 @@
 import type { SavedSession } from '@app/db';
 import type { BrowserService, SeoService } from '@app/ipc-contract';
-import { filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
+import { copyValueOf, filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
+import { OPEN_IN_TEMPLATES, type OpenInTemplateId, type OpenToolResult, type PaletteReturnFocus } from '@app/specs/command-palette.spec';
+import { isPublicAddress, openInUrl } from '@app/specs/open-in.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
+import type { RenderProfile } from '@app/specs/render-profile.spec';
 import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { createFullscreen } from './fullscreen';
 import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
+import { createTabRenderProfiles, type RenderProfileOptions } from './render-profile';
+import { withAuditProfiles } from './render-profile-audits';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { createTabA11y, type A11yRunner } from '../seo/a11y-runs';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
 import { withKnown } from '../seo/context-source';
 import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
 import { createTabSpeed, type TabSpeedOptions } from '../seo/vitals-tabs';
-import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
+import { matchDevtoolsShortcut, matchFindStepShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
 import { wireTabView, type TabContextMenuRequest } from './tab-events';
 import { aliveContents, capTitle, clampPageBounds, createTab, emptyTabState, noop, sameTabState, showsPage, zoomOf, type HostWindow, type PageState, type StripState, type Tab, type TabView } from './tab-model';
 import { createTabPrompts, type TabPermissions } from './tab-permissions';
+import type { FindService } from '@app/ipc-contract';
+import { DEFAULT_SEARCH_ENGINE, type SearchEngineId } from '@app/specs/browser-polish.spec';
+import { createTabFinds } from './find';
+import { captureClosedTab, createClosedTabStack, restoreClosedHistory } from './history-closed-tabs';
 
 // Main-process owner of all browser state (spec `browser-chrome.feature.md` and `tabs.feature.md`,
 // Controller). Only Electron *types* are imported: the view factory and the window are injected, so
@@ -82,6 +91,8 @@ export interface BrowserController extends BrowserService {
   openTabFromPage(opener: unknown, url: string): number | null;
   /** Raises a status-bar notice (a new `seq`). */
   notify(kind: NoticeKind): void;
+  /** Forgets every render-profile pin in memory (Clear Browsing Data; `render-profile.feature.md`). */
+  forgetRenderProfilePins(): void;
   /**
    * The id of the open tab whose (live) page view's WebContents is `contents`, else `null`: the
    * permission handlers attribute a request to its tab with it (`permissions.feature.md`).
@@ -107,10 +118,45 @@ export interface BrowserController extends BrowserService {
    */
   toggleSidebar(): void;
   /**
+   * Asks the chrome to toggle the SEO devtools drawer (its menu item and reserved shortcut,
+   * `devtools.feature.md`): bumps `devtoolsToggleSeq`. A no-op without a window.
+   */
+  toggleDevtools(): void;
+  /**
+   * Asks the chrome to open (or close) the command palette (its menu item and reserved shortcut,
+   * `command-palette.feature.md`): records where focus was (`page` when the active tab's shown page
+   * has it, else `chrome`), focuses the chrome and bumps `commandPalette.seq`. A no-op without a
+   * window or while the active tab is in HTML fullscreen.
+   */
+  openCommandPalette(): void;
+  /** "Open in" a tool for the active tab (`BrowserService.openTool`; always present in main). */
+  openTool(tool: OpenInTemplateId): OpenToolResult;
+  // Browser polish (Phase 2.5 Task 6, `browser-polish.feature.md`).
+  /** Find in page on the tabs (`find.*`; Mod+F, Mod+G). */
+  readonly find: FindService;
+  /** The active tab's next / previous match (Mod+G, Edit › Find Next / Previous); `false` without an open bar. */
+  stepFind(forward: boolean): boolean;
+  /** Reopens the most recently closed tab (Mod+Shift+T); its id, or `null`. */
+  reopenClosedTab(): number | null;
+  /** Asks the chrome to open the History view: bumps `historyViewSeq`. A no-op without a window. */
+  showHistory(): void;
+  /** Empties the closed-tab stack (Clear Browsing Data, "Clear all history"). */
+  forgetClosedTabs(): void;
+  /** The search engine changed (`BrowserControllerOptions.searchEngine`): the state reports it. */
+  searchEngineChanged(): void;
+  /** The content notes' generation went up (`BrowserControllerOptions.contentNotesGeneration`): the state reports it. */
+  contentNotesChanged(): void;
+  /**
    * The tabs' SEO audits, highlight overlays and copy commands, as the `seo.*` procedures see them
    * (`seo-sidebar.feature.md`, Auditor; `seo-panels.feature.md`).
    */
   readonly seo: SeoService;
+  /**
+   * Re-scores the tab's audit (Phase 2.5 Task 7, `seo-checks.feature.md`: a link, sitemap or hreflang
+   * check finished): the active tab at once, keeping its ready audit on screen until the new one; any
+   * other tab when it is next shown. `false` for an id that names no open tab.
+   */
+  rescoreAudit(tabId: number): boolean;
 }
 
 export interface BrowserControllerOptions {
@@ -165,6 +211,26 @@ export interface BrowserControllerOptions {
    * through it, so the chrome never needs clipboard access. Without it they copy nothing.
    */
   readonly clipboard?: { writeText(text: string): void };
+  /**
+   * The menu's Clear Browsing Data… (`createClearBrowsingData` in `../clear-browsing-data.ts`: it
+   * asks first): `browser.clearBrowsingData` from the command palette runs it. Without it, a no-op.
+   */
+  readonly clearBrowsingData?: () => void;
+  /**
+   * The IP address a tab's current document came from (the response recorder's `addressFor`), or
+   * `null` when unknown: `browser.openTool` refuses a page from a non-public address. Without it,
+   * every address is unknown (the name check alone decides).
+   */
+  readonly pageAddress?: (contents: TabView['webContents']) => string | null;
+  /**
+   * Per-tab render profiles (`render-profile.feature.md`): the tab debugger factory, the site pins and
+   * the app's Chromium version. Without it `browser.setRenderProfile` is a no-op answering `false`.
+   */
+  readonly renderProfiles?: RenderProfileOptions;
+  /** The engine address-bar searches use (`browser-polish.spec.ts`); without it, `DEFAULT_SEARCH_ENGINE`. */
+  readonly searchEngine?: () => SearchEngineId;
+  /** The content notes' generation (`seo-content.feature.md`; main's content service); without it, `0`. */
+  readonly contentNotesGeneration?: () => number;
 }
 
 /** Whether `audit` is the one the panel rendered (`SeoAuditRef`: its URL and when it was taken). */
@@ -177,6 +243,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const strip: StripState = { tabs: [], activeTabId: null, win: null, attached: null, pageBounds: null };
   let focusAddressBarSeq = 0;
   let toggleSidebarSeq = 0;
+  // The SEO devtools drawer (`devtools.spec.ts`): main asks the chrome to toggle it, like the sidebar.
+  let devtoolsToggleSeq = 0;
+  // The command palette (`command-palette.spec.ts`): main asks the chrome to open it, like the sidebar.
+  let paletteSeq = 0;
+  let paletteReturnFocus: PaletteReturnFocus = 'chrome';
+  // Browser polish (`browser-polish.spec.ts`): History view requests and the closed-tab stack.
+  let historyViewSeq = 0;
+  const closedTabs = createClosedTabStack();
+  const searchEngine = (): SearchEngineId => options.searchEngine?.() ?? DEFAULT_SEARCH_ENGINE;
   let notice: Notice | null = null;
   /** A window was attached once: the restore point has passed. */
   let everAttached = false;
@@ -184,11 +259,18 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, renderProfile: renderProfiles.state(tab) })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
+    devtoolsToggleSeq,
+    commandPalette: { seq: paletteSeq, returnFocus: paletteReturnFocus },
     notice: notice && { ...notice },
+    contentNotesGeneration: options.contentNotesGeneration?.() ?? 0,
+    find: finds.state(activeTab()),
+    historyViewSeq,
+    closedTabCount: closedTabs.size(),
+    searchEngine: searchEngine(),
   });
   const stateWatch = createStateWatch(snapshot);
 
@@ -218,8 +300,16 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // The SEO auditor audits only the active tab of an attached window. The accessibility check's
   // answer for the tab's document (Task 6) travels in the page's context, beside what main collects:
   // an input known at once, in the first analysis and the final one alike (`withKnown`).
-  const seoOptions: TabAuditsOptions | undefined = options.seo && {
-    ...options.seo,
+  // Every audit records the render profile its run's extraction started under, kept with that run
+  // (`render-profile.feature.md`, Recorded with audits).
+  const auditProfiles =
+    options.seo &&
+    withAuditProfiles(options.seo, (contents) => {
+      const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
+      return tab ? renderProfiles.auditProfile(tab) : null;
+    });
+  const seoOptions: TabAuditsOptions | undefined = auditProfiles && {
+    ...auditProfiles.options,
     context: (contents) => {
       const base = options.seo!.context?.(contents);
       const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
@@ -260,6 +350,37 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed,
   });
 
+  // Find in page (`browser-polish.feature.md`): each tab's own bar, run in its shown page.
+  const finds = createTabFinds({
+    changed,
+    pageContents: (tab) => {
+      const view = tab.view && showsPage(tab) && tab.state.url !== '' ? tab.view : null;
+      return view ? (aliveContents(view) ?? null) : null;
+    },
+  });
+
+  // Render profiles (`render-profile.feature.md`): each tab's own, applied through its own debugger; a
+  // change of the frame or the device fit lays the active tab's view out again.
+  const renderProfiles = createTabRenderProfiles(options.renderProfiles, {
+    changed: () => {
+      const tab = activeTab();
+      if (tab) applyBounds(tab);
+      changed();
+    },
+    pageArea: () => (strip.pageBounds !== null && hasWindow() ? clampPageBounds(strip.pageBounds, strip.win!.getContentSize() as [number, number]) : null),
+  });
+
+  /**
+   * Loads `url` in `tab`'s `view`, the tab's render profile for it put into effect first, so the
+   * first request already carries it.
+   */
+  const loadInTab = (tab: Tab, view: TabView, url: string): void => {
+    renderProfiles.beforeLoad(tab, url);
+    view.webContents.loadURL(url).catch(() => {
+      // Failures surface through `did-fail-load` / the tab state.
+    });
+  };
+
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
   const openEmptyTab = (): number => {
     const tab = createTab(nextTabId++);
@@ -287,7 +408,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       const top = tab.fullscreen === 'notice' ? Math.min(FULLSCREEN_BANNER_HEIGHT, height) : 0;
       tab.view.setBounds({ x: 0, y: top, width, height: height - top });
     } else if (strip.pageBounds !== null) {
-      tab.view.setBounds(clampPageBounds(strip.pageBounds, [width, height]));
+      tab.view.setBounds(renderProfiles.viewBounds(tab, clampPageBounds(strip.pageBounds, [width, height])));
     }
   };
 
@@ -325,6 +446,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     speeds.forget(tab);
     a11y.forget(tab);
     highlights.dropped(tab);
+    renderProfiles.released(tab);
+    finds.released(tab);
     if (view) detach(view);
     return view;
   };
@@ -352,9 +475,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const loadRestored = (tab: Tab): void => {
     if (!tab.restored || tab.view || !hasWindow()) return;
     const { url } = tab.restored;
-    ensureView(tab)?.webContents.loadURL(url).catch(() => {
-      // Failures surface through `did-fail-load` / the tab state.
-    });
+    const view = ensureView(tab);
+    if (view) loadInTab(tab, view, url);
   };
 
   /** Makes the window show exactly the active tab's view (none for an empty tab, or behind a panel). */
@@ -466,8 +588,17 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         a11y.dropped(t);
         audits.navigated(t);
         speeds.navigated(t);
+        finds.navigated(t);
       },
     });
+    const unlistenEvents = tab.unlisten;
+    const unlistenProfile = renderProfiles.wire(tab, view);
+    const unlistenFind = finds.wire(tab, view);
+    tab.unlisten = () => {
+      unlistenEvents();
+      unlistenProfile();
+      unlistenFind();
+    };
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
     applyBounds(tab);
     syncAttached();
@@ -507,6 +638,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const index = strip.tabs.findIndex((t) => t.id === tabId);
     const tab = strip.tabs[index];
     if (!tab) return false;
+    // Reopen Closed Tab (`browser-polish.feature.md`): what it showed, read before its view goes.
+    const closed = captureClosedTab(tab, index);
+    if (closed) closedTabs.push(closed);
     closeView(tab);
     strip.tabs.splice(index, 1);
     if (strip.tabs.length === 0) {
@@ -595,19 +729,27 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const openTabFromPage = (opener: unknown, url: string): number | null => {
     if (!hasWindow() || !isWebUrl(url)) return null;
     const openerTab = strip.tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === opener);
-    return openerTab ? openTabRightOf(openerTab, url) : null;
+    // A tab the page opens renders as its opener does (`render-profile.feature.md`, Popups).
+    return openerTab ? openTabRightOf(openerTab, url, true) : null;
   };
 
-  /** A link from the SEO sidebar: opened in a background tab right of the active tab (as its popup would be). */
-  const openBackgroundTab = (url: string): number | null => {
+  /**
+   * A link from the SEO sidebar or the palette: opened in a background tab right of the active tab (as
+   * its popup would be). It starts with the active tab's own render profile only with `inherit` (a
+   * page of the audited site); a tool, help page, robots.txt or sitemap does not.
+   */
+  const openBackgroundTab = (url: string, inherit = false): number | null => {
     const parsed = parseWebUrl(url);
     const opener = activeTab();
     if (!hasWindow() || !parsed || !opener) return null;
-    return openTabRightOf(opener, parsed.href);
+    return openTabRightOf(opener, parsed.href, inherit);
   };
 
-  /** Opens the `http(s)` `url` in a new background tab right of `openerTab`, after the tabs it opened. */
-  const openTabRightOf = (openerTab: Tab, url: string): number | null => {
+  /**
+   * Opens the `http(s)` `url` in a new background tab right of `openerTab`, after the tabs it opened;
+   * with `inherit` it starts with the opener's own render profile.
+   */
+  const openTabRightOf = (openerTab: Tab, url: string, inherit: boolean): number | null => {
     const index = strip.tabs.indexOf(openerTab);
     if (index < 0) return null;
     if (strip.tabs.length >= MAX_TABS) {
@@ -619,11 +761,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     while (descendsFrom(strip.tabs[at], openerTab.id)) at += 1;
     const tab = createTab(nextTabId++, openerTab.id);
     strip.tabs.splice(at, 0, tab);
+    // It starts with the opener's own render profile, in effect before its first request.
+    if (inherit) renderProfiles.inherit(openerTab, tab);
     const view = ensureView(tab);
     // No opener link, referrer or POST body: the new tab loads the URL on its own.
-    view?.webContents.loadURL(url).catch(() => {
-      // Failures surface through `did-fail-load` / the tab state.
-    });
+    if (view) loadInTab(tab, view, url);
     changed();
     return tab.id;
   };
@@ -638,6 +780,57 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (!hasWindow()) return;
     toggleSidebarSeq += 1;
     changed();
+  };
+
+  const toggleDevtools = (): void => {
+    if (!hasWindow()) return;
+    devtoolsToggleSeq += 1;
+    changed();
+  };
+
+  /** The active tab's view, if it is attached and shows its page (never a panel or an empty tab). */
+  const shownView = (): TabView | null => {
+    const tab = activeTab();
+    const view = tab ? liveView(tab) : null;
+    return tab && view && showsPage(tab) && strip.attached === view ? view : null;
+  };
+
+  const openCommandPalette = (): void => {
+    const win = strip.win;
+    if (!win || win.isDestroyed()) return;
+    // A fullscreen page covers the whole window, the palette too: nothing opens.
+    if (activeTab()?.fullscreen) return;
+    paletteReturnFocus = shownView()?.webContents.isFocused() === true ? 'page' : 'chrome';
+    paletteSeq += 1;
+    win.webContents.focus();
+    changed();
+  };
+
+  /**
+   * "Open in" a tool (`browser.openTool`, `command-palette.spec.ts`): its URL from the table and the
+   * active tab's own URL, opened in a background tab right of it; refused for no web page, a
+   * non-public name, a document from a non-public address, or no tab opened.
+   */
+  const openTool = (tool: OpenInTemplateId): OpenToolResult => {
+    const template = OPEN_IN_TEMPLATES.find((t) => t.id === tool);
+    const tab = activeTab();
+    const view = tab ? liveView(tab) : null;
+    const contents = view ? aliveContents(view) : undefined;
+    if (!template || !tab || !contents || !hasWindow() || !showsPage(tab) || !isWebUrl(tab.state.url)) return { status: 'refused', reason: 'no-page' };
+    const url = openInUrl(template, tab.state.url);
+    if (url === null) return { status: 'refused', reason: 'not-public' };
+    const address = options.pageAddress?.(contents) ?? null;
+    if (address !== null && !isPublicAddress(address)) return { status: 'refused', reason: 'private-address' };
+    const id = openTabRightOf(tab, url, false); // tools never inherit the tab's render profile (render-profile.feature.md)
+    return id === null ? { status: 'refused', reason: 'not-opened' } : { status: 'opened', tabId: id };
+  };
+
+  /** Focus back to the page the palette was opened from (`browser.focusPage`). */
+  const focusPage = (): boolean => {
+    const view = hasWindow() ? shownView() : null;
+    if (!view) return false;
+    view.webContents.focus();
+    return true;
   };
 
   const runShortcut = (shortcut: TabShortcut): void => {
@@ -662,6 +855,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         return;
       case 'previous-tab':
         cycle(-1);
+        return;
+      case 'command-palette':
+        openCommandPalette();
+        return;
+      case 'find-in-page':
+        openFind();
+        return;
+      case 'reopen-closed-tab':
+        reopenClosedTab();
     }
   };
 
@@ -674,13 +876,92 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const shortcut = matchTabShortcut(input, platform);
     const page = shortcut ? null : matchPageShortcut(input, platform);
     const sidebar = !shortcut && !page && matchSidebarShortcut(input, platform);
-    if (!shortcut && !page && !sidebar) return;
+    const devtools = !shortcut && !page && !sidebar && matchDevtoolsShortcut(input, platform);
+    // Mod+G / Mod+Shift+G only while the active tab's find bar is open (`browser-polish.spec.ts`).
+    const findStep = shortcut || page || sidebar || devtools ? null : matchFindStepShortcut(input, platform, finds.isOpen(activeTab()));
+    if (!shortcut && !page && !sidebar && !devtools && findStep === null) return;
     event.preventDefault();
     if (input.type !== 'keyDown') return;
+    // A held Mod+K toggles the palette once (`command-palette.spec.ts`), a held Mod+Shift+D the
+    // drawer, and a held Mod+Shift+T reopens one tab.
+    if ((shortcut?.command === 'command-palette' || shortcut?.command === 'reopen-closed-tab' || devtools) && input.isAutoRepeat === true) return;
     if (shortcut) runShortcut(shortcut);
     else if (page) runPageCommand(page);
+    else if (devtools) toggleDevtools();
+    else if (findStep !== null) stepFind(findStep === 'next');
     else toggleSidebar();
   }
+
+  // ---- Browser polish (Phase 2.5 Task 6, `browser-polish.feature.md`) ----
+
+  /** Mod+F: opens the active tab's find bar (or focuses it again) and moves focus to the chrome. */
+  function openFind(): void {
+    const tab = activeTab();
+    const win = strip.win;
+    if (!tab || !win || win.isDestroyed() || tab.fullscreen || !finds.open(tab)) return;
+    win.webContents.focus();
+  }
+
+  function stepFind(forward: boolean): boolean {
+    const tab = activeTab();
+    return tab !== undefined && hasWindow() && finds.step(tab, forward);
+  }
+
+  const tabById = (tabId: number): Tab | undefined => strip.tabs.find((t) => t.id === tabId);
+  const find: FindService = {
+    open: openFind,
+    search: (tabId, text, matchCase) => {
+      const tab = tabById(tabId);
+      return tab !== undefined && hasWindow() && finds.query(tab, text, matchCase);
+    },
+    step: (tabId, forward) => tabId === strip.activeTabId && stepFind(forward),
+    close: (tabId) => {
+      const tab = tabById(tabId);
+      if (!tab || !finds.close(tab)) return false;
+      if (tab.id === strip.activeTabId) focusPage();
+      return true;
+    },
+  };
+
+  /**
+   * Mod+Shift+T: the most recently closed tab comes back at its strip position, active, with its
+   * back / forward entries and its own render profile (in effect before its first request).
+   */
+  function reopenClosedTab(): number | null {
+    const closed = closedTabs.peek();
+    if (!closed || !hasWindow()) return null;
+    if (strip.tabs.length >= MAX_TABS) {
+      raiseNotice('tab-limit');
+      return null;
+    }
+    closedTabs.pop();
+    const tab = createTab(nextTabId++);
+    const left = activeTab();
+    if (left) highlights.deactivated(left);
+    strip.tabs.splice(Math.min(closed.index, strip.tabs.length), 0, tab);
+    strip.activeTabId = tab.id;
+    renderProfiles.inherit(closed.profileOf, tab);
+    // Shown (strip label, address bar) as what it was until its page commits.
+    tab.restored = { url: closed.url, title: closed.title };
+    tab.state = { ...tab.state, url: closed.url, title: closed.title };
+    const view = ensureView(tab);
+    const contents = view ? aliveContents(view) : undefined;
+    if (view && contents) {
+      renderProfiles.beforeLoad(tab, closed.url);
+      if (!restoreClosedHistory(contents, closed)) loadInTab(tab, view, closed.url);
+    }
+    focusActive();
+    changed();
+    return tab.id;
+  }
+
+  const showHistory = (): void => {
+    const win = strip.win;
+    if (!win || win.isDestroyed()) return;
+    historyViewSeq += 1;
+    win.webContents.focus();
+    changed();
+  };
 
   const restoreSession = (saved: SavedSession): void => {
     const [only] = strip.tabs;
@@ -748,16 +1029,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     },
 
     navigate(input) {
-      const resolved = resolveAddressInput(input);
+      const resolved = resolveAddressInput(input, searchEngine());
       const tab = activeTab();
       if (resolved === null || !tab) return false;
       const view = ensureView(tab);
       if (!view) return false;
       // What the user typed replaces a restored tab's saved URL (as shown, and for Reload).
       tab.restored = null;
-      view.webContents.loadURL(resolved.url).catch(() => {
-        // Superseded or failed loads surface through `did-fail-load` / the tab state.
-      });
+      loadInTab(tab, view, resolved.url);
       view.webContents.focus();
       return true;
     },
@@ -782,14 +1061,35 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     toggleSidebar,
 
+    toggleDevtools,
+
+    openCommandPalette,
+
+    focusPage,
+
+    clearBrowsingData: () => options.clearBrowsingData?.(),
+
+    openTool,
+
     openBackgroundTab,
+
+    // Browser polish (Phase 2.5 Task 6, `browser-polish.feature.md`).
+    find,
+    stepFind,
+    reopenClosedTab,
+    showHistory,
+    forgetClosedTabs: () => {
+      if (closedTabs.clear()) changed();
+    },
+    searchEngineChanged: changed,
+    contentNotesChanged: changed,
 
     seo: {
       getAudit: (tabId) => {
         const tab = strip.tabs.find((t) => t.id === tabId);
         const response = audits.response(tab);
-        // A ready audit carries the tab's accessibility run (Task 6).
-        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab) } : response;
+        // A ready audit carries the tab's accessibility run (Task 6) and the render profile it ran under.
+        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab), renderProfile: auditProfiles?.profileOf(response.audit) ?? null } : response;
       },
       measureSpeed: (tabId) => speeds.measure(strip.tabs.find((tab) => tab.id === tabId)),
       setHighlight: (tabId, mode) => {
@@ -819,6 +1119,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         options.clipboard.writeText(block.status === 'valid' ? formatJson(block.text).text : block.text);
         return true;
       },
+      // The command palette's copies (`command-palette.feature.md`): one allowlisted value, same checks.
+      copyValue: (tabId, shown, key) => {
+        const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
+        if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown)) return false;
+        const value = copyValueOf(response.audit, key);
+        if (value === null) return false;
+        options.clipboard.writeText(value);
+        return true;
+      },
       // The accessibility check runs on request, for the active tab only (Task 6).
       runAccessibility: (tabId) => {
         const tab = activeTab();
@@ -832,6 +1141,25 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     },
 
     openTabFromPage,
+
+    rescoreAudit: (tabId) => {
+      const tab = strip.tabs.find((t) => t.id === tabId);
+      if (!tab) return false;
+      if (hasWindow() && tab.id === strip.activeTabId) return audits.rerun(tab, true);
+      audits.schedule(tab, 'load');
+      return true;
+    },
+
+    // Render profiles (`render-profile.feature.md`): any open tab, from the chrome only.
+    setRenderProfile: (tabId: number, profile: RenderProfile, pin?: boolean) => {
+      const tab = strip.tabs.find((t) => t.id === tabId);
+      return tab !== undefined && hasWindow() && renderProfiles.set(tab, profile, pin);
+    },
+    clearRenderProfile: (tabId: number) => {
+      const tab = strip.tabs.find((t) => t.id === tabId);
+      return tab !== undefined && hasWindow() && renderProfiles.clear(tab);
+    },
+    forgetRenderProfilePins: () => renderProfiles.forgetPins(),
 
     notify: raiseNotice,
 

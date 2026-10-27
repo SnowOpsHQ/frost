@@ -338,7 +338,9 @@ describe('robots.txt fetcher', () => {
       expect(await createRobotsFetcher({ hop }).get('https://example.com/'), location).toMatchObject({ outcome: 'private-redirect', redirects: 0 });
       expect(asked, location).toEqual(['https://example.com/robots.txt']);
     }
-    for (const host of ['172.32.0.1', '192.169.0.1', '11.0.0.1', '[2001:db8::1]', 'example.local.test', 'localhost.example.com']) expect(isPrivateHost(new URL(`http://${host}/`).hostname), host).toBe(false);
+    for (const host of ['172.32.0.1', '192.169.0.1', '11.0.0.1', '[2606:4700::1111]', 'example.local.example.com', 'localhost.example.com']) expect(isPrivateHost(new URL(`http://${host}/`).hostname), host).toBe(false);
+    // Phase 2.5 Task 2 review: the shared check (private-address.spec.ts) also refuses documentation and `.test` names.
+    for (const host of ['[2001:db8::1]', 'example.local.test', '100.64.0.1']) expect(isPrivateHost(new URL(`http://${host}/`).hostname), host).toBe(true);
     // A page that is itself on a private host (a dev server) may be redirected to another one.
     const dev = fakeHop({ 'http://localhost:5173/robots.txt': redirect('http://127.0.0.1:5173/robots.txt'), 'http://127.0.0.1:5173/robots.txt': ok('User-agent: *\n') });
     expect(await createRobotsFetcher({ hop: dev.hop }).get('http://localhost:5173/page')).toMatchObject({ outcome: 'ok', redirects: 1 });

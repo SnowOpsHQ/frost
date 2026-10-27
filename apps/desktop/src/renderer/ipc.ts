@@ -2,8 +2,13 @@ import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
 import type { LinkFilter } from '@app/seo-core';
 import type { SeoAuditRef } from '@app/ipc-contract';
+import type { CopyValueKey, OpenInTemplateId } from '@app/specs/command-palette.spec';
+import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
+import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@app/ipc-contract';
+import type { SearchEngineId } from '@app/specs/browser-polish.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
 // the user intents it sends. All browser state, and every SEO audit, lives in main. The chrome never
@@ -28,7 +33,7 @@ export const actions = {
   /** Audits the tab again (`seo.rerun`). */
   rerunAudit: (tabId: number) => ipc.seo.rerun.mutate({ tabId }).catch(ignore),
   /** Opens an `http(s)` URL from a panel in a background tab (main checks the scheme); resolves the tab's id or `null`. */
-  openBackgroundTab: (url: string) => ipc.browser.openBackgroundTab.mutate({ url }).catch(() => null),
+  openBackgroundTab: (url: string, options: { readonly inherit?: boolean } = {}) => ipc.browser.openBackgroundTab.mutate({ url, ...(options.inherit === true ? { inherit: true } : {}) }).catch(() => null),
   /** Sets the tab's highlight overlay (`seo.setHighlight`); resolves whether it was set. */
   setHighlight: (tabId: number, mode: HighlightMode) => ipc.seo.setHighlight.mutate({ tabId, mode }).catch(() => false),
   /** Copies the filtered links of the audit on screen as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
@@ -41,4 +46,35 @@ export const actions = {
   measureSpeed: (tabId: number) => ipc.seo.measureSpeed.mutate({ tabId }).catch(() => null),
   /** Starts the accessibility check on the tab's page (`seo.runAccessibility`); resolves whether one is running. */
   runAccessibility: (tabId: number) => ipc.seo.runAccessibility.mutate({ tabId }).catch(() => false),
+  // The command palette's (`command-palette.feature.md`).
+  /** Runs a page command (zoom …) on the active tab, as its menu item does. */
+  pageCommand: (command: PageCommand) => ipc.browser.pageCommand.mutate({ command }).catch(ignore),
+  /** Gives focus back to the active tab's page; resolves whether a page took it. */
+  focusPage: () => ipc.browser.focusPage.mutate().catch(() => false),
+  /** The menu's Clear Browsing Data… (main asks first). */
+  clearBrowsingData: () => ipc.browser.clearBrowsingData.mutate().catch(ignore),
+  /** Copies one allowlisted value of the audit on screen through main's clipboard; resolves whether it was copied. */
+  copyValue: (tabId: number, audit: SeoAuditRef, key: CopyValueKey) => ipc.seo.copyValue.mutate({ tabId, audit, key }).catch(() => false),
+  /** "Open in" a tool: main builds the URL and may refuse (`OpenToolResult`); `null` on an IPC failure. */
+  openTool: (tool: OpenInTemplateId) => ipc.browser.openTool.mutate({ tool }).catch(() => null),
+  /** Sets the tab's render profile (`pin`: as this site's pin); resolves whether it was set (`render-profile.feature.md`). */
+  setRenderProfile: (tabId: number, profile: RenderProfile, pin?: boolean) => ipc.browser.setRenderProfile.mutate({ tabId, profile, ...(pin === undefined ? {} : { pin }) }).catch(() => false),
+  /** Reset: the tab's render profile and this site's pin go; resolves whether it had one. */
+  clearRenderProfile: (tabId: number) => ipc.browser.clearRenderProfile.mutate({ tabId }).catch(() => false),
+  // Browser polish (`browser-polish.feature.md`): find in page, history, reopen tab, search engine.
+  /** Opens the active tab's find bar (as Mod+F). */
+  openFind: () => ipc.find.open.mutate().catch(ignore),
+  /** Runs `text` in the tab's find bar (main calls `findInPage`); resolves whether its bar was open. */
+  findSearch: (tabId: number, text: string, matchCase: boolean) => ipc.find.search.mutate({ tabId, text, matchCase }).catch(() => false),
+  findStep: (tabId: number, forward: boolean) => ipc.find.step.mutate({ tabId, forward }).catch(() => false),
+  closeFind: (tabId: number) => ipc.find.close.mutate({ tabId }).catch(() => false),
+  /** One page of history; an empty one on an IPC failure. */
+  historyList: (query: string, after: HistoryCursorAnswer | null): Promise<HistoryPageAnswer> => ipc.history.list.query({ query, after }).catch(() => ({ visits: [], next: null })),
+  jumpBackIn: (): Promise<JumpBackInAnswer> => ipc.history.jumpBackIn.query().catch(() => ({ mostVisited: [], recent: [] })),
+  removeVisit: (url: string) => ipc.history.remove.mutate({ url }).catch(() => false),
+  /** "Clear all history" (main asks first); resolves whether it cleared. */
+  clearHistory: () => ipc.history.clearAll.mutate().catch(() => false),
+  reopenClosedTab: () => ipc.history.reopenClosedTab.mutate().catch(() => null),
+  showHistory: () => ipc.history.show.mutate().catch(ignore),
+  setSearchEngine: (engine: SearchEngineId) => ipc.settings.setSearchEngine.mutate({ engine }).catch(() => false),
 };

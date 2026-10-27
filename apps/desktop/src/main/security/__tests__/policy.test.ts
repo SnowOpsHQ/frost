@@ -166,6 +166,14 @@ describe('packaged debugging lockdown', () => {
     }
   });
 
+  test('packaged-app-refuses-host-resolver-rules', () => {
+    // Spec: PACKAGED_FORBIDDEN_SWITCHES (command-palette.feature.md, Open in: the private-address check).
+    expect(PACKAGED_FORBIDDEN_SWITCHES).toContain('host-resolver-rules');
+    const refusal = remoteDebuggingRefusal({ isPackaged: true, hasSwitch: (s) => s === 'host-resolver-rules', argv: ARGV0 });
+    expect(refusal).toBe(`${PACKAGED_DEBUG_REFUSAL} (host-resolver-rules)`);
+    expect(remoteDebuggingRefusal({ isPackaged: false, hasSwitch: (s) => s === 'host-resolver-rules', argv: ARGV0 })).toBeNull();
+  });
+
   test('packaged-app-starts-without-debug-switches', () => {
     const argv = [...ARGV0, '--lang=en', '/home/u/inspect/report.html', '--no-remote-debugging'];
     expect(remoteDebuggingRefusal({ isPackaged: true, hasSwitch: noSwitch, argv })).toBeNull();

@@ -10,11 +10,14 @@
  * renderer imports this module for its types only.
  */
 import { z } from 'zod';
+import { ChecksContextSchema } from './seo-checks.schema';
 import { AccessibilityContextSchema, PageSecuritySchema } from './seo-compliance.schema';
 import { headerValueCap, RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SOURCES, ROBOTS_FETCH_LIMITS, ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
 import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
 import { BlockingScriptsSchema, type PerformanceContext } from './seo-speed.schema.spec';
+import { VISIBLE_TEXT_LIMITS } from './seo-content.spec';
+import type { JavascriptContext } from './seo-javascript.schema';
 import { isWebUrl } from './web-url.spec';
 
 export * from './seo-limits.spec';
@@ -215,6 +218,13 @@ const markupItems = z
  */
 export const HreflangLinkSchema = z.strictObject({ hreflang: z.string().max(L.maxHreflangChars), href: urlText, resolved: urlText.nullable() });
 
+/**
+ * The page's visible text for the content analysis (Phase 2.5 Task 3, `seo-content.spec.ts`,
+ * `VISIBLE_TEXT_LIMITS`): the text nodes the word count reads, a `\n` at each block boundary, the
+ * first `maxVisibleTextChars` code units; `truncated` when cut or when the walk stopped early.
+ */
+export const VisibleTextSchema = z.strictObject({ text: z.string().max(VISIBLE_TEXT_LIMITS.maxVisibleTextChars), truncated: z.boolean() });
+
 /** Characters of the items' text values together. */
 function markupChars(items: readonly { readonly properties: readonly ({ readonly value: string } | { readonly item: number })[] }[]): number {
   let sum = 0;
@@ -254,6 +264,7 @@ function markupChars(items: readonly { readonly properties: readonly ({ readonly
  *   page has (Task 3).
  * - `hreflang`: the head's hreflang links (`HreflangLinkSchema`), `hreflangTotal` how many it has (Task 4).
  * - `security`: http subresources of an https page, meta CSP and meta referrer (`PageSecuritySchema`, Task 6).
+ * - `visibleText`: the visible text for the content analysis (`VisibleTextSchema`, Phase 2.5 Task 3).
  */
 export const PageSnapshotSchema = z
   .strictObject({
@@ -273,6 +284,8 @@ export const PageSnapshotSchema = z
     viewport: attribute.nullable(),
     headings: z.array(HeadingSchema).max(L.maxHeadings),
     headingTotal: count,
+    // Phase 2.5 Task 2 review (`seo-javascript.spec.ts`): the first hidden headings, for the served-HTML comparison.
+    hiddenHeadings: z.array(HeadingSchema).max(L.maxHiddenHeadings).optional(),
     wordCount: count,
     textTruncated: z.boolean(),
     partial: z.boolean(),
@@ -291,6 +304,8 @@ export const PageSnapshotSchema = z
     hreflangTotal: count,
     // Task 5 (`seo-speed.schema.spec.ts`): the head's render-blocking scripts.
     blockingScripts: BlockingScriptsSchema.optional(),
+    // Phase 2.5 Task 3 (`seo-content.spec.ts`): the visible text the content analysis reads.
+    visibleText: VisibleTextSchema.optional(),
   })
   .refine(
     (s) =>
@@ -372,9 +387,10 @@ export const RobotsFetchSchema = z.strictObject({
  * What main collected about the page beside the extractor's snapshot, handed to the analysis worker
  * with it and validated there: its response (`null`: none recorded) and its origin's robots.txt
  * (`null`: not fetched); and the accessibility check's answer for the tab's document
- * (`AccessibilityContextSchema`, Task 6; absent or `null`: none; `'invalid'`: rejected).
+ * (`AccessibilityContextSchema`, Task 6; absent or `null`: none; `'invalid'`: rejected); and the
+ * link, sitemap and hreflang checks that ran on it (`ChecksContextSchema`, Phase 2.5 Task 7; absent: none).
  */
-export const PageContextSchema = z.strictObject({ response: ResponseMetaSchema.nullable(), robots: RobotsFetchSchema.nullable(), accessibility: AccessibilityContextSchema.optional() });
+export const PageContextSchema = z.strictObject({ response: ResponseMetaSchema.nullable(), robots: RobotsFetchSchema.nullable(), accessibility: AccessibilityContextSchema.optional(), checks: ChecksContextSchema.optional() });
 export type PageContext = z.infer<typeof PageContextSchema>;
 export type ResponseMeta = z.infer<typeof ResponseMetaSchema>;
 export type ResponseHeader = z.infer<typeof ResponseHeaderSchema>;
@@ -382,11 +398,12 @@ export type RedirectHop = z.infer<typeof RedirectHopSchema>;
 export type RobotsFetch = z.infer<typeof RobotsFetchSchema>;
 export type HreflangLink = z.infer<typeof HreflangLinkSchema>;
 export type { A11yNode, A11yViolation, AccessibilityContext, AccessibilityResult, InsecureResource, PageSecurity } from './seo-compliance.schema';
+export type { ChecksContext } from './seo-checks.schema';
 /** Nothing collected (`PageContext` with neither part). */
 export const NO_PAGE_CONTEXT: PageContext = { response: null, robots: null };
 
-/** What the rules read: the extractor's snapshot, and what main collected beside it (the speed measurement too, Task 5). */
-export type PageSnapshot = ExtractedSnapshot & PageContext & PerformanceContext;
+/** What the rules read: the extractor's snapshot, and what main collected beside it (the speed measurement too, Task 5; the served HTML, Phase 2.5 Task 2). */
+export type PageSnapshot = ExtractedSnapshot & PageContext & PerformanceContext & JavascriptContext;
 export type PageLink = z.infer<typeof LinkSchema>;
 export type PageImage = z.infer<typeof ImageSchema>;
 export type PageHeading = z.infer<typeof HeadingSchema>;

@@ -17,13 +17,16 @@ import { SCHEMA_PARSE_LIMITS, SCHEMA_SINGLETON_TYPES } from './schema-types.spec
 import { ROBOTS_FETCH_LIMITS } from './seo-indexability.spec';
 import { PERFORMANCE_RULE_SPECS } from './seo-speed.spec';
 import { COMPLIANCE_RULE_SPECS } from './seo-compliance.spec';
+import { DESCRIPTION_WIDTH_RULE, TITLE_WIDTH_RULE } from './seo-content.spec';
+import { JAVASCRIPT_RULE_SPECS } from './seo-javascript.spec';
+import { CHECKS_RULE_SPECS } from './seo-checks.spec';
 
 /** How bad a failing rule is. Ordered: the sidebar ranks issues by it (then by catalog order). */
 export const SEO_SEVERITIES = ['error', 'warning', 'info'] as const;
 export type SeoSeverity = (typeof SEO_SEVERITIES)[number];
 
 /** What a rule is about (the On-Page panel groups facts the same way). */
-export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'indexability', 'hreflang', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social', 'schema', 'performance', 'security', 'accessibility'] as const;
+export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'indexability', 'hreflang', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social', 'schema', 'performance', 'security', 'accessibility', 'javascript'] as const;
 export type SeoCategory = (typeof SEO_CATEGORIES)[number];
 
 export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
@@ -45,23 +48,28 @@ export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
   performance: 'Page speed',
   security: 'Security',
   accessibility: 'Accessibility',
+  javascript: 'JavaScript',
 };
 
 // ---- Thresholds ------------------------------------------------------------------------------
 // Lengths are Unicode code points of the whitespace-normalised value (`CappedText.length`).
 
 /**
- * A title shorter than this says too little to rank on or to be chosen in results; result pages
- * show about 50–60 characters of a title before cutting it, so longer than `TITLE_MAX_CHARS` is
- * likely truncated (pixel width comes later; characters are the Phase 2 proxy).
+ * A title shorter than this says too little to rank on or to be chosen in results. Measured as a
+ * width since the Phase 2.5 Task 3 review: this many average lowercase Latin letters
+ * (`seo-content.spec.ts`, `TITLE_WIDTH_RULE`), so a full-width title has a passing range too. Result pages
+ * show about 50–60 characters of a title before cutting it: `TITLE_MAX_CHARS` is now only the
+ * On-Page meter's guide range. Since Phase 2.5 Task 3 the cut is measured as a width
+ * (`title-too-wide`, `seo-content.spec.ts`), which replaced the character rule.
  */
 export const TITLE_MIN_CHARS = 30;
 export const TITLE_MAX_CHARS = 60;
 
 /**
  * A meta description is the usual source of a result's snippet: under `DESCRIPTION_MIN_CHARS` it
- * rarely describes the page well enough to be used; past `DESCRIPTION_MAX_CHARS` the snippet is
- * typically cut off on desktop results.
+ * rarely describes the page well enough to be used. Past about `DESCRIPTION_MAX_CHARS` the snippet
+ * is typically cut off on desktop results; that is measured as a width since Phase 2.5 Task 3
+ * (`meta-description-too-wide`), and the maximum is only the On-Page meter's guide range.
  */
 export const DESCRIPTION_MIN_CHARS = 70;
 export const DESCRIPTION_MAX_CHARS = 160;
@@ -135,19 +143,12 @@ export const SEO_RULE_SPECS = [
     category: 'title',
     severity: 'warning',
     title: 'Title is too short',
-    condition: `The title has fewer than ${TITLE_MIN_CHARS} characters.`,
+    condition: `The first title with text is narrower than ${TITLE_MIN_CHARS} average lowercase Latin letters at the result title size (frost’s width table: about 15 full-width characters), so short titles in every script are measured alike.`,
     why: 'A very short title rarely says enough to match what people search for or to stand out among other results.',
     fix: `Describe the page’s main topic more fully, in about ${TITLE_MIN_CHARS}–${TITLE_MAX_CHARS} characters.`,
   },
-  {
-    id: 'title-too-long',
-    category: 'title',
-    severity: 'warning',
-    title: 'Title is too long',
-    condition: `The title has more than ${TITLE_MAX_CHARS} characters.`,
-    why: 'Search results cut long titles off, so the end of the title (often the brand or a key detail) is not seen.',
-    fix: `Put the most important words first and shorten the title to ${TITLE_MAX_CHARS} characters or fewer.`,
-  },
+  // Phase 2.5 Task 3: the width rule replaces the character maximum (`seo-content.spec.ts`).
+  TITLE_WIDTH_RULE,
   // Meta description
   {
     id: 'meta-description-missing',
@@ -163,19 +164,11 @@ export const SEO_RULE_SPECS = [
     category: 'meta-description',
     severity: 'info',
     title: 'Meta description is short',
-    condition: `The first meta description with text has fewer than ${DESCRIPTION_MIN_CHARS} characters.`,
+    condition: `The first meta description with text is narrower than ${DESCRIPTION_MIN_CHARS} average lowercase Latin letters at the result description size (frost’s width table: about 35 full-width characters).`,
     why: 'A very short description rarely summarises the page well, so search engines often replace it with text of their own.',
     fix: `Expand it to a useful summary of about ${DESCRIPTION_MIN_CHARS}–${DESCRIPTION_MAX_CHARS} characters.`,
   },
-  {
-    id: 'meta-description-too-long',
-    category: 'meta-description',
-    severity: 'warning',
-    title: 'Meta description is too long',
-    condition: `The first meta description with text has more than ${DESCRIPTION_MAX_CHARS} characters.`,
-    why: 'Long descriptions are cut off in results, so the end of the message is lost.',
-    fix: `Lead with the key point and trim the description to ${DESCRIPTION_MAX_CHARS} characters or fewer.`,
-  },
+  DESCRIPTION_WIDTH_RULE,
   {
     id: 'meta-description-multiple',
     category: 'meta-description',
@@ -784,6 +777,10 @@ export const SEO_RULE_SPECS = [
   ...PERFORMANCE_RULE_SPECS,
   // Security and accessibility (Phase 2 Task 6): `seo-compliance.spec.ts`.
   ...COMPLIANCE_RULE_SPECS,
+  // Served HTML vs the rendered DOM (Phase 2.5 Task 2): `seo-javascript.spec.ts`.
+  ...JAVASCRIPT_RULE_SPECS,
+  // Link status, sitemap and hreflang reciprocity checks (Phase 2.5 Task 7): `seo-checks.spec.ts`.
+  ...CHECKS_RULE_SPECS,
 ] as const satisfies readonly SeoRuleSpec[];
 
 export type SeoRuleId = (typeof SEO_RULE_SPECS)[number]['id'];

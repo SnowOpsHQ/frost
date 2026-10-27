@@ -27,6 +27,9 @@ export class FakeTabContents extends EventEmitter {
     this.zoomFactor = factor;
   });
   focus = vi.fn();
+  /** Whether the page has keyboard focus (the command palette records it: `command-palette.spec.ts`). */
+  focused = false;
+  isFocused = () => this.focused;
   executeJavaScriptInIsolatedWorld = vi.fn(async (_worldId: number, _scripts: { code: string }[]) => undefined);
   destroyed = false;
   /** Like Electron's `webContents.close()` (no beforeunload wait): the WebContents is destroyed. */

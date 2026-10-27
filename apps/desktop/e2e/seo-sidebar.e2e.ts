@@ -179,7 +179,8 @@ test('empty-tab-shows-hint', async () => {
   // Compliance have suites of their own: seo-schema, seo-indexability, seo-speed and
   // seo-compliance.e2e.ts): none is left disabled or "coming soon".
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(SEO_PANELS.length);
-  await expect(page.getByTestId('seo-rail-item')).toHaveCount(9);
+  // Eleven since Phase 2.5 Task 2 (JavaScript, seo-javascript.e2e.ts).
+  await expect(page.getByTestId('seo-rail-item')).toHaveCount(11);
   expect(SEO_PANELS.filter((panel) => !panel.available).map((panel) => panel.id)).toEqual([]);
   for (const panel of SEO_PANELS) await expect(railItem(panel.id)).toBeEnabled();
   await expect(page.locator(`[data-testid="seo-rail-item"][aria-label*="${COMING_SOON_LABEL}"]`)).toHaveCount(0);
@@ -259,7 +260,7 @@ test('hostile-page-snapshot-is-bounded', async () => {
   expect(Number(await page.getByTestId('seo-duration').getAttribute('data-ms'))).toBeLessThan(EXTRACT_TIMEOUT_MS);
   expect(elapsed).toBeLessThan(30_000);
   const ids = await issueIds();
-  expect(ids).toContain('title-too-long');
+  expect(ids).toContain('title-too-wide');
   // The page's main-world overrides never ran for the extractor (its isolated world has its own).
   const id = await contentsIdAt(url);
   expect(await run(id, 'window.__hits')).toBe(0);

@@ -3,6 +3,9 @@ import type { PageCommand } from '@app/specs/page-commands.spec';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
 import { SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
+import { COMMAND_PALETTE_MENU_ID, COMMAND_PALETTE_MENU_LABEL } from '@app/specs/command-palette.spec';
+import { DEVTOOLS_MENU_ACCELERATOR, DEVTOOLS_MENU_ID, DEVTOOLS_MENU_LABEL } from '@app/specs/devtools.spec';
+import { HISTORY_MENU_LABEL, POLISH_MENU_IDS } from '@app/specs/browser-polish.spec';
 import type { BrowserController } from './browser/controller';
 
 // The application menu (spec `tabs.feature.md`, Menu). Tab shortcuts are menu accelerators handled
@@ -16,17 +19,39 @@ import type { BrowserController } from './browser/controller';
 /** The controller calls the menu makes. */
 export type TabCommands = Pick<
   BrowserController,
-  'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab' | 'runPageCommand' | 'toggleSidebar'
+  'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab' | 'runPageCommand' | 'toggleSidebar' | 'openCommandPalette' | 'toggleDevtools'
 >;
 
 /** Everything the menu runs: the tab commands and Clear Browsing Data… (`clear-browsing-data.ts`). */
 export interface AppMenuCommands extends TabCommands {
   clearBrowsingData(): void;
+  // Browser polish (`browser-polish.feature.md`); optional so other fakes need not grow.
+  readonly find?: Pick<BrowserController['find'], 'open'>;
+  stepFind?(forward: boolean): unknown;
+  reopenClosedTab?(): unknown;
+  showHistory?(): void;
+}
+
+/** The menu items browser polish adds (`browser-polish.spec.ts`, `POLISH_MENU_IDS`): File, Edit and History. */
+function polishItems(commands: AppMenuCommands) {
+  const step = (forward: boolean) => () => void commands.stepFind?.(forward);
+  return {
+    file: [{ id: POLISH_MENU_IDS.reopen, label: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', click: () => void commands.reopenClosedTab?.() }],
+    edit: [
+      { type: 'separator' },
+      { id: POLISH_MENU_IDS.find, label: 'Find…', accelerator: 'CmdOrCtrl+F', click: () => commands.find?.open() },
+      { id: POLISH_MENU_IDS.findNext, label: 'Find Next', accelerator: 'CmdOrCtrl+G', click: step(true) },
+      { id: POLISH_MENU_IDS.findPrevious, label: 'Find Previous', accelerator: 'CmdOrCtrl+Shift+G', click: step(false) },
+    ],
+    // Mod+Y is an accelerator only (not reserved): a page's text field keeps Ctrl+Y (redo) first.
+    history: [{ type: 'separator' }, { id: POLISH_MENU_IDS.history, label: HISTORY_MENU_LABEL, accelerator: 'CmdOrCtrl+Y', click: () => commands.showHistory?.() }],
+  } satisfies Record<string, MenuItemConstructorOptions[]>;
 }
 
 /** The menu template for `platform` (pure; `installAppMenu` builds and installs it). */
 export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Platform = process.platform): MenuItemConstructorOptions[] {
   const mac = platform === 'darwin';
+  const polish = polishItems(commands);
   const selectTab: MenuItemConstructorOptions[] = [];
   for (let n = 1; n < TAB_SHORTCUT_COUNT; n++) {
     selectTab.push({ id: `select-tab-${n}`, label: `Tab ${n}`, accelerator: `CmdOrCtrl+${n}`, click: () => void commands.activateTabAt(n - 1) });
@@ -43,6 +68,7 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
     label: 'File',
     submenu: [
       { id: 'new-tab', label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => void commands.newTab() },
+      ...polish.file,
       { id: 'focus-address-bar', label: 'Open Location…', accelerator: 'CmdOrCtrl+L', click: () => commands.focusAddressBar() },
       { type: 'separator' },
       { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => void commands.closeActiveTab() },
@@ -75,6 +101,7 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
       { role: 'delete' },
       { type: 'separator' },
       { role: 'selectAll' },
+      ...polish.edit,
     ],
   };
 
@@ -118,6 +145,10 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
       { type: 'separator' },
       // The SEO sidebar (spec `seo-sidebar.feature.md`, Toggle): the chrome owns open / closed.
       { id: SIDEBAR_TOGGLE_MENU_ID, label: 'SEO Sidebar', accelerator: 'CmdOrCtrl+Shift+S', click: () => commands.toggleSidebar() },
+      // The command palette (spec `command-palette.feature.md`): Mod+K is also reserved in `before-input-event`.
+      { id: COMMAND_PALETTE_MENU_ID, label: COMMAND_PALETTE_MENU_LABEL, accelerator: 'CmdOrCtrl+K', click: () => commands.openCommandPalette() },
+      // The SEO devtools drawer (spec `devtools.feature.md`): Mod+Shift+D is also reserved in `before-input-event`.
+      { id: DEVTOOLS_MENU_ID, label: DEVTOOLS_MENU_LABEL, accelerator: DEVTOOLS_MENU_ACCELERATOR, click: () => commands.toggleDevtools() },
     ],
   };
   // Back / Forward: Cmd+[ / Cmd+] on macOS (Cmd+Left / Cmd+Right hidden: not reserved, so a text
@@ -130,10 +161,12 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
           { id: 'forward', label: 'Forward', accelerator: 'Cmd+]', click: page('forward') },
           { id: 'back-arrow', label: 'Back', accelerator: 'Cmd+Left', ...hidden, click: page('back') },
           { id: 'forward-arrow', label: 'Forward', accelerator: 'Cmd+Right', ...hidden, click: page('forward') },
+          ...polish.history,
         ]
       : [
           { id: 'back', label: 'Back', accelerator: 'Alt+Left', click: page('back') },
           { id: 'forward', label: 'Forward', accelerator: 'Alt+Right', click: page('forward') },
+          ...polish.history,
         ],
   };
 

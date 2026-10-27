@@ -3,6 +3,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import { BackIcon, CrashArt, OfflineArt, PageAlertArt, ReloadIcon, ShieldAlertArt, UnreachableArt } from '../icons';
 import { actions } from '../ipc';
 import { crashView, loadErrorView, type LoadErrorView } from '../page-error';
+import { RenderProfileFrame } from './RenderProfile';
 import { StartView } from './StartView';
 
 // The page area of the browser chrome and what fills it instead of the tab's view: the error and
@@ -94,11 +95,11 @@ function CrashPanel({ tab }: { readonly tab: TabState }) {
 function PageContent({ tab, empty }: { readonly tab: TabState | undefined; readonly empty: boolean }) {
   if (tab?.crashed) return <CrashPanel tab={tab} />;
   if (tab?.error) return <ErrorPanel tab={{ ...tab, error: tab.error }} />;
-  return empty ? <StartView /> : null;
+  return empty ? <StartView tabId={tab?.id} /> : null;
 }
 
 /** The area the tab's page view covers; its rectangle is reported to main on every resize. */
-export function PageArea({ tab, empty }: { readonly tab: TabState | undefined; readonly empty: boolean }) {
+export function PageArea({ tab, empty, onEditProfile }: { readonly tab: TabState | undefined; readonly empty: boolean; readonly onEditProfile: () => void }) {
   const area = useRef<HTMLElement>(null);
   const report = useCallback(() => {
     const el = area.current;
@@ -123,6 +124,7 @@ export function PageArea({ tab, empty }: { readonly tab: TabState | undefined; r
   return (
     <main ref={area} className="page-area" data-testid="page-area">
       <PageContent tab={tab} empty={empty} />
+      <RenderProfileFrame tab={tab} onEdit={onEditProfile} />
     </main>
   );
 }

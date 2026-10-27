@@ -1,7 +1,15 @@
 import type { LinkFilter, SeoAuditResponse, SpeedResponse } from '@app/seo-core';
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
+import type { CopyValueKey, OpenInTemplateId, OpenToolResult } from '@app/specs/command-palette.spec';
+import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
+import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { ChecksService } from './checks-service';
+import type { ContentService } from './content-service';
+import type { JavascriptService } from './javascript-router';
+import type { DevtoolsService } from './devtools-service';
+import type { FindService, HistoryService, SettingsService } from './polish-services';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -43,7 +51,7 @@ export interface BrowserService {
    * Answers the new tab's id, or `null` for any other URL, no window or tab, or `MAX_TABS` (the
    * `tab-limit` notice is raised).
    */
-  openBackgroundTab(url: string): number | null;
+  openBackgroundTab(url: string, inherit?: boolean): number | null;
   back(): void;
   forward(): void;
   reload(): void;
@@ -56,6 +64,30 @@ export interface BrowserService {
    * queued, answered, timed-out or unknown one).
    */
   answerPermission(promptId: string, decision: PermissionDecision): boolean;
+  // The command palette's (`command-palette.feature.md`): commands the chrome could reach only
+  // through the menu before.
+  /** Runs a page command on the active tab exactly as its menu item does (`page-commands.feature.md`). */
+  runPageCommand(command: PageCommand): void;
+  /** Gives keyboard focus back to the active tab's page; `false` (focus unchanged) when it shows none. */
+  focusPage(): boolean;
+  /** The menu's Clear Browsing Data… (which asks first, in main's own dialog). */
+  clearBrowsingData(): void;
+  /**
+   * Opens "Open in" tool `tool` for the active tab (`command-palette.spec.ts`, `OPEN_IN_TEMPLATES`):
+   * the URL is built here from the table and the tab's own URL; refused (`OPEN_TOOL_REFUSALS`) for no
+   * web page, a non-public name, a document whose recorded response address is not public, or no tab.
+   * Optional so other services' fakes need not grow; without it the procedure fails closed.
+   */
+  openTool?(tool: OpenInTemplateId): OpenToolResult;
+  /**
+   * Sets the tab's render profile (`render-profile.feature.md`): its own, or with `pin: true` the pin
+   * of the site it shows (`false` also removes that site's pin; left out, the site's pin stays); the
+   * default profile is a Reset. `false` (a no-op) for an id that names no open tab, no window, or
+   * `pin` on a tab with no web page.
+   */
+  setRenderProfile(tabId: number, profile: RenderProfile, pin?: boolean): boolean;
+  /** Reset: the tab's render profile and this site's pin go. `false` if the tab had none (or names no open tab). */
+  clearRenderProfile(tabId: number): boolean;
   getState(): BrowserState;
   /**
    * Resolves with the state once its `version` exceeds `sinceVersion` (at once if it already
@@ -114,10 +146,28 @@ export interface SeoService {
    * `false` (a no-op) otherwise. Its state and results come with the tab's ready audit.
    */
   runAccessibility(tabId: number): boolean;
+  /**
+   * Writes one value of the tab's ready audit (`copyValueOf`, `command-palette.spec.ts`
+   * `COPY_VALUE_KEYS`) to the system clipboard, if that audit is the one the chrome shows (`audit`)
+   * and has that value; else `false`, nothing written (`command-palette.feature.md`).
+   */
+  copyValue(tabId: number, audit: SeoAuditRef, key: CopyValueKey): boolean;
 }
 
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */
 export interface IpcServices {
   readonly browser?: BrowserService;
   readonly seo?: SeoService;
+  /** The Content panel's notes and Copy as HTML (Phase 2.5 Task 3, `content-service.ts`). */
+  readonly content?: ContentService;
+  /** The JavaScript panel's served-HTML refetch (Phase 2.5 Task 2, `javascript-router.ts`). */
+  readonly javascript?: JavascriptService;
+  /** The SEO devtools drawer (Phase 2.5 Task 5, `devtools-service.ts`). */
+  readonly devtools?: DevtoolsService;
+  /** Browser polish (Phase 2.5 Task 6, `polish-services.ts`): find in page, history, settings. */
+  readonly find?: FindService;
+  readonly history?: HistoryService;
+  readonly settings?: SettingsService;
+  /** The link, sitemap and hreflang checks (Phase 2.5 Task 7, `checks-service.ts`). */
+  readonly checks?: ChecksService;
 }

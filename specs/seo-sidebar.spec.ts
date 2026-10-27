@@ -62,12 +62,16 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  * Indexability's HTTP / robots.txt / hreflang checks, Page Speed, and Compliance's security and
  * accessibility). Indexability also covers `indexing` (the robots meta tags), which On-Page shows too.
  */
-const OWN_PANEL_CATEGORIES: readonly SeoCategory[] = ['social', 'schema', 'indexability', 'hreflang', 'performance', 'security', 'accessibility'];
+const OWN_PANEL_CATEGORIES: readonly SeoCategory[] = ['social', 'schema', 'indexability', 'hreflang', 'performance', 'security', 'accessibility', 'javascript'];
 const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => !OWN_PANEL_CATEGORIES.includes(category));
+const CONTENT_PANEL_CATEGORIES: readonly SeoCategory[] = ['title', 'meta-description', 'content'];
 
 export const SEO_PANELS = [
   { id: 'overview', label: 'Overview', available: true, categories: SEO_CATEGORIES },
   { id: 'on-page', label: 'On-Page', available: true, categories: ON_PAGE_CATEGORIES },
+  // Phase 2.5 Task 3 (`seo-content.feature.md`): n-grams, readability, the target query and the
+  // snippet editor. Its title, description and content rules are On-Page's too.
+  { id: 'content', label: 'Content', available: true, categories: CONTENT_PANEL_CATEGORIES },
   { id: 'links', label: 'Links', available: true, categories: ['links'] },
   { id: 'images', label: 'Images', available: true, categories: ['images'] },
   { id: 'social', label: 'Social', available: true, categories: ['social'] },
@@ -75,6 +79,8 @@ export const SEO_PANELS = [
   { id: 'indexability', label: 'Indexability', available: true, categories: ['indexing', 'indexability', 'hreflang'] },
   { id: 'speed', label: 'Page Speed', available: true, categories: ['performance'] },
   { id: 'compliance', label: 'Compliance', available: true, categories: ['security', 'accessibility'] },
+  // Phase 2.5 Task 2 (`seo-javascript.feature.md`): served HTML vs the rendered DOM.
+  { id: 'javascript', label: 'JavaScript', available: true, categories: ['javascript'] },
 ] as const satisfies readonly { id: string; label: string; available: boolean; categories: readonly SeoCategory[] }[];
 export type SeoPanelId = (typeof SEO_PANELS)[number]['id'];
 export const DEFAULT_SEO_PANEL: SeoPanelId = 'overview';
@@ -184,9 +190,10 @@ export const SOCIAL_REMOTE_IMAGES = false;
  * heading by level, `off` removes the overlay. One mode at a time per tab; it is part of the tab's
  * state (`TabState.highlight`) and goes back to `off` when the tab's page changes (a new document,
  * an in-page navigation to another URL, a load error, a crash) and when another tab becomes active.
- * Only the active tab showing a web page can be highlighted.
+ * Only the active tab showing a web page can be highlighted. `broken` (Phase 2.5 Task 7,
+ * `seo-checks.feature.md`) outlines only the links the tab's link check found broken.
  */
-export const HIGHLIGHT_MODES = ['off', 'links', 'headings'] as const;
+export const HIGHLIGHT_MODES = ['off', 'links', 'headings', 'broken'] as const;
 export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
 
 /**
@@ -195,7 +202,7 @@ export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
  * toggle that removes it in view. If the page removes the overlay's host itself, the overlay stops
  * and the tab's mode goes back to `off` too.
  */
-export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = { links: 'links', headings: 'on-page' };
+export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = { links: 'links', headings: 'on-page', broken: 'links' };
 
 /**
  * What the overlay draws (frost's own palette): a link's box by kind (a link whose `rel` has
@@ -212,5 +219,6 @@ export const HIGHLIGHT_STYLES = {
   h4: { color: '#65a30d', label: 'H4' },
   h5: { color: '#ca8a04', label: 'H5' },
   h6: { color: '#9a3412', label: 'H6' },
+  broken: { color: '#dc2626', label: 'broken' },
 } as const;
 export type HighlightKind = keyof typeof HIGHLIGHT_STYLES;

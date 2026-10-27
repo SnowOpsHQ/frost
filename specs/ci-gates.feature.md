@@ -24,7 +24,7 @@ never is.
   accepted entry that matches more or fewer findings than its `count` (stale or duplicated), and on
   any file the scanner could not parse.
 - **Gate: semgrep-rule-test** — `pnpm security:semgrep:test`: Semgrep's native rule test of each
-  `semgrep/<name>.yml` (`ipc-sender-guard`, `webcontents-factory`) against
+  `semgrep/<name>.yml` (`ipc-sender-guard`, `webcontents-factory`, `debugger-allowlist`) against
   `semgrep/__fixtures__/<name>.ts`; every `// ruleid:` line must be flagged and every `// ok:` line
   must not.
 - **Gate: semgrep-repo-scan** — `pnpm security:semgrep:scan`: all those rules over `apps`,
@@ -79,6 +79,20 @@ pinned to `TAB_VIEW_WEB_PREFERENCES` by `browser/__tests__/tab-view.test.ts`). T
   aliased import) and a class extending one of them, anywhere outside the allowlist, are flagged
   (fixture `semgrep/__fixtures__/webcontents-factory.ts`); static calls such as
   `BrowserWindow.fromWebContents(…)` are not; the repo scan is clean.
+
+## Semgrep `debugger-allowlist` rule (Phase 2.5, `render-profile.feature.md`)
+A tab's `webContents.debugger` speaks CDP in-process, so it is reachable only from allowlisted
+modules (the rule's `paths.exclude`): `apps/desktop/src/main/browser/render-profile-debugger.ts`,
+which attaches only to browse-session tabs and sends only `RENDER_PROFILE_CDP_METHODS`. Test-only
+code is excluded as above.
+- **Scenario: semgrep-flags-debugger-outside-allowlist** — `debugger-outside-allowlisted-modules`:
+  any `debugger` property of anything (`.attach`, `.sendCommand`, `.detach`, `.on`, an alias, an
+  index access), a destructured `debugger` binding (typed or untyped, in a declaration, a parameter
+  or an assignment) and a reflective read of it by name (`Reflect.get`,
+  `Reflect.getOwnPropertyDescriptor`, `Object.getOwnPropertyDescriptor`), outside the allowlist, are
+  flagged (fixture
+  `semgrep/__fixtures__/debugger-allowlist.ts`); other WebContents members and a `'debugger'` string
+  are not; the repo scan is clean.
 
 ## Electronegativity (`scripts/electronegativity.mjs`)
 - **Scenario: electronegativity-sees-literal-hardening** — `createMainWindow()` writes `sandbox`,

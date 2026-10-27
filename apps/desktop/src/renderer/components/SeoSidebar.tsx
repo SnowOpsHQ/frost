@@ -5,13 +5,19 @@ import { IDLE_A11Y_RUN } from '@app/specs/seo-compliance.spec';
 import { COMING_SOON_LABEL, DEFAULT_SEO_PANEL, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { AuditArt, ChevronIcon, ComplianceIcon, ImagesIcon, IndexabilityIcon, LinksIcon, OnPageIcon, OverviewIcon, ReloadIcon, SchemaIcon, SocialIcon, SpeedIcon } from '../icons';
 import { actions } from '../ipc';
+import type { PanelJump } from '../palette/registry';
 import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
 import { Compliance } from './seo/Compliance';
+import { Content } from './seo/Content';
+import { ContentIcon } from './seo/content-icons';
 import { Images } from './seo/Images';
 import { Indexability } from './seo/Indexability';
+import { JavaScript } from './seo/JavaScript';
+import { JavascriptIcon } from './seo/javascript-icons';
 import { Links } from './seo/Links';
 import { OnPage } from './seo/OnPage';
+import { AuditProfileNote } from './seo/AuditProfileNote';
 import { Overview } from './seo/Overview';
 import { Schema } from './seo/Schema';
 import { Social } from './seo/Social';
@@ -33,6 +39,7 @@ function canRerun(response: SeoAuditResponse | null): boolean {
 const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   overview: OverviewIcon,
   'on-page': OnPageIcon,
+  content: ContentIcon,
   links: LinksIcon,
   images: ImagesIcon,
   social: SocialIcon,
@@ -40,6 +47,7 @@ const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   indexability: IndexabilityIcon,
   speed: SpeedIcon,
   compliance: ComplianceIcon,
+  javascript: JavascriptIcon,
 };
 
 function Rail({
@@ -131,7 +139,7 @@ function Hint({ title, message, testId, reason, retry }: { readonly title: strin
   );
 }
 
-function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefined; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null }) {
+function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: TabState | undefined; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null; readonly notesGeneration?: number }) {
   if (!tab || response === null) return <Hint testId="seo-empty" title="No page yet" message="Open a web page and frost audits it here: a health score, ranked issues and what search engines read." />;
   if (response.status === 'pending') return <Skeleton />;
   if (response.status === 'unavailable') {
@@ -141,6 +149,8 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
   switch (panel) {
     case 'on-page':
       return <OnPage audit={response.audit} tab={tab} />;
+    case 'content':
+      return <Content audit={response.audit} tab={tab} notesGeneration={notesGeneration} />;
     case 'links':
       return <Links audit={response.audit} tab={tab} />;
     case 'images':
@@ -150,19 +160,48 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
     case 'schema':
       return <Schema audit={response.audit} tab={tab} />;
     case 'indexability':
-      return <Indexability audit={response.audit} />;
+      return <Indexability audit={response.audit} tab={tab} />;
     case 'speed':
-      return <Speed audit={response.audit} tab={tab} />;
+      return <Speed audit={response.audit} tab={tab} renderProfile={response.renderProfile ?? null} />;
     case 'compliance':
       return <Compliance audit={response.audit} tab={tab} run={response.accessibilityRun ?? IDLE_A11Y_RUN} />;
+    case 'javascript':
+      return <JavaScript audit={response.audit} tab={tab} />;
     default:
-      return <Overview audit={response.audit} />;
+      return (
+        <>
+          <AuditProfileNote renderProfile={response.renderProfile ?? null} />
+          <Overview audit={response.audit} />
+        </>
+      );
   }
 }
 
-export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab: TabState | undefined; readonly open: boolean; readonly response: SeoAuditResponse | null; readonly onOpenChange: (open: boolean) => void }) {
+export function SeoSidebar({
+  tab,
+  open,
+  response,
+  onOpenChange,
+  jump,
+  notesGeneration,
+}: {
+  readonly tab: TabState | undefined;
+  readonly open: boolean;
+  readonly response: SeoAuditResponse | null;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly jump?: PanelJump | null;
+  /** Main's content notes generation (`BrowserState.contentNotesGeneration`), for the Content panel. */
+  readonly notesGeneration?: number;
+}) {
   const [panel, setPanel] = useState<SeoPanelId>(DEFAULT_SEO_PANEL);
   const railItems = useRef(new Map<SeoPanelId, HTMLButtonElement>()).current;
+  // A command palette jump (`command-palette.feature.md`): open on that panel, focusing its rail item if asked.
+  useEffect(() => {
+    if (!jump) return;
+    setPanel(jump.panel);
+    onOpenChange(true);
+    if (jump.focus) railItems.get(jump.panel)?.focus();
+  }, [jump]);
   const wasOpen = useRef(open);
   // Collapsing from inside the panel (its button, or the shortcut while focus was in it) would drop
   // focus with the panel: it moves to the open panel's rail item instead.
@@ -221,7 +260,7 @@ export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab
             </button>
           </header>
           <div className="seo-body">
-            <PanelBody tab={tab} panel={panel} response={response} />
+            <PanelBody tab={tab} panel={panel} response={response} notesGeneration={notesGeneration} />
           </div>
           {ready ? (
             <footer className="seo-foot" data-testid="seo-duration" data-ms={Math.round(ready.audit.durationMs)}>

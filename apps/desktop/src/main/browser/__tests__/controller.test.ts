@@ -372,7 +372,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0, documentSeq: 0, highlight: 'off' });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0, documentSeq: 0, highlight: 'off', renderProfile: null });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);
@@ -1508,3 +1508,62 @@ describe('seo sidebar toggle', () => {
   });
 });
 
+
+// Acceptance: specs/devtools.feature.md (controller-toggles-devtools)
+describe('seo devtools toggle', () => {
+  test('controller-toggles-devtools', () => {
+    const chrome = win.webContents as unknown as EventEmitter;
+    const start = controller.getState().devtoolsToggleSeq ?? -1;
+    expect(start).toBe(0);
+    for (const target of ['chrome', 'tab'] as const) {
+      if (target === 'tab') {
+        controller.navigate('example.com');
+        commit(view().contents, 'https://example.com/', 'Example');
+      }
+      const emitter = target === 'chrome' ? chrome : (view().contents as unknown as EventEmitter);
+      const before = controller.getState().devtoolsToggleSeq!;
+      const down = fakeEvent();
+      emitter.emit('before-input-event', down, key('d', { control: true, shift: true }));
+      expect(down.defaultPrevented, target).toBe(true);
+      expect(controller.getState().devtoolsToggleSeq).toBe(before + 1);
+      // Held down: consumed, toggled once.
+      const repeat = fakeEvent();
+      emitter.emit('before-input-event', repeat, { ...key('d', { control: true, shift: true }), isAutoRepeat: true });
+      expect(repeat.defaultPrevented, target).toBe(true);
+      const up = fakeEvent();
+      emitter.emit('before-input-event', up, key('d', { control: true, shift: true }, 'keyUp'));
+      expect(up.defaultPrevented, target).toBe(true);
+      expect(controller.getState().devtoolsToggleSeq).toBe(before + 1);
+      // Ctrl+D alone is the page's.
+      const plain = fakeEvent();
+      emitter.emit('before-input-event', plain, key('d', { control: true }));
+      expect(plain.defaultPrevented, target).toBe(false);
+    }
+    const version = controller.getState().version;
+    controller.toggleDevtools();
+    expect(controller.getState()).toMatchObject({ devtoolsToggleSeq: start + 3, version: version + 1 });
+    expect(BrowserStateSchema.parse(controller.getState()).devtoolsToggleSeq).toBe(start + 3);
+    // Without a window nothing changes.
+    win.emit('close');
+    win.emit('closed');
+    const after = controller.getState();
+    controller.toggleDevtools();
+    expect(controller.getState()).toEqual(after);
+  });
+});
+
+// Acceptance: specs/seo-content.feature.md (content-notes-generation-in-state)
+describe('content notes generation', () => {
+  test('content-notes-generation-in-state', () => {
+    let generation = 0;
+    const notesController = createBrowserController({ createView: () => new FakeTabView() as unknown as TabView, platform: 'linux', contentNotesGeneration: () => generation });
+    notesController.attach(new FakeHostWindow() as unknown as HostWindow);
+    expect(BrowserStateSchema.parse(notesController.getState()).contentNotesGeneration).toBe(0);
+    const version = notesController.getState().version;
+    generation = 1;
+    notesController.contentNotesChanged();
+    expect(notesController.getState()).toMatchObject({ contentNotesGeneration: 1, version: version + 1 });
+    // Without it (a test controller), the state reports none deleted.
+    expect(controller.getState().contentNotesGeneration).toBe(0);
+  });
+});

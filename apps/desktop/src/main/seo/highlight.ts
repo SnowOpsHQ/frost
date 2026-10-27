@@ -5,6 +5,8 @@ import type { ExtractTarget } from './extract';
 // Highlight mode (spec `seo-sidebar.spec.ts`, `HIGHLIGHT_MODES` / `HIGHLIGHT_STYLES`,
 // `seo-limits.spec.ts`, `HIGHLIGHT_BUDGET_MS`; acceptance `seo-panels.feature.md`, Highlight): an
 // overlay outlining the page's links by type or its headings by level, each box with a small label.
+// `broken` (Phase 2.5 Task 7, `seo-checks.feature.md`) outlines only the links whose target (its
+// `#fragment` aside) is one of `targets`: the tab's link check's broken ones, handed in by main.
 //
 // `paintHighlight` runs in the tab's isolated SEO world (`SEO_WORLD_ID`), like the extractor. It is
 // self-contained (serialised with its arguments into a script) and uses DOM APIs only: no
@@ -153,10 +155,10 @@ export const OVERLAY_KEY = '__frostSeoHighlight';
 /**
  * Removes any overlay this world drew in the page, then (unless `mode` is `off`) draws the new
  * one. Runs in the isolated world only; self-contained (`plan` is `planHighlight`, `store` the
- * world's global). Resolves, once the first drawing pass is done, the mode drawn and how many boxes
- * (`off` if the page removed the host before).
+ * world's global, `targets` the URLs `broken` outlines). Resolves, once the first drawing pass is
+ * done, the mode drawn and how many boxes (`off` if the page removed the host before).
  */
-export function paintHighlight(document: OverlayDocument, mode: HighlightMode, config: OverlayConfig, plan: typeof planHighlight, store: Record<string, unknown>): Promise<OverlayResult> {
+export function paintHighlight(document: OverlayDocument, mode: HighlightMode, config: OverlayConfig, plan: typeof planHighlight, store: Record<string, unknown>, targets: readonly string[] = []): Promise<OverlayResult> {
   const previous = store[config.key] as OverlayState | undefined;
   if (previous) previous.stop(mode === 'off' ? 'off' : 'replaced');
   const root = document.documentElement;
@@ -186,6 +188,17 @@ export function paintHighlight(document: OverlayDocument, mode: HighlightMode, c
       return site(url.host) === pageSite ? 'internal' : 'external';
     } catch {
       return 'other';
+    }
+  };
+  // `broken`: a link whose target, resolved and without its fragment, is one of `targets`.
+  const brokenSet = new Set(targets);
+  const isBroken = (el: PageTarget): boolean => {
+    try {
+      const url = new URL((el.getAttribute('href') ?? '').trim(), document.baseURI);
+      url.hash = '';
+      return brokenSet.has(url.href);
+    } catch {
+      return false;
     }
   };
   // Outlines only what can be seen: not inside `display: none`, `visibility: hidden` or `opacity: 0`.
@@ -266,8 +279,9 @@ export function paintHighlight(document: OverlayDocument, mode: HighlightMode, c
     }
     measuring = true;
     dirty = false;
-    const list = mode === 'links' ? document.links : document.querySelectorAll('h1, h2, h3, h4, h5, h6');
-    const max = mode === 'links' ? config.maxLinks : config.maxHeadings;
+    const linkMode = mode === 'links' || mode === 'broken';
+    const list = linkMode ? document.links : document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    const max = linkMode ? config.maxLinks : config.maxHeadings;
     const items: HighlightItem[] = [];
     let index = 0;
     let spent = 0;
@@ -279,8 +293,8 @@ export function paintHighlight(document: OverlayDocument, mode: HighlightMode, c
         if (spent + (performance.now() - sliceStart) > config.budgetMs) break;
         if (performance.now() - sliceStart > config.frameMs) break;
         const el = list[index++];
-        if (!el || !shown(el)) continue;
-        const kind: HighlightKind = mode === 'links' ? linkKind(el) : (`h${Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1))}` as HighlightKind);
+        if (!el || !shown(el) || (mode === 'broken' && !isBroken(el))) continue;
+        const kind: HighlightKind = mode === 'broken' ? 'broken' : mode === 'links' ? linkKind(el) : (`h${Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1))}` as HighlightKind);
         // Document coordinates as of now: the scroll offset may differ by the next slice.
         const r = el.getBoundingClientRect();
         items.push({ kind, rect: { left: r.left + view.scrollX, top: r.top + view.scrollY, width: r.width, height: r.height } });
@@ -375,9 +389,10 @@ export const OVERLAY_CONFIG: OverlayConfig = {
   styles: HIGHLIGHT_STYLES,
 };
 
-/** The script that sets the overlay to `mode` in the isolated world (removing any before). */
-export function highlightScript(mode: HighlightMode): string {
-  return `(${paintHighlight.toString()})(document, ${JSON.stringify(mode)}, ${JSON.stringify(OVERLAY_CONFIG)}, ${planHighlight.toString()}, globalThis)`;
+/** The script that sets the overlay to `mode` in the isolated world (removing any before); `targets`: the URLs `broken` outlines (at most `maxLinks`). */
+export function highlightScript(mode: HighlightMode, targets: readonly string[] = []): string {
+  const outlined = mode === 'broken' ? targets.slice(0, SNAPSHOT_LIMITS.maxLinks) : [];
+  return `(${paintHighlight.toString()})(document, ${JSON.stringify(mode)}, ${JSON.stringify(OVERLAY_CONFIG)}, ${planHighlight.toString()}, globalThis, ${JSON.stringify(outlined)})`;
 }
 
 /** The script that settles with why the current overlay ended (`OverlayEnd`), or `none` without one. */
@@ -386,8 +401,8 @@ export function highlightEndedScript(): string {
 }
 
 /** Sets the overlay in `contents`' SEO world; resolves the script's (untrusted) answer. */
-export function runHighlight(contents: ExtractTarget, mode: HighlightMode): Promise<unknown> {
-  return contents.executeJavaScriptInIsolatedWorld(SEO_WORLD_ID, [{ code: highlightScript(mode) }]);
+export function runHighlight(contents: ExtractTarget, mode: HighlightMode, targets: readonly string[] = []): Promise<unknown> {
+  return contents.executeJavaScriptInIsolatedWorld(SEO_WORLD_ID, [{ code: highlightScript(mode, targets) }]);
 }
 
 /** Waits, in `contents`' SEO world, for the current overlay to end; resolves why (untrusted). */

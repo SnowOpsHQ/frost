@@ -17,6 +17,8 @@ export interface KeyInput {
   readonly meta: boolean;
   readonly shift: boolean;
   readonly alt: boolean;
+  /** A key-down repeated by holding the key (Electron's `Input.isAutoRepeat`). */
+  readonly isAutoRepeat?: boolean;
 }
 
 /** The physical key, from `code`, else (input without one) guessed from `key` on a US layout. */
@@ -53,6 +55,8 @@ export function matchTabShortcut(input: KeyInput, platform: NodeJS.Platform): Ta
   if (!mod || other) return null;
 
   if (input.shift) {
+    // Reopen Closed Tab (`browser-polish.spec.ts`), on every platform.
+    if (code === 'KeyT') return { command: 'reopen-closed-tab' };
     // macOS only: Cmd+Shift+] / Cmd+Shift+[.
     if (!mac) return null;
     if (code === 'BracketRight') return { command: 'next-tab' };
@@ -69,6 +73,12 @@ export function matchTabShortcut(input: KeyInput, platform: NodeJS.Platform): Ta
       return { command: 'focus-address-bar' };
     case 'Digit9':
       return { command: 'select-last-tab' };
+    // The command palette (`command-palette.spec.ts`, `COMMAND_PALETTE_SHORTCUT`).
+    case 'KeyK':
+      return { command: 'command-palette' };
+    // Find in page (`browser-polish.spec.ts`, `FIND_SHORTCUT`).
+    case 'KeyF':
+      return { command: 'find-in-page' };
   }
   const digit = /^Digit([1-8])$/.exec(code);
   if (digit) return { command: 'select-tab', index: Number(digit[1]) - 1 };
@@ -132,4 +142,31 @@ export function matchSidebarShortcut(input: KeyInput, platform: NodeJS.Platform)
   const mod = mac ? input.meta : input.control;
   const other = mac ? input.control : input.meta;
   return mod && !other && !input.alt && input.shift && physicalKey(input) === 'KeyS';
+}
+
+/**
+ * Whether `input` (key-down or key-up) is the SEO devtools drawer toggle, `Mod+Shift+D` (spec
+ * `devtools.spec.ts`, `DEVTOOLS_TOGGLE_SHORTCUT`): as the sidebar's, with `D` by its physical key.
+ */
+export function matchDevtoolsShortcut(input: KeyInput, platform: NodeJS.Platform): boolean {
+  if (input.type !== 'keyDown' && input.type !== 'keyUp') return false;
+  const mac = platform === 'darwin';
+  const mod = mac ? input.meta : input.control;
+  const other = mac ? input.control : input.meta;
+  return mod && !other && !input.alt && input.shift && physicalKey(input) === 'KeyD';
+}
+
+/**
+ * The find bar's next / previous match (`browser-polish.spec.ts`, `FIND_STEP_SHORTCUTS`): `Mod+G` /
+ * `Mod+Shift+G` (key-down or key-up), only while the active tab's find bar is open (`open`); else
+ * `null`, so a page keeps the key. Mod is Meta on macOS and Control elsewhere; the other one and Alt
+ * not held; `G` by its physical key.
+ */
+export function matchFindStepShortcut(input: KeyInput, platform: NodeJS.Platform, open: boolean): 'next' | 'previous' | null {
+  if (!open || (input.type !== 'keyDown' && input.type !== 'keyUp')) return null;
+  const mac = platform === 'darwin';
+  const mod = mac ? input.meta : input.control;
+  const other = mac ? input.control : input.meta;
+  if (!mod || other || input.alt || physicalKey(input) !== 'KeyG') return null;
+  return input.shift ? 'previous' : 'next';
 }

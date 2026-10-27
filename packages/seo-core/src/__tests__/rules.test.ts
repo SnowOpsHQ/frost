@@ -2,19 +2,18 @@
 // Acceptance: specs/seo-rules.feature.md (Catalog, one scenario per rule)
 import { describe, expect, test } from 'vitest';
 import {
-  DESCRIPTION_MAX_CHARS,
   DESCRIPTION_MIN_CHARS,
   FINDING_SAMPLE_LIMIT,
   IMAGE_ALT_MAX_CHARS,
   IMAGE_OVERSIZE_FACTOR,
   SEO_RULE_SPECS,
   THIN_CONTENT_WORDS,
-  TITLE_MAX_CHARS,
   TITLE_MIN_CHARS,
   URL_MAX_CHARS,
   type SeoRuleId,
 } from '@app/specs/seo-rules.spec';
-import { RULES, runAudit, type FindingDetails, type PageSnapshot } from '../index';
+import { DESCRIPTION_WIDTH_RULE, SNIPPET_BUDGETS_PX, TITLE_WIDTH_RULE } from '@app/specs/seo-content.spec';
+import { minSnippetWidth, RULES, runAudit, type FindingDetails, type PageSnapshot } from '../index';
 import { chars, cleanSnapshot, page, PAGE_URL, robots, socialTags, text } from './fixtures';
 
 function rule(id: SeoRuleId) {
@@ -118,14 +117,47 @@ describe('title', () => {
     passes('title-too-short', page({ titles: [text(chars(TITLE_MIN_CHARS))] }));
     passes('title-too-short', page({ titles: [], titleTotal: 0 }));
     passes('title-too-short', page({ titles: [text('')] }));
+    // A width since the Phase 2.5 Task 3 review: 40 narrow letters are still too short.
+    const narrow = fails('title-too-short', page({ titles: [text(chars(40, 'i'))] }));
+    expect(factOf(narrow, 'Width')).toBe('178 px');
+    expect(factOf(narrow, 'At least')).toBe(`about ${Math.round(minSnippetWidth('title'))} px`);
   });
 
-  test('title-too-long', () => {
-    fails('title-too-long', page({ titles: [text(chars(TITLE_MAX_CHARS + 1))] }));
-    passes('title-too-long', page({ titles: [text(chars(TITLE_MAX_CHARS))] }));
-    // A 10 MB title: the kept text is capped, the full length is what is measured.
-    const huge = fails('title-too-long', page({ titles: [text(chars(1_024), 10_485_760)] }));
-    expect(factOf(huge, 'Length')).toBe('10,485,760 characters');
+  // Phase 2.5 Task 3 review (`seo-content.feature.md`, Rules): every script has a passing range.
+  test('cjk-title-has-a-passing-range', () => {
+    const cjk = (n: number) => '漢'.repeat(n);
+    const title = (n: number) => page({ titles: [text(cjk(n))] });
+    fails('title-too-short', title(14));
+    for (const n of [15, 22, 29]) {
+      passes('title-too-short', title(n));
+      passes('title-too-wide', title(n));
+    }
+    fails('title-too-wide', title(30));
+    // A description: 14 px each, at least about 480 px, at most 920 px.
+    const description = (n: number) => page({ metaDescriptions: [text(cjk(n))] });
+    fails('meta-description-too-short', description(34));
+    for (const n of [35, 50, 65]) {
+      passes('meta-description-too-short', description(n));
+      passes('meta-description-too-wide', description(n));
+    }
+    fails('meta-description-too-wide', description(66));
+    expect(runAudit(title(20)).findings.filter((f) => f.category === 'title')).toEqual([]);
+  });
+
+  // Phase 2.5 Task 3 (`seo-content.feature.md`, Rules): the width replaces the character maximum.
+  test('title-too-wide', () => {
+    // 32 wide letters are past the budget though within the old 60 characters …
+    const wide = fails('title-too-wide', page({ titles: [text(chars(32, 'W'))] }));
+    expect(factOf(wide, 'Width')).toBe('604 px');
+    expect(factOf(wide, 'Budget')).toBe(`about ${SNIPPET_BUDGETS_PX.titleDesktop} px`);
+    expect(factOf(wide, 'A result shows')).toMatch(/^W+…$/);
+    // … and 100 narrow ones fit.
+    passes('title-too-wide', page({ titles: [text(chars(100, 'i'))] }));
+    passes('title-too-wide', cleanSnapshot());
+    passes('title-too-wide', page({ titles: [], titleTotal: 0 }));
+    passes('title-too-wide', page({ titles: [text('')] }));
+    // A 10 MB title: the kept text (capped) is already far past the budget.
+    fails('title-too-wide', page({ titles: [text(chars(1_024), 10_485_760)] }));
   });
 });
 
@@ -140,17 +172,41 @@ describe('meta description', () => {
   });
 
   test('meta-description-too-short', () => {
-    fails('meta-description-too-short', page({ metaDescriptions: [text(chars(DESCRIPTION_MIN_CHARS - 1))] }));
+    // `x` is 7 px at the description size, the minimum about 480 px.
+    fails('meta-description-too-short', page({ metaDescriptions: [text(chars(DESCRIPTION_MIN_CHARS - 2))] }));
+    fails('meta-description-too-short', page({ metaDescriptions: [text(chars(DESCRIPTION_MIN_CHARS + 30, 'i'))] }));
     passes('meta-description-too-short', page({ metaDescriptions: [text(chars(DESCRIPTION_MIN_CHARS))] }));
     // The first description with text is measured, whatever comes before it.
     fails('meta-description-too-short', page({ metaDescriptions: [text(''), text(chars(10))], metaDescriptionTotal: 2 }));
     passes('meta-description-too-short', page({ metaDescriptions: [text(''), text(chars(100))], metaDescriptionTotal: 2 }));
   });
 
-  test('meta-description-too-long', () => {
-    fails('meta-description-too-long', page({ metaDescriptions: [text(chars(DESCRIPTION_MAX_CHARS + 1))] }));
-    passes('meta-description-too-long', page({ metaDescriptions: [text(chars(DESCRIPTION_MAX_CHARS))] }));
-    fails('meta-description-too-long', page({ metaDescriptions: [text(''), text(chars(DESCRIPTION_MAX_CHARS + 1))], metaDescriptionTotal: 2 }));
+  test('meta-description-too-wide', () => {
+    // `x` is 7 px at the description size: 132 are 924 px, 131 are 917 px.
+    const wide = fails('meta-description-too-wide', page({ metaDescriptions: [text(chars(132))] }));
+    expect(factOf(wide, 'Width')).toBe('924 px');
+    passes('meta-description-too-wide', page({ metaDescriptions: [text(chars(131))] }));
+    passes('meta-description-too-wide', page({ metaDescriptions: [text(chars(200, 'i'))] }));
+    // The first description with text is measured.
+    fails('meta-description-too-wide', page({ metaDescriptions: [text(''), text(chars(132))], metaDescriptionTotal: 2 }));
+    passes('meta-description-too-wide', page({ metaDescriptions: [], metaDescriptionTotal: 0 }));
+  });
+
+  test('width-rules-replace-character-maximums', () => {
+    const ids: readonly string[] = SEO_RULE_SPECS.map((spec) => spec.id);
+    expect(ids).not.toContain('title-too-long');
+    expect(ids).not.toContain('meta-description-too-long');
+    expect(ids).toContain('title-too-short');
+    expect(ids).toContain('meta-description-too-short');
+    expect(SEO_RULE_SPECS.find((spec) => spec.id === 'title-too-wide')).toEqual(TITLE_WIDTH_RULE);
+    expect(SEO_RULE_SPECS.find((spec) => spec.id === 'meta-description-too-wide')).toEqual(DESCRIPTION_WIDTH_RULE);
+    // A long, wide title fails once, on its width.
+    const title = runAudit(page({ titles: [text(chars(80, 'W'))] })).findings.filter((f) => f.category === 'title');
+    expect(title.map((f) => f.ruleId)).toEqual(['title-too-wide']);
+    // Their severities are pinned: the title's a warning, the description's information.
+    expect(rule('title-too-wide').severity).toBe('warning');
+    expect(rule('meta-description-too-wide').severity).toBe('info');
+    expect(runAudit(page({ metaDescriptions: [text(chars(132))] })).findings.find((f) => f.ruleId === 'meta-description-too-wide')?.severity).toBe('info');
   });
 
   test('meta-description-multiple', () => {

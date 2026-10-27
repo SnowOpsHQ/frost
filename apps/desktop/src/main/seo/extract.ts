@@ -1,4 +1,5 @@
 import { MAX_BLOCKING_SCRIPTS } from '@app/specs/seo-speed.spec';
+import { VISIBLE_TEXT_BLOCKS, VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
 import { SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { securityCall } from './security-extract';
@@ -23,6 +24,7 @@ interface PageNode {
 }
 interface PageText extends PageNode {
   readonly length: number;
+  readonly parentElement: PageElement | null;
   substringData(offset: number, count: number): string;
 }
 interface PageElement extends PageNode {
@@ -106,6 +108,8 @@ export function extractPage(
   socialTags: readonly string[],
   socialUrlTags: readonly string[],
   maxBlockingScripts = 20,
+  maxVisibleText = 0,
+  blocks: readonly string[] = [],
 ): unknown {
   const started = performance.now();
   const deadline = started + budgetMs;
@@ -320,16 +324,18 @@ export function extractPage(
     social[tag] = content === null ? null : socialUrlTags.includes(tag) ? cut(content.trim(), L.maxUrlChars) : cut(squash(cut(content, L.maxSocialChars * 4)), L.maxSocialChars);
   }
 
-  // Headings that are shown (hidden ones are counted in the total only).
-  const [headings, headingTotal] = firstOf(
-    document.querySelectorAll('h1, h2, h3, h4, h5, h6'),
-    L.maxHeadings,
-    (el) => ({
-      level: Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1)),
-      text: shortText(el, L.maxHeadingChars),
-    }),
-    (el) => !isHidden(el),
-  );
+  // Headings that are shown (hidden ones are counted in the total, and the first few kept apart for
+  // the served-HTML comparison, which cannot tell them apart: Phase 2.5 Task 2 review).
+  const headingOf = (el: PageElement) => ({
+    level: Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1)),
+    text: shortText(el, L.maxHeadingChars),
+  });
+  const hiddenHeadings: { level: number; text: string }[] = [];
+  const [headings, headingTotal] = firstOf(document.querySelectorAll('h1, h2, h3, h4, h5, h6'), L.maxHeadings, headingOf, (el) => {
+    if (!isHidden(el)) return true;
+    if (hiddenHeadings.length < L.maxHiddenHeadings) hiddenHeadings.push(headingOf(el));
+    return false;
+  });
 
   // Links.
   const [links, linkTotal] = firstOf(document.links, L.maxLinks, (el) => {
@@ -626,6 +632,39 @@ export function extractPage(
   };
   let wordCount = 0;
   let textTruncated = false;
+  // The same walk keeps the visible text for the content analysis (Phase 2.5 Task 3,
+  // `seo-content.spec.ts`): each node's white space collapsed, a `\n` at a block boundary (a `<br>`,
+  // entering a block element, or a text whose nearest block ancestor is another than the previous
+  // text's: `closest` of the block elements, so `<div><p><span>a</span></p>b</div>` is `a\nb`), the
+  // first `maxVisibleText` code units.
+  const keptText: string[] = [];
+  let kept = 0;
+  let keptCut = false;
+  let blockBreak = false;
+  const blockSelector = blocks.filter((name) => name !== 'br' && name !== 'hr').join(',');
+  let lastBlock: PageElement | null | undefined;
+  const keep = (raw: string, node: PageText): void => {
+    const text = raw.replace(/\s+/g, ' ');
+    if (text === '') return;
+    if (text !== ' ' && blockSelector !== '') {
+      const block = node.parentElement ? node.parentElement.closest(blockSelector) : null;
+      if (lastBlock !== undefined && block !== lastBlock) blockBreak = true;
+      lastBlock = block;
+    }
+    if (kept >= maxVisibleText) {
+      keptCut = true;
+      return;
+    }
+    // White space alone separates words (unless a block boundary already does).
+    if (text === ' ' && (kept === 0 || blockBreak)) return;
+    const piece = (blockBreak && kept > 0 && text !== ' ' ? '\n' : '') + text;
+    if (text !== ' ') blockBreak = false;
+    const room = maxVisibleText - kept;
+    const part = cut(piece, room);
+    if (part.length < piece.length) keptCut = true;
+    keptText.push(part);
+    kept += part.length;
+  };
   if (document.body) {
     let visited = 0;
     let textNodes = 0;
@@ -637,7 +676,9 @@ export function extractPage(
         if (node.nodeType !== ELEMENT_NODE) return FILTER_ACCEPT;
         const el = node as PageElement;
         // A hidden subtree is pruned; a layout wrapper's (`display: contents`) is walked.
-        return SKIP.includes(el.localName) || el.hasAttribute('hidden') || unshown(el) ? FILTER_REJECT : FILTER_SKIP;
+        if (SKIP.includes(el.localName) || el.hasAttribute('hidden') || unshown(el)) return FILTER_REJECT;
+        if (blocks.includes(el.localName)) blockBreak = true;
+        return FILTER_SKIP;
       },
     });
     try {
@@ -648,13 +689,16 @@ export function extractPage(
         // A node cut by the budget is truncation even when no node follows it.
         if (take < data.length) textTruncated = true;
         scanned += take;
-        wordCount += countWords(data.substringData(0, take));
+        const chunk = data.substringData(0, take);
+        wordCount += countWords(chunk);
+        if (maxVisibleText > 0) keep(chunk, data);
       }
     } catch (error) {
       if (error !== STOP) throw error;
       textTruncated = true;
     }
   }
+  const visibleText = { text: keptText.join('').replace(/ *\n */g, '\n').trim(), truncated: keptCut || textTruncated };
 
   return {
     url: cut(document.URL, L.maxUrlChars),
@@ -673,6 +717,7 @@ export function extractPage(
     viewport,
     headings,
     headingTotal,
+    hiddenHeadings,
     wordCount: total(wordCount),
     textTruncated,
     partial,
@@ -689,15 +734,17 @@ export function extractPage(
     hreflang,
     hreflangTotal,
     blockingScripts: { urls: blockingUrls, total: total(blockingTotal) },
+    ...(maxVisibleText > 0 ? { visibleText } : {}),
   };
 }
 
 /**
  * The script run in the isolated world: `extractPage` called on its `document` with the spec's
- * limits, deadline, robots meta names and social tags, then the security read (`extractSecurity`,
+ * limits, deadline, robots meta names, social tags and the visible-text cap and blocks (Phase 2.5
+ * Task 3), then the security read (`extractSecurity`,
  * Task 6) as its `security`.
  */
-export const EXTRACTOR_SCRIPT = `Object.assign((${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)}, ${MAX_BLOCKING_SCRIPTS}), { security: ${securityCall(SECURITY_LIMITS)} })`;
+export const EXTRACTOR_SCRIPT = `Object.assign((${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)}, ${MAX_BLOCKING_SCRIPTS}, ${VISIBLE_TEXT_LIMITS.maxVisibleTextChars}, ${JSON.stringify(VISIBLE_TEXT_BLOCKS)}), { security: ${securityCall(SECURITY_LIMITS)} })`;
 
 /** The part of a tab's WebContents the extractor needs. */
 export interface ExtractTarget {

@@ -44,6 +44,50 @@ export const MIGRATIONS: readonly Migration[] = [
     id: '0002_block_only_permissions',
     sql: `DELETE FROM site_permissions WHERE decision <> 'block';`,
   },
+  {
+    // Render profiles pinned to a site (Phase 2.5 Task 1).
+    id: '0003_render_profile_pins',
+    sql: `
+      CREATE TABLE render_profile_pins (
+        origin TEXT PRIMARY KEY NOT NULL,
+        profile TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX render_profile_pins_updated_at ON render_profile_pins (updated_at);
+    `,
+  },
+  {
+    // The Content panel's notes (Phase 2.5 Task 3, `seo-content.spec.ts`, `CONTENT_TABLES`):
+    // target queries and snippet drafts per page URL (`content-schema.ts`). `IF NOT EXISTS`: a dev
+    // profile from before the Phase 2.5 merge has them already, recorded as `0003_seo_content_notes`.
+    id: '0004_seo_content_notes',
+    sql: `
+      CREATE TABLE IF NOT EXISTS seo_target_queries (
+        url TEXT PRIMARY KEY NOT NULL,
+        query TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS seo_snippet_variants (
+        url TEXT NOT NULL,
+        slot INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (url, slot)
+      );
+    `,
+  },
+  {
+    // Local preferences by key (Phase 2.5 Task 6, `browser-polish.spec.ts`): the search engine choice.
+    id: '0005_app_settings',
+    sql: `
+      CREATE TABLE app_settings (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 /**

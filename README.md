@@ -12,13 +12,19 @@ browser and run SEO skills.
   guards for browsed content, per-origin permission prompts, page commands and a context menu, and a
   local browser-session database that restores tabs. The plan and how it was built:
   [`docs/plans/phase-1-browser-core.md`](docs/plans/phase-1-browser-core.md).
-- **Phase 2 — SEO engine and sidebar:** built (Tasks 1–6); the release check (Task 7) is in
-  progress. Visiting a page gives a live audit with a 0–100 health score in a docked, collapsible
-  sidebar: Overview, On-Page, Links, Images, Social, Schema, Indexability, Page Speed and Compliance
-  panels, from 101 rules of frost's own. Extraction runs in isolated worlds, and the analysis runs in
-  a worker thread with a hard timeout. What the app does now:
+- **Phase 2 — SEO engine and sidebar:** done. Visiting a page gives a live audit with a 0–100 health
+  score in a docked, collapsible sidebar: Overview, On-Page, Links, Images, Social, Schema,
+  Indexability, Page Speed and Compliance panels, from 101 rules of frost's own. Extraction runs in
+  isolated worlds, and the analysis runs in a worker thread with a hard timeout. The plan and how it
+  was built: [`docs/plans/phase-2-seo-engine.md`](docs/plans/phase-2-seo-engine.md).
+- **Phase 2.5 — SEO tooling depth:** built (Tasks 1–7); its macOS release check is run separately.
+  The day-to-day toolkit around the audit: per-tab render profiles (device, crawler user agents,
+  network, JavaScript and cache off), a served-HTML vs rendered-DOM comparison, a Content panel with
+  a snippet editor, a command palette, an SEO devtools drawer, find in page, reopen closed tab,
+  history and a choice of search engine, and on-request link, sitemap and hreflang checks; the
+  sidebar gains Content and JavaScript panels (eleven, with 111 rules). What the app does now:
   [`apps/desktop/README.md`](apps/desktop/README.md); the plan and how it was built:
-  [`docs/plans/phase-2-seo-engine.md`](docs/plans/phase-2-seo-engine.md).
+  [`docs/plans/phase-2.5-seo-tooling.md`](docs/plans/phase-2.5-seo-tooling.md).
 - **Next:** Phase 3, SERP + intent + indexability (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 
 ## Clean-room note
@@ -30,14 +36,16 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
 ## Layout
 - `apps/desktop/` — the Electron app (main, preload, the React chrome), packaged with Electron Forge.
 - `packages/seo-core/` — the SEO audit engine (`@app/seo-core`): the rule catalog's checks, the
-  health score, and the schema, robots.txt, hreflang, page speed and security readers. Pure
+  health score, the schema, robots.txt, hreflang, page speed and security readers, the content
+  report, the served-vs-rendered comparison and the link, sitemap and hreflang check readers. Pure
   TypeScript, with no Electron, DOM or Zod dependency.
-- `packages/db/` — the local browser-session database (Drizzle over `node:sqlite`).
+- `packages/db/` — the local database (Drizzle over `node:sqlite`): the browser session, history,
+  pinned render profiles, content notes and app settings.
 - `packages/ipc-contract/` — the typed tRPC IPC contract and its sender guard.
 - `specs/` — machine-checkable spec artifacts (constants, Zod schemas, `*.feature.md` acceptance
   lists); every scenario maps to a named test.
 - `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, 8-phase roadmap).
-- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–2).
+- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–2.5).
 - `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner.
 
 ## Getting started

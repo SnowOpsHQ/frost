@@ -57,10 +57,15 @@ not describe end-to-end `window.open` behaviour (see `window-open-judges-chromiu
 ## Packaged debugging lockdown — `remoteDebuggingRefusal({ isPackaged, hasSwitch, argv })` (policy.test.ts)
 Called first thing in `src/main/index.ts`; a non-null result is printed and the app exits `1`.
 - **Scenario: packaged-app-refuses-remote-debugging** — packaged, any of
-  `PACKAGED_FORBIDDEN_SWITCHES` (`remote-debugging-port`, `remote-debugging-pipe`) reported by
+  `PACKAGED_FORBIDDEN_SWITCHES` (`remote-debugging-port`, `remote-debugging-pipe`,
+  `host-resolver-rules`) reported by
   `hasSwitch`, or an argv entry matching `PACKAGED_FORBIDDEN_ARGV` (`--remote-debugging-port=9339`,
   `-remote-debugging-pipe`, `--inspect`, `--inspect-brk=0`, `--INSPECT`) → a refusal message that
   starts with `PACKAGED_DEBUG_REFUSAL` and names the switch.
+- **Scenario: packaged-app-refuses-host-resolver-rules** — packaged with `host-resolver-rules`
+  (it would let a launcher point a site's name at a private address, defeating the command
+  palette's "Open in" private-address check) → the refusal, naming it; unpackaged (the e2e suite
+  uses it) → `null`.
 - **Scenario: packaged-app-starts-without-debug-switches** — packaged with ordinary arguments
   (`--lang=en`, a path containing `inspect`, `--no-remote-debugging`) → `null`.
 - **Scenario: unpackaged-app-allows-debugging** — unpackaged (dev / e2e) → `null` whatever the

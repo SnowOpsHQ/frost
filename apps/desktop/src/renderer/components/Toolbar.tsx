@@ -2,6 +2,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import { BackIcon, ForwardIcon, ReloadIcon, SidebarIcon, StopIcon } from '../icons';
 import { actions } from '../ipc';
 import { AddressBar } from './AddressBar';
+import { RenderProfileToggle } from './RenderProfile';
 
 // The toolbar of the browser chrome (`App.tsx`; spec `browser-chrome.feature.md`, Layout). Styling is the
 // bundled styles.css only (strict CSP).
@@ -11,11 +12,15 @@ export function Toolbar({
   focusSeq,
   sidebarOpen,
   onToggleSidebar,
+  profileOpen,
+  onToggleProfile,
 }: {
   readonly tab: TabState | undefined;
   readonly focusSeq: number | undefined;
   readonly sidebarOpen: boolean;
   readonly onToggleSidebar: () => void;
+  readonly profileOpen: boolean;
+  readonly onToggleProfile: () => void;
 }) {
   const loading = tab?.loading === true;
   return (
@@ -48,6 +53,8 @@ export function Toolbar({
         </button>
       </nav>
       <AddressBar tab={tab} focusSeq={focusSeq} />
+      {/* Render profiles (`render-profile.feature.md`): the editor bar's toggle. */}
+      <RenderProfileToggle tab={tab} open={profileOpen} onToggle={onToggleProfile} />
       {/* The SEO sidebar's panel (spec `seo-sidebar.feature.md`): also View › SEO Sidebar, Mod+Shift+S. */}
       <button
         type="button"

@@ -16,9 +16,10 @@ export type HostWindow = Pick<
 
 /**
  * A tab's own state; its `permissionPrompt` comes from the broker, its `auditVersion` from the SEO
- * auditor and its `highlight` from `Tab.highlight` when the state is read.
+ * auditor, its `highlight` from `Tab.highlight` and its `renderProfile` from the render profiles
+ * (`render-profile.ts`) when the state is read.
  */
-export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion' | 'highlight'>;
+export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion' | 'highlight' | 'renderProfile'>;
 export type FullscreenMode = NonNullable<TabState['fullscreen']>;
 
 export interface Tab {

@@ -35,6 +35,7 @@ const tabAt = (documentSeq: number): TabState => ({
   auditVersion: 1,
   documentSeq,
   highlight: 'off',
+  renderProfile: null,
 });
 const pending = (url: string): SpeedResponse => ({ status: 'pending', url });
 

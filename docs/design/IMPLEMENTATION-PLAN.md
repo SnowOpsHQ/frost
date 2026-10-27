@@ -107,22 +107,37 @@ Semgrep ipc rules + a Playwright `openExternal` regression test) in CI.
   (web-vitals) and accessibility (axe) adapters; On-Page / Schema / Speed / Compliance panels.
   Deliverable: visit a page → live audit with a health score.
 
+**Phase 2.5 — SEO tooling depth**
+- Per-tab render profiles (device, user agent, network, JavaScript/cache switches) recorded with every
+  audit; served-HTML vs rendered-DOM comparison; content analysis (n-grams, readability, pixel widths,
+  target query) and a search-snippet editor; a keyboard command palette; an SEO devtools drawer
+  (network, redirects, console, storage, issues); browser polish (find in page, reopen closed tab,
+  history, choice of search engine); bounded link-status and sitemap checks. Deliverable: the
+  day-to-day SEO toolkit around the audit.
+
 **Phase 3 — SERP + intent + indexability**
-- SERP overlay with remotely-configured selectors; on-device embedding + intent classifier (ORT);
+- SERP overlay with remotely-configured (signed) selectors: result composition, page-1 ownership by
+  domain, feature outlines on the page, visible per-tab search parameters, and honest "couldn't read
+  this layout" states; on-device embedding + intent classifier (ORT) with its confidence shown;
   indexability/AI-readiness probes (bot user-agents). Deliverable: SERP and visibility panels.
 
 **Phase 4 — Accounts, entitlements, telemetry**
 - Backend API + better-auth; signed entitlement snapshots with offline grace; consent-gated
-  OTel/Sentry with working Settings toggles. Deliverable: sign-in, plan gating, honest telemetry.
+  OTel/Sentry with working Settings toggles. Search Console connection (read-only OAuth scope, tokens in the OS
+  keychain and main only) with a page/site performance panel. Deliverable: sign-in, plan gating, honest telemetry.
 
 **Phase 5 — AI agent**
 - Agent runtime utility process; Vercel AI SDK via Gateway; tool set (page audit/data/text, SERP,
-  navigate/click, run-ai-search, GSC) with the approval + sandbox model; declarative SEO skills.
+  navigate/click, run-ai-search, GSC) with the approval + sandbox model; declarative SEO skills;
+  user-governed customisation (skills editor, MCP connections labelled untrusted, a page to review and
+  revoke standing grants, chat export/retention, a context meter).
   Deliverable: an agent that audits and operates the browser safely.
 
 **Phase 6 — Change intelligence**
 - Append-only capture/version/diff schema (immutability via triggers); region/context tagging;
-  Changes panel. Deliverable: per-page change history with explicit retention controls.
+  Changes panel; local-first screenshots (viewport, area, full page) and projects that group pages and
+  queries, each capture recording its render profile and search parameters; a DOM inspector.
+  Deliverable: per-page change history and visual evidence with explicit retention controls.
 
 **Phase 7 — Sync & polish (optional)**
 - libSQL/local-first sync of change-intelligence; auto-update (signed, staged); cross-platform.

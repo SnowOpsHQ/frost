@@ -1,0 +1,50 @@
+# Debugger allowlist rule (CI gate; acceptance: specs/ci-gates.feature.md, "Semgrep
+# debugger-outside-allowlisted-modules"; specs/render-profile.feature.md). A tab's
+# `webContents.debugger` speaks the Chrome DevTools Protocol in-process: it can read and drive the
+# page. Phase 2.5's Global Constraints allow it only in main, only on browse-session tab WebContents,
+# and only in the modules that enforce the CDP method allowlist.
+#
+#   Rule test (fixtures):   pnpm security:semgrep:test
+#   Repo scan (0 findings): pnpm security:semgrep:scan
+#
+# The allowlist is `paths.exclude` below (the render-profile debugger only: the devtools drawer
+# records through the browse session's webRequest observers, never the debugger). Any use of a `debugger` property is flagged elsewhere —
+# `attach` / `sendCommand` / `detach` / `on`, an alias of it, a destructured binding (typed or not,
+# in a declaration, a parameter or an assignment) or a reflective read by name (`Reflect.get`,
+# `Reflect.getOwnPropertyDescriptor`, `Object.getOwnPropertyDescriptor`) — so no module can reach a
+# debugger through a helper. (A name computed at run time is out of a static rule's reach; review
+# catches that.) Never exclude the fixture (`semgrep --test` would
+# pass vacuously).
+rules:
+  - id: debugger-outside-allowlisted-modules
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      webContents.debugger used outside an allowlisted module. CDP is reachable only through
+      apps/desktop/src/main/browser/render-profile-debugger.ts, which attaches to browse-session
+      tabs only and sends only RENDER_PROFILE_CDP_METHODS (specs/render-profile.spec.ts); a new
+      module joins the allowlist in semgrep/debugger-allowlist.yml in a reviewed PR.
+    paths:
+      exclude:
+        # Allowlisted modules.
+        - /apps/desktop/src/main/browser/render-profile-debugger.ts
+        # Test-only code: never bundled into the app.
+        - "__tests__/"
+        - "*.test.ts"
+        - /apps/desktop/src/test/
+        - /apps/desktop/e2e/
+    pattern-either:
+      - pattern: $X.debugger
+      - pattern: $X["debugger"]
+      - pattern: "const { ..., debugger: $V, ... } = $E;"
+      - pattern: "let { ..., debugger: $V, ... } = $E;"
+      - pattern: "var { ..., debugger: $V, ... } = $E;"
+      - pattern: "function $F(..., { ..., debugger: $V, ... }: $T, ...) { ... }"
+      - pattern: "(..., { ..., debugger: $V, ... }: $T, ...) => $BODY"
+      # Untyped parameters, a destructuring assignment, and reflective reads by name.
+      - pattern: "function $F(..., { ..., debugger: $V, ... }, ...) { ... }"
+      - pattern: "(..., { ..., debugger: $V, ... }, ...) => $BODY"
+      - pattern: "({ ..., debugger: $V, ... } = $E)"
+      - pattern: Reflect.get($X, "debugger", ...)
+      - pattern: Reflect.getOwnPropertyDescriptor($X, "debugger")
+      - pattern: Object.getOwnPropertyDescriptor($X, "debugger")

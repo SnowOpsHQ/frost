@@ -3,6 +3,11 @@
 // runtime, so main and the chrome renderer can both import it.
 export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreAudit, scoreBand } from './audit';
 export { RULES } from './rules';
+export { copyValueOf } from './copy-values';
+export * from './content';
+export * from './javascript';
+// Link, sitemap and hreflang checks (Phase 2.5 Task 7).
+export * from './checks';
 export {
   accessibilityReport,
   allowsInlineScripts,
