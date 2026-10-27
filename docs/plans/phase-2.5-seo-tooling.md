@@ -1,0 +1,266 @@
+# Phase 2.5 — SEO Tooling Depth Implementation Plan
+
+> **For agentic workers:** implement task-by-task, subagent-driven. Tasks in the same batch touch
+> mostly separate files and run in parallel in their own worktrees; an integrator merges each batch,
+> then fresh reviewers check each task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** the day-to-day SEO toolkit around the Phase 2 audit:
+- render a page the way a crawler or a slow phone would;
+- see what depends on JavaScript;
+- judge content and draft better snippets;
+- drive everything from the keyboard;
+- debug a page's network, redirects and console without leaving frost.
+
+**Architecture:** Phase 2's architecture holds:
+- page-facing scripts run only in isolated worlds;
+- all page-derived analysis (Zod validation included) runs in the `worker_threads` analysis worker
+  under its hard timeout;
+- the chrome talks to main only through `enforceSender`-first tRPC procedures;
+- page text is always inert.
+
+New in this phase:
+- Main drives a tab's emulation and network conditions through the tab's own
+  `webContents.debugger` (Chrome DevTools Protocol in-process, no remote debugging port).
+- A second bounded fetcher, sharing the robots.txt fetcher's rules, reads served HTML, link statuses
+  and sitemaps.
+
+**Spec:**
+- `docs/design/IMPLEMENTATION-PLAN.md` §4 Phase 2.5.
+- UI direction: `docs/ui-reference/README.md`.
+
+## Spec-Driven Development protocol
+As before:
+- every task authors `specs/` artifacts first;
+- each scenario has a named test that cites it;
+- reviewers check spec↔test↔code agreement.
+
+## Global Constraints
+Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still holds, plus the following.
+- **Clean-room.** Behaviour is specified here in frost's own words, from SEO practice and public web
+  standards. Nothing is copied from any other product's UI text, code, prompts or assets.
+- **Debugger use is main-only and per tab.**
+  - `webContents.debugger.attach()` is allowed only on browse-session tab WebContents, and only by the
+    render-profile module and the devtools drawer's recorder.
+  - Only an allowlist of CDP methods may be sent.
+  - The debugger is detached when the tab closes.
+  - The packaged-build refusal of `--remote-debugging-*` is unchanged.
+  - A Semgrep rule (new) flags `debugger.attach`/`sendCommand` outside those modules.
+- **Fetching on the user's behalf.** Served HTML, link checks and sitemap reads all go through one
+  bounded fetcher that applies the robots.txt fetcher's rules:
+  - browse session, cookies omitted, no referrer;
+  - http(s) only;
+  - redirect cap;
+  - private-address refusal unless the page itself is private;
+  - size and time caps;
+  - per-origin rate limit.
+
+  Each surface says that sites can see these requests.
+- **Values are masked by default.** Cookie and storage values in the devtools drawer are shown masked
+  until the user reveals one. Request and response bodies are never captured. `Authorization`,
+  `Cookie` and `Set-Cookie` headers are always masked.
+- **No new remote calls from the chrome.** Command-palette web suggestions don't exist in this phase.
+  "Open in external tool" builds only `https:` URLs from a fixed, reviewed template table and opens
+  them as background tabs.
+
+## Review Focus
+- **A tab's render profile cannot leak into another tab or the app session.**
+  - Profiles are scoped per tab, and are cleared on tab close unless pinned to the site.
+  - The overridden state is always visible on the tab and in the status bar.
+  - Task 1 (`render-profile-is-tab-scoped`).
+- **A page cannot observe or defeat emulation beyond what the emulated environment itself exposes.**
+  - The debugger session is invisible to the page.
+  - A page cannot detach it.
+  - Task 1 (`emulation-is-invisible-to-page`).
+- **Served-HTML parsing is bounded and off the main thread.**
+  - It is parsed in the worker.
+  - The size and time caps apply.
+  - Hostile markup (deep nesting, 50 MB) stays bounded.
+  - Task 2 (`served-html-is-bounded`).
+- **Devtools never exposes secrets by default.**
+  - Masked cookies and auth headers.
+  - Never bodies.
+  - Task 5 (`devtools-masks-secrets`).
+- **Link/sitemap checks cannot be turned into a request flood or a LAN probe.**
+  - A per-origin rate limit and a total cap.
+  - Private-address refusal.
+  - Task 7 (`link-checks-are-bounded`).
+
+---
+
+### Batch A (parallel)
+
+#### Task 1: Per-tab render profiles
+- **Profile.** A profile combines:
+  - a device preset: viewport, device-scale factor, touch, mobile flag;
+  - a user agent: browser, mobile, common crawler user agents, or custom text with a length cap;
+  - a network condition: offline, slow 3G, fast 3G, 4G, none;
+  - switches: JavaScript off, cache off.
+- **How it's applied.** Through CDP on the tab's own debugger:
+  - `Emulation.setDeviceMetricsOverride` / `setTouchEmulationEnabled`;
+  - `Network.setUserAgentOverride` (with matching UA client hints);
+  - `Network.emulateNetworkConditions`;
+  - `Emulation.setScriptExecutionDisabled`;
+  - `Network.setCacheDisabled`.
+
+  The chrome shows "Reload to apply" where a reload is needed.
+- **Visibility.** The profile is shown on the tab, in the status bar and in the page area's frame.
+  "Reset" is one click.
+- **Scope and lifetime.** Profiles are tab-scoped by default. "Pin to this site" keeps a profile per
+  origin, stored locally.
+- **Recorded with audits.** Every audit records the profile it ran under. The Overview shows it, and
+  the vitals' lab caveat names the profile.
+- **Honesty note.** A crawler user agent doesn't reproduce a crawler's network origin or rendering
+  service, so results may differ from what the real crawler sees.
+- **Procedures.** `browser.setRenderProfile` and `browser.clearRenderProfile`, both
+  `enforceSender`-first and Zod-validated.
+- **Semgrep.** New rule `debugger-outside-allowlisted-modules`.
+- **Tests.** Unit tests for the profile spec and the CDP command builder (allowlist). e2e:
+  - mobile preset → the page sees the viewport width and the UA;
+  - JavaScript off → a script-written marker is absent;
+  - slow network → load is measurably slower;
+  - profile scoped to its tab;
+  - the page cannot detect the debugger;
+  - reset restores defaults.
+- [ ] Spec → red → green → commit `feat(browser): per-tab render profiles`
+
+#### Task 3: Content analysis and snippet editor
+- **Content panel.** A new rail item, or an On-Page sub-section; the implementer decides and documents
+  it. It shows:
+  - 1/2/3-word n-grams from the visible text (`Intl.Segmenter`, stop-words per language where frost
+    ships a small list), with presence in the title, H1, meta description and URL;
+  - a readability grade where a formula is valid for the page language (English Flesch reading ease,
+    with a documented formula). Other languages show "not available";
+  - an optional **target query** typed by the user, stored per URL locally, giving a checklist of term
+    presence in the title, H1, URL, the first 100 words and headings.
+- **Information, not targets.** n-gram density is never scored as pass/fail: nothing rewards keyword
+  stuffing.
+- **Pixel widths.** Title and description width against the result-snippet budget.
+  - Desktop title ≈ 580 px at the snippet font size.
+  - Description ≈ 920 px desktop, ≈ 680 px mobile.
+  - These are spec constants with a source note.
+  - Width comes from a character-width table generated at build time by measuring a common sans-serif
+    with canvas in Electron and committed as data. The worker computes widths from the table.
+  - New rules: title over budget (warning) and description over budget (info), which replace or
+    augment the character-length rules. Document how they interact.
+- **Snippet editor.**
+  - Inputs: the current title and description, plus user-drafted variants.
+  - Live desktop and mobile previews truncated at the pixel budget, with an ellipsis.
+  - Variants are stored locally per URL (DB table).
+  - "Copy as HTML" (`<title>` and `<meta name="description">`, HTML-escaped) goes through main.
+  - The previews are drawn by frost; no favicon is fetched into the chrome (use a neutral glyph).
+- **Tests.** Unit tests for n-grams (CJK, Thai, stop-words), readability, the width table and
+  truncation, rules, the variant store, router and copy. e2e for the panel, the target query and the
+  editor.
+- [ ] commit `feat(seo): content analysis and snippet editor`
+
+#### Task 4: Command palette
+- **Opening.** Cmd/Ctrl+K opens a palette over the chrome. The shortcut is reserved in
+  `before-input-event` so pages can't swallow it, following the Phase 1 shortcut table.
+- **Searching.** Fuzzy search over an **action registry**. Every action has an id, label, group,
+  keywords, an availability predicate and a handler (a chrome-side or main procedure).
+- **Built-in actions:**
+  - jump to each SEO panel; toggle the sidebar;
+  - highlight modes;
+  - re-audit; run the accessibility check;
+  - every tab and navigation command (new tab, close tab, reload, back/forward, zoom);
+  - Clear Browsing Data;
+  - copy actions for the current audit (title, meta description, canonical, H1, URL, robots, the
+    status code, the JSON-LD block), written by main from the shown audit, as Phase 2 copy actions do;
+  - "Open in" actions from a fixed `https:` template table: public validators and testers for rich
+    results, mobile rendering, page speed, an archive lookup, and the robots.txt and sitemap of the
+    site. Each opens as a background tab through `browser.openBackgroundTab`.
+- **Keyboard.** Fully keyboard-driven (arrows, Enter, Esc), ARIA combobox/listbox, recent actions
+  first.
+- **Extensible.** Later tasks register their own actions; this task only provides the registry and
+  the built-ins.
+- **Tests.** Unit tests for the registry, the fuzzy matcher, the template table (`https:` only, the URL
+  encoded, no page-controlled host) and availability. e2e: open, search, run a jump, run a copy, run
+  "Open in", and the page can't block Cmd/Ctrl+K.
+- [ ] commit `feat(chrome): command palette`
+
+### Batch B (parallel, after Batch A is merged)
+
+#### Task 2: Served HTML vs rendered DOM
+- **Fetching.** The bounded fetcher (see Global Constraints; extract it from the robots.txt fetcher
+  into `seo/fetcher.ts` and share it) fetches the page URL as served: cookies omitted, caps of about
+  5 MB and 10 s, and the tab's render profile user agent when one is set.
+- **Parsing.**
+  - Parse in the **worker** with a spec-compliant HTML parser dependency (e.g. `parse5`, MIT),
+    bounded by node count and depth.
+  - Produce a snapshot of the same shape as the rendered snapshot, extracting the fields that make
+    sense without layout: title, metas, robots, canonical, headings, links, structured data, word
+    count, hreflang.
+- **JavaScript panel.**
+  - A per-field structural diff (only in served, only in rendered, changed).
+  - A verdict: JS-independent / partly / heavily JS-dependent.
+  - Rules: canonical, robots or title differs after JS (warning); main content (word count) mostly
+    added by JS (info); links only present after rendering (info).
+- **States:** pending, ready, served HTML unavailable (with the reason), identical.
+- [ ] commit `feat(seo): served vs rendered comparison`
+
+#### Task 5: SEO devtools drawer
+- A drawer under the page area: resizable, toggled with Cmd/Ctrl+Shift+D, its state per window. Tabs:
+  - **Network:** requests recorded from the browse-session `web-request.ts` owner for the active tab.
+    Shows method, URL as text, type, status, size, timing waterfall, third-party flag, and robots.txt
+    verdict for crawlable types. Filters and a cap (e.g. 2,000 per document). `Authorization`,
+    `Cookie` and `Set-Cookie` are always masked, and bodies are never stored.
+  - **Redirects:** the main-frame redirect trace from Phase 2's response recorder, with each hop's
+    status and the headers that matter.
+  - **Console:** the tab's console messages (`console-message` event), deduplicated with counts,
+    capped, rendered as text.
+  - **Storage:** cookies for the tab's origin (from the browse session; names visible, values masked
+    with per-item reveal) and the origin's storage usage. Read-only: no editing or deleting from here
+    except a "Clear this site's data" action that asks for confirmation.
+  - **Issues:** every finding for the current audit in one sortable table, with its detail.
+- The drawer is read-only by design: no script execution, no DOM editing.
+- [ ] commit `feat(chrome): SEO devtools drawer`
+
+#### Task 6: Browser polish
+- **Find in page:** Cmd/Ctrl+F, using `webContents.findInPage`, with a find bar in the chrome, match
+  count, next/previous, and Esc.
+- **Reopen closed tab:** Cmd/Ctrl+Shift+T. Session-local stack, capped.
+- **History view:** an app view listing `recent_visits` with search, open, delete one, and clear all
+  (which reuses Clear Browsing Data's history part).
+- **New-tab page:** the start view gains "Jump back in" (recent visits, local only). No remote content.
+- **Search engine choice:** Google (default), Bing or DuckDuckGo in settings, plus prefix shortcuts in
+  the address bar (`g `, `b `, `d `). `SEARCH_URL_TEMPLATE` becomes a table.
+- Each item registers its command-palette actions.
+- [ ] commit `feat(browser): find, reopen tab, history, search engines`
+
+#### Task 7: Link status and sitemap checks
+- **Link checks.**
+  - "Check links" on the Links panel: HEAD (falling back to GET with a capped body) through the bounded
+    fetcher.
+  - Per-origin concurrency 2 and a rate limit, a total cap (e.g. 500 links), and private-address
+    refusal.
+  - Results: status, redirect target, broken, robots-blocked.
+  - The broken-link highlight reuses the highlight overlay.
+- **Sitemaps.**
+  - From the robots.txt `Sitemap:` lines, or `/sitemap.xml`: fetch (capped, gzip supported), parse in
+    the worker with an XML parser dependency, bounded, following sitemap indexes to a depth/total cap.
+  - Report URL count, errors, whether the current URL is listed, and `lastmod` sanity.
+- **hreflang reciprocity.** For the page's hreflang alternates (capped), fetch each alternate and check
+  it links back.
+- Every surface states that these requests are visible to the sites.
+- [ ] commit `feat(seo): link status, sitemap and hreflang reciprocity checks`
+
+### Task 8: Release check
+- [ ] Mac `verify:mac`, full e2e on macOS and Linux, Mac screenshots of the new surfaces, README and
+  plan "As built". Commit `docs: phase 2.5 seo tooling`
+
+## Self-review notes
+- **Covered:**
+  - render profiles (1);
+  - JavaScript dependency (2);
+  - content and snippets (3);
+  - palette (4);
+  - devtools (5);
+  - browser table stakes (6);
+  - link, sitemap and hreflang checks (7).
+- **Moved to other phases (design §4):**
+  - SERP composition and search parameters → Phase 3;
+  - Search Console → Phase 4;
+  - agent customisation → Phase 5;
+  - screenshots, projects and DOM inspector → Phase 6.
+- **Out of scope:** web suggestions in the palette; AI search engines in the address bar; teams and
+  API keys; themes.
