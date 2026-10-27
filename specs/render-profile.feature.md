@@ -111,6 +111,19 @@ the procedures' inputs, `TabRenderProfileSchema`). Phase 2.5 Task 1. Each line m
   a fresh tab (restored, opened from another, or empty) gets one only from its first load, so frost
   never awaits them before loading (see How it is applied).
 
+## Command palette (`apps/desktop/src/renderer/__tests__/render-profile-palette.test.ts`)
+Registered with `registerPaletteActions` (`command-palette.spec.ts`) in the Page group:
+- "Render as …", one per `QUICK_RENDER_PROFILES` entry: sets it as the active tab's own profile
+  (never a pin), as the editor bar's quick chips do; not offered while the tab already has exactly it.
+- "Reset render profile": `browser.clearRenderProfile`, offered only while the tab has a profile.
+- "Pin profile to this site": `browser.setRenderProfile` with `pin`, offered only for a tab on a web
+  page whose profile is not this site's pin yet.
+- **Scenario: palette-render-quick-profiles** — one action per quick profile; each sets it on the
+  active tab with `pin: false` and answers a status line; refused, it says nothing changed.
+- **Scenario: palette-render-availability** — Reset only with a profile; Pin only with an unpinned
+  profile on a web page; a quick profile not while it is already the tab's.
+- End to end: `palette-runs-a-render-profile` (`command-palette.e2e.ts`).
+
 ## End to end (`apps/desktop/e2e/render-profile.e2e.ts`)
 - `mobile-preset-viewport-and-ua`: phone + mobile user agent → the page sees `innerWidth` 412 and the
   mobile user agent, and the server gets it.

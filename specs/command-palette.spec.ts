@@ -110,6 +110,13 @@ export const PALETTE_EMPTY_MESSAGE = 'No matching commands' as const;
 export type PalettePanel = SeoPanelId;
 
 /**
+ * Panels whose feature registers its own jump (same id, `panel.<id>`) next to its other actions, so
+ * the built-ins leave theirs out: one row per panel. `content`: "Open Content panel", with "Set
+ * target query…" and "Copy snippet as HTML" (`seo-content.feature.md`, Command palette).
+ */
+export const FEATURE_PANEL_JUMPS = ['content'] as const satisfies readonly PalettePanel[];
+
+/**
  * Copy actions (`seo.copyValue({ tabId, audit, key })`): main writes, with Electron's `clipboard`,
  * one value of the tab's **ready** audit, and only if that audit is the one the chrome shows
  * (`SeoAuditRefSchema`), as the Phase 2 copy actions do. The chrome never touches the clipboard.

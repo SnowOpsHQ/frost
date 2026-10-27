@@ -1,6 +1,6 @@
 import { copyValueOf, type SeoAudit } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
-import { COPY_VALUE_KEYS, COPY_VALUE_LABELS, OPEN_IN_TEMPLATES, PALETTE_DETAIL_MAX_CHARS, SITE_FILES, type CopyValueKey } from '@app/specs/command-palette.spec';
+import { COPY_VALUE_KEYS, COPY_VALUE_LABELS, FEATURE_PANEL_JUMPS, OPEN_IN_TEMPLATES, PALETTE_DETAIL_MAX_CHARS, SITE_FILES, type CopyValueKey } from '@app/specs/command-palette.spec';
 import { DEFAULT_ZOOM, ZOOM_FACTORS, type PageCommand } from '@app/specs/page-commands.spec';
 import { HIGHLIGHT_PANELS, SEO_PANELS, type HighlightMode, type SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
@@ -53,8 +53,11 @@ const ref = (audit: SeoAudit) => ({ url: audit.url, takenAt: audit.takenAt });
 const ZOOM_MIN = ZOOM_FACTORS[0];
 const ZOOM_MAX = ZOOM_FACTORS[ZOOM_FACTORS.length - 1]!;
 
+/** Panels whose feature registers its own jump (`FEATURE_PANEL_JUMPS`). */
+const OWN_JUMPS: ReadonlySet<string> = new Set(FEATURE_PANEL_JUMPS);
+
 function panelActions(): PaletteAction[] {
-  const panels = SEO_PANELS.map(
+  const panels = SEO_PANELS.filter((panel) => !OWN_JUMPS.has(panel.id)).map(
     (panel): PaletteAction => ({
       id: `panel.${panel.id}`,
       label: `${panel.label} panel`,

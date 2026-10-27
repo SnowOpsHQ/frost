@@ -21,6 +21,8 @@ import {
 } from '@app/specs/render-profile.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { actions } from '../ipc';
+import { registerPaletteActions } from '../palette/registry';
+import { renderProfilePaletteSources } from '../render-profile-palette';
 import { badgeLabel, chipText, draftOf, frameNotes, outlineRect, profileOfDraft, type ProfileDraft } from '../render-profile-view';
 
 // The chrome's side of per-tab render profiles (spec `render-profile.feature.md`, Visible state): the
@@ -29,6 +31,10 @@ import { badgeLabel, chipText, draftOf, frameNotes, outlineRect, profileOfDraft,
 // comes from the tab's state; every change goes through `browser.setRenderProfile` /
 // `browser.clearRenderProfile`. Styling is the bundled styles.css only (strict CSP: SVG attributes,
 // never `style=`).
+
+// The command palette's render-profile actions (`render-profile-palette.ts`), once per module instance.
+const unregisterPaletteActions = registerPaletteActions(...renderProfilePaletteSources(actions));
+import.meta.hot?.dispose(unregisterPaletteActions);
 
 function Glyph({ children, className }: { readonly children: ReactNode; readonly className?: string }) {
   return (

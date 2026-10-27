@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { queryChecklist, type NgramRow, type SeoAudit } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import {
@@ -13,8 +13,10 @@ import {
   type NgramSize,
   type QueryPresence,
 } from '@app/specs/seo-content.spec';
+import { contentPaletteSources, onTargetQueryFocus, takeTargetQueryFocus } from '../../content-palette';
 import { capQuery, countLabel, ngramBar, ratio } from '../../content-view';
-import { useContentNotes } from '../../hooks/useContentNotes';
+import { copySnippetHtml, useContentNotes } from '../../hooks/useContentNotes';
+import { registerPaletteActions } from '../../palette/registry';
 import { CloseIcon } from '../../icons';
 import { Flash, useFlash } from './actions';
 import { AbsentGlyph, BarsIcon, BookIcon, PartialGlyph, PresentGlyph, TargetIcon } from './content-icons';
@@ -25,6 +27,10 @@ import { SnippetEditor } from './SnippetEditor';
 // preview and drafts, the target query checklist, the page's n-grams and its readability. All of
 // it is information: nothing here is scored, and counts are never pass or fail. Page-derived text
 // is React text only (`PageText`, `<bdi>`); bars are SVG attributes, never `style`.
+
+// The command palette's Content actions (`content-palette.ts`), once per module instance.
+const unregisterPaletteActions = registerPaletteActions(...contentPaletteSources({ copySnippetHtml }));
+import.meta.hot?.dispose(unregisterPaletteActions);
 
 const PLACE_SHORT: Readonly<Record<NgramPlace, [string, string]>> = {
   title: ['T', 'Title'],
@@ -47,11 +53,22 @@ function SectionTitle({ icon: Icon, text }: { readonly icon: typeof BookIcon; re
 
 function TargetQuery({ audit, query, loaded, onChange }: { readonly audit: SeoAudit; readonly query: string; readonly loaded: boolean; readonly onChange: (query: string) => void }) {
   const checks = queryChecklist(query, audit.content.fields, audit.content.language.code);
+  // The palette's "Set target query…": focus the field once it takes input (now, or when it is ready).
+  const field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!loaded) return;
+    const focus = () => {
+      if (takeTargetQueryFocus()) field.current?.focus();
+    };
+    focus();
+    return onTargetQueryFocus(focus);
+  }, [loaded]);
   return (
     <div className="seo-query" data-testid="seo-query">
       <label className="seo-search seo-query-field">
         <TargetIcon />
         <input
+          ref={field}
           type="search"
           className="seo-search-input"
           data-testid="seo-query-input"

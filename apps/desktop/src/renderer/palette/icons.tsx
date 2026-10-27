@@ -21,6 +21,7 @@ import {
   SpeedIcon,
   StopIcon,
 } from '../icons';
+import { RenderProfileIcon } from '../components/RenderProfile';
 import { ContentIcon } from '../components/seo/content-icons';
 import type { PaletteIconName } from './registry';
 
@@ -176,6 +177,7 @@ const ICONS: Readonly<Record<PaletteIconName, (props: GlyphProps) => ReactNode>>
   'panel-overview': OverviewIcon,
   'panel-on-page': OnPageIcon,
   'panel-content': ContentIcon,
+  'render-profile': RenderProfileIcon,
   'panel-links': LinksIcon,
   'panel-images': ImagesIcon,
   'panel-social': SocialIcon,

@@ -136,7 +136,8 @@ named test.
   own origin (scheme and port kept), never another host.
 
 ## Built-in actions (`builtins.test.ts`)
-- **Scenario: builtins-cover-the-plan** — a jump per `SEO_PANELS` panel, show / hide the sidebar, the
+- **Scenario: builtins-cover-the-plan** — a jump per `SEO_PANELS` panel (but `FEATURE_PANEL_JUMPS`,
+  whose feature registers its own), show / hide the sidebar, the
   highlight modes and off, re-audit, the accessibility check, new / close / next / previous tab,
   reload, hard reload, stop, back, forward, zoom in / out / reset, Clear Browsing Data, a copy per
   `COPY_VALUE_KEYS`, one per JSON-LD block, one per `OPEN_IN_TEMPLATES` and `SITE_FILES` entry.
@@ -172,3 +173,13 @@ named test.
   was opened from (or the address bar it was opened from).
 - **Scenario: palette-makes-no-network-requests** — typing and browsing the list requests nothing:
   neither the chrome nor the site sees a request.
+- **Scenario: palette-runs-a-render-profile** — a feature's registered action: "Render as Googlebot
+  smartphone" sets that profile on the active tab (badge, status chip, and after a reload the page
+  sees the crawler's user agent); "Reset render profile" is offered then, and restores the defaults.
+
+## Feature actions
+Features register their own actions with `registerPaletteActions` in their own renderer files:
+- render profiles (`render-profile-palette.ts`, from `components/RenderProfile.tsx`;
+  `render-profile.feature.md`, Command palette);
+- the Content panel (`content-palette.ts`, from `components/seo/Content.tsx`;
+  `seo-content.feature.md`, Command palette).

@@ -1,11 +1,13 @@
 // Specs: specs/command-palette.spec.ts (COMMAND_PALETTE_MENU_ID, OPEN_IN_TEMPLATES, SITE_FILES, PALETTE_SHEET_HEIGHT),
-// specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS['command-palette']), specs/browser.spec.ts (BROWSE_PARTITION)
+// specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS['command-palette']), specs/browser.spec.ts (BROWSE_PARTITION),
+// specs/render-profile.spec.ts (QUICK_RENDER_PROFILES; render-profile.feature.md, Command palette)
 // Acceptance: specs/command-palette.feature.md (End to end)
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { COMMAND_PALETTE_MENU_ID, OPEN_IN_TEMPLATES } from '@app/specs/command-palette.spec';
+import { QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
@@ -335,4 +337,43 @@ test('palette-makes-no-network-requests', async () => {
   }
   expect(chromeRequests).toEqual([]);
   expect(site.requests.slice(before)).toEqual([]);
+});
+
+test('palette-runs-a-render-profile', async () => {
+  const url = `${site.origin}/page`;
+  await go(url);
+  const id = await contentsIdAt(url);
+  const quick = QUICK_RENDER_PROFILES.find((q) => q.id === 'googlebot-smartphone')!;
+  const badge = () => activeTab().getByTestId('tab-render-profile');
+  const chip = () => page.getByTestId('status-render-profile');
+  await expect(badge()).toHaveCount(0);
+
+  // A feature's registered action: no Reset while the tab has no profile.
+  await press('chrome', 'K', ['mod']);
+  await input().fill('render profile');
+  await expect(options().first()).toHaveAttribute('data-action', /^render\.quick\./);
+  await expect(page.locator('[data-testid="command-palette-option"][data-action="render.reset"]')).toHaveCount(0);
+  await input().fill('render as googlebot smart');
+  await expect(activeOption()).toHaveAttribute('data-action', `render.quick.${quick.id}`);
+  await input().press('Enter');
+  await expect(palette()).toHaveCount(0);
+  await expect(page.getByTestId('command-palette-status')).toHaveText(`Render profile: ${quick.label}`);
+
+  // On the tab, in the status bar and the frame; after a reload the page sees the crawler's user agent.
+  await expect(badge()).toHaveAttribute('data-status', 'active');
+  await expect(chip()).toContainText('Googlebot smartphone');
+  await page.getByTestId('render-frame-reload').click();
+  await expect.poll(() => run(id, 'navigator.userAgent')).toContain('Googlebot');
+  await expect.poll(() => run(id, 'innerWidth')).toBe(412);
+
+  // Reset is offered now, and restores the defaults.
+  await press('chrome', 'K', ['mod']);
+  await input().fill('reset render');
+  await expect(activeOption()).toHaveAttribute('data-action', 'render.reset');
+  await input().press('Enter');
+  await expect(palette()).toHaveCount(0);
+  await expect(badge()).toHaveCount(0);
+  await expect(chip()).toHaveCount(0);
+  await run(id, 'location.reload()');
+  await expect.poll(() => run(id, 'navigator.userAgent')).not.toContain('Googlebot');
 });

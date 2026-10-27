@@ -132,6 +132,20 @@ Copy as HTML), `specs/seo-content.schema.ts` (the `content.*` inputs), `specs/se
 - **Scenario: breadcrumb-and-labels** — the preview's address line (host › decoded path segments) and
   the counts' wording.
 
+## Command palette (`apps/desktop/src/renderer/__tests__/content-palette.test.ts`)
+Registered with `registerPaletteActions` (`command-palette.spec.ts`); the Content panel's jump is
+this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second one.
+- "Open Content panel" (`panel.content`): the sidebar on the Content panel, focus on its rail item.
+- "Set target query…": the sidebar on the Content panel with focus in the target query field (once
+  the field is ready, within `TARGET_QUERY_FOCUS_WINDOW_MS`; a stale request never takes focus).
+  Offered for a web page with a ready audit.
+- "Copy snippet as HTML": the page's own title and description through `content.copySnippetHtml`
+  (as the snippet editor's Copy as HTML), for the shown ready audit with a title or description.
+- **Scenario: palette-content-actions** — the three actions, their groups, and what each runs.
+- **Scenario: palette-content-availability** — the jump always; the query and the copy only for a
+  web page with a ready audit, the copy only with a title or description.
+- **Scenario: target-query-focus-request** — a request is taken once, and not after the window.
+
 ## End to end (`seo-content.e2e.ts`)
 - **Scenario: content-panel-on-article** — a loopback article: the Content rail item, its n-grams,
   readability and the stop-word note.

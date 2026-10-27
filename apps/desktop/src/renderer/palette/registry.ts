@@ -15,6 +15,7 @@ export const PALETTE_ICON_NAMES = [
   'panel-overview',
   'panel-on-page',
   'panel-content',
+  'render-profile',
   'panel-links',
   'panel-images',
   'panel-social',

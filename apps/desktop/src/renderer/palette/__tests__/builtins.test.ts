@@ -1,10 +1,10 @@
-// Spec: specs/command-palette.spec.ts (COPY_VALUE_KEYS, OPEN_IN_TEMPLATES, SITE_FILES, PALETTE_DETAIL_MAX_CHARS),
+// Spec: specs/command-palette.spec.ts (COPY_VALUE_KEYS, FEATURE_PANEL_JUMPS, OPEN_IN_TEMPLATES, SITE_FILES, PALETTE_DETAIL_MAX_CHARS),
 // specs/seo-sidebar.spec.ts (SEO_PANELS, HIGHLIGHT_PANELS), specs/page-commands.spec.ts (PAGE_COMMANDS)
 // Acceptance: specs/command-palette.feature.md (Built-in actions)
 import { describe, expect, test, vi } from 'vitest';
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
-import { COPY_VALUE_KEYS, OPEN_IN_TEMPLATES, PALETTE_DETAIL_MAX_CHARS, SITE_FILES } from '@app/specs/command-palette.spec';
+import { COPY_VALUE_KEYS, FEATURE_PANEL_JUMPS, OPEN_IN_TEMPLATES, PALETTE_DETAIL_MAX_CHARS, SITE_FILES } from '@app/specs/command-palette.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import { builtinPaletteSources, type PaletteApi } from '../builtins';
 import { createPaletteRegistry, type PaletteAction, type PaletteContext } from '../registry';
@@ -84,7 +84,8 @@ describe('built-in palette actions', () => {
   test('builtins-cover-the-plan', () => {
     const { ids, registry } = setup({ tabs: [tab({ canGoBack: true, canGoForward: true, loading: true, zoom: 1.5 }), tab({ id: 2 })], sidebarOpen: false });
     const expected = [
-      ...SEO_PANELS.map((p) => `panel.${p.id}`),
+      // A panel in FEATURE_PANEL_JUMPS gets its jump from its feature (content-palette.ts).
+      ...SEO_PANELS.filter((p) => !(FEATURE_PANEL_JUMPS as readonly string[]).includes(p.id)).map((p) => `panel.${p.id}`),
       'sidebar.show',
       'highlight.links',
       'highlight.headings',
