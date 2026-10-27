@@ -318,6 +318,8 @@ test('page-cannot-navigate-to-non-web-scheme-e2e', async () => {
 
 test('browse-session-refuses-file-scheme-e2e', async () => {
   const id = await open('/a', 'Page A');
+  // Its title is known before it stops loading; a load still running would settle `loadURL` below instead of the refusal.
+  await expect.poll(() => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.isLoading(), id)).toBe(false);
   // A readable file with content the page must never see.
   const dir = await mkdtemp(path.join(tmpdir(), 'frost-e2e-file-'));
   const marker = `frost-secret-${randomUUID()}`;
