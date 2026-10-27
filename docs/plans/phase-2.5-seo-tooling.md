@@ -249,7 +249,7 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
     a partial served page is compared but checks no rule;
   - JavaScript is its own rail panel (the last), with "Fetch again" (`javascript.refetchServed`) and
     two palette actions.
-- [ ] commit `feat(seo): served vs rendered comparison`
+- [x] commit `feat(seo): served vs rendered comparison`
 
 #### Task 5: SEO devtools drawer
 - A drawer under the page area: resizable, toggled with Cmd/Ctrl+Shift+D, its state per window. Tabs:
@@ -335,7 +335,50 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
 - **hreflang reciprocity.** For the page's hreflang alternates (capped), fetch each alternate and check
   it links back.
 - Every surface states that these requests are visible to the sites.
-- [ ] commit `feat(seo): link status, sitemap and hreflang reciprocity checks`
+- As built (`specs/seo-checks.feature.md`, `specs/seo-checks.spec.ts`, `specs/seo-checks.schema.ts`):
+  - every check is started by the user ("Check links", "Check sitemaps", "Check return links", or
+    the palette) for the active tab's ready audit, and belongs to that tab's document and URL: a new
+    document, an in-page move to another URL or a closed tab cancels it; Stop keeps what it found;
+  - link checks: HEAD, then GET (16 KB) on 405 / 501 (and for that origin's later links); at most
+    500 unique targets, 2 per origin 250 ms apart, 6 in all, 10 s per link; private hosts skipped
+    from a public page; same-origin links robots.txt disallows are reported `blocked`, not fetched;
+    results stream through `checks.watch`, definite HTTP answers are cached per URL for the session
+    (Clear Browsing Data forgets them); a Status column, "Broken only" and a `broken` highlight mode;
+  - sitemaps from robots.txt `Sitemap:` lines or `/sitemap.xml`: gzip, 50 MB, indexes to depth 2,
+    20 files, 50,000 URLs, parsed with `saxes` in a checks worker of their own (DTDs refused);
+    hreflang reciprocity reads up to 20 alternates' heads and `Link` headers there too;
+  - five rules (`links-broken`, `links-internal-redirect`, `sitemap-page-not-listed`,
+    `sitemap-unreachable`, `hreflang-no-return-link`) read the finished runs from the page context
+    (`controller.rescoreAudit` re-scores the audit when a run ends);
+  - `checks.*` procedures are `enforceSender`-first; built on a temporary fetch adapter, switched to
+    the shared bounded fetcher at integration (below).
+- [x] commit `feat(seo): link status, sitemap and hreflang reciprocity checks`
+
+**Batch B integration (as built).**
+- Merged into `phase-2.5/seo-tooling` in the order served vs rendered, devtools drawer, browser
+  polish, link and sitemap checks.
+- One analysis job table: `audit`, `speed`, `served`, `robots` (the drawer's verdicts) and `checks`
+  (which runs in the checks' own analyzer instance), each with its refusal reason and payload.
+- The checks moved onto the shared bounded fetcher (`checks-fetch.ts` maps its outcomes onto
+  `CHECK_FETCH_OUTCOMES`). Main runs the fetcher in two lanes over one hop (`fetcher.spec.ts`,
+  Lanes): robots.txt and the served HTML share the `audit` lane; user-started checks have a
+  `checks` lane with per-origin queues of their own (`CHECKS_FETCHER_LIMITS`), so an audit's
+  requests never wait behind a 500-link check. The served HTML and the checks send the same render
+  profile user agent.
+- Chrome rows: tab strip, toolbar, permission prompt, render-profile editor bar, find bar,
+  workspace (the page column, with the palette's sheet or the History sheet over the page area, and
+  the SEO sidebar), devtools drawer, status bar. The find bar is now a chrome row above the
+  workspace and the drawer a band under it (across the sidebar too); the drawer is clamped against
+  the workspace and itself. The page area's measured bounds (`setPageBounds`) leave room for all of
+  them.
+- Reserved shortcuts never collide on any platform (`reserved-shortcuts-never-collide`): Mod+K,
+  Mod+F, Mod+L, Mod+T, Mod+Shift+T, Mod+Shift+S, Mod+Shift+D, Mod+R / Mod+Shift+R, and Mod+G /
+  Mod+Shift+G while the find bar is open. Every feature's palette actions register together with
+  no id offered twice (`palette-features-register-together`).
+- The rail has eleven panels, JavaScript last; its `javascript` category is in `SEO_CATEGORIES`
+  and the Overview's checks. Task 7's rules use the existing `links`, `indexability` and
+  `hreflang` categories.
+- [x] commit `refactor(seo): link and sitemap checks use the shared bounded fetcher`
 
 ### Task 8: Release check
 - [ ] Mac `verify:mac`, full e2e on macOS and Linux, Mac screenshots of the new surfaces, README and

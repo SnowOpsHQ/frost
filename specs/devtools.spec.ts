@@ -38,8 +38,8 @@ export const DEVTOOLS_STORAGE_KEYS = {
 export const DEVTOOLS_DEFAULT_OPEN = false;
 
 /**
- * The drawer's height (CSS px). It is a band at the bottom of the page column, so the page area
- * above it shrinks and the tab's view is laid out above it through `browser.setPageBounds` (as the
+ * The drawer's height (CSS px). It is a band under the workspace (the page column and the SEO
+ * sidebar; `column` is the two together), so the page area above it shrinks and the tab's view is laid out above it through `browser.setPageBounds` (as the
  * palette's sheet does at the top). Dragging its top edge, or Arrow Up / Down on the edge
  * (`keyboardStep`; Page Up / Down: four steps), resizes it, clamped to `[min, column − pageMinVisible]`
  * (never below `min`). The CSS clamps it too (`max-height`), so a short window never hides the page.

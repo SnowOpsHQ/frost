@@ -16,11 +16,12 @@ import { NetworkPanel } from './NetworkPanel';
 import { RedirectsPanel } from './RedirectsPanel';
 import { StoragePanel } from './StoragePanel';
 
-// The SEO devtools drawer (spec `devtools.feature.md`): a band at the bottom of the page column,
-// so the page area above it shrinks and main lays the tab's view out above it (`setPageBounds`, as
-// the palette's sheet at the top). Its height is an SVG strut's `height` attribute (never
-// `style=`: strict CSP), clamped here and by the CSS. Read-only by design: everything it shows
-// comes from the `devtools.*` procedures (masked by main) or the shown audit, rendered as text.
+// The SEO devtools drawer (spec `devtools.feature.md`): a band under the workspace (the page column
+// and the SEO sidebar), so the page area above it shrinks and main lays the tab's view out above it
+// (`setPageBounds`, as for the palette's sheet at the top). Its height is an SVG strut's `height`
+// attribute (never `style=`: strict CSP), clamped here and by the CSS. Read-only by design:
+// everything it shows comes from the `devtools.*` procedures (masked by main) or the shown audit,
+// rendered as text.
 
 // The palette's devtools actions (`devtools-palette.ts`), once per module instance.
 const unregisterPaletteActions = registerPaletteActions(...devtoolsPaletteSources());
@@ -58,7 +59,7 @@ export function DevtoolsDrawer({
 
   if (!open) return null;
 
-  /** The page column's height (the clamp's reference); 0 before layout. */
+  /** The workspace stack's height, the workspace's and the drawer's together (the clamp's reference); 0 before layout. */
   const column = (): number => root.current?.parentElement?.clientHeight ?? 0;
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {

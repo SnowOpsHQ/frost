@@ -156,12 +156,15 @@ input {
 
 .chrome {
   display: grid;
-  /* Rows: tab strip, toolbar, permission prompt, render-profile editor bar, workspace, status bar.
-     The prompt row is empty (0 high) unless the active tab shows a permission prompt; the editor
-     bar's row is empty unless it is open (render-profile.feature.md). The command palette's sheet is
-     not a row: it sits at the top of the workspace's page column (command-palette.spec.ts). Each
-     takes its height from the page area, so the tab's view is laid out below them all. */
-  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto auto minmax(0, 1fr) var(--status-height);
+  /* Rows: tab strip, toolbar, permission prompt, render-profile editor bar, find bar, the workspace
+     stack (the workspace, then the devtools drawer), status bar. The prompt row is empty (0 high)
+     unless the active tab shows a permission prompt; the editor bar's row is empty unless it is open
+     (render-profile.feature.md); the find bar's unless the active tab's is open
+     (browser-polish.feature.md); the drawer's band is there only while it is open
+     (devtools.feature.md). The command palette's sheet and the History sheet are not rows: they sit
+     at the top of the workspace's page column (command-palette.spec.ts). Each takes its height from
+     the page area, so the tab's view is laid out clear of them all. */
+  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto auto auto minmax(0, 1fr) var(--status-height);
   height: 100%;
 }
 
@@ -728,8 +731,19 @@ input {
 
 /* ---- Workspace: the page area and the SEO sidebar ------------------------------------------ */
 
+/* The workspace row, with the devtools drawer's band under it while open (its max-height is a
+   share of this stack, so the page keeps some height). */
+.workspace-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .workspace {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -6511,10 +6525,11 @@ input {
 /* End of JavaScript panel */
 
 /* Devtools drawer ------------------------------------------------------------------------------
-   The SEO devtools drawer (specs/devtools.feature.md): a band at the bottom of the page column, so the
-   page area above it shrinks (the tab's view is laid out above it through setPageBounds). Its height is
-   the strut's SVG height attribute (DEVTOOLS_HEIGHT in specs/devtools.spec.ts); max-height keeps at
-   least --devtools-page-min of the page in view. Waterfall bars are SVG rects sized by attributes. */
+   The SEO devtools drawer (specs/devtools.feature.md): a band under the workspace (the page column
+   and the SEO sidebar), so the page area above it shrinks (the tab's view is laid out above it
+   through setPageBounds). Its height is the strut's SVG height attribute (DEVTOOLS_HEIGHT in
+   specs/devtools.spec.ts); max-height keeps at least --devtools-page-min of the workspace in view.
+   Waterfall bars are SVG rects sized by attributes. */
 
 .devtools {
   --devtools-page-min: 160px;
@@ -7015,8 +7030,8 @@ input {
 
 /* Browser polish (Phase 2.5 Task 6, specs/browser-polish.feature.md): the find bar, the History
    sheet and the new-tab page's "Jump back in". Tab views are drawn above the chrome's DOM, so none of
-   these overlays the page: the find bar is a row of the page column above the page area, and while
-   the History sheet is open it fills the page column and the page area shrinks to nothing. */
+   these overlays the page: the find bar is a chrome row above the workspace, and while the History
+   sheet is open it fills the page column and the page area shrinks to nothing. */
 
 :root {
   --find-height: 40px;
@@ -7036,8 +7051,12 @@ input {
 
 /* ---- Find bar ---- */
 
+.find-slot {
+  min-width: 0;
+}
+
 .find-bar {
-  flex: 0 0 var(--find-height);
+  height: var(--find-height);
   display: flex;
   align-items: center;
   gap: 4px;

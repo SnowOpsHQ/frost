@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { FindBar } from './components/FindBar';
-import { HistoryView } from './components/HistoryView';
-import { useHistoryView } from './hooks/useHistoryView';
 import { CommandPalette } from './components/CommandPalette';
 import { DevtoolsDrawer } from './components/devtools/DevtoolsDrawer';
+import { FindBar } from './components/FindBar';
 import { FullscreenNotice } from './components/FullscreenNotice';
+import { HistoryView } from './components/HistoryView';
 import { PageArea } from './components/PagePanels';
 import { PromptBar } from './components/PermissionBar';
 import { RenderProfileBar } from './components/RenderProfile';
@@ -13,18 +12,21 @@ import { StatusBar } from './components/StatusBar';
 import { TabStrip } from './components/TabStrip';
 import { Toolbar } from './components/Toolbar';
 import { useBrowserState } from './hooks/useBrowserState';
+import { useHistoryView } from './hooks/useHistoryView';
 import { useNotice } from './hooks/useNotice';
 import { usePing } from './hooks/usePing';
 import { useSeoAudit } from './hooks/useSeoAudit';
 import { useSidebarOpen } from './hooks/useSidebarOpen';
 import type { PanelJump } from './palette/registry';
 
-// The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`): tab strip,
-// toolbar, permission prompt bar, the render-profile editor bar while open
-// (`render-profile.feature.md`), page area with the SEO sidebar docked on its right
-// (`seo-sidebar.feature.md`) and the command palette's sheet above it while open
-// (`command-palette.feature.md`) and the SEO devtools drawer below it while open (`devtools.feature.md`),
-// status bar, and the fullscreen notice.
+// The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`). Its rows: the
+// tab strip, the toolbar, the permission prompt bar, the render-profile editor bar while open
+// (`render-profile.feature.md`), the find bar while the active tab's is open
+// (`browser-polish.feature.md`), the workspace (the page column, with the command palette's sheet
+// or the History sheet over the page area, and the SEO sidebar docked on its right:
+// `command-palette.feature.md`, `seo-sidebar.feature.md`), the SEO devtools drawer while open
+// (`devtools.feature.md`), and the status bar; and the fullscreen notice. The page area takes what
+// the others leave, and main lays the tab's view out over exactly that.
 // All browser state lives in main; this page renders it and sends user intents over the
 // sender-guarded `browser.*` procedures (`ipc.ts`). Styling is the bundled styles.css only
 // (strict CSP). Runtime constants come from the Zod-free specs (`tabs.spec`, `permissions.spec`,
@@ -54,16 +56,21 @@ export function App() {
         {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} covered={tab.fullscreen !== null} /> : null}
       </div>
       <div className="render-slot">{profileOpen ? <RenderProfileBar tab={tab} onClose={() => setProfileOpen(false)} /> : null}</div>
-      <div className="workspace">
-        {/* The palette's sheet sits above the page area, never under the tab's view (`command-palette.spec.ts`). */}
-        <div className="page-column" data-history={historyOpen ? 'open' : undefined}>
-          <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
-          {historyOpen ? <HistoryView onClose={closeHistory} /> : <FindBar find={state?.find} />}
-          <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
-          {/* The SEO devtools drawer (`devtools.feature.md`): a band under the page area, which shrinks above it. */}
-          <DevtoolsDrawer state={state} tab={tab} audit={empty ? null : audit} onOpenPanel={(panel) => setPanelJump((last) => ({ panel, focus: true, seq: (last?.seq ?? 0) + 1 }))} />
+      {/* The find bar's row: empty unless the active tab's bar is open, and while the History sheet shows. */}
+      <div className="find-slot">{historyOpen ? null : <FindBar find={state?.find} />}</div>
+      {/* The workspace and, under it, the devtools drawer's band: the drawer is clamped against their height. */}
+      <div className="workspace-stack">
+        <div className="workspace">
+          {/* The palette's sheet and the History sheet sit above the page area, never under the tab's view (`command-palette.spec.ts`). */}
+          <div className="page-column" data-history={historyOpen ? 'open' : undefined}>
+            <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
+            {historyOpen ? <HistoryView onClose={closeHistory} /> : null}
+            <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
+          </div>
+          <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} />
         </div>
-        <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} />
+        {/* The SEO devtools drawer (`devtools.feature.md`): a band under the workspace, which shrinks above it. */}
+        <DevtoolsDrawer state={state} tab={tab} audit={empty ? null : audit} onOpenPanel={(panel) => setPanelJump((last) => ({ panel, focus: true, seq: (last?.seq ?? 0) + 1 }))} />
       </div>
       <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />
       {tab?.fullscreen === 'notice' ? <FullscreenNotice tab={tab} /> : null}

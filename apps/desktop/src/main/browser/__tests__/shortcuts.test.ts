@@ -1,12 +1,15 @@
 // Spec: specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS), specs/page-commands.spec.ts (RESERVED_PAGE_SHORTCUTS)
 // Acceptance: specs/tabs.feature.md (Shortcut matching), specs/page-commands.feature.md (Shortcut matching),
-// specs/seo-sidebar.feature.md (Toggle), specs/devtools.feature.md (devtools-shortcut-matches; DEVTOOLS_TOGGLE_SHORTCUT)
+// specs/seo-sidebar.feature.md (Toggle), specs/devtools.feature.md (devtools-shortcut-matches; DEVTOOLS_TOGGLE_SHORTCUT),
+// specs/browser-polish.feature.md (FIND_SHORTCUT, FIND_STEP_SHORTCUTS, REOPEN_TAB_SHORTCUT)
 import { describe, expect, test } from 'vitest';
 import { RESERVED_PAGE_SHORTCUTS, UNRESERVED_PAGE_SHORTCUTS, type PageCommand } from '@app/specs/page-commands.spec';
 import { RESERVED_TAB_SHORTCUTS, type TabCommand } from '@app/specs/tabs.spec';
 import { SIDEBAR_TOGGLE_SHORTCUT } from '@app/specs/seo-sidebar.spec';
 import { DEVTOOLS_TOGGLE_SHORTCUT } from '@app/specs/devtools.spec';
-import { matchDevtoolsShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput } from '../shortcuts';
+import { FIND_SHORTCUT, FIND_STEP_SHORTCUTS, REOPEN_TAB_SHORTCUT } from '@app/specs/browser-polish.spec';
+import { COMMAND_PALETTE_SHORTCUT } from '@app/specs/command-palette.spec';
+import { matchDevtoolsShortcut, matchFindStepShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput } from '../shortcuts';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'] as const;
 
@@ -168,5 +171,48 @@ describe('devtools shortcut matching', () => {
     expect(matchTabShortcut(toggle, platform)).toBeNull();
     expect(matchPageShortcut(toggle, platform)).toBeNull();
     expect(matchSidebarShortcut(toggle, platform)).toBe(false);
+  });
+});
+
+describe('reserved shortcuts together', () => {
+  // Phase 2.5 Batch B integration: every reserved chrome shortcut is taken by exactly one matcher,
+  // on every platform, so none runs twice or shadows another.
+  test.each(PLATFORMS)('reserved-shortcuts-never-collide (%s)', (platform) => {
+    const matchers = {
+      tab: (input: KeyInput) => matchTabShortcut(input, platform) !== null,
+      page: (input: KeyInput) => matchPageShortcut(input, platform) !== null,
+      sidebar: (input: KeyInput) => matchSidebarShortcut(input, platform),
+      devtools: (input: KeyInput) => matchDevtoolsShortcut(input, platform),
+      // Mod+G / Mod+Shift+G are reserved only while the find bar is open: checked as if it were.
+      findStep: (input: KeyInput) => matchFindStepShortcut(input, platform, true) !== null,
+    };
+    const expected: readonly [string, keyof typeof matchers][] = [
+      [COMMAND_PALETTE_SHORTCUT, 'tab'],
+      [FIND_SHORTCUT, 'tab'],
+      [REOPEN_TAB_SHORTCUT, 'tab'],
+      ['Mod+L', 'tab'],
+      ['Mod+T', 'tab'],
+      [SIDEBAR_TOGGLE_SHORTCUT, 'sidebar'],
+      [DEVTOOLS_TOGGLE_SHORTCUT, 'devtools'],
+      [FIND_STEP_SHORTCUTS.next, 'findStep'],
+      [FIND_STEP_SHORTCUTS.previous, 'findStep'],
+      ['Mod+R', 'page'],
+      ['Mod+Shift+R', 'page'],
+    ];
+    for (const [combo, owner] of expected) {
+      const input = inputFor(combo, platform);
+      const taken = Object.entries(matchers)
+        .filter(([, matches]) => matches(input))
+        .map(([name]) => name);
+      expect(taken, combo).toEqual([owner]);
+    }
+    // Distinct combos.
+    expect(new Set(expected.map(([combo]) => combo)).size).toBe(expected.length);
+    // The two tab-table entries sharing a letter stay apart by Shift.
+    expect(matchTabShortcut(inputFor('Mod+T', platform), platform)).toEqual({ command: 'new-tab' });
+    expect(matchTabShortcut(inputFor(REOPEN_TAB_SHORTCUT, platform), platform)).toEqual({ command: 'reopen-closed-tab' });
+    expect(matchTabShortcut(inputFor('Mod+Shift+F', platform), platform)).toBeNull();
+    expect(matchTabShortcut(inputFor('Mod+Shift+K', platform), platform)).toBeNull();
+    expect(matchTabShortcut(inputFor('Mod+Shift+L', platform), platform)).toBeNull();
   });
 });

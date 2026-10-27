@@ -194,7 +194,7 @@ Everything the page hands over is untrusted.
 - **Not checked.** JSON-LD context aliases, accessibility inside frames, and
   headers of a page restored from the back/forward cache or reached by `pushState` ("Unknown").
   An accessibility check that times out may leave the page's renderer busy for a while.
-- No download manager (downloads are cancelled with a notice) and no find bar yet.
+- No download manager (downloads are cancelled with a notice).
 
 ## Running, building, testing
 From the repo root (`pnpm install` first):

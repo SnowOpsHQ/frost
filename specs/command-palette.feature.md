@@ -247,4 +247,15 @@ Features register their own actions with `registerPaletteActions` in their own r
 - render profiles (`render-profile-palette.ts`, from `components/RenderProfile.tsx`;
   `render-profile.feature.md`, Command palette);
 - the Content panel (`content-palette.ts`, from `components/seo/Content.tsx`;
-  `seo-content.feature.md`, Command palette).
+  `seo-content.feature.md`, Command palette);
+- the JavaScript panel (`javascript-palette.ts`, from `components/seo/JavaScript.tsx`;
+  `seo-javascript.feature.md`, Command palette);
+- the devtools drawer (`devtools-palette.ts`, from `components/devtools/DevtoolsDrawer.tsx`;
+  `devtools.feature.md`);
+- browser polish (`browser-polish-palette.ts`, from `components/HistoryView.tsx`;
+  `browser-polish.feature.md`);
+- the link, sitemap and hreflang checks (`checks-palette.ts`, from `components/seo/LinkChecks.tsx`;
+  `seo-checks.feature.md`).
+- **Scenario: palette-features-register-together** (`renderer/__tests__/palette-all-features.test.ts`)
+  — the built-ins and every feature's sources register in one registry without a duplicate static
+  id, and for a web page with a ready audit no action id is offered twice.

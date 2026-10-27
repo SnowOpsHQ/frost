@@ -11,7 +11,7 @@ fields, the `find.*` / `history.*` / `settings.*` inputs). Shortcuts: `RESERVED_
   find bar, or focuses it again (`focusSeq`), and moves keyboard focus to the chrome. A tab with no
   page (empty, error or crash panel) gets no bar. (`find-shortcut-opens-bar`, e2e
   `find-shortcuts-beat-a-greedy-page`)
-- The bar is a row of the page column above the page area (the tab's view is laid out below it). It
+- The bar is a chrome row above the workspace (the tab's view is laid out below it). It
   runs `webContents.findInPage` in main: a new session for each new text or case switch, a follow-up
   for next / previous; `''` stops the find. The count is the latest `found-in-page` answer's
   (`findCountLabel`: `n of m`, or `No results`). (`find-search-runs-find-in-page`,

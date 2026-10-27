@@ -97,6 +97,11 @@ describe('bounded fetcher', () => {
     expect(fetched.body.byteLength).toBe(200_000);
     expect(read.count).toBe(Math.ceil(200_000 / chunk));
     expect(cancel).toHaveBeenCalled();
+    // A cap that is a whole number of chunks: a body that goes on is still `truncated`, one that ends is not.
+    const exact = fakeHop({ 'https://exact.example/more': { kind: 'response', status: 200, body: body([chunk, chunk, chunk]), cancel: vi.fn() }, 'https://exact.example/end': { kind: 'response', status: 200, body: body([chunk, chunk]), cancel: vi.fn() } });
+    const exactFetcher = createBoundedFetcher({ hop: exact.hop, limits: { perOriginIntervalMs: 0 } });
+    expect(await exactFetcher.fetch({ url: 'https://exact.example/more', page: PAGE, maxBytes: 2 * chunk })).toMatchObject({ outcome: 'response', truncated: true, body: expect.objectContaining({ byteLength: 2 * chunk }) });
+    expect(await exactFetcher.fetch({ url: 'https://exact.example/end', page: PAGE, maxBytes: 2 * chunk })).toMatchObject({ outcome: 'response', truncated: false, body: expect.objectContaining({ byteLength: 2 * chunk }) });
     // A hop that never settles: one deadline from the call.
     const never = fakeHop({ 'https://slow.example/': () => new Promise<HopResult>(() => undefined) });
     let settled: unknown;

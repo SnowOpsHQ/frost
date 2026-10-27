@@ -6,8 +6,8 @@ import { ChevronIcon, CloseIcon, SearchIcon } from '../icons';
 import { actions } from '../ipc';
 
 // The find bar (spec `browser-polish.spec.ts`; acceptance `browser-polish.feature.md`, Find in page):
-// a row of the page column above the page area while the active tab's bar is open (main lays the
-// tab's view out below it). Main owns the state per tab (`BrowserState.find`) and runs
+// a chrome row above the workspace while the active tab's bar is open (main lays the tab's view
+// out below it). Main owns the state per tab (`BrowserState.find`) and runs
 // `findInPage`; the text typed here goes only to main. Styling is the bundled styles.css only.
 
 /** The last focus request taken (one counter for every tab: a bar shown again after a switch is not one). */

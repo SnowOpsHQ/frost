@@ -25,8 +25,9 @@
  *   itself on a private host (a dev server). Literal hosts only, without DNS: a public name that
  *   resolves to a private address is not caught.
  * - **Caps per call.** The body is read up to `maxBytes`, then reading stops and the request is
- *   cancelled (`truncated`). One deadline, `timeoutMs`, counted from the call (time waiting for the
- *   origin's turn, every hop and the body included), ends it with `timeout`.
+ *   cancelled (`truncated`; a body that exactly fills the cap is `truncated` only if more follows).
+ *   One deadline, `timeoutMs`, counted from the call (time waiting for the origin's turn, every hop
+ *   and the body included), ends it with `timeout`.
  * - **Per-origin rate limit and concurrency.** Requests are queued per origin (of the first URL):
  *   at most `perOriginConcurrency` run at once, a new one starts no sooner than
  *   `perOriginIntervalMs` after the previous one started there, and at most `maxQueuedPerOrigin`

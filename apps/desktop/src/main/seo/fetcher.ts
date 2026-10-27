@@ -98,7 +98,7 @@ export const cutUrl = (value: string): string => value.slice(0, SNAPSHOT_LIMITS.
 
 const EMPTY = new Uint8Array(0);
 
-/** Reads `body` up to `maxBytes` bytes (then stops reading): the bytes and whether there was more. */
+/** Reads `body` up to `maxBytes` bytes (then stops reading): the bytes and whether there was more (one chunk past an exactly full cap is read to know). */
 export async function readCapped(body: AsyncIterable<Uint8Array>, maxBytes: number): Promise<{ bytes: Uint8Array<ArrayBuffer>; truncated: boolean }> {
   const chunks: Uint8Array[] = [];
   let length = 0;
@@ -113,10 +113,8 @@ export async function readCapped(body: AsyncIterable<Uint8Array>, maxBytes: numb
     }
     chunks.push(chunk);
     length += chunk.byteLength;
-    if (length === maxBytes) {
-      // Exactly full: whether more follows is unknown; stop reading anyway.
-      break;
-    }
+    // Exactly full: the loop reads one more chunk, so a body that goes on is `truncated` (a 50 MB cap
+    // is a whole number of a stream's chunks, so a longer body often fills it exactly).
   }
   const bytes = new Uint8Array(length);
   let at = 0;
