@@ -114,7 +114,8 @@ export const FRAME_ANCESTORS_OPEN = ['*', 'scheme:', 'scheme://*'] as const;
  * X-Frame-Options"): the values of every header, split on commas, trimmed and lowercased, as a set.
  * More than one distinct value blocks framing if any is `deny`, `sameorigin` or `allowall` (and is
  * ignored otherwise); one value blocks it if it is `deny` or `sameorigin`; `allowall` and anything
- * unknown allow it. A Content-Security-Policy header's `frame-ancestors` makes browsers ignore it.
+ * unknown allow it. A Content-Security-Policy header's `frame-ancestors` makes browsers ignore it,
+ * whatever its sources allow (an open `frame-ancestors *` with `X-Frame-Options: DENY` is unprotected).
  */
 export const XFO_BLOCKING_VALUES = ['deny', 'sameorigin'] as const;
 
@@ -432,7 +433,7 @@ export const COMPLIANCE_RULE_SPECS = [
     severity: 'info',
     title: 'Any site can frame this page',
     condition:
-      'The response headers are known, X-Frame-Options does not block framing (read as the HTML Standard does: one value DENY or SAMEORIGIN, or several distinct values one of which is DENY, SAMEORIGIN or ALLOWALL), and no Content-Security-Policy header has a frame-ancestors directive that restricts framing (one with *, a bare scheme such as https:, or a scheme with a wildcard host does not; frame-ancestors is ignored in a <meta> policy). A policy main had to cut is unknown: the rule passes.',
+      'The response headers are known and nothing in effect restricts framing: no Content-Security-Policy header has a frame-ancestors directive that restricts it (one with *, a bare scheme such as https:, or a scheme with a wildcard host does not; frame-ancestors is ignored in a <meta> policy), and, only when no Content-Security-Policy header has a frame-ancestors directive at all (one overrides X-Frame-Options, whatever its sources allow), X-Frame-Options does not block framing (read as the HTML Standard does: one value DENY or SAMEORIGIN, or several distinct values one of which is DENY, SAMEORIGIN or ALLOWALL). A policy main had to cut is unknown: the rule passes.',
     why: 'Another site can load the page in an invisible frame and trick visitors into clicking its buttons (clickjacking).',
     fix: 'Send Content-Security-Policy: frame-ancestors \'self\' (and X-Frame-Options: SAMEORIGIN for older browsers).',
   },

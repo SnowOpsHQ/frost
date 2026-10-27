@@ -155,6 +155,34 @@ describe('CSP', () => {
     expect(row.note).toMatch(/cut/i);
   });
 
+  test('frame-ancestors-overrides-frame-options', () => {
+    const rows = (snapshot: PageSnapshot) => Object.fromEntries(runAudit(snapshot).compliance.security.headers.map((row) => [row.name, row]));
+    // An open frame-ancestors is still enforced: browsers ignore the X-Frame-Options beside it.
+    const open = withOnly(header('content-security-policy', 'frame-ancestors *'), header('x-frame-options', 'DENY'));
+    expect(analyseSecurity(open)).toMatchObject({ frameAncestorsSet: true, frameAncestors: false, frameOptionsProtect: false });
+    const result = fails('clickjacking-unprotected', open);
+    expect(factOf(result, 'frame-ancestors')).toBe('*');
+    expect(factOf(result, 'X-Frame-Options')).toMatch(/DENY.*overridden/i);
+    const openRows = rows(open);
+    expect(openRows['x-frame-options']).toMatchObject({ state: 'weak', values: ['DENY'] });
+    expect(openRows['x-frame-options']!.note).toMatch(/overridden by CSP frame-ancestors/i);
+    expect(openRows['content-security-policy']!.note).toMatch(/frame-ancestors allows framing/i);
+    // A restricting frame-ancestors overrides it too, and protects.
+    const strict = withOnly(header('content-security-policy', "frame-ancestors 'self'"), header('x-frame-options', 'ALLOWALL'));
+    expect(analyseSecurity(strict)).toMatchObject({ frameAncestorsSet: true, frameAncestors: true, frameOptionsProtect: false });
+    passes('clickjacking-unprotected', strict);
+    expect(rows(strict)['x-frame-options']).toMatchObject({ state: 'good' });
+    expect(rows(strict)['x-frame-options']!.note).toMatch(/overridden by CSP frame-ancestors/i);
+    // A policy without frame-ancestors, or a meta one (it cannot set it), leaves X-Frame-Options in effect.
+    const noDirective = withOnly(header('content-security-policy', "script-src 'self'"), header('x-frame-options', 'DENY'));
+    expect(analyseSecurity(noDirective)).toMatchObject({ frameAncestorsSet: false, frameOptionsProtect: true });
+    passes('clickjacking-unprotected', noDirective);
+    expect(rows(noDirective)['x-frame-options']).toMatchObject({ state: 'good', note: null });
+    const meta = page({ ...withOnly(header('x-frame-options', 'DENY')), security: cleanSecurity({ metaCsp: ['frame-ancestors *'] }) });
+    expect(analyseSecurity(meta)).toMatchObject({ frameAncestorsSet: false, frameOptionsProtect: true });
+    passes('clickjacking-unprotected', meta);
+  });
+
   test('csp-frame-ancestors-header-only', () => {
     expect(frameAncestors(parseCsp("frame-ancestors 'self'", 'header'))).toEqual([["'self'"]]);
     expect(frameAncestors(parseCsp("frame-ancestors 'self'", 'meta'))).toEqual([]);

@@ -87,6 +87,8 @@ export function analyseSecurity(s: PageSnapshot): SecurityFacts {
   const upgradeInsecure = upgradesInsecureRequests(cspPolicies);
   const meta = metaReferrerPolicy(s.security.metaReferrer);
   const header = headerReferrerPolicy(headerValues(s, 'referrer-policy'));
+  // An enforced frame-ancestors (header policies only) overrides X-Frame-Options, even when open.
+  const ancestors = frameAncestors(cspPolicies);
   const result: SecurityFacts = {
     url: s.url,
     https: url?.protocol === 'https:',
@@ -96,10 +98,11 @@ export function analyseSecurity(s: PageSnapshot): SecurityFacts {
     hsts: hstsValue === undefined ? null : parseHsts(hstsValue),
     cspPolicies,
     inlineScriptsAllowed: !cspCut && allowsInlineScripts(cspPolicies),
-    frameAncestors: frameAncestors(cspPolicies).some(frameAncestorsProtect),
+    frameAncestorsSet: ancestors.length > 0,
+    frameAncestors: ancestors.some(frameAncestorsProtect),
     upgradeInsecure,
     cspCut,
-    frameOptionsProtect: frameOptionsProtect(headerValues(s, 'x-frame-options')),
+    frameOptionsProtect: ancestors.length === 0 && frameOptionsProtect(headerValues(s, 'x-frame-options')),
     nosniff: isNosniff(headerValues(s, 'x-content-type-options')),
     referrerPolicy: meta ?? header,
     referrerFrom: meta !== null ? 'meta' : header !== null ? 'header' : null,
@@ -140,13 +143,17 @@ function headerRows(s: PageSnapshot, f: SecurityFacts, failing: ReadonlySet<SeoR
         const inline = failing.has('csp-unsafe-inline');
         const scripts = f.cspPolicies.some((policy) => scriptSources(policy) !== null);
         const note = inline ? "Allows inline scripts ('unsafe-inline')" : scripts ? 'Restricts scripts' : 'Does not restrict scripts';
-        return { ...base, values: shown, fromMeta, state: inline ? 'weak' : 'good', note: f.frameAncestors ? `${note} · frame-ancestors set` : note };
+        const framing = f.frameAncestors ? ' · frame-ancestors set' : f.frameAncestorsSet ? ' · frame-ancestors allows framing' : '';
+        return { ...base, values: shown, fromMeta, state: inline ? 'weak' : 'good', note: `${note}${framing}` };
       }
       case 'x-content-type-options':
         return { ...base, values: shown, state: f.nosniff ? 'good' : 'weak', note: f.nosniff ? null : 'Only nosniff has an effect.' };
       case 'x-frame-options':
-        // A Content-Security-Policy frame-ancestors makes browsers ignore X-Frame-Options.
-        if (f.frameAncestors) return { ...base, values: shown, state: 'good', note: 'Ignored by browsers: CSP frame-ancestors protects the page.' };
+        // A Content-Security-Policy frame-ancestors makes browsers ignore X-Frame-Options, whatever it allows.
+        if (f.frameAncestorsSet)
+          return f.frameAncestors
+            ? { ...base, values: shown, state: 'good', note: 'Overridden by CSP frame-ancestors, which protects the page.' }
+            : { ...base, values: shown, state: 'weak', note: 'Overridden by CSP frame-ancestors, which lets any site frame the page.' };
         return { ...base, values: shown, state: f.frameOptionsProtect ? 'good' : 'weak', note: f.frameOptionsProtect ? null : 'Does not block framing (DENY or SAMEORIGIN would).' };
       case 'referrer-policy': {
         const unsafe = f.referrerPolicy !== null && (UNSAFE_REFERRER_POLICIES as readonly string[]).includes(f.referrerPolicy);

@@ -37,6 +37,7 @@ function security(changes: Partial<SecurityReport> = {}): SecurityReport {
     hsts: { maxAge: 31_536_000, includeSubDomains: true, preload: false },
     cspPolicies: [],
     inlineScriptsAllowed: false,
+    frameAncestorsSet: false,
     frameAncestors: false,
     upgradeInsecure: false,
     cspCut: false,

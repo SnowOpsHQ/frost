@@ -53,12 +53,18 @@ export interface SecurityFacts {
   readonly cspPolicies: readonly CspPolicy[];
   /** Inline scripts run (`false` when a cut CSP header leaves it unknown). */
   readonly inlineScriptsAllowed: boolean;
+  /**
+   * A header policy has a `frame-ancestors` directive (a `<meta>` policy cannot set it): it is
+   * enforced, so browsers ignore X-Frame-Options whatever its sources allow.
+   */
+  readonly frameAncestorsSet: boolean;
   /** A header policy's `frame-ancestors` keeps other sites from framing the page (`frameAncestorsProtect`). */
   readonly frameAncestors: boolean;
   /** An enforced policy has `upgrade-insecure-requests`. */
   readonly upgradeInsecure: boolean;
   /** A Content-Security-Policy header was cut by main (`truncated`): what depends on it is unknown. */
   readonly cspCut: boolean;
+  /** X-Frame-Options blocks framing and is in effect: `false` whenever `frameAncestorsSet` overrides it. */
   readonly frameOptionsProtect: boolean;
   readonly nosniff: boolean;
   /** The document's referrer policy, and what set it (`null`: none known). */

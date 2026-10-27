@@ -66,8 +66,9 @@ Each line maps to one named test.
     mixed content rule fails (`CSP_UPGRADE_DIRECTIVE`).
   - X-Frame-Options follows the HTML Standard's algorithm (`XFO_BLOCKING_VALUES`): several distinct
     values block framing if one of them is DENY, SAMEORIGIN or ALLOWALL; a single ALLOWALL or unknown
-    value allows it. A Content-Security-Policy header's `frame-ancestors` overrides it (the XFO row is
-    then not called weak). `frame-ancestors` holding `*`, a bare scheme or a wildcard host does not
+    value allows it. A Content-Security-Policy header's `frame-ancestors` overrides it, whatever its
+    sources allow (the XFO row then says it is overridden, and is not called weak only when
+    `frame-ancestors` restricts framing). `frame-ancestors` holding `*`, a bare scheme or a wildcard host does not
     protect (`FRAME_ANCESTORS_OPEN`). Inline scripts are decided by `script-src-elem`, then
     `script-src`, then `default-src` (`CSP_SCRIPT_ELEMENT_DIRECTIVES`).
   - CSP headers (and Content-Security-Policy-Report-Only, now recorded) are kept up to 16 KB
@@ -103,6 +104,7 @@ Each line maps to one named test.
 - HSTS parses max-age (quoted too), includeSubDomains, preload; duplicates or a bad max-age make it ignored → `hsts-parser`
 - nosniff is the first token → `frame-options-and-nosniff`
 - X-Frame-Options by the HTML Standard: one DENY / SAMEORIGIN blocks; several distinct values block if one is DENY, SAMEORIGIN or ALLOWALL; ALLOWALL alone and unknown values allow → `frame-options-html-algorithm`
+- An enforced `frame-ancestors` (a header policy's) overrides X-Frame-Options even when its sources allow framing: with `frame-ancestors *` and `X-Frame-Options: DENY` the page is unprotected (`clickjacking-unprotected` fails), the XFO is not counted, and its row says it is overridden by CSP frame-ancestors; a meta policy's `frame-ancestors` overrides nothing → `frame-ancestors-overrides-frame-options`
 - The referrer policy is the last known header token, a meta tag (legacy values too) wins → `referrer-policy-reading`
 
 ## Mixed content

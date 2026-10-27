@@ -3,7 +3,7 @@ import type { InsecureResource } from '@app/specs/seo-snapshot.spec';
 import { headerValues } from '../indexability';
 import type { FindingDetails, PageSnapshot } from '../types';
 import { details, fact, formatCount } from '../util';
-import { scriptSources } from './csp';
+import { frameAncestors, scriptSources } from './csp';
 import { formatDuration } from './headers';
 import { analyseAccessibility, analyseSecurity, hstsActive } from './index';
 
@@ -80,7 +80,9 @@ export const COMPLIANCE_CHECKS = {
     const f = analyseSecurity(s);
     if (!f.headersKnown || f.frameOptionsProtect || f.frameAncestors || f.cspCut) return null;
     const value = headerValues(s, 'x-frame-options')[0];
-    return details([fact('X-Frame-Options', value ?? 'Not sent'), fact('frame-ancestors', 'Not set')]);
+    const ancestors = frameAncestors(f.cspPolicies)[0];
+    const xfo = value === undefined ? 'Not sent' : f.frameAncestorsSet ? `${value} (overridden by frame-ancestors)` : value;
+    return details([fact('X-Frame-Options', xfo), fact('frame-ancestors', ancestors === undefined ? 'Not set' : ancestors.join(' ') || '(empty)')]);
   },
   'referrer-policy-missing': (s) => {
     const f = analyseSecurity(s);
