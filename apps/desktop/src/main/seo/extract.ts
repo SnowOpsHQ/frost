@@ -282,16 +282,18 @@ export function extractPage(
     social[tag] = content === null ? null : socialUrlTags.includes(tag) ? cut(content.trim(), L.maxUrlChars) : cut(squash(cut(content, L.maxSocialChars * 4)), L.maxSocialChars);
   }
 
-  // Headings that are shown (hidden ones are counted in the total only).
-  const [headings, headingTotal] = firstOf(
-    document.querySelectorAll('h1, h2, h3, h4, h5, h6'),
-    L.maxHeadings,
-    (el) => ({
-      level: Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1)),
-      text: shortText(el, L.maxHeadingChars),
-    }),
-    (el) => !isHidden(el),
-  );
+  // Headings that are shown (hidden ones are counted in the total, and the first few kept apart for
+  // the served-HTML comparison, which cannot tell them apart: Phase 2.5 Task 2 review).
+  const headingOf = (el: PageElement) => ({
+    level: Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1)),
+    text: shortText(el, L.maxHeadingChars),
+  });
+  const hiddenHeadings: { level: number; text: string }[] = [];
+  const [headings, headingTotal] = firstOf(document.querySelectorAll('h1, h2, h3, h4, h5, h6'), L.maxHeadings, headingOf, (el) => {
+    if (!isHidden(el)) return true;
+    if (hiddenHeadings.length < L.maxHiddenHeadings) hiddenHeadings.push(headingOf(el));
+    return false;
+  });
 
   // Links.
   const [links, linkTotal] = firstOf(document.links, L.maxLinks, (el) => {
@@ -671,6 +673,7 @@ export function extractPage(
     viewport,
     headings,
     headingTotal,
+    hiddenHeadings,
     wordCount: total(wordCount),
     textTruncated,
     partial,

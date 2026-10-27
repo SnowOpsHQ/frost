@@ -104,3 +104,23 @@ describe('alternates and robots.txt', () => {
     }
   });
 });
+
+describe('sitemap parse review fixes', () => {
+  test('sitemap-depth-capped', () => {
+    // 40,000 nested elements: stopped past SITEMAP_LIMITS.maxXmlDepth, fast.
+    const deep = `<urlset xmlns="${SITEMAP_NAMESPACE}">${'<a>'.repeat(40_000)}${'</a>'.repeat(40_000)}</urlset>`;
+    const started = performance.now();
+    expect(parseSitemap(job(deep))).toMatchObject({ error: 'malformed' });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(SITEMAP_LIMITS.maxXmlDepth).toBe(16);
+  });
+
+  test('sitemap-listed-by-canonical-and-root', () => {
+    const url = (loc: string) => `<url><loc>${loc}</loc></url>`;
+    expect(parseSitemap(job(urlset(url('https://example.com/canonical')), { canonicalUrl: 'https://example.com/canonical' })).listed).toBe(true);
+    expect(parseSitemap(job(urlset(url('https://example.com/canonical')), { canonicalUrl: null })).listed).toBe(false);
+    // The root with or without its slash is one URL; other paths keep theirs.
+    expect(parseSitemap(job(urlset(url('https://example.com')), { pageUrl: 'https://example.com/' })).listed).toBe(true);
+    expect(parseSitemap(job(urlset(url('https://example.com/guides/tea/')))).listed).toBe(false);
+  });
+});

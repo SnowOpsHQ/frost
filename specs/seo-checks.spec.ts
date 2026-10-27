@@ -29,7 +29,9 @@ import { SNAPSHOT_LIMITS } from './seo-limits.spec';
  * - `requestTimeoutMs`: one link's deadline, its HEAD, GET fallback and redirects together;
  * - `maxRedirects`: redirects followed per link (one more is `too-many-redirects`);
  * - `getBodyBytes`: a GET fallback reads at most this much of the body, then the connection is aborted;
- * - `cacheEntries`: results kept per URL for the session (oldest dropped first).
+ * - `cacheEntries`: results kept per URL and user agent for the session (oldest dropped first):
+ *   definite answers only (`ok`, `redirect`, `broken` with a status), never `temporary` or a
+ *   failure to answer; "Check again" on the same page asks every link afresh.
  */
 export const LINK_CHECK_LIMITS = {
   maxLinks: 500,
@@ -51,18 +53,31 @@ export const LINK_CHECK_LIMITS = {
 export const CHECK_FETCH_OUTCOMES = ['response', 'timeout', 'unreachable', 'too-many-redirects', 'bad-redirect', 'no-location', 'private-redirect', 'aborted'] as const;
 export type CheckFetchOutcome = (typeof CHECK_FETCH_OUTCOMES)[number];
 
-/** HEAD answers that mean "this server does not do HEAD": the link is asked again with GET, and so is every later link to that origin in the run. */
-export const HEAD_FALLBACK_STATUSES = [405, 501] as const;
+/**
+ * HEAD answers the link is asked again with GET for, the GET's answer then being the one kept: the
+ * server does not do HEAD (405, 501), or answers HEAD differently from GET, as some do for 403 and
+ * 404 (Phase 2.5 Task 2 review).
+ */
+export const HEAD_FALLBACK_STATUSES = [403, 404, 405, 501] as const;
+/** Of those, the ones that say the whole origin does not do HEAD: every later link to it in the run is asked with GET at once. */
+export const HEAD_ORIGIN_FALLBACK_STATUSES = [405, 501] as const satisfies readonly (typeof HEAD_FALLBACK_STATUSES)[number][];
+
+/**
+ * Statuses that say "not now" rather than "broken": rate limited (429) or temporarily unavailable
+ * (503). The link is `temporary`, never cached, and not a broken link.
+ */
+export const TEMPORARY_STATUSES = [429, 503] as const;
 
 /**
  * A checked link's outcome:
  * - `ok`: a 2xx answer, with no redirect;
  * - `redirect`: a 2xx answer after one or more redirects (`finalUrl` is where it ended);
- * - `broken`: a 4xx or 5xx answer, or no answer (`LINK_BROKEN_REASONS`);
+ * - `broken`: a 4xx or 5xx answer (other than `TEMPORARY_STATUSES`), or no answer (`LINK_BROKEN_REASONS`);
+ * - `temporary`: a `TEMPORARY_STATUSES` answer (rate limited or unavailable for now: check again later);
  * - `blocked`: a same-origin link the page origin's robots.txt disallows for Googlebot (not fetched);
  * - `skipped`: not fetched (`LINK_SKIP_REASONS`).
  */
-export const LINK_STATUS_KINDS = ['ok', 'redirect', 'broken', 'blocked', 'skipped'] as const;
+export const LINK_STATUS_KINDS = ['ok', 'redirect', 'broken', 'temporary', 'blocked', 'skipped'] as const;
 export type LinkStatusKind = (typeof LINK_STATUS_KINDS)[number];
 
 /** Why a link is `broken`: an error status, or no usable answer. */
@@ -79,7 +94,7 @@ export type LinkCheckReason = LinkBrokenReason | LinkSkipReason;
 export const LINK_ROBOTS_AGENT = 'Googlebot' as const;
 
 /** The labels the Links panel shows (frost's own words). */
-export const LINK_STATUS_LABELS: Readonly<Record<LinkStatusKind, string>> = { ok: 'OK', redirect: 'Redirect', broken: 'Broken', blocked: 'Blocked by robots.txt', skipped: 'Skipped' };
+export const LINK_STATUS_LABELS: Readonly<Record<LinkStatusKind, string>> = { ok: 'OK', redirect: 'Redirect', broken: 'Broken', temporary: 'Try again later', blocked: 'Blocked by robots.txt', skipped: 'Skipped' };
 export const LINK_REASON_LABELS: Readonly<Record<LinkCheckReason, string>> = {
   'http-error': 'Error status',
   unreachable: 'No answer',
@@ -162,7 +177,11 @@ export const SITEMAP_NAMESPACE = 'http://www.sitemaps.org/schemas/sitemap/0.9';
  * - `timeoutMs`: one file's deadline (its redirects and download);
  * - `maxLocChars`: a `<loc>` longer than this is not a URL frost reads;
  * - `maxSources`: robots.txt `Sitemap:` lines taken;
- * - `maxErrors`, `maxSamples`: errors and `lastmod` samples kept.
+ * - `maxErrors`, `maxSamples`: errors and `lastmod` samples kept;
+ * - `maxRunBytes`: bytes downloaded in all, per run (each file's `maxBytes` is cut to what is left;
+ *   past it, files are not read: `over-budget`);
+ * - `maxXmlDepth`: elements nested deeper than this end the file's parse (`malformed`): a sitemap is
+ *   three levels deep, and the XML parser's cost grows with the square of the depth.
  */
 export const SITEMAP_LIMITS = {
   maxBytes: 50 * 1024 * 1024,
@@ -174,6 +193,8 @@ export const SITEMAP_LIMITS = {
   maxSources: 10,
   maxErrors: 20,
   maxSamples: 5,
+  maxRunBytes: 200 * 1024 * 1024,
+  maxXmlDepth: 16,
 } as const;
 
 /** Where the run's first sitemaps came from: robots.txt's `Sitemap:` lines, or `/sitemap.xml` of the page's origin when there were none. */
@@ -187,9 +208,12 @@ export type SitemapSource = (typeof SITEMAP_SOURCES)[number];
  *   is read: no DTDs, no entity expansion); `not-sitemap`: the root is neither `<urlset>` nor
  *   `<sitemapindex>`; `wrong-namespace`: the root is not in `SITEMAP_NAMESPACE`;
  * - `too-large`: over `maxBytes` (downloaded or inflated); `too-many-urls`: past `maxUrls`;
- * - `too-many-files`, `too-deep`: an index pointed past `maxFiles` or `maxDepth` (those files are not read).
+ * - `too-many-files`, `too-deep`: an index pointed past `maxFiles` or `maxDepth` (those files are not read);
+ * - `over-budget`: the run downloaded `maxRunBytes` (the rest are not read);
+ * - `not-found`: no robots.txt `Sitemap:` line, and the guessed `/sitemap.xml` is not there (it did
+ *   not answer with a sitemap). Information only: a site need not have one at that address.
  */
-export const SITEMAP_ERROR_KINDS = ['unreachable', 'timeout', 'http-error', 'redirect', 'malformed', 'dtd-refused', 'not-sitemap', 'wrong-namespace', 'too-large', 'too-many-urls', 'too-many-files', 'too-deep'] as const;
+export const SITEMAP_ERROR_KINDS = ['unreachable', 'timeout', 'http-error', 'redirect', 'malformed', 'dtd-refused', 'not-sitemap', 'wrong-namespace', 'too-large', 'too-many-urls', 'too-many-files', 'too-deep', 'over-budget', 'not-found'] as const;
 export type SitemapErrorKind = (typeof SITEMAP_ERROR_KINDS)[number];
 
 export const SITEMAP_ERROR_LABELS: Readonly<Record<SitemapErrorKind, string>> = {
@@ -205,9 +229,15 @@ export const SITEMAP_ERROR_LABELS: Readonly<Record<SitemapErrorKind, string>> = 
   'too-many-urls': `Past ${SITEMAP_LIMITS.maxUrls.toLocaleString('en-US')} URLs`,
   'too-many-files': `Past ${SITEMAP_LIMITS.maxFiles} files`,
   'too-deep': `Index nested past ${SITEMAP_LIMITS.maxDepth} levels`,
+  'over-budget': `Past ${SITEMAP_LIMITS.maxRunBytes / 1024 / 1024} MB downloaded in this check`,
+  'not-found': 'No sitemap at /sitemap.xml',
 };
 
-/** The errors that make a sitemap "unreachable or invalid" (`sitemap-unreachable`); the caps frost applies are not the site's fault. */
+/**
+ * The errors that make a sitemap "unreachable or invalid" (`sitemap-unreachable`); the caps frost
+ * applies are not the site's fault, and a guessed `/sitemap.xml` that is not there is `not-found`
+ * (only sitemaps robots.txt declares, and the files their indexes list, count).
+ */
 export const SITEMAP_INVALID_ERRORS = ['unreachable', 'timeout', 'http-error', 'redirect', 'malformed', 'dtd-refused', 'not-sitemap', 'wrong-namespace', 'too-large'] as const satisfies readonly SitemapErrorKind[];
 
 /** One file read (or tried). */
@@ -238,13 +268,20 @@ export interface SitemapRunState {
   readonly files: readonly SitemapFileReport[];
   /** `<url>` entries counted across every file (at most `maxUrls`). */
   readonly urlCount: number;
-  /** Whether the page's URL (fragment aside) is a `<loc>` of one of them; `null` when no `urlset` was read. */
+  /**
+   * Whether the page's URL or its effective canonical (fragment aside; `https://a.example` and
+   * `https://a.example/` are one URL, other paths keep their trailing slash) is a `<loc>` of one of
+   * them; `null` when no `urlset` was read, or when the page was not found and not every sitemap
+   * could be read (a file failed, or a cap stopped the run): then frost cannot tell.
+   */
   readonly listed: boolean | null;
+  /** Every sitemap the run found was read whole (no file failed, no cap was hit). */
+  readonly complete: boolean;
   readonly lastmod: { readonly invalid: number; readonly future: number; readonly samples: readonly string[] };
   readonly errors: readonly { readonly url: string; readonly kind: SitemapErrorKind }[];
 }
 
-export const IDLE_SITEMAP_RUN: SitemapRunState = { status: 'idle', startedAt: null, finishedAt: null, source: null, files: [], urlCount: 0, listed: null, lastmod: { invalid: 0, future: 0, samples: [] }, errors: [] };
+export const IDLE_SITEMAP_RUN: SitemapRunState = { status: 'idle', startedAt: null, finishedAt: null, source: null, files: [], urlCount: 0, listed: null, complete: true, lastmod: { invalid: 0, future: 0, samples: [] }, errors: [] };
 
 // ---- hreflang reciprocity -----------------------------------------------------------------------
 
@@ -365,7 +402,7 @@ export const CHECKS_RULE_SPECS = [
     category: 'indexability',
     severity: 'info',
     title: 'Page is not in any sitemap',
-    condition: 'A sitemap check read at least one <urlset>, and none of the files read lists the page’s URL (its #fragment aside) as a <loc>.',
+    condition: 'A sitemap check read every sitemap it found, at least one of them a <urlset>, and none lists the page’s URL or its canonical (the #fragment aside) as a <loc>.',
     why: 'A sitemap tells search engines which URLs the site wants found. A page left out may be discovered later, or not at all if few pages link to it.',
     fix: 'Add the page’s canonical URL to the sitemap, or check whether it should be indexed at all.',
   },
@@ -374,7 +411,7 @@ export const CHECKS_RULE_SPECS = [
     category: 'indexability',
     severity: 'warning',
     title: 'Sitemap unreachable or invalid',
-    condition: 'A sitemap check ran, and a sitemap could not be fetched (no answer, an error status, a redirect frost does not follow), is not well-formed XML, has a DOCTYPE, is not a <urlset> or <sitemapindex> in the sitemaps namespace, or is over 50 MB uncompressed.',
+    condition: 'A sitemap check ran, and a sitemap robots.txt declares (or one a sitemap index lists) could not be fetched (no answer, an error status, a redirect frost does not follow), is not well-formed XML, has a DOCTYPE, is not a <urlset> or <sitemapindex> in the sitemaps namespace, or is over 50 MB uncompressed.',
     why: 'Search engines read sitemaps the same way. One they cannot fetch or parse tells them nothing, so the URLs in it are found only through links.',
     fix: 'Serve each sitemap with a 200 status as well-formed XML in the sitemaps.org namespace, under 50 MB (split it and add a sitemap index if needed), and list it in robots.txt.',
   },

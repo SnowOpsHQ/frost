@@ -29,7 +29,9 @@ import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
 import { createResponseRecorder } from './seo/responses';
 import { createRobotsFetcher, netHop, pendingRobots, type RobotsFetcher } from './seo/robots-fetch';
-import { createFetcherLanes } from './seo/fetcher';
+import { createFetcherLanes, netResolver, withE2ePublicHosts } from './seo/fetcher';
+import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
+import { SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
 import { createServedHtml, PENDING_SERVED, type ServedHtml } from './seo/served';
 import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
@@ -136,6 +138,13 @@ function start(): void {
     timeoutMs: CHECKS_ANALYSIS_TIMEOUT_MS,
   });
   app.once('will-quit', () => checksAnalyzer.dispose());
+  // The served HTML's parse (specs/seo-javascript.feature.md) has a worker of its own too, with a
+  // shorter deadline: a hostile page that is ended there never restarts the audits' worker.
+  const servedAnalyzer = createAnalyzer({
+    spawn: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }),
+    timeoutMs: SERVED_PARSE_LIMITS.timeoutMs,
+  });
+  app.once('will-quit', () => servedAnalyzer.dispose());
   let checks: Checks | null = null;
   // Indexability (specs/seo-indexability.feature.md): each tab's main-frame response is recorded
   // from the browse session's webRequest events (status, redirects, allowlisted headers, capped as
@@ -187,10 +196,17 @@ function start(): void {
     const profile = tabId === null ? null : (browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null);
     return profile && profile.status !== 'failed' ? profileUserAgent(profile.profile, process.versions.chrome) : null;
   };
+  // A render profile with JavaScript off: the served HTML is parsed as that browser parsed it.
+  const tabScripting = (contents: WebContents): boolean => {
+    const tabId = browser.tabIdOf(contents);
+    const profile = tabId === null ? null : (browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null);
+    return !(profile && profile.status !== 'failed' && profile.profile.javascriptDisabled);
+  };
   const servedInput = (contents: WebContents, url: string) => {
     if (!served) return knownInput(null);
     const userAgent = tabUserAgent(contents);
-    return laterInput(served.get(contents.id, url, userAgent), PENDING_SERVED, served.peek(contents.id, url, userAgent));
+    const how = { scripting: tabScripting(contents) };
+    return laterInput(served.get(contents.id, url, userAgent, how), PENDING_SERVED, served.peek(contents.id, url, userAgent, how));
   };
 
   // The SEO devtools drawer (specs/devtools.feature.md): a subscriber of the browse session's
@@ -322,9 +338,14 @@ function start(): void {
     // lanes over one hop: robots.txt and the served HTML share the `audit` lane's per-origin queues;
     // the link, sitemap and hreflang checks have the `checks` lane, so an audit never waits behind one.
     const hop = netHop(net, browseSession);
-    const fetchers = createFetcherLanes({ hop });
+    // Each hop's host name is resolved on the browse session first, and refused if any address is
+    // private (specs/private-address.spec.ts). The e2e seam (unpackaged only: a packaged build refuses
+    // the switch at startup) exempts the loopback test sites' public-looking names from that check.
+    const e2eHosts = app.isPackaged ? '' : app.commandLine.getSwitchValue(E2E_PUBLIC_HOSTS_SWITCH);
+    const resolve = e2eHosts === '' ? netResolver(browseSession) : withE2ePublicHosts(netResolver(browseSession), e2eHosts.split(','));
+    const fetchers = createFetcherLanes({ hop, resolve });
     robots = createRobotsFetcher({ hop, fetcher: fetchers.audit });
-    served = createServedHtml({ fetcher: fetchers.audit, parse: (input) => analyzer.parseServed(input) });
+    served = createServedHtml({ fetcher: fetchers.audit, parse: (input) => servedAnalyzer.parseServed(input) });
     observeRequests(browseSession, devtools.observer);
     const robotsFetcher = robots;
     checks = createChecks({
@@ -362,6 +383,8 @@ function start(): void {
         // for its current URL is forgotten and the tab audited again.
         javascript: {
           refetchServed: (tabId) => {
+            // Only the active tab (the one the panel shows): another tab's answer is never dropped.
+            if (browser.getState().activeTabId !== tabId) return false;
             const contents = webContents.getAllWebContents().find((c) => !c.isDestroyed() && isBrowseContents(c) && browser.tabIdOf(c) === tabId);
             if (!contents || !served) return false;
             served.drop(contents.id, contents.getURL());
@@ -406,6 +429,8 @@ function start(): void {
         served?.clear();
         devtools.clear();
         checks?.clearCache();
+        // Running checks go too: nothing they fetch afterwards is kept (seo-checks.feature.md).
+        checks?.cancelAll();
         // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
         browser.forgetRenderProfilePins();
       },

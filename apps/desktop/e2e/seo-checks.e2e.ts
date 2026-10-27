@@ -8,6 +8,7 @@ import { gzipSync } from 'node:zlib';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { CHECKS_VISIBILITY_NOTICE, SITEMAP_LIMITS, SITEMAP_NAMESPACE } from '@app/specs/seo-checks.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SEO_WORLD_ID } from '@app/specs/seo-limits.spec';
+import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -17,6 +18,12 @@ import { chromeHelpers } from './helpers';
  */
 const SITE_HOST = 'checks.frost-e2e.net';
 const BOMB_HOST = 'bombs.frost-e2e.net';
+/**
+ * A public-looking name that resolves to the loopback server but is not exempted from the bounded
+ * fetcher's DNS check (`E2E_PUBLIC_HOSTS_SWITCH` names only the two above): like a public name that
+ * points at a private address, it is refused (Phase 2.5 Task 2 review).
+ */
+const LAN_HOST = 'lan.frost-e2e.net';
 const AUDIT_WAIT = AUDIT_DEBOUNCE_MS + EXTRACT_TIMEOUT_MS + 5_000;
 const CHECK_WAIT = 30_000;
 /** How long a `/slow/…` answer takes. */
@@ -62,7 +69,7 @@ async function startSite() {
       case '/cookie-links':
         return page('A page that sets a cookie', '', '<a href="/fresh/a">A</a> <a href="/fresh/b">B</a>', { 'Set-Cookie': 'session=secret-value; Path=/' });
       case '/private-links':
-        return page('A public page linking to private addresses', '', `<a href="http://127.0.0.1:${port}/secret">Router</a> <a href="http://localhost:${port}/secret-too">Local</a> <a href="/ok">OK</a>`);
+        return page('A public page linking to private addresses', '', `<a href="http://127.0.0.1:${port}/secret">Router</a> <a href="http://localhost:${port}/secret-too">Local</a> <a href="http://${LAN_HOST}:${port}/secret-name">LAN</a> <a href="/ok">OK</a>`);
       case '/slow-links':
         return page('A page whose links answer slowly', '', Array.from({ length: 12 }, (_, i) => `<a href="/slow/${i}">Slow ${i}</a>`).join(' '));
       case '/ok':
@@ -146,7 +153,7 @@ const checkRequests = (paths: readonly string[]) => site.seen.filter((entry) => 
 
 test.beforeAll(async () => {
   site = await startSite();
-  ({ app, page } = await launchApp([`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1, MAP ${BOMB_HOST} 127.0.0.1`]));
+  ({ app, page } = await launchApp([`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1, MAP ${BOMB_HOST} 127.0.0.1, MAP ${LAN_HOST} 127.0.0.1`, `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST},${BOMB_HOST}`]));
   await page.waitForLoadState('domcontentloaded');
 });
 
@@ -200,8 +207,10 @@ test('link-check-private-refused-e2e', async () => {
   await expect(row(`127.0.0.1:${site.port}/secret`)).toHaveAttribute('data-status', 'skipped');
   await expect(row(`127.0.0.1:${site.port}/secret`).getByTestId('seo-link-status')).toHaveText('Skipped: Private address');
   await expect(row(`localhost:${site.port}/secret-too`)).toHaveAttribute('data-status', 'skipped');
+  // A public name that resolves to a private address: refused after resolving it, never requested.
+  await expect(row(`${LAN_HOST}:${site.port}/secret-name`)).toHaveAttribute('data-status', 'skipped');
   await expect(row('/ok')).toHaveAttribute('data-status', 'ok');
-  expect(checkRequests(['/secret', '/secret-too'])).toEqual([]);
+  expect(checkRequests(['/secret', '/secret-too', '/secret-name'])).toEqual([]);
 });
 
 test('sitemap-index-e2e', async () => {

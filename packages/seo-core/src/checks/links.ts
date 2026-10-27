@@ -1,4 +1,4 @@
-import { HEAD_FALLBACK_STATUSES, type CheckFetchOutcome, type LinkCheckResult, type LinkSkipReason } from '@app/specs/seo-checks.spec';
+import { HEAD_FALLBACK_STATUSES, HEAD_ORIGIN_FALLBACK_STATUSES, TEMPORARY_STATUSES, type CheckFetchOutcome, type LinkCheckResult, type LinkSkipReason } from '@app/specs/seo-checks.spec';
 import { parseUrl, withoutFragment } from '../util';
 
 // Link status classification (spec `seo-checks.spec.ts`, `LINK_STATUS_KINDS`, `LINK_BROKEN_REASONS`,
@@ -21,9 +21,19 @@ export function linkTargetKey(href: string): string | null {
   return withoutFragment(url);
 }
 
-/** Whether a HEAD answer says the server does not do HEAD (`HEAD_FALLBACK_STATUSES`): ask again with GET. */
+/** Whether a HEAD answer is asked again with GET (`HEAD_FALLBACK_STATUSES`), the GET's answer being kept. */
 export function needsGetFallback(status: number | null): boolean {
   return status !== null && (HEAD_FALLBACK_STATUSES as readonly number[]).includes(status);
+}
+
+/** Whether a HEAD answer says the whole origin does not do HEAD (`HEAD_ORIGIN_FALLBACK_STATUSES`): later links to it go straight to GET. */
+export function originNeedsGet(status: number | null): boolean {
+  return status !== null && (HEAD_ORIGIN_FALLBACK_STATUSES as readonly number[]).includes(status);
+}
+
+/** Whether a status means "not now" (`TEMPORARY_STATUSES`): rate limited or temporarily unavailable. */
+export function isTemporaryStatus(status: number | null): boolean {
+  return status !== null && (TEMPORARY_STATUSES as readonly number[]).includes(status);
 }
 
 /** A link not fetched. */
@@ -38,7 +48,8 @@ export function blockedLink(url: string): LinkCheckResult {
 
 /**
  * The result for `url` from `answer`; `null` for an aborted fetch (the run was cancelled: no result).
- * A 2xx is `ok`, or `redirect` after a redirect; 4xx and 5xx are `broken` (`http-error`); any other
+ * A 2xx is `ok`, or `redirect` after a redirect; 429 and 503 are `temporary` (`TEMPORARY_STATUSES`);
+ * other 4xx and 5xx are `broken` (`http-error`); any other
  * final status is `broken` (`other-status`); no answer is `broken` with why; a redirect to a private
  * host is `skipped` (`private`).
  */
@@ -50,6 +61,7 @@ export function classifyLink(url: string, answer: LinkAnswer): LinkCheckResult |
     case 'response': {
       const status = answer.status;
       if (status !== null && status >= 200 && status < 300) return { ...base, kind: answer.redirects > 0 ? 'redirect' : 'ok', reason: null };
+      if (isTemporaryStatus(status)) return { ...base, kind: 'temporary', reason: null };
       if (status !== null && status >= 400 && status < 600) return { ...base, kind: 'broken', reason: 'http-error' };
       return { ...base, kind: 'broken', reason: 'other-status' };
     }

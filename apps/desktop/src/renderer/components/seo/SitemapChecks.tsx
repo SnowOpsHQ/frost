@@ -34,7 +34,7 @@ function StartStop({ running, done, start, stop, label, testId }: { readonly run
 export function SitemapChecks({ tab, run }: { readonly tab: TabState; readonly run: SitemapRunState }) {
   const running = run.status === 'running';
   const checked = run.status !== 'idle';
-  const listed = run.listed === null ? { label: 'Unknown', tone: 'muted' as const } : run.listed ? { label: 'Page is listed', tone: 'ok' as const } : { label: 'Page is not listed', tone: 'warn' as const };
+  const listed = run.listed === null ? { label: run.complete ? 'Unknown' : 'Couldn’t check every sitemap', tone: 'muted' as const } : run.listed ? { label: 'Page is listed', tone: 'ok' as const } : { label: 'Page is not listed', tone: 'warn' as const };
   return (
     <section className="seo-section seo-index-card seo-checks" data-testid="seo-sitemap-checks" data-status={run.status}>
       <header className="seo-section-head">

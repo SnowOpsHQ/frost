@@ -279,6 +279,8 @@ export const PageSnapshotSchema = z
     viewport: attribute.nullable(),
     headings: z.array(HeadingSchema).max(L.maxHeadings),
     headingTotal: count,
+    // Phase 2.5 Task 2 review (`seo-javascript.spec.ts`): the first hidden headings, for the served-HTML comparison.
+    hiddenHeadings: z.array(HeadingSchema).max(L.maxHiddenHeadings).optional(),
     wordCount: count,
     textTruncated: z.boolean(),
     partial: z.boolean(),

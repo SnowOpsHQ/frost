@@ -42,6 +42,8 @@ export const SitemapJobSchema = z.strictObject({
   bytes: z.instanceof(Uint8Array).refine((bytes) => bytes.byteLength <= SITEMAP_LIMITS.maxBytes, { message: 'sitemap over its cap' }),
   fileUrl: webUrl,
   pageUrl: webUrl,
+  /** The page's effective canonical, also looked for (`null`: none, or the page itself). */
+  canonicalUrl: webUrl.nullable().optional(),
   urlBudget: z.int().nonnegative().max(SITEMAP_LIMITS.maxUrls),
   now: z.number().nonnegative(),
 });

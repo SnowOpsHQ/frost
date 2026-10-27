@@ -82,6 +82,8 @@ export interface Checks extends ChecksService {
   brokenFor(contentsId: number): string[];
   /** Forgets the cached link results (Clear Browsing Data). */
   clearCache(): void;
+  /** Cancels every running check (Clear Browsing Data): their requests are aborted. */
+  cancelAll(): void;
   cacheSize(): number;
 }
 
@@ -149,10 +151,13 @@ export function createChecks(options: ChecksOptions): Checks {
     else pushTimer ??= setTimeout(wake, pushIntervalMs);
   };
 
-  const remember = (url: string, result: LinkCheckResult): void => {
+  /** A cached result is per URL and user agent (a site may answer a crawler differently). */
+  const cacheKey = (url: string, userAgent: string | null): string => [userAgent ?? '', url].join('\n');
+  const remember = (url: string, userAgent: string | null, result: LinkCheckResult): void => {
     if (!cacheable(result)) return;
-    cache.delete(url);
-    cache.set(url, result);
+    const key = cacheKey(url, userAgent);
+    cache.delete(key);
+    cache.set(key, result);
     while (cache.size > linkLimits.cacheEntries) cache.delete(cache.keys().next().value!);
   };
 
@@ -213,7 +218,8 @@ export function createChecks(options: ChecksOptions): Checks {
 
   // ---- Link checks ----
 
-  async function runLinks(entry: Entry, signal: AbortSignal, tab: ChecksTab): Promise<void> {
+  /** `fresh`: "Check again" on this page, every link asked afresh (the cache is not read, only written). */
+  async function runLinks(entry: Entry, signal: AbortSignal, tab: ChecksTab, fresh: boolean): Promise<void> {
     const live = (): boolean => entries.get(entry.tabId) === entry && !signal.aborted;
     const plan = planLinks(entry.pageLinks, entry.key, linkLimits);
     const results = new Map<string, LinkCheckResult>(plan.skipped);
@@ -237,7 +243,7 @@ export function createChecks(options: ChecksOptions): Checks {
     }
     const toFetch: string[] = [];
     for (const url of plan.candidates) {
-      const cached = cache.get(url);
+      const cached = fresh ? undefined : cache.get(cacheKey(url, tab.userAgent));
       if (blocked.has(url)) results.set(url, blockedLink(url));
       else if (cached) results.set(url, { ...cached, cached: true });
       else toFetch.push(url);
@@ -249,7 +255,7 @@ export function createChecks(options: ChecksOptions): Checks {
       async (url, runSignal) => {
         const result = await checkLink(url, { fetch: options.fetch, page: entry.key, userAgent: tab.userAgent, getOnly, signal: runSignal, limits: linkLimits, now });
         if (result === null || !live()) return;
-        remember(url, result);
+        remember(url, tab.userAgent, result);
         results.set(url, result);
         publish();
       },
@@ -260,8 +266,14 @@ export function createChecks(options: ChecksOptions): Checks {
 
   // ---- Sitemaps ----
 
-  async function runSitemaps(entry: Entry, signal: AbortSignal, tab: ChecksTab): Promise<void> {
+  async function runSitemaps(entry: Entry, signal: AbortSignal, tab: ChecksTab, canonical: string | null): Promise<void> {
     const live = (): boolean => entries.get(entry.tabId) === entry && !signal.aborted;
+    // A page URL the worker's job cannot hold: the check cannot run (not every file "malformed").
+    if (entry.key.length > SNAPSHOT_LIMITS.maxUrlChars) {
+      finish(entry, 'sitemaps', 'failed');
+      return;
+    }
+    const canonicalUrl = canonical !== null && canonical !== entry.key && canonical.length <= SNAPSHOT_LIMITS.maxUrlChars && isWebUrl(canonical) ? withoutFragment(canonical) : null;
     const robots = await robotsOf(entry.key);
     if (!live()) return;
     let sources: string[] = [];
@@ -277,11 +289,16 @@ export function createChecks(options: ChecksOptions): Checks {
     const lastmod = { invalid: 0, future: 0, samples: [] as string[] };
     let urlCount = 0;
     let listed: boolean | null = null;
+    // Every sitemap found was read whole: else a page not found in them is not known to be missing.
+    let complete = true;
+    let downloaded = 0;
     const addError = (url: string, kind: SitemapErrorKind): void => {
+      if (kind !== 'not-found') complete = false;
       if (errors.length < sitemapLimits.maxErrors) errors.push({ url: url.slice(0, SNAPSHOT_LIMITS.maxUrlChars), kind });
     };
     const publish = (): void => {
-      entry.sitemaps = { ...entry.sitemaps, source, files: [...files], urlCount, listed, lastmod: { ...lastmod, samples: [...lastmod.samples] }, errors: [...errors] };
+      const shownListed = listed === true ? true : complete ? listed : null;
+      entry.sitemaps = { ...entry.sitemaps, source, files: [...files], urlCount, listed: shownListed, complete, lastmod: { ...lastmod, samples: [...lastmod.samples] }, errors: [...errors] };
       push(false);
     };
     publish();
@@ -305,13 +322,22 @@ export function createChecks(options: ChecksOptions): Checks {
       const wait = last + linkLimits.perOriginIntervalMs - now();
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
       if (!live()) return;
+      // The run's byte budget: each file gets what is left of it.
+      const left = sitemapLimits.maxRunBytes - downloaded;
+      if (left <= 0) {
+        addError(url, 'over-budget');
+        publish();
+        continue;
+      }
       last = now();
-      const answer = await options.fetch(url, { method: 'GET', maxBytes: sitemapLimits.maxBytes, timeoutMs: sitemapLimits.timeoutMs, maxRedirects: linkLimits.maxRedirects, page: entry.key, userAgent: tab.userAgent, signal });
+      const answer = await options.fetch(url, { method: 'GET', maxBytes: Math.min(sitemapLimits.maxBytes, left), timeoutMs: sitemapLimits.timeoutMs, maxRedirects: linkLimits.maxRedirects, page: entry.key, userAgent: tab.userAgent, signal });
       if (!live() || answer.outcome === 'aborted') return;
+      downloaded += answer.body.byteLength;
       let error = sitemapFetchError(answer);
+      if (error === 'too-large' && left < sitemapLimits.maxBytes) error = 'over-budget';
       const file: { -readonly [K in keyof SitemapFileReport]: SitemapFileReport[K] } = { url, depth, type: null, status: answer.status, gzip: false, entries: 0, error: null };
       if (error === null) {
-        const parsed = await analyse({ kind: 'sitemap', bytes: answer.body, fileUrl: answer.finalUrl, pageUrl: entry.key, urlBudget: Math.max(0, sitemapLimits.maxUrls - urlCount), now: now() });
+        const parsed = await analyse({ kind: 'sitemap', bytes: answer.body, fileUrl: answer.finalUrl, pageUrl: entry.key, canonicalUrl, urlBudget: Math.max(0, sitemapLimits.maxUrls - urlCount), now: now() });
         if (!live()) return;
         if (!parsed.ok || parsed.kind !== 'sitemap') error = 'malformed';
         else {
@@ -334,6 +360,8 @@ export function createChecks(options: ChecksOptions): Checks {
           }
         }
       }
+      // A guessed /sitemap.xml (robots.txt declares none) that is not a sitemap: there is none, not a broken one.
+      if (error !== null && source === 'fallback' && depth === 0) error = 'not-found';
       file.error = error;
       files.push(file);
       if (error !== null) addError(url, error);
@@ -396,16 +424,18 @@ export function createChecks(options: ChecksOptions): Checks {
     const entry = entryFor(tabId, tab, audit.page.linkList);
     const current = kind === 'links' ? entry.links : kind === 'sitemaps' ? entry.sitemaps : entry.hreflang;
     if (current.status === 'running') return true;
+    // A check run before on this page: "Check again" asks afresh.
+    const again = current.status !== 'idle';
     const controller = new AbortController();
     entry.controllers[kind] = controller;
     const begun = { status: 'running' as const, startedAt: now(), finishedAt: null };
     let run: Promise<void>;
     if (kind === 'links') {
       entry.links = { ...IDLE_LINK_RUN, ...begun };
-      run = runLinks(entry, controller.signal, tab);
+      run = runLinks(entry, controller.signal, tab, again);
     } else if (kind === 'sitemaps') {
       entry.sitemaps = { ...IDLE_SITEMAP_RUN, ...begun };
-      run = runSitemaps(entry, controller.signal, tab);
+      run = runSitemaps(entry, controller.signal, tab, audit.indexability.canonical.effective);
     } else {
       entry.hreflang = { ...IDLE_HREFLANG_RUN, ...begun };
       run = runHreflang(entry, controller.signal, tab, audit);
@@ -495,6 +525,10 @@ export function createChecks(options: ChecksOptions): Checks {
     clearCache() {
       cache.clear();
       getOnly.clear();
+    },
+
+    cancelAll() {
+      for (const tabId of [...entries.keys()]) cancel(tabId);
     },
 
     cacheSize: () => cache.size,

@@ -6,7 +6,7 @@ import { CHECKS_RULE_SPECS, HREFLANG_CHECK_LIMITS, IDLE_HREFLANG_RUN, IDLE_LINK_
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { FINDING_SAMPLE_LIMIT, SEO_RULE_SPECS, type SeoRuleId } from '@app/specs/seo-rules.spec';
 import type { ChecksContext } from '@app/specs/seo-snapshot.spec';
-import { checksContextOf, classifyLink, headHreflangLinks, hreflangTargets, lastmodIssue, lastmodTime, linkTargetKey, needsGetFallback, reciprocityOf, RULES, type FindingDetails, type HreflangReport, type PageLink, type PageSnapshot } from '../index';
+import { checksContextOf, classifyLink, headHreflangLinks, hreflangTargets, lastmodIssue, lastmodTime, linkTargetKey, needsGetFallback, originNeedsGet, reciprocityOf, RULES, type FindingDetails, type HreflangReport, type PageLink, type PageSnapshot } from '../index';
 import { cleanSnapshot, page } from './fixtures';
 
 const NOW = Date.UTC(2026, 9, 27, 12, 0, 0);
@@ -38,7 +38,10 @@ describe('classification', () => {
     expect(classifyLink('https://a.test/', { ...base, outcome: 'response', status: 200 })).toMatchObject({ kind: 'ok', status: 200, reason: null, finalUrl: null });
     expect(classifyLink('https://a.test/', { outcome: 'response', status: 204, redirects: 2, finalUrl: 'https://a.test/b', method: 'GET' })).toMatchObject({ kind: 'redirect', redirects: 2, finalUrl: 'https://a.test/b', method: 'GET' });
     expect(classifyLink('https://a.test/', { ...base, outcome: 'response', status: 404 })).toMatchObject({ kind: 'broken', reason: 'http-error', status: 404 });
-    expect(classifyLink('https://a.test/', { ...base, outcome: 'response', status: 503 })).toMatchObject({ kind: 'broken', reason: 'http-error' });
+    // 429 and 503 say "not now": temporary, not broken (Phase 2.5 Task 2 review).
+    expect(classifyLink('https://a.test/', { ...base, outcome: 'response', status: 503 })).toMatchObject({ kind: 'temporary', reason: null, status: 503 });
+    expect(classifyLink('https://a.test/', { ...base, outcome: 'response', status: 429 })).toMatchObject({ kind: 'temporary', reason: null, status: 429 });
+    expect(classifyLink('https://a.test/', { ...base, outcome: 'response', status: 500 })).toMatchObject({ kind: 'broken', reason: 'http-error' });
     expect(classifyLink('https://a.test/', { ...base, outcome: 'response', status: 304 })).toMatchObject({ kind: 'broken', reason: 'other-status' });
     for (const outcome of ['timeout', 'unreachable', 'too-many-redirects', 'bad-redirect', 'no-location'] as const) {
       expect(classifyLink('https://a.test/', { ...base, outcome, status: null })).toMatchObject({ kind: 'broken', reason: outcome });
@@ -48,9 +51,10 @@ describe('classification', () => {
   });
 
   test('head-fallback-statuses', () => {
-    expect(needsGetFallback(405)).toBe(true);
-    expect(needsGetFallback(501)).toBe(true);
-    for (const status of [200, 301, 403, 404, 500, null]) expect(needsGetFallback(status)).toBe(false);
+    for (const status of [403, 404, 405, 501]) expect(needsGetFallback(status)).toBe(true);
+    for (const status of [200, 301, 410, 500, null]) expect(needsGetFallback(status)).toBe(false);
+    // Only 405 and 501 say the whole origin does not do HEAD.
+    expect([403, 404, 405, 501].map(originNeedsGet)).toEqual([false, false, true, true]);
   });
 
   test('lastmod-w3c-datetime', () => {

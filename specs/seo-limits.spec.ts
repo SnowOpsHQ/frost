@@ -114,6 +114,11 @@ export const SNAPSHOT_LIMITS = {
   maxHeadings: 300,
   /** Characters of each heading's text kept. */
   maxHeadingChars: 300,
+  /**
+   * Hidden headings kept apart (`hiddenHeadings`, Phase 2.5 Task 2 review), in document order: the
+   * served-HTML comparison counts them with the shown ones, as the served HTML has no layout.
+   */
+  maxHiddenHeadings: 50,
   /** Links (`a[href]`, `area[href]`) kept, in document order. */
   maxLinks: 1_000,
   /** Characters of each link's anchor text kept. */

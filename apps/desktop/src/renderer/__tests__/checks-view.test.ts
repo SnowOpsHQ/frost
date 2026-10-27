@@ -32,7 +32,7 @@ describe('checks view', () => {
     expect(of(link('mailto:x@y'))?.kind).toBe('skipped');
     expect(of(link(''))).toBeUndefined();
     expect(of(link('https://example.com/c'))).toBeUndefined();
-    expect(linkKindCounts(run)).toEqual({ ok: 1, redirect: 0, broken: 1, blocked: 0, skipped: 1 });
+    expect(linkKindCounts(run)).toEqual({ ok: 1, redirect: 0, broken: 1, temporary: 0, blocked: 0, skipped: 1 });
     expect(linkResultIndex(undefined)(link('https://example.com/a'))).toBeUndefined();
     const state = { version: 2, tabId: 4, url: 'https://example.com/', links: run, sitemaps: IDLE_SITEMAP_RUN, hreflang: IDLE_HREFLANG_RUN };
     expect(checksFor(state, 4)).toBe(state);

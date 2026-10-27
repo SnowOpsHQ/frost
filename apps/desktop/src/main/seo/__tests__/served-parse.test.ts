@@ -136,4 +136,31 @@ describe('served HTML parse', () => {
     expect(parseServedHtml(null as never)).toEqual({ ok: false, reason: 'parse-failed' });
     expect(parseServedHtml({ url: URL_A, contentType: null, body: 'not bytes' as never })).toEqual({ ok: false, reason: 'parse-failed' });
   });
+
+  test('served-parse-attribute-bomb', () => {
+    // A tag with 300,000 distinct attributes (about 3 MB): only the first `maxAttributes` are kept,
+    // and the tokenizer never compares each new one with all the others.
+    const attributes = Array.from({ length: 300_000 }, (_, i) => `a${i}`).join(' ');
+    const html = `<html><head><title>Bomb</title></head><body><a href="/first" ${attributes}>link</a><p>after</p></body></html>`;
+    const started = performance.now();
+    const s = served(html);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(s.links.map((l) => l.href)).toEqual(['https://www.example.com/first']);
+    expect(s.wordCount).toBe(2);
+    expect(SERVED_PARSE_LIMITS.maxAttributes).toBe(256);
+    // The attribute after the cap is not read (an `href` placed late is dropped as a browser would not).
+    const late = served(`<body><a ${Array.from({ length: 300 }, (_, i) => `x${i}`).join(' ')} href="/late">late</a></body>`);
+    expect(late.linkTotal).toBe(0);
+  });
+
+  test('served-parse-template-depth', () => {
+    // `<template>` contents count from the template's own depth: nesting cannot hide in them.
+    const limits: ParseLimits = { ...SERVED_PARSE_LIMITS, maxDepth: 20 };
+    const nested = (n: number) => `${'<div>'.repeat(n)}x${'</div>'.repeat(n)}`;
+    const inside = served(`<body>${'<div>'.repeat(10)}<template>${nested(15)}</template>${'</div>'.repeat(10)}</body>`, 'text/html', URL_A, limits);
+    expect(inside.partial).toBe(true);
+    const shallow = served(`<body><template>${nested(5)}</template><p>ok</p></body>`, 'text/html', URL_A, limits);
+    expect(shallow.partial).toBe(false);
+    expect(shallow.wordCount).toBe(1);
+  });
 });

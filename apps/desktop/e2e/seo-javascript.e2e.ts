@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { SERVED_ACCEPT, SERVED_FETCH_LIMITS } from '@app/specs/seo-javascript.spec';
 import { ANALYSIS_TIMEOUT_MS, AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -127,6 +128,16 @@ test.beforeAll(async () => {
     '/set-cookie': html(STATIC, { 'Set-Cookie': 'frost_session=secret-value; Path=/; SameSite=Lax' }),
     '/after-cookie': html(STATIC),
     '/ua': html(STATIC),
+    // Signed in (the tab's cookie): the page; without a cookie (frost's fetch): 302 to the login page.
+    '/account': (request, response) => {
+      if ((request.headers.cookie ?? '').includes('frost_session=')) html(STATIC)(request, response);
+      else response.writeHead(302, { Location: '/login' }).end();
+    },
+    '/login': html(`<!doctype html><html lang="en"><head>${HEAD}<title>Sign in</title></head><body><h1>Sign in</h1></body></html>`),
+    // A cookie set only on frost's own fetch: it must never reach the browse session.
+    '/fetch-sets-cookie': (request, response) => html(STATIC, request.headers.accept === SERVED_ACCEPT ? { 'Set-Cookie': 'fetched_only=1; Path=/' } : {})(request, response),
+    // A static page whose <h1> CSS hides (served and rendered alike).
+    '/hidden-h1': html(STATIC.replace('<h1>Static</h1>', '<h1 style="display:none">Static</h1>')),
   });
   ({ app, page } = await launchApp());
   await page.waitForLoadState('domcontentloaded');
@@ -226,4 +237,28 @@ test('served-fetch-uses-profile-user-agent', async () => {
   expect(site.servedFetches('/ua').at(-1)?.userAgent).toContain('Googlebot');
   await expect(jsState()).not.toHaveAttribute('data-state', 'pending', { timeout: SERVED_WAIT });
   await expect(page.getByTestId('seo-js-user-agent')).toContainText('Googlebot', { timeout: SERVED_WAIT });
+});
+
+test('served-redirected-elsewhere-e2e', async () => {
+  // Signed in, the tab shows the account page; frost's fetch, without cookies, is sent to /login.
+  await openJavascript(`${site.origin}/set-cookie`);
+  await openJavascript(`${site.origin}/account`);
+  await expect(jsState()).toHaveAttribute('data-state', 'unavailable');
+  await expect(jsState()).toHaveAttribute('data-reason', 'redirected');
+  await expect(jsState()).toContainText(`${site.origin}/login`);
+  await expect(page.locator('[data-testid="seo-js-issues"] [data-testid="seo-issue"]')).toHaveCount(0);
+  expect(site.servedFetches('/login').length).toBeGreaterThan(0);
+});
+
+test('fetcher-set-cookie-not-stored', async () => {
+  await openJavascript(`${site.origin}/fetch-sets-cookie`);
+  await expect.poll(() => site.servedFetches('/fetch-sets-cookie').length).toBeGreaterThan(0);
+  const names = await app.evaluate(({ session }, { partition, url }) => session.fromPartition(partition).cookies.get({ url }).then((cookies) => cookies.map((c) => c.name)), { partition: BROWSE_PARTITION, url: site.origin });
+  expect(names).not.toContain('fetched_only');
+});
+
+test('hidden-h1-static-page-is-identical', async () => {
+  await openJavascript(`${site.origin}/hidden-h1`);
+  await expect(jsState()).toHaveAttribute('data-state', 'identical');
+  await expect(field('h1')).toHaveAttribute('data-status', 'same');
 });

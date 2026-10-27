@@ -47,7 +47,36 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
 - **Sites can see it.** The panel says so (`FETCH_DISCLOSURE`): frost requests each audited page a
   second time, with no cookies, and with the user agent named above.
 
+## Review fixes (Phase 2.5 Task 2 review)
+- **One private-address check** (`specs/private-address.spec.ts`), shared by the bounded fetcher and
+  the palette's "Open in": every reserved IPv4 / IPv6 range (carrier-grade NAT `100.64.0.0/10`
+  included), IPv4-in-IPv6 forms by their IPv4 address, local-only names, trailing dots.
+- **Names are resolved before each hop** on the browse session (`netResolver`): any private address
+  refuses the hop unless the page is on a private host. The rebinding window between check and
+  connection, and proxies, are documented gaps (`fetcher.spec.ts`). The e2e seam
+  (`--frost-e2e-public-hosts`, unpackaged only, refused by packaged builds) exempts the loopback test
+  sites' names.
+- **Redirected served HTML** (a login page for a fetch without cookies) is `unavailable` /
+  `redirected` with where it ended; nothing is compared.
+- **Hidden headings** are kept apart by the extractor (`hiddenHeadings`, at most
+  `maxHiddenHeadings`) and compared with the served HTML's headings, so a CSS-hidden `<h1>` does not
+  make a static page JavaScript-dependent; H1s and canonicals compare as sets.
+- **The served parse** keeps at most `maxAttributes` attributes a tag (in the tokenizer), counts
+  `<template>` contents from the template's depth, follows a JavaScript-off profile
+  (`scriptingEnabled: false`), and runs in a worker of its own with `SERVED_PARSE_LIMITS.timeoutMs`.
+- **In-flight served fetches are aborted** on navigation, Fetch again and Clear Browsing Data; Fetch
+  again only acts on the active tab.
+
 ## Bounded fetcher (`fetcher.test.ts`)
+- **Scenario: private-address-ranges** — every IPv4 block at both ends, as a host and in mapped,
+  compatible, NAT64 and 6to4 forms; carrier-grade NAT, broadcast, documentation and the IPv6 ranges;
+  every local-only suffix with trailing dots; public neighbours stay public.
+- **Scenario: fetcher-resolves-names-before-each-hop** — public → public → `http://10.0.0.1/` is
+  refused at the third hop; a public name resolving to `100.64/10` or `fd00::/8`, or a redirect to
+  one, is refused unrequested; an unresolvable name is `unreachable`; literals are not resolved; a
+  private page is not checked; resolution counts against the deadline.
+- **Scenario: net-resolver-and-e2e-seam** — `netResolver` reads `session.resolveHost`'s endpoints;
+  the seam exempts only the names it lists; packaged builds refuse its switch.
 - **Scenario: fetcher-refuses-non-web** — `file:`, `data:`, `ftp:`, `javascript:` and unparsable URLs
   are `not-web` and never requested.
 - **Scenario: fetcher-follows-bounded-redirects** — redirects are followed one hop at a time up to
@@ -85,6 +114,12 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
   user agent or URL fetches again; `forget` (a new document), `drop` (Fetch again) and `clear` (Clear
   Browsing Data) fetch again; at most `maxCachedPerTab` per tab.
 - **Scenario: served-never-fetches-non-web** — a non-`http(s)` page is `not-fetched`, nothing requested.
+- **Scenario: served-redirected-elsewhere** — a fetch that ends at another URL (fragment aside) is
+  `redirected`, with the final URL, and is not parsed.
+- **Scenario: served-aborted-on-navigation** — `forget`, `drop` and `clear` abort the tab's fetches
+  in flight, and only those.
+- **Scenario: served-scripting-follows-the-profile** — scripting off is a key of its own and is
+  parsed with `scriptingEnabled: false` (`<noscript>` content is markup then).
 - **Scenario: served-states-of-failures** — a non-2xx is `http-status` (with the status), a non-HTML
   type `not-html`, each fetch failure its own reason, a parse failure or timeout `parse-failed` /
   `parse-timeout`; a ready state carries the fetch facts and validates (`ServedStateSchema`).
@@ -102,6 +137,10 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
 - **Scenario: served-html-is-bounded** — a document past `maxNodes` or `maxDepth` (100,000 nested
   `<div>`s, a flood of elements) stops at the cap, `partial`, within the parse time budget; garbage
   bytes and a non-web URL never throw.
+- **Scenario: served-parse-attribute-bomb** — a tag with 300,000 attributes parses in well under a
+  second, keeping the first `maxAttributes`.
+- **Scenario: served-parse-template-depth** — nesting inside `<template>` counts from the template's
+  depth.
 - **Scenario: served-parse-runs-in-the-worker** — the analyzer's `served` job posts to the worker and
   maps its timeout to `parse-timeout` (`analysis.test.ts`).
 - **Scenario: served-state-validated-on-its-own** — an invalid served state in the context makes the
@@ -118,6 +157,9 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
   with totals.
 - **Scenario: js-verdict-thresholds** — `heavily`, `partly` and `independent` at the documented
   thresholds.
+- **Scenario: js-hidden-h1-is-not-js** — an H1 the rendered page hides is compared as present: the
+  static page stays identical (`extractor-keeps-hidden-headings-apart` in `extract-dom.test.ts`).
+- **Scenario: js-canonicals-compare-as-a-set** — a canonical listed twice is the same canonical.
 - **Scenario: js-canonical-changed**, **js-robots-changed**, **js-title-changed**,
   **js-content-added**, **js-links-added** — each rule fails and passes on its condition; none fails
   on a pending, unavailable or partial comparison.
@@ -142,3 +184,8 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
 - **Scenario: served-fetch-sends-no-cookies** — the page sets a cookie; the served fetch carries none.
 - **Scenario: served-fetch-uses-profile-user-agent** — with a Googlebot render profile, the served
   fetch carries that user agent, and the panel says so.
+- **Scenario: served-redirected-elsewhere-e2e** — signed in by a cookie, the tab shows `/account`;
+  frost's cookieless fetch is sent to `/login`: "Served HTML unavailable", redirected, no rule.
+- **Scenario: fetcher-set-cookie-not-stored** — a `Set-Cookie` on frost's fetch never reaches the
+  browse session's cookies.
+- **Scenario: hidden-h1-static-page-is-identical** — a static page with a CSS-hidden `<h1>` is identical.

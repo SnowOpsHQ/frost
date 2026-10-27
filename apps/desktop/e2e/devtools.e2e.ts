@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { CLEAR_SITE_DATA, DEVTOOLS_MENU_ID, DEVTOOLS_STORAGE_KEYS, MASKED_VALUE } from '@app/specs/devtools.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -119,7 +120,7 @@ const restoreDialogs = () =>
 
 test.beforeAll(async () => {
   site = await startSiteServer();
-  ({ app, page } = await launchApp([`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1,MAP ${THIRD_HOST} 127.0.0.1`]));
+  ({ app, page } = await launchApp([`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1,MAP ${THIRD_HOST} 127.0.0.1`, `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST},${THIRD_HOST}`]));
   await page.waitForLoadState('domcontentloaded');
 });
 

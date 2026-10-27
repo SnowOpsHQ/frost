@@ -12,11 +12,11 @@ const answer = (status: number, changes: Partial<CheckFetchResult> = {}): CheckF
 describe('link checks', () => {
   test('link-plan-dedupes-and-skips', () => {
     const plan = planLinks(
-      [link('https://example.com/a#one'), link('https://example.com/a#two'), link('mailto:x@example.com'), link('mailto:x@example.com'), link(''), link('http://127.0.0.1:8080/admin'), link('http://192.168.0.1/'), link('http://router.local/'), link('https://other.test/')],
+      [link('https://example.com/a#one'), link('https://example.com/a#two'), link('mailto:x@example.com'), link('mailto:x@example.com'), link(''), link('http://127.0.0.1:8080/admin'), link('http://192.168.0.1/'), link('http://router.local/'), link('https://other.example.org/')],
       'https://example.com/page',
     );
-    expect(plan.order).toEqual(['https://example.com/a', 'mailto:x@example.com', 'http://127.0.0.1:8080/admin', 'http://192.168.0.1/', 'http://router.local/', 'https://other.test/']);
-    expect(plan.candidates).toEqual(['https://example.com/a', 'https://other.test/']);
+    expect(plan.order).toEqual(['https://example.com/a', 'mailto:x@example.com', 'http://127.0.0.1:8080/admin', 'http://192.168.0.1/', 'http://router.local/', 'https://other.example.org/']);
+    expect(plan.candidates).toEqual(['https://example.com/a', 'https://other.example.org/']);
     expect([...plan.skipped.values()].map((r) => [r.url, r.reason])).toEqual([
       ['mailto:x@example.com', 'not-http'],
       ['http://127.0.0.1:8080/admin', 'private'],
@@ -55,14 +55,26 @@ describe('link checks', () => {
     asked.length = 0;
     await checkLink('https://example.com/c', { fetch, page: 'https://example.com/a', userAgent: null, getOnly, signal });
     expect(asked.map((o) => o.method)).toEqual(['GET']);
+    // A HEAD 403 or 404 is asked again with GET, and the GET is trusted (Phase 2.5 Task 2 review); the
+    // origin is not remembered (those are per URL).
+    for (const status of [403, 404]) {
+      asked.length = 0;
+      const headOnly: CheckFetch = async (_url, options) => (asked.push(options), options.method === 'HEAD' ? answer(status) : answer(200));
+      const fresh = new Set<string>();
+      await expect(checkLink('https://other.example.org/x', { fetch: headOnly, page: 'https://example.com/a', userAgent: null, getOnly: fresh, signal })).resolves.toMatchObject({ kind: 'ok', status: 200, method: 'GET' });
+      expect(asked.map((o) => o.method)).toEqual(['HEAD', 'GET']);
+      expect(fresh.size).toBe(0);
+      const missing: CheckFetch = async (_url, options) => (asked.push(options), answer(404));
+      await expect(checkLink('https://other.example.org/y', { fetch: missing, page: 'https://example.com/a', userAgent: null, getOnly: fresh, signal })).resolves.toMatchObject({ kind: 'broken', status: 404, method: 'GET' });
+    }
     // Any other HEAD answer stands (no GET).
     asked.length = 0;
-    const notFound: CheckFetch = async (_url, options) => (asked.push(options), answer(404));
-    await expect(checkLink('https://other.test/x', { fetch: notFound, page: 'https://example.com/a', userAgent: null, getOnly, signal })).resolves.toMatchObject({ kind: 'broken', status: 404, method: 'HEAD' });
+    const gone: CheckFetch = async (_url, options) => (asked.push(options), answer(410));
+    await expect(checkLink('https://other.example.org/x', { fetch: gone, page: 'https://example.com/a', userAgent: null, getOnly, signal })).resolves.toMatchObject({ kind: 'broken', status: 410, method: 'HEAD' });
     expect(asked).toHaveLength(1);
     // A stopped run has no result.
     const controller = new AbortController();
     controller.abort();
-    await expect(checkLink('https://other.test/x', { fetch: async () => answer(0, { outcome: 'aborted', status: null }), page: 'https://example.com/a', userAgent: null, getOnly, signal: controller.signal })).resolves.toBeNull();
+    await expect(checkLink('https://other.example.org/x', { fetch: async () => answer(0, { outcome: 'aborted', status: null }), page: 'https://example.com/a', userAgent: null, getOnly, signal: controller.signal })).resolves.toBeNull();
   });
 });

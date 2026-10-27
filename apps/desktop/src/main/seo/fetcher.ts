@@ -1,5 +1,6 @@
 import type { Session } from 'electron';
 import { FETCHER_LANES, FETCHER_LIMITS, type BoundedFetcher, type BoundedFetchRequest, type BoundedFetchResult, type FetchMethod, type FetchOutcome, type FetcherLane, type FetchRedirect } from '@app/specs/fetcher.spec';
+import { isIpLiteral, isPrivateAddress, isPrivateHost } from '@app/specs/private-address.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 
@@ -39,54 +40,22 @@ export interface BoundedFetcherOptions {
   readonly now?: () => number;
   /** The per-origin queue's limits (defaults: `FETCHER_LIMITS`). */
   readonly limits?: { readonly perOriginConcurrency?: number; readonly perOriginIntervalMs?: number; readonly maxQueuedPerOrigin?: number };
-}
-
-/** The 32-bit value of a dotted IPv4 literal (as `URL` serialises one), or `null`. */
-function ipv4(host: string): number | null {
-  const parts = host.split('.');
-  if (parts.length !== 4 || !parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) return null;
-  return parts.reduce((value, part) => value * 256 + Number(part), 0);
-}
-
-function privateIpv4(value: number): boolean {
-  const a = Math.floor(value / 2 ** 24);
-  const b = Math.floor(value / 2 ** 16) % 256;
-  return a === 0 || a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
-}
-
-/** The eight 16-bit groups of an IPv6 literal (without brackets, as `URL` serialises one), or `null`. */
-function ipv6(host: string): number[] | null {
-  const halves = host.split('::');
-  if (halves.length > 2) return null;
-  const parse = (part: string) => (part === '' ? [] : part.split(':').map((group) => (/^[0-9a-f]{1,4}$/i.test(group) ? parseInt(group, 16) : NaN)));
-  const head = parse(halves[0]!);
-  const tail = halves.length === 2 ? parse(halves[1]!) : [];
-  const fill = 8 - head.length - tail.length;
-  if (fill < 0 || (halves.length === 1 && fill !== 0)) return null;
-  const groups = [...head, ...new Array<number>(halves.length === 2 ? fill : 0).fill(0), ...tail];
-  return groups.length === 8 && groups.every((group) => Number.isInteger(group)) ? groups : null;
+  /**
+   * Resolves a host name before each hop to it (`fetcher.spec.ts`, Private addresses; main:
+   * `netResolver` on the browse session). Without one only literal hosts are checked (unit tests of
+   * other rules); main always gives one (`createFetcherLanes` requires it).
+   */
+  readonly resolve?: Resolve;
 }
 
 /**
- * Whether `hostname` (`URL.hostname`) is a private host (`fetcher.spec.ts`, private addresses):
- * `localhost` / `*.localhost`, `*.local`, or an IP literal in loopback, RFC 1918, link-local or
- * `0.0.0.0/8`, IPv6 loopback / unspecified, unique-local `fc00::/7`, link-local `fe80::/10`, or an
- * IPv4-mapped form of a private IPv4 address. Literal hosts only: no DNS lookup.
+ * The addresses `host` resolves to; rejects when it does not resolve. `null`: not checked (only the
+ * e2e seam answers so, for the hosts `E2E_PUBLIC_HOSTS_SWITCH` names).
  */
-export function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, '');
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
-  const v4 = ipv4(host);
-  if (v4 !== null) return privateIpv4(v4);
-  if (!host.startsWith('[') || !host.endsWith(']')) return false;
-  const groups = ipv6(host.slice(1, -1));
-  if (!groups) return false;
-  const [g0, , , , , g5, g6, g7] = groups as [number, number, number, number, number, number, number, number];
-  if (groups.slice(0, 7).every((group) => group === 0) && (g7 === 0 || g7 === 1)) return true;
-  if ((g0 & 0xfe00) === 0xfc00 || (g0 & 0xffc0) === 0xfe80) return true;
-  if (groups.slice(0, 5).every((group) => group === 0) && g5 === 0xffff) return privateIpv4(g6 * 65_536 + g7);
-  return false;
-}
+export type Resolve = (host: string) => Promise<readonly string[] | null>;
+
+// The private-host check is the shared one (`private-address.spec.ts`), re-exported for callers.
+export { isPrivateHost };
 
 /** Whether `pageUrl` is on a private host (so the requests made for it may go to private hosts too). */
 export function isPrivatePage(pageUrl: string): boolean {
@@ -241,6 +210,21 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
     });
   };
 
+  /** Whether `hostname` (a name) resolves to any private address: `null` when it does not (or is not checked). */
+  async function resolvedPrivate(hostname: string, deadline: Promise<'stopped'>): Promise<'private' | 'unresolved' | 'stopped' | null> {
+    if (!options.resolve) return null;
+    let addresses: readonly string[] | null | 'stopped';
+    try {
+      addresses = await Promise.race([options.resolve(hostname.replace(/\.+$/, '')), deadline]);
+    } catch {
+      return 'unresolved';
+    }
+    if (addresses === 'stopped') return 'stopped';
+    if (addresses === null) return null;
+    if (addresses.length === 0) return 'unresolved';
+    return addresses.some(isPrivateAddress) ? 'private' : null;
+  }
+
   async function fetchBounded(request: BoundedFetchRequest): Promise<BoundedFetchResult> {
     const started = now();
     const maxRedirects = request.maxRedirects ?? limits.maxRedirects;
@@ -249,6 +233,8 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
     const method = request.method ?? 'GET';
     const keep = request.keepHeaders ?? ['content-type'];
     const pagePrivate = isPrivatePage(request.page);
+    /** Whether a hop to `hostname` must be resolved first (a name, a public page, a resolver). */
+    const mustResolve = (hostname: string): boolean => !pagePrivate && options.resolve !== undefined && !isIpLiteral(hostname);
     const chain: FetchRedirect[] = [];
     let current = request.url;
     let status: number | null = null;
@@ -293,6 +279,15 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
       release = got;
       for (;;) {
         if (controller.signal.aborted) return ended(why());
+        // A name is resolved before the first hop (each redirect's target is resolved where it is
+        // checked, below); any private address refuses it, unless the page is private.
+        if (chain.length === 0 && mustResolve(first.hostname)) {
+          const refused = await resolvedPrivate(first.hostname, deadline);
+          if (refused === 'stopped') return ended(why());
+          if (refused === 'unresolved') return ended('unreachable');
+          if (refused === 'private') return ended('private-address');
+          if (controller.signal.aborted) return ended(why());
+        }
         const result = await Promise.race([options.hop(current, controller.signal, { method, userAgent: request.userAgent ?? null, ...(request.accept ? { accept: request.accept } : {}) }), deadline]);
         if (result === 'stopped') return ended(why());
         status = result.status;
@@ -302,6 +297,12 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
           const next = parseWebUrl(safeResolve(result.location, current));
           if (!next) return ended('bad-redirect');
           if (!pagePrivate && isPrivateHost(next.hostname)) return ended('private-redirect');
+          if (mustResolve(next.hostname)) {
+            const refused = await resolvedPrivate(next.hostname, deadline);
+            if (refused === 'stopped') return ended(why());
+            if (refused === 'unresolved') return ended('unreachable');
+            if (refused === 'private') return ended('private-redirect');
+          }
           chain.push({ url: cutUrl(current), status: result.status, location: cutUrl(next.href) });
           current = next.href;
           status = null;
@@ -345,7 +346,7 @@ export type FetcherLanes = Readonly<Record<FetcherLane, BoundedFetcher>>;
  * checks), each a bounded fetcher over `hop` with its lane's per-origin limits (`FETCHER_LANES`), so
  * an audit's requests never wait in a queue behind a check's.
  */
-export function createFetcherLanes(options: Omit<BoundedFetcherOptions, 'limits'>): FetcherLanes {
+export function createFetcherLanes(options: Omit<BoundedFetcherOptions, 'limits' | 'resolve'> & { readonly resolve: Resolve }): FetcherLanes {
   return {
     audit: createBoundedFetcher({ ...options, limits: FETCHER_LANES.audit }),
     checks: createBoundedFetcher({ ...options, limits: FETCHER_LANES.checks }),
@@ -410,4 +411,24 @@ export function netHop(net: NetRequester, session: Session): Hop {
       });
       request.end();
     });
+}
+
+/** The parts of a session the resolver uses. */
+export interface HostResolver {
+  resolveHost(host: string): Promise<{ readonly endpoints: readonly { readonly address: string }[] }>;
+}
+
+/** Main's `Resolve`: the browse session's own resolver (`session.resolveHost`: its host rules and DNS cache). */
+export function netResolver(session: HostResolver): Resolve {
+  return async (host) => (await session.resolveHost(host)).endpoints.map((endpoint) => endpoint.address);
+}
+
+/**
+ * The e2e seam (`fetcher.spec.ts`, `E2E_PUBLIC_HOSTS_SWITCH`): `resolve`, except that the names in
+ * `hosts` are not checked (`null`). Main wires it only in an unpackaged build started with the switch
+ * (a packaged build refuses to start with it); never in production.
+ */
+export function withE2ePublicHosts(resolve: Resolve, hosts: readonly string[]): Resolve {
+  const exempt = new Set(hosts.map((host) => host.trim().toLowerCase()).filter((host) => host !== ''));
+  return (host) => (exempt.has(host.toLowerCase()) ? Promise.resolve(null) : resolve(host));
 }

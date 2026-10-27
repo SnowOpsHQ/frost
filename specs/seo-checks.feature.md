@@ -87,12 +87,16 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `link-plan-dedupes-and-skips` — each target once, non-`http(s)` and private ones skipped, past 500 over the cap.
 - `link-plan-private-page` — a private page's private links are checked.
 - `head-get-fallback` — HEAD 405 → GET with a 16 KB body cap; the origin then goes straight to GET.
+  HEAD 403 or 404 → GET too, the GET trusted, the origin not remembered (Phase 2.5 Task 2 review).
 
 ## Worker parsing (`apps/desktop/src/main/seo/__tests__/checks-analyse.test.ts`)
 - `sitemap-urlset-listed` — URLs counted, the page found (fragment aside), `lastmod` problems counted.
 - `sitemap-index-children` — an index's `<sitemap>` locations, at most 20.
 - `sitemap-dtd-refused` — a DOCTYPE stops the parse.
 - `sitemap-entity-bomb` — a billion-laughs file is refused, and an undefined entity is malformed, quickly.
+- `sitemap-depth-capped` — 40,000 nested elements stop past `maxXmlDepth` (16), fast (`malformed`).
+- `sitemap-listed-by-canonical-and-root` — the canonical matches; the root with or without its slash
+  is one URL, other paths keep theirs.
 - `sitemap-gzip-bomb-capped` — gzip is inflated to 50 MB at most, then `too-large`.
 - `sitemap-wrong-namespace` — another namespace is an error; another root is not a sitemap; broken XML is malformed.
 - `sitemap-url-budget` — past the run's budget it stops with `too-many-urls`.
@@ -104,13 +108,22 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `checks-need-active-ready-tab` — no run without the active tab's ready audit of its URL.
 - `link-run-streams-results` — results arrive in link order; the state's version wakes `watch`.
 - `link-run-robots-blocked` — disallowed same-origin links are `blocked` and not fetched.
-- `link-run-cached` — a second run reuses definite answers.
+- `link-run-cached` — a later document's run reuses definite answers, per URL and user agent;
+  "Check again" on the same page asks afresh.
+- `link-run-temporary-not-cached` — 429 and 503 are `temporary`: never cached, never broken.
+- `clear-browsing-data-cancels-checks` — Clear Browsing Data cancels running checks (their requests aborted).
+- `sitemap-listed-unknown-when-incomplete` — a failed file or a cap hit leaves "listed" unknown
+  (`null`, "Couldn’t check every sitemap") unless the page was found; `sitemap-page-not-listed` then passes.
+- `sitemap-matches-the-canonical` — the page's effective canonical counts as the page.
+- `sitemap-run-byte-budget` — at most `maxRunBytes` downloaded per run; the rest `over-budget`.
+- `sitemap-long-page-url-cannot-run` — a page URL past 2,048 characters fails the run, nothing requested.
 - `link-run-total-cap` — 600 targets: 500 fetched, 100 over the cap (`link-checks-are-bounded`).
 - `link-run-private-refused` — a public page's links to 127.0.0.1 are never fetched (`link-checks-are-bounded`).
 - `checks-cancel-on-navigation` — a new document or another in-page URL cancels and aborts every request (`link-checks-are-bounded`).
 - `checks-stop-keeps-results` — Stop keeps what was found and re-scores.
 - `sitemap-run-follows-index` — robots.txt's sitemaps, an index to depth 2, listed or not, too deep reported.
-- `sitemap-run-fallback-and-errors` — no Sitemap line: `/sitemap.xml`; an error status is an error.
+- `sitemap-run-fallback-and-errors` — no Sitemap line: `/sitemap.xml`; when it is not there it is
+  `not-found` (information, not `sitemap-unreachable`).
 - `hreflang-run-statuses` — reciprocal, missing return, unreachable, private skipped.
 - `checks-context-and-broken` — `contextFor` only for the same document and URL; the broken highlight's targets.
 
@@ -130,7 +143,8 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 
 ## End to end (`apps/desktop/e2e/seo-checks.e2e.ts`)
 - `link-check-statuses-e2e` — OK, redirect, 404 and HEAD-405-then-GET links show their statuses; Broken only; broken highlight draws.
-- `link-check-private-refused-e2e` — a public-looking page's links to 127.0.0.1 are skipped and never requested.
+- `link-check-private-refused-e2e` — a public-looking page's links to 127.0.0.1, and to a public
+  name that resolves to it, are skipped and never requested.
 - `sitemap-index-e2e` — an index → sitemaps → listed, and not listed for another page.
 - `sitemap-gzip-bomb-e2e` — a gzip bomb sitemap stays bounded (too large) and the app keeps working.
 - `hreflang-reciprocity-e2e` — a reciprocal and a non-reciprocal alternate.

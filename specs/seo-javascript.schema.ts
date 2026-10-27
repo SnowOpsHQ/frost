@@ -128,6 +128,8 @@ export interface ServedParseInput {
   readonly url: string;
   readonly contentType: string | null;
   readonly body: Uint8Array;
+  /** Parse as a browser with scripting on (default) or off (a render profile with JavaScript off). */
+  readonly scriptingEnabled?: boolean;
 }
 /** The parse job's answer. */
 export type ServedParseResult = { readonly ok: true; readonly snapshot: ServedSnapshot } | { readonly ok: false; readonly reason: 'parse-failed' | 'parse-timeout' };

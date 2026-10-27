@@ -79,8 +79,8 @@ describe('runs', () => {
   });
 
   test('link-run-streams-results', async () => {
-    const net = fakeFetch({ 'https://example.com/missing': () => response(404), 'https://other.test/moved': () => response(200, { redirects: 1, finalUrl: 'https://other.test/new' }) });
-    const { checks, rescore } = setup(audit([link('https://example.com/a#x'), link('https://example.com/missing'), link('https://other.test/moved', 'external'), link('mailto:x@example.com', 'other'), link('https://example.com/a')]), { fetch: net.fetch });
+    const net = fakeFetch({ 'https://example.com/missing': () => response(404), 'https://other.example.org/moved': () => response(200, { redirects: 1, finalUrl: 'https://other.example.org/new' }) });
+    const { checks, rescore } = setup(audit([link('https://example.com/a#x'), link('https://example.com/missing'), link('https://other.example.org/moved', 'external'), link('mailto:x@example.com', 'other'), link('https://example.com/a')]), { fetch: net.fetch });
     const first = checks.state(1).version;
     const woken = checks.watch(1, first);
     expect(checks.checkLinks(1)).toBe(true);
@@ -93,49 +93,96 @@ describe('runs', () => {
     expect(state.links.results.map((r) => [r.url, r.kind, r.status])).toEqual([
       ['https://example.com/a', 'ok', 200],
       ['https://example.com/missing', 'broken', 404],
-      ['https://other.test/moved', 'redirect', 200],
+      ['https://other.example.org/moved', 'redirect', 200],
       ['mailto:x@example.com', 'skipped', null],
     ]);
+    // A HEAD 404 is asked again with GET (Phase 2.5 Task 2 review), and the GET is kept.
     expect(net.asked.map((a) => [a.url, a.options.method])).toEqual([
       ['https://example.com/a', 'HEAD'],
-      ['https://other.test/moved', 'HEAD'],
+      ['https://other.example.org/moved', 'HEAD'],
       ['https://example.com/missing', 'HEAD'],
+      ['https://example.com/missing', 'GET'],
     ]);
     expect(rescore).toHaveBeenCalledWith(1);
     expect(checks.brokenFor(11)).toEqual(['https://example.com/missing']);
   });
 
   test('link-run-robots-blocked', async () => {
-    const { checks, net, robots } = setup(audit([link('https://example.com/private/x'), link('https://example.com/ok'), link('https://other.test/private/x', 'external')]), {}, robotsTxt('User-agent: *\nDisallow: /private/\n'));
+    const { checks, net, robots } = setup(audit([link('https://example.com/private/x'), link('https://example.com/ok'), link('https://other.example.org/private/x', 'external')]), {}, robotsTxt('User-agent: *\nDisallow: /private/\n'));
     checks.checkLinks(1);
     await vi.runAllTimersAsync();
     expect(robots).toHaveBeenCalledWith(PAGE);
     expect(checks.state(1).links.results.map((r) => [r.url, r.kind])).toEqual([
       ['https://example.com/private/x', 'blocked'],
       ['https://example.com/ok', 'ok'],
-      ['https://other.test/private/x', 'ok'],
+      ['https://other.example.org/private/x', 'ok'],
     ]);
     expect(net.asked.map((a) => a.url)).not.toContain('https://example.com/private/x');
   });
 
   test('link-run-cached', async () => {
-    const { checks, net } = setup(audit([link('https://example.com/a'), link('https://example.com/b')]));
+    const { checks, net, tab } = setup(audit([link('https://example.com/a'), link('https://example.com/b')]));
     checks.checkLinks(1);
     await vi.runAllTimersAsync();
     expect(net.asked).toHaveLength(2);
     expect(checks.cacheSize()).toBe(2);
+    // A new document of the page: its first check reads the cache.
+    checks.dropped(11);
     checks.checkLinks(1);
     await vi.runAllTimersAsync();
     expect(net.asked).toHaveLength(2);
     expect(checks.state(1).links.results.every((r) => r.cached)).toBe(true);
-    checks.clearCache();
+    // "Check again" on the same page asks every link afresh (Phase 2.5 Task 2 review).
     checks.checkLinks(1);
     await vi.runAllTimersAsync();
     expect(net.asked).toHaveLength(4);
+    expect(checks.state(1).links.results.some((r) => r.cached)).toBe(false);
+    // The cache is per user agent: a render profile's crawler UA is asked afresh.
+    checks.dropped(11);
+    tab.current = { ...tab.current!, userAgent: 'Googlebot/2.1' };
+    checks.checkLinks(1);
+    await vi.runAllTimersAsync();
+    expect(net.asked).toHaveLength(6);
+    expect(checks.cacheSize()).toBe(4);
+    checks.clearCache();
+    checks.dropped(11);
+    checks.checkLinks(1);
+    await vi.runAllTimersAsync();
+    expect(net.asked).toHaveLength(8);
+  });
+
+  test('link-run-temporary-not-cached', async () => {
+    const net = fakeFetch({ 'https://example.com/busy': () => response(429), 'https://example.com/down': () => response(503), 'https://example.com/gone': () => response(500) });
+    const { checks } = setup(audit([link('https://example.com/busy'), link('https://example.com/down'), link('https://example.com/gone')]), { fetch: net.fetch });
+    checks.checkLinks(1);
+    await vi.runAllTimersAsync();
+    expect(checks.state(1).links.results.map((r) => [r.url, r.kind])).toEqual([
+      ['https://example.com/busy', 'temporary'],
+      ['https://example.com/down', 'temporary'],
+      ['https://example.com/gone', 'broken'],
+    ]);
+    // Only the definite answer is cached, and only it is a broken link.
+    expect(checks.cacheSize()).toBe(1);
+    expect(ChecksContextSchema.parse(checks.contextFor(11, PAGE)).links?.broken.map((b) => b.url)).toEqual(['https://example.com/gone']);
+  });
+
+  test('clear-browsing-data-cancels-checks', async () => {
+    const net = fakeFetch({}, 5_000);
+    const { checks } = setup(audit([link('https://example.com/a'), link('https://example.com/b')]), { fetch: net.fetch });
+    checks.checkLinks(1);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(net.inflight()).toBeGreaterThan(0);
+    checks.clearCache();
+    checks.cancelAll();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(net.aborted()).toBeGreaterThan(0);
+    expect(checks.state(1).links.status).toBe('idle');
+    await vi.runAllTimersAsync();
+    expect(checks.cacheSize()).toBe(0);
   });
 
   test('link-run-total-cap', async () => {
-    const links = Array.from({ length: 600 }, (_, i) => link(`https://site${i % 30}.test/${i}`, 'external'));
+    const links = Array.from({ length: 600 }, (_, i) => link(`https://site${i % 30}.example.org/${i}`, 'external'));
     const { checks, net } = setup(audit(links));
     checks.checkLinks(1);
     let peak = 0;
@@ -239,7 +286,9 @@ describe('sitemaps and hreflang', () => {
     const { checks } = setup(audit([]), { fetch: net.fetch });
     checks.checkSitemaps(1);
     await vi.runAllTimersAsync();
-    expect(checks.state(1).sitemaps).toMatchObject({ status: 'done', source: 'fallback', listed: null, errors: [{ url: 'https://example.com/sitemap.xml', kind: 'http-error' }] });
+    // A guessed /sitemap.xml that is not there: no sitemap, not a broken one (Phase 2.5 Task 2 review).
+    expect(checks.state(1).sitemaps).toMatchObject({ status: 'done', source: 'fallback', listed: null, complete: true, errors: [{ url: 'https://example.com/sitemap.xml', kind: 'not-found' }] });
+    expect(ChecksContextSchema.parse(checks.contextFor(11, PAGE)).sitemaps?.errors).toEqual([{ url: 'https://example.com/sitemap.xml', kind: 'not-found' }]);
     const again = fakeFetch({ 'https://example.com/sitemap.xml': xml(loc('https://example.com/other')) });
     const second = setup(audit([]), { fetch: again.fetch });
     second.checks.checkSitemaps(1);
@@ -282,5 +331,68 @@ describe('sitemaps and hreflang', () => {
     expect(checks.contextFor(12, PAGE)).toBeUndefined();
     expect(checks.brokenFor(11)).toEqual(['https://example.com/gone']);
     expect(checks.brokenFor(12)).toEqual([]);
+  });
+});
+
+describe('sitemap review fixes', () => {
+  const xml = (body: string, root = 'urlset') => () => response(200, { body: encode(`<${root} xmlns="${SITEMAP_NAMESPACE}">${body}</${root}>`) });
+  const loc = (url: string, entry = 'url') => `<${entry}><loc>${url}</loc></${entry}>`;
+  const robotsWith = (...sitemaps: string[]) => robotsTxt(`User-agent: *\nAllow: /\n${sitemaps.map((s) => `Sitemap: ${s}`).join('\n')}\n`);
+
+  test('sitemap-listed-unknown-when-incomplete', async () => {
+    // One declared sitemap read (the page is not in it), the other failed: frost cannot tell.
+    const net = fakeFetch({ 'https://example.com/a.xml': xml(loc('https://example.com/other')), 'https://example.com/b.xml': () => response(500) });
+    const { checks } = setup(audit([]), { fetch: net.fetch }, robotsWith('https://example.com/a.xml', 'https://example.com/b.xml'));
+    checks.checkSitemaps(1);
+    await vi.runAllTimersAsync();
+    expect(checks.state(1).sitemaps).toMatchObject({ listed: null, complete: false });
+    const context = ChecksContextSchema.parse(checks.contextFor(11, PAGE));
+    expect(context.sitemaps?.listed).toBeNull();
+    // Found anyway: listed, however incomplete.
+    const found = fakeFetch({ 'https://example.com/a.xml': xml(loc(PAGE)), 'https://example.com/b.xml': () => response(500) });
+    const second = setup(audit([]), { fetch: found.fetch }, robotsWith('https://example.com/a.xml', 'https://example.com/b.xml'));
+    second.checks.checkSitemaps(1);
+    await vi.runAllTimersAsync();
+    expect(second.checks.state(1).sitemaps).toMatchObject({ listed: true, complete: false });
+    // A cap hit (an index past maxFiles) is incomplete too.
+    const index = fakeFetch({ 'https://example.com/index.xml': xml(Array.from({ length: 25 }, (_, i) => loc(`https://example.com/s${i}.xml`, 'sitemap')).join(''), 'sitemapindex') });
+    const capped = setup(audit([]), { fetch: index.fetch }, robotsWith('https://example.com/index.xml'));
+    capped.checks.checkSitemaps(1);
+    await vi.runAllTimersAsync();
+    expect(capped.checks.state(1).sitemaps).toMatchObject({ listed: null, complete: false });
+  });
+
+  test('sitemap-matches-the-canonical', async () => {
+    const answer = audit([]);
+    const withCanonical: SeoAuditResponse = { ...answer, audit: { ...(answer as Extract<SeoAuditResponse, { status: 'ready' }>).audit, indexability: { hreflang: { entries: [], total: 0, hasXDefault: false, hasSelf: false }, canonical: { effective: 'https://example.com/canonical#x' } } } as unknown as SeoAudit } as SeoAuditResponse;
+    const net = fakeFetch({ 'https://example.com/a.xml': xml(loc('https://example.com/canonical')) });
+    const { checks } = setup(withCanonical, { fetch: net.fetch }, robotsWith('https://example.com/a.xml'));
+    checks.checkSitemaps(1);
+    await vi.runAllTimersAsync();
+    expect(checks.state(1).sitemaps).toMatchObject({ listed: true, complete: true });
+  });
+
+  test('sitemap-run-byte-budget', async () => {
+    const big = () => response(200, { body: new Uint8Array(1024), truncated: true });
+    const net = fakeFetch({ 'https://example.com/a.xml': big, 'https://example.com/b.xml': big });
+    const { checks } = setup(audit([]), { fetch: net.fetch, sitemapLimits: { maxRunBytes: 1024 } }, robotsWith('https://example.com/a.xml', 'https://example.com/b.xml'));
+    checks.checkSitemaps(1);
+    await vi.runAllTimersAsync();
+    // The first file gets the whole budget (and is cut by it), the second is not requested.
+    expect(net.asked.map((a) => [a.url, a.options.maxBytes])).toEqual([['https://example.com/a.xml', 1024]]);
+    expect(checks.state(1).sitemaps.errors.map((e) => [e.url, e.kind])).toEqual([
+      ['https://example.com/a.xml', 'over-budget'],
+      ['https://example.com/b.xml', 'over-budget'],
+    ]);
+  });
+
+  test('sitemap-long-page-url-cannot-run', async () => {
+    const long = `https://example.com/${'a'.repeat(2_100)}`;
+    const { checks, tab, net } = setup(audit([], undefined, long));
+    tab.current = { ...tab.current!, url: long };
+    expect(checks.checkSitemaps(1)).toBe(true);
+    await vi.runAllTimersAsync();
+    expect(checks.state(1).sitemaps).toMatchObject({ status: 'failed', files: [] });
+    expect(net.asked).toEqual([]);
   });
 });

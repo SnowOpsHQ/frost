@@ -17,6 +17,7 @@ import {
 } from '@app/specs/command-palette.spec';
 import { QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -112,7 +113,7 @@ async function auditedPage(): Promise<number> {
 
 test.beforeAll(async () => {
   site = await startSiteServer();
-  ({ app, page } = await launchApp([`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1`]));
+  ({ app, page } = await launchApp([`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1`, `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST}`]));
   await page.waitForLoadState('domcontentloaded');
 });
 

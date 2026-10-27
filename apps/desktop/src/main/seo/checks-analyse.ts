@@ -22,7 +22,7 @@ export interface SitemapParse {
   readonly entries: number;
   /** `<url>` entries counted (at most the job's `urlBudget`). */
   readonly counted: number;
-  /** One counted `<loc>` is the page's URL (fragment aside). */
+  /** One counted `<loc>` is the page's URL or its canonical (fragment aside). */
   readonly listed: boolean;
   /** An index's `<sitemap>` locations (`http(s)`, at most `SITEMAP_LIMITS.maxFiles`). */
   readonly children: readonly string[];
@@ -54,7 +54,11 @@ class Stop extends Error {
   }
 }
 
-/** `value` as a document key (parsed, `http(s)`, no fragment), or `null`. */
+/**
+ * `value` as a document key (parsed, `http(s)`, no fragment), or `null`. Parsing makes
+ * `https://a.example` and `https://a.example/` one key (the root path is always `/`); any other
+ * path keeps its trailing slash or lack of one, as servers may treat them as two pages.
+ */
 function keyOf(value: string, base?: string): string | null {
   try {
     const url = new URL(value, base);
@@ -83,7 +87,8 @@ const FEED_BYTES = 256 * 1024;
 
 /** Reads one sitemap file (`SitemapJob`). Never throws. */
 export function parseSitemap(job: SitemapJob): SitemapParse {
-  const pageKey = keyOf(job.pageUrl);
+  // The page is listed under its own URL or its effective canonical.
+  const pageKeys = new Set([keyOf(job.pageUrl), job.canonicalUrl ? keyOf(job.canonicalUrl) : null].filter((key): key is string => key !== null));
   let type: SitemapParse['type'] = null;
   let entries = 0;
   let counted = 0;
@@ -123,6 +128,9 @@ export function parseSitemap(job: SitemapJob): SitemapParse {
   });
   parser.on('opentag', (tag: SaxesTagNS) => {
     depth += 1;
+    // A sitemap is three levels deep; nesting far past that only costs the parser (its work grows
+    // with the square of the depth): the file is not a sitemap frost reads.
+    if (depth > SITEMAP_LIMITS.maxXmlDepth) throw new Stop('malformed');
     if (depth === 1) {
       if (tag.local === 'urlset') type = 'urlset';
       else if (tag.local === 'sitemapindex') type = 'index';
@@ -153,7 +161,7 @@ export function parseSitemap(job: SitemapJob): SitemapParse {
       if (type === 'urlset') {
         if (counted >= job.urlBudget) throw new Stop('too-many-urls');
         counted += 1;
-        if (!listed && pageKey !== null && done.loc !== null && keyOf(done.loc) === pageKey) listed = true;
+        if (!listed && done.loc !== null && pageKeys.has(keyOf(done.loc) ?? '')) listed = true;
       } else if (done.loc !== null && children.length < SITEMAP_LIMITS.maxFiles) {
         const child = keyOf(done.loc);
         if (child !== null) children.push(child);

@@ -38,7 +38,7 @@ describe('served HTML', () => {
     expect(request.method ?? 'GET').toBe('GET');
     expect(request.readBody!(200)).toBe(true);
     expect(request.readBody!(404)).toBe(false);
-    expect(parsed).toHaveBeenCalledWith({ url: PAGE, contentType: 'text/html; charset=utf-8', body: HTML });
+    expect(parsed).toHaveBeenCalledWith({ url: PAGE, contentType: 'text/html; charset=utf-8', body: HTML, scriptingEnabled: true });
     expect(ServedStateSchema.safeParse(state).success).toBe(true);
     expect(state).toMatchObject({ status: 'ready', fetch: { url: PAGE, finalUrl: PAGE, status: 200, bytes: HTML.byteLength, userAgent: 'Googlebot/2.1', truncated: false } });
     // Frost's own user agent: none is set.
@@ -107,8 +107,62 @@ describe('served HTML', () => {
     expect(await timedOut.served.get(1, PAGE, null)).toMatchObject({ status: 'unavailable', reason: 'parse-timeout', httpStatus: 200 });
     const rejected = setup(undefined, () => Promise.reject(new Error('gone')));
     expect(await rejected.served.get(1, PAGE, null)).toMatchObject({ status: 'unavailable', reason: 'parse-failed' });
-    // The parse reads from the URL that answered (after redirects).
-    const moved = setup(() => result({ finalUrl: 'https://example.com/moved', redirects: 1 }));
-    expect(await moved.served.get(1, PAGE, null)).toMatchObject({ status: 'ready', fetch: { finalUrl: 'https://example.com/moved', redirects: 1 }, snapshot: { url: 'https://example.com/moved' } });
+    // A redirect that ends back at the page (its fragment aside) is the page.
+    const back = setup(() => result({ finalUrl: `${PAGE}#top`, redirects: 1 }));
+    expect(await back.served.get(1, PAGE, null)).toMatchObject({ status: 'ready', fetch: { redirects: 1 } });
+  });
+
+  test('served-redirected-elsewhere', async () => {
+    // A fetch without cookies sent to the login page (302 → /login): not the page that was rendered.
+    const { served, parsed } = setup(() => result({ finalUrl: 'https://example.com/login', redirects: 1 }));
+    const state = await served.get(1, PAGE, null);
+    expect(state).toEqual({ status: 'unavailable', reason: 'redirected', httpStatus: 200, finalUrl: 'https://example.com/login' });
+    expect(ServedStateSchema.safeParse(state).success).toBe(true);
+    expect(parsed).not.toHaveBeenCalled();
+  });
+
+  test('served-aborted-on-navigation', async () => {
+    const signals: AbortSignal[] = [];
+    const fetcher: BoundedFetcher = {
+      fetch: (request) => {
+        signals.push(request.signal!);
+        return new Promise(() => undefined);
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    const served = createServedHtml({ fetcher, parse: async () => ({ ok: false, reason: 'parse-failed' }) });
+    void served.get(1, PAGE, null);
+    void served.get(1, `${PAGE}/b`, null);
+    void served.get(2, PAGE, null);
+    // A new document in tab 1 aborts its fetches in flight, not tab 2's.
+    served.forget(1);
+    expect(signals.map((signal) => signal.aborted)).toEqual([true, true, false]);
+    served.drop(2, PAGE);
+    expect(signals[2]!.aborted).toBe(true);
+    void served.get(3, PAGE, null);
+    served.clear();
+    expect(signals[3]!.aborted).toBe(true);
+  });
+
+  test('served-scripting-follows-the-profile', async () => {
+    const { served, requests, parsed } = setup();
+    await served.get(1, PAGE, null, { scripting: false });
+    expect(parsed).toHaveBeenLastCalledWith(expect.objectContaining({ scriptingEnabled: false }));
+    expect(served.peek(1, PAGE, null, { scripting: false })).toBeDefined();
+    // Another key: scripting on is fetched again.
+    expect(served.peek(1, PAGE, null)).toBeUndefined();
+    await served.get(1, PAGE, null);
+    expect(requests).toHaveLength(2);
+    // `<noscript>` content is markup without scripting: it counts as words and links of the page.
+    const html = new TextEncoder().encode('<html><head><title>T</title></head><body><p>one</p><noscript><p>two three</p><a href="/x">x</a></noscript></body></html>');
+    const off = parseServedHtml({ url: PAGE, contentType: 'text/html', body: html, scriptingEnabled: false });
+    const on = parseServedHtml({ url: PAGE, contentType: 'text/html', body: html });
+    expect(off.ok && on.ok).toBe(true);
+    if (off.ok && on.ok) {
+      expect(off.snapshot.links.map((l) => l.href)).toEqual(['https://example.com/x']);
+      expect(on.snapshot.links).toEqual([]);
+      expect(off.snapshot.noscript).toEqual({ count: 1, wordCount: 3, linkCount: 1 });
+      expect(on.snapshot.noscript).toEqual({ count: 1, wordCount: 3, linkCount: 1 });
+    }
   });
 });

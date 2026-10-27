@@ -233,4 +233,27 @@ describe('javascript rules', () => {
     for (const s of [...partial(page, { links: [] }), ...notComparable(page)]) expect(rule('js-links-added').check(s)).toBeNull();
     expect(rule('js-links-added').severity).toBe('info');
   });
+
+});
+
+describe('javascript review fixes', () => {
+  test('js-hidden-h1-is-not-js', () => {
+    // A static page whose <h1> CSS hides: the extractor keeps it apart; the served HTML has it too.
+    const page = cleanSnapshot();
+    const rendered: PageSnapshot = { ...page, headings: page.headings.filter((h) => h.level !== 1), hiddenHeadings: page.headings.filter((h) => h.level === 1) };
+    const report = comparison(withServed(rendered, { headings: page.headings }));
+    expect(fieldOf(report, 'h1').status).toBe('same');
+    expect(report.headings.removedTotal + report.headings.addedTotal).toBe(0);
+    expect(report).toMatchObject({ status: 'identical', verdict: 'independent' });
+    // Without the hidden list (an older snapshot) the same page reads as changed by JavaScript.
+    expect(fieldOf(comparison(withServed({ ...rendered, hiddenHeadings: undefined }, { headings: page.headings })), 'h1').status).toBe('only-served');
+  });
+
+  test('js-canonicals-compare-as-a-set', () => {
+    const page = cleanSnapshot();
+    const twice = { href: PAGE_URL, resolved: PAGE_URL };
+    const report = comparison(withServed({ ...page, canonicals: [twice, twice], canonicalTotal: 2 }, { canonicals: [twice], canonicalTotal: 1 }));
+    expect(fieldOf(report, 'canonical').status).toBe('same');
+    expect(rule('js-canonical-changed').check(withServed({ ...page, canonicals: [twice, twice], canonicalTotal: 2 }, { canonicals: [twice], canonicalTotal: 1 }))).toBeNull();
+  });
 });

@@ -19,14 +19,19 @@ export interface ServedHtmlOptions {
   readonly limits?: Partial<typeof SERVED_FETCH_LIMITS>;
 }
 
+/** How the served HTML is read: `scripting` false for a tab whose render profile turns JavaScript off (default true). */
+export interface ServedHow {
+  readonly scripting?: boolean;
+}
+
 export interface ServedHtml {
   /** The served state of `pageUrl` (its fragment dropped) for tab document `contentsId`, fetched with `userAgent` (`null`: frost's own). Cached; never rejects. */
-  get(contentsId: number, pageUrl: string, userAgent: string | null): Promise<ServedState>;
+  get(contentsId: number, pageUrl: string, userAgent: string | null, how?: ServedHow): Promise<ServedState>;
   /** What `get` would answer at once: the settled answer, else `undefined`. */
-  peek(contentsId: number, pageUrl: string, userAgent: string | null): ServedState | undefined;
+  peek(contentsId: number, pageUrl: string, userAgent: string | null, how?: ServedHow): ServedState | undefined;
   /** Drops the tab's answers for `pageUrl` (every user agent): "Fetch again". */
   drop(contentsId: number, pageUrl: string): void;
-  /** The tab's document changed, or the tab is gone: its answers go. */
+  /** The tab's document changed, or the tab is gone: its answers go, and a fetch still in flight is aborted. */
   forget(contentsId: number): void;
   /** Clear Browsing Data: every answer goes (one in flight is not kept). */
   clear(): void;
@@ -75,9 +80,14 @@ export function servedFailure(fetched: BoundedFetchResult): ServedState | null {
 
 export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
   const limits = { ...SERVED_FETCH_LIMITS, ...options.limits };
-  const tabs = new Map<number, Map<string, { readonly value: Promise<ServedState>; settled?: ServedState }>>();
+  interface Entry {
+    readonly value: Promise<ServedState>;
+    readonly controller: AbortController;
+    settled?: ServedState;
+  }
+  const tabs = new Map<number, Map<string, Entry>>();
 
-  async function load(url: string, userAgent: string | null): Promise<ServedState> {
+  async function load(url: string, userAgent: string | null, scripting: boolean, signal: AbortSignal): Promise<ServedState> {
     const fetched = await options.fetcher.fetch({
       url,
       page: url,
@@ -88,12 +98,15 @@ export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
       maxRedirects: limits.maxRedirects,
       readBody: (status) => status >= 200 && status < 300,
       keepHeaders: ['content-type'],
+      signal,
     });
     const failed = servedFailure(fetched);
     if (failed) return failed;
     const finalUrl = fetched.finalUrl ?? url;
+    // Redirected elsewhere (a login page, another locale): not the page that was rendered.
+    if (pageKey(finalUrl) !== url) return unavailable('redirected', fetched.status, cutUrl(finalUrl));
     const contentType = fetched.headers['content-type'] ?? null;
-    const parsed = await options.parse({ url: finalUrl, contentType, body: fetched.body }).catch((): ServedParseResult => ({ ok: false, reason: 'parse-failed' }));
+    const parsed = await options.parse({ url: finalUrl, contentType, body: fetched.body, scriptingEnabled: scripting }).catch((): ServedParseResult => ({ ok: false, reason: 'parse-failed' }));
     if (!parsed.ok) return unavailable(parsed.reason, fetched.status, cutUrl(finalUrl));
     return {
       status: 'ready',
@@ -112,39 +125,55 @@ export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
     };
   }
 
-  const keyOf = (url: string, userAgent: string | null): string => `${url}\n${userAgent ?? ''}`;
+  const keyOf = (url: string, userAgent: string | null, scripting: boolean): string => [url, userAgent ?? '', scripting ? 'js' : 'no-js'].join('\n');
+  /** Drops `entries`' `keys`, aborting a fetch still in flight. */
+  const remove = (entries: Map<string, Entry>, keys: readonly string[]): void => {
+    for (const key of keys) {
+      entries.get(key)?.controller.abort();
+      entries.delete(key);
+    }
+  };
 
   return {
-    get(contentsId, pageUrl, userAgent) {
+    get(contentsId, pageUrl, userAgent, how = {}) {
       const url = pageKey(pageUrl);
       if (url === null) return Promise.resolve(unavailable('not-fetched'));
+      const scripting = how.scripting ?? true;
       let entries = tabs.get(contentsId);
       if (!entries) {
         entries = new Map();
         tabs.set(contentsId, entries);
       }
-      const key = keyOf(url, userAgent);
+      const key = keyOf(url, userAgent, scripting);
       const cached = entries.get(key);
       if (cached) return cached.value;
-      const value = load(url, userAgent).catch(() => unavailable('unreachable'));
-      const entry: { readonly value: Promise<ServedState>; settled?: ServedState } = { value };
+      const controller = new AbortController();
+      const value = load(url, userAgent, scripting, controller.signal).catch(() => unavailable('unreachable'));
+      const entry: Entry = { value, controller };
       entries.set(key, entry);
-      while (entries.size > limits.maxCachedPerTab) entries.delete(entries.keys().next().value!);
+      while (entries.size > limits.maxCachedPerTab) remove(entries, [entries.keys().next().value!]);
       void value.then((state) => (entry.settled = state));
       return value;
     },
-    peek(contentsId, pageUrl, userAgent) {
+    peek(contentsId, pageUrl, userAgent, how = {}) {
       const url = pageKey(pageUrl);
-      return url === null ? undefined : tabs.get(contentsId)?.get(keyOf(url, userAgent))?.settled;
+      return url === null ? undefined : tabs.get(contentsId)?.get(keyOf(url, userAgent, how.scripting ?? true))?.settled;
     },
     drop(contentsId, pageUrl) {
       const url = pageKey(pageUrl);
       const entries = tabs.get(contentsId);
       if (url === null || !entries) return;
-      for (const key of [...entries.keys()]) if (key.startsWith(`${url}\n`)) entries.delete(key);
+      remove(entries, [...entries.keys()].filter((key) => key.split('\n')[0] === url));
     },
-    forget: (contentsId) => void tabs.delete(contentsId),
-    clear: () => tabs.clear(),
+    forget(contentsId) {
+      const entries = tabs.get(contentsId);
+      if (entries) remove(entries, [...entries.keys()]);
+      tabs.delete(contentsId);
+    },
+    clear() {
+      for (const entries of tabs.values()) remove(entries, [...entries.keys()]);
+      tabs.clear();
+    },
     size: (contentsId) => tabs.get(contentsId)?.size ?? 0,
   };
 }

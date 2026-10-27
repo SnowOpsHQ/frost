@@ -38,6 +38,7 @@ export function linkTone(kind: LinkStatusKind): Tone {
       return 'error';
     case 'redirect':
     case 'blocked':
+    case 'temporary':
       return 'warn';
     default:
       return 'muted';

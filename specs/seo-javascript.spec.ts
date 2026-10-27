@@ -60,11 +60,15 @@ export const SERVED_HTML_TYPES = ['text/html', 'application/xhtml+xml'] as const
  *   `<meta http-equiv="Content-Type">` in the first `prescanBytes` bytes, else UTF-8; an encoding
  *   label the runtime does not know is UTF-8;
  * - parsing: `parse5` (the WHATWG HTML parsing algorithm, scripting enabled, as in the browser that
- *   rendered the page, so `<noscript>` holds text and the head is built as the browser built it);
+ *   rendered the page, so `<noscript>` holds text and the head is built as the browser built it;
+ *   scripting disabled when the tab's render profile turns JavaScript off, as that browser did);
  * - bounds: at most `maxNodes` nodes (elements, text and comments) are created and at most
- *   `maxDepth` levels deep: past either, parsing stops and what was built is read (`partial`). The
- *   job has the worker's `ANALYSIS_TIMEOUT_MS` like every analysis (`parse-timeout`).
- *   `<noscript>` text is parsed as a fragment within the same node budget.
+ *   `maxDepth` levels deep, `<template>` contents counted at their template's depth: past either,
+ *   parsing stops and what was built is read (`partial`). At most `maxAttributes` attributes of a
+ *   tag are kept (the tokenizer drops the rest, so a tag with a million attributes costs no more
+ *   than one with `maxAttributes`). The job runs in a worker of its own (main's served analyzer, not
+ *   the audits'), with `timeoutMs` (`parse-timeout`): a hostile page that is ended there never
+ *   restarts the audits' worker. `<noscript>` text is parsed as a fragment within the same node budget.
  */
 export const SERVED_PARSE_LIMITS = {
   maxNodes: 200_000,
@@ -72,6 +76,10 @@ export const SERVED_PARSE_LIMITS = {
   prescanBytes: 1_024,
   /** Characters of one `<noscript>`'s text parsed for its words and links. */
   maxNoscriptChars: 100_000,
+  /** Attributes kept per tag. */
+  maxAttributes: 256,
+  /** The served parse's own deadline in its worker. */
+  timeoutMs: 1_500,
 } as const;
 
 // ---- The comparison's states ------------------------------------------------------------------------
@@ -81,6 +89,9 @@ export const SERVED_PARSE_LIMITS = {
  * - `not-fetched`: nothing was fetched for this audit (no fetcher, or a page frost does not fetch);
  * - `http-status`: the server answered frost's fetch with a non-2xx status (`httpStatus`);
  * - `not-html`: the answer is not HTML (`SERVED_HTML_TYPES`);
+ * - `redirected`: the fetch ended at another URL than the page (its fragment aside): a login page
+ *   for a fetch without cookies, another locale, … The rendered page is not that page, so nothing is
+ *   compared and no rule is checked; the panel shows where it ended (`finalUrl`);
  * - `private-address`, `private-redirect`, `too-many-redirects`, `bad-redirect`, `no-location`,
  *   `unreachable`, `timeout`, `busy`: the fetch ended so (`fetcher.spec.ts`, `FETCH_OUTCOMES`);
  * - `parse-timeout`, `parse-failed`: the worker did not parse it in time, or failed;
@@ -90,6 +101,7 @@ export const SERVED_UNAVAILABLE_REASONS = [
   'not-fetched',
   'http-status',
   'not-html',
+  'redirected',
   'private-address',
   'private-redirect',
   'too-many-redirects',
@@ -109,6 +121,7 @@ export const SERVED_UNAVAILABLE_MESSAGES: Readonly<Record<ServedUnavailableReaso
   'not-fetched': 'frost did not fetch the served HTML for this page.',
   'http-status': 'The server answered frost’s fetch with HTTP {status}, so there is no served page to compare.',
   'not-html': 'The server did not answer frost’s fetch with an HTML page.',
+  redirected: 'The server sent frost’s fetch (without cookies) to another address, so the served page is not the one shown here.',
   'private-address': 'The page is on a private address, which frost does not fetch for a public page.',
   'private-redirect': 'The server redirected frost’s fetch to a private address, which frost does not follow.',
   'too-many-redirects': 'The server redirected frost’s fetch too many times.',

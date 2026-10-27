@@ -17,13 +17,22 @@
  *   the fetcher checks its `Location` before requesting the next hop itself: at most
  *   `maxRedirects` (one more is `too-many-redirects`); a non-`http(s)` or unparsable `Location`
  *   is `bad-redirect`, a 3xx without one `no-location`; another origin is allowed.
- * - **Private addresses.** A private host (`isPrivateHost`: `localhost` and `*.localhost`,
- *   `*.local`, and IP literals in loopback, RFC 1918, link-local, `0.0.0.0/8`, IPv6 loopback and
- *   unspecified, unique-local `fc00::/7`, link-local `fe80::/10`, and IPv4-mapped forms of those) is
- *   never requested, neither as the first URL (`private-address`) nor as a redirect hop
+ * - **Private addresses.** A private host (`private-address.spec.ts`, `isPrivateHost`: every
+ *   reserved IPv4 and IPv6 range, IPv4-in-IPv6 forms judged by their IPv4 address, and local-only
+ *   names such as `localhost`, `*.local`, `*.internal`, `*.lan`, `*.home.arpa`, `*.test`, single
+ *   labels) is never requested, neither as the first URL (`private-address`) nor as a redirect hop
  *   (`private-redirect`), unless the page the request is made for (`BoundedFetchRequest.page`) is
- *   itself on a private host (a dev server). Literal hosts only, without DNS: a public name that
- *   resolves to a private address is not caught.
+ *   itself on a private host (a dev server: its URL's host, literally). A **name** is also resolved
+ *   before each hop (main: `session.resolveHost` on the browse session, so its proxy-free resolver,
+ *   host rules and cache): if **any** address it resolves to is private, the hop is refused the same
+ *   way; a name that does not resolve is `unreachable`. Two gaps remain, by design of the network
+ *   stack frost uses: `net.request` cannot be pinned to the address checked, so a name whose answer
+ *   changes between the check and the connection (DNS rebinding, a TTL of zero) can still reach a
+ *   private address in that window; and through a proxy the proxy resolves the name itself.
+ *   The e2e suite's seam: `E2E_PUBLIC_HOSTS_SWITCH` (unpackaged builds only; a packaged build refuses
+ *   to start with it, `PACKAGED_FORBIDDEN_SWITCHES`) names hosts whose resolution is not checked, so
+ *   a loopback server under a public-looking name (`--host-resolver-rules`) can stand for a public
+ *   site. Their literal check still applies.
  * - **Caps per call.** The body is read up to `maxBytes`, then reading stops and the request is
  *   cancelled (`truncated`; a body that exactly fills the cap is `truncated` only if more follows).
  *   One deadline, `timeoutMs`, counted from the call (time waiting for the origin's turn, every hop
@@ -104,6 +113,13 @@ export type FetchMethod = (typeof FETCH_METHODS)[number];
  */
 export const FETCH_OUTCOMES = ['response', 'not-web', 'private-address', 'too-many-redirects', 'bad-redirect', 'no-location', 'private-redirect', 'unreachable', 'timeout', 'aborted', 'busy'] as const;
 export type FetchOutcome = (typeof FETCH_OUTCOMES)[number];
+
+/**
+ * The e2e seam (see Private addresses): `--frost-e2e-public-hosts=a.example,b.example` exempts those
+ * host names from the DNS check. Read only by unpackaged builds; packaged builds refuse to start
+ * with it.
+ */
+export const E2E_PUBLIC_HOSTS_SWITCH = 'frost-e2e-public-hosts' as const;
 
 /** What a surface that fetches on the user's behalf says about it. */
 export const FETCH_DISCLOSURE = 'frost requests this from the site itself, without cookies. The site can see these requests.' as const;

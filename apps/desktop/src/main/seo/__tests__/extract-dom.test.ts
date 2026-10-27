@@ -188,6 +188,18 @@ describe('extractor on a DOM', () => {
     expect(snapshot.wordCount).toBe(2);
   });
 
+  test('extractor-keeps-hidden-headings-apart', () => {
+    // Phase 2.5 Task 2 review: the served-HTML comparison counts hidden headings with the shown ones.
+    const snapshot = extract({ body: '<div hidden><h1>Secret heading</h1></div><h2 hidden>Also hidden</h2><h1>Shown</h1>' });
+    expect(snapshot.hiddenHeadings).toEqual([
+      { level: 1, text: 'Secret heading' },
+      { level: 2, text: 'Also hidden' },
+    ]);
+    const many = extract({ body: Array.from({ length: SNAPSHOT_LIMITS.maxHiddenHeadings + 10 }, (_, i) => `<h3 hidden>H${i}</h3>`).join('') });
+    expect(many.hiddenHeadings).toHaveLength(SNAPSHOT_LIMITS.maxHiddenHeadings);
+    expect(many.headingTotal).toBe(SNAPSHOT_LIMITS.maxHiddenHeadings + 10);
+  });
+
   test('extractor-reads-bot-robots', () => {
     const snapshot = extract({
       head: '<meta name="GoogleBot" content="NoIndex"><meta name="otherbot" content="noindex"><meta name="bingbot" content="nofollow"><meta name="robots" content="index"><meta name="googlebot-news" content="none">',

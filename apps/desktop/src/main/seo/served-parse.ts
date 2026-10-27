@@ -1,4 +1,4 @@
-import { defaultTreeAdapter, parse, parseFragment, type DefaultTreeAdapterMap, type TreeAdapter } from 'parse5';
+import { defaultTreeAdapter, Parser, type DefaultTreeAdapterMap, type ParserOptions, type TreeAdapter } from 'parse5';
 import { SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
 import type { ServedParseInput, ServedParseResult, ServedSnapshot } from '@app/specs/seo-javascript.schema';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
@@ -31,6 +31,7 @@ export interface ParseLimits {
   readonly maxDepth: number;
   readonly prescanBytes: number;
   readonly maxNoscriptChars: number;
+  readonly maxAttributes: number;
 }
 
 /** The node budget one parse shares (the document and its `<noscript>` fragments). */
@@ -38,11 +39,21 @@ interface Budget {
   nodes: number;
   hit: boolean;
   readonly limits: ParseLimits;
+  /** Parse as a browser with scripting on (`<noscript>` is text) or off. */
+  readonly scripting: boolean;
 }
 
 /** `defaultTreeAdapter`, counting the nodes it creates and refusing to go deeper than `maxDepth`: both stop the parse (`STOP`). */
 function boundedAdapter(budget: Budget): TreeAdapter<DefaultTreeAdapterMap> {
   const depth = new WeakMap<object, number>();
+  // A `<template>`'s contents hang off the template, not the tree: they count from its depth.
+  const templateOf = new WeakMap<object, object>();
+  const levelOf = (node: object): number => {
+    const own = depth.get(node);
+    if (own !== undefined) return own;
+    const template = templateOf.get(node);
+    return template === undefined ? 0 : levelOf(template);
+  };
   const count = (): void => {
     budget.nodes += 1;
     if (budget.nodes > budget.limits.maxNodes) {
@@ -51,7 +62,7 @@ function boundedAdapter(budget: Budget): TreeAdapter<DefaultTreeAdapterMap> {
     }
   };
   const attach = (parent: ParentNode, child: ChildNode): void => {
-    const level = (depth.get(parent) ?? 0) + 1;
+    const level = levelOf(parent) + 1;
     if (level > budget.limits.maxDepth) {
       budget.hit = true;
       throw STOP;
@@ -67,7 +78,11 @@ function boundedAdapter(budget: Budget): TreeAdapter<DefaultTreeAdapterMap> {
     ...defaultTreeAdapter,
     createElement(tagName, namespaceURI, attrs) {
       count();
-      return defaultTreeAdapter.createElement(tagName, namespaceURI, attrs);
+      return defaultTreeAdapter.createElement(tagName, namespaceURI, attrs.length > budget.limits.maxAttributes ? attrs.slice(0, budget.limits.maxAttributes) : attrs);
+    },
+    setTemplateContent(template, content) {
+      templateOf.set(content, template);
+      defaultTreeAdapter.setTemplateContent(template, content);
     },
     createCommentNode(data) {
       count();
@@ -90,6 +105,43 @@ function boundedAdapter(budget: Budget): TreeAdapter<DefaultTreeAdapterMap> {
       defaultTreeAdapter.insertTextBefore(parent, text, reference);
     },
   };
+}
+
+/** The tokenizer's hook that keeps a tag's attribute (parse5 internals; checked at runtime). */
+interface AttributeHook {
+  currentToken: { readonly attrs?: readonly unknown[] } | null;
+  _leaveAttrName(): void;
+}
+
+/**
+ * Makes `parser`'s tokenizer keep at most `max` attributes of a tag: the rest are dropped before
+ * parse5's duplicate check, which scans the tag's attributes so far (a tag with a million distinct
+ * attributes would otherwise cost a million squared). Without the hook (another parse5) only the
+ * adapter's cap applies, and the worker's deadline bounds the rest.
+ */
+function capAttributes(parser: Parser<DefaultTreeAdapterMap>, max: number): void {
+  const tokenizer = parser.tokenizer as unknown as AttributeHook;
+  const leave = tokenizer._leaveAttrName;
+  if (typeof leave !== 'function') return;
+  tokenizer._leaveAttrName = function (this: AttributeHook) {
+    if ((this.currentToken?.attrs?.length ?? 0) >= max) return;
+    leave.call(this);
+  };
+}
+
+/** Parses `html` as a document (`parse5`'s `parse`, with the attribute cap). */
+function parseDocument(html: string, options: ParserOptions<DefaultTreeAdapterMap>, maxAttributes: number): void {
+  const parser = new Parser(options);
+  capAttributes(parser, maxAttributes);
+  parser.tokenizer.write(html, true);
+}
+
+/** Parses `html` as a fragment (`parse5`'s `parseFragment`, with the attribute cap). */
+function parseFragmentOf(html: string, options: ParserOptions<DefaultTreeAdapterMap>, maxAttributes: number): Node {
+  const parser = Parser.getFragmentParser(null, options);
+  capAttributes(parser, maxAttributes);
+  parser.tokenizer.write(html, true);
+  return parser.getFragment();
 }
 
 // ---- Decoding ------------------------------------------------------------------------------------
@@ -398,15 +450,20 @@ function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budge
   let noscriptWords = 0;
   let noscriptLinks = 0;
   for (const el of noscripts) {
-    if (budget.hit) break;
-    const read = textOf(el, limits.maxNoscriptChars, L.maxElementTextVisits);
-    if (read.text.trim() === '') continue;
     let fragment: Node;
-    try {
-      fragment = parseFragment(read.text, { treeAdapter: boundedAdapter(budget) });
-    } catch (error) {
-      if (error !== STOP) throw error;
-      break;
+    if (!budget.scripting) {
+      // Scripting off: the parser built `<noscript>`'s content as elements already.
+      fragment = el;
+    } else {
+      if (budget.hit) break;
+      const read = textOf(el, limits.maxNoscriptChars, L.maxElementTextVisits);
+      if (read.text.trim() === '') continue;
+      try {
+        fragment = parseFragmentOf(read.text, { treeAdapter: boundedAdapter(budget), scriptingEnabled: true }, limits.maxAttributes);
+      } catch (error) {
+        if (error !== STOP) throw error;
+        break;
+      }
     }
     for (const node of walk(fragment, (child) => SKIP.includes(child.tagName))) {
       if (isText(node)) noscriptWords += countWords(node.value);
@@ -454,7 +511,8 @@ export function parseServedHtml(input: ServedParseInput, limits: ParseLimits = S
     const url = parseWebUrl(input.url);
     if (!url || !(input.body instanceof Uint8Array)) return { ok: false, reason: 'parse-failed' };
     const text = decodeServed(input.body, typeof input.contentType === 'string' ? input.contentType : null, limits.prescanBytes);
-    const budget: Budget = { nodes: 0, hit: false, limits };
+    const scripting = input.scriptingEnabled !== false;
+    const budget: Budget = { nodes: 0, hit: false, limits, scripting };
     const adapter = boundedAdapter(budget);
     // The document is kept as soon as the parser creates it, so a parse stopped at a cap still has it.
     let document: Node | null = null;
@@ -467,7 +525,7 @@ export function parseServedHtml(input: ServedParseInput, limits: ParseLimits = S
       },
     };
     try {
-      parse(text, { treeAdapter: keeping, scriptingEnabled: true });
+      parseDocument(text, { treeAdapter: keeping, scriptingEnabled: scripting }, limits.maxAttributes);
     } catch (error) {
       if (error !== STOP) throw error;
     }

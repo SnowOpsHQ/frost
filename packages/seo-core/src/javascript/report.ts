@@ -106,7 +106,10 @@ function valuesOf(side: Side, id: JsFieldId): Values {
         true,
       );
     case 'canonical':
-      return list(side.canonicals.map((c) => c.resolved ?? c.href));
+      return list(
+        side.canonicals.map((c) => c.resolved ?? c.href),
+        true,
+      );
     case 'og-url':
       return one(side.ogUrl);
     case 'lang':
@@ -114,7 +117,10 @@ function valuesOf(side: Side, id: JsFieldId): Values {
     case 'viewport':
       return one(side.viewport);
     case 'h1':
-      return list(side.headings.filter((h) => h.level === 1).map((h) => h.text));
+      return list(
+        side.headings.filter((h) => h.level === 1).map((h) => h.text),
+        true,
+      );
     case 'hreflang':
       return list(
         side.hreflang.map((h) => `${h.hreflang} → ${h.resolved ?? h.href}`),
@@ -265,7 +271,10 @@ export function jsVerdict(metrics: JsMetrics, fields: readonly JsFieldDiff[], st
 }
 
 /** The comparison of a served snapshot with the rendered one. */
-export function compareServed(served: ServedSnapshot, fetch: ServedFetch, rendered: Side): JavascriptComparison {
+export function compareServed(served: ServedSnapshot, fetch: ServedFetch, renderedPage: Side & { readonly hiddenHeadings?: Side['headings'] }): JavascriptComparison {
+  // The served HTML has no layout: its headings are compared with the rendered page's shown and
+  // hidden ones together (`hiddenHeadings`, the extractor's first few).
+  const rendered: Side = { ...renderedPage, headings: [...renderedPage.headings, ...(renderedPage.hiddenHeadings ?? [])] };
   const fields = compareFields(served, rendered);
   const links = diffEntries(linkEntries(served), linkEntries(rendered), true);
   const headings = diffEntries(headingEntries(served), headingEntries(rendered));

@@ -8,7 +8,7 @@ import { createBoundedFetcher, type Hop, type HopResult } from '../fetcher';
 
 afterEach(() => vi.useRealTimers());
 
-const PAGE = 'https://a.test/page';
+const PAGE = 'https://a.example.org/page';
 const OPTIONS: CheckFetchOptions = { method: 'GET', maxBytes: 8, timeoutMs: 1_000, maxRedirects: 2, page: PAGE, userAgent: null, signal: new AbortController().signal };
 
 async function* chunks(...parts: string[]) {
@@ -40,63 +40,63 @@ describe('check fetch', () => {
 
   test('check-fetch-follows-checked-redirects', async () => {
     const { hop, asked } = routedHop({
-      'https://a.test/1': { redirect: '/2' },
-      'https://a.test/2': { redirect: 'https://b.test/3' },
-      'https://b.test/3': { status: 200, body: ['ok'] },
-      'https://a.test/loop': { redirect: '/loop' },
-      'https://a.test/none': { redirect: null, status: 302 },
-      'https://a.test/file': { redirect: 'file:///etc/passwd' },
+      'https://a.example.org/1': { redirect: '/2' },
+      'https://a.example.org/2': { redirect: 'https://b.example.org/3' },
+      'https://b.example.org/3': { status: 200, body: ['ok'] },
+      'https://a.example.org/loop': { redirect: '/loop' },
+      'https://a.example.org/none': { redirect: null, status: 302 },
+      'https://a.example.org/file': { redirect: 'file:///etc/passwd' },
     });
     const fetch = checkFetch(hop);
-    await expect(fetch('https://a.test/1', OPTIONS)).resolves.toMatchObject({ outcome: 'response', status: 200, finalUrl: 'https://b.test/3', redirects: 2, truncated: false, headers: { contentType: 'text/html' } });
-    expect(asked.map((a) => a.url)).toEqual(['https://a.test/1', 'https://a.test/2', 'https://b.test/3']);
-    await expect(fetch('https://a.test/loop', OPTIONS)).resolves.toMatchObject({ outcome: 'too-many-redirects', redirects: 2 });
-    await expect(fetch('https://a.test/none', OPTIONS)).resolves.toMatchObject({ outcome: 'no-location', status: 302 });
-    await expect(fetch('https://a.test/file', OPTIONS)).resolves.toMatchObject({ outcome: 'bad-redirect' });
+    await expect(fetch('https://a.example.org/1', OPTIONS)).resolves.toMatchObject({ outcome: 'response', status: 200, finalUrl: 'https://b.example.org/3', redirects: 2, truncated: false, headers: { contentType: 'text/html' } });
+    expect(asked.map((a) => a.url)).toEqual(['https://a.example.org/1', 'https://a.example.org/2', 'https://b.example.org/3']);
+    await expect(fetch('https://a.example.org/loop', OPTIONS)).resolves.toMatchObject({ outcome: 'too-many-redirects', redirects: 2 });
+    await expect(fetch('https://a.example.org/none', OPTIONS)).resolves.toMatchObject({ outcome: 'no-location', status: 302 });
+    await expect(fetch('https://a.example.org/file', OPTIONS)).resolves.toMatchObject({ outcome: 'bad-redirect' });
     await expect(fetch('ftp://a.test/x', OPTIONS)).resolves.toMatchObject({ outcome: 'bad-redirect' });
-    await expect(fetch('https://nowhere.test/', OPTIONS)).resolves.toMatchObject({ outcome: 'unreachable', status: null, finalUrl: 'https://nowhere.test/' });
+    await expect(fetch('https://nowhere.example.org/', OPTIONS)).resolves.toMatchObject({ outcome: 'unreachable', status: null, finalUrl: 'https://nowhere.example.org/' });
   });
 
   test('check-fetch-refuses-private-redirects', async () => {
-    const { hop, asked } = routedHop({ 'https://a.test/x': { redirect: 'http://192.168.1.1/admin' }, 'http://192.168.1.1/admin': { status: 200 } });
+    const { hop, asked } = routedHop({ 'https://a.example.org/x': { redirect: 'http://192.168.1.1/admin' }, 'http://192.168.1.1/admin': { status: 200 } });
     const fetch = checkFetch(hop);
-    await expect(fetch('https://a.test/x', OPTIONS)).resolves.toMatchObject({ outcome: 'private-redirect', status: 301, redirects: 0 });
+    await expect(fetch('https://a.example.org/x', OPTIONS)).resolves.toMatchObject({ outcome: 'private-redirect', status: 301, redirects: 0 });
     // A private target asked for directly is refused the same way, before any request.
     await expect(fetch('http://192.168.1.1/admin', OPTIONS)).resolves.toMatchObject({ outcome: 'private-redirect', status: null });
-    expect(asked.map((a) => a.url)).toEqual(['https://a.test/x']);
+    expect(asked.map((a) => a.url)).toEqual(['https://a.example.org/x']);
     // The page itself is private: followed.
-    await expect(fetch('https://a.test/x', { ...OPTIONS, page: 'http://localhost:3000/' })).resolves.toMatchObject({ outcome: 'response', status: 200 });
+    await expect(fetch('https://a.example.org/x', { ...OPTIONS, page: 'http://localhost:3000/' })).resolves.toMatchObject({ outcome: 'response', status: 200 });
   });
 
   test('check-fetch-caps-body', async () => {
-    const { hop, cancels } = routedHop({ 'https://a.test/big': { body: ['12345', '67890', 'abc'] }, 'https://a.test/small': { body: ['123'] } });
+    const { hop, cancels } = routedHop({ 'https://a.example.org/big': { body: ['12345', '67890', 'abc'] }, 'https://a.example.org/small': { body: ['123'] } });
     const fetch = checkFetch(hop);
-    const big = await fetch('https://a.test/big', OPTIONS);
+    const big = await fetch('https://a.example.org/big', OPTIONS);
     expect(new TextDecoder().decode(big.body)).toBe('12345678');
     expect(big.truncated).toBe(true);
-    const small = await fetch('https://a.test/small', OPTIONS);
+    const small = await fetch('https://a.example.org/small', OPTIONS);
     expect(new TextDecoder().decode(small.body)).toBe('123');
     expect(small.truncated).toBe(false);
     // HEAD (and a GET with no byte budget) reads nothing; every answer's connection is closed.
-    const head = await fetch('https://a.test/big', { ...OPTIONS, method: 'HEAD' });
+    const head = await fetch('https://a.example.org/big', { ...OPTIONS, method: 'HEAD' });
     expect(head.body.byteLength).toBe(0);
-    const none = await fetch('https://a.test/big', { ...OPTIONS, maxBytes: 0 });
+    const none = await fetch('https://a.example.org/big', { ...OPTIONS, maxBytes: 0 });
     expect(none.body.byteLength).toBe(0);
-    expect(cancels).toEqual(['https://a.test/big', 'https://a.test/small', 'https://a.test/big', 'https://a.test/big']);
+    expect(cancels).toEqual(['https://a.example.org/big', 'https://a.example.org/small', 'https://a.example.org/big', 'https://a.example.org/big']);
   });
 
   test('check-fetch-deadline-and-abort', async () => {
     vi.useFakeTimers();
     const never: Hop = () => new Promise<HopResult>(() => undefined);
     const fetch = checkFetch(never);
-    const timing = fetch('https://a.test/', { ...OPTIONS, timeoutMs: 500 });
+    const timing = fetch('https://a.example.org/', { ...OPTIONS, timeoutMs: 500 });
     await vi.advanceTimersByTimeAsync(500);
     await expect(timing).resolves.toMatchObject({ outcome: 'timeout' });
     const controller = new AbortController();
-    const stopping = fetch('https://a.test/', { ...OPTIONS, signal: controller.signal });
+    const stopping = fetch('https://a.example.org/', { ...OPTIONS, signal: controller.signal });
     controller.abort();
     await expect(stopping).resolves.toMatchObject({ outcome: 'aborted' });
-    await expect(fetch('https://a.test/', { ...OPTIONS, signal: controller.signal })).resolves.toMatchObject({ outcome: 'aborted' });
+    await expect(fetch('https://a.example.org/', { ...OPTIONS, signal: controller.signal })).resolves.toMatchObject({ outcome: 'aborted' });
     // A body that never ends is cut by the deadline too.
     const hanging: Hop = async () => ({
       kind: 'response',
@@ -107,22 +107,22 @@ describe('check fetch', () => {
       })(),
       cancel: () => undefined,
     });
-    const slow = checkFetch(hanging)('https://a.test/', { ...OPTIONS, timeoutMs: 300 });
+    const slow = checkFetch(hanging)('https://a.example.org/', { ...OPTIONS, timeoutMs: 300 });
     await vi.advanceTimersByTimeAsync(300);
     await expect(slow).resolves.toMatchObject({ outcome: 'timeout' });
   });
 
   test('check-fetch-sends-method-agent-and-reads-headers', async () => {
-    const link = ['<https://a.test/de>; rel="alternate"; hreflang="de"', `<https://a.test/fr>; rel="alternate"; hreflang="fr"${' '.repeat(2_000)}`];
-    const { hop, asked } = routedHop({ 'https://a.test/': { headers: { 'content-type': 'text/html', 'content-encoding': 'gzip', link, 'set-cookie': 'a=1' } } });
+    const link = ['<https://a.example.org/de>; rel="alternate"; hreflang="de"', `<https://a.example.org/fr>; rel="alternate"; hreflang="fr"${' '.repeat(2_000)}`];
+    const { hop, asked } = routedHop({ 'https://a.example.org/': { headers: { 'content-type': 'text/html', 'content-encoding': 'gzip', link, 'set-cookie': 'a=1' } } });
     const fetch = checkFetch(hop);
-    const answer = await fetch('https://a.test/', { ...OPTIONS, method: 'HEAD', userAgent: 'Mozilla/5.0 (compatible; Test)' });
-    expect(asked[0]).toEqual({ url: 'https://a.test/', method: 'HEAD', userAgent: 'Mozilla/5.0 (compatible; Test)' });
+    const answer = await fetch('https://a.example.org/', { ...OPTIONS, method: 'HEAD', userAgent: 'Mozilla/5.0 (compatible; Test)' });
+    expect(asked[0]).toEqual({ url: 'https://a.example.org/', method: 'HEAD', userAgent: 'Mozilla/5.0 (compatible; Test)' });
     // Every Link header is read (joined), past the fetcher's default header cap.
     expect(answer.headers).toEqual({ contentType: 'text/html', contentEncoding: 'gzip', link: link.join(', ') });
     // A user agent with a line break (or none) is never sent: frost's own instead.
-    await fetch('https://a.test/', { ...OPTIONS, userAgent: 'evil\r\nCookie: x' });
-    await fetch('https://a.test/', { ...OPTIONS, userAgent: null });
+    await fetch('https://a.example.org/', { ...OPTIONS, userAgent: 'evil\r\nCookie: x' });
+    await fetch('https://a.example.org/', { ...OPTIONS, userAgent: null });
     expect(asked.slice(1).map((a) => [a.method, a.userAgent])).toEqual([
       ['GET', null],
       ['GET', null],
@@ -136,9 +136,9 @@ describe('check fetch', () => {
       fetch: async (request) => (requests.push(request), { url: request.url, outcome: 'busy', status: null, finalUrl: null, redirects: 0, chain: [], headers: {}, body: new Uint8Array(0), truncated: false, durationMs: 0 }),
       load: () => ({ running: 0, queued: 0 }),
     };
-    const answer = await createCheckFetch(fetcher)('https://a.test/x', OPTIONS);
-    expect(requests).toEqual([expect.objectContaining({ url: 'https://a.test/x', page: PAGE, method: 'GET', maxBytes: 8, timeoutMs: 1_000, maxRedirects: 2, signal: OPTIONS.signal })]);
+    const answer = await createCheckFetch(fetcher)('https://a.example.org/x', OPTIONS);
+    expect(requests).toEqual([expect.objectContaining({ url: 'https://a.example.org/x', page: PAGE, method: 'GET', maxBytes: 8, timeoutMs: 1_000, maxRedirects: 2, signal: OPTIONS.signal })]);
     // A full queue asked nothing: no answer, never cached.
-    expect(answer).toMatchObject({ outcome: 'unreachable', status: null, finalUrl: 'https://a.test/x' });
+    expect(answer).toMatchObject({ outcome: 'unreachable', status: null, finalUrl: 'https://a.example.org/x' });
   });
 });

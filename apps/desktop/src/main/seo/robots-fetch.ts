@@ -73,6 +73,11 @@ function robotsOutcome(fetched: BoundedFetchResult): RobotsFetchOutcome {
     case 'timeout':
     case 'unreachable':
       return fetched.outcome;
+    // The page's own host resolves to a private address (Phase 2.5 Task 2 review: names are resolved
+    // before each hop) while the page itself is not on a private host: refused like a private
+    // redirect, so no robots.txt (never an "unreachable" warning for it).
+    case 'private-address':
+      return 'private-redirect';
     default:
       return 'unreachable';
   }

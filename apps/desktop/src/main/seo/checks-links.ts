@@ -1,4 +1,4 @@
-import { classifyLink, linkTargetKey, needsGetFallback, skippedLink, type PageLink } from '@app/seo-core';
+import { classifyLink, linkTargetKey, needsGetFallback, originNeedsGet, skippedLink, type PageLink } from '@app/seo-core';
 import { LINK_CHECK_LIMITS, type LinkCheckResult } from '@app/specs/seo-checks.spec';
 import type { CheckFetch } from './checks-fetch';
 import { isPrivateHost } from './fetcher';
@@ -54,7 +54,7 @@ export interface LinkRequestOptions {
   /** The page the links are on: private hosts may be requested only when it is on one (`fetcher.spec.ts`). */
   readonly page: string;
   readonly userAgent: string | null;
-  /** Origins known not to do HEAD (asked with GET at once; a HEAD answer in `HEAD_FALLBACK_STATUSES` adds its origin). */
+  /** Origins known not to do HEAD (asked with GET at once; a HEAD answer in `HEAD_ORIGIN_FALLBACK_STATUSES` adds its origin). */
   readonly getOnly: Set<string>;
   readonly signal: AbortSignal;
   readonly limits?: Pick<LinkLimits, 'requestTimeoutMs' | 'maxRedirects' | 'getBodyBytes'>;
@@ -84,7 +84,7 @@ export async function checkLink(url: string, options: LinkRequestOptions): Promi
   let method: 'HEAD' | 'GET' = options.getOnly.has(origin) ? 'GET' : 'HEAD';
   let answer = await ask(method);
   if (method === 'HEAD' && answer.outcome === 'response' && needsGetFallback(answer.status)) {
-    options.getOnly.add(origin);
+    if (originNeedsGet(answer.status)) options.getOnly.add(origin);
     method = 'GET';
     answer = await ask(method);
   }
