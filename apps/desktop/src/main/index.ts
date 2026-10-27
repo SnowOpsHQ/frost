@@ -9,6 +9,8 @@ import { contextMenuTemplate } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
 import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
+import { createProfileDebugger } from './browser/render-profile-debugger';
+import { createRenderProfilePins } from './browser/render-profile-pins';
 import { clearBrowseStorage, confirmClearBrowsingData, createClearBrowsingData } from './clear-browsing-data';
 import { installAppMenu, popupContextMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
@@ -162,6 +164,22 @@ function start(): void {
     });
     contents.once('destroyed', () => shownTimes.forget(id));
   });
+  // Per-tab render profiles (specs/render-profile.feature.md): each tab's own debugger, attached
+  // only to a browse-session tab's WebContents and only while it has a profile, sending only the
+  // allowlisted CDP methods (browser/render-profile-debugger.ts). "Pin to this site" profiles are
+  // kept per origin in the session database (written at once), loaded before any tab loads.
+  const renderProfilePins = createRenderProfilePins({
+    save: (origin, profile) => sessionStore.writer.saveRenderProfilePin(origin, profile),
+    remove: (origin) => sessionStore.writer.deleteRenderProfilePin(origin),
+  });
+  const renderProfiles = {
+    pins: renderProfilePins,
+    chromeVersion: process.versions.chrome,
+    debuggerFor: (contents: WebContents, detached: (reason: string) => void) => {
+      if (!isBrowseContents(contents)) throw new Error('render profiles apply to browse-session tabs only');
+      return createProfileDebugger(contents, detached);
+    },
+  };
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
@@ -178,6 +196,7 @@ function start(): void {
     // The command palette's Clear Browsing Data… (specs/command-palette.feature.md): the menu's own,
     // confirming action, set up once the app is ready (below).
     clearBrowsingData: () => void clearBrowsingData?.(),
+    renderProfiles,
   });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
@@ -245,6 +264,8 @@ function start(): void {
       forgetSeoCaches: () => {
         robots?.clear();
         responses.clear();
+        // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
+        browser.forgetRenderProfilePins();
       },
       log: logSession,
     });
@@ -256,6 +277,7 @@ function start(): void {
     // has the restored tabs.
     const saved = await loadSavedState(sessionStore, logSession);
     decisions.load(saved.decisions);
+    renderProfilePins.load(await sessionStore.repository.loadRenderProfilePins().catch(() => []));
     browser.restoreSession(saved.session);
     openMainWindow();
     markStarted();

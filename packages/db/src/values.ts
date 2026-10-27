@@ -1,5 +1,7 @@
 import { MAX_STORED_TITLE_LENGTH, MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import { PERSISTED_DECISIONS, SITE_PERMISSIONS, type PersistedDecision, type SitePermission } from '@app/specs/permissions.spec';
+import { isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
+import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 
 // What may be stored, and what a stored value must look like to be loaded (spec
@@ -39,6 +41,28 @@ export function storableOrigin(origin: unknown): string | null {
   const url = storableUrl(origin);
   if (url === null) return null;
   return new URL(url).origin === origin ? origin : null;
+}
+
+/** Longest stored render profile (its JSON); a longer value is not a profile. */
+export const MAX_STORED_PROFILE_LENGTH = 2_048;
+
+/**
+ * A render profile as stored and loaded (`render-profile.feature.md`): the value itself, or its JSON
+ * text (at most `MAX_STORED_PROFILE_LENGTH`), if it is a valid, non-default profile
+ * (`RenderProfileSchema`); else `null`.
+ */
+export function storableProfile(value: RenderProfile | string): RenderProfile | null {
+  let candidate: unknown = value;
+  if (typeof value === 'string') {
+    if (value.length > MAX_STORED_PROFILE_LENGTH) return null;
+    try {
+      candidate = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  const parsed = RenderProfileSchema.safeParse(candidate);
+  return parsed.success && !isDefaultRenderProfile(parsed.data) ? parsed.data : null;
 }
 
 export const isSitePermission = (value: unknown): value is SitePermission => includes(SITE_PERMISSIONS, value);

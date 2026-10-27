@@ -1,11 +1,11 @@
-// Spec: specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, SESSION_TABLES)
+// Spec: specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, SESSION_TABLES), specs/render-profile.feature.md (pins)
 // Acceptance: specs/browser-session-db.feature.md (Migrations)
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, test } from 'vitest';
 import { MIGRATIONS_TABLE, SESSION_TABLES } from '@app/specs/browser-session-db.spec';
 import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
-import { browserTabs, recentVisits, schemaMigrations, sitePermissions } from '../schema';
+import { browserTabs, recentVisits, renderProfilePins, schemaMigrations, sitePermissions } from '../schema';
 
 const memory = () => new DatabaseSync(':memory:');
 
@@ -61,13 +61,13 @@ describe('migrations', () => {
     const db = memory();
     expect(runMigrations(db)).toEqual(MIGRATIONS.map((m) => m.id));
     expect(tableNames(db)).toEqual([...SESSION_TABLES, MIGRATIONS_TABLE].sort());
-    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions]) {
+    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins]) {
       const name = getTableConfig(table).name;
       expect(sqliteColumns(db, name), name).toEqual(drizzleColumns(table));
     }
-    // The schema's index exists too.
-    const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'").all().map((row) => row['name']);
-    expect(indexes).toEqual(getTableConfig(recentVisits).indexes.map((index) => index.config.name));
+    // The schema's indexes exist too.
+    const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row['name']);
+    expect(indexes).toEqual([recentVisits, renderProfilePins].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort());
     expect(recordedIds(db)).toEqual(MIGRATIONS.map((m) => m.id));
   });
 

@@ -32,6 +32,8 @@ function fakes() {
     runPageCommand: vi.fn((_command: string) => undefined),
     focusPage: vi.fn(() => true),
     clearBrowsingData: vi.fn(() => undefined),
+    setRenderProfile: vi.fn(() => false),
+    clearRenderProfile: vi.fn(() => false),
     getState: vi.fn(() => STATE),
     watch: vi.fn(async () => STATE),
   } satisfies BrowserService;

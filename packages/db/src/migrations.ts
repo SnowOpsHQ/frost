@@ -44,6 +44,18 @@ export const MIGRATIONS: readonly Migration[] = [
     id: '0002_block_only_permissions',
     sql: `DELETE FROM site_permissions WHERE decision <> 'block';`,
   },
+  {
+    // Render profiles pinned to a site (Phase 2.5 Task 1).
+    id: '0003_render_profile_pins',
+    sql: `
+      CREATE TABLE render_profile_pins (
+        origin TEXT PRIMARY KEY NOT NULL,
+        profile TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX render_profile_pins_updated_at ON render_profile_pins (updated_at);
+    `,
+  },
 ];
 
 /**

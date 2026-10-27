@@ -5,11 +5,13 @@ import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, 
 import type { PaletteReturnFocus } from '@app/specs/command-palette.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
+import type { RenderProfile } from '@app/specs/render-profile.spec';
 import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { createFullscreen } from './fullscreen';
 import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
+import { createTabRenderProfiles, type RenderProfileOptions } from './render-profile';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { createTabA11y, type A11yRunner } from '../seo/a11y-runs';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
@@ -83,6 +85,8 @@ export interface BrowserController extends BrowserService {
   openTabFromPage(opener: unknown, url: string): number | null;
   /** Raises a status-bar notice (a new `seq`). */
   notify(kind: NoticeKind): void;
+  /** Forgets every render-profile pin in memory (Clear Browsing Data; `render-profile.feature.md`). */
+  forgetRenderProfilePins(): void;
   /**
    * The id of the open tab whose (live) page view's WebContents is `contents`, else `null`: the
    * permission handlers attribute a request to its tab with it (`permissions.feature.md`).
@@ -178,6 +182,11 @@ export interface BrowserControllerOptions {
    * asks first): `browser.clearBrowsingData` from the command palette runs it. Without it, a no-op.
    */
   readonly clearBrowsingData?: () => void;
+  /**
+   * Per-tab render profiles (`render-profile.feature.md`): the tab debugger factory, the site pins and
+   * the app's Chromium version. Without it `browser.setRenderProfile` is a no-op answering `false`.
+   */
+  readonly renderProfiles?: RenderProfileOptions;
 }
 
 /** Whether `audit` is the one the panel rendered (`SeoAuditRef`: its URL and when it was taken). */
@@ -200,7 +209,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, renderProfile: renderProfiles.state(tab) })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
@@ -237,6 +246,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // an input known at once, in the first analysis and the final one alike (`withKnown`).
   const seoOptions: TabAuditsOptions | undefined = options.seo && {
     ...options.seo,
+    // Every audit records the render profile its extraction ran under (`render-profile.feature.md`).
+    extract: (contents) => {
+      const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
+      if (tab) renderProfiles.extractionStarted(tab, contents.getURL());
+      return options.seo!.extract(contents);
+    },
     context: (contents) => {
       const base = options.seo!.context?.(contents);
       const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
@@ -277,6 +292,28 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed,
   });
 
+  // Render profiles (`render-profile.feature.md`): each tab's own, applied through its own debugger; a
+  // change of the frame or the device fit lays the active tab's view out again.
+  const renderProfiles = createTabRenderProfiles(options.renderProfiles, {
+    changed: () => {
+      const tab = activeTab();
+      if (tab) applyBounds(tab);
+      changed();
+    },
+    pageArea: () => (strip.pageBounds !== null && hasWindow() ? clampPageBounds(strip.pageBounds, strip.win!.getContentSize() as [number, number]) : null),
+  });
+
+  /**
+   * Loads `url` in `tab`'s `view`, the tab's render profile for it put into effect first, so the
+   * first request already carries it.
+   */
+  const loadInTab = (tab: Tab, view: TabView, url: string): void => {
+    renderProfiles.beforeLoad(tab, url);
+    view.webContents.loadURL(url).catch(() => {
+      // Failures surface through `did-fail-load` / the tab state.
+    });
+  };
+
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
   const openEmptyTab = (): number => {
     const tab = createTab(nextTabId++);
@@ -304,7 +341,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       const top = tab.fullscreen === 'notice' ? Math.min(FULLSCREEN_BANNER_HEIGHT, height) : 0;
       tab.view.setBounds({ x: 0, y: top, width, height: height - top });
     } else if (strip.pageBounds !== null) {
-      tab.view.setBounds(clampPageBounds(strip.pageBounds, [width, height]));
+      tab.view.setBounds(renderProfiles.viewBounds(tab, clampPageBounds(strip.pageBounds, [width, height])));
     }
   };
 
@@ -342,6 +379,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     speeds.forget(tab);
     a11y.forget(tab);
     highlights.dropped(tab);
+    renderProfiles.released(tab);
     if (view) detach(view);
     return view;
   };
@@ -369,9 +407,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const loadRestored = (tab: Tab): void => {
     if (!tab.restored || tab.view || !hasWindow()) return;
     const { url } = tab.restored;
-    ensureView(tab)?.webContents.loadURL(url).catch(() => {
-      // Failures surface through `did-fail-load` / the tab state.
-    });
+    const view = ensureView(tab);
+    if (view) loadInTab(tab, view, url);
   };
 
   /** Makes the window show exactly the active tab's view (none for an empty tab, or behind a panel). */
@@ -485,6 +522,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         speeds.navigated(t);
       },
     });
+    const unlistenEvents = tab.unlisten;
+    const unlistenProfile = renderProfiles.wire(tab, view);
+    tab.unlisten = () => {
+      unlistenEvents();
+      unlistenProfile();
+    };
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
     applyBounds(tab);
     syncAttached();
@@ -636,11 +679,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     while (descendsFrom(strip.tabs[at], openerTab.id)) at += 1;
     const tab = createTab(nextTabId++, openerTab.id);
     strip.tabs.splice(at, 0, tab);
+    // It starts with the opener's own render profile, in effect before its first request.
+    renderProfiles.inherit(openerTab, tab);
     const view = ensureView(tab);
     // No opener link, referrer or POST body: the new tab loads the URL on its own.
-    view?.webContents.loadURL(url).catch(() => {
-      // Failures surface through `did-fail-load` / the tab state.
-    });
+    if (view) loadInTab(tab, view, url);
     changed();
     return tab.id;
   };
@@ -801,9 +844,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       if (!view) return false;
       // What the user typed replaces a restored tab's saved URL (as shown, and for Reload).
       tab.restored = null;
-      view.webContents.loadURL(resolved.url).catch(() => {
-        // Superseded or failed loads surface through `did-fail-load` / the tab state.
-      });
+      loadInTab(tab, view, resolved.url);
       view.webContents.focus();
       return true;
     },
@@ -840,8 +881,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       getAudit: (tabId) => {
         const tab = strip.tabs.find((t) => t.id === tabId);
         const response = audits.response(tab);
-        // A ready audit carries the tab's accessibility run (Task 6).
-        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab) } : response;
+        // A ready audit carries the tab's accessibility run (Task 6) and the render profile it ran under.
+        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab), renderProfile: renderProfiles.auditProfile(tab, response.audit.url) } : response;
       },
       measureSpeed: (tabId) => speeds.measure(strip.tabs.find((tab) => tab.id === tabId)),
       setHighlight: (tabId, mode) => {
@@ -893,6 +934,17 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     },
 
     openTabFromPage,
+
+    // Render profiles (`render-profile.feature.md`): any open tab, from the chrome only.
+    setRenderProfile: (tabId: number, profile: RenderProfile, pin: boolean) => {
+      const tab = strip.tabs.find((t) => t.id === tabId);
+      return tab !== undefined && hasWindow() && renderProfiles.set(tab, profile, pin);
+    },
+    clearRenderProfile: (tabId: number) => {
+      const tab = strip.tabs.find((t) => t.id === tabId);
+      return tab !== undefined && hasWindow() && renderProfiles.clear(tab);
+    },
+    forgetRenderProfilePins: () => renderProfiles.forgetPins(),
 
     notify: raiseNotice,
 

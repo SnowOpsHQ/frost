@@ -156,8 +156,12 @@ input {
 
 .chrome {
   display: grid;
-  /* The prompt row is empty (0 high) unless the active tab shows a permission prompt. */
-  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto minmax(0, 1fr) var(--status-height);
+  /* Rows: tab strip, toolbar, permission prompt, render-profile editor bar, workspace, status bar.
+     The prompt row is empty (0 high) unless the active tab shows a permission prompt; the editor
+     bar's row is empty unless it is open (render-profile.feature.md). The command palette's sheet is
+     not a row: it sits at the top of the workspace's page column (command-palette.spec.ts). Each
+     takes its height from the page area, so the tab's view is laid out below them all. */
+  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto auto minmax(0, 1fr) var(--status-height);
   height: 100%;
 }
 
@@ -5310,3 +5314,351 @@ input {
     transition: none;
   }
 }
+
+/* ==== Render profiles (Phase 2.5 Task 1, specs/render-profile.feature.md) ======================== */
+/* The editor bar gets a grid row of its own under the prompt row (0 high while closed; `.chrome` in
+   Layout), so the page area makes room for it: nothing is ever drawn over a tab's view. */
+
+:root {
+  --render-accent: #7a4fe0;
+  --render-soft: rgb(122 79 224 / 0.13);
+  --render-edge: rgb(122 79 224 / 0.55);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --render-accent: #a98bff;
+    --render-soft: rgb(169 139 255 / 0.16);
+    --render-edge: rgb(169 139 255 / 0.55);
+  }
+}
+
+.render-slot {
+  min-width: 0;
+}
+
+.render-toggle[data-active='true'] {
+  background: var(--render-soft);
+  color: var(--render-accent);
+}
+
+.render-toggle[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--render-edge);
+}
+
+/* ---- Editor bar ---- */
+
+.render-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 9px 14px;
+  border-bottom: 1px solid var(--prompt-edge);
+  background: var(--bg-prompt);
+  box-shadow: var(--shadow-prompt);
+  font-size: 12.5px;
+  animation: prompt-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.render-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.render-bar-title {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.render-chip {
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--border-field);
+  border-radius: 13px;
+  background: var(--bg-field);
+  color: var(--text);
+  font-size: 12px;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.render-chip:hover:not(:disabled) {
+  border-color: var(--render-edge);
+  color: var(--render-accent);
+}
+
+.render-chip:focus-visible,
+.render-frame-button:focus-visible,
+.render-field select:focus-visible,
+.render-custom-ua:focus-visible,
+.render-check input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.render-bar-close {
+  width: 26px;
+  height: 26px;
+}
+
+.render-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.render-field select,
+.render-custom-ua {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: 8px;
+  background: var(--bg-field);
+  color: var(--text);
+  font: inherit;
+}
+
+.render-custom-ua {
+  flex: 1 1 220px;
+  min-width: 160px;
+  max-width: 420px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.render-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.render-check input {
+  margin: 0;
+  accent-color: var(--render-accent);
+}
+
+.render-check:has(input:disabled) {
+  opacity: 0.5;
+}
+
+.render-bar-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.render-bar-note {
+  margin: 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--caution) 10%, transparent);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* ---- Page-area frame ---- */
+
+.render-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 4px var(--render-edge);
+}
+
+.render-frame-art {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.render-frame-device {
+  fill: none;
+  stroke: var(--render-edge);
+  stroke-width: 1;
+}
+
+.render-frame-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  overflow: hidden;
+  background: var(--render-accent);
+  color: #ffffff;
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.render-frame-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.render-frame-summary {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.render-frame-tag {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 0.18);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.render-frame-caveat {
+  cursor: help;
+}
+
+.render-frame-failed {
+  background: var(--danger);
+}
+
+.render-frame-spacer {
+  flex: 1;
+}
+
+.render-frame-button {
+  flex: none;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid rgb(255 255 255 / 0.45);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.render-frame-button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.16);
+}
+
+.render-frame-primary {
+  border-color: transparent;
+  background: #ffffff;
+  color: var(--render-accent);
+}
+
+.render-frame-primary:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.88);
+}
+
+/* In the editor bar the same buttons sit on the bar's own background. */
+.render-bar .render-frame-button {
+  height: 28px;
+  padding: 0 14px;
+  border-color: var(--border-field);
+  background: var(--bg-field);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.render-bar .render-frame-primary {
+  border-color: transparent;
+  background: var(--render-accent);
+  color: #ffffff;
+}
+
+.render-bar .render-frame-button:disabled {
+  opacity: 0.5;
+}
+
+/* ---- Tab badge and status chip ---- */
+
+.tab-profile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--render-soft);
+  color: var(--render-accent);
+}
+
+.tab-profile[data-needs-reload='true'],
+.tab-profile[data-status='failed'] {
+  box-shadow: inset 0 0 0 1px var(--render-edge);
+}
+
+.tab-profile-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.status-render-profile {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: var(--render-soft);
+  color: var(--render-accent);
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.status-render-profile + .status-zoom {
+  margin-left: 0;
+}
+
+.status-render-profile-icon {
+  width: 13px;
+  height: 13px;
+}
+
+/* ---- The audit's profile (Overview) ---- */
+
+.seo-audit-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--render-edge);
+  border-radius: 10px;
+  background: var(--render-soft);
+}
+
+.seo-audit-profile-summary {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.seo-audit-profile-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .render-bar {
+    animation: none;
+  }
+}
+/* ==== End render profiles ===================================================================== */

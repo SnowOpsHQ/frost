@@ -12,7 +12,7 @@ import { createPaletteRegistry, type PaletteAction, type PaletteContext } from '
 const URL_A = 'https://www.example.com/a';
 
 function tab(changes: Partial<TabState> = {}): TabState {
-  return { id: 1, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', ...changes };
+  return { id: 1, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
 }
 
 function state(tabs: TabState[], activeTabId = tabs[0]?.id ?? null): BrowserState {

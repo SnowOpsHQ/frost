@@ -12,6 +12,7 @@ import {
 } from '@app/specs/browser.spec';
 import { PageCommandInputSchema, SeoCopyValueInputSchema } from '@app/specs/command-palette.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
+import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app/specs/render-profile.schema.spec';
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
@@ -162,6 +163,18 @@ const browserRouter = router({
       ctx.browser.clearBrowsingData();
       return null;
     }),
+  // Render profiles (Phase 2.5 Task 1, `render-profile.feature.md`): whether the tab's profile was set /
+  // whether it had one to clear.
+  setRenderProfile: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(SetRenderProfileInputSchema)
+    .mutation(({ ctx, input }) => ctx.browser.setRenderProfile(input.tabId, input.profile, input.pin) === true),
+  clearRenderProfile: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(ClearRenderProfileInputSchema)
+    .mutation(({ ctx, input }) => ctx.browser.clearRenderProfile(input.tabId) === true),
   watch: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)

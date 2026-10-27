@@ -1,3 +1,4 @@
+import type { AuditRenderProfile } from '@app/specs/render-profile.spec';
 import type { AccessibilityRunState } from '@app/specs/seo-compliance.spec';
 import type { ScoreBand, SeoCategory, SeoRuleId, SeoRuleSpec, SeoSeverity } from '@app/specs/seo-rules.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
@@ -106,9 +107,10 @@ export interface SeoAudit {
 
 /**
  * `seo.getAudit`'s answer (`seo-sidebar.spec.ts`, `SEO_AUDIT_STATUSES`). A ready answer carries the
- * tab's accessibility run (`seo-compliance.spec.ts`, `AccessibilityRunState`) when main has one.
+ * tab's accessibility run (`seo-compliance.spec.ts`, `AccessibilityRunState`) when main has one, and
+ * the render profile the audit ran under (`render-profile.spec.ts`, `AuditRenderProfile`; `null`: none).
  */
 export type SeoAuditResponse =
   | { readonly status: 'pending'; readonly url: string }
-  | { readonly status: 'ready'; readonly url: string; readonly audit: SeoAudit; readonly accessibilityRun?: AccessibilityRunState }
+  | { readonly status: 'ready'; readonly url: string; readonly audit: SeoAudit; readonly accessibilityRun?: AccessibilityRunState; readonly renderProfile?: AuditRenderProfile | null }
   | { readonly status: 'unavailable'; readonly url: string; readonly reason: SeoUnavailableReason };
