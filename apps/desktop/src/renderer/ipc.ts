@@ -37,4 +37,6 @@ export const actions = {
   copyUrl: (tabId: number, audit: SeoAuditRef, url: string) => ipc.seo.copyUrl.mutate({ tabId, audit, url }).catch(() => false),
   /** Copies one JSON-LD block of the audit on screen through main's clipboard (main formats it); resolves whether it was copied. */
   copySchemaJson: (tabId: number, audit: SeoAuditRef, block: number) => ipc.seo.copySchemaJson.mutate({ tabId, audit, block }).catch(() => false),
+  /** Starts the accessibility check on the tab's page (`seo.runAccessibility`); resolves whether one is running. */
+  runAccessibility: (tabId: number) => ipc.seo.runAccessibility.mutate({ tabId }).catch(() => false),
 };

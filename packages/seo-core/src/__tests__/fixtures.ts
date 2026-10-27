@@ -64,6 +64,7 @@ export function cleanSnapshot(): PageSnapshot {
       { src: 'https://example.com/img/divider.svg', alt: text(''), width: null, height: null, loading: null, rendered: null, natural: { width: 4000, height: 10 }, inFirstViewport: false, cssSized: false },
     ],
     imageTotal: 2,
+    security: cleanSecurity(),
     jsonLd: [jsonLd(CLEAN_GRAPH)],
     jsonLdTotal: 1,
     microdata: [],
@@ -77,7 +78,21 @@ export function cleanSnapshot(): PageSnapshot {
   };
 }
 
-/** The page's response as main records it from the network: 200, a couple of headers, no redirects (`changes` override). */
+/** The security facts of a page with no http subresources and no meta policies (`changes` override). */
+export function cleanSecurity(changes: Partial<PageSnapshot['security']> = {}): PageSnapshot['security'] {
+  return { insecureResources: [], insecureResourceTotal: 0, resourcesTruncated: false, metaCsp: [], metaReferrer: null, ...changes };
+}
+
+/** The security headers of a well-configured site (each passes its rule; Task 6). */
+export const SECURITY_HEADERS_OK: ResponseMeta['headers'] = [
+  { name: 'strict-transport-security', value: 'max-age=31536000; includeSubDomains' },
+  { name: 'content-security-policy', value: "default-src 'self'; frame-ancestors 'self'" },
+  { name: 'x-content-type-options', value: 'nosniff' },
+  { name: 'x-frame-options', value: 'SAMEORIGIN' },
+  { name: 'referrer-policy', value: 'strict-origin-when-cross-origin' },
+];
+
+/** The page's response as main records it from the network: 200, a couple of headers and the security ones, no redirects (`changes` override). */
 export function okResponse(changes: Partial<ResponseMeta> = {}): ResponseMeta {
   return {
     url: PAGE_URL,
@@ -87,6 +102,7 @@ export function okResponse(changes: Partial<ResponseMeta> = {}): ResponseMeta {
     headers: [
       { name: 'content-type', value: 'text/html; charset=utf-8' },
       { name: 'cache-control', value: 'max-age=600' },
+      ...SECURITY_HEADERS_OK,
     ],
     redirects: [],
     redirectTotal: 0,

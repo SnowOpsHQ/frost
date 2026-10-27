@@ -10,6 +10,7 @@
  * renderer imports this module for its types only.
  */
 import { z } from 'zod';
+import { AccessibilityContextSchema, PageSecuritySchema } from './seo-compliance.schema';
 import { RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SOURCES, ROBOTS_FETCH_LIMITS, ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
 import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
@@ -246,6 +247,7 @@ function markupChars(items: readonly { readonly properties: readonly ({ readonly
  *   values together at most `maxMarkupTotalChars`, with `microdataTotal` / `rdfaTotal` the items the
  *   page has (Task 3).
  * - `hreflang`: the head's hreflang links (`HreflangLinkSchema`), `hreflangTotal` how many it has (Task 4).
+ * - `security`: http subresources of an https page, meta CSP and meta referrer (`PageSecuritySchema`, Task 6).
  */
 export const PageSnapshotSchema = z
   .strictObject({
@@ -272,6 +274,7 @@ export const PageSnapshotSchema = z
     linkTotal: count,
     images: z.array(ImageSchema).max(L.maxImages),
     imageTotal: count,
+    security: PageSecuritySchema,
     jsonLd: z.array(JsonLdBlockSchema).max(L.maxJsonLdBlocks),
     jsonLdTotal: count,
     microdata: markupItems,
@@ -354,15 +357,17 @@ export const RobotsFetchSchema = z.strictObject({
 /**
  * What main collected about the page beside the extractor's snapshot, handed to the analysis worker
  * with it and validated there: its response (`null`: none recorded) and its origin's robots.txt
- * (`null`: not fetched).
+ * (`null`: not fetched); and the accessibility check's answer for the tab's document
+ * (`AccessibilityContextSchema`, Task 6; absent or `null`: none; `'invalid'`: rejected).
  */
-export const PageContextSchema = z.strictObject({ response: ResponseMetaSchema.nullable(), robots: RobotsFetchSchema.nullable() });
+export const PageContextSchema = z.strictObject({ response: ResponseMetaSchema.nullable(), robots: RobotsFetchSchema.nullable(), accessibility: AccessibilityContextSchema.optional() });
 export type PageContext = z.infer<typeof PageContextSchema>;
 export type ResponseMeta = z.infer<typeof ResponseMetaSchema>;
 export type ResponseHeader = z.infer<typeof ResponseHeaderSchema>;
 export type RedirectHop = z.infer<typeof RedirectHopSchema>;
 export type RobotsFetch = z.infer<typeof RobotsFetchSchema>;
 export type HreflangLink = z.infer<typeof HreflangLinkSchema>;
+export type { A11yNode, A11yViolation, AccessibilityContext, AccessibilityResult, InsecureResource, PageSecurity } from './seo-compliance.schema';
 /** Nothing collected (`PageContext` with neither part). */
 export const NO_PAGE_CONTEXT: PageContext = { response: null, robots: null };
 

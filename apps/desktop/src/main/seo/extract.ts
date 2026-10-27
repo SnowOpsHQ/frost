@@ -1,4 +1,6 @@
+import { SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
+import { securityCall } from './security-extract';
 
 // The SEO extractor (spec `seo-snapshot.spec.ts`, `seo-limits.spec.ts`; acceptance
 // `seo-sidebar.feature.md`, Extraction). `extractPage` is one self-contained function: it is
@@ -628,9 +630,10 @@ export function extractPage(
 
 /**
  * The script run in the isolated world: `extractPage` called on its `document` with the spec's
- * limits, deadline, robots meta names and social tags.
+ * limits, deadline, robots meta names and social tags, then the security read (`extractSecurity`,
+ * Task 6) as its `security`.
  */
-export const EXTRACTOR_SCRIPT = `(${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)})`;
+export const EXTRACTOR_SCRIPT = `Object.assign((${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)}), { security: ${securityCall(SECURITY_LIMITS)} })`;
 
 /** The part of a tab's WebContents the extractor needs. */
 export interface ExtractTarget {

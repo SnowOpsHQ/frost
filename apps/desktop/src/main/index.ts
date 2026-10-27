@@ -13,6 +13,7 @@ import { clearBrowseStorage, confirmClearBrowsingData, createClearBrowsingData }
 import { installAppMenu, popupContextMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
+import { runAccessibilityCheck } from './seo/a11y';
 import { createAnalyzer } from './seo/analysis';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
@@ -130,6 +131,9 @@ function start(): void {
     contextMenu: showContextMenu,
     seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
     highlight: { paint: runHighlight, ended: watchHighlight },
+    // The accessibility check (specs/seo-compliance.feature.md): axe-core in the tab's own isolated
+    // accessibility world, on request only; its answer is validated in the analysis worker.
+    accessibility: runAccessibilityCheck,
     clipboard,
   });
 

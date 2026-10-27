@@ -189,7 +189,18 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   response headers.
 - Accessibility: run `axe-core` in the isolated world on demand (button) with a time cap. Group the
   violations by impact; each node is shown as a text selector.
-- [ ] commit `feat(seo): compliance panel`
+- Decisions (`specs/seo-compliance.feature.md`, `specs/seo-compliance.spec.ts`,
+  `specs/seo-compliance.schema.ts`): HTTPS, mixed content (from the DOM: Chromium blocks or upgrades
+  it before the network sees it, so `webRequest` is not used; loopback http is not mixed content) and
+  the headers (Task 4's recorded response, plus meta CSP / referrer) are read by frost's own CSP,
+  HSTS and referrer readers in the worker; unknown headers are "unknown", never a failure; loopback
+  pages are "Local". `axe-core` is bundled into main as a string and injected only on request into
+  its own isolated world (`A11Y_WORLD_ID`), once per document, with a 10 s cap; the run script caps
+  the summary, main size-checks it, the worker validates it beside the next snapshot
+  (`PageContext.accessibility`) and the audit is re-scored without going pending. Only critical and
+  serious violations score (one warning each), and only once a check ran on that document and URL.
+  13 rules (`security`, `accessibility`); `seo.runAccessibility`.
+- [x] commit `feat(seo): compliance panel`
 
 ### Task 7: Release check
 

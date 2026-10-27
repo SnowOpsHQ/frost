@@ -1,6 +1,7 @@
 // Spec: specs/seo-snapshot.spec.ts (SeoTabInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema,
 // SeoCopyUrlInputSchema, SeoCopySchemaInputSchema), specs/seo-sidebar.spec.ts (statuses, HIGHLIGHT_MODES, link filters), specs/ipc-sender.spec.ts
-// Acceptance: specs/seo-sidebar.feature.md (Router), specs/seo-panels.feature.md (Router), specs/seo-schema.feature.md (Controller and router)
+// Acceptance: specs/seo-sidebar.feature.md (Router), specs/seo-panels.feature.md (Router), specs/seo-schema.feature.md (Controller and router),
+// specs/seo-compliance.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import type { SeoAuditResponse } from '@app/seo-core';
@@ -23,6 +24,7 @@ function fakeSeo() {
     copyLinksCsv: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _filter: { type: string; rel: string; query: string }): number | null => (tabId === 1 ? 4 : null)),
     copyUrl: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _url: string) => tabId === 1),
     copySchemaJson: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _block: number) => tabId === 1),
+    runAccessibility: vi.fn((tabId: number) => tabId === 1),
   } satisfies SeoService;
 }
 
@@ -59,6 +61,7 @@ const VALID_INPUT: Record<string, unknown> = {
   copyLinksCsv: { tabId: 1, audit: AUDIT, filter: FILTER },
   copyUrl: { tabId: 1, audit: AUDIT, url: 'https://example.com/a' },
   copySchemaJson: { tabId: 1, audit: AUDIT, block: 0 },
+  runAccessibility: { tabId: 1 },
 };
 const SEO_PROCEDURES = Object.keys(VALID_INPUT);
 /** No service method was called. */
@@ -122,6 +125,7 @@ describe('seo router', () => {
         { tabId: 1, audit: { ...AUDIT, takenAt: 'now' }, block: 0 },
         { tabId: 1, audit: AUDIT, block: 0, text: '{}' },
       ],
+      runAccessibility: [{ tabId: 1, extra: true }, { tabId: 1, rules: ['image-alt'] }],
     };
     for (const name of SEO_PROCEDURES) {
       const valid = VALID_INPUT[name] as Record<string, unknown>;
@@ -156,6 +160,10 @@ describe('seo router', () => {
     await expect(procedure(ctxFor(seo), 'copySchemaJson')({ tabId: 1, audit: AUDIT, block: SNAPSHOT_LIMITS.maxJsonLdBlocks - 1 })).resolves.toBe(true);
     expect(seo.copySchemaJson).toHaveBeenLastCalledWith(1, AUDIT, SNAPSHOT_LIMITS.maxJsonLdBlocks - 1);
     await expect(procedure(ctxFor(seo), 'copySchemaJson')({ tabId: 2, audit: AUDIT, block: 0 })).resolves.toBe(false);
+    // Compliance (seo-compliance.feature.md, Router): the accessibility check, a mutation answering a boolean.
+    await expect(procedure(ctxFor(seo), 'runAccessibility')({ tabId: 1 })).resolves.toBe(true);
+    expect(seo.runAccessibility).toHaveBeenLastCalledWith(1);
+    await expect(procedure(ctxFor(seo), 'runAccessibility')({ tabId: 2 })).resolves.toBe(false);
 
     // Over the transport too: getAudit is a query, rerun a mutation.
     const sender = { id: 1, mainFrame: { frameTreeNodeId: 100 }, isDestroyed: () => false };
@@ -168,6 +176,8 @@ describe('seo router', () => {
     });
     expect(await handle({ sender, senderFrame }, { type: 'query', path: 'seo.getAudit', input: { tabId: 3 } })).toStrictEqual({ result: { data: PENDING } });
     expect(await handle({ sender, senderFrame }, { type: 'mutation', path: 'seo.rerun', input: { tabId: 1 } })).toStrictEqual({ result: { data: true } });
+    expect(await handle({ sender, senderFrame }, { type: 'query', path: 'seo.runAccessibility', input: { tabId: 1 } })).not.toStrictEqual({ result: { data: true } });
+    expect(await handle({ sender, senderFrame }, { type: 'mutation', path: 'seo.runAccessibility', input: { tabId: 1 } })).toStrictEqual({ result: { data: true } });
   });
 
   test('missing-seo-service-is-internal-error', async () => {

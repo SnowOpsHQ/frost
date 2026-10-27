@@ -153,7 +153,8 @@ const browserRouter = router({
  * started; `setHighlight` whether the overlay was set (`seo-panels.feature.md`); `copyLinksCsv`
  * how many rows it wrote to main's clipboard (`null`: none, no ready audit); `copyUrl` whether it
  * wrote the URL (only one the audit lists); `copySchemaJson` whether it wrote the JSON-LD block
- * (`seo-schema.feature.md`). The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
+ * (`seo-schema.feature.md`); `runAccessibility` whether an accessibility check is running
+ * (`seo-compliance.feature.md`). The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
  */
 const seoRouter = router({
   getAudit: publicProcedure
@@ -189,6 +190,12 @@ const seoRouter = router({
     .use(requireSeo)
     .input(SeoCopySchemaInputSchema)
     .mutation(({ ctx, input }) => ctx.seo.copySchemaJson(input.tabId, input.audit, input.block) === true),
+  // Compliance (Task 6, `seo-compliance.feature.md`): starts the accessibility check on the active tab.
+  runAccessibility: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoTabInputSchema)
+    .mutation(({ ctx, input }) => ctx.seo.runAccessibility(input.tabId) === true),
 });
 
 export const appRouter = router({

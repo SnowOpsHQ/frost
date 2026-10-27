@@ -1,7 +1,9 @@
+import type { AccessibilityRunState } from '@app/specs/seo-compliance.spec';
 import type { ScoreBand, SeoCategory, SeoRuleId, SeoRuleSpec, SeoSeverity } from '@app/specs/seo-rules.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 // Types only: the snapshot's Zod schema stays in main (it is the untrusted page's data).
 import type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
+import type { ComplianceReport } from './compliance/model';
 import type { IndexabilityReport } from './indexability/model';
 import type { SchemaReport } from './schema/model';
 
@@ -95,10 +97,15 @@ export interface SeoAudit {
   readonly schema: SchemaReport;
   /** The page's indexability: verdict, HTTP response, robots.txt, canonicals and hreflang (the Indexability panel, Task 4). */
   readonly indexability: IndexabilityReport;
+  /** The page's security (HTTPS, mixed content, headers) and its accessibility check, if one ran (the Compliance panel, Task 6). */
+  readonly compliance: ComplianceReport;
 }
 
-/** `seo.getAudit`'s answer (`seo-sidebar.spec.ts`, `SEO_AUDIT_STATUSES`). */
+/**
+ * `seo.getAudit`'s answer (`seo-sidebar.spec.ts`, `SEO_AUDIT_STATUSES`). A ready answer carries the
+ * tab's accessibility run (`seo-compliance.spec.ts`, `AccessibilityRunState`) when main has one.
+ */
 export type SeoAuditResponse =
   | { readonly status: 'pending'; readonly url: string }
-  | { readonly status: 'ready'; readonly url: string; readonly audit: SeoAudit }
+  | { readonly status: 'ready'; readonly url: string; readonly audit: SeoAudit; readonly accessibilityRun?: AccessibilityRunState }
   | { readonly status: 'unavailable'; readonly url: string; readonly reason: SeoUnavailableReason };

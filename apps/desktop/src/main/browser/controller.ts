@@ -10,6 +10,7 @@ import { createFullscreen } from './fullscreen';
 import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
+import { createTabA11y, type A11yRunner } from '../seo/a11y-runs';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
 import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
 import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
@@ -147,6 +148,11 @@ export interface BrowserControllerOptions {
    */
   readonly highlight?: HighlightPainter;
   /**
+   * Runs the accessibility check in a tab's page (`runAccessibilityCheck` in `../seo/a11y.ts`,
+   * Task 6). Without it `seo.runAccessibility` is a no-op answering `false`.
+   */
+  readonly accessibility?: A11yRunner;
+  /**
    * The system clipboard (Electron's `clipboard`, in main): "Copy as CSV" and "Copy URL" write
    * through it, so the chrome never needs clipboard access. Without it they copy nothing.
    */
@@ -170,7 +176,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id), highlight: tab.highlight })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
@@ -201,11 +207,35 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // the operation that caused them).
   const prompts = createTabPrompts(options.permissions, changed);
 
-  // The SEO auditor audits only the active tab of an attached window.
-  const audits = createTabAudits(options.seo, {
+  // The SEO auditor audits only the active tab of an attached window. The accessibility check's
+  // answer for the tab's document (Task 6) travels in the page's context, beside what main collects.
+  const seoOptions: TabAuditsOptions | undefined = options.seo && {
+    ...options.seo,
+    context: (contents) => {
+      const base = options.seo!.context?.(contents);
+      const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
+      const answer = tab ? a11y.resultFor(tab, contents.getURL()) : null;
+      if (answer === null) return base ?? Promise.resolve(undefined);
+      return Promise.resolve(base).then((collected) => ({ response: null, robots: null, ...(typeof collected === 'object' && collected !== null ? collected : {}), accessibility: answer }));
+    },
+  };
+  const audits = createTabAudits(seoOptions, {
     isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
     isOpen: (tab) => strip.tabs.includes(tab),
     changed,
+  });
+
+  // The accessibility check (Task 6), on request for the active tab; an answer re-scores the audit
+  // (at once, keeping the audit on screen, or when the tab is next shown).
+  const a11y = createTabA11y({
+    runner: options.accessibility,
+    isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    isOpen: (tab) => strip.tabs.includes(tab),
+    changed,
+    answered: (tab) => {
+      if (hasWindow() && tab.id === strip.activeTabId) audits.rerun(tab, true);
+      else audits.schedule(tab, 'load');
+    },
   });
 
   // The SEO highlight overlay, on the active tab only (it goes when the page changes or the tab is left).
@@ -277,6 +307,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (fullscreen.clear(tab)) fullscreen.leaveWindowFullscreen();
     prompts.deny(tab);
     audits.forget(tab);
+    a11y.forget(tab);
     highlights.dropped(tab);
     if (view) detach(view);
     return view;
@@ -357,7 +388,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const contents = tab.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
     // An error or crash panel replaced the page: its overlay went with it.
-    if (!showsPage(tab)) highlights.dropped(tab);
+    if (!showsPage(tab)) {
+      highlights.dropped(tab);
+      a11y.dropped(tab);
+    }
     const url = contents.getURL();
     // A restored tab's first load has no URL until it commits: it keeps showing what was saved.
     const shown = url === '' ? tab.restored : null;
@@ -401,11 +435,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       removeTab,
       contextMenu: options.contextMenu,
       pageSettled: (t, kind) => {
-        if (kind === 'in-page') highlights.navigatedInPage(t);
+        if (kind === 'in-page') {
+          highlights.navigatedInPage(t);
+          a11y.navigatedInPage(t);
+        }
         audits.schedule(t, kind);
       },
       pageCommitted: (t) => {
         highlights.dropped(t);
+        a11y.dropped(t);
         audits.navigated(t);
       },
     });
@@ -726,7 +764,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     openBackgroundTab,
 
     seo: {
-      getAudit: (tabId) => audits.response(strip.tabs.find((tab) => tab.id === tabId)),
+      getAudit: (tabId) => {
+        const tab = strip.tabs.find((t) => t.id === tabId);
+        const response = audits.response(tab);
+        // A ready audit carries the tab's accessibility run (Task 6).
+        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab) } : response;
+      },
       setHighlight: (tabId, mode) => {
         const tab = strip.tabs.find((t) => t.id === tabId);
         return tab !== undefined && highlights.set(tab, mode);
@@ -753,6 +796,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         if (!block || block.text === '') return false;
         options.clipboard.writeText(block.status === 'valid' ? formatJson(block.text).text : block.text);
         return true;
+      },
+      // The accessibility check runs on request, for the active tab only (Task 6).
+      runAccessibility: (tabId) => {
+        const tab = activeTab();
+        return tab !== undefined && tab.id === tabId && hasWindow() && a11y.start(tab);
       },
       // Only the active tab is ever audited (`RERUN_ACTIVE_TAB_ONLY`).
       rerun: (tabId) => {

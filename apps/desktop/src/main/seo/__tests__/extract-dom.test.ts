@@ -5,13 +5,16 @@ import { JSDOM } from 'jsdom';
 import { describe, expect, test } from 'vitest';
 import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { PageSnapshotSchema, type PageSnapshot } from '@app/specs/seo-snapshot.spec';
+import { SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { extractPage, type PageDocument } from '../extract';
+import { extractSecurity, RESOURCE_SELECTOR, type SecurityDocument } from '../security-extract';
 
 const PAGE = 'https://example.com/guides/page';
 
-/** Runs the extractor on `document` with the spec's limits (overridden by `limits`). */
+/** Runs the extractor on `document` with the spec's limits (overridden by `limits`), then the security read, as `EXTRACTOR_SCRIPT` does. */
 function run(document: unknown, limits: Partial<SnapshotLimits> = {}, budget = EXTRACT_BUDGET_MS): PageSnapshot {
-  return extractPage(document as PageDocument, { ...SNAPSHOT_LIMITS, ...limits }, budget, ROBOTS_META_NAMES, SOCIAL_TAGS, SOCIAL_URL_TAGS) as PageSnapshot;
+  const page = extractPage(document as PageDocument, { ...SNAPSHOT_LIMITS, ...limits }, budget, ROBOTS_META_NAMES, SOCIAL_TAGS, SOCIAL_URL_TAGS) as PageSnapshot;
+  return { ...page, security: extractSecurity(document as SecurityDocument, SECURITY_LIMITS, RESOURCE_SELECTOR) as PageSnapshot['security'] };
 }
 
 /** Runs the extractor on `body` (and `head`) in a jsdom document at `url`, after `prepare` (stubs layout values jsdom lacks). */

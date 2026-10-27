@@ -1,14 +1,18 @@
-import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_RULES, SCORE_BANDS, SEO_SEVERITIES, SEVERITY_WEIGHTS, type ScoreBand, type SeoCategory, type SeoSeverity } from '@app/specs/seo-rules.spec';
+import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_RULES, SCORE_BANDS, SEO_SEVERITIES, SEVERITY_WEIGHTS, type ScoreBand, type SeoCategory, type SeoRuleId, type SeoSeverity } from '@app/specs/seo-rules.spec';
 import type { PanelStatus } from '@app/specs/seo-sidebar.spec';
 import { RULES } from './rules';
 import type { Finding, PageFacts, PageSnapshot, SeoAudit, SeoRule, SeverityCounts } from './types';
 import { described, robotsWith } from './rules/head';
+import { complianceReport } from './compliance';
 import { indexabilityReport } from './indexability';
 import { analyseSchema } from './schema';
 import { tokens } from './util';
 
 // Running the rules over a snapshot, ranking the findings and scoring them (spec
 // `seo-rules.spec.ts`, Health score; acceptance `seo-rules.feature.md`, Audit and score).
+
+/** The `security` rules (the Compliance panel's verdict reads their severities). */
+const SECURITY_RULES: ReadonlySet<SeoRuleId> = new Set(RULES.filter((rule) => rule.category === 'security').map((rule) => rule.id));
 
 const SEVERITY_RANK: Readonly<Record<SeoSeverity, number>> = { error: 0, warning: 1, info: 2 };
 
@@ -105,6 +109,7 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
   const score = scoreAudit(ranked);
   const page = pageFacts(snapshot);
   const indexability = indexabilityReport(snapshot, new Set(ranked.map((finding) => finding.ruleId)), page.noindexFor);
+  const compliance = complianceReport(snapshot, new Map(ranked.map((finding) => [finding.ruleId, finding.severity])), SECURITY_RULES);
   return {
     url: snapshot.url,
     takenAt: snapshot.extractedAt,
@@ -117,5 +122,6 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
     page,
     schema: analyseSchema(snapshot),
     indexability,
+    compliance,
   };
 }
