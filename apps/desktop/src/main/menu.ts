@@ -3,6 +3,7 @@ import type { PageCommand } from '@app/specs/page-commands.spec';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
 import { SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
+import { COMMAND_PALETTE_MENU_ID, COMMAND_PALETTE_MENU_LABEL } from '@app/specs/command-palette.spec';
 import type { BrowserController } from './browser/controller';
 
 // The application menu (spec `tabs.feature.md`, Menu). Tab shortcuts are menu accelerators handled
@@ -16,7 +17,7 @@ import type { BrowserController } from './browser/controller';
 /** The controller calls the menu makes. */
 export type TabCommands = Pick<
   BrowserController,
-  'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab' | 'runPageCommand' | 'toggleSidebar'
+  'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab' | 'runPageCommand' | 'toggleSidebar' | 'openCommandPalette'
 >;
 
 /** Everything the menu runs: the tab commands and Clear Browsing Data… (`clear-browsing-data.ts`). */
@@ -118,6 +119,8 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
       { type: 'separator' },
       // The SEO sidebar (spec `seo-sidebar.feature.md`, Toggle): the chrome owns open / closed.
       { id: SIDEBAR_TOGGLE_MENU_ID, label: 'SEO Sidebar', accelerator: 'CmdOrCtrl+Shift+S', click: () => commands.toggleSidebar() },
+      // The command palette (spec `command-palette.feature.md`): Mod+K is also reserved in `before-input-event`.
+      { id: COMMAND_PALETTE_MENU_ID, label: COMMAND_PALETTE_MENU_LABEL, accelerator: 'CmdOrCtrl+K', click: () => commands.openCommandPalette() },
     ],
   };
   // Back / Forward: Cmd+[ / Cmd+] on macOS (Cmd+Left / Cmd+Right hidden: not reserved, so a text

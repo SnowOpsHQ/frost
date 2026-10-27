@@ -60,5 +60,7 @@ export const RESERVED_TAB_SHORTCUTS = {
   'select-last-tab': ['Mod+9'],
   'next-tab': ['Ctrl+Tab', 'mac:Mod+Shift+]'],
   'previous-tab': ['Ctrl+Shift+Tab', 'mac:Mod+Shift+['],
+  // The command palette (Phase 2.5 Task 4, `command-palette.spec.ts`): opens or closes it.
+  'command-palette': ['Mod+K'],
 } as const;
 export type TabCommand = keyof typeof RESERVED_TAB_SHORTCUTS;

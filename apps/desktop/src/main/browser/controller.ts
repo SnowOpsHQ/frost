@@ -1,7 +1,8 @@
 import type { SavedSession } from '@app/db';
 import type { BrowserService, SeoService } from '@app/ipc-contract';
-import { filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
+import { copyValueOf, filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
+import type { PaletteReturnFocus } from '@app/specs/command-palette.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
@@ -107,6 +108,13 @@ export interface BrowserController extends BrowserService {
    */
   toggleSidebar(): void;
   /**
+   * Asks the chrome to open (or close) the command palette (its menu item and reserved shortcut,
+   * `command-palette.feature.md`): records where focus was (`page` when the active tab's shown page
+   * has it, else `chrome`), focuses the chrome and bumps `commandPalette.seq`. A no-op without a
+   * window or while the active tab is in HTML fullscreen.
+   */
+  openCommandPalette(): void;
+  /**
    * The tabs' SEO audits, highlight overlays and copy commands, as the `seo.*` procedures see them
    * (`seo-sidebar.feature.md`, Auditor; `seo-panels.feature.md`).
    */
@@ -165,6 +173,11 @@ export interface BrowserControllerOptions {
    * through it, so the chrome never needs clipboard access. Without it they copy nothing.
    */
   readonly clipboard?: { writeText(text: string): void };
+  /**
+   * The menu's Clear Browsing Data… (`createClearBrowsingData` in `../clear-browsing-data.ts`: it
+   * asks first): `browser.clearBrowsingData` from the command palette runs it. Without it, a no-op.
+   */
+  readonly clearBrowsingData?: () => void;
 }
 
 /** Whether `audit` is the one the panel rendered (`SeoAuditRef`: its URL and when it was taken). */
@@ -177,6 +190,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const strip: StripState = { tabs: [], activeTabId: null, win: null, attached: null, pageBounds: null };
   let focusAddressBarSeq = 0;
   let toggleSidebarSeq = 0;
+  // The command palette (`command-palette.spec.ts`): main asks the chrome to open it, like the sidebar.
+  let paletteSeq = 0;
+  let paletteReturnFocus: PaletteReturnFocus = 'chrome';
   let notice: Notice | null = null;
   /** A window was attached once: the restore point has passed. */
   let everAttached = false;
@@ -188,6 +204,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
+    commandPalette: { seq: paletteSeq, returnFocus: paletteReturnFocus },
     notice: notice && { ...notice },
   });
   const stateWatch = createStateWatch(snapshot);
@@ -640,6 +657,32 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed();
   };
 
+  /** The active tab's view, if it is attached and shows its page (never a panel or an empty tab). */
+  const shownView = (): TabView | null => {
+    const tab = activeTab();
+    const view = tab ? liveView(tab) : null;
+    return tab && view && showsPage(tab) && strip.attached === view ? view : null;
+  };
+
+  const openCommandPalette = (): void => {
+    const win = strip.win;
+    if (!win || win.isDestroyed()) return;
+    // A fullscreen page covers the whole window, the palette too: nothing opens.
+    if (activeTab()?.fullscreen) return;
+    paletteReturnFocus = shownView()?.webContents.isFocused() === true ? 'page' : 'chrome';
+    paletteSeq += 1;
+    win.webContents.focus();
+    changed();
+  };
+
+  /** Focus back to the page the palette was opened from (`browser.focusPage`). */
+  const focusPage = (): boolean => {
+    const view = hasWindow() ? shownView() : null;
+    if (!view) return false;
+    view.webContents.focus();
+    return true;
+  };
+
   const runShortcut = (shortcut: TabShortcut): void => {
     switch (shortcut.command) {
       case 'new-tab':
@@ -662,6 +705,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         return;
       case 'previous-tab':
         cycle(-1);
+        return;
+      case 'command-palette':
+        openCommandPalette();
     }
   };
 
@@ -782,6 +828,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     toggleSidebar,
 
+    openCommandPalette,
+
+    focusPage,
+
+    clearBrowsingData: () => options.clearBrowsingData?.(),
+
     openBackgroundTab,
 
     seo: {
@@ -817,6 +869,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         const block = response.audit.schema.blocks.find((b) => b.index === index);
         if (!block || block.text === '') return false;
         options.clipboard.writeText(block.status === 'valid' ? formatJson(block.text).text : block.text);
+        return true;
+      },
+      // The command palette's copies (`command-palette.feature.md`): one allowlisted value, same checks.
+      copyValue: (tabId, shown, key) => {
+        const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
+        if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown)) return false;
+        const value = copyValueOf(response.audit, key);
+        if (value === null) return false;
+        options.clipboard.writeText(value);
         return true;
       },
       // The accessibility check runs on request, for the active tab only (Task 6).

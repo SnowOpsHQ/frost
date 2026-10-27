@@ -27,6 +27,8 @@ function fakeSeo() {
     copySchemaJson: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _block: number) => tabId === 1),
     measureSpeed: vi.fn((_tabId: number): Promise<SpeedResponse> => Promise.resolve(SPEED_BACKGROUND)),
     runAccessibility: vi.fn((tabId: number) => tabId === 1),
+    // The command palette's (palette-router.test.ts).
+    copyValue: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _key: string) => tabId === 1),
   } satisfies SeoService;
 }
 
@@ -65,6 +67,7 @@ const VALID_INPUT: Record<string, unknown> = {
   copySchemaJson: { tabId: 1, audit: AUDIT, block: 0 },
   measureSpeed: { tabId: 1 },
   runAccessibility: { tabId: 1 },
+  copyValue: { tabId: 1, audit: AUDIT, key: 'title' },
 };
 const SEO_PROCEDURES = Object.keys(VALID_INPUT);
 /** No service method was called. */
@@ -130,6 +133,8 @@ describe('seo router', () => {
         { tabId: 1, audit: AUDIT, block: 0, text: '{}' },
       ],
       runAccessibility: [{ tabId: 1, extra: true }, { tabId: 1, rules: ['image-alt'] }],
+      // More in palette-router.test.ts.
+      copyValue: [{ tabId: 1, audit: AUDIT }, { tabId: 1, audit: AUDIT, key: 'body' }],
     };
     for (const name of SEO_PROCEDURES) {
       const valid = VALID_INPUT[name] as Record<string, unknown>;

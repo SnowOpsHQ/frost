@@ -10,6 +10,7 @@ import {
   WatchInputSchema,
   type BrowserState,
 } from '@app/specs/browser.spec';
+import { PageCommandInputSchema, SeoCopyValueInputSchema } from '@app/specs/command-palette.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
 import type { BrowserService } from './services';
@@ -139,6 +140,28 @@ const browserRouter = router({
     .use(requireBrowser)
     .input(AnswerPermissionInputSchema)
     .mutation(({ ctx, input }) => ctx.browser.answerPermission(input.promptId, input.decision) === true),
+  // The command palette (`command-palette.feature.md`, Router): a page command (zoom …) as the menu
+  // runs it, focus back to the page, and the menu's confirming Clear Browsing Data…; each answers `null`
+  // but `focusPage` (whether a page took focus).
+  pageCommand: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(PageCommandInputSchema)
+    .mutation(({ ctx, input }) => {
+      ctx.browser.runPageCommand(input.command);
+      return null;
+    }),
+  focusPage: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .mutation(({ ctx }) => ctx.browser.focusPage() === true),
+  clearBrowsingData: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .mutation(({ ctx }) => {
+      ctx.browser.clearBrowsingData();
+      return null;
+    }),
   watch: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)
@@ -203,6 +226,12 @@ const seoRouter = router({
     .use(requireSeo)
     .input(SeoTabInputSchema)
     .mutation(({ ctx, input }) => ctx.seo.runAccessibility(input.tabId) === true),
+  // Command palette (Phase 2.5 Task 4, `command-palette.feature.md`): one allowlisted value of the shown audit.
+  copyValue: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoCopyValueInputSchema)
+    .mutation(({ ctx, input }) => ctx.seo.copyValue(input.tabId, input.audit, input.key) === true),
 });
 
 export const appRouter = router({

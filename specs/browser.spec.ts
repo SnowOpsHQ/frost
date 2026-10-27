@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
 import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './permissions.spec';
 import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
+import { PALETTE_RETURN_FOCUS } from './command-palette.spec';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
@@ -224,6 +225,13 @@ export const BrowserStateSchema = z.strictObject({
    * whether the sidebar is open, toggles whenever the value it last saw changes.
    */
   toggleSidebarSeq: z.int().nonnegative(),
+  /**
+   * The command palette (`command-palette.spec.ts`): `seq` increases by one each time main is asked
+   * to open it (its menu item and reserved shortcut); the chrome opens it whenever the value it last
+   * saw changes (or closes it, if open). `returnFocus` is where keyboard focus was at that request
+   * (`PALETTE_RETURN_FOCUS`), so closing the palette can put it back.
+   */
+  commandPalette: z.strictObject({ seq: z.int().nonnegative(), returnFocus: z.enum(PALETTE_RETURN_FOCUS) }),
   notice: NoticeSchema.nullable(),
 });
 export type BrowserState = z.infer<typeof BrowserStateSchema>;
