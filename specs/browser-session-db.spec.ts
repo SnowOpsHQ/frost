@@ -29,8 +29,12 @@ export const DB_SIDECAR_SUFFIXES = ['-journal', '-wal', '-shm'] as const;
 /** The table the forward-only migration runner records applied migration ids in. */
 export const MIGRATIONS_TABLE = 'schema_migrations' as const;
 
-/** The tables migration `0001` creates (besides `MIGRATIONS_TABLE`). */
-export const SESSION_TABLES = ['browser_tabs', 'recent_visits', 'site_permissions'] as const;
+/**
+ * The tables the migrations create (besides `MIGRATIONS_TABLE`): `0001` the first three, `0003`
+ * `render_profile_pins` (Phase 2.5 Task 1, `render-profile.feature.md`: one pinned render profile
+ * per origin, as JSON, at most `MAX_RENDER_PROFILE_PINS`).
+ */
+export const SESSION_TABLES = ['browser_tabs', 'recent_visits', 'site_permissions', 'render_profile_pins'] as const;
 
 /** At most this many tabs are saved, and restored (the window holds no more). */
 export const MAX_RESTORED_TABS = MAX_TABS;
@@ -79,7 +83,8 @@ export const CORRUPTION_RESULT_CODES = [11, 26] as const;
  * **Clear Browsing Data…** (`browser-session-db.feature.md`, Clear browsing data): an application
  * menu item (the File menu; the app menu on macOS) that asks first, in a native message box main
  * shows parented to the window, and on confirmation clears the visits, every permission decision
- * (stored and in memory) with the prompt back-off, and the browse partition's storage and cache.
+ * (stored and in memory) with the prompt back-off, every pinned render profile (stored and in memory,
+ * `render-profile.feature.md`), and the browse partition's storage and cache.
  * It closes no tab. `buttons[confirmIndex]` clears; Cancel is the default and the cancel answer.
  */
 export const CLEAR_BROWSING_DATA = {
@@ -89,7 +94,7 @@ export const CLEAR_BROWSING_DATA = {
     type: 'warning',
     message: 'Clear browsing data?',
     detail:
-      'This clears your recent visits, every site permission you allowed or blocked, and the cookies, site data and cache of every site. Open tabs stay open.',
+      'This clears your recent visits, every site permission you allowed or blocked, the render profiles pinned to sites, and the cookies, site data and cache of every site. Open tabs stay open.',
     buttons: ['Clear Browsing Data', 'Cancel'],
     defaultId: 1,
     cancelId: 1,

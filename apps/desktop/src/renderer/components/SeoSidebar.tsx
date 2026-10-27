@@ -12,6 +12,7 @@ import { Images } from './seo/Images';
 import { Indexability } from './seo/Indexability';
 import { Links } from './seo/Links';
 import { OnPage } from './seo/OnPage';
+import { AuditProfileNote } from './seo/AuditProfileNote';
 import { Overview } from './seo/Overview';
 import { Schema } from './seo/Schema';
 import { Social } from './seo/Social';
@@ -152,11 +153,16 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
     case 'indexability':
       return <Indexability audit={response.audit} />;
     case 'speed':
-      return <Speed audit={response.audit} tab={tab} />;
+      return <Speed audit={response.audit} tab={tab} renderProfile={response.renderProfile ?? null} />;
     case 'compliance':
       return <Compliance audit={response.audit} tab={tab} run={response.accessibilityRun ?? IDLE_A11Y_RUN} />;
     default:
-      return <Overview audit={response.audit} />;
+      return (
+        <>
+          <AuditProfileNote renderProfile={response.renderProfile ?? null} />
+          <Overview audit={response.audit} />
+        </>
+      );
   }
 }
 

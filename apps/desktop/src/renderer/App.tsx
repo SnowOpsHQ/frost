@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { FullscreenNotice } from './components/FullscreenNotice';
 import { PageArea } from './components/PagePanels';
 import { PromptBar } from './components/PermissionBar';
+import { RenderProfileBar } from './components/RenderProfile';
 import { SeoSidebar } from './components/SeoSidebar';
 import { StatusBar } from './components/StatusBar';
 import { TabStrip } from './components/TabStrip';
@@ -28,16 +30,19 @@ export function App() {
   const notice = useNotice(state === null ? undefined : state.notice);
   const [sidebarOpen, setSidebarOpen, toggleSidebar] = useSidebarOpen(state?.toggleSidebarSeq);
   const audit = useSeoAudit(tab);
+  // The render-profile editor bar (`render-profile.feature.md`): open per window, under the toolbar.
+  const [profileOpen, setProfileOpen] = useState(false);
   return (
     <div className="chrome">
       <TabStrip state={state} />
-      <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} />
+      <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} profileOpen={profileOpen} onToggleProfile={() => setProfileOpen((open) => !open)} />
       {/* Always present (empty without a prompt), so the grid rows stay put; polite, not focus-taking. */}
       <div className="prompt-slot" aria-live="polite">
         {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} covered={tab.fullscreen !== null} /> : null}
       </div>
+      <div className="render-slot">{profileOpen ? <RenderProfileBar tab={tab} onClose={() => setProfileOpen(false)} /> : null}</div>
       <div className="workspace">
-        <PageArea tab={tab} empty={state !== null && empty} />
+        <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
         <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} />
       </div>
       <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />

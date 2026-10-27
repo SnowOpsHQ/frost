@@ -1,6 +1,7 @@
 import type { LinkFilter, SeoAuditResponse, SpeedResponse } from '@app/seo-core';
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
+import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
@@ -56,6 +57,14 @@ export interface BrowserService {
    * queued, answered, timed-out or unknown one).
    */
   answerPermission(promptId: string, decision: PermissionDecision): boolean;
+  /**
+   * Sets the tab's render profile (`render-profile.feature.md`): its own, or with `pin` this site's
+   * pin (`false` removes the site's pin); the default profile is a Reset. `false` (a no-op) for an id
+   * that names no open tab, no window, or `pin` on a tab with no web page.
+   */
+  setRenderProfile(tabId: number, profile: RenderProfile, pin: boolean): boolean;
+  /** Reset: the tab's render profile and this site's pin go. `false` if the tab had none (or names no open tab). */
+  clearRenderProfile(tabId: number): boolean;
   getState(): BrowserState;
   /**
    * Resolves with the state once its `version` exceeds `sinceVersion` (at once if it already

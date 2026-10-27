@@ -1,4 +1,5 @@
 import { MAX_RECENT_VISITS, SESSION_WRITE_BATCH_MS } from '@app/specs/browser-session-db.spec';
+import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { SavedSession, SessionRepository, StoredDecision, VisitUpdate } from './repository';
 
 // Batched writes (spec `browser-session-db.feature.md`, Batched writes). The tab strip and visits
@@ -15,6 +16,10 @@ export interface SessionWriter {
   updateVisitTitle(url: string, title: string): void;
   /** Remembers a Block (written at once). */
   savePermissionDecision(decision: StoredDecision): void;
+  /** Pins a render profile to `origin` (written at once; `render-profile.feature.md`). */
+  saveRenderProfilePin(origin: string, profile: RenderProfile): void;
+  /** Removes `origin`'s pinned render profile (written at once). */
+  deleteRenderProfilePin(origin: string): void;
   /**
    * Clear Browsing Data: drops the visits still pending (never written), then, after every earlier
    * write, deletes every stored visit and decision. A pending tab strip is kept (and written as
@@ -136,6 +141,15 @@ export function createSessionWriter(repository: SessionRepository, options: Writ
     savePermissionDecision(decision) {
       const at = now();
       void enqueue(() => repository.savePermissionDecision(decision, at));
+    },
+
+    saveRenderProfilePin(origin, profile) {
+      const at = now();
+      void enqueue(() => repository.saveRenderProfilePin(origin, profile, at));
+    },
+
+    deleteRenderProfilePin(origin) {
+      void enqueue(() => repository.deleteRenderProfilePin(origin));
     },
 
     clearBrowsingData() {

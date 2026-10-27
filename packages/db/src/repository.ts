@@ -2,9 +2,10 @@ import { asc, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { MAX_RECENT_VISITS, MAX_RESTORED_TABS, MAX_STORED_TITLE_LENGTH, MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import type { PersistedDecision, SitePermission } from '@app/specs/permissions.spec';
+import { MAX_RENDER_PROFILE_PINS, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { SessionDatabase } from './client';
-import { browserTabs, recentVisits, sitePermissions } from './schema';
-import { isPersistedDecision, isSitePermission, storableOrigin, storableTitle, storableUrl } from './values';
+import { browserTabs, recentVisits, renderProfilePins, sitePermissions } from './schema';
+import { isPersistedDecision, isSitePermission, MAX_STORED_PROFILE_LENGTH, storableOrigin, storableProfile, storableTitle, storableUrl } from './values';
 
 // The browser-session repository (spec `browser-session-db.feature.md`, Repository): the only
 // reads and writes of the session tables. Values are normalized on the way in (`values.ts`) and
@@ -48,6 +49,12 @@ export interface StoredDecision {
   readonly decision: PersistedDecision;
 }
 
+/** A render profile pinned to an origin ("Pin to this site", `render-profile.feature.md`). */
+export interface StoredRenderProfilePin {
+  readonly origin: string;
+  readonly profile: RenderProfile;
+}
+
 /** What one write carries: the latest tab strip (if it changed) and the visits since the last write. */
 export interface SessionWrite {
   readonly session?: SavedSession;
@@ -71,7 +78,18 @@ export interface SessionRepository {
   loadPermissionDecisions(): Promise<StoredDecision[]>;
   /** Remembers a Block (one row per key). Anything but a Block, or an invalid key, is ignored. */
   savePermissionDecision(decision: StoredDecision, at: number): Promise<void>;
-  /** Deletes every visit and every stored decision in one transaction (Clear Browsing Data); the tab strip is kept. */
+  /**
+   * The pinned render profiles, oldest first, at most `MAX_RENDER_PROFILE_PINS`; a row that is not a
+   * serialized `http(s)` origin with a valid, non-default profile is skipped.
+   */
+  loadRenderProfilePins(): Promise<StoredRenderProfilePin[]>;
+  /** Pins `profile` to `origin` (replacing its pin), then drops the oldest pins beyond the cap. Invalid values are ignored. */
+  saveRenderProfilePin(origin: string, profile: RenderProfile, at: number): Promise<void>;
+  deleteRenderProfilePin(origin: string): Promise<void>;
+  /**
+   * Deletes every visit, stored decision and pinned render profile in one transaction (Clear
+   * Browsing Data); the tab strip is kept.
+   */
   clearBrowsingData(): Promise<void>;
 }
 
@@ -210,6 +228,40 @@ export function createSessionRepository(db: SessionDatabase): SessionRepository 
         });
     },
 
-    clearBrowsingData: () => batch([db.delete(recentVisits), db.delete(sitePermissions)]),
+    async loadRenderProfilePins() {
+      // A tampered file: no more rows than can be kept, and no more of each value than a profile needs.
+      const rows = await db
+        .select({
+          origin: sql<unknown>`substr(${renderProfilePins.origin}, 1, ${MAX_STORED_URL_LENGTH + 1})`,
+          profile: sql<unknown>`substr(${renderProfilePins.profile}, 1, ${MAX_STORED_PROFILE_LENGTH + 1})`,
+        })
+        .from(renderProfilePins)
+        .orderBy(asc(renderProfilePins.updatedAt), asc(renderProfilePins.origin))
+        .limit(MAX_RENDER_PROFILE_PINS);
+      const pins: StoredRenderProfilePin[] = [];
+      for (const row of rows) {
+        const origin = storableOrigin(row.origin);
+        const profile = typeof row.profile === 'string' ? storableProfile(row.profile) : null;
+        if (origin !== null && profile !== null) pins.push({ origin, profile });
+      }
+      return pins;
+    },
+
+    async saveRenderProfilePin(origin, profile, at) {
+      const stored = storableOrigin(origin);
+      if (stored === null || storableProfile(profile) === null) return;
+      const kept = db.select({ origin: renderProfilePins.origin }).from(renderProfilePins).orderBy(desc(renderProfilePins.updatedAt), desc(renderProfilePins.origin)).limit(MAX_RENDER_PROFILE_PINS);
+      await batch([
+        db
+          .insert(renderProfilePins)
+          .values({ origin: stored, profile: JSON.stringify(profile), updatedAt: at })
+          .onConflictDoUpdate({ target: renderProfilePins.origin, set: { profile: JSON.stringify(profile), updatedAt: at } }),
+        db.delete(renderProfilePins).where(notInArray(renderProfilePins.origin, kept)),
+      ]);
+    },
+
+    deleteRenderProfilePin: (origin) => batch([db.delete(renderProfilePins).where(eq(renderProfilePins.origin, origin))]),
+
+    clearBrowsingData: () => batch([db.delete(recentVisits), db.delete(sitePermissions), db.delete(renderProfilePins)]),
   };
 }

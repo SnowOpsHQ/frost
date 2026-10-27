@@ -3,6 +3,7 @@ import { createIpcClient } from '@app/ipc-contract/renderer';
 import type { LinkFilter } from '@app/seo-core';
 import type { SeoAuditRef } from '@app/ipc-contract';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
+import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
@@ -41,4 +42,8 @@ export const actions = {
   measureSpeed: (tabId: number) => ipc.seo.measureSpeed.mutate({ tabId }).catch(() => null),
   /** Starts the accessibility check on the tab's page (`seo.runAccessibility`); resolves whether one is running. */
   runAccessibility: (tabId: number) => ipc.seo.runAccessibility.mutate({ tabId }).catch(() => false),
+  /** Sets the tab's render profile (`pin`: as this site's pin); resolves whether it was set (`render-profile.feature.md`). */
+  setRenderProfile: (tabId: number, profile: RenderProfile, pin: boolean) => ipc.browser.setRenderProfile.mutate({ tabId, profile, pin }).catch(() => false),
+  /** Reset: the tab's render profile and this site's pin go; resolves whether it had one. */
+  clearRenderProfile: (tabId: number) => ipc.browser.clearRenderProfile.mutate({ tabId }).catch(() => false),
 };

@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
 import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './permissions.spec';
 import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
+import { TabRenderProfileSchema } from './render-profile.schema.spec';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
@@ -189,6 +190,12 @@ export const TabStateSchema = z.strictObject({
    * is no longer the active one.
    */
   highlight: z.enum(HIGHLIGHT_MODES),
+  /**
+   * The tab's render profile (`render-profile.spec.ts`, `TabRenderProfile`): its own, or its site's
+   * pin; `null` while it renders as frost does by default. Always shown on the tab, in the status bar
+   * and around the page area (`render-profile.feature.md`).
+   */
+  renderProfile: TabRenderProfileSchema.nullable(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

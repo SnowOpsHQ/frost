@@ -2,6 +2,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import { NOTICE_MESSAGES, UNRESPONSIVE_STATUS, type NoticeKind } from '@app/specs/tabs.spec';
 import type { Connection } from '../hooks/usePing';
 import { panelHost } from '../page-error';
+import { StatusProfileChip } from './RenderProfile';
 import { hostOf, tabSecurity } from '../security';
 import { zoomLabel } from '../zoom-label';
 
@@ -43,6 +44,7 @@ export function StatusBar({
           {status}
         </span>
       )}
+      {tab?.renderProfile ? <StatusProfileChip state={tab.renderProfile} /> : null}
       {zoom !== null ? (
         <span className="status-zoom" data-testid="status-zoom" title="Page zoom">
           {zoom}

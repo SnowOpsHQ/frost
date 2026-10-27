@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import { AlertIcon, CloseIcon, FrostMark, GlobeIcon, PlusIcon } from '../icons';
 import { actions } from '../ipc';
+import { TabProfileBadge } from './RenderProfile';
 import { tabLabel } from '../tab-label';
 import { tablistFocusTarget } from '../tablist-keys';
 
@@ -75,6 +76,7 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
         <span className="tab-label" data-testid="tab-label">
           {label}
         </span>
+        {tab.renderProfile ? <TabProfileBadge state={tab.renderProfile} /> : null}
         {tab.permissionPrompt && !active ? (
           <span className="tab-attention" data-testid="tab-permission-dot">
             <span className="tab-attention-dot" aria-hidden="true" />

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { formatBytes, formatMs, formatVital, type Finding, type LargeResource, type NavigationReport, type SeoAudit, type SpeedReport, type VitalReading } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
+import { profileLabDataNote, type AuditRenderProfile } from '@app/specs/render-profile.spec';
 import {
   LAB_DATA_NOTE,
   SCORE_SOURCE_NOTE,
@@ -201,7 +202,7 @@ function LiveLine({ state, report, source, onResume }: { readonly state: SpeedPo
   );
 }
 
-function VerdictCard({ report, state, source, onResume, onRemeasure }: { readonly report: SpeedReport | null; readonly state: SpeedPollState; readonly source: 'live' | 'audit' | null; readonly onResume: () => void; readonly onRemeasure: () => void }) {
+function VerdictCard({ report, state, source, onResume, onRemeasure, labNote }: { readonly report: SpeedReport | null; readonly state: SpeedPollState; readonly source: 'live' | 'audit' | null; readonly onResume: () => void; readonly onRemeasure: () => void; readonly labNote: string }) {
   const band = report?.verdict ?? null;
   return (
     <section className="seo-speed-verdict" data-testid="seo-speed-verdict" data-band={band ?? 'none'}>
@@ -229,7 +230,7 @@ function VerdictCard({ report, state, source, onResume, onRemeasure }: { readonl
       ) : null}
       <p className="seo-speed-lab" data-testid="seo-speed-lab-note">
         <FlaskIcon />
-        <span>{LAB_DATA_NOTE}</span>
+        <span>{labNote}</span>
       </p>
     </section>
   );
@@ -482,7 +483,8 @@ function DomCard({ report }: { readonly report: SpeedReport }) {
   );
 }
 
-export function Speed({ audit, tab }: { readonly audit: SeoAudit; readonly tab: TabState }) {
+/** The Speed panel; under a render profile (`render-profile.feature.md`) the lab-data caveat names it. */
+export function Speed({ audit, tab, renderProfile = null }: { readonly audit: SeoAudit; readonly tab: TabState; readonly renderProfile?: AuditRenderProfile | null }) {
   const { state, resume, restart } = useSpeed(tab);
   const [message, flash] = useFlash();
   const { report, source } = shownSpeed(tab.url, state.response, audit);
@@ -492,7 +494,7 @@ export function Speed({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
   };
   return (
     <div className="seo-speed" data-testid="seo-speed" data-source={source ?? 'none'}>
-      <VerdictCard report={report} state={state} source={source} onResume={resume} onRemeasure={remeasure} />
+      <VerdictCard report={report} state={state} source={source} onResume={resume} onRemeasure={remeasure} labNote={renderProfile ? profileLabDataNote(renderProfile.profile) : LAB_DATA_NOTE} />
       {report ? (
         <>
           <header className="seo-speed-since">

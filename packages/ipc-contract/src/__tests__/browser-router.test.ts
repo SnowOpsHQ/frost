@@ -16,7 +16,7 @@ const PROMPT_ID = '0f8b2f63-3b7e-4b0e-9d43-7f1f0d6f2a11';
 function stateAt(version: number): BrowserState {
   return {
     version,
-    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0, documentSeq: 0, highlight: 'off' }],
+    tabs: [{ id: 1, url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0, documentSeq: 0, highlight: 'off', renderProfile: null }],
     activeTabId: 1,
     focusAddressBarSeq: 0,
     toggleSidebarSeq: 0,
@@ -39,6 +39,8 @@ function fakeService(version = 3) {
     stop: vi.fn(),
     setPageBounds: vi.fn(),
     answerPermission: vi.fn((promptId: string, _decision: 'allow' | 'block' | 'dismiss') => promptId === PROMPT_ID),
+    setRenderProfile: vi.fn((tabId: number) => tabId === 1),
+    clearRenderProfile: vi.fn((tabId: number) => tabId === 1),
     getState: vi.fn(() => current),
     watch: vi.fn(
       (_since: number, _signal?: AbortSignal) =>
@@ -98,6 +100,8 @@ const VALID_INPUT: Record<string, unknown> = {
   setPageBounds: { x: 0, y: 48, width: 1280, height: 720 },
   watch: { sinceVersion: 0 },
   answerPermission: { promptId: PROMPT_ID, decision: 'allow' },
+  setRenderProfile: { tabId: 1, profile: { device: 'phone', userAgent: 'mobile', customUserAgent: '', network: 'none', javascriptDisabled: false, cacheDisabled: false }, pin: false },
+  clearRenderProfile: { tabId: 1 },
 };
 const BROWSER_PROCEDURES = Object.keys(VALID_INPUT);
 
