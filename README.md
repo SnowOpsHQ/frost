@@ -29,3 +29,14 @@ workspace and is intentionally not committed here.
 TypeScript + React + Electron Forge · pnpm/Turbo monorepo · typed tRPC IPC with a central
 sender guard · SQLite + Drizzle (local-first) · Vercel AI-SDK agent · security & consented
 telemetry designed in from commit #1.
+
+## License
+Copyright (C) 2026 SnowOpsHQ.
+
+frost is free software: you can redistribute it and/or modify it under the terms of the
+**GNU Affero General Public License, version 3** (`AGPL-3.0-only`), as published by the Free
+Software Foundation. See [`LICENSE`](LICENSE). It is distributed WITHOUT ANY WARRANTY; without even
+the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Bundled third-party libraries keep their own licenses; the packaged app ships their notices in
+`THIRD_PARTY_NOTICES`. For a commercial license, contact SnowOpsHQ.
