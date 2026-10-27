@@ -23,12 +23,31 @@ function attachTo({ debugger: dbg }: WebContents): void {
 }
 // ruleid: debugger-outside-allowlisted-modules
 const arrow = ({ debugger: dbg }: WebContents) => dbg.isAttached();
+// ruleid: debugger-outside-allowlisted-modules
+const viaReflect = Reflect.get(contents, 'debugger');
+// ruleid: debugger-outside-allowlisted-modules
+const viaReflectDescriptor = Reflect.getOwnPropertyDescriptor(contents, "debugger");
+// ruleid: debugger-outside-allowlisted-modules
+const viaDescriptor = Object.getOwnPropertyDescriptor(contents, 'debugger');
+let assigned: unknown;
+// ruleid: debugger-outside-allowlisted-modules
+({ debugger: assigned } = contents);
+// ruleid: debugger-outside-allowlisted-modules
+const untypedArrow = ({ debugger: dbg }) => dbg;
+// ruleid: debugger-outside-allowlisted-modules
+function untypedFunction({ debugger: dbg }) {
+  return dbg;
+}
 
 // ok: debugger-outside-allowlisted-modules
 const tools = contents.isDevToolsOpened();
+// ok: debugger-outside-allowlisted-modules
+const viaReflectSession = Reflect.get(contents, 'session');
+// ok: debugger-outside-allowlisted-modules
+const sessionDescriptor = Object.getOwnPropertyDescriptor(contents, 'session');
 // ok: debugger-outside-allowlisted-modules
 const debuggerLabel = 'debugger';
 // ok: debugger-outside-allowlisted-modules
 const isAttached = (value: { attached: boolean }) => value.attached;
 
-export { alias, arrow, attachTo, debuggerLabel, destructured, isAttached, tools, viaIndex };
+export { alias, arrow, assigned, attachTo, debuggerLabel, destructured, isAttached, sessionDescriptor, tools, untypedArrow, untypedFunction, viaDescriptor, viaIndex, viaReflect, viaReflectDescriptor, viaReflectSession };

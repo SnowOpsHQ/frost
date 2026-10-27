@@ -176,7 +176,8 @@ export function RenderProfileBar({ tab, onClose }: { readonly tab: TabState | un
   const apply = (): void => {
     if (!tab || !result.ok) return;
     if (result.isDefault) void actions.clearRenderProfile(tab.id);
-    else void actions.setRenderProfile(tab.id, result.profile, draft.pin && site);
+    // "Pin to this site": ticked pins; unticked by the user unpins; never touched, the site's pin stays.
+    else void actions.setRenderProfile(tab.id, result.profile, draft.pin && site ? true : state?.pinned === true ? false : undefined);
   };
   return (
     <section
@@ -201,7 +202,8 @@ export function RenderProfileBar({ tab, onClose }: { readonly tab: TabState | un
             data-testid={`render-quick-${quick.id}`}
             disabled={!tab}
             onClick={() => {
-              if (tab) void actions.setRenderProfile(tab.id, quick.profile, false);
+              // The tab's own profile; the site's pin, if any, stays (`render-profile.feature.md`).
+              if (tab) void actions.setRenderProfile(tab.id, quick.profile);
             }}
           >
             {quick.label}

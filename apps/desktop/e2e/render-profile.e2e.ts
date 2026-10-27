@@ -16,6 +16,17 @@ import { chromeHelpers } from './helpers';
 const requests: { path: string; userAgent: string }[] = [];
 /** What `/probe` pages reported (`POST /report`). */
 const reports: Record<string, unknown>[] = [];
+/** What the cross-site frames reported (`POST /frame-report`): their name and what they saw. */
+const frameReports: { name: string; ua: string; touch: number; mobile: boolean | null; screen: number }[] = [];
+
+/** A frame page (`/frame?name=…`, served on every origin): an image, its report, and the frame nested in it. */
+function framePage(name: string, nested: string): string {
+  const child = nested === '' ? '' : `<iframe src="${nested}" width="240" height="120"></iframe>`;
+  return PAGE(
+    `<h1>${name}</h1><img src="/frame-img?name=${name}" width="1" height="1" alt="">${child}`,
+    `<script>addEventListener('load', () => fetch('/frame-report', { method: 'POST', body: JSON.stringify({ name: ${JSON.stringify(name)}, ua: navigator.userAgent, touch: navigator.maxTouchPoints, mobile: navigator.userAgentData ? navigator.userAgentData.mobile : null, screen: screen.width }) }));</script>`,
+  );
+}
 
 const PAGE = (body: string, head = '') =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Render profile test</title>${head}</head><body>${body}</body></html>`;
@@ -52,7 +63,7 @@ if (location.search.includes('report')) {
 
 function route(request: IncomingMessage, response: ServerResponse): void {
   const url = new URL(request.url ?? '/', 'http://x');
-  requests.push({ path: url.pathname, userAgent: String(request.headers['user-agent'] ?? '') });
+  requests.push({ path: url.pathname === '/frame-img' ? `/frame-img?name=${url.searchParams.get('name') ?? ''}` : url.pathname, userAgent: String(request.headers['user-agent'] ?? '') });
   const html = (body: string): void => void response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(body);
   switch (url.pathname) {
     case '/page':
@@ -64,6 +75,27 @@ function route(request: IncomingMessage, response: ServerResponse): void {
     case '/blob.bin':
       response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }).end(Buffer.alloc(120_000, 7));
       return;
+    case '/frame-top':
+      // The page on 127.0.0.1 embeds a frame on `localhost`, which embeds one on `[::1]`: three sites.
+      return html(PAGE('<h1>Top</h1>', '') + `<iframe src="${otherOrigin}/frame?name=mid" width="320" height="240"></iframe>`);
+    case '/frame':
+      return html(framePage(url.searchParams.get('name') ?? '', url.searchParams.get('name') === 'mid' ? `${thirdOrigin}/frame?name=leaf` : ''));
+    case '/frame-img':
+      response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }).end(Buffer.alloc(64, 1));
+      return;
+    case '/frame-report': {
+      let body = '';
+      request.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')));
+      request.on('end', () => {
+        try {
+          frameReports.push(JSON.parse(body) as (typeof frameReports)[number]);
+        } catch {
+          // Ignored.
+        }
+        response.writeHead(204).end();
+      });
+      return;
+    }
     case '/probe':
       return html(PAGE('<h1>Probe</h1>', `<script>${PROBE_SCRIPT}</script>`));
     case '/report': {
@@ -85,9 +117,12 @@ function route(request: IncomingMessage, response: ServerResponse): void {
 }
 
 let server: ReturnType<typeof createServer>;
-/** The site on `127.0.0.1`, and the same server as another origin (`localhost`). */
+/** The same routes on the IPv6 loopback (a third site for nested frames). */
+let server6: ReturnType<typeof createServer>;
+/** The site on `127.0.0.1`, and the same server as other origins (`localhost`, `[::1]`). */
 let origin = '';
 let otherOrigin = '';
+let thirdOrigin = '';
 
 let app: ElectronApplication;
 let chrome: Page;
@@ -102,15 +137,20 @@ test.beforeAll(async () => {
   const { port } = server.address() as AddressInfo;
   origin = `http://127.0.0.1:${port}`;
   otherOrigin = `http://localhost:${port}`;
+  server6 = createServer(route);
+  await new Promise<void>((resolve) => server6.listen(port, '::1', resolve));
+  thirdOrigin = `http://[::1]:${port}`;
 });
 
 test.afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await new Promise<void>((resolve) => server6.close(() => resolve()));
 });
 
 test.beforeEach(async () => {
   requests.length = 0;
   reports.length = 0;
+  frameReports.length = 0;
   ({ app, page: chrome } = await launchApp());
 });
 
@@ -356,6 +396,40 @@ test('emulation-is-invisible-to-page', async () => {
   } finally {
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+test('cross-site-iframes-are-emulated', async () => {
+  const id = await open('/frame-top');
+  await expect.poll(() => frameReports.map((r) => r.name).sort()).toEqual(['leaf', 'mid']);
+  const own = frameReports[0]!.ua;
+  expect(own).not.toContain('Googlebot');
+
+  // Googlebot smartphone: the cross-site frame and the one nested in it run under it too.
+  await applyProfile({ device: 'phone', userAgent: 'googlebot-smartphone' });
+  await profileActive();
+  frameReports.length = 0;
+  requests.length = 0;
+  await reload(id, '/frame-top');
+  await expect.poll(() => frameReports.map((r) => r.name).sort(), { timeout: 15_000 }).toEqual(['leaf', 'mid']);
+  for (const report of frameReports) {
+    expect(report.ua, report.name).toContain('Googlebot/2.1');
+    expect(report.mobile, report.name).toBe(true);
+    expect(report.touch, report.name).toBe(5);
+  }
+  // Their own requests carry it.
+  for (const name of ['mid', 'leaf']) expect(requests.find((r) => r.path === `/frame-img?name=${name}`)?.userAgent, name).toContain('Googlebot/2.1');
+
+  // JavaScript off: neither frame's script runs (they still load, and their images with the profile).
+  await applyProfile({ js: true });
+  await profileActive();
+  frameReports.length = 0;
+  requests.length = 0;
+  await reload(id, '/frame-top');
+  await expect.poll(() => requests.filter((r) => r.path.startsWith('/frame-img')).length, { timeout: 15_000 }).toBe(2);
+  await waitLoaded(id);
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  expect(frameReports).toEqual([]);
+  for (const name of ['mid', 'leaf']) expect(requests.find((r) => r.path === `/frame-img?name=${name}`)?.userAgent, name).toContain('Googlebot/2.1');
 });
 
 test('reset-restores-defaults', async () => {

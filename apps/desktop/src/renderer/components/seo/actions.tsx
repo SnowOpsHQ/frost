@@ -87,7 +87,8 @@ export function UrlActions({
         disabled={!openable}
         title={openable ? undefined : 'Only http and https addresses open in a tab'}
         onClick={() => {
-          void actions.openBackgroundTab(url).then((id) => flash(id === null ? 'Could not open a tab' : 'Opened in a background tab'));
+          // A page of the audited site: it renders under the tab's own profile (`render-profile.feature.md`).
+          void actions.openBackgroundTab(url, { inherit: true }).then((id) => flash(id === null ? 'Could not open a tab' : 'Opened in a background tab'));
         }}
       >
         <OpenTabIcon />

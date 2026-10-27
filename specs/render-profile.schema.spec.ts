@@ -35,14 +35,15 @@ export const RenderProfileSchema = z
   }) satisfies z.ZodType<RenderProfile>;
 
 /**
- * `browser.setRenderProfile` input: the tab, its profile, and whether this site's pin is this
- * profile ("Pin to this site"; `false` removes the site's pin). Answers whether the tab's profile was
+ * `browser.setRenderProfile` input: the tab, its profile, and this site's pin: `true` makes the
+ * profile this site's pin ("Pin to this site"), `false` removes the site's pin, and leaving it out
+ * keeps the site's pin as it is (the profile is the tab's own). Answers whether the tab's profile was
  * set (an id that names no open tab is a no-op answering `false`).
  */
 export const SetRenderProfileInputSchema = z.strictObject({
   tabId: z.int().positive(),
   profile: RenderProfileSchema,
-  pin: z.boolean(),
+  pin: z.boolean().optional(),
 });
 export type SetRenderProfileInput = z.infer<typeof SetRenderProfileInputSchema>;
 

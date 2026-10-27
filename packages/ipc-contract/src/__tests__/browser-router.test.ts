@@ -228,10 +228,10 @@ describe('browser router', () => {
     const { service } = fakeService();
     const ctx = ctxFor(service);
     await expect(procedure(ctx, 'openBackgroundTab')({ url: 'https://example.com/a' })).resolves.toBe(5);
-    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('https://example.com/a');
+    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('https://example.com/a', false);
     // The service decides what opens (http(s) only): anything else answers null.
     await expect(procedure(ctx, 'openBackgroundTab')({ url: 'javascript:alert(1)' })).resolves.toBeNull();
-    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('javascript:alert(1)');
+    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('javascript:alert(1)', false);
   });
 
   test('missing-browser-service-is-internal-error', async () => {

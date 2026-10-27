@@ -111,7 +111,7 @@ function TextValue({ property, value }: { readonly property: string; readonly va
         disabled={!openable}
         aria-label="Open in new tab"
         title={openable ? 'Open in new tab' : 'Only http and https addresses open in a tab'}
-        onClick={() => void actions.openBackgroundTab(text.trim()).then((id) => flash(id === null ? 'Could not open a tab' : 'Opened in a background tab'))}
+        onClick={() => void actions.openBackgroundTab(text.trim(), { inherit: true }).then((id) => flash(id === null ? 'Could not open a tab' : 'Opened in a background tab'))}
       >
         <OpenTabIcon />
       </button>

@@ -38,7 +38,8 @@ describe('render-profile palette actions', () => {
       expect(action.label).toBe(`Render as ${quick.label}`);
       expect(await action.run(ctx)).toBe(`Render profile: ${quick.label}`);
       // The tab's own profile, never this site's pin.
-      expect(api.setRenderProfile).toHaveBeenLastCalledWith(4, quick.profile, false);
+      // The tab's own profile; the site's pin, if any, is left as it is (`pin` left out).
+      expect(api.setRenderProfile).toHaveBeenLastCalledWith(4, quick.profile);
     }
     // Refused by main: the status line says nothing changed.
     const refused = setup(tab(), false);

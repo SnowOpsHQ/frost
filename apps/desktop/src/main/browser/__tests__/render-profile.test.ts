@@ -1,12 +1,19 @@
 // Spec: specs/render-profile.spec.ts (DEVICE_PRESETS, USER_AGENT_TEMPLATES, NETWORK_PRESETS, RENDER_PROFILE_CDP_METHODS,
 // NETWORK_ENABLE_PARAMS, CDP_PROTOCOL_VERSION, fitRenderViewport, RENDER_FRAME, MAX_RENDER_PROFILE_PINS, QUICK_RENDER_PROFILES),
-// specs/render-profile.schema.spec.ts (RenderProfileSchema, TabRenderProfileSchema)
+// specs/render-profile.schema.spec.ts (RenderProfileSchema, TabRenderProfileSchema), RENDER_PROFILE_SESSION_METHODS,
+// TARGET_AUTO_ATTACH_PARAMS, CHILD_RESUME_TIMEOUT_MS, TOP_LEVEL_ONLY_METHODS, WORKER_METHODS, clientHintsBrands
 // Acceptance: specs/render-profile.feature.md
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { BrowserStateSchema } from '@app/specs/browser.spec';
+import { BROWSE_PARTITION, BrowserStateSchema } from '@app/specs/browser.spec';
 import {
   CDP_PROTOCOL_VERSION,
+  CHILD_RESUME_TIMEOUT_MS,
+  clientHintsBrands,
+  isAllowedCdpCommand,
+  TARGET_AUTO_ATTACH_PARAMS,
+  TOP_LEVEL_ONLY_METHODS,
+  WORKER_METHODS,
   DEFAULT_RENDER_PROFILE,
   DEVICE_PRESET_IDS,
   DEVICE_PRESETS,
@@ -26,13 +33,15 @@ import {
 } from '@app/specs/render-profile.spec';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../test/controller-fakes';
-import { fakeEvent } from '../../../test/electron-fake';
+import { fakeEvent, fromPartition } from '../../../test/electron-fake';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../controller';
-import { renderProfileCommands, type CdpCommand } from '../render-profile-cdp';
+import { renderProfileCommands, userAgentMetadata, type CdpCommand } from '../render-profile-cdp';
 import { CdpMethodRefused, createProfileDebugger, type DebuggerHost, type ProfileDebugger } from '../render-profile-debugger';
 import { createRenderProfilePins, type RenderProfilePins } from '../render-profile-pins';
 import { createTabRenderProfiles } from '../render-profile';
 import { createTab } from '../tab-model';
+
+vi.mock('electron', async () => (await import('../../../test/electron-fake')).electronFake());
 
 const VERSION = '140.0.7339.80';
 const PHONE_BOT: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' };
@@ -123,7 +132,7 @@ describe('cdp commands', () => {
     const ua = commands[2]!.params as { userAgent: string; platform: string; userAgentMetadata: { mobile: boolean; platform: string; brands: { brand: string; version: string }[] } };
     expect(ua.userAgent).toContain('Googlebot/2.1');
     expect(ua.platform).toBe('Linux armv8l');
-    expect(ua.userAgentMetadata).toMatchObject({ mobile: true, platform: 'Android', brands: [{ brand: 'Chromium', version: '140' }] });
+    expect(ua.userAgentMetadata).toMatchObject({ mobile: true, platform: 'Android', brands: clientHintsBrands(140, '140') });
     expect(commands[3]!.params).toEqual({ offline: false, latency: 2_000, downloadThroughput: 50_000, uploadThroughput: 50_000, connectionType: 'cellular3g' });
     expect(commands[4]!.params).toMatchObject({ width: 412, height: 700, scale: 0.8, deviceScaleFactor: 2.625, mobile: true, screenWidth: 412, screenHeight: 915 });
     expect(commands[5]!.params).toEqual({ enabled: true, maxTouchPoints: 5 });
@@ -173,7 +182,7 @@ describe('cdp commands', () => {
   });
 });
 
-/** A WebContents' `debugger` as Electron exposes it, recording what is done to it. */
+/** A WebContents' `debugger` as Electron exposes it, recording what is done to it (with flat sessions). */
 class FakeDebugger extends EventEmitter {
   attached = false;
   attach = vi.fn((_version?: string) => {
@@ -184,14 +193,24 @@ class FakeDebugger extends EventEmitter {
     this.attached = false;
   });
   isAttached = () => this.attached;
-  sendCommand = vi.fn(async (_method: string, _params?: object) => ({}));
+  sendCommand = vi.fn(async (_method: string, _params?: object, _sessionId?: string): Promise<unknown> => ({}));
+  /** The commands sent to `sessionId` (`''`: the tab itself), as `method` names. */
+  sentTo(sessionId: string): string[] {
+    return this.sendCommand.mock.calls.filter(([, , sid]) => (sid ?? '') === sessionId).map(([method]) => method);
+  }
+  /** Announces a child target, as Chromium does once auto-attach is on. */
+  announce(sessionId: string, type: string, waitingForDebugger = true, parent = ''): void {
+    this.emit('message', {}, 'Target.attachedToTarget', { sessionId, targetInfo: { type, url: '' }, waitingForDebugger }, parent);
+  }
 }
 
-function debuggerHost(): { host: DebuggerHost; dbg: FakeDebugger; destroy(): void } {
+function debuggerHost(session: unknown = fromPartition(BROWSE_PARTITION)): { host: DebuggerHost; dbg: FakeDebugger; destroy(): void } {
   const dbg = new FakeDebugger();
   let destroyed = false;
-  return { host: { debugger: dbg as unknown as DebuggerHost['debugger'], isDestroyed: () => destroyed }, dbg, destroy: () => (destroyed = true) };
+  return { host: { debugger: dbg as unknown as DebuggerHost['debugger'], session: session as DebuggerHost['session'], isDestroyed: () => destroyed }, dbg, destroy: () => (destroyed = true) };
 }
+
+const PROFILE_METHODS = (profile: RenderProfile) => renderProfileCommands(profile, { chromeVersion: VERSION }).map((c) => c.method);
 
 describe('render-profile debugger', () => {
   test('debugger-refuses-unlisted-method', async () => {
@@ -199,29 +218,58 @@ describe('render-profile debugger', () => {
     const detached = vi.fn();
     const profileDebugger = createProfileDebugger(host, detached);
     expect(dbg.attach).not.toHaveBeenCalled();
-    // One unlisted method refuses the whole batch, before anything reaches the debugger.
-    for (const method of ['Runtime.evaluate', 'Debugger.enable', 'Page.reload']) {
+    // One unlisted method refuses the whole batch, before anything reaches the debugger; the session
+    // methods are never part of a profile either.
+    for (const method of ['Runtime.evaluate', 'Debugger.enable', 'Page.reload', 'Runtime.runIfWaitingForDebugger', 'Target.setAutoAttach']) {
       expect(() => profileDebugger.send([{ method: 'Network.disable', params: {} }, { method, params: {} } as unknown as CdpCommand])).toThrow(CdpMethodRefused);
+      expect(() => profileDebugger.sendTopLevel([{ method, params: {} } as unknown as CdpCommand])).toThrow(CdpMethodRefused);
     }
     expect(dbg.attach).not.toHaveBeenCalled();
     expect(dbg.sendCommand).not.toHaveBeenCalled();
     // Allowlisted commands: attached once (protocol 1.3), every one dispatched at once, in order,
-    // before any has answered.
+    // before any has answered; then auto-attach for the tab's cross-site frames.
     const commands = renderProfileCommands(PHONE_BOT, { chromeVersion: VERSION });
     let answer: () => void = () => undefined;
     dbg.sendCommand.mockImplementationOnce(() => new Promise((resolve) => (answer = () => resolve({}))));
     const answered = profileDebugger.send(commands);
-    expect(dbg.sendCommand).toHaveBeenCalledTimes(commands.length);
+    expect(dbg.sendCommand).toHaveBeenCalledTimes(commands.length + 1);
+    expect(dbg.sendCommand).toHaveBeenLastCalledWith('Target.setAutoAttach', TARGET_AUTO_ATTACH_PARAMS);
     let settled = false;
     void answered.then(() => (settled = true));
     await settle();
     expect(settled).toBe(false);
     answer();
     await answered;
+    // Auto-attach is turned on once per attach; a refit goes to the tab only.
     await profileDebugger.send(commands.slice(0, 1));
+    await profileDebugger.sendTopLevel(commands.slice(0, 1));
     expect(dbg.attach).toHaveBeenCalledExactlyOnceWith(CDP_PROTOCOL_VERSION);
-    expect(dbg.sendCommand.mock.calls.map(([method]) => method)).toEqual([...commands.map((c) => c.method), commands[0]!.method]);
+    expect(dbg.sentTo('')).toEqual([...commands.map((c) => c.method), 'Target.setAutoAttach', commands[0]!.method, commands[0]!.method]);
     expect(profileDebugger.isAttached()).toBe(true);
+  });
+
+  test('debugger-refuses-non-browse-contents', () => {
+    // The app's own window, a WebContents on another partition: never a debugger.
+    for (const session of [fromPartition('persist:other'), fromPartition('persist:frost-app'), {}, null]) {
+      const { host, dbg } = debuggerHost(session);
+      expect(() => createProfileDebugger(host, vi.fn())).toThrow('browse-session tabs only');
+      expect(dbg.attach).not.toHaveBeenCalled();
+      expect(dbg.listenerCount('detach')).toBe(0);
+    }
+    expect(() => createProfileDebugger(debuggerHost().host, vi.fn())).not.toThrow();
+  });
+
+  test('session-methods-are-restricted', () => {
+    expect(isAllowedCdpCommand('Target.setAutoAttach', TARGET_AUTO_ATTACH_PARAMS, 'top')).toBe(true);
+    expect(isAllowedCdpCommand('Target.setAutoAttach', TARGET_AUTO_ATTACH_PARAMS, 'child')).toBe(true);
+    expect(isAllowedCdpCommand('Target.setAutoAttach', { ...TARGET_AUTO_ATTACH_PARAMS, waitForDebuggerOnStart: false }, 'top')).toBe(false);
+    expect(isAllowedCdpCommand('Target.setAutoAttach', { ...TARGET_AUTO_ATTACH_PARAMS, filter: [{ type: 'browser' }] }, 'top')).toBe(false);
+    expect(isAllowedCdpCommand('Target.setAutoAttach', null, 'top')).toBe(false);
+    expect(isAllowedCdpCommand('Runtime.runIfWaitingForDebugger', {}, 'child')).toBe(true);
+    expect(isAllowedCdpCommand('Runtime.runIfWaitingForDebugger', {}, 'top')).toBe(false);
+    expect(isAllowedCdpCommand('Runtime.runIfWaitingForDebugger', { x: 1 }, 'child')).toBe(false);
+    for (const method of ['Runtime.enable', 'Runtime.evaluate', 'Target.attachToTarget', 'Target.createTarget', 'Target.setDiscoverTargets']) expect(isAllowedCdpCommand(method, {}, 'child'), method).toBe(false);
+    expect(isAllowedCdpCommand('Network.setCacheDisabled', { cacheDisabled: true }, 'child')).toBe(true);
   });
 
   test('debugger-attaches-lazily-and-detaches', async () => {
@@ -240,6 +288,7 @@ describe('render-profile debugger', () => {
     profileDebugger.dispose();
     expect(dbg.attached).toBe(false);
     expect(dbg.listenerCount('detach')).toBe(0);
+    expect(dbg.listenerCount('message')).toBe(0);
     expect(() => profileDebugger.send([{ method: 'Network.disable', params: {} }])).toThrow();
     // A destroyed WebContents is never touched.
     const other = debuggerHost();
@@ -251,6 +300,118 @@ describe('render-profile debugger', () => {
     const failing = debuggerHost();
     failing.dbg.sendCommand.mockRejectedValueOnce(new Error('refused'));
     await expect(createProfileDebugger(failing.host, vi.fn()).send([{ method: 'Network.disable', params: {} }])).rejects.toThrow('refused');
+    void destroy;
+  });
+
+  test('child-frames-get-the-profile', async () => {
+    const { host, dbg } = debuggerHost();
+    const profileDebugger = createProfileDebugger(host, vi.fn());
+    const commands = renderProfileCommands({ ...PHONE_BOT, javascriptDisabled: true }, { chromeVersion: VERSION });
+    await profileDebugger.send(commands);
+    // A cross-site frame, announced paused: every profile command but the viewport, auto-attach for
+    // its own cross-site frames, then (once they answered) it is resumed.
+    dbg.announce('frame-1', 'iframe');
+    const frameMethods = commands.map((c) => c.method).filter((m) => !(TOP_LEVEL_ONLY_METHODS as readonly string[]).includes(m));
+    expect(dbg.sentTo('frame-1')).toEqual([...frameMethods, 'Target.setAutoAttach']);
+    await settle();
+    expect(dbg.sentTo('frame-1').at(-1)).toBe('Runtime.runIfWaitingForDebugger');
+    // A frame nested in it is announced on its session and handled the same way.
+    dbg.announce('frame-2', 'iframe', true, 'frame-1');
+    await settle();
+    expect(dbg.sentTo('frame-2')).toEqual([...frameMethods, 'Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger']);
+    // A dedicated worker: the user agent and the cache switch only.
+    dbg.announce('worker-1', 'worker', true, 'frame-1');
+    await settle();
+    expect(dbg.sentTo('worker-1')).toEqual([...commands.map((c) => c.method).filter((m) => (WORKER_METHODS as readonly string[]).includes(m)), 'Runtime.runIfWaitingForDebugger']);
+    // A child that was already running is not resumed (it never waited); anything else is only resumed.
+    dbg.announce('frame-3', 'iframe', false);
+    dbg.announce('other-1', 'shared_worker', true);
+    await settle();
+    expect(dbg.sentTo('frame-3')).toEqual([...frameMethods, 'Target.setAutoAttach']);
+    expect(dbg.sentTo('other-1')).toEqual(['Runtime.runIfWaitingForDebugger']);
+    // A child's failure never fails the tab's profile.
+    dbg.sendCommand.mockImplementation(async (_m, _p, sid) => {
+      if (sid) throw new Error('child refused');
+      return {};
+    });
+    await expect(profileDebugger.send(commands)).resolves.toBeUndefined();
+  });
+
+  test('child-resumes-after-answers-or-timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { host, dbg } = debuggerHost();
+      const profileDebugger = createProfileDebugger(host, vi.fn());
+      await profileDebugger.send(renderProfileCommands(PHONE_BOT, { chromeVersion: VERSION }));
+      // One of the child's commands never answers: it is not resumed early (that could leave it
+      // paused for good), but at `CHILD_RESUME_TIMEOUT_MS`, once.
+      dbg.sendCommand.mockImplementation(async (method, _p, sid) => (sid === 'stuck' && method === 'Network.setUserAgentOverride' ? new Promise(() => undefined) : {}));
+      dbg.announce('stuck', 'iframe');
+      await vi.advanceTimersByTimeAsync(CHILD_RESUME_TIMEOUT_MS - 1);
+      expect(dbg.sentTo('stuck')).not.toContain('Runtime.runIfWaitingForDebugger');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(dbg.sentTo('stuck').filter((m) => m === 'Runtime.runIfWaitingForDebugger')).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(CHILD_RESUME_TIMEOUT_MS * 5);
+      expect(dbg.sentTo('stuck').filter((m) => m === 'Runtime.runIfWaitingForDebugger')).toHaveLength(1);
+      // A child whose dispatch throws (the tab is going) is still resumed at the deadline.
+      dbg.sendCommand.mockImplementation((method, _p, sid) => {
+        if (sid === 'broken' && method !== 'Runtime.runIfWaitingForDebugger') throw new Error('gone');
+        return Promise.resolve({});
+      });
+      dbg.announce('broken', 'iframe');
+      await vi.advanceTimersByTimeAsync(CHILD_RESUME_TIMEOUT_MS);
+      expect(dbg.sentTo('broken').filter((m) => m === 'Runtime.runIfWaitingForDebugger')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('profile-change-reaches-children', async () => {
+    const { host, dbg } = debuggerHost();
+    const profileDebugger = createProfileDebugger(host, vi.fn());
+    await profileDebugger.send(renderProfileCommands(PHONE_BOT, { chromeVersion: VERSION }));
+    dbg.announce('frame-1', 'iframe');
+    dbg.announce('frame-2', 'iframe');
+    await settle();
+    dbg.emit('message', {}, 'Target.detachedFromTarget', { sessionId: 'frame-2' }, '');
+    dbg.sendCommand.mockClear();
+    // The new profile reaches the tab and each live child (no resume: they run already).
+    await profileDebugger.send(renderProfileCommands(NO_JS, { chromeVersion: VERSION }));
+    expect(dbg.sentTo('frame-1')).toEqual(PROFILE_METHODS(NO_JS).filter((m) => !(TOP_LEVEL_ONLY_METHODS as readonly string[]).includes(m)));
+    expect(dbg.sentTo('frame-2')).toEqual([]);
+    // A refit of the viewport is for the tab alone; other protocol events are ignored.
+    dbg.sendCommand.mockClear();
+    dbg.emit('message', {}, 'Network.requestWillBeSent', { requestId: '1' }, 'frame-1');
+    await profileDebugger.sendTopLevel([{ method: 'Emulation.clearDeviceMetricsOverride', params: {} }]);
+    expect(dbg.sentTo('frame-1')).toEqual([]);
+    // Detached: its children are forgotten; a stray announcement from a session frost no longer
+    // has is not resumed.
+    profileDebugger.detach();
+    dbg.sendCommand.mockClear();
+    dbg.announce('late', 'iframe');
+    await settle();
+    expect(dbg.sendCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('client hints', () => {
+  test('client-hints-grease', () => {
+    // As the engine reports it (Electron 45 / Chromium 156: GREASE first, `Not:A-Brand` 8).
+    expect(clientHintsBrands(156, '156')).toEqual([
+      { brand: 'Not:A-Brand', version: '8' },
+      { brand: 'Chromium', version: '156' },
+    ]);
+    expect(clientHintsBrands(157, '157')).toEqual([
+      { brand: 'Chromium', version: '157' },
+      { brand: 'Not-A.Brand', version: '99' },
+    ]);
+    expect(clientHintsBrands(140, '140.0.7339.80', true)).toEqual([
+      { brand: 'Not=A?Brand', version: '24.0.0.0' },
+      { brand: 'Chromium', version: '140.0.7339.80' },
+    ]);
+    const metadata = userAgentMetadata(PHONE_BOT, VERSION) as { brands: unknown; fullVersionList: unknown };
+    expect(metadata.brands).toEqual(clientHintsBrands(140, '140'));
+    expect(metadata.fullVersionList).toEqual(clientHintsBrands(140, VERSION, true));
   });
 });
 
@@ -289,6 +450,9 @@ class FakeProfileDebugger implements ProfileDebugger {
     this.attached = true;
     this.sent.push([...commands]);
     if (this.hold) await new Promise<void>((resolve) => this.waiting.push(resolve));
+  });
+  sendTopLevel = vi.fn(async (commands: readonly CdpCommand[]) => {
+    this.sent.push([...commands]);
   });
   detach = vi.fn(() => {
     this.attached = false;
@@ -510,6 +674,64 @@ describe('render profiles in the controller', () => {
     expect(tabState(child).renderProfile).toBeNull();
   });
 
+  test('pin-committed-origin', async () => {
+    // A navigation to another site is under way: the pin is for the page the tab shows.
+    const { id, contents } = await openAt('https://a.example/');
+    contents.emit('did-start-navigation', fakeEvent({ url: 'https://b.example/', isMainFrame: true, isSameDocument: false }));
+    expect(controller.setRenderProfile(id, PHONE_BOT, true)).toBe(true);
+    expect(pinWrites).toHaveBeenCalledExactlyOnceWith('https://a.example', PHONE_BOT);
+    expect(pins.get('https://b.example')).toBeNull();
+    // Unpinning, too, is about the page shown.
+    contents.emit('did-start-navigation', fakeEvent({ url: 'https://b.example/', isMainFrame: true, isSameDocument: false }));
+    controller.setRenderProfile(id, NO_JS, false);
+    expect(pinRemovals).toHaveBeenCalledExactlyOnceWith('https://a.example');
+  });
+
+  test('quick-profile-keeps-site-pin', async () => {
+    const { id, contents } = await openAt('https://a.example/');
+    controller.setRenderProfile(id, PHONE_BOT, true);
+    // `pin` left out (a quick chip, the palette): the tab's own profile, the site's pin kept.
+    expect(controller.setRenderProfile(id, NO_JS)).toBe(true);
+    expect(pinRemovals).not.toHaveBeenCalled();
+    expect(pins.get('https://a.example')).toEqual(PHONE_BOT);
+    expect(tabState(id).renderProfile).toMatchObject({ profile: NO_JS, source: 'tab', pinned: false });
+    // Another tab on the site still gets the pin.
+    controller.newTab();
+    const other = await openAt('https://a.example/x');
+    expect(tabState(other.id).renderProfile).toMatchObject({ profile: PHONE_BOT, source: 'site', pinned: true });
+    void contents;
+  });
+
+  test('forgotten-pins-stay-forgotten', async () => {
+    const { id, contents } = await openAt('https://a.example/');
+    controller.setRenderProfile(id, PHONE_BOT, true);
+    navigateTo(contents, 'https://b.example/');
+    expect(tabState(id).renderProfile).toBeNull();
+    // Clear Browsing Data: the pin is gone from memory too, so the site comes back unemulated.
+    controller.forgetRenderProfilePins();
+    navigateTo(contents, 'https://a.example/again');
+    expect(tabState(id).renderProfile).toBeNull();
+    controller.newTab();
+    const other = await openAt('https://a.example/');
+    expect(tabState(other.id).renderProfile).toBeNull();
+    expect(debuggers.get(other.contents)).toBeUndefined();
+  });
+
+  test('tools-do-not-inherit', async () => {
+    const { id } = await openAt('https://a.example/');
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    // A tool, help page, robots.txt or sitemap (`inherit` left out or false): frost's defaults.
+    const tool = controller.openBackgroundTab('https://validator.example/?url=x')!;
+    const robots = controller.openBackgroundTab('https://a.example/robots.txt', false)!;
+    await settle();
+    expect(tabState(tool).renderProfile).toBeNull();
+    expect(tabState(robots).renderProfile).toBeNull();
+    // A page the sidebar opens from the audited page: the opener's own profile.
+    const page = controller.openBackgroundTab('https://a.example/linked', true)!;
+    await settle();
+    expect(tabState(page).renderProfile).toMatchObject({ profile: PHONE_BOT, source: 'tab' });
+  });
+
   test('unexpected-detach-reattaches-once', async () => {
     const { id, contents } = await openAt('https://a.example/');
     controller.setRenderProfile(id, PHONE_BOT, false);
@@ -566,19 +788,14 @@ describe('audits record the profile', () => {
     profiles.wire(tab, view as unknown as TabView);
     view.contents.emit('did-start-navigation', fakeEvent({ url: 'https://a.example/', isMainFrame: true, isSameDocument: false }));
     view.contents.emit('did-navigate', fakeEvent(), 'https://a.example/');
-    profiles.extractionStarted(tab, 'https://a.example/');
-    expect(profiles.auditProfile(tab, 'https://a.example/')).toBeNull();
+    // What a run starting now runs under (kept with that run: `held-audit-keeps-its-profile`).
+    expect(profiles.auditProfile(tab)).toBeNull();
     profiles.set(tab, PHONE_BOT, false);
     await settle();
     // Set after the page loaded: partial.
-    profiles.extractionStarted(tab, 'https://a.example/#top');
-    expect(profiles.auditProfile(tab, 'https://a.example/')).toEqual({ profile: PHONE_BOT, partial: true });
+    expect(profiles.auditProfile(tab)).toEqual({ profile: PHONE_BOT, partial: true });
     view.contents.emit('did-start-navigation', fakeEvent({ url: 'https://a.example/', isMainFrame: true, isSameDocument: false }));
     view.contents.emit('did-navigate', fakeEvent(), 'https://a.example/');
-    profiles.extractionStarted(tab, 'https://a.example/');
-    expect(profiles.auditProfile(tab, 'https://a.example/')).toEqual({ profile: PHONE_BOT, partial: false });
-    // Another URL's audit: not known.
-    expect(profiles.auditProfile(tab, 'https://b.example/')).toBeNull();
-    expect(profiles.auditProfile(undefined, 'https://a.example/')).toBeNull();
+    expect(profiles.auditProfile(tab)).toEqual({ profile: PHONE_BOT, partial: false });
   });
 });

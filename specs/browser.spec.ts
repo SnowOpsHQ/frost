@@ -271,7 +271,15 @@ export type PageBounds = z.infer<typeof PageBoundsSchema>;
  * `MAX_TABS` (which raises the `tab-limit` notice) opens nothing and answers `null`; otherwise
  * the new tab's id. The URL is loaded as is (no address-bar resolution, no referrer).
  */
-export const OpenBackgroundTabInputSchema = z.strictObject({ url: z.string().min(1).max(ADDRESS_INPUT_MAX_LENGTH) });
+export const OpenBackgroundTabInputSchema = z.strictObject({
+  url: z.string().min(1).max(ADDRESS_INPUT_MAX_LENGTH),
+  /**
+   * Whether the new tab starts with the active tab's own render profile (`render-profile.feature.md`,
+   * Popups): only for a page of the audited site; tools, help pages, robots.txt and sitemaps leave it
+   * out (no profile).
+   */
+  inherit: z.boolean().optional(),
+});
 export type OpenBackgroundTabInput = z.infer<typeof OpenBackgroundTabInputSchema>;
 
 /** Window title while a page is shown: `<page title> — frost`; an empty tab shows `APP_WINDOW_TITLE`. */

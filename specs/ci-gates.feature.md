@@ -87,7 +87,10 @@ which attaches only to browse-session tabs and sends only `RENDER_PROFILE_CDP_ME
 code is excluded as above.
 - **Scenario: semgrep-flags-debugger-outside-allowlist** — `debugger-outside-allowlisted-modules`:
   any `debugger` property of anything (`.attach`, `.sendCommand`, `.detach`, `.on`, an alias, an
-  index access) and a destructured `debugger` binding, outside the allowlist, are flagged (fixture
+  index access), a destructured `debugger` binding (typed or untyped, in a declaration, a parameter
+  or an assignment) and a reflective read of it by name (`Reflect.get`,
+  `Reflect.getOwnPropertyDescriptor`, `Object.getOwnPropertyDescriptor`), outside the allowlist, are
+  flagged (fixture
   `semgrep/__fixtures__/debugger-allowlist.ts`); other WebContents members and a `'debugger'` string
   are not; the repo scan is clean.
 

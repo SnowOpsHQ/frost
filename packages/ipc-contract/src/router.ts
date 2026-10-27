@@ -98,7 +98,8 @@ const browserRouter = router({
     .use(requireBrowser)
     .input(OpenBackgroundTabInputSchema)
     .mutation(({ ctx, input }) => {
-      const id = ctx.browser.openBackgroundTab(input.url);
+      // Render profiles (`render-profile.feature.md`, Popups): only a page of the audited site inherits.
+      const id = ctx.browser.openBackgroundTab(input.url, input.inherit === true);
       return typeof id === 'number' ? id : null;
     }),
   back: publicProcedure

@@ -415,7 +415,7 @@ function LargeRow({ resource, flash }: { readonly resource: LargeResource; reado
         disabled={!openable}
         aria-label="Open in new tab"
         title={openable ? 'Open in new tab' : 'Only complete http and https addresses open in a tab'}
-        onClick={() => void actions.openBackgroundTab(resource.url).then((id) => flash(id === null ? 'Could not open a tab' : 'Opened in a background tab'))}
+        onClick={() => void actions.openBackgroundTab(resource.url, { inherit: true }).then((id) => flash(id === null ? 'Could not open a tab' : 'Opened in a background tab'))}
       >
         <OpenTabIcon />
       </button>
