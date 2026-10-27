@@ -215,6 +215,14 @@ describe('extractor on a DOM', () => {
     const headings = words('<h2 style="display:contents">Wrapped heading</h2><div style="display:none"><h2 style="display:contents">Gone</h2></div>');
     expect(headings.headings).toEqual([{ level: 2, text: 'Wrapped heading' }]);
     expect(headings.headingTotal).toBe(2);
+    // A hostile chain of wrappers is looked up only so far: past that the heading counts as not shown, and the snapshot is partial.
+    const deep = (depth: number) =>
+      extract({
+        body: `${'<div style="display:contents">'.repeat(depth)}<h2 style="display:contents">Deep</h2>${'</div>'.repeat(depth)}`,
+        prepare: (_document, window) => chromiumVisibility(window),
+      });
+    expect(deep(20)).toMatchObject({ partial: false, headings: [{ level: 2, text: 'Deep' }] });
+    expect(deep(2_000)).toMatchObject({ partial: true, headings: [] });
   });
 
   test('extractor-reads-bot-robots', () => {

@@ -121,6 +121,8 @@ export function extractPage(
   const SCAN = 65_536;
   /** Most `<title>` elements looked at (SVG titles included) when counting HTML ones. */
   const TITLE_SCAN = 10_000;
+  /** Most nested `display: contents` wrappers looked through for one element (`boxlessShown`). */
+  const WRAPPER_SCAN = 256;
   /** Thrown from a walker's filter to stop it (a cap or the deadline). */
   const STOP = {};
   /** Set once anything stopped at the deadline. */
@@ -164,13 +166,19 @@ export function extractPage(
    * Whether `el`, which has no box (`checkVisibility()` false), still shows its content: it is a
    * layout wrapper (`display: contents`, nested ones too), and the nearest ancestor that is not one
    * has a box and does not skip its content (`content-visibility: hidden`, or a closed `<details>`
-   * the wrapper is not the summary of). Style is read only for boxless elements, once each.
+   * the wrapper is not the summary of). Style is read only for boxless elements, once each. Past
+   * `WRAPPER_SCAN` wrappers, or the deadline, it is not shown and the snapshot is partial.
    */
   const boxlessShown = (el: PageElement): boolean => {
     const chain: PageElement[] = [];
     let node: PageElement | null = el;
     let shown = boxless.get(el);
     while (shown === undefined && node !== null && computed(node, 'display') === 'contents') {
+      if (chain.length >= WRAPPER_SCAN || late()) {
+        partial = true;
+        shown = false;
+        break;
+      }
       chain.push(node);
       node = node.parentElement;
       if (node !== null) shown = boxless.get(node);
