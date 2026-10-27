@@ -1,0 +1,5 @@
+# Replaces Semgrep's default ignore list (which silently skips any `test/`, `build/`, `dist/` …
+# directory). Only what git ignores is skipped; the rules themselves exclude test-only code and the
+# transport files explicitly (semgrep/ipc-sender-guard.yml). Scans run with --no-git-ignore so
+# untracked new files are scanned too.
+:include .gitignore

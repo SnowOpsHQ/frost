@@ -1,0 +1,16 @@
+{
+  "name": "@app/specs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Machine-checkable spec artifacts (source-only; consumed as TypeScript).",
+  "exports": {
+    "./*": "./*.ts"
+  },
+  "scripts": {
+    "lint": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

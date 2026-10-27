@@ -1,0 +1,38 @@
+# WebContents-factory rule (CI gate; acceptance: specs/ci-gates.feature.md, "Semgrep
+# webcontents-factory rule"). Every WebContents must be created by an allowlisted factory that sets
+# the hardened webPreferences explicitly (specs/window-hardening.spec.ts) and is unit tested for them.
+#
+#   Rule test (fixtures):   pnpm security:semgrep:test
+#   Repo scan (0 findings): pnpm security:semgrep:scan
+#
+# The allowlist is `paths.exclude` below. Never exclude the fixture (`semgrep --test` would pass
+# vacuously).
+rules:
+  - id: webcontents-outside-factory
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      WebContents created outside an allowlisted factory. Create windows and views through a factory
+      that sets sandbox/contextIsolation/nodeIntegration/webSecurity explicitly and is covered by the
+      window-hardening tests (today: createMainWindow in apps/desktop/src/main/window.ts); a new
+      factory joins the allowlist in semgrep/webcontents-factory.yml in a reviewed PR.
+    paths:
+      exclude:
+        # Allowlisted factories.
+        - /apps/desktop/src/main/window.ts
+        # Test-only code: never bundled into the app.
+        - "__tests__/"
+        - "*.test.ts"
+        - /apps/desktop/src/test/
+        - /apps/desktop/e2e/
+    patterns:
+      - pattern-either:
+          # `electron.X` also matches the named and aliased imports from 'electron'.
+          - pattern: new electron.$CLASS(...)
+          - pattern: new $NS.$CLASS(...)
+          - pattern: new $CLASS(...)
+          - pattern: class $C extends electron.$CLASS { ... }
+          - pattern: class $C extends $CLASS { ... }
+      - metavariable-regex:
+          metavariable: $CLASS
+          regex: ^(BrowserWindow|BrowserView|WebContentsView)$

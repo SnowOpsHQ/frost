@@ -28,7 +28,10 @@ task, a fresh reviewer before the next starts, and a whole-branch review at the 
 - App pages load from the `app://` scheme, never `file://`.
 - `shell.openExternal` only for the scheme allowlist, and only on a real user gesture.
 - CI must stay green: Electronegativity, the Semgrep `ipc-sender-guard` rule, and the
-  `openExternal`-deny e2e.
+  `openExternal`-deny e2e (`.github/workflows/ci.yml`; gates listed in `specs/ci-gates.feature.md`).
+  Run them locally with `pnpm security:electronegativity`, `pnpm security:semgrep` (needs `uv`) and
+  `pnpm test:e2e` (needs a display). Accepting an Electronegativity finding means adding it, with a
+  one-line rationale, to `security/electronegativity-baseline.json` in a reviewed PR.
 
 ## Commits & branches
 - Conventional commits (`feat:`, `fix:`, `chore:`, `ci:`, `docs:` …).

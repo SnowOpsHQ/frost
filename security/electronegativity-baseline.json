@@ -1,0 +1,29 @@
+{
+  "$comment": "Reviewed Electronegativity findings accepted by the CI gate (scripts/electronegativity.mjs; specs/ci-gates.feature.md). Keyed by check id + repo-relative file + trimmed source line. Every entry needs a one-line rationale and accepts exactly `count` findings (default 1): a duplicated line or a stale entry fails the gate.",
+  "accepted": [
+    {
+      "id": "AUXCLICK_JS_CHECK",
+      "file": "apps/desktop/src/main/window.ts",
+      "source": "return new BrowserWindow({",
+      "rationale": "Middle-click opens reach the app-wide setWindowOpenHandler, which always denies the window and opens externally only allowlisted URLs on a trusted gesture (verified with a real middle-click: no window, no in-window navigation); disabling Auxclick adds nothing."
+    },
+    {
+      "id": "PRELOAD_JS_CHECK",
+      "file": "apps/desktop/src/main/window.ts",
+      "source": "preload: path.join(__dirname, 'preload.cjs'),",
+      "rationale": "Reviewed: the sandboxed preload exposes only the frozen fixed-channel invoke bridge (ipc-transport.spec.ts; e2e renderer-has-no-node-or-ipc-globals); Semgrep renderer-bridge-outside-preload keeps contextBridge/ipcRenderer confined to it."
+    },
+    {
+      "id": "OPEN_EXTERNAL_JS_CHECK",
+      "file": "apps/desktop/src/main/security/register.ts",
+      "source": "shell.openExternal(target.href).catch((err: unknown) => console.error('openExternal failed', err));",
+      "rationale": "Reviewed: reached only when resolveExternalOpen allows the URL (scheme allowlist + trusted input gesture, security-policy.spec.ts), pinned by policy/register unit tests and the external-url e2e."
+    },
+    {
+      "id": "CSP_GLOBAL_CHECK",
+      "file": "apps/desktop/src/main/security/policy.ts",
+      "source": "result['Content-Security-Policy'] = [appCspHeader()];",
+      "rationale": "False positive: the scanner cannot evaluate the non-literal value; it is APP_CSP from security-policy.spec.ts, strict per test app-csp-is-strict and enforced end to end by e2e boots-under-strict-csp-without-violations."
+    }
+  ]
+}

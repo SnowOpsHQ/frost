@@ -39,7 +39,7 @@ change-history store, and an AI agent that can drive the browser and run SEO ski
 | Shell | **Electron (latest stable)** + Electron Forge | Proven for this exact app shape; WebContentsView tabs. |
 | Language/UI | **TypeScript + React** | Matches the domain; large ecosystem. |
 | Monorepo | **pnpm workspaces + Turborepo** | Desktop app, shared packages, backend in one repo. |
-| IPC | **electron-trpc + Zod**, every channel typed, one central `enforceSender` middleware | Root-cause fix for the IPC/sender findings. |
+| IPC | **tRPC v11 + Zod** over a small in-repo link in `@app/ipc-contract` (one `ipcMain.handle` channel `app:trpc`; preload `exposeIpcBridge()` → `window.frostIpc.invoke`), every procedure typed, one central `enforceSender` middleware | Root-cause fix for the IPC/sender findings. In-repo because electron-trpc supports tRPC v10 only, and trpc-electron crashes main on a null `senderFrame`. |
 | Data | **SQLite + Drizzle**, built on **libSQL** | Local-first now; sync later with no rewrite. |
 | AI | **Vercel AI SDK** + **AI Gateway** (`provider/model` strings); agent loop in a locked-down utility process | Provider-agnostic, observable, no shipped keys. |
 | On-device ML | **ONNX Runtime native** with Core ML EP (Apple Silicon) | SERP intent classifier; faster/lower-power than WASM. |

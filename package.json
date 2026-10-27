@@ -1,0 +1,26 @@
+{
+  "name": "frost",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "test:e2e": "turbo run test:e2e",
+    "make:mac": "pnpm --filter @app/desktop make:mac",
+    "verify:mac": "pnpm --filter @app/desktop verify:mac",
+    "security:electronegativity": "node scripts/electronegativity.mjs",
+    "security:semgrep": "pnpm security:semgrep:test && pnpm security:semgrep:scan",
+    "security:semgrep:test": "uvx semgrep@1.182.1 --test --metrics off --config semgrep/ipc-sender-guard.yml semgrep/__fixtures__/ipc-sender-guard.ts && uvx semgrep@1.182.1 --test --metrics off --config semgrep/webcontents-factory.yml semgrep/__fixtures__/webcontents-factory.ts",
+    "security:semgrep:scan": "uvx semgrep@1.182.1 scan --metrics off --error --no-git-ignore --config semgrep/ipc-sender-guard.yml --config semgrep/webcontents-factory.yml apps packages specs"
+  },
+  "devDependencies": {
+    "@doyensec/electronegativity": "1.10.3",
+    "turbo": "^2.11.10",
+    "typescript": "^7.0.2"
+  }
+}

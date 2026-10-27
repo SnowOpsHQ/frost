@@ -6,7 +6,7 @@
 
 **Architecture:** A pnpm/Turbo monorepo with an Electron Forge desktop app. Renderer and main share a `packages/ipc-contract` (Zod + tRPC) so every channel is typed and validated by one `enforceSender` middleware. A single `security-policy` module owns webPreferences, the `openExternal` allowlist, permission handling, navigation pinning, and the `app://` CSP. CI runs Electronegativity + a Semgrep rule + a Playwright `openExternal`-deny test on every push.
 
-**Tech Stack:** TypeScript, Electron (latest stable) + Electron Forge (Vite), React, pnpm workspaces, Turborepo, electron-trpc, @trpc/server, Zod, Vitest, Playwright, Electronegativity, Semgrep.
+**Tech Stack:** TypeScript, Electron (latest stable) + Electron Forge (Vite), React, pnpm workspaces, Turborepo, @trpc/server + @trpc/client v11 (IPC transport: a small in-repo link in `@app/ipc-contract`, since electron-trpc supports tRPC v10 only, and trpc-electron crashes main on a null `senderFrame`), Zod, Vitest, Playwright, Electronegativity, Semgrep.
 
 **Spec:** `docs/design/IMPLEMENTATION-PLAN.md` (§2 stack, §3 security model, Phase 0 deliverable). The plan argues from that design; executors read both.
 
@@ -24,7 +24,7 @@ This plan is spec-first. **Every task begins by authoring or updating a machine-
 - No raw `ipcRenderer`/`ipcMain` passthrough is exposed to any renderer; all IPC flows through `packages/ipc-contract`.
 - Every `ipcMain`/tRPC procedure passes through the shared `enforceSender` middleware — no exceptions.
 - App's own pages load from a custom `app://` scheme (registered privileged), never `file://`.
-- Naming: packages are `@app/<name>`; the product name is a placeholder `app` (no third-party assets, code, or marks).
+- Naming: packages are `@app/<name>`; the product name is `frost` (no third-party assets, code, or marks).
 - Commit after every task with a conventional-commit message.
 
 ## Review Focus
@@ -129,8 +129,9 @@ test('rejects-foreign-sender', async () => {
 ### Task 4: Wire IPC end-to-end (main ↔ minimal preload ↔ renderer)
 
 **Files:**
-- Modify: `apps/desktop/src/main/index.ts` (register `app://`, call `registerSecurity`, attach `electron-trpc` with `createContext` from the real `senderFrame`)
-- Create: `apps/desktop/src/preload/index.ts` (expose **only** the typed electron-trpc bridge — no generic ipc)
+- Create: `packages/ipc-contract/src/transport/*` (in-repo tRPC v11 transport: main handler on the single `ipcMain.handle` channel `app:trpc`, preload `exposeIpcBridge()` → `window.frostIpc.invoke`, renderer `ipcLink`; in-repo because electron-trpc supports tRPC v10 only, and trpc-electron crashes main on a null `senderFrame`)
+- Modify: `apps/desktop/src/main/index.ts` (register `app://`, call `registerSecurity`, `attachIpcHandler` with `createContext` from the real `senderFrame`)
+- Create: `apps/desktop/src/preload/index.ts` (expose **only** the IPC bridge via `exposeIpcBridge()` — no generic ipc)
 - Modify: `apps/desktop/src/renderer/` (tRPC client calls `ping`, renders the result)
 - Test: `apps/desktop/e2e/ipc.e2e.ts` (Playwright + Electron)
 
@@ -139,7 +140,7 @@ test('rejects-foreign-sender', async () => {
 
 - [ ] **Step 1: Write the failing e2e test** `ipc.e2e.ts`: launch the Electron app, wait for the renderer, assert the DOM shows `pong` (proving a real sender-validated round-trip over `app://`).
 - [ ] **Step 2: Run → FAIL** (renderer shows nothing / app not wired).
-- [ ] **Step 3: Implement** `protocol.handle('app', …)` serving the renderer bundle; `createContext` derives origin/frame from the electron-trpc event's `senderFrame`; preload exposes only `exposeElectronTRPC()`; renderer calls `trpc.ping.query()` and renders it.
+- [ ] **Step 3: Implement** `protocol.handle('app', …)` serving the renderer bundle; `createContext` derives origin/frame from the `ipcMain.handle` event's `senderFrame`; preload exposes only `exposeIpcBridge()`; renderer calls `ping` through the in-repo `ipcLink` client and renders it.
 - [ ] **Step 4: Run → PASS.**
 - [ ] **Step 5: Commit** — `feat(ipc): end-to-end sender-validated ping over app://`.
 
@@ -156,7 +157,7 @@ test('rejects-foreign-sender', async () => {
 - Consumes: the security module (Task 2) and the e2e harness (Task 4).
 
 - [ ] **Step 1: Write the failing e2e** `external-url.e2e.ts`: a test page served on loopback calls `window.open('reaprobe://x')` on a click; assert **no** external open occurs (spy/stub `shell.openExternal` in the main process test build and assert it was not called for the non-web scheme, and IS called for an allowlisted `https:` link).
-- [ ] **Step 2: Write `semgrep/ipc-sender-guard.yml`** — pattern: an `ipcMain.handle(...)`/tRPC procedure definition that does not include `enforceSender`; plus a deliberately-unguarded fixture under `semgrep/__fixtures__/bad.ts`. Test `semgrep-flags-unguarded-handler`: running Semgrep on the fixture returns a finding; running on `packages/ipc-contract` returns none.
+- [ ] **Step 2: Write `semgrep/ipc-sender-guard.yml`** — pattern: a tRPC procedure definition that does not include `enforceSender`, or any `ipcMain.handle(...)`/`ipcMain.on(...)` outside the transport's single `app:trpc` handler (`packages/ipc-contract/src/transport/main.ts`); plus a deliberately-unguarded fixture under `semgrep/__fixtures__/bad.ts`. Test `semgrep-flags-unguarded-handler`: running Semgrep on the fixture returns a finding; running on `packages/ipc-contract` returns none.
 - [ ] **Step 3: Run both → FAIL** (no workflow / scripts yet).
 - [ ] **Step 4: Implement** `ci.yml` running: `pnpm install`, `turbo run lint test build`, `npx @doyensec/electronegativity -i apps/desktop`, `semgrep --config semgrep/ipc-sender-guard.yml`, and the Playwright e2e suite. Add the fixture + rule.
 - [ ] **Step 5: Run the e2e and Semgrep tests locally → PASS; push and confirm the workflow is green.**
