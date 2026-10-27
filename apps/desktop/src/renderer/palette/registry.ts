@@ -74,6 +74,18 @@ export interface PanelJump {
   readonly seq: number;
 }
 
+/**
+ * A question the palette asks, inline, before running an action (an "Open in" tool's first use of a
+ * host): `message`, an optional `note`, and the button that runs it. `accept` is called when the
+ * user confirms (the action remembers the answer there); going back runs nothing.
+ */
+export interface PaletteConfirm {
+  readonly message: string;
+  readonly note?: string | null;
+  readonly confirmLabel: string;
+  readonly accept: () => void;
+}
+
 /** A handler's answer: a short status line (frost's own words) to show after the palette closed, or nothing. */
 export type PaletteOutcome = string | null | undefined | void;
 
@@ -94,6 +106,8 @@ export interface PaletteAction {
    * runs. `handler`: the handler moves focus itself (a new tab, a panel jump), so nothing is restored.
    */
   readonly focus?: 'restore' | 'handler';
+  /** A question to ask first, or `null` to run at once (see `PaletteConfirm`). */
+  readonly confirm?: (ctx: PaletteContext) => PaletteConfirm | null;
   /** Whether it is offered now; without one, always. A predicate that throws leaves it out. */
   readonly available?: (ctx: PaletteContext) => boolean;
   readonly run: (ctx: PaletteContext) => PaletteOutcome | Promise<PaletteOutcome>;

@@ -60,6 +60,20 @@ describe('fuzzy matcher', () => {
     expect(order('history', [item('kw', 'Clear browsing data…', 'browser', ['history']), item('label', 'History panel')])).toEqual(['label', 'kw']);
   });
 
+  test('matcher-label-always-beats-keyword', () => {
+    // The weakest label match: a scattered subsequence late in a long label.
+    const weakest = matchAction('zq', { label: `${'a '.repeat(60)}z${'b'.repeat(80)}q` })!;
+    // The strongest keyword match: the keyword is exactly the query, on a short label.
+    const strongest = matchAction('zq', { label: 'Other', keywords: ['zq'] })!;
+    expect(weakest).not.toBeNull();
+    expect(strongest).not.toBeNull();
+    expect(weakest.score).toBeGreaterThan(strongest.score);
+    // Per word, across a multi-word query: two label words beat a label word and a keyword word.
+    const labels = matchAction('copy title', { label: 'Copy the long winded page title', keywords: [] })!;
+    const mixed = matchAction('copy title', { label: 'Copy', keywords: ['title'] })!;
+    expect(labels.score).toBeGreaterThan(mixed.score);
+  });
+
   test('matcher-folds-case-and-accents', () => {
     const plain = score('zoom', 'Zoom in');
     expect(plain).not.toBeNull();

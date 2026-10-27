@@ -33,8 +33,9 @@ named test.
   built-ins are registered the same way. Unavailable actions are not listed.
 - **Search is frost's own fuzzy matcher**: case- and accent-insensitive; every word of the query
   must match the label or a keyword, as a prefix, a substring or a subsequence (consecutive and
-  word-start characters score higher, gaps and long labels lower); label matches beat keyword
-  matches; the matched characters are highlighted. Recent actions come first with an empty query
+  word-start characters score higher, gaps and long labels lower); a word that matches the label
+  always outranks one that matches only a keyword (label scores sit in a band above every keyword
+  score); the matched characters are highlighted. Recent actions come first with an empty query
   and get a small boost with one. Recents live in the chrome's `localStorage`, capped.
 - **Copies are written by main from the shown audit.** `seo.copyValue({ tabId, audit, key })`
   (`enforceSender` first, Zod, `key` from `COPY_VALUE_KEYS`) writes the value main's ready audit
@@ -42,10 +43,24 @@ named test.
   `seo.copySchemaJson`. A copy action is offered only when its value exists, and its row previews
   the value as inert text.
 - **"Open in" is a fixed `https:` table** (`OPEN_IN_TEMPLATES`): fixed origin and path, the page
-  URL (without credentials or fragment) only as one URL-encoded query value, opened in a background
-  tab through `browser.openBackgroundTab`. Offered only for public hosts; each row names the host it
-  sends the URL to. The site's own robots.txt and sitemap.xml (`SITE_FILES`) are opened on the
-  active tab's own origin.
+  URL (without credentials or fragment) only as one URL-encoded query value. Main builds and opens
+  it (`browser.openTool({ tool })`): from the table and the active tab's own URL, refusing a page
+  whose main-frame response came from a non-public IP address (the webRequest `ip` the response
+  recorder keeps), since a public-looking name can resolve to a LAN host. Offered only for public
+  host names (`isPublicHost`, `open-in.spec.ts`). Each row's label ends with the destination host
+  (matched, highlighted, read out); the first use of each host asks once, as an inline palette step,
+  and the answer is kept in the chrome's `localStorage` (a preference: Clear Browsing Data leaves
+  it); a page URL with a query string says the query is sent too. The site's own robots.txt and
+  sitemap.xml (`SITE_FILES`) are opened on the active tab's own origin
+  (`browser.openBackgroundTab`).
+- **The selection follows the action, not the row.** The active option is kept as an action id and
+  found again in each new list (a page can change the list under it: `pushState` toggles "Go
+  back"); only when that action is gone does the first row become active. Enter runs exactly the
+  action shown selected.
+- **It never opens invisible or under the page.** In a page column shorter than
+  `PALETTE_SHEET_MIN_HEIGHT` it does not open (the status line says why); when the active tab enters
+  HTML fullscreen while it is open, it closes without restoring focus to the hidden chrome. A held
+  Mod+K toggles once (auto-repeat ignored).
 - **Commands the chrome could not reach before** get small procedures: `browser.pageCommand`
   (zoom in / out / reset, hard reload … exactly as the menu runs them), `browser.focusPage`
   (returns focus to the page) and `browser.clearBrowsingData` (the menu's Clear Browsing Data…,
@@ -63,6 +78,17 @@ named test.
 - **Scenario: palette-shortcut-is-reserved** — Mod+K from the chrome's and a tab's
   `before-input-event` is consumed (key-down and key-up), bumps `commandPalette.seq` once per press,
   focuses the chrome, and records `returnFocus`: `page` when the tab's page had focus, else `chrome`.
+- **Scenario: palette-shortcut-ignores-auto-repeat** — an auto-repeated Mod+K key-down
+  (`isAutoRepeat`) is consumed and changes nothing.
+- **Scenario: open-tool-builds-from-the-table-and-the-active-tab** — `openTool(id)` opens
+  `openInUrl(template, active tab URL)` in a background tab right of the active one and answers its
+  id; no web page → `no-page`; a non-public name → `not-public`; the tab limit → `not-opened`.
+- **Scenario: open-tool-refuses-private-addresses** — when the document's recorded response address
+  is private, loopback, link-local or otherwise not public → `private-address` and no tab opens; a
+  public or unrecorded address opens.
+- **Scenario: response-recorder-keeps-the-address** (`command-palette.test.ts`) — the committed
+  response keeps its webRequest `ip`, kept across in-page navigations, dropped with a new document
+  without one, a forgotten tab or Clear Browsing Data.
 - **Scenario: palette-not-opened-in-fullscreen** — while the active tab is in HTML fullscreen the key
   is still consumed, and `seq` does not change.
 - **Scenario: palette-menu-item** (`menu.test.ts`) — View › Command Palette… (`COMMAND_PALETTE_MENU_ID`)
@@ -88,6 +114,8 @@ named test.
 - **Scenario: copy-value-validates-input** — a key outside `COPY_VALUE_KEYS`, a missing or malformed
   audit, extra fields, or a text to copy are `BAD_REQUEST`, and call nothing.
 - **Scenario: page-command-validates-input** — only `PAGE_COMMANDS`, no extra fields.
+- **Scenario: open-tool-validates-input** — only `OPEN_IN_TEMPLATES` ids; a URL, an extra field or a
+  site file id is `BAD_REQUEST`; it calls `openTool` and answers its result.
 - **Scenario: palette-procedures-call-service** — each calls its service method and answers what it
   answers (`null` for the commands without an answer).
 
@@ -108,6 +136,10 @@ named test.
 - **Scenario: matcher-all-words-must-match** — every word must match the label or a keyword.
 - **Scenario: matcher-uses-keywords-below-labels** — a keyword match ranks below a label match and
   highlights nothing.
+- **Scenario: matcher-label-always-beats-keyword** — the weakest label match (a scattered
+  subsequence in a long label) outranks the strongest keyword match (an exact keyword).
+- **Scenario: selection-follows-the-action-id** (`keys.test.ts`) — the active index is the active
+  id's place in the new list; an id that is gone (or none) gives the first row; an empty list none.
 - **Scenario: matcher-folds-case-and-accents** — `ZOOM`, `zóom` and `zoom` match alike.
 - **Scenario: matcher-is-bounded** — a query over `PALETTE_QUERY_MAX_CHARS` is cut; a long label
   scores without blowing up.
@@ -132,6 +164,22 @@ named test.
 - **Scenario: open-in-only-for-public-hosts** — `localhost`, loopback, private and link-local
   addresses, single-label and `.local` / `.internal` / `.lan` / `.home.arpa` names, non-`http(s)`
   URLs and results over `ADDRESS_INPUT_MAX_LENGTH` give `null`.
+- **Scenario: public-host-probes** — every non-public IPv4 block (`NON_PUBLIC_IPV4_BLOCKS`: its first
+  and last address, and both neighbours outside it), IPv6 forms (unspecified, loopback,
+  IPv4-compatible, IPv4-mapped and NAT64 of private IPv4 addresses, discard, documentation, unique
+  local, link-local, site-local, multicast) and name suffixes (`NON_PUBLIC_NAME_SUFFIXES`) are not
+  public; public neighbours are. `isPublicAddress` reads Chromium's `ip` text, bracketed or not.
+- **Scenario: open-in-rejects-malformed-templates** — a template whose path or origin would put the
+  URL on another host, scheme or path builds nothing.
+- **Scenario: open-in-label-names-the-host** — `openInLabel` is the description, ` — ` and the host;
+  `sendsQuery` is true exactly when the URL sent has a query string.
+- **Scenario: consent-remembers-hosts** (`consent.test.ts`) — granted hosts are kept (deduplicated,
+  capped at `OPEN_IN_CONSENT_MAX`, malformed storage ignored, storage errors swallowed).
+- **Scenario: sheet-sizes-match-styles** (`apps/desktop/src/__tests__/palette-styles.test.ts`) —
+  `styles.css` declares `PALETTE_SHEET_HEIGHT`, `PALETTE_PAGE_MIN_VISIBLE` and
+  `PALETTE_SHEET_MIN_HEIGHT`, and the sheet's height is built from them.
+- **Scenario: palette-fits-and-closes-for-fullscreen** (`layout.test.ts`) — `paletteFits` is false
+  below `PALETTE_SHEET_MIN_HEIGHT`; `closesForFullscreen` is true for a tab in either fullscreen phase.
 - **Scenario: site-files-use-the-page-origin** — robots.txt and sitemap.xml are built on the page's
   own origin (scheme and port kept), never another host.
 
@@ -148,6 +196,11 @@ named test.
   value exists, and previews it (cut to `PALETTE_DETAIL_MAX_CHARS`).
 - **Scenario: handlers-call-procedures** — each handler calls its procedure with the active tab and
   the shown audit's ref (copy), the built URL (open in), the command (page), and answers a status line.
+- **Scenario: open-in-asks-once-per-host** — an "Open in" action for a host not yet granted has a
+  confirmation step (`OPEN_IN_CONSENT_MESSAGE` with its host, `OPEN_IN_QUERY_NOTE` when the URL has a
+  query); accepting it grants that host (and only it); a granted host has none.
+- **Scenario: open-in-calls-main-and-reports-refusals** — the handler calls `openTool(id)`, never
+  with a URL, and says `OPEN_TOOL_REFUSAL_MESSAGES[reason]` for a refusal.
 - **Scenario: highlight-opens-the-owning-panel** — a highlight action opens `HIGHLIGHT_PANELS[mode]`
   first, so the chrome does not turn the overlay off again.
 - **Scenario: palette-keys** (`keys.test.ts`) — ↑/↓, Tab/Shift+Tab wrap; PageUp/PageDown jump and
@@ -166,9 +219,21 @@ named test.
   sidebar on it, and the palette is gone.
 - **Scenario: palette-copy-writes-main-clipboard** — "Copy title" puts the audit's title on the
   system clipboard (read in main), and a status line says so.
-- **Scenario: palette-open-in-opens-a-background-tab** — "Open in" a tool opens one background tab
-  whose request is the expected `https:` URL (requests to the tool's host are cancelled in the test),
-  the active tab staying active; the site's robots.txt opens on the page's own origin.
+- **Scenario: palette-open-in-asks-first-and-opens** — on a page with a public name and no recorded
+  private address (served in the test by a browse-session protocol handler), the "Open in" row names
+  its host; running it asks first (with the query note for a URL with a query); Back sends nothing;
+  confirming opens one background tab whose request is the expected `https:` URL (requests to the
+  tool's host are cancelled in the test), the active tab staying active; the same host is not asked
+  again. The site's robots.txt opens on the page's own origin.
+- **Scenario: palette-open-in-refuses-a-private-page** — a public-looking name that resolved to a
+  loopback address: confirming opens nothing and the status line says why.
+- **Scenario: palette-selection-survives-list-changes** — with "Zoom in" selected, the page's
+  `pushState` adds "Go back" above it; the selection stays on "Zoom in" and Enter zooms.
+- **Scenario: palette-closes-when-the-page-goes-fullscreen** — the page enters HTML fullscreen
+  while the palette is open: the palette closes and nothing in the chrome takes focus.
+- **Scenario: palette-clear-browsing-data-asks-once** — with main's message box answering Cancel,
+  the palette's Clear Browsing Data… asks exactly once and clears nothing (a site cookie stays);
+  answering Clear clears it, and the granted "Open in" hosts are still remembered.
 - **Scenario: palette-esc-closes-and-restores-focus** — Esc closes it; focus is back in the page it
   was opened from (or the address bar it was opened from).
 - **Scenario: palette-makes-no-network-requests** — typing and browsing the list requests nothing:

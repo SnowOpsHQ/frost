@@ -5000,6 +5000,7 @@ input {
 :root {
   --palette-sheet-height: 404px;
   --palette-page-min-visible: 96px;
+  --palette-sheet-min-height: 180px;
   --palette-width: 640px;
   --palette-bg: #ffffff;
   --palette-edge: #dfe4eb;
@@ -5041,7 +5042,8 @@ input {
   /* Its content never widens the page column: opening the palette or typing must not move the
      column / sidebar split (the tab's view would be resized). */
   contain: inline-size;
-  height: min(var(--palette-sheet-height), calc(100% - var(--palette-page-min-visible)));
+  /* Never shorter than its minimum: the palette does not open in a column shorter than that. */
+  height: max(min(var(--palette-sheet-height), calc(100% - var(--palette-page-min-visible))), var(--palette-sheet-min-height));
   min-height: 0;
   padding: 12px 16px 14px;
   border-bottom: 1px solid var(--bg-chrome-edge);
@@ -5268,6 +5270,92 @@ input {
 
 .palette-foot-count {
   margin-left: auto;
+}
+
+/* An action's question ("Open in": the first use of a host), in place of the list. */
+.palette-confirm {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 16px 22px;
+  overflow-y: auto;
+  text-align: center;
+}
+
+.palette-confirm-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 2px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.palette-confirm-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.palette-confirm-message {
+  max-width: 44ch;
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.palette-confirm-note {
+  max-width: 48ch;
+  margin: 0;
+  color: var(--caution);
+  font-size: 12px;
+}
+
+.palette-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.palette-button {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--palette-edge);
+  border-radius: 8px;
+  background: var(--bg-chrome);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.palette-button:hover {
+  background: var(--bg-hover);
+}
+
+.palette-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.palette-button-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.palette-button-primary:hover {
+  background: var(--accent-hover);
+}
+
+.palette-foot[data-step='confirm'] .palette-foot-list {
+  display: none;
 }
 
 /* A narrow palette keeps the keys and drops the words. */

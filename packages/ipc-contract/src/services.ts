@@ -1,6 +1,6 @@
 import type { LinkFilter, SeoAuditResponse, SpeedResponse } from '@app/seo-core';
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
-import type { CopyValueKey } from '@app/specs/command-palette.spec';
+import type { CopyValueKey, OpenInTemplateId, OpenToolResult } from '@app/specs/command-palette.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
@@ -68,6 +68,13 @@ export interface BrowserService {
   focusPage(): boolean;
   /** The menu's Clear Browsing Data… (which asks first, in main's own dialog). */
   clearBrowsingData(): void;
+  /**
+   * Opens "Open in" tool `tool` for the active tab (`command-palette.spec.ts`, `OPEN_IN_TEMPLATES`):
+   * the URL is built here from the table and the tab's own URL; refused (`OPEN_TOOL_REFUSALS`) for no
+   * web page, a non-public name, a document whose recorded response address is not public, or no tab.
+   * Optional so other services' fakes need not grow; without it the procedure fails closed.
+   */
+  openTool?(tool: OpenInTemplateId): OpenToolResult;
   /**
    * Sets the tab's render profile (`render-profile.feature.md`): its own, or with `pin` this site's
    * pin (`false` removes the site's pin); the default profile is a Reset. `false` (a no-op) for an id

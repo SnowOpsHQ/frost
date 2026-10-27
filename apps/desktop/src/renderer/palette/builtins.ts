@@ -1,11 +1,27 @@
 import { copyValueOf, type SeoAudit } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
-import { COPY_VALUE_KEYS, COPY_VALUE_LABELS, FEATURE_PANEL_JUMPS, OPEN_IN_TEMPLATES, PALETTE_DETAIL_MAX_CHARS, SITE_FILES, type CopyValueKey } from '@app/specs/command-palette.spec';
+import {
+  COPY_VALUE_KEYS,
+  COPY_VALUE_LABELS,
+  FEATURE_PANEL_JUMPS,
+  OPEN_IN_CONFIRM_LABEL,
+  OPEN_IN_CONSENT_MESSAGE,
+  OPEN_IN_QUERY_NOTE,
+  OPEN_IN_TEMPLATES,
+  OPEN_TOOL_REFUSAL_MESSAGES,
+  openInLabel,
+  PALETTE_DETAIL_MAX_CHARS,
+  SITE_FILES,
+  type CopyValueKey,
+  type OpenInTemplateId,
+  type OpenToolResult,
+} from '@app/specs/command-palette.spec';
 import { DEFAULT_ZOOM, ZOOM_FACTORS, type PageCommand } from '@app/specs/page-commands.spec';
 import { HIGHLIGHT_PANELS, SEO_PANELS, type HighlightMode, type SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { zoomLabel } from '../zoom-label';
-import { openInUrl, siteFileUrl, templateHost } from './open-in';
+import { createConsentStore, type ConsentStore } from './consent';
+import { openInUrl, sendsQuery, siteFileUrl, templateHost } from './open-in';
 import { readyAudit, type PaletteAction, type PaletteContext, type PaletteSource } from './registry';
 
 // The palette's built-in actions (spec `command-palette.spec.ts`; acceptance
@@ -31,6 +47,8 @@ export interface PaletteApi {
   copyValue(tabId: number, audit: { url: string; takenAt: number }, key: CopyValueKey): Promise<boolean>;
   copySchemaJson(tabId: number, audit: { url: string; takenAt: number }, block: number): Promise<boolean>;
   openBackgroundTab(url: string): Promise<number | null>;
+  /** Main builds the tool's URL from the table and the active tab, and may refuse (`null`: IPC failure). */
+  openTool(tool: OpenInTemplateId): Promise<OpenToolResult | null>;
   clearBrowsingData(): Promise<unknown>;
 }
 
@@ -198,24 +216,37 @@ function copyActions(api: PaletteApi): PaletteSource[] {
   return [...values, blocks];
 }
 
-function openInActions(api: PaletteApi): PaletteAction[] {
+function openInActions(api: PaletteApi, consent: ConsentStore): PaletteAction[] {
   const opened = (id: number | null, where: string) => (id === null ? 'Couldn’t open a tab' : `Opened ${where} in a background tab`);
-  const tools = OPEN_IN_TEMPLATES.map(
-    (template): PaletteAction => ({
+  const tools = OPEN_IN_TEMPLATES.map((template): PaletteAction => {
+    const host = templateHost(template);
+    return {
       id: `open-in.${template.id}`,
-      label: template.label,
+      // The destination host is part of the label: matched, highlighted and read out.
+      label: openInLabel(template),
       group: 'open-in',
       keywords: ['open in', 'external', 'tool', ...template.keywords],
       icon: 'external',
-      detail: () => `Sends this page’s URL to ${templateHost(template)}`,
+      detail: (ctx) => (ctx.tab && sendsQuery(ctx.tab.url) ? 'Sends this page’s address, query string included' : 'Sends this page’s address'),
       available: (ctx) => showsPage(ctx.tab) && openInUrl(template, ctx.tab.url) !== null,
-      run: async (ctx) => {
-        const url = openInUrl(template, ctx.tab!.url);
-        if (url === null) return 'Couldn’t open a tab';
-        return opened(await api.openBackgroundTab(url), templateHost(template));
+      // The first use of each destination host asks (inline); the answer is kept as a preference.
+      confirm: (ctx) =>
+        consent.has(host)
+          ? null
+          : {
+              message: OPEN_IN_CONSENT_MESSAGE.replace('{host}', host),
+              note: ctx.tab && sendsQuery(ctx.tab.url) ? OPEN_IN_QUERY_NOTE : null,
+              confirmLabel: OPEN_IN_CONFIRM_LABEL,
+              accept: () => consent.grant(host),
+            },
+      run: async () => {
+        // Main builds the URL from the table and the active tab's own URL, and checks where the page came from.
+        const result = await api.openTool(template.id);
+        if (result === null) return 'Couldn’t open a tab';
+        return result.status === 'opened' ? opened(result.tabId, host) : OPEN_TOOL_REFUSAL_MESSAGES[result.reason];
       },
-    }),
-  );
+    };
+  });
   const files = SITE_FILES.map(
     (file): PaletteAction => ({
       id: `open-in.${file.id}`,
@@ -419,6 +450,6 @@ function browserActions(api: PaletteApi): PaletteAction[] {
  * chrome shows; "Open in" builds only from the fixed tables. Registering them twice in one registry
  * throws (duplicate ids).
  */
-export function builtinPaletteSources(procedures: PaletteApi): PaletteSource[] {
-  return [...panelActions(), ...auditActions(procedures), ...copyActions(procedures), ...openInActions(procedures), ...pageActions(procedures), ...tabActions(procedures), ...browserActions(procedures)];
+export function builtinPaletteSources(procedures: PaletteApi, consent: ConsentStore = createConsentStore(null)): PaletteSource[] {
+  return [...panelActions(), ...auditActions(procedures), ...copyActions(procedures), ...openInActions(procedures, consent), ...pageActions(procedures), ...tabActions(procedures), ...browserActions(procedures)];
 }

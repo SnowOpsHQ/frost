@@ -4,7 +4,20 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
-import { COPY_VALUE_KEYS, FEATURE_PANEL_JUMPS, OPEN_IN_TEMPLATES, PALETTE_DETAIL_MAX_CHARS, SITE_FILES } from '@app/specs/command-palette.spec';
+import {
+  COPY_VALUE_KEYS,
+  FEATURE_PANEL_JUMPS,
+  OPEN_IN_CONSENT_MESSAGE,
+  OPEN_IN_QUERY_NOTE,
+  OPEN_IN_TEMPLATES,
+  OPEN_TOOL_REFUSAL_MESSAGES,
+  OPEN_TOOL_REFUSALS,
+  openInLabel,
+  PALETTE_DETAIL_MAX_CHARS,
+  SITE_FILES,
+  type OpenInTemplateId,
+  type OpenToolResult,
+} from '@app/specs/command-palette.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import { builtinPaletteSources, type PaletteApi } from '../builtins';
 import { createPaletteRegistry, type PaletteAction, type PaletteContext } from '../registry';
@@ -59,14 +72,22 @@ function fakeApi() {
     copyValue: vi.fn(async (_tabId: number, _audit: { url: string; takenAt: number }, _key: string) => true),
     copySchemaJson: vi.fn(async (_tabId: number, _audit: { url: string; takenAt: number }, _block: number) => true),
     openBackgroundTab: vi.fn(async (_url: string): Promise<number | null> => 9),
+    openTool: vi.fn(async (_tool: OpenInTemplateId): Promise<OpenToolResult | null> => ({ status: 'opened', tabId: 9 })),
     clearBrowsingData: vi.fn(async () => undefined),
   } satisfies PaletteApi;
 }
 
-function setup(context: Partial<PaletteContext> & { tabs?: TabState[] } = {}) {
+/** An in-memory consent store (the palette's is `consent.ts`, on localStorage). */
+function fakeConsent(granted: readonly string[] = []) {
+  const hosts = new Set(granted);
+  return { has: vi.fn((host: string) => hosts.has(host)), grant: vi.fn((host: string) => void hosts.add(host)) };
+}
+
+function setup(context: Partial<PaletteContext> & { tabs?: TabState[]; granted?: readonly string[] } = {}) {
   const api = fakeApi();
+  const consent = fakeConsent(context.granted ?? OPEN_IN_TEMPLATES.map((t) => new URL(t.origin).host));
   const registry = createPaletteRegistry();
-  registry.register(...builtinPaletteSources(api));
+  registry.register(...builtinPaletteSources(api, consent));
   const tabs = context.tabs ?? (context.tab ? [context.tab] : [tab()]);
   const active = context.tab ?? tabs[0];
   const chrome = { openPanel: vi.fn(), setSidebarOpen: vi.fn() };
@@ -77,7 +98,7 @@ function setup(context: Partial<PaletteContext> & { tabs?: TabState[] } = {}) {
     if (!found) throw new Error(`${id} not available`);
     return found;
   };
-  return { api, registry, ctx, ids, get, chrome };
+  return { api, registry, ctx, ids, get, chrome, consent };
 }
 
 describe('built-in palette actions', () => {
@@ -186,10 +207,10 @@ describe('built-in palette actions', () => {
     expect(api.copySchemaJson).toHaveBeenLastCalledWith(1, shown, 1);
     for (const template of OPEN_IN_TEMPLATES) {
       expect(await get(`open-in.${template.id}`).run(ctx)).toMatch(/background tab/i);
-      const sent = new URL(api.openBackgroundTab.mock.lastCall![0]);
-      expect(sent.origin).toBe(template.origin);
-      expect(sent.searchParams.get(template.urlParam)).toBe(URL_A);
+      // Main builds the URL from the table and the tab: the chrome sends only the tool's id.
+      expect(api.openTool).toHaveBeenLastCalledWith(template.id);
     }
+    expect(api.openBackgroundTab).not.toHaveBeenCalled();
     await get('open-in.robots-txt').run(ctx);
     expect(api.openBackgroundTab).toHaveBeenLastCalledWith('https://www.example.com/robots.txt');
     api.openBackgroundTab.mockResolvedValueOnce(null);
@@ -244,5 +265,44 @@ describe('built-in palette actions', () => {
     expect(on.api.setHighlight).toHaveBeenLastCalledWith(1, 'off');
     on.api.setHighlight.mockResolvedValueOnce(false);
     expect(await on.get('highlight.links').run(on.ctx)).toMatch(/couldn/i);
+  });
+
+  test('open-in-asks-once-per-host', () => {
+    const rich = OPEN_IN_TEMPLATES.find((t) => t.id === 'rich-results')!;
+    const host = new URL(rich.origin).host;
+    const { get, ctx, consent } = setup({ granted: [] });
+    const action = get('open-in.rich-results');
+    // The label names the destination host.
+    expect(action.label).toBe(openInLabel(rich));
+    const step = action.confirm!(ctx)!;
+    expect(step).not.toBeNull();
+    expect(step.message).toBe(OPEN_IN_CONSENT_MESSAGE.replace('{host}', host));
+    expect(step.note ?? null).toBeNull();
+    step.accept();
+    expect(consent.grant).toHaveBeenCalledExactlyOnceWith(host);
+    expect(action.confirm!(ctx)).toBeNull();
+    // Another host is still asked; the two page speed tools share one host, so one answer covers both.
+    expect(get('open-in.html-validator').confirm!(ctx)).not.toBeNull();
+    get('open-in.mobile-rendering').confirm!(ctx)!.accept();
+    expect(get('open-in.page-speed').confirm!(ctx)).toBeNull();
+    // A page URL with a query string: the step and the row both say it is sent too.
+    const query = setup({ granted: [], tab: tab({ url: 'https://www.example.com/a?session=abc' }) });
+    expect(query.get('open-in.archive').confirm!(query.ctx)!.note).toBe(OPEN_IN_QUERY_NOTE);
+    expect(query.get('open-in.archive').detail!(query.ctx)).toMatch(/query string/i);
+    expect(setup().get('open-in.archive').detail!(setup().ctx)).not.toMatch(/query string/i);
+    // Site files go to the site itself: no question.
+    expect(query.get('open-in.robots-txt').confirm).toBeUndefined();
+  });
+
+  test('open-in-calls-main-and-reports-refusals', async () => {
+    const { api, get, ctx } = setup();
+    for (const reason of OPEN_TOOL_REFUSALS) {
+      api.openTool.mockResolvedValueOnce({ status: 'refused', reason });
+      expect(await get('open-in.rich-results').run(ctx)).toBe(OPEN_TOOL_REFUSAL_MESSAGES[reason]);
+    }
+    // An IPC failure.
+    api.openTool.mockResolvedValueOnce(null);
+    expect(await get('open-in.rich-results').run(ctx)).toMatch(/couldn/i);
+    expect(api.openTool.mock.calls.every(([tool]) => tool === 'rich-results')).toBe(true);
   });
 });

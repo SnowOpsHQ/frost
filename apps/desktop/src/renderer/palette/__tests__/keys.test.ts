@@ -1,7 +1,8 @@
 // Spec: specs/command-palette.spec.ts (keyboard), specs/tabs.spec.ts / specs/page-commands.spec.ts (shortcut notation)
-// Acceptance: specs/command-palette.feature.md (Built-in actions: palette-keys, shortcut-labels-per-platform)
+// Acceptance: specs/command-palette.feature.md (Built-in actions: palette-keys, shortcut-labels-per-platform;
+// Registry, matcher and recents: selection-follows-the-action-id)
 import { describe, expect, test } from 'vitest';
-import { PALETTE_PAGE_STEP, paletteKey, shortcutLabel } from '../keys';
+import { PALETTE_PAGE_STEP, paletteKey, resolveActive, shortcutLabel } from '../keys';
 
 const press = (key: string, mods: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean } = {}) => ({ key, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, ...mods });
 
@@ -42,5 +43,19 @@ describe('palette keys', () => {
     expect(shortcutLabel('Mod+=', false)).toBe('Ctrl+=');
     expect(shortcutLabel({ mac: 'Mod+[', other: 'Alt+Left' }, true)).toBe('⌘[');
     expect(shortcutLabel({ mac: 'Mod+[', other: 'Alt+Left' }, false)).toBe('Alt+←');
+  });
+
+  test('selection-follows-the-action-id', () => {
+    const before = ['page.reload', 'page.zoom-in', 'page.zoom-out'];
+    expect(resolveActive(before, 'page.zoom-in')).toBe(1);
+    // The page adds "Go back" above it: the selection moves with the action, not the row.
+    const after = ['page.reload', 'page.back', 'page.zoom-in', 'page.zoom-out'];
+    expect(resolveActive(after, 'page.zoom-in')).toBe(2);
+    // The selected action went away: the first row.
+    expect(resolveActive(['page.reload', 'page.zoom-out'], 'page.zoom-in')).toBe(0);
+    // No selection yet: the first row; an empty list: none.
+    expect(resolveActive(after, null)).toBe(0);
+    expect(resolveActive([], 'page.zoom-in')).toBe(-1);
+    expect(resolveActive([], null)).toBe(-1);
   });
 });

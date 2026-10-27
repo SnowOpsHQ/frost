@@ -34,8 +34,11 @@ import type { SeoPanelId } from './seo-sidebar.spec';
  * (`tabs.spec.ts`): taken from every tab's and the chrome's `before-input-event` and consumed, so a
  * page can neither see nor block it, and the View menu's item (`COMMAND_PALETTE_MENU_ID`) has it as
  * its accelerator. Main bumps `BrowserState.commandPalette.seq`; the chrome opens the palette whenever
- * that changes, or closes it if it is open. While the active tab is in HTML fullscreen (its view
- * covers the whole window) the shortcut is consumed and nothing opens.
+ * that changes, or closes it if it is open. A key held down toggles once: auto-repeated key-downs
+ * (`input.isAutoRepeat`) are consumed and ignored. While the active tab is in HTML fullscreen (its
+ * view covers the whole window) the shortcut is consumed and nothing opens; and when the active tab
+ * enters HTML fullscreen while the palette is open, the palette closes without restoring focus (the
+ * chrome is hidden behind the page).
  */
 export const COMMAND_PALETTE_SHORTCUT = 'Mod+K' as const;
 export const COMMAND_PALETTE_MENU_ID = 'command-palette' as const;
@@ -58,10 +61,15 @@ export type PaletteReturnFocus = (typeof PALETTE_RETURN_FOCUS)[number];
  * page column, and the page area below it shrinks. The chrome reports the smaller page area through
  * the existing `browser.setPageBounds` (as the SEO sidebar does sideways), so main lays the view
  * out below the sheet: no second view, no page capture, no z-order trick. Its height is fixed while
- * it is open, so typing never resizes the page. Keep these equal to `styles.css`.
+ * it is open, so typing never resizes the page. It is never shorter than `PALETTE_SHEET_MIN_HEIGHT`
+ * (the page then keeps less than `PALETTE_PAGE_MIN_VISIBLE`); in a page column shorter than that
+ * the palette does not open (it would be cut off) and says so in the status line
+ * (`PALETTE_TOO_SHORT_MESSAGE`). Keep these equal to `styles.css` (a unit test reads it).
  */
 export const PALETTE_SHEET_HEIGHT = 404;
 export const PALETTE_PAGE_MIN_VISIBLE = 96;
+export const PALETTE_SHEET_MIN_HEIGHT = 180;
+export const PALETTE_TOO_SHORT_MESSAGE = 'The window is too short for the command palette' as const;
 
 /** Groups, in the order the palette lists them with an empty query. */
 export const PALETTE_GROUPS = [
@@ -148,12 +156,29 @@ export const COPY_VALUE_LABELS: Readonly<Record<CopyValueKey, string>> = {
  * and path, its fixed `params`, and the page URL as the value of `urlParam`, URL-encoded
  * (`URLSearchParams`). The page URL goes nowhere else: never into the host or the path, and the
  * host is never page-controlled. The page URL sent is the active tab's URL with any user name,
- * password and fragment removed. Offered only for an `http(s)` page on a public host (never
- * `localhost`, a private or loopback address, a single-label name or a `.local` / `.internal` /
- * `.lan` / `.home.arpa` name: those URLs mean nothing to a public tool and would leak an internal
- * address), and only if the result fits `browser.openBackgroundTab`. Each opens in a background tab
- * through `browser.openBackgroundTab`; the row names the host it sends the URL to. Labels are
- * frost's own descriptions of what the tool does.
+ * password and fragment removed. Offered only for an `http(s)` page on a public host
+ * (`isPublicHost` in `open-in.spec.ts`: never `localhost`, a non-public IP literal, a single-label
+ * name or a name under a reserved or local-only suffix: those URLs mean nothing to a public tool and
+ * would leak an internal address), and only if the result fits `browser.openBackgroundTab`. Labels are frost's own
+ * descriptions of what the tool does, followed by the host the URL goes to (`openInLabel`: `Rich
+ * results test — search.google.com`), so the destination is matched, highlighted and read out.
+ *
+ * Main builds and opens it (`browser.openTool({ tool })`, `enforceSender` first): from the table and
+ * the active tab's own URL, never a URL the chrome sends. Main refuses (`OPEN_TOOL_REFUSALS`) when
+ * the active tab shows no web page (`no-page`), its URL cannot be sent (`not-public`), its
+ * main-frame response came from a private, loopback or otherwise non-public IP address
+ * (`private-address`: the webRequest `ip` main recorded for the document; a public name can resolve
+ * to a LAN address), or no tab opened (`not-opened`: the tab limit). With no recorded address (a
+ * back/forward cache restore, a response main never saw, after Clear Browsing Data) the name check
+ * alone decides. Otherwise it opens the URL in a background tab right of the active one.
+ *
+ * Before the first use of each destination host the palette asks, as an inline step (never a
+ * native dialog): `OPEN_IN_CONSENT_MESSAGE`, plus `OPEN_IN_QUERY_NOTE` when the page URL has a
+ * query string. Confirming remembers the host in the chrome's own `localStorage`
+ * (`OPEN_IN_CONSENT_STORAGE_KEY`, a JSON array of hosts, at most `OPEN_IN_CONSENT_MAX`); it is a
+ * preference, so Clear Browsing Data (which clears the browse partition) leaves it. Going back
+ * (Esc, "Back") returns to the list and sends nothing. A row whose page URL has a query string says
+ * so in its detail line every time.
  */
 export const OPEN_IN_TEMPLATES = [
   {
@@ -215,6 +240,32 @@ export interface OpenInTemplate {
   readonly params: Readonly<Record<string, string>>;
 }
 export type OpenInTemplateId = (typeof OPEN_IN_TEMPLATES)[number]['id'];
+export const OPEN_IN_TEMPLATE_IDS = OPEN_IN_TEMPLATES.map((t) => t.id) as [OpenInTemplateId, ...OpenInTemplateId[]];
+
+/** A tool's row label: its description, then the host the page URL goes to. */
+export function openInLabel(template: OpenInTemplate): string {
+  return `${template.label} — ${new URL(template.origin).host}`;
+}
+
+export const OPEN_IN_CONSENT_STORAGE_KEY = 'frost.command-palette.open-in-hosts' as const;
+export const OPEN_IN_CONSENT_MAX = 32;
+/** The first-use question (`{host}`: the destination host). */
+export const OPEN_IN_CONSENT_MESSAGE = 'frost will send this page’s address to {host}.' as const;
+export const OPEN_IN_QUERY_NOTE = 'The address includes its query string (the part after “?”), which is sent too.' as const;
+export const OPEN_IN_CONFIRM_LABEL = 'Send and open' as const;
+export const OPEN_IN_BACK_LABEL = 'Back' as const;
+
+/** Why main did not open a tool (`browser.openTool`), and what the status line says. */
+export const OPEN_TOOL_REFUSALS = ['no-page', 'not-public', 'private-address', 'not-opened'] as const;
+export type OpenToolRefusal = (typeof OPEN_TOOL_REFUSALS)[number];
+export const OPEN_TOOL_REFUSAL_MESSAGES: Readonly<Record<OpenToolRefusal, string>> = {
+  'no-page': 'Nothing sent: this tab shows no web page',
+  'not-public': 'Nothing sent: this page’s address isn’t public',
+  'private-address': 'Nothing sent: this page came from a private network address',
+  'not-opened': 'Couldn’t open a tab',
+};
+/** `browser.openTool`'s answer. */
+export type OpenToolResult = { readonly status: 'opened'; readonly tabId: number } | { readonly status: 'refused'; readonly reason: OpenToolRefusal };
 /**
  * The longest "Open in" URL offered: `browser.openBackgroundTab`'s cap (equal to
  * `ADDRESS_INPUT_MAX_LENGTH` in `browser.spec.ts`, which the renderer cannot import: Zod).

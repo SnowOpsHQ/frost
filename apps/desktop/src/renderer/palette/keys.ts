@@ -48,6 +48,18 @@ export function paletteKey(key: KeyPress, active: number, count: number): Palett
   }
 }
 
+/**
+ * The active row in `ids` (the list as now shown): where the active action `activeId` is, else the
+ * first row (no selection yet, or that action is gone), `-1` for an empty list. The selection is kept
+ * as an action id, so a list that changes under it (a page's `pushState` adds "Go back") never makes
+ * Enter run another action than the one shown selected.
+ */
+export function resolveActive(ids: readonly string[], activeId: string | null): number {
+  if (ids.length === 0) return -1;
+  const at = activeId === null ? -1 : ids.indexOf(activeId);
+  return at >= 0 ? at : 0;
+}
+
 const MAC_MODIFIERS: Readonly<Record<string, string>> = { Mod: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' };
 /** macOS lists modifiers in this order. */
 const MAC_ORDER = ['Ctrl', 'Alt', 'Shift', 'Mod'];

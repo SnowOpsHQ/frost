@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import type { SeoAuditResponse, SpeedResponse } from '@app/seo-core';
 import type { BrowserState } from '@app/specs/browser.spec';
-import { COPY_VALUE_KEYS } from '@app/specs/command-palette.spec';
+import { COPY_VALUE_KEYS, OPEN_IN_TEMPLATES, SITE_FILES, type OpenToolResult } from '@app/specs/command-palette.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { PAGE_COMMANDS } from '@app/specs/page-commands.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
@@ -34,6 +34,7 @@ function fakes() {
     clearBrowsingData: vi.fn(() => undefined),
     setRenderProfile: vi.fn(() => false),
     clearRenderProfile: vi.fn(() => false),
+    openTool: vi.fn((_tool: string): OpenToolResult => ({ status: 'opened', tabId: 4 })),
     getState: vi.fn(() => STATE),
     watch: vi.fn(async () => STATE),
   } satisfies BrowserService;
@@ -85,6 +86,7 @@ const VALID: Record<string, unknown> = {
   'browser.pageCommand': { command: 'zoom-in' },
   'browser.focusPage': undefined,
   'browser.clearBrowsingData': undefined,
+  'browser.openTool': { tool: 'rich-results' },
 };
 
 describe('palette router', () => {
@@ -136,6 +138,35 @@ describe('palette router', () => {
       expect(error.code, JSON.stringify(input) ?? 'undefined').toBe('BAD_REQUEST');
       untouched(services);
     }
+  });
+
+  test('open-tool-validates-input', async () => {
+    const malformed = [
+      undefined,
+      {},
+      'rich-results',
+      { tool: 'RICH-RESULTS' },
+      { tool: 'evil' },
+      { tool: 1 },
+      { tool: 'rich-results', extra: 1 },
+      // Never a URL from the chrome.
+      { tool: 'rich-results', url: 'https://evil.example.net/' },
+      { url: 'https://search.google.com/test/rich-results?url=x' },
+      ...SITE_FILES.map((file) => ({ tool: file.id })),
+    ];
+    for (const input of malformed) {
+      const services = fakes();
+      const error = await errorOf(procedure(ctxFor(services), 'browser.openTool')(input));
+      expect(error.code, JSON.stringify(input) ?? 'undefined').toBe('BAD_REQUEST');
+      untouched(services);
+    }
+    const services = fakes();
+    for (const template of OPEN_IN_TEMPLATES) {
+      await expect(procedure(ctxFor(services), 'browser.openTool')({ tool: template.id })).resolves.toEqual({ status: 'opened', tabId: 4 });
+      expect(services.browser.openTool).toHaveBeenLastCalledWith(template.id);
+    }
+    services.browser.openTool.mockReturnValueOnce({ status: 'refused', reason: 'private-address' });
+    await expect(procedure(ctxFor(services), 'browser.openTool')({ tool: 'archive' })).resolves.toEqual({ status: 'refused', reason: 'private-address' });
   });
 
   test('palette-procedures-call-service', async () => {

@@ -6,7 +6,15 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
-import { COMMAND_PALETTE_MENU_ID, OPEN_IN_TEMPLATES } from '@app/specs/command-palette.spec';
+import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
+import {
+  COMMAND_PALETTE_MENU_ID,
+  OPEN_IN_CONSENT_MESSAGE,
+  OPEN_IN_CONSENT_STORAGE_KEY,
+  OPEN_IN_QUERY_NOTE,
+  OPEN_IN_TEMPLATES,
+  OPEN_TOOL_REFUSAL_MESSAGES,
+} from '@app/specs/command-palette.spec';
 import { QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { closeApp, launchApp } from './harness';
@@ -14,12 +22,19 @@ import { chromeHelpers } from './helpers';
 
 /**
  * A public-looking name for the loopback server (`--host-resolver-rules`), so the "Open in" tools,
- * offered only for public hosts, are offered for its pages.
+ * offered only for public host names, are offered for its pages; main then refuses them, as the
+ * page came from a loopback address. (Reserved test names such as `.example` are not public.)
  */
-const SITE_HOST = 'palette.frost-e2e.example';
+const SITE_HOST = 'palette.frost-e2e.net';
+/** A public name whose page the test serves itself (a browse-session protocol handler: no recorded address). */
+const PUBLIC_HOST = 'public.frost-e2e.net';
 const TITLE = 'Palette page: a well titled page about tea';
 
-/** Loopback pages: `/page` (an auditable page), `/greedy` (cancels every keydown), `/robots.txt`. Every request path is logged. */
+/**
+ * Loopback pages: `/page` (an auditable page), `/greedy` (cancels every keydown), `/pushes` (calls
+ * pushState a moment after a click), `/fullscreen` (asks for fullscreen a moment after a click),
+ * `/robots.txt`. Every request path is logged.
+ */
 async function startSiteServer() {
   const requests: string[] = [];
   const server = createServer((request, response) => {
@@ -27,6 +42,14 @@ async function startSiteServer() {
     requests.push(path);
     const html = (body: string) => response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(`<!doctype html>${body}`);
     if (path === '/robots.txt') response.writeHead(200, { 'Content-Type': 'text/plain' }).end('User-agent: *\nAllow: /\n');
+    else if (path === '/pushes')
+      html(`<html lang="en"><title>Pushes</title><button id="push">Push later</button><script>
+        document.getElementById('push').addEventListener('click', () => setTimeout(() => history.pushState({}, '', '/pushes?moved=1'), 2500));
+      </script></html>`);
+    else if (path === '/fullscreen')
+      html(`<html lang="en"><title>Fullscreen</title><button id="go">Go fullscreen</button><script>
+        document.getElementById('go').addEventListener('click', () => setTimeout(() => document.documentElement.requestFullscreen(), 700));
+      </script></html>`);
     else if (path === '/greedy')
       html(`<html lang="en"><title>Greedy</title><input id="field" autofocus><script>
         window.seen = [];
@@ -56,7 +79,7 @@ async function startSiteServer() {
 let app: ElectronApplication;
 let page: Page;
 let site: Awaited<ReturnType<typeof startSiteServer>>;
-const { go, contentsIdAt, menu, press, strip, activeTab, address, closeAllTabs, run } = chromeHelpers(
+const { go, contentsIdAt, menu, press, strip, activeTab, address, closeAllTabs, run, realClick } = chromeHelpers(
   () => app,
   () => page,
 );
@@ -239,12 +262,8 @@ test('palette-copy-writes-main-clipboard', async () => {
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain('"@type": "Organization"');
 });
 
-test('palette-open-in-opens-a-background-tab', async () => {
-  const pageUrl = `${site.origin}/page`;
-  await go(pageUrl);
-  await contentsIdAt(pageUrl);
-  await expect(activeTab()).toHaveAttribute('title', TITLE);
-  // Requests to the tools' hosts never leave the test: recorded, then cancelled.
+/** Records and cancels the browse session's requests to the tools' hosts (they never leave the test). */
+async function interceptTools(): Promise<{ seen: () => Promise<string[]>; stop: () => Promise<void> }> {
   const hosts = [...new Set(OPEN_IN_TEMPLATES.map((t) => new URL(t.origin).host))];
   await app.evaluate(
     ({ session }, { partition, hosts }) => {
@@ -257,34 +276,206 @@ test('palette-open-in-opens-a-background-tab', async () => {
     },
     { partition: BROWSE_PARTITION, hosts },
   );
-  const seen = () => app.evaluate(() => (globalThis as { __paletteSeen?: string[] }).__paletteSeen ?? []);
+  return {
+    seen: () => app.evaluate(() => (globalThis as { __paletteSeen?: string[] }).__paletteSeen ?? []),
+    stop: () => app.evaluate(({ session }, partition) => session.fromPartition(partition).webRequest.onBeforeRequest(null), BROWSE_PARTITION),
+  };
+}
+
+test('palette-open-in-asks-first-and-opens', async () => {
+  // A page on a public name, served by the test itself (no network, no recorded address).
+  await app.evaluate(({ session }, partition) => {
+    session.fromPartition(partition).protocol.handle('http', () => new Response('<!doctype html><html lang="en"><title>A public article</title><h1>Article</h1></html>', { headers: { 'content-type': 'text/html; charset=utf-8' } }));
+  }, BROWSE_PARTITION);
+  await page.evaluate((key) => localStorage.removeItem(key), OPEN_IN_CONSENT_STORAGE_KEY);
+  const tools = await interceptTools();
+  const pageUrl = `http://${PUBLIC_HOST}/article?topic=tea`;
   try {
+    await go(pageUrl);
+    await contentsIdAt(pageUrl);
+    await expect(activeTab()).toHaveAttribute('title', 'A public article');
     await press('chrome', 'K', ['mod']);
-    await input().fill('rich results');
+    // The destination host is in the label: matched and highlighted.
+    await input().fill('rich google');
     await expect(activeOption()).toHaveAttribute('data-action', 'open-in.rich-results');
-    await expect(activeOption().getByTestId('command-palette-detail')).toContainText('search.google.com');
+    await expect(activeOption()).toContainText('Rich results test — search.google.com');
+    await expect(activeOption().locator('mark').filter({ hasText: /google/i })).toHaveCount(1);
+    await expect(activeOption().getByTestId('command-palette-detail')).toContainText('query string');
+
+    // First use of the host: asked, inline, with the query note; Back sends nothing.
     await input().press('Enter');
+    const confirm = page.getByTestId('command-palette-confirm');
+    await expect(confirm).toBeVisible();
+    await expect(page.getByTestId('command-palette-confirm-message')).toHaveText(OPEN_IN_CONSENT_MESSAGE.replace('{host}', 'search.google.com'));
+    await expect(page.getByTestId('command-palette-confirm-note')).toHaveText(OPEN_IN_QUERY_NOTE);
+    await expect(page.getByTestId('command-palette-confirm-accept')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(confirm).toHaveCount(0);
+    await expect(palette()).toBeVisible();
+    await expect(input()).toBeFocused();
+    await expect(activeOption()).toHaveAttribute('data-action', 'open-in.rich-results');
+    expect(await tools.seen()).toEqual([]);
+    await expect(strip()).toHaveCount(1);
+
+    // Confirmed: one background tab, the page's tab still active, its request exactly the template's URL.
+    await input().press('Enter');
+    await expect(page.getByTestId('command-palette-confirm-accept')).toBeFocused();
+    await page.keyboard.press('Enter');
     await expect(palette()).toHaveCount(0);
-    // One background tab, the page's tab still active; its request is exactly the template's URL.
     await expect(strip()).toHaveCount(2);
     await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
     await expect(strip().nth(1)).toHaveAttribute('aria-selected', 'false');
     const expected = `https://search.google.com/test/rich-results?url=${encodeURIComponent(pageUrl)}`;
-    await expect.poll(seen).toEqual([expected]);
-    expect(new URL(expected).protocol).toBe('https:');
+    await expect.poll(tools.seen).toEqual([expected]);
     await expect(page.getByTestId('command-palette-status')).toHaveText('Opened search.google.com in a background tab');
+    expect(await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]') as unknown, OPEN_IN_CONSENT_STORAGE_KEY)).toEqual(['search.google.com']);
+
+    // The same host again: no question.
+    await press('chrome', 'K', ['mod']);
+    await input().fill('rich results');
+    await input().press('Enter');
+    await expect(palette()).toHaveCount(0);
+    await expect(strip()).toHaveCount(3);
+    await expect.poll(async () => (await tools.seen()).length).toBe(2);
   } finally {
-    await app.evaluate(({ session }, partition) => session.fromPartition(partition).webRequest.onBeforeRequest(null), BROWSE_PARTITION);
+    await tools.stop();
+    await app.evaluate(({ session }, partition) => session.fromPartition(partition).protocol.unhandle('http'), BROWSE_PARTITION);
+  }
+});
+
+test('palette-open-in-refuses-a-private-page', async () => {
+  // A public-looking name that resolved to a loopback address.
+  await page.evaluate((key) => localStorage.setItem(key, JSON.stringify(['search.google.com'])), OPEN_IN_CONSENT_STORAGE_KEY);
+  const pageUrl = `${site.origin}/page`;
+  await go(pageUrl);
+  await contentsIdAt(pageUrl);
+  await expect(activeTab()).toHaveAttribute('title', TITLE);
+  const tools = await interceptTools();
+  try {
+    await press('chrome', 'K', ['mod']);
+    await input().fill('rich results');
+    await expect(activeOption()).toHaveAttribute('data-action', 'open-in.rich-results');
+    await input().press('Enter');
+    await expect(palette()).toHaveCount(0);
+    await expect(page.getByTestId('command-palette-status')).toHaveText(OPEN_TOOL_REFUSAL_MESSAGES['private-address']);
+    await expect(strip()).toHaveCount(1);
+    expect(await tools.seen()).toEqual([]);
+  } finally {
+    await tools.stop();
   }
 
-  // The site's robots.txt: on the page's own origin.
+  // The site's own robots.txt is not a third party: it opens, on the page's own origin.
   await press('chrome', 'K', ['mod']);
   await input().fill('robots.txt');
   await expect(activeOption()).toHaveAttribute('data-action', 'open-in.robots-txt');
   await input().press('Enter');
-  await expect(strip()).toHaveCount(3);
+  await expect(strip()).toHaveCount(2);
   await contentsIdAt(`${site.origin}/robots.txt`);
   await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
+});
+
+test('palette-selection-survives-list-changes', async () => {
+  const pageUrl = `${site.origin}/pushes`;
+  await go(pageUrl);
+  const id = await contentsIdAt(pageUrl);
+  await expect(activeTab()).toHaveAttribute('title', 'Pushes');
+  // A real click; a moment later the page itself calls pushState (with that activation), which
+  // makes "Go back" appear above the selection.
+  await realClick(id, '#push');
+  await press('chrome', 'K', ['mod']);
+  await expect(palette()).toBeVisible();
+  const back = page.locator('[data-testid="command-palette-option"][data-action="page.back"]');
+  await expect(back).toHaveCount(0);
+  // Select "Zoom in" with the pointer (a real move picks a row).
+  const zoomIn = page.locator('[data-testid="command-palette-option"][data-action="page.zoom-in"]');
+  await zoomIn.hover({ position: { x: 30, y: 10 } });
+  await zoomIn.hover({ position: { x: 40, y: 14 } });
+  await expect(activeOption()).toHaveAttribute('data-action', 'page.zoom-in');
+  await expect(back).toHaveCount(0);
+  // The list changes under it: the selection stays on "Zoom in", and Enter runs exactly that.
+  await expect(back).toHaveCount(1);
+  await expect(activeOption()).toHaveAttribute('data-action', 'page.zoom-in');
+  await input().press('Enter');
+  await expect(palette()).toHaveCount(0);
+  const zoom = () => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.getZoomFactor(), id);
+  await expect.poll(zoom).toBeCloseTo(1.1, 5);
+  expect(await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.getURL(), id)).toBe(`${site.origin}/pushes?moved=1`);
+  // Zoom is per host: put it back for the other tests.
+  await menu('zoom-reset');
+  await expect.poll(zoom).toBe(1);
+});
+
+test('palette-closes-when-the-page-goes-fullscreen', async () => {
+  const pageUrl = `${site.origin}/fullscreen`;
+  await go(pageUrl);
+  const id = await contentsIdAt(pageUrl);
+  const windowFullscreen = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFullScreen());
+  // A real click (the page's gesture); the page asks for fullscreen a moment later.
+  await realClick(id, '#go');
+  await press('chrome', 'K', ['mod']);
+  await expect(palette()).toBeVisible();
+  try {
+    await expect.poll(windowFullscreen).toBe(true);
+    await expect(palette()).toHaveCount(0);
+    // Focus was not put back into the hidden chrome.
+    expect(await page.evaluate(() => document.activeElement === document.body || document.activeElement === null)).toBe(true);
+  } finally {
+    await run(id, 'document.fullscreenElement ? document.exitFullscreen() : null');
+    await expect.poll(windowFullscreen).toBe(false);
+  }
+});
+
+test('palette-clear-browsing-data-asks-once', async () => {
+  await go(`${site.origin}/page`);
+  await contentsIdAt(`${site.origin}/page`);
+  const cookie = () =>
+    app.evaluate(async ({ session }, { partition, url }) => (await session.fromPartition(partition).cookies.get({ url, name: 'kept' })).length, { partition: BROWSE_PARTITION, url: site.origin });
+  await app.evaluate(async ({ session }, { partition, url }) => session.fromPartition(partition).cookies.set({ url, name: 'kept', value: '1', expirationDate: Date.now() / 1000 + 3600 }), {
+    partition: BROWSE_PARTITION,
+    url: site.origin,
+  });
+  expect(await cookie()).toBe(1);
+  await page.evaluate((key) => localStorage.setItem(key, JSON.stringify(['search.google.com'])), OPEN_IN_CONSENT_STORAGE_KEY);
+  // Main's message box answers for the test (Cancel, then Clear); every question is counted.
+  const answer = (index: number) =>
+    app.evaluate(({ dialog }, index) => {
+      const holder = globalThis as { __paletteBoxes?: number; __paletteBox?: typeof dialog.showMessageBox };
+      holder.__paletteBox ??= dialog.showMessageBox;
+      holder.__paletteBoxes = 0;
+      dialog.showMessageBox = (async () => {
+        holder.__paletteBoxes! += 1;
+        return { response: index, checkboxChecked: false };
+      }) as typeof dialog.showMessageBox;
+    }, index);
+  const asked = () => app.evaluate(() => (globalThis as { __paletteBoxes?: number }).__paletteBoxes ?? 0);
+  const runClear = async () => {
+    await press('chrome', 'K', ['mod']);
+    await input().fill('clear browsing');
+    await expect(activeOption()).toHaveAttribute('data-action', 'browser.clear-data');
+    await input().press('Enter');
+    await expect(palette()).toHaveCount(0);
+  };
+  try {
+    await answer(CLEAR_BROWSING_DATA.dialog.cancelId);
+    await runClear();
+    await expect.poll(asked).toBe(1);
+    // Give a (wrong) clear time to happen: nothing was cleared, and it asked exactly once.
+    await page.waitForTimeout(500);
+    expect(await cookie()).toBe(1);
+    expect(await asked()).toBe(1);
+
+    await answer(CLEAR_BROWSING_DATA.confirmIndex);
+    await runClear();
+    await expect.poll(cookie).toBe(0);
+    expect(await asked()).toBe(1);
+    // The "Open in" answers are a preference, not browsing data: still remembered.
+    expect(await page.evaluate((key) => localStorage.getItem(key), OPEN_IN_CONSENT_STORAGE_KEY)).toBe(JSON.stringify(['search.google.com']));
+  } finally {
+    await app.evaluate(({ dialog }) => {
+      const holder = globalThis as { __paletteBox?: typeof dialog.showMessageBox };
+      if (holder.__paletteBox) dialog.showMessageBox = holder.__paletteBox;
+    });
+  }
 });
 
 test('palette-esc-closes-and-restores-focus', async () => {

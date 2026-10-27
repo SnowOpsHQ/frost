@@ -197,6 +197,8 @@ function start(): void {
     // The command palette's Clear Browsing Data… (specs/command-palette.feature.md): the menu's own,
     // confirming action, set up once the app is ready (below).
     clearBrowsingData: () => void clearBrowsingData?.(),
+    // "Open in" refuses a page from a non-public address (specs/command-palette.feature.md).
+    pageAddress: (contents) => responses.addressFor(contents.id),
     renderProfiles,
   });
 

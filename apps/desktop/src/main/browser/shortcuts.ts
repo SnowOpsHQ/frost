@@ -17,6 +17,8 @@ export interface KeyInput {
   readonly meta: boolean;
   readonly shift: boolean;
   readonly alt: boolean;
+  /** A key-down repeated by holding the key (Electron's `Input.isAutoRepeat`). */
+  readonly isAutoRepeat?: boolean;
 }
 
 /** The physical key, from `code`, else (input without one) guessed from `key` on a US layout. */

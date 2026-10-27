@@ -10,7 +10,7 @@ import {
   WatchInputSchema,
   type BrowserState,
 } from '@app/specs/browser.spec';
-import { PageCommandInputSchema, SeoCopyValueInputSchema } from '@app/specs/command-palette.schema';
+import { OpenToolInputSchema, PageCommandInputSchema, SeoCopyValueInputSchema } from '@app/specs/command-palette.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app/specs/render-profile.schema.spec';
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
@@ -163,6 +163,16 @@ const browserRouter = router({
     .mutation(({ ctx }) => {
       ctx.browser.clearBrowsingData();
       return null;
+    }),
+  // "Open in" a tool (`command-palette.feature.md`): only a table id; main builds the URL and checks
+  // where the page came from (`OpenToolResult`).
+  openTool: publicProcedure
+    .use(enforceSender)
+    .use(requireBrowser)
+    .input(OpenToolInputSchema)
+    .mutation(({ ctx, input }) => {
+      if (!ctx.browser.openTool) throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'openTool unavailable' });
+      return ctx.browser.openTool(input.tool);
     }),
   // Render profiles (Phase 2.5 Task 1, `render-profile.feature.md`): whether the tab's profile was set /
   // whether it had one to clear.

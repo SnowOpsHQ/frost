@@ -2,8 +2,9 @@
 // Acceptance: specs/command-palette.feature.md (Open in)
 import { describe, expect, test } from 'vitest';
 import { ADDRESS_INPUT_MAX_LENGTH } from '@app/specs/browser.spec';
-import { OPEN_IN_TEMPLATES, OPEN_IN_URL_MAX_LENGTH, SITE_FILES } from '@app/specs/command-palette.spec';
-import { isPublicHost, openInUrl, pageUrlToSend, siteFileUrl } from '../open-in';
+import { OPEN_IN_TEMPLATES, OPEN_IN_URL_MAX_LENGTH, openInLabel, SITE_FILES, type OpenInTemplate } from '@app/specs/command-palette.spec';
+import { NON_PUBLIC_IPV4_BLOCKS, NON_PUBLIC_NAME_SUFFIXES, parseIpv4 } from '@app/specs/open-in.spec';
+import { isPublicAddress, isPublicHost, openInUrl, pageUrlToSend, sendsQuery, siteFileUrl } from '../open-in';
 
 const PAGE = 'https://www.example.com/guides/seo basics?ref=nav&x=1';
 
@@ -55,15 +56,15 @@ describe('open in', () => {
 
   test('open-in-host-never-page-controlled', () => {
     const hostile = [
-      'https://evil.example/?url=https://other.example/&doc=x',
-      'https://evil.example/#@search.google.com',
-      'https://evil.example/%2F%2Fattacker.example',
-      'https://evil.example/a/..%2f..%2fb',
-      'https://xn--bcher-kva.example/ü?q=ä',
+      'https://evil.example.net/?url=https://other.example/&doc=x',
+      'https://evil.example.net/#@search.google.com',
+      'https://evil.example.net/%2F%2Fattacker.example',
+      'https://evil.example.net/a/..%2f..%2fb',
+      'https://xn--bcher-kva.example.net/ü?q=ä',
       'https://[2606:4700::1111]/x',
-      'https://evil.example:8443/path;matrix?x=%00',
-      `https://evil.example/${'@'.repeat(40)}`,
-      'https://evil.example/‮exe.html',
+      'https://evil.example.net:8443/path;matrix?x=%00',
+      `https://evil.example.net/${'@'.repeat(40)}`,
+      'https://evil.example.net/‮exe.html',
     ];
     for (const template of OPEN_IN_TEMPLATES) {
       for (const page of hostile) {
@@ -110,8 +111,77 @@ describe('open in', () => {
     expect(siteFileUrl(robots, 'https://user:pw@www.example.com/')).toBe('https://www.example.com/robots.txt');
     for (const file of SITE_FILES) {
       expect(file.path.startsWith('/') && !file.path.startsWith('//')).toBe(true);
-      for (const page of ['https://evil.example/@other.example', 'https://evil.example/#//other.example/']) expect(new URL(siteFileUrl(file, page)!).host).toBe('evil.example');
+      for (const page of ['https://evil.example.net/@other.example', 'https://evil.example.net/#//other.example/']) expect(new URL(siteFileUrl(file, page)!).host).toBe('evil.example.net');
       for (const page of ['', 'about:blank', 'app://app/', 'file:///x']) expect(siteFileUrl(file, page)).toBeNull();
     }
+  });
+
+  test('public-host-probes', () => {
+    const dotted = (n: number) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+    for (const [base, prefix] of NON_PUBLIC_IPV4_BLOCKS) {
+      const first = parseIpv4(base)!;
+      const last = first + 2 ** (32 - prefix) - 1;
+      for (const inside of [first, last]) {
+        expect(isPublicHost(dotted(inside)), `${dotted(inside)} in ${base}/${prefix}`).toBe(false);
+        expect(isPublicAddress(dotted(inside)), dotted(inside)).toBe(false);
+        expect(isPublicAddress(`::ffff:${dotted(inside)}`), `mapped ${dotted(inside)}`).toBe(false);
+        expect(isPublicAddress(`64:ff9b::${dotted(inside)}`), `nat64 ${dotted(inside)}`).toBe(false);
+      }
+      // Both neighbours just outside are public, unless they belong to another listed block.
+      for (const outside of [first - 1, last + 1]) {
+        if (outside < 0 || outside > 0xffffffff) continue;
+        const listed = NON_PUBLIC_IPV4_BLOCKS.some(([b, p]) => outside >= parseIpv4(b)! && outside < parseIpv4(b)! + 2 ** (32 - p));
+        if (!listed) expect(isPublicAddress(dotted(outside)), `${dotted(outside)} next to ${base}/${prefix}`).toBe(true);
+      }
+    }
+    // The blocks the review listed, by name.
+    for (const address of ['198.18.0.1', '198.19.255.254', '192.0.0.8', '224.0.0.251', '239.255.255.250', '240.0.0.1', '255.255.255.255']) expect(isPublicAddress(address), address).toBe(false);
+    for (const address of ['198.17.255.255', '198.20.0.0', '192.0.1.0', '223.255.255.255', '8.8.8.8', '1.1.1.1']) expect(isPublicAddress(address), address).toBe(true);
+    // IPv6, as URL host literals (normalised by URL) and as Chromium's `ip` text.
+    const nonPublicV6 = ['::', '::1', '::127.0.0.1', '::8.8.8.8', '::ffff:10.0.0.1', '::ffff:192.168.1.1', '64:ff9b::192.168.0.1', '64:ff9b::7f00:1', '100::1', '2001:db8::1', 'fc00::1', 'fd12:3456::1', 'fe80::1', 'febf::1', 'fec0::1', 'feff::1', 'ff02::1', 'ff0e::fb', 'fe80::1%eth0'];
+    for (const address of nonPublicV6) {
+      expect(isPublicAddress(address), address).toBe(false);
+      expect(isPublicAddress(`[${address}]`), `[${address}]`).toBe(false);
+      if (!address.includes('%')) expect(isPublicHost(new URL(`https://[${address}]/`).hostname), `host [${address}]`).toBe(false);
+    }
+    for (const address of ['2606:4700::1111', '2001:4860:4860::8888', '::ffff:8.8.8.8', '64:ff9b::8.8.8.8', 'fbff::1', 'fe00::1']) {
+      expect(isPublicAddress(address), address).toBe(true);
+      expect(isPublicHost(new URL(`https://[${address}]/`).hostname), `host [${address}]`).toBe(true);
+    }
+    // Garbage is never public.
+    for (const address of ['', 'not-an-ip', '1.2.3', '256.1.1.1', '1:2:3:4:5:6:7:8:9', '::1::2', 'g::1', '01.2.3.4']) expect(isPublicAddress(address), JSON.stringify(address)).toBe(false);
+    // Names: every listed suffix (and the bare suffix) is not public; a public name that merely contains one is.
+    for (const suffix of NON_PUBLIC_NAME_SUFFIXES) {
+      expect(isPublicHost(`www${suffix}`), `www${suffix}`).toBe(false);
+      expect(isPublicHost(`a.b${suffix}.`), `a.b${suffix}.`).toBe(false);
+      expect(isPublicHost(`www${suffix.replace(/\./g, '-')}.com`), `${suffix} inside a public name`).toBe(true);
+    }
+    for (const host of ['router.localdomain', 'api.test', 'x.invalid', 'abcdefghijklmnop.onion', 'shop.example']) expect(isPublicHost(host), host).toBe(false);
+  });
+
+  test('open-in-rejects-malformed-templates', () => {
+    const good: OpenInTemplate = { id: 'probe', label: 'Probe', keywords: [], origin: 'https://tool.example.com', path: '/check', urlParam: 'url', params: {} };
+    expect(openInUrl(good, PAGE)).toMatch(/^https:\/\/tool\.example\.com\/check\?url=/);
+    const malformed: OpenInTemplate[] = [
+      { ...good, path: '//evil.example.net/check' },
+      { ...good, path: 'https://evil.example.net/check' },
+      { ...good, path: 'check' },
+      { ...good, path: '/a/../check' },
+      { ...good, origin: 'http://tool.example.com' },
+      { ...good, origin: 'https://tool.example.com/base' },
+      { ...good, origin: 'https://user@tool.example.com' },
+      { ...good, origin: 'not a url' },
+    ];
+    for (const template of malformed) expect(openInUrl(template, PAGE), `${template.origin} ${template.path}`).toBeNull();
+  });
+
+  test('open-in-label-names-the-host', () => {
+    for (const template of OPEN_IN_TEMPLATES) expect(openInLabel(template)).toBe(`${template.label} — ${new URL(template.origin).host}`);
+    expect(openInLabel(OPEN_IN_TEMPLATES.find((t) => t.id === 'rich-results')!)).toBe('Rich results test — search.google.com');
+    expect(sendsQuery('https://www.example.com/a?q=1')).toBe(true);
+    expect(sendsQuery('https://www.example.com/a?')).toBe(false);
+    expect(sendsQuery('https://www.example.com/a#?q=1')).toBe(false);
+    expect(sendsQuery('https://www.example.com/a')).toBe(false);
+    expect(sendsQuery('http://localhost/a?q=1')).toBe(false);
   });
 });

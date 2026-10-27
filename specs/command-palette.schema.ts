@@ -4,7 +4,7 @@
  * only. The plain values are `command-palette.spec.ts`.
  */
 import { z } from 'zod';
-import { COPY_VALUE_KEYS } from './command-palette.spec';
+import { COPY_VALUE_KEYS, OPEN_IN_TEMPLATE_IDS } from './command-palette.spec';
 import { PAGE_COMMANDS } from './page-commands.spec';
 import { SeoAuditRefSchema } from './seo-snapshot.spec';
 
@@ -23,3 +23,11 @@ export type SeoCopyValueInput = z.infer<typeof SeoCopyValueInputSchema>;
  */
 export const PageCommandInputSchema = z.strictObject({ command: z.enum(PAGE_COMMANDS) });
 export type PageCommandInput = z.infer<typeof PageCommandInputSchema>;
+
+/**
+ * `browser.openTool` input: one `OPEN_IN_TEMPLATES` id. Main builds the URL from the table and the
+ * active tab's own URL (never a URL from the chrome) and refuses a page that came from a non-public
+ * address (`OPEN_TOOL_REFUSALS`).
+ */
+export const OpenToolInputSchema = z.strictObject({ tool: z.enum(OPEN_IN_TEMPLATE_IDS) });
+export type OpenToolInput = z.infer<typeof OpenToolInputSchema>;

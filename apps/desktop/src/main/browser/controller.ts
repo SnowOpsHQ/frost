@@ -2,7 +2,8 @@ import type { SavedSession } from '@app/db';
 import type { BrowserService, SeoService } from '@app/ipc-contract';
 import { copyValueOf, filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
-import type { PaletteReturnFocus } from '@app/specs/command-palette.spec';
+import { OPEN_IN_TEMPLATES, type OpenInTemplateId, type OpenToolResult, type PaletteReturnFocus } from '@app/specs/command-palette.spec';
+import { isPublicAddress, openInUrl } from '@app/specs/open-in.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
@@ -118,6 +119,8 @@ export interface BrowserController extends BrowserService {
    * window or while the active tab is in HTML fullscreen.
    */
   openCommandPalette(): void;
+  /** "Open in" a tool for the active tab (`BrowserService.openTool`; always present in main). */
+  openTool(tool: OpenInTemplateId): OpenToolResult;
   /**
    * The tabs' SEO audits, highlight overlays and copy commands, as the `seo.*` procedures see them
    * (`seo-sidebar.feature.md`, Auditor; `seo-panels.feature.md`).
@@ -182,6 +185,12 @@ export interface BrowserControllerOptions {
    * asks first): `browser.clearBrowsingData` from the command palette runs it. Without it, a no-op.
    */
   readonly clearBrowsingData?: () => void;
+  /**
+   * The IP address a tab's current document came from (the response recorder's `addressFor`), or
+   * `null` when unknown: `browser.openTool` refuses a page from a non-public address. Without it,
+   * every address is unknown (the name check alone decides).
+   */
+  readonly pageAddress?: (contents: TabView['webContents']) => string | null;
   /**
    * Per-tab render profiles (`render-profile.feature.md`): the tab debugger factory, the site pins and
    * the app's Chromium version. Without it `browser.setRenderProfile` is a no-op answering `false`.
@@ -718,6 +727,25 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed();
   };
 
+  /**
+   * "Open in" a tool (`browser.openTool`, `command-palette.spec.ts`): its URL from the table and the
+   * active tab's own URL, opened in a background tab right of it; refused for no web page, a
+   * non-public name, a document from a non-public address, or no tab opened.
+   */
+  const openTool = (tool: OpenInTemplateId): OpenToolResult => {
+    const template = OPEN_IN_TEMPLATES.find((t) => t.id === tool);
+    const tab = activeTab();
+    const view = tab ? liveView(tab) : null;
+    const contents = view ? aliveContents(view) : undefined;
+    if (!template || !tab || !contents || !hasWindow() || !showsPage(tab) || !isWebUrl(tab.state.url)) return { status: 'refused', reason: 'no-page' };
+    const url = openInUrl(template, tab.state.url);
+    if (url === null) return { status: 'refused', reason: 'not-public' };
+    const address = options.pageAddress?.(contents) ?? null;
+    if (address !== null && !isPublicAddress(address)) return { status: 'refused', reason: 'private-address' };
+    const id = openTabRightOf(tab, url);
+    return id === null ? { status: 'refused', reason: 'not-opened' } : { status: 'opened', tabId: id };
+  };
+
   /** Focus back to the page the palette was opened from (`browser.focusPage`). */
   const focusPage = (): boolean => {
     const view = hasWindow() ? shownView() : null;
@@ -766,6 +794,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (!shortcut && !page && !sidebar) return;
     event.preventDefault();
     if (input.type !== 'keyDown') return;
+    // A held Mod+K toggles the palette once (`command-palette.spec.ts`).
+    if (shortcut?.command === 'command-palette' && input.isAutoRepeat === true) return;
     if (shortcut) runShortcut(shortcut);
     else if (page) runPageCommand(page);
     else toggleSidebar();
@@ -874,6 +904,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     focusPage,
 
     clearBrowsingData: () => options.clearBrowsingData?.(),
+
+    openTool,
 
     openBackgroundTab,
 

@@ -5,12 +5,15 @@ import type { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { copyValueOf } from '@app/seo-core';
 import { BrowserStateSchema } from '@app/specs/browser.spec';
-import { COPY_VALUE_KEYS } from '@app/specs/command-palette.spec';
+import { COPY_VALUE_KEYS, OPEN_IN_TEMPLATES } from '@app/specs/command-palette.spec';
+import { openInUrl } from '@app/specs/open-in.spec';
+import { MAX_TABS } from '@app/specs/tabs.spec';
 import { AUDIT_DEBOUNCE_MS } from '@app/specs/seo-limits.spec';
 import { commit, FakeHostWindow, FakeTabView } from '../../../test/controller-fakes';
 import { fakeEvent } from '../../../test/electron-fake';
 import { rawSnapshot } from '../../../test/seo-fakes';
 import { analyseSnapshot } from '../../seo/analyse';
+import { createResponseRecorder } from '../../seo/responses';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../controller';
 
 let views: FakeTabView[];
@@ -18,8 +21,11 @@ let win: FakeHostWindow;
 let controller: BrowserController;
 let clipboard: { writeText: ReturnType<typeof vi.fn<(text: string) => void>> };
 let clearBrowsingData: ReturnType<typeof vi.fn<() => void>>;
+/** The address each tab's document came from, as the response recorder would answer (by WebContents). */
+let addresses: Map<unknown, string | null>;
 
 function create(options: { clear?: boolean } = {}) {
+  addresses = new Map();
   views = [];
   win = new FakeHostWindow();
   clipboard = { writeText: vi.fn<(text: string) => void>() };
@@ -33,6 +39,7 @@ function create(options: { clear?: boolean } = {}) {
     platform: 'linux',
     seo: { extract: async (contents) => rawSnapshot((contents as unknown as { url: string }).url), analyse: async (raw) => analyseSnapshot(raw) },
     clipboard,
+    pageAddress: (contents) => addresses.get(contents) ?? null,
     ...(options.clear === false ? {} : { clearBrowsingData }),
   });
   controller.attach(win as unknown as HostWindow);
@@ -98,6 +105,104 @@ describe('command palette (controller)', () => {
       expect(event.defaultPrevented, JSON.stringify(input)).toBe(false);
     }
     expect(palette().seq).toBe(3);
+  });
+
+  test('palette-shortcut-ignores-auto-repeat', () => {
+    const chrome = win.webContents as unknown as EventEmitter;
+    chrome.emit('before-input-event', fakeEvent(), key('k', { control: true }));
+    expect(palette().seq).toBe(1);
+    // Held down: the repeats are consumed (the page never gets them) and change nothing.
+    for (let i = 0; i < 3; i++) {
+      const repeat = fakeEvent();
+      chrome.emit('before-input-event', repeat, { ...key('k', { control: true }), isAutoRepeat: true });
+      expect(repeat.defaultPrevented).toBe(true);
+    }
+    expect(palette().seq).toBe(1);
+    chrome.emit('before-input-event', fakeEvent(), key('k', { control: true }, 'keyUp'));
+    chrome.emit('before-input-event', fakeEvent(), { ...key('k', { control: true }), isAutoRepeat: false });
+    expect(palette().seq).toBe(2);
+  });
+
+  test('open-tool-builds-from-the-table-and-the-active-tab', () => {
+    // No page.
+    expect(controller.openTool('rich-results')).toEqual({ status: 'refused', reason: 'no-page' });
+    const page = 'https://www.example.com/guide?x=1';
+    const contents = loadPage(page);
+    addresses.set(contents, '93.184.216.34');
+    const before = controller.getState().tabs.length;
+    for (const template of OPEN_IN_TEMPLATES) {
+      const result = controller.openTool(template.id);
+      expect(result.status, template.id).toBe('opened');
+      const opened = views.at(-1)!.contents;
+      expect(opened.loadURL).toHaveBeenLastCalledWith(openInUrl(template, page));
+      // A background tab: the page's tab stays active.
+      expect(controller.getState().activeTabId).toBe(controller.getState().tabs[0]!.id);
+    }
+    expect(controller.getState().tabs.length).toBe(before + OPEN_IN_TEMPLATES.length);
+
+    // A non-public name: refused, nothing opened.
+    create();
+    const local = loadPage('http://printer.local/status');
+    addresses.set(local, null);
+    expect(controller.openTool('rich-results')).toEqual({ status: 'refused', reason: 'not-public' });
+    expect(controller.getState().tabs).toHaveLength(1);
+
+    // The tab limit.
+    create();
+    loadPage(page);
+    for (let i = controller.getState().tabs.length; i < MAX_TABS; i++) controller.openBackgroundTab(`https://www.example.com/${i}`);
+    expect(controller.openTool('rich-results')).toEqual({ status: 'refused', reason: 'not-opened' });
+  });
+
+  test('open-tool-refuses-private-addresses', () => {
+    const page = 'https://intranet-looks-public.example.com/';
+    for (const address of ['10.1.2.3', '192.168.0.10', '127.0.0.1', '::1', '[fd00::1]', '169.254.1.1', '100.64.0.1', '::ffff:192.168.1.1', 'garbage']) {
+      create();
+      const contents = loadPage(page);
+      addresses.set(contents, address);
+      expect(controller.openTool('page-speed'), address).toEqual({ status: 'refused', reason: 'private-address' });
+      expect(controller.getState().tabs, address).toHaveLength(1);
+    }
+    for (const address of ['93.184.216.34', '2606:4700::1111', null]) {
+      create();
+      const contents = loadPage(page);
+      addresses.set(contents, address);
+      expect(controller.openTool('page-speed').status, String(address)).toBe('opened');
+    }
+  });
+
+  test('response-recorder-keeps-the-address', () => {
+    const recorder = createResponseRecorder();
+    const url = 'https://www.example.com/a';
+    const respond = (id: number, ip: string | undefined) =>
+      recorder.responded({ id, url, webContentsId: 7, resourceType: 'mainFrame', statusCode: 200, fromCache: false, responseHeaders: {}, ...(ip === undefined ? {} : { ip }) } as unknown as Parameters<typeof recorder.responded>[0]);
+    expect(recorder.addressFor(7)).toBeNull();
+    respond(1, '192.168.1.20');
+    recorder.committed(7, url, 200);
+    expect(recorder.addressFor(7)).toBe('192.168.1.20');
+    // An in-page navigation keeps the document, so its address.
+    expect(recorder.responseFor(7, `${url}#x`)).not.toBeNull();
+    expect(recorder.addressFor(7)).toBe('192.168.1.20');
+    // A new document without an address (no ip reported): unknown.
+    respond(2, undefined);
+    recorder.committed(7, url, 200);
+    expect(recorder.addressFor(7)).toBeNull();
+    // A back/forward restore main never saw a response for: unknown.
+    respond(3, '10.0.0.1');
+    recorder.committed(7, url, 200);
+    expect(recorder.addressFor(7)).toBe('10.0.0.1');
+    recorder.committed(7, 'https://www.example.com/other', 200);
+    expect(recorder.addressFor(7)).toBeNull();
+    // Garbage is kept as text (it is then not public), cut to a sane length.
+    respond(4, 'x'.repeat(500));
+    recorder.committed(7, url, 200);
+    expect(recorder.addressFor(7)!.length).toBeLessThanOrEqual(64);
+    recorder.forget(7);
+    expect(recorder.addressFor(7)).toBeNull();
+    respond(5, '10.0.0.1');
+    recorder.committed(7, url, 200);
+    recorder.clear();
+    expect(recorder.addressFor(7)).toBeNull();
   });
 
   test('palette-not-opened-in-fullscreen', () => {

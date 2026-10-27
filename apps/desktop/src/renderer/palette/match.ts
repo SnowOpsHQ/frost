@@ -32,8 +32,15 @@ const GAP_PENALTY = 1;
 const LEAD_PENALTY = 0.5;
 const POSITION_PENALTY = 0.5;
 const LENGTH_PENALTY = 0.5;
-/** A keyword match counts this much of a label match (and highlights nothing). */
+/**
+ * Every label match sits in a band above every keyword match: the spec has label matches beat
+ * keyword matches, whatever kind each one is. A label word scores `LABEL_BAND` plus its score
+ * (never below `-TEXT_MAX * LENGTH_PENALTY`); a keyword word scores `KEYWORD_WEIGHT` of its own,
+ * clamped to `[0, KEYWORD_MAX)` (and highlights nothing).
+ */
+const LABEL_BAND = 10_000;
 const KEYWORD_WEIGHT = 0.6;
+const KEYWORD_MAX = LABEL_BAND - 1_000;
 /** Longest text matched against (labels and keywords are short; this bounds the alignment). */
 const TEXT_MAX = 256;
 
@@ -162,13 +169,13 @@ export function matchAction(query: string, action: { readonly label: string; rea
   const indices = new Set<number>();
   for (const word of words) {
     const onLabel = matchWord(word, label);
-    let best = onLabel ? onLabel.score : Number.NEGATIVE_INFINITY;
-    let fromLabel = onLabel !== null;
-    for (const keyword of keywords) {
-      const onKeyword = matchWord(word, keyword);
-      if (onKeyword && onKeyword.score * KEYWORD_WEIGHT > best) {
-        best = onKeyword.score * KEYWORD_WEIGHT;
-        fromLabel = false;
+    let best = onLabel ? LABEL_BAND + onLabel.score : Number.NEGATIVE_INFINITY;
+    const fromLabel = onLabel !== null;
+    // A keyword only counts when the label does not match this word at all.
+    if (!fromLabel) {
+      for (const keyword of keywords) {
+        const onKeyword = matchWord(word, keyword);
+        if (onKeyword) best = Math.max(best, Math.min(KEYWORD_MAX - 1, Math.max(0, onKeyword.score * KEYWORD_WEIGHT)));
       }
     }
     if (best === Number.NEGATIVE_INFINITY) return null;

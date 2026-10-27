@@ -2,7 +2,7 @@ import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
 import type { LinkFilter } from '@app/seo-core';
 import type { SeoAuditRef } from '@app/ipc-contract';
-import type { CopyValueKey } from '@app/specs/command-palette.spec';
+import type { CopyValueKey, OpenInTemplateId } from '@app/specs/command-palette.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
@@ -53,6 +53,8 @@ export const actions = {
   clearBrowsingData: () => ipc.browser.clearBrowsingData.mutate().catch(ignore),
   /** Copies one allowlisted value of the audit on screen through main's clipboard; resolves whether it was copied. */
   copyValue: (tabId: number, audit: SeoAuditRef, key: CopyValueKey) => ipc.seo.copyValue.mutate({ tabId, audit, key }).catch(() => false),
+  /** "Open in" a tool: main builds the URL and may refuse (`OpenToolResult`); `null` on an IPC failure. */
+  openTool: (tool: OpenInTemplateId) => ipc.browser.openTool.mutate({ tool }).catch(() => null),
   /** Sets the tab's render profile (`pin`: as this site's pin); resolves whether it was set (`render-profile.feature.md`). */
   setRenderProfile: (tabId: number, profile: RenderProfile, pin: boolean) => ipc.browser.setRenderProfile.mutate({ tabId, profile, pin }).catch(() => false),
   /** Reset: the tab's render profile and this site's pin go; resolves whether it had one. */

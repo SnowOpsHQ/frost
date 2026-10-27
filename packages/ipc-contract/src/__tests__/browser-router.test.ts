@@ -46,6 +46,7 @@ function fakeService(version = 3) {
     clearBrowsingData: vi.fn(() => undefined),
     setRenderProfile: vi.fn((tabId: number) => tabId === 1),
     clearRenderProfile: vi.fn((tabId: number) => tabId === 1),
+    openTool: vi.fn((_tool: string) => ({ status: 'refused', reason: 'no-page' }) as const),
     getState: vi.fn(() => current),
     watch: vi.fn(
       (_since: number, _signal?: AbortSignal) =>
@@ -111,6 +112,7 @@ const VALID_INPUT: Record<string, unknown> = {
   clearBrowsingData: undefined,
   setRenderProfile: { tabId: 1, profile: { device: 'phone', userAgent: 'mobile', customUserAgent: '', network: 'none', javascriptDisabled: false, cacheDisabled: false }, pin: false },
   clearRenderProfile: { tabId: 1 },
+  openTool: { tool: 'rich-results' },
 };
 const BROWSER_PROCEDURES = Object.keys(VALID_INPUT);
 

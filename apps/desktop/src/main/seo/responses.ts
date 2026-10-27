@@ -14,8 +14,13 @@ import { withoutFragment } from './auditor';
 // `did-navigate` commits the newest response for the URL it committed; without one (a page from
 // the back/forward cache, or one main never saw) the record is `navigation`: did-navigate's
 // status, no headers. The analysis worker validates and reads the record (`PageContextSchema`).
+// Beside it, main keeps the IP address the document's response came from (webRequest `ip`, cut to
+// `MAX_ADDRESS_CHARS`): the command palette's "Open in" refuses a page from a non-public address
+// (`command-palette.spec.ts`, `browser.openTool`). It never goes to the worker.
 
 const ALLOWED: ReadonlySet<string> = new Set(RESPONSE_HEADER_ALLOWLIST);
+/** Longest IP text kept (an IPv6 address with a zone fits). */
+const MAX_ADDRESS_CHARS = 64;
 
 /** `value` cut to `max` UTF-16 code units, never splitting a surrogate pair. */
 function cut(value: string, max: number): string {
@@ -56,13 +61,15 @@ export function captureHeaders(responseHeaders: Record<string, string[] | string
 interface Pending {
   hops: RedirectHop[];
   hopTotal: number;
-  final: { url: string; status: number | null; fromCache: boolean; headers: ResponseHeader[] } | null;
+  final: { url: string; status: number | null; fromCache: boolean; headers: ResponseHeader[]; address: string | null } | null;
 }
 
 interface TabRecord {
   /** Main-frame requests in flight (or answered, not yet committed), oldest first. */
   readonly pending: Map<number, Pending>;
   committed: ResponseMeta | null;
+  /** The committed document's response address, `null` when unknown. */
+  address: string | null;
 }
 
 /** The parts of a tab's WebContents the recorder listens to. */
@@ -80,6 +87,8 @@ export interface ResponseRecorder extends Required<MainFrameObserver> {
   /** The tab's response for `url` (the URL it shows now): its committed one, `in-page` when the URL changed in place, `null` without any. */
   responseFor(contentsId: number, url: string): ResponseMeta | null;
   forget(contentsId: number): void;
+  /** The IP address the tab's current document came from (kept across in-page navigations), `null` when unknown. */
+  addressFor(contentsId: number): string | null;
   /** Forgets every tab's record and pending request (Clear Browsing Data). */
   clear(): void;
 }
@@ -91,7 +100,7 @@ export function createResponseRecorder(): ResponseRecorder {
   const recordOf = (id: number): TabRecord => {
     let record = tabs.get(id);
     if (record) tabs.delete(id);
-    else record = { pending: new Map(), committed: null };
+    else record = { pending: new Map(), committed: null, address: null };
     tabs.set(id, record);
     while (tabs.size > RESPONSE_LIMITS.maxTrackedTabs) tabs.delete(tabs.keys().next().value!);
     return record;
@@ -128,7 +137,10 @@ export function createResponseRecorder(): ResponseRecorder {
       if (!isMainFrame(details)) return;
       const pending = pendingOf(details);
       if (!pending) return;
-      pending.final = { url: url(details.url), status: httpStatus(details.statusCode), fromCache: details.fromCache === true, headers: captureHeaders(details.responseHeaders) };
+      // `ip` is reported at runtime (Electron's typings list it only for redirects).
+      const ip = (details as { ip?: unknown }).ip;
+      const address = typeof ip === 'string' && ip !== '' ? ip.slice(0, MAX_ADDRESS_CHARS) : null;
+      pending.final = { url: url(details.url), status: httpStatus(details.statusCode), fromCache: details.fromCache === true, headers: captureHeaders(details.responseHeaders), address };
     },
 
     failed(details: OnErrorOccurredListenerDetails) {
@@ -155,11 +167,13 @@ export function createResponseRecorder(): ResponseRecorder {
         }
       }
       if (match < 0) {
+        record.address = null;
         record.committed = { url: url(committedUrl), source: 'navigation', status: httpStatus(httpResponseCode), headersAvailable: false, headers: [], redirects: [], redirectTotal: 0 };
         return;
       }
       const [, pending] = entries[match]!;
       const final = pending.final!;
+      record.address = final.address;
       record.committed = {
         url: url(committedUrl),
         source: final.fromCache ? 'cache' : 'network',
@@ -178,6 +192,10 @@ export function createResponseRecorder(): ResponseRecorder {
       if (!committed) return null;
       if (withoutFragment(committed.url) === withoutFragment(current)) return committed;
       return { url: url(current), source: 'in-page', status: null, headersAvailable: false, headers: [], redirects: [], redirectTotal: 0 };
+    },
+
+    addressFor(contentsId) {
+      return tabs.get(contentsId)?.address ?? null;
     },
 
     forget(contentsId) {
