@@ -24,9 +24,8 @@ browser and run SEO skills.
 ## Clean-room note
 frost is a **clean-room** build. It is designed from a written behavioral/design
 spec authored by us, not from any third party's source. **This repository contains
-no third-party code, bundles, or UI assets.** The reverse-engineering analysis that
-informed the design (decompiled bundles, screenshots) is kept in a separate private
-workspace and is intentionally not committed here.
+no third-party code, bundles, or UI assets.** Third-party open-source libraries are used
+only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOTICES`).
 
 ## Layout
 - `apps/desktop/` — the Electron app (main, preload, the React chrome), packaged with Electron Forge.
