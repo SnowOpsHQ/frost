@@ -99,7 +99,7 @@ async function go(url: string, title: string): Promise<void> {
 
 /** Replaces the saved strip with `rows`, straight in the database file, as something other than frost could. */
 function plantTabs(rows: { url: string; title: string; active?: boolean }[]): void {
-  const db = new DatabaseSync(path.join(profile, DB_FILE_NAME));
+  const db = new DatabaseSync(path.join(profile, DB_FILE_NAME), { timeout: 5_000 });
   try {
     db.exec('DELETE FROM browser_tabs');
     const insert = db.prepare('INSERT INTO browser_tabs (position, url, title, active) VALUES (?, ?, ?, ?)');
@@ -185,7 +185,8 @@ const ASK_GEOLOCATION = 'new Promise((resolve) => navigator.geolocation.getCurre
 
 /** Reads `sql` from the database file with a connection of its own (the app may have it open). */
 function query(sql: string): Record<string, unknown>[] {
-  const db = new DatabaseSync(path.join(profile, DB_FILE_NAME), { readOnly: true });
+  // A busy timeout: the app may be mid-write (batched saves), which would otherwise throw "database is locked".
+  const db = new DatabaseSync(path.join(profile, DB_FILE_NAME), { readOnly: true, timeout: 5_000 });
   try {
     return db.prepare(sql).all().map((row) => ({ ...row }));
   } finally {
