@@ -15,6 +15,7 @@ import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app/specs/render-profile.schema.spec';
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
 import { contentRouter } from './content-router';
+import { javascriptRouter } from './javascript-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -265,6 +266,8 @@ export const appRouter = router({
   seo: seoRouter,
   // Phase 2.5 Task 3 (`seo-content.feature.md`): the Content panel's notes and Copy as HTML.
   content: contentRouter,
+  // Phase 2.5 Task 2 (`seo-javascript.feature.md`): the JavaScript panel's "Fetch again".
+  javascript: javascriptRouter,
 });
 
 export type AppRouter = typeof appRouter;

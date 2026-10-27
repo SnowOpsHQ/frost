@@ -16,6 +16,7 @@ import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, 
 import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
 import { BlockingScriptsSchema, type PerformanceContext } from './seo-speed.schema.spec';
 import { VISIBLE_TEXT_LIMITS } from './seo-content.spec';
+import type { JavascriptContext } from './seo-javascript.schema';
 import { isWebUrl } from './web-url.spec';
 
 export * from './seo-limits.spec';
@@ -391,8 +392,8 @@ export type { A11yNode, A11yViolation, AccessibilityContext, AccessibilityResult
 /** Nothing collected (`PageContext` with neither part). */
 export const NO_PAGE_CONTEXT: PageContext = { response: null, robots: null };
 
-/** What the rules read: the extractor's snapshot, and what main collected beside it (the speed measurement too, Task 5). */
-export type PageSnapshot = ExtractedSnapshot & PageContext & PerformanceContext;
+/** What the rules read: the extractor's snapshot, and what main collected beside it (the speed measurement too, Task 5; the served HTML, Phase 2.5 Task 2). */
+export type PageSnapshot = ExtractedSnapshot & PageContext & PerformanceContext & JavascriptContext;
 export type PageLink = z.infer<typeof LinkSchema>;
 export type PageImage = z.infer<typeof ImageSchema>;
 export type PageHeading = z.infer<typeof HeadingSchema>;

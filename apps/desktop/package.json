@@ -25,6 +25,7 @@
     "@app/seo-core": "workspace:*",
     "@app/specs": "workspace:*",
     "axe-core": "4.14.0",
+    "parse5": "^8.0.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "web-vitals": "^6.2.3"

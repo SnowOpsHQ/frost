@@ -36,7 +36,7 @@ describe('seo view helpers', () => {
     expect(railStatuses({ status: 'pending', url: 'https://a.example/' })).toEqual({});
     expect(railStatuses({ status: 'unavailable', url: 'https://a.example/', reason: 'timeout' })).toEqual({});
     const statuses = railStatuses(ready('https://a.example/', [finding('warning', 'links'), finding('error', 'title'), finding('warning', 'social')]));
-    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', content: 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass', indexability: 'pass', speed: 'pass', compliance: 'pass' };
+    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', content: 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass', indexability: 'pass', speed: 'pass', compliance: 'pass', javascript: 'pass' };
     for (const panel of SEO_PANELS) {
       if (panel.available) expect(statuses[panel.id], panel.id).toBe(expected[panel.id]);
       else expect(statuses[panel.id], panel.id).toBeUndefined();
@@ -57,6 +57,8 @@ describe('seo view helpers', () => {
     // Compliance: security and accessibility findings colour it (and Overview), not On-Page.
     expect(railStatuses(ready('https://a.example/', [finding('error', 'security')]))).toMatchObject({ overview: 'error', 'on-page': 'pass', compliance: 'error' });
     expect(railStatuses(ready('https://a.example/', [finding('warning', 'accessibility')]))).toMatchObject({ 'on-page': 'pass', compliance: 'warn' });
+    // JavaScript (Phase 2.5 Task 2): served-vs-rendered findings colour it (and Overview), not On-Page.
+    expect(railStatuses(ready('https://a.example/', [finding('warning', 'javascript')]))).toMatchObject({ overview: 'warn', 'on-page': 'pass', javascript: 'warn' });
     // Content (Phase 2.5 Task 3, seo-content.feature.md): title, description and content findings colour it and On-Page.
     expect(railStatuses(ready('https://a.example/', [finding('info', 'meta-description')]))).toMatchObject({ content: 'pass', 'on-page': 'pass' });
     expect(railStatuses(ready('https://a.example/', [finding('warning', 'title')]))).toMatchObject({ content: 'warn', 'on-page': 'warn' });

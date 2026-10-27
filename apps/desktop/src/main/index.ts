@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, ipcMain, net, session, type WebContents } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, session, webContents, type WebContents } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -23,6 +23,9 @@ import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
 import { createResponseRecorder } from './seo/responses';
 import { createRobotsFetcher, netHop, pendingRobots, type RobotsFetcher } from './seo/robots-fetch';
+import { createBoundedFetcher } from './seo/fetcher';
+import { createServedHtml, PENDING_SERVED, type ServedHtml } from './seo/served';
+import { profileUserAgent } from '@app/specs/render-profile.spec';
 import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
 import { observeMainFrames } from './browser/web-request';
@@ -151,7 +154,23 @@ function start(): void {
       response: knownInput(responses.responseFor(contents.id, url)),
       robots: robots ? laterInput(robots.get(url), pendingRobots(url), robots.peek(url)) : knownInput(null),
       performance: laterInput(measureForAudit(contents)),
+      served: servedInput(contents, url),
     });
+  };
+  // Served HTML vs the rendered DOM (specs/seo-javascript.feature.md): main fetches the page as
+  // served through the shared bounded fetcher (cookies omitted, bounded; the tab's render-profile
+  // user agent if it has one in effect), the analysis worker parses it; kept per tab document, URL
+  // and user agent (a new document drops it). Set up once the browse session exists (below).
+  let served: ServedHtml | null = null;
+  const servedUserAgent = (contents: WebContents): string | null => {
+    const tabId = browser.tabIdOf(contents);
+    const profile = tabId === null ? null : (browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null);
+    return profile && profile.status !== 'failed' ? profileUserAgent(profile.profile, process.versions.chrome) : null;
+  };
+  const servedInput = (contents: WebContents, url: string) => {
+    if (!served) return knownInput(null);
+    const userAgent = servedUserAgent(contents);
+    return laterInput(served.get(contents.id, url, userAgent), PENDING_SERVED, served.peek(contents.id, url, userAgent));
   };
 
   app.on('web-contents-created', (_event, contents) => {
@@ -165,6 +184,9 @@ function start(): void {
       if (tabId !== null && tabId === browser.getState().activeTabId) void collect(contents, { prime: true }).catch(() => undefined);
     });
     contents.once('destroyed', () => shownTimes.forget(id));
+    // A new document fetches its served HTML afresh (seo-javascript.feature.md).
+    contents.on('did-navigate', () => served?.forget(id));
+    contents.once('destroyed', () => served?.forget(id));
   });
   // Per-tab render profiles (specs/render-profile.feature.md): each tab's own debugger, attached
   // only to a browse-session tab's WebContents and only while it has a profile, sending only the
@@ -237,7 +259,12 @@ function start(): void {
     // The browse session's main-frame observers (the one owner of its onBeforeRedirect /
     // onResponseStarted / onErrorOccurred: browser/web-request.ts) and its robots.txt fetcher.
     observeMainFrames(browseSession, responses);
-    robots = createRobotsFetcher({ hop: netHop(net, browseSession) });
+    // One bounded fetcher for every request made on the user's behalf (specs/fetcher.spec.ts): its
+    // per-origin queues are shared by robots.txt and the served HTML.
+    const hop = netHop(net, browseSession);
+    const fetcher = createBoundedFetcher({ hop });
+    robots = createRobotsFetcher({ hop, fetcher });
+    served = createServedHtml({ fetcher, parse: (input) => analyzer.parseServed(input) });
     hardenBrowseSession(browseSession, {
       onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
       permissions: createBrowsePermissionHandlers({
@@ -256,6 +283,16 @@ function start(): void {
       services: {
         browser,
         seo: browser.seo,
+        // The JavaScript panel's "Fetch again" (specs/seo-javascript.feature.md): the tab's served HTML
+        // for its current URL is forgotten and the tab audited again.
+        javascript: {
+          refetchServed: (tabId) => {
+            const contents = webContents.getAllWebContents().find((c) => !c.isDestroyed() && isBrowseContents(c) && browser.tabIdOf(c) === tabId);
+            if (!contents || !served) return false;
+            served.drop(contents.id, contents.getURL());
+            return browser.seo.rerun(tabId) === true;
+          },
+        },
         // The Content panel's notes (local, in the session database) and Copy as HTML (specs/seo-content.feature.md).
         content: createContentService({
           notes: sessionStore.contentNotes,
@@ -277,6 +314,7 @@ function start(): void {
       forgetSeoCaches: () => {
         robots?.clear();
         responses.clear();
+        served?.clear();
         // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
         browser.forgetRenderProfilePins();
       },

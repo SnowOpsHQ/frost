@@ -13,6 +13,8 @@ import { Content } from './seo/Content';
 import { ContentIcon } from './seo/content-icons';
 import { Images } from './seo/Images';
 import { Indexability } from './seo/Indexability';
+import { JavaScript } from './seo/JavaScript';
+import { JavascriptIcon } from './seo/javascript-icons';
 import { Links } from './seo/Links';
 import { OnPage } from './seo/OnPage';
 import { AuditProfileNote } from './seo/AuditProfileNote';
@@ -45,6 +47,7 @@ const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   indexability: IndexabilityIcon,
   speed: SpeedIcon,
   compliance: ComplianceIcon,
+  javascript: JavascriptIcon,
 };
 
 function Rail({
@@ -162,6 +165,8 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
       return <Speed audit={response.audit} tab={tab} renderProfile={response.renderProfile ?? null} />;
     case 'compliance':
       return <Compliance audit={response.audit} tab={tab} run={response.accessibilityRun ?? IDLE_A11Y_RUN} />;
+    case 'javascript':
+      return <JavaScript audit={response.audit} tab={tab} />;
     default:
       return (
         <>

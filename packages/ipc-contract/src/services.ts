@@ -6,6 +6,7 @@ import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import type { ContentService } from './content-service';
+import type { JavascriptService } from './javascript-router';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -156,4 +157,6 @@ export interface IpcServices {
   readonly seo?: SeoService;
   /** The Content panel's notes and Copy as HTML (Phase 2.5 Task 3, `content-service.ts`). */
   readonly content?: ContentService;
+  /** The JavaScript panel's served-HTML refetch (Phase 2.5 Task 2, `javascript-router.ts`). */
+  readonly javascript?: JavascriptService;
 }
