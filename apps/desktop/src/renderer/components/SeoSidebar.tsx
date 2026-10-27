@@ -139,7 +139,7 @@ function Hint({ title, message, testId, reason, retry }: { readonly title: strin
   );
 }
 
-function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefined; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null }) {
+function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: TabState | undefined; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null; readonly notesGeneration?: number }) {
   if (!tab || response === null) return <Hint testId="seo-empty" title="No page yet" message="Open a web page and frost audits it here: a health score, ranked issues and what search engines read." />;
   if (response.status === 'pending') return <Skeleton />;
   if (response.status === 'unavailable') {
@@ -150,7 +150,7 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
     case 'on-page':
       return <OnPage audit={response.audit} tab={tab} />;
     case 'content':
-      return <Content audit={response.audit} tab={tab} />;
+      return <Content audit={response.audit} tab={tab} notesGeneration={notesGeneration} />;
     case 'links':
       return <Links audit={response.audit} tab={tab} />;
     case 'images':
@@ -183,12 +183,15 @@ export function SeoSidebar({
   response,
   onOpenChange,
   jump,
+  notesGeneration,
 }: {
   readonly tab: TabState | undefined;
   readonly open: boolean;
   readonly response: SeoAuditResponse | null;
   readonly onOpenChange: (open: boolean) => void;
   readonly jump?: PanelJump | null;
+  /** Main's content notes generation (`BrowserState.contentNotesGeneration`), for the Content panel. */
+  readonly notesGeneration?: number;
 }) {
   const [panel, setPanel] = useState<SeoPanelId>(DEFAULT_SEO_PANEL);
   const railItems = useRef(new Map<SeoPanelId, HTMLButtonElement>()).current;
@@ -257,7 +260,7 @@ export function SeoSidebar({
             </button>
           </header>
           <div className="seo-body">
-            <PanelBody tab={tab} panel={panel} response={response} />
+            <PanelBody tab={tab} panel={panel} response={response} notesGeneration={notesGeneration} />
           </div>
           {ready ? (
             <footer className="seo-foot" data-testid="seo-duration" data-ms={Math.round(ready.audit.durationMs)}>

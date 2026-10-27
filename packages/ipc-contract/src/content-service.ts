@@ -12,10 +12,14 @@ export interface ContentVariant {
   readonly updatedAt: number;
 }
 
-/** A page's notes: its target query (`''`: none) and its drafts, in slot order. */
+/**
+ * A page's notes: its target query (`''`: none) and its drafts, in slot order, and the notes
+ * generation they were read in (main raises it each time every note is deleted; each write carries it).
+ */
 export interface ContentNotesAnswer {
   readonly query: string;
   readonly variants: readonly ContentVariant[];
+  readonly generation: number;
 }
 
 /** What Copy as HTML writes: the page's own title and description, or a stored draft. */
@@ -24,12 +28,14 @@ export type SnippetHtmlSource = 'page' | { readonly slot: number };
 export interface ContentService {
   /** The notes stored for `url` (without its fragment); none when there are none or it fails. Never rejects. */
   notes(url: string): Promise<ContentNotesAnswer>;
+  // Each write carries the `generation` its notes were read in: one from another generation (every
+  // note was deleted since) is refused, `false`, and stores nothing.
   /** Stores `url`'s target query (`''` deletes it); `false` when nothing was stored. Never rejects. */
-  setTargetQuery(url: string, query: string): Promise<boolean>;
+  setTargetQuery(url: string, query: string, generation: number): Promise<boolean>;
   /** Stores a draft in its slot; `false` when nothing was stored. Never rejects. */
-  saveVariant(url: string, variant: Omit<ContentVariant, 'updatedAt'>): Promise<boolean>;
+  saveVariant(url: string, variant: Omit<ContentVariant, 'updatedAt'>, generation: number): Promise<boolean>;
   /** Empties a slot; `false` when nothing was deleted. Never rejects. */
-  deleteVariant(url: string, slot: number): Promise<boolean>;
+  deleteVariant(url: string, slot: number, generation: number): Promise<boolean>;
   /**
    * Writes the snippet HTML (`snippetHtml`) to the system clipboard: the page's own title and
    * description from the tab's ready audit if it is the one the panel shows (`audit`), or the draft

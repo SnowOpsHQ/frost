@@ -250,6 +250,13 @@ export const BrowserStateSchema = z.strictObject({
    */
   commandPalette: z.strictObject({ seq: z.int().nonnegative(), returnFocus: z.enum(PALETTE_RETURN_FOCUS) }),
   notice: NoticeSchema.nullable(),
+  /**
+   * The content notes' generation (`seo-content.feature.md`): main raises it by one each time every
+   * target query and snippet draft is deleted (Clear Browsing Data with its box ticked, or "Delete
+   * all notes"); an open Content panel drops its pending edits and reads its notes again whenever it
+   * changes. Main always sends it; optional so that older state fixtures stay valid.
+   */
+  contentNotesGeneration: z.int().nonnegative().optional(),
   // Browser polish (Phase 2.5 Task 6, `browser-polish.schema.ts`): the active tab's find bar, the
   // History view request, the closed-tab count and the search engine.
   ...BrowserPolishStateShape,

@@ -11,15 +11,17 @@ import { appRouter, createSenderPolicy, type ContentNotesAnswer, type ContentSer
 
 const WINDOW_ID = 7;
 const PAGE = 'https://example.com/guides/tea';
-const NOTES: ContentNotesAnswer = { query: 'green tea', variants: [{ slot: 0, title: 'T', description: 'D', updatedAt: 1 }] };
+const NOTES: ContentNotesAnswer = { query: 'green tea', variants: [{ slot: 0, title: 'T', description: 'D', updatedAt: 1 }], generation: 3 };
+/** The notes generation each write carries (main refuses one from another; seo-content.feature.md). */
+const GENERATION = 3;
 const AUDIT = { url: PAGE, takenAt: 1_760_000_000_000 };
 
 function fakeContent() {
   return {
     notes: vi.fn(async (_url: string) => NOTES),
-    setTargetQuery: vi.fn(async (_url: string, _query: string) => true),
-    saveVariant: vi.fn(async (_url: string, _variant: { slot: number; title: string; description: string }) => true),
-    deleteVariant: vi.fn(async (_url: string, _slot: number) => true),
+    setTargetQuery: vi.fn(async (_url: string, _query: string, _generation: number) => true),
+    saveVariant: vi.fn(async (_url: string, _variant: { slot: number; title: string; description: string }, _generation: number) => true),
+    deleteVariant: vi.fn(async (_url: string, _slot: number, _generation: number) => true),
     copySnippetHtml: vi.fn(async (tabId: number, _audit: { url: string; takenAt: number }, _source: 'page' | { slot: number }) => tabId === 1),
     clearAllNotes: vi.fn(async () => true),
   } satisfies ContentService;
@@ -51,9 +53,9 @@ async function errorOf(run: Promise<unknown>): Promise<TRPCError> {
 
 const VALID_INPUT: Record<string, unknown> = {
   getNotes: { url: PAGE },
-  setTarget: { url: PAGE, query: 'green tea' },
-  saveVariant: { url: PAGE, slot: 0, title: 'A title', description: 'A description' },
-  deleteVariant: { url: PAGE, slot: 0 },
+  setTarget: { url: PAGE, query: 'green tea', generation: GENERATION },
+  saveVariant: { url: PAGE, slot: 0, title: 'A title', description: 'A description', generation: GENERATION },
+  deleteVariant: { url: PAGE, slot: 0, generation: GENERATION },
   copySnippetHtml: { tabId: 1, audit: AUDIT, source: 'page' },
   // Phase 2.5 Task 3 review: "Delete all notes" (main confirms); no input.
   clearAllNotes: undefined,
@@ -110,6 +112,18 @@ describe('content router', () => {
       ],
       clearAllNotes: [],
     };
+    // Each write's bad inputs carry a generation (one defect each); without one, or a bad one, is refused too.
+    const generations = [undefined, -1, 1.5, '3'];
+    for (const name of ['setTarget', 'saveVariant', 'deleteVariant']) {
+      const valid = VALID_INPUT[name] as Record<string, unknown>;
+      bad[name] = [
+        ...bad[name]!.map((input) => (typeof input === 'object' && input !== null ? { generation: GENERATION, ...input } : input)),
+        ...generations.map((generation) => {
+          const { generation: _, ...rest } = valid;
+          return generation === undefined ? rest : { ...rest, generation };
+        }),
+      ];
+    }
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
         const content = fakeContent();
@@ -124,12 +138,12 @@ describe('content router', () => {
     const content = fakeContent();
     await expect(procedure(ctxFor(content), 'getNotes')({ url: PAGE })).resolves.toEqual(NOTES);
     expect(content.notes).toHaveBeenCalledExactlyOnceWith(PAGE);
-    await expect(procedure(ctxFor(content), 'setTarget')({ url: PAGE, query: '' })).resolves.toBe(true);
-    expect(content.setTargetQuery).toHaveBeenCalledExactlyOnceWith(PAGE, '');
-    await expect(procedure(ctxFor(content), 'saveVariant')({ url: PAGE, slot: 2, title: 'T', description: 'D' })).resolves.toBe(true);
-    expect(content.saveVariant).toHaveBeenCalledExactlyOnceWith(PAGE, { slot: 2, title: 'T', description: 'D' });
-    await expect(procedure(ctxFor(content), 'deleteVariant')({ url: PAGE, slot: 2 })).resolves.toBe(true);
-    expect(content.deleteVariant).toHaveBeenCalledExactlyOnceWith(PAGE, 2);
+    await expect(procedure(ctxFor(content), 'setTarget')({ url: PAGE, query: '', generation: 0 })).resolves.toBe(true);
+    expect(content.setTargetQuery).toHaveBeenCalledExactlyOnceWith(PAGE, '', 0);
+    await expect(procedure(ctxFor(content), 'saveVariant')({ url: PAGE, slot: 2, title: 'T', description: 'D', generation: GENERATION })).resolves.toBe(true);
+    expect(content.saveVariant).toHaveBeenCalledExactlyOnceWith(PAGE, { slot: 2, title: 'T', description: 'D' }, GENERATION);
+    await expect(procedure(ctxFor(content), 'deleteVariant')({ url: PAGE, slot: 2, generation: GENERATION })).resolves.toBe(true);
+    expect(content.deleteVariant).toHaveBeenCalledExactlyOnceWith(PAGE, 2, GENERATION);
     await expect(procedure(ctxFor(content), 'copySnippetHtml')({ tabId: 1, audit: AUDIT, source: 'page' })).resolves.toBe(true);
     expect(content.copySnippetHtml).toHaveBeenLastCalledWith(1, AUDIT, 'page');
     await expect(procedure(ctxFor(content), 'copySnippetHtml')({ tabId: 1, audit: AUDIT, source: 'variant', slot: 3 })).resolves.toBe(true);

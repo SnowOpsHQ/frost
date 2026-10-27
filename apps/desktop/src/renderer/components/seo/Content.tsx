@@ -232,9 +232,10 @@ function Readability({ audit }: { readonly audit: SeoAudit }) {
   );
 }
 
-export function Content({ audit, tab }: { readonly audit: SeoAudit; readonly tab: TabState }) {
+/** `notesGeneration`: main's notes generation (`BrowserState.contentNotesGeneration`); a change resets the notes. */
+export function Content({ audit, tab, notesGeneration }: { readonly audit: SeoAudit; readonly tab: TabState; readonly notesGeneration?: number }) {
   const [message, flash] = useFlash();
-  const notes = useContentNotes(audit.url);
+  const notes = useContentNotes(audit.url, notesGeneration);
   return (
     <div className="seo-content" data-testid="seo-content">
       <Section title="Search preview" testId="seo-content-snippet">

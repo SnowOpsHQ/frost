@@ -281,6 +281,32 @@ test('delete-all-notes-and-clear-browsing-data', async () => {
   expect(await storedNotes()).toEqual({ query: '', drafts: 0 });
 });
 
+// Codex review (PR #6): Clear Browsing Data deleting the notes resets an open Content panel.
+test('clear-browsing-data-resets-open-content-panel', async () => {
+  const { menu } = chromeHelpers(
+    () => app!,
+    () => page,
+  );
+  const drafts = () => page.locator('[data-testid="seo-snippet-source"][data-source="draft"]');
+  await writeNotes();
+  // An edit not saved yet (saves wait for typing to pause) when the notes are deleted.
+  await page.getByTestId('seo-query-input').fill('loose leaf tin');
+  const calls = await stubMessageBoxes([{ response: 0, checkboxChecked: true }]);
+  await menu('clear-browsing-data');
+  await expect.poll(async () => (await calls()).length).toBe(1);
+  // The open panel (not opened again) drops the deleted query and draft at once.
+  await expect(page.getByTestId('seo-query-input')).toHaveValue('');
+  await expect(drafts()).toHaveCount(0);
+  // The pending edit was not saved afterwards: main has nothing.
+  expect(await storedNotes()).toEqual({ query: '', drafts: 0 });
+  // A later edit stores only itself; nothing deleted comes back with it.
+  await page.getByTestId('seo-query-input').fill('oolong');
+  await expect.poll(storedNotes).toEqual({ query: 'oolong', drafts: 0 });
+  // Leaves no note for the other tests.
+  await page.getByTestId('seo-query-clear').click();
+  await expect.poll(storedNotes).toEqual({ query: '', drafts: 0 });
+});
+
 test('content-page-text-is-inert', async () => {
   await openContent(`${site.origin}/inert`);
   await expect(page.getByTestId('seo-serp-desktop-title')).toHaveText('<img src=x onerror=top.__pwned=1> ‮evil title');

@@ -274,6 +274,16 @@ function start(): void {
   // The search engine choice (specs/browser-polish.feature.md): kept locally in the session database,
   // loaded before the first window opens; the address bar and the context menu search with it.
   const searchEngine = createSearchEngineSetting({ store: sessionStore.settings, changed: () => browser.searchEngineChanged(), log: logSession });
+  // The Content panel's notes (local, in the session database) and Copy as HTML (specs/seo-content.feature.md).
+  // Its generation, raised whenever every note is deleted, is in the browser state, so open panels reset.
+  const content = createContentService({
+    notes: sessionStore.contentNotes,
+    audit: (tabId) => browser.seo.getAudit(tabId),
+    clipboard,
+    log: logSession,
+    confirmClearAll: () => confirmClearContentNotes(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
+    changed: () => browser.contentNotesChanged(),
+  });
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
@@ -295,6 +305,7 @@ function start(): void {
     pageAddress: (contents) => responses.addressFor(contents.id),
     renderProfiles,
     searchEngine: () => searchEngine.searchEngine(),
+    contentNotesGeneration: () => content.generation(),
   });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
@@ -394,14 +405,8 @@ function start(): void {
           },
         },
         checks,
-        // The Content panel's notes (local, in the session database) and Copy as HTML (specs/seo-content.feature.md).
-        content: createContentService({
-          notes: sessionStore.contentNotes,
-          audit: (tabId) => browser.seo.getAudit(tabId),
-          clipboard,
-          log: logSession,
-          confirmClearAll: () => confirmClearContentNotes(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
-        }),
+        // The Content panel's notes (specs/seo-content.feature.md), set up with the browser above.
+        content,
         // The SEO devtools drawer (specs/devtools.feature.md).
         devtools,
         // Browser polish (specs/browser-polish.feature.md): find in page, the History view (local
@@ -436,8 +441,9 @@ function start(): void {
         // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
         browser.forgetRenderProfilePins();
       },
-      // Only when the dialog's checkbox was ticked (specs/seo-content.feature.md).
-      clearContentNotes: () => sessionStore.contentNotes.clearAll(),
+      // Only when the dialog's checkbox was ticked (specs/seo-content.feature.md): through the content
+      // service, so the notes generation goes up and open Content panels reset.
+      clearContentNotes: () => content.deleteAllNotes(),
       // With the visits, the history part: the closed-tab stack (specs/browser-polish.feature.md).
       forgetClosedTabs: () => browser.forgetClosedTabs(),
       log: logSession,

@@ -67,7 +67,7 @@ export function App() {
             {historyOpen ? <HistoryView onClose={closeHistory} /> : null}
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>
-          <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} />
+          <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} notesGeneration={state?.contentNotesGeneration} />
         </div>
         {/* The SEO devtools drawer (`devtools.feature.md`): a band under the workspace, which shrinks above it. */}
         <DevtoolsDrawer state={state} tab={tab} audit={empty ? null : audit} onOpenPanel={(panel) => setPanelJump((last) => ({ panel, focus: true, seq: (last?.seq ?? 0) + 1 }))} />

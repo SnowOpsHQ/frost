@@ -12,13 +12,19 @@ import { isWebUrl } from './web-url.spec';
 /** A page URL the notes are kept for (the audit's URL): `http(s)`, at most `maxUrlChars`. Main drops its `#fragment`. */
 const pageUrl = z.string().min(1).max(SNAPSHOT_LIMITS.maxUrlChars).refine(isWebUrl, { message: 'not an http(s) URL' });
 const slot = z.int().min(0).max(MAX_SNIPPET_VARIANTS - 1);
+/**
+ * The notes generation a write's notes were read in (`content.getNotes`' `generation`). Main raises
+ * it each time every note is deleted, and refuses a write from any other one, so an edit still in
+ * flight then cannot bring a deleted note back.
+ */
+const generation = z.int().nonnegative();
 
 /** `content.getNotes`: the page's target query and drafts. */
 export const ContentNotesInputSchema = z.strictObject({ url: pageUrl });
 export type ContentNotesInput = z.infer<typeof ContentNotesInputSchema>;
 
 /** `content.setTargetQuery`: the query (`''` deletes it). */
-export const SetTargetQueryInputSchema = z.strictObject({ url: pageUrl, query: z.string().max(TARGET_QUERY_MAX_CHARS) });
+export const SetTargetQueryInputSchema = z.strictObject({ url: pageUrl, query: z.string().max(TARGET_QUERY_MAX_CHARS), generation });
 export type SetTargetQueryInput = z.infer<typeof SetTargetQueryInputSchema>;
 
 /** `content.saveVariant`: a draft in a slot (written over what the slot held). */
@@ -27,11 +33,12 @@ export const SaveVariantInputSchema = z.strictObject({
   slot,
   title: z.string().max(SNIPPET_VARIANT_TITLE_MAX_CHARS),
   description: z.string().max(SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS),
+  generation,
 });
 export type SaveVariantInput = z.infer<typeof SaveVariantInputSchema>;
 
 /** `content.deleteVariant`: empties a slot. */
-export const DeleteVariantInputSchema = z.strictObject({ url: pageUrl, slot });
+export const DeleteVariantInputSchema = z.strictObject({ url: pageUrl, slot, generation });
 export type DeleteVariantInput = z.infer<typeof DeleteVariantInputSchema>;
 
 /**

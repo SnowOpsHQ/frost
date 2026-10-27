@@ -45,6 +45,12 @@ Copy as HTML), `specs/seo-content.schema.ts` (the `content.*` inputs), `specs/se
   all notes" (the panel's button, and the palette's action) deletes every one after a native
   confirmation main shows (`CLEAR_CONTENT_NOTES`). Migration `0004` creates its tables only if they
   are missing, so a profile that ran the pre-merge build (which recorded them as `0003`) migrates.
+- **Main counts the deletions of every note.** Its notes generation goes up by one each time every
+  note is deleted, by Clear Browsing Data (box ticked) or "Delete all notes". The chrome sees it in
+  `BrowserState.contentNotesGeneration` and in every `content.getNotes` answer. When it changes, an
+  open panel drops its pending edits and reads its notes again. Each write (`content.setTarget`,
+  `saveVariant`, `deleteVariant`) carries the generation its notes were read in, and main refuses a
+  write from any other generation, so an edit still in flight cannot bring a deleted note back.
 - **Copy as HTML goes through main**, like the other copy commands: `content.copySnippetHtml` reads
   the page's values from main's own ready audit (only the one the panel shows) or the stored draft,
   escapes them and writes them with Electron's `clipboard`. The chrome never touches the clipboard.
@@ -143,9 +149,9 @@ Copy as HTML), `specs/seo-content.schema.ts` (the `content.*` inputs), `specs/se
 - **Scenario: content-procedures-enforce-sender** — every `content.*` procedure rejects a foreign
   sender before the service runs, and fails closed without the service.
 - **Scenario: content-inputs-are-validated** — strict inputs: an unknown key, an over-long value,
-  a non-`http(s)` URL or a bad slot never reaches the service.
-- **Scenario: content-procedures-call-service** — valid inputs reach the service unchanged; Copy as
-  HTML passes `page` or `{ slot }`.
+  a non-`http(s)` URL, a bad slot or a write without its generation never reaches the service.
+- **Scenario: content-procedures-call-service** — valid inputs reach the service unchanged, each write
+  with its generation; Copy as HTML passes `page` or `{ slot }`.
 
 ## Copy (`content-service.test.ts`)
 - **Scenario: copy-snippet-html-page** — the page's own title and description from the ready audit
@@ -153,6 +159,13 @@ Copy as HTML), `specs/seo-content.schema.ts` (the `content.*` inputs), `specs/se
 - **Scenario: copy-snippet-html-variant** — a stored draft of the audit's URL; nothing for an empty slot.
 - **Scenario: clear-all-notes-asks-first** — `clearAllNotes` deletes only after the confirmation
   (`CLEAR_CONTENT_NOTES`); cancelled, nothing is deleted.
+- **Scenario: content-notes-generation** — each notes answer carries main's generation; a confirmed
+  "Delete all notes" and Clear Browsing Data's deletion (`deleteAllNotes`) each raise it by one and
+  tell the chrome; a cancelled one does neither.
+- **Scenario: stale-note-write-refused** — a query, draft or draft deletion carrying an older
+  generation is refused (`false`) and stores nothing; one carrying the current generation is kept.
+- **Scenario: content-notes-generation-in-state** (`controller.test.ts`) — `BrowserState` reports
+  main's generation, and a change bumps the state's version.
 - **Scenario: content-service-survives-a-closed-database** — with the database closed, reads answer
   no notes and writes `false`; the failure is logged in main, never sent to the chrome.
 
@@ -192,5 +205,8 @@ this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second one.
   keeps the notes, ticked removes them; the panel's "Delete all notes" removes them after confirming.
 - **Scenario: snippet-editor-previews** — the page's previews cut a wide title at the budget with an
   ellipsis; a draft updates the previews live and persists; Copy as HTML writes escaped HTML.
+- **Scenario: clear-browsing-data-resets-open-content-panel** — with the panel open on a target query
+  and a draft (and an edit not yet saved), Clear Browsing Data with its box ticked empties the open
+  panel at once; the pending edit is not saved, and a later edit stores only itself.
 - **Scenario: content-page-text-is-inert** — markup and bidi overrides in the page's text and title
   render as text in the panel; nothing runs, no element is created from them.

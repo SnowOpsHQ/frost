@@ -34,8 +34,9 @@ function setup(snapshot = rawSnapshot(URL_A, { titles: [{ text: 'Tea & "biscuits
   let response: SeoAuditResponse = { status: 'ready', url: URL_A, audit };
   const clipboard = { writeText: vi.fn((_text: string) => undefined) };
   const confirmClearAll = vi.fn(async () => true);
-  const service = createContentService({ notes, audit: (tabId) => (tabId === 1 ? response : { status: 'unavailable', url: '', reason: 'no-tab' }), clipboard, now: () => 42, confirmClearAll });
-  return { service, clipboard, audit, notes, opened, confirmClearAll, set: (next: SeoAuditResponse) => (response = next) };
+  const changed = vi.fn();
+  const service = createContentService({ notes, audit: (tabId) => (tabId === 1 ? response : { status: 'unavailable', url: '', reason: 'no-tab' }), clipboard, now: () => 42, confirmClearAll, changed });
+  return { service, clipboard, audit, notes, opened, confirmClearAll, changed, set: (next: SeoAuditResponse) => (response = next) };
 }
 
 describe('content service', () => {
@@ -56,32 +57,75 @@ describe('content service', () => {
   // Phase 2.5 Task 3 review: "Delete all notes" asks first (CLEAR_CONTENT_NOTES), in main.
   test('clear-all-notes-asks-first', async () => {
     const { service, confirmClearAll } = setup();
-    await service.setTargetQuery(URL_A, 'green tea');
-    await service.saveVariant('https://example.org/b', { slot: 0, title: 'Draft', description: '' });
+    await service.setTargetQuery(URL_A, 'green tea', 0);
+    await service.saveVariant('https://example.org/b', { slot: 0, title: 'Draft', description: '' }, 0);
     confirmClearAll.mockResolvedValueOnce(false);
     expect(await service.clearAllNotes()).toBe(false);
     expect((await service.notes(URL_A)).query).toBe('green tea');
     expect(await service.clearAllNotes()).toBe(true);
     expect(confirmClearAll).toHaveBeenCalledTimes(2);
-    expect(await service.notes(URL_A)).toEqual({ query: '', variants: [] });
-    expect(await service.notes('https://example.org/b')).toEqual({ query: '', variants: [] });
+    expect(await service.notes(URL_A)).toEqual({ query: '', variants: [], generation: 1 });
+    expect(await service.notes('https://example.org/b')).toEqual({ query: '', variants: [], generation: 1 });
     // A confirmation that fails deletes nothing.
-    await service.setTargetQuery(URL_A, 'oolong');
+    await service.setTargetQuery(URL_A, 'oolong', 1);
     confirmClearAll.mockRejectedValueOnce(new Error('no window'));
     expect(await service.clearAllNotes()).toBe(false);
     expect((await service.notes(URL_A)).query).toBe('oolong');
   });
 
+  // Codex review (PR #6): main counts the deletions of every note, so open panels reset and reload.
+  test('content-notes-generation', async () => {
+    const { service, confirmClearAll, changed } = setup();
+    expect(service.generation()).toBe(0);
+    expect((await service.notes(URL_A)).generation).toBe(0);
+    // Cancelled: no deletion, no new generation, nothing told.
+    confirmClearAll.mockResolvedValueOnce(false);
+    expect(await service.clearAllNotes()).toBe(false);
+    expect(service.generation()).toBe(0);
+    expect(changed).not.toHaveBeenCalled();
+    // "Delete all notes", confirmed.
+    expect(await service.clearAllNotes()).toBe(true);
+    expect(service.generation()).toBe(1);
+    expect(changed).toHaveBeenCalledTimes(1);
+    // Clear Browsing Data's deletion (box ticked): no confirmation of its own (its dialog asked).
+    expect(await service.setTargetQuery(URL_A, 'sencha', 1)).toBe(true);
+    await service.deleteAllNotes();
+    expect(confirmClearAll).toHaveBeenCalledTimes(2);
+    expect(service.generation()).toBe(2);
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(await service.notes(URL_A)).toEqual({ query: '', variants: [], generation: 2 });
+  });
+
+  test('stale-note-write-refused', async () => {
+    const { service } = setup();
+    expect(await service.setTargetQuery(URL_A, 'green tea', 0)).toBe(true);
+    expect(await service.saveVariant(URL_A, { slot: 0, title: 'Kept', description: '' }, 0)).toBe(true);
+    await service.deleteAllNotes();
+    // Writes read in generation 0 (an edit in flight when the notes were deleted) bring nothing back.
+    expect(await service.setTargetQuery(URL_A, 'green tea', 0)).toBe(false);
+    expect(await service.saveVariant(URL_A, { slot: 0, title: 'Stale', description: '' }, 0)).toBe(false);
+    expect(await service.notes(URL_A)).toEqual({ query: '', variants: [], generation: 1 });
+    // Nor one from a generation main never had.
+    expect(await service.setTargetQuery(URL_A, 'future', 2)).toBe(false);
+    // The current generation's are kept, and a stale deletion leaves them.
+    expect(await service.setTargetQuery(URL_A, 'oolong', 1)).toBe(true);
+    expect(await service.saveVariant(URL_A, { slot: 0, title: 'Fresh', description: '' }, 1)).toBe(true);
+    expect(await service.deleteVariant(URL_A, 0, 0)).toBe(false);
+    expect(await service.notes(URL_A)).toMatchObject({ query: 'oolong', variants: [{ slot: 0, title: 'Fresh' }], generation: 1 });
+    expect(await service.deleteVariant(URL_A, 0, 1)).toBe(true);
+    expect((await service.notes(URL_A)).variants).toEqual([]);
+  });
+
   test('copy-snippet-html-variant', async () => {
     const { service, clipboard, audit } = setup();
     const shown = { url: audit.url, takenAt: audit.takenAt };
-    expect(await service.saveVariant(`${URL_A}#part`, { slot: 1, title: 'Draft <one>', description: '' })).toBe(true);
-    expect(await service.notes(URL_A)).toEqual({ query: '', variants: [{ slot: 1, title: 'Draft <one>', description: '', updatedAt: 42 }] });
+    expect(await service.saveVariant(`${URL_A}#part`, { slot: 1, title: 'Draft <one>', description: '' }, 0)).toBe(true);
+    expect(await service.notes(URL_A)).toEqual({ query: '', variants: [{ slot: 1, title: 'Draft <one>', description: '', updatedAt: 42 }], generation: 0 });
     expect(await service.copySnippetHtml(1, shown, { slot: 1 })).toBe(true);
     expect(clipboard.writeText).toHaveBeenLastCalledWith('<title>Draft &lt;one&gt;</title>');
     // An empty slot, or a draft with nothing in it, writes nothing.
     expect(await service.copySnippetHtml(1, shown, { slot: 0 })).toBe(false);
-    await service.saveVariant(URL_A, { slot: 2, title: ' ', description: '' });
+    await service.saveVariant(URL_A, { slot: 2, title: ' ', description: '' }, 0);
     expect(await service.copySnippetHtml(1, shown, { slot: 2 })).toBe(false);
     expect(clipboard.writeText).toHaveBeenCalledTimes(1);
   });
@@ -91,10 +135,10 @@ describe('content service', () => {
     const log = vi.fn();
     await opened.close();
     const closed = createContentService({ notes: opened.contentNotes, audit: () => ({ status: 'pending', url: URL_A }), clipboard: { writeText: vi.fn() }, log });
-    expect(await closed.notes(URL_A)).toEqual({ query: '', variants: [] });
-    expect(await closed.setTargetQuery(URL_A, 'tea')).toBe(false);
-    expect(await closed.saveVariant(URL_A, { slot: 0, title: 't', description: '' })).toBe(false);
-    expect(await closed.deleteVariant(URL_A, 0)).toBe(false);
+    expect(await closed.notes(URL_A)).toEqual({ query: '', variants: [], generation: 0 });
+    expect(await closed.setTargetQuery(URL_A, 'tea', 0)).toBe(false);
+    expect(await closed.saveVariant(URL_A, { slot: 0, title: 't', description: '' }, 0)).toBe(false);
+    expect(await closed.deleteVariant(URL_A, 0, 0)).toBe(false);
     expect(log).toHaveBeenCalled();
   });
 });

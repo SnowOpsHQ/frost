@@ -1551,3 +1551,19 @@ describe('seo devtools toggle', () => {
     expect(controller.getState()).toEqual(after);
   });
 });
+
+// Acceptance: specs/seo-content.feature.md (content-notes-generation-in-state)
+describe('content notes generation', () => {
+  test('content-notes-generation-in-state', () => {
+    let generation = 0;
+    const notesController = createBrowserController({ createView: () => new FakeTabView() as unknown as TabView, platform: 'linux', contentNotesGeneration: () => generation });
+    notesController.attach(new FakeHostWindow() as unknown as HostWindow);
+    expect(BrowserStateSchema.parse(notesController.getState()).contentNotesGeneration).toBe(0);
+    const version = notesController.getState().version;
+    generation = 1;
+    notesController.contentNotesChanged();
+    expect(notesController.getState()).toMatchObject({ contentNotesGeneration: 1, version: version + 1 });
+    // Without it (a test controller), the state reports none deleted.
+    expect(controller.getState().contentNotesGeneration).toBe(0);
+  });
+});

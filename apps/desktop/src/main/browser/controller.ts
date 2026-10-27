@@ -144,6 +144,8 @@ export interface BrowserController extends BrowserService {
   forgetClosedTabs(): void;
   /** The search engine changed (`BrowserControllerOptions.searchEngine`): the state reports it. */
   searchEngineChanged(): void;
+  /** The content notes' generation went up (`BrowserControllerOptions.contentNotesGeneration`): the state reports it. */
+  contentNotesChanged(): void;
   /**
    * The tabs' SEO audits, highlight overlays and copy commands, as the `seo.*` procedures see them
    * (`seo-sidebar.feature.md`, Auditor; `seo-panels.feature.md`).
@@ -227,6 +229,8 @@ export interface BrowserControllerOptions {
   readonly renderProfiles?: RenderProfileOptions;
   /** The engine address-bar searches use (`browser-polish.spec.ts`); without it, `DEFAULT_SEARCH_ENGINE`. */
   readonly searchEngine?: () => SearchEngineId;
+  /** The content notes' generation (`seo-content.feature.md`; main's content service); without it, `0`. */
+  readonly contentNotesGeneration?: () => number;
 }
 
 /** Whether `audit` is the one the panel rendered (`SeoAuditRef`: its URL and when it was taken). */
@@ -262,6 +266,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     devtoolsToggleSeq,
     commandPalette: { seq: paletteSeq, returnFocus: paletteReturnFocus },
     notice: notice && { ...notice },
+    contentNotesGeneration: options.contentNotesGeneration?.() ?? 0,
     find: finds.state(activeTab()),
     historyViewSeq,
     closedTabCount: closedTabs.size(),
@@ -1077,6 +1082,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       if (closedTabs.clear()) changed();
     },
     searchEngineChanged: changed,
+    contentNotesChanged: changed,
 
     seo: {
       getAudit: (tabId) => {
