@@ -32,6 +32,8 @@ export interface ContentNotesRepository {
   saveVariant(url: string, variant: Omit<SnippetVariant, 'updatedAt'>, at: number): Promise<boolean>;
   /** Empties a slot; `false` for an invalid URL or slot. */
   deleteVariant(url: string, slot: number): Promise<boolean>;
+  /** Deletes every target query and draft, of every URL, in one transaction ("Delete all notes", Clear Browsing Data's checkbox). */
+  clearAll(): Promise<void>;
 }
 
 export const EMPTY_NOTES: ContentNotes = { query: '', variants: [] };
@@ -128,6 +130,10 @@ export function createContentNotesRepository(db: SessionDatabase): ContentNotesR
       if (key === null || !isSlot(slot)) return false;
       await db.delete(seoSnippetVariants).where(and(eq(seoSnippetVariants.url, key), eq(seoSnippetVariants.slot, slot)));
       return true;
+    },
+
+    async clearAll() {
+      await db.batch([db.delete(seoTargetQueries), db.delete(seoSnippetVariants)]);
     },
   };
 }

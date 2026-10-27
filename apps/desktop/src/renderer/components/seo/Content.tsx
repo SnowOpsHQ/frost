@@ -15,11 +15,11 @@ import {
 } from '@app/specs/seo-content.spec';
 import { contentPaletteSources, onTargetQueryFocus, takeTargetQueryFocus } from '../../content-palette';
 import { capQuery, countLabel, ngramBar, ratio } from '../../content-view';
-import { copySnippetHtml, useContentNotes } from '../../hooks/useContentNotes';
+import { clearAllContentNotes, copySnippetHtml, useContentNotes } from '../../hooks/useContentNotes';
 import { registerPaletteActions } from '../../palette/registry';
 import { CloseIcon } from '../../icons';
 import { Flash, useFlash } from './actions';
-import { AbsentGlyph, BarsIcon, BookIcon, PartialGlyph, PresentGlyph, TargetIcon } from './content-icons';
+import { AbsentGlyph, BarsIcon, BookIcon, PartialGlyph, PresentGlyph, TargetIcon, TrashIcon } from './content-icons';
 import { PageText, Section } from './parts';
 import { SnippetEditor } from './SnippetEditor';
 
@@ -29,7 +29,7 @@ import { SnippetEditor } from './SnippetEditor';
 // is React text only (`PageText`, `<bdi>`); bars are SVG attributes, never `style`.
 
 // The command palette's Content actions (`content-palette.ts`), once per module instance.
-const unregisterPaletteActions = registerPaletteActions(...contentPaletteSources({ copySnippetHtml }));
+const unregisterPaletteActions = registerPaletteActions(...contentPaletteSources({ copySnippetHtml, clearAllNotes: clearAllContentNotes }));
 import.meta.hot?.dispose(unregisterPaletteActions);
 
 const PLACE_SHORT: Readonly<Record<NgramPlace, [string, string]>> = {
@@ -124,7 +124,7 @@ function NgramTable({ rows, size }: { readonly rows: readonly NgramRow[]; readon
   return (
     <ol className="seo-ngrams" data-testid="seo-ngrams" data-size={size}>
       {rows.map((row) => (
-        <li key={row.text} className="seo-ngram" data-testid="seo-ngram">
+        <li key={row.terms.join('\u0000')} className="seo-ngram" data-testid="seo-ngram">
           <PageText value={row.text} className="seo-ngram-text" testId="seo-ngram-text" />
           <span className="seo-ngram-count" data-testid="seo-ngram-count">
             {row.count.toLocaleString('en-US')}
@@ -249,6 +249,20 @@ export function Content({ audit, tab }: { readonly audit: SeoAudit; readonly tab
       </Section>
       <Section title="Readability" badge={<SectionTitle icon={BookIcon} text="Flesch" />} testId="seo-content-readability">
         <Readability audit={audit} />
+      </Section>
+      <Section title="Your notes" testId="seo-content-notes">
+        <p className="seo-note seo-notes-line">Target queries and drafts are kept on this computer, for every page you wrote them for. Clear Browsing Data keeps them unless you tick its box.</p>
+        <div className="seo-panel-tools">
+          <button
+            type="button"
+            className="seo-toggle seo-toggle-danger"
+            data-testid="seo-notes-delete-all"
+            onClick={() => void clearAllContentNotes().then((deleted) => flash(deleted ? 'Every content note deleted' : 'Nothing was deleted'))}
+          >
+            <TrashIcon />
+            <span>Delete all notes…</span>
+          </button>
+        </div>
       </Section>
       <Flash message={message} testId="seo-content-flash" />
     </div>

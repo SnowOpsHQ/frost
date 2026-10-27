@@ -12,6 +12,8 @@ import { readyAudit, type PaletteSource } from './palette/registry';
 /** The procedure the copy calls (`copySnippetHtml` in `hooks/useContentNotes.ts`; `null`: the page's own). */
 export interface ContentPaletteApi {
   copySnippetHtml(tabId: number, audit: { url: string; takenAt: number }, slot: number | null): Promise<boolean>;
+  /** "Delete all notes" (`content.clearAllNotes`: main asks first); resolves whether they were deleted. */
+  clearAllNotes(): Promise<boolean>;
 }
 
 /** How long a "Set target query…" request waits for the panel's query field to be ready. */
@@ -92,6 +94,16 @@ export function contentPaletteSources(api: ContentPaletteApi): PaletteSource[] {
         const ok = await api.copySnippetHtml(ctx.tab!.id, { url: audit.url, takenAt: audit.takenAt }, null);
         return ok ? 'Snippet copied as HTML' : 'Nothing was copied';
       },
+    },
+    // Phase 2.5 Task 3 review: every stored target query and draft (main confirms first). Always
+    // offered: the notes are of every page, not only this one.
+    {
+      id: 'content.delete-all-notes',
+      label: 'Delete all content notes…',
+      group: 'browser',
+      keywords: [...KEYWORDS, 'delete', 'remove', 'clear', 'target query', 'drafts', 'notes', 'privacy'],
+      icon: 'clear',
+      run: async () => ((await api.clearAllNotes()) ? 'Content notes deleted' : 'Nothing was deleted'),
     },
   ];
 }

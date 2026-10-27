@@ -5,13 +5,16 @@ import { parseUrl } from '../util';
 import { ngramTables, type NgramTables } from './ngrams';
 import { readability, type Readability } from './readability';
 import { measureSnippet, snippetText, type SnippetCut } from './widths';
-import { contentLanguage, primaryLanguage, stopWordsFor, termsOf, wordRuns, type ContentLanguage } from './words';
+import { contentLanguage, fieldRuns, primaryLanguage, stopWordsFor, wordRuns, type ContentLanguage } from './words';
 
 // The Content panel's report (spec `seo-content.spec.ts`; acceptance `seo-content.feature.md`):
 // built by `runAudit`, so in the analysis worker, from the validated snapshot only.
 
-/** The page's fields as normalised words, in order (each at most `maxFieldWords`). */
-export type ContentFields = Readonly<Record<TargetQueryPlace | NgramPlace, readonly string[]>>;
+/**
+ * The page's fields as runs of normalised words (`fieldRuns`: a run ends at punctuation and between
+ * elements, so a phrase never spans two of them), each field at most `maxFieldWords` words.
+ */
+export type ContentFields = Readonly<Record<TargetQueryPlace | NgramPlace, readonly (readonly string[])[]>>;
 
 export interface ContentReport {
   /** The snapshot carried visible text (an older extractor's did not). */
@@ -32,8 +35,8 @@ export interface ContentReport {
   readonly fields: ContentFields;
 }
 
-/** A URL's words: its host (without `www.`) and its decoded path, split at `- _ . / + ~ = &`. */
-export function urlTerms(url: string, lang: string | null): string[] {
+/** A URL's words: its host (without `www.`), then each decoded path segment, as runs; words split at `- _ . + ~ = &`. */
+export function urlTerms(url: string, lang: string | null): string[][] {
   const parsed = parseUrl(url);
   if (!parsed) return [];
   let path = parsed.pathname;
@@ -43,7 +46,7 @@ export function urlTerms(url: string, lang: string | null): string[] {
     // Keep the path as written.
   }
   const host = parsed.hostname.replace(/^www\./, '');
-  return termsOf(`${host} ${path}`.replace(/[-_./+~=&]+/g, ' '), lang);
+  return fieldRuns([host, ...path.split('/')].map((part) => part.replace(/[-_.+~=&]+/g, ' ')), lang);
 }
 
 /** The report of `s` (validated snapshot). */
@@ -59,12 +62,12 @@ export function contentReport(s: PageSnapshot): ContentReport {
   const title = s.titles[0]?.text ?? '';
   const description = described(s)?.text ?? '';
   const fields: ContentFields = {
-    title: termsOf(title, lang),
-    h1: termsOf(s.headings.filter((h) => h.level === 1).map((h) => h.text).join('\n'), lang),
-    description: termsOf(description, lang),
+    title: fieldRuns(title, lang),
+    h1: fieldRuns(s.headings.filter((h) => h.level === 1).map((h) => h.text), lang),
+    description: fieldRuns(description, lang),
     url: urlTerms(s.url, lang),
-    'first-words': termsOf(text, lang, CONTENT_LIMITS.firstWords),
-    headings: termsOf(s.headings.filter((h) => h.level > 1).map((h) => h.text).join('\n'), lang),
+    'first-words': fieldRuns(text, lang, CONTENT_LIMITS.firstWords),
+    headings: fieldRuns(s.headings.filter((h) => h.level > 1).map((h) => h.text), lang),
   };
   const measured = measureSnippet(title, description);
   return {

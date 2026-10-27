@@ -87,8 +87,9 @@ export const CORRUPTION_RESULT_CODES = [11, 26] as const;
  * shows parented to the window, and on confirmation clears the visits, every permission decision
  * (stored and in memory) with the prompt back-off, every pinned render profile (stored and in memory,
  * `render-profile.feature.md`), and the browse partition's storage and cache. The Content panel's
- * target queries and snippet drafts are the user's own work and are kept (`MAX_CONTENT_NOTE_URLS` in
- * `seo-content.spec.ts`); the dialog says so. It closes no tab. `buttons[confirmIndex]` clears; Cancel is the default and the cancel answer.
+ * target queries and snippet drafts are the user's own work and are kept unless the dialog's
+ * checkbox (`checkboxLabel`, unchecked by default) is ticked (`seo-content.spec.ts`,
+ * `MAX_CONTENT_NOTE_URLS`); the dialog says so. It closes no tab. `buttons[confirmIndex]` clears; Cancel is the default and the cancel answer.
  */
 export const CLEAR_BROWSING_DATA = {
   menuItemId: 'clear-browsing-data',
@@ -97,7 +98,9 @@ export const CLEAR_BROWSING_DATA = {
     type: 'warning',
     message: 'Clear browsing data?',
     detail:
-      'This clears your recent visits, every site permission you allowed or blocked, the render profiles pinned to sites, and the cookies, site data and cache of every site. Your target queries and snippet drafts are kept, and open tabs stay open.',
+      'This clears your recent visits, every site permission you allowed or blocked, the render profiles pinned to sites, and the cookies, site data and cache of every site. Your target queries and snippet drafts are kept unless you tick the box below, and open tabs stay open.',
+    checkboxLabel: 'Also remove target queries and snippet drafts',
+    checkboxChecked: false,
     buttons: ['Clear Browsing Data', 'Cancel'],
     defaultId: 1,
     cancelId: 1,

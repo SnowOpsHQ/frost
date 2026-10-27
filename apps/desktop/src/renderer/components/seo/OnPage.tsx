@@ -1,4 +1,4 @@
-import { formatPx, type SeoAudit, type SnippetCut } from '@app/seo-core';
+import { formatPx, minSnippetWidth, type SeoAudit, type SnippetCut } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import { DESCRIPTION_MAX_CHARS, DESCRIPTION_MIN_CHARS, TITLE_MAX_CHARS, TITLE_MIN_CHARS, type SeoCategory } from '@app/specs/seo-rules.spec';
 import { snippetIndicator } from '../../content-view';
@@ -22,10 +22,10 @@ function IssueBadge({ audit, categories }: { readonly audit: SeoAudit; readonly 
   );
 }
 
-function Measured({ label, value, total, min, max, cut, testId }: { readonly label: string; readonly value: SeoAudit['page']['title']; readonly total: number; readonly min: number; readonly max: number; readonly cut: SnippetCut | null; readonly testId: string }) {
+function Measured({ label, kind, value, total, min, max, cut, testId }: { readonly label: string; readonly kind: 'title' | 'description'; readonly value: SeoAudit['page']['title']; readonly total: number; readonly min: number; readonly max: number; readonly cut: SnippetCut | null; readonly testId: string }) {
   const text = value?.text ?? '';
   // Characters are counted against the guide range; "too long" is the width (Phase 2.5 Task 3, seo-content.spec.ts).
-  const indicator = snippetIndicator(value?.length ?? null, min, cut?.truncated ?? false);
+  const indicator = snippetIndicator(value?.length ?? null, cut, minSnippetWidth(kind));
   return (
     <div className="seo-measured" data-testid={testId}>
       <div className="seo-measured-head">
@@ -66,8 +66,8 @@ export function OnPage({ audit, tab }: { readonly audit: SeoAudit; readonly tab:
   return (
     <div className="seo-onpage" data-testid="seo-onpage">
       <Section title="Search appearance" badge={<IssueBadge audit={audit} categories={['title', 'meta-description']} />}>
-        <Measured label="Title" value={page.title} total={page.titleTotal} min={TITLE_MIN_CHARS} max={TITLE_MAX_CHARS} cut={audit.content.snippet.title} testId="seo-fact-title" />
-        <Measured label="Meta description" value={page.description} total={page.descriptionTotal} min={DESCRIPTION_MIN_CHARS} max={DESCRIPTION_MAX_CHARS} cut={audit.content.snippet.descriptionDesktop} testId="seo-fact-description" />
+        <Measured label="Title" kind="title" value={page.title} total={page.titleTotal} min={TITLE_MIN_CHARS} max={TITLE_MAX_CHARS} cut={audit.content.snippet.title} testId="seo-fact-title" />
+        <Measured label="Meta description" kind="description" value={page.description} total={page.descriptionTotal} min={DESCRIPTION_MIN_CHARS} max={DESCRIPTION_MAX_CHARS} cut={audit.content.snippet.descriptionDesktop} testId="seo-fact-description" />
       </Section>
 
       <Section title="URL and indexing" badge={<IssueBadge audit={audit} categories={['url', 'canonical', 'indexing', 'language', 'mobile']} />}>

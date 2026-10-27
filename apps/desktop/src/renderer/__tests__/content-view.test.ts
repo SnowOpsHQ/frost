@@ -33,12 +33,17 @@ describe('content view', () => {
   });
 
   test('on-page-length-verdict-uses-width', () => {
-    expect(snippetIndicator(null, 30, false)).toBe('missing');
-    expect(snippetIndicator(0, 30, false)).toBe('missing');
-    expect(snippetIndicator(12, 30, false)).toBe('short');
+    // Since the review the minimum is a width too: narrower than `min` px is short, whatever the count.
+    const cut = (width: number, truncated = false) => ({ width, truncated });
+    expect(snippetIndicator(null, null, 294)).toBe('missing');
+    expect(snippetIndicator(0, null, 294)).toBe('missing');
+    expect(snippetIndicator(12, cut(120), 294)).toBe('short');
+    expect(snippetIndicator(40, cut(178), 294)).toBe('short');
+    // 15 full-width characters (300 px) are long enough.
+    expect(snippetIndicator(15, cut(300), 294)).toBe('ok');
     // Over 60 characters but narrow: fine; wide: long, whatever the count.
-    expect(snippetIndicator(100, 30, false)).toBe('ok');
-    expect(snippetIndicator(40, 30, true)).toBe('long');
+    expect(snippetIndicator(100, cut(500), 294)).toBe('ok');
+    expect(snippetIndicator(40, cut(700, true), 294)).toBe('long');
   });
 
   test('draft-slots', () => {

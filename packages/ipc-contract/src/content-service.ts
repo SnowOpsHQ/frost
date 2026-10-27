@@ -36,4 +36,10 @@ export interface ContentService {
    * stored in `source.slot` for that audit's URL. `false`, nothing written, for anything else.
    */
   copySnippetHtml(tabId: number, audit: SeoAuditRef, source: SnippetHtmlSource): Promise<boolean>;
+  /**
+   * "Delete all notes": asks first in a native message box main shows (`CLEAR_CONTENT_NOTES`), then
+   * deletes every target query and draft. `true` once deleted; `false` (nothing deleted) when the
+   * user cancels or it fails. Never rejects.
+   */
+  clearAllNotes(): Promise<boolean>;
 }

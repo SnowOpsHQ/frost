@@ -92,6 +92,28 @@ describe('clear browsing data', () => {
     expect(CLEAR_BROWSING_DATA.dialog.defaultId).toBe(CLEAR_BROWSING_DATA.dialog.cancelId);
   });
 
+  // Phase 2.5 Task 3 review (seo-content.feature.md, Store): the content notes, only when asked.
+  test('clear-browsing-data-content-notes-checkbox', async () => {
+    expect(CLEAR_BROWSING_DATA.dialog.checkboxLabel).toBe('Also remove target queries and snippet drafts');
+    expect(CLEAR_BROWSING_DATA.dialog.checkboxChecked).toBe(false);
+    const showMessageBox = vi.mocked(dialog.showMessageBox);
+    showMessageBox.mockResolvedValueOnce({ response: CLEAR_BROWSING_DATA.confirmIndex, checkboxChecked: true });
+    await expect(confirmClearBrowsingData(null)).resolves.toBe('with-content-notes');
+    showMessageBox.mockResolvedValueOnce({ response: CLEAR_BROWSING_DATA.dialog.cancelId, checkboxChecked: true });
+    await expect(confirmClearBrowsingData(null)).resolves.toBe(false);
+    // Ticked: the notes are cleared last; unticked: never.
+    const clearContentNotes = vi.fn(async () => undefined);
+    const ticked = fakeParts(true);
+    ticked.parts.confirm.mockResolvedValueOnce('with-content-notes' as never);
+    await expect(createClearBrowsingData({ ...ticked.parts, clearContentNotes })()).resolves.toBe(true);
+    expect(clearContentNotes).toHaveBeenCalledOnce();
+    const unticked = fakeParts(true);
+    await expect(createClearBrowsingData({ ...unticked.parts, clearContentNotes })()).resolves.toBe(true);
+    const cancelled = fakeParts(false);
+    await expect(createClearBrowsingData({ ...cancelled.parts, clearContentNotes })()).resolves.toBe(false);
+    expect(clearContentNotes).toHaveBeenCalledOnce();
+  });
+
   test('clear-browse-storage', async () => {
     const browse = session.fromPartition(BROWSE_PARTITION) as unknown as FakeSession;
     const app = session.defaultSession as unknown as FakeSession;

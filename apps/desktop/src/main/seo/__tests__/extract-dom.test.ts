@@ -513,6 +513,15 @@ describe('extractor on a DOM', () => {
     expect(extract({ body: '<p>Text</p>' }).visibleText).toBeUndefined();
   });
 
+  // Phase 2.5 Task 3 review: the nearest block ancestor decides, not the parent.
+  test('visible-text-block-of-inline-text', () => {
+    expect(visible({ body: '<div><p><span>alpha</span></p>beta</div>' }).visibleText!.text).toBe('alpha\nbeta');
+    expect(visible({ body: '<div>gamma<p><em>delta</em> epsilon</p><b>zeta</b></div>' }).visibleText!.text).toBe('gamma\ndelta epsilon\nzeta');
+    // Inline siblings of one block stay joined, as rendered.
+    expect(visible({ body: '<p><b>se</b><i>arch</i> <a href="/">engine</a></p>' }).visibleText!.text).toBe('search engine');
+    expect(visible({ body: '<ul><li><a href="/a">One</a></li><li><a href="/b">Two</a></li></ul>' }).visibleText!.text).toBe('One\nTwo');
+  });
+
   test('visible-text-capped', () => {
     const snapshot = visible({ body: `<p>${'abcdefghij '.repeat(100)}</p><p>more</p>`, max: 55 });
     expect(snapshot.visibleText!.text).toBe('abcdefghij '.repeat(5).trim());

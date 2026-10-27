@@ -18,6 +18,7 @@ import { restrictAppRequests } from './protocol/requests';
 import { runAccessibilityCheck } from './seo/a11y';
 import { createAnalyzer } from './seo/analysis';
 import { createContentService } from './seo/content-notes';
+import { confirmClearContentNotes } from './seo/content-notes-dialog';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
 import { createResponseRecorder } from './seo/responses';
@@ -256,7 +257,13 @@ function start(): void {
         browser,
         seo: browser.seo,
         // The Content panel's notes (local, in the session database) and Copy as HTML (specs/seo-content.feature.md).
-        content: createContentService({ notes: sessionStore.contentNotes, audit: (tabId) => browser.seo.getAudit(tabId), clipboard, log: logSession }),
+        content: createContentService({
+          notes: sessionStore.contentNotes,
+          audit: (tabId) => browser.seo.getAudit(tabId),
+          clipboard,
+          log: logSession,
+          confirmClearAll: () => confirmClearContentNotes(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
+        }),
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -273,6 +280,8 @@ function start(): void {
         // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
         browser.forgetRenderProfilePins();
       },
+      // Only when the dialog's checkbox was ticked (specs/seo-content.feature.md).
+      clearContentNotes: () => sessionStore.contentNotes.clearAll(),
       log: logSession,
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu

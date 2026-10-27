@@ -21,6 +21,7 @@ function fakeContent() {
     saveVariant: vi.fn(async (_url: string, _variant: { slot: number; title: string; description: string }) => true),
     deleteVariant: vi.fn(async (_url: string, _slot: number) => true),
     copySnippetHtml: vi.fn(async (tabId: number, _audit: { url: string; takenAt: number }, _source: 'page' | { slot: number }) => tabId === 1),
+    clearAllNotes: vi.fn(async () => true),
   } satisfies ContentService;
 }
 
@@ -54,6 +55,8 @@ const VALID_INPUT: Record<string, unknown> = {
   saveVariant: { url: PAGE, slot: 0, title: 'A title', description: 'A description' },
   deleteVariant: { url: PAGE, slot: 0 },
   copySnippetHtml: { tabId: 1, audit: AUDIT, source: 'page' },
+  // Phase 2.5 Task 3 review: "Delete all notes" (main confirms); no input.
+  clearAllNotes: undefined,
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (content: ReturnType<typeof fakeContent>) => {
@@ -105,6 +108,7 @@ describe('content router', () => {
         { tabId: 1, audit: AUDIT, source: 'variant', slot: MAX_SNIPPET_VARIANTS },
         { tabId: 1, audit: AUDIT, source: 'page', html: '<title>x</title>' },
       ],
+      clearAllNotes: [],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -131,5 +135,9 @@ describe('content router', () => {
     await expect(procedure(ctxFor(content), 'copySnippetHtml')({ tabId: 1, audit: AUDIT, source: 'variant', slot: 3 })).resolves.toBe(true);
     expect(content.copySnippetHtml).toHaveBeenLastCalledWith(1, AUDIT, { slot: 3 });
     await expect(procedure(ctxFor(content), 'copySnippetHtml')({ tabId: 2, audit: AUDIT, source: 'page' })).resolves.toBe(false);
+    await expect(procedure(ctxFor(content), 'clearAllNotes')()).resolves.toBe(true);
+    expect(content.clearAllNotes).toHaveBeenCalledOnce();
+    content.clearAllNotes.mockResolvedValueOnce(false);
+    await expect(procedure(ctxFor(content), 'clearAllNotes')()).resolves.toBe(false);
   });
 });

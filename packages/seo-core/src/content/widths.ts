@@ -1,4 +1,5 @@
 import { SNIPPET_BUDGETS_PX, SNIPPET_ELLIPSIS, SNIPPET_FONT, type SnippetTextKind } from '@app/specs/seo-content.spec';
+import { DESCRIPTION_MIN_CHARS, TITLE_MIN_CHARS } from '@app/specs/seo-rules.spec';
 import { SNIPPET_FONT_TABLE } from './snippet-font';
 
 // Result-snippet widths from frost's committed character-width table (spec `seo-content.spec.ts`,
@@ -10,29 +11,74 @@ const INDEX: ReadonlyMap<number, number> = new Map([...SNIPPET_FONT_TABLE.chars]
 
 /** Full-width characters (CJK ideographs, kana, Hangul, full-width forms): `SNIPPET_FONT.wideEm` em. */
 const WIDE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}　-〿！-｠￠-￦]/u;
-/** Marks that combine with the character before them take no width of their own. */
-const COMBINING = /\p{M}/u;
-/** Joiners, direction marks and other invisible format characters. */
-const INVISIBLE = /\p{Cf}/u;
+/** Emoji and flags (regional indicators): drawn one em wide, like full-width characters. */
+const PICTOGRAPHIC = /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
+/** Marks that take no width of their own: nonspacing and enclosing (`Mn`, `Me`). */
+const ZERO_WIDTH_MARK = /[\p{Mn}\p{Me}]/u;
+/** Spacing marks (`Mc`, such as Devanagari vowel signs): the average width. */
+const SPACING_MARK = /\p{Mc}/u;
+/** Joiners, direction marks and other invisible format characters, and control characters. */
+const INVISIBLE = /[\p{Cf}\p{Cc}]/u;
 
 function sizeOf(kind: SnippetTextKind): number {
   return kind === 'title' ? SNIPPET_FONT.titlePx : SNIPPET_FONT.descriptionPx;
 }
 
-/** One character's advance in 1/100 px at `kind`'s size. */
-function advance(char: string, kind: SnippetTextKind): number {
+/** A grapheme's first character's advance in 1/100 px at `kind`'s size. */
+function baseAdvance(char: string, kind: SnippetTextKind): number {
   const index = INDEX.get(char.codePointAt(0)!);
   if (index !== undefined) return SNIPPET_FONT_TABLE.widths[kind][index]!;
-  if (COMBINING.test(char) || INVISIBLE.test(char)) return 0;
-  if (WIDE.test(char)) return Math.round(sizeOf(kind) * SNIPPET_FONT.wideEm * 100);
+  if (ZERO_WIDTH_MARK.test(char) || INVISIBLE.test(char)) return 0;
+  if (WIDE.test(char) || PICTOGRAPHIC.test(char)) return Math.round(sizeOf(kind) * SNIPPET_FONT.wideEm * 100);
   return SNIPPET_FONT_TABLE.averageLower[kind];
 }
 
-/** `text`'s width in px at `kind`'s size (white space as written: callers pass normalised text). */
+/**
+ * One grapheme's advance in 1/100 px: its first character's, plus the average for each spacing
+ * mark after it; anything else after it (nonspacing marks, joiners, variation selectors, the rest
+ * of an emoji ZWJ sequence) takes none.
+ */
+function advance(grapheme: string, kind: SnippetTextKind): number {
+  let sum = 0;
+  let first = true;
+  for (const char of grapheme) {
+    if (first) sum += baseAdvance(char, kind);
+    else if (SPACING_MARK.test(char)) sum += SNIPPET_FONT_TABLE.averageLower[kind];
+    first = false;
+  }
+  return sum;
+}
+
+let graphemeSegmenter: Intl.Segmenter | null | undefined;
+
+/** `text`'s graphemes (`Intl.Segmenter`); without it, code points with their marks and joined characters. */
+export function graphemesOf(text: string): string[] {
+  if (graphemeSegmenter === undefined) graphemeSegmenter = typeof Intl === 'object' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  if (graphemeSegmenter) return Array.from(graphemeSegmenter.segment(text), (segment) => segment.segment);
+  const out: string[] = [];
+  let joined = false;
+  for (const char of text) {
+    if (out.length > 0 && (joined || /[\p{M}\u200d\ufe0e\ufe0f]/u.test(char))) out[out.length - 1] += char;
+    else out.push(char);
+    joined = char === '\u200d';
+  }
+  return out;
+}
+
+/** `text`'s width in px at `kind`'s size, summed per grapheme (white space as written: callers pass normalised text). */
 export function textWidth(text: string, kind: SnippetTextKind): number {
   let sum = 0;
-  for (const char of text) sum += advance(char, kind);
+  for (const grapheme of graphemesOf(text)) sum += advance(grapheme, kind);
   return sum / 100;
+}
+
+/**
+ * The width under which a title or description is too short (`title-too-short`,
+ * `meta-description-too-short`): `TITLE_MIN_CHARS` / `DESCRIPTION_MIN_CHARS` average lowercase
+ * Latin letters at the result size (the table's `averageLower`).
+ */
+export function minSnippetWidth(kind: SnippetTextKind): number {
+  return ((kind === 'title' ? TITLE_MIN_CHARS : DESCRIPTION_MIN_CHARS) * SNIPPET_FONT_TABLE.averageLower[kind]) / 100;
 }
 
 /** What a result would show of a text at a budget: the text, cut or whole, and both widths. */
@@ -56,7 +102,8 @@ export function truncateToWidth(text: string, budget: number, kind: SnippetTextK
   const width = textWidth(text, kind);
   if (width <= budget) return { shown: text, truncated: false, width, budget };
   const limit = budget * 100 - textWidth(SNIPPET_ELLIPSIS, kind) * 100;
-  const chars = [...text];
+  // Cut between graphemes, never inside one.
+  const chars = graphemesOf(text);
   let used = 0;
   let end = 0;
   while (end < chars.length && used + advance(chars[end]!, kind) <= limit) used += advance(chars[end++]!, kind);
@@ -97,9 +144,17 @@ export function formatPx(px: number): string {
 
 const ESCAPES: Readonly<Record<string, string>> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
-/** `value` safe as HTML text and as a double-quoted attribute value. */
+/** Bidi controls: written as numeric character references in copied HTML. */
+const BIDI_CONTROLS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+/** C0 and C1 control characters: removed from copied HTML. */
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/**
+ * `value` safe as HTML text and as a double-quoted attribute value: `& < > " '` escaped, bidi
+ * controls as numeric character references (`&#x202E;`), so they show and cannot reorder the markup.
+ */
 export function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => ESCAPES[char]!);
+  return value.replace(/[&<>"']/g, (char) => ESCAPES[char]!).replace(BIDI_CONTROLS, (char) => `&#x${char.codePointAt(0)!.toString(16).toUpperCase()};`);
 }
 
 /**
@@ -108,8 +163,9 @@ export function escapeHtml(value: string): string {
  * both are empty.
  */
 export function snippetHtml(title: string, description: string): string {
-  const t = snippetText(title);
-  const d = snippetText(description);
+  // White space first (a tab is a space), then the other control characters go.
+  const t = snippetText(title).replace(CONTROLS, '').trim();
+  const d = snippetText(description).replace(CONTROLS, '').trim();
   const lines: string[] = [];
   if (t !== '') lines.push(`<title>${escapeHtml(t)}</title>`);
   if (d !== '') lines.push(`<meta name="description" content="${escapeHtml(d)}">`);

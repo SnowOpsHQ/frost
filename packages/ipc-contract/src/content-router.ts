@@ -16,7 +16,8 @@ const requireContent = middleware(({ ctx, next }) => {
 /**
  * `getNotes` answers the page's target query and drafts (`ContentNotes`); `setTarget`, `saveVariant`
  * and `deleteVariant` whether they were stored; `copySnippetHtml` whether main wrote the HTML to its
- * clipboard (only from the ready audit the panel shows, or a stored draft of its URL).
+ * clipboard (only from the ready audit the panel shows, or a stored draft of its URL);
+ * `clearAllNotes` whether every note was deleted (after main's confirmation).
  */
 export const contentRouter = router({
   getNotes: publicProcedure
@@ -44,4 +45,9 @@ export const contentRouter = router({
     .use(requireContent)
     .input(CopySnippetHtmlInputSchema)
     .mutation(async ({ ctx, input }) => (await ctx.content.copySnippetHtml(input.tabId, input.audit, input.source === 'variant' ? { slot: input.slot! } : 'page')) === true),
+  // Phase 2.5 Task 3 review: "Delete all notes" (the panel's button and the palette); main confirms.
+  clearAllNotes: publicProcedure
+    .use(enforceSender)
+    .use(requireContent)
+    .mutation(async ({ ctx }) => (await ctx.content.clearAllNotes()) === true),
 });

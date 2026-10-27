@@ -58,15 +58,16 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     // The Content panel's notes (Phase 2.5 Task 3, `seo-content.spec.ts`, `CONTENT_TABLES`):
-    // target queries and snippet drafts per page URL (`content-schema.ts`).
+    // target queries and snippet drafts per page URL (`content-schema.ts`). `IF NOT EXISTS`: a dev
+    // profile from before the Phase 2.5 merge has them already, recorded as `0003_seo_content_notes`.
     id: '0004_seo_content_notes',
     sql: `
-      CREATE TABLE seo_target_queries (
+      CREATE TABLE IF NOT EXISTS seo_target_queries (
         url TEXT PRIMARY KEY NOT NULL,
         query TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
-      CREATE TABLE seo_snippet_variants (
+      CREATE TABLE IF NOT EXISTS seo_snippet_variants (
         url TEXT NOT NULL,
         slot INTEGER NOT NULL,
         title TEXT NOT NULL,

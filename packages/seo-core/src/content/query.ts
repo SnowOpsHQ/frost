@@ -1,5 +1,5 @@
 import { CONTENT_LIMITS, TARGET_QUERY_PLACES, type QueryPresence, type TargetQueryPlace } from '@app/specs/seo-content.spec';
-import { hasSequence, stopWordsFor, wordsOf } from './words';
+import { hasPhrase, stopWordsFor, wordsOf } from './words';
 
 // The target query checklist (spec `seo-content.spec.ts`, Target query). Pure: the chrome runs it
 // on the user's query and the word lists the worker made from the page (`ContentReport.fields`);
@@ -30,14 +30,17 @@ export function queryTerms(query: string, lang: string | null): QueryTerms {
   return { terms, phrase };
 }
 
-/** For each `TARGET_QUERY_PLACES` place: which of the query's terms it holds, and whether it holds the phrase. Empty for a query with no words. */
-export function queryChecklist(query: string, fields: Readonly<Record<TargetQueryPlace, readonly string[]>>, lang: string | null): QueryPlaceCheck[] {
+/**
+ * For each `TARGET_QUERY_PLACES` place (its runs of words, `fieldRuns`): which of the query's terms
+ * it holds, and whether one of its runs holds the phrase. Empty for a query with no words.
+ */
+export function queryChecklist(query: string, fields: Readonly<Record<TargetQueryPlace, readonly (readonly string[])[]>>, lang: string | null): QueryPlaceCheck[] {
   const { terms, phrase } = queryTerms(query, lang);
   if (terms.length === 0) return [];
   return TARGET_QUERY_PLACES.map((place) => {
-    const words = new Set(fields[place]);
+    const words = new Set(fields[place].flat());
     const found = terms.map((term) => ({ term, present: words.has(term) }));
     const present = found.filter((term) => term.present).length;
-    return { place, terms: found, presence: present === terms.length ? 'all' : present > 0 ? 'some' : 'none', phrase: hasSequence(fields[place], phrase) };
+    return { place, terms: found, presence: present === terms.length ? 'all' : present > 0 ? 'some' : 'none', phrase: hasPhrase(fields[place], phrase) };
   });
 }
