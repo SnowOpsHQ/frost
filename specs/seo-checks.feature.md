@@ -25,8 +25,9 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
   profile's (printable ASCII only).
 - **Bounded by construction** (`link-checks-are-bounded`). At most `maxLinks` (500) unique targets per
   run; per origin 2 in flight and 250 ms between starts; 6 in flight in all; 10 s per link. A private
-  host (literal: `localhost`, RFC 1918, link-local, loopback, unique-local IPv6) is never asked from a
-  public page, nor followed to by a redirect.
+  host (the shared check in `specs/private-address.spec.ts`: every reserved range and name suffix, and
+  names that resolve to a private address before each hop) is never asked from a public page, nor
+  followed to by a redirect.
 - **HEAD, then GET.** HEAD first; a 405 or 501 means the server does not do HEAD: the link is asked
   again with GET, its body read to 16 KB and the connection aborted, and every later link to that
   origin goes straight to GET.

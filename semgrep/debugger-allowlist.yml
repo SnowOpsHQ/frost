@@ -7,8 +7,8 @@
 #   Rule test (fixtures):   pnpm security:semgrep:test
 #   Repo scan (0 findings): pnpm security:semgrep:scan
 #
-# The allowlist is `paths.exclude` below (today: the render-profile debugger; the devtools drawer's
-# recorder joins it in its own reviewed PR). Any use of a `debugger` property is flagged elsewhere —
+# The allowlist is `paths.exclude` below (the render-profile debugger only: the devtools drawer
+# records through the browse session's webRequest observers, never the debugger). Any use of a `debugger` property is flagged elsewhere —
 # `attach` / `sendCommand` / `detach` / `on`, an alias of it, a destructured binding (typed or not,
 # in a declaration, a parameter or an assignment) or a reflective read by name (`Reflect.get`,
 # `Reflect.getOwnPropertyDescriptor`, `Object.getOwnPropertyDescriptor`) — so no module can reach a

@@ -266,7 +266,7 @@ bounded fetcher.
 - [x] commit `fix(chrome): Batch B integration consistency`
 
 ### Task 8: Release check
-- [ ] Mac package `verify:mac`, full e2e on macOS and Linux, Mac screenshots of the new surfaces (the
+- [x] Mac package `verify:mac`, full e2e on macOS and Linux, Mac screenshots of the new surfaces (the
   release check, run separately).
 - [x] macOS e2e timing (found on a macOS run; no product change): commit
   `fix(e2e): macOS timing in the find, palette and reopen-tab suites`

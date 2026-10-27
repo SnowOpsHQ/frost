@@ -182,6 +182,6 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   `<meta name="googlebot" content="noindex">` scores at most `NOINDEX_SCORE_CAP` and its score
   card says "Not indexable" and names googlebot.
 - **Scenario: empty-tab-shows-hint** — an empty tab shows the sidebar's hint, no score; the rail
-  lists all ten panels (`SEO_PANELS`; Content since Phase 2.5 Task 3), each with a status.
+  lists all eleven panels (`SEO_PANELS`; Content and JavaScript since Phase 2.5), each with a status.
 - **Scenario: narrow-window-keeps-page-usable** — with the chrome 500 px wide the tab's view keeps
   `PAGE_MIN_WIDTH`, the sidebar narrows (the rail stays), and a click in the page still lands.
