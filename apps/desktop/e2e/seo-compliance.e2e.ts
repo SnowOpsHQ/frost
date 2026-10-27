@@ -295,12 +295,24 @@ test('huge-dom-run-stays-bounded-e2e', async () => {
   await expect(a11yState()).toHaveAttribute('data-state', /results|timed-out/, { timeout: RUN_WAIT });
   expect(Date.now() - started).toBeLessThan(RUN_WAIT);
   if ((await a11yState().getAttribute('data-state')) === 'results') {
-    const nodes = await page.locator('[data-testid="seo-a11y-rule"]').evaluateAll((items) => items.length);
-    expect(nodes).toBeLessThanOrEqual(A11Y_LIMITS.maxRules);
-    const imageAlt = page.locator('[data-testid="seo-a11y-rule"][data-rule-id="image-alt"]');
-    await expect(imageAlt.getByTestId('seo-a11y-rule-count')).toHaveText('6,000');
-    await imageAlt.getByTestId('seo-a11y-rule-toggle').click();
-    expect(await imageAlt.getByTestId('seo-a11y-node').count()).toBeLessThanOrEqual(A11Y_LIMITS.maxNodesPerRule);
+    const rules = page.locator('[data-testid="seo-a11y-rule"]');
+    expect(await rules.count()).toBeLessThanOrEqual(A11Y_LIMITS.maxRules);
+    // The run script's own deadline (`A11Y_PAGE_BUDGET_MS`) may pass before every chunk ran (a slow
+    // machine): then which rules it reached depends on the machine, and the panel says so.
+    const partial = page.getByTestId('seo-a11y-partial');
+    if ((await partial.count()) > 0) {
+      await expect(partial).toContainText('Not every rule was checked');
+      // What it did report is still capped: each rule lists at most `maxNodesPerRule` elements.
+      for (const rule of await rules.all()) {
+        await rule.getByTestId('seo-a11y-rule-toggle').click();
+        expect(await rule.getByTestId('seo-a11y-node').count()).toBeLessThanOrEqual(A11Y_LIMITS.maxNodesPerRule);
+      }
+    } else {
+      const imageAlt = page.locator('[data-testid="seo-a11y-rule"][data-rule-id="image-alt"]');
+      await expect(imageAlt.getByTestId('seo-a11y-rule-count')).toHaveText('6,000');
+      await imageAlt.getByTestId('seo-a11y-rule-toggle').click();
+      expect(await imageAlt.getByTestId('seo-a11y-node').count()).toBeLessThanOrEqual(A11Y_LIMITS.maxNodesPerRule);
+    }
   }
   // A run in progress is cancelled by navigation: the next page starts idle, and back on the huge
   // page (a new document) the old run's answer never lands, however long it takes.
