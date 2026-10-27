@@ -108,7 +108,9 @@ named test.
   together.
 - **Scenario: network-rows-incremental** — rows carry no headers; a cursor answers only the rows
   changed since and the keys removed since; a cursor from before a reset (or too old) gets a full
-  answer; answers are paged at `maxRowsPerAnswer`.
+  answer, as does any cursor from before the tab's log started over (Clear Browsing Data, the tab
+  forgotten or let go past `maxTrackedTabs`), also once new requests are in it; answers are paged at
+  `maxRowsPerAnswer`.
 - **Scenario: network-headers-on-demand** — one row's headers, masked as stored; `gone` for an
   unknown key.
 - **Scenario: network-preserve-log** — with "Preserve log" on for a tab, earlier documents stay (at
@@ -155,6 +157,10 @@ named test.
   `revealCookie` `false`, `clearSiteData` `refused`) for an open tab that is not the active one.
 - **Scenario: devtools-redirect-trace** — the trace is the recorder's committed response: hops with
   status, location and their key headers, the final status and headers; `none` without a response.
+- **Scenario: devtools-clear-browsing-data** — Clear Browsing Data (`clear`) forgets every tab's
+  requests, console and cookie reveals, and moves the version of each tab that had any on, waking its
+  `watch`: an open drawer asks again and the cursor it holds gets a full answer (no rows), also after
+  the next requests, so nothing cleared stays on screen.
 - **Scenario: devtools-open-switches-capture** — `setOpen` from any live window turns full capture
   on; closing it (or the window going away) turns it off.
 

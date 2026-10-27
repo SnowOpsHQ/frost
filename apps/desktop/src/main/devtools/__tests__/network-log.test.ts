@@ -340,6 +340,17 @@ describe('network log', () => {
     expect(log.rows(TAB, rest.rev)).toMatchObject({ full: true, entries: [] });
     // A cursor from the future (another tab's) too.
     expect(log.rows(TAB, rest.rev + 1e6)!.full).toBe(true);
+    // And one from before the tab's log started over (Clear Browsing Data, the tab forgotten), also
+    // once new rows are in it: the chrome drops what it held.
+    for (const startOver of [() => log.clear(), () => log.forget(TAB)]) {
+      log.sent(sent('https://www.example.com/before.js'));
+      const held = log.rows(TAB, 0)!.rev;
+      startOver();
+      log.sent(sent('https://www.example.com/after.js'));
+      const answer = log.rows(TAB, held)!;
+      expect(answer).toMatchObject({ full: true, removed: [] });
+      expect(answer.entries.map((e) => e.url)).toEqual(['https://www.example.com/after.js']);
+    }
   });
 
   test('network-headers-on-demand', () => {

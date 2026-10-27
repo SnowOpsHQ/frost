@@ -250,7 +250,9 @@ export function createNetworkLog(options: NetworkLogOptions = {}): NetworkLog {
     headerBytes: 0,
     overEntries: 0,
     overBytes: 0,
-    floorRev: 0,
+    // Past every cursor handed out so far: one from before the log started over (Clear Browsing
+    // Data, the tab forgotten or let go) names rows this log never had, so it gets a full answer.
+    floorRev: ++rev,
     removals: [],
   });
 

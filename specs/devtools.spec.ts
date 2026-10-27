@@ -291,8 +291,9 @@ export interface NetworkEntry {
 /**
  * `devtools.network`: the rows of the tab's log changed since `since` (`no-tab`: not the active
  * tab). `full`: the answer replaces everything the chrome holds (a cursor of 0, one from before a
- * reset, or one too old for the removal records); otherwise merge `entries` by key and drop
- * `removed`. `rev` is the cursor for the next call; `more`: rows are left, ask again at once.
+ * reset or before the tab's log started over, or one too old for the removal records); otherwise
+ * merge `entries` by key and drop `removed`. `rev` is the cursor for the next call; `more`: rows
+ * are left, ask again at once.
  */
 export type NetworkLogAnswer =
   | {

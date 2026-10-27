@@ -185,6 +185,41 @@ describe('devtools service', () => {
     expect(other.status === 'ready' && other.finalHeaders).toEqual([{ name: 'x-robots-tag', value: 'all', masked: false, truncated: false }]);
   });
 
+  test('devtools-clear-browsing-data', async () => {
+    const { service, tabs, setActive } = setup();
+    const never = new AbortController();
+    service.observer.sent!(sent(21, 'https://www.example.com/a.js'));
+    service.observer.sent!(sent(22, 'https://www.example.com/other-tab.js'));
+    tabs.get(1)!.emit('console-message', { level: 'info', message: 'hi', sourceId: '', lineNumber: 1 });
+    expect(await service.revealCookie(1, { name: 'a', domain: '', path: '' })).toBe(true);
+    expect(await service.storage(1)).toMatchObject({ cookies: [{ name: 'a', value: 'secret' }] });
+    // What an open drawer holds: the rows and the cursor of its last answer.
+    const held = service.network(1, 0);
+    expect(held.status === 'ready' && held.entries.map((e) => e.url)).toEqual(['https://www.example.com/a.js']);
+    const cursor = held.status === 'ready' ? held.rev : -1;
+    const seen = service.version(1);
+    setActive(2);
+    const otherSeen = service.version(2);
+    setActive(1);
+    const woken = service.watch(1, seen, never.signal);
+    service.clear();
+    // Its watch wakes (and every other tab that had data moves on too).
+    expect(service.version(1)).toBeGreaterThan(seen);
+    expect(await woken).toBe(service.version(1));
+    setActive(2);
+    expect(service.version(2)).toBeGreaterThan(otherSeen);
+    setActive(1);
+    // Asking again: nothing cleared is left.
+    expect(service.console(1)).toEqual({ status: 'ready', entries: [], total: 0, dropped: 0 });
+    expect(await service.storage(1)).toMatchObject({ status: 'ready', cookies: [{ name: 'a', value: null }] });
+    expect(service.network(1, cursor)).toMatchObject({ status: 'ready', full: true, entries: [] });
+    // The next request: the old cursor still gets a full answer, so the cleared rows go.
+    service.observer.sent!(sent(21, 'https://www.example.com/b.js'));
+    const next = service.network(1, cursor);
+    expect(next).toMatchObject({ status: 'ready', full: true, removed: [] });
+    expect(next.status === 'ready' && next.entries.map((e) => e.url)).toEqual(['https://www.example.com/b.js']);
+  });
+
   test('devtools-open-switches-capture', () => {
     const { service, live } = setup();
     expect(service.parts.network.fullCapture()).toBe(false);

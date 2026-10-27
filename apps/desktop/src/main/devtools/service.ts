@@ -52,7 +52,7 @@ export interface DevtoolsMain extends DevtoolsService {
   readonly observer: RequestObserver;
   /** Listens to a tab's WebContents: navigations, console messages, its end. */
   watchContents(contents: DevtoolsContents): void;
-  /** Forgets every log and reveal (Clear Browsing Data). */
+  /** Forgets every log and reveal (Clear Browsing Data), waking the watches of the tabs that had any. */
   clear(): void;
   /** For tests. */
   readonly parts: { readonly network: NetworkLog; readonly console: ConsoleLog; readonly storage: SiteStorage };
@@ -247,6 +247,8 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
       network.clear();
       consoleLog.clear();
       storage.clear();
+      // Every tab that had data moves on, so an open drawer asks again and drops what it shows.
+      for (const id of [...versions.keys()]) changed(id);
     },
   };
   return service;
