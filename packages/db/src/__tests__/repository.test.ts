@@ -123,9 +123,13 @@ describe('session', () => {
       (1, 'https://b.example/', replace(hex(zeroblob(20000000)), '00', 'tt'), 1)`);
     raw.exec(`WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i + 1 FROM n WHERE i < 300001)
       INSERT INTO browser_tabs (position, url, title, active) SELECT i, 'https://t' || i || '.example/', '', 0 FROM n`);
-    const started = performance.now();
-    const session = await repo.loadSession();
-    expect(performance.now() - started).toBeLessThan(100);
+    // Watch what SQLite hands back rather than timing it (wall-clock bounds flake on loaded CI
+    // runners): the read must return at most `MAX_RESTORED_TABS` rows, each value already cut in SQL.
+    const seen = { rows: 0, longest: 0 };
+    const watched = watchReads(raw, seen);
+    const session = await createSessionRepository(createDrizzle(watched)).loadSession();
+    expect(seen.rows).toBeLessThanOrEqual(MAX_RESTORED_TABS);
+    expect(seen.longest).toBeLessThanOrEqual(Math.max(MAX_STORED_URL_LENGTH + 1, MAX_STORED_TITLE_LENGTH * 2));
     expect(session.tabs).toHaveLength(MAX_RESTORED_TABS - 1);
     expect(session.tabs[0]).toEqual({ url: 'https://b.example/', title: 't'.repeat(MAX_STORED_TITLE_LENGTH) });
     expect(session.activeIndex).toBe(0);
@@ -235,3 +239,33 @@ describe('permission decisions', () => {
     expect(raw.prepare('SELECT COUNT(*) AS n FROM site_permissions').get()).toEqual({ n: 6 });
   });
 });
+
+/** `db`, recording how many rows its statements return and the longest string value in them. */
+function watchReads(db: DatabaseSync, seen: { rows: number; longest: number }): DatabaseSync {
+  const record = (result: unknown): void => {
+    const rows = Array.isArray(result) ? result : result && typeof result === 'object' ? [result] : [];
+    seen.rows += rows.length;
+    for (const row of rows) {
+      for (const value of Object.values(row as object)) if (typeof value === 'string') seen.longest = Math.max(seen.longest, value.length);
+    }
+  };
+  const watchStatement = (statement: object): object =>
+    new Proxy(statement, {
+      get(target, key) {
+        const value: unknown = Reflect.get(target, key, target);
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          const result: unknown = value.apply(target, args);
+          if (key === 'all' || key === 'get') record(result);
+          return result;
+        };
+      },
+    });
+  return new Proxy(db, {
+    get(target, key) {
+      const value: unknown = Reflect.get(target, key, target);
+      if (key === 'prepare' && typeof value === 'function') return (sql: string) => watchStatement(value.call(target, sql) as object);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
