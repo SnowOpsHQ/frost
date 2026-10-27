@@ -52,8 +52,9 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
   10 s); the worker reads its head's `<link rel="alternate" hreflang>` (stopping where the head ends)
   and its `Link` header, and says whether it lists this page (its URL or canonical) back with one of
   the values the page gives itself. The head's `href`s resolve against the document's base (the
-  head's first `<base href>`, itself resolved against the alternate's URL; an invalid or
-  non-`http(s)` one is ignored), the `Link` header's against the alternate's URL.
+  head's first `<base href>`, itself resolved against the alternate's URL; one that does not parse
+  is ignored, one with another scheme is kept as a browser keeps it), the `Link` header's against
+  the alternate's URL.
 - **Visible to the sites.** Every surface shows `CHECKS_VISIBILITY_NOTICE`.
 - **Rules score only finished runs** (`done`, or `stopped`). A finished run re-scores the audit (the
   active tab at once, keeping its audit on screen).
@@ -105,8 +106,8 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `sitemap-url-budget` — past the run's budget it stops with `too-many-urls`.
 - `alternate-return-links` — head and `Link` header annotations, resolved against the alternate.
 - `alternate-base-href` — the head's annotations resolve against the alternate's `<base href>` (relative
-  bases against the alternate's URL; an invalid or non-`http(s)` one falls back to that URL); the
-  `Link` header's never do.
+  bases against the alternate's URL; one that does not parse falls back to that URL, one with another
+  scheme leaves relative `href`s with no `http(s)` target); the `Link` header's never do.
 - `robots-job-blocks-and-lists-sitemaps` — Googlebot's verdict per URL; only a fetched file blocks.
 - `checks-job-validated` — anything not a `ChecksJobSchema` job is `invalid-job`.
 

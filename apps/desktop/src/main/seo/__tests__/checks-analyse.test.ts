@@ -101,9 +101,12 @@ describe('alternates and robots.txt', () => {
     expect(run(`<head><base href="/de/"><base href="/en/">${back}</head>`)).toMatchObject(missing);
     // Without one, the alternate's URL: `page` is /fr/page, not this page.
     expect(run(`<head>${back}</head>`)).toMatchObject(missing);
-    // An invalid or non-http(s) base is ignored: the alternate's URL again.
-    for (const base of ['http://[', 'javascript:alert(1)//', 'data:text/html,x', 'ftp://example.com/de/']) {
-      expect(run(`<head><base href="${base}"><link rel="alternate" hreflang="en" href="../en/page"></head>`), base).toMatchObject(reciprocal);
+    // A base that does not parse is ignored: the alternate's URL again.
+    expect(run('<head><base href="http://["><link rel="alternate" hreflang="en" href="../en/page"></head>')).toMatchObject(reciprocal);
+    // One with another scheme stays the base, as in a browser: a relative href has no http(s) target.
+    for (const base of ['javascript:alert(1)//', 'data:text/html,x', 'ftp://example.com/de/']) {
+      expect(run(`<head><base href="${base}"><link rel="alternate" hreflang="en" href="../en/page"></head>`), base).toMatchObject(missing);
+      expect(run(`<head><base href="${base}"><link rel="alternate" hreflang="en" href="https://example.com/en/page"></head>`), base).toMatchObject(reciprocal);
     }
     // The Link header's targets resolve against the alternate's URL, never the HTML base.
     expect(run('<head><base href="https://example.com/en/"></head>', '<page>; rel="alternate"; hreflang="en"')).toMatchObject(missing);

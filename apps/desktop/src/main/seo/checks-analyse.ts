@@ -70,6 +70,15 @@ function keyOf(value: string, base?: string): string | null {
   }
 }
 
+/** A `<base href>` resolved against the document's URL, whatever its scheme; null when it does not parse. */
+function baseOf(href: string, documentUrl: string): string | null {
+  try {
+    return new URL(href, documentUrl).href;
+  } catch {
+    return null;
+  }
+}
+
 /** The bytes to parse: inflated (up to `maxBytes`) when they start with gzip's magic bytes. */
 function inflate(bytes: Uint8Array): { ok: true; bytes: Uint8Array; gzip: boolean } | { ok: false; gzip: true; error: SitemapErrorKind } {
   if (bytes.byteLength < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) return { ok: true, bytes, gzip: false };
@@ -194,13 +203,13 @@ export function parseSitemap(job: SitemapJob): SitemapParse {
 /**
  * Reads an alternate's head and `Link` header (`HreflangJob`) and whether they list this page back.
  * The head's annotations resolve against the document's base (its first `<base href>`, resolved
- * against the alternate's URL; an invalid or non-`http(s)` one leaves that URL), the header's against
- * the alternate's URL.
+ * against the alternate's URL; one that does not parse leaves that URL, one with another scheme stays
+ * the base as in a browser), the header's against the alternate's URL.
  */
 export function parseAlternate(job: HreflangJob): HreflangParse {
   const html = job.bytes.byteLength === 0 ? '' : new TextDecoder('utf-8').decode(job.bytes);
   const head = alternateHead(html, HREFLANG_CHECK_LIMITS.maxLinks);
-  const base = (head.baseHref === null ? null : keyOf(head.baseHref, job.url)) ?? job.url;
+  const base = (head.baseHref === null ? null : baseOf(head.baseHref, job.url)) ?? job.url;
   const links: ReturnLink[] = head.links.map((link) => ({ hreflang: link.hreflang.slice(0, SNAPSHOT_LIMITS.maxHreflangChars), resolved: keyOf(link.href, base) }));
   if (job.link !== null) {
     for (const value of parseLinkHeader(job.link, HREFLANG_CHECK_LIMITS.maxLinks)) {

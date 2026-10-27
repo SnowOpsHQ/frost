@@ -113,6 +113,8 @@ export function alternateHead(html: string, max: number): AlternateHead {
       // The first occurrence of an attribute counts, as in HTML.
       if (attr !== '' && !attributes.has(attr)) attributes.set(attr, value);
     }
+    // A tag the input ends inside is dropped, as in a browser.
+    if (i >= n) break;
     i++;
     if (name === 'link') {
       const rel = decodeAttribute(attributes.get('rel') ?? '')

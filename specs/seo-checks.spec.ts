@@ -291,8 +291,10 @@ export const IDLE_SITEMAP_RUN: SitemapRunState = { status: 'idle', startedAt: nu
  * the worker reads `<link rel="alternate" hreflang>` in `<head>` only (stopping at `</head>` or
  * `<body>`), at most `maxLinks` of them, and the `Link` header's. The head's annotations resolve
  * against the document's base: the first `<base>` with an `href` there, resolved against the
- * alternate's URL (an invalid or non-`http(s)` one leaves the alternate's URL); the `Link`
- * header's always resolve against the alternate's URL.
+ * alternate's URL (one that does not parse leaves the alternate's URL; one that parses to another
+ * scheme stays the base, as in a browser, so relative `href`s resolve to no `http(s)` page); a tag
+ * cut off by the end of the input does not count. The `Link` header's always resolve against the
+ * alternate's URL.
  */
 export const HREFLANG_CHECK_LIMITS = {
   maxAlternates: 20,

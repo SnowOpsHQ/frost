@@ -102,6 +102,9 @@ describe('classification', () => {
     expect(alternateHead('<head><base target=_top><base href=" /e&amp;n/ "><base href="/later/"><link rel=alternate hreflang=en href=page>', 10)).toEqual({ links: [{ hreflang: 'en', href: 'page' }], baseHref: '/e&n/' });
     expect(alternateHead(`<head>${'<link rel=alternate hreflang=x href=/x>'.repeat(5)}<base href="https://example.com/b/">`, 2)).toEqual({ links: [{ hreflang: 'x', href: '/x' }, { hreflang: 'x', href: '/x' }], baseHref: 'https://example.com/b/' });
     expect(alternateHead('<base href="">', 10).baseHref).toBe('');
+    // A tag the input ends inside (no closing `>`) does not count, as in a browser.
+    expect(alternateHead('<head><base href="https://example.com/x', 10).baseHref).toBeNull();
+    expect(alternateHead('<head><base href="/b/"><link rel=alternate hreflang=en href=page', 10)).toEqual({ links: [], baseHref: '/b/' });
     // Not one in a comment, in raw text, or past the head.
     expect(alternateHead('<head><!-- <base href="/c/"> --><script><base href="/s/"></script></head><base href="/after/">', 10).baseHref).toBeNull();
     expect(alternateHead('<head></head><body><base href="/body/">', 10).baseHref).toBeNull();
