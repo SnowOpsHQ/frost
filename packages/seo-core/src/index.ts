@@ -5,7 +5,9 @@ export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreA
 export { RULES } from './rules';
 export {
   analyseIndexability,
+  decodeRobotsBytes,
   groupsFor,
+  inScope,
   headerValues,
   indexabilityReport,
   isValidHreflang,
@@ -26,6 +28,7 @@ export {
   type IndexabilityFacts,
   type IndexabilityReport,
   type LinkValue,
+  type NoindexScope,
   type RobotsAgentVerdict,
   type RobotsFile,
   type RobotsGroup,

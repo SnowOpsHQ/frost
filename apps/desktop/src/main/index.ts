@@ -17,7 +17,8 @@ import { createAnalyzer } from './seo/analysis';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
 import { createResponseRecorder } from './seo/responses';
-import { createRobotsFetcher, netHop, type RobotsFetcher } from './seo/robots-fetch';
+import { createRobotsFetcher, netHop, pendingRobots, type RobotsFetcher } from './seo/robots-fetch';
+import type { ContextSource } from './seo/auditor';
 import { observeMainFrames } from './browser/web-request';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
@@ -115,10 +116,25 @@ function start(): void {
   // analysis worker beside the extractor's answer, where they are validated and read.
   const responses = createResponseRecorder();
   let robots: RobotsFetcher | null = null;
-  const collectContext = async (contents: WebContents) => {
+  // The audit never waits for robots.txt: it is analysed with what is known now (robots.txt still
+  // `pending` the first time an origin is seen), and again once the fetch settles.
+  const collectContext = (contents: WebContents): ContextSource => {
     const url = contents.getURL();
-    return { response: responses.responseFor(contents.id, url), robots: robots ? await robots.get(url) : null };
+    const response = responses.responseFor(contents.id, url);
+    if (!robots) return { now: () => ({ context: { response, robots: null }, final: true }), later: null };
+    const fetcher = robots;
+    const fetching = fetcher.get(url);
+    let settled = fetcher.peek(url);
+    void fetching.then((fetched) => (settled = fetched));
+    return {
+      now: () => {
+        if (settled !== undefined) return { context: { response, robots: settled }, final: true };
+        return { context: { response, robots: pendingRobots(url) }, final: false };
+      },
+      later: fetching.then((fetched) => ({ response, robots: fetched })),
+    };
   };
+
   app.on('web-contents-created', (_event, contents) => {
     if (isBrowseContents(contents)) responses.watch(contents);
   });
@@ -194,6 +210,11 @@ function start(): void {
       forgetPermissionDecisions: () => permissions.forgetDecisions(),
       clearStoredData: () => sessionStore.writer.clearBrowsingData(),
       clearBrowseStorage,
+      // The SEO auditor's robots.txt answers and recorded responses (seo-indexability.feature.md).
+      forgetSeoCaches: () => {
+        robots?.clear();
+        responses.clear();
+      },
       log: logSession,
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu

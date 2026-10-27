@@ -72,11 +72,21 @@ export type ResponseSource = (typeof RESPONSE_SOURCES)[number];
 /**
  * Main fetches `<page origin>/robots.txt` itself (never the page): through the **browse session**
  * (its proxy and certificate checks), cookies and credentials off, no referrer, not from or into
- * the HTTP cache. Bounded:
+ * the HTTP cache. A known, observable property: frost requests `/robots.txt` from every origin it
+ * audits, once per `cacheTtlMs`, with the browse session's normal user agent (it does not pose as
+ * a crawler), so a site's logs show those requests. Bounded:
  * - `maxRedirects`: redirects followed (RFC 9309 asks crawlers to follow at least five); each hop
- *   must stay `http(s)` (another origin is allowed, as crawlers do). One more is `too-many-redirects`;
- *   a non-`http(s)` or unparsable `Location` is `bad-redirect`, never requested;
- * - `maxBytes`: the body is read up to 500 KiB (512 000 bytes; the limit RFC 9309 sets as a
+ *   must stay `http(s)` (another origin is allowed, as crawlers do). One more is
+ *   `too-many-redirects`; a non-`http(s)` or unparsable `Location` is `bad-redirect`, a 3xx with no
+ *   `Location` `no-location`, neither ever requested;
+ * - private addresses: a redirect hop to a private host (`isPrivateHost` in
+ *   `apps/desktop/src/main/seo/robots-fetch.ts`: `localhost` and `*.localhost`, `*.local`, and IP
+ *   literals in loopback, RFC 1918, link-local, `0.0.0.0/8`, IPv6 loopback, unique-local
+ *   `fc00::/7`, link-local `fe80::/10` and IPv4-mapped forms of those) is never requested
+ *   (`private-redirect`), unless the page's own origin is itself a private host (a dev server).
+ *   Only literal hosts are checked, without DNS: a public name that resolves to a private address
+ *   (DNS rebinding and the like) is not caught;
+ * - `maxBytes`: the body is read up to 500 KiB (512,000 bytes; the limit RFC 9309 sets as a
  *   minimum and Google applies). The rest is never read and ignored (`truncated`);
  * - `timeoutMs`: one deadline for the whole fetch, redirects and body included (`timeout`);
  * - `cacheTtlMs`: the answer is kept per origin for this long (`failureTtlMs` for a fetch that
@@ -93,28 +103,53 @@ export const ROBOTS_FETCH_LIMITS = {
 } as const;
 
 /**
- * How a robots.txt fetch ended, and what it means for crawling (RFC 9309 §2.3.1, common crawler
+ * Where a robots.txt fetch stands, and what it means for crawling (RFC 9309 §2.3.1, common crawler
  * practice):
+ * - `pending`: still fetching. The page is audited without it at once (the robots.txt card says so
+ *   and the verdict is `pending`), and audited again when the fetch settles;
  * - `ok` (2xx): the file is parsed and its rules apply;
- * - `unavailable` (4xx other than 429, or more than `maxRedirects` redirects): there is no
- *   robots.txt, so crawlers may fetch everything;
- * - `server-error` (5xx, or 429), `unreachable` (a network error), `timeout`, `bad-redirect`:
- *   unknown. Crawlers then assume everything is disallowed until they can read it, so frost's
+ * - no robots.txt, so crawlers may fetch everything (`ROBOTS_ALLOW_ALL_OUTCOMES`): `unavailable`
+ *   (4xx other than 401, 403 and 429), `forbidden` (401 or 403), `too-many-redirects` (more than
+ *   `maxRedirects`), `private-redirect` (a hop to a private host was refused);
+ * - unknown (`ROBOTS_UNKNOWN_OUTCOMES`): `server-error` (5xx, or 429), `unreachable` (a network
+ *   error), `timeout`, `bad-redirect` (to a non-web address), `no-location` (a 3xx without a
+ *   `Location`). Crawlers then assume everything is disallowed until they can read it, so frost's
  *   verdict for each bot is "unknown" and the `robots-txt-unreachable` rule fails.
- * 3xx responses are followed (above); a 3xx without a usable `Location` is `bad-redirect`.
+ * 3xx responses with a usable `Location` are followed (above).
  */
-export const ROBOTS_FETCH_OUTCOMES = ['ok', 'unavailable', 'server-error', 'unreachable', 'timeout', 'bad-redirect'] as const;
+export const ROBOTS_FETCH_OUTCOMES = [
+  'pending',
+  'ok',
+  'unavailable',
+  'forbidden',
+  'too-many-redirects',
+  'private-redirect',
+  'server-error',
+  'unreachable',
+  'timeout',
+  'bad-redirect',
+  'no-location',
+] as const;
 export type RobotsFetchOutcome = (typeof ROBOTS_FETCH_OUTCOMES)[number];
+/** The outcomes that mean there is no robots.txt to obey (crawlers may fetch everything). */
+export const ROBOTS_ALLOW_ALL_OUTCOMES = ['unavailable', 'forbidden', 'too-many-redirects', 'private-redirect'] as const satisfies readonly RobotsFetchOutcome[];
 /** The outcomes that leave crawlers unable to tell what is allowed (assume disallowed). */
-export const ROBOTS_UNKNOWN_OUTCOMES = ['server-error', 'unreachable', 'timeout', 'bad-redirect'] as const satisfies readonly RobotsFetchOutcome[];
+export const ROBOTS_UNKNOWN_OUTCOMES = ['server-error', 'unreachable', 'timeout', 'bad-redirect', 'no-location'] as const satisfies readonly RobotsFetchOutcome[];
+/** The outcomes a later fetch may change (cached for `failureTtlMs` only). */
+export const ROBOTS_TRANSIENT_OUTCOMES = ['server-error', 'unreachable', 'timeout'] as const satisfies readonly RobotsFetchOutcome[];
 
 export const ROBOTS_OUTCOME_LABELS: Readonly<Record<RobotsFetchOutcome, string>> = {
+  pending: 'Fetching robots.txt…',
   ok: 'Fetched',
   unavailable: 'Not found (no restrictions)',
+  forbidden: 'Access denied (no restrictions)',
+  'too-many-redirects': 'Too many redirects (no restrictions)',
+  'private-redirect': 'Unavailable (redirect to a private address)',
   'server-error': 'Server error',
   unreachable: 'Could not connect',
   timeout: 'Timed out',
   'bad-redirect': 'Redirects to a non-web address',
+  'no-location': 'Redirect without a Location',
 };
 
 // ---- robots.txt parsing (frost's own, from RFC 9309) ------------------------------------------
@@ -123,8 +158,9 @@ export const ROBOTS_OUTCOME_LABELS: Readonly<Record<RobotsFetchOutcome, string>>
  * The crawlers the panel gives a verdict for, as product tokens. A group applies to a crawler when
  * one of its `user-agent` values starts with the token, case-insensitively, followed by nothing or
  * a character that cannot be part of a token (so `Googlebot/2.1` is Googlebot's, `Googlebot-News`
- * is not). The most specific group wins: a crawler's own groups (all of them, merged), else the
- * `*` groups (merged), else no group (everything allowed).
+ * is not). A value is the global `*` only when it is `*` alone (`*foo` names no crawler). The most
+ * specific group wins: a crawler's own groups (all of them, merged), else the `*` groups (merged),
+ * else no group (everything allowed).
  */
 export const ROBOTS_AGENTS = ['Googlebot', 'Bingbot', '*'] as const;
 export type RobotsAgent = (typeof ROBOTS_AGENTS)[number];
@@ -146,11 +182,13 @@ export const ROBOTS_PARSE_LIMITS = {
 
 /**
  * An hreflang value is `x-default`, or a language code from `ISO_639_1`, optionally followed by a
- * four-letter script subtag (ISO 15924 form, e.g. `zh-Hant`) and then optionally by a region code
- * from `ISO_3166_1_ALPHA_2`, joined by `-` and compared case-insensitively (BCP 47's common subset,
- * as search engines read it). `en_US`, `en-UK`, `eng` and `english` are invalid. A value checks
- * against frost's own tables, not `Intl`: `Intl.getCanonicalLocales` accepts any well-formed tag
- * (`qq-ZZ` too) and would say nothing about real codes.
+ * script subtag from `ISO_15924_COMMON` (e.g. `zh-Hant`) and then optionally by a region: a code
+ * from `ISO_3166_1_ALPHA_2` or a UN M.49 area code from `UN_M49_REGIONS` (e.g. `es-419`), joined by
+ * `-` and compared case-insensitively (BCP 47's common subset, as search engines read it). `en_US`,
+ * `en-UK`, `eng` and `english` are invalid. A value checks against frost's own tables, not `Intl`:
+ * `Intl.getCanonicalLocales` accepts any well-formed tag (`qq-ZZ` too) and would say nothing about
+ * real codes. The script table is the scripts pages commonly name, not all of ISO 15924: a rare
+ * script subtag is reported as invalid.
  */
 export const HREFLANG_X_DEFAULT = 'x-default' as const;
 
@@ -177,6 +215,18 @@ export const ISO_3166_1_ALPHA_2 = [
   'ZW',
 ] as const;
 
+/** ISO 15924 script codes in common use on the web (title case, compared case-insensitively). */
+export const ISO_15924_COMMON = [
+  'Arab', 'Armn', 'Beng', 'Bopo', 'Cyrl', 'Deva', 'Ethi', 'Geor', 'Grek', 'Gujr', 'Guru', 'Hang', 'Hani', 'Hans', 'Hant', 'Hebr', 'Hira', 'Jpan', 'Kana',
+  'Khmr', 'Knda', 'Kore', 'Laoo', 'Latn', 'Mlym', 'Mong', 'Mymr', 'Orya', 'Sinh', 'Syrc', 'Taml', 'Telu', 'Tfng', 'Thaa', 'Thai', 'Tibt',
+] as const;
+
+/** UN M.49 area codes BCP 47 accepts as regions (the world, continents and sub-regions, e.g. `419` Latin America). */
+export const UN_M49_REGIONS = [
+  '001', '002', '003', '005', '009', '011', '013', '014', '015', '017', '018', '019', '021', '029', '030', '034', '035', '039', '053', '054', '057',
+  '061', '142', '143', '145', '150', '151', '154', '155', '202', '419',
+] as const;
+
 /** hreflang annotations read: `<link rel="alternate" hreflang>` in `<head>` (`SNAPSHOT_LIMITS.maxHreflang`) and HTTP `Link` headers (the header cap). */
 export const HREFLANG_SOURCES = ['html', 'header'] as const;
 export type HreflangSource = (typeof HREFLANG_SOURCES)[number];
@@ -190,16 +240,26 @@ export const HREFLANG_RECIPROCITY_CHECKED = false;
 // ---- Verdict --------------------------------------------------------------------------------------
 
 /**
+ * Whose noindex makes the page "Not indexable": the generic robots meta tag (`robots`, or an
+ * `X-Robots-Tag` without a crawler name) and Googlebot's. A noindex for another crawler frost reads
+ * (`ROBOTS_META_NAMES`: googlebot-news, bingbot) only keeps the page out of that crawler's product:
+ * a warning naming it (`robots-noindex-other-bot`, `x-robots-noindex-other-bot`), no score cap.
+ */
+export const NOINDEX_VERDICT_NAMES = ['robots', 'googlebot'] as const;
+
+/**
  * The panel's overall verdict:
  * - `not-indexable`: a rule in `NOT_INDEXABLE_RULES` (`seo-rules.spec.ts`) fails (an error status,
  *   noindex in a robots meta tag or `X-Robots-Tag`, robots.txt blocking Googlebot); each is a reason;
+ * - `pending`: none of those so far, but robots.txt is still being fetched (it may block Googlebot);
  * - `canonicalised`: none of those, but the canonical (HTML or HTTP header) names another URL;
- * - `indexable`: neither.
+ * - `indexable`: none of the above.
  */
-export const INDEXABILITY_VERDICTS = ['indexable', 'not-indexable', 'canonicalised'] as const;
+export const INDEXABILITY_VERDICTS = ['indexable', 'not-indexable', 'canonicalised', 'pending'] as const;
 export type IndexabilityVerdict = (typeof INDEXABILITY_VERDICTS)[number];
 export const INDEXABILITY_VERDICT_LABELS: Readonly<Record<IndexabilityVerdict, string>> = {
   indexable: 'Indexable',
   'not-indexable': 'Not indexable',
   canonicalised: 'Indexable, but canonicalised elsewhere',
+  pending: 'Checking robots.txt…',
 };

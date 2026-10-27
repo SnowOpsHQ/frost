@@ -5,12 +5,12 @@ import { ROBOTS_PARSE_LIMITS } from '@app/specs/seo-indexability.spec';
 // - lines end at CR, LF or CRLF; a leading byte order mark is dropped; `#` starts a comment;
 // - a record is `key: value`, the key case-insensitive (`user-agent`, `allow`, `disallow`,
 //   `sitemap`; other keys are ignored);
-// - a group is one or more consecutive `user-agent` lines and the rules after them; a
-//   `user-agent` line after any other record (a rule, a `sitemap` line, or a key frost does not
-//   read, such as `crawl-delay`) starts the next group, as common crawlers do; rules before any
-//   group are ignored; `sitemap` lines belong to no group (a rule after one still joins the group);
+// - a group is one or more `user-agent` lines and the rules after them; only a rule (`allow` /
+//   `disallow`) ends a group's agents, so a `user-agent` line after a rule starts the next group,
+//   while `sitemap` lines and keys frost does not read (`crawl-delay` …) between agents keep them
+//   in one group; rules before any group are ignored; `sitemap` lines belong to no group;
 // - a `user-agent` value's product token is its leading run of letters, `-` and `_` (`*` alone is
-//   every crawler), compared case-insensitively;
+//   every crawler; `*foo` names none), compared case-insensitively;
 // - a crawler follows every group naming its token, merged; else every `*` group, merged; else
 //   no group (everything allowed). An empty group still counts (it allows everything);
 // - a rule's path is matched against the URL's path and query, both percent-normalised: a
@@ -66,6 +66,48 @@ function hex(byte: number): string {
   return `%${byte.toString(16).toUpperCase().padStart(2, '0')}`;
 }
 
+/**
+ * robots.txt bytes as text without losing a byte: valid UTF-8 decodes to its characters; any byte
+ * that is not part of a valid UTF-8 sequence (a Latin-1 file, an overlong form, a surrogate, a cut
+ * sequence) becomes its percent-encoding `%XX`, so a Latin-1 `Disallow: /caf\xE9` matches the URL
+ * path `/caf%E9` as a crawler comparing bytes would. A byte order mark is kept (the parser drops it).
+ * Linear.
+ */
+export function decodeRobotsBytes(bytes: Uint8Array): string {
+  const out: string[] = [];
+  const n = bytes.length;
+  let i = 0;
+  const continuation = (at: number): boolean => at < n && (bytes[at]! & 0xc0) === 0x80;
+  while (i < n) {
+    const b0 = bytes[i]!;
+    if (b0 < 0x80) {
+      out.push(String.fromCharCode(b0));
+      i += 1;
+      continue;
+    }
+    let length = 0;
+    let codePoint = 0;
+    let min = 0;
+    if (b0 >= 0xc2 && b0 <= 0xdf) [length, codePoint, min] = [2, b0 & 0x1f, 0x80];
+    else if (b0 >= 0xe0 && b0 <= 0xef) [length, codePoint, min] = [3, b0 & 0x0f, 0x800];
+    else if (b0 >= 0xf0 && b0 <= 0xf4) [length, codePoint, min] = [4, b0 & 0x07, 0x10000];
+    let valid = length > 0;
+    for (let k = 1; valid && k < length; k++) {
+      if (!continuation(i + k)) valid = false;
+      else codePoint = (codePoint << 6) | (bytes[i + k]! & 0x3f);
+    }
+    if (valid && (codePoint < min || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff))) valid = false;
+    if (!valid) {
+      out.push(hex(b0));
+      i += 1;
+      continue;
+    }
+    out.push(String.fromCodePoint(codePoint));
+    i += length;
+  }
+  return out.join('');
+}
+
 /** `codePoint` as UTF-8, percent-encoded (a lone surrogate as U+FFFD). */
 function encodeCodePoint(codePoint: number): string {
   const cp = codePoint >= 0xd800 && codePoint <= 0xdfff ? 0xfffd : codePoint;
@@ -102,7 +144,8 @@ export function normaliseRobotsPath(value: string): string {
 
 /** A `user-agent` value's product token, lowercased: `*`, or its leading letters, `-` and `_` (`''` when none). */
 export function productToken(value: string): string {
-  if (value.startsWith('*')) return '*';
+  if (/^\*\s*$/.test(value)) return '*';
+  if (value.startsWith('*')) return '';
   return (/^[A-Za-z_-]+/.exec(value)?.[0] ?? '').toLowerCase();
 }
 
@@ -112,7 +155,7 @@ export function parseRobotsTxt(text: string, limits: RobotsParseLimits = ROBOTS_
   const sitemaps: RobotsSitemap[] = [];
   let sitemapTotal = 0;
   let ruleCount = 0;
-  /** Whether a record other than `user-agent` followed the current group's agents (a `user-agent` line then starts a new group). */
+  /** Whether the current group has taken a rule (a `user-agent` line then starts a new group). */
   let inRules = true;
   let lineNumber = 0;
   const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
@@ -161,13 +204,11 @@ export function parseRobotsTxt(text: string, limits: RobotsParseLimits = ROBOTS_
         return;
       }
       case 'sitemap':
-        inRules = true;
         if (value === '') return;
         sitemapTotal++;
         if (sitemaps.length < limits.maxSitemaps) sitemaps.push({ raw: value, line });
         return;
       default:
-        inRules = true;
         return;
     }
   }

@@ -14,10 +14,10 @@ import { createBrowserController, type HostWindow, type TabView } from '../../br
 import { MAIN_FRAME_FILTER, observeMainFrames, type ObservedSession } from '../../browser/web-request';
 import { analyseSnapshot } from '../analyse';
 import type { AnalysisResult } from '../analysis';
-import { CONTEXT_TIMEOUT_MS } from '../auditor';
+import { CONTEXT_TIMEOUT_MS, type ContextSource } from '../auditor';
 import { extractPage, type PageDocument } from '../extract';
 import { captureHeaders, createResponseRecorder } from '../responses';
-import { createRobotsFetcher, netHop, outcomeOf, type Hop, type HopResult, type NetRequester } from '../robots-fetch';
+import { createRobotsFetcher, isPrivateHost, netHop, outcomeOf, type Hop, type HopResult, type NetRequester } from '../robots-fetch';
 
 const PAGE = 'https://example.com/a';
 
@@ -185,6 +185,18 @@ describe('response recorder', () => {
     expect(recorder.responseFor(100, PAGE)).toBeNull();
     expect(recorder.responseFor(100 + RESPONSE_LIMITS.maxTrackedTabs + 4, PAGE)).not.toBeNull();
   });
+
+  test('response-recorder-clears', () => {
+    const recorder = createResponseRecorder();
+    recorder.responded(responded());
+    recorder.committed(7, PAGE, 200);
+    recorder.responded(responded({ id: 2, url: 'https://example.com/next' }));
+    recorder.clear();
+    expect(recorder.responseFor(7, PAGE)).toBeNull();
+    // Nothing pending survives either.
+    recorder.committed(7, 'https://example.com/next', 200);
+    expect(recorder.responseFor(7, 'https://example.com/next')?.source).toBe('navigation');
+  });
 });
 
 // ---- robots.txt fetch -------------------------------------------------------------------------
@@ -201,6 +213,9 @@ function body(chunks: (string | number)[], read = { count: 0 }): AsyncIterable<U
     },
   };
 }
+const decoder = new TextDecoder();
+/** The fetched body as text (tests only; frost decodes it in the worker). */
+const textOf = (fetched: RobotsFetch | null): string => decoder.decode(fetched!.body);
 const ok = (text: string, status = 200): HopResult => ({ kind: 'response', status, body: body([text]), cancel: vi.fn() });
 const redirect = (location: string | null, status = 301): HopResult => ({ kind: 'redirect', status, location });
 
@@ -225,7 +240,7 @@ describe('robots.txt fetcher', () => {
     const fetcher = createRobotsFetcher({ hop });
     const fetched = await fetcher.get('https://user:pw@example.com:8443/deep/page?q=1#f');
     expect(asked).toEqual(['https://example.com:8443/robots.txt']);
-    expect(fetched).toEqual({ url: 'https://example.com:8443/robots.txt', outcome: 'ok', status: 200, finalUrl: 'https://example.com:8443/robots.txt', redirects: 0, text: 'User-agent: *\nDisallow: /x\n', bytes: 27, truncated: false });
+    expect(fetched).toEqual({ url: 'https://example.com:8443/robots.txt', outcome: 'ok', status: 200, finalUrl: 'https://example.com:8443/robots.txt', redirects: 0, body: encoder.encode('User-agent: *\nDisallow: /x\n'), truncated: false });
     expect(PageContextSchema.safeParse({ response: null, robots: fetched }).success).toBe(true);
     // Only http(s) pages have a robots.txt to fetch.
     for (const url of ['file:///etc/passwd', 'ftp://example.com/', 'data:text/plain,x', 'about:blank', 'not a url']) expect(await fetcher.get(url)).toBeNull();
@@ -233,11 +248,14 @@ describe('robots.txt fetcher', () => {
   });
 
   test('robots-fetch-status-semantics', async () => {
-    expect([200, 204, 404, 401, 403, 410, 429, 500, 503, 301, 100].map(outcomeOf)).toEqual(['ok', 'ok', 'unavailable', 'unavailable', 'unavailable', 'unavailable', 'server-error', 'server-error', 'server-error', 'bad-redirect', 'server-error']);
-    const { hop } = fakeHop({ 'https://a.example/robots.txt': ok('ignored', 404), 'https://b.example/robots.txt': ok('ignored', 503) });
+    expect([200, 204, 404, 401, 403, 410, 429, 500, 503, 301, 100].map(outcomeOf)).toEqual(['ok', 'ok', 'unavailable', 'forbidden', 'forbidden', 'unavailable', 'server-error', 'server-error', 'server-error', 'no-location', 'server-error']);
+    const { hop } = fakeHop({ 'https://a.example/robots.txt': ok('ignored', 404), 'https://b.example/robots.txt': ok('ignored', 503), 'https://c.example/robots.txt': ok('ignored', 403), 'https://d.example/robots.txt': ok('ignored', 302) });
     const fetcher = createRobotsFetcher({ hop });
-    expect(await fetcher.get('https://a.example/')).toMatchObject({ outcome: 'unavailable', status: 404, text: '' });
-    expect(await fetcher.get('https://b.example/')).toMatchObject({ outcome: 'server-error', status: 503, text: '' });
+    expect(await fetcher.get('https://a.example/')).toMatchObject({ outcome: 'unavailable', status: 404, body: new Uint8Array(0) });
+    expect(await fetcher.get('https://b.example/')).toMatchObject({ outcome: 'server-error', status: 503, body: new Uint8Array(0) });
+    expect(await fetcher.get('https://c.example/')).toMatchObject({ outcome: 'forbidden', status: 403 });
+    // A 3xx answered without a Location (so not reported as a redirect).
+    expect(await fetcher.get('https://d.example/')).toMatchObject({ outcome: 'no-location', status: 302 });
     expect(await fetcher.get('https://down.example/')).toMatchObject({ outcome: 'unreachable', status: null, finalUrl: null });
   });
 
@@ -255,7 +273,7 @@ describe('robots.txt fetcher', () => {
       loop.asked.push(url);
       return redirect(`${url}x`);
     };
-    expect(await createRobotsFetcher({ hop: loopHop }).get('https://loop.example/')).toMatchObject({ outcome: 'unavailable', redirects: ROBOTS_FETCH_LIMITS.maxRedirects });
+    expect(await createRobotsFetcher({ hop: loopHop }).get('https://loop.example/')).toMatchObject({ outcome: 'too-many-redirects', redirects: ROBOTS_FETCH_LIMITS.maxRedirects });
     expect(loop.asked).toHaveLength(ROBOTS_FETCH_LIMITS.maxRedirects + 1);
     // A relative Location resolves against the hop that sent it.
     const relative = fakeHop({ 'https://r.example/robots.txt': redirect('/real/robots.txt'), 'https://r.example/real/robots.txt': ok('') });
@@ -263,12 +281,47 @@ describe('robots.txt fetcher', () => {
   });
 
   test('robots-fetch-never-leaves-http', async () => {
-    for (const location of ['file:///etc/passwd', 'ftp://example.com/robots.txt', 'javascript:alert(1)', 'data:text/plain,User-agent', 'chrome://settings', 'http://', null]) {
+    for (const location of ['file:///etc/passwd', 'ftp://example.com/robots.txt', 'javascript:alert(1)', 'data:text/plain,User-agent', 'chrome://settings', 'http://']) {
       const { hop, asked } = fakeHop({ 'https://example.com/robots.txt': redirect(location, 302) });
       expect(await createRobotsFetcher({ hop }).get('https://example.com/'), String(location)).toMatchObject({ outcome: 'bad-redirect', redirects: 0 });
       // The non-web URL is never requested.
       expect(asked).toEqual(['https://example.com/robots.txt']);
     }
+    const none = fakeHop({ 'https://example.com/robots.txt': redirect(null, 302) });
+    expect(await createRobotsFetcher({ hop: none.hop }).get('https://example.com/')).toMatchObject({ outcome: 'no-location', redirects: 0 });
+  });
+
+  test('robots-fetch-refuses-private-redirects', async () => {
+    const privateTargets = [
+      'http://127.0.0.1/robots.txt',
+      'http://127.8.9.10:8080/x',
+      'http://10.0.0.5/robots.txt',
+      'http://172.16.0.1/',
+      'http://172.31.255.255/',
+      'http://192.168.1.1/',
+      'http://169.254.169.254/latest/meta-data',
+      'http://0.0.0.0/',
+      'http://localhost/robots.txt',
+      'http://api.localhost:3000/',
+      'http://printer.local/',
+      'http://[::1]/',
+      'http://[fd12:3456::1]/',
+      'http://[fc00::1]/',
+      'http://[fe80::1]/',
+      'http://[::ffff:127.0.0.1]/',
+      'http://[::ffff:192.168.0.1]/',
+      'http://2130706433/',
+      'http://0x7f.1/',
+    ];
+    for (const location of privateTargets) {
+      const { hop, asked } = fakeHop({ 'https://example.com/robots.txt': redirect(location, 302) });
+      expect(await createRobotsFetcher({ hop }).get('https://example.com/'), location).toMatchObject({ outcome: 'private-redirect', redirects: 0 });
+      expect(asked, location).toEqual(['https://example.com/robots.txt']);
+    }
+    for (const host of ['172.32.0.1', '192.169.0.1', '11.0.0.1', '[2001:db8::1]', 'example.local.test', 'localhost.example.com']) expect(isPrivateHost(new URL(`http://${host}/`).hostname), host).toBe(false);
+    // A page that is itself on a private host (a dev server) may be redirected to another one.
+    const dev = fakeHop({ 'http://localhost:5173/robots.txt': redirect('http://127.0.0.1:5173/robots.txt'), 'http://127.0.0.1:5173/robots.txt': ok('User-agent: *\n') });
+    expect(await createRobotsFetcher({ hop: dev.hop }).get('http://localhost:5173/page')).toMatchObject({ outcome: 'ok', redirects: 1 });
   });
 
   test('robots-fetch-caps-the-body', async () => {
@@ -277,15 +330,17 @@ describe('robots.txt fetcher', () => {
     const chunk = 64 * 1024;
     const { hop } = fakeHop({ 'https://big.example/robots.txt': { kind: 'response', status: 200, body: body(Array.from({ length: 100 }, () => chunk), read), cancel } });
     const fetched = (await createRobotsFetcher({ hop }).get('https://big.example/'))!;
-    expect(fetched).toMatchObject({ outcome: 'ok', bytes: ROBOTS_FETCH_LIMITS.maxBytes, truncated: true });
-    expect(fetched.text).toHaveLength(ROBOTS_FETCH_LIMITS.maxBytes);
+    expect(fetched).toMatchObject({ outcome: 'ok', truncated: true });
+    expect(fetched.body.byteLength).toBe(ROBOTS_FETCH_LIMITS.maxBytes);
     // Reading stopped at the cap, and the request was cancelled.
     expect(read.count).toBe(Math.ceil(ROBOTS_FETCH_LIMITS.maxBytes / chunk));
     expect(cancel).toHaveBeenCalled();
     expect(PageContextSchema.safeParse({ response: null, robots: fetched }).success).toBe(true);
-    // UTF-8 is decoded (a BOM is dropped); invalid bytes never grow the text past the cap.
-    const utf8 = fakeHop({ 'https://u.example/robots.txt': ok('﻿User-agent: *\nDisallow: /ü\n') });
-    expect((await createRobotsFetcher({ hop: utf8.hop }).get('https://u.example/'))!.text).toBe('User-agent: *\nDisallow: /ü\n');
+    // The bytes are kept exactly as read (not decoded on main): a Latin-1 file stays Latin-1.
+    const latin1 = Uint8Array.from([0x2f, 0x63, 0x61, 0x66, 0xe9]);
+    const raw = fakeHop({ 'https://u.example/robots.txt': { kind: 'response', status: 200, body: { async *[Symbol.asyncIterator]() { yield latin1; } }, cancel: vi.fn() } });
+    expect((await createRobotsFetcher({ hop: raw.hop }).get('https://u.example/'))!.body).toEqual(latin1);
+    expect(textOf(await createRobotsFetcher({ hop: fakeHop({ 'https://v.example/robots.txt': ok('User-agent: *') }).hop }).get('https://v.example/'))).toBe('User-agent: *');
   });
 
   test('robots-fetch-times-out', async () => {
@@ -347,6 +402,32 @@ describe('robots.txt fetcher', () => {
     expect(spread.asked.slice(-2)).toEqual(['http://h40.example/robots.txt', 'https://h40.example:444/robots.txt']);
   });
 
+  test('robots-fetch-peeks-and-clears', async () => {
+    let release: (value: HopResult) => void = () => undefined;
+    const { hop, asked } = fakeHop({ 'https://p.example/robots.txt': () => new Promise<HopResult>((resolve) => (release = resolve)) });
+    const fetcher = createRobotsFetcher({ hop });
+    // Nothing known before a fetch, nor while it runs; the answer once it settled.
+    expect(fetcher.peek('https://p.example/a')).toBeUndefined();
+    const fetching = fetcher.get('https://p.example/a');
+    expect(fetcher.peek('https://p.example/b')).toBeUndefined();
+    release(ok('User-agent: *\n'));
+    const fetched = await fetching;
+    expect(fetcher.peek('https://p.example/c')).toBe(fetched);
+    expect(fetcher.peek('ftp://p.example/')).toBeNull();
+    // Clear Browsing Data forgets every origin: the next audit fetches again.
+    fetcher.clear();
+    expect(fetcher.size()).toBe(0);
+    expect(fetcher.peek('https://p.example/c')).toBeUndefined();
+    void fetcher.get('https://p.example/d');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked).toHaveLength(2);
+    // A fetch in flight while clearing is not cached afterwards.
+    release(ok('late'));
+    await vi.advanceTimersByTimeAsync(0);
+    fetcher.clear();
+    expect(fetcher.peek('https://p.example/')).toBeUndefined();
+  });
+
   test('robots-net-hop-sends-no-cookies-and-follows-nothing', async () => {
     class FakeRequest extends EventEmitter {
       aborted = false;
@@ -391,8 +472,10 @@ describe('robots.txt fetcher', () => {
 
 const CONTEXT: PageContext = {
   response: { url: PAGE, source: 'network', status: 404, headersAvailable: true, headers: [{ name: 'x-robots-tag', value: 'noindex' }], redirects: [], redirectTotal: 0 },
-  robots: { url: 'https://example.com/robots.txt', outcome: 'ok', status: 200, finalUrl: 'https://example.com/robots.txt', redirects: 0, text: 'User-agent: *\nDisallow: /a\n', bytes: 27, truncated: false },
+  robots: { url: 'https://example.com/robots.txt', outcome: 'ok', status: 200, finalUrl: 'https://example.com/robots.txt', redirects: 0, body: new TextEncoder().encode('User-agent: *\nDisallow: /a\n'), truncated: false },
 };
+/** The same context while robots.txt is still being fetched. */
+const PENDING_CONTEXT: PageContext = { ...CONTEXT, robots: { ...CONTEXT.robots!, outcome: 'pending', status: null, finalUrl: null, body: new Uint8Array(0) } };
 
 describe('context in the analysis', () => {
   test('analysis-validates-the-context', () => {
@@ -411,7 +494,9 @@ describe('context in the analysis', () => {
       { ...CONTEXT, response: { ...CONTEXT.response, headers: [{ name: 'set-cookie', value: 'x' }] } },
       { ...CONTEXT, response: { ...CONTEXT.response, headers: [{ name: 'link', value: 'x'.repeat(RESPONSE_LIMITS.maxHeaderValueChars + 1) }] } },
       { ...CONTEXT, response: { ...CONTEXT.response, headersAvailable: false } },
-      { ...CONTEXT, robots: { ...CONTEXT.robots, text: 'x'.repeat(ROBOTS_FETCH_LIMITS.maxBytes + 1) } },
+      { ...CONTEXT, robots: { ...CONTEXT.robots, body: new Uint8Array(ROBOTS_FETCH_LIMITS.maxBytes + 1) } },
+      { ...CONTEXT, robots: { ...CONTEXT.robots, body: 'User-agent: *' } },
+      { ...CONTEXT, robots: { ...CONTEXT.robots, text: 'User-agent: *' } },
       { ...CONTEXT, robots: { ...CONTEXT.robots, url: 'file:///robots.txt' } },
       'context',
     ];
@@ -423,14 +508,14 @@ describe('context in the analysis', () => {
   describe('auditor', () => {
     let views: FakeTabView[];
     let analysed: { raw: unknown; context: unknown }[];
-    let context: (contents: unknown) => Promise<unknown>;
+    let source: (contents: unknown) => ContextSource;
     let controller: ReturnType<typeof createBrowserController>;
 
     beforeEach(() => {
       vi.useFakeTimers();
       views = [];
       analysed = [];
-      context = async () => CONTEXT;
+      source = () => ({ now: () => ({ context: CONTEXT, final: true }), later: null });
       controller = createBrowserController({
         createView: () => {
           const view = new FakeTabView();
@@ -444,7 +529,7 @@ describe('context in the analysis', () => {
             analysed.push({ raw, context: collected });
             return analyseSnapshot(raw, collected);
           },
-          context: (contents) => context(contents),
+          context: (contents) => source(contents),
         },
       });
       controller.attach(new FakeHostWindow() as unknown as HostWindow);
@@ -459,66 +544,116 @@ describe('context in the analysis', () => {
       return contents;
     };
     const status = () => controller.seo.getAudit(controller.getState().activeTabId!);
+    const verdict = () => {
+      const answer = status();
+      return answer.status === 'ready' ? answer.audit.indexability.verdict : answer.status;
+    };
+    /** A source whose robots.txt settles when the test says. */
+    const slowSource = () => {
+      let release: (value: unknown) => void = () => undefined;
+      const later = new Promise<unknown>((resolve) => (release = resolve));
+      return { source: (): ContextSource => ({ now: () => ({ context: PENDING_CONTEXT, final: false }), later }), release: () => release(CONTEXT) };
+    };
 
     test('auditor-hands-the-context-to-the-worker', async () => {
       const seen: unknown[] = [];
-      context = async (contents) => {
+      source = (contents) => {
         seen.push(contents);
-        return CONTEXT;
+        return { now: () => ({ context: CONTEXT, final: true }), later: null };
       };
       const contents = load(PAGE);
       await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
       expect(seen).toEqual([contents]);
       expect(analysed).toHaveLength(1);
       expect(analysed[0]!.context).toBe(CONTEXT);
-      const answer = status();
-      expect(answer.status === 'ready' && answer.audit.indexability.verdict).toBe('not-indexable');
+      expect(verdict()).toBe('not-indexable');
     });
 
-    test('auditor-waits-for-a-slow-context-then-goes-without', async () => {
-      let release: (value: unknown) => void = () => undefined;
-      context = () => new Promise((resolve) => (release = resolve));
+    test('auditor-does-not-wait-for-robots', async () => {
+      const slow = slowSource();
+      source = slow.source;
       load(PAGE);
-      await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS + 1_000);
-      expect(analysed).toHaveLength(0);
-      expect(status().status).toBe('pending');
-      release(CONTEXT);
-      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+      // Ready at once, without robots.txt: the other panels are complete, the verdict is pending
+      // (the 404 already makes it "not indexable" here, so take a page without other reasons).
       expect(analysed).toHaveLength(1);
+      expect(analysed[0]!.context).toBe(PENDING_CONTEXT);
       expect(status().status).toBe('ready');
-      // One that never settles: analysed without it after CONTEXT_TIMEOUT_MS.
-      context = () => new Promise(() => undefined);
-      controller.seo.rerun(controller.getState().activeTabId!);
-      await vi.advanceTimersByTimeAsync(CONTEXT_TIMEOUT_MS - 1);
-      expect(analysed).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(1);
+      const before = controller.getState().tabs[0]!.auditVersion;
+      slow.release();
+      await vi.advanceTimersByTimeAsync(0);
+      // Analysed again with robots.txt, and the chrome is told.
       expect(analysed).toHaveLength(2);
-      expect(analysed[1]!.context).toBeUndefined();
-      expect(status().status).toBe('ready');
-      // One that rejects or throws: analysed without it at once.
-      context = () => Promise.reject(new Error('boom'));
-      controller.seo.rerun(controller.getState().activeTabId!);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(analysed).toHaveLength(3);
-      expect(analysed[2]!.context).toBeUndefined();
-      context = () => {
-        throw new Error('sync boom');
-      };
-      controller.seo.rerun(controller.getState().activeTabId!);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(analysed).toHaveLength(4);
+      expect(analysed[1]!.context).toBe(CONTEXT);
+      expect(controller.getState().tabs[0]!.auditVersion).toBeGreaterThan(before);
+      const answer = status();
+      expect(answer.status === 'ready' && answer.audit.indexability.robots?.outcome).toBe('ok');
     });
 
-    test('auditor-drops-a-context-for-a-page-that-moved-on', async () => {
+    test('auditor-verdict-pending-until-robots', async () => {
+      const clean = { ...CONTEXT, response: { ...CONTEXT.response!, status: 200, headers: [] } };
       let release: (value: unknown) => void = () => undefined;
-      context = () => new Promise((resolve) => (release = resolve));
+      const later = new Promise<unknown>((resolve) => (release = resolve));
+      source = () => ({ now: () => ({ context: { ...clean, robots: PENDING_CONTEXT.robots }, final: false }), later });
+      load(PAGE);
+      await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+      expect(verdict()).toBe('pending');
+      release(clean);
+      await vi.advanceTimersByTimeAsync(0);
+      // `Disallow: /a` blocks the page.
+      expect(verdict()).toBe('not-indexable');
+    });
+
+    test('auditor-drops-late-robots-for-a-page-that-moved-on', async () => {
+      const slow = slowSource();
+      source = slow.source;
       const contents = load(PAGE);
       await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+      expect(analysed).toHaveLength(1);
       commit(contents, 'https://example.com/b', 'B');
-      release(CONTEXT);
+      slow.release();
       await vi.advanceTimersByTimeAsync(0);
-      // The old run is never analysed.
-      expect(analysed).toHaveLength(0);
+      // Not analysed again for a URL the tab no longer shows.
+      expect(analysed).toHaveLength(1);
+      // Nor for a superseded run: a rerun took over.
+      const again = slowSource();
+      source = again.source;
+      contents.emit('did-finish-load');
+      await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+      const runs = analysed.length;
+      source = () => ({ now: () => ({ context: CONTEXT, final: true }), later: null });
+      controller.seo.rerun(controller.getState().activeTabId!);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(analysed).toHaveLength(runs + 1);
+      again.release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(analysed).toHaveLength(runs + 1);
+    });
+
+    test('auditor-survives-a-broken-context-source', async () => {
+      // A source that throws, a `now` that throws, a `later` that rejects or never settles.
+      source = () => {
+        throw new Error('boom');
+      };
+      load(PAGE);
+      await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+      expect(analysed.at(-1)!.context).toBeUndefined();
+      expect(status().status).toBe('ready');
+      source = () => ({
+        now: () => {
+          throw new Error('boom');
+        },
+        later: Promise.reject(new Error('late boom')),
+      });
+      controller.seo.rerun(controller.getState().activeTabId!);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(analysed.at(-1)!.context).toBeUndefined();
+      const count = analysed.length;
+      source = () => ({ now: () => ({ context: PENDING_CONTEXT, final: false }), later: new Promise(() => undefined) });
+      controller.seo.rerun(controller.getState().activeTabId!);
+      await vi.advanceTimersByTimeAsync(CONTEXT_TIMEOUT_MS + 1);
+      expect(analysed).toHaveLength(count + 1);
+      expect(status().status).toBe('ready');
     });
   });
 });

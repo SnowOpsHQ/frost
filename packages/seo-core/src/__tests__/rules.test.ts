@@ -234,11 +234,19 @@ describe('indexing', () => {
     // A crawler-specific tag alone is enough, and the finding names it.
     const google = fails('robots-noindex', page({ metaRobots: [robots('index, follow'), robots('noindex', 'googlebot')] }));
     expect(google.facts).toEqual([{ label: 'Meta robots (googlebot)', value: 'noindex' }]);
-    expect(factOf(fails('robots-noindex', page({ metaRobots: [robots('noindex', 'bingbot')] })), 'Meta robots (bingbot)')).toBe('noindex');
-    expect(factOf(fails('robots-noindex', page({ metaRobots: [robots('none', 'googlebot-news')] })), 'Meta robots (googlebot-news)')).toBe('none');
+    // Another crawler's tag is not this rule (robots-noindex-other-bot).
+    passes('robots-noindex', page({ metaRobots: [robots('noindex', 'bingbot')] }));
+    passes('robots-noindex', page({ metaRobots: [robots('none', 'googlebot-news')] }));
     passes('robots-noindex', cleanSnapshot());
     passes('robots-noindex', page({ metaRobots: [] }));
     passes('robots-noindex', page({ metaRobots: [robots('index'), robots('nofollow', 'googlebot')] }));
+  });
+
+  test('robots-noindex-other-bot', () => {
+    expect(factOf(fails('robots-noindex-other-bot', page({ metaRobots: [robots('noindex', 'bingbot')] })), 'Meta robots (bingbot)')).toBe('noindex');
+    expect(factOf(fails('robots-noindex-other-bot', page({ metaRobots: [robots('none', 'googlebot-news')] })), 'Meta robots (googlebot-news)')).toBe('none');
+    passes('robots-noindex-other-bot', page({ metaRobots: [robots('noindex'), robots('noindex', 'googlebot')] }));
+    passes('robots-noindex-other-bot', cleanSnapshot());
   });
 
   test('robots-nofollow', () => {

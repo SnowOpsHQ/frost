@@ -12,7 +12,7 @@ const robots = (changes: Partial<RobotsReport> = {}): RobotsReport => ({
   outcome: 'ok',
   status: 200,
   redirects: 0,
-  bytes: 1_234,
+  bytes: 1_300,
   truncated: false,
   groupCount: 1,
   ruleCount: 1,
@@ -32,7 +32,8 @@ describe('indexability view helpers', () => {
     expect(statusText(599)).toBe('599');
     expect(statusText(null)).toBe('Unknown');
     expect([200, 204, 301, 404, 503, null].map(statusTone)).toEqual(['ok', 'ok', 'warn', 'error', 'error', 'muted']);
-    expect([0, 999, 1_000, 12_345, 512_000].map(formatBytes)).toEqual(['0 B', '999 B', '1 KB', '12.3 KB', '512 KB']);
+    // One unit throughout: KiB (1,024 bytes), so the cap reads "500 KiB".
+    expect([0, 1_023, 1_024, 12_800, 512_000].map(formatBytes)).toEqual(['0 B', '1,023 B', '1 KiB', '12.5 KiB', '500 KiB']);
   });
 
   test('source-notes', () => {
@@ -54,8 +55,14 @@ describe('indexability view helpers', () => {
     expect(robotsGroupText(agent())).toBe('User-agent: * (fallback)');
     expect(robotsGroupText(agent({ groupAgents: ['a', 'b', 'c', 'd', 'e'], fallback: false }))).toBe('User-agent: a, b, c, +2');
     expect(robotsGroupText(agent({ groupAgents: [] }))).toBe('No group');
-    expect(robotsFetchText(robots({ redirects: 1 }))).toBe('Fetched · 200 · 1.2 KB · 1 redirect');
-    expect(robotsFetchText(robots({ bytes: 512_000, truncated: true }))).toBe('Fetched · 200 · 512 KB (cut at the limit)');
+    expect(robotsFetchText(robots({ redirects: 1 }))).toBe('Fetched · 200 · 1.3 KiB · 1 redirect');
+    expect(robotsFetchText(robots({ bytes: 512_000, truncated: true }))).toBe('Fetched · 200 · 500 KiB (cut at the limit)');
+    expect(robotsFetchText(robots({ outcome: 'forbidden', status: 403 }))).toBe('Access denied (no restrictions) · 403');
+    expect(robotsFetchText(robots({ outcome: 'private-redirect', status: 302 }))).toBe('Unavailable (redirect to a private address) · 302');
+    expect(robotsFetchText(robots({ outcome: 'pending', status: null }))).toBe('Fetching robots.txt…');
+    expect(robotsRuleText(agent({ allowed: null, groupAgents: [] }), robots({ outcome: 'pending' }))).toBe('Waiting for robots.txt');
+    expect(robotsRuleText(agent({ groupAgents: [] }), robots({ outcome: 'too-many-redirects' }))).toMatch(/No robots.txt/);
+    expect(robotsVerdictLabel({ allowed: null }, 'pending')).toEqual({ label: 'Checking…', tone: 'muted' });
     expect(robotsFetchText(robots({ outcome: 'unavailable', status: 404 }))).toBe('Not found (no restrictions) · 404');
     expect(robotsFetchText(robots({ outcome: 'timeout', status: null }))).toBe('Timed out');
   });
@@ -110,5 +117,8 @@ describe('indexability view helpers', () => {
     expect(verdictSummary('indexable')).toMatch(/^Nothing/);
     expect(verdictSummary('not-indexable')).toMatch(/will not show/);
     expect(verdictSummary('canonicalised')).toMatch(/another URL/);
+    expect(verdictSummary('pending')).toMatch(/robots.txt/);
+    const pendingRobots = report({ verdict: 'pending', robots: robots({ outcome: 'pending', status: null, agents: [agent({ allowed: null, groupAgents: [] })] }) });
+    expect(values(pendingRobots)[3]).toEqual(['robots', 'Checking…', 'muted']);
   });
 });

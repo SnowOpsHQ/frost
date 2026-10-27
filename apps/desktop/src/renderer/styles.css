@@ -3394,6 +3394,38 @@ input {
   --verdict: var(--caution);
 }
 
+.seo-verdict[data-verdict='pending'] {
+  --verdict: var(--info-tone);
+}
+
+.seo-robots-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.seo-robots-pending-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--info-tone);
+  animation: seo-robots-pulse 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes seo-robots-pulse {
+  from {
+    opacity: 0.35;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 .seo-verdict-head {
   display: flex;
   align-items: center;
@@ -3807,7 +3839,8 @@ input {
   .seo-hint,
   .seo-skeleton-ring,
   .seo-skeleton-line,
-  .seo-skeleton-block {
+  .seo-skeleton-block,
+  .seo-robots-pending-dot {
     animation: none;
   }
 

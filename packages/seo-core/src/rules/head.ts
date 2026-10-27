@@ -1,5 +1,6 @@
 import { DESCRIPTION_MAX_CHARS, DESCRIPTION_MIN_CHARS, TITLE_MAX_CHARS, TITLE_MIN_CHARS } from '@app/specs/seo-rules.spec';
 import type { CappedText, FindingDetails, PageSnapshot } from '../types';
+import { inScope, type NoindexScope } from '../indexability/scope';
 import { characters, details, fact, formatCount, parseUrl, siteHost, tokens, withoutFragment } from '../util';
 
 // Checks on the document's head: title, meta description, canonical, meta robots, lang and
@@ -23,9 +24,9 @@ function lengthFacts(label: string, value: CappedText, min: number, max: number)
   return [fact(label, value.text), fact('Length', characters(value.length)), fact('Recommended', `${min}–${max} characters`)];
 }
 
-/** The robots metas (generic or crawler-specific) carrying any of `directives`. */
-export function robotsWith(s: PageSnapshot, directives: readonly string[]): PageSnapshot['metaRobots'] {
-  return s.metaRobots.filter((meta) => tokens(meta.content).some((token) => directives.includes(token)));
+/** The robots metas (generic or crawler-specific, in `scope`) carrying any of `directives`. */
+export function robotsWith(s: PageSnapshot, directives: readonly string[], scope: NoindexScope = 'all'): PageSnapshot['metaRobots'] {
+  return s.metaRobots.filter((meta) => inScope(meta.name, scope) && tokens(meta.content).some((token) => directives.includes(token)));
 }
 
 /** A fact per robots meta, named after its crawler (`Meta robots (googlebot)`); the generic tag is plain `Meta robots`. */
@@ -89,7 +90,11 @@ export const HEAD_CHECKS = {
   },
 
   'robots-noindex': (s) => {
-    const metas = robotsWith(s, ['noindex', 'none']);
+    const metas = robotsWith(s, ['noindex', 'none'], 'verdict');
+    return metas.length > 0 ? details(robotsFacts(metas)) : null;
+  },
+  'robots-noindex-other-bot': (s) => {
+    const metas = robotsWith(s, ['noindex', 'none'], 'other');
     return metas.length > 0 ? details(robotsFacts(metas)) : null;
   },
   'robots-nofollow': (s) => {

@@ -336,18 +336,18 @@ export const ResponseMetaSchema = z
 
 /**
  * Main's fetch of the page origin's robots.txt (`ROBOTS_FETCH_LIMITS`, `ROBOTS_FETCH_OUTCOMES`):
- * the URL asked for, how it ended, the final HTTP status (`null` without a response), the URL that
- * answered (`null` without one), how many redirects were followed, the body as text (UTF-8, from at
- * most `maxBytes` bytes; `''` unless `ok`), how many bytes were read and whether the file was longer.
+ * the URL asked for, how it ended (`pending` while it runs), the final HTTP status (`null` without
+ * a response), the URL that answered (`null` without one), how many redirects were followed, the
+ * body exactly as read (bytes, at most `maxBytes`; empty unless `ok`: main never decodes it, the
+ * worker does, `decodeRobotsBytes`) and whether the file was longer.
  */
 export const RobotsFetchSchema = z.strictObject({
   url: urlText.min(1).refine(isWebUrl, { message: 'not an http(s) URL' }),
   outcome: z.enum(ROBOTS_FETCH_OUTCOMES),
   status: status.nullable(),
   finalUrl: urlText.nullable(),
-  redirects: z.int().nonnegative().max(ROBOTS_FETCH_LIMITS.maxRedirects + 1),
-  text: z.string().max(ROBOTS_FETCH_LIMITS.maxBytes),
-  bytes: z.int().nonnegative().max(ROBOTS_FETCH_LIMITS.maxBytes),
+  redirects: z.int().nonnegative().max(ROBOTS_FETCH_LIMITS.maxRedirects),
+  body: z.instanceof(Uint8Array).refine((body) => body.byteLength <= ROBOTS_FETCH_LIMITS.maxBytes, { message: 'robots.txt over its cap' }),
   truncated: z.boolean(),
 });
 

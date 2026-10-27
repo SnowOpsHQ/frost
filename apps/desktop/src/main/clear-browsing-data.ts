@@ -4,8 +4,8 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 
 // Clear Browsing Data… (spec `browser-session-db.feature.md`, Clear browsing data): the
 // application menu's item asks first, in a native message box main shows, then clears the visits,
-// every permission decision (stored and in memory) with the prompt back-off, and the browse
-// partition's storage and cache. It closes no tab and leaves the app UI's session alone.
+// every permission decision (stored and in memory) with the prompt back-off, the browse
+// partition's storage and cache, and the SEO auditor's robots.txt answers and recorded responses. It closes no tab and leaves the app UI's session alone.
 
 /** What clearing is made of (injected, so the order and the failure handling are unit-tested). */
 export interface ClearBrowsingDataParts {
@@ -17,6 +17,8 @@ export interface ClearBrowsingDataParts {
   clearStoredData(): Promise<void>;
   /** The browse partition's storage and HTTP cache (`clearBrowseStorage`). */
   clearBrowseStorage(): Promise<void>;
+  /** The SEO auditor's per-origin robots.txt answers and recorded tab responses (`seo-indexability.feature.md`). */
+  forgetSeoCaches(): void;
   log(message: string): void;
 }
 
@@ -42,6 +44,7 @@ export function createClearBrowsingData(parts: ClearBrowsingDataParts): () => Pr
     await attempt('permission decisions', () => parts.forgetPermissionDecisions());
     await attempt('stored visits and decisions', () => parts.clearStoredData());
     await attempt('site storage and cache', () => parts.clearBrowseStorage());
+    await attempt('robots.txt answers and recorded responses', () => parts.forgetSeoCaches());
     return true;
   };
   let running: Promise<boolean> | null = null;

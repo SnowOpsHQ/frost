@@ -67,8 +67,8 @@ describe('hreflang codes', () => {
   });
 
   test('hreflang-codes-validate', () => {
-    for (const valid of ['en', 'EN', 'en-GB', 'en-gb', 'pt-BR', 'zh-Hant', 'zh-Hant-TW', 'x-default', 'X-Default', ' de ']) expect(isValidHreflang(valid), valid).toBe(true);
-    for (const invalid of ['en-UK', 'en_US', 'eng', 'english', 'xx', 'en-', '', 'en-GB-x', 'en-123', 'qq-ZZ', '-GB', 'GB']) expect(isValidHreflang(invalid), invalid).toBe(false);
+    for (const valid of ['en', 'EN', 'en-GB', 'en-gb', 'pt-BR', 'zh-Hant', 'zh-hant', 'zh-Hant-TW', 'sr-Latn', 'es-419', 'en-001', 'x-default', 'X-Default', ' de ']) expect(isValidHreflang(valid), valid).toBe(true);
+    for (const invalid of ['en-UK', 'en_US', 'eng', 'english', 'xx', 'en-', '', 'en-GB-x', 'en-123', 'es-420', 'zh-Abcd', 'zh-Hant-ZZ', 'qq-ZZ', '-GB', 'GB']) expect(isValidHreflang(invalid), invalid).toBe(false);
     expect(parseHreflangCode('zh-hant-tw')).toEqual({ language: 'zh', script: 'hant', region: 'TW' });
     expect(parseHreflangCode('x-default')).toBe('x-default');
   });
@@ -114,13 +114,22 @@ describe('indexability rules', () => {
   test('x-robots-noindex', () => {
     const generic = fails('x-robots-noindex', withHeaders(header('x-robots-tag', 'noindex')));
     expect(factOf(generic, 'Applies to')).toBe('all crawlers');
-    expect(factOf(fails('x-robots-noindex', withHeaders(header('x-robots-tag', 'googlebot: noindex'))), 'Applies to')).toBe('googlebot');
+    expect(factOf(fails('x-robots-noindex', withHeaders(header('x-robots-tag', 'GoogleBot: NOINDEX'))), 'Applies to')).toBe('googlebot');
     fails('x-robots-noindex', withHeaders(header('x-robots-tag', 'max-snippet: 10'), header('x-robots-tag', 'none')));
-    fails('x-robots-noindex', withHeaders(header('x-robots-tag', 'BingBot: NOINDEX')));
     // Another crawler's noindex, or a nofollow, is not this rule.
+    passes('x-robots-noindex', withHeaders(header('x-robots-tag', 'bingbot: noindex')));
+    passes('x-robots-noindex', withHeaders(header('x-robots-tag', 'googlebot-news: noindex')));
     passes('x-robots-noindex', withHeaders(header('x-robots-tag', 'otherbot: noindex')));
     passes('x-robots-noindex', withHeaders(header('x-robots-tag', 'nofollow')));
     passes('x-robots-noindex', cleanSnapshot());
+  });
+
+  test('x-robots-noindex-other-bot', () => {
+    expect(factOf(fails('x-robots-noindex-other-bot', withHeaders(header('x-robots-tag', 'BingBot: NOINDEX'))), 'Applies to')).toBe('bingbot');
+    expect(factOf(fails('x-robots-noindex-other-bot', withHeaders(header('x-robots-tag', 'googlebot-news: none'))), 'Applies to')).toBe('googlebot-news');
+    passes('x-robots-noindex-other-bot', withHeaders(header('x-robots-tag', 'noindex'), header('x-robots-tag', 'googlebot: noindex')));
+    passes('x-robots-noindex-other-bot', withHeaders(header('x-robots-tag', 'otherbot: noindex')));
+    passes('x-robots-noindex-other-bot', cleanSnapshot());
   });
 
   test('x-robots-nofollow', () => {
@@ -153,9 +162,9 @@ describe('indexability rules', () => {
   });
 
   test('robots-txt-unreachable', () => {
-    for (const outcome of ['server-error', 'unreachable', 'timeout', 'bad-redirect'] as const) fails('robots-txt-unreachable', page({ robots: okRobots('', { outcome, status: outcome === 'server-error' ? 503 : null }) }));
+    for (const outcome of ['server-error', 'unreachable', 'timeout', 'bad-redirect', 'no-location'] as const) fails('robots-txt-unreachable', page({ robots: okRobots('', { outcome, status: outcome === 'server-error' ? 503 : null }) }));
     expect(factOf(fails('robots-txt-unreachable', page({ robots: okRobots('', { outcome: 'server-error', status: 503 }) })), 'Status')).toBe('503');
-    passes('robots-txt-unreachable', page({ robots: okRobots('', { outcome: 'unavailable', status: 404 }) }));
+    for (const outcome of ['unavailable', 'forbidden', 'too-many-redirects', 'private-redirect', 'pending'] as const) passes('robots-txt-unreachable', page({ robots: okRobots('', { outcome, status: null }) }));
     passes('robots-txt-unreachable', cleanSnapshot());
     passes('robots-txt-unreachable', page({ robots: null }));
   });
@@ -271,6 +280,36 @@ describe('verdict', () => {
     // Several reasons at once, in NOT_INDEXABLE_RULES order.
     const both = runAudit(page({ metaRobots: [robots('noindex')], response: okResponse({ status: 410 }) }));
     expect(both.indexability.reasons).toEqual(['A robots meta tag asks not to index it (robots)', 'The server answered HTTP 410']);
+  });
+
+  test('verdict-other-crawlers-do-not-cap', () => {
+    // A noindex for googlebot-news or bingbot alone (meta or header) is a warning, never "Not indexable".
+    for (const snapshot of [page({ metaRobots: [robots('noindex', 'bingbot')] }), page({ metaRobots: [robots('noindex', 'googlebot-news')] }), withHeaders(header('x-robots-tag', 'bingbot: noindex'))]) {
+      const audit = runAudit(snapshot);
+      expect(audit.indexability.verdict).toBe('indexable');
+      expect(audit.indexable).toBe(true);
+      expect(audit.score).toBeGreaterThan(NOINDEX_SCORE_CAP);
+    }
+  });
+
+  test('verdict-pending-while-robots-is-fetched', () => {
+    const pending = page({ robots: okRobots('', { outcome: 'pending', status: null, finalUrl: null }) });
+    const audit = runAudit(pending);
+    expect(audit.indexability.verdict).toBe('pending');
+    expect(audit.indexable).toBe(true);
+    expect(audit.indexability.robots?.agents.map((agent) => agent.allowed)).toEqual([null, null, null]);
+    for (const id of ['robots-txt-blocks-googlebot', 'robots-txt-blocks-all', 'robots-txt-unreachable', 'robots-txt-no-sitemap'] as const) passes(id, pending);
+    // A reason that does not depend on robots.txt is already final.
+    expect(runAudit(page({ robots: pending.robots, response: okResponse({ status: 404 }) })).indexability.verdict).toBe('not-indexable');
+    // Pending outranks canonicalised (robots.txt may still block the page).
+    expect(runAudit(page({ robots: pending.robots, canonicals: [{ href: 'https://example.com/x', resolved: 'https://example.com/x' }], canonicalTotal: 1 })).indexability.verdict).toBe('pending');
+  });
+
+  test('verdict-reads-non-utf8-robots', () => {
+    const latin1 = Uint8Array.from([...'User-agent: *\nDisallow: /caf'].map((c) => c.charCodeAt(0)).concat([0xe9]));
+    const snapshot = page({ url: 'https://example.com/caf%E9', canonicals: [], canonicalTotal: 0, ogUrl: null, robots: okRobots('', { body: latin1 }) });
+    expect(runAudit(snapshot).indexability.verdict).toBe('not-indexable');
+    expect(analyseIndexability(snapshot).robots!.text).toBe('User-agent: *\nDisallow: /caf%E9');
   });
 
   test('verdict-canonicalised', () => {

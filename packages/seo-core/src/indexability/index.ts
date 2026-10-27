@@ -6,7 +6,8 @@ import { parseUrl, withoutFragment } from '../util';
 import { parseLinkHeader, parseXRobotsTag, type LinkValue, type XRobotsTag } from './headers';
 import { isValidHreflang } from './hreflang';
 import type { CanonicalReport, HreflangEntry, HreflangReport, HttpReport, IndexabilityReport, RobotsAgentVerdict, RobotsReport } from './model';
-import { matchRobots, parseRobotsTxt, robotsPathOf } from './robots';
+import { decodeRobotsBytes, matchRobots, parseRobotsTxt, robotsPathOf } from './robots';
+import { inScope, type NoindexScope } from './scope';
 
 // The page's indexability facts, read once per snapshot (memoised, like `analyseSchema`) so the
 // `indexability` / `hreflang` rules and the panel share one pass (acceptance
@@ -19,6 +20,7 @@ const facts = new WeakMap<PageSnapshot, IndexabilityFacts>();
 
 /** Crawlers whose `X-Robots-Tag` counts like the robots meta tags (`ROBOTS_META_NAMES` without the generic name). */
 const X_ROBOTS_AGENTS: ReadonlySet<string> = new Set(ROBOTS_META_NAMES.filter((name) => name !== 'robots'));
+
 const UNKNOWN: ReadonlySet<RobotsFetchOutcome> = new Set(ROBOTS_UNKNOWN_OUTCOMES);
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
@@ -49,9 +51,12 @@ export function headerValues(s: PageSnapshot, name: string): string[] {
   return s.response?.headersAvailable ? s.response.headers.filter((header) => header.name === name).map((header) => header.value) : [];
 }
 
-/** The `X-Robots-Tag` values that apply to indexing in search (every crawler, or one of `X_ROBOTS_AGENTS`) and carry one of `directives`. */
-export function xRobotsWith(tags: readonly XRobotsTag[], directives: readonly string[]): XRobotsTag[] {
-  return tags.filter((tag) => (tag.agent === null || X_ROBOTS_AGENTS.has(tag.agent)) && tag.directives.some((d) => directives.includes(d)));
+/**
+ * The `X-Robots-Tag` values that apply to indexing in search (every crawler, or one of
+ * `X_ROBOTS_AGENTS`), in `scope` (the generic tag counts as `robots`), carrying one of `directives`.
+ */
+export function xRobotsWith(tags: readonly XRobotsTag[], directives: readonly string[], scope: NoindexScope = 'all'): XRobotsTag[] {
+  return tags.filter((tag) => (tag.agent === null || X_ROBOTS_AGENTS.has(tag.agent)) && inScope(tag.agent ?? 'robots', scope) && tag.directives.some((d) => directives.includes(d)));
 }
 
 /** The page's `Link` header values (parsed), at most `maxHreflang` of them. */
@@ -88,8 +93,10 @@ function robotsReport(s: PageSnapshot): RobotsReport | null {
   if (!fetched) return null;
   const page = parseUrl(s.url);
   const path = page ? robotsPathOf(page) : '/';
-  const file = fetched.outcome === 'ok' ? parseRobotsTxt(fetched.text) : null;
-  const unknown = UNKNOWN.has(fetched.outcome);
+  const text = fetched.outcome === 'ok' ? decodeRobotsBytes(fetched.body) : '';
+  const file = fetched.outcome === 'ok' ? parseRobotsTxt(text) : null;
+  // Unknown until it can be read: an unreadable file, or one still being fetched.
+  const unknown = UNKNOWN.has(fetched.outcome) || fetched.outcome === 'pending';
   const agents: RobotsAgentVerdict[] = ROBOTS_AGENTS.map((agent) => {
     if (!file) return { agent, allowed: unknown ? null : true, groupAgents: [], groupLine: null, fallback: false, rule: null };
     const match = matchRobots(file, agent, path);
@@ -109,7 +116,7 @@ function robotsReport(s: PageSnapshot): RobotsReport | null {
     outcome: fetched.outcome,
     status: fetched.status,
     redirects: fetched.redirects,
-    bytes: fetched.bytes,
+    bytes: fetched.body.byteLength,
     truncated: fetched.truncated,
     groupCount: file?.groups.length ?? 0,
     ruleCount: file?.ruleCount ?? 0,
@@ -120,8 +127,8 @@ function robotsReport(s: PageSnapshot): RobotsReport | null {
     sitemapTotal: file?.sitemapTotal ?? 0,
     path,
     agents,
-    text: fetched.text.slice(0, ROBOTS_PARSE_LIMITS.maxViewChars),
-    textCut: fetched.text.length > ROBOTS_PARSE_LIMITS.maxViewChars,
+    text: text.slice(0, ROBOTS_PARSE_LIMITS.maxViewChars),
+    textCut: text.length > ROBOTS_PARSE_LIMITS.maxViewChars,
   };
 }
 
@@ -181,10 +188,10 @@ export function indexabilityReport(s: PageSnapshot, failing: ReadonlySet<SeoRule
     if (!failing.has(id)) continue;
     switch (id) {
       case 'robots-noindex':
-        reasons.push(`A robots meta tag asks not to index it (${noindexFor.join(', ')})`);
+        reasons.push(`A robots meta tag asks not to index it (${noindexFor.filter((name) => inScope(name, 'verdict')).join(', ')})`);
         break;
       case 'x-robots-noindex':
-        reasons.push(`The X-Robots-Tag header asks not to index it (${xRobotsAgents(xRobotsWith(base.xRobotsTag, ['noindex', 'none']))})`);
+        reasons.push(`The X-Robots-Tag header asks not to index it (${xRobotsAgents(xRobotsWith(base.xRobotsTag, ['noindex', 'none'], 'verdict'))})`);
         break;
       case 'robots-txt-blocks-googlebot': {
         const rule = base.robots?.agents.find((agent) => agent.agent === 'Googlebot')?.rule;
@@ -196,11 +203,13 @@ export function indexabilityReport(s: PageSnapshot, failing: ReadonlySet<SeoRule
     }
   }
   if (reasons.length > 0) return { ...base, verdict: 'not-indexable', reasons };
+  if (base.robots?.outcome === 'pending') return { ...base, verdict: 'pending', reasons: [] };
   if (failing.has('canonical-elsewhere') && base.canonical.effective) return { ...base, verdict: 'canonicalised', reasons: [`Its canonical points to ${base.canonical.effective}`] };
   return { ...base, verdict: 'indexable', reasons: [] };
 }
 
 export { parseLinkHeader, parseXRobotsTag, type LinkValue, type XRobotsTag } from './headers';
 export { isValidHreflang, parseHreflangCode, type HreflangCode } from './hreflang';
-export { groupsFor, matchRobots, normaliseRobotsPath, parseRobotsTxt, productToken, robotsPathOf, robotsPatternMatches, type RobotsFile, type RobotsGroup, type RobotsMatch, type RobotsRule } from './robots';
+export { decodeRobotsBytes, groupsFor, matchRobots, normaliseRobotsPath, parseRobotsTxt, productToken, robotsPathOf, robotsPatternMatches, type RobotsFile, type RobotsGroup, type RobotsMatch, type RobotsRule } from './robots';
 export type * from './model';
+export { inScope, type NoindexScope } from './scope';

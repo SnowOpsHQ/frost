@@ -97,9 +97,9 @@ export function okResponse(changes: Partial<ResponseMeta> = {}): ResponseMeta {
 /** The clean site's robots.txt: one group for every crawler, a private area and a sitemap. */
 export const CLEAN_ROBOTS_TXT = 'User-agent: *\nDisallow: /private/\n\nSitemap: https://example.com/sitemap.xml\n';
 
-/** A robots.txt fetch that answered `text` with 200 (`changes` override). */
+/** A robots.txt fetch that answered `text` (UTF-8) with 200 (`changes` override). */
 export function okRobots(text = CLEAN_ROBOTS_TXT, changes: Partial<RobotsFetch> = {}): RobotsFetch {
-  return { url: 'https://example.com/robots.txt', outcome: 'ok', status: 200, finalUrl: 'https://example.com/robots.txt', redirects: 0, text, bytes: text.length, truncated: false, ...changes };
+  return { url: 'https://example.com/robots.txt', outcome: 'ok', status: 200, finalUrl: 'https://example.com/robots.txt', redirects: 0, body: new TextEncoder().encode(text), truncated: false, ...changes };
 }
 
 /** A response header kept by main. */

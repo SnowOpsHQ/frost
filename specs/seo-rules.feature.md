@@ -65,9 +65,12 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
 
 ## Indexing
 - **Scenario: robots-noindex** — fails for `noindex` (any case, among other tokens) and `none` in
-  the generic `robots` tag, and in a `googlebot`, `googlebot-news` or `bingbot` tag alone; the
-  finding's facts name each tag (`Meta robots (googlebot)` → `noindex`); passes for `index, follow`,
-  with no robots meta, and for `noindex` in a tag frost does not read.
+  the generic `robots` tag, and in a `googlebot` tag alone (`NOINDEX_VERDICT_NAMES`); the finding's
+  facts name each tag (`Meta robots (googlebot)` → `noindex`); passes for `index, follow`, with no
+  robots meta, for `noindex` in a tag frost does not read, and for a `googlebot-news` or `bingbot`
+  tag (Task 4: those are `robots-noindex-other-bot`).
+- **Scenario: robots-noindex-other-bot** — fails for `noindex` / `none` in a `googlebot-news` or
+  `bingbot` tag, naming it; passes for the generic and `googlebot` tags. It never caps the score.
 - **Scenario: robots-nofollow** — fails for `nofollow` and `none` (generic or crawler-specific,
   named likewise); passes for `noindex` alone.
 

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type { CanonicalReport, HreflangReport, HttpReport, IndexabilityReport, RobotsReport, SeoAudit } from '@app/seo-core';
-import { HREFLANG_RECIPROCITY_CHECKED, INDEXABILITY_VERDICT_LABELS, type IndexabilityVerdict } from '@app/specs/seo-indexability.spec';
+import { HREFLANG_RECIPROCITY_CHECKED, INDEXABILITY_VERDICT_LABELS, ROBOTS_ALLOW_ALL_OUTCOMES, type IndexabilityVerdict, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import { BlockedIcon, CanonicalIcon, CheckCircleIcon, CodeIcon, ExchangeIcon, GlobeIcon, HopIcon, OpenTabIcon, RobotIcon, SitemapIcon } from '../../icons';
 import { actions } from '../../ipc';
 import { hreflangFlags, robotsFetchText, robotsGroupText, robotsRuleText, robotsVerdictLabel, sourceNote, statusText, statusTone, verdictSignals, verdictSummary, type Tone } from '../../indexability-view';
@@ -17,10 +17,11 @@ import { FactRow, PageText, RawText } from './parts';
 
 /** The panel's categories (`SEO_PANELS`). */
 const CATEGORIES = ['indexing', 'indexability', 'hreflang'] as const;
+const ALLOW_ALL: ReadonlySet<RobotsFetchOutcome> = new Set(ROBOTS_ALLOW_ALL_OUTCOMES);
 /** hreflang rows shown before "Show all". */
 const HREFLANG_FIRST_ROWS = 25;
 
-const VERDICT_ICON: Readonly<Record<IndexabilityVerdict, typeof CheckCircleIcon>> = { indexable: CheckCircleIcon, 'not-indexable': BlockedIcon, canonicalised: CanonicalIcon };
+const VERDICT_ICON: Readonly<Record<IndexabilityVerdict, typeof CheckCircleIcon>> = { indexable: CheckCircleIcon, 'not-indexable': BlockedIcon, canonicalised: CanonicalIcon, pending: RobotIcon };
 
 /** A titled card with an icon in its heading. */
 function Card({ title, icon, aside, children, testId }: { readonly title: string; readonly icon: ReactNode; readonly aside?: ReactNode; readonly children: ReactNode; readonly testId?: string }) {
@@ -236,14 +237,27 @@ function RobotsCard({ robots, flash }: { readonly robots: RobotsReport | null; r
       </Card>
     );
   }
-  const tone: Tone = robots.outcome === 'ok' ? 'ok' : robots.outcome === 'unavailable' ? 'muted' : 'warn';
+  if (robots.outcome === 'pending') {
+    return (
+      <Card title="robots.txt" icon={<RobotIcon />} testId="seo-index-robots" aside={<Pill tone="muted" testId="seo-index-robots-outcome">{robotsFetchText(robots)}</Pill>}>
+        <div className="seo-robots" data-outcome="pending">
+          <PageText value={robots.url} className="seo-mono seo-robots-url" testId="seo-index-robots-url" />
+          <p className="seo-robots-pending" data-testid="seo-index-robots-pending" aria-busy="true">
+            <span className="seo-robots-pending-dot" aria-hidden="true" />
+            Fetching robots.txt… The other checks are ready; the verdict follows once it answers.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+  const tone: Tone = robots.outcome === 'ok' ? 'ok' : ALLOW_ALL.has(robots.outcome) ? 'muted' : 'warn';
   return (
     <Card title="robots.txt" icon={<RobotIcon />} testId="seo-index-robots" aside={<Pill tone={tone} testId="seo-index-robots-outcome">{robotsFetchText(robots)}</Pill>}>
       <div className="seo-robots" data-outcome={robots.outcome}>
         <PageText value={robots.finalUrl ?? robots.url} className="seo-mono seo-robots-url" testId="seo-index-robots-url" />
         <ul className="seo-robots-agents" data-testid="seo-index-robots-agents">
           {robots.agents.map((verdict) => {
-            const label = robotsVerdictLabel(verdict);
+            const label = robotsVerdictLabel(verdict, robots.outcome);
             return (
               <li key={verdict.agent} className="seo-robots-agent" data-testid="seo-index-robots-agent" data-agent={verdict.agent} data-allowed={String(verdict.allowed)}>
                 <span className="seo-robots-agent-name">{verdict.agent === '*' ? 'Other crawlers (*)' : verdict.agent}</span>
@@ -295,7 +309,7 @@ function RobotsCard({ robots, flash }: { readonly robots: RobotsReport | null; r
             )}
             {robots.textCut || robots.truncated ? (
               <p className="seo-note" data-testid="seo-index-robots-cut">
-                {robots.truncated ? 'The file is over 500 KB: crawlers (and frost) ignore the rest. ' : ''}
+                {robots.truncated ? 'The file is over 500 KiB (512,000 bytes): crawlers (and frost) ignore the rest. ' : ''}
                 {robots.textCut ? `Showing the first ${formatCount(robots.text.length)} characters.` : ''}
               </p>
             ) : null}

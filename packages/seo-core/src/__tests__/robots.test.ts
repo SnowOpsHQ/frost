@@ -2,7 +2,7 @@
 // Acceptance: specs/seo-indexability.feature.md (robots.txt parser)
 import { describe, expect, test } from 'vitest';
 import { ROBOTS_PARSE_LIMITS } from '@app/specs/seo-indexability.spec';
-import { matchRobots, normaliseRobotsPath, parseRobotsTxt, productToken, robotsPathOf, robotsPatternMatches } from '../index';
+import { decodeRobotsBytes, matchRobots, normaliseRobotsPath, parseRobotsTxt, productToken, robotsPathOf, robotsPatternMatches } from '../index';
 
 /** Whether `agent` may crawl `path` (a URL path and query, normalised here) under `text`. */
 function allowed(text: string, agent: string, path: string): boolean {
@@ -65,12 +65,24 @@ describe('robots.txt parser', () => {
     expect(parseRobotsTxt(blank).groups.map((group) => group.tokens)).toEqual([['a', 'b'], ['c'], ['d']]);
     expect(allowed(blank, 'a', '/x')).toBe(false);
     expect(allowed(blank, 'c', '/d')).toBe(true);
-    // Any other record ends the agent list too: a crawler's crawl-delay-only group is its own.
-    const delay = 'User-agent: slowbot\nCrawl-delay: 5\n\nUser-agent: *\nDisallow: /w/\n';
-    expect(parseRobotsTxt(delay).groups.map((group) => group.tokens)).toEqual([['slowbot'], ['*']]);
-    expect(allowed(delay, 'slowbot', '/w/x')).toBe(true);
-    expect(allowed(delay, 'Googlebot', '/w/x')).toBe(false);
-    expect(parseRobotsTxt('User-agent: a\nSitemap: https://example.com/s.xml\nUser-agent: b\nDisallow: /').groups.map((group) => group.tokens)).toEqual([['a'], ['b']]);
+  });
+
+  test('robots-only-rules-end-an-agent-list', () => {
+    // Crawl-delay (or any key frost does not read) between agents keeps them in one group.
+    const delay = 'User-agent: Googlebot\nCrawl-delay: 10\nUser-agent: Bingbot\nDisallow: /\n';
+    expect(parseRobotsTxt(delay).groups.map((group) => group.tokens)).toEqual([['googlebot', 'bingbot']]);
+    expect(allowed(delay, 'Googlebot', '/page')).toBe(false);
+    expect(allowed(delay, 'Bingbot', '/page')).toBe(false);
+    // So does a Sitemap line.
+    const sitemap = 'User-agent: a\nSitemap: https://example.com/s.xml\nUser-agent: b\nDisallow: /';
+    expect(parseRobotsTxt(sitemap).groups.map((group) => group.tokens)).toEqual([['a', 'b']]);
+    expect(parseRobotsTxt(sitemap).sitemapTotal).toBe(1);
+    expect(allowed(sitemap, 'a', '/x')).toBe(false);
+    // A crawl-delay-only crawler listed just before `*` follows the `*` group's rules (RFC 9309).
+    const merged = 'User-agent: slowbot\nCrawl-delay: 5\n\nUser-agent: *\nDisallow: /w/\n';
+    expect(parseRobotsTxt(merged).groups.map((group) => group.tokens)).toEqual([['slowbot', '*']]);
+    expect(allowed(merged, 'slowbot', '/w/x')).toBe(false);
+    expect(allowed(merged, 'Googlebot', '/w/x')).toBe(false);
   });
 
   test('robots-rules-before-any-group-are-ignored', () => {
@@ -97,6 +109,10 @@ describe('robots.txt parser', () => {
     expect(productToken('*')).toBe('*');
     expect(productToken('Googlebot-News')).toBe('googlebot-news');
     expect(productToken('123bot')).toBe('');
+    // Only `*` alone is every crawler.
+    expect(productToken('*foo')).toBe('');
+    expect(productToken('* ')).toBe('*');
+    expect(allowed('User-agent: *foo\nDisallow: /', 'Googlebot', '/x')).toBe(true);
     const text = 'User-agent: GOOGLEBOT/2.1\nDisallow: /g\n\nUser-agent: Googlebot-News\nDisallow: /n\n\nUser-agent: *\nDisallow: /all\n';
     expect(allowed(text, 'Googlebot', '/g')).toBe(false);
     // Googlebot-News is another crawler: its group is not Googlebot's.
@@ -153,6 +169,8 @@ describe('robots.txt parser', () => {
     expect(allowed('User-agent: *\nAllow: /page\nDisallow: /page\n', 'x', '/page')).toBe(true);
     expect(allowed('User-agent: *\nAllow: /$\nDisallow: /\n', 'x', '/')).toBe(true);
     expect(allowed('User-agent: *\nAllow: /$\nDisallow: /\n', 'x', '/page.htm')).toBe(false);
+    // Length is counted in normalised octets: `/ツ` is `/%E3%83%84` (10), longer than `/%E3%83` (7).
+    expect(allowed('User-agent: *\nAllow: /ツ\nDisallow: /%E3%83\n', 'x', '/ツ')).toBe(true);
     // Wildcard length counts like any character.
     expect(allowed('User-agent: *\nDisallow: /*.php\nAllow: /x/\n', 'x', '/x/a.php')).toBe(false);
     const match = matchRobots(parseRobotsTxt(text), 'x', '/page');
@@ -201,6 +219,24 @@ describe('robots.txt parser', () => {
     expect(normaliseRobotsPath('/a b')).toBe('/a%20b');
     expect(normaliseRobotsPath('/\uD800')).toBe('/%EF%BF%BD');
     expect(normaliseRobotsPath('/%zz%4')).toBe('/%zz%4');
+  });
+
+  test('robots-bytes-decode-without-loss', () => {
+    // Valid UTF-8 decodes; a BOM is kept for the parser to drop.
+    expect(decodeRobotsBytes(new TextEncoder().encode('\uFEFFUser-agent: *\nDisallow: /ü\n'))).toBe('\uFEFFUser-agent: *\nDisallow: /ü\n');
+    // A byte that is not UTF-8 (a Latin-1 file) is kept as its percent-encoding.
+    const latin1 = Uint8Array.from([...'User-agent: *\nDisallow: /caf'].map((c) => c.charCodeAt(0)).concat([0xe9, 0x0a]));
+    const text = decodeRobotsBytes(latin1);
+    expect(text).toBe('User-agent: *\nDisallow: /caf%E9\n');
+    expect(matchRobots(parseRobotsTxt(text), 'x', normaliseRobotsPath('/caf%E9')).allowed).toBe(false);
+    expect(matchRobots(parseRobotsTxt(text), 'x', normaliseRobotsPath('/café')).allowed).toBe(true);
+    // Overlong forms, surrogates, truncated and stray continuation bytes are bytes, not characters.
+    expect(decodeRobotsBytes(Uint8Array.from([0xc0, 0xaf, 0xed, 0xa0, 0x80, 0xe3, 0x83, 0x80, 0xf0, 0x9f, 0x98]))).toBe('%C0%AF%ED%A0%80ダ%F0%9F%98');
+    expect(decodeRobotsBytes(Uint8Array.from([0xe3, 0x83, 0x84, 0xf0, 0x9f, 0x98, 0x80]))).toBe('ツ😀');
+    // Linear on 500 KiB of garbage.
+    const started = performance.now();
+    expect(decodeRobotsBytes(new Uint8Array(512_000).fill(0xff))).toHaveLength(512_000 * 3);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   test('robots-matches-path-and-query-of-url', () => {

@@ -1,5 +1,5 @@
 import type { HreflangEntry, HttpReport, IndexabilityReport, RobotsAgentVerdict, RobotsReport } from '@app/seo-core';
-import { ROBOTS_OUTCOME_LABELS, type IndexabilityVerdict } from '@app/specs/seo-indexability.spec';
+import { ROBOTS_ALLOW_ALL_OUTCOMES, ROBOTS_OUTCOME_LABELS, type IndexabilityVerdict, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import { formatCount } from './seo-view';
 
 // Pure helpers behind the Indexability panel (acceptance `seo-indexability.feature.md`, Panel):
@@ -65,15 +65,18 @@ export function sourceNote(http: HttpReport): string | null {
   }
 }
 
-/** A size in bytes as `512 B`, `12.3 KB`, `500 KB` (1 KB = 1,000 bytes), for robots.txt sizes. */
+/** A size in bytes as `512 B`, `12.5 KiB`, `500 KiB` (1 KiB = 1,024 bytes, the unit of the robots.txt cap), for robots.txt sizes. */
 export function formatBytes(bytes: number): string {
-  if (bytes < 1_000) return `${formatCount(bytes)} B`;
-  const kb = bytes / 1_000;
-  return `${kb >= 100 ? formatCount(Math.round(kb)) : (Math.round(kb * 10) / 10).toLocaleString('en-US')} KB`;
+  if (bytes < 1_024) return `${formatCount(bytes)} B`;
+  const kib = bytes / 1_024;
+  return `${kib >= 100 ? formatCount(Math.round(kib)) : (Math.round(kib * 10) / 10).toLocaleString('en-US')} KiB`;
 }
 
-/** A crawler's robots.txt verdict as a word and a tone. */
-export function robotsVerdictLabel(verdict: Pick<RobotsAgentVerdict, 'allowed'>): { label: string; tone: Tone } {
+const ALLOW_ALL: ReadonlySet<RobotsFetchOutcome> = new Set(ROBOTS_ALLOW_ALL_OUTCOMES);
+
+/** A crawler's robots.txt verdict as a word and a tone (`Checking…` while robots.txt is fetched). */
+export function robotsVerdictLabel(verdict: Pick<RobotsAgentVerdict, 'allowed'>, outcome?: RobotsFetchOutcome): { label: string; tone: Tone } {
+  if (outcome === 'pending') return { label: 'Checking…', tone: 'muted' };
   if (verdict.allowed === true) return { label: 'Allowed', tone: 'ok' };
   if (verdict.allowed === false) return { label: 'Blocked', tone: 'error' };
   return { label: 'Unknown', tone: 'warn' };
@@ -82,7 +85,8 @@ export function robotsVerdictLabel(verdict: Pick<RobotsAgentVerdict, 'allowed'>)
 /** Which rule decided (`Line 4 · Disallow: /x`), or why none did. */
 export function robotsRuleText(verdict: RobotsAgentVerdict, robots: Pick<RobotsReport, 'outcome'>): string {
   if (verdict.rule) return `Line ${formatCount(verdict.rule.line)} · ${verdict.rule.allow ? 'Allow' : 'Disallow'}: ${verdict.rule.raw}`;
-  if (robots.outcome === 'unavailable') return 'No robots.txt: everything may be crawled';
+  if (robots.outcome === 'pending') return 'Waiting for robots.txt';
+  if (ALLOW_ALL.has(robots.outcome)) return 'No robots.txt: everything may be crawled';
   if (robots.outcome !== 'ok') return 'robots.txt could not be read: crawlers assume everything is blocked';
   if (verdict.groupAgents.length === 0) return 'No group applies: everything may be crawled';
   return 'No rule matches this URL';
@@ -144,8 +148,8 @@ export function verdictSignals(report: IndexabilityReport): Signal[] {
     {
       id: 'robots',
       label: 'robots.txt',
-      value: googlebot ? robotsVerdictLabel(googlebot).label : 'Not checked',
-      tone: googlebot ? robotsVerdictLabel(googlebot).tone : 'muted',
+      value: googlebot ? robotsVerdictLabel(googlebot, report.robots?.outcome).label : 'Not checked',
+      tone: googlebot ? robotsVerdictLabel(googlebot, report.robots?.outcome).tone : 'muted',
     },
     {
       id: 'canonical',
@@ -161,6 +165,8 @@ export function verdictSummary(verdict: IndexabilityVerdict): string {
   switch (verdict) {
     case 'not-indexable':
       return 'Search engines will not show this page in results:';
+    case 'pending':
+      return 'Nothing found so far keeps search engines out; frost is still reading robots.txt.';
     case 'canonicalised':
       return 'It can be indexed, but asks search engines to index another URL instead:';
     default:

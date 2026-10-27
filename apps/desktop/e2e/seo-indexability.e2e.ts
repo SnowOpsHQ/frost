@@ -10,8 +10,8 @@ import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
 const AUDIT_WAIT = AUDIT_DEBOUNCE_MS + EXTRACT_TIMEOUT_MS + 5_000;
-/** An audit that waits for a robots.txt fetch to time out. */
-const SLOW_AUDIT_WAIT = AUDIT_WAIT + ROBOTS_FETCH_LIMITS.timeoutMs + 2_000;
+/** How long after its first audit a page's robots.txt fetch may still settle (its own deadline). */
+const ROBOTS_SETTLE_WAIT = ROBOTS_FETCH_LIMITS.timeoutMs + 2_000;
 
 const words = (n: number) => Array.from({ length: n }, (_, i) => `word${i % 50}`).join(' ');
 const html = (title: string, head: string, body = '') =>
@@ -73,12 +73,14 @@ async function site(routes: Record<string, Route>): Promise<Site> {
 }
 
 /** Loads `url`, opens Indexability and waits for the audit of `shown` (the URL the tab ends at). */
-async function audit(url: string, { shown = url, timeout = AUDIT_WAIT }: { shown?: string; timeout?: number } = {}): Promise<void> {
+async function audit(url: string, { shown = url, timeout = AUDIT_WAIT, settled = true }: { shown?: string; timeout?: number; settled?: boolean } = {}): Promise<void> {
   await go(url);
   if ((await sidebar().getAttribute('data-open')) !== 'true' || (await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'indexability') await railItem('indexability').click();
   await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'indexability');
   await expect(page.getByTestId('seo-audit-url')).toHaveAttribute('title', `⁨${shown}⁩`, { timeout });
   await expect(verdict()).toBeVisible({ timeout });
+  // The first audit of an origin may come before its robots.txt: wait for the second (unless asked not to).
+  if (settled) await expect(page.getByTestId('seo-index-robots-pending')).toHaveCount(0, { timeout: ROBOTS_SETTLE_WAIT });
 }
 
 test.beforeAll(async () => {
@@ -203,11 +205,11 @@ test('robots-fetch-is-bounded-e2e', async () => {
     '/page': page200(),
   });
   await audit(`${big.origin}/page`);
-  await expect(page.getByTestId('seo-index-robots-outcome')).toHaveText('Fetched · 200 · 512 KB (cut at the limit)');
+  await expect(page.getByTestId('seo-index-robots-outcome')).toHaveText('Fetched · 200 · 500 KiB (cut at the limit)');
   // The rule past the cap was never read.
   await expect(agent('Googlebot')).toHaveAttribute('data-allowed', 'true');
   await page.getByTestId('seo-index-view-robots').click();
-  await expect(page.getByTestId('seo-index-robots-cut')).toContainText('over 500 KB');
+  await expect(page.getByTestId('seo-index-robots-cut')).toContainText('over 500 KiB (512,000 bytes)');
 
   // A robots.txt that redirects off-origin to a non-web address: never followed.
   const away = await site({ '/robots.txt': (_request, response) => response.writeHead(302, { Location: 'file:///etc/passwd' }).end(), '/page': page200() });
@@ -217,13 +219,25 @@ test('robots-fetch-is-bounded-e2e', async () => {
   expect(await issueIds()).toContain('robots-txt-unreachable');
   expect(away.requestsFor('/robots.txt')).toHaveLength(1);
 
-  // One that never answers: given up after the deadline, and the page's audit still completes.
+  // One that never answers: the audit does not wait for it. Every other check is ready while the
+  // robots.txt card says it is fetching, and the verdict is pending; then it gives up at the deadline.
   const hung: ServerResponse[] = [];
   const slow = await site({ '/robots.txt': (_request, response) => void hung.push(response), '/page': page200() });
   const started = Date.now();
-  await audit(`${slow.origin}/page`, { timeout: SLOW_AUDIT_WAIT });
-  await expect(page.getByTestId('seo-index-robots-outcome')).toHaveText('Timed out');
-  expect(Date.now() - started).toBeLessThan(SLOW_AUDIT_WAIT);
+  await audit(`${slow.origin}/page`, { settled: false });
+  await expect(page.getByTestId('seo-index-robots-pending')).toBeVisible();
+  await expect(page.getByTestId('seo-index-robots-outcome')).toHaveText('Fetching robots.txt…');
+  await expect(verdict()).toHaveAttribute('data-verdict', 'pending');
+  await expect(page.getByTestId('seo-index-status')).toHaveText('200 OK');
+  await railItem('on-page').click();
+  await expect(page.getByTestId('seo-fact-url')).toHaveText(`${slow.origin}/page`);
+  await railItem('overview').click();
+  await expect(page.getByTestId('seo-score')).toBeVisible();
+  // All of that before the robots.txt deadline.
+  expect(Date.now() - started).toBeLessThan(ROBOTS_FETCH_LIMITS.timeoutMs);
+  await railItem('indexability').click();
+  await expect(page.getByTestId('seo-index-robots-outcome')).toHaveText('Timed out', { timeout: ROBOTS_SETTLE_WAIT });
+  await expect(verdict()).toHaveAttribute('data-verdict', 'indexable');
   expect(await issueIds()).toContain('robots-txt-unreachable');
   for (const response of hung) response.destroy();
 });

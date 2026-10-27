@@ -167,10 +167,15 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   picks the document's response (`navigation`, did-navigate's status and no headers, for a page from
   the back/forward cache; `in-page` after `pushState`). robots.txt is fetched by main with
   `net.request` on the browse session (cookies off; `net.fetch` rejects on `redirect: 'manual'`),
-  hop by hop: at most 5 redirects, `http(s)` only, 500 KiB, 5 s, cached per origin. Both travel to
-  the analysis worker beside the snapshot (`PageContextSchema`), where frost's own RFC 9309 parser
-  and the rules run. Every "not indexable" rule (`NOT_INDEXABLE_RULES`) caps the score.
+  hop by hop: at most 5 redirects, `http(s)` only, never to a private host (unless the page is on
+  one), 500 KiB (512,000 bytes) kept as bytes, 5 s, cached per origin (cleared with browsing data).
+  Both travel to the analysis worker beside the snapshot (`PageContextSchema`), where frost's own
+  RFC 9309 parser and the rules run; the audit never waits for robots.txt (it is re-analysed when
+  the fetch settles; the verdict is `pending` until then). Every "not indexable" rule
+  (`NOT_INDEXABLE_RULES`: generic or Googlebot noindex, robots.txt blocking Googlebot, 4xx/5xx)
+  caps the score.
 - [x] commit `feat(seo): indexability panel`
+- [x] commit `fix(seo): address indexability review findings`
 
 ### Task 5: Page Speed panel
 

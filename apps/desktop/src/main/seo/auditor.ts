@@ -11,9 +11,11 @@ import type { AnalysisResult } from './analysis';
 // `seo-sidebar.feature.md`, Auditor). It keeps the latest audit of each tab, keyed by the URL it
 // was taken for without its `#fragment`, and audits only the **active** tab. The extractor's answer
 // is never parsed or audited here, on the main thread: it goes to `analyse` (the analysis worker,
-// `analysis.ts`) together with what `context` collected meanwhile (the tab's response metadata and
-// its origin's robots.txt, `seo-indexability.feature.md`; started with the extraction, and waited for
-// at most `CONTEXT_TIMEOUT_MS`), which answers the audit or why there is none: `did-finish-load` and
+// `analysis.ts`) together with what `context` knows by then (the tab's response metadata and its
+// origin's robots.txt, `seo-indexability.feature.md`). The audit never waits for robots.txt: while
+// it is still being fetched the page is analysed without it, and analysed again once it settles
+// (within `CONTEXT_TIMEOUT_MS`), if that run is still the tab's latest and the tab still shows its
+// URL. The analysis answers the audit or why there is none: `did-finish-load` and
 // main-frame `did-navigate-in-page` (SPA routes; a fragment-only change is ignored) schedule a run
 // after `AUDIT_DEBOUNCE_MS` of quiet, or at most `AUDIT_MAX_WAIT_MS` after the first event of a
 // burst; a background tab's events only mark its audit stale, and it is audited when it is shown.
@@ -37,16 +39,25 @@ export interface TabAuditsOptions {
   readonly analyse: (raw: unknown, context?: unknown) => Promise<AnalysisResult>;
   /**
    * What main collects about the page beside the extractor (main: the tab's recorded response and
-   * its origin's robots.txt, a `PageContext`), started with each extraction. It should never
-   * reject and settle within `ROBOTS_FETCH_LIMITS.timeoutMs`; the auditor waits at most
-   * `contextTimeoutMs` after the extraction answered, then analyses without it. Without it nothing
-   * is collected.
+   * its origin's robots.txt, a `PageContext`), started with each extraction. Without it nothing is
+   * collected.
    */
-  readonly context?: (contents: TabContents) => Promise<unknown>;
+  readonly context?: (contents: TabContents) => ContextSource;
   readonly contextTimeoutMs?: number;
   readonly debounceMs?: number;
   readonly maxWaitMs?: number;
   readonly timeoutMs?: number;
+}
+
+/** What `context` collected for one run (`TabAuditsOptions.context`). */
+export interface ContextSource {
+  /** What is known once the extraction answered: the context, and whether it is final (robots.txt settled). */
+  now(): { readonly context: unknown; readonly final: boolean };
+  /**
+   * The final context, when `now()` is not final: it settles once robots.txt is fetched (it should
+   * within `ROBOTS_FETCH_LIMITS.timeoutMs`; the auditor gives up after `contextTimeoutMs`).
+   */
+  readonly later: Promise<unknown> | null;
 }
 
 /** What made a page event: a load finished, or the URL changed in place (SPA route, fragment). */
@@ -101,8 +112,8 @@ interface Entry {
 type Auditable = { readonly ok: true; readonly contents: TabContents; readonly url: string; readonly key: string } | { readonly ok: false; readonly reason: SeoUnavailableReason };
 
 /**
- * The longest the auditor waits for `context` once the extraction has answered: the robots.txt
- * fetch's own deadline and a margin. Past it the page is analysed without what was collected.
+ * The longest the auditor waits for a run's final context (`ContextSource.later`) after its first
+ * analysis: the robots.txt fetch's own deadline and a margin. Past it the first audit stays.
  */
 export const CONTEXT_TIMEOUT_MS = ROBOTS_FETCH_LIMITS.timeoutMs + 1_000;
 
@@ -167,11 +178,37 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
     bump(entry);
   };
 
+  const failed: AnalysisResult = { ok: false, reason: 'analysis-failed' };
+
+  /** Whether run `run` (for `key`) is still the tab's latest and the tab still shows `key`. */
+  const current = (tab: Tab, entry: Entry, key: string, run: number): boolean => entries.get(tab.id) === entry && entry.run === run && stillAt(tab, entry, key);
+
+  /** Analyses `result` with `context` in the worker; never rejects. */
+  const analyseWith = (result: unknown, context: unknown): Promise<AnalysisResult> => {
+    try {
+      return options!.analyse(result, context).catch(() => failed);
+    } catch {
+      return Promise.resolve(failed);
+    }
+  };
+
+  /** What `source` knows now (a source that throws knows nothing). */
+  const known = (source: ContextSource | undefined): { context: unknown; final: boolean } => {
+    if (!source) return { context: undefined, final: true };
+    try {
+      const now = source.now();
+      return { context: now.context, final: now.final || source.later === null };
+    } catch {
+      return { context: undefined, final: true };
+    }
+  };
+
   /**
    * The extraction of run `run` (for `key`) answered: an error settles now; an answer is analysed in
-   * the worker first, with the run's context once it is collected (or `contextTimeoutMs` passed).
+   * the worker with what the run's context knows now, and again with the final context once it
+   * settles (robots.txt), if the run is still current.
    */
-  const extracted = (tab: Tab, entry: Entry, key: string, run: number, result: unknown, context: Promise<unknown> | undefined): void => {
+  const extracted = (tab: Tab, entry: Entry, key: string, run: number, result: unknown, source: ContextSource | undefined): void => {
     if (!stillAt(tab, entry, key)) return;
     if (result instanceof Error) {
       settle(entry, { status: 'unavailable', reason: 'extraction-failed' });
@@ -180,26 +217,10 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
     // Extracted: the extraction deadline is met; the analysis has its own (`ANALYSIS_TIMEOUT_MS`).
     clearTimeout(entry.deadline);
     entry.deadline = undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const collected = context
-      ? Promise.race([context, new Promise<undefined>((resolve) => (timer = setTimeout(() => resolve(undefined), contextTimeoutMs)))]).finally(() => clearTimeout(timer))
-      : Promise.resolve(undefined);
-    const failed: AnalysisResult = { ok: false, reason: 'analysis-failed' };
-    const analysis = collected
-      .then((gathered): Promise<AnalysisResult> | AnalysisResult | null => {
-        // A newer run, a closed tab or a page that moved on: not analysed at all.
-        if (entries.get(tab.id) !== entry || entry.run !== run || !stillAt(tab, entry, key)) return null;
-        try {
-          return options!.analyse(result, gathered);
-        } catch {
-          return failed;
-        }
-      })
-      .catch(() => failed);
-    void analysis.then((answer) => {
-      if (answer === null) return;
+    const first = known(source);
+    void analyseWith(result, first.context).then((answer) => {
       // A newer run, a closed tab or a page that moved on: dropped.
-      if (entries.get(tab.id) !== entry || entry.run !== run || !stillAt(tab, entry, key)) return;
+      if (!current(tab, entry, key, run)) return;
       if (!answer.ok) {
         settle(entry, { status: 'unavailable', reason: answer.reason });
         return;
@@ -207,6 +228,22 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
       // An audit of another URL (the document changed under the run): dropped.
       if (withoutFragment(answer.audit.url) !== key) return;
       settle(entry, { status: 'ready', audit: answer.audit });
+      if (!first.final && source?.later) refine(tab, entry, key, run, result, source.later);
+    });
+  };
+
+  /** Analyses run `run` again once its final context settles (at most `contextTimeoutMs` from now), if it is still current. */
+  const refine = (tab: Tab, entry: Entry, key: string, run: number, result: unknown, later: Promise<unknown>): void => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const gaveUp = {};
+    const settled = Promise.race([later.catch(() => gaveUp), new Promise<unknown>((resolve) => (timer = setTimeout(() => resolve(gaveUp), contextTimeoutMs)))]).finally(() => clearTimeout(timer));
+    void settled.then((context) => {
+      if (context === gaveUp || !current(tab, entry, key, run) || entry.state.status !== 'ready') return;
+      void analyseWith(result, context).then((answer) => {
+        // Only a better answer for the same URL replaces the first one.
+        if (!answer.ok || !current(tab, entry, key, run) || withoutFragment(answer.audit.url) !== key) return;
+        settle(entry, { status: 'ready', audit: answer.audit });
+      });
     });
   };
 
@@ -226,13 +263,15 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
     } catch (error) {
       extraction = Promise.reject(error);
     }
-    // Collected beside the extraction (never rejects: a failure is "nothing collected").
-    let context: Promise<unknown> | undefined;
+    // Collected beside the extraction (a source that throws collects nothing).
+    let context: ContextSource | undefined;
     if (options.context) {
       try {
-        context = options.context(target.contents).catch(() => undefined);
+        context = options.context(target.contents);
+        // Its final context may never be awaited (the first one was final, or the run moved on).
+        context.later?.catch(() => undefined);
       } catch {
-        context = Promise.resolve(undefined);
+        context = undefined;
       }
     }
     void extraction

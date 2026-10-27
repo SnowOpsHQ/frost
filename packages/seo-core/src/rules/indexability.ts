@@ -1,5 +1,5 @@
 import { ROBOTS_OUTCOME_LABELS, ROBOTS_UNKNOWN_OUTCOMES, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
-import { analyseIndexability, xRobotsAgents, xRobotsWith } from '../indexability';
+import { analyseIndexability, xRobotsAgents, xRobotsWith, type NoindexScope } from '../indexability';
 import type { RobotsAgentVerdict } from '../indexability/model';
 import type { FindingDetails, PageSnapshot } from '../types';
 import { details, fact, formatCount } from '../util';
@@ -39,9 +39,9 @@ function blockedFacts(verdict: RobotsAgentVerdict, path: string) {
   ];
 }
 
-function xRobotsCheck(directives: readonly string[]): Check {
+function xRobotsCheck(directives: readonly string[], scope: NoindexScope = 'all'): Check {
   return (s) => {
-    const tags = xRobotsWith(analyseIndexability(s).xRobotsTag, directives);
+    const tags = xRobotsWith(analyseIndexability(s).xRobotsTag, directives, scope);
     return tags.length > 0 ? details([fact('Applies to', xRobotsAgents(tags)), ...tags.map((tag) => fact('X-Robots-Tag', tag.value))]) : null;
   };
 }
@@ -56,7 +56,8 @@ export const INDEXABILITY_CHECKS = {
     const hops = http.redirects.filter((hop) => !hop.internal);
     return details([fact('Redirects', formatCount(http.serverRedirects)), fact('Final URL', http.url)], hops.map((hop) => `${hop.status} ${hop.url} → ${hop.location}`), http.serverRedirects);
   },
-  'x-robots-noindex': xRobotsCheck(['noindex', 'none']),
+  'x-robots-noindex': xRobotsCheck(['noindex', 'none'], 'verdict'),
+  'x-robots-noindex-other-bot': xRobotsCheck(['noindex', 'none'], 'other'),
   'x-robots-nofollow': xRobotsCheck(['nofollow', 'none']),
   'robots-txt-blocks-googlebot': (s) => {
     const verdict = verdictOf(s, 'Googlebot');

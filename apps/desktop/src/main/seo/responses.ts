@@ -78,6 +78,8 @@ export interface ResponseRecorder extends Required<MainFrameObserver> {
   /** The tab's response for `url` (the URL it shows now): its committed one, `in-page` when the URL changed in place, `null` without any. */
   responseFor(contentsId: number, url: string): ResponseMeta | null;
   forget(contentsId: number): void;
+  /** Forgets every tab's record and pending request (Clear Browsing Data). */
+  clear(): void;
 }
 
 export function createResponseRecorder(): ResponseRecorder {
@@ -178,6 +180,10 @@ export function createResponseRecorder(): ResponseRecorder {
 
     forget(contentsId) {
       tabs.delete(contentsId);
+    },
+
+    clear() {
+      tabs.clear();
     },
   };
   return recorder;
