@@ -240,6 +240,11 @@ export function extractPage(
     const href = cut((el.getAttribute('href') ?? '').trim(), L.maxUrlChars);
     return { href, resolved: resolve(href)?.href ?? null };
   });
+  // hreflang annotations in the head (Task 4): the value and the href as written, and resolved.
+  const [hreflang, hreflangTotal] = firstOf(document.querySelectorAll('head link[rel~="alternate" i][hreflang]'), L.maxHreflang, (el) => {
+    const href = cut((el.getAttribute('href') ?? '').trim(), L.maxUrlChars);
+    return { hreflang: cut((el.getAttribute('hreflang') ?? '').trim(), L.maxHreflangChars), href, resolved: resolve(href)?.href ?? null };
+  });
   const ogElement = document.querySelectorAll('meta[property="og:url" i]')[0];
   const ogContent = ogElement ? ogElement.getAttribute('content') : null;
   const ogUrl = ogContent === null ? null : cut(ogContent.trim(), L.maxUrlChars);
@@ -616,6 +621,8 @@ export function extractPage(
     microdataTotal,
     rdfa,
     rdfaTotal,
+    hreflang,
+    hreflangTotal,
   };
 }
 

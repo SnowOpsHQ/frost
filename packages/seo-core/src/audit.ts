@@ -1,8 +1,9 @@
-import { NOINDEX_SCORE_CAP, SCORE_BANDS, SEO_SEVERITIES, SEVERITY_WEIGHTS, type ScoreBand, type SeoCategory, type SeoSeverity } from '@app/specs/seo-rules.spec';
+import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_RULES, SCORE_BANDS, SEO_SEVERITIES, SEVERITY_WEIGHTS, type ScoreBand, type SeoCategory, type SeoSeverity } from '@app/specs/seo-rules.spec';
 import type { PanelStatus } from '@app/specs/seo-sidebar.spec';
 import { RULES } from './rules';
 import type { Finding, PageFacts, PageSnapshot, SeoAudit, SeoRule, SeverityCounts } from './types';
 import { described, robotsWith } from './rules/head';
+import { indexabilityReport } from './indexability';
 import { analyseSchema } from './schema';
 import { tokens } from './util';
 
@@ -14,7 +15,7 @@ const SEVERITY_RANK: Readonly<Record<SeoSeverity, number>> = { error: 0, warning
 /**
  * The health score of `findings` (0–100): `round(100 × Π (1 − SEVERITY_WEIGHTS[severity]))` over
  * the failing rules, each rule once however many findings it has; at most `NOINDEX_SCORE_CAP` while
- * `robots-noindex` fails.
+ * a rule in `NOT_INDEXABLE_RULES` fails.
  */
 export function scoreAudit(findings: readonly Pick<Finding, 'ruleId' | 'severity'>[]): number {
   const seen = new Set<string>();
@@ -25,7 +26,7 @@ export function scoreAudit(findings: readonly Pick<Finding, 'ruleId' | 'severity
     remaining *= 1 - SEVERITY_WEIGHTS[finding.severity];
   }
   const score = Math.min(100, Math.max(0, Math.round(100 * remaining)));
-  return seen.has('robots-noindex') ? Math.min(score, NOINDEX_SCORE_CAP) : score;
+  return NOT_INDEXABLE_RULES.some((id) => seen.has(id)) ? Math.min(score, NOINDEX_SCORE_CAP) : score;
 }
 
 /** The band a score falls in (`SCORE_BANDS`, first match). */
@@ -102,16 +103,19 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
   }
   const ranked = rankFindings(findings);
   const score = scoreAudit(ranked);
+  const page = pageFacts(snapshot);
+  const indexability = indexabilityReport(snapshot, new Set(ranked.map((finding) => finding.ruleId)), page.noindexFor);
   return {
     url: snapshot.url,
     takenAt: snapshot.extractedAt,
     durationMs: snapshot.durationMs,
     score,
     band: scoreBand(score),
-    indexable: !ranked.some((finding) => finding.ruleId === 'robots-noindex'),
+    indexable: indexability.verdict !== 'not-indexable',
     counts: countSeverities(ranked),
     findings: ranked,
-    page: pageFacts(snapshot),
+    page,
     schema: analyseSchema(snapshot),
+    indexability,
   };
 }

@@ -183,6 +183,12 @@ export const SNAPSHOT_LIMITS = {
    * later values are kept empty (so a page of long values costs no more than this, however many items).
    */
   maxMarkupTotalChars: 262_144,
+  /**
+   * hreflang annotations (Phase 2 Task 4): `<link rel~="alternate" hreflang>` elements in `<head>`
+   * kept, in document order, and the characters of each `hreflang` value kept.
+   */
+  maxHreflang: 300,
+  maxHreflangChars: 64,
   /** Text nodes the word count walks at most (it then reports `textTruncated`; it visits at most four times as many nodes in all). */
   maxTextNodes: 50_000,
   /** Characters of visible text the word count reads at most (then `textTruncated`). */

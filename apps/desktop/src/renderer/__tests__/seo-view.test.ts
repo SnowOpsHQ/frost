@@ -36,7 +36,7 @@ describe('seo view helpers', () => {
     expect(railStatuses({ status: 'pending', url: 'https://a.example/' })).toEqual({});
     expect(railStatuses({ status: 'unavailable', url: 'https://a.example/', reason: 'timeout' })).toEqual({});
     const statuses = railStatuses(ready('https://a.example/', [finding('warning', 'links'), finding('error', 'title'), finding('warning', 'social')]));
-    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass' };
+    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass', indexability: 'pass' };
     for (const panel of SEO_PANELS) {
       if (panel.available) expect(statuses[panel.id], panel.id).toBe(expected[panel.id]);
       else expect(statuses[panel.id], panel.id).toBeUndefined();
@@ -48,6 +48,10 @@ describe('seo view helpers', () => {
     expect(railStatuses(ready('https://a.example/', [finding('warning', 'schema')])).schema).toBe('warn');
     expect(railStatuses(ready('https://a.example/', [finding('info', 'url')]))['on-page']).toBe('pass');
     expect(railStatuses(ready('https://a.example/', [finding('warning', 'url')]))['on-page']).toBe('warn');
+    // Indexability: HTTP / robots.txt and hreflang findings colour it, not On-Page; the robots meta tags colour both.
+    expect(railStatuses(ready('https://a.example/', [finding('error', 'indexability')]))).toMatchObject({ overview: 'error', 'on-page': 'pass', indexability: 'error' });
+    expect(railStatuses(ready('https://a.example/', [finding('warning', 'hreflang')]))).toMatchObject({ 'on-page': 'pass', indexability: 'warn' });
+    expect(railStatuses(ready('https://a.example/', [finding('warning', 'indexing')]))).toMatchObject({ 'on-page': 'warn', indexability: 'warn' });
   });
 
   test('response-matches-tab', () => {

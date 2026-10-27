@@ -10,6 +10,7 @@
  * renderer imports this module for its types only.
  */
 import { z } from 'zod';
+import { RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SOURCES, ROBOTS_FETCH_LIMITS, ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
 import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
 import { isWebUrl } from './web-url.spec';
@@ -201,6 +202,13 @@ const markupItems = z
     { message: 'items do not form a forest' },
   );
 
+/**
+ * `<link rel~="alternate" hreflang>` in `<head>` (Task 4), in document order: the `hreflang` value
+ * (trimmed, cut to `maxHreflangChars`), the `href` as written (trimmed, cut) and resolved against
+ * the document (`null` if it does not parse).
+ */
+export const HreflangLinkSchema = z.strictObject({ hreflang: z.string().max(L.maxHreflangChars), href: urlText, resolved: urlText.nullable() });
+
 /** Characters of the items' text values together. */
 function markupChars(items: readonly { readonly properties: readonly ({ readonly value: string } | { readonly item: number })[] }[]): number {
   let sum = 0;
@@ -237,6 +245,7 @@ function markupChars(items: readonly { readonly properties: readonly ({ readonly
  *   `maxJsonLdTotalChars`; `microdata` / `rdfa`: the markup items (`MarkupItemSchema`), their text
  *   values together at most `maxMarkupTotalChars`, with `microdataTotal` / `rdfaTotal` the items the
  *   page has (Task 3).
+ * - `hreflang`: the head's hreflang links (`HreflangLinkSchema`), `hreflangTotal` how many it has (Task 4).
  */
 export const PageSnapshotSchema = z
   .strictObject({
@@ -269,6 +278,8 @@ export const PageSnapshotSchema = z
     microdataTotal: count,
     rdfa: markupItems,
     rdfaTotal: count,
+    hreflang: z.array(HreflangLinkSchema).max(L.maxHreflang),
+    hreflangTotal: count,
   })
   .refine(
     (s) =>
@@ -280,12 +291,83 @@ export const PageSnapshotSchema = z
       s.imageTotal >= s.images.length &&
       s.jsonLdTotal >= s.jsonLd.length &&
       s.microdataTotal >= s.microdata.length &&
-      s.rdfaTotal >= s.rdfa.length,
+      s.rdfaTotal >= s.rdfa.length &&
+      s.hreflangTotal >= s.hreflang.length,
     { message: 'a total is below its list' },
   )
   .refine((s) => s.jsonLd.reduce((sum, block) => sum + block.text.length, 0) <= L.maxJsonLdTotalChars, { message: 'JSON-LD over its total cap' })
   .refine((s) => markupChars(s.microdata) + markupChars(s.rdfa) <= L.maxMarkupTotalChars, { message: 'markup values over their total cap' });
-export type PageSnapshot = z.infer<typeof PageSnapshotSchema>;
+/** What the extractor answers (`PageSnapshotSchema`): the page's DOM only. */
+export type ExtractedSnapshot = z.infer<typeof PageSnapshotSchema>;
+
+// ---- What main collects beside the snapshot (Task 4; `seo-indexability.spec.ts`) ------------
+
+const status = z.int().min(100).max(999);
+
+/** A response header main kept (`RESPONSE_HEADER_ALLOWLIST`, lowercased), its value cut to `maxHeaderValueChars`. */
+export const ResponseHeaderSchema = z.strictObject({ name: z.enum(RESPONSE_HEADER_ALLOWLIST), value: z.string().max(RESPONSE_LIMITS.maxHeaderValueChars) });
+
+/**
+ * A redirect the main-frame request went through: the URL that answered, its status and where it
+ * sent the request (each cut to `maxUrlChars`). `internal`: Chromium made it up itself (an HSTS or
+ * `upgrade-insecure-requests` upgrade, status line "Internal Redirect"); no server answered it.
+ */
+export const RedirectHopSchema = z.strictObject({ url: urlText, status, location: urlText, internal: z.boolean() });
+
+/**
+ * A tab's main-frame response, recorded by main from the browse session (`RESPONSE_SOURCES`):
+ * - `url`: the URL the response is for (the document's URL; for `in-page`, the tab's URL now);
+ * - `status`: the final HTTP status, `null` when unknown (`in-page`, or no code);
+ * - `headers`: the allowlisted headers in arrival order (empty when not `headersAvailable`);
+ * - `redirects`: the first `maxRedirects` hops before it, `redirectTotal` all of them.
+ */
+export const ResponseMetaSchema = z
+  .strictObject({
+    url: urlText.min(1),
+    source: z.enum(RESPONSE_SOURCES),
+    status: status.nullable(),
+    headersAvailable: z.boolean(),
+    headers: z.array(ResponseHeaderSchema).max(RESPONSE_LIMITS.maxHeaders),
+    redirects: z.array(RedirectHopSchema).max(RESPONSE_LIMITS.maxRedirects),
+    redirectTotal: count,
+  })
+  .refine((r) => r.redirectTotal >= r.redirects.length, { message: 'a total is below its list' })
+  .refine((r) => r.headersAvailable || r.headers.length === 0, { message: 'headers without headersAvailable' });
+
+/**
+ * Main's fetch of the page origin's robots.txt (`ROBOTS_FETCH_LIMITS`, `ROBOTS_FETCH_OUTCOMES`):
+ * the URL asked for, how it ended, the final HTTP status (`null` without a response), the URL that
+ * answered (`null` without one), how many redirects were followed, the body as text (UTF-8, from at
+ * most `maxBytes` bytes; `''` unless `ok`), how many bytes were read and whether the file was longer.
+ */
+export const RobotsFetchSchema = z.strictObject({
+  url: urlText.min(1).refine(isWebUrl, { message: 'not an http(s) URL' }),
+  outcome: z.enum(ROBOTS_FETCH_OUTCOMES),
+  status: status.nullable(),
+  finalUrl: urlText.nullable(),
+  redirects: z.int().nonnegative().max(ROBOTS_FETCH_LIMITS.maxRedirects + 1),
+  text: z.string().max(ROBOTS_FETCH_LIMITS.maxBytes),
+  bytes: z.int().nonnegative().max(ROBOTS_FETCH_LIMITS.maxBytes),
+  truncated: z.boolean(),
+});
+
+/**
+ * What main collected about the page beside the extractor's snapshot, handed to the analysis worker
+ * with it and validated there: its response (`null`: none recorded) and its origin's robots.txt
+ * (`null`: not fetched).
+ */
+export const PageContextSchema = z.strictObject({ response: ResponseMetaSchema.nullable(), robots: RobotsFetchSchema.nullable() });
+export type PageContext = z.infer<typeof PageContextSchema>;
+export type ResponseMeta = z.infer<typeof ResponseMetaSchema>;
+export type ResponseHeader = z.infer<typeof ResponseHeaderSchema>;
+export type RedirectHop = z.infer<typeof RedirectHopSchema>;
+export type RobotsFetch = z.infer<typeof RobotsFetchSchema>;
+export type HreflangLink = z.infer<typeof HreflangLinkSchema>;
+/** Nothing collected (`PageContext` with neither part). */
+export const NO_PAGE_CONTEXT: PageContext = { response: null, robots: null };
+
+/** What the rules read: the extractor's snapshot, and what main collected beside it. */
+export type PageSnapshot = ExtractedSnapshot & PageContext;
 export type PageLink = z.infer<typeof LinkSchema>;
 export type PageImage = z.infer<typeof ImageSchema>;
 export type PageHeading = z.infer<typeof HeadingSchema>;

@@ -3316,6 +3316,485 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- Indexability (Task 4) ------------------------------------------------------------------- */
+
+.seo-index {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Tones shared by pills, signals and flags: ok / warn / error / muted. */
+.seo-pill,
+.seo-signal,
+.seo-flag-chip {
+  --tone: var(--text-faint);
+}
+
+.seo-pill[data-tone='ok'],
+.seo-signal[data-tone='ok'],
+.seo-flag-chip[data-tone='ok'] {
+  --tone: var(--ok);
+}
+
+.seo-pill[data-tone='warn'],
+.seo-signal[data-tone='warn'],
+.seo-flag-chip[data-tone='warn'] {
+  --tone: var(--caution);
+}
+
+.seo-pill[data-tone='error'],
+.seo-signal[data-tone='error'],
+.seo-flag-chip[data-tone='error'] {
+  --tone: var(--danger);
+}
+
+.seo-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  color: var(--tone);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.seo-pill[data-tone='muted'] {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+/* The verdict card. */
+.seo-verdict {
+  --verdict: var(--ok);
+  position: relative;
+  padding: 14px 14px 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--verdict) 28%, var(--seo-card-edge));
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--verdict) 11%, transparent), transparent 62%),
+    var(--seo-card);
+  box-shadow: var(--shadow-card);
+}
+
+.seo-verdict[data-verdict='not-indexable'] {
+  --verdict: var(--danger);
+}
+
+.seo-verdict[data-verdict='canonicalised'] {
+  --verdict: var(--caution);
+}
+
+.seo-verdict-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.seo-verdict-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--verdict) 16%, transparent);
+  color: var(--verdict);
+}
+
+.seo-verdict-icon .icon {
+  width: 26px;
+  height: 26px;
+  stroke-width: 2;
+}
+
+.seo-verdict-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.seo-verdict-label {
+  color: var(--verdict);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.seo-verdict-summary {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.seo-verdict-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-verdict-reasons li {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.seo-verdict-reasons li::before {
+  position: absolute;
+  top: 0.55em;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--verdict);
+  content: '';
+}
+
+.seo-signals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--seo-card-edge);
+  list-style: none;
+}
+
+.seo-signal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+  min-width: 0;
+}
+
+.seo-signal-dot {
+  grid-row: span 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone) 18%, transparent);
+}
+
+.seo-signal-label {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seo-signal-value {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Evidence cards. */
+.seo-index-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.seo-index-title-icon {
+  display: grid;
+  place-items: center;
+  color: var(--icon);
+}
+
+.seo-index-title-icon .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.seo-index-sub {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
+
+.seo-index-sub:first-of-type {
+  margin-top: 0;
+}
+
+.seo-inline-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--icon);
+}
+
+.seo-index-empty {
+  margin-top: 0;
+}
+
+.seo-index-source {
+  margin: 10px 0 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--info-tone) 10%, transparent);
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+/* The redirect chain: each hop on a rail, the final response last. */
+.seo-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-chain-hop {
+  position: relative;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 4px;
+}
+
+.seo-chain-hop .seo-pill {
+  justify-content: center;
+}
+
+.seo-chain-arrow {
+  position: absolute;
+  bottom: -9px;
+  left: 21px;
+  width: 14px;
+  height: 14px;
+  color: var(--text-faint);
+}
+
+.seo-chain-hop + .seo-chain-hop {
+  margin-top: 6px;
+}
+
+.seo-chain-final .seo-page-text {
+  font-weight: 600;
+}
+
+/* Response headers: name above value. */
+.seo-headers {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--seo-card-edge);
+}
+
+.seo-header {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1px;
+  min-width: 0;
+}
+
+.seo-header dt {
+  color: var(--text-muted);
+  font: 600 10.5px/1.4 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.seo-header dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+}
+
+/* Robots directives and hreflang rows: a code tag, then the value. */
+.seo-directives,
+.seo-hreflang,
+.seo-sitemaps,
+.seo-robots-agents {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-directives {
+  gap: 5px;
+}
+
+.seo-directive {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.seo-directive-agent {
+  min-width: 44px;
+}
+
+/* robots.txt */
+.seo-robots-url {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+}
+
+.seo-robots-agents {
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 9px;
+  background: var(--seo-bg);
+}
+
+.seo-robots-agent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 8px 10px;
+}
+
+.seo-robots-agent + .seo-robots-agent {
+  border-top: 1px solid var(--seo-card-edge);
+}
+
+.seo-robots-agent-name {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.seo-robots-rule,
+.seo-robots-group {
+  grid-column: 1 / -1;
+}
+
+.seo-robots-rule {
+  color: var(--text);
+}
+
+.seo-robots-group {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.seo-robots-path {
+  margin-top: 6px;
+}
+
+.seo-sitemaps {
+  gap: 6px;
+}
+
+.seo-sitemap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.seo-robots-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.seo-robots-tools .seo-action {
+  height: 28px;
+}
+
+.seo-robots-text {
+  margin-top: 10px;
+}
+
+/* hreflang */
+.seo-hreflang-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.seo-hreflang {
+  gap: 0;
+}
+
+.seo-hreflang-row {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.seo-hreflang-row + .seo-hreflang-row {
+  border-top: 1px solid var(--seo-card-edge);
+}
+
+.seo-hreflang-code {
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+
+.seo-hreflang-row[data-valid='false'] .seo-hreflang-code {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.seo-hreflang-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.seo-hreflang-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.seo-flag-chip {
+  padding: 0 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--tone) 13%, transparent);
+  color: var(--tone);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.seo-flag-chip[data-tone='muted'] {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .progress-active::after,
   .start-mark,

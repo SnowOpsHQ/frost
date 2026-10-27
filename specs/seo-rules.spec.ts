@@ -14,13 +14,14 @@
  */
 import { SNAPSHOT_LIMITS } from './seo-limits.spec';
 import { SCHEMA_PARSE_LIMITS, SCHEMA_SINGLETON_TYPES } from './schema-types.spec';
+import { ROBOTS_FETCH_LIMITS } from './seo-indexability.spec';
 
 /** How bad a failing rule is. Ordered: the sidebar ranks issues by it (then by catalog order). */
 export const SEO_SEVERITIES = ['error', 'warning', 'info'] as const;
 export type SeoSeverity = (typeof SEO_SEVERITIES)[number];
 
 /** What a rule is about (the On-Page panel groups facts the same way). */
-export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social', 'schema'] as const;
+export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'indexability', 'hreflang', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social', 'schema'] as const;
 export type SeoCategory = (typeof SEO_CATEGORIES)[number];
 
 export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
@@ -29,6 +30,8 @@ export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
   headings: 'Headings',
   canonical: 'Canonical',
   indexing: 'Indexing',
+  indexability: 'Indexability',
+  hreflang: 'hreflang',
   language: 'Language',
   mobile: 'Mobile',
   content: 'Content',
@@ -287,6 +290,161 @@ export const SEO_RULE_SPECS = [
     condition: 'A robots meta tag ("robots", "googlebot", "googlebot-news" or "bingbot") contains "nofollow" or "none". The finding names each tag that does.',
     why: 'A page-wide nofollow stops crawlers from discovering pages through this one and passing value along its links.',
     fix: 'Remove nofollow from the robots meta tag; mark individual links rel="nofollow" where needed instead.',
+  },
+  // Indexability (Task 4; `seo-indexability.feature.md`): the HTTP response, X-Robots-Tag, robots.txt and canonicals.
+  {
+    id: 'http-status-redirect',
+    category: 'indexability',
+    severity: 'warning',
+    title: 'Page answered with a redirect status',
+    condition: 'The page’s final HTTP status is 3xx (the browser showed the redirect response’s own body, with no usable Location).',
+    why: 'Search engines index the target of a redirect, not the redirect itself. A 3xx page that renders content is usually a misconfigured redirect.',
+    fix: 'Send a 200 for this URL, or give the redirect a Location header that points at the real page.',
+  },
+  {
+    id: 'http-status-client-error',
+    category: 'indexability',
+    severity: 'error',
+    title: 'Page answered with a client error',
+    condition: 'The page’s final HTTP status is 4xx (for example 404 Not Found or 410 Gone). The page is not indexable (NOT_INDEXABLE_RULES).',
+    why: 'A 4xx status tells search engines the page does not exist, whatever it shows. They drop it from results and stop crawling it as often.',
+    fix: 'If the page should exist, make the server answer 200. If it moved, redirect it (301) to its new URL; if it is gone, keep the 404 or 410 and remove links to it.',
+  },
+  {
+    id: 'http-status-server-error',
+    category: 'indexability',
+    severity: 'error',
+    title: 'Page answered with a server error',
+    condition: 'The page’s final HTTP status is 5xx. The page is not indexable (NOT_INDEXABLE_RULES).',
+    why: 'Search engines treat a 5xx as a temporary failure: they retry later, and a page that keeps failing is dropped from results.',
+    fix: 'Fix the server error (check the server’s logs for this URL) so the page answers 200.',
+  },
+  {
+    id: 'http-redirect-chain',
+    category: 'indexability',
+    severity: 'warning',
+    title: 'Page is behind a chain of redirects',
+    condition: 'The page was reached through more than one server redirect (redirects the browser made up itself, such as HSTS upgrades, are not counted).',
+    why: 'Every hop costs crawl time and a little reliability; crawlers stop following long chains, and links to the first URL pass value less directly.',
+    fix: 'Point links, sitemaps and the first redirect straight at the final URL.',
+  },
+  {
+    id: 'x-robots-noindex',
+    category: 'indexability',
+    severity: 'warning',
+    title: 'X-Robots-Tag header asks not to index',
+    condition: 'An X-Robots-Tag response header for all crawlers, or for googlebot, googlebot-news or bingbot (as "googlebot: noindex"), contains "noindex" or "none". The page is not indexable (NOT_INDEXABLE_RULES).',
+    why: 'The header works like a robots meta tag but is invisible in the page’s HTML, so a server or CDN rule can de-index pages without anyone noticing.',
+    fix: 'Remove noindex from the X-Robots-Tag header for this URL (check the server, CDN and framework config that adds it).',
+  },
+  {
+    id: 'x-robots-nofollow',
+    category: 'indexability',
+    severity: 'warning',
+    title: 'X-Robots-Tag header asks not to follow links',
+    condition: 'An X-Robots-Tag response header for all crawlers, or for googlebot, googlebot-news or bingbot, contains "nofollow" or "none".',
+    why: 'A page-wide nofollow stops crawlers from discovering pages through this one, and the header is easy to miss because it is not in the HTML.',
+    fix: 'Remove nofollow from the X-Robots-Tag header; mark individual links rel="nofollow" where needed instead.',
+  },
+  {
+    id: 'robots-txt-blocks-googlebot',
+    category: 'indexability',
+    severity: 'error',
+    title: 'robots.txt blocks Googlebot from this page',
+    condition: 'The site’s robots.txt (fetched and parsed by frost) has a Disallow rule that is the most specific match for this URL in the group Googlebot follows (its own, else "*"). The page is not indexable (NOT_INDEXABLE_RULES).',
+    why: 'Googlebot will not fetch a blocked page, so it cannot read its content or its tags. A blocked URL can still appear in results, but only as a bare link with no description.',
+    fix: 'Remove or narrow the Disallow rule (an Allow rule for this path also works). To keep a page out of results, allow crawling and use noindex instead.',
+  },
+  {
+    id: 'robots-txt-blocks-all',
+    category: 'indexability',
+    severity: 'warning',
+    title: 'robots.txt blocks other crawlers from this page',
+    condition: 'The robots.txt "*" group’s most specific match for this URL is a Disallow rule, while Googlebot (through a group of its own) may crawl it.',
+    why: 'Crawlers without a group of their own, such as smaller search engines and preview bots, follow the "*" group and will not fetch this page.',
+    fix: 'Allow the page in the "*" group too, unless keeping other crawlers out is intended.',
+  },
+  {
+    id: 'robots-txt-unreachable',
+    category: 'indexability',
+    severity: 'warning',
+    title: 'robots.txt could not be read',
+    condition: `Fetching the site’s robots.txt failed: a 5xx or 429 status, a network error, no answer within ${ROBOTS_FETCH_LIMITS.timeoutMs / 1000} seconds, or a redirect to a non-web address.`,
+    why: 'When robots.txt cannot be read, crawlers assume the whole site is disallowed and stop crawling until it can. A short outage is fine; a lasting one takes the site out of search.',
+    fix: 'Make /robots.txt answer quickly with 200 (or 404 if you have none), and check the server or firewall rules that block it.',
+  },
+  {
+    id: 'robots-txt-no-sitemap',
+    category: 'indexability',
+    severity: 'info',
+    title: 'robots.txt lists no sitemap',
+    condition: 'The site’s robots.txt was fetched and has no Sitemap line.',
+    why: 'A Sitemap line is the simplest way to tell every crawler where the site’s sitemap is, without submitting it to each search engine.',
+    fix: 'Add a line such as "Sitemap: https://example.com/sitemap.xml" to robots.txt (an absolute URL; any number of them).',
+  },
+  {
+    id: 'canonical-elsewhere',
+    category: 'indexability',
+    severity: 'info',
+    title: 'Page defers to another URL',
+    condition: 'The canonical (the first <link rel="canonical">, else an HTTP Link header with rel="canonical") resolves to a URL other than this page’s (the #fragment ignored).',
+    why: 'Search engines usually index the canonical URL instead of this one. That is right for duplicates and variants, and a costly mistake on a page that should rank itself.',
+    fix: 'If this page should be indexed under its own URL, point its canonical at itself.',
+  },
+  {
+    id: 'canonical-header-conflict',
+    category: 'indexability',
+    severity: 'warning',
+    title: 'HTML and HTTP canonicals disagree',
+    condition: 'The page has a <link rel="canonical"> and an HTTP Link header with rel="canonical", and they resolve to different URLs (the #fragment ignored).',
+    why: 'Faced with two different canonicals, search engines may ignore both and choose the preferred URL themselves.',
+    fix: 'Declare the canonical in one place, or make both name the same absolute URL.',
+  },
+  // hreflang (Task 4; `seo-indexability.feature.md`)
+  {
+    id: 'hreflang-invalid-code',
+    category: 'hreflang',
+    severity: 'error',
+    title: 'hreflang has an invalid language or region',
+    condition: 'An hreflang value (in <head> or an HTTP Link header) is not "x-default" or a language code from ISO 639-1, optionally with a script and an ISO 3166-1 region (such as "en", "en-GB" or "zh-Hant-TW").',
+    why: 'Search engines ignore an annotation whose code they cannot read, so that language version is never offered to its audience. "en-UK" (it is GB) and "en_US" (underscore) are common slips.',
+    fix: 'Use the two-letter language code, then optionally a hyphen and the two-letter country code: "en-GB", "pt-BR", "es".',
+  },
+  {
+    id: 'hreflang-missing-self',
+    category: 'hreflang',
+    severity: 'warning',
+    title: 'hreflang set does not include this page',
+    condition: 'The page has hreflang annotations, and none of them points to this page’s URL or its canonical (the #fragment ignored).',
+    why: 'Each language version must list itself among its alternates. Without the self-reference, search engines may not trust the set.',
+    fix: 'Add an hreflang link for this page’s own language that points to this page’s canonical URL.',
+  },
+  {
+    id: 'hreflang-no-x-default',
+    category: 'hreflang',
+    severity: 'info',
+    title: 'hreflang set has no x-default',
+    condition: 'The page has hreflang annotations and none of them is "x-default".',
+    why: 'x-default names the page for everyone whose language matches no version (often a language picker or the main site), so they still land somewhere sensible.',
+    fix: 'Add <link rel="alternate" hreflang="x-default" href="…"> pointing at the fallback page.',
+  },
+  {
+    id: 'hreflang-duplicate',
+    category: 'hreflang',
+    severity: 'warning',
+    title: 'hreflang value used more than once',
+    condition: 'The same hreflang value (case aside) appears in more than one annotation.',
+    why: 'Each language and region should have exactly one URL. With two, search engines pick one themselves, or ignore both.',
+    fix: 'Keep one annotation per hreflang value and remove the duplicates.',
+  },
+  {
+    id: 'hreflang-relative-url',
+    category: 'hreflang',
+    severity: 'warning',
+    title: 'hreflang URL is relative',
+    condition: 'An hreflang annotation’s URL does not start with a scheme (for example "/de/" or "//example.com/de/").',
+    why: 'Search engines expect fully-qualified URLs in hreflang. A relative one is resolved against wherever the page was fetched from, which may not be the version you meant.',
+    fix: 'Write every hreflang URL in full, including https:// and the host.',
   },
   // Language and mobile
   {
@@ -612,7 +770,7 @@ export type SeoRuleId = (typeof SEO_RULE_SPECS)[number]['id'];
  *     score = round(100 × Π over failing rules (1 − SEVERITY_WEIGHTS[severity]))
  *
  * So no issues is 100, one error is 80, one warning 93, one info 99, an error and three warnings
- * 64. When `robots-noindex` fails the result is then capped at `NOINDEX_SCORE_CAP`. The score only
+ * 64. When a rule in `NOT_INDEXABLE_RULES` fails the result is then capped at `NOINDEX_SCORE_CAP`. The score only
  * ever goes down as issues are added, never below 0, and does not depend on the order of the
  * findings.
  */
@@ -623,12 +781,19 @@ export const SEVERITY_WEIGHTS: Readonly<Record<SeoSeverity, number>> = {
 };
 
 /**
- * A page that asks not to be indexed (`robots-noindex`) gets at most this score, so it always
+ * A page that cannot be indexed (`NOT_INDEXABLE_RULES`: noindex, an error status, robots.txt) gets at most this score, so it always
  * lands in the `poor` band and the score card says "Not indexable". The rule stays a warning, since
  * noindex is often intentional, but whatever else is right about the page, it will not appear in
  * search results while the tag is there, and a "Good" score would hide that.
  */
 export const NOINDEX_SCORE_CAP = 59;
+
+/**
+ * The rules that make a page "Not indexable" (Task 4; `seo-indexability.spec.ts`, verdicts): while any
+ * of them fails the audit is `indexable: false`, the score is capped at `NOINDEX_SCORE_CAP` and the
+ * score card says `NOT_INDEXABLE_LABEL` with the reasons.
+ */
+export const NOT_INDEXABLE_RULES = ['robots-noindex', 'x-robots-noindex', 'robots-txt-blocks-googlebot', 'http-status-client-error', 'http-status-server-error'] as const satisfies readonly SeoRuleId[];
 export const NOT_INDEXABLE_LABEL = 'Not indexable' as const;
 
 /** The score's band (the ring's colour and label): at least `min`, the first match wins. */

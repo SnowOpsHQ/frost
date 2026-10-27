@@ -1,5 +1,5 @@
 import { SOCIAL_TAGS } from '@app/specs/seo-limits.spec';
-import type { PageSnapshot } from '@app/specs/seo-snapshot.spec';
+import type { ExtractedSnapshot as PageSnapshot } from '@app/specs/seo-snapshot.spec';
 
 // A valid page snapshot as the extractor would answer it, for the auditor and schema tests.
 
@@ -37,6 +37,8 @@ export function rawSnapshot(url: string, changes: Partial<PageSnapshot> = {}): P
     microdataTotal: 0,
     rdfa: [],
     rdfaTotal: 0,
+    hreflang: [],
+    hreflangTotal: 0,
     ...changes,
   };
 }

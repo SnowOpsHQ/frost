@@ -5,9 +5,9 @@ import { SCHEMA_PANEL_LIMITS, SCHEMA_SYNTAX_LABELS, SCHEMA_URL_PROPERTIES, type 
 import { SEO_RULE_SPECS, SEO_SEVERITIES, type SeoSeverity } from '@app/specs/seo-rules.spec';
 import { ChevronIcon, CodeIcon, CopyIcon, OpenTabIcon, RefIcon, SchemaArt, TreeIcon } from '../../icons';
 import { actions } from '../../ipc';
-import { entityIndex, errorExcerpt, firstShown, formatCount, moreShown, openableUrl, openByDefault, rawSegments, schemaTypeSummary, UNTYPED_LABEL } from '../../seo-view';
+import { entityIndex, errorExcerpt, firstShown, formatCount, moreShown, openableUrl, openByDefault, schemaTypeSummary, UNTYPED_LABEL } from '../../seo-view';
 import { auditRef, Flash, PanelIssues, useFlash } from './actions';
-import { PageText, SEVERITY_LABEL, SeverityGlyph } from './parts';
+import { PageText, RawText, SEVERITY_LABEL, SeverityGlyph } from './parts';
 
 // Schema (acceptance `seo-schema.feature.md`, Panel): the page's structured data as main read it
 // (`audit.schema`): a summary, the ranked `schema` issues, then one card per JSON-LD block and one per
@@ -56,23 +56,6 @@ function ShowMore({ shown, total, onMore, noun }: { readonly shown: number; read
     <button type="button" className="seo-show-more" data-testid="seo-schema-show-more" onClick={onMore}>
       Show more {noun} ({formatCount(total - shown)} hidden)
     </button>
-  );
-}
-
-/** Raw-view text: `RAW_VIEW_MARKED` characters (bidi and control characters) shown as visible markers. */
-function RawText({ text }: { readonly text: string }) {
-  return (
-    <>
-      {rawSegments(text).map((segment, i) =>
-        segment.kind === 'text' ? (
-          segment.text
-        ) : (
-          <span key={i} className="seo-raw-marker" data-testid="seo-raw-marker" title={`Invisible character ${segment.code}`}>
-            {segment.code}
-          </span>
-        ),
-      )}
-    </>
   );
 }
 

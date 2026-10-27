@@ -165,7 +165,7 @@ export function Overview({ audit }: { readonly audit: SeoAudit }) {
           </span>
           {audit.indexable ? null : (
             <span className="seo-score-summary seo-not-indexable" data-testid="seo-not-indexable">
-              Asks not to be indexed: {audit.page.noindexFor.join(', ')}
+              <PageText value={audit.indexability.reasons.join(' · ')} lines={2} />
             </span>
           )}
           <span className="seo-score-summary">

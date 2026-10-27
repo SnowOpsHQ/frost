@@ -3,6 +3,39 @@
 // runtime, so main and the chrome renderer can both import it.
 export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreAudit, scoreBand } from './audit';
 export { RULES } from './rules';
+export {
+  analyseIndexability,
+  groupsFor,
+  headerValues,
+  indexabilityReport,
+  isValidHreflang,
+  matchRobots,
+  normaliseRobotsPath,
+  parseHreflangCode,
+  parseLinkHeader,
+  parseRobotsTxt,
+  parseXRobotsTag,
+  productToken,
+  robotsPathOf,
+  robotsPatternMatches,
+  type CanonicalReport,
+  type HreflangCode,
+  type HreflangEntry,
+  type HreflangReport,
+  type HttpReport,
+  type IndexabilityFacts,
+  type IndexabilityReport,
+  type LinkValue,
+  type RobotsAgentVerdict,
+  type RobotsFile,
+  type RobotsGroup,
+  type RobotsMatch,
+  type RobotsReport,
+  type RobotsRule,
+  type RobotsRuleRef,
+  type RobotsSitemapRef,
+  type XRobotsTag,
+} from './indexability';
 export { altState, filterImages, imageCounts, isLazyInFirstViewport, isOversized, isSvg, lacksDimensions, type AltState } from './images';
 export { csvCell, filterLinks, linkCounts, linksCsv, NO_LINK_FILTER, relFlags, type LinkCounts, type LinkFilter } from './links';
 export {
@@ -31,6 +64,10 @@ export {
 export { pageUrls, socialPreview, type SocialCard, type SocialImage, type SocialPreview, type SocialSource, type SocialValue } from './social';
 export type {
   CappedText,
+  ExtractedSnapshot,
+  PageContext,
+  ResponseMeta,
+  RobotsFetch,
   Finding,
   ImageSize,
   FindingDetails,

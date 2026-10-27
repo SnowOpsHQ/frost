@@ -1,4 +1,5 @@
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
+import { ROBOTS_FETCH_LIMITS } from '@app/specs/seo-indexability.spec';
 import { AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
@@ -10,7 +11,9 @@ import type { AnalysisResult } from './analysis';
 // `seo-sidebar.feature.md`, Auditor). It keeps the latest audit of each tab, keyed by the URL it
 // was taken for without its `#fragment`, and audits only the **active** tab. The extractor's answer
 // is never parsed or audited here, on the main thread: it goes to `analyse` (the analysis worker,
-// `analysis.ts`), which answers the audit or why there is none: `did-finish-load` and
+// `analysis.ts`) together with what `context` collected meanwhile (the tab's response metadata and
+// its origin's robots.txt, `seo-indexability.feature.md`; started with the extraction, and waited for
+// at most `CONTEXT_TIMEOUT_MS`), which answers the audit or why there is none: `did-finish-load` and
 // main-frame `did-navigate-in-page` (SPA routes; a fragment-only change is ignored) schedule a run
 // after `AUDIT_DEBOUNCE_MS` of quiet, or at most `AUDIT_MAX_WAIT_MS` after the first event of a
 // burst; a background tab's events only mark its audit stale, and it is audited when it is shown.
@@ -31,7 +34,16 @@ export interface TabAuditsOptions {
    * Validates and audits an extractor answer off the main thread (main: the analysis worker,
    * `createAnalyzer`; it enforces `ANALYSIS_TIMEOUT_MS`). Never rejects.
    */
-  readonly analyse: (raw: unknown) => Promise<AnalysisResult>;
+  readonly analyse: (raw: unknown, context?: unknown) => Promise<AnalysisResult>;
+  /**
+   * What main collects about the page beside the extractor (main: the tab's recorded response and
+   * its origin's robots.txt, a `PageContext`), started with each extraction. It should never
+   * reject and settle within `ROBOTS_FETCH_LIMITS.timeoutMs`; the auditor waits at most
+   * `contextTimeoutMs` after the extraction answered, then analyses without it. Without it nothing
+   * is collected.
+   */
+  readonly context?: (contents: TabContents) => Promise<unknown>;
+  readonly contextTimeoutMs?: number;
   readonly debounceMs?: number;
   readonly maxWaitMs?: number;
   readonly timeoutMs?: number;
@@ -88,6 +100,12 @@ interface Entry {
 
 type Auditable = { readonly ok: true; readonly contents: TabContents; readonly url: string; readonly key: string } | { readonly ok: false; readonly reason: SeoUnavailableReason };
 
+/**
+ * The longest the auditor waits for `context` once the extraction has answered: the robots.txt
+ * fetch's own deadline and a margin. Past it the page is analysed without what was collected.
+ */
+export const CONTEXT_TIMEOUT_MS = ROBOTS_FETCH_LIMITS.timeoutMs + 1_000;
+
 /** `url` without its `#fragment`. */
 export function withoutFragment(url: string): string {
   const hash = url.indexOf('#');
@@ -108,6 +126,7 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
   const debounceMs = options?.debounceMs ?? AUDIT_DEBOUNCE_MS;
   const maxWaitMs = options?.maxWaitMs ?? AUDIT_MAX_WAIT_MS;
   const timeoutMs = options?.timeoutMs ?? EXTRACT_TIMEOUT_MS;
+  const contextTimeoutMs = options?.contextTimeoutMs ?? CONTEXT_TIMEOUT_MS;
   const entries = new Map<number, Entry>();
 
   const entryOf = (tab: Tab): Entry => {
@@ -148,8 +167,11 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
     bump(entry);
   };
 
-  /** The extraction of run `run` (for `key`) answered: an error settles now; an answer is analysed in the worker first. */
-  const extracted = (tab: Tab, entry: Entry, key: string, run: number, result: unknown): void => {
+  /**
+   * The extraction of run `run` (for `key`) answered: an error settles now; an answer is analysed in
+   * the worker first, with the run's context once it is collected (or `contextTimeoutMs` passed).
+   */
+  const extracted = (tab: Tab, entry: Entry, key: string, run: number, result: unknown, context: Promise<unknown> | undefined): void => {
     if (!stillAt(tab, entry, key)) return;
     if (result instanceof Error) {
       settle(entry, { status: 'unavailable', reason: 'extraction-failed' });
@@ -158,13 +180,24 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
     // Extracted: the extraction deadline is met; the analysis has its own (`ANALYSIS_TIMEOUT_MS`).
     clearTimeout(entry.deadline);
     entry.deadline = undefined;
-    let analysis: Promise<AnalysisResult>;
-    try {
-      analysis = options!.analyse(result);
-    } catch {
-      analysis = Promise.resolve({ ok: false, reason: 'analysis-failed' });
-    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const collected = context
+      ? Promise.race([context, new Promise<undefined>((resolve) => (timer = setTimeout(() => resolve(undefined), contextTimeoutMs)))]).finally(() => clearTimeout(timer))
+      : Promise.resolve(undefined);
+    const failed: AnalysisResult = { ok: false, reason: 'analysis-failed' };
+    const analysis = collected
+      .then((gathered): Promise<AnalysisResult> | AnalysisResult | null => {
+        // A newer run, a closed tab or a page that moved on: not analysed at all.
+        if (entries.get(tab.id) !== entry || entry.run !== run || !stillAt(tab, entry, key)) return null;
+        try {
+          return options!.analyse(result, gathered);
+        } catch {
+          return failed;
+        }
+      })
+      .catch(() => failed);
     void analysis.then((answer) => {
+      if (answer === null) return;
       // A newer run, a closed tab or a page that moved on: dropped.
       if (entries.get(tab.id) !== entry || entry.run !== run || !stillAt(tab, entry, key)) return;
       if (!answer.ok) {
@@ -193,6 +226,15 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
     } catch (error) {
       extraction = Promise.reject(error);
     }
+    // Collected beside the extraction (never rejects: a failure is "nothing collected").
+    let context: Promise<unknown> | undefined;
+    if (options.context) {
+      try {
+        context = options.context(target.contents).catch(() => undefined);
+      } catch {
+        context = Promise.resolve(undefined);
+      }
+    }
     void extraction
       .then(
         (value) => value,
@@ -201,7 +243,7 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
       .then((result) => {
         if (entries.get(tab.id) !== entry) return;
         if (entry.inflight === token) entry.inflight = null;
-        if (entry.run === run && entry.timedOut !== run) extracted(tab, entry, key, run, result);
+        if (entry.run === run && entry.timedOut !== run) extracted(tab, entry, key, run, result, context);
         // One trailing run for whatever was requested meanwhile.
         if (entry.queued && entry.inflight === null) {
           entry.queued = false;

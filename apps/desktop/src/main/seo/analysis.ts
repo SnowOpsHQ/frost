@@ -26,8 +26,8 @@ export interface AnalyzerOptions {
 }
 
 export interface Analyzer {
-  /** Validates and audits an extractor answer in the worker. Never rejects. */
-  analyse(raw: unknown): Promise<AnalysisResult>;
+  /** Validates and audits an extractor answer (with what main collected beside it, `PageContext`) in the worker. Never rejects. */
+  analyse(raw: unknown, context?: unknown): Promise<AnalysisResult>;
   /** Terminates the worker (the app is quitting). */
   dispose(): void;
 }
@@ -35,6 +35,7 @@ export interface Analyzer {
 interface Job {
   readonly id: number;
   readonly raw: unknown;
+  readonly context: unknown;
   readonly settle: (result: AnalysisResult) => void;
 }
 
@@ -98,7 +99,7 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
       return;
     }
     try {
-      running.postMessage({ id: job.id, raw: job.raw });
+      running.postMessage({ id: job.id, raw: job.raw, context: job.context });
     } catch {
       // Not structured-cloneable: not a snapshot.
       job.settle({ ok: false, reason: 'invalid-snapshot' });
@@ -109,9 +110,9 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
   }
 
   return {
-    analyse: (raw) =>
+    analyse: (raw, context) =>
       new Promise<AnalysisResult>((settle) => {
-        queue.push({ id: nextId++, raw, settle });
+        queue.push({ id: nextId++, raw, context, settle });
         pump();
       }),
     dispose() {

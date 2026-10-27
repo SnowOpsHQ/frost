@@ -170,10 +170,12 @@ test('empty-tab-shows-hint', async () => {
   await expect(sidebar()).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('seo-empty')).toBeVisible();
   await expect(score()).toHaveCount(0);
-  // The rail lists every panel; the ones not built yet are disabled, with no status (Schema is built: seo-schema.e2e.ts).
+  // The rail lists every panel; the ones not built yet are disabled, with no status (Schema and
+  // Indexability are built: seo-schema.e2e.ts, seo-indexability.e2e.ts).
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(SEO_PANELS.length);
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(9);
-  for (const soon of ['indexability', 'speed', 'compliance']) {
+  await expect(railItem('indexability')).toBeEnabled();
+  for (const soon of ['speed', 'compliance']) {
     await expect(railItem(soon)).toBeDisabled();
     await expect(railItem(soon)).not.toHaveAttribute('data-status');
   }

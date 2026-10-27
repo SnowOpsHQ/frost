@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, ipcMain, session } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, session, type WebContents } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -16,6 +16,9 @@ import { restrictAppRequests } from './protocol/requests';
 import { createAnalyzer } from './seo/analysis';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
+import { createResponseRecorder } from './seo/responses';
+import { createRobotsFetcher, netHop, type RobotsFetcher } from './seo/robots-fetch';
+import { observeMainFrames } from './browser/web-request';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
@@ -105,13 +108,27 @@ function start(): void {
     spawn: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }),
   });
   app.once('will-quit', () => analyzer.dispose());
+  // Indexability (specs/seo-indexability.feature.md): each tab's main-frame response is recorded
+  // from the browse session's webRequest events (status, redirects, allowlisted headers, capped as
+  // they arrive) and committed on the tab's `did-navigate`; robots.txt is fetched by main through
+  // the browse session (cookies off, bounded) once the session exists. Both are handed to the
+  // analysis worker beside the extractor's answer, where they are validated and read.
+  const responses = createResponseRecorder();
+  let robots: RobotsFetcher | null = null;
+  const collectContext = async (contents: WebContents) => {
+    const url = contents.getURL();
+    return { response: responses.responseFor(contents.id, url), robots: robots ? await robots.get(url) : null };
+  };
+  app.on('web-contents-created', (_event, contents) => {
+    if (isBrowseContents(contents)) responses.watch(contents);
+  });
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
     permissions,
     session: sessionStore.writer,
     contextMenu: showContextMenu,
-    seo: { extract: runExtractor, analyse: (raw) => analyzer.analyse(raw) },
+    seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
     highlight: { paint: runHighlight, ended: watchHighlight },
     clipboard,
   });
@@ -148,7 +165,12 @@ function start(): void {
     restrictAppRequests(session.defaultSession, windows.isAppWebContents);
     // Tabs' session: no `app:` handler (protocol.handle below is the default session's), per-origin
     // permission prompts (everything not promptable denied), and every download cancelled with a notice.
-    hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), {
+    const browseSession = session.fromPartition(BROWSE_PARTITION);
+    // The browse session's main-frame observers (the one owner of its onBeforeRedirect /
+    // onResponseStarted / onErrorOccurred: browser/web-request.ts) and its robots.txt fetcher.
+    observeMainFrames(browseSession, responses);
+    robots = createRobotsFetcher({ hop: netHop(net, browseSession) });
+    hardenBrowseSession(browseSession, {
       onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
       permissions: createBrowsePermissionHandlers({
         broker: permissions,
@@ -193,4 +215,13 @@ function start(): void {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
+}
+
+/** Whether `contents` is a tab's (on the browse partition's session); fails closed. */
+function isBrowseContents(contents: WebContents): boolean {
+  try {
+    return contents.session === session.fromPartition(BROWSE_PARTITION);
+  } catch {
+    return false;
+  }
 }

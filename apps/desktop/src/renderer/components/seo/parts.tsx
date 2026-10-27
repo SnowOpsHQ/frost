@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { SeoSeverity } from '@app/specs/seo-rules.spec';
 import { ErrorGlyph, InfoGlyph, WarningGlyph } from '../../icons';
-import { isolatedTooltip, type LengthIndicator } from '../../seo-view';
+import { isolatedTooltip, rawSegments, type LengthIndicator } from '../../seo-view';
 
 // Small building blocks of the SEO panels. Every page-derived string is rendered as React text
 // inside a `<bdi>` (so a bidi override in it cannot reorder the chrome's own labels), never as
@@ -92,5 +92,22 @@ export function LengthMeter({ length, min, max, indicator, testId }: { readonly 
         </span>
       </span>
     </div>
+  );
+}
+
+/** Raw-view text: `RAW_VIEW_MARKED` characters (bidi and control characters) shown as visible markers. */
+export function RawText({ text }: { readonly text: string }) {
+  return (
+    <>
+      {rawSegments(text).map((segment, i) =>
+        segment.kind === 'text' ? (
+          segment.text
+        ) : (
+          <span key={i} className="seo-raw-marker" data-testid="seo-raw-marker" title={`Invisible character ${segment.code}`}>
+            {segment.code}
+          </span>
+        ),
+      )}
+    </>
   );
 }

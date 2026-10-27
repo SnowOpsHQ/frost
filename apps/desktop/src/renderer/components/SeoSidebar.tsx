@@ -7,6 +7,7 @@ import { actions } from '../ipc';
 import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
 import { Images } from './seo/Images';
+import { Indexability } from './seo/Indexability';
 import { Links } from './seo/Links';
 import { OnPage } from './seo/OnPage';
 import { Overview } from './seo/Overview';
@@ -145,6 +146,8 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
       return <Social audit={response.audit} tab={tab} />;
     case 'schema':
       return <Schema audit={response.audit} tab={tab} />;
+    case 'indexability':
+      return <Indexability audit={response.audit} />;
     default:
       return <Overview audit={response.audit} />;
   }

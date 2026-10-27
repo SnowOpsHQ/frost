@@ -1,4 +1,4 @@
-import type { CappedText, PageSnapshot } from '../types';
+import type { CappedText, PageSnapshot, ResponseMeta, RobotsFetch } from '../types';
 
 // Snapshot fixtures for the rule tests (`seo-rules.feature.md`): a clean page that passes every
 // rule, and `page(...)` to change it the way a scenario says.
@@ -70,7 +70,41 @@ export function cleanSnapshot(): PageSnapshot {
     microdataTotal: 0,
     rdfa: [],
     rdfaTotal: 0,
+    hreflang: [],
+    hreflangTotal: 0,
+    response: okResponse(),
+    robots: okRobots(),
   };
+}
+
+/** The page's response as main records it from the network: 200, a couple of headers, no redirects (`changes` override). */
+export function okResponse(changes: Partial<ResponseMeta> = {}): ResponseMeta {
+  return {
+    url: PAGE_URL,
+    source: 'network',
+    status: 200,
+    headersAvailable: true,
+    headers: [
+      { name: 'content-type', value: 'text/html; charset=utf-8' },
+      { name: 'cache-control', value: 'max-age=600' },
+    ],
+    redirects: [],
+    redirectTotal: 0,
+    ...changes,
+  };
+}
+
+/** The clean site's robots.txt: one group for every crawler, a private area and a sitemap. */
+export const CLEAN_ROBOTS_TXT = 'User-agent: *\nDisallow: /private/\n\nSitemap: https://example.com/sitemap.xml\n';
+
+/** A robots.txt fetch that answered `text` with 200 (`changes` override). */
+export function okRobots(text = CLEAN_ROBOTS_TXT, changes: Partial<RobotsFetch> = {}): RobotsFetch {
+  return { url: 'https://example.com/robots.txt', outcome: 'ok', status: 200, finalUrl: 'https://example.com/robots.txt', redirects: 0, text, bytes: text.length, truncated: false, ...changes };
+}
+
+/** A response header kept by main. */
+export function header(name: ResponseMeta['headers'][number]['name'], value: string): ResponseMeta['headers'][number] {
+  return { name, value };
 }
 
 /** A JSON-LD block as the extractor keeps it: `value` serialised (or a string as written), whole. */

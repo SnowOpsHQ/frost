@@ -160,7 +160,17 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
 - hreflang: extraction plus basic validation (self-reference, x-default, valid codes; reciprocity is
   out of scope).
 - Quick actions: open robots.txt or the sitemap in a new tab.
-- [ ] commit `feat(seo): indexability panel`
+- Decisions (`specs/seo-indexability.feature.md`, `specs/seo-indexability.spec.ts`): the browse
+  session's `onBeforeRedirect` / `onResponseStarted` / `onErrorOccurred` have one owner
+  (`browser/web-request.ts`) that fans out to observers (observers only, `mainFrame` filter); main
+  keeps the allowlisted headers and redirect hops, capped as they arrive, and the tab's `did-navigate`
+  picks the document's response (`navigation`, did-navigate's status and no headers, for a page from
+  the back/forward cache; `in-page` after `pushState`). robots.txt is fetched by main with
+  `net.request` on the browse session (cookies off; `net.fetch` rejects on `redirect: 'manual'`),
+  hop by hop: at most 5 redirects, `http(s)` only, 500 KiB, 5 s, cached per origin. Both travel to
+  the analysis worker beside the snapshot (`PageContextSchema`), where frost's own RFC 9309 parser
+  and the rules run. Every "not indexable" rule (`NOT_INDEXABLE_RULES`) caps the score.
+- [x] commit `feat(seo): indexability panel`
 
 ### Task 5: Page Speed panel
 

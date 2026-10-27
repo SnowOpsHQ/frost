@@ -584,3 +584,74 @@ export function SchemaArt(props: IconProps) {
     </PanelArt>
   );
 }
+
+// ---- Indexability panel (Task 4) ------------------------------------------------------------
+
+/** "Not indexable": a circle struck through. */
+export function BlockedIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M6.3 6.3l11.4 11.4" />
+    </Icon>
+  );
+}
+
+/** "Canonicalised elsewhere": a page whose arrow leaves it for another. */
+export function CanonicalIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M13 4.5H7A1.5 1.5 0 0 0 5.5 6v12A1.5 1.5 0 0 0 7 19.5h6" />
+      <path d="M10 12h10" />
+      <path d="M16.5 8.5L20 12l-3.5 3.5" />
+    </Icon>
+  );
+}
+
+/** An HTTP exchange: two arrows passing each other. */
+export function ExchangeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4.5 8.5h13" />
+      <path d="M14.5 5.5l3 3-3 3" />
+      <path d="M19.5 15.5h-13" />
+      <path d="M9.5 12.5l-3 3 3 3" />
+    </Icon>
+  );
+}
+
+/** A crawler: a small robot head with an antenna. */
+export function RobotIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="5" y="8" width="14" height="10.5" rx="3" />
+      <path d="M12 8V5" />
+      <circle cx="12" cy="4" r="1" />
+      <path d="M9.3 12.6v.6M14.7 12.6v.6" />
+      <path d="M9.5 15.6h5" />
+    </Icon>
+  );
+}
+
+/** A sitemap: a node fanning out to three. */
+export function SitemapIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="9.5" y="3.8" width="5" height="4" rx="1" />
+      <rect x="3.5" y="16.2" width="5" height="4" rx="1" />
+      <rect x="9.5" y="16.2" width="5" height="4" rx="1" />
+      <rect x="15.5" y="16.2" width="5" height="4" rx="1" />
+      <path d="M12 7.8v8.4M6 16.2V13h12v3.2" />
+    </Icon>
+  );
+}
+
+/** A redirect hop: an arrow bending down and on. */
+export function HopIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 5v6.5a3 3 0 0 0 3 3h9" />
+      <path d="M14.5 11l3.5 3.5-3.5 3.5" />
+    </Icon>
+  );
+}

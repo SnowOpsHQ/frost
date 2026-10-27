@@ -57,8 +57,13 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  * `error` if any of them fails with severity `error`, `warn` if any fails with `warning`, else
  * `pass` (info findings never colour a dot).
  */
-/** On-Page covers every category except the ones with a panel of their own beyond it (Social, Schema). */
-const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => category !== 'social' && category !== 'schema');
+/**
+ * On-Page covers every category except the ones with a panel of their own beyond it (Social, Schema,
+ * and Indexability's HTTP / robots.txt / hreflang checks). Indexability also covers `indexing` (the
+ * robots meta tags), which On-Page shows too.
+ */
+const OWN_PANEL_CATEGORIES: readonly SeoCategory[] = ['social', 'schema', 'indexability', 'hreflang'];
+const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => !OWN_PANEL_CATEGORIES.includes(category));
 
 export const SEO_PANELS = [
   { id: 'overview', label: 'Overview', available: true, categories: SEO_CATEGORIES },
@@ -67,7 +72,7 @@ export const SEO_PANELS = [
   { id: 'images', label: 'Images', available: true, categories: ['images'] },
   { id: 'social', label: 'Social', available: true, categories: ['social'] },
   { id: 'schema', label: 'Schema', available: true, categories: ['schema'] },
-  { id: 'indexability', label: 'Indexability', available: false, categories: [] },
+  { id: 'indexability', label: 'Indexability', available: true, categories: ['indexing', 'indexability', 'hreflang'] },
   { id: 'speed', label: 'Page Speed', available: false, categories: [] },
   { id: 'compliance', label: 'Compliance', available: false, categories: [] },
 ] as const satisfies readonly { id: string; label: string; available: boolean; categories: readonly SeoCategory[] }[];
