@@ -1,5 +1,5 @@
 // Spec: specs/browser-session-db.spec.ts (CLEAR_BROWSING_DATA), specs/browser.spec.ts (BROWSE_PARTITION)
-// Acceptance: specs/browser-session-db.feature.md (Clear browsing data)
+// Acceptance: specs/browser-session-db.feature.md (Clear browsing data), specs/browser-polish.feature.md (Reopen closed tab)
 import { dialog, session } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
@@ -112,6 +112,31 @@ describe('clear browsing data', () => {
     const cancelled = fakeParts(false);
     await expect(createClearBrowsingData({ ...cancelled.parts, clearContentNotes })()).resolves.toBe(false);
     expect(clearContentNotes).toHaveBeenCalledOnce();
+  });
+
+  // Phase 2.5 Task 6 review (browser-polish.feature.md, Reopen closed tab): the closed-tab stack is
+  // the history part Clear Browsing Data clears with the visits; only once confirmed.
+  test('clear-browsing-data-forgets-closed-tabs', async () => {
+    const forgetClosedTabs = (order: string[]) => vi.fn(() => void order.push('closed-tabs'));
+    const cancelled = fakeParts(false);
+    const cancelledForget = forgetClosedTabs(cancelled.order);
+    await expect(createClearBrowsingData({ ...cancelled.parts, forgetClosedTabs: cancelledForget })()).resolves.toBe(false);
+    expect(cancelledForget).not.toHaveBeenCalled();
+    expect(cancelled.order).toEqual(['confirm']);
+    const confirmed = fakeParts(true);
+    const confirmedForget = forgetClosedTabs(confirmed.order);
+    await expect(createClearBrowsingData({ ...confirmed.parts, forgetClosedTabs: confirmedForget })()).resolves.toBe(true);
+    expect(confirmedForget).toHaveBeenCalledOnce();
+    expect(confirmed.order).toEqual(['confirm', 'forget', 'closed-tabs', 'stored', 'storage', 'seo']);
+    // With the content-notes checkbox ticked as well.
+    const ticked = fakeParts(true);
+    ticked.parts.confirm.mockResolvedValueOnce('with-content-notes' as never);
+    const tickedForget = forgetClosedTabs(ticked.order);
+    const clearContentNotes = vi.fn(async () => void ticked.order.push('notes'));
+    await expect(createClearBrowsingData({ ...ticked.parts, forgetClosedTabs: tickedForget, clearContentNotes })()).resolves.toBe(true);
+    expect(tickedForget).toHaveBeenCalledOnce();
+    // (Its confirmation is the one-off answer, which records nothing.)
+    expect(ticked.order).toEqual(['forget', 'closed-tabs', 'stored', 'storage', 'seo', 'notes']);
   });
 
   test('clear-browse-storage', async () => {

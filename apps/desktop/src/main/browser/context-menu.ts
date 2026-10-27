@@ -2,7 +2,7 @@ import type { ContextMenuParams, MenuItemConstructorOptions } from 'electron';
 import { ADDRESS_INPUT_MAX_LENGTH } from '@app/specs/browser.spec';
 import { CONTEXT_MENU_LABELS, CONTEXT_MENU_SEARCH_LABEL, CONTEXT_MENU_SELECTION_MAX } from '@app/specs/page-commands.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
-import { contextMenuSearchLabel, DEFAULT_SEARCH_ENGINE, type SearchEngineId } from '@app/specs/browser-polish.spec';
+import { contextMenuSearchLabel, DEFAULT_SEARCH_ENGINE, wellFormed, type SearchEngineId } from '@app/specs/browser-polish.spec';
 import { searchUrl } from './address';
 
 // The page's context menu (spec `page-commands.feature.md`, Context menu): a pure function of a
@@ -27,9 +27,12 @@ export interface ContextMenuCommands {
 /** Control characters and bidi controls (overrides, embeddings, isolates, marks). */
 const INVISIBLE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/g;
 
-/** `text` with invisible characters removed and whitespace runs collapsed to one space, trimmed. */
+/**
+ * `text` with invisible characters removed, whitespace runs collapsed to one space, trimmed, and any
+ * lone surrogate replaced by U+FFFD (`wellFormed`: the label and the search URL stay valid text).
+ */
 function cleanSelection(text: string): string {
-  return text.replace(INVISIBLE, '').replace(/\s+/g, ' ').trim();
+  return wellFormed(text.replace(INVISIBLE, '').replace(/\s+/g, ' ').trim());
 }
 
 /** The search item's label: the cleaned selection, cut to `CONTEXT_MENU_SELECTION_MAX`, `&` doubled. */

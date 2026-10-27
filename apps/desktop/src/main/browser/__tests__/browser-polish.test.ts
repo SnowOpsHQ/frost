@@ -171,6 +171,36 @@ describe('search engines', () => {
     expect(state().searchEngine).toBe('duckduckgo');
   });
 
+  // A lone surrogate (a page selection, typed or pasted text) would make `encodeURIComponent` throw:
+  // it becomes U+FFFD first (`browser-polish.feature.md`, Search engines).
+  test('search-url-tolerates-lone-surrogates', () => {
+    for (const id of SEARCH_ENGINE_IDS) {
+      expect(new URL(searchEngineUrl(id, 'a\uD800b')).searchParams.get('q')).toBe('a\uFFFDb');
+      expect(new URL(searchEngineUrl(id, '\uDC00')).searchParams.get('q')).toBe('\uFFFD');
+    }
+    expect(resolveAddressInput('d a\uD800b')).toEqual({ kind: 'search', url: 'https://duckduckgo.com/?q=a%EF%BF%BDb' });
+    expect(resolveAddressInput('a\uD800 b', 'bing')).toEqual({ kind: 'search', url: 'https://www.bing.com/search?q=a%EF%BF%BD%20b' });
+    // A well-formed pair is kept as it is.
+    expect(new URL(searchEngineUrl('google', 'tea \u{1F375}')).searchParams.get('q')).toBe('tea \u{1F375}');
+    // The context menu's search item, from a selection with a lone surrogate.
+    const openInNewTab = vi.fn();
+    const commands = { back: vi.fn(), forward: vi.fn(), reload: vi.fn(), openInNewTab, copyText: vi.fn(), edit: vi.fn() };
+    const params: ContextMenuParamsInput = {
+      linkURL: '',
+      srcURL: '',
+      mediaType: 'none',
+      isEditable: false,
+      selectionText: 'a\uD800b',
+      editFlags: { canCut: false, canCopy: true, canPaste: false, canSelectAll: true, canUndo: false, canRedo: false, canDelete: false, canEditRichly: false },
+    };
+    for (const id of SEARCH_ENGINE_IDS) {
+      const item = contextMenuTemplate(params, { canGoBack: false, canGoForward: false }, commands, id).find((i) => i.id === 'context-search')!;
+      expect(item.label).toContain('a\uFFFDb');
+      item.click!(undefined as never, undefined as never, undefined as never);
+      expect(openInNewTab).toHaveBeenLastCalledWith(searchEngineUrl(id, 'a\uFFFDb'));
+    }
+  });
+
   test('context-menu-uses-engine', () => {
     expect(contextMenuSearchLabel('google')).toBe(CONTEXT_MENU_SEARCH_LABEL);
     const params: ContextMenuParamsInput = {

@@ -81,6 +81,17 @@ const untouched = (all: Fakes) => {
   for (const service of Object.values(all)) for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled();
 };
 
+/** Every input in `bad` is refused (`BAD_REQUEST`) before any service is called. */
+async function expectRefused(bad: Record<string, unknown[]>): Promise<void> {
+  for (const [path, inputs] of Object.entries(bad)) {
+    for (const input of inputs) {
+      const all = fakes();
+      expect((await errorOf(procedure(ctxFor(all), path)(input))).code, `${path} ${JSON.stringify(input)}`).toBe('BAD_REQUEST');
+      untouched(all);
+    }
+  }
+}
+
 describe('browser polish router', () => {
   test('polish-router-guards-and-validates', async () => {
     const paths = Object.keys(appRouter._def.procedures).filter((p) => /^(find|history|settings)\./.test(p));
@@ -99,15 +110,6 @@ describe('browser polish router', () => {
     for (const path of PATHS) expect((await errorOf(procedure(ctxFor({}), path)(VALID_INPUT[path]))).code, path).toBe(IPC_INTERNAL_ERROR_CODE);
 
     const bad: Record<string, unknown[]> = {
-      'find.search': [
-        { tabId: 0, text: 'a', matchCase: false },
-        { tabId: 1, text: 'a'.repeat(FIND_TEXT_MAX_CHARS + 1), matchCase: false },
-        { tabId: 1, text: 'a' },
-        { tabId: 1, text: 'a', matchCase: false, forward: true },
-        { tabId: 1, text: 5, matchCase: false },
-      ],
-      'find.step': [{ tabId: 1 }, { tabId: -1, forward: true }, { tabId: 1, forward: 'yes' }],
-      'find.close': [{}, { tabId: 1.5 }, { tabId: 1, text: 'x' }],
       'history.list': [
         { query: '' },
         { query: 'q'.repeat(HISTORY_QUERY_MAX_CHARS + 1), after: null },
@@ -120,13 +122,28 @@ describe('browser polish router', () => {
       'history.remove': [{ url: 'javascript:alert(1)' }, { url: 'file:///etc/passwd' }, { url: '' }, { url: `https://e.com/${'x'.repeat(MAX_STORED_URL_LENGTH)}` }, {}],
       'settings.setSearchEngine': [{ engine: 'evil' }, { engine: 'https://evil.example/?q={q}' }, {}, { engine: 'bing', template: 'x' }],
     };
-    for (const [path, inputs] of Object.entries(bad)) {
-      for (const input of inputs) {
-        const all = fakes();
-        expect((await errorOf(procedure(ctxFor(all), path)(input))).code, `${path} ${JSON.stringify(input)}`).toBe('BAD_REQUEST');
-        untouched(all);
-      }
-    }
+    await expectRefused(bad);
+  });
+
+  // The find text is capped and strictly shaped before main's find runs (`browser-polish.feature.md`, Find in page).
+  test('find-input-is-validated', async () => {
+    await expectRefused({
+      'find.search': [
+        { tabId: 0, text: 'a', matchCase: false },
+        { tabId: 1, text: 'a'.repeat(FIND_TEXT_MAX_CHARS + 1), matchCase: false },
+        { tabId: 1, text: 'a' },
+        { tabId: 1, text: 'a', matchCase: false, forward: true },
+        { tabId: 1, text: 5, matchCase: false },
+        { tabId: 1, text: ['a'], matchCase: false },
+      ],
+      'find.step': [{ tabId: 1 }, { tabId: -1, forward: true }, { tabId: 1, forward: 'yes' }, { tabId: 1, forward: true, text: 'a' }],
+      'find.close': [{}, { tabId: 1.5 }, { tabId: 1, text: 'x' }],
+    });
+    // At the cap exactly, the text reaches the service unchanged.
+    const all = fakes();
+    const longest = 'a'.repeat(FIND_TEXT_MAX_CHARS);
+    await expect(procedure(ctxFor(all), 'find.search')({ tabId: 1, text: longest, matchCase: false })).resolves.toBe(true);
+    expect(all.find.search).toHaveBeenCalledExactlyOnceWith(1, longest, false);
   });
 
   test('polish-procedures-call-services', async () => {
