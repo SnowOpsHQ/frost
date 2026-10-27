@@ -4,8 +4,8 @@
 > fresh reviewer before the next). Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** frost's core value. Visiting a page produces a live SEO audit with a health score, shown in
-a docked SEO sidebar next to the page: Overview, On-Page, Schema, Indexability, Page Speed and
-Compliance panels.
+a docked SEO sidebar next to the page: Overview, On-Page, Links, Images, Social, Schema,
+Indexability, Page Speed and Compliance panels.
 
 **Architecture:**
 - `packages/seo-core` (`@app/seo-core`) is pure TypeScript with no Electron or DOM dependency. It holds
@@ -15,8 +15,9 @@ Compliance panels.
     the page's own scripts and CSP are never touched;
   - response metadata from the browse session (status, headers);
   - fetches main makes itself (robots.txt).
-- Main validates the snapshot with Zod (it is untrusted page data, size-capped) and runs the rules.
-  The chrome reads the audit through `enforceSender`-guarded procedures, like `browser.*`.
+- The snapshot is validated with Zod (it is untrusted page data, size-capped) and the rules run on
+  it, off main's thread, in an analysis worker (Task 3 review follow-up; see As built). The chrome
+  reads the audit through `enforceSender`-guarded procedures, like `browser.*`.
 - The sidebar is part of the chrome (`app://app`). The page view shrinks to make room, so the
   page-area bounds mechanism from Phase 1 is unchanged.
 
@@ -27,8 +28,8 @@ Compliance panels.
   "how to fix") → details.
 
 **Tech Stack:** As Phase 1, plus `web-vitals` (Task 5) and `axe-core` (Task 6) as dependencies. Both
-are open-source libraries the design names (§4 Phase 2). They are injected into the isolated world
-only, never into the chrome.
+are open-source libraries the design names (§4 Phase 2). Each is injected only into an isolated
+world of its own, never into the page's main world or the chrome.
 
 ## Spec-Driven Development protocol
 
@@ -53,7 +54,8 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   on navigation, when the tab changes, the sidebar collapses or its panel is left. The page can see
   (and remove) that host, never its contents.
 - **Snapshot handling.**
-  - Results are untrusted. Zod-validate them in main, with hard caps on counts and string lengths.
+  - Results are untrusted. Zod-validate them (in the analysis worker, never on main's thread), with
+    hard caps on counts and string lengths.
   - A page that returns garbage gets an "audit unavailable" state, not a crash.
 - **The chrome renders page-derived strings as text only.** No HTML, no `innerHTML`, no URLs turned
   into clickable `href`s without `http(s)` validation. Links in panels open via `browser.*`
@@ -71,7 +73,7 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   (`page-text-is-inert-in-sidebar`).
 - **SPA navigations** (`pushState`) re-audit the new URL, and stale results never show against the
   wrong URL. Task 1 (`audit-matches-current-url`).
-- **robots.txt fetching** uses the browse session (cookies off), follows at most N redirects, caps its
+- **robots.txt fetching** uses the browse session (cookies off), follows at most 5 redirects, caps its
   size, and never fetches non-`http(s)` URLs. Task 4 (`robots-fetch-is-bounded`).
 - **Injected libraries** (web-vitals, axe) never run in the main world and are not page-visible.
   Tasks 5–6 (`measurement-runs-isolated`).
@@ -81,11 +83,13 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
 ### Task 1: seo-core, extraction, sidebar shell, Overview + On-Page
 
 **Files:**
-- `packages/seo-core` with the `PageSnapshot` type plus Zod schema, a rule interface, ~25 on-page rules,
-  and `scoreAudit()`.
+- `packages/seo-core` with the `PageSnapshot` type plus Zod schema, a rule interface, ~25 on-page rules
+  (32 as built), and `scoreAudit()`. The Zod schema lives in `specs/seo-snapshot.spec.ts`; seo-core
+  itself has no Zod dependency.
 - `specs/seo-snapshot.spec.ts`, `specs/seo-rules.feature.md`, `specs/seo-sidebar.feature.md`.
 - Main: `apps/desktop/src/main/seo/{extract,auditor}.ts`; the extractor source is bundled as a string.
-- Router: `seo.getAudit`. The audit version goes in tab state, so `browser.watch` wakes the chrome.
+- Router: `seo.getAudit` (and `seo.rerun`). The audit version goes in tab state, so `browser.watch`
+  wakes the chrome.
 - Renderer:
   - sidebar shell with a rail;
   - Overview (score ring, counts, top issues);
@@ -110,6 +114,7 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
 **Health score:** weighted by severity (error/warn/info), normalised 0–100, documented in the spec.
 
 - [x] Spec → red → green → commit `feat(seo): seo-core, isolated extraction and the SEO sidebar`
+- [x] commit `fix(seo): address sidebar review findings`
 
 ### Task 2: On-Page detail — Links, Images, Social
 
@@ -127,6 +132,7 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   overlay lives in a closed shadow root styled through the CSSOM, so a page's CSP does not affect it;
   links open through `browser.openBackgroundTab` (`http(s)` only).
 - [x] commit `feat(seo): links, images, social and highlight mode`
+- [x] commit `fix(seo): address panels review findings`
 
 ### Task 3: Schema panel
 
@@ -151,8 +157,8 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
 
 ### Task 4: Indexability panel
 
-- Main-frame response status and headers from the browse session (`webRequest.onCompleted` /
-  `onHeadersReceived`, recorded per tab and main-frame request), including `X-Robots-Tag`.
+- Main-frame response status and headers from the browse session (`webRequest` observers, recorded
+  per tab and main-frame request), including `X-Robots-Tag`.
 - robots.txt: fetch and parse with our own parser (groups, Allow/Disallow, wildcards, `$`, longest-match
   precedence, Sitemap lines). Verdict for the current URL for Googlebot and `*`.
 - Combined indexability verdict: status code, meta robots, X-Robots-Tag, canonical-to-self, and
@@ -225,16 +231,96 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   serious violations score (one warning each), and only once a check ran on that document and URL.
   13 rules (`security`, `accessibility`); `seo.runAccessibility`.
 - [x] commit `feat(seo): compliance panel`
+- [x] commit `fix(seo): address compliance review findings`
 
 ### Task 7: Release check
 
-- Mac package `verify:mac`, full e2e on macOS and Linux, Mac screenshots of each panel on real pages,
-  README and plan updates.
-- [ ] commit `docs: phase 2 seo engine`
+- [ ] Mac package `verify:mac`, full e2e on macOS and Linux, Mac screenshots of each panel on real
+  pages (the release check, run separately).
+- [x] README and plan updates: commit `docs: phase 2 seo engine`
+
+## As built
+
+Tasks 1–6 are implemented, reviewed and merged, each followed by a `fix(seo)` commit for its review.
+What the app does now is in `apps/desktop/README.md`; each behaviour, with its named tests, is in the
+`specs/seo-*.feature.md` files. Where the build departs from the plan above:
+- **Nine panels, not six.** Links, Images and Social are rail panels of their own (Task 2), not
+  sections inside On-Page. The rail lists `SEO_PANELS` (Overview, On-Page, Links, Images, Social,
+  Schema, Indexability, Page Speed, Compliance), and every one is available: none is left
+  "coming soon".
+- **Analysis runs in a `worker_threads` worker, not on main.** Added in the Task 3 review. The
+  snapshot's Zod parse, `runAudit`, the robots.txt decode and parse, and the validation of speed
+  measurements and accessibility results all run in one long-lived worker (`seo/analysis-worker.ts`,
+  the Forge Vite main-build entry `seo-analysis`, loaded from the ASAR; heap capped at 256 MB, no
+  Electron APIs). Analyses run one at a time with a hard `ANALYSIS_TIMEOUT_MS` (2 s): on timeout the
+  worker is terminated, the audit is `analysis-timeout`, and the next analysis spawns a fresh worker.
+  Main only does bounded size and shape checks.
+- **Three isolated worlds, not one.** `SEO_WORLD_ID` (the extractor, its security read and the
+  highlight overlay), `A11Y_WORLD_ID` (axe-core) and `SPEED_WORLD_ID` (web-vitals) are distinct, so
+  each library's state lives apart from the extractor's. Highlight mode is the one documented
+  exception to "never modify the page's DOM": a single host element on `<html>` with a closed shadow
+  root.
+- **The context source is non-blocking.** Inputs that come from outside the snapshot (the recorded
+  response, robots.txt, the speed measurement, an accessibility result) are named inputs of the
+  page's `PageContext` (`seo/context-source.ts`). Each is known at once or arrives later. The audit
+  is analysed at once, with stand-ins for anything not yet settled (robots.txt `pending`, no
+  measurement). It is analysed again, once, when every input has settled (within
+  `CONTEXT_TIMEOUT_MS`), if the run is still current. A reload or re-score keeps the shown audit
+  until the final one, so the score does not flicker. (Task 4 first waited for robots.txt; its review
+  made it non-blocking, and Tasks 5–6 added their inputs the same way.)
+- **101 rules in 18 categories**: 32 from Task 1 (the plan said about 25), 8 image and social rules
+  from Task 2, 14 `schema`, 19 `indexability` and `hreflang`, 15 `performance`, and 13 `security`
+  and `accessibility`. By severity that is 12 errors, 58 warnings and 31 info (`SEO_RULE_SPECS`).
+  The score is multiplicative: each failing rule, counted once, keeps `1 − weight` of what is left
+  (`SEVERITY_WEIGHTS`: error 0.2, warning 0.07, info 0.01). Two things were not in the plan: every
+  `NOT_INDEXABLE_RULES` rule caps the score at `NOINDEX_SCORE_CAP` (59), and only a generic or
+  Googlebot noindex makes a page "Not indexable".
+- **Response metadata.** It comes from browse-session observers (`onBeforeRedirect`,
+  `onResponseStarted`, `onErrorOccurred`), not `onCompleted` / `onHeadersReceived`. These have one
+  owner, `browser/web-request.ts`, because Electron keeps one listener per event per session, and no
+  request waits for main. The tab's `did-navigate` picks the document's response.
+- **robots.txt uses `net.request`, not `net.fetch`.** With `redirect: 'manual'`, `net.fetch` /
+  `session.fetch` reject instead of answering the 3xx, so frost could not check each hop.
+  `net.request` reports each redirect, and frost checks it before requesting the next hop itself. It
+  also refuses private hosts (literal hosts only, unless the page is on one), keeps the body as bytes
+  (decoded without loss in the worker), and gives verdicts for Bingbot as well as Googlebot and `*`.
+  hreflang is read from HTTP `Link` headers too.
+- **Per-panel decisions** (each in its feature file):
+  - **Links / Images.** Copy as CSV and Copy URL are written by main from the audit the panel
+    rendered.
+  - **Social.** Remote images are never loaded into the chrome: the previews show the URL, the
+    declared size and a placeholder, and no proxy was built.
+  - **Opening links.** Page links open through a new `browser.openBackgroundTab` (`http(s)` only).
+  - **Highlight.** The overlay uses the CSSOM, so a page's CSP does not affect it, and it never
+    outlives its panel.
+  - **Schema.** The page hands over only text; main's worker parses it, and Copy JSON is written by
+    main.
+  - **Speed.** The audit takes one measurement for the score. The open panel polls `seo.measureSpeed`
+    for live values (one at a time, paused after 120 polls). Poor is a warning and needs improvement
+    is info, because the data is lab data. Main tracks when each tab's document was first shown and
+    hidden, so background loads get no false paint metrics. Native Wayland without paint timing is
+    detected and explained, not worked around. Only trusted lifecycle events reach the speed world.
+  - **Compliance.** Mixed content is read from the DOM, not `webRequest`, and
+    `upgrade-insecure-requests` is honoured. Missing headers are "Unknown", never a failure. axe-core
+    runs only on request, in rule chunks with a page budget and a 10 s cap. Only critical and serious
+    violations score, and only after a check ran on that document and URL. "Highlight node" is not
+    offered.
+- **`THIRD_PARTY_NOTICES`.** web-vitals (Apache-2.0) and axe-core (MPL-2.0) ship unmodified. Their
+  notices, and those of the other bundled runtime packages, are generated from the installed
+  packages' own license files by `apps/desktop/third-party-notices.ts`
+  (`pnpm --filter @app/desktop notices`). The result is committed as `apps/desktop/THIRD_PARTY_NOTICES`
+  and shipped as `resources/THIRD_PARTY_NOTICES` (`packagerConfig.extraResource`). A test fails when
+  it is stale.
+- **Known limits** (listed in `apps/desktop/README.md`):
+  - Speed values are lab data only.
+  - Under native Wayland some compositors report no paint metrics.
+  - Sites can see frost's robots.txt requests in their logs.
+  - Per-host zoom survives a relaunch and Clear Browsing Data (a Phase 1 limit).
+  - hreflang reciprocity is not checked.
 
 ## Self-review notes
 - **Deliverable (design §4 Phase 2):** a `seo-core` rule engine (Tasks 1–6); isolated-world extraction
-  (1); CWV (5) and a11y (6) adapters; On-Page / Schema / Speed / Compliance panels (1–6); a health
-  score (1).
+  (1); CWV (5) and a11y (6) adapters; On-Page / Schema / Speed / Compliance panels (1–6), plus
+  Links, Images, Social (2) and Indexability (4); a health score (1).
 - **Out of scope:** SERP overlay, intent, AI readiness (Phase 3); raw-vs-rendered JavaScript diff;
   GSC; change history (Phase 6).
