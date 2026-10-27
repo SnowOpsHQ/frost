@@ -75,6 +75,9 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   replaces a newer one. A cross-document commit (`did-navigate`) before the new page's
   `did-finish-load` makes the answer `pending` for the new URL at once, and the old page's result
   is dropped. A snapshot whose own `url` (fragment aside) is not the URL the run was for is dropped.
+  The snapshot holds `document.URL` cut to `maxUrlChars`, so a page whose URL is longer than that
+  before its fragment is matched by its first `maxUrlChars` characters: its audit is ready (first
+  and final analyses alike), and a snapshot that differs within them is still dropped.
 - **Scenario: audit-runs-coalesce** — while an extraction is in flight in a tab (even past its
   timeout), page events and reruns start no second one; it runs once, after the first settles. A
   new document (`did-navigate`) releases the wait.

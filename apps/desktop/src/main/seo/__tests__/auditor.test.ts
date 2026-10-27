@@ -236,6 +236,26 @@ describe('auditor', () => {
     expect(audit().status).toBe('ready');
   });
 
+  test('audit-matches-current-url: a URL longer than the snapshot holds', async () => {
+    // Past `maxUrlChars` before its fragment: the snapshot holds the URL's first `maxUrlChars` characters.
+    const long = `https://example.com/${'p'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}`;
+    const held = (url: string) => url.slice(0, SNAPSHOT_LIMITS.maxUrlChars);
+    load(`${long}#section`);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    expect(runs).toHaveLength(1);
+    runs[0]!.resolve(rawSnapshot(held(`${long}#section`)));
+    await flush();
+    const answer = audit();
+    expect(answer.status).toBe('ready');
+    expect(answer.status === 'ready' && answer.audit.url).toBe(held(long));
+
+    // A snapshot whose held URL differs from the page's first `maxUrlChars` characters is still another page's.
+    expect(controller.seo.rerun(activeId())).toBe(true);
+    runs[1]!.resolve(rawSnapshot(held(`https://example.com/${'q'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}`)));
+    await flush();
+    expect(audit().status).toBe('pending');
+  });
+
   test('audit-runs-coalesce', async () => {
     const contents = load(A);
     await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);

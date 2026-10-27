@@ -208,6 +208,8 @@ many visits on many devices), which can be very different. The panel says so und
 - **Scenario: speed-measures-the-active-tab-once-at-a-time**, **speed-only-for-active-web-pages**,
   **speed-times-out-and-waits-for-a-busy-page**, **speed-answers-bad-data-as-unavailable**,
   **speed-measurements-stop-at-navigation** (new document, reload, SPA route), **speed-forgets-closed-tabs**,
+  **speed-measures-a-url-longer-than-the-measurement-holds** (a measurement is this page's when its
+  `url`, fragment aside, is the page's URL cut to `maxUrlChars`; another page's is `invalid-measurement`),
   **speed-passes-shown-times-and-asks-for-new-resources-only** (a background tab's late first-shown
   time, a left tab's first-hidden time).
 

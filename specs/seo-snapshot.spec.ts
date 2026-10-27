@@ -223,7 +223,8 @@ function markupChars(items: readonly { readonly properties: readonly ({ readonly
  * cap); each `…Total` is the page's full count (at least the list's length).
  *
  * - `url`: `document.URL`, cut to `maxUrlChars`; it must be an `http(s)` URL (the auditor only
- *   runs on those, and checks it is the URL it expected).
+ *   runs on those, and checks it is the URL it expected: fragment aside, the tab's URL cut to
+ *   `maxUrlChars` too, so a longer URL is known by its first `maxUrlChars` characters).
  * - `extractedAt`: when the extractor ran (epoch ms); `durationMs`: how long it took.
  * - `lang`: `<html lang>` as written (trimmed; `null` when absent or empty).
  * - `titles`: each HTML `<title>` element's text (SVG titles are not page titles).

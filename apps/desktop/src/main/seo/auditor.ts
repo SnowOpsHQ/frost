@@ -1,7 +1,7 @@
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { ROBOTS_FETCH_LIMITS } from '@app/specs/seo-indexability.spec';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
-import { AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import { AUDIT_DEBOUNCE_MS, AUDIT_MAX_WAIT_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl } from '../browser/address';
@@ -133,6 +133,16 @@ export function withoutFragment(url: string): string {
   return hash < 0 ? url : url.slice(0, hash);
 }
 
+/**
+ * Whether `reported`, a URL a script in the page reported (its `document.URL` cut to `maxUrlChars`:
+ * the snapshot's, the speed measurement's), is the page at `key` (a URL without its fragment). A
+ * URL longer than `maxUrlChars` before its fragment is known only by its first `maxUrlChars`
+ * characters (a serialised URL is ASCII, so cutting it never splits a character).
+ */
+export function reportsUrl(reported: string, key: string): boolean {
+  return withoutFragment(reported) === key.slice(0, SNAPSHOT_LIMITS.maxUrlChars);
+}
+
 /** Whether `tab` shows a web page that can be audited, and its contents, URL and key if so. */
 function auditable(tab: Tab): Auditable {
   if (tab.crashed) return { ok: false, reason: 'crashed' };
@@ -241,7 +251,7 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
         return;
       }
       // An audit of another URL (the document changed under the run): dropped.
-      if (withoutFragment(answer.audit.url) !== key) return;
+      if (!reportsUrl(answer.audit.url, key)) return;
       if (!holding) settle(entry, { status: 'ready', audit: answer.audit });
       if (later) refine(tab, entry, key, run, result, later, holding ? answer.audit : null);
     });
@@ -264,7 +274,7 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
       if (!current(tab, entry, key, run) || entry.state.status !== 'ready') return;
       void analyseWith(result, context).then((answer) => {
         // Only a better answer for the same URL replaces the first one.
-        if (!answer.ok || !current(tab, entry, key, run) || withoutFragment(answer.audit.url) !== key) return fallBack();
+        if (!answer.ok || !current(tab, entry, key, run) || !reportsUrl(answer.audit.url, key)) return fallBack();
         settle(entry, { status: 'ready', audit: answer.audit });
       });
     });
