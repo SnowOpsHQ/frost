@@ -168,6 +168,9 @@ Indexability panel). Phase 2 Task 4. Each line maps to one named test.
   **response-in-page-url-has-none**, **response-attributed-to-its-tab-only**,
   **response-not-committed-is-not-the-document**, **response-tracks-tabs-through-their-contents**,
   **response-recorder-clears**.
+- **Scenario: response-recorded-for-a-url-longer-than-it-holds** — its URL is kept cut to
+  `maxUrlChars`, but it is matched by its whole URL (fragment aside), so its status and headers are
+  not lost and another URL sharing those first characters is another page.
 - **Scenario: robots-fetch-origin-only** — and never for a non-`http(s)` page.
 - **Scenario: robots-fetch-status-semantics**, **robots-fetch-follows-bounded-redirects**,
   **robots-fetch-never-leaves-http**, **robots-fetch-refuses-private-redirects** (unless the page

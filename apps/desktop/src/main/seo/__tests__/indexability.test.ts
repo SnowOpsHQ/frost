@@ -143,6 +143,24 @@ describe('response recorder', () => {
     expect(recorder.responseFor(8, PAGE)).toBeNull();
   });
 
+  test('response-recorded-for-a-url-longer-than-it-holds', () => {
+    // Codex review: the stored URL is cut to `maxUrlChars`, the URLs it is matched with are not.
+    const long = `https://example.com/${'a'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}`;
+    const recorder = createResponseRecorder();
+    recorder.responded(responded({ url: long, responseHeaders: { 'X-Robots-Tag': ['noindex'] } }));
+    recorder.committed(7, `${long}#part`, 200);
+    const response = recorder.responseFor(7, long)!;
+    expect(response).toMatchObject({ source: 'network', status: 200, headersAvailable: true, headers: [{ name: 'x-robots-tag', value: 'noindex' }] });
+    expect(response.url).toHaveLength(SNAPSHOT_LIMITS.maxUrlChars);
+    // Another page is still another page, even one that shares those first characters.
+    expect(recorder.responseFor(7, 'https://example.com/other')?.source).toBe('in-page');
+    expect(recorder.responseFor(7, `${long}&page=2`)?.source).toBe('in-page');
+    const other = createResponseRecorder();
+    other.responded(responded({ url: `${long}&page=1`, responseHeaders: { 'X-Robots-Tag': ['noindex'] } }));
+    other.committed(7, `${long}&page=2`, 200);
+    expect(other.responseFor(7, `${long}&page=2`)).toMatchObject({ source: 'navigation', headersAvailable: false, headers: [] });
+  });
+
   test('response-attributed-to-its-tab-only', () => {
     const recorder = createResponseRecorder();
     recorder.responded(responded({ webContentsId: 8, responseHeaders: { 'x-robots-tag': ['noindex'] } }));
