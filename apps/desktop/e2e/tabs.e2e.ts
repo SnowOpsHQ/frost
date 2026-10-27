@@ -281,6 +281,10 @@ test('page-cannot-block-tab-shortcuts', async () => {
   await go(`${site.origin}/greedy`);
   const greedy = await contentsIdAt(`${site.origin}/greedy`);
   await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), greedy);
+  // Its URL commits before its script runs: wait for the key listener, or the control key is lost.
+  await expect
+    .poll(() => app.evaluate(({ webContents }, id) => webContents.fromId(id)!.executeJavaScript('Array.isArray(window.seen)') as Promise<boolean>, greedy))
+    .toBe(true);
   // Control: the page really does swallow ordinary keys.
   await press(greedy, 'A');
   await expect.poll(() => pageSaw(greedy)).toEqual(['a']);

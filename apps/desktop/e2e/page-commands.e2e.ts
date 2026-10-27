@@ -130,6 +130,8 @@ test('page-shortcuts-e2e', async () => {
   await open('/a', 'Page A');
   const id = await open('/greedy', 'Greedy');
   await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), id);
+  // Its title commits before its script runs: wait for the key listener, or the control key is lost.
+  await expect.poll(() => run(id, 'Array.isArray(window.seen)')).toBe(true);
   // Control: the page really does swallow ordinary keys.
   await press(id, 'Q');
   await expect.poll(() => pageSaw(id)).toEqual(['q']);
@@ -164,6 +166,7 @@ test('page-shortcuts-e2e', async () => {
 
   // Back and forward (each reload left a fresh document: the page saw none of the keys above).
   await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), id);
+  await expect.poll(() => run(id, 'Array.isArray(window.seen)')).toBe(true);
   await press(id, 'Q');
   await expect.poll(() => pageSaw(id)).toEqual(['q']);
   if (mac) await press(id, '[', ['mod']);
