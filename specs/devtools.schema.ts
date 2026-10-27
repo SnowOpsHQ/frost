@@ -11,9 +11,17 @@ import { isWebUrl } from './web-url.spec';
 
 const tabId = z.int().positive();
 
-/** `devtools.network` / `redirects` / `console` / `storage` / `clearSiteData`: the tab (the active one, from the drawer). */
+/** `devtools.redirects` / `console` / `storage` / `clearSiteData`: the tab (the active one, from the drawer). */
 export const DevtoolsTabInputSchema = z.strictObject({ tabId });
 export type DevtoolsTabInput = z.infer<typeof DevtoolsTabInputSchema>;
+
+/** `devtools.network`: the tab and the chrome's cursor (`since`: the last `rev` it merged; 0 or left out: everything). */
+export const DevtoolsNetworkInputSchema = z.strictObject({ tabId, since: z.int().nonnegative().optional() });
+export type DevtoolsNetworkInput = z.infer<typeof DevtoolsNetworkInputSchema>;
+
+/** `devtools.requestHeaders`: one row of the tab's log, by its key. */
+export const RequestHeadersInputSchema = z.strictObject({ tabId, requestKey: z.int().positive() });
+export type RequestHeadersInput = z.infer<typeof RequestHeadersInputSchema>;
 
 /** `devtools.watch`: the tab and the last devtools version the chrome saw (`0` before the first). */
 export const DevtoolsWatchInputSchema = z.strictObject({ tabId, sinceVersion: z.int().nonnegative() });

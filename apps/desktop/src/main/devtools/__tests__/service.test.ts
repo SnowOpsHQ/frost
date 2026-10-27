@@ -1,9 +1,9 @@
-// Spec: specs/devtools.spec.ts (MAX_PENDING_DEVTOOLS_WATCHES, REDIRECT_KEY_HEADERS, NETWORK_LIMITS)
+// Spec: specs/devtools.spec.ts (MAX_PENDING_DEVTOOLS_WATCHES, DEVTOOLS_WATCH_EVICTED, DEVTOOLS_TAB_SCOPE, REDIRECT_KEY_HEADERS, NETWORK_LIMITS)
 // Acceptance: specs/devtools.feature.md (Service)
 import { EventEmitter } from 'node:events';
 import type { OnBeforeRedirectListenerDetails, OnResponseStartedListenerDetails, OnSendHeadersListenerDetails } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
-import { MAX_PENDING_DEVTOOLS_WATCHES, NETWORK_LIMITS } from '@app/specs/devtools.spec';
+import { DEVTOOLS_WATCH_EVICTED, MAX_PENDING_DEVTOOLS_WATCHES, NETWORK_LIMITS } from '@app/specs/devtools.spec';
 import type { ResponseMeta } from '@app/specs/seo-snapshot.spec';
 import { createDevtoolsService, type DevtoolsContents, type DevtoolsServiceOptions } from '../service';
 
@@ -25,7 +25,9 @@ function setup(over: Partial<DevtoolsServiceOptions> = {}) {
   const tabs = new Map<number, FakeContents>([[1, new FakeContents(21)], [2, new FakeContents(22)]]);
   let response: ResponseMeta | null = null;
   const live = new Set([100, 101]);
+  let active = 1;
   const service = createDevtoolsService({
+    activeTabId: () => active,
     contentsOf: (tabId) => (tabs.get(tabId) as unknown as DevtoolsContents) ?? null,
     tabIdOf: (contentsId) => [...tabs.entries()].find(([, c]) => c.id === contentsId)?.[0] ?? null,
     responses: { responseFor: () => response },
@@ -38,7 +40,7 @@ function setup(over: Partial<DevtoolsServiceOptions> = {}) {
     ...over,
   });
   for (const contents of tabs.values()) service.watchContents(contents as unknown as DevtoolsContents);
-  return { service, tabs, live, setResponse: (meta: ResponseMeta | null) => (response = meta) };
+  return { service, tabs, live, setResponse: (meta: ResponseMeta | null) => (response = meta), setActive: (id: number) => (active = id) };
 }
 
 let nextId = 1;
@@ -53,7 +55,7 @@ describe('devtools service', () => {
     // A request wakes a waiter on its tab only.
     const never = new AbortController();
     const onOne = service.watch(1, 0, never.signal);
-    const onTwo = service.watch(2, 0, never.signal);
+    service.observer.sent!(sent(22, 'https://www.example.com/other-tab.js'));
     service.observer.sent!(sent(21, 'https://www.example.com/a.js'));
     const v1 = await onOne;
     expect(v1).toBeGreaterThan(0);
@@ -66,7 +68,7 @@ describe('devtools service', () => {
     const v2 = await next;
     expect(v2).toBeGreaterThan(v1);
     const nav = service.watch(1, v2, never.signal);
-    tabs.get(1)!.emit('did-start-navigation', { url: 'https://www.example.com/next', isSameDocument: false, isMainFrame: true });
+    tabs.get(1)!.emit('did-navigate', {}, 'https://www.example.com/next', 200);
     expect(await nav).toBeGreaterThan(v2);
     const c = service.console(1);
     expect(c).toEqual({ status: 'ready', entries: [], total: 0, dropped: 0 });
@@ -83,26 +85,59 @@ describe('devtools service', () => {
     const future = service.watch(1, 1e9, never.signal);
     service.observer.sent!(sent(21, 'https://www.example.com/b.js'));
     expect(await future).toBe(service.version(1));
-    // Capped: one more answers the oldest early.
-    const waits = Array.from({ length: MAX_PENDING_DEVTOOLS_WATCHES + 1 }, () => service.watch(2, service.version(2), never.signal));
-    expect(await waits[0]).toBe(service.version(2));
-    await onTwo;
     // A destroyed tab is forgotten.
-    tabs.get(2)!.destroyed = true;
-    tabs.get(2)!.emit('destroyed');
-    expect(service.network(2)).toEqual({ status: 'no-tab', tabId: 2 });
+    tabs.get(1)!.destroyed = true;
+    tabs.get(1)!.emit('destroyed');
+    expect(service.network(1, 0)).toEqual({ status: 'no-tab', tabId: 1 });
+    expect(service.console(1)).toEqual({ status: 'no-tab' });
+    expect(await service.storage(1)).toEqual({ status: 'no-tab' });
+    expect(service.redirects(1)).toEqual({ status: 'no-tab' });
+    expect(service.setPreserveLog(1, true)).toBe(false);
+    expect(await service.clearSiteData(1)).toBe('refused');
+  });
+
+  test('devtools-watch-eviction-marker', async () => {
+    const { service } = setup();
+    const never = new AbortController();
+    const waits = Array.from({ length: MAX_PENDING_DEVTOOLS_WATCHES + 2 }, () => service.watch(1, 0, never.signal));
+    // The two oldest are pushed out: a marker, never a version (so the chrome knows to back off).
+    expect(await waits[0]).toBe(DEVTOOLS_WATCH_EVICTED);
+    expect(await waits[1]).toBe(DEVTOOLS_WATCH_EVICTED);
+    expect(DEVTOOLS_WATCH_EVICTED).toBeLessThan(0);
+    service.observer.sent!(sent(21, 'https://www.example.com/a.js'));
+    for (const wait of waits.slice(2)) expect(await wait).toBe(service.version(1));
+  });
+
+  test('devtools-active-tab-only', async () => {
+    const { service, setActive } = setup();
+    service.observer.sent!(sent(22, 'https://www.example.com/secret-tab.js'));
+    service.parts.console.add(22, { level: 'info', message: 'other tab' });
+    const never = new AbortController();
+    // Tab 2 is open but not active: nothing of it is served.
+    expect(service.version(2)).toBe(0);
+    expect(await service.watch(2, 0, never.signal)).toBe(0);
+    expect(service.network(2, 0)).toEqual({ status: 'no-tab', tabId: 2 });
+    expect(service.requestHeaders(2, 1)).toEqual({ status: 'gone' });
+    expect(service.redirects(2)).toEqual({ status: 'no-tab' });
     expect(service.console(2)).toEqual({ status: 'no-tab' });
     expect(await service.storage(2)).toEqual({ status: 'no-tab' });
-    expect(service.redirects(2)).toEqual({ status: 'no-tab' });
-    expect(service.setPreserveLog(2, true)).toBe(false);
+    expect(await service.revealCookie(2, { name: 'a', domain: '', path: '' })).toBe(false);
     expect(await service.clearSiteData(2)).toBe('refused');
+    expect(service.setPreserveLog(2, true)).toBe(false);
+    // Once it is the active tab, it is.
+    setActive(2);
+    const log = service.network(2, 0);
+    expect(log.status === 'ready' && log.entries.map((e) => e.url)).toEqual(['https://www.example.com/secret-tab.js']);
+    expect(log.status === 'ready' && service.requestHeaders(2, log.entries[0]!.key)).toMatchObject({ status: 'ready' });
+    expect(service.console(2)).toMatchObject({ status: 'ready', total: 1 });
+    expect(service.version(2)).toBeGreaterThan(0);
   });
 
   test('devtools-redirect-trace', () => {
     const { service, setResponse, tabs } = setup();
     tabs.get(1)!.url = 'https://www.example.com/final';
     expect(service.redirects(1)).toEqual({ status: 'none' });
-    service.parts.network.navigated(21, 'https://www.example.com/a');
+    service.parts.network.committed(21, 'https://www.example.com/a');
     const first = sent(21, 'https://www.example.com/a', 'mainFrame');
     service.observer.sent!(first);
     service.observer.redirected!({ ...first, redirectURL: 'https://www.example.com/b', statusCode: 301, statusLine: '', fromCache: false, responseHeaders: { Location: ['https://www.example.com/b'], 'Cache-Control': ['max-age=3600'], 'X-Robots-Tag': ['noindex'], 'Set-Cookie': ['t=1'] } } as unknown as OnBeforeRedirectListenerDetails);
@@ -145,7 +180,7 @@ describe('devtools service', () => {
       ],
     });
     // Without the recorder's own final headers, the response recorder's key headers.
-    service.parts.network.navigated(21, 'https://www.example.com/other');
+    service.parts.network.committed(21, 'https://www.example.com/other');
     const other = service.redirects(1);
     expect(other.status === 'ready' && other.finalHeaders).toEqual([{ name: 'x-robots-tag', value: 'all', masked: false, truncated: false }]);
   });
@@ -163,15 +198,15 @@ describe('devtools service', () => {
     service.setOpen(null, true);
     expect(service.parts.network.fullCapture()).toBe(false);
     // Closed: the small ring.
-    service.parts.network.navigated(21, 'https://www.example.com/');
+    service.parts.network.committed(21, 'https://www.example.com/');
     for (let i = 0; i < NETWORK_LIMITS.closedRingSize + 5; i++) service.observer.sent!(sent(21, `https://www.example.com/${i}`));
-    const log = service.network(1);
+    const log = service.network(1, 0);
     expect(log.status === 'ready' && [log.entries.length, log.notKept]).toEqual([NETWORK_LIMITS.closedRingSize, 5]);
     // Preserve log is per tab, through the service.
     expect(service.setPreserveLog(1, true)).toBe(true);
-    const preserved = service.network(1);
+    const preserved = service.network(1, 0);
     expect(preserved.status === 'ready' && preserved.preserve).toBe(true);
     service.clear();
-    expect(service.network(1)).toMatchObject({ status: 'ready', entries: [] });
+    expect(service.network(1, 0)).toMatchObject({ status: 'ready', entries: [] });
   });
 });

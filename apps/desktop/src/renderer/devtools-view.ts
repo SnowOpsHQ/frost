@@ -2,12 +2,15 @@ import {
   DEFAULT_DEVTOOLS_TAB,
   DEVTOOLS_DEFAULT_OPEN,
   DEVTOOLS_HEIGHT,
+  DEVTOOLS_REFRESH_MIN_MS,
   DEVTOOLS_TABS,
+  DEVTOOLS_WATCH_BACKOFF_MS,
   ISSUE_FALLBACK_PANEL,
   NETWORK_SEARCH_MAX_CHARS,
   type DevtoolsTabId,
   type IssueSortKey,
   type NetworkEntry,
+  type NetworkLogAnswer,
   type NetworkTypeFilter,
   type RobotsVerdict,
 } from '@app/specs/devtools.spec';
@@ -65,6 +68,31 @@ export function heightAfterKey(height: number, key: string, column: number): num
     default:
       return null;
   }
+}
+
+// ---- Watching and merging ---------------------------------------------------------------------
+
+/**
+ * What the chrome's watch loop does with one `devtools.watch` answer (`next`; `null`: the call
+ * failed) after `since`: back off `DEVTOOLS_WATCH_BACKOFF_MS` when it brings no news (evicted, the
+ * same version, a failure), else refresh with the new version, waiting until
+ * `DEVTOOLS_REFRESH_MIN_MS` have passed since the last refresh (`last`, at `now`).
+ */
+export function watchStep(next: number | null, since: number, last: number, now: number): { readonly kind: 'backoff'; readonly ms: number } | { readonly kind: 'refresh'; readonly version: number; readonly waitMs: number } {
+  if (next === null || next < 0 || next === since) return { kind: 'backoff', ms: DEVTOOLS_WATCH_BACKOFF_MS };
+  return { kind: 'refresh', version: next, waitMs: Math.max(0, last + DEVTOOLS_REFRESH_MIN_MS - now) };
+}
+
+/**
+ * `rows` with an incremental `devtools.network` answer merged in: a `full` answer replaces them, a
+ * changed row replaces its key, `removed` keys go; in key order. Unchanged: the same array.
+ */
+export function mergeRows(rows: readonly NetworkEntry[], answer: Extract<NetworkLogAnswer, { status: 'ready' }>): readonly NetworkEntry[] {
+  if (!answer.full && answer.entries.length === 0 && answer.removed.length === 0) return rows;
+  const byKey = new Map<number, NetworkEntry>(answer.full ? [] : rows.map((e) => [e.key, e]));
+  for (const key of answer.removed) byKey.delete(key);
+  for (const entry of answer.entries) byKey.set(entry.key, entry);
+  return [...byKey.values()].sort((a, b) => a.key - b.key);
 }
 
 // ---- Network -----------------------------------------------------------------------------------

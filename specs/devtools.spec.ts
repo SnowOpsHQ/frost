@@ -64,12 +64,25 @@ export const DEFAULT_DEVTOOLS_TAB: DevtoolsTabId = 'network';
 /**
  * The chrome waits for changes with the `devtools.watch` long-poll (a tab's devtools version:
  * network, console, storage reveals), at most `DEVTOOLS_WATCH_TIMEOUT_MS`; main keeps at most
- * `MAX_PENDING_DEVTOOLS_WATCHES` waiting (one more answers the oldest early). After a change the
- * shown tab's data is fetched again, no sooner than `DEVTOOLS_REFRESH_MIN_MS` after the last fetch.
+ * `MAX_PENDING_DEVTOOLS_WATCHES` waiting: one more answers the oldest early with
+ * `DEVTOOLS_WATCH_EVICTED` (never a version). After a change the shown tab's data is fetched again,
+ * no sooner than `DEVTOOLS_REFRESH_MIN_MS` after the last fetch. When a watch answers no news (the
+ * same version, or evicted) or fails, the chrome waits `DEVTOOLS_WATCH_BACKOFF_MS` before it asks
+ * again, so two pollers can never evict each other in a busy loop.
  */
 export const DEVTOOLS_WATCH_TIMEOUT_MS = 25_000;
 export const MAX_PENDING_DEVTOOLS_WATCHES = 8;
 export const DEVTOOLS_REFRESH_MIN_MS = 300;
+export const DEVTOOLS_WATCH_EVICTED = -1;
+export const DEVTOOLS_WATCH_BACKOFF_MS = 1_000;
+
+/**
+ * Which tab the `devtools.*` procedures serve (decision): only the active tab of the app's window
+ * (frost shows one window; the drawer only ever shows the active tab). Any other id answers as
+ * `no-tab` (`watch`: its version stays 0), so the chrome can never read another tab's log, console
+ * or cookies.
+ */
+export const DEVTOOLS_TAB_SCOPE = 'active-tab' as const;
 
 // ---- Network -----------------------------------------------------------------------------------
 
@@ -83,10 +96,25 @@ export const DEVTOOLS_REFRESH_MIN_MS = 300;
  * - drawer closed everywhere: a small ring of the newest `closedRingSize` requests of the current
  *   document, plus its main-frame request (always kept); the ones it lets go are counted (`notKept`),
  *   and the Network tab says that a reload records them all.
- * A main-frame navigation to another document starts a new log, unless "Preserve log" is on for that
- * tab (session-only): then earlier documents' requests stay, at most `maxPreserved` in all (the oldest
- * go first). At most `maxTrackedTabs` tabs are recorded (the one recorded least recently is forgotten).
- * Requests answered from Chromium's memory cache never reach `webRequest`, so they are not listed.
+ * A main-frame navigation that commits another document (`did-navigate`) starts a new log, unless
+ * "Preserve log" is on for that tab (session-only): then earlier documents' requests stay, at most
+ * `maxPreserved` in all (the oldest go first). The committing request (and its redirect hops) and
+ * the requests sent after its response started move into the new document; a navigation that never
+ * commits (a `204`, a download, one cancelled) leaves the log as it was. At most `maxTrackedTabs` tabs
+ * are recorded (the one recorded least recently is forgotten). Requests answered from Chromium's
+ * memory cache never reach `webRequest`, so they are not listed.
+ *
+ * Memory is bounded in bytes too: each kept string costs 2 bytes per UTF-16
+ * code unit, each entry `entryOverheadBytes` and each header `headerOverheadBytes` more. A tab keeps
+ * at most `tabBudgetBytes` (headers at most `maxHeaderShare` of it), all tabs together
+ * `globalBudgetBytes`. A request that does not fit is not
+ * kept; headers that do not fit are left off their entry (`headersDropped`); both are counted
+ * (`overBudget`: entries and bytes) and the Network tab says so.
+ *
+ * The list is light: `devtools.network` answers rows **without headers**, only the rows changed
+ * since the chrome's cursor (`since`, a revision), at most `maxRowsPerAnswer` at a time (`more`: ask
+ * again at once), with the keys of rows removed since. Headers come on demand, for the row the user
+ * opens (`devtools.requestHeaders`), masked as ever.
  */
 export const NETWORK_LIMITS = {
   maxPerDocument: 2_000,
@@ -94,9 +122,18 @@ export const NETWORK_LIMITS = {
   maxPreserved: 2_000,
   maxUrlChars: 2_048,
   maxHeaderValueChars: 1_024,
-  maxHeadersPerMessage: 32,
+  maxHeadersPerMessage: 16,
   maxErrorChars: 120,
   maxTrackedTabs: 16,
+  tabBudgetBytes: 4_000_000,
+  globalBudgetBytes: 32_000_000,
+  entryOverheadBytes: 400,
+  headerOverheadBytes: 64,
+  /** Headers may take at most this share of a tab's budget, so rows always keep the rest. */
+  maxHeaderShare: 0.5,
+  maxRowsPerAnswer: 500,
+  /** Removed-row records a tab keeps for incremental answers (an older cursor gets a full answer). */
+  maxRemovalRecords: 2_048,
 } as const;
 
 /** The drawer's request types (from Electron's `resourceType`, `NETWORK_TYPE_OF`). */
@@ -218,7 +255,7 @@ export interface NetworkHeader {
 }
 
 /**
- * One request. `state`: `pending` (no answer yet), `done` (answered), `redirected` (answered with a
+ * One request (a row: no headers; `devtools.requestHeaders` has them). `state`: `pending` (no answer yet), `done` (answered), `redirected` (answered with a
  * redirect: `redirectTo`; the next hop is its own entry), `failed` (`error`, Chromium's net error
  * text). `size`: the response's `Content-Length` when it sent one (Electron's `webRequest` reports
  * no transfer size). `startedAt` is ms since the epoch; `durationMs` from the request's first event to
@@ -227,6 +264,8 @@ export interface NetworkHeader {
  */
 export interface NetworkEntry {
   readonly key: number;
+  /** The row's revision: it changes whenever the row does (the cursor `devtools.network` counts from). */
+  readonly rev: number;
   /** Which document of the tab it belongs to (counts up; differs only with "Preserve log"). */
   readonly document: number;
   readonly method: string;
@@ -243,27 +282,51 @@ export interface NetworkEntry {
   readonly fromCache: boolean;
   readonly thirdParty: boolean;
   readonly robots: RobotsVerdict;
-  readonly requestHeaders: readonly NetworkHeader[];
-  readonly omittedRequestHeaders: number;
-  readonly responseHeaders: readonly NetworkHeader[];
-  readonly omittedResponseHeaders: number;
+  readonly requestHeaderCount: number;
+  readonly responseHeaderCount: number;
+  /** Its headers were not kept: the byte budget was full. */
+  readonly headersDropped: boolean;
 }
 
-/** `devtools.network`: the tab's log (`no-tab`: the id names no open tab). */
+/**
+ * `devtools.network`: the rows of the tab's log changed since `since` (`no-tab`: not the active
+ * tab). `full`: the answer replaces everything the chrome holds (a cursor of 0, one from before a
+ * reset, or one too old for the removal records); otherwise merge `entries` by key and drop
+ * `removed`. `rev` is the cursor for the next call; `more`: rows are left, ask again at once.
+ */
 export type NetworkLogAnswer =
   | {
       readonly status: 'ready';
       readonly tabId: number;
       /** The current document's URL (the third-party flag's reference). */
       readonly pageUrl: string;
+      readonly rev: number;
+      readonly full: boolean;
+      readonly more: boolean;
       readonly entries: readonly NetworkEntry[];
+      readonly removed: readonly number[];
       /** Requests of the current document past `maxPerDocument`, not kept. */
       readonly dropped: number;
       /** Requests the closed drawer's ring let go (`closedRingSize`). */
       readonly notKept: number;
+      /** What the byte budgets left out: whole requests, and bytes (theirs and dropped headers'). */
+      readonly overBudget: { readonly entries: number; readonly bytes: number };
       readonly preserve: boolean;
     }
   | { readonly status: 'no-tab'; readonly tabId: number };
+
+/** `devtools.requestHeaders`: one row's headers, masked (`gone`: no such row in the active tab's log). */
+export type NetworkHeadersAnswer =
+  | {
+      readonly status: 'ready';
+      readonly key: number;
+      readonly requestHeaders: readonly NetworkHeader[];
+      readonly omittedRequestHeaders: number;
+      readonly responseHeaders: readonly NetworkHeader[];
+      readonly omittedResponseHeaders: number;
+      readonly headersDropped: boolean;
+    }
+  | { readonly status: 'gone' };
 
 // ---- Redirects ---------------------------------------------------------------------------------
 
@@ -337,7 +400,10 @@ export type ConsoleLogAnswer =
  * Cookies for the tab's URL (`session.fromPartition(BROWSE_PARTITION).cookies.get({ url })`), at most
  * `maxCookies`; names, domain, path, expiry and flags are shown, values masked (`value: null`) until
  * the user reveals one. A Reveal lasts for the tab's current document only (the next main-frame
- * navigation, Clear this site's data or closing the tab masks it again) and is never stored.
+ * navigation that commits, Clear this site's data or closing the tab masks it again) and is never
+ * stored. Each Reveal is stamped with the tab's committed document at the moment it was asked for, and
+ * `storage` shows a value only while that stamp is the tab's current one: a Reveal asked during a
+ * navigation that then commits never shows in the new document.
  */
 export const COOKIE_LIMITS = {
   maxCookies: 200,
@@ -378,7 +444,9 @@ export type StorageAnswer =
 /**
  * "Clear this site's data": main asks first in a native message box (Cancel is the default), then
  * clears the origin's cookies (Chromium clears cookies for the whole registrable domain), storage
- * and cache from the browse partition (`session.clearData`). Nothing else; no tab is reloaded.
+ * and cache from the browse partition (`session.clearData`). Nothing else; no tab is reloaded. One
+ * dialog at a time: a second request for the same origin shares the first one's answer; one for
+ * another origin while a dialog is up answers `busy` (nothing asked, nothing cleared).
  */
 export const CLEAR_SITE_DATA = {
   dialog: {
@@ -395,7 +463,7 @@ export const CLEAR_SITE_DATA = {
   confirmIndex: 1,
   dataTypes: ['cookies', 'localStorage', 'indexedDB', 'serviceWorkers', 'fileSystems', 'cache', 'backgroundFetch'],
 } as const;
-export const CLEAR_SITE_DATA_RESULTS = ['cleared', 'cancelled', 'refused'] as const;
+export const CLEAR_SITE_DATA_RESULTS = ['cleared', 'cancelled', 'refused', 'busy'] as const;
 export type ClearSiteDataResult = (typeof CLEAR_SITE_DATA_RESULTS)[number];
 
 // ---- Issues ------------------------------------------------------------------------------------

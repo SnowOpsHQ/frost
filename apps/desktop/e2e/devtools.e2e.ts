@@ -36,6 +36,7 @@ async function startSiteServer() {
     if (path === '/api') return text('application/json', '{"ok":true}');
     if (path === '/r301') return response.writeHead(301, { Location: '/r302', 'Cache-Control': 'max-age=60' }).end();
     if (path === '/r302') return response.writeHead(302, { Location: '/final', 'X-Robots-Tag': 'noarchive' }).end();
+    if (path === '/no-content') return response.writeHead(204).end();
     if (path === '/final') return html('<html lang="en"><title>Final</title><h1>Final</h1></html>');
     if (path === '/cookies')
       return html('<html lang="en"><title>Cookies</title><h1>Cookies</h1></html>', { 'Set-Cookie': [`session_id=${COOKIE_SECRET}; Path=/; HttpOnly`, 'theme=dark; Path=/; SameSite=Lax; Max-Age=3600'] });
@@ -223,6 +224,25 @@ test('network-masks-authorization', async () => {
   await expect(auth.locator('dd')).toHaveText(MASKED_VALUE);
   // The secret is nowhere in the chrome.
   expect(await page.content()).not.toContain(SECRET);
+});
+
+test('network-log-survives-uncommitted-navigation', async () => {
+  await setDrawer(true);
+  await showTab('network');
+  await go(`${site.origin}/page`);
+  const id = await contentsIdAt(`${site.origin}/page`);
+  await expect(rowFor('/api')).toHaveCount(1);
+  await showTab('console');
+  await expect(page.getByTestId('devtools-console-row').filter({ hasText: 'repeat me' })).toHaveCount(1);
+  await showTab('network');
+  // A navigation to a 204 never commits: the page, its log and its console stay.
+  await go(`${site.origin}/no-content`);
+  await expect(rowFor('/no-content')).toHaveCount(1);
+  expect(await run(id, 'location.pathname')).toBe('/page');
+  await expect(rowFor('/api')).toHaveCount(1);
+  await expect(rowFor('/page')).toHaveCount(1);
+  await showTab('console');
+  await expect(page.getByTestId('devtools-console-row').filter({ hasText: 'repeat me' })).toHaveCount(1);
 });
 
 test('redirects-show-the-chain', async () => {

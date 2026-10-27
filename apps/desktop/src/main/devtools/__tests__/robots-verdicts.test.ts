@@ -30,6 +30,7 @@ describe('robots verdicts', () => {
     const get = vi.fn(async () => answer);
     const verdicts = vi.fn(async (job: { robots: RobotsFetch; urls: string[] }) => robotsVerdicts(job));
     const service = createDevtoolsService({
+      activeTabId: () => 1,
       contentsOf: (id) => (id === 1 ? tab : null),
       tabIdOf: (id) => (id === 11 ? 1 : null),
       responses: { responseFor: () => null },
@@ -44,7 +45,7 @@ describe('robots verdicts', () => {
     const log = service.observer;
     let id = 1;
     const send = (url: string, resourceType: string) => log.sent?.({ id: id++, url, method: 'GET', webContentsId: 11, resourceType, referrer: '', timestamp: 1, requestHeaders: {} } as unknown as OnSendHeadersListenerDetails);
-    service.parts.network.navigated(11, `${ORIGIN}/page`);
+    service.parts.network.committed(11, `${ORIGIN}/page`);
     send(`${ORIGIN}/page`, 'mainFrame');
     send(`${ORIGIN}/blocked/app.js`, 'script');
     send(`${ORIGIN}/site.css`, 'stylesheet');

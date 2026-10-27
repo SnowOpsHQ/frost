@@ -200,6 +200,8 @@ function start(): void {
   const tabContents = new Map<number, WebContents>();
   const devtools = createDevtoolsService({
     contentsOf: (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null,
+    // Only the active tab is served (specs/devtools.spec.ts, DEVTOOLS_TAB_SCOPE).
+    activeTabId: () => browser.getState().activeTabId,
     tabIdOf: (contentsId) => browser.tabIdOf(webContents.fromId(contentsId)),
     responses,
     robots: () => robots,

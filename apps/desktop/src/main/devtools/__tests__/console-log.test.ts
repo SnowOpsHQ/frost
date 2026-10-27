@@ -48,7 +48,7 @@ describe('console log', () => {
     expect(log.snapshot(TAB)!.entries[0]).toMatchObject({ message: '[object]', source: '', line: 0 });
   });
 
-  test('console-resets-on-navigation', () => {
+  test('console-resets-on-commit', () => {
     const log = createConsoleLog();
     log.add(TAB, { level: 'info', message: 'old page' });
     log.add(4, { level: 'info', message: 'other tab' });

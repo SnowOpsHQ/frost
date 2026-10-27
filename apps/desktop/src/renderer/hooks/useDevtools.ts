@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DEVTOOLS_REFRESH_MIN_MS, DEVTOOLS_STORAGE_KEYS, type DevtoolsTabId } from '@app/specs/devtools.spec';
+import { DEVTOOLS_STORAGE_KEYS, type DevtoolsTabId } from '@app/specs/devtools.spec';
 import { devtoolsApi } from '../components/devtools/api';
 import { onDevtoolsRequest } from '../devtools-palette';
-import { heightFromStorage, openFromStorage, tabFromStorage } from '../devtools-view';
+import { heightFromStorage, openFromStorage, tabFromStorage, watchStep } from '../devtools-view';
 import { useSeqChange } from './useSeqChange';
 
 // The SEO devtools drawer's state in the chrome (spec `devtools.spec.ts`; acceptance
@@ -72,7 +72,9 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 /**
  * The tab's devtools version while `active`: the `devtools.watch` long-poll, at most one new value
- * every `DEVTOOLS_REFRESH_MIN_MS` (so a busy page does not refetch the log on every request).
+ * every `DEVTOOLS_REFRESH_MIN_MS` (so a busy page does not refetch the log on every request). An answer
+ * without news (the same version, `DEVTOOLS_WATCH_EVICTED`, a failure) waits `DEVTOOLS_WATCH_BACKOFF_MS`
+ * before the next watch (`watchStep`), so two pollers never evict each other in a busy loop.
  */
 export function useDevtoolsVersion(tabId: number | undefined, active: boolean): number {
   const [version, setVersion] = useState(0);
@@ -85,17 +87,16 @@ export function useDevtoolsVersion(tabId: number | undefined, active: boolean): 
       while (!cancelled) {
         const next = await devtoolsApi.watch(tabId, since);
         if (cancelled) return;
-        if (next === null) {
-          await sleep(1_000);
+        const step = watchStep(next, since, last, Date.now());
+        if (step.kind === 'backoff') {
+          await sleep(step.ms);
           continue;
         }
-        if (next === since) continue;
-        const wait = last + DEVTOOLS_REFRESH_MIN_MS - Date.now();
-        if (wait > 0) await sleep(wait);
+        if (step.waitMs > 0) await sleep(step.waitMs);
         if (cancelled) return;
-        since = next;
+        since = step.version;
         last = Date.now();
-        setVersion(next);
+        setVersion(step.version);
       }
     })();
     return () => {

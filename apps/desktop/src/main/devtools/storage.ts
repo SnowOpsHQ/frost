@@ -5,9 +5,12 @@ import { cut } from './network-log';
 // The devtools drawer's Storage tab (spec `devtools.spec.ts`, `COOKIE_LIMITS`, `CLEAR_SITE_DATA`;
 // acceptance `devtools.feature.md`, Storage). Cookies of the tab's URL come from the browse
 // partition's cookie store; values are masked (`value: null`) unless the user revealed that cookie
-// for the tab's current document. Which cookies are revealed is kept here, in memory only, and
-// forgotten on the tab's next cross-document navigation, on "Clear this site's data" and when the
-// tab goes. The values themselves are never kept: each answer reads the store again.
+// for the tab's current document. Which cookies are revealed is kept here, in memory only, each
+// stamped with the tab's committed document when it was asked for; a stale stamp shows nothing, and
+// the reveals are forgotten when the tab commits its next document (`did-navigate`), on "Clear this
+// site's data" and when the tab goes. The values themselves are never kept: each answer reads the
+// store again. One "Clear this site's data" dialog at a time: the same origin shares it, another
+// origin is `busy`.
 
 /** A cookie as Electron's `cookies.get` answers it (the fields read). */
 export interface CookieLike {
@@ -46,10 +49,14 @@ export interface SiteStorage {
   storage(contentsId: number, pageUrl: string): Promise<StorageAnswer>;
   /** Reveals one cookie of the page's URL until the tab's next navigation; `false` for an unknown cookie or a non-web page. Never rejects. */
   reveal(contentsId: number, pageUrl: string, cookie: CookieRef): Promise<boolean>;
-  /** Asks, then clears the page origin's data; `refused` for a non-web page (nothing asked). One dialog at a time. Never rejects. */
+  /**
+   * Asks, then clears the page origin's data; `refused` for a non-web page (nothing asked). One dialog
+   * at a time: a request for the origin being asked about shares its answer, any other is `busy`.
+   * Never rejects.
+   */
   clearSiteData(contentsId: number, pageUrl: string): Promise<ClearSiteDataResult>;
-  /** The tab started a cross-document navigation: its reveals are forgotten. */
-  navigated(contentsId: number): void;
+  /** The tab committed a cross-document navigation (`did-navigate`): a new document, its reveals forgotten. */
+  committed(contentsId: number): void;
   forget(contentsId: number): void;
   /** Forgets every reveal (Clear Browsing Data). */
   clear(): void;
@@ -79,8 +86,12 @@ export function cookieView(cookie: CookieLike, revealed: boolean): CookieView {
 }
 
 export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
-  const revealed = new Map<number, Set<string>>();
-  let clearing: Promise<ClearSiteDataResult> | null = null;
+  /** Per tab: revealed cookie key → the committed document it was revealed in. */
+  const revealed = new Map<number, Map<string, number>>();
+  /** Per tab: its committed document (counts up with each commit). */
+  const documents = new Map<number, number>();
+  const documentOf = (contentsId: number): number => documents.get(contentsId) ?? 0;
+  let clearing: { readonly origin: string; readonly answer: Promise<ClearSiteDataResult> } | null = null;
   const log = (message: string): void => options.log?.(`devtools: ${message}`);
 
   const read = async (url: string): Promise<readonly CookieLike[] | null> => {
@@ -99,12 +110,13 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
       if (!page) return { status: 'no-page' };
       const cookies = (await read(page.href)) ?? [];
       const shown = revealed.get(contentsId);
+      const now = documentOf(contentsId);
       return {
         status: 'ready',
         origin: page.origin,
         cookies: cookies.slice(0, COOKIE_LIMITS.maxCookies).map((c) => {
           const masked = cookieView(c, false);
-          return shown?.has(keyOf(masked)) === true ? cookieView(c, true) : masked;
+          return shown?.get(keyOf(masked)) === now ? cookieView(c, true) : masked;
         }),
         cookieTotal: cookies.length,
         usage: null,
@@ -114,14 +126,17 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
     async reveal(contentsId, pageUrl, cookie) {
       const page = parseWebUrl(pageUrl);
       if (!page) return false;
+      // Stamped now: a commit that lands while the store is read leaves this reveal in the old document.
+      const stamp = documentOf(contentsId);
       const cookies = (await read(page.href)) ?? [];
+      if (documentOf(contentsId) !== stamp) return false;
       const key = keyOf(cookie);
       // Only a cookie the drawer lists (within `maxCookies`), compared by its listed (capped) fields.
       const listed = cookies.slice(0, COOKIE_LIMITS.maxCookies).some((c) => keyOf(cookieView(c, false)) === key);
       if (!listed) return false;
-      let set = revealed.get(contentsId);
-      if (!set) revealed.set(contentsId, (set = new Set()));
-      set.add(key);
+      let shown = revealed.get(contentsId);
+      if (!shown) revealed.set(contentsId, (shown = new Map()));
+      shown.set(key, stamp);
       options.changed?.(contentsId);
       return true;
     },
@@ -129,7 +144,8 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
     clearSiteData(contentsId, pageUrl) {
       const page = parseWebUrl(pageUrl);
       if (!page) return Promise.resolve('refused');
-      clearing ??= (async (): Promise<ClearSiteDataResult> => {
+      if (clearing) return clearing.origin === page.origin ? clearing.answer : Promise.resolve('busy');
+      const answer = (async (): Promise<ClearSiteDataResult> => {
         let confirmed = false;
         try {
           confirmed = await options.confirmClear(page.origin);
@@ -142,21 +158,25 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
         } catch (error) {
           log(`clearing site data failed (${error instanceof Error ? error.message : String(error)})`);
         }
-        revealed.delete(contentsId);
+        // Every reveal goes (the origin's tabs may be several).
+        revealed.clear();
         options.changed?.(contentsId);
         return 'cleared';
       })().finally(() => {
         clearing = null;
       });
-      return clearing;
+      clearing = { origin: page.origin, answer };
+      return answer;
     },
 
-    navigated(contentsId) {
+    committed(contentsId) {
+      documents.set(contentsId, documentOf(contentsId) + 1);
       if (revealed.delete(contentsId)) options.changed?.(contentsId);
     },
 
     forget(contentsId) {
       revealed.delete(contentsId);
+      documents.delete(contentsId);
     },
 
     clear() {
