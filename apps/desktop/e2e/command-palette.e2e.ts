@@ -100,6 +100,7 @@ const pageSaw = (id: number) => run(id, 'window.seen.map((k) => k.toLowerCase())
 /** Loads `/page` and waits for its ready audit (the palette offers copies only then). */
 async function auditedPage(): Promise<number> {
   const url = `${site.origin}/page`;
+  const before = site.requests.length;
   await go(url);
   const id = await contentsIdAt(url);
   await press('chrome', 'K', ['mod']);
@@ -108,6 +109,8 @@ async function auditedPage(): Promise<number> {
   await expect(options().first()).toHaveAttribute('data-action', 'copy.title', { timeout: AUDIT_WAIT });
   await input().press('Escape');
   await expect(palette()).toHaveCount(0);
+  // The audit's served-HTML fetch can land after the title is known: wait for it (the page's load and that fetch).
+  await expect.poll(() => site.requests.slice(before).filter((path) => path === '/page').length, { timeout: AUDIT_WAIT }).toBe(2);
   return id;
 }
 
