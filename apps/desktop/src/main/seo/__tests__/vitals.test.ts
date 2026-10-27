@@ -84,7 +84,7 @@ interface FakeEntry {
 }
 
 /** A fake isolated world: its Performance API, its observers, a small DOM and timers. */
-function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[]; paint?: FakeEntry[]; elements?: number; tree?: unknown; hints?: number } = {}) {
+function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[]; paint?: FakeEntry[]; elements?: number; tree?: unknown; hints?: number; navigation?: boolean } = {}) {
   const domReads = { count: 0 };
   const observers: { callback: (list: { getEntries(): FakeEntry[] }) => void; options: unknown }[] = [];
   const timers: (() => void)[] = [];
@@ -113,6 +113,14 @@ function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[];
     for (const l of listeners.filter((x) => x.type === type)) l.listener({ isTrusted });
   };
   const clock = { now: 1_000, url: A };
+  /** The world's `navigation` (Navigation API): its `currententrychange` listeners. */
+  const navigationListeners: ((event: { isTrusted: boolean }) => unknown)[] = [];
+  const navigation = { addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => unknown) => void (type === 'currententrychange' && navigationListeners.push(listener)) };
+  /** The URL changes in the document (`pushState`): `currententrychange` fires at once, as the browser (trusted) or a page script would. */
+  const navigate = (url: string, isTrusted = true) => {
+    if (isTrusted) clock.url = url;
+    for (const listener of navigationListeners) listener({ isTrusted });
+  };
   const nav: FakeEntry = { name: A, entryType: 'navigation', startTime: 0, duration: 400, type: 'navigate', redirectCount: 0, responseStart: 90, responseEnd: 100, loadEventEnd: 400, transferSize: 5_000, encodedBodySize: 4_700, decodedBodySize: 20_000, contentType: 'text/html', contentEncoding: 'gzip', domainLookupStart: -5, connectEnd: Number.NaN };
   const leaf = { firstElementChild: null, nextElementSibling: null, parentElement: null };
   const env = {
@@ -124,6 +132,7 @@ function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[];
       getEntriesByName: (name: string) => (name === 'first-contentful-paint' ? (options.paint ?? []) : []),
     },
     EventTarget: Target,
+    ...(options.navigation === false ? {} : { navigation }),
     PerformanceObserver: class {
       constructor(callback: (list: { getEntries(): FakeEntry[] }) => void) {
         observers.push({ callback, options: null });
@@ -146,7 +155,7 @@ function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[];
     global: {} as Record<string, unknown>,
     setTimeout: (callback: () => void) => timers.push(callback),
   } satisfies SpeedEnvironment;
-  return { env, library, observers, timers, reports, libraryOptions, fire, clock, domReads, deliver: (entries: FakeEntry[]) => observers[0]!.callback({ getEntries: () => entries }) };
+  return { env, library, observers, timers, reports, libraryOptions, fire, clock, domReads, navigate, navigationListeners, deliver: (entries: FakeEntry[]) => observers[0]!.callback({ getEntries: () => entries }) };
 }
 
 const LIMITS: SpeedLimits = { ...SPEED_LIMITS, maxResources: 3, maxResourceUrlChars: 30 };
@@ -422,11 +431,56 @@ describe('collector guards and deltas', () => {
     // A fragment is no route change; another path is: a new epoch, the requests start again.
     world.clock.url = `${A}#section`;
     expect(run({ since: 3, epoch: 0 })).toMatchObject({ resourceEpoch: 0, resourceOffset: 3 });
+    world.clock.now = 1_500;
     world.clock.url = `${A}/route`;
     const routed = run({ since: 3, epoch: 0 });
     expect(routed).toMatchObject({ resourceEpoch: 1, resourceOffset: 0, resourceTotal: 0, resources: [], softNavigation: true });
-    world.deliver([entry('https://example.com/route.json', { initiatorType: 'fetch' })]);
+    world.deliver([entry('https://example.com/route.json', { initiatorType: 'fetch', startTime: 1_600 })]);
     expect(run({ since: 0, epoch: 1 })).toMatchObject({ resourceTotal: 1, softNavigation: true });
+  });
+
+  test('collector-keeps-route-resources-observed-before-the-next-collection', async () => {
+    // Without the Navigation API: the observer sees the URL change when the route's request arrives.
+    const plain = fakeWorld({ navigation: false });
+    const runIn = (world: ReturnType<typeof fakeWorld>, o: Partial<CollectOptions> = {}) => measurePage(world.env, () => world.library, { ...SPEED_LIMITS }, consts(0), opts(o)) as PerformanceMeasurement;
+    const first = measurePage(plain.env, () => plain.library, { ...SPEED_LIMITS }, consts(0), opts());
+    plain.deliver([entry('https://example.com/1.js'), entry('https://example.com/2.js')]);
+    plain.timers[0]!();
+    expect(await first).toMatchObject({ resourceEpoch: 0, resourceTotal: 2 });
+    // The SPA changes its URL and finishes the route's request, all before the next collection.
+    plain.clock.now = 1_200;
+    plain.clock.url = `${A}/route`;
+    plain.clock.now = 1_350;
+    plain.deliver([entry('https://example.com/route.json', { initiatorType: 'fetch', startTime: 1_300 })]);
+    const routed = runIn(plain, { since: 2, epoch: 0 });
+    expect(routed).toMatchObject({ resourceEpoch: 1, resourceOffset: 0, resourceTotal: 1, softNavigation: true });
+    expect(routed.resources.map((r) => r.url)).toEqual(['https://example.com/route.json']);
+
+    // With it: the boundary is the moment the URL changed (trusted `currententrychange`).
+    const world = fakeWorld();
+    const primed = measurePage(world.env, () => world.library, { ...SPEED_LIMITS }, consts(0), opts());
+    world.timers[0]!();
+    await primed;
+    expect(world.navigationListeners).toHaveLength(1);
+    world.clock.now = 2_000;
+    world.navigate(`${A}/next`);
+    world.clock.now = 2_400;
+    // An old route's request still in flight at the change is not the new route's; one starting at the change is.
+    world.deliver([entry('https://example.com/old.json', { startTime: 1_900 }), entry('https://example.com/next.json', { startTime: 2_000 })]);
+    const next = runIn(world);
+    expect(next).toMatchObject({ url: `${A}/next`, resourceEpoch: 1, resourceTotal: 1, softNavigation: true });
+    expect(next.resources.map((r) => r.url)).toEqual(['https://example.com/next.json']);
+    // A page's synthetic event moves no boundary: the next change is found from the last time the
+    // old URL was seen (that collection, at 2 400 ms), so a request at 2 550 ms is the new route's.
+    world.clock.now = 2_500;
+    world.clock.url = `${A}/third`;
+    world.clock.now = 2_600;
+    world.navigate(`${A}/ignored`, false);
+    world.clock.now = 2_700;
+    world.deliver([entry('https://example.com/third.json', { startTime: 2_550 })]);
+    const third = runIn(world);
+    expect(third).toMatchObject({ url: `${A}/third`, resourceEpoch: 2, resourceTotal: 1 });
+    expect(third.resources.map((r) => r.url)).toEqual(['https://example.com/third.json']);
   });
 
   test('collector-refreshes-the-dom-every-n-collections', async () => {

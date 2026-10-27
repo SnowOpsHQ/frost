@@ -86,6 +86,13 @@ async function startSite() {
     // Content that jumps whenever the test calls `shift()` (no input: it counts), for the live updates.
     '/shifting': page('A page that shifts on cue', '', `<div id="banner"></div><p>${words(400)}</p><script>let h = 0; window.shift = () => { h += 90; const b = document.getElementById('banner'); b.style.height = h + 'px'; b.style.background = '#ccd'; };</script>`),
     '/still': page('A still page', '', `<p>${words(300)}</p>`),
+    // A single-page app: `route()` changes the URL in place, then fetches the route's data.
+    '/spa': page(
+      'A single-page app',
+      '',
+      `<p>${words(300)}</p><script>window.route = async () => { history.pushState({}, '', '/spa/route'); const r = await fetch('/route.json', { cache: 'no-store' }); return (await r.json()).ok === true ? 'ok' : 'bad'; };</script>`,
+    ),
+    '/route.json': (_request, response) => response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end('{"ok":true}'),
     // Many requests and many bytes, a blocking script in the head, and uncompressed JavaScript.
     '/heavy': page(
       'A heavy page',
@@ -305,6 +312,23 @@ test('measurement-runs-isolated', async () => {
   expect(seen.state).toBe(true);
   // And the measurement is live, from the isolated world.
   await expect(chrome.getByTestId('seo-speed-live')).toHaveAttribute('data-state', 'live');
+});
+
+test('spa-route-requests-are-counted-e2e', async () => {
+  const spa = await measure('/spa');
+  const id = await contentsIdAt(spa);
+  // Leave the panel (no live polls): the next collection comes only with the route's audit.
+  await railItem('overview').click();
+  await expect(speed()).toHaveCount(0);
+  // The URL changes in place and the route's request finishes, all before that collection.
+  expect(await run(id, 'window.route()')).toBe('ok');
+  const routed = `${site.origin}/spa/route`;
+  await expect(chrome.getByTestId('seo-audit-url')).toHaveAttribute('title', `⁨${routed}⁩`, { timeout: AUDIT_WAIT });
+  await railItem('speed').click();
+  await expect(chrome.getByTestId('seo-speed-note-soft-navigation')).toBeAttached({ timeout: AUDIT_WAIT });
+  // The route's request is counted (it was observed before the collection that noticed the change).
+  await expect(chrome.locator('[data-testid="seo-speed-type"][data-type="fetch"]')).toHaveAttribute('data-requests', '1', { timeout: 10_000 });
+  await expect(chrome.locator('[data-testid="seo-speed-large"]').filter({ hasText: '/route.json' })).toHaveCount(1);
 });
 
 test('live-updates-stop-after-navigation-e2e', async () => {

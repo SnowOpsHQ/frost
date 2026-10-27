@@ -63,7 +63,13 @@ many visits on many devices), which can be very different. The panel says so und
 - **Route changes.** The vitals and the navigation timing belong to the page load (the hard
   navigation); the panel labels them `SINCE_LOAD_LABEL`. When the URL changes inside the document
   (a route change; a fragment does not count) the collector starts a new resource epoch: the
-  requests are counted from that change and the panel says so (`SOFT_NAVIGATION_NOTE`).
+  requests are counted from that change and the panel says so (`SOFT_NAVIGATION_NOTE`). The
+  epoch's boundary is set when the URL changes, not at the next collection: the world listens for
+  the Navigation API's trusted `currententrychange` (it fires inside `pushState` / `replaceState`,
+  before the route's own requests start; verified in Electron 45's isolated worlds), and without it
+  the resource observer and each collection check the URL, the boundary then being the last time the
+  old URL was seen. Requests that started at or after the boundary belong to the new route (also
+  those observed before the next collection); earlier ones belong to the old route and are dropped.
 - **Metric limits.**
   - INP needs interactions: until the user clicks, taps or types in the page there is none, and the
     card says `INP_HINT` ("Interact with the page to measure INP"). Interactions before the first
@@ -178,6 +184,10 @@ many visits on many devices), which can be very different. The panel says so und
   entry, `PAINT_GRACE_MS` after load.
 - **Scenario: collector-answers-only-new-resources-and-restarts-on-route-change** — `since` / `epoch`;
   a fragment is not a route change.
+- **Scenario: collector-keeps-route-resources-observed-before-the-next-collection** — the route's
+  requests delivered after the URL change but before the next collection are answered in the new
+  epoch; the boundary is the trusted `currententrychange` (earlier requests dropped, one starting at
+  it kept), else the last time the old URL was seen; an untrusted event moves nothing.
 - **Scenario: collector-refreshes-the-dom-every-n-collections**, **collector-notes-a-full-timing-buffer**.
 - **Scenario: native-wayland-detection**, **shown-times**, **reassemble-puts-the-list-back-together**
   (and the worker accepts only a whole list).
@@ -235,6 +245,9 @@ many visits on many devices), which can be very different. The panel says so und
   `webVitals` and `SPEED_STATE_KEY` globals, sees none of them used, read or written and no global
   added, while the measurement still reports its real values (its fake LCP is never shown, both
   images are counted).
+- **Scenario: spa-route-requests-are-counted-e2e** — a page changes its URL in place and fetches the
+  route's data while the panel is closed: the route's audit and the panel count that request (and say
+  the requests are counted from the route change).
 - **Scenario: live-updates-stop-after-navigation-e2e** — a page shifts after the panel opened and its CLS
   rises live; after navigating, the still page is measured afresh and the shifting page's values never return; leaving
   the panel ends the polls.

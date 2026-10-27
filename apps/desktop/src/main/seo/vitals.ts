@@ -28,7 +28,8 @@ import {
 // The first run in a document (main primes it at `dom-ready` of the active tab) installs: a guard
 // that lets only trusted `TRUSTED_ONLY_EVENTS` reach the world's listeners, web-vitals
 // (`reportAllChanges`, buffered observers, so a late start still sees LCP, CLS, FCP and TTFB) and a
-// buffered `resource` observer, keeping their state in the world's global `SPEED_STATE_KEY`. The
+// buffered `resource` observer (and a `currententrychange` listener that marks a route change as it
+// happens), keeping their state in the world's global `SPEED_STATE_KEY`. The
 // buffered entries arrive asynchronously, so the state holds a settle promise for `SPEED_SETTLE_MS`
 // that every run made meanwhile awaits. Every list and number is capped while it is read; main
 // still has the answer validated in the analysis worker (`PerformanceMeasurementSchema`): it is
@@ -73,6 +74,8 @@ export interface SpeedEnvironment {
   readonly PerformanceObserver?: new (callback: (list: { getEntries(): readonly PageEntry[] }) => void) => { observe(options: { type: string; buffered: boolean }): void };
   /** The world's `EventTarget` (its prototype's listener methods are wrapped, `TRUSTED_ONLY_EVENTS`). */
   readonly EventTarget?: { readonly prototype: ListenerTarget };
+  /** The Navigation API's `navigation`: its trusted `currententrychange` marks a route change as it happens. */
+  readonly navigation?: { addEventListener(type: string, listener: (event: { readonly isTrusted: boolean }) => void): void };
   readonly document: {
     readonly URL: string;
     readonly documentElement: PageNode | null;
@@ -152,21 +155,60 @@ export function measurePage(env: SpeedEnvironment, loadLibrary: () => WebVitalsL
     depthComplete: boolean;
     hints: number;
   }
+  interface ResourceRecord {
+    url: string;
+    urlCut: boolean;
+    initiator: string;
+    contentType: string | null;
+    contentEncoding: string | null;
+    transfer: number;
+    encoded: number;
+    decoded: number;
+    start: number;
+    duration: number;
+    blocking: boolean | null;
+  }
   interface State {
     vitals: { lcp: number | null; cls: number | null; inp: number | null; fcp: number | null; ttfb: number | null };
-    resources: unknown[];
+    resources: ResourceRecord[];
     total: number;
     overflow: { transfer: number; encoded: number; decoded: number; weight: number };
     bufferFull: boolean;
     /** Bumped when the URL changes inside the document: the resources start again. */
     epoch: number;
     url: string;
+    /** When `url` was last seen (`performance.now()`): a change found later happened after it. */
+    seenAt: number;
+    /** Where this epoch starts (`performance.now()`): requests that started earlier are the old route's. */
+    boundary: number;
     soft: boolean;
     /** Pending while the first run's buffered entries arrive; every run meanwhile awaits it. */
     settling: Promise<void> | null;
     collections: number;
     dom: DomSize | null;
   }
+  /**
+   * A route change (the URL without its fragment changed): a new epoch, from the moment it happened
+   * (`exact`: now, from the trusted `currententrychange`) or else from the last time the old URL was
+   * seen. The requests already observed that started at or after it are kept (they are the new
+   * route's, even if no collection ran in between); the earlier ones go with the old route.
+   */
+  const checkRoute = (st: State, exact: boolean): void => {
+    const now = env.performance.now();
+    const url = withoutFragment(env.document.URL);
+    if (url !== st.url) {
+      const boundary = exact ? now : st.seenAt;
+      st.url = url;
+      st.epoch += 1;
+      st.boundary = boundary;
+      st.resources = st.resources.filter((record) => record.start >= boundary);
+      st.total = st.resources.length;
+      st.overflow = { transfer: 0, encoded: 0, decoded: 0, weight: 0 };
+      st.soft = true;
+      st.dom = null;
+    }
+    st.seenAt = now;
+  };
   let state = env.global[C.key] as State | undefined;
   if (state === undefined) {
     const created: State = {
@@ -177,6 +219,8 @@ export function measurePage(env: SpeedEnvironment, loadLibrary: () => WebVitalsL
       bufferFull: false,
       epoch: 0,
       url: withoutFragment(env.document.URL),
+      seenAt: env.performance.now(),
+      boundary: 0,
       soft: false,
       settling: null,
       collections: 0,
@@ -242,6 +286,8 @@ export function measurePage(env: SpeedEnvironment, loadLibrary: () => WebVitalsL
       // No vitals (the values stay null); the resources are still measured.
     }
     const add = (entry: PageEntry): void => {
+      // Started before this epoch's route change: the old route's request.
+      if (time(entry.startTime) < created.boundary) return;
       created.total = Math.min(created.total + 1, L.maxCount);
       const transfer = bytes(entry['transferSize']);
       const encoded = bytes(entry['encodedBodySize']);
@@ -277,12 +323,23 @@ export function measurePage(env: SpeedEnvironment, loadLibrary: () => WebVitalsL
       });
       if (env.PerformanceObserver) {
         const observer = new env.PerformanceObserver((list) => {
+          // A route change since the last look is found before its requests are added.
+          checkRoute(created, false);
           for (const entry of list.getEntries()) add(entry);
         });
         observer.observe({ type: 'resource', buffered: true });
       }
     } catch {
       // No resource observer: no resources.
+    }
+    try {
+      // Fired by the browser inside `pushState` / `replaceState` / a traversal, before the route's
+      // own requests start; a page's synthetic one is ignored.
+      env.navigation?.addEventListener('currententrychange', (event) => {
+        if (event && event.isTrusted === true) checkRoute(created, true);
+      });
+    } catch {
+      // No Navigation API: route changes are found by the observer and the collections.
     }
     created.settling = new Promise<void>((resolve) => {
       env.setTimeout(() => {
@@ -333,17 +390,9 @@ export function measurePage(env: SpeedEnvironment, loadLibrary: () => WebVitalsL
 
   const collect = () => {
     const begin = env.performance.now();
-    // The URL changed inside the document (a route change): the requests start again.
+    // The URL changed inside the document (a route change) and nothing noticed yet: a new epoch.
     const url = env.document.URL;
-    if (withoutFragment(url) !== s.url) {
-      s.url = withoutFragment(url);
-      s.epoch += 1;
-      s.resources = [];
-      s.total = 0;
-      s.overflow = { transfer: 0, encoded: 0, decoded: 0, weight: 0 };
-      s.soft = true;
-      s.dom = null;
-    }
+    checkRoute(s, false);
     const navEntry = env.performance.getEntriesByType('navigation')[0];
     const navigation = navEntry
       ? {
@@ -421,7 +470,7 @@ export function measurePage(env: SpeedEnvironment, loadLibrary: () => WebVitalsL
 }
 
 /** The script's fixed part: `measurePage` called with the world's globals, the web-vitals IIFE (wrapped, so `webVitals` stays local), the limits and constants. */
-const SCRIPT_HEAD = `(${measurePage.toString()})({ performance, PerformanceObserver: globalThis.PerformanceObserver, EventTarget: globalThis.EventTarget, document, global: globalThis, setTimeout: (callback, ms) => setTimeout(callback, ms) }, function () {
+const SCRIPT_HEAD = `(${measurePage.toString()})({ performance, PerformanceObserver: globalThis.PerformanceObserver, EventTarget: globalThis.EventTarget, navigation: globalThis.navigation, document, global: globalThis, setTimeout: (callback, ms) => setTimeout(callback, ms) }, function () {
 ${webVitalsSource}
 return webVitals;
 }, ${JSON.stringify(SPEED_LIMITS)}, ${JSON.stringify(COLLECT_CONSTANTS)}, `;
