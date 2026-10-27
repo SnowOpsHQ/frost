@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { OnBeforeRedirectListenerDetails, OnErrorOccurredListenerDetails, OnResponseStartedListenerDetails } from 'electron';
 import { headerValueCap, RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, type ResponseHeaderName } from '@app/specs/seo-indexability.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
@@ -25,6 +26,8 @@ function cut(value: string, max: number): string {
 }
 
 const url = (value: string): string => cut(value, SNAPSHOT_LIMITS.maxUrlChars);
+/** A page's exact identity (its URL without the fragment, digested: stored URLs are cut, a long URL's identity is not). */
+const identity = (value: string): string => createHash('sha256').update(withoutFragment(value)).digest('base64');
 const httpStatus = (code: unknown): number | null => (typeof code === 'number' && Number.isInteger(code) && code >= 100 && code <= 999 ? code : null);
 
 /**
@@ -56,13 +59,15 @@ export function captureHeaders(responseHeaders: Record<string, string[] | string
 interface Pending {
   hops: RedirectHop[];
   hopTotal: number;
-  final: { url: string; status: number | null; fromCache: boolean; headers: ResponseHeader[] } | null;
+  final: { url: string; key: string; status: number | null; fromCache: boolean; headers: ResponseHeader[] } | null;
 }
 
 interface TabRecord {
   /** Main-frame requests in flight (or answered, not yet committed), oldest first. */
   readonly pending: Map<number, Pending>;
   committed: ResponseMeta | null;
+  /** The committed document's `identity`. */
+  committedKey: string | null;
 }
 
 /** The parts of a tab's WebContents the recorder listens to. */
@@ -91,7 +96,7 @@ export function createResponseRecorder(): ResponseRecorder {
   const recordOf = (id: number): TabRecord => {
     let record = tabs.get(id);
     if (record) tabs.delete(id);
-    else record = { pending: new Map(), committed: null };
+    else record = { pending: new Map(), committed: null, committedKey: null };
     tabs.set(id, record);
     while (tabs.size > RESPONSE_LIMITS.maxTrackedTabs) tabs.delete(tabs.keys().next().value!);
     return record;
@@ -128,7 +133,7 @@ export function createResponseRecorder(): ResponseRecorder {
       if (!isMainFrame(details)) return;
       const pending = pendingOf(details);
       if (!pending) return;
-      pending.final = { url: url(details.url), status: httpStatus(details.statusCode), fromCache: details.fromCache === true, headers: captureHeaders(details.responseHeaders) };
+      pending.final = { url: url(details.url), key: identity(details.url), status: httpStatus(details.statusCode), fromCache: details.fromCache === true, headers: captureHeaders(details.responseHeaders) };
     },
 
     failed(details: OnErrorOccurredListenerDetails) {
@@ -144,12 +149,13 @@ export function createResponseRecorder(): ResponseRecorder {
 
     committed(contentsId, committedUrl, httpResponseCode) {
       const record = recordOf(contentsId);
-      const key = withoutFragment(committedUrl);
+      const key = identity(committedUrl);
+      record.committedKey = key;
       const entries = [...record.pending.entries()];
       let match = -1;
       for (let i = entries.length - 1; i >= 0; i--) {
         const final = entries[i]![1].final;
-        if (final && withoutFragment(final.url) === key) {
+        if (final && final.key === key) {
           match = i;
           break;
         }
@@ -174,9 +180,10 @@ export function createResponseRecorder(): ResponseRecorder {
     },
 
     responseFor(contentsId, current) {
-      const committed = tabs.get(contentsId)?.committed ?? null;
+      const record = tabs.get(contentsId);
+      const committed = record?.committed ?? null;
       if (!committed) return null;
-      if (withoutFragment(committed.url) === withoutFragment(current)) return committed;
+      if (record!.committedKey === identity(current)) return committed;
       return { url: url(current), source: 'in-page', status: null, headersAvailable: false, headers: [], redirects: [], redirectTotal: 0 };
     },
 
