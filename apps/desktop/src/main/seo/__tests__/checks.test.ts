@@ -155,7 +155,7 @@ describe('runs', () => {
     checks.checkLinks(1);
     await vi.runAllTimersAsync();
     expect(net.asked.map((a) => a.url)).toEqual(['https://example.com/ok']);
-    expect(net.asked[0]!.options.allowPrivate).toBe(false);
+    expect(net.asked[0]!.options.page).toBe(PAGE);
     expect(checks.state(1).links.results.filter((r) => r.reason === 'private')).toHaveLength(3);
   });
 

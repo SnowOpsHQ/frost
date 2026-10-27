@@ -22,8 +22,9 @@ import { SNAPSHOT_LIMITS } from './seo-limits.spec';
 /**
  * How a link check run is bounded (review focus `link-checks-are-bounded`):
  * - `maxLinks`: unique `http(s)` targets fetched per run (the rest are `skipped`, `over-cap`);
- * - `perOriginConcurrency`: requests in flight to one origin at a time;
- * - `perOriginIntervalMs`: at least this long between two request starts to one origin (the rate limit);
+ * - `perOriginConcurrency`: requests in flight to one origin at a time (also the bounded fetcher's
+ *   `checks` lane, `CHECKS_FETCHER_LIMITS` in `fetcher.spec.ts`);
+ * - `perOriginIntervalMs`: at least this long between two request starts to one origin (the rate limit; the lane's too);
  * - `maxConcurrency`: requests in flight in all;
  * - `requestTimeoutMs`: one link's deadline, its HEAD, GET fallback and redirects together;
  * - `maxRedirects`: redirects followed per link (one more is `too-many-redirects`);
@@ -42,7 +43,7 @@ export const LINK_CHECK_LIMITS = {
 } as const;
 
 /**
- * How one bounded fetch ended (main's fetcher, `checks-fetch.ts`): `response` (a final, non-redirect
+ * How one bounded fetch ended (main's fetcher, `checks-fetch.ts`, mapped from `FETCH_OUTCOMES`): `response` (a final, non-redirect
  * answer: its status says the rest), no answer in time (`timeout`) or at all (`unreachable`), a
  * redirect not followed (`too-many-redirects`, `bad-redirect`: not `http(s)`, `no-location`,
  * `private-redirect`: to a private host the page is not on), or `aborted` (the run was cancelled).

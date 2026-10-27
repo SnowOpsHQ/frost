@@ -14,12 +14,15 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - **Every check is the user's.** Nothing is fetched until "Check links", "Check sitemaps" or "Check
   return links" is pressed (or its command-palette action runs), for the active tab's ready audit.
   The links come from main's own audit of the tab, never from the chrome.
-- **One door to the network.** Every request goes through `CheckFetch` (`main/seo/checks-fetch.ts`):
-  the robots.txt fetcher's rules (browse session, `credentials: 'omit'`, no session cookies, no
-  referrer, `no-store`, `http(s)` only, manual redirects each checked before they are followed, at
-  most 5, never to a private host unless the page is on one, a body cap, one deadline). It is an
-  adapter over the robots.txt fetcher's hop; Phase 2.5 Task 2's shared `seo/fetcher.ts` replaces it.
-  The `User-Agent` is frost's own, or the tab's render profile's.
+- **One door to the network.** Every request goes through `CheckFetch` (`main/seo/checks-fetch.ts`),
+  a thin mapping onto the shared bounded fetcher (`seo/fetcher.ts`, `fetcher.spec.ts`) and its rules
+  (browse session, `credentials: 'omit'`, no session cookies, no referrer, `no-store`, `http(s)` only,
+  manual redirects each checked before they are followed, at most 5, never to a private host unless
+  the page is on one, a body cap, one deadline). The checks use the fetcher's `checks` lane, per-origin
+  queues of their own (`CHECKS_FETCHER_LIMITS`: 2 at once, 250 ms apart), so an audit's robots.txt and
+  served HTML never wait behind a link check. The fetcher's outcomes map onto `CHECK_FETCH_OUTCOMES`
+  (`busy`, a full queue, is `unreachable`). The `User-Agent` is frost's own, or the tab's render
+  profile's (printable ASCII only).
 - **Bounded by construction** (`link-checks-are-bounded`). At most `maxLinks` (500) unique targets per
   run; per origin 2 in flight and 250 ms between starts; 6 in flight in all; 10 s per link. A private
   host (literal: `localhost`, RFC 1918, link-local, loopback, unique-local IPv6) is never asked from a
@@ -71,11 +74,14 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `scheduler-survives-throwing-tasks` — a task that throws counts as done.
 
 ## Fetcher (`apps/desktop/src/main/seo/__tests__/checks-fetch.test.ts`)
+- `check-fetch-outcomes-map` — every check outcome is one of the shared fetcher's.
 - `check-fetch-follows-checked-redirects` — at most `maxRedirects`, each resolved and checked; `no-location` and non-`http(s)` stop it.
-- `check-fetch-refuses-private-redirects` — a redirect to a private host is not followed unless allowed.
+- `check-fetch-refuses-private-redirects` — a redirect to (or a target on) a private host is not requested unless the page is on one.
 - `check-fetch-caps-body` — GET reads up to `maxBytes`, then cancels; HEAD reads nothing.
 - `check-fetch-deadline-and-abort` — a hop that never answers times out; an abort answers `aborted`.
-- `check-hop-sends-method-and-agent` — the method and a printable user agent reach `net.request`, cookies off.
+- `check-fetch-sends-method-agent-and-reads-headers` — the method and a printable user agent reach the hop; every `Link` header is read, past the fetcher's default header cap.
+- `check-fetch-uses-the-given-fetcher` — every request goes through the fetcher it is given (main's `checks` lane) with the page and caps; a full queue (`busy`) is `unreachable`.
+- The lanes themselves: `audit-never-waits-behind-a-link-check` in `fetcher.test.ts` (`seo-javascript.feature.md`, Bounded fetcher).
 
 ## Link checks (`apps/desktop/src/main/seo/__tests__/checks-links.test.ts`)
 - `link-plan-dedupes-and-skips` — each target once, non-`http(s)` and private ones skipped, past 500 over the cap.

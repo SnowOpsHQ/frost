@@ -1,5 +1,5 @@
 import type { Session } from 'electron';
-import { FETCHER_LIMITS, type BoundedFetcher, type BoundedFetchRequest, type BoundedFetchResult, type FetchMethod, type FetchOutcome, type FetchRedirect } from '@app/specs/fetcher.spec';
+import { FETCHER_LANES, FETCHER_LIMITS, type BoundedFetcher, type BoundedFetchRequest, type BoundedFetchResult, type FetchMethod, type FetchOutcome, type FetcherLane, type FetchRedirect } from '@app/specs/fetcher.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 
@@ -136,15 +136,15 @@ function safeResolve(location: string, base: string): string {
   }
 }
 
-/** The kept headers of a hop's answer: lowercase names, arrays joined with `, `, values cut. */
-function keptHeaders(headers: Readonly<Record<string, string | readonly string[]>> | undefined, keep: readonly string[]): Record<string, string> {
+/** The kept headers of a hop's answer: lowercase names, arrays joined with `, `, values cut to `maxChars`. */
+function keptHeaders(headers: Readonly<Record<string, string | readonly string[]>> | undefined, keep: readonly string[], maxChars: number): Record<string, string> {
   const out: Record<string, string> = {};
   if (!headers) return out;
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
     if (!keep.includes(lower)) continue;
     const joined = Array.isArray(value) ? value.join(', ') : String(value);
-    out[lower] = joined.slice(0, FETCHER_LIMITS.maxHeaderValueChars);
+    out[lower] = joined.slice(0, maxChars);
   }
   return out;
 }
@@ -309,7 +309,7 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
           status = null;
           continue;
         }
-        headers = keptHeaders(result.headers, keep);
+        headers = keptHeaders(result.headers, keep, request.maxHeaderChars ?? limits.maxHeaderValueChars);
         const wanted = method !== 'HEAD' && (request.readBody ? request.readBody(result.status) : true);
         if (!wanted) {
           result.cancel();
@@ -336,6 +336,21 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
       const queue = queues.get(origin);
       return { running: queue?.running ?? 0, queued: queue?.waiting.length ?? 0 };
     },
+  };
+}
+
+/** Main's fetchers, one per lane (`fetcher.spec.ts`, Lanes): separate per-origin queues over one hop. */
+export type FetcherLanes = Readonly<Record<FetcherLane, BoundedFetcher>>;
+
+/**
+ * The `audit` lane (robots.txt, the served HTML) and the `checks` lane (link, sitemap and hreflang
+ * checks), each a bounded fetcher over `hop` with its lane's per-origin limits (`FETCHER_LANES`), so
+ * an audit's requests never wait in a queue behind a check's.
+ */
+export function createFetcherLanes(options: Omit<BoundedFetcherOptions, 'limits'>): FetcherLanes {
+  return {
+    audit: createBoundedFetcher({ ...options, limits: FETCHER_LANES.audit }),
+    checks: createBoundedFetcher({ ...options, limits: FETCHER_LANES.checks }),
   };
 }
 

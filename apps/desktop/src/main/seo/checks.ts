@@ -29,15 +29,16 @@ import type { ChecksAnalysisResult } from './checks-analyse';
 import type { CheckFetch, CheckFetchResult } from './checks-fetch';
 import { checkLink, planLinks, type LinkLimits } from './checks-links';
 import { runBounded } from './checks-scheduler';
-import { isPrivateHost } from './robots-fetch';
+import { isPrivateHost } from './fetcher';
 
 // The link, sitemap and hreflang checks of each tab (spec `seo-checks.spec.ts`; acceptance
 // `seo-checks.feature.md`, Runs; review focus `link-checks-are-bounded`). A check runs only when the
 // user asks (`checks.*`), for the active tab's ready audit, and belongs to that tab's document and URL
 // (fragment aside): a new document (`dropped`), an in-page navigation to another URL or a closed tab
 // cancels every run of the tab, aborting its requests. Stop ends one run and keeps what it found.
-// Requests go through `fetch` (the bounded fetcher) and the scheduler (per-origin concurrency and
-// rate limit); what a server sent is parsed by `analyse` (the checks' worker). Link results are
+// Requests go through `fetch` (the bounded fetcher's `checks` lane, `fetcher.spec.ts`) and the
+// scheduler (per-origin concurrency and rate limit, and the run's total); what a server sent is
+// parsed by `analyse` (the checks' worker). Link results are
 // cached per URL for the session (definite HTTP answers only). Progress is pushed at most every
 // `CHECKS_PUSH_INTERVAL_MS` (a version bump that wakes `watch`); a finished run (done or stopped) asks
 // the auditor to re-score the page (`rescore`), whose context then carries the checks (`contextFor`).
@@ -242,12 +243,11 @@ export function createChecks(options: ChecksOptions): Checks {
       else toFetch.push(url);
     }
     publish();
-    const allowPrivate = pagePrivate(entry.key);
     await runBounded(
       toFetch,
       originOf,
       async (url, runSignal) => {
-        const result = await checkLink(url, { fetch: options.fetch, allowPrivate, userAgent: tab.userAgent, getOnly, signal: runSignal, limits: linkLimits, now });
+        const result = await checkLink(url, { fetch: options.fetch, page: entry.key, userAgent: tab.userAgent, getOnly, signal: runSignal, limits: linkLimits, now });
         if (result === null || !live()) return;
         remember(url, result);
         results.set(url, result);
@@ -306,7 +306,7 @@ export function createChecks(options: ChecksOptions): Checks {
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
       if (!live()) return;
       last = now();
-      const answer = await options.fetch(url, { method: 'GET', maxBytes: sitemapLimits.maxBytes, timeoutMs: sitemapLimits.timeoutMs, maxRedirects: linkLimits.maxRedirects, allowPrivate, userAgent: tab.userAgent, signal });
+      const answer = await options.fetch(url, { method: 'GET', maxBytes: sitemapLimits.maxBytes, timeoutMs: sitemapLimits.timeoutMs, maxRedirects: linkLimits.maxRedirects, page: entry.key, userAgent: tab.userAgent, signal });
       if (!live() || answer.outcome === 'aborted') return;
       let error = sitemapFetchError(answer);
       const file: { -readonly [K in keyof SitemapFileReport]: SitemapFileReport[K] } = { url, depth, type: null, status: answer.status, gzip: false, entries: 0, error: null };
@@ -366,7 +366,7 @@ export function createChecks(options: ChecksOptions): Checks {
           publish();
           return;
         }
-        const answer = await options.fetch(target.url, { method: 'GET', maxBytes: HREFLANG_CHECK_LIMITS.maxBytes, timeoutMs: HREFLANG_CHECK_LIMITS.timeoutMs, maxRedirects: linkLimits.maxRedirects, allowPrivate, userAgent: tab.userAgent, signal: runSignal });
+        const answer = await options.fetch(target.url, { method: 'GET', maxBytes: HREFLANG_CHECK_LIMITS.maxBytes, timeoutMs: HREFLANG_CHECK_LIMITS.timeoutMs, maxRedirects: linkLimits.maxRedirects, page: entry.key, userAgent: tab.userAgent, signal: runSignal });
         if (!live() || answer.outcome === 'aborted') return;
         if (answer.outcome !== 'response' || !is2xx(answer.status)) {
           results.set(target.url, { ...base, status: answer.outcome === 'private-redirect' ? 'skipped' : 'unreachable', httpStatus: answer.status });

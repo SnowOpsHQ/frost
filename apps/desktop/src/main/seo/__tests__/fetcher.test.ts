@@ -1,10 +1,15 @@
-// Spec: specs/fetcher.spec.ts (FETCHER_LIMITS, FETCH_OUTCOMES, BoundedFetchRequest / BoundedFetchResult)
+// Spec: specs/fetcher.spec.ts (FETCHER_LIMITS, FETCH_OUTCOMES, BoundedFetchRequest / BoundedFetchResult, Lanes)
 // Acceptance: specs/seo-javascript.feature.md (Bounded fetcher)
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { FETCHER_LIMITS } from '@app/specs/fetcher.spec';
-import { createBoundedFetcher, netHop, type Hop, type HopResult, type NetRequester } from '../fetcher';
+import { CHECKS_FETCHER_LIMITS, FETCHER_LANES, FETCHER_LIMITS } from '@app/specs/fetcher.spec';
+import { LINK_CHECK_LIMITS } from '@app/specs/seo-checks.spec';
+import { createCheckFetch } from '../checks-fetch';
+import { checkLink } from '../checks-links';
+import { runBounded } from '../checks-scheduler';
+import { createBoundedFetcher, createFetcherLanes, netHop, type Hop, type HopResult, type NetRequester } from '../fetcher';
 import { createRobotsFetcher } from '../robots-fetch';
+import { createServedHtml } from '../served';
 
 const encoder = new TextEncoder();
 function body(chunks: (string | number)[], read = { count: 0 }): AsyncIterable<Uint8Array> {
@@ -206,6 +211,58 @@ describe('bounded fetcher', () => {
     expect(answered).toBe(false);
     expect(shared.load('https://example.com').queued).toBe(1);
     expect(urls()).toEqual(['https://example.com/page']);
+  });
+});
+
+describe('fetcher lanes', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test('checks-lane-limits', () => {
+    // The checks' lane keeps the link check's own per-origin bounds (`LINK_CHECK_LIMITS`).
+    expect(FETCHER_LANES.checks).toBe(CHECKS_FETCHER_LIMITS);
+    expect(CHECKS_FETCHER_LIMITS.perOriginConcurrency).toBe(LINK_CHECK_LIMITS.perOriginConcurrency);
+    expect(CHECKS_FETCHER_LIMITS.perOriginIntervalMs).toBe(LINK_CHECK_LIMITS.perOriginIntervalMs);
+    expect(FETCHER_LANES.audit).toMatchObject({ perOriginConcurrency: FETCHER_LIMITS.perOriginConcurrency, perOriginIntervalMs: FETCHER_LIMITS.perOriginIntervalMs, maxQueuedPerOrigin: FETCHER_LIMITS.maxQueuedPerOrigin });
+  });
+
+  test('audit-never-waits-behind-a-link-check', async () => {
+    // A 500-link check on the page's own origin whose requests never answer, holding every slot.
+    const links = Array.from({ length: LINK_CHECK_LIMITS.maxLinks }, (_, i) => `https://example.com/link/${i}`);
+    const routes: Record<string, HopResult | (() => Promise<HopResult>)> = { 'https://example.com/robots.txt': ok('User-agent: *\nDisallow:\n'), [PAGE]: ok('<!doctype html><title>t</title>', 200, { 'content-type': 'text/html' }) };
+    for (const url of links) routes[url] = () => new Promise<HopResult>(() => undefined);
+    const { hop, urls } = fakeHop(routes);
+    const lanes = createFetcherLanes({ hop });
+    const fetch = createCheckFetch(lanes.checks);
+    const run = new AbortController();
+    void runBounded(links, (url) => new URL(url).origin, (url, signal) => checkLink(url, { fetch, page: PAGE, userAgent: null, getOnly: new Set(), signal }), { perOrigin: LINK_CHECK_LIMITS.perOriginConcurrency, intervalMs: LINK_CHECK_LIMITS.perOriginIntervalMs, maxConcurrency: LINK_CHECK_LIMITS.maxConcurrency, signal: run.signal });
+    await vi.advanceTimersByTimeAsync(LINK_CHECK_LIMITS.perOriginIntervalMs * 4);
+    expect(lanes.checks.load('https://example.com').running).toBe(LINK_CHECK_LIMITS.perOriginConcurrency);
+    // The audit's robots.txt and served HTML of that origin start at once, in the audit lane.
+    const robots = createRobotsFetcher({ hop, fetcher: lanes.audit });
+    const served = createServedHtml({ fetcher: lanes.audit, parse: async () => ({ ok: false, reason: 'parse-failed' }) });
+    const asked = urls().length;
+    let robotsAnswer: unknown;
+    let servedAnswer: unknown;
+    void robots.get(PAGE).then((answer) => (robotsAnswer = answer));
+    void served.get(1, PAGE, null).then((answer) => (servedAnswer = answer));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(urls().slice(asked)).toContain('https://example.com/robots.txt');
+    expect(robotsAnswer).toMatchObject({ outcome: 'ok' });
+    await vi.advanceTimersByTimeAsync(FETCHER_LIMITS.perOriginIntervalMs);
+    expect(urls().slice(asked)).toContain(PAGE);
+    expect(servedAnswer).toBeDefined();
+    expect(lanes.audit.load('https://example.com').queued).toBe(0);
+    // On one shared queue the same check would hold robots.txt back.
+    const shared = createBoundedFetcher({ hop });
+    for (const url of links.slice(0, 3)) void shared.fetch({ url, page: PAGE });
+    let sharedAnswer: unknown;
+    void createRobotsFetcher({ hop, fetcher: shared })
+      .get(PAGE)
+      .then((answer) => (sharedAnswer = answer));
+    await vi.advanceTimersByTimeAsync(FETCHER_LIMITS.perOriginIntervalMs * 4);
+    expect(sharedAnswer).toBeUndefined();
+    run.abort();
   });
 });
 

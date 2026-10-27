@@ -11,8 +11,9 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
 ## Decisions
 - **One bounded fetcher, extracted from robots.txt's.** `apps/desktop/src/main/seo/fetcher.ts`
   (`createBoundedFetcher`, `netHop`, `isPrivateHost`) holds the rules every request on the user's
-  behalf follows (`fetcher.spec.ts`). Main has one instance; robots.txt and the served HTML share its
-  per-origin queues, and Task 7's checks use it too. robots.txt keeps its own cache and outcomes on
+  behalf follows (`fetcher.spec.ts`). Main runs it in two lanes (`fetcher.spec.ts`, Lanes):
+  robots.txt and the served HTML share the `audit` lane's per-origin queues, and Task 7's checks
+  have a `checks` lane of their own, so an audit never waits behind a link check. robots.txt keeps its own cache and outcomes on
   top (`robots-fetch.ts`); its behaviour and tests are unchanged. The per-call deadline counts from the
   call (queue wait included), so a context input always settles within its own deadline.
 - **A later input of the audit.** The served HTML is the `served` input of the page's context
@@ -70,6 +71,11 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
   sets `User-Agent` / `Accept` only when given; it reports the response headers.
 - **Scenario: robots-shares-the-fetcher** — robots.txt through a shared fetcher uses its queue (the
   Phase 2 robots tests in `indexability.test.ts` pass unchanged).
+- **Scenario: checks-lane-limits** — the `checks` lane keeps the link check's per-origin concurrency
+  and rate limit; the `audit` lane keeps `FETCHER_LIMITS` (`fetcher.spec.ts`, Lanes).
+- **Scenario: audit-never-waits-behind-a-link-check** — while a 500-link check holds every slot of the
+  page's origin in the `checks` lane, that origin's robots.txt and served HTML start at once in the
+  `audit` lane; on one shared queue robots.txt would wait.
 
 ## Fetching (`served.test.ts`)
 - **Scenario: served-fetch-request** — the page's URL without its fragment, `GET`, cookies off

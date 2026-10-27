@@ -35,6 +35,22 @@
  * - **User agent.** The browse session's own (frost's) unless the request names one (`userAgent`,
  *   e.g. a tab's render profile user agent).
  *
+ * ## Lanes (Phase 2.5 integration)
+ * Main runs two instances of the fetcher, both on the same hop (`netHop` on the browse session), so
+ * every rule above holds for both; only their per-origin queues are separate (`FETCHER_LANES`):
+ * - **`audit`**: what every audit fetches by itself, robots.txt and the served HTML, with
+ *   `FETCHER_LIMITS`.
+ * - **`checks`**: what the user starts on request, Task 7's link, sitemap and hreflang checks, with
+ *   `CHECKS_FETCHER_LIMITS`.
+ *
+ * A link check can queue up to 500 requests on one origin and keep both of a queue's slots busy for
+ * minutes; on one shared queue an audit's robots.txt and served-HTML fetches would wait behind it
+ * (and could time out waiting, since the deadline counts the wait). With separate lanes an audit
+ * never waits for a check; a priority within one queue would not do, as it cannot take back a slot
+ * a running check holds (up to 10 s a link). The cost: a site can see both lanes at once, at most
+ * `perOriginConcurrency` of each (4 requests in flight) and each lane's rate. robots.txt itself stays
+ * in the `audit` lane (cached per origin): the checks ask main's robots.txt fetcher for it.
+ *
  * Sites can see these requests: every surface that makes them says so (`FETCH_DISCLOSURE`).
  */
 
@@ -52,9 +68,26 @@ export const FETCHER_LIMITS = {
   perOriginIntervalMs: 200,
   /** Requests waiting per origin; one more is `busy`. */
   maxQueuedPerOrigin: 1_000,
-  /** Response headers kept per call (`BoundedFetchResult.headers`), each value cut to this. */
+  /** Response headers kept per call (`BoundedFetchResult.headers`), each value cut to this (unless the call says otherwise). */
   maxHeaderValueChars: 1_024,
 } as const;
+
+/**
+ * The `checks` lane's per-origin queue (see Lanes): `LINK_CHECK_LIMITS`' per-origin concurrency and
+ * rate limit (`seo-checks.spec.ts`), and the same queue cap as the `audit` lane.
+ */
+export const CHECKS_FETCHER_LIMITS = {
+  perOriginConcurrency: 2,
+  perOriginIntervalMs: 250,
+  maxQueuedPerOrigin: 1_000,
+} as const;
+
+/** The fetcher instances main runs, and each one's per-origin queue limits (see Lanes). */
+export const FETCHER_LANES = {
+  audit: { perOriginConcurrency: FETCHER_LIMITS.perOriginConcurrency, perOriginIntervalMs: FETCHER_LIMITS.perOriginIntervalMs, maxQueuedPerOrigin: FETCHER_LIMITS.maxQueuedPerOrigin },
+  checks: CHECKS_FETCHER_LIMITS,
+} as const;
+export type FetcherLane = keyof typeof FETCHER_LANES;
 
 export const FETCH_METHODS = ['GET', 'HEAD'] as const;
 export type FetchMethod = (typeof FETCH_METHODS)[number];
@@ -97,6 +130,8 @@ export interface BoundedFetchRequest {
   readonly readBody?: (status: number) => boolean;
   /** Response headers to keep (lowercase names; default `content-type` only). */
   readonly keepHeaders?: readonly string[];
+  /** Characters kept of each kept header's value (default `FETCHER_LIMITS.maxHeaderValueChars`; a `Link` header listing alternates needs more). */
+  readonly maxHeaderChars?: number;
   /** Aborts the call (queued or running): `aborted`. */
   readonly signal?: AbortSignal;
 }
@@ -132,7 +167,7 @@ export interface BoundedFetchResult {
   readonly durationMs: number;
 }
 
-/** The fetcher main shares (one per app: the per-origin queues are shared by every surface). */
+/** A fetcher main shares (one per lane, `FETCHER_LANES`: a lane's per-origin queues are shared by every surface in it). */
 export interface BoundedFetcher {
   /** Fetches `request`; never rejects. */
   fetch(request: BoundedFetchRequest): Promise<BoundedFetchResult>;

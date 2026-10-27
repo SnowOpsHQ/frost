@@ -20,7 +20,7 @@ import { restrictAppRequests } from './protocol/requests';
 import { runAccessibilityCheck } from './seo/a11y';
 import { createAnalyzer } from './seo/analysis';
 import { createChecks, type Checks } from './seo/checks';
-import { createCheckFetch, netCheckHop } from './seo/checks-fetch';
+import { createCheckFetch } from './seo/checks-fetch';
 import { CHECKS_ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-checks.spec';
 import { profileUserAgent } from '@app/specs/render-profile.spec';
 import { createContentService } from './seo/content-notes';
@@ -29,7 +29,7 @@ import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
 import { createResponseRecorder } from './seo/responses';
 import { createRobotsFetcher, netHop, pendingRobots, type RobotsFetcher } from './seo/robots-fetch';
-import { createBoundedFetcher } from './seo/fetcher';
+import { createFetcherLanes } from './seo/fetcher';
 import { createServedHtml, PENDING_SERVED, type ServedHtml } from './seo/served';
 import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
@@ -318,16 +318,17 @@ function start(): void {
     // The browse session's main-frame observers (the one owner of its onBeforeRedirect /
     // onResponseStarted / onErrorOccurred: browser/web-request.ts) and its robots.txt fetcher.
     observeMainFrames(browseSession, responses);
-    // One bounded fetcher for every request made on the user's behalf (specs/fetcher.spec.ts): its
-    // per-origin queues are shared by robots.txt and the served HTML.
+    // One bounded fetcher for every request made on the user's behalf (specs/fetcher.spec.ts), in two
+    // lanes over one hop: robots.txt and the served HTML share the `audit` lane's per-origin queues;
+    // the link, sitemap and hreflang checks have the `checks` lane, so an audit never waits behind one.
     const hop = netHop(net, browseSession);
-    const fetcher = createBoundedFetcher({ hop });
-    robots = createRobotsFetcher({ hop, fetcher });
-    served = createServedHtml({ fetcher, parse: (input) => analyzer.parseServed(input) });
+    const fetchers = createFetcherLanes({ hop });
+    robots = createRobotsFetcher({ hop, fetcher: fetchers.audit });
+    served = createServedHtml({ fetcher: fetchers.audit, parse: (input) => analyzer.parseServed(input) });
     observeRequests(browseSession, devtools.observer);
     const robotsFetcher = robots;
     checks = createChecks({
-      fetch: createCheckFetch(netCheckHop(net, browseSession)),
+      fetch: createCheckFetch(fetchers.checks),
       analyse: (job) => checksAnalyzer.analyseCheck(job),
       robots: (pageUrl) => robotsFetcher.get(pageUrl),
       tab: (tabId) => {

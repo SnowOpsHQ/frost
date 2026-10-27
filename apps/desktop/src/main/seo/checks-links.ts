@@ -1,7 +1,7 @@
 import { classifyLink, linkTargetKey, needsGetFallback, skippedLink, type PageLink } from '@app/seo-core';
 import { LINK_CHECK_LIMITS, type LinkCheckResult } from '@app/specs/seo-checks.spec';
 import type { CheckFetch } from './checks-fetch';
-import { isPrivateHost } from './robots-fetch';
+import { isPrivateHost } from './fetcher';
 
 // The link check's planning and one link's request (spec `seo-checks.spec.ts`, `LINK_CHECK_LIMITS`,
 // `HEAD_FALLBACK_STATUSES`; acceptance `seo-checks.feature.md`, Link checks; review focus
@@ -51,8 +51,8 @@ export function planLinks(links: readonly PageLink[], pageUrl: string, limits: P
 
 export interface LinkRequestOptions {
   readonly fetch: CheckFetch;
-  /** Redirects to private hosts are followed (the page is on one). */
-  readonly allowPrivate: boolean;
+  /** The page the links are on: private hosts may be requested only when it is on one (`fetcher.spec.ts`). */
+  readonly page: string;
   readonly userAgent: string | null;
   /** Origins known not to do HEAD (asked with GET at once; a HEAD answer in `HEAD_FALLBACK_STATUSES` adds its origin). */
   readonly getOnly: Set<string>;
@@ -77,7 +77,7 @@ export async function checkLink(url: string, options: LinkRequestOptions): Promi
       maxBytes: method === 'GET' ? limits.getBodyBytes : 0,
       timeoutMs: Math.max(1, deadline - now()),
       maxRedirects: limits.maxRedirects,
-      allowPrivate: options.allowPrivate,
+      page: options.page,
       userAgent: options.userAgent,
       signal: options.signal,
     });

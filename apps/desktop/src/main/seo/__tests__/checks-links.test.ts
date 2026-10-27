@@ -43,26 +43,26 @@ describe('link checks', () => {
     };
     const getOnly = new Set<string>();
     const signal = new AbortController().signal;
-    const result = await checkLink('https://example.com/b', { fetch, allowPrivate: false, userAgent: 'UA', getOnly, signal });
+    const result = await checkLink('https://example.com/b', { fetch, page: 'https://example.com/a', userAgent: 'UA', getOnly, signal });
     expect(result).toMatchObject({ kind: 'redirect', status: 200, method: 'GET', finalUrl: 'https://example.com/b/' });
     expect(asked.map((o) => [o.method, o.maxBytes])).toEqual([
       ['HEAD', 0],
       ['GET', LINK_CHECK_LIMITS.getBodyBytes],
     ]);
-    expect(asked.every((o) => o.userAgent === 'UA' && o.maxRedirects === LINK_CHECK_LIMITS.maxRedirects && o.timeoutMs <= LINK_CHECK_LIMITS.requestTimeoutMs)).toBe(true);
+    expect(asked.every((o) => o.userAgent === 'UA' && o.page === 'https://example.com/a' && o.maxRedirects === LINK_CHECK_LIMITS.maxRedirects && o.timeoutMs <= LINK_CHECK_LIMITS.requestTimeoutMs)).toBe(true);
     // The origin is remembered: its next link goes straight to GET.
     expect(getOnly.has('https://example.com')).toBe(true);
     asked.length = 0;
-    await checkLink('https://example.com/c', { fetch, allowPrivate: false, userAgent: null, getOnly, signal });
+    await checkLink('https://example.com/c', { fetch, page: 'https://example.com/a', userAgent: null, getOnly, signal });
     expect(asked.map((o) => o.method)).toEqual(['GET']);
     // Any other HEAD answer stands (no GET).
     asked.length = 0;
     const notFound: CheckFetch = async (_url, options) => (asked.push(options), answer(404));
-    await expect(checkLink('https://other.test/x', { fetch: notFound, allowPrivate: false, userAgent: null, getOnly, signal })).resolves.toMatchObject({ kind: 'broken', status: 404, method: 'HEAD' });
+    await expect(checkLink('https://other.test/x', { fetch: notFound, page: 'https://example.com/a', userAgent: null, getOnly, signal })).resolves.toMatchObject({ kind: 'broken', status: 404, method: 'HEAD' });
     expect(asked).toHaveLength(1);
     // A stopped run has no result.
     const controller = new AbortController();
     controller.abort();
-    await expect(checkLink('https://other.test/x', { fetch: async () => answer(0, { outcome: 'aborted', status: null }), allowPrivate: false, userAgent: null, getOnly, signal: controller.signal })).resolves.toBeNull();
+    await expect(checkLink('https://other.test/x', { fetch: async () => answer(0, { outcome: 'aborted', status: null }), page: 'https://example.com/a', userAgent: null, getOnly, signal: controller.signal })).resolves.toBeNull();
   });
 });
