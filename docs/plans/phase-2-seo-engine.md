@@ -235,7 +235,7 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
 
 ### Task 7: Release check
 
-- [ ] Mac package `verify:mac`, full e2e on macOS and Linux, Mac screenshots of each panel on real
+- [x] Mac package `verify:mac`, full e2e on macOS and Linux, Mac screenshots of each panel on real
   pages (the release check, run separately).
 - [x] README and plan updates: commit `docs: phase 2 seo engine`
 

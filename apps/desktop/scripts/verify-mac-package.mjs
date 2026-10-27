@@ -101,10 +101,16 @@ function appEnv() {
   for (const key of ['ELECTRON_RUN_AS_NODE', 'ELECTRON_ENABLE_LOGGING', 'NODE_OPTIONS']) delete env[key];
   return env;
 }
-/** Starts the packaged executable; resolves `{ code, stderr }` on exit, or `{ alive: true }` after `ms`. */
+/**
+ * Starts the packaged executable on a throwaway profile; resolves `{ code, stderr }` on exit, or
+ * `{ alive: true }` after `ms`. The fresh `--user-data-dir` keeps the check independent of an
+ * installed frost that may be running: on a shared profile the single-instance lock would make the
+ * launched copy hand over to it and exit 0.
+ */
 function launch(argv, ms) {
+  const profile = mkdtempSync(path.join(tmpdir(), 'frost-verify-profile-'));
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, argv, { env: appEnv(), stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(executable, [`--user-data-dir=${profile}`, ...argv], { env: appEnv(), stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (chunk) => (stderr += chunk));
     child.on('error', reject);
@@ -118,7 +124,7 @@ function launch(argv, ms) {
       clearTimeout(timer);
       resolve({ alive: false, code, signal, stderr });
     });
-  });
+  }).finally(() => rmSync(profile, { recursive: true, force: true }));
 }
 
 const mode = signingMode(appPath);

@@ -51,8 +51,11 @@ Every check prints `PASS <name>` or `FAIL <name>: <reason>`; any failure exits n
   ad-hoc → no entitlements at all (empty, no keys); Developer ID → exactly `MAC_ENTITLEMENTS`.
 - **Scenario: fuses-read-back** — `@electron/fuses` reads the packaged app's fuse wire and every
   `PACKAGED_FUSES` entry has its configured state.
-- **Scenario: launches-and-stays-alive** — the packaged executable, started with no arguments,
-  is still running after `MAC_LAUNCH_ALIVE_MS` (then it is terminated).
+- **Scenario: launches-and-stays-alive** — the packaged executable, started with no arguments
+  other than a fresh throwaway `--user-data-dir` (so a running installed frost, which holds the
+  single-instance lock on the default profile, cannot make it hand over and exit), is still running
+  after `MAC_LAUNCH_ALIVE_MS` (then it is terminated). Every launch in these checks uses its own
+  throwaway profile.
 - **Scenario: refuses-remote-debugging** — started, one at a time, with `--<name>=0` and `--<name>`
   for every `PACKAGED_FORBIDDEN_SWITCHES` name, and with `--inspect=0` (`PACKAGED_FORBIDDEN_ARGV`),
   it exits with code 1 and its stderr contains `PACKAGED_DEBUG_REFUSAL`
