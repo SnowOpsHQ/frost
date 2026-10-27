@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CommandPalette } from './components/CommandPalette';
+import { DevtoolsDrawer } from './components/devtools/DevtoolsDrawer';
 import { FullscreenNotice } from './components/FullscreenNotice';
 import { PageArea } from './components/PagePanels';
 import { PromptBar } from './components/PermissionBar';
@@ -19,7 +20,8 @@ import type { PanelJump } from './palette/registry';
 // toolbar, permission prompt bar, the render-profile editor bar while open
 // (`render-profile.feature.md`), page area with the SEO sidebar docked on its right
 // (`seo-sidebar.feature.md`) and the command palette's sheet above it while open
-// (`command-palette.feature.md`), status bar, and the fullscreen notice.
+// (`command-palette.feature.md`) and the SEO devtools drawer below it while open (`devtools.feature.md`),
+// status bar, and the fullscreen notice.
 // All browser state lives in main; this page renders it and sends user intents over the
 // sender-guarded `browser.*` procedures (`ipc.ts`). Styling is the bundled styles.css only
 // (strict CSP). Runtime constants come from the Zod-free specs (`tabs.spec`, `permissions.spec`,
@@ -52,6 +54,8 @@ export function App() {
         <div className="page-column">
           <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
           <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
+          {/* The SEO devtools drawer (`devtools.feature.md`): a band under the page area, which shrinks above it. */}
+          <DevtoolsDrawer state={state} tab={tab} audit={empty ? null : audit} onOpenPanel={(panel) => setPanelJump((last) => ({ panel, focus: true, seq: (last?.seq ?? 0) + 1 }))} />
         </div>
         <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} />
       </div>

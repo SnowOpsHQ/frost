@@ -7,6 +7,7 @@ import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
+import type { DevtoolsService } from './devtools-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -159,4 +160,6 @@ export interface IpcServices {
   readonly content?: ContentService;
   /** The JavaScript panel's served-HTML refetch (Phase 2.5 Task 2, `javascript-router.ts`). */
   readonly javascript?: JavascriptService;
+  /** The SEO devtools drawer (Phase 2.5 Task 5, `devtools-service.ts`). */
+  readonly devtools?: DevtoolsService;
 }

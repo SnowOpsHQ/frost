@@ -28,7 +28,9 @@ import { createServedHtml, PENDING_SERVED, type ServedHtml } from './seo/served'
 import { profileUserAgent } from '@app/specs/render-profile.spec';
 import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
-import { observeMainFrames } from './browser/web-request';
+import { observeMainFrames, observeRequests } from './browser/web-request';
+import { createDevtoolsService } from './devtools/service';
+import { browseCookies, clearBrowseOrigin, confirmClearSiteData } from './devtools/site-data';
 import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './seo/vitals';
 import { createShownTimes } from './seo/vitals-shown';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
@@ -173,9 +175,29 @@ function start(): void {
     return laterInput(served.get(contents.id, url, userAgent), PENDING_SERVED, served.peek(contents.id, url, userAgent));
   };
 
+  // The SEO devtools drawer (specs/devtools.feature.md): a subscriber of the browse session's
+  // webRequest owner (observers only), each tab's console messages and the Storage tab's reveals;
+  // read-only but for "Clear this site's data", which main confirms in its own dialog. The robots.txt
+  // verdicts are decided in the analysis worker.
+  const tabContents = new Map<number, WebContents>();
+  const devtools = createDevtoolsService({
+    contentsOf: (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null,
+    tabIdOf: (contentsId) => browser.tabIdOf(webContents.fromId(contentsId)),
+    responses,
+    robots: () => robots,
+    robotsVerdicts: (job) => analyzer.robotsVerdicts(job),
+    cookies: browseCookies,
+    confirmClearSiteData: (origin) => confirmClearSiteData(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, origin),
+    clearOrigin: clearBrowseOrigin,
+    liveWindow: (id) => BrowserWindow.fromId(id)?.isDestroyed() === false,
+    log: logSession,
+  });
+
   app.on('web-contents-created', (_event, contents) => {
     if (!isBrowseContents(contents)) return;
     responses.watch(contents);
+    tabContents.set(contents.id, contents);
+    devtools.watchContents(contents);
     // The speed collector's observers start at `dom-ready` of the active tab's document, before a
     // page's own scripts can clear the timing buffers for long (seo-speed.feature.md).
     const id = contents.id;
@@ -183,10 +205,13 @@ function start(): void {
       const tabId = browser.tabIdOf(contents);
       if (tabId !== null && tabId === browser.getState().activeTabId) void collect(contents, { prime: true }).catch(() => undefined);
     });
-    contents.once('destroyed', () => shownTimes.forget(id));
+    contents.once('destroyed', () => {
+      shownTimes.forget(id);
+      tabContents.delete(id);
+      served?.forget(id);
+    });
     // A new document fetches its served HTML afresh (seo-javascript.feature.md).
     contents.on('did-navigate', () => served?.forget(id));
-    contents.once('destroyed', () => served?.forget(id));
   });
   // Per-tab render profiles (specs/render-profile.feature.md): each tab's own debugger, attached
   // only to a browse-session tab's WebContents and only while it has a profile, sending only the
@@ -243,6 +268,9 @@ function start(): void {
     windows.track(win);
     registerSecurity(session.defaultSession, win, securityOptions);
     browser.attach(win);
+    // The devtools drawer's full capture lasts only while an open window has it open.
+    const windowId = win.id;
+    win.once('closed', () => devtools.setOpen(windowId, false));
     loadRenderer(win, { devServerUrl }).catch((err: unknown) => {
       console.error('failed to load renderer', err);
       app.quit();
@@ -265,6 +293,7 @@ function start(): void {
     const fetcher = createBoundedFetcher({ hop });
     robots = createRobotsFetcher({ hop, fetcher });
     served = createServedHtml({ fetcher, parse: (input) => analyzer.parseServed(input) });
+    observeRequests(browseSession, devtools.observer);
     hardenBrowseSession(browseSession, {
       onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
       permissions: createBrowsePermissionHandlers({
@@ -301,6 +330,8 @@ function start(): void {
           log: logSession,
           confirmClearAll: () => confirmClearContentNotes(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
         }),
+        // The SEO devtools drawer (specs/devtools.feature.md).
+        devtools,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -315,6 +346,7 @@ function start(): void {
         robots?.clear();
         responses.clear();
         served?.clear();
+        devtools.clear();
         // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
         browser.forgetRenderProfilePins();
       },

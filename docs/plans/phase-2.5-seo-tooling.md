@@ -266,7 +266,27 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
     except a "Clear this site's data" action that asks for confirmation.
   - **Issues:** every finding for the current audit in one sortable table, with its detail.
 - The drawer is read-only by design: no script execution, no DOM editing.
-- [ ] commit `feat(chrome): SEO devtools drawer`
+- As built (`specs/devtools.feature.md`, `specs/devtools.spec.ts`, `specs/devtools.schema.ts`):
+  - a band at the bottom of the page column (the page area shrinks above it through
+    `setPageBounds`), sized by an SVG strut's `height` attribute, resizable from its top edge (mouse
+    and keyboard), clamped to keep the page in view; open, height and tab per window in
+    `localStorage`. Toggled by `Mod+Shift+D` (reserved in `before-input-event`), View › SEO Devtools
+    and the palette (`devtools-palette.ts`); main bumps `BrowserState.devtoolsToggleSeq`;
+  - recording decision: always on, from a new `observeRequests` subscriber of `web-request.ts`
+    (observers only); full (2,000 per document) while any window has the drawer open
+    (`devtools.setOpen`), otherwise a ring of the newest 100 plus the document request. "Preserve
+    log" per tab; secret headers stored only as `•••`, other headers allowlisted, bodies never read;
+  - robots.txt verdicts for the page origin's crawlable requests are decided in the analysis worker
+    (a `robots` job) from the robots.txt fetcher's answer; the third-party flag reuses
+    `isThirdParty`;
+  - Redirects come from the response recorder, with each hop's key headers from the drawer's
+    recorder; Console deduplicates and caps; Storage masks cookie values, Reveal lasts until the
+    tab's next navigation (kept in main), "Clear this site's data" is confirmed in main's dialog and
+    clears that origin from the browse partition. Per-origin storage usage is not shown (Electron
+    has no cheap figure);
+  - procedures `devtools.watch` (a version long-poll), `network`, `redirects`, `console`, `storage`,
+    `revealCookie`, `clearSiteData`, `setOpen`, `setPreserveLog`, all `enforceSender`-first.
+- [x] commit `feat(chrome): SEO devtools drawer`
 
 #### Task 6: Browser polish
 - **Find in page:** Cmd/Ctrl+F, using `webContents.findInPage`, with a find bar in the chrome, match

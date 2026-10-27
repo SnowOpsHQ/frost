@@ -1,13 +1,15 @@
 import type { SeoAudit, SpeedReport } from '@app/seo-core';
 import type { ServedParseInput, ServedParseResult } from '@app/specs/seo-javascript.schema';
 import { ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import type { RobotsVerdictsResult } from '../devtools/robots-verdicts';
 
 // Page-derived analysis off the Electron main thread (spec `seo-limits.spec.ts`,
 // `ANALYSIS_TIMEOUT_MS`; acceptance `seo-schema.feature.md`, Analysis off the main thread). Main posts
 // each extractor answer to one long-lived worker (`analysis-worker.ts`), one at a time; each analysis
 // has a hard timeout, after which the worker is terminated and the next analysis spawns a new one.
 // Speed measurements (`seo-speed.feature.md`) go through the same worker and queue, as `speed` jobs,
-// and so does the served HTML's parse (`seo-javascript.feature.md`), as `served` jobs.
+// and so does the served HTML's parse (`seo-javascript.feature.md`), as `served` jobs, and the
+// devtools drawer's robots.txt verdicts (`devtools.feature.md`), as `robots` jobs.
 
 export type AnalysisResult = { readonly ok: true; readonly audit: SeoAudit } | { readonly ok: false; readonly reason: 'invalid-snapshot' | 'analysis-timeout' | 'analysis-failed' };
 export type SpeedAnalysisResult = { readonly ok: true; readonly report: SpeedReport } | { readonly ok: false; readonly reason: 'invalid-measurement' | 'analysis-timeout' | 'analysis-failed' };
@@ -36,11 +38,13 @@ export interface Analyzer {
   analyseSpeed(raw: unknown): Promise<SpeedAnalysisResult>;
   /** Parses served HTML into a served snapshot in the worker (`served-parse.ts`; `parse-timeout` past the timeout). Never rejects. */
   parseServed(input: ServedParseInput): Promise<ServedParseResult>;
+  /** Validates a robots.txt verdict job (`RobotsVerdictJobSchema`) and decides its URLs in the worker. Never rejects. */
+  robotsVerdicts(raw: unknown): Promise<RobotsVerdictsResult>;
   /** Terminates the worker (the app is quitting). */
   dispose(): void;
 }
 
-type JobKind = 'audit' | 'speed' | 'served';
+type JobKind = 'audit' | 'speed' | 'served' | 'robots';
 type Settled = { readonly ok: boolean; readonly reason?: string };
 
 interface Job {
@@ -52,13 +56,16 @@ interface Job {
 }
 
 /** The reason a job's input is refused with. */
-const INVALID: Readonly<Record<JobKind, string>> = { audit: 'invalid-snapshot', speed: 'invalid-measurement', served: 'parse-failed' };
+const INVALID: Readonly<Record<JobKind, string>> = { audit: 'invalid-snapshot', speed: 'invalid-measurement', served: 'parse-failed', robots: 'invalid-job' };
+
+/** The field a job kind's successful result carries its payload in. */
+const PAYLOAD: Readonly<Record<JobKind, string>> = { audit: 'audit', speed: 'report', served: 'snapshot', robots: 'verdicts' };
 
 /** What the worker answered, if it has the shape of a `kind` job's result. */
 function asResult(kind: JobKind, value: unknown): Settled | null {
   if (typeof value !== 'object' || value === null) return null;
-  const result = value as { ok?: unknown; audit?: unknown; report?: unknown; reason?: unknown };
-  const payload = kind === 'audit' ? result.audit : kind === 'speed' ? result.report : (result as { snapshot?: unknown }).snapshot;
+  const result = value as { ok?: unknown; reason?: unknown } & Record<string, unknown>;
+  const payload = result[PAYLOAD[kind]];
   if (result.ok === true && typeof payload === 'object' && payload !== null) return result as Settled;
   if (result.ok === false && (result.reason === INVALID[kind] || result.reason === 'analysis-failed')) return result as Settled;
   return null;
@@ -136,6 +143,7 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
     analyseSpeed: (raw) => enqueue('speed', raw, undefined) as Promise<SpeedAnalysisResult>,
     parseServed: (input) =>
       enqueue('served', input, undefined).then((result): ServedParseResult => (result.ok ? (result as ServedParseResult) : { ok: false, reason: result.reason === 'analysis-timeout' ? 'parse-timeout' : 'parse-failed' })),
+    robotsVerdicts: (raw) => enqueue('robots', raw, undefined) as Promise<RobotsVerdictsResult>,
     dispose() {
       for (const job of queue.splice(0)) job.settle({ ok: false, reason: 'analysis-failed' });
       if (current) finish({ ok: false, reason: 'analysis-failed' }, true);

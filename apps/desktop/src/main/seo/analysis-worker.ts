@@ -1,5 +1,6 @@
 import { parentPort } from 'node:worker_threads';
 import type { ServedParseInput } from '@app/specs/seo-javascript.schema';
+import { robotsVerdicts } from '../devtools/robots-verdicts';
 import { analyseSnapshot, analyseSpeed } from './analyse';
 import { parseServedHtml } from './served-parse';
 
@@ -7,11 +8,25 @@ import { parseServedHtml } from './served-parse';
 // acceptance `seo-schema.feature.md`, Analysis off the main thread). It runs in a `worker_threads`
 // Worker with no Electron APIs; all it ever receives is `{ id, raw, context }`, the extractor's
 // answer and what main collected beside it (the response, robots.txt and the speed measurement),
-// or `{ id, kind: 'speed', raw }`, a live speed measurement (`seo-speed.feature.md`), or
-// `{ id, kind: 'served', raw }`, served HTML bytes to parse (`seo-javascript.feature.md`); and all it
-// sends back is `{ id, result }`.
+// or `{ id, kind, raw }` for another job kind: `speed`, a live speed measurement
+// (`seo-speed.feature.md`); `served`, served HTML bytes to parse (`seo-javascript.feature.md`);
+// `robots`, the devtools drawer's robots.txt verdict job (`devtools.feature.md`). All it sends back
+// is `{ id, result }`.
+
+/** The job's result, by its kind. */
+function resultOf(message: { readonly kind?: unknown; readonly raw: unknown; readonly context?: unknown }): unknown {
+  switch (message.kind) {
+    case 'speed':
+      return analyseSpeed(message.raw);
+    case 'served':
+      return parseServedHtml(message.raw as ServedParseInput);
+    case 'robots':
+      return robotsVerdicts(message.raw);
+    default:
+      return analyseSnapshot(message.raw, message.context);
+  }
+}
 
 parentPort?.on('message', (message: { readonly id: number; readonly kind?: unknown; readonly raw: unknown; readonly context?: unknown }) => {
-  const result = message.kind === 'speed' ? analyseSpeed(message.raw) : message.kind === 'served' ? parseServedHtml(message.raw as ServedParseInput) : analyseSnapshot(message.raw, message.context);
-  parentPort?.postMessage({ id: message.id, result });
+  parentPort?.postMessage({ id: message.id, result: resultOf(message) });
 });

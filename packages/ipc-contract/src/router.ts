@@ -16,6 +16,7 @@ import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
 import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
+import { devtoolsRouter } from './devtools-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -268,6 +269,8 @@ export const appRouter = router({
   content: contentRouter,
   // Phase 2.5 Task 2 (`seo-javascript.feature.md`): the JavaScript panel's "Fetch again".
   javascript: javascriptRouter,
+  // Phase 2.5 Task 5 (`devtools.feature.md`): the SEO devtools drawer (read-only; masked data).
+  devtools: devtoolsRouter,
 });
 
 export type AppRouter = typeof appRouter;

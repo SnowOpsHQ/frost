@@ -1,11 +1,12 @@
 // Spec: specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS), specs/page-commands.spec.ts (RESERVED_PAGE_SHORTCUTS)
 // Acceptance: specs/tabs.feature.md (Shortcut matching), specs/page-commands.feature.md (Shortcut matching),
-// specs/seo-sidebar.feature.md (Toggle)
+// specs/seo-sidebar.feature.md (Toggle), specs/devtools.feature.md (devtools-shortcut-matches; DEVTOOLS_TOGGLE_SHORTCUT)
 import { describe, expect, test } from 'vitest';
 import { RESERVED_PAGE_SHORTCUTS, UNRESERVED_PAGE_SHORTCUTS, type PageCommand } from '@app/specs/page-commands.spec';
 import { RESERVED_TAB_SHORTCUTS, type TabCommand } from '@app/specs/tabs.spec';
 import { SIDEBAR_TOGGLE_SHORTCUT } from '@app/specs/seo-sidebar.spec';
-import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput } from '../shortcuts';
+import { DEVTOOLS_TOGGLE_SHORTCUT } from '@app/specs/devtools.spec';
+import { matchDevtoolsShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput } from '../shortcuts';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'] as const;
 
@@ -146,5 +147,25 @@ describe('sidebar shortcut matching', () => {
     // Not a tab or page shortcut (it never runs twice).
     expect(matchTabShortcut(toggle, platform)).toBeNull();
     expect(matchPageShortcut(toggle, platform)).toBeNull();
+  });
+});
+
+describe('devtools shortcut matching', () => {
+  test.each(PLATFORMS)('devtools-shortcut-matches (%s)', (platform) => {
+    const toggle = inputFor(DEVTOOLS_TOGGLE_SHORTCUT, platform);
+    expect(matchDevtoolsShortcut(toggle, platform)).toBe(true);
+    expect(matchDevtoolsShortcut({ ...toggle, type: 'keyUp' }, platform)).toBe(true);
+    expect(matchDevtoolsShortcut({ ...toggle, key: 'D' }, platform)).toBe(true);
+    expect(matchDevtoolsShortcut({ ...toggle, type: 'char' }, platform)).toBe(false);
+    expect(matchDevtoolsShortcut(inputFor('Mod+D', platform), platform)).toBe(false);
+    expect(matchDevtoolsShortcut({ ...toggle, alt: true }, platform)).toBe(false);
+    expect(matchDevtoolsShortcut({ ...toggle, control: true, meta: true }, platform)).toBe(false);
+    expect(matchDevtoolsShortcut(inputFor('Mod+Shift+S', platform), platform)).toBe(false);
+    const mac = platform === 'darwin';
+    expect(matchDevtoolsShortcut({ ...toggle, meta: !mac, control: mac }, platform)).toBe(false);
+    // No other reserved shortcut takes it (it runs once).
+    expect(matchTabShortcut(toggle, platform)).toBeNull();
+    expect(matchPageShortcut(toggle, platform)).toBeNull();
+    expect(matchSidebarShortcut(toggle, platform)).toBe(false);
   });
 });

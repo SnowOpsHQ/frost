@@ -233,6 +233,13 @@ export const BrowserStateSchema = z.strictObject({
    */
   toggleSidebarSeq: z.int().nonnegative(),
   /**
+   * The SEO devtools drawer (`devtools.spec.ts`, `DEVTOOLS_TOGGLE_SHORTCUT`): increases by one each
+   * time main is asked to toggle it (its menu item and reserved shortcut); the chrome, which owns
+   * open / closed, toggles whenever the value it last saw changes. Main always sends it; optional
+   * only so that states built before the drawer existed (test fixtures) stay valid.
+   */
+  devtoolsToggleSeq: z.int().nonnegative().optional(),
+  /**
    * The command palette (`command-palette.spec.ts`): `seq` increases by one each time main is asked
    * to open it (its menu item and reserved shortcut); the chrome opens it whenever the value it last
    * saw changes (or closes it, if open). `returnFocus` is where keyboard focus was at that request
