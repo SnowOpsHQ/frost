@@ -6,6 +6,7 @@ import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion, type FuseV1Config } from '@electron/fuses';
+import { NOTICES_FILE } from './third-party-notices.ts';
 import {
   MAC_APP_CATEGORY,
   MAC_BUNDLE_ID,
@@ -73,6 +74,9 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
       appCategoryType: MAC_APP_CATEGORY,
       darwinDarkModeSupport: true,
       asar: true,
+      // The licenses of the bundled third-party packages (third-party-notices.ts), beside app.asar in
+      // resources/ (specs/seo-speed.feature.md, Licenses). Relative to the app directory Forge runs in.
+      extraResource: [NOTICES_FILE],
       ...signing,
     },
     rebuildConfig: {},
@@ -98,9 +102,12 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
     plugins: [
       new VitePlugin({
         // Object entries name the bundles (.vite/build/main.cjs, .vite/build/preload.cjs) so the two
-        // `index.ts` entry files don't collide in the shared output dir.
+        // `index.ts` entry files don't collide in the shared output dir. The SEO analysis worker is a
+        // bundle of its own beside them (.vite/build/seo-analysis.cjs): main starts it with
+        // `new Worker(path.join(__dirname, 'seo-analysis.cjs'))` (specs/seo-schema.feature.md).
         build: [
           { entry: { main: 'src/main/index.ts' }, config: 'vite.main.config.ts', target: 'main' },
+          { entry: { 'seo-analysis': 'src/main/seo/analysis-worker.ts' }, config: 'vite.main.config.ts', target: 'main' },
           { entry: { preload: 'src/preload/index.ts' }, config: 'vite.preload.config.ts', target: 'preload' },
         ],
         renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],

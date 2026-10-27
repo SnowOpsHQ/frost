@@ -103,7 +103,8 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   still pending in the writer are dropped, so none is written back; the tab strip is kept); then
   the browse partition's storage (`session.fromPartition(BROWSE_PARTITION).clearStorageData()`:
   cookies, local storage, IndexedDB, service workers, cache storage …) and its HTTP cache
-  (`clearCache()`). One part failing is logged and the others still run. No tab is closed or
+  (`clearCache()`); then the SEO auditor's per-origin robots.txt answers and recorded tab responses
+  (`seo-indexability.feature.md`). One part failing is logged and the others still run. No tab is closed or
   reloaded, and the app UI's own session is untouched. Pending prompts stay pending (they are
   undecided); one that was narrowed by a now-forgotten decision grants only requests whose every
   permission is remembered Allowed when it is answered (`permissions.feature.md`, Remembered
@@ -251,8 +252,8 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Scenario: clear-asks-first** — the action asks for confirmation before anything; when it is
   not confirmed nothing is cleared and it answers `false`.
 - **Scenario: clear-clears-everything** — confirmed, it forgets the in-memory decisions, then
-  clears the stored visits and decisions, then the browse storage and cache, and answers `true`;
-  it closes no tab.
+  clears the stored visits and decisions, then the browse storage and cache, then the SEO
+  auditor's robots.txt answers and recorded responses, and answers `true`; it closes no tab.
 - **Scenario: clear-goes-on-after-a-failure** — a part that throws or rejects is logged once and
   the other parts still run.
 - **Scenario: clear-dialog-options** — the confirmation is `dialog.showMessageBox` with

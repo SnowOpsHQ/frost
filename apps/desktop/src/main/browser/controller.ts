@@ -1,15 +1,21 @@
 import type { SavedSession } from '@app/db';
-import type { BrowserService } from '@app/ipc-contract';
+import type { BrowserService, SeoService } from '@app/ipc-contract';
+import { filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
-import { isWebUrl } from '@app/specs/web-url.spec';
+import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { createFullscreen } from './fullscreen';
 import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
-import { matchPageShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
+import { createTabA11y, type A11yRunner } from '../seo/a11y-runs';
+import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
+import { withKnown } from '../seo/context-source';
+import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
+import { createTabSpeed, type TabSpeedOptions } from '../seo/vitals-tabs';
+import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
 import { wireTabView, type TabContextMenuRequest } from './tab-events';
 import { aliveContents, capTitle, clampPageBounds, createTab, emptyTabState, noop, sameTabState, showsPage, zoomOf, type HostWindow, type PageState, type StripState, type Tab, type TabView } from './tab-model';
@@ -20,8 +26,8 @@ import { createTabPrompts, type TabPermissions } from './tab-permissions';
 // this runs under Vitest with plain fakes. Its parts: the tab model (`tab-model.ts`), each tab
 // view's events (`tab-events.ts`), HTML fullscreen (`fullscreen.ts`), the session database's side
 // (`session-sync.ts`), state versioning and `watch` (`state-watch.ts`), the permission broker's
-// side (`tab-permissions.ts`) and the page commands (`page-commands.ts`); this file holds the strip
-// and its commands.
+// side (`tab-permissions.ts`), the page commands (`page-commands.ts`) and the SEO auditor
+// (`../seo/auditor.ts`); this file holds the strip and its commands.
 //
 // Only the active tab's view is ever attached to the window's `contentView`, and only while it shows
 // a page: a tab whose last load failed or whose renderer crashed shows the chrome's error / crash
@@ -95,6 +101,16 @@ export interface BrowserController extends BrowserService {
    * Only before the first window is attached; a no-op afterwards.
    */
   restoreSession(saved: SavedSession): void;
+  /**
+   * Asks the chrome to toggle the SEO sidebar (its menu item and reserved shortcut,
+   * `seo-sidebar.feature.md`): bumps `toggleSidebarSeq`. A no-op without a window.
+   */
+  toggleSidebar(): void;
+  /**
+   * The tabs' SEO audits, highlight overlays and copy commands, as the `seo.*` procedures see them
+   * (`seo-sidebar.feature.md`, Auditor; `seo-panels.feature.md`).
+   */
+  readonly seo: SeoService;
 }
 
 export interface BrowserControllerOptions {
@@ -121,12 +137,46 @@ export interface BrowserControllerOptions {
    * main builds it from the params and pops it up on `window`. Without it there is none.
    */
   readonly contextMenu?: (request: TabContextMenuRequest) => void;
+  /**
+   * The SEO auditor's extractor (`runExtractor` in `../seo/extract.ts`) and timings: the active
+   * tab is audited after each load and SPA route change. Without it no tab is ever audited (every
+   * page's audit stays `pending`).
+   */
+  readonly seo?: TabAuditsOptions;
+  /**
+   * Draws or removes the SEO highlight overlay in a tab's page and waits for it to end
+   * (`runHighlight` / `watchHighlight` in `../seo/highlight.ts`). Without it `seo.setHighlight` is a
+   * no-op answering `false`.
+   */
+  readonly highlight?: HighlightPainter;
+  /**
+   * The page-speed collector and its analysis (`runVitals` in `../seo/vitals.ts`, the worker's
+   * `analyseSpeed`): `seo.measureSpeed` measures the active tab (`seo-speed.feature.md`). Without it
+   * every measurement stays `pending`.
+   */
+  readonly speed?: TabSpeedOptions;
+  /**
+   * Runs the accessibility check in a tab's page (`runAccessibilityCheck` in `../seo/a11y.ts`,
+   * Task 6). Without it `seo.runAccessibility` is a no-op answering `false`.
+   */
+  readonly accessibility?: A11yRunner;
+  /**
+   * The system clipboard (Electron's `clipboard`, in main): "Copy as CSV" and "Copy URL" write
+   * through it, so the chrome never needs clipboard access. Without it they copy nothing.
+   */
+  readonly clipboard?: { writeText(text: string): void };
+}
+
+/** Whether `audit` is the one the panel rendered (`SeoAuditRef`: its URL and when it was taken). */
+function sameAudit(audit: { readonly url: string; readonly takenAt: number }, shown: { readonly url: string; readonly takenAt: number }): boolean {
+  return audit.url === shown.url && audit.takenAt === shown.takenAt;
 }
 
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {
   let nextTabId = 1;
   const strip: StripState = { tabs: [], activeTabId: null, win: null, attached: null, pageBounds: null };
   let focusAddressBarSeq = 0;
+  let toggleSidebarSeq = 0;
   let notice: Notice | null = null;
   /** A window was attached once: the restore point has passed. */
   let everAttached = false;
@@ -134,9 +184,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id) })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
+    toggleSidebarSeq,
     notice: notice && { ...notice },
   });
   const stateWatch = createStateWatch(snapshot);
@@ -164,9 +215,56 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // the operation that caused them).
   const prompts = createTabPrompts(options.permissions, changed);
 
+  // The SEO auditor audits only the active tab of an attached window. The accessibility check's
+  // answer for the tab's document (Task 6) travels in the page's context, beside what main collects:
+  // an input known at once, in the first analysis and the final one alike (`withKnown`).
+  const seoOptions: TabAuditsOptions | undefined = options.seo && {
+    ...options.seo,
+    context: (contents) => {
+      const base = options.seo!.context?.(contents);
+      const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
+      const answer = tab ? a11y.resultFor(tab, contents.getURL()) : null;
+      if (answer === null) return base ?? { now: () => ({ context: undefined, final: true }), later: null };
+      return withKnown(base, { accessibility: answer });
+    },
+  };
+  const audits = createTabAudits(seoOptions, {
+    isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    isOpen: (tab) => strip.tabs.includes(tab),
+    changed,
+  });
+
+  // Live page-speed measurements, of the active tab only (dropped with each new document).
+  const speeds = createTabSpeed(options.speed, {
+    isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    isOpen: (tab) => strip.tabs.includes(tab),
+  });
+
+  // The accessibility check (Task 6), on request for the active tab; an answer re-scores the audit
+  // (at once, keeping the audit on screen, or when the tab is next shown).
+  const a11y = createTabA11y({
+    runner: options.accessibility,
+    isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    isOpen: (tab) => strip.tabs.includes(tab),
+    changed,
+    answered: (tab) => {
+      if (hasWindow() && tab.id === strip.activeTabId) audits.rerun(tab, true);
+      else audits.schedule(tab, 'load');
+    },
+  });
+
+  // The SEO highlight overlay, on the active tab only (it goes when the page changes or the tab is left).
+  const highlights = createTabHighlights({
+    painter: options.highlight,
+    isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    changed,
+  });
+
   /** Appends an empty tab and makes it active (the caller syncs the window and bumps the version). */
   const openEmptyTab = (): number => {
     const tab = createTab(nextTabId++);
+    const left = activeTab();
+    if (left) highlights.deactivated(left);
     strip.tabs.push(tab);
     strip.activeTabId = tab.id;
     return tab.id;
@@ -223,6 +321,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // Its WebContents is going: nothing will leave HTML fullscreen, so the window leaves OS fullscreen.
     if (fullscreen.clear(tab)) fullscreen.leaveWindowFullscreen();
     prompts.deny(tab);
+    audits.forget(tab);
+    speeds.forget(tab);
+    a11y.forget(tab);
+    highlights.dropped(tab);
     if (view) detach(view);
     return view;
   };
@@ -236,7 +338,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   /** Forgets `tab`'s view (its WebContents is gone): off the window, and the tab is empty again. */
   const dropView = (tab: Tab): void => {
     if (!releaseView(tab)) return;
-    tab.state = emptyTabState(tab.id);
+    tab.state = emptyTabState(tab.id, tab.documentSeq);
     changed();
   };
 
@@ -267,10 +369,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (shown) detach(shown);
     // A fullscreen page that is no longer shown leaves fullscreen.
     if (hidden) fullscreen.leave(hidden);
+    // Page speed: when a document was first shown and hidden (`seo-speed.feature.md`, Background tabs).
+    if (hidden) speeds.hidden(hidden);
     const win = strip.win;
     if (!want || !tab || !win || win.isDestroyed()) return;
     win.contentView.addChildView(want);
     strip.attached = want;
+    speeds.shown(tab);
     applyBounds(tab);
     want.setVisible(true);
     // Chromium completes a hidden page's exit only once it is shown: ask again (once settled).
@@ -301,6 +406,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const refresh = (tab: Tab): void => {
     const contents = tab.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
+    // An error or crash panel replaced the page: its overlay went with it.
+    if (!showsPage(tab)) {
+      highlights.dropped(tab);
+      a11y.dropped(tab);
+    }
     const url = contents.getURL();
     // A restored tab's first load has no URL until it commits: it keeps showing what was saved.
     const shown = url === '' ? tab.restored : null;
@@ -316,6 +426,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       unresponsive: tab.unresponsive,
       fullscreen: tab.fullscreen,
       zoom: zoomOf(contents),
+      documentSeq: tab.documentSeq,
     };
     if (sameTabState(tab.state, next)) return;
     tab.state = next;
@@ -343,6 +454,19 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       takeShortcut,
       removeTab,
       contextMenu: options.contextMenu,
+      pageSettled: (t, kind) => {
+        if (kind === 'in-page') {
+          highlights.navigatedInPage(t);
+          a11y.navigatedInPage(t);
+        }
+        audits.schedule(t, kind);
+      },
+      pageCommitted: (t) => {
+        highlights.dropped(t);
+        a11y.dropped(t);
+        audits.navigated(t);
+        speeds.navigated(t);
+      },
     });
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
     applyBounds(tab);
@@ -367,9 +491,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const tab = strip.tabs.find((t) => t.id === tabId);
     if (!tab || !hasWindow()) return false;
     if (tab.id === strip.activeTabId) return true;
+    // The tab left behind loses its overlay.
+    const left = activeTab();
+    if (left) highlights.deactivated(left);
     strip.activeTabId = tab.id;
     syncAttached();
     focusActive();
+    audits.activated(tab);
     changed();
     return true;
   };
@@ -391,6 +519,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       strip.activeTabId = next ? next.id : null;
       syncAttached();
       focusActive();
+      if (next) audits.activated(next);
     }
     changed();
     return true;
@@ -465,9 +594,22 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const openTabFromPage = (opener: unknown, url: string): number | null => {
     if (!hasWindow() || !isWebUrl(url)) return null;
-    const index = strip.tabs.findIndex((tab) => tab.view !== null && aliveContents(tab.view) === opener);
-    const openerTab = strip.tabs[index];
-    if (!openerTab) return null;
+    const openerTab = strip.tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === opener);
+    return openerTab ? openTabRightOf(openerTab, url) : null;
+  };
+
+  /** A link from the SEO sidebar: opened in a background tab right of the active tab (as its popup would be). */
+  const openBackgroundTab = (url: string): number | null => {
+    const parsed = parseWebUrl(url);
+    const opener = activeTab();
+    if (!hasWindow() || !parsed || !opener) return null;
+    return openTabRightOf(opener, parsed.href);
+  };
+
+  /** Opens the `http(s)` `url` in a new background tab right of `openerTab`, after the tabs it opened. */
+  const openTabRightOf = (openerTab: Tab, url: string): number | null => {
+    const index = strip.tabs.indexOf(openerTab);
+    if (index < 0) return null;
     if (strip.tabs.length >= MAX_TABS) {
       raiseNotice('tab-limit');
       return null;
@@ -489,6 +631,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const focusAddressBar = (): void => {
     if (!hasWindow()) return;
     requestAddressFocus();
+    changed();
+  };
+
+  const toggleSidebar = (): void => {
+    if (!hasWindow()) return;
+    toggleSidebarSeq += 1;
     changed();
   };
 
@@ -525,11 +673,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   function takeShortcut(event: { preventDefault(): void }, input: KeyInput): void {
     const shortcut = matchTabShortcut(input, platform);
     const page = shortcut ? null : matchPageShortcut(input, platform);
-    if (!shortcut && !page) return;
+    const sidebar = !shortcut && !page && matchSidebarShortcut(input, platform);
+    if (!shortcut && !page && !sidebar) return;
     event.preventDefault();
     if (input.type !== 'keyDown') return;
     if (shortcut) runShortcut(shortcut);
     else if (page) runPageCommand(page);
+    else toggleSidebar();
   }
 
   const restoreSession = (saved: SavedSession): void => {
@@ -629,6 +779,57 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     activatePreviousTab: () => cycle(-1),
 
     focusAddressBar,
+
+    toggleSidebar,
+
+    openBackgroundTab,
+
+    seo: {
+      getAudit: (tabId) => {
+        const tab = strip.tabs.find((t) => t.id === tabId);
+        const response = audits.response(tab);
+        // A ready audit carries the tab's accessibility run (Task 6).
+        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab) } : response;
+      },
+      measureSpeed: (tabId) => speeds.measure(strip.tabs.find((tab) => tab.id === tabId)),
+      setHighlight: (tabId, mode) => {
+        const tab = strip.tabs.find((t) => t.id === tabId);
+        return tab !== undefined && highlights.set(tab, mode);
+      },
+      // All three copy only what the tab's ready audit holds, through main's clipboard, and only from
+      // the audit the panel shows (`SeoAuditRefSchema`).
+      copyLinksCsv: (tabId, shown, filter) => {
+        const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
+        if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown)) return null;
+        const rows = filterLinks(response.audit.page.linkList, filter);
+        options.clipboard.writeText(linksCsv(rows));
+        return rows.length;
+      },
+      copyUrl: (tabId, shown, url) => {
+        const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
+        if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown) || !pageUrls(response.audit.page).has(url)) return false;
+        options.clipboard.writeText(url);
+        return true;
+      },
+      copySchemaJson: (tabId, shown, index) => {
+        const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
+        if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown)) return false;
+        const block = response.audit.schema.blocks.find((b) => b.index === index);
+        if (!block || block.text === '') return false;
+        options.clipboard.writeText(block.status === 'valid' ? formatJson(block.text).text : block.text);
+        return true;
+      },
+      // The accessibility check runs on request, for the active tab only (Task 6).
+      runAccessibility: (tabId) => {
+        const tab = activeTab();
+        return tab !== undefined && tab.id === tabId && hasWindow() && a11y.start(tab);
+      },
+      // Only the active tab is ever audited (`RERUN_ACTIVE_TAB_ONLY`).
+      rerun: (tabId) => {
+        const tab = activeTab();
+        return tab !== undefined && tab.id === tabId && hasWindow() && audits.rerun(tab);
+      },
+    },
 
     openTabFromPage,
 

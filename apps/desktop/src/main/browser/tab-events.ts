@@ -3,6 +3,7 @@ import { IGNORED_LOAD_ERROR_CODES } from '@app/specs/browse-guard.spec';
 import { FULLSCREEN_EXIT_KEY } from '@app/specs/permissions.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl } from './address';
+import type { PageEventKind } from '../seo/auditor';
 import type { Fullscreen } from './fullscreen';
 import type { SessionSink } from './session-sync';
 import type { KeyInput } from './shortcuts';
@@ -50,6 +51,13 @@ export interface TabEventContext {
   /** Closes the tab (its page closed itself). */
   removeTab(tabId: number): void;
   readonly contextMenu: ((request: TabContextMenuRequest) => void) | undefined;
+  /**
+   * The page finished loading or changed its URL in place (a main-frame `did-navigate-in-page`):
+   * the SEO auditor audits it soon if it is the active tab (`seo-sidebar.feature.md`, Auditor).
+   */
+  pageSettled(tab: Tab, kind: PageEventKind): void;
+  /** A new main-frame document committed (`did-navigate`). */
+  pageCommitted(tab: Tab): void;
 }
 
 /** Whether no modifier key is held. */
@@ -82,8 +90,12 @@ export function wireTabView(tab: Tab, view: TabView, ctx: TabEventContext): () =
     if (typeof url === 'string' && isWebUrl(url)) session?.recordVisit(url);
   };
   listen('did-navigate-in-page', (_event: unknown, url: unknown, isMainFrame: unknown) => {
-    if (isMainFrame === true) recordVisit(url);
+    if (isMainFrame !== true) return;
+    recordVisit(url);
+    // An SPA route change: a new URL to audit (after the state refresh above saw it).
+    ctx.pageSettled(tab, 'in-page');
   });
+  listen('did-finish-load', () => ctx.pageSettled(tab, 'load'));
   listen('page-title-updated', () => {
     const url = view.webContents.getURL();
     if (session && tab.error === null && !tab.crashed && tab.state.title !== '' && isWebUrl(url)) session.updateVisitTitle(url, tab.state.title);
@@ -93,15 +105,18 @@ export function wireTabView(tab: Tab, view: TabView, ctx: TabEventContext): () =
     ctx.refresh(tab);
   });
   // A main-frame page committed (Electron emits `did-navigate` only for non-error pages): the
-  // old document's permission prompts are denied, and the new one is not fullscreen.
+  // old document's permission prompts are denied, and the new one is not fullscreen. It is a new
+  // document, also when it is a reload of the same URL (`documentSeq`, read by the refresh below).
   listen('did-navigate', (_event: unknown, url: unknown) => {
     // Loading what was open at the last launch (its saved URL) is not a new visit.
     const restoring = tab.restored !== null && url === tab.restored.url;
+    tab.documentSeq += 1;
     tab.error = null;
     tab.restored = null;
     tab.exitRequested = false;
     if (ctx.denyPrompts(tab)) ctx.changed();
     if (fullscreen.clear(tab)) ctx.applyBounds(tab);
+    ctx.pageCommitted(tab);
     ctx.refresh(tab);
     if (!restoring) recordVisit(url);
   });

@@ -1,6 +1,7 @@
 {
   "name": "@app/db",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "Local browser-session database for the main process: Drizzle schema, forward-only migrations and a small repository over node:sqlite.",

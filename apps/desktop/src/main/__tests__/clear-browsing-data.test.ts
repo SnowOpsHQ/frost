@@ -26,6 +26,9 @@ function fakeParts(confirmed: boolean) {
     clearBrowseStorage: vi.fn(async () => {
       order.push('storage');
     }),
+    forgetSeoCaches: vi.fn(() => {
+      order.push('seo');
+    }),
     log: vi.fn<(message: string) => void>(),
   } satisfies ClearBrowsingDataParts;
   return { parts, order };
@@ -47,7 +50,8 @@ describe('clear browsing data', () => {
     const { parts, order } = fakeParts(true);
     const clear = createClearBrowsingData(parts);
     await expect(clear()).resolves.toBe(true);
-    expect(order).toEqual(['confirm', 'forget', 'stored', 'storage']);
+    // The SEO auditor's robots.txt cache and recorded responses go too (seo-indexability.feature.md).
+    expect(order).toEqual(['confirm', 'forget', 'stored', 'storage', 'seo']);
     expect(parts.log).not.toHaveBeenCalled();
     // A second request while one runs is the same run (one dialog), and a later one asks again.
     const [first, second] = [clear(), clear()];
@@ -63,7 +67,7 @@ describe('clear browsing data', () => {
     });
     parts.clearStoredData.mockRejectedValueOnce(new Error('disk I/O error'));
     await expect(createClearBrowsingData(parts)()).resolves.toBe(true);
-    expect(order).toEqual(['confirm', 'storage']);
+    expect(order).toEqual(['confirm', 'storage', 'seo']);
     expect(parts.clearBrowseStorage).toHaveBeenCalledOnce();
     expect(parts.log).toHaveBeenCalledTimes(2);
     expect(parts.log.mock.calls.map(([message]) => message).join('\n')).toMatch(/broker gone[\s\S]*disk I\/O error/);

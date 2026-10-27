@@ -2,6 +2,7 @@ import { Menu, type MenuItemConstructorOptions } from 'electron';
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
+import { SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
 import type { BrowserController } from './browser/controller';
 
 // The application menu (spec `tabs.feature.md`, Menu). Tab shortcuts are menu accelerators handled
@@ -15,7 +16,7 @@ import type { BrowserController } from './browser/controller';
 /** The controller calls the menu makes. */
 export type TabCommands = Pick<
   BrowserController,
-  'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab' | 'runPageCommand'
+  'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab' | 'runPageCommand' | 'toggleSidebar'
 >;
 
 /** Everything the menu runs: the tab commands and Clear Browsing Data… (`clear-browsing-data.ts`). */
@@ -114,6 +115,9 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
       { id: 'zoom-out-keypad', label: 'Zoom Out', accelerator: 'CmdOrCtrl+numsub', ...hidden, click: page('zoom-out') },
       { id: 'zoom-reset', label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: page('zoom-reset') },
       { id: 'zoom-reset-keypad', label: 'Actual Size', accelerator: 'CmdOrCtrl+num0', ...hidden, click: page('zoom-reset') },
+      { type: 'separator' },
+      // The SEO sidebar (spec `seo-sidebar.feature.md`, Toggle): the chrome owns open / closed.
+      { id: SIDEBAR_TOGGLE_MENU_ID, label: 'SEO Sidebar', accelerator: 'CmdOrCtrl+Shift+S', click: () => commands.toggleSidebar() },
     ],
   };
   // Back / Forward: Cmd+[ / Cmd+] on macOS (Cmd+Left / Cmd+Right hidden: not reserved, so a text

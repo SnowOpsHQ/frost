@@ -1,5 +1,13 @@
+import type { LinkFilter, SeoAuditResponse, SpeedResponse } from '@app/seo-core';
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
+import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+
+/** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
+export interface SeoAuditRef {
+  readonly url: string;
+  readonly takenAt: number;
+}
 
 // Main-process services the procedures call (spec `specs/browser.spec.ts`). Main supplies the
 // implementations through the IPC context (`IpcHandlerOptions.services`); this package only knows
@@ -29,6 +37,13 @@ export interface BrowserService {
   closeTab(tabId: number): boolean;
   /** Shows the tab (only the active tab's view is attached). `false` for an id that names no open tab. */
   activateTab(tabId: number): boolean;
+  /**
+   * Opens the `http(s)` `url` in a new background tab right of the active tab (after the tabs it
+   * already opened); the active tab stays active (`browser.spec.ts`, `OpenBackgroundTabInputSchema`).
+   * Answers the new tab's id, or `null` for any other URL, no window or tab, or `MAX_TABS` (the
+   * `tab-limit` notice is raised).
+   */
+  openBackgroundTab(url: string): number | null;
   back(): void;
   forward(): void;
   reload(): void;
@@ -51,7 +66,58 @@ export interface BrowserService {
   watch(sinceVersion: number, signal?: AbortSignal): Promise<BrowserState>;
 }
 
+/**
+ * The SEO auditor as the `seo.*` procedures see it (acceptance: `seo-sidebar.feature.md`, Router;
+ * statuses and reasons: `seo-sidebar.spec.ts`).
+ */
+export interface SeoService {
+  /**
+   * The tab's audit state: `ready` with the audit of exactly its current URL, `pending` while that
+   * audit is scheduled or running, `unavailable` with a reason (`no-tab` for an id that names no
+   * open tab: never an error).
+   */
+  getAudit(tabId: number): SeoAuditResponse;
+  /** Audits the tab again at once; `false` (a no-op) when it shows nothing auditable or names no tab. */
+  rerun(tabId: number): boolean;
+  /**
+   * Sets the tab's highlight overlay (`seo-sidebar.spec.ts`, `HIGHLIGHT_MODES`): only the active
+   * tab showing a web page; `false` (a no-op) otherwise.
+   */
+  setHighlight(tabId: number, mode: HighlightMode): boolean;
+  /**
+   * Writes the links `filter` selects from the tab's ready audit to the system clipboard as CSV
+   * (`seo-sidebar.spec.ts`, `LINKS_CSV_COLUMNS`); answers how many rows, or `null` (nothing
+   * written) without a ready audit, or when it is not the audit the panel shows (`audit`).
+   */
+  copyLinksCsv(tabId: number, audit: SeoAuditRef, filter: LinkFilter): number | null;
+  /**
+   * Writes `url` to the system clipboard if the tab's ready audit is the one the panel shows
+   * (`audit`) and lists it (`pageUrls`, parsed hrefs); else `false`, nothing written.
+   */
+  copyUrl(tabId: number, audit: SeoAuditRef, url: string): boolean;
+  /**
+   * Writes JSON-LD block `block` of the tab's ready audit to the system clipboard, if that audit is
+   * the one the panel shows (`audit`): pretty-printed (`formatJson`) when it parsed, its text as kept
+   * otherwise (`seo-schema.feature.md`). `false`, nothing written, for anything else.
+   */
+  copySchemaJson(tabId: number, audit: SeoAuditRef, block: number): boolean;
+  /**
+   * Measures the tab's page speed (`seo-speed.spec.ts`, `SPEED_STATUSES`): `ready` with the report of
+   * exactly its current URL, `pending` while it cannot answer yet, `unavailable` with a reason (only
+   * the active tab is measured; `no-tab` for an id that names no open tab). At most one collection
+   * per tab runs, none sooner than `SPEED_MIN_INTERVAL_MS` after the last. Never rejects.
+   */
+  measureSpeed(tabId: number): Promise<SpeedResponse>;
+  /**
+   * Starts the accessibility check on the tab's page (`seo-compliance.feature.md`): only the active
+   * tab showing a web page; `true` if a check is running now (one already running is not doubled),
+   * `false` (a no-op) otherwise. Its state and results come with the tab's ready audit.
+   */
+  runAccessibility(tabId: number): boolean;
+}
+
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */
 export interface IpcServices {
   readonly browser?: BrowserService;
+  readonly seo?: SeoService;
 }

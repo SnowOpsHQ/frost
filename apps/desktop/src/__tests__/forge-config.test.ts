@@ -1,5 +1,5 @@
 // Spec: specs/macos-package.spec.ts · Acceptance: specs/macos-package.feature.md (Forge configuration)
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { FuseV1Options } from '@electron/fuses';
 import type { MakerBase } from '@electron-forge/maker-base';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
@@ -16,6 +16,7 @@ import {
   PACKAGED_FUSES,
 } from '@app/specs/macos-package.spec';
 import { makeForgeConfig } from '../../forge.config';
+import { NOTICES_FILE } from '../../third-party-notices';
 
 const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
   productName: string;
@@ -81,6 +82,14 @@ describe('forge config (macOS package)', () => {
       asar: true,
     });
     expect(packageJson.productName).toBe(MAC_PRODUCT_NAME);
+  });
+
+  test('ships-third-party-notices', () => {
+    // specs/seo-speed.feature.md (Licenses): the notices file is an extra resource of every package
+    // (resources/THIRD_PARTY_NOTICES beside app.asar), for the libraries frost bundles and injects.
+    const { packagerConfig } = makeForgeConfig({});
+    expect(packagerConfig?.extraResource).toEqual([NOTICES_FILE]);
+    expect(existsSync(new URL(`../../${NOTICES_FILE}`, import.meta.url))).toBe(true);
   });
 
   test('flips-the-spec-fuses', () => {

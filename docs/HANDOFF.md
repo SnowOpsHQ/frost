@@ -12,7 +12,7 @@ Read, in order:
 5. `docs/scaffolding-checklist.md` — environment preflight + Task 1 tick list.
 
 Then implement Phase 0 task-by-task (subagent-driven recommended). Keep CI green. UI direction for
-later phases is in `docs/ui-reference/README.md`; the reference screenshots are intentionally not in
+later phases is in `docs/ui-reference/README.md`; no third-party screenshots or assets are kept in
 this repo.
 
 ---

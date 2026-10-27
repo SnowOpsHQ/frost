@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { app, BrowserWindow, clipboard, ipcMain, session } from 'electron';
+import { Worker } from 'node:worker_threads';
+import { app, BrowserWindow, clipboard, ipcMain, net, session, type WebContents } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -12,6 +13,18 @@ import { clearBrowseStorage, confirmClearBrowsingData, createClearBrowsingData }
 import { installAppMenu, popupContextMenu } from './menu';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
+import { runAccessibilityCheck } from './seo/a11y';
+import { createAnalyzer } from './seo/analysis';
+import { runExtractor } from './seo/extract';
+import { runHighlight, watchHighlight } from './seo/highlight';
+import { createResponseRecorder } from './seo/responses';
+import { createRobotsFetcher, netHop, pendingRobots, type RobotsFetcher } from './seo/robots-fetch';
+import type { ContextSource } from './seo/auditor';
+import { contextSource, knownInput, laterInput } from './seo/context-source';
+import { observeMainFrames } from './browser/web-request';
+import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './seo/vitals';
+import { createShownTimes } from './seo/vitals-shown';
+import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
@@ -90,12 +103,76 @@ function start(): void {
     });
     popupContextMenu(template, window as BrowserWindow);
   };
+  // The active tab is audited after each load and SPA route change (specs/seo-sidebar.feature.md):
+  // the extractor runs in the tab's isolated SEO world, and what it answers is validated and audited
+  // in the analysis worker, never on this thread (specs/seo-schema.feature.md). The worker is the
+  // Forge Vite main build's `seo-analysis` entry, bundled beside main.cjs (in the ASAR when
+  // packaged); it gets no Electron APIs, only the extractor's answer, and a capped heap. The
+  // highlight overlay is drawn from the same world (specs/seo-panels.feature.md), and the SEO
+  // panels' "Copy" commands write through main's clipboard (the chrome has no clipboard access).
+  const analyzer = createAnalyzer({
+    spawn: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }),
+  });
+  app.once('will-quit', () => analyzer.dispose());
+  // Indexability (specs/seo-indexability.feature.md): each tab's main-frame response is recorded
+  // from the browse session's webRequest events (status, redirects, allowlisted headers, capped as
+  // they arrive) and committed on the tab's `did-navigate`; robots.txt is fetched by main through
+  // the browse session (cookies off, bounded) once the session exists. Both are handed to the
+  // analysis worker beside the extractor's answer, where they are validated and read.
+  const responses = createResponseRecorder();
+  let robots: RobotsFetcher | null = null;
+  // Page speed (specs/seo-speed.feature.md): the collector runs in the tab's own isolated speed world
+  // (web-vitals and frost's observers, never the main world); its answer is validated and summarised
+  // in the analysis worker. The audit takes one measurement beside the snapshot (the health score's
+  // performance rules); the Speed panel polls `seo.measureSpeed` for live values.
+  // Main owns "when was this document first shown" (frost's background tabs report `visible`), and
+  // knows whether paint timing can arrive at all (native Wayland may never report it).
+  const shownTimes = createShownTimes();
+  const wayland = nativeWayland(process.platform, app.commandLine.getSwitchValue('ozone-platform'), app.commandLine.getSwitchValue('ozone-platform-hint'), process.env);
+  const collect = (contents: WebContents, options: Partial<CollectOptions>): Promise<unknown> => runVitals(contents, { ...shownTimes.of(contents.id), ...options, nativeWayland: wayland });
+  const measureForAudit = (contents: WebContents): Promise<unknown> =>
+    withTimeout(
+      collect(contents, {}).catch(() => null),
+      SPEED_MEASURE_TIMEOUT_MS,
+      null,
+    );
+  // The audit never waits for a slow input: it is analysed with what is known now (robots.txt still
+  // `pending` the first time an origin is seen, no speed measurement yet), and again once every
+  // input has settled (seo/context-source.ts).
+  const collectContext = (contents: WebContents): ContextSource => {
+    const url = contents.getURL();
+    return contextSource({
+      response: knownInput(responses.responseFor(contents.id, url)),
+      robots: robots ? laterInput(robots.get(url), pendingRobots(url), robots.peek(url)) : knownInput(null),
+      performance: laterInput(measureForAudit(contents)),
+    });
+  };
+
+  app.on('web-contents-created', (_event, contents) => {
+    if (!isBrowseContents(contents)) return;
+    responses.watch(contents);
+    // The speed collector's observers start at `dom-ready` of the active tab's document, before a
+    // page's own scripts can clear the timing buffers for long (seo-speed.feature.md).
+    const id = contents.id;
+    contents.on('dom-ready', () => {
+      const tabId = browser.tabIdOf(contents);
+      if (tabId !== null && tabId === browser.getState().activeTabId) void collect(contents, { prime: true }).catch(() => undefined);
+    });
+    contents.once('destroyed', () => shownTimes.forget(id));
+  });
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
     permissions,
     session: sessionStore.writer,
     contextMenu: showContextMenu,
+    seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
+    highlight: { paint: runHighlight, ended: watchHighlight },
+    speed: { measure: collect, analyse: (raw) => analyzer.analyseSpeed(raw), times: shownTimes },
+    // The accessibility check (specs/seo-compliance.feature.md): axe-core in the tab's own isolated
+    // accessibility world, on request only; its answer is validated in the analysis worker.
+    accessibility: runAccessibilityCheck,
+    clipboard,
   });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
@@ -130,7 +207,12 @@ function start(): void {
     restrictAppRequests(session.defaultSession, windows.isAppWebContents);
     // Tabs' session: no `app:` handler (protocol.handle below is the default session's), per-origin
     // permission prompts (everything not promptable denied), and every download cancelled with a notice.
-    hardenBrowseSession(session.fromPartition(BROWSE_PARTITION), {
+    const browseSession = session.fromPartition(BROWSE_PARTITION);
+    // The browse session's main-frame observers (the one owner of its onBeforeRedirect /
+    // onResponseStarted / onErrorOccurred: browser/web-request.ts) and its robots.txt fetcher.
+    observeMainFrames(browseSession, responses);
+    robots = createRobotsFetcher({ hop: netHop(net, browseSession) });
+    hardenBrowseSession(browseSession, {
       onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
       permissions: createBrowsePermissionHandlers({
         broker: permissions,
@@ -145,7 +227,7 @@ function start(): void {
       policy: senderPolicy,
       ipcMain,
       fromWebContents: (contents) => BrowserWindow.fromWebContents(contents),
-      services: { browser },
+      services: { browser, seo: browser.seo },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
     // to the focused window (else the app's), then clears visits, decisions and site storage.
@@ -154,6 +236,11 @@ function start(): void {
       forgetPermissionDecisions: () => permissions.forgetDecisions(),
       clearStoredData: () => sessionStore.writer.clearBrowsingData(),
       clearBrowseStorage,
+      // The SEO auditor's robots.txt answers and recorded responses (seo-indexability.feature.md).
+      forgetSeoCaches: () => {
+        robots?.clear();
+        responses.clear();
+      },
       log: logSession,
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
@@ -175,4 +262,13 @@ function start(): void {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
+}
+
+/** Whether `contents` is a tab's (on the browse partition's session); fails closed. */
+function isBrowseContents(contents: WebContents): boolean {
+  try {
+    return contents.session === session.fromPartition(BROWSE_PARTITION);
+  } catch {
+    return false;
+  }
 }

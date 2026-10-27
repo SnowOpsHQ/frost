@@ -119,6 +119,9 @@ Phase 1 Task 2. Each scenario maps to one named test.
   Real titles are kept.
 - **Scenario: unknown-tab-id-is-a-no-op** — `closeTab` / `activateTab` with an id that names no
   open tab (never used, or already closed) answer `false` and change nothing.
+- **Scenario: document-seq-counts-new-documents** — a tab's `documentSeq` is `0` before its first
+  commit and goes up by one with each main-frame `did-navigate` (another URL, or a reload of the same
+  one), bumping the state version; an in-page navigation and another tab's commits leave it as it is.
 
 ## Router (`packages/ipc-contract/src/__tests__/browser-router.test.ts`)
 - **Scenario: tab-procedures-validate-tab-id** — `browser.closeTab` / `browser.activateTab` reject

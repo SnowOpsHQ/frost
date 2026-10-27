@@ -1,9 +1,11 @@
 // Spec: specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS), specs/page-commands.spec.ts (RESERVED_PAGE_SHORTCUTS)
-// Acceptance: specs/tabs.feature.md (Shortcut matching), specs/page-commands.feature.md (Shortcut matching)
+// Acceptance: specs/tabs.feature.md (Shortcut matching), specs/page-commands.feature.md (Shortcut matching),
+// specs/seo-sidebar.feature.md (Toggle)
 import { describe, expect, test } from 'vitest';
 import { RESERVED_PAGE_SHORTCUTS, UNRESERVED_PAGE_SHORTCUTS, type PageCommand } from '@app/specs/page-commands.spec';
 import { RESERVED_TAB_SHORTCUTS, type TabCommand } from '@app/specs/tabs.spec';
-import { matchPageShortcut, matchTabShortcut, type KeyInput } from '../shortcuts';
+import { SIDEBAR_TOGGLE_SHORTCUT } from '@app/specs/seo-sidebar.spec';
+import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput } from '../shortcuts';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'] as const;
 
@@ -123,5 +125,26 @@ describe('page shortcut matching', () => {
     expect(matchPageShortcut(inputFor('Mod+[', platform), platform)).toBe(mac ? 'back' : null);
     // Plain letters, digits and Esc.
     for (const combo of ['R', '0', '=', 'Escape', 'Mod+Escape']) expect(matchPageShortcut(inputFor(combo, platform), platform), combo).toBeNull();
+  });
+});
+
+describe('sidebar shortcut matching', () => {
+  test.each(PLATFORMS)('sidebar-shortcut-matches (%s)', (platform) => {
+    const toggle = inputFor(SIDEBAR_TOGGLE_SHORTCUT, platform);
+    expect(matchSidebarShortcut(toggle, platform)).toBe(true);
+    expect(matchSidebarShortcut({ ...toggle, type: 'keyUp' }, platform)).toBe(true);
+    // Caps Lock / layouts: the physical key decides.
+    expect(matchSidebarShortcut({ ...toggle, key: 'S' }, platform)).toBe(true);
+    expect(matchSidebarShortcut({ ...toggle, type: 'char' }, platform)).toBe(false);
+    expect(matchSidebarShortcut(inputFor('Mod+S', platform), platform)).toBe(false);
+    expect(matchSidebarShortcut({ ...toggle, alt: true }, platform)).toBe(false);
+    expect(matchSidebarShortcut({ ...toggle, control: true, meta: true }, platform)).toBe(false);
+    expect(matchSidebarShortcut(inputFor('Mod+Shift+D', platform), platform)).toBe(false);
+    // The other modifier is not Mod.
+    const mac = platform === 'darwin';
+    expect(matchSidebarShortcut({ ...toggle, meta: !mac, control: mac }, platform)).toBe(false);
+    // Not a tab or page shortcut (it never runs twice).
+    expect(matchTabShortcut(toggle, platform)).toBeNull();
+    expect(matchPageShortcut(toggle, platform)).toBeNull();
   });
 });

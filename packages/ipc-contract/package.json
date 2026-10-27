@@ -1,6 +1,7 @@
 {
   "name": "@app/ipc-contract",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "Typed tRPC IPC contract shared by main, preload and renderer; every procedure passes enforceSender.",
@@ -16,6 +17,7 @@
     "lint": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@app/seo-core": "workspace:*",
     "@app/specs": "workspace:*",
     "@trpc/client": "11.19.0",
     "@trpc/server": "11.19.0",

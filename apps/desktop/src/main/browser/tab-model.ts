@@ -1,6 +1,7 @@
 import type { BrowserWindow, WebContentsView } from 'electron';
 import { WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH, type LoadError, type PageBounds, type TabState } from '@app/specs/browser.spec';
 import { DEFAULT_ZOOM, ZOOM_FACTORS } from '@app/specs/page-commands.spec';
+import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
 // The browser controller's tab model (`controller.ts`): what it keeps per tab and the strip state
 // its parts share, plus pure helpers over them. Only Electron *types* are imported.
@@ -13,8 +14,11 @@ export type HostWindow = Pick<
   'contentView' | 'webContents' | 'getContentSize' | 'setTitle' | 'on' | 'once' | 'isDestroyed' | 'isFullScreen' | 'setFullScreen'
 >;
 
-/** A tab's own state; its `permissionPrompt` comes from the broker when the state is read. */
-export type PageState = Omit<TabState, 'permissionPrompt'>;
+/**
+ * A tab's own state; its `permissionPrompt` comes from the broker, its `auditVersion` from the SEO
+ * auditor and its `highlight` from `Tab.highlight` when the state is read.
+ */
+export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion' | 'highlight'>;
 export type FullscreenMode = NonNullable<TabState['fullscreen']>;
 
 export interface Tab {
@@ -55,6 +59,14 @@ export interface Tab {
    * state until its view commits something (a load in flight has no URL yet).
    */
   restored: { readonly url: string; readonly title: string } | null;
+  /**
+   * The SEO highlight overlay on its page (`seo.setHighlight`), and the URL (without its
+   * `#fragment`) it was drawn on: an in-page navigation to another URL turns it off.
+   */
+  highlight: HighlightMode;
+  highlightKey: string;
+  /** Main-frame documents committed in this tab (`did-navigate`, reloads too): its `documentSeq`. */
+  documentSeq: number;
   state: PageState;
 }
 
@@ -70,8 +82,8 @@ export interface StripState {
 
 export function noop(): void {}
 
-export function emptyTabState(id: number): PageState {
-  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, fullscreen: null, zoom: DEFAULT_ZOOM };
+export function emptyTabState(id: number, documentSeq = 0): PageState {
+  return { id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, fullscreen: null, zoom: DEFAULT_ZOOM, documentSeq };
 }
 
 /** A new empty tab, not yet in the strip. */
@@ -88,6 +100,9 @@ export function createTab(id: number, openerId: number | null = null): Tab {
     exitRequested: false,
     openerId,
     restored: null,
+    highlight: 'off',
+    highlightKey: '',
+    documentSeq: 0,
     state: emptyTabState(id),
   };
 }
@@ -107,6 +122,7 @@ export function sameTabState(a: PageState, b: PageState): boolean {
     a.unresponsive === b.unresponsive &&
     a.fullscreen === b.fullscreen &&
     a.zoom === b.zoom &&
+    a.documentSeq === b.documentSeq &&
     sameError(a.error, b.error)
   );
 }

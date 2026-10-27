@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
 import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './permissions.spec';
+import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
@@ -169,6 +170,25 @@ export const TabStateSchema = z.strictObject({
    * empty tab). Per host in Chromium: tabs on the same host share it.
    */
   zoom: z.number().min(0.25).max(5),
+  /**
+   * Increases each time the tab's SEO audit changes (`seo-sidebar.spec.ts`: it became pending,
+   * ready or unavailable); `0` before its first. The chrome asks `seo.getAudit` again whenever the
+   * active tab's `auditVersion` (or URL) changes, so `browser.watch` is what wakes the sidebar.
+   */
+  auditVersion: z.int().nonnegative(),
+  /**
+   * Increases by one each time a new main-frame document commits in the tab (`did-navigate`: a
+   * navigation, back / forward to another document, and a reload, also of the same URL); `0` before
+   * its first. An in-page navigation (`did-navigate-in-page`) does not change it. The chrome uses it
+   * as a document's identity where the URL is not one (the Speed panel's poll session).
+   */
+  documentSeq: z.int().nonnegative(),
+  /**
+   * The SEO highlight overlay shown on the tab's page (`seo-sidebar.spec.ts`, `HIGHLIGHT_MODES`):
+   * `off` unless `seo.setHighlight` turned it on, and `off` again once the page changes or the tab
+   * is no longer the active one.
+   */
+  highlight: z.enum(HIGHLIGHT_MODES),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 
@@ -198,6 +218,12 @@ export const BrowserStateSchema = z.strictObject({
   tabs: z.array(TabStateSchema).max(MAX_TABS),
   activeTabId: z.int().positive().nullable(),
   focusAddressBarSeq: z.int().nonnegative(),
+  /**
+   * Increases by one each time the SEO sidebar should be toggled from main (its menu item and
+   * reserved shortcut, `seo-sidebar.spec.ts` `SIDEBAR_TOGGLE_SHORTCUT`); the chrome, which owns
+   * whether the sidebar is open, toggles whenever the value it last saw changes.
+   */
+  toggleSidebarSeq: z.int().nonnegative(),
   notice: NoticeSchema.nullable(),
 });
 export type BrowserState = z.infer<typeof BrowserStateSchema>;
@@ -222,6 +248,16 @@ export const PageBoundsSchema = z.strictObject({
   height: z.number(),
 });
 export type PageBounds = z.infer<typeof PageBoundsSchema>;
+
+/**
+ * `browser.openBackgroundTab` input (Phase 2 Task 2: a link or image in the SEO sidebar): an
+ * `http(s)` URL, opened in a new background tab right of the active tab (after the tabs it already
+ * opened), the active tab staying active. Any other scheme, an unparsable URL, no window, or
+ * `MAX_TABS` (which raises the `tab-limit` notice) opens nothing and answers `null`; otherwise
+ * the new tab's id. The URL is loaded as is (no address-bar resolution, no referrer).
+ */
+export const OpenBackgroundTabInputSchema = z.strictObject({ url: z.string().min(1).max(ADDRESS_INPUT_MAX_LENGTH) });
+export type OpenBackgroundTabInput = z.infer<typeof OpenBackgroundTabInputSchema>;
 
 /** Window title while a page is shown: `<page title> — frost`; an empty tab shows `APP_WINDOW_TITLE`. */
 export const APP_WINDOW_TITLE = 'frost' as const;
