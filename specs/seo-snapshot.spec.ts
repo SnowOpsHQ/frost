@@ -255,7 +255,7 @@ function markupChars(items: readonly { readonly properties: readonly ({ readonly
  *   `isWordLike`, so Chinese, Japanese and Thai text without spaces is counted word by word; where
  *   `Intl.Segmenter` is missing, a run of letters or digits. Words split across text nodes count
  *   once per node. `textTruncated` when the walk stopped at `maxTextNodes`, `maxTextScanChars` or
- *   the deadline (`EXTRACT_BUDGET_MS`).
+ *   the deadline (`EXTRACT_BUDGET_MS`), or `maxTextScanChars` cut a text node short (the last one too).
  * - `partial`: the extractor reached `EXTRACT_BUDGET_MS` and stopped early: some lists may hold
  *   fewer entries than their cap allows (their totals are still the page's).
  * - `jsonLd`: each JSON-LD block (`JsonLdBlockSchema`), their text together at most
