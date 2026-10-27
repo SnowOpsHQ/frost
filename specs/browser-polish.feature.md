@@ -25,7 +25,9 @@ fields, the `find.*` / `history.*` / `settings.*` inputs). Shortcuts: `RESERVED_
   (`find-is-per-tab`, `find-closes-on-navigation`)
 - The find text stays in the chrome and main: it is never written into the page, and the page's
   scripts get no event carrying it (Chromium's find runs below the page's script world). A page may
-  notice that it was scrolled to a match. The text is capped (`FIND_TEXT_MAX_CHARS`).
+  still learn *where* a match is, never the text: it may notice that it was scrolled to a match, and
+  Chromium fires `beforematch` on a `hidden=until-found` element whose content matched (revealing
+  it), so a page can tell which element matched. The text is capped (`FIND_TEXT_MAX_CHARS`).
   (`find-input-is-validated`)
 
 ## Reopen closed tab
@@ -39,7 +41,8 @@ fields, the `find.*` / `history.*` / `settings.*` inputs). Shortcuts: `RESERVED_
   kept), at most `CLOSED_TABS_MAX` (the oldest drops), and is emptied by Clear Browsing Data and
   "Clear all history". Closing the window does not fill it (the saved session covers that). At
   `MAX_TABS` nothing reopens, the `tab-limit` notice is raised and the entry stays.
-  (`closed-tab-stack-caps-and-clears`, `reopen-respects-tab-limit`)
+  (`closed-tab-stack-caps-and-clears`, `clear-browsing-data-forgets-closed-tabs`,
+  `reopen-respects-tab-limit`)
 - Limits: page state (scroll position, form contents) is not restored; a tab closed by its own
   `window.close()` reopens at its URL only (its history is already gone). (`reopen-after-page-close`)
 
@@ -70,8 +73,9 @@ fields, the `find.*` / `history.*` / `settings.*` inputs). Shortcuts: `RESERVED_
 
 ## Search engines
 - `SEARCH_ENGINES` is a typed table of `https:` templates; `{q}` is only ever the encoded query.
-  Google is the default; Bing and DuckDuckGo can be chosen. (`engine-table-is-https-only`,
-  `engine-url-encodes-query`)
+  Google is the default; Bing and DuckDuckGo can be chosen. A lone surrogate in the query (typed, or
+  a page selection in the context menu) becomes U+FFFD first (`wellFormed`), so encoding never throws.
+  (`engine-table-is-https-only`, `engine-url-encodes-query`, `search-url-tolerates-lone-surrogates`)
 - The choice is made in the command palette ("Search with …", one action per other engine) and
   stored in `app_settings` (migration `0005_app_settings`); an unknown stored value reads as the
   default. It persists across launches and is a preference (Clear Browsing Data keeps it).

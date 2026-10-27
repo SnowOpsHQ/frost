@@ -2,14 +2,21 @@
 // Acceptance: specs/tabs.feature.md (Shortcut matching), specs/page-commands.feature.md (Shortcut matching),
 // specs/seo-sidebar.feature.md (Toggle), specs/devtools.feature.md (devtools-shortcut-matches; DEVTOOLS_TOGGLE_SHORTCUT),
 // specs/browser-polish.feature.md (FIND_SHORTCUT, FIND_STEP_SHORTCUTS, REOPEN_TAB_SHORTCUT)
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { RESERVED_PAGE_SHORTCUTS, UNRESERVED_PAGE_SHORTCUTS, type PageCommand } from '@app/specs/page-commands.spec';
 import { RESERVED_TAB_SHORTCUTS, type TabCommand } from '@app/specs/tabs.spec';
 import { SIDEBAR_TOGGLE_SHORTCUT } from '@app/specs/seo-sidebar.spec';
 import { DEVTOOLS_TOGGLE_SHORTCUT } from '@app/specs/devtools.spec';
 import { FIND_SHORTCUT, FIND_STEP_SHORTCUTS, REOPEN_TAB_SHORTCUT } from '@app/specs/browser-polish.spec';
 import { COMMAND_PALETTE_SHORTCUT } from '@app/specs/command-palette.spec';
+import type { MenuItemConstructorOptions } from 'electron';
+import { POLISH_MENU_IDS } from '@app/specs/browser-polish.spec';
+import { SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
+import { DEVTOOLS_MENU_ID } from '@app/specs/devtools.spec';
+import { appMenuTemplate, type AppMenuCommands } from '../../menu';
 import { matchDevtoolsShortcut, matchFindStepShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput } from '../shortcuts';
+
+vi.mock('electron', async () => (await import('../../../test/electron-fake')).electronFake());
 
 const PLATFORMS = ['darwin', 'linux', 'win32'] as const;
 
@@ -175,44 +182,116 @@ describe('devtools shortcut matching', () => {
 });
 
 describe('reserved shortcuts together', () => {
-  // Phase 2.5 Batch B integration: every reserved chrome shortcut is taken by exactly one matcher,
-  // on every platform, so none runs twice or shadows another.
-  test.each(PLATFORMS)('reserved-shortcuts-never-collide (%s)', (platform) => {
-    const matchers = {
-      tab: (input: KeyInput) => matchTabShortcut(input, platform) !== null,
-      page: (input: KeyInput) => matchPageShortcut(input, platform) !== null,
-      sidebar: (input: KeyInput) => matchSidebarShortcut(input, platform),
-      devtools: (input: KeyInput) => matchDevtoolsShortcut(input, platform),
-      // Mod+G / Mod+Shift+G are reserved only while the find bar is open: checked as if it were.
-      findStep: (input: KeyInput) => matchFindStepShortcut(input, platform, true) !== null,
+  type Owner = 'tab' | 'page' | 'sidebar' | 'devtools' | 'findStep';
+
+  /** Every reserved combo for `platform` (the `mac:` / `other:` entries that apply), with its owner and command. */
+  function reservedCombos(platform: NodeJS.Platform): { combo: string; owner: Owner; command: string }[] {
+    const mac = platform === 'darwin';
+    const applies = (entry: string): string | null => {
+      if (entry.startsWith('mac:')) return mac ? entry.slice(4) : null;
+      if (entry.startsWith('other:')) return mac ? null : entry.slice(6);
+      return entry;
     };
-    const expected: readonly [string, keyof typeof matchers][] = [
-      [COMMAND_PALETTE_SHORTCUT, 'tab'],
-      [FIND_SHORTCUT, 'tab'],
-      [REOPEN_TAB_SHORTCUT, 'tab'],
-      ['Mod+L', 'tab'],
-      ['Mod+T', 'tab'],
-      [SIDEBAR_TOGGLE_SHORTCUT, 'sidebar'],
-      [DEVTOOLS_TOGGLE_SHORTCUT, 'devtools'],
-      [FIND_STEP_SHORTCUTS.next, 'findStep'],
-      [FIND_STEP_SHORTCUTS.previous, 'findStep'],
-      ['Mod+R', 'page'],
-      ['Mod+Shift+R', 'page'],
-    ];
-    for (const [combo, owner] of expected) {
-      const input = inputFor(combo, platform);
-      const taken = Object.entries(matchers)
-        .filter(([, matches]) => matches(input))
-        .map(([name]) => name);
-      expect(taken, combo).toEqual([owner]);
+    const out: { combo: string; owner: Owner; command: string }[] = [];
+    for (const [command, combos] of Object.entries(RESERVED_TAB_SHORTCUTS) as [TabCommand, readonly string[]][]) {
+      combos.forEach((entry, i) => {
+        const combo = applies(entry);
+        if (combo !== null) out.push({ combo, owner: 'tab', command: command === 'select-tab' ? `select-tab-${i + 1}` : command });
+      });
     }
-    // Distinct combos.
-    expect(new Set(expected.map(([combo]) => combo)).size).toBe(expected.length);
-    // The two tab-table entries sharing a letter stay apart by Shift.
-    expect(matchTabShortcut(inputFor('Mod+T', platform), platform)).toEqual({ command: 'new-tab' });
-    expect(matchTabShortcut(inputFor(REOPEN_TAB_SHORTCUT, platform), platform)).toEqual({ command: 'reopen-closed-tab' });
-    expect(matchTabShortcut(inputFor('Mod+Shift+F', platform), platform)).toBeNull();
-    expect(matchTabShortcut(inputFor('Mod+Shift+K', platform), platform)).toBeNull();
-    expect(matchTabShortcut(inputFor('Mod+Shift+L', platform), platform)).toBeNull();
+    for (const [command, combos] of Object.entries(RESERVED_PAGE_SHORTCUTS) as [PageCommand, readonly string[]][]) {
+      for (const entry of combos) {
+        const combo = applies(entry);
+        if (combo !== null) out.push({ combo, owner: 'page', command });
+      }
+    }
+    out.push({ combo: SIDEBAR_TOGGLE_SHORTCUT, owner: 'sidebar', command: SIDEBAR_TOGGLE_MENU_ID });
+    out.push({ combo: DEVTOOLS_TOGGLE_SHORTCUT, owner: 'devtools', command: DEVTOOLS_MENU_ID });
+    out.push({ combo: FIND_STEP_SHORTCUTS.next, owner: 'findStep', command: POLISH_MENU_IDS.findNext });
+    out.push({ combo: FIND_STEP_SHORTCUTS.previous, owner: 'findStep', command: POLISH_MENU_IDS.findPrevious });
+    return out;
+  }
+
+  /** Every application-menu item with an accelerator on `platform`: its id and the accelerator in spec notation. */
+  function menuAccelerators(platform: NodeJS.Platform): { id: string; combo: string }[] {
+    const commands = new Proxy({}, { get: () => () => undefined }) as AppMenuCommands;
+    const out: { id: string; combo: string }[] = [];
+    const walk = (items: readonly MenuItemConstructorOptions[]): void => {
+      for (const item of items) {
+        if (typeof item.accelerator === 'string') out.push({ id: item.id ?? String(item.role), combo: comboOfAccelerator(item.accelerator) });
+        if (Array.isArray(item.submenu)) walk(item.submenu);
+      }
+    };
+    walk(appMenuTemplate(commands, platform));
+    return out;
+  }
+
+  /** An Electron accelerator in the spec notation `inputFor` reads (`CmdOrCtrl+Plus` → `Mod+Shift+=`). */
+  function comboOfAccelerator(accelerator: string): string {
+    const parts = accelerator.split('+');
+    // `CmdOrCtrl+Plus` is the only `+` key; `CmdOrCtrl+-` / `CmdOrCtrl+=` split cleanly.
+    const key = parts.pop()!;
+    const mods = parts.map((m) => (m === 'CmdOrCtrl' || m === 'Cmd' ? 'Mod' : m));
+    const keys: Record<string, [string[], string]> = {
+      Plus: [['Shift'], '='],
+      numadd: [[], 'NumpadAdd'],
+      numsub: [[], 'NumpadSubtract'],
+      num0: [[], 'Numpad0'],
+    };
+    const [extra, name] = keys[key] ?? [[], key];
+    return [...mods, ...extra, name].join('+');
+  }
+
+  // Phase 2.5 Batch B integration and the Task 6 review: every reserved chrome shortcut, and every
+  // application-menu accelerator, is taken by at most one matcher on every platform, a reserved one by
+  // exactly its owner, and a menu item's accelerator runs that item's own command; so a new shortcut
+  // that collides with any of them (Mod+W, Mod+1–9, zoom, Ctrl+Tab, Alt+arrows, F5, Mod+Y, Mod+G …) fails here.
+  test.each(PLATFORMS)('reserved-shortcuts-never-collide (%s)', (platform) => {
+    const matchers: Record<Owner, (input: KeyInput) => string | null> = {
+      tab: (input) => {
+        const match = matchTabShortcut(input, platform);
+        return match === null ? null : match.command === 'select-tab' ? `select-tab-${match.index + 1}` : match.command;
+      },
+      page: (input) => matchPageShortcut(input, platform),
+      sidebar: (input) => (matchSidebarShortcut(input, platform) ? SIDEBAR_TOGGLE_MENU_ID : null),
+      devtools: (input) => (matchDevtoolsShortcut(input, platform) ? DEVTOOLS_MENU_ID : null),
+      // Mod+G / Mod+Shift+G are reserved only while the find bar is open: checked as if it were.
+      findStep: (input) => {
+        const step = matchFindStepShortcut(input, platform, true);
+        return step === null ? null : step === 'next' ? POLISH_MENU_IDS.findNext : POLISH_MENU_IDS.findPrevious;
+      },
+    };
+    const takers = (combo: string) =>
+      (Object.entries(matchers) as [Owner, (input: KeyInput) => string | null][]).flatMap(([owner, match]) => {
+        const command = match(inputFor(combo, platform));
+        return command === null ? [] : [{ owner, command }];
+      });
+
+    // Every reserved combo: exactly its owner, running its command; no combo reserved twice.
+    const reserved = reservedCombos(platform);
+    for (const { combo, owner, command } of reserved) expect(takers(combo), `${platform} ${combo}`).toEqual([{ owner, command }]);
+    expect(new Set(reserved.map((r) => r.combo)).size, 'a combo reserved twice').toBe(reserved.length);
+    for (const named of [COMMAND_PALETTE_SHORTCUT, FIND_SHORTCUT, REOPEN_TAB_SHORTCUT]) expect(reserved.map((r) => r.combo)).toContain(named);
+
+    // Every menu accelerator: unique in the menu, taken by at most one matcher, and then by the matcher
+    // whose command is the item's own (`reload-f5` runs `reload`, `select-tab-3` the third tab …).
+    const menu = menuAccelerators(platform);
+    expect(menu.length).toBeGreaterThan(30);
+    const seen = new Map<string, string>();
+    for (const { id, combo } of menu) {
+      expect(seen.get(combo), `${platform} ${combo}: ${seen.get(combo)} and ${id}`).toBeUndefined();
+      seen.set(combo, id);
+      const taken = takers(combo);
+      expect(taken.length, `${platform} ${id} ${combo}: ${JSON.stringify(taken)}`).toBeLessThanOrEqual(1);
+      if (taken[0]) expect(id.startsWith(taken[0].command), `${platform} ${id} ${combo} runs ${taken[0].command}`).toBe(true);
+    }
+    // The menu-only accelerators stay unreserved (a page's own handling comes first).
+    const unreserved = ['Mod+Y', 'Mod+Shift+W', 'Escape', ...(platform === 'darwin' ? ['Mod+Left', 'Mod+Right'] : ['Ctrl+Shift+Q'])];
+    for (const combo of unreserved) {
+      expect(seen.has(combo), `${platform} menu has ${combo}`).toBe(true);
+      expect(takers(combo), `${platform} ${combo}`).toEqual([]);
+    }
+    // Every reserved combo is a menu accelerator too (one press, one command, whoever has focus).
+    for (const { combo } of reserved) expect(seen.has(combo), `${platform} ${combo} in the menu`).toBe(true);
   });
 });

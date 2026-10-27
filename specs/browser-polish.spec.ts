@@ -42,9 +42,18 @@ export function searchEngine(id: unknown): (typeof SEARCH_ENGINES)[number] {
   return SEARCH_ENGINES.find((engine) => engine.id === id) ?? SEARCH_ENGINES.find((engine) => engine.id === DEFAULT_SEARCH_ENGINE)!;
 }
 
-/** The search URL for `query` on `engine`: its template with `{q}` replaced by the encoded query. */
+/**
+ * `text` with every lone surrogate replaced by U+FFFD (as `String.prototype.toWellFormed` does): a
+ * lone surrogate in a typed query or a page selection would make `encodeURIComponent` throw. With the
+ * `u` flag a surrogate pair is one code point, so only lone halves match.
+ */
+export function wellFormed(text: string): string {
+  return text.replace(/\p{Cs}/gu, '\uFFFD');
+}
+
+/** The search URL for `query` on `engine`: its template with `{q}` replaced by the encoded (well-formed) query. */
 export function searchEngineUrl(engine: SearchEngineId, query: string): string {
-  return searchEngine(engine).template.replace('{q}', encodeURIComponent(query));
+  return searchEngine(engine).template.replace('{q}', encodeURIComponent(wellFormed(query)));
 }
 
 /**
