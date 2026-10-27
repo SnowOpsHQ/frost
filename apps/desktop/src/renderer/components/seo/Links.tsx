@@ -7,6 +7,12 @@ import { actions } from '../../ipc';
 import { formatCount, linkQuery } from '../../seo-view';
 import { auditRef, Flash, HighlightToggle, PanelIssues, UrlActions, useFlash } from './actions';
 import { PageText } from './parts';
+// Phase 2.5 Task 7 (`seo-checks.feature.md`): the link check, its row status and "Broken only".
+import type { LinkCheckResult } from '@app/specs/seo-checks.spec';
+import { IDLE_LINK_RUN } from '@app/specs/seo-checks.spec';
+import { checksFor, linkResultIndex } from '../../checks-view';
+import { useChecks } from '../../hooks/useChecks';
+import { LinkChecks, LinkStatusChip } from './LinkChecks';
 
 // Links (acceptance `seo-panels.feature.md`, Links): the page's links (the snapshot's first
 // `maxLinks`) with their type, rel flags and target; filters by type and rel and a text search;
@@ -24,7 +30,11 @@ function LinkRow({
   onToggle,
   tabId,
   flash,
+  result,
+  checking,
 }: {
+  readonly result: LinkCheckResult | undefined;
+  readonly checking: boolean;
   readonly link: PageLink;
   readonly audit: SeoAudit;
   readonly open: boolean;
@@ -34,7 +44,7 @@ function LinkRow({
 }) {
   const flags = relFlags(link);
   return (
-    <li className="seo-table-row" data-testid="seo-link-row" data-kind={link.kind} data-rel={LINK_REL_FLAGS.filter((flag) => flags[flag]).join(' ')} data-open={open}>
+    <li className="seo-table-row" data-testid="seo-link-row" data-kind={link.kind} data-rel={LINK_REL_FLAGS.filter((flag) => flags[flag]).join(' ')} data-open={open} data-status={result?.kind ?? ''}>
       <button type="button" className="seo-table-main" aria-expanded={open} onClick={onToggle}>
         <span className="seo-table-line">
           <span className="seo-kind" data-kind={link.kind}>
@@ -47,6 +57,7 @@ function LinkRow({
             </span>
           ))}
           {link.target !== null && link.target !== '' ? <PageText value={`target ${link.target}`} className="seo-flag seo-flag-plain" /> : null}
+          <LinkStatusChip result={result} pending={checking} />
         </span>
         {link.href === '' ? <span className="seo-missing seo-table-sub">No usable URL</span> : <PageText value={link.href} className="seo-table-sub seo-mono" testId="seo-link-href" />}
       </button>
@@ -67,6 +78,10 @@ export function Links({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
   const counts = useMemo(() => linkCounts(list), [list]);
   const rows = useMemo(() => filterLinks(list, filter), [list, type, rel, filter.query]);
   const capped = page.links.total > list.length;
+  const linkRun = checksFor(useChecks(tab.id), tab.id)?.links ?? IDLE_LINK_RUN;
+  const resultOf = useMemo(() => linkResultIndex(linkRun), [linkRun]);
+  const [brokenOnly, setBrokenOnly] = useState(false);
+  const shown = brokenOnly ? rows.filter((link) => resultOf(link)?.kind === 'broken') : rows;
   return (
     <div className="seo-links" data-testid="seo-links">
       <PanelIssues audit={audit} categories={['links']} clean="No link issues found." />
@@ -130,6 +145,16 @@ export function Links({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
         </div>
       </section>
 
+      <LinkChecks
+        tab={tab}
+        run={linkRun}
+        brokenOnly={brokenOnly}
+        onBrokenOnly={(on) => {
+          setBrokenOnly(on);
+          setOpenRow(null);
+        }}
+      />
+
       <section className="seo-section seo-table-section">
         <div className="seo-filters">
           <label className="seo-search">
@@ -185,15 +210,15 @@ export function Links({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
             ))}
           </select>
         </div>
-        <p className="seo-table-count" data-testid="seo-links-shown" data-count={rows.length}>
-          {rows.length === list.length ? `${formatCount(rows.length)} ${rows.length === 1 ? 'link' : 'links'}` : `${formatCount(rows.length)} of ${formatCount(list.length)} links match`}
+        <p className="seo-table-count" data-testid="seo-links-shown" data-count={shown.length}>
+          {shown.length === list.length ? `${formatCount(shown.length)} ${shown.length === 1 ? 'link' : 'links'}` : `${formatCount(shown.length)} of ${formatCount(list.length)} links match`}
         </p>
-        {rows.length === 0 ? (
+        {shown.length === 0 ? (
           <p className="seo-empty-line">{list.length === 0 ? 'This page has no links.' : 'No links match these filters.'}</p>
         ) : (
           <ul className="seo-table" data-testid="seo-links-table" aria-label="Links">
-            {rows.map((link, index) => (
-              <LinkRow key={index} link={link} audit={audit} open={openRow === index} onToggle={() => setOpenRow(openRow === index ? null : index)} tabId={tab.id} flash={flash} />
+            {shown.map((link, index) => (
+              <LinkRow key={index} link={link} audit={audit} open={openRow === index} onToggle={() => setOpenRow(openRow === index ? null : index)} tabId={tab.id} flash={flash} result={resultOf(link)} checking={linkRun.status === 'running'} />
             ))}
           </ul>
         )}

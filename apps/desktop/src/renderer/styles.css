@@ -6350,3 +6350,75 @@ input {
 }
 
 /* End of Content panel */
+
+/* Link and sitemap checks (Phase 2.5 Task 7, specs/seo-checks.feature.md) ------------------------- */
+
+.seo-checks-notice {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.seo-checks .seo-panel-tools {
+  margin-top: 0;
+}
+
+.seo-checks-summary {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seo-checks-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-checks-counts .seo-flag-chip {
+  line-height: 18px;
+}
+
+.seo-checks-count {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seo-link-status {
+  flex: none;
+  margin-left: auto;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.seo-table-row[data-status='broken'] .seo-table-main {
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+
+.seo-checks-samples {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  list-style: none;
+}
+
+.seo-checks-file + .seo-checks-file {
+  margin-top: 4px;
+}
+
+.seo-hreflang-checks {
+  margin-top: 10px;
+}
+
+/* End of link and sitemap checks */

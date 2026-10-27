@@ -188,9 +188,10 @@ export const SOCIAL_REMOTE_IMAGES = false;
  * heading by level, `off` removes the overlay. One mode at a time per tab; it is part of the tab's
  * state (`TabState.highlight`) and goes back to `off` when the tab's page changes (a new document,
  * an in-page navigation to another URL, a load error, a crash) and when another tab becomes active.
- * Only the active tab showing a web page can be highlighted.
+ * Only the active tab showing a web page can be highlighted. `broken` (Phase 2.5 Task 7,
+ * `seo-checks.feature.md`) outlines only the links the tab's link check found broken.
  */
-export const HIGHLIGHT_MODES = ['off', 'links', 'headings'] as const;
+export const HIGHLIGHT_MODES = ['off', 'links', 'headings', 'broken'] as const;
 export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
 
 /**
@@ -199,7 +200,7 @@ export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
  * toggle that removes it in view. If the page removes the overlay's host itself, the overlay stops
  * and the tab's mode goes back to `off` too.
  */
-export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = { links: 'links', headings: 'on-page' };
+export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = { links: 'links', headings: 'on-page', broken: 'links' };
 
 /**
  * What the overlay draws (frost's own palette): a link's box by kind (a link whose `rel` has
@@ -216,5 +217,6 @@ export const HIGHLIGHT_STYLES = {
   h4: { color: '#65a30d', label: 'H4' },
   h5: { color: '#ca8a04', label: 'H5' },
   h6: { color: '#9a3412', label: 'H6' },
+  broken: { color: '#dc2626', label: 'broken' },
 } as const;
 export type HighlightKind = keyof typeof HIGHLIGHT_STYLES;

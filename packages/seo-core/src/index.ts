@@ -5,6 +5,8 @@ export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreA
 export { RULES } from './rules';
 export { copyValueOf } from './copy-values';
 export * from './content';
+// Link, sitemap and hreflang checks (Phase 2.5 Task 7).
+export * from './checks';
 export {
   accessibilityReport,
   allowsInlineScripts,

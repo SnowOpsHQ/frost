@@ -10,6 +10,7 @@
  * renderer imports this module for its types only.
  */
 import { z } from 'zod';
+import { ChecksContextSchema } from './seo-checks.schema';
 import { AccessibilityContextSchema, PageSecuritySchema } from './seo-compliance.schema';
 import { headerValueCap, RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SOURCES, ROBOTS_FETCH_LIMITS, ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
@@ -378,9 +379,10 @@ export const RobotsFetchSchema = z.strictObject({
  * What main collected about the page beside the extractor's snapshot, handed to the analysis worker
  * with it and validated there: its response (`null`: none recorded) and its origin's robots.txt
  * (`null`: not fetched); and the accessibility check's answer for the tab's document
- * (`AccessibilityContextSchema`, Task 6; absent or `null`: none; `'invalid'`: rejected).
+ * (`AccessibilityContextSchema`, Task 6; absent or `null`: none; `'invalid'`: rejected); and the
+ * link, sitemap and hreflang checks that ran on it (`ChecksContextSchema`, Phase 2.5 Task 7; absent: none).
  */
-export const PageContextSchema = z.strictObject({ response: ResponseMetaSchema.nullable(), robots: RobotsFetchSchema.nullable(), accessibility: AccessibilityContextSchema.optional() });
+export const PageContextSchema = z.strictObject({ response: ResponseMetaSchema.nullable(), robots: RobotsFetchSchema.nullable(), accessibility: AccessibilityContextSchema.optional(), checks: ChecksContextSchema.optional() });
 export type PageContext = z.infer<typeof PageContextSchema>;
 export type ResponseMeta = z.infer<typeof ResponseMetaSchema>;
 export type ResponseHeader = z.infer<typeof ResponseHeaderSchema>;
@@ -388,6 +390,7 @@ export type RedirectHop = z.infer<typeof RedirectHopSchema>;
 export type RobotsFetch = z.infer<typeof RobotsFetchSchema>;
 export type HreflangLink = z.infer<typeof HreflangLinkSchema>;
 export type { A11yNode, A11yViolation, AccessibilityContext, AccessibilityResult, InsecureResource, PageSecurity } from './seo-compliance.schema';
+export type { ChecksContext } from './seo-checks.schema';
 /** Nothing collected (`PageContext` with neither part). */
 export const NO_PAGE_CONTEXT: PageContext = { response: null, robots: null };
 

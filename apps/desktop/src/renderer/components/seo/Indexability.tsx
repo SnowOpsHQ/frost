@@ -7,6 +7,12 @@ import { hreflangFlags, robotsFetchText, robotsGroupText, robotsRuleText, robots
 import { formatCount, openableUrl } from '../../seo-view';
 import { Flash, PanelIssues, useFlash } from './actions';
 import { FactRow, PageText, RawText } from './parts';
+// Phase 2.5 Task 7 (`seo-checks.feature.md`): the Sitemaps check and hreflang return links.
+import type { TabState } from '@app/specs/browser.spec';
+import { IDLE_HREFLANG_RUN, IDLE_SITEMAP_RUN } from '@app/specs/seo-checks.spec';
+import { checksFor } from '../../checks-view';
+import { useChecks } from '../../hooks/useChecks';
+import { HreflangChecks, SitemapChecks } from './SitemapChecks';
 
 // Indexability (acceptance `seo-indexability.feature.md`, Panel): the verdict with its reasons and
 // signals, the ranked indexability / hreflang / robots meta issues, then the evidence: the HTTP
@@ -320,7 +326,7 @@ function RobotsCard({ robots, flash }: { readonly robots: RobotsReport | null; r
   );
 }
 
-function HreflangCard({ hreflang }: { readonly hreflang: HreflangReport }) {
+function HreflangCard({ hreflang, children }: { readonly hreflang: HreflangReport; readonly children?: ReactNode }) {
   const [all, setAll] = useState(false);
   const shown = all ? hreflang.entries : hreflang.entries.slice(0, HREFLANG_FIRST_ROWS);
   const aside = hreflang.entries.length > 0 ? <span className="seo-badge">{formatCount(hreflang.total)}</span> : null;
@@ -362,16 +368,17 @@ function HreflangCard({ hreflang }: { readonly hreflang: HreflangReport }) {
               {all ? 'Show fewer' : `Show all ${formatCount(hreflang.entries.length)}`}
             </button>
           ) : null}
-          {HREFLANG_RECIPROCITY_CHECKED ? null : <p className="seo-note">Return links (each alternate listing this page back) are not checked: that needs fetching every alternate.</p>}
+          {HREFLANG_RECIPROCITY_CHECKED ? children : <p className="seo-note">Return links (each alternate listing this page back) are not checked: that needs fetching every alternate.</p>}
         </>
       )}
     </Card>
   );
 }
 
-export function Indexability({ audit }: { readonly audit: SeoAudit }) {
+export function Indexability({ audit, tab }: { readonly audit: SeoAudit; readonly tab?: TabState }) {
   const [message, flash] = useFlash();
   const report = audit.indexability;
+  const checks = checksFor(useChecks(tab?.id), tab?.id ?? 0);
   return (
     <div className="seo-index" data-testid="seo-indexability">
       <VerdictCard report={report} />
@@ -380,7 +387,8 @@ export function Indexability({ audit }: { readonly audit: SeoAudit }) {
       <DirectivesCard report={report} />
       <CanonicalCard canonical={report.canonical} />
       <RobotsCard robots={report.robots} flash={flash} />
-      <HreflangCard hreflang={report.hreflang} />
+      {tab ? <SitemapChecks tab={tab} run={checks?.sitemaps ?? IDLE_SITEMAP_RUN} /> : null}
+      <HreflangCard hreflang={report.hreflang}>{tab ? <HreflangChecks tab={tab} run={checks?.hreflang ?? IDLE_HREFLANG_RUN} /> : null}</HreflangCard>
       <Flash message={message} testId="seo-index-flash" />
     </div>
   );

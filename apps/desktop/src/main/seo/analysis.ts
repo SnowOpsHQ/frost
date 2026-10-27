@@ -1,5 +1,6 @@
 import type { SeoAudit, SpeedReport } from '@app/seo-core';
 import { ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import type { ChecksAnalysisResult } from './checks-analyse';
 
 // Page-derived analysis off the Electron main thread (spec `seo-limits.spec.ts`,
 // `ANALYSIS_TIMEOUT_MS`; acceptance `seo-schema.feature.md`, Analysis off the main thread). Main posts
@@ -32,11 +33,13 @@ export interface Analyzer {
   analyse(raw: unknown, context?: unknown): Promise<AnalysisResult>;
   /** Validates and summarises a speed measurement (`PerformanceMeasurementSchema`) in the worker. Never rejects. */
   analyseSpeed(raw: unknown): Promise<SpeedAnalysisResult>;
+  /** Validates and runs a checks job (`ChecksJobSchema`, Phase 2.5 Task 7: a sitemap, an alternate, robots.txt) in the worker. Never rejects. */
+  analyseCheck(raw: unknown): Promise<ChecksAnalysisResult>;
   /** Terminates the worker (the app is quitting). */
   dispose(): void;
 }
 
-type JobKind = 'audit' | 'speed';
+type JobKind = 'audit' | 'speed' | 'checks';
 type Settled = { readonly ok: boolean; readonly reason?: string };
 
 interface Job {
@@ -50,6 +53,12 @@ interface Job {
 /** What the worker answered, if it has the shape of a `kind` job's result. */
 function asResult(kind: JobKind, value: unknown): Settled | null {
   if (typeof value !== 'object' || value === null) return null;
+  if (kind === 'checks') {
+    const checked = value as { ok?: unknown; kind?: unknown; reason?: unknown } & Record<string, unknown>;
+    if (checked.ok === true && (checked.kind === 'sitemap' || checked.kind === 'hreflang' || checked.kind === 'robots') && typeof checked[checked.kind] === 'object' && checked[checked.kind] !== null) return checked as Settled;
+    if (checked.ok === false && (checked.reason === 'invalid-job' || checked.reason === 'analysis-failed')) return checked as Settled;
+    return null;
+  }
   const result = value as { ok?: unknown; audit?: unknown; report?: unknown; reason?: unknown };
   const payload = kind === 'audit' ? result.audit : result.report;
   if (result.ok === true && typeof payload === 'object' && payload !== null) return result as Settled;
@@ -108,10 +117,10 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
       return;
     }
     try {
-      running.postMessage(job.kind === 'audit' ? { id: job.id, raw: job.raw, context: job.context } : { id: job.id, kind: 'speed', raw: job.raw });
+      running.postMessage(job.kind === 'audit' ? { id: job.id, raw: job.raw, context: job.context } : { id: job.id, kind: job.kind, raw: job.raw });
     } catch {
       // Not structured-cloneable: not a snapshot (or measurement).
-      job.settle({ ok: false, reason: job.kind === 'audit' ? 'invalid-snapshot' : 'invalid-measurement' });
+      job.settle({ ok: false, reason: job.kind === 'audit' ? 'invalid-snapshot' : job.kind === 'checks' ? 'invalid-job' : 'invalid-measurement' });
       pump();
       return;
     }
@@ -127,6 +136,7 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
   return {
     analyse: (raw, context) => enqueue('audit', raw, context) as Promise<AnalysisResult>,
     analyseSpeed: (raw) => enqueue('speed', raw, undefined) as Promise<SpeedAnalysisResult>,
+    analyseCheck: (raw) => enqueue('checks', raw, undefined) as Promise<ChecksAnalysisResult>,
     dispose() {
       for (const job of queue.splice(0)) job.settle({ ok: false, reason: 'analysis-failed' });
       if (current) finish({ ok: false, reason: 'analysis-failed' }, true);

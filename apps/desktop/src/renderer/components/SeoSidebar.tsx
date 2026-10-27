@@ -157,7 +157,7 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
     case 'schema':
       return <Schema audit={response.audit} tab={tab} />;
     case 'indexability':
-      return <Indexability audit={response.audit} />;
+      return <Indexability audit={response.audit} tab={tab} />;
     case 'speed':
       return <Speed audit={response.audit} tab={tab} renderProfile={response.renderProfile ?? null} />;
     case 'compliance':

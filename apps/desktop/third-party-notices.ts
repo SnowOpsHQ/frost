@@ -35,6 +35,8 @@ export const NOTICE_PACKAGES: readonly NoticePackage[] = [
   { name: '@trpc/server', from: 'packages/ipc-contract', use: 'Messages between the app window and the main process.' },
   { name: 'zod', from: 'specs', use: 'Validating messages and page data in the main process.' },
   { name: 'drizzle-orm', from: 'packages/db', use: 'The browser-session database.' },
+  { name: 'saxes', from: 'apps/desktop', use: 'Reading sitemaps in the analysis worker (streaming, no DTDs; the sitemap check).' },
+  { name: 'xmlchars', from: 'node_modules/saxes', use: 'Used by saxes.' },
 ];
 
 /** The directory of package `name` as Node would find it from `from` (walking up `node_modules`). */

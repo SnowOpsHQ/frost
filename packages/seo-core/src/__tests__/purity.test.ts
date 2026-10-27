@@ -23,7 +23,7 @@ test('seo-core-is-pure', () => {
     const imports = [...code.matchAll(/(?:from|import)\s+'([^']+)'/g)].map((m) => m[1]!);
     for (const specifier of imports) {
       // Relative modules and the Zod-free specs only; the snapshot spec (Zod) for its types only.
-      const allowed = specifier.startsWith('.') || ['@app/specs/seo-rules.spec', '@app/specs/seo-sidebar.spec', '@app/specs/seo-limits.spec', '@app/specs/schema-types.spec', '@app/specs/seo-indexability.spec', '@app/specs/seo-speed.spec', '@app/specs/seo-compliance.spec', '@app/specs/command-palette.spec', '@app/specs/render-profile.spec', '@app/specs/seo-content.spec'].includes(specifier) || ((specifier === '@app/specs/seo-snapshot.spec' || specifier === '@app/specs/seo-speed.schema.spec') && /import type|export type/.test(code));
+      const allowed = specifier.startsWith('.') || ['@app/specs/seo-rules.spec', '@app/specs/seo-sidebar.spec', '@app/specs/seo-limits.spec', '@app/specs/schema-types.spec', '@app/specs/seo-indexability.spec', '@app/specs/seo-speed.spec', '@app/specs/seo-compliance.spec', '@app/specs/command-palette.spec', '@app/specs/render-profile.spec', '@app/specs/seo-content.spec', '@app/specs/seo-checks.spec'].includes(specifier) || ((specifier === '@app/specs/seo-snapshot.spec' || specifier === '@app/specs/seo-speed.schema.spec') && /import type|export type/.test(code));
       expect(allowed, `${path.relative(SRC, file)} imports ${specifier}`).toBe(true);
     }
     for (const value of code.matchAll(/^import (?!type)[^;]*from '@app\/specs\/seo-(snapshot|speed\.schema)\.spec'/gm)) expect.fail(`${file}: value import of the Zod snapshot spec: ${value[0]}`);

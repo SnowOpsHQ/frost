@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, ipcMain, net, session, type WebContents } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, session, webContents, type WebContents } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -17,6 +17,10 @@ import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { runAccessibilityCheck } from './seo/a11y';
 import { createAnalyzer } from './seo/analysis';
+import { createChecks, type Checks } from './seo/checks';
+import { createCheckFetch, netCheckHop } from './seo/checks-fetch';
+import { CHECKS_ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-checks.spec';
+import { profileUserAgent } from '@app/specs/render-profile.spec';
 import { createContentService } from './seo/content-notes';
 import { confirmClearContentNotes } from './seo/content-notes-dialog';
 import { runExtractor } from './seo/extract';
@@ -118,6 +122,15 @@ function start(): void {
     spawn: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }),
   });
   app.once('will-quit', () => analyzer.dispose());
+  // Link, sitemap and hreflang checks (specs/seo-checks.feature.md): on request only, through main's
+  // bounded fetcher on the browse session (set up once the session exists, below); what servers send
+  // is parsed in a worker of the checks' own (the same bundle), so a long sitemap never holds an audit back.
+  const checksAnalyzer = createAnalyzer({
+    spawn: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }),
+    timeoutMs: CHECKS_ANALYSIS_TIMEOUT_MS,
+  });
+  app.once('will-quit', () => checksAnalyzer.dispose());
+  let checks: Checks | null = null;
   // Indexability (specs/seo-indexability.feature.md): each tab's main-frame response is recorded
   // from the browse session's webRequest events (status, redirects, allowlisted headers, capped as
   // they arrive) and committed on the tab's `did-navigate`; robots.txt is fetched by main through
@@ -151,6 +164,8 @@ function start(): void {
       response: knownInput(responses.responseFor(contents.id, url)),
       robots: robots ? laterInput(robots.get(url), pendingRobots(url), robots.peek(url)) : knownInput(null),
       performance: laterInput(measureForAudit(contents)),
+      // The checks that ran on this document and URL (specs/seo-checks.feature.md, Rules).
+      checks: knownInput(checks?.contextFor(contents.id, url)),
     });
   };
 
@@ -165,6 +180,12 @@ function start(): void {
       if (tabId !== null && tabId === browser.getState().activeTabId) void collect(contents, { prime: true }).catch(() => undefined);
     });
     contents.once('destroyed', () => shownTimes.forget(id));
+    // A new document, an in-page move to another URL or a closed tab cancels the page's checks.
+    contents.on('did-navigate', () => checks?.dropped(id));
+    contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (isMainFrame) checks?.navigatedInPage(id, url);
+    });
+    contents.once('destroyed', () => checks?.dropped(id));
   });
   // Per-tab render profiles (specs/render-profile.feature.md): each tab's own debugger, attached
   // only to a browse-session tab's WebContents and only while it has a profile, sending only the
@@ -187,7 +208,8 @@ function start(): void {
     session: sessionStore.writer,
     contextMenu: showContextMenu,
     seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
-    highlight: { paint: runHighlight, ended: watchHighlight },
+    // The `broken` mode outlines the link check's broken targets (specs/seo-checks.feature.md).
+    highlight: { paint: (contents, mode) => runHighlight(contents, mode, mode === 'broken' ? (checks?.brokenFor(contents.id) ?? []) : []), ended: watchHighlight },
     speed: { measure: collect, analyse: (raw) => analyzer.analyseSpeed(raw), times: shownTimes },
     // The accessibility check (specs/seo-compliance.feature.md): axe-core in the tab's own isolated
     // accessibility world, on request only; its answer is validated in the analysis worker.
@@ -238,6 +260,21 @@ function start(): void {
     // onResponseStarted / onErrorOccurred: browser/web-request.ts) and its robots.txt fetcher.
     observeMainFrames(browseSession, responses);
     robots = createRobotsFetcher({ hop: netHop(net, browseSession) });
+    const robotsFetcher = robots;
+    checks = createChecks({
+      fetch: createCheckFetch(netCheckHop(net, browseSession)),
+      analyse: (job) => checksAnalyzer.analyseCheck(job),
+      robots: (pageUrl) => robotsFetcher.get(pageUrl),
+      tab: (tabId) => {
+        const state = browser.getState();
+        const tab = state.tabs.find((t) => t.id === tabId);
+        const contents = tab ? webContents.getAllWebContents().find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) : undefined;
+        if (!tab || !contents) return null;
+        const profile = tab.renderProfile?.profile;
+        return { contentsId: contents.id, url: contents.getURL(), active: state.activeTabId === tabId, userAgent: profile ? profileUserAgent(profile, process.versions.chrome) : null, audit: browser.seo.getAudit(tabId) };
+      },
+      rescore: (tabId) => void browser.rescoreAudit(tabId),
+    });
     hardenBrowseSession(browseSession, {
       onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
       permissions: createBrowsePermissionHandlers({
@@ -256,6 +293,7 @@ function start(): void {
       services: {
         browser,
         seo: browser.seo,
+        checks,
         // The Content panel's notes (local, in the session database) and Copy as HTML (specs/seo-content.feature.md).
         content: createContentService({
           notes: sessionStore.contentNotes,
@@ -277,6 +315,7 @@ function start(): void {
       forgetSeoCaches: () => {
         robots?.clear();
         responses.clear();
+        checks?.clearCache();
         // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
         browser.forgetRenderProfilePins();
       },
