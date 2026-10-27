@@ -370,6 +370,47 @@ describe('broker', () => {
     expect(rest).toHaveBeenCalledExactlyOnceWith(true);
   });
 
+  test('clearing-decisions-reevaluates-narrowed-prompts', () => {
+    // The camera is allowed: asking for camera + microphone prompts for the microphone only, and a
+    // microphone-only request coalesces into that prompt.
+    broker.request(1, media(['video']), answerSpy());
+    broker.answer(1, headId(broker, 1), 'allow');
+    const both = answerSpy();
+    const micOnly = answerSpy();
+    broker.request(1, media(['video', 'audio']), both);
+    broker.request(1, media(['audio']), micOnly);
+    expect(broker.pendingCount()).toBe(1);
+    expect(broker.promptFor(1)).toMatchObject({ permission: 'media', mediaTypes: ['audio'] });
+
+    // Clear Browsing Data forgets the camera while the prompt is pending; Allow then answers only
+    // what the prompt asked about: the request that also wanted the camera is denied.
+    broker.forgetDecisions();
+    broker.answer(1, headId(broker, 1), 'allow');
+    expect(both).toHaveBeenCalledExactlyOnceWith(false);
+    expect(micOnly).toHaveBeenCalledExactlyOnceWith(true);
+    expect(broker.check(scope(A), 'camera')).toBe(false);
+    expect(broker.check(scope(A), 'microphone')).toBe(true);
+    // The camera is asked for again.
+    broker.request(1, media(['video', 'audio']), answerSpy());
+    expect(broker.promptFor(1)).toMatchObject({ permission: 'media', mediaTypes: ['video'] });
+    broker.denyTab(1);
+
+    // After the clear, a Block of the camera from another tab's prompt: the narrowed prompt's
+    // Allow does not grant a request that wanted the now-blocked camera.
+    broker.request(1, media(['video'], B), answerSpy());
+    broker.answer(1, headId(broker, 1), 'allow');
+    const blockedCamera = answerSpy();
+    broker.request(1, media(['video', 'audio'], B), blockedCamera);
+    expect(broker.promptFor(1)).toMatchObject({ origin: B, mediaTypes: ['audio'] });
+    broker.forgetDecisions();
+    broker.request(2, media(['video'], B), answerSpy());
+    broker.answer(2, headId(broker, 2), 'block');
+    expect(blockedCamera).not.toHaveBeenCalled();
+    broker.answer(1, headId(broker, 1), 'allow');
+    expect(blockedCamera).toHaveBeenCalledExactlyOnceWith(false);
+    expect(broker.check(scope(B), 'microphone')).toBe(true);
+  });
+
   test('check-reflects-remembered-allow', () => {
     const decide = (origin: string, permission: 'notifications' | 'geolocation', decision: 'allow' | 'block' | 'dismiss') => {
       broker.request(1, { origin, topLevelOrigin: origin, permission }, answerSpy());

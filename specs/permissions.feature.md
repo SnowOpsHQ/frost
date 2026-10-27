@@ -43,7 +43,13 @@ named test.
   forgets every remembered Allow and Block, stored and in memory, and the back-off
   (`forgetDecisions`); nothing else revokes a decision in Phase 1 (no site-settings UI yet). A request is answered from what is remembered,
   with no prompt: any asked-for permission Blocked → denied; all Allowed → granted; otherwise the
-  prompt asks for the undecided ones only.
+  prompt asks for the undecided ones only. Each pending request keeps **everything it asked for**,
+  not only what its prompt names: when the prompt is answered (or settled by another answer) a
+  request is granted only if every permission it asked for is remembered Allowed **then**. So a
+  prompt narrowed by a decision that has since gone (Clear Browsing Data while it is pending) or
+  turned into a Block (another prompt's answer after the clear) still names only what it named,
+  and its Allow grants only what that prompt asked about: a request that also wanted the
+  forgotten or blocked permission is denied and must ask again.
 - **Queue.** Each tab has its own queue; the chrome shows its head. Identical requests (same tab,
   scope, permission and devices) **coalesce** into the pending prompt and get the same answer, up
   to `MAX_COALESCED_REQUESTS` per prompt (more are denied at once). An Allow / Block also settles
@@ -163,6 +169,12 @@ named test.
   request is granted at once; after Block for an origin's microphone, a camera + microphone request
   is denied at once; with only the camera allowed, a camera + microphone request prompts for the
   microphone only.
+- **Scenario: clearing-decisions-reevaluates-narrowed-prompts** (review finding) — with the camera
+  allowed, a camera + microphone request prompts for the microphone only (a microphone-only request
+  coalesces into it); `forgetDecisions()` while it is pending, then Allow: the camera +
+  microphone request is denied, the microphone-only one granted, only the microphone is remembered
+  and the camera prompts again. Likewise when, after the clear, another tab's prompt Blocks the
+  camera before the narrowed prompt is allowed.
 - **Scenario: check-reflects-remembered-allow** — `check(origin, permission)` is `true` only after
   an Allow of that pair (not after Block, dismiss or for another origin).
 - **Scenario: prompt-times-out** — (fake timers) an unanswered prompt is denied after
@@ -306,6 +318,13 @@ Each scenario uses fresh loopback origins (decisions are remembered for the app 
   elsewhere: the prompt bar goes away, and the new page's request prompts afresh (a new id).
 - **Scenario: non-promptable-denied-without-prompt-e2e** — `navigator.requestMIDIAccess()` rejects
   and `navigator.storage.persist()` resolves `false`, with no prompt bar ever shown.
+- **Scenario: clearing-decisions-reevaluates-narrowed-prompts-e2e** — (Chromium's fake media
+  devices, `--use-fake-device-for-media-stream`) `getUserMedia({ video })` allowed; then
+  `getUserMedia({ video, audio })` prompts for the microphone only; Clear Browsing Data… from the
+  menu (main's message box stubbed to confirm) while it is pending: the page's camera permission
+  reads `denied` and the prompt still names the microphone; Allow rejects that request
+  `NotAllowedError` (no camera); a microphone-only request is then granted with no prompt, and a
+  camera request prompts again.
 - **Scenario: background-tab-prompt-shows-dot-e2e** — a prompt in a background tab shows its strip
   dot, not the bar; activating the tab shows the bar.
 - **Scenario: app-session-stays-deny-all-e2e** — the chrome page's own

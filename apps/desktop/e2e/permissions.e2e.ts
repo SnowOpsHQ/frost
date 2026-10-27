@@ -3,6 +3,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { BROWSE_PARTITION, NEW_TAB_LABEL } from '@app/specs/browser.spec';
 import {
   FULLSCREEN_BANNER_HEIGHT,
@@ -83,7 +84,9 @@ async function site(): Promise<Awaited<ReturnType<typeof startSite>>> {
 }
 
 test.beforeAll(async () => {
-  ({ app, page } = await launchApp());
+  // Chromium's fake camera and microphone, so `getUserMedia` reaches the permission request on a
+  // machine with no devices (it still asks: this is not the fake *UI* switch, which would not).
+  ({ app, page } = await launchApp(['--use-fake-device-for-media-stream']));
   await page.waitForLoadState('domcontentloaded');
   // Counts every prompt bar the chrome ever renders (so "no prompt" means none, not "none now"),
   // and logs, with the renderer's own clock, each bar's mount and every change of its arming.
@@ -173,6 +176,13 @@ async function open(url: string, title: string): Promise<number> {
 }
 
 const ASK_NOTIFICATIONS = 'Notification.requestPermission()';
+/** `getUserMedia` for `constraints`: the granted track kinds (`audio+video`), or the error's name. */
+const askMedia = (constraints: { video?: true; audio?: true }) =>
+  `navigator.mediaDevices.getUserMedia(${JSON.stringify(constraints)}).then((stream) => {
+    const kinds = stream.getTracks().map((track) => track.kind).sort().join('+');
+    for (const track of stream.getTracks()) track.stop();
+    return kinds;
+  }, (error) => error.name)`;
 const ASK_GEOLOCATION = 'new Promise((resolve) => navigator.geolocation.getCurrentPosition(() => resolve("position"), (error) => resolve(`error ${error.code}`)))';
 
 /** The prompt bar shows `origin` (embedded in `embedder`, if given) asking for `kind`. */
@@ -403,6 +413,47 @@ test('background-tab-prompt-shows-dot-e2e', async () => {
   await expect(firstTab.getByTestId('tab-permission-dot')).toHaveCount(0);
   await page.getByTestId('permission-dismiss').click();
   await expect(asked).resolves.toBe('denied');
+});
+
+test('clearing-decisions-reevaluates-narrowed-prompts-e2e', async () => {
+  const a = await site();
+  const id = await open(`${a.origin}/media`, 'Page MEDIA');
+  // The camera allowed; then camera + microphone prompts for the microphone only.
+  const camera = run(id, askMedia({ video: true }));
+  await expectPrompt(a.origin, a.host, 'camera');
+  await allow();
+  await expect(camera).resolves.toBe('video');
+  await expect(prompt()).toHaveCount(0);
+  const both = run(id, askMedia({ video: true, audio: true }));
+  await expectPrompt(a.origin, a.host, 'microphone');
+
+  // Clear Browsing Data… (main's message box stubbed to confirm) while that prompt is pending.
+  await app.evaluate(({ dialog }, confirm) => {
+    const record = { calls: 0 };
+    (globalThis as unknown as { __clearDialog: typeof record }).__clearDialog = record;
+    if (!Object.getOwnPropertyDescriptor(dialog, 'showMessageBox')?.writable) throw new Error('e2e: dialog.showMessageBox is not writable; cannot stub it');
+    Object.assign(dialog, {
+      showMessageBox: async () => {
+        record.calls += 1;
+        return { response: confirm, checkboxChecked: false };
+      },
+    });
+  }, CLEAR_BROWSING_DATA.confirmIndex);
+  await menu(CLEAR_BROWSING_DATA.menuItemId);
+  await expect.poll(() => app.evaluate(() => (globalThis as unknown as { __clearDialog: { calls: number } }).__clearDialog.calls)).toBe(1);
+  // The camera's Allow is forgotten (the page's own check says so); the prompt is still pending.
+  await expect.poll(() => run(id, 'navigator.permissions.query({ name: "camera" }).then((status) => status.state)')).toBe('denied');
+  await expectPrompt(a.origin, a.host, 'microphone');
+
+  // Allowing the microphone does not grant the camera the request also asked for.
+  await allow();
+  await expect(both).resolves.toBe('NotAllowedError');
+  await expect(prompt()).toHaveCount(0);
+  await expect(run(id, askMedia({ audio: true }))).resolves.toBe('audio');
+  const cameraAgain = run(id, askMedia({ video: true }));
+  await expectPrompt(a.origin, a.host, 'camera');
+  await page.getByTestId('permission-dismiss').click();
+  await expect(cameraAgain).resolves.toBe('NotAllowedError');
 });
 
 test('app-session-stays-deny-all-e2e', async () => {
