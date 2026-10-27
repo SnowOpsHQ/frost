@@ -8,6 +8,8 @@ import { createWindowRegistry } from './app-windows';
 import { contextMenuTemplate } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
+import { confirmClearHistory } from './browser/history-dialog';
+import { createHistoryService, createSearchEngineSetting } from './browser/history-service';
 import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
 import { createProfileDebugger } from './browser/render-profile-debugger';
 import { createRenderProfilePins } from './browser/render-profile-pins';
@@ -104,7 +106,7 @@ function start(): void {
       edit: (command) => {
         if (live()) contents[command]();
       },
-    });
+    }, searchEngine.searchEngine());
     popupContextMenu(template, window as BrowserWindow);
   };
   // The active tab is audited after each load and SPA route change (specs/seo-sidebar.feature.md):
@@ -180,6 +182,9 @@ function start(): void {
     // createProfileDebugger refuses anything but a browse-session tab's WebContents itself.
     debuggerFor: (contents: WebContents, detached: (reason: string) => void) => createProfileDebugger(contents, detached),
   };
+  // The search engine choice (specs/browser-polish.feature.md): kept locally in the session database,
+  // loaded before the first window opens; the address bar and the context menu search with it.
+  const searchEngine = createSearchEngineSetting({ store: sessionStore.settings, changed: () => browser.searchEngineChanged(), log: logSession });
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
@@ -199,6 +204,7 @@ function start(): void {
     // "Open in" refuses a page from a non-public address (specs/command-palette.feature.md).
     pageAddress: (contents) => responses.addressFor(contents.id),
     renderProfiles,
+    searchEngine: () => searchEngine.searchEngine(),
   });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
@@ -264,6 +270,17 @@ function start(): void {
           log: logSession,
           confirmClearAll: () => confirmClearContentNotes(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
         }),
+        // Browser polish (specs/browser-polish.feature.md): find in page, the History view (local
+        // visits; "Clear all history" asks in main first), Reopen Closed Tab and the search engine.
+        find: browser.find,
+        history: createHistoryService({
+          history: sessionStore.history,
+          writer: sessionStore.writer,
+          tabs: browser,
+          confirmClearAll: () => confirmClearHistory(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
+          log: logSession,
+        }),
+        settings: searchEngine,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -282,6 +299,8 @@ function start(): void {
       },
       // Only when the dialog's checkbox was ticked (specs/seo-content.feature.md).
       clearContentNotes: () => sessionStore.contentNotes.clearAll(),
+      // With the visits, the history part: the closed-tab stack (specs/browser-polish.feature.md).
+      forgetClosedTabs: () => browser.forgetClosedTabs(),
       log: logSession,
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
@@ -293,6 +312,7 @@ function start(): void {
     const saved = await loadSavedState(sessionStore, logSession);
     decisions.load(saved.decisions);
     renderProfilePins.load(await sessionStore.repository.loadRenderProfilePins().catch(() => []));
+    await searchEngine.load();
     browser.restoreSession(saved.session);
     openMainWindow();
     markStarted();

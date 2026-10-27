@@ -34,9 +34,10 @@ export const MIGRATIONS_TABLE = 'schema_migrations' as const;
  * `render_profile_pins` (Phase 2.5 Task 1, `render-profile.feature.md`: one pinned render profile
  * per origin, as JSON, at most `MAX_RENDER_PROFILE_PINS`), `0004` the Content panel's notes
  * (Phase 2.5 Task 3, `CONTENT_TABLES` in `seo-content.spec.ts`: target queries and snippet drafts
- * per page URL).
+ * per page URL), `0005` `app_settings` (Phase 2.5 Task 6, `browser-polish.spec.ts`: local
+ * preferences by key, such as `SEARCH_ENGINE_SETTING_KEY`).
  */
-export const SESSION_TABLES = ['browser_tabs', 'recent_visits', 'site_permissions', 'render_profile_pins', 'seo_target_queries', 'seo_snippet_variants'] as const;
+export const SESSION_TABLES = ['browser_tabs', 'recent_visits', 'site_permissions', 'render_profile_pins', 'seo_target_queries', 'seo_snippet_variants', 'app_settings'] as const;
 
 /** At most this many tabs are saved, and restored (the window holds no more). */
 export const MAX_RESTORED_TABS = MAX_TABS;

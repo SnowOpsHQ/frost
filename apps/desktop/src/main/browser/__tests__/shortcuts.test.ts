@@ -68,7 +68,8 @@ describe('tab shortcut matching', () => {
     // Not ours: plain keys, extra modifiers, the other platform's modifier.
     expect(matchTabShortcut({ ...t, [mod]: false }, platform)).toBeNull();
     expect(matchTabShortcut({ ...t, alt: true }, platform)).toBeNull();
-    expect(matchTabShortcut({ ...t, shift: true, key: 'T' }, platform)).toBeNull();
+    // Mod+Shift+T is Reopen Closed Tab (`browser-polish.spec.ts`), not New Tab.
+    expect(matchTabShortcut({ ...t, shift: true, key: 'T' }, platform)).toEqual({ command: 'reopen-closed-tab' });
     expect(matchTabShortcut({ ...t, [other]: true }, platform)).toBeNull();
     expect(matchTabShortcut({ ...t, [mod]: false, [other]: true }, platform)).toBeNull();
     expect(matchTabShortcut(inputFor('Mod+0', platform), platform)).toBeNull();

@@ -7,6 +7,7 @@ import { describe, expect, test } from 'vitest';
 import { MIGRATIONS_TABLE, SESSION_TABLES } from '@app/specs/browser-session-db.spec';
 import { CONTENT_TABLES } from '@app/specs/seo-content.spec';
 import { seoSnippetVariants, seoTargetQueries } from '../content-schema';
+import { appSettings } from '../settings-schema';
 import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
 import { browserTabs, recentVisits, renderProfilePins, schemaMigrations, sitePermissions } from '../schema';
 
@@ -66,7 +67,7 @@ describe('migrations', () => {
     expect(tableNames(db)).toEqual([...SESSION_TABLES, MIGRATIONS_TABLE].sort());
     // Phase 2.5 Task 3's Content panel notes are session tables too (`seo-content.feature.md`, content-tables-migrate).
     expect(SESSION_TABLES).toEqual(expect.arrayContaining([...CONTENT_TABLES]));
-    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants]) {
+    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants, appSettings]) {
       const name = getTableConfig(table).name;
       expect(sqliteColumns(db, name), name).toEqual(drizzleColumns(table));
     }

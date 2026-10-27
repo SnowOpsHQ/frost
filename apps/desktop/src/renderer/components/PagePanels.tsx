@@ -95,7 +95,7 @@ function CrashPanel({ tab }: { readonly tab: TabState }) {
 function PageContent({ tab, empty }: { readonly tab: TabState | undefined; readonly empty: boolean }) {
   if (tab?.crashed) return <CrashPanel tab={tab} />;
   if (tab?.error) return <ErrorPanel tab={{ ...tab, error: tab.error }} />;
-  return empty ? <StartView /> : null;
+  return empty ? <StartView tabId={tab?.id} /> : null;
 }
 
 /** The area the tab's page view covers; its rectangle is reported to main on every resize. */

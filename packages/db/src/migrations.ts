@@ -77,6 +77,17 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    // Local preferences by key (Phase 2.5 Task 6, `browser-polish.spec.ts`): the search engine choice.
+    id: '0005_app_settings',
+    sql: `
+      CREATE TABLE app_settings (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 /**

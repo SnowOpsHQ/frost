@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { FindBar } from './components/FindBar';
+import { HistoryView } from './components/HistoryView';
+import { useHistoryView } from './hooks/useHistoryView';
 import { CommandPalette } from './components/CommandPalette';
 import { FullscreenNotice } from './components/FullscreenNotice';
 import { PageArea } from './components/PagePanels';
@@ -38,6 +41,8 @@ export function App() {
   const [panelJump, setPanelJump] = useState<PanelJump | null>(null);
   // The render-profile editor bar (`render-profile.feature.md`): open per window, under the toolbar.
   const [profileOpen, setProfileOpen] = useState(false);
+  // Browser polish (`browser-polish.feature.md`): the History sheet (per window) and the active tab's find bar.
+  const [historyOpen, closeHistory] = useHistoryView(state?.historyViewSeq, tab);
   return (
     <div className="chrome">
       <TabStrip state={state} />
@@ -49,8 +54,9 @@ export function App() {
       <div className="render-slot">{profileOpen ? <RenderProfileBar tab={tab} onClose={() => setProfileOpen(false)} /> : null}</div>
       <div className="workspace">
         {/* The palette's sheet sits above the page area, never under the tab's view (`command-palette.spec.ts`). */}
-        <div className="page-column">
+        <div className="page-column" data-history={historyOpen ? 'open' : undefined}>
           <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
+          {historyOpen ? <HistoryView onClose={closeHistory} /> : <FindBar find={state?.find} />}
           <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
         </div>
         <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} />

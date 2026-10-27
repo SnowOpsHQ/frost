@@ -7,6 +7,8 @@ import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@app/ipc-contract';
+import type { SearchEngineId } from '@app/specs/browser-polish.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
 // the user intents it sends. All browser state, and every SEO audit, lives in main. The chrome never
@@ -59,4 +61,20 @@ export const actions = {
   setRenderProfile: (tabId: number, profile: RenderProfile, pin?: boolean) => ipc.browser.setRenderProfile.mutate({ tabId, profile, ...(pin === undefined ? {} : { pin }) }).catch(() => false),
   /** Reset: the tab's render profile and this site's pin go; resolves whether it had one. */
   clearRenderProfile: (tabId: number) => ipc.browser.clearRenderProfile.mutate({ tabId }).catch(() => false),
+  // Browser polish (`browser-polish.feature.md`): find in page, history, reopen tab, search engine.
+  /** Opens the active tab's find bar (as Mod+F). */
+  openFind: () => ipc.find.open.mutate().catch(ignore),
+  /** Runs `text` in the tab's find bar (main calls `findInPage`); resolves whether its bar was open. */
+  findSearch: (tabId: number, text: string, matchCase: boolean) => ipc.find.search.mutate({ tabId, text, matchCase }).catch(() => false),
+  findStep: (tabId: number, forward: boolean) => ipc.find.step.mutate({ tabId, forward }).catch(() => false),
+  closeFind: (tabId: number) => ipc.find.close.mutate({ tabId }).catch(() => false),
+  /** One page of history; an empty one on an IPC failure. */
+  historyList: (query: string, after: HistoryCursorAnswer | null): Promise<HistoryPageAnswer> => ipc.history.list.query({ query, after }).catch(() => ({ visits: [], next: null })),
+  jumpBackIn: (): Promise<JumpBackInAnswer> => ipc.history.jumpBackIn.query().catch(() => ({ mostVisited: [], recent: [] })),
+  removeVisit: (url: string) => ipc.history.remove.mutate({ url }).catch(() => false),
+  /** "Clear all history" (main asks first); resolves whether it cleared. */
+  clearHistory: () => ipc.history.clearAll.mutate().catch(() => false),
+  reopenClosedTab: () => ipc.history.reopenClosedTab.mutate().catch(() => null),
+  showHistory: () => ipc.history.show.mutate().catch(ignore),
+  setSearchEngine: (engine: SearchEngineId) => ipc.settings.setSearchEngine.mutate({ engine }).catch(() => false),
 };

@@ -266,7 +266,27 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
 - **Search engine choice:** Google (default), Bing or DuckDuckGo in settings, plus prefix shortcuts in
   the address bar (`g `, `b `, `d `). `SEARCH_URL_TEMPLATE` becomes a table.
 - Each item registers its command-palette actions.
-- [ ] commit `feat(browser): find, reopen tab, history, search engines`
+- As built (`specs/browser-polish.feature.md`, `specs/browser-polish.spec.ts`, `specs/browser-polish.schema.ts`):
+  - Mod+F and Mod+Shift+T are new `RESERVED_TAB_SHORTCUTS` entries (taken in `before-input-event`);
+    Mod+G / Mod+Shift+G are reserved only while the active tab's find bar is open; Mod+Y (History)
+    is a menu accelerator only, as Ctrl+Y is redo in a page's text field on Linux and Windows;
+  - the find bar is a page-column row above the page area; main keeps each tab's bar
+    (`find.ts`), runs `findInPage` and reports the active tab's in `BrowserState.find`; a new
+    document closes it;
+  - Reopen Closed Tab keeps up to 20 tabs in memory (`history-closed-tabs.ts`) and restores the
+    back / forward entries with `navigationHistory.restore` (URL and title only: no scroll position
+    or form state) and the tab's own render profile; a tab whose page closed itself reopens at its URL;
+  - History is a sheet that fills the page column (the view is laid out zero-high while it shows),
+    keyset-paginated 100 at a time; "Clear all history" asks in main and clears the visits and the
+    closed-tab stack, the history part Clear Browsing Data also clears;
+  - the new-tab page's "Jump back in" shows up to 4 most-visited and 4 recent pages as frost-drawn
+    monogram tiles;
+  - the search engine is chosen in the command palette ("Search with …"; there is no settings view
+    yet) and stored in `app_settings` (migration `0005_app_settings`); `SEARCH_ENGINES` is the typed
+    table, `SEARCH_URL_TEMPLATE` stays as the default's; `g ` / `b ` / `d ` prefixes always search,
+    and the context menu's search follows the engine;
+  - new `find.*`, `history.*` and `settings.*` routers (`polish-router.ts`), all `enforceSender`-first.
+- [x] commit `feat(browser): find, reopen tab, history, search engines`
 
 #### Task 7: Link status and sitemap checks
 - **Link checks.**

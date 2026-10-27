@@ -4,6 +4,7 @@ import { MAX_RECENT_VISITS, MAX_RESTORED_TABS, MAX_STORED_TITLE_LENGTH, MAX_STOR
 import type { PersistedDecision, SitePermission } from '@app/specs/permissions.spec';
 import { MAX_RENDER_PROFILE_PINS, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { SessionDatabase } from './client';
+import { clearHistoryItems, deleteVisitItem } from './history';
 import { browserTabs, recentVisits, renderProfilePins, sitePermissions } from './schema';
 import { isPersistedDecision, isSitePermission, MAX_STORED_PROFILE_LENGTH, storableOrigin, storableProfile, storableTitle, storableUrl } from './values';
 
@@ -91,6 +92,10 @@ export interface SessionRepository {
    * Browsing Data); the tab strip is kept.
    */
   clearBrowsingData(): Promise<void>;
+  /** The history part of Clear Browsing Data alone: every visit ("Clear all history", `browser-polish.feature.md`). */
+  clearHistory(): Promise<void>;
+  /** Deletes one URL's visit (the History view's Delete); `false` for a URL that cannot be stored. */
+  deleteVisit(url: string): Promise<boolean>;
 }
 
 const EMPTY_SESSION: SavedSession = { tabs: [{ url: '', title: '' }], activeIndex: 0 };
@@ -262,6 +267,15 @@ export function createSessionRepository(db: SessionDatabase): SessionRepository 
 
     deleteRenderProfilePin: (origin) => batch([db.delete(renderProfilePins).where(eq(renderProfilePins.origin, origin))]),
 
-    clearBrowsingData: () => batch([db.delete(recentVisits), db.delete(sitePermissions), db.delete(renderProfilePins)]),
+    clearBrowsingData: () => batch([...clearHistoryItems(db), db.delete(sitePermissions), db.delete(renderProfilePins)]),
+
+    clearHistory: () => batch(clearHistoryItems(db)),
+
+    async deleteVisit(url) {
+      const item = deleteVisitItem(db, url);
+      if (item === null) return false;
+      await batch([item]);
+      return true;
+    },
   };
 }

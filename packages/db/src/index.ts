@@ -5,3 +5,5 @@
 export type { SavedSession, StoredDecision, StoredRenderProfilePin } from './repository';
 export type { ContentNotes, ContentNotesRepository, SnippetVariant } from './content-notes';
 export { openSessionStore, type SessionStore } from './store';
+export type { HistoryCursor, HistoryPage, HistoryRepository, HistoryVisit, JumpBackIn } from './history';
+export type { SettingsRepository } from './settings';

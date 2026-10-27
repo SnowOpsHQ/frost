@@ -26,6 +26,13 @@ export interface SessionWriter {
    * usual). Resolves once done; never rejects.
    */
   clearBrowsingData(): Promise<void>;
+  /**
+   * Browser polish (`browser-polish.feature.md`, History view): forgets `url`'s pending visit, then,
+   * after every earlier write, deletes its stored one (`deleteVisit` resolves whether it could).
+   * `clearHistory` is the history part of `clearBrowsingData`: every pending and stored visit. Never reject.
+   */
+  deleteVisit(url: string): Promise<boolean>;
+  clearHistory(): Promise<void>;
   /** Writes everything pending now; resolves once it (and every earlier write) is done. */
   flush(): Promise<void>;
 }
@@ -155,6 +162,20 @@ export function createSessionWriter(repository: SessionRepository, options: Writ
     clearBrowsingData() {
       visits.clear();
       return enqueue(() => repository.clearBrowsingData());
+    },
+
+    async deleteVisit(url) {
+      visits.delete(url);
+      let removed = false;
+      await enqueue(async () => {
+        removed = await repository.deleteVisit(url);
+      });
+      return removed;
+    },
+
+    clearHistory() {
+      visits.clear();
+      return enqueue(() => repository.clearHistory());
     },
 
     flush: writeBatch,
