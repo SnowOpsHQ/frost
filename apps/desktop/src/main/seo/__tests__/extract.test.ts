@@ -1,5 +1,6 @@
 // Spec: specs/seo-limits.spec.ts (SEO_WORLD_ID, SNAPSHOT_LIMITS, EXTRACT_BUDGET_MS)
 // Acceptance: specs/seo-sidebar.feature.md (Extraction)
+import { VISIBLE_TEXT_BLOCKS, VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
 import { MAX_BLOCKING_SCRIPTS } from '@app/specs/seo-speed.spec';
 import { describe, expect, test, vi } from 'vitest';
 import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS } from '@app/specs/seo-limits.spec';
@@ -25,7 +26,7 @@ describe('extractor', () => {
     // It parses as a script (an expression statement calling the extractor).
     expect(() => new Function(EXTRACTOR_SCRIPT)).not.toThrow();
     expect(EXTRACTOR_SCRIPT).toContain(JSON.stringify(SNAPSHOT_LIMITS));
-    expect(EXTRACTOR_SCRIPT).toContain(`, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)}, ${MAX_BLOCKING_SCRIPTS})`);
+    expect(EXTRACTOR_SCRIPT).toContain(`, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)}, ${MAX_BLOCKING_SCRIPTS}, ${VISIBLE_TEXT_LIMITS.maxVisibleTextChars}, ${JSON.stringify(VISIBLE_TEXT_BLOCKS)})`);
     // Reads only; never writes the DOM, never uses Node or Electron, never reads innerText / innerHTML.
     for (const forbidden of [/\brequire\s*\(/, /\bprocess\./, /\belectron\b/i, /\bipcRenderer\b/, /\binnerText\b/, /\binnerHTML\b/, /\bouterHTML\b/, /\.(appendChild|insertBefore|removeChild|replaceChildren|setAttribute|remove)\(/, /\beval\s*\(/]) {
       expect(EXTRACTOR_SCRIPT, String(forbidden)).not.toMatch(forbidden);

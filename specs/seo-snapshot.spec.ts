@@ -15,6 +15,7 @@ import { headerValueCap, RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SO
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
 import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
 import { BlockingScriptsSchema, type PerformanceContext } from './seo-speed.schema.spec';
+import { VISIBLE_TEXT_LIMITS } from './seo-content.spec';
 import { isWebUrl } from './web-url.spec';
 
 export * from './seo-limits.spec';
@@ -211,6 +212,13 @@ const markupItems = z
  */
 export const HreflangLinkSchema = z.strictObject({ hreflang: z.string().max(L.maxHreflangChars), href: urlText, resolved: urlText.nullable() });
 
+/**
+ * The page's visible text for the content analysis (Phase 2.5 Task 3, `seo-content.spec.ts`,
+ * `VISIBLE_TEXT_LIMITS`): the text nodes the word count reads, a `\n` at each block boundary, the
+ * first `maxVisibleTextChars` code units; `truncated` when cut or when the walk stopped early.
+ */
+export const VisibleTextSchema = z.strictObject({ text: z.string().max(VISIBLE_TEXT_LIMITS.maxVisibleTextChars), truncated: z.boolean() });
+
 /** Characters of the items' text values together. */
 function markupChars(items: readonly { readonly properties: readonly ({ readonly value: string } | { readonly item: number })[] }[]): number {
   let sum = 0;
@@ -249,6 +257,7 @@ function markupChars(items: readonly { readonly properties: readonly ({ readonly
  *   page has (Task 3).
  * - `hreflang`: the head's hreflang links (`HreflangLinkSchema`), `hreflangTotal` how many it has (Task 4).
  * - `security`: http subresources of an https page, meta CSP and meta referrer (`PageSecuritySchema`, Task 6).
+ * - `visibleText`: the visible text for the content analysis (`VisibleTextSchema`, Phase 2.5 Task 3).
  */
 export const PageSnapshotSchema = z
   .strictObject({
@@ -286,6 +295,8 @@ export const PageSnapshotSchema = z
     hreflangTotal: count,
     // Task 5 (`seo-speed.schema.spec.ts`): the head's render-blocking scripts.
     blockingScripts: BlockingScriptsSchema.optional(),
+    // Phase 2.5 Task 3 (`seo-content.spec.ts`): the visible text the content analysis reads.
+    visibleText: VisibleTextSchema.optional(),
   })
   .refine(
     (s) =>

@@ -4,6 +4,7 @@ import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 // Types only: the snapshot's Zod schema stays in main (it is the untrusted page's data).
 import type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
 import type { ComplianceReport } from './compliance/model';
+import type { ContentReport } from './content/report';
 import type { IndexabilityReport } from './indexability/model';
 import type { SpeedReport } from './performance/model';
 import type { SchemaReport } from './schema/model';
@@ -102,6 +103,8 @@ export interface SeoAudit {
   readonly performance: SpeedReport | null;
   /** The page's security (HTTPS, mixed content, headers) and its accessibility check, if one ran (the Compliance panel, Task 6). */
   readonly compliance: ComplianceReport;
+  /** The page's words, n-grams, readability and snippet widths (the Content panel, Phase 2.5 Task 3). */
+  readonly content: ContentReport;
 }
 
 /**

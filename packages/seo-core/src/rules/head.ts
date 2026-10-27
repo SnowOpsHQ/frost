@@ -47,19 +47,11 @@ export const HEAD_CHECKS = {
     const title = titled(s);
     return title && title.length < TITLE_MIN_CHARS ? details(lengthFacts('Title', title, TITLE_MIN_CHARS, TITLE_MAX_CHARS)) : null;
   },
-  'title-too-long': (s) => {
-    const title = titled(s);
-    return title && title.length > TITLE_MAX_CHARS ? details(lengthFacts('Title', title, TITLE_MIN_CHARS, TITLE_MAX_CHARS)) : null;
-  },
 
   'meta-description-missing': (s) => (described(s) ? null : details([fact('Meta description', s.metaDescriptionTotal === 0 ? 'None' : 'Empty')])),
   'meta-description-too-short': (s) => {
     const description = described(s);
     return description && description.length < DESCRIPTION_MIN_CHARS ? details(lengthFacts('Description', description, DESCRIPTION_MIN_CHARS, DESCRIPTION_MAX_CHARS)) : null;
-  },
-  'meta-description-too-long': (s) => {
-    const description = described(s);
-    return description && description.length > DESCRIPTION_MAX_CHARS ? details(lengthFacts('Description', description, DESCRIPTION_MIN_CHARS, DESCRIPTION_MAX_CHARS)) : null;
   },
   'meta-description-multiple': (s) =>
     s.metaDescriptionTotal > 1 ? details([fact('Meta descriptions', formatCount(s.metaDescriptionTotal))], s.metaDescriptions.map((d) => d.text || '(empty)'), s.metaDescriptionTotal) : null,

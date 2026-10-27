@@ -8,6 +8,8 @@ import { actions } from '../ipc';
 import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
 import { Compliance } from './seo/Compliance';
+import { Content } from './seo/Content';
+import { ContentIcon } from './seo/content-icons';
 import { Images } from './seo/Images';
 import { Indexability } from './seo/Indexability';
 import { Links } from './seo/Links';
@@ -33,6 +35,7 @@ function canRerun(response: SeoAuditResponse | null): boolean {
 const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   overview: OverviewIcon,
   'on-page': OnPageIcon,
+  content: ContentIcon,
   links: LinksIcon,
   images: ImagesIcon,
   social: SocialIcon,
@@ -141,6 +144,8 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
   switch (panel) {
     case 'on-page':
       return <OnPage audit={response.audit} tab={tab} />;
+    case 'content':
+      return <Content audit={response.audit} tab={tab} />;
     case 'links':
       return <Links audit={response.audit} tab={tab} />;
     case 'images':

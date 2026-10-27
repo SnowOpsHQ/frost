@@ -64,10 +64,14 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  */
 const OWN_PANEL_CATEGORIES: readonly SeoCategory[] = ['social', 'schema', 'indexability', 'hreflang', 'performance', 'security', 'accessibility'];
 const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => !OWN_PANEL_CATEGORIES.includes(category));
+const CONTENT_PANEL_CATEGORIES: readonly SeoCategory[] = ['title', 'meta-description', 'content'];
 
 export const SEO_PANELS = [
   { id: 'overview', label: 'Overview', available: true, categories: SEO_CATEGORIES },
   { id: 'on-page', label: 'On-Page', available: true, categories: ON_PAGE_CATEGORIES },
+  // Phase 2.5 Task 3 (`seo-content.feature.md`): n-grams, readability, the target query and the
+  // snippet editor. Its title, description and content rules are On-Page's too.
+  { id: 'content', label: 'Content', available: true, categories: CONTENT_PANEL_CATEGORIES },
   { id: 'links', label: 'Links', available: true, categories: ['links'] },
   { id: 'images', label: 'Images', available: true, categories: ['images'] },
   { id: 'social', label: 'Social', available: true, categories: ['social'] },

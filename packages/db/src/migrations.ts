@@ -44,6 +44,26 @@ export const MIGRATIONS: readonly Migration[] = [
     id: '0002_block_only_permissions',
     sql: `DELETE FROM site_permissions WHERE decision <> 'block';`,
   },
+  {
+    // The Content panel's notes (Phase 2.5 Task 3, `seo-content.spec.ts`, `CONTENT_TABLES`):
+    // target queries and snippet drafts per page URL (`content-schema.ts`).
+    id: '0003_seo_content_notes',
+    sql: `
+      CREATE TABLE seo_target_queries (
+        url TEXT PRIMARY KEY NOT NULL,
+        query TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE seo_snippet_variants (
+        url TEXT NOT NULL,
+        slot INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (url, slot)
+      );
+    `,
+  },
 ];
 
 /**

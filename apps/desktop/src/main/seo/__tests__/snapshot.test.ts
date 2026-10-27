@@ -1,7 +1,8 @@
 // Spec: specs/seo-snapshot.spec.ts (PageSnapshotSchema), specs/seo-limits.spec.ts (SNAPSHOT_LIMITS)
-// Acceptance: specs/seo-sidebar.feature.md (Snapshot schema)
+// Acceptance: specs/seo-sidebar.feature.md (Snapshot schema), specs/seo-content.feature.md (visible-text-schema)
 import { describe, expect, test } from 'vitest';
 import { PageSnapshotSchema, SNAPSHOT_LIMITS as L, type PageSnapshot } from '@app/specs/seo-snapshot.spec';
+import { VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
 import { rawSnapshot } from '../../../test/seo-fakes';
 import { parseSnapshot } from '../snapshot';
 
@@ -193,5 +194,18 @@ describe('snapshot schema', () => {
     expect(ok(rawSnapshot(URL_A, { jsonLd: [block('{}')], jsonLdTotal: 0 }))).toBe(false);
     expect(ok(rawSnapshot(URL_A, { microdata: [item()], microdataTotal: 0 }))).toBe(false);
     expect(ok(rawSnapshot(URL_A, { rdfa: [item()], rdfaTotal: 0 }))).toBe(false);
+  });
+
+  // Phase 2.5 Task 3 (`seo-content.feature.md`, Visible text).
+  test('visible-text-schema', () => {
+    const max = VISIBLE_TEXT_LIMITS.maxVisibleTextChars;
+    expect(ok(rawSnapshot(URL_A, { visibleText: { text: 'x'.repeat(max), truncated: true } }))).toBe(true);
+    expect(ok(rawSnapshot(URL_A, { visibleText: { text: '', truncated: false } }))).toBe(true);
+    // Optional: an extractor without it still parses.
+    expect(ok(rawSnapshot(URL_A))).toBe(true);
+    expect(ok(rawSnapshot(URL_A, { visibleText: { text: 'x'.repeat(max + 1), truncated: true } }))).toBe(false);
+    expect(ok(rawSnapshot(URL_A, { visibleText: { text: 'x', truncated: false, extra: 1 } as never }))).toBe(false);
+    expect(ok(rawSnapshot(URL_A, { visibleText: { text: 1, truncated: false } as never }))).toBe(false);
+    expect(ok(rawSnapshot(URL_A, { visibleText: 'text' as never }))).toBe(false);
   });
 });

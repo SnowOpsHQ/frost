@@ -25,6 +25,9 @@ rules:
         - "*.test.ts"
         - /apps/desktop/src/test/
         - /apps/desktop/e2e/
+        # Build-time only, never bundled or packaged: one hidden window on about:blank with the
+        # hardened webPreferences set explicitly, to measure the snippet font (seo-content.spec.ts).
+        - /apps/desktop/scripts/measure-snippet-font.mjs
     patterns:
       - pattern-either:
           # `electron.X` also matches the named and aliased imports from 'electron'.

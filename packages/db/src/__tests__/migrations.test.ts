@@ -1,9 +1,11 @@
-// Spec: specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, SESSION_TABLES)
+// Spec: specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, SESSION_TABLES), specs/seo-content.spec.ts (CONTENT_TABLES)
 // Acceptance: specs/browser-session-db.feature.md (Migrations)
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, test } from 'vitest';
 import { MIGRATIONS_TABLE, SESSION_TABLES } from '@app/specs/browser-session-db.spec';
+import { CONTENT_TABLES } from '@app/specs/seo-content.spec';
+import { seoSnippetVariants, seoTargetQueries } from '../content-schema';
 import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
 import { browserTabs, recentVisits, schemaMigrations, sitePermissions } from '../schema';
 
@@ -60,8 +62,9 @@ describe('migrations', () => {
   test('migrations-create-schema', () => {
     const db = memory();
     expect(runMigrations(db)).toEqual(MIGRATIONS.map((m) => m.id));
-    expect(tableNames(db)).toEqual([...SESSION_TABLES, MIGRATIONS_TABLE].sort());
-    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions]) {
+    // Phase 2.5 Task 3 adds the Content panel's notes (`seo-content.feature.md`, content-tables-migrate).
+    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CONTENT_TABLES, MIGRATIONS_TABLE].sort());
+    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, seoTargetQueries, seoSnippetVariants]) {
       const name = getTableConfig(table).name;
       expect(sqliteColumns(db, name), name).toEqual(drizzleColumns(table));
     }

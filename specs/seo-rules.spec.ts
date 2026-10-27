@@ -17,6 +17,7 @@ import { SCHEMA_PARSE_LIMITS, SCHEMA_SINGLETON_TYPES } from './schema-types.spec
 import { ROBOTS_FETCH_LIMITS } from './seo-indexability.spec';
 import { PERFORMANCE_RULE_SPECS } from './seo-speed.spec';
 import { COMPLIANCE_RULE_SPECS } from './seo-compliance.spec';
+import { DESCRIPTION_WIDTH_RULE, TITLE_WIDTH_RULE } from './seo-content.spec';
 
 /** How bad a failing rule is. Ordered: the sidebar ranks issues by it (then by catalog order). */
 export const SEO_SEVERITIES = ['error', 'warning', 'info'] as const;
@@ -51,17 +52,19 @@ export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
 // Lengths are Unicode code points of the whitespace-normalised value (`CappedText.length`).
 
 /**
- * A title shorter than this says too little to rank on or to be chosen in results; result pages
- * show about 50–60 characters of a title before cutting it, so longer than `TITLE_MAX_CHARS` is
- * likely truncated (pixel width comes later; characters are the Phase 2 proxy).
+ * A title shorter than this says too little to rank on or to be chosen in results. Result pages
+ * show about 50–60 characters of a title before cutting it: `TITLE_MAX_CHARS` is now only the
+ * On-Page meter's guide range. Since Phase 2.5 Task 3 the cut is measured as a width
+ * (`title-too-wide`, `seo-content.spec.ts`), which replaced the character rule.
  */
 export const TITLE_MIN_CHARS = 30;
 export const TITLE_MAX_CHARS = 60;
 
 /**
  * A meta description is the usual source of a result's snippet: under `DESCRIPTION_MIN_CHARS` it
- * rarely describes the page well enough to be used; past `DESCRIPTION_MAX_CHARS` the snippet is
- * typically cut off on desktop results.
+ * rarely describes the page well enough to be used. Past about `DESCRIPTION_MAX_CHARS` the snippet
+ * is typically cut off on desktop results; that is measured as a width since Phase 2.5 Task 3
+ * (`meta-description-too-wide`), and the maximum is only the On-Page meter's guide range.
  */
 export const DESCRIPTION_MIN_CHARS = 70;
 export const DESCRIPTION_MAX_CHARS = 160;
@@ -139,15 +142,8 @@ export const SEO_RULE_SPECS = [
     why: 'A very short title rarely says enough to match what people search for or to stand out among other results.',
     fix: `Describe the page’s main topic more fully, in about ${TITLE_MIN_CHARS}–${TITLE_MAX_CHARS} characters.`,
   },
-  {
-    id: 'title-too-long',
-    category: 'title',
-    severity: 'warning',
-    title: 'Title is too long',
-    condition: `The title has more than ${TITLE_MAX_CHARS} characters.`,
-    why: 'Search results cut long titles off, so the end of the title (often the brand or a key detail) is not seen.',
-    fix: `Put the most important words first and shorten the title to ${TITLE_MAX_CHARS} characters or fewer.`,
-  },
+  // Phase 2.5 Task 3: the width rule replaces the character maximum (`seo-content.spec.ts`).
+  TITLE_WIDTH_RULE,
   // Meta description
   {
     id: 'meta-description-missing',
@@ -167,15 +163,7 @@ export const SEO_RULE_SPECS = [
     why: 'A very short description rarely summarises the page well, so search engines often replace it with text of their own.',
     fix: `Expand it to a useful summary of about ${DESCRIPTION_MIN_CHARS}–${DESCRIPTION_MAX_CHARS} characters.`,
   },
-  {
-    id: 'meta-description-too-long',
-    category: 'meta-description',
-    severity: 'warning',
-    title: 'Meta description is too long',
-    condition: `The first meta description with text has more than ${DESCRIPTION_MAX_CHARS} characters.`,
-    why: 'Long descriptions are cut off in results, so the end of the message is lost.',
-    fix: `Lead with the key point and trim the description to ${DESCRIPTION_MAX_CHARS} characters or fewer.`,
-  },
+  DESCRIPTION_WIDTH_RULE,
   {
     id: 'meta-description-multiple',
     category: 'meta-description',

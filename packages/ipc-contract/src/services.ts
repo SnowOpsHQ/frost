@@ -2,6 +2,7 @@ import type { LinkFilter, SeoAuditResponse, SpeedResponse } from '@app/seo-core'
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { ContentService } from './content-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -120,4 +121,6 @@ export interface SeoService {
 export interface IpcServices {
   readonly browser?: BrowserService;
   readonly seo?: SeoService;
+  /** The Content panel's notes and Copy as HTML (Phase 2.5 Task 3, `content-service.ts`). */
+  readonly content?: ContentService;
 }

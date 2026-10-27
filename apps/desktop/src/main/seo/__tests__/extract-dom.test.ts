@@ -1,11 +1,13 @@
 // Spec: specs/seo-limits.spec.ts (SNAPSHOT_LIMITS, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES),
 // specs/seo-snapshot.spec.ts (PageSnapshotSchema, hidden elements, wordCount, ImageSchema, SocialSchema)
-// Acceptance: specs/seo-sidebar.feature.md (Extraction, Against a DOM), specs/seo-panels.feature.md (Extraction)
+// Acceptance: specs/seo-sidebar.feature.md (Extraction, Against a DOM), specs/seo-panels.feature.md (Extraction),
+// specs/seo-content.feature.md (Visible text; spec specs/seo-content.spec.ts VISIBLE_TEXT_LIMITS, VISIBLE_TEXT_BLOCKS)
 import { JSDOM } from 'jsdom';
 import { describe, expect, test } from 'vitest';
 import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { PageSnapshotSchema, type PageSnapshot } from '@app/specs/seo-snapshot.spec';
 import { SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
+import { VISIBLE_TEXT_BLOCKS, VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
 import { extractPage, type PageDocument } from '../extract';
 import { extractSecurity, RESOURCE_SELECTOR, type SecurityDocument } from '../security-extract';
 
@@ -50,6 +52,13 @@ function loaded(el: Element, width: number, height: number): void {
 }
 
 const times = (n: number, make: (i: number) => string) => Array.from({ length: n }, (_, i) => make(i)).join('');
+
+/** `extract`, keeping the visible text (cap `max`, `VISIBLE_TEXT_BLOCKS`) as `EXTRACTOR_SCRIPT` does. */
+function visible({ body, max = VISIBLE_TEXT_LIMITS.maxVisibleTextChars, limits = {} }: { body: string; max?: number; limits?: Partial<SnapshotLimits> }): PageSnapshot {
+  const dom = new JSDOM(`<!doctype html><html lang="en"><head></head><body>${body}</body></html>`, { url: PAGE });
+  const page = extractPage(dom.window.document as unknown as PageDocument, { ...SNAPSHOT_LIMITS, ...limits }, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SOCIAL_TAGS, SOCIAL_URL_TAGS, 20, max, VISIBLE_TEXT_BLOCKS) as PageSnapshot;
+  return { ...page, security: extractSecurity(dom.window.document as unknown as SecurityDocument, SECURITY_LIMITS, RESOURCE_SELECTOR) as PageSnapshot['security'] };
+}
 
 describe('extractor on a DOM', () => {
   test('extractor-output-parses', () => {
@@ -490,4 +499,31 @@ describe('extractor on a DOM', () => {
     expect(lengths).toEqual([40, 40, 20, 0, 0, 0, 0]);
     expect(lengths.reduce((a, b) => a + b, 0)).toBe(100);
   });
+
+  // Phase 2.5 Task 3 (`seo-content.feature.md`, Visible text).
+  test('visible-text-blocks', () => {
+    const snapshot = visible({
+      body: `<header><nav><a href="/">Home</a><a href="/b">Blog</a></nav></header><h1>Green   tea</h1><p>Brew it <b>gently</b>,
+        then <i>wait</i>.</p><ul><li>One</li><li>Two</li></ul><h2>Next</h2>After the heading<br>a new line
+        <script>var hidden = 1;</script><style>p { color: red }</style><p hidden>Secret</p><div>End</div>`,
+    });
+    expect(snapshot.visibleText).toEqual({ text: ['HomeBlog', 'Green tea', 'Brew it gently, then wait.', 'One', 'Two', 'Next', 'After the heading', 'a new line', 'End'].join('\n'), truncated: false });
+    expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    // Without a cap (the default) the snapshot has no visible text.
+    expect(extract({ body: '<p>Text</p>' }).visibleText).toBeUndefined();
+  });
+
+  test('visible-text-capped', () => {
+    const snapshot = visible({ body: `<p>${'abcdefghij '.repeat(100)}</p><p>more</p>`, max: 55 });
+    expect(snapshot.visibleText!.text).toBe('abcdefghij '.repeat(5).trim());
+    expect(snapshot.visibleText!.truncated).toBe(true);
+    // The word count still reads the whole walk.
+    expect(snapshot.wordCount).toBe(101);
+    // Never half a surrogate pair.
+    const emoji = visible({ body: `<p>ab${'😀'.repeat(10)}</p>`, max: 5 });
+    expect(emoji.visibleText!.text).toBe('ab😀');
+    // A walk stopped by its node cap is truncated too.
+    expect(visible({ body: times(20, (i) => `<p>w${i}</p>`), limits: { maxTextNodes: 5 } }).visibleText!.truncated).toBe(true);
+  });
 });
+

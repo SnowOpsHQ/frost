@@ -1,4 +1,5 @@
 import { createDrizzle } from './client';
+import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { openSessionDatabase, type OpenOptions } from './open';
 import { createSessionRepository, type SessionRepository } from './repository';
 import { createSessionWriter, type SessionWriter, type WriterOptions } from './writer';
@@ -12,6 +13,8 @@ export interface SessionStore {
   readonly repository: SessionRepository;
   /** Batched writes while the app runs. */
   readonly writer: SessionWriter;
+  /** The Content panel's target queries and snippet drafts (Phase 2.5 Task 3), written at once. */
+  readonly contentNotes: ContentNotesRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /** Flushes pending writes, then closes the database (idempotent; never rejects). */
@@ -22,13 +25,15 @@ export type SessionStoreOptions = OpenOptions & Pick<WriterOptions, 'batchMs' | 
 
 export function openSessionStore(options: SessionStoreOptions): SessionStore {
   const { db, file } = openSessionDatabase(options);
-  const repository = createSessionRepository(createDrizzle(db));
+  const drizzle = createDrizzle(db);
+  const repository = createSessionRepository(drizzle);
   const writer = createSessionWriter(repository, options);
   let closing: Promise<void> | null = null;
   return {
     file,
     repository,
     writer,
+    contentNotes: createContentNotesRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },
