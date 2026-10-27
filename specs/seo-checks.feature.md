@@ -115,6 +115,9 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `clear-browsing-data-cancels-checks` — Clear Browsing Data cancels running checks (their requests aborted).
 - `sitemap-listed-unknown-when-incomplete` — a failed file or a cap hit leaves "listed" unknown
   (`null`, "Couldn’t check every sitemap") unless the page was found; `sitemap-page-not-listed` then passes.
+- `sitemap-url-cap-publishes-incomplete` — the URL budget spent with a file still queued: that file is
+  `too-many-urls` and "listed" unknown, not "not listed" (the state is published before the run ends).
+- `sitemap-stop-leaves-listing-unknown` — Stop with files unread leaves "listed" unknown (incomplete).
 - `sitemap-matches-the-canonical` — the page's effective canonical counts as the page.
 - `sitemap-run-byte-budget` — at most `maxRunBytes` downloaded per run; the rest `over-budget`.
 - `sitemap-long-page-url-cannot-run` — a page URL past 2,048 characters fails the run, nothing requested.

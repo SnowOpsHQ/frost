@@ -362,6 +362,34 @@ describe('sitemap review fixes', () => {
     expect(capped.checks.state(1).sitemaps).toMatchObject({ listed: null, complete: false });
   });
 
+  test('sitemap-url-cap-publishes-incomplete', async () => {
+    // a.xml spends the whole one-URL budget (the page is not in it); b.xml stays unread.
+    const net = fakeFetch({ 'https://example.com/a.xml': xml(loc('https://example.com/other')), 'https://example.com/b.xml': xml(loc(PAGE)) });
+    const { checks } = setup(audit([]), { fetch: net.fetch, sitemapLimits: { maxUrls: 1 } }, robotsWith('https://example.com/a.xml', 'https://example.com/b.xml'));
+    checks.checkSitemaps(1);
+    await vi.runAllTimersAsync();
+    expect(net.asked.map((a) => a.url)).toEqual(['https://example.com/a.xml']);
+    expect(checks.state(1).sitemaps).toMatchObject({ status: 'done', urlCount: 1, listed: null, complete: false, errors: [{ url: 'https://example.com/b.xml', kind: 'too-many-urls' }] });
+    const context = ChecksContextSchema.parse(checks.contextFor(11, PAGE));
+    expect(context.sitemaps).toMatchObject({ listed: null, errors: [{ url: 'https://example.com/b.xml', kind: 'too-many-urls' }] });
+  });
+
+  test('sitemap-stop-leaves-listing-unknown', async () => {
+    // a.xml read (the page is not in it), b.xml still in flight when the user stops.
+    const net = fakeFetch({ 'https://example.com/a.xml': xml(loc('https://example.com/other')), 'https://example.com/b.xml': xml(loc(PAGE)) }, 100);
+    const { checks, rescore } = setup(audit([]), { fetch: net.fetch }, robotsWith('https://example.com/a.xml', 'https://example.com/b.xml'));
+    checks.checkSitemaps(1);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(checks.state(1).sitemaps).toMatchObject({ status: 'running', listed: false, complete: true });
+    expect(net.asked.map((a) => a.url)).toEqual(['https://example.com/a.xml', 'https://example.com/b.xml']);
+    expect(checks.stop(1, 'sitemaps')).toBe(true);
+    expect(checks.state(1).sitemaps).toMatchObject({ status: 'stopped', listed: null, complete: false });
+    expect(rescore).toHaveBeenCalledTimes(1);
+    expect(ChecksContextSchema.parse(checks.contextFor(11, PAGE)).sitemaps?.listed).toBeNull();
+    await vi.runAllTimersAsync();
+    expect(checks.state(1).sitemaps).toMatchObject({ status: 'stopped', listed: null, complete: false });
+  });
+
   test('sitemap-matches-the-canonical', async () => {
     const answer = audit([]);
     const withCanonical: SeoAuditResponse = { ...answer, audit: { ...(answer as Extract<SeoAuditResponse, { status: 'ready' }>).audit, indexability: { hreflang: { entries: [], total: 0, hasXDefault: false, hasSelf: false }, canonical: { effective: 'https://example.com/canonical#x' } } } as unknown as SeoAudit } as SeoAuditResponse;

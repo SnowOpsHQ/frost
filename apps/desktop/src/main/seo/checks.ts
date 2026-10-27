@@ -67,7 +67,7 @@ export interface ChecksOptions {
   readonly rescore: (tabId: number) => void;
   readonly now?: () => number;
   readonly linkLimits?: Partial<LinkLimits>;
-  readonly sitemapLimits?: Partial<typeof SITEMAP_LIMITS>;
+  readonly sitemapLimits?: { readonly [K in keyof typeof SITEMAP_LIMITS]?: number };
   readonly pushIntervalMs?: number;
 }
 
@@ -302,6 +302,13 @@ export function createChecks(options: ChecksOptions): Checks {
       push(false);
     };
     publish();
+    // Stopped or cancelled with files unread: what was read is not every sitemap. `abort` fires before
+    // `stop` re-scores, so the audit sees the incomplete state. (Every early `return` below follows an abort.)
+    const onAbort = (): void => {
+      complete = false;
+      if (entries.get(entry.tabId) === entry) publish();
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
     const queue = sources.map((url) => ({ url, depth: 0 }));
     const seen = new Set(sources);
     const allowPrivate = pagePrivate(entry.key);
@@ -310,6 +317,7 @@ export function createChecks(options: ChecksOptions): Checks {
       const { url, depth } = queue.shift()!;
       if (urlCount >= sitemapLimits.maxUrls) {
         addError(url, 'too-many-urls');
+        publish();
         break;
       }
       if (!allowPrivate && pagePrivate(url)) {
@@ -367,6 +375,7 @@ export function createChecks(options: ChecksOptions): Checks {
       if (error !== null) addError(url, error);
       publish();
     }
+    signal.removeEventListener('abort', onAbort);
     if (live()) finish(entry, 'sitemaps', 'done');
   }
 
