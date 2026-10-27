@@ -121,7 +121,18 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
   - profile scoped to its tab;
   - the page cannot detect the debugger;
   - reset restores defaults.
-- [ ] Spec → red → green → commit `feat(browser): per-tab render profiles`
+- As built (`specs/render-profile.feature.md`, `specs/render-profile.spec.ts`):
+  - presets: desktop, phone and tablet devices; frost's own, mobile, common crawler and capped custom
+    user agents with matching client hints; offline, slow 3G, fast 3G, 4G;
+  - CDP goes only through `render-profile-debugger.ts`, which enforces the method allowlist and is
+    the one module the Semgrep rule `debugger-outside-allowlisted-modules` allows;
+  - a profile stays with its tab across cross-origin navigation, is inherited by tabs it opens, and
+    goes with the tab; "Pin to this site" keeps one per origin (`render_profile_pins`, migration
+    `0003`), and Clear Browsing Data forgets the pins;
+  - the editor bar has its own chrome grid row under the toolbar, so nothing is drawn over the tab's
+    view; the tab badge, status chip and page-area frame show the profile, "Reload to apply" and Reset;
+  - audits record the profile they ran under (Overview, Speed lab caveat).
+- [x] Spec → red → green → commit `feat(browser): per-tab render profiles`
 
 #### Task 3: Content analysis and snippet editor
 - **Content panel.** A new rail item, or an On-Page sub-section; the implementer decides and documents
@@ -151,7 +162,19 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
 - **Tests.** Unit tests for n-grams (CJK, Thai, stop-words), readability, the width table and
   truncation, rules, the variant store, router and copy. e2e for the panel, the target query and the
   editor.
-- [ ] commit `feat(seo): content analysis and snippet editor`
+- As built (`specs/seo-content.feature.md`, `specs/seo-content.spec.ts`):
+  - Content is its own rail item, after On-Page (the rail has ten panels);
+  - the extractor keeps the visible text it already walks (capped, with block breaks), and the
+    analysis worker builds `audit.content` from it; n-grams and readability are information only;
+  - widths come from a character-width table generated in Electron
+    (`apps/desktop/scripts/measure-snippet-font.mjs`) and committed as data;
+  - `title-too-wide` (warning) and `meta-description-too-wide` (info) replace `title-too-long` and
+    `meta-description-too-long`; the character minimums stay;
+  - target queries and drafts are stored locally per URL (migration `0004_seo_content_notes`,
+    renumbered from `0003` at integration). Clear Browsing Data keeps them on purpose (the user's own
+    work), and its dialog says so;
+  - `content.*` procedures are `enforceSender`-first; Copy as HTML goes through main.
+- [x] commit `feat(seo): content analysis and snippet editor`
 
 #### Task 4: Command palette
 - **Opening.** Cmd/Ctrl+K opens a palette over the chrome. The shortcut is reserved in
@@ -185,6 +208,16 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
     commands;
   - "Open in" is offered only for public hosts and sends the URL without credentials or fragment.
 - [x] commit `feat(chrome): command palette`
+
+**Batch A integration (as built).**
+- Merged into `phase-2.5/seo-tooling` in the order palette, render profiles, content.
+- Chrome rows: tab strip, toolbar, permission prompt, render-profile editor bar, workspace, status
+  bar. The palette's sheet sits at the top of the workspace's page column, above the page area.
+  The page area's measured bounds (`setPageBounds`) leave room for all of them, and the
+  render-profile frame insets the view within it.
+- Render profiles and Content register their own palette actions (`render-profile-palette.ts`,
+  `content-palette.ts`). Content owns its panel jump (`FEATURE_PANEL_JUMPS`).
+- [x] commit `feat(chrome): palette actions for render profiles and content`
 
 ### Batch B (parallel, after Batch A is merged)
 
