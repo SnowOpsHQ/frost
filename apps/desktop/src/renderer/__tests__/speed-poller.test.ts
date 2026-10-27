@@ -119,6 +119,32 @@ describe('speed poller', () => {
     expect(SPEED_LIVE_MAX_POLLS).toBe(120);
   });
 
+  test('speed-poller-restarts-on-a-new-document', async () => {
+    const poller = make(2);
+    poller.start(1, A, 1);
+    for (let i = 0; i < 2; i++) {
+      calls.at(-1)!.resolve(pending(A));
+      await vi.advanceTimersByTimeAsync(SPEED_POLL_MS);
+    }
+    expect(poller.state()).toMatchObject({ session: { tabId: 1, url: A, document: 1 }, response: pending(A), polls: 2, paused: true });
+    // The same document again: nothing new.
+    poller.start(1, A, 1);
+    expect(calls).toHaveLength(2);
+    // A reload (same tab and URL, another document): a fresh, unpaused session with no answer yet.
+    poller.start(1, A, 2);
+    expect(calls).toHaveLength(3);
+    expect(poller.state()).toMatchObject({ session: { tabId: 1, url: A, document: 2 }, response: null, polls: 0, paused: false });
+    // While it runs, another reload ends it too: its late answer is dropped.
+    poller.start(1, A, 3);
+    calls[2]!.resolve(pending(A));
+    await flush();
+    expect(poller.state()).toMatchObject({ session: { document: 3 }, response: null, polls: 0 });
+    calls[3]!.resolve(pending(A));
+    await flush();
+    expect(poller.state()).toMatchObject({ session: { document: 3 }, response: pending(A), polls: 1 });
+    poller.stop();
+  });
+
   test('speed-poller-survives-a-throwing-measure', async () => {
     const poller = createSpeedPoller({
       measure: () => {

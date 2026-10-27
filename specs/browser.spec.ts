@@ -177,6 +177,13 @@ export const TabStateSchema = z.strictObject({
    */
   auditVersion: z.int().nonnegative(),
   /**
+   * Increases by one each time a new main-frame document commits in the tab (`did-navigate`: a
+   * navigation, back / forward to another document, and a reload, also of the same URL); `0` before
+   * its first. An in-page navigation (`did-navigate-in-page`) does not change it. The chrome uses it
+   * as a document's identity where the URL is not one (the Speed panel's poll session).
+   */
+  documentSeq: z.int().nonnegative(),
+  /**
    * The SEO highlight overlay shown on the tab's page (`seo-sidebar.spec.ts`, `HIGHLIGHT_MODES`):
    * `off` unless `seo.setHighlight` turned it on, and `off` again once the page changes or the tab
    * is no longer the active one.

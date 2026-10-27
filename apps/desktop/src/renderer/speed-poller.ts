@@ -4,13 +4,16 @@ import { SPEED_LIVE_MAX_POLLS, SPEED_POLL_MS } from '@app/specs/seo-speed.spec';
 // The Speed panel's live updates (spec `seo-speed.spec.ts`, `SPEED_POLL_MS`, `SPEED_LIVE_MAX_POLLS`;
 // acceptance `seo-speed.feature.md`, Live updates). Pure (timers and the IPC call are injected):
 // while the panel is open the chrome asks main for the active tab's measurement, waits for the
-// answer, then asks again `intervalMs` later; never two requests at once. A session is one tab and
-// one URL: `start` with another one ends the old session (its late answers are dropped) and starts
-// afresh; `stop` ends it (the panel closed). After `maxPolls` polls it pauses until `resume`.
+// answer, then asks again `intervalMs` later; never two requests at once. A session is one tab, one
+// URL and one document (the tab's `documentSeq`: a reload of the same URL is another): `start` with
+// another one ends the old session (its late answers are dropped) and starts afresh; `stop` ends it
+// (the panel closed). After `maxPolls` polls it pauses until `resume`.
 
 export interface SpeedSession {
   readonly tabId: number;
   readonly url: string;
+  /** The tab's `documentSeq` when the session started. */
+  readonly document: number;
 }
 
 export interface SpeedPollState {
@@ -33,8 +36,8 @@ export interface SpeedPollerOptions {
 }
 
 export interface SpeedPoller {
-  /** Polls `tabId` at `url` (a no-op if that is the session already running or paused). */
-  start(tabId: number, url: string): void;
+  /** Polls `tabId` at `url` in its `document` (a no-op if that is the session already running or paused). */
+  start(tabId: number, url: string, document?: number): void;
   /** Ends the session: no more polls, late answers dropped. */
   stop(): void;
   /** Starts another run of `maxPolls` polls of a paused session. */
@@ -98,9 +101,10 @@ export function createSpeedPoller(options: SpeedPollerOptions): SpeedPoller {
   };
 
   return {
-    start(tabId, url) {
-      if (state.session && token !== null && state.session.tabId === tabId && state.session.url === url) return;
-      begin({ tabId, url });
+    start(tabId, url, document = 0) {
+      const current = state.session;
+      if (current && token !== null && current.tabId === tabId && current.url === url && current.document === document) return;
+      begin({ tabId, url, document });
     },
     stop() {
       clear();

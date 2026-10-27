@@ -6,8 +6,8 @@ import { createSpeedPoller, IDLE_SPEED_STATE, type SpeedPoller, type SpeedPollSt
 
 /**
  * Live speed measurements of `tab` while the component using it is mounted (the Speed panel is open):
- * one poll session per tab and URL (`speed-poller.ts`), ended when the tab or its URL changes or
- * the panel goes.
+ * one poll session per tab, URL and document (`speed-poller.ts`), ended when the tab, its URL or its
+ * document changes (a reload of the same URL: `documentSeq`) or the panel goes.
  */
 export function useSpeed(tab: TabState | undefined): { readonly state: SpeedPollState; readonly resume: () => void; readonly restart: () => void } {
   const [state, setState] = useState<SpeedPollState>(IDLE_SPEED_STATE);
@@ -15,10 +15,11 @@ export function useSpeed(tab: TabState | undefined): { readonly state: SpeedPoll
   poller.current ??= createSpeedPoller({ measure: actions.measureSpeed, onChange: setState });
   const tabId = tab?.id;
   const url = tab?.url ?? '';
+  const documentSeq = tab?.documentSeq ?? 0;
   useEffect(() => {
     if (tabId === undefined || url === '') poller.current!.stop();
-    else poller.current!.start(tabId, url);
-  }, [tabId, url]);
+    else poller.current!.start(tabId, url, documentSeq);
+  }, [tabId, url, documentSeq]);
   useEffect(() => () => poller.current!.stop(), []);
   return { state, resume: () => poller.current!.resume(), restart: () => poller.current!.restart() };
 }

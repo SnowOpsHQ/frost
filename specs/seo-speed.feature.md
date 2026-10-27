@@ -120,8 +120,10 @@ many visits on many devices), which can be very different. The panel says so und
   read by the extractor (the snapshot), so that finding always comes from the audit.
 - **Live updates, bounded.** The chrome polls every `SPEED_POLL_MS` after each answer (never two at
   once) and pauses after `SPEED_LIVE_MAX_POLLS` (Resume starts another run). A poll session is one
-  tab and one URL: switching tabs, navigating, leaving the panel or collapsing the sidebar ends it,
-  and its late answers are dropped. Main measures only the active tab, shares a collection in
+  tab, one URL and one document (the tab's `documentSeq`): switching tabs, navigating, reloading
+  (toolbar, menu or shortcut: the same URL, a new document), leaving the panel or collapsing the
+  sidebar ends it, and its late answers are dropped; a reload of a paused session starts a fresh,
+  unpaused one, so the old document's live report is never shown over the new audit's. Main measures only the active tab, shares a collection in
   flight, answers the last measurement again sooner than `SPEED_MIN_INTERVAL_MS`, never stacks a
   collection on a page that has not answered the previous one (`timeout`), and drops what it measured
   at each new document (`did-navigate`) or URL: a late answer is never shown against another page.
@@ -221,6 +223,12 @@ many visits on many devices), which can be very different. The panel says so und
 ## Renderer helpers (`apps/desktop/src/renderer/__tests__/speed-poller.test.ts`, `speed-view.test.ts`)
 - **Scenario: speed-poller-polls-one-at-a-time**, **speed-poller-stops-on-navigation-and-close**,
   **speed-poller-pauses-after-max-polls**, **speed-poller-survives-a-throwing-measure**.
+- **Scenario: speed-poller-restarts-on-a-new-document** — the same tab and URL with another
+  document (a reload) ends the session (late answers dropped) and starts a fresh one, also from a
+  paused session; the same document again is a no-op.
+- **Scenario: use-speed-restarts-on-reload** (`use-speed.test.ts`, the hook in a DOM) — the panel's
+  hook, paused at the poll limit, starts polling again with no answer shown once the tab's
+  `documentSeq` changes for the same URL.
 - **Scenario: meter-geometry**, **missing-vital-text**, **waterfall-geometry**, **bars-and-shares**,
   **shown-speed-prefers-live-for-this-url**, **speed-issues-merge-measured-and-snapshot-rules**,
   **openable-resources-and-ago**, **speed-notes** (Wayland, route change, too few requests, a full
@@ -248,6 +256,8 @@ many visits on many devices), which can be very different. The panel says so und
 - **Scenario: spa-route-requests-are-counted-e2e** — a page changes its URL in place and fetches the
   route's data while the panel is closed: the route's audit and the panel count that request (and say
   the requests are counted from the route change).
+- **Scenario: reload-starts-a-fresh-speed-session-e2e** — with the panel open, the toolbar's Reload
+  (the same URL) starts the poll count again, and the shifted page's live CLS does not come back.
 - **Scenario: live-updates-stop-after-navigation-e2e** — a page shifts after the panel opened and its CLS
   rises live; after navigating, the still page is measured afresh and the shifting page's values never return; leaving
   the panel ends the polls.

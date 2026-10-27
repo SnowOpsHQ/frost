@@ -372,7 +372,7 @@ describe('tabs', () => {
     expect(id).not.toBeNull();
     expect(ids()).toEqual([first.id, id]);
     expect(active()).toBe(id);
-    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0, highlight: 'off' });
+    expect(controller.getState().tabs[1]).toEqual({ id, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 0, documentSeq: 0, highlight: 'off' });
     // No view for the empty tab; the previous tab's view is no longer attached.
     expect(views).toHaveLength(1);
     expect(attached()).toEqual([]);
@@ -641,6 +641,33 @@ describe('tabs', () => {
     }
     expect(controller.getState()).toEqual(before);
     expect(a.view.contents.close).not.toHaveBeenCalled();
+  });
+
+  test('document-seq-counts-new-documents', () => {
+    const seqOf = (id: number) => controller.getState().tabs.find((t) => t.id === id)!.documentSeq;
+    expect(controller.getState().tabs[0]!.documentSeq).toBe(0);
+    const a = loadFirst('https://a.test/');
+    expect(seqOf(a.id)).toBe(1);
+    // A reload of the same URL is a new document: one more, and the state version moves with it.
+    const contents = a.view.webContents;
+    contents.loading = true;
+    contents.emit('did-start-loading');
+    const version = controller.getState().version;
+    contents.emit('did-navigate', fakeEvent(), contents.url, 200, 'OK');
+    expect(controller.getState()).toMatchObject({ version: version + 1, tabs: [{ url: 'https://a.test/', documentSeq: 2 }] });
+    contents.loading = false;
+    contents.emit('did-stop-loading');
+    // Another URL: one more; an in-page navigation: none.
+    commit(contents, 'https://a.test/next', 'Next');
+    expect(seqOf(a.id)).toBe(3);
+    contents.url = 'https://a.test/route';
+    contents.emit('did-navigate-in-page', fakeEvent(), contents.url, true);
+    expect(controller.getState().tabs[0]).toMatchObject({ url: 'https://a.test/route', documentSeq: 3 });
+    // Each tab counts its own.
+    const b = openPage('https://b.test/');
+    expect(seqOf(b.id)).toBe(1);
+    expect(seqOf(a.id)).toBe(3);
+    expect(BrowserStateSchema.safeParse(controller.getState()).success).toBe(true);
   });
 
   test('background-page-close-closes-its-tab', () => {

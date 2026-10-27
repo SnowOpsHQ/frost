@@ -105,10 +105,12 @@ export function wireTabView(tab: Tab, view: TabView, ctx: TabEventContext): () =
     ctx.refresh(tab);
   });
   // A main-frame page committed (Electron emits `did-navigate` only for non-error pages): the
-  // old document's permission prompts are denied, and the new one is not fullscreen.
+  // old document's permission prompts are denied, and the new one is not fullscreen. It is a new
+  // document, also when it is a reload of the same URL (`documentSeq`, read by the refresh below).
   listen('did-navigate', (_event: unknown, url: unknown) => {
     // Loading what was open at the last launch (its saved URL) is not a new visit.
     const restoring = tab.restored !== null && url === tab.restored.url;
+    tab.documentSeq += 1;
     tab.error = null;
     tab.restored = null;
     tab.exitRequested = false;

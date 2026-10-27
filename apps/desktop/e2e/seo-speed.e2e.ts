@@ -331,6 +331,25 @@ test('spa-route-requests-are-counted-e2e', async () => {
   await expect(chrome.locator('[data-testid="seo-speed-large"]').filter({ hasText: '/route.json' })).toHaveCount(1);
 });
 
+test('reload-starts-a-fresh-speed-session-e2e', async () => {
+  // Its own URL (the same page): the next test's `measure('/shifting')` must be a real navigation.
+  const shifting = await measure('/shifting?reload');
+  const live = chrome.getByTestId('seo-speed-live');
+  const polls = async () => Number(await live.getAttribute('data-polls'));
+  // The page shifts live, and the session has polled a few times.
+  const before = (await valueOf('cls')) ?? 0;
+  await run(await contentsIdAt(shifting), 'window.shift()');
+  await expect.poll(() => valueOf('cls'), { timeout: 10_000 }).toBeGreaterThan(before);
+  await expect.poll(polls, { timeout: 10_000 }).toBeGreaterThanOrEqual(4);
+  const reached = await polls();
+  // The toolbar's Reload: the same tab and URL, a new document. The panel stays, its session starts
+  // again (the count does not go on from the old document's), and the shift is not shown again.
+  await chrome.getByTestId('reload').click();
+  await expect.poll(polls, { timeout: AUDIT_WAIT }).toBeLessThan(reached);
+  await expect(speed()).toHaveAttribute('data-source', 'live', { timeout: AUDIT_WAIT });
+  await expect.poll(async () => (await valueOf('cls')) ?? 0, { timeout: 10_000 }).toBeLessThan(0.01);
+});
+
 test('live-updates-stop-after-navigation-e2e', async () => {
   const shifting = await measure('/shifting');
   // Live: the page shifts after the panel opened, and the panel follows.

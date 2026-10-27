@@ -338,7 +338,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   /** Forgets `tab`'s view (its WebContents is gone): off the window, and the tab is empty again. */
   const dropView = (tab: Tab): void => {
     if (!releaseView(tab)) return;
-    tab.state = emptyTabState(tab.id);
+    tab.state = emptyTabState(tab.id, tab.documentSeq);
     changed();
   };
 
@@ -426,6 +426,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       unresponsive: tab.unresponsive,
       fullscreen: tab.fullscreen,
       zoom: zoomOf(contents),
+      documentSeq: tab.documentSeq,
     };
     if (sameTabState(tab.state, next)) return;
     tab.state = next;
