@@ -1508,3 +1508,46 @@ describe('seo sidebar toggle', () => {
   });
 });
 
+
+// Acceptance: specs/devtools.feature.md (controller-toggles-devtools)
+describe('seo devtools toggle', () => {
+  test('controller-toggles-devtools', () => {
+    const chrome = win.webContents as unknown as EventEmitter;
+    const start = controller.getState().devtoolsToggleSeq ?? -1;
+    expect(start).toBe(0);
+    for (const target of ['chrome', 'tab'] as const) {
+      if (target === 'tab') {
+        controller.navigate('example.com');
+        commit(view().contents, 'https://example.com/', 'Example');
+      }
+      const emitter = target === 'chrome' ? chrome : (view().contents as unknown as EventEmitter);
+      const before = controller.getState().devtoolsToggleSeq!;
+      const down = fakeEvent();
+      emitter.emit('before-input-event', down, key('d', { control: true, shift: true }));
+      expect(down.defaultPrevented, target).toBe(true);
+      expect(controller.getState().devtoolsToggleSeq).toBe(before + 1);
+      // Held down: consumed, toggled once.
+      const repeat = fakeEvent();
+      emitter.emit('before-input-event', repeat, { ...key('d', { control: true, shift: true }), isAutoRepeat: true });
+      expect(repeat.defaultPrevented, target).toBe(true);
+      const up = fakeEvent();
+      emitter.emit('before-input-event', up, key('d', { control: true, shift: true }, 'keyUp'));
+      expect(up.defaultPrevented, target).toBe(true);
+      expect(controller.getState().devtoolsToggleSeq).toBe(before + 1);
+      // Ctrl+D alone is the page's.
+      const plain = fakeEvent();
+      emitter.emit('before-input-event', plain, key('d', { control: true }));
+      expect(plain.defaultPrevented, target).toBe(false);
+    }
+    const version = controller.getState().version;
+    controller.toggleDevtools();
+    expect(controller.getState()).toMatchObject({ devtoolsToggleSeq: start + 3, version: version + 1 });
+    expect(BrowserStateSchema.parse(controller.getState()).devtoolsToggleSeq).toBe(start + 3);
+    // Without a window nothing changes.
+    win.emit('close');
+    win.emit('closed');
+    const after = controller.getState();
+    controller.toggleDevtools();
+    expect(controller.getState()).toEqual(after);
+  });
+});

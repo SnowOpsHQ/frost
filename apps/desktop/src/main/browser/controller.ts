@@ -20,7 +20,7 @@ import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
 import { withKnown } from '../seo/context-source';
 import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
 import { createTabSpeed, type TabSpeedOptions } from '../seo/vitals-tabs';
-import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
+import { matchDevtoolsShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
 import { wireTabView, type TabContextMenuRequest } from './tab-events';
 import { aliveContents, capTitle, clampPageBounds, createTab, emptyTabState, noop, sameTabState, showsPage, zoomOf, type HostWindow, type PageState, type StripState, type Tab, type TabView } from './tab-model';
@@ -113,6 +113,11 @@ export interface BrowserController extends BrowserService {
    * `seo-sidebar.feature.md`): bumps `toggleSidebarSeq`. A no-op without a window.
    */
   toggleSidebar(): void;
+  /**
+   * Asks the chrome to toggle the SEO devtools drawer (its menu item and reserved shortcut,
+   * `devtools.feature.md`): bumps `devtoolsToggleSeq`. A no-op without a window.
+   */
+  toggleDevtools(): void;
   /**
    * Asks the chrome to open (or close) the command palette (its menu item and reserved shortcut,
    * `command-palette.feature.md`): records where focus was (`page` when the active tab's shown page
@@ -209,6 +214,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const strip: StripState = { tabs: [], activeTabId: null, win: null, attached: null, pageBounds: null };
   let focusAddressBarSeq = 0;
   let toggleSidebarSeq = 0;
+  // The SEO devtools drawer (`devtools.spec.ts`): main asks the chrome to toggle it, like the sidebar.
+  let devtoolsToggleSeq = 0;
   // The command palette (`command-palette.spec.ts`): main asks the chrome to open it, like the sidebar.
   let paletteSeq = 0;
   let paletteReturnFocus: PaletteReturnFocus = 'chrome';
@@ -223,6 +230,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
+    devtoolsToggleSeq,
     commandPalette: { seq: paletteSeq, returnFocus: paletteReturnFocus },
     notice: notice && { ...notice },
   });
@@ -720,6 +728,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed();
   };
 
+  const toggleDevtools = (): void => {
+    if (!hasWindow()) return;
+    devtoolsToggleSeq += 1;
+    changed();
+  };
+
   /** The active tab's view, if it is attached and shows its page (never a panel or an empty tab). */
   const shownView = (): TabView | null => {
     const tab = activeTab();
@@ -802,13 +816,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const shortcut = matchTabShortcut(input, platform);
     const page = shortcut ? null : matchPageShortcut(input, platform);
     const sidebar = !shortcut && !page && matchSidebarShortcut(input, platform);
-    if (!shortcut && !page && !sidebar) return;
+    const devtools = !shortcut && !page && !sidebar && matchDevtoolsShortcut(input, platform);
+    if (!shortcut && !page && !sidebar && !devtools) return;
     event.preventDefault();
     if (input.type !== 'keyDown') return;
-    // A held Mod+K toggles the palette once (`command-palette.spec.ts`).
-    if (shortcut?.command === 'command-palette' && input.isAutoRepeat === true) return;
+    // A held Mod+K toggles the palette once (`command-palette.spec.ts`), a held Mod+Shift+D the drawer.
+    if ((shortcut?.command === 'command-palette' || devtools) && input.isAutoRepeat === true) return;
     if (shortcut) runShortcut(shortcut);
     else if (page) runPageCommand(page);
+    else if (devtools) toggleDevtools();
     else toggleSidebar();
   }
 
@@ -909,6 +925,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     focusAddressBar,
 
     toggleSidebar,
+
+    toggleDevtools,
 
     openCommandPalette,
 

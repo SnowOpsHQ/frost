@@ -6,6 +6,7 @@ import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import type { ContentService } from './content-service';
+import type { DevtoolsService } from './devtools-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -156,4 +157,6 @@ export interface IpcServices {
   readonly seo?: SeoService;
   /** The Content panel's notes and Copy as HTML (Phase 2.5 Task 3, `content-service.ts`). */
   readonly content?: ContentService;
+  /** The SEO devtools drawer (Phase 2.5 Task 5, `devtools-service.ts`). */
+  readonly devtools?: DevtoolsService;
 }

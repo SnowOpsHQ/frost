@@ -6350,3 +6350,506 @@ input {
 }
 
 /* End of Content panel */
+
+/* Devtools drawer ------------------------------------------------------------------------------
+   The SEO devtools drawer (specs/devtools.feature.md): a band at the bottom of the page column, so the
+   page area above it shrinks (the tab's view is laid out above it through setPageBounds). Its height is
+   the strut's SVG height attribute (DEVTOOLS_HEIGHT in specs/devtools.spec.ts); max-height keeps at
+   least --devtools-page-min of the page in view. Waterfall bars are SVG rects sized by attributes. */
+
+.devtools {
+  --devtools-page-min: 160px;
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  min-height: 0;
+  max-height: calc(100% - var(--devtools-page-min));
+  overflow: hidden;
+  border-top: 1px solid var(--bg-chrome-edge);
+  background: var(--bg-chrome);
+  color: var(--text);
+  font-size: 12px;
+  user-select: text;
+}
+
+.devtools-strut {
+  display: block;
+  flex: none;
+  width: 0;
+}
+
+.devtools-resize {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 6px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.devtools-resize:hover,
+.devtools-resize:focus-visible {
+  outline: none;
+  background: var(--accent-soft);
+}
+
+.devtools-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.devtools-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.devtools-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.devtools-tab {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.devtools-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.devtools-tab[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.devtools-tab:focus-visible,
+.devtools-button:focus-visible,
+.devtools-link:focus-visible,
+.devtools-sort:focus-visible,
+.devtools-row-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.devtools-note {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.devtools-close {
+  width: 26px;
+  height: 26px;
+}
+
+.devtools-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.devtools-network,
+.devtools-console,
+.devtools-storage,
+.devtools-redirects {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.devtools-redirects,
+.devtools-console-list {
+  overflow: auto;
+}
+
+.devtools-toolbar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.devtools-toolbar select,
+.devtools-search {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: 7px;
+  background: var(--bg-field);
+  color: var(--text);
+  font: inherit;
+}
+
+.devtools-search {
+  width: 200px;
+}
+
+.devtools-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.devtools-count,
+.devtools-summary {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.devtools-count {
+  margin-left: auto;
+}
+
+.devtools-notice {
+  flex: none;
+  margin: 0;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+  color: var(--caution);
+}
+
+.devtools-split {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.devtools-table-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+}
+
+.devtools-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.devtools-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+  background: var(--bg-chrome);
+  color: var(--text-muted);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.devtools-table td {
+  max-width: 320px;
+  padding: 3px 8px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--bg-hover);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.devtools-row:hover {
+  background: var(--bg-hover);
+}
+
+.devtools-row-selected,
+.devtools-row-selected:hover {
+  background: var(--accent-soft);
+}
+
+.devtools-row-failed td {
+  color: var(--danger);
+}
+
+.devtools-row-button,
+.devtools-link,
+.devtools-sort {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.devtools-link {
+  color: var(--accent);
+}
+
+.devtools-link:hover {
+  text-decoration: underline;
+}
+
+.devtools-sort {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.devtools-robots-blocked {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.devtools-robots-allowed {
+  color: var(--ok);
+}
+
+.devtools-waterfall-head,
+.devtools-waterfall-cell {
+  width: 22%;
+  min-width: 120px;
+}
+
+.devtools-waterfall {
+  display: block;
+  width: 100%;
+  height: 10px;
+}
+
+.devtools-bar {
+  fill: var(--accent);
+}
+
+.devtools-bar-pending {
+  fill: var(--text-faint);
+}
+
+.devtools-bar-redirected {
+  fill: var(--caution);
+}
+
+.devtools-bar-failed {
+  fill: var(--danger);
+}
+
+.devtools-details {
+  flex: 0 0 38%;
+  min-width: 260px;
+  padding: 8px 10px;
+  overflow: auto;
+  border-left: 1px solid var(--bg-chrome-edge);
+}
+
+.devtools-details-url {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+
+.devtools-method {
+  font-weight: 600;
+}
+
+.devtools-subhead {
+  margin: 10px 0 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.devtools-header-list {
+  margin: 0;
+}
+
+.devtools-header {
+  display: grid;
+  grid-template-columns: minmax(110px, 34%) minmax(0, 1fr);
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.devtools-header dt {
+  color: var(--text-muted);
+}
+
+.devtools-header dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.devtools-header[data-masked='true'] dd {
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+}
+
+.devtools-muted {
+  margin: 4px 0;
+  color: var(--text-faint);
+}
+
+.devtools-error-text {
+  margin: 4px 0;
+  color: var(--danger);
+}
+
+.devtools-empty {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--text-muted);
+}
+
+.devtools-chain {
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+}
+
+.devtools-hop {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--bg-hover);
+}
+
+.devtools-hop-body {
+  min-width: 0;
+}
+
+.devtools-hop-url {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.devtools-hop-headers {
+  margin-top: 4px;
+}
+
+.devtools-status {
+  flex: none;
+  min-width: 38px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.devtools-status-2xx {
+  color: var(--ok);
+}
+
+.devtools-status-3xx {
+  color: var(--caution);
+}
+
+.devtools-status-4xx,
+.devtools-status-5xx {
+  color: var(--danger);
+}
+
+.devtools-console-list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 11.5px;
+}
+
+.devtools-console-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--bg-hover);
+}
+
+.devtools-level-warning {
+  background: rgb(240 153 90 / 0.08);
+}
+
+.devtools-level-error {
+  background: rgb(210 63 63 / 0.08);
+}
+
+.devtools-level {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.devtools-level svg {
+  width: 14px;
+  height: 14px;
+}
+
+.devtools-console-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.devtools-console-count {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.devtools-console-source {
+  flex: none;
+  max-width: 30%;
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.devtools-button {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border-field);
+  border-radius: 7px;
+  background: var(--bg-field);
+  color: var(--text);
+}
+
+.devtools-button:hover {
+  background: var(--bg-field-hover);
+}
+
+.devtools-danger {
+  color: var(--danger);
+}
+
+.devtools-storage > .devtools-muted {
+  flex: none;
+  padding: 0 10px 6px;
+}
+
+.devtools-issue-details {
+  color: var(--text-muted);
+}
+
+/* End of Devtools drawer */

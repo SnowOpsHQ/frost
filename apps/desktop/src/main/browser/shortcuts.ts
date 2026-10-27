@@ -138,3 +138,15 @@ export function matchSidebarShortcut(input: KeyInput, platform: NodeJS.Platform)
   const other = mac ? input.control : input.meta;
   return mod && !other && !input.alt && input.shift && physicalKey(input) === 'KeyS';
 }
+
+/**
+ * Whether `input` (key-down or key-up) is the SEO devtools drawer toggle, `Mod+Shift+D` (spec
+ * `devtools.spec.ts`, `DEVTOOLS_TOGGLE_SHORTCUT`): as the sidebar's, with `D` by its physical key.
+ */
+export function matchDevtoolsShortcut(input: KeyInput, platform: NodeJS.Platform): boolean {
+  if (input.type !== 'keyDown' && input.type !== 'keyUp') return false;
+  const mac = platform === 'darwin';
+  const mod = mac ? input.meta : input.control;
+  const other = mac ? input.control : input.meta;
+  return mod && !other && !input.alt && input.shift && physicalKey(input) === 'KeyD';
+}
