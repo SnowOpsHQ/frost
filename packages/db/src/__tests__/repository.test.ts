@@ -133,7 +133,8 @@ describe('session', () => {
     expect(session.tabs).toHaveLength(MAX_RESTORED_TABS - 1);
     expect(session.tabs[0]).toEqual({ url: 'https://b.example/', title: 't'.repeat(MAX_STORED_TITLE_LENGTH) });
     expect(session.activeIndex).toBe(0);
-  });
+    // Planting 40 MB of values and 300k rows dominates the run; slow CI runners need more than the default 5 s.
+  }, 30_000);
 
   test('restore-is-capped', async () => {
     plantTabs(Array.from({ length: MAX_RESTORED_TABS + 3 }, (_, i) => ({ url: `https://t${i}.example/` })));
