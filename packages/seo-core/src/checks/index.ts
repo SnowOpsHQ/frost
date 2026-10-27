@@ -2,6 +2,6 @@
 // acceptance `seo-checks.feature.md`): the pure parts. Main fetches; the analysis worker parses.
 export { blockedLink, classifyLink, isTemporaryStatus, linkTargetKey, needsGetFallback, originNeedsGet, skippedLink, type LinkAnswer } from './links';
 export { lastmodIssue, lastmodTime } from './lastmod';
-export { decodeAttribute, headHreflangLinks, type HeadHreflang } from './head-hreflang';
+export { alternateHead, decodeAttribute, headHreflangLinks, type AlternateHead, type HeadHreflang } from './head-hreflang';
 export { hreflangTargets, reciprocityOf, type AlternateTarget, type ReturnLink } from './reciprocity';
 export { checksContextOf } from './summary';

@@ -4,8 +4,10 @@
 // `<head>` (its end tag, `<body>`, or any start tag that cannot be in the head), skipping comments
 // and the raw text of `<script>`, `<style>`, `<title>`, `<textarea>`, `<noscript>` and `<template>`.
 // It keeps each `<link>` whose `rel` has `alternate` and that has an `hreflang` attribute: the value
-// and the `href` as written (entities decoded), at most `max`. Linear in the text; never throws.
-// Pure: the analysis worker runs it on the first `HREFLANG_CHECK_LIMITS.maxBytes` of the answer.
+// and the `href` as written (entities decoded), at most `max`; and the `href` of the head's first
+// `<base>` that has one (the document's base, whether before or after the links). Linear in the text;
+// never throws. Pure: the analysis worker runs it on the first `HREFLANG_CHECK_LIMITS.maxBytes` of
+// the answer.
 
 /** Start tags a head may hold (anything else ends it, as the HTML parser's "in head" mode does). */
 const HEAD_TAGS: ReadonlySet<string> = new Set(['html', 'head', 'base', 'basefont', 'bgsound', 'link', 'meta', 'title', 'noscript', 'noframes', 'style', 'script', 'template']);
@@ -33,12 +35,26 @@ export interface HeadHreflang {
   readonly href: string;
 }
 
+export interface AlternateHead {
+  /** The `<link rel="alternate" hreflang>` annotations, at most `max`. */
+  readonly links: HeadHreflang[];
+  /** The first `<base>`'s `href` as written (entities decoded, trimmed), `null` for none. */
+  readonly baseHref: string | null;
+}
+
 /** The `<link rel="alternate" hreflang>` annotations of `html`'s head, at most `max`. */
 export function headHreflangLinks(html: string, max: number): HeadHreflang[] {
+  return alternateHead(html, max).links;
+}
+
+/** The hreflang annotations of `html`'s head (at most `max`) and its base `href`. */
+export function alternateHead(html: string, max: number): AlternateHead {
   const out: HeadHreflang[] = [];
+  let baseHref: string | null = null;
   const n = html.length;
   let i = 0;
-  while (i < n && out.length < max) {
+  // Past `max` links only while no base is known (a later `<base>` is still the document's).
+  while (i < n && (out.length < max || baseHref === null)) {
     const lt = html.indexOf('<', i);
     if (lt < 0) break;
     i = lt + 1;
@@ -103,7 +119,11 @@ export function headHreflangLinks(html: string, max: number): HeadHreflang[] {
         .toLowerCase()
         .split(/[\s]+/);
       const hreflang = attributes.get('hreflang');
-      if (rel.includes('alternate') && hreflang !== undefined) out.push({ hreflang: decodeAttribute(hreflang).trim(), href: decodeAttribute(attributes.get('href') ?? '').trim() });
+      if (rel.includes('alternate') && hreflang !== undefined && out.length < max) out.push({ hreflang: decodeAttribute(hreflang).trim(), href: decodeAttribute(attributes.get('href') ?? '').trim() });
+    } else if (name === 'base') {
+      // The first `<base>` with an `href` is the document's; one without an `href` does not count.
+      const href = attributes.get('href');
+      if (baseHref === null && href !== undefined) baseHref = decodeAttribute(href).trim();
     } else if (RAW_TEXT.has(name)) {
       // Its text up to the matching end tag, case aside (`name` is one of `RAW_TEXT`'s).
       const endTag = new RegExp(`</${name}[\\s/>]`, 'ig');
@@ -113,5 +133,5 @@ export function headHreflangLinks(html: string, max: number): HeadHreflang[] {
       i = end.index;
     }
   }
-  return out;
+  return { links: out, baseHref };
 }

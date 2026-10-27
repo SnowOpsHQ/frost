@@ -6,7 +6,7 @@ import { CHECKS_RULE_SPECS, HREFLANG_CHECK_LIMITS, IDLE_HREFLANG_RUN, IDLE_LINK_
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { FINDING_SAMPLE_LIMIT, SEO_RULE_SPECS, type SeoRuleId } from '@app/specs/seo-rules.spec';
 import type { ChecksContext } from '@app/specs/seo-snapshot.spec';
-import { checksContextOf, classifyLink, headHreflangLinks, hreflangTargets, lastmodIssue, lastmodTime, linkTargetKey, needsGetFallback, originNeedsGet, reciprocityOf, RULES, type FindingDetails, type HreflangReport, type PageLink, type PageSnapshot } from '../index';
+import { alternateHead, checksContextOf, classifyLink, headHreflangLinks, hreflangTargets, lastmodIssue, lastmodTime, linkTargetKey, needsGetFallback, originNeedsGet, reciprocityOf, RULES, type FindingDetails, type HreflangReport, type PageLink, type PageSnapshot } from '../index';
 import { cleanSnapshot, page } from './fixtures';
 
 const NOW = Date.UTC(2026, 9, 27, 12, 0, 0);
@@ -98,6 +98,14 @@ describe('classification', () => {
     headHreflangLinks(`<head><script>${'x'.repeat(500_000)}`, 10);
     expect(performance.now() - started).toBeLessThan(1_000);
     expect(headHreflangLinks('', 10)).toEqual([]);
+    // The head's first <base> with an href (decoded, trimmed), wherever it is in the head and past the link cap.
+    expect(alternateHead('<head><base target=_top><base href=" /e&amp;n/ "><base href="/later/"><link rel=alternate hreflang=en href=page>', 10)).toEqual({ links: [{ hreflang: 'en', href: 'page' }], baseHref: '/e&n/' });
+    expect(alternateHead(`<head>${'<link rel=alternate hreflang=x href=/x>'.repeat(5)}<base href="https://example.com/b/">`, 2)).toEqual({ links: [{ hreflang: 'x', href: '/x' }, { hreflang: 'x', href: '/x' }], baseHref: 'https://example.com/b/' });
+    expect(alternateHead('<base href="">', 10).baseHref).toBe('');
+    // Not one in a comment, in raw text, or past the head.
+    expect(alternateHead('<head><!-- <base href="/c/"> --><script><base href="/s/"></script></head><base href="/after/">', 10).baseHref).toBeNull();
+    expect(alternateHead('<head></head><body><base href="/body/">', 10).baseHref).toBeNull();
+    expect(alternateHead('<head><div><base href="/div/">', 10).baseHref).toBeNull();
   });
 });
 

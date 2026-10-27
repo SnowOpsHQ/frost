@@ -1,6 +1,6 @@
 import { gunzipSync } from 'node:zlib';
 import { SaxesParser, type SaxesTagNS } from 'saxes';
-import { decodeRobotsBytes, headHreflangLinks, lastmodIssue, matchRobots, parseLinkHeader, parseRobotsTxt, reciprocityOf, robotsPathOf, type ReturnLink } from '@app/seo-core';
+import { alternateHead, decodeRobotsBytes, lastmodIssue, matchRobots, parseLinkHeader, parseRobotsTxt, reciprocityOf, robotsPathOf, type ReturnLink } from '@app/seo-core';
 import { HREFLANG_CHECK_LIMITS, LINK_ROBOTS_AGENT, SITEMAP_LIMITS, SITEMAP_NAMESPACE, type SitemapErrorKind } from '@app/specs/seo-checks.spec';
 import { ChecksJobSchema, type HreflangJob, type RobotsJob, type SitemapJob } from '@app/specs/seo-checks.schema';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
@@ -191,10 +191,17 @@ export function parseSitemap(job: SitemapJob): SitemapParse {
   return result();
 }
 
-/** Reads an alternate's head and `Link` header (`HreflangJob`) and whether they list this page back. */
+/**
+ * Reads an alternate's head and `Link` header (`HreflangJob`) and whether they list this page back.
+ * The head's annotations resolve against the document's base (its first `<base href>`, resolved
+ * against the alternate's URL; an invalid or non-`http(s)` one leaves that URL), the header's against
+ * the alternate's URL.
+ */
 export function parseAlternate(job: HreflangJob): HreflangParse {
   const html = job.bytes.byteLength === 0 ? '' : new TextDecoder('utf-8').decode(job.bytes);
-  const links: ReturnLink[] = headHreflangLinks(html, HREFLANG_CHECK_LIMITS.maxLinks).map((link) => ({ hreflang: link.hreflang.slice(0, SNAPSHOT_LIMITS.maxHreflangChars), resolved: keyOf(link.href, job.url) }));
+  const head = alternateHead(html, HREFLANG_CHECK_LIMITS.maxLinks);
+  const base = (head.baseHref === null ? null : keyOf(head.baseHref, job.url)) ?? job.url;
+  const links: ReturnLink[] = head.links.map((link) => ({ hreflang: link.hreflang.slice(0, SNAPSHOT_LIMITS.maxHreflangChars), resolved: keyOf(link.href, base) }));
   if (job.link !== null) {
     for (const value of parseLinkHeader(job.link, HREFLANG_CHECK_LIMITS.maxLinks)) {
       if (value.rel.includes('alternate') && value.hreflang !== null) links.push({ hreflang: value.hreflang.slice(0, SNAPSHOT_LIMITS.maxHreflangChars), resolved: keyOf(value.target, job.url) });

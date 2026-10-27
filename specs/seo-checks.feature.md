@@ -51,7 +51,9 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - **hreflang reciprocity.** Each distinct alternate other than the page (at most 20) is fetched (1 MiB,
   10 s); the worker reads its head's `<link rel="alternate" hreflang>` (stopping where the head ends)
   and its `Link` header, and says whether it lists this page (its URL or canonical) back with one of
-  the values the page gives itself.
+  the values the page gives itself. The head's `href`s resolve against the document's base (the
+  head's first `<base href>`, itself resolved against the alternate's URL; an invalid or
+  non-`http(s)` one is ignored), the `Link` header's against the alternate's URL.
 - **Visible to the sites.** Every surface shows `CHECKS_VISIBILITY_NOTICE`.
 - **Rules score only finished runs** (`done`, or `stopped`). A finished run re-scores the audit (the
   active tab at once, keeping its audit on screen).
@@ -62,7 +64,7 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `head-fallback-statuses` — 405 and 501 ask again with GET; other statuses do not.
 - `lastmod-w3c-datetime` — the six W3C Datetime forms pass; other forms and impossible dates are invalid.
 - `lastmod-future` — later than a day from now is in the future; time zones count.
-- `head-hreflang-bounded-read` — `<link rel=alternate hreflang>` in the head only: comments, raw text and the body are skipped; capped.
+- `head-hreflang-bounded-read` — `<link rel=alternate hreflang>` in the head only: comments, raw text and the body are skipped; capped. The head's first `<base>` with an `href` is read too (later ones and those outside the head are not), also past the link cap.
 - `hreflang-targets-capped` — distinct alternates other than the page, at most 20, and the page's own values.
 - `hreflang-reciprocity` — reciprocal, wrong language, missing return; the canonical counts as the page.
 - `checks-context-of-finished-runs` — only done or stopped runs count; broken and internal redirects summarised.
@@ -102,6 +104,9 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `sitemap-wrong-namespace` — another namespace is an error; another root is not a sitemap; broken XML is malformed.
 - `sitemap-url-budget` — past the run's budget it stops with `too-many-urls`.
 - `alternate-return-links` — head and `Link` header annotations, resolved against the alternate.
+- `alternate-base-href` — the head's annotations resolve against the alternate's `<base href>` (relative
+  bases against the alternate's URL; an invalid or non-`http(s)` one falls back to that URL); the
+  `Link` header's never do.
 - `robots-job-blocks-and-lists-sitemaps` — Googlebot's verdict per URL; only a fetched file blocks.
 - `checks-job-validated` — anything not a `ChecksJobSchema` job is `invalid-job`.
 

@@ -85,6 +85,31 @@ describe('alternates and robots.txt', () => {
     expect(run('', '<https://example.com/en/>; rel="alternate"; hreflang="en", </fr/>; rel="alternate"; hreflang="fr"')).toMatchObject({ hreflang: { status: 'reciprocal', returnLangs: ['en'] } });
   });
 
+  test('alternate-base-href', () => {
+    // The alternate at /fr/page links back to this page (/en/page) as `page`, relative to its base.
+    const run = (html: string, link: string | null = null) => analyseCheck({ kind: 'hreflang', bytes: encode(html), url: 'https://example.com/fr/page', link, pageKeys: ['https://example.com/en/page'], selfLangs: ['en'] });
+    const reciprocal = { hreflang: { status: 'reciprocal', returnLangs: ['en'] } };
+    const missing = { hreflang: { status: 'missing-return' } };
+    const back = '<link rel="alternate" hreflang="en" href="page">';
+    expect(run(`<head><base href="https://example.com/en/">${back}</head>`)).toEqual({ ok: true, kind: 'hreflang', ...reciprocal });
+    // The base is the whole document's: links before it resolve against it too.
+    expect(run(`<head>${back}<base href="/en/"></head>`)).toMatchObject(reciprocal);
+    // A relative base resolves against the alternate's URL.
+    expect(run(`<head><base href="../en/">${back}</head>`)).toMatchObject(reciprocal);
+    // Only the first <base> with an href counts.
+    expect(run(`<head><base target="_blank"><base href="/en/"><base href="/de/">${back}</head>`)).toMatchObject(reciprocal);
+    expect(run(`<head><base href="/de/"><base href="/en/">${back}</head>`)).toMatchObject(missing);
+    // Without one, the alternate's URL: `page` is /fr/page, not this page.
+    expect(run(`<head>${back}</head>`)).toMatchObject(missing);
+    // An invalid or non-http(s) base is ignored: the alternate's URL again.
+    for (const base of ['http://[', 'javascript:alert(1)//', 'data:text/html,x', 'ftp://example.com/de/']) {
+      expect(run(`<head><base href="${base}"><link rel="alternate" hreflang="en" href="../en/page"></head>`), base).toMatchObject(reciprocal);
+    }
+    // The Link header's targets resolve against the alternate's URL, never the HTML base.
+    expect(run('<head><base href="https://example.com/en/"></head>', '<page>; rel="alternate"; hreflang="en"')).toMatchObject(missing);
+    expect(run('<head><base href="https://example.com/de/"></head>', '<../en/page>; rel="alternate"; hreflang="en"')).toMatchObject(reciprocal);
+  });
+
   test('robots-job-blocks-and-lists-sitemaps', () => {
     const robots = (text: string, outcome = 'ok') => ({ url: 'https://example.com/robots.txt', outcome, status: outcome === 'ok' ? 200 : 404, finalUrl: 'https://example.com/robots.txt', redirects: 0, body: outcome === 'ok' ? encode(text) : new Uint8Array(0), truncated: false });
     const text = 'User-agent: Googlebot\nDisallow: /private/\n\nUser-agent: *\nDisallow: /\n\nSitemap: /sitemap_index.xml\nSitemap: https://cdn.example.com/s.xml.gz\nSitemap: ftp://x/y\n';
