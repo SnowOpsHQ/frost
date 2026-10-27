@@ -4,7 +4,7 @@ import { isWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl } from '../browser/address';
 import { aliveContents, type Tab, type TabView } from '../browser/tab-model';
 import type { SpeedAnalysisResult } from './analysis';
-import { withoutFragment } from './auditor';
+import { reportsUrl, withoutFragment } from './auditor';
 import { withTimeout, type CollectOptions } from './vitals';
 import type { ShownTimes } from './vitals-shown';
 
@@ -173,7 +173,7 @@ export function createTabSpeed(options: TabSpeedOptions | undefined, ctx: TabSpe
         answer = { ok: false, reason: 'analysis-failed' };
       }
       // A measurement of another URL (the document changed under it) is not this page's.
-      if (answer.ok && withoutFragment(answer.report.url) !== key) answer = { ok: false, reason: 'invalid-measurement' };
+      if (answer.ok && !reportsUrl(answer.report.url, key)) answer = { ok: false, reason: 'invalid-measurement' };
       response = answer.ok ? { status: 'ready', url: shown, report: answer.report } : { status: 'unavailable', url: shown, reason: answer.reason };
     }
     const current = measurable(tab);

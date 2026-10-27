@@ -857,6 +857,23 @@ describe('tab speed', () => {
     await back;
   });
 
+  test('speed-measures-a-url-longer-than-the-measurement-holds', async () => {
+    // Past `maxUrlChars` before its fragment: the measurement holds the URL's first `maxUrlChars` characters.
+    const long = `https://example.com/${'p'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}`;
+    const held = (url: string) => url.slice(0, SNAPSHOT_LIMITS.maxUrlChars);
+    load(`${long}#section`);
+    const answer = controller.seo.measureSpeed(activeId());
+    // No resources: the fake's one is named after the page's URL, past the resource URL cap here.
+    const none = { resources: [], resourceTotal: 0 };
+    collections[0]!.resolve(rawMeasurement(held(long), none));
+    await expect(answer).resolves.toMatchObject({ status: 'ready', report: { url: held(long) } });
+    // Another page's held URL is still not this page's.
+    await vi.advanceTimersByTimeAsync(SPEED_MIN_INTERVAL_MS);
+    const other = controller.seo.measureSpeed(activeId());
+    collections[1]!.resolve(rawMeasurement(held(`https://example.com/${'q'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}`), none));
+    await expect(other).resolves.toMatchObject({ status: 'unavailable', reason: 'invalid-measurement' });
+  });
+
   test('speed-forgets-closed-tabs', async () => {
     load(A);
     const id = activeId();
@@ -893,7 +910,8 @@ describe('audit measurement', () => {
       },
       platform: 'linux',
       seo: {
-        extract: async (contents) => rawSnapshot((contents as unknown as { url: string }).url),
+        // As the extractor holds it: `document.URL` cut to `maxUrlChars`.
+        extract: async (contents) => rawSnapshot((contents as unknown as { url: string }).url.slice(0, SNAPSHOT_LIMITS.maxUrlChars)),
         analyse: async (raw, context): Promise<AnalysisResult> => {
           analysed.push(context);
           return analyseSnapshot(raw, context);
@@ -958,6 +976,24 @@ describe('audit measurement', () => {
     expect(analysed).toHaveLength(4);
     expect(lcpRule()).toBe(false);
     expect(version()).toBeGreaterThan(shown);
+  });
+
+  test('audit-does-not-wait-for-the-measurement: a URL longer than the snapshot holds', async () => {
+    const long = `https://example.com/${'p'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}`;
+    controller.navigate(long);
+    const contents = views.at(-1)!.contents;
+    commit(contents, long, 'Long');
+    contents.emit('did-finish-load');
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    expect(status().status).toBe('ready');
+    expect(lcpRule()).toBe(false);
+    // The final context's analysis is the same page's (its held URL), so it replaces the first audit.
+    fetches[0]!(ROBOTS);
+    // No resources: the fake's one is named after the page's URL, past the resource URL cap here.
+    measurements[0]!(rawMeasurement(long.slice(0, SNAPSHOT_LIMITS.maxUrlChars), { vitals: SLOW.vitals, resources: [], resourceTotal: 0 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(analysed).toHaveLength(2);
+    expect(lcpRule()).toBe(true);
   });
 
   test('audit-measurement-that-never-comes-keeps-the-first-audit', async () => {

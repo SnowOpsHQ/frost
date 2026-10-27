@@ -64,7 +64,7 @@ interface PageView {
   readonly innerHeight: number;
   readonly scrollX: number;
   readonly scrollY: number;
-  getComputedStyle?(el: PageImageElement): PageStyle;
+  getComputedStyle?(el: PageElement): PageStyle;
 }
 /** A stylesheet rule as the CSSOM exposes it (style rules have a selector and a style; grouping rules nested rules). */
 interface PageRule {
@@ -125,6 +125,8 @@ export function extractPage(
   const SCAN = 65_536;
   /** Most `<title>` elements looked at (SVG titles included) when counting HTML ones. */
   const TITLE_SCAN = 10_000;
+  /** Most nested `display: contents` wrappers looked through for one element (`boxlessShown`). */
+  const WRAPPER_SCAN = 256;
   /** Thrown from a walker's filter to stop it (a cap or the deadline). */
   const STOP = {};
   /** Set once anything stopped at the deadline. */
@@ -159,8 +161,48 @@ export function extractPage(
     const value = el ? el.getAttribute(name) : null;
     return value === null ? null : cut(squash(cut(value, max * 4)), max);
   };
-  /** Hidden: the `hidden` attribute on it or an ancestor, or no box (`checkVisibility()` false, where it exists). */
-  const isHidden = (el: PageElement): boolean => el.closest('[hidden]') !== null || (typeof el.checkVisibility === 'function' && !el.checkVisibility());
+  const view = document.defaultView;
+  /** `el`'s computed value of `name` (`''` where the DOM has no `getComputedStyle`). */
+  const computed = (el: PageElement, name: string): string => (view && typeof view.getComputedStyle === 'function' ? view.getComputedStyle(el).getPropertyValue(name) : '');
+  /** `boxlessShown`'s answers (every wrapper of a chain shares its answer). */
+  const boxless = new Map<PageElement, boolean>();
+  /**
+   * Whether `el`, which has no box (`checkVisibility()` false), still shows its content: it is a
+   * layout wrapper (`display: contents`, nested ones too), and the nearest ancestor that is not one
+   * has a box and does not skip its content (`content-visibility: hidden`, or a closed `<details>`
+   * the wrapper is not the summary of). Style is read only for boxless elements, once each. Past
+   * `WRAPPER_SCAN` wrappers, or the deadline, it is not shown and the snapshot is partial.
+   */
+  const boxlessShown = (el: PageElement): boolean => {
+    const chain: PageElement[] = [];
+    let node: PageElement | null = el;
+    let shown = boxless.get(el);
+    while (shown === undefined && node !== null && computed(node, 'display') === 'contents') {
+      if (chain.length >= WRAPPER_SCAN || late()) {
+        partial = true;
+        shown = false;
+        break;
+      }
+      chain.push(node);
+      node = node.parentElement;
+      if (node !== null) shown = boxless.get(node);
+    }
+    if (shown === undefined) {
+      const top = chain[chain.length - 1];
+      shown =
+        node !== null &&
+        top !== undefined &&
+        (typeof node.checkVisibility !== 'function' || node.checkVisibility()) &&
+        computed(node, 'content-visibility') !== 'hidden' &&
+        !(node.localName === 'details' && !node.hasAttribute('open') && top.localName !== 'summary');
+    }
+    for (const wrapper of chain) boxless.set(wrapper, shown);
+    return shown;
+  };
+  /** No box and not a wrapper whose content is shown (`checkVisibility()` false, where it exists). */
+  const unshown = (el: PageElement): boolean => typeof el.checkVisibility === 'function' && !el.checkVisibility() && !boxlessShown(el);
+  /** Hidden: the `hidden` attribute on it or an ancestor, or not shown (`unshown`). */
+  const isHidden = (el: PageElement): boolean => el.closest('[hidden]') !== null || unshown(el);
   /**
    * Up to `limit` code units of `root`'s text, read node by node, visiting at most `visits` nodes
    * (elements too) and stopping at the deadline; the code units seen, and the first `img[alt]`.
@@ -316,7 +358,6 @@ export function extractPage(
 
   // Images, with their rendered and natural sizes. The first viewport is the top
   // `innerHeight` × `innerWidth` of the document, wherever it is scrolled to now.
-  const view = document.defaultView;
   const finite = (n: number): number => (Number.isFinite(n) ? n : 0);
   const viewWidth = view ? finite(view.innerWidth) : 0;
   const viewHeight = view ? finite(view.innerHeight) : 0;
@@ -430,7 +471,7 @@ export function extractPage(
   };
   /** CSS fixes the image's box: a computed `aspect-ratio` with a ratio, or `width` and `height` declared together (inline or a matching rule). */
   const cssSized = (img: PageImageElement): boolean => {
-    const ratio = view && typeof view.getComputedStyle === 'function' ? view.getComputedStyle(img).getPropertyValue('aspect-ratio') : '';
+    const ratio = computed(img, 'aspect-ratio');
     if (/\d/.test(ratio)) return true;
     if (declared(img.style, 'width') && declared(img.style, 'height')) return true;
     sizingSelectors ??= readSizingSelectors();
@@ -634,7 +675,8 @@ export function extractPage(
         if (textNodes >= L.maxTextNodes || scanned >= L.maxTextScanChars || visited > L.maxTextNodes * 4 || ((visited & 255) === 1 && late())) throw STOP;
         if (node.nodeType !== ELEMENT_NODE) return FILTER_ACCEPT;
         const el = node as PageElement;
-        if (SKIP.includes(el.localName) || el.hasAttribute('hidden') || (typeof el.checkVisibility === 'function' && !el.checkVisibility())) return FILTER_REJECT;
+        // A hidden subtree is pruned; a layout wrapper's (`display: contents`) is walked.
+        if (SKIP.includes(el.localName) || el.hasAttribute('hidden') || unshown(el)) return FILTER_REJECT;
         if (blocks.includes(el.localName)) blockBreak = true;
         return FILTER_SKIP;
       },

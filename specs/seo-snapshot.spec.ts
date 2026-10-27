@@ -47,8 +47,12 @@ export const RobotsMetaSchema = z.strictObject({ name: z.enum(ROBOTS_META_NAMES)
  * Hidden elements (headings and the word count both skip them): an element with the `hidden`
  * attribute or inside one, and, where `Element.checkVisibility` exists (Chromium; not every test
  * DOM), an element for which `checkVisibility()` is false (no box: `display: none` on it or an
- * ancestor, or inside `content-visibility: hidden`). `visibility: hidden` and off-screen text count
- * as shown (they still take part in layout).
+ * ancestor, or inside `content-visibility: hidden`). A layout wrapper (`display: contents`) has no
+ * box of its own but shows its content: it is hidden only when the nearest ancestor that is not one
+ * is hidden or skips its content (`content-visibility: hidden`, or a closed `<details>` the wrapper
+ * is not the summary of; a chain of wrappers is looked through only so far, past which it counts as
+ * hidden and the snapshot is `partial`). `visibility: hidden` and off-screen text count as shown (they
+ * still take part in layout).
  */
 
 /** `link[rel=canonical]`: the `href` attribute as written, and resolved against the document (`null` if it does not parse). */
@@ -233,7 +237,8 @@ function markupChars(items: readonly { readonly properties: readonly ({ readonly
  * cap); each `…Total` is the page's full count (at least the list's length).
  *
  * - `url`: `document.URL`, cut to `maxUrlChars`; it must be an `http(s)` URL (the auditor only
- *   runs on those, and checks it is the URL it expected).
+ *   runs on those, and checks it is the URL it expected: fragment aside, the tab's URL cut to
+ *   `maxUrlChars` too, so a longer URL is known by its first `maxUrlChars` characters).
  * - `extractedAt`: when the extractor ran (epoch ms); `durationMs`: how long it took.
  * - `lang`: `<html lang>` as written (trimmed; `null` when absent or empty).
  * - `titles`: each HTML `<title>` element's text (SVG titles are not page titles).

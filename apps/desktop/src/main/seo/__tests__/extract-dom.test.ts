@@ -51,6 +51,25 @@ function loaded(el: Element, width: number, height: number): void {
   Object.defineProperty(el, 'naturalHeight', { value: height });
 }
 
+/**
+ * Gives `window`'s elements `checkVisibility()` as Chromium answers it (jsdom has none): `false`
+ * without a box of its own (`display: none` on it or an ancestor, `display: contents` on it) or
+ * inside skipped content (`content-visibility: hidden`, a closed `<details>` but its summary).
+ */
+function chromiumVisibility(window: JSDOM['window']): void {
+  const style = (el: Element, name: string) => window.getComputedStyle(el).getPropertyValue(name);
+  window.Element.prototype.checkVisibility = function (this: Element) {
+    if (style(this, 'display') === 'contents') return false;
+    for (let el: Element | null = this; el !== null; el = el.parentElement) {
+      if (style(el, 'display') === 'none') return false;
+      const parent = el.parentElement;
+      if (parent && style(parent, 'content-visibility') === 'hidden') return false;
+      if (parent && parent.localName === 'details' && !parent.hasAttribute('open') && el.localName !== 'summary') return false;
+    }
+    return true;
+  };
+}
+
 const times = (n: number, make: (i: number) => string) => Array.from({ length: n }, (_, i) => make(i)).join('');
 
 /** `extract`, keeping the visible text (cap `max`, `VISIBLE_TEXT_BLOCKS`) as `EXTRACTOR_SCRIPT` does. */
@@ -198,6 +217,33 @@ describe('extractor on a DOM', () => {
     const many = extract({ body: Array.from({ length: SNAPSHOT_LIMITS.maxHiddenHeadings + 10 }, (_, i) => `<h3 hidden>H${i}</h3>`).join('') });
     expect(many.hiddenHeadings).toHaveLength(SNAPSHOT_LIMITS.maxHiddenHeadings);
     expect(many.headingTotal).toBe(SNAPSHOT_LIMITS.maxHiddenHeadings + 10);
+  });
+
+  test('extractor-reads-through-boxless-wrappers', () => {
+    const words = (body: string) => extract({ body, prepare: (_document, window) => chromiumVisibility(window) });
+    // A `display: contents` wrapper (nested too) has no box, but its content is shown.
+    const wrapped = words('<div style="display:contents"><p>one two</p> three<div style="display:contents">four</div></div>');
+    expect(wrapped.wordCount).toBe(4);
+    expect(wrapped.textTruncated).toBe(false);
+    // Hidden around the wrapper: not shown.
+    expect(words('<div style="display:none"><span style="display:contents">gone</span></div><p>kept</p>').wordCount).toBe(1);
+    expect(words('<div style="content-visibility:hidden"><span style="display:contents">skipped</span></div><p>kept</p>').wordCount).toBe(1);
+    expect(words('<details><summary>Summary</summary><span style="display:contents">closed</span></details>').wordCount).toBe(1);
+    expect(words('<details open><summary>Summary</summary><span style="display:contents">open</span></details>').wordCount).toBe(2);
+    // A hidden element is still pruned; `visibility: hidden` still counts (it takes part in layout).
+    expect(words('<p style="display:none">gone <span style="display:contents">too</span></p><p style="visibility:hidden">laid <span style="visibility:visible">out</span></p>').wordCount).toBe(2);
+    // Headings: one that is `display: contents` is listed; inside a hidden element it is not.
+    const headings = words('<h2 style="display:contents">Wrapped heading</h2><div style="display:none"><h2 style="display:contents">Gone</h2></div>');
+    expect(headings.headings).toEqual([{ level: 2, text: 'Wrapped heading' }]);
+    expect(headings.headingTotal).toBe(2);
+    // A hostile chain of wrappers is looked up only so far: past that the heading counts as not shown, and the snapshot is partial.
+    const deep = (depth: number) =>
+      extract({
+        body: `${'<div style="display:contents">'.repeat(depth)}<h2 style="display:contents">Deep</h2>${'</div>'.repeat(depth)}`,
+        prepare: (_document, window) => chromiumVisibility(window),
+      });
+    expect(deep(20)).toMatchObject({ partial: false, headings: [{ level: 2, text: 'Deep' }] });
+    expect(deep(2_000)).toMatchObject({ partial: true, headings: [] });
   });
 
   test('extractor-reads-bot-robots', () => {
