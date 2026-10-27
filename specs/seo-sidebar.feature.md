@@ -126,7 +126,7 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   window the page area keeps `PAGE_MIN_WIDTH` and the panel narrows instead
   (`narrow-window-keeps-page-usable`).
 - The rail lists `SEO_PANELS` in order: available panels as buttons with a status dot, the others
-  disabled, labelled `COMING_SOON_LABEL`, without a dot.
+  disabled, labelled `COMING_SOON_LABEL`, without a dot. Since Tasks 5 and 6 every panel is available.
 - Overview: the score ring (0–100, coloured by band) with the band's label, error / warning / info
   counts, and the top `OVERVIEW_TOP_ISSUES` ranked issues ("Show all" for the rest). Each issue
   expands to its why, its fix and its facts and samples.

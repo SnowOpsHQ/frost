@@ -8,7 +8,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_LABEL } from '@app/specs/seo-rules.spec';
-import { PAGE_MIN_WIDTH, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH, SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
+import { COMING_SOON_LABEL, PAGE_MIN_WIDTH, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH, SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -170,16 +170,14 @@ test('empty-tab-shows-hint', async () => {
   await expect(sidebar()).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('seo-empty')).toBeVisible();
   await expect(score()).toHaveCount(0);
-  // The rail lists every panel; the ones not built yet are disabled, with no status (Schema and
-  // Indexability are built: seo-schema.e2e.ts, seo-indexability.e2e.ts; Page Speed: seo-speed.e2e.ts).
+  // The rail lists every panel, and every one is built now (Schema, Indexability, Page Speed and
+  // Compliance have suites of their own: seo-schema, seo-indexability, seo-speed and
+  // seo-compliance.e2e.ts): none is left disabled or "coming soon".
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(SEO_PANELS.length);
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(9);
-  await expect(railItem('indexability')).toBeEnabled();
-  await expect(railItem('speed')).toBeEnabled();
-  for (const soon of ['compliance']) {
-    await expect(railItem(soon)).toBeDisabled();
-    await expect(railItem(soon)).not.toHaveAttribute('data-status');
-  }
+  expect(SEO_PANELS.filter((panel) => !panel.available).map((panel) => panel.id)).toEqual([]);
+  for (const panel of SEO_PANELS) await expect(railItem(panel.id)).toBeEnabled();
+  await expect(page.locator(`[data-testid="seo-rail-item"][aria-label*="${COMING_SOON_LABEL}"]`)).toHaveCount(0);
 });
 
 test('good-page-scores-high', async () => {

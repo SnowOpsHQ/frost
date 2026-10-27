@@ -16,6 +16,8 @@ import { analyseSnapshot } from '../analyse';
 import type { AnalysisResult } from '../analysis';
 import { CONTEXT_TIMEOUT_MS, type ContextSource } from '../auditor';
 import { extractPage, type PageDocument } from '../extract';
+import { extractSecurity, RESOURCE_SELECTOR, type SecurityDocument } from '../security-extract';
+import { SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { captureHeaders, createResponseRecorder } from '../responses';
 import { createRobotsFetcher, isPrivateHost, netHop, outcomeOf, type Hop, type HopResult, type NetRequester } from '../robots-fetch';
 
@@ -662,7 +664,9 @@ describe('context in the analysis', () => {
 
 function extract(head: string, body = '', limits = {}): ExtractedSnapshot {
   const dom = new JSDOM(`<!doctype html><html lang="en"><head>${head}</head><body>${body}</body></html>`, { url: PAGE });
-  return extractPage(dom.window.document as unknown as PageDocument, { ...SNAPSHOT_LIMITS, ...limits }, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SOCIAL_TAGS, SOCIAL_URL_TAGS) as ExtractedSnapshot;
+  const page = extractPage(dom.window.document as unknown as PageDocument, { ...SNAPSHOT_LIMITS, ...limits }, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SOCIAL_TAGS, SOCIAL_URL_TAGS) as ExtractedSnapshot;
+  // With the security read beside it, as the extractor's script does (Task 6).
+  return { ...page, security: extractSecurity(dom.window.document as unknown as SecurityDocument, SECURITY_LIMITS, RESOURCE_SELECTOR) as ExtractedSnapshot['security'] };
 }
 
 describe('hreflang extraction', () => {

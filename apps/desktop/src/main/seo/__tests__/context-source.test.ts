@@ -1,7 +1,8 @@
 // Spec: specs/seo-indexability.feature.md (the record travels with the snapshot; the audit never waits),
-// specs/seo-speed.feature.md (Two measurements: audit-does-not-wait-for-the-measurement)
+// specs/seo-speed.feature.md (Two measurements: audit-does-not-wait-for-the-measurement),
+// specs/seo-compliance.feature.md (a run belongs to one document and URL: its answer in the context)
 import { describe, expect, test } from 'vitest';
-import { contextSource, knownInput, laterInput } from '../context-source';
+import { contextSource, knownInput, laterInput, withKnown } from '../context-source';
 
 /** A promise the test settles. */
 function deferred<T>() {
@@ -50,5 +51,17 @@ describe('context source', () => {
     speed.reject(new Error('boom'));
     await expect(source.later).resolves.toEqual({ robots: null, performance: null });
     expect(source.now().final).toBe(true);
+  });
+
+  test('known-values-join-now-and-later', async () => {
+    const speed = deferred<unknown>();
+    const source = withKnown(contextSource({ response: knownInput(null), robots: knownInput(null), performance: laterInput(speed.promise) }), { accessibility: 'answer' });
+    expect(source.now()).toEqual({ context: { response: null, robots: null, accessibility: 'answer' }, final: false });
+    speed.resolve('measured');
+    await expect(source.later).resolves.toEqual({ response: null, robots: null, performance: 'measured', accessibility: 'answer' });
+    // Without a source: nothing collected, and the values, final at once.
+    const bare = withKnown(undefined, { accessibility: 'answer' });
+    expect(bare.now()).toEqual({ context: { response: null, robots: null, accessibility: 'answer' }, final: true });
+    expect(bare.later).toBeNull();
   });
 });

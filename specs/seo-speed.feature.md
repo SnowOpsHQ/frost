@@ -109,7 +109,8 @@ many visits on many devices), which can be very different. The panel says so und
   **summary-third-party-share**, **navigation-phases**, **speed-report-has-measured-findings-only**, **formats**.
 
 ## Measurement, validation and main (`apps/desktop/src/main/seo/__tests__/vitals.test.ts`)
-- **Scenario: vitals-script-runs-in-the-speed-world** — `SPEED_WORLD_ID`, never 0, 999 or `SEO_WORLD_ID`.
+- **Scenario: vitals-script-runs-in-the-speed-world** — `SPEED_WORLD_ID`, never 0, 999, `SEO_WORLD_ID` or
+  `A11Y_WORLD_ID` (the three SEO worlds are distinct).
 - **Scenario: vitals-script-bundles-web-vitals-and-is-self-contained** — the IIFE, wrapped; no Node,
   Electron, DOM writes or `eval`.
 - **Scenario: collector-installs-once-and-waits-for-buffered-entries** — `reportAllChanges`, buffered

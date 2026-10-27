@@ -1,0 +1,82 @@
+{
+  "testEngine": { "name": "axe-core", "version": "4.14.0" },
+  "testRunner": { "name": "axe" },
+  "testEnvironment": { "userAgent": "test", "windowWidth": 1280, "windowHeight": 800 },
+  "timestamp": "2026-10-26T12:00:00.000Z",
+  "url": "https://example.com/checkout",
+  "toolOptions": { "runOnly": { "type": "tag", "values": ["wcag2a"] } },
+  "passes": [
+    { "id": "document-title", "impact": null, "tags": ["wcag2a"], "description": "d", "help": "h", "helpUrl": "https://help.example/rules/document-title", "nodes": [{ "target": ["html"] }] },
+    { "id": "html-has-lang", "impact": null, "tags": ["wcag2a"], "description": "d", "help": "h", "helpUrl": "https://help.example/rules/html-has-lang", "nodes": [{ "target": ["html"] }] },
+    { "id": "landmark-one-main", "impact": null, "tags": ["best-practice"], "description": "d", "help": "h", "helpUrl": "https://help.example/rules/landmark-one-main", "nodes": [{ "target": ["html"] }] }
+  ],
+  "incomplete": [
+    { "id": "color-contrast", "impact": "serious", "tags": ["wcag2aa"], "description": "d", "help": "h", "helpUrl": "https://help.example/rules/color-contrast", "nodes": [{ "target": [".hero h2"], "failureSummary": "Needs review" }] }
+  ],
+  "inapplicable": [
+    { "id": "video-caption", "impact": null, "tags": ["wcag2a"], "description": "d", "help": "h", "helpUrl": "https://help.example/rules/video-caption", "nodes": [] },
+    { "id": "audio-caption", "impact": null, "tags": ["wcag2a"], "description": "d", "help": "h", "helpUrl": "https://help.example/rules/audio-caption", "nodes": [] }
+  ],
+  "violations": [
+    {
+      "id": "color-contrast",
+      "impact": "serious",
+      "tags": ["cat.color", "wcag2aa", "wcag143"],
+      "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+      "help": "Elements must meet minimum color contrast ratio thresholds",
+      "helpUrl": "https://help.example/rules/color-contrast",
+      "nodes": [
+        {
+          "any": [{ "id": "color-contrast", "data": { "fgColor": "#bbbbbb", "bgColor": "#ffffff", "contrastRatio": 1.92 }, "relatedNodes": [], "impact": "serious", "message": "Element has insufficient color contrast of 1.92" }],
+          "all": [],
+          "none": [],
+          "impact": "serious",
+          "html": "<p class=\"faint\">Low contrast text</p>",
+          "target": ["p.faint"],
+          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #bbbbbb, background color: #ffffff, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+        },
+        { "any": [], "all": [], "none": [], "impact": "serious", "html": "<span>x</span>", "target": [["my-widget", "span.label"]], "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast" }
+      ]
+    },
+    {
+      "id": "image-alt",
+      "impact": "critical",
+      "tags": ["cat.text-alternatives", "wcag2a", "wcag111"],
+      "description": "Ensure <img> elements have alternative text or a role of none or presentation",
+      "help": "Images must have alternative text",
+      "helpUrl": "https://help.example/rules/image-alt",
+      "nodes": [
+        { "any": [], "all": [], "none": [], "impact": "critical", "html": "<img src=\"/hero.png\">", "target": ["img[src$=\"hero.png\"]"], "failureSummary": "Fix any of the following:\n  Element does not have an alt attribute" },
+        { "any": [], "all": [], "none": [], "impact": "critical", "html": "<img src=\"/b.png\">", "target": [".gallery > img:nth-child(2)"], "failureSummary": "Fix any of the following:\n  Element does not have an alt attribute" },
+        { "any": [], "all": [], "none": [], "impact": "critical", "html": "<img src=\"/c.png\">", "target": [".gallery > img:nth-child(3)"], "failureSummary": "Fix any of the following:\n  Element does not have an alt attribute" }
+      ]
+    },
+    {
+      "id": "heading-order",
+      "impact": "moderate",
+      "tags": ["cat.semantics", "best-practice"],
+      "description": "Ensure the order of headings is semantically correct",
+      "help": "Heading levels should only increase by one",
+      "helpUrl": "javascript:alert(1)",
+      "nodes": [{ "any": [], "all": [], "none": [], "impact": "moderate", "html": "<h4>Deep</h4>", "target": ["h4"], "failureSummary": "Fix any of the following:\n  Heading order invalid" }]
+    },
+    {
+      "id": "button-name",
+      "impact": "critical",
+      "tags": ["cat.name-role-value", "wcag2a", "wcag412"],
+      "description": "Ensure buttons have discernible text",
+      "help": "Buttons must have discernible text",
+      "helpUrl": "https://help.example/rules/button-name",
+      "nodes": [{ "any": [], "all": [], "none": [], "impact": "critical", "html": "<button></button>", "target": ["#checkout > button"], "failureSummary": "Fix any of the following:\n  Element does not have inner text that is visible to screen readers" }]
+    },
+    {
+      "id": "odd-rule",
+      "impact": "catastrophic",
+      "tags": "not-a-list",
+      "description": 42,
+      "help": null,
+      "helpUrl": "https://help.example/rules/odd-rule",
+      "nodes": "none"
+    }
+  ]
+}

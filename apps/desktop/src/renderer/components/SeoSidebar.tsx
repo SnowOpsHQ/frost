@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SeoAuditResponse } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
+import { IDLE_A11Y_RUN } from '@app/specs/seo-compliance.spec';
 import { COMING_SOON_LABEL, DEFAULT_SEO_PANEL, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { AuditArt, ChevronIcon, ComplianceIcon, ImagesIcon, IndexabilityIcon, LinksIcon, OnPageIcon, OverviewIcon, ReloadIcon, SchemaIcon, SocialIcon, SpeedIcon } from '../icons';
 import { actions } from '../ipc';
 import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
+import { Compliance } from './seo/Compliance';
 import { Images } from './seo/Images';
 import { Indexability } from './seo/Indexability';
 import { Links } from './seo/Links';
@@ -151,6 +153,8 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
       return <Indexability audit={response.audit} />;
     case 'speed':
       return <Speed audit={response.audit} tab={tab} />;
+    case 'compliance':
+      return <Compliance audit={response.audit} tab={tab} run={response.accessibilityRun ?? IDLE_A11Y_RUN} />;
     default:
       return <Overview audit={response.audit} />;
   }

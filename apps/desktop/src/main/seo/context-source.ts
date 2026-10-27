@@ -1,3 +1,4 @@
+import { NO_PAGE_CONTEXT } from '@app/specs/seo-snapshot.spec';
 import type { ContextSource } from './auditor';
 
 // What main collects about a page beside the extractor's snapshot (its `PageContext`, analysed with
@@ -62,5 +63,22 @@ export function contextSource(inputs: Readonly<Record<string, ContextInput>>): C
   return {
     now: build,
     later: waiting.length === 0 ? null : Promise.all(waiting).then(() => build().context),
+  };
+}
+
+/**
+ * `source` with `values` known in it too, now and once it is final (the controller adds the
+ * accessibility check's answer, Task 6, to what main collects). Without a source: nothing collected
+ * (`NO_PAGE_CONTEXT`) and `values`, final at once.
+ */
+export function withKnown(source: ContextSource | undefined, values: Readonly<Record<string, unknown>>): ContextSource {
+  const add = (context: unknown): Record<string, unknown> => ({ ...NO_PAGE_CONTEXT, ...(typeof context === 'object' && context !== null ? context : {}), ...values });
+  if (!source) return { now: () => ({ context: add(undefined), final: true }), later: null };
+  return {
+    now: () => {
+      const now = source.now();
+      return { context: add(now.context), final: now.final };
+    },
+    later: source.later ? source.later.then(add) : null,
   };
 }

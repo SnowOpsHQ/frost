@@ -154,7 +154,8 @@ const browserRouter = router({
  * how many rows it wrote to main's clipboard (`null`: none, no ready audit); `copyUrl` whether it
  * wrote the URL (only one the audit lists); `copySchemaJson` whether it wrote the JSON-LD block
  * (`seo-schema.feature.md`); `measureSpeed` the active tab's speed measurement (`seo-speed.feature.md`,
- * polled while the Speed panel is open). The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
+ * polled while the Speed panel is open); `runAccessibility` whether an accessibility check is running
+ * (`seo-compliance.feature.md`). The chrome asks again whenever `browser.watch` reports a new `auditVersion`.
  */
 const seoRouter = router({
   getAudit: publicProcedure
@@ -196,6 +197,12 @@ const seoRouter = router({
     .use(requireSeo)
     .input(SeoTabInputSchema)
     .mutation(({ ctx, input }) => ctx.seo.measureSpeed(input.tabId)),
+  // Compliance (Task 6, `seo-compliance.feature.md`): starts the accessibility check on the active tab.
+  runAccessibility: publicProcedure
+    .use(enforceSender)
+    .use(requireSeo)
+    .input(SeoTabInputSchema)
+    .mutation(({ ctx, input }) => ctx.seo.runAccessibility(input.tabId) === true),
 });
 
 export const appRouter = router({

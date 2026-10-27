@@ -75,8 +75,12 @@ export interface TabAudits {
   navigated(tab: Tab): void;
   /** `tab` became the active tab: audit it if it has no audit of its current URL, or that audit is stale. */
   activated(tab: Tab): void;
-  /** Audits `tab` again now (no debounce; after an extraction still in flight); `false` if it is not auditable. */
-  rerun(tab: Tab): boolean;
+  /**
+   * Audits `tab` again now (no debounce; after an extraction still in flight); `false` if it is not
+   * auditable. With `keepShown` a ready audit of the same URL stays the answer until the new one
+   * settles (no `pending` in between: the accessibility check's answer being scored, Task 6).
+   */
+  rerun(tab: Tab, keepShown?: boolean): boolean;
   /** Forgets `tab` (closed or its page gone): its timers are cleared, late results ignored. */
   forget(tab: Tab): void;
   /** What `seo.getAudit` answers for `tab` (`undefined`: no such tab). */
@@ -389,7 +393,7 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
       schedule(tab, 'load');
     },
 
-    rerun(tab) {
+    rerun(tab, keepShown = false) {
       if (!options) return false;
       const target = auditable(tab);
       if (!target.ok) return false;
@@ -397,9 +401,11 @@ export function createTabAudits(options: TabAuditsOptions | undefined, ctx: TabA
       clearTimeout(entry.timer);
       entry.timer = undefined;
       entry.burstStart = undefined;
-      entry.key = target.key;
-      entry.state = { status: 'pending' };
-      bump(entry);
+      if (!keepShown || entry.key !== target.key || entry.state.status !== 'ready') {
+        entry.key = target.key;
+        entry.state = { status: 'pending' };
+        bump(entry);
+      }
       request(tab, entry);
       return true;
     },

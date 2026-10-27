@@ -36,7 +36,7 @@ describe('seo view helpers', () => {
     expect(railStatuses({ status: 'pending', url: 'https://a.example/' })).toEqual({});
     expect(railStatuses({ status: 'unavailable', url: 'https://a.example/', reason: 'timeout' })).toEqual({});
     const statuses = railStatuses(ready('https://a.example/', [finding('warning', 'links'), finding('error', 'title'), finding('warning', 'social')]));
-    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass', indexability: 'pass', speed: 'pass' };
+    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass', indexability: 'pass', speed: 'pass', compliance: 'pass' };
     for (const panel of SEO_PANELS) {
       if (panel.available) expect(statuses[panel.id], panel.id).toBe(expected[panel.id]);
       else expect(statuses[panel.id], panel.id).toBeUndefined();
@@ -54,6 +54,9 @@ describe('seo view helpers', () => {
     expect(railStatuses(ready('https://a.example/', [finding('warning', 'indexing')]))).toMatchObject({ 'on-page': 'warn', indexability: 'warn' });
     // Page speed (Task 5): performance findings colour Overview and Speed only.
     expect(railStatuses(ready('https://a.example/', [finding('warning', 'performance')]))).toMatchObject({ overview: 'warn', 'on-page': 'pass', speed: 'warn' });
+    // Compliance: security and accessibility findings colour it (and Overview), not On-Page.
+    expect(railStatuses(ready('https://a.example/', [finding('error', 'security')]))).toMatchObject({ overview: 'error', 'on-page': 'pass', compliance: 'error' });
+    expect(railStatuses(ready('https://a.example/', [finding('warning', 'accessibility')]))).toMatchObject({ 'on-page': 'pass', compliance: 'warn' });
   });
 
   test('response-matches-tab', () => {

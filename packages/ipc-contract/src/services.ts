@@ -108,6 +108,12 @@ export interface SeoService {
    * per tab runs, none sooner than `SPEED_MIN_INTERVAL_MS` after the last. Never rejects.
    */
   measureSpeed(tabId: number): Promise<SpeedResponse>;
+  /**
+   * Starts the accessibility check on the tab's page (`seo-compliance.feature.md`): only the active
+   * tab showing a web page; `true` if a check is running now (one already running is not doubled),
+   * `false` (a no-op) otherwise. Its state and results come with the tab's ready audit.
+   */
+  runAccessibility(tabId: number): boolean;
 }
 
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */

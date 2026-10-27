@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import webVitalsSource from 'virtual:web-vitals-iife';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS } from '@app/specs/seo-limits.spec';
+import { A11Y_WORLD_ID, SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { PageSnapshotSchema } from '@app/specs/seo-snapshot.spec';
 import { MAX_BLOCKING_SCRIPTS, SPEED_LIMITS, SPEED_MEASURE_TIMEOUT_MS, SPEED_MIN_INTERVAL_MS, SPEED_SETTLE_MS, SPEED_STATE_KEY, SPEED_WORLD_ID, type SpeedLimits } from '@app/specs/seo-speed.spec';
 import { PerformanceMeasurementSchema, type PerformanceMeasurement } from '@app/specs/seo-speed.schema.spec';
@@ -18,6 +19,7 @@ import { createAnalyzer, type AnalysisResult, type AnalysisWorker, type SpeedAna
 import { contextSource, knownInput, laterInput } from '../context-source';
 import { extractPage, type PageDocument } from '../extract';
 import { pendingRobots } from '../robots-fetch';
+import { extractSecurity, RESOURCE_SELECTOR, type SecurityDocument } from '../security-extract';
 import { measurePage, runVitals, VITALS_SCRIPT, type SpeedEnvironment } from '../vitals';
 
 const A = 'https://example.com/a';
@@ -119,9 +121,11 @@ describe('collector', () => {
     const contents = { executeJavaScriptInIsolatedWorld: vi.fn(async (_world: number, _scripts: { code: string }[]) => answer) };
     await expect(runVitals(contents)).resolves.toBe(answer);
     const [world, scripts, ...rest] = contents.executeJavaScriptInIsolatedWorld.mock.calls[0]!;
-    // Its own isolated world: never the main world (0), Electron's (999) or the extractor's.
+    // Its own isolated world: never the main world (0), Electron's (999), the extractor's or the
+    // accessibility check's (Task 6).
     expect(world).toBe(SPEED_WORLD_ID);
-    expect([0, 999, SEO_WORLD_ID]).not.toContain(world);
+    expect([0, 999, SEO_WORLD_ID, A11Y_WORLD_ID]).not.toContain(world);
+    expect(new Set([SEO_WORLD_ID, A11Y_WORLD_ID, SPEED_WORLD_ID]).size).toBe(3);
     expect(scripts).toEqual([{ code: VITALS_SCRIPT }]);
     expect(rest).toEqual([]);
   });
@@ -253,7 +257,12 @@ describe('extractor', () => {
     // (jsdom lacks the "force async" default Chromium applies: model it.)
     Object.defineProperty(inserted, 'async', { value: true });
     dom.window.document.head.append(inserted);
-    const run = (max?: number) => PageSnapshotSchema.parse(extractPage(dom.window.document as unknown as PageDocument, SNAPSHOT_LIMITS, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SOCIAL_TAGS, SOCIAL_URL_TAGS, max));
+    // With the security read beside it, as the extractor's script does (Task 6).
+    const run = (max?: number) =>
+      PageSnapshotSchema.parse({
+        ...(extractPage(dom.window.document as unknown as PageDocument, SNAPSHOT_LIMITS, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SOCIAL_TAGS, SOCIAL_URL_TAGS, max) as object),
+        security: extractSecurity(dom.window.document as unknown as SecurityDocument, SECURITY_LIMITS, RESOURCE_SELECTOR),
+      });
     expect(run().blockingScripts).toEqual({ urls: ['https://example.com/blocking.js', 'https://cdn.example.net/also.js'], total: 2 });
     expect(run(1).blockingScripts).toEqual({ urls: ['https://example.com/blocking.js'], total: 2 });
     expect(MAX_BLOCKING_SCRIPTS).toBe(20);

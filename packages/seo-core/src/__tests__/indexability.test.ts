@@ -339,7 +339,7 @@ describe('verdict', () => {
   test('http-report-for-the-panel', () => {
     const facts = analyseIndexability(withHeaders(header('x-robots-tag', 'noarchive'))).http!;
     expect(facts).toMatchObject({ status: 200, source: 'network', serverRedirects: 0 });
-    expect(facts.headers.map((h) => h.name)).toEqual(['content-type', 'cache-control', 'x-robots-tag']);
+    expect(facts.headers.map((h) => h.name)).toEqual([...okResponse().headers.map((h) => h.name), 'x-robots-tag']);
     // Headers that main marked unavailable are never read.
     const restored = page({ response: okResponse({ source: 'navigation', headersAvailable: false, headers: [] }) });
     expect(analyseIndexability(restored).xRobotsTag).toEqual([]);

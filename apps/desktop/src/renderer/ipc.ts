@@ -39,4 +39,6 @@ export const actions = {
   copySchemaJson: (tabId: number, audit: SeoAuditRef, block: number) => ipc.seo.copySchemaJson.mutate({ tabId, audit, block }).catch(() => false),
   /** Measures the active tab's page speed (`seo.measureSpeed`); resolves its answer, `null` on an IPC failure. */
   measureSpeed: (tabId: number) => ipc.seo.measureSpeed.mutate({ tabId }).catch(() => null),
+  /** Starts the accessibility check on the tab's page (`seo.runAccessibility`); resolves whether one is running. */
+  runAccessibility: (tabId: number) => ipc.seo.runAccessibility.mutate({ tabId }).catch(() => false),
 };
