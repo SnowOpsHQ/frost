@@ -171,11 +171,12 @@ test('empty-tab-shows-hint', async () => {
   await expect(page.getByTestId('seo-empty')).toBeVisible();
   await expect(score()).toHaveCount(0);
   // The rail lists every panel; the ones not built yet are disabled, with no status (Schema and
-  // Indexability are built: seo-schema.e2e.ts, seo-indexability.e2e.ts).
+  // Indexability are built: seo-schema.e2e.ts, seo-indexability.e2e.ts; Page Speed: seo-speed.e2e.ts).
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(SEO_PANELS.length);
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(9);
   await expect(railItem('indexability')).toBeEnabled();
-  for (const soon of ['speed', 'compliance']) {
+  await expect(railItem('speed')).toBeEnabled();
+  for (const soon of ['compliance']) {
     await expect(railItem(soon)).toBeDisabled();
     await expect(railItem(soon)).not.toHaveAttribute('data-status');
   }

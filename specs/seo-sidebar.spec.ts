@@ -58,11 +58,11 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  * `pass` (info findings never colour a dot).
  */
 /**
- * On-Page covers every category except the ones with a panel of their own beyond it (Social, Schema,
+ * On-Page covers every category except the ones with a panel of their own beyond it (Social, Schema, Page Speed,
  * and Indexability's HTTP / robots.txt / hreflang checks). Indexability also covers `indexing` (the
  * robots meta tags), which On-Page shows too.
  */
-const OWN_PANEL_CATEGORIES: readonly SeoCategory[] = ['social', 'schema', 'indexability', 'hreflang'];
+const OWN_PANEL_CATEGORIES: readonly SeoCategory[] = ['social', 'schema', 'indexability', 'hreflang', 'performance'];
 const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => !OWN_PANEL_CATEGORIES.includes(category));
 
 export const SEO_PANELS = [
@@ -73,7 +73,7 @@ export const SEO_PANELS = [
   { id: 'social', label: 'Social', available: true, categories: ['social'] },
   { id: 'schema', label: 'Schema', available: true, categories: ['schema'] },
   { id: 'indexability', label: 'Indexability', available: true, categories: ['indexing', 'indexability', 'hreflang'] },
-  { id: 'speed', label: 'Page Speed', available: false, categories: [] },
+  { id: 'speed', label: 'Page Speed', available: true, categories: ['performance'] },
   { id: 'compliance', label: 'Compliance', available: false, categories: [] },
 ] as const satisfies readonly { id: string; label: string; available: boolean; categories: readonly SeoCategory[] }[];
 export type SeoPanelId = (typeof SEO_PANELS)[number]['id'];

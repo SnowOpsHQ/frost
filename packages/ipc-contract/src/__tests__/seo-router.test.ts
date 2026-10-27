@@ -1,9 +1,10 @@
 // Spec: specs/seo-snapshot.spec.ts (SeoTabInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema,
 // SeoCopyUrlInputSchema, SeoCopySchemaInputSchema), specs/seo-sidebar.spec.ts (statuses, HIGHLIGHT_MODES, link filters), specs/ipc-sender.spec.ts
-// Acceptance: specs/seo-sidebar.feature.md (Router), specs/seo-panels.feature.md (Router), specs/seo-schema.feature.md (Controller and router)
+// Acceptance: specs/seo-sidebar.feature.md (Router), specs/seo-panels.feature.md (Router), specs/seo-schema.feature.md (Controller and router),
+// specs/seo-speed.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
-import type { SeoAuditResponse } from '@app/seo-core';
+import type { SeoAuditResponse, SpeedResponse } from '@app/seo-core';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
@@ -14,6 +15,7 @@ import { createIpcRequestHandler } from '../transport/main';
 
 const WINDOW_ID = 7;
 const PENDING: SeoAuditResponse = { status: 'pending', url: 'https://example.com/' };
+const SPEED_BACKGROUND: SpeedResponse = { status: 'unavailable', url: 'https://example.com/', reason: 'background' };
 
 function fakeSeo() {
   return {
@@ -23,6 +25,7 @@ function fakeSeo() {
     copyLinksCsv: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _filter: { type: string; rel: string; query: string }): number | null => (tabId === 1 ? 4 : null)),
     copyUrl: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _url: string) => tabId === 1),
     copySchemaJson: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _block: number) => tabId === 1),
+    measureSpeed: vi.fn((_tabId: number): Promise<SpeedResponse> => Promise.resolve(SPEED_BACKGROUND)),
   } satisfies SeoService;
 }
 
@@ -59,6 +62,7 @@ const VALID_INPUT: Record<string, unknown> = {
   copyLinksCsv: { tabId: 1, audit: AUDIT, filter: FILTER },
   copyUrl: { tabId: 1, audit: AUDIT, url: 'https://example.com/a' },
   copySchemaJson: { tabId: 1, audit: AUDIT, block: 0 },
+  measureSpeed: { tabId: 1 },
 };
 const SEO_PROCEDURES = Object.keys(VALID_INPUT);
 /** No service method was called. */
@@ -88,6 +92,7 @@ describe('seo router', () => {
     const extras: Record<string, unknown[]> = {
       getAudit: [{ tabId: 1, extra: true }],
       rerun: [{ tabId: 1, extra: true }],
+      measureSpeed: [{ tabId: 1, extra: true }, { tabId: 1, url: 'https://example.com/' }],
       setHighlight: [{ tabId: 1 }, { tabId: 1, mode: 'images' }, { tabId: 1, mode: 'LINKS' }, { tabId: 1, mode: 'links', extra: 1 }],
       copyLinksCsv: [
         { tabId: 1, audit: AUDIT },
@@ -157,7 +162,10 @@ describe('seo router', () => {
     expect(seo.copySchemaJson).toHaveBeenLastCalledWith(1, AUDIT, SNAPSHOT_LIMITS.maxJsonLdBlocks - 1);
     await expect(procedure(ctxFor(seo), 'copySchemaJson')({ tabId: 2, audit: AUDIT, block: 0 })).resolves.toBe(false);
 
-    // Over the transport too: getAudit is a query, rerun a mutation.
+    await expect(procedure(ctxFor(seo), 'measureSpeed')({ tabId: 4 })).resolves.toEqual(SPEED_BACKGROUND);
+    expect(seo.measureSpeed).toHaveBeenCalledExactlyOnceWith(4);
+
+    // Over the transport too: getAudit is a query, rerun and measureSpeed mutations.
     const sender = { id: 1, mainFrame: { frameTreeNodeId: 100 }, isDestroyed: () => false };
     const senderFrame = { origin: APP_ORIGIN, frameTreeNodeId: 100, parent: null, detached: false, isDestroyed: () => false };
     const handle = createIpcRequestHandler({
@@ -168,6 +176,7 @@ describe('seo router', () => {
     });
     expect(await handle({ sender, senderFrame }, { type: 'query', path: 'seo.getAudit', input: { tabId: 3 } })).toStrictEqual({ result: { data: PENDING } });
     expect(await handle({ sender, senderFrame }, { type: 'mutation', path: 'seo.rerun', input: { tabId: 1 } })).toStrictEqual({ result: { data: true } });
+    expect(await handle({ sender, senderFrame }, { type: 'mutation', path: 'seo.measureSpeed', input: { tabId: 1 } })).toStrictEqual({ result: { data: SPEED_BACKGROUND } });
   });
 
   test('missing-seo-service-is-internal-error', async () => {

@@ -13,6 +13,7 @@ import { OnPage } from './seo/OnPage';
 import { Overview } from './seo/Overview';
 import { Schema } from './seo/Schema';
 import { Social } from './seo/Social';
+import { Speed } from './seo/Speed';
 
 // The SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance `seo-sidebar.feature.md`, Sidebar): docked
 // right of the page area, the open panel and then the persistent rail at the window's edge. The
@@ -148,6 +149,8 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
       return <Schema audit={response.audit} tab={tab} />;
     case 'indexability':
       return <Indexability audit={response.audit} />;
+    case 'speed':
+      return <Speed audit={response.audit} tab={tab} />;
     default:
       return <Overview audit={response.audit} />;
   }

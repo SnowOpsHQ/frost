@@ -3,6 +3,7 @@ import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 // Types only: the snapshot's Zod schema stays in main (it is the untrusted page's data).
 import type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
 import type { IndexabilityReport } from './indexability/model';
+import type { SpeedReport } from './performance/model';
 import type { SchemaReport } from './schema/model';
 
 export type { CappedText, ExtractedSnapshot, HreflangLink, ImageSize, PageContext, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial, RedirectHop, ResponseHeader, ResponseMeta, RobotsFetch } from '@app/specs/seo-snapshot.spec';
@@ -95,6 +96,8 @@ export interface SeoAudit {
   readonly schema: SchemaReport;
   /** The page's indexability: verdict, HTTP response, robots.txt, canonicals and hreflang (the Indexability panel, Task 4). */
   readonly indexability: IndexabilityReport;
+  /** The page's speed measured with the audit (the Speed panel's fallback until it measures live, Task 5); `null`: not measured. */
+  readonly performance: SpeedReport | null;
 }
 
 /** `seo.getAudit`'s answer (`seo-sidebar.spec.ts`, `SEO_AUDIT_STATUSES`). */

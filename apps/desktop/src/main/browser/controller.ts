@@ -12,6 +12,7 @@ import { pageTitle } from './page-title';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
 import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
+import { createTabSpeed, type TabSpeedOptions } from '../seo/vitals-tabs';
 import { matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
 import { wireTabView, type TabContextMenuRequest } from './tab-events';
@@ -147,6 +148,12 @@ export interface BrowserControllerOptions {
    */
   readonly highlight?: HighlightPainter;
   /**
+   * The page-speed collector and its analysis (`runVitals` in `../seo/vitals.ts`, the worker's
+   * `analyseSpeed`): `seo.measureSpeed` measures the active tab (`seo-speed.feature.md`). Without it
+   * every measurement stays `pending`.
+   */
+  readonly speed?: TabSpeedOptions;
+  /**
    * The system clipboard (Electron's `clipboard`, in main): "Copy as CSV" and "Copy URL" write
    * through it, so the chrome never needs clipboard access. Without it they copy nothing.
    */
@@ -206,6 +213,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
     isOpen: (tab) => strip.tabs.includes(tab),
     changed,
+  });
+
+  // Live page-speed measurements, of the active tab only (dropped with each new document).
+  const speeds = createTabSpeed(options.speed, {
+    isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    isOpen: (tab) => strip.tabs.includes(tab),
   });
 
   // The SEO highlight overlay, on the active tab only (it goes when the page changes or the tab is left).
@@ -277,6 +290,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (fullscreen.clear(tab)) fullscreen.leaveWindowFullscreen();
     prompts.deny(tab);
     audits.forget(tab);
+    speeds.forget(tab);
     highlights.dropped(tab);
     if (view) detach(view);
     return view;
@@ -407,6 +421,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       pageCommitted: (t) => {
         highlights.dropped(t);
         audits.navigated(t);
+        speeds.navigated(t);
       },
     });
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
@@ -727,6 +742,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     seo: {
       getAudit: (tabId) => audits.response(strip.tabs.find((tab) => tab.id === tabId)),
+      measureSpeed: (tabId) => speeds.measure(strip.tabs.find((tab) => tab.id === tabId)),
       setHighlight: (tabId, mode) => {
         const tab = strip.tabs.find((t) => t.id === tabId);
         return tab !== undefined && highlights.set(tab, mode);

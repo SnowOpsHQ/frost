@@ -19,6 +19,8 @@ import { runHighlight, watchHighlight } from './seo/highlight';
 import { createResponseRecorder } from './seo/responses';
 import { createRobotsFetcher, netHop, type RobotsFetcher } from './seo/robots-fetch';
 import { observeMainFrames } from './browser/web-request';
+import { runVitals, withTimeout } from './seo/vitals';
+import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
@@ -115,9 +117,20 @@ function start(): void {
   // analysis worker beside the extractor's answer, where they are validated and read.
   const responses = createResponseRecorder();
   let robots: RobotsFetcher | null = null;
+  // Page speed (specs/seo-speed.feature.md): the collector runs in the tab's own isolated speed world
+  // (web-vitals and frost's observers, never the main world); its answer is validated and summarised
+  // in the analysis worker. The audit takes one measurement beside the snapshot (the health score's
+  // performance rules); the Speed panel polls `seo.measureSpeed` for live values.
+  const measureForAudit = (contents: WebContents): Promise<unknown> =>
+    withTimeout(
+      runVitals(contents).catch(() => null),
+      SPEED_MEASURE_TIMEOUT_MS,
+      null,
+    );
   const collectContext = async (contents: WebContents) => {
     const url = contents.getURL();
-    return { response: responses.responseFor(contents.id, url), robots: robots ? await robots.get(url) : null };
+    const [robotsFetch, performance] = await Promise.all([robots ? robots.get(url) : null, measureForAudit(contents)]);
+    return { response: responses.responseFor(contents.id, url), robots: robotsFetch, performance };
   };
   app.on('web-contents-created', (_event, contents) => {
     if (isBrowseContents(contents)) responses.watch(contents);
@@ -130,6 +143,7 @@ function start(): void {
     contextMenu: showContextMenu,
     seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
     highlight: { paint: runHighlight, ended: watchHighlight },
+    speed: { measure: runVitals, analyse: (raw) => analyzer.analyseSpeed(raw) },
     clipboard,
   });
 

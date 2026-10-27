@@ -1,12 +1,14 @@
-import type { SeoAudit } from '@app/seo-core';
+import type { SeoAudit, SpeedReport } from '@app/seo-core';
 import { ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 
 // Page-derived analysis off the Electron main thread (spec `seo-limits.spec.ts`,
 // `ANALYSIS_TIMEOUT_MS`; acceptance `seo-schema.feature.md`, Analysis off the main thread). Main posts
 // each extractor answer to one long-lived worker (`analysis-worker.ts`), one at a time; each analysis
 // has a hard timeout, after which the worker is terminated and the next analysis spawns a new one.
+// Speed measurements (`seo-speed.feature.md`) go through the same worker and queue, as `speed` jobs.
 
 export type AnalysisResult = { readonly ok: true; readonly audit: SeoAudit } | { readonly ok: false; readonly reason: 'invalid-snapshot' | 'analysis-timeout' | 'analysis-failed' };
+export type SpeedAnalysisResult = { readonly ok: true; readonly report: SpeedReport } | { readonly ok: false; readonly reason: 'invalid-measurement' | 'analysis-timeout' | 'analysis-failed' };
 
 /** The parts of a `worker_threads` Worker the analyzer uses. */
 export interface AnalysisWorker {
@@ -28,23 +30,30 @@ export interface AnalyzerOptions {
 export interface Analyzer {
   /** Validates and audits an extractor answer (with what main collected beside it, `PageContext`) in the worker. Never rejects. */
   analyse(raw: unknown, context?: unknown): Promise<AnalysisResult>;
+  /** Validates and summarises a speed measurement (`PerformanceMeasurementSchema`) in the worker. Never rejects. */
+  analyseSpeed(raw: unknown): Promise<SpeedAnalysisResult>;
   /** Terminates the worker (the app is quitting). */
   dispose(): void;
 }
 
+type JobKind = 'audit' | 'speed';
+type Settled = { readonly ok: boolean; readonly reason?: string };
+
 interface Job {
   readonly id: number;
+  readonly kind: JobKind;
   readonly raw: unknown;
   readonly context: unknown;
-  readonly settle: (result: AnalysisResult) => void;
+  readonly settle: (result: Settled) => void;
 }
 
-/** What the worker answered, if it has the shape of an analysis result. */
-function asResult(value: unknown): AnalysisResult | null {
+/** What the worker answered, if it has the shape of a `kind` job's result. */
+function asResult(kind: JobKind, value: unknown): Settled | null {
   if (typeof value !== 'object' || value === null) return null;
-  const result = value as { ok?: unknown; audit?: unknown; reason?: unknown };
-  if (result.ok === true && typeof result.audit === 'object' && result.audit !== null) return result as AnalysisResult;
-  if (result.ok === false && (result.reason === 'invalid-snapshot' || result.reason === 'analysis-failed')) return result as AnalysisResult;
+  const result = value as { ok?: unknown; audit?: unknown; report?: unknown; reason?: unknown };
+  const payload = kind === 'audit' ? result.audit : result.report;
+  if (result.ok === true && typeof payload === 'object' && payload !== null) return result as Settled;
+  if (result.ok === false && (result.reason === (kind === 'audit' ? 'invalid-snapshot' : 'invalid-measurement') || result.reason === 'analysis-failed')) return result as Settled;
   return null;
 }
 
@@ -56,7 +65,7 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
   let nextId = 1;
 
   /** Settles the current job and moves on; `kill` also ends its worker (the next job spawns a new one). */
-  const finish = (result: AnalysisResult, kill: boolean): void => {
+  const finish = (result: Settled, kill: boolean): void => {
     if (!current) return;
     const { job, timer, worker: running } = current;
     clearTimeout(timer);
@@ -75,7 +84,7 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
     created.on('message', (message) => {
       const { id, result } = (message ?? {}) as { id?: unknown; result?: unknown };
       if (!current || current.worker !== created || current.job.id !== id) return;
-      finish(asResult(result) ?? { ok: false, reason: 'analysis-failed' }, false);
+      finish(asResult(current.job.kind, result) ?? { ok: false, reason: 'analysis-failed' }, false);
     });
     const failed = () => {
       if (worker === created) worker = null;
@@ -99,22 +108,25 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
       return;
     }
     try {
-      running.postMessage({ id: job.id, raw: job.raw, context: job.context });
+      running.postMessage(job.kind === 'audit' ? { id: job.id, raw: job.raw, context: job.context } : { id: job.id, kind: 'speed', raw: job.raw });
     } catch {
-      // Not structured-cloneable: not a snapshot.
-      job.settle({ ok: false, reason: 'invalid-snapshot' });
+      // Not structured-cloneable: not a snapshot (or measurement).
+      job.settle({ ok: false, reason: job.kind === 'audit' ? 'invalid-snapshot' : 'invalid-measurement' });
       pump();
       return;
     }
     current = { job, worker: running, timer: setTimeout(() => finish({ ok: false, reason: 'analysis-timeout' }, true), timeoutMs) };
   }
 
+  const enqueue = (kind: JobKind, raw: unknown, context: unknown): Promise<Settled> =>
+    new Promise<Settled>((settle) => {
+      queue.push({ id: nextId++, kind, raw, context, settle });
+      pump();
+    });
+
   return {
-    analyse: (raw, context) =>
-      new Promise<AnalysisResult>((settle) => {
-        queue.push({ id: nextId++, raw, context, settle });
-        pump();
-      }),
+    analyse: (raw, context) => enqueue('audit', raw, context) as Promise<AnalysisResult>,
+    analyseSpeed: (raw) => enqueue('speed', raw, undefined) as Promise<SpeedAnalysisResult>,
     dispose() {
       for (const job of queue.splice(0)) job.settle({ ok: false, reason: 'analysis-failed' });
       if (current) finish({ ok: false, reason: 'analysis-failed' }, true);

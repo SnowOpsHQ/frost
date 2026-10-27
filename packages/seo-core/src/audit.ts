@@ -4,6 +4,7 @@ import { RULES } from './rules';
 import type { Finding, PageFacts, PageSnapshot, SeoAudit, SeoRule, SeverityCounts } from './types';
 import { described, robotsWith } from './rules/head';
 import { indexabilityReport } from './indexability';
+import { speedReport } from './performance';
 import { analyseSchema } from './schema';
 import { tokens } from './util';
 
@@ -117,5 +118,6 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
     page,
     schema: analyseSchema(snapshot),
     indexability,
+    performance: snapshot.performance ? speedReport(snapshot.performance) : null,
   };
 }
