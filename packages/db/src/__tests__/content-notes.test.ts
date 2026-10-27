@@ -136,7 +136,7 @@ describe('content notes', () => {
     old.exec(MIGRATIONS.find((m) => m.id === '0004_seo_content_notes')!.sql);
     old.prepare("INSERT INTO schema_migrations (id, applied_at) VALUES ('0003_seo_content_notes', 1)").run();
     old.prepare("INSERT INTO seo_target_queries (url, query, updated_at) VALUES (?, 'kept', 1)").run(PAGE);
-    expect(runMigrations(old)).toEqual(['0003_render_profile_pins', '0004_seo_content_notes']);
+    expect(runMigrations(old)).toEqual(MIGRATIONS.map((m) => m.id).filter((id) => id >= '0003'));
     expect(old.prepare('SELECT query FROM seo_target_queries').all().map((row) => row['query'])).toEqual(['kept']);
   });
 });

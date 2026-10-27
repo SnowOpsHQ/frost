@@ -1,4 +1,5 @@
-import { LOOPBACK_HTTP_HOSTS, LOOPBACK_IPV4_PATTERN, SEARCH_URL_TEMPLATE } from '@app/specs/browser.spec';
+import { LOOPBACK_HTTP_HOSTS, LOOPBACK_IPV4_PATTERN } from '@app/specs/browser.spec';
+import { DEFAULT_SEARCH_ENGINE, SEARCH_ENGINES, searchEngineUrl, type SearchEngineId } from '@app/specs/browser-polish.spec';
 import { BROWSABLE_SCHEMES, parseWebUrl } from '@app/specs/web-url.spec';
 
 // Pure address-bar resolution for `specs/address-bar.feature.md`. No Electron import.
@@ -57,13 +58,25 @@ function isValidPort(port: string | undefined): boolean {
   return n >= 1 && n <= 65_535;
 }
 
-/** The `SEARCH_URL_TEMPLATE` search for `query` (only ever its `q` parameter). */
-export function searchUrl(query: string): string {
-  return SEARCH_URL_TEMPLATE.replace('{q}', encodeURIComponent(query));
+/** The search for `query` on `engine` (`SEARCH_ENGINES`; only ever its query parameter). */
+export function searchUrl(query: string, engine: SearchEngineId = DEFAULT_SEARCH_ENGINE): string {
+  return searchEngineUrl(engine, query);
 }
 
-function searchFor(query: string): ResolvedAddress {
-  return { kind: 'search', url: searchUrl(query) };
+function searchFor(query: string, engine: SearchEngineId): ResolvedAddress {
+  return { kind: 'search', url: searchUrl(query, engine) };
+}
+
+/**
+ * An address-bar engine prefix (`browser-polish.feature.md`, Search engines): a `SEARCH_ENGINES`
+ * prefix letter (lowercase), whitespace, then a non-empty query. Answers the engine and the trimmed
+ * query, or `null` (no prefix: the input is resolved as usual).
+ */
+export function parseSearchPrefix(input: string): { readonly engine: SearchEngineId; readonly query: string } | null {
+  const match = /^([a-z])\s+(\S[\s\S]*)$/.exec(input.trim());
+  if (!match) return null;
+  const engine = SEARCH_ENGINES.find((e) => e.prefix === match[1]);
+  return engine ? { engine: engine.id, query: (match[2] ?? '').trim() } : null;
 }
 
 /** Input typed with an explicit `http://`/`https://`: any URL with a non-empty host and a valid port. */
@@ -87,14 +100,17 @@ function schemelessWebUrl(text: string): string | null {
 
 /**
  * Resolves what the user typed into the address bar (spec `address-bar.feature.md`): an
- * `http(s)` URL to load, a `SEARCH_URL_TEMPLATE` search for anything else (including every
- * non-web scheme: `javascript:`, `file:`, `app:`, `data:`, `chrome:` …), or `null` for empty input
- * (a no-op). Scheme-less loopback hosts get `http:`, every other scheme-less web host `https:`.
+ * `http(s)` URL to load, a search on `engine` for anything else (including every non-web scheme:
+ * `javascript:`, `file:`, `app:`, `data:`, `chrome:` …), or `null` for empty input (a no-op).
+ * Scheme-less loopback hosts get `http:`, every other scheme-less web host `https:`. An engine
+ * prefix (`parseSearchPrefix`: `g `, `b `, `d `) always searches that engine (Phase 2.5 Task 6).
  */
-export function resolveAddressInput(input: string): ResolvedAddress | null {
+export function resolveAddressInput(input: string, engine: SearchEngineId = DEFAULT_SEARCH_ENGINE): ResolvedAddress | null {
   const text = input.trim();
   if (text === '') return null;
-  if (/\s/.test(text)) return searchFor(text);
+  const prefixed = parseSearchPrefix(text);
+  if (prefixed) return searchFor(prefixed.query, prefixed.engine);
+  if (/\s/.test(text)) return searchFor(text, engine);
 
   const scheme = SCHEME_PREFIX.exec(text)?.[1]?.toLowerCase();
   const typedScheme = scheme !== undefined && !HOST_WITH_PORT.test(text);
@@ -103,7 +119,7 @@ export function resolveAddressInput(input: string): ResolvedAddress | null {
       ? explicitWebUrl(text)
       : null
     : schemelessWebUrl(text);
-  return url === null ? searchFor(text) : { kind: 'url', url };
+  return url === null ? searchFor(text, engine) : { kind: 'url', url };
 }
 
 /**

@@ -7012,3 +7012,460 @@ input {
 }
 
 /* End of Devtools drawer */
+
+/* Browser polish (Phase 2.5 Task 6, specs/browser-polish.feature.md): the find bar, the History
+   sheet and the new-tab page's "Jump back in". Tab views are drawn above the chrome's DOM, so none of
+   these overlays the page: the find bar is a row of the page column above the page area, and while
+   the History sheet is open it fills the page column and the page area shrinks to nothing. */
+
+:root {
+  --find-height: 40px;
+  --history-width: 760px;
+  --jump-tile-bg: #ffffff;
+  --jump-tile-edge: #e3e7ee;
+  --jump-monogram-bg: rgb(47 111 228 / 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --jump-tile-bg: #1f2228;
+    --jump-tile-edge: #2c3038;
+    --jump-monogram-bg: rgb(108 157 255 / 0.18);
+  }
+}
+
+/* ---- Find bar ---- */
+
+.find-bar {
+  flex: 0 0 var(--find-height);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+  background: var(--bg-chrome);
+  contain: inline-size;
+}
+
+.find-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.find-icon .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.find-input {
+  flex: 0 1 280px;
+  min-width: 80px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  outline: 0;
+  background: var(--bg-field);
+  user-select: text;
+  cursor: text;
+}
+
+.find-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.find-count {
+  min-width: 72px;
+  padding: 0 6px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.find-count[data-empty='true'] {
+  color: var(--danger);
+}
+
+.find-tool {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--icon);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.find-tool:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.find-tool:disabled {
+  opacity: 0.32;
+}
+
+.find-tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.find-case[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.find-previous .icon {
+  transform: rotate(180deg);
+}
+
+.find-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--bg-chrome-edge);
+}
+
+/* ---- History sheet ---- */
+
+.page-column[data-history='open'] > .page-area {
+  flex: 0 0 0;
+  height: 0;
+}
+
+.history-sheet {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  contain: inline-size;
+  background: var(--bg-page);
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--history-width), 100%);
+  min-height: 0;
+  container: history / inline-size;
+}
+
+.history-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 18px 20px 12px;
+}
+
+.history-title {
+  margin: 0 8px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.history-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 180px;
+  min-width: 160px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+  background: var(--bg-field);
+  color: var(--text-faint);
+}
+
+.history-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.history-search .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.history-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  user-select: text;
+  cursor: text;
+}
+
+.history-clear {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--danger);
+  white-space: nowrap;
+}
+
+.history-clear:hover {
+  background: var(--bg-hover);
+}
+
+.history-close,
+.history-action {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--icon);
+}
+
+.history-close:hover,
+.history-action:hover {
+  background: var(--bg-hover);
+}
+
+.history-action .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.history-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 20px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.history-empty {
+  margin: 48px 0;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.history-day + .history-day {
+  margin-top: 14px;
+}
+
+.history-day-label {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: 8px 4px 6px;
+  background: var(--bg-page);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.history-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 0 4px;
+  border-radius: var(--radius-control);
+}
+
+.history-row:hover {
+  background: var(--bg-hover);
+}
+
+.history-row .history-action {
+  opacity: 0;
+}
+
+.history-row:hover .history-action,
+.history-row:focus-within .history-action {
+  opacity: 1;
+}
+
+.history-time {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  text-align: start;
+}
+
+.history-open:focus-visible,
+.history-action:focus-visible,
+.history-close:focus-visible,
+.history-clear:focus-visible,
+.history-more:focus-visible,
+.jump-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.history-monogram,
+.jump-monogram {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--jump-monogram-bg);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.history-label {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-host {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-more {
+  display: block;
+  height: 32px;
+  margin: 16px auto 0;
+  padding: 0 16px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+}
+
+.history-clear {
+  margin-inline-start: auto;
+}
+
+/* A narrow page column: the search takes its own row and rows drop the host. */
+@container history (max-width: 520px) {
+  .history-search {
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  .history-host {
+    display: none;
+  }
+
+  .history-row {
+    grid-template-columns: 52px minmax(0, 1fr) auto auto;
+  }
+}
+
+/* ---- New-tab page: Jump back in ---- */
+
+.jump {
+  width: min(640px, 92%);
+  margin-top: 30px;
+}
+
+.jump-title {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: start;
+  text-transform: uppercase;
+}
+
+.jump-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jump-tile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--jump-tile-edge);
+  border-radius: 12px;
+  background: var(--jump-tile-bg);
+  box-shadow: var(--shadow-card);
+  text-align: start;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.jump-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.jump-monogram {
+  grid-row: 1 / 3;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.jump-label,
+.jump-host {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jump-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.jump-host {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+/* End of Browser polish */

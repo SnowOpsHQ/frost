@@ -24,6 +24,8 @@ export interface ClearBrowsingDataParts {
   forgetSeoCaches(): void;
   /** Every target query and snippet draft (`seo-content.spec.ts`); only when the checkbox was ticked. */
   clearContentNotes?(): Promise<void>;
+  /** The closed-tab stack: with the stored visits, the history part ("Clear all history" runs it alone; `browser-polish.feature.md`). */
+  forgetClosedTabs?(): void;
   log(message: string): void;
 }
 
@@ -47,6 +49,7 @@ export function createClearBrowsingData(parts: ClearBrowsingDataParts): () => Pr
     });
     if (!confirmed) return false;
     await attempt('permission decisions', () => parts.forgetPermissionDecisions());
+    await attempt('recently closed tabs', () => parts.forgetClosedTabs?.());
     await attempt('stored visits and decisions', () => parts.clearStoredData());
     await attempt('site storage and cache', () => parts.clearBrowseStorage());
     await attempt('robots.txt answers and recorded responses', () => parts.forgetSeoCaches());

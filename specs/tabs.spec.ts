@@ -62,5 +62,9 @@ export const RESERVED_TAB_SHORTCUTS = {
   'previous-tab': ['Ctrl+Shift+Tab', 'mac:Mod+Shift+['],
   // The command palette (Phase 2.5 Task 4, `command-palette.spec.ts`): opens or closes it.
   'command-palette': ['Mod+K'],
+  // Browser polish (Phase 2.5 Task 6, `browser-polish.spec.ts`): the active tab's find bar, and
+  // Reopen Closed Tab.
+  'find-in-page': ['Mod+F'],
+  'reopen-closed-tab': ['Mod+Shift+T'],
 } as const;
 export type TabCommand = keyof typeof RESERVED_TAB_SHORTCUTS;

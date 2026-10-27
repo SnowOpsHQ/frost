@@ -8,6 +8,7 @@ import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
+import type { FindService, HistoryService, SettingsService } from './polish-services';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -162,4 +163,8 @@ export interface IpcServices {
   readonly javascript?: JavascriptService;
   /** The SEO devtools drawer (Phase 2.5 Task 5, `devtools-service.ts`). */
   readonly devtools?: DevtoolsService;
+  /** Browser polish (Phase 2.5 Task 6, `polish-services.ts`): find in page, history, settings. */
+  readonly find?: FindService;
+  readonly history?: HistoryService;
+  readonly settings?: SettingsService;
 }

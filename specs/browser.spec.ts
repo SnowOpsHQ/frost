@@ -15,6 +15,8 @@ import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './per
 import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
 import { PALETTE_RETURN_FOCUS } from './command-palette.spec';
 import { TabRenderProfileSchema } from './render-profile.schema.spec';
+import { BrowserPolishStateShape } from './browser-polish.schema';
+import { DEFAULT_SEARCH_ENGINE, searchEngine } from './browser-polish.spec';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
@@ -34,9 +36,10 @@ export const BROWSE_BLANK_URL = 'about:blank' as const;
 
 /**
  * Address-bar input that is not a web address becomes a search: `{q}` is replaced by the trimmed
- * input, `encodeURIComponent`-encoded.
+ * input, `encodeURIComponent`-encoded. The engine is the user's choice from the typed table
+ * `SEARCH_ENGINES` (`browser-polish.spec.ts`, Phase 2.5 Task 6); this is the default engine's template.
  */
-export const SEARCH_URL_TEMPLATE = 'https://www.google.com/search?q={q}' as const;
+export const SEARCH_URL_TEMPLATE: string = searchEngine(DEFAULT_SEARCH_ENGINE).template;
 
 /** Longest address-bar input `browser.navigate` accepts (longer input is rejected, not truncated). */
 export const ADDRESS_INPUT_MAX_LENGTH = 8_192;
@@ -247,6 +250,9 @@ export const BrowserStateSchema = z.strictObject({
    */
   commandPalette: z.strictObject({ seq: z.int().nonnegative(), returnFocus: z.enum(PALETTE_RETURN_FOCUS) }),
   notice: NoticeSchema.nullable(),
+  // Browser polish (Phase 2.5 Task 6, `browser-polish.schema.ts`): the active tab's find bar, the
+  // History view request, the closed-tab count and the search engine.
+  ...BrowserPolishStateShape,
 });
 export type BrowserState = z.infer<typeof BrowserStateSchema>;
 

@@ -2,6 +2,7 @@ import type { ContextMenuParams, MenuItemConstructorOptions } from 'electron';
 import { ADDRESS_INPUT_MAX_LENGTH } from '@app/specs/browser.spec';
 import { CONTEXT_MENU_LABELS, CONTEXT_MENU_SEARCH_LABEL, CONTEXT_MENU_SELECTION_MAX } from '@app/specs/page-commands.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
+import { contextMenuSearchLabel, DEFAULT_SEARCH_ENGINE, type SearchEngineId } from '@app/specs/browser-polish.spec';
 import { searchUrl } from './address';
 
 // The page's context menu (spec `page-commands.feature.md`, Context menu): a pure function of a
@@ -32,10 +33,12 @@ function cleanSelection(text: string): string {
 }
 
 /** The search item's label: the cleaned selection, cut to `CONTEXT_MENU_SELECTION_MAX`, `&` doubled. */
-function searchLabel(selection: string): string {
+function searchLabel(selection: string, engine: SearchEngineId): string {
   const chars = [...selection];
   const shown = chars.length <= CONTEXT_MENU_SELECTION_MAX ? selection : `${chars.slice(0, CONTEXT_MENU_SELECTION_MAX - 1).join('')}…`;
-  return CONTEXT_MENU_SEARCH_LABEL.replace('{selection}', shown.replaceAll('&', '&&'));
+  // The chosen engine's label (`browser-polish.spec.ts`); the default's is `CONTEXT_MENU_SEARCH_LABEL`.
+  const template = engine === DEFAULT_SEARCH_ENGINE ? CONTEXT_MENU_SEARCH_LABEL : contextMenuSearchLabel(engine);
+  return template.replace('{selection}', shown.replaceAll('&', '&&'));
 }
 
 function isMailto(url: string): boolean {
@@ -48,11 +51,12 @@ function isMailto(url: string): boolean {
 
 const separator: MenuItemConstructorOptions = { type: 'separator' };
 
-/** The context menu for a click with `params` in a tab with these history flags. */
+/** The context menu for a click with `params` in a tab with these history flags; searches use `engine`. */
 export function contextMenuTemplate(
   params: ContextMenuParamsInput,
   history: { readonly canGoBack: boolean; readonly canGoForward: boolean },
   commands: ContextMenuCommands,
+  engine: SearchEngineId = DEFAULT_SEARCH_ENGINE,
 ): MenuItemConstructorOptions[] {
   const groups: MenuItemConstructorOptions[][] = [];
   const entry = (id: keyof typeof CONTEXT_MENU_LABELS, click: () => void, enabled = true): MenuItemConstructorOptions => ({
@@ -86,7 +90,7 @@ export function contextMenuTemplate(
   }
   if (selection !== '') {
     const query = [...selection].slice(0, ADDRESS_INPUT_MAX_LENGTH).join('');
-    groups.push([{ id: 'context-search', label: searchLabel(selection), enabled: true, click: () => commands.openInNewTab(searchUrl(query)) }]);
+    groups.push([{ id: 'context-search', label: searchLabel(selection, engine), enabled: true, click: () => commands.openInNewTab(searchUrl(query, engine)) }]);
   }
 
   // A plain page: history and reload.

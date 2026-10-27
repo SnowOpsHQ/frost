@@ -17,6 +17,7 @@ import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchem
 import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
+import { findRouter, historyRouter, settingsRouter } from './polish-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -271,6 +272,10 @@ export const appRouter = router({
   javascript: javascriptRouter,
   // Phase 2.5 Task 5 (`devtools.feature.md`): the SEO devtools drawer (read-only; masked data).
   devtools: devtoolsRouter,
+  // Phase 2.5 Task 6 (`browser-polish.feature.md`): find in page, history and reopen tab, settings.
+  find: findRouter,
+  history: historyRouter,
+  settings: settingsRouter,
 });
 
 export type AppRouter = typeof appRouter;
