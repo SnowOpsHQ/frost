@@ -1,0 +1,992 @@
+/* frost browser chrome. Bundled by Vite and served from app:// (CSP style-src 'self'): no inline
+   styles anywhere. Light and dark follow the OS (prefers-color-scheme). */
+
+:root {
+  color-scheme: light dark;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Inter', Roboto, Ubuntu, Cantarell, 'Noto Sans',
+    'Helvetica Neue', Arial, sans-serif;
+
+  --tabstrip-height: 40px;
+  --toolbar-height: 50px;
+  --status-height: 26px;
+  --radius-control: 9px;
+  --radius-field: 11px;
+
+  --bg-chrome: #f3f5f8;
+  --bg-chrome-edge: #e2e6ec;
+  --bg-strip: #e4e8ee;
+  --bg-tab-hover: rgb(255 255 255 / 0.3);
+  --bg-field: #ffffff;
+  --bg-field-hover: #ffffff;
+  --border-field: #d7dce4;
+  --bg-page: #fbfcfd;
+  --bg-hover: rgb(20 30 50 / 0.07);
+  --bg-active: rgb(20 30 50 / 0.12);
+
+  --text: #1b2230;
+  --text-muted: #5f6b7d;
+  --text-faint: #8d97a6;
+  --icon: #3a4556;
+
+  --accent: #2f6fe4;
+  --accent-soft: rgb(47 111 228 / 0.22);
+  --ok: #1f9d63;
+  --warn: #c2410c;
+  --danger: #d23f3f;
+
+  --start-glow: rgb(82 145 255 / 0.13);
+  --start-mark: #5b8def;
+  --shadow-field: 0 1px 2px rgb(16 24 40 / 0.06);
+
+  --on-accent: #ffffff;
+  --accent-hover: #2560cc;
+  --panel-art: #6b7a90;
+
+  --bg-prompt: #ffffff;
+  --prompt-edge: #dfe4eb;
+  --shadow-prompt: 0 1px 3px rgb(16 24 40 / 0.07);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-chrome: #1d2026;
+    --bg-chrome-edge: #2c3038;
+    --bg-strip: #131519;
+    --bg-tab-hover: rgb(255 255 255 / 0.06);
+    --bg-field: #2a2e36;
+    --bg-field-hover: #30353e;
+    --border-field: #3a3f49;
+    --bg-page: #16181d;
+    --bg-hover: rgb(255 255 255 / 0.07);
+    --bg-active: rgb(255 255 255 / 0.12);
+
+    --text: #e7eaf0;
+    --text-muted: #a3acba;
+    --text-faint: #737d8c;
+    --icon: #c9d0db;
+
+    --accent: #6c9dff;
+    --accent-soft: rgb(108 157 255 / 0.28);
+    --ok: #4cc38a;
+    --warn: #f0995a;
+    --danger: #f07171;
+
+    --start-glow: rgb(108 157 255 / 0.12);
+    --start-mark: #7ea8ff;
+    --shadow-field: none;
+
+    --on-accent: #0e1422;
+    --accent-hover: #86afff;
+    --panel-art: #8f9bad;
+
+    --bg-prompt: #242830;
+    --prompt-edge: #343943;
+    --shadow-prompt: 0 1px 3px rgb(0 0 0 / 0.35);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--bg-chrome);
+  color: var(--text);
+  font: 13px/1.4 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Layout ------------------------------------------------------------------------------- */
+
+.chrome {
+  display: grid;
+  /* The prompt row is empty (0 high) unless the active tab shows a permission prompt. */
+  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto minmax(0, 1fr) var(--status-height);
+  height: 100%;
+}
+
+/* ---- Tab strip ---------------------------------------------------------------------------- */
+
+/* The active tab is cut from the toolbar's colour and flows into it; the others sit on the darker
+   strip. The row scrolls sideways (no scrollbar) once the tabs reach their minimum width. */
+.tabstrip {
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+  padding: 0 8px 0 4px;
+  background: var(--bg-strip);
+}
+
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+  /* Room for the active tab's flared corners at both ends. */
+  padding: 0 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  --tab-bg: transparent;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* An explicit width too: the scrolling row sizes itself from its tabs' intrinsic widths. */
+  flex: 0 1 224px;
+  width: 224px;
+  min-width: 84px;
+  height: 32px;
+  padding: 0 6px 0 11px;
+  border-radius: 10px 10px 0 0;
+  background: var(--tab-bg);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+/* Hairline dividers between inactive tabs (hidden next to the active or a hovered one). */
+.tab + .tab::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 1px;
+  background: var(--border-field);
+  transition: opacity 120ms ease;
+}
+
+.tab[data-active='true']::before,
+.tab[data-active='true'] + .tab::before,
+.tab:hover::before,
+.tab:hover + .tab::before {
+  opacity: 0;
+}
+
+.tab:hover:not([data-active='true']) {
+  --tab-bg: var(--bg-tab-hover);
+  color: var(--text);
+}
+
+.tab[data-active='true'] {
+  --tab-bg: var(--bg-chrome);
+  z-index: 1;
+  color: var(--text);
+}
+
+/* The flared corners where the active tab meets the toolbar. */
+.tab[data-active='true']::after,
+.tab[data-active='true'] .tab-glyph::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.tab[data-active='true']::after {
+  right: -10px;
+  background: radial-gradient(circle at 100% 0, transparent 9.5px, var(--bg-chrome) 10px);
+}
+
+.tab[data-active='true'] .tab-glyph::after {
+  left: -10px;
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--bg-chrome) 10px);
+}
+
+/* The focusable part is the inner role="tab"; the ring goes around the whole tab. */
+.tab-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  outline: none;
+}
+
+.tab:has(.tab-main:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tab-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+}
+
+.tab[data-active='true'] .tab-glyph {
+  color: var(--icon);
+}
+
+.tab-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.tab-mark {
+  width: 15px;
+  height: 15px;
+  color: var(--start-mark);
+}
+
+.tab .tab-icon-alert {
+  color: var(--warn);
+}
+
+/* A background tab whose page asks for a permission: a small accent dot after its label. */
+.tab-attention {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 10px;
+  height: 16px;
+}
+
+.tab-attention-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* Loading indicator: a small ring with a sweeping accent arc. */
+.tab-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--accent-soft);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tab-spin 0.8s linear infinite;
+}
+
+@keyframes tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tab-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tab-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+/* Inactive tabs show × only on hover, so narrow tabs keep room for their label. */
+.tab:not([data-active='true']):not(:hover) .tab-close {
+  display: none;
+}
+
+.tab-close:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.tab-close .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.new-tab {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 3px 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--icon);
+  transition: background-color 120ms ease;
+}
+
+.new-tab:hover {
+  background: var(--bg-tab-hover);
+}
+
+.new-tab:active {
+  background: var(--bg-active);
+}
+
+.new-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.new-tab .icon {
+  width: 17px;
+  height: 17px;
+}
+
+/* ---- Toolbar ------------------------------------------------------------------------------ */
+
+.toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 0 10px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.nav-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--icon);
+  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.tool:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.tool:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.tool:disabled {
+  opacity: 0.32;
+}
+
+.tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+/* ---- Address bar -------------------------------------------------------------------------- */
+
+.address {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px 0 11px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+  background: var(--bg-field);
+  box-shadow: var(--shadow-field);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.address:hover {
+  background: var(--bg-field-hover);
+}
+
+.address:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.address-badge {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.address-badge .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.address[data-security='secure'] .address-badge {
+  color: var(--ok);
+}
+
+.address[data-security='insecure'] .address-badge {
+  color: var(--warn);
+}
+
+.address-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 13.5px;
+  letter-spacing: 0.005em;
+  user-select: text;
+  cursor: text;
+}
+
+.address-input::placeholder {
+  color: var(--text-faint);
+}
+
+.address-input::selection {
+  background: var(--accent-soft);
+}
+
+/* Loading indicator: a slim bar sliding along the toolbar's bottom edge. */
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.progress-active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 32%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: progress-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+/* ---- Permission prompt -------------------------------------------------------------------- */
+
+/* The row between the toolbar and the page area; empty unless the active tab has a prompt. */
+.prompt-slot {
+  min-width: 0;
+}
+
+.prompt-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 7px 10px 7px 14px;
+  border-bottom: 1px solid var(--prompt-edge);
+  background: var(--bg-prompt);
+  box-shadow: var(--shadow-prompt);
+  animation: prompt-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.prompt-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-prompt));
+  color: var(--accent);
+}
+
+.prompt-icon .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.prompt-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-origin {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* "(embedded in site.example)": the top-level site, a step quieter than the requester. */
+.prompt-embedder .prompt-origin {
+  font-weight: 500;
+}
+
+.prompt-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+/* Allow and Block weigh the same: frost does not nudge either answer. */
+.prompt-button {
+  min-width: 72px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--border-field);
+  border-radius: 8px;
+  background: var(--bg-field);
+  box-shadow: var(--shadow-field);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+
+.prompt-button:hover:not(:disabled) {
+  background: var(--bg-field-hover);
+  border-color: color-mix(in srgb, var(--border-field) 70%, var(--text-faint));
+}
+
+.prompt-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.prompt-button:disabled,
+.prompt-dismiss:disabled {
+  opacity: 0.55;
+}
+
+.prompt-button:focus-visible,
+.prompt-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.prompt-dismiss {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-faint);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.prompt-dismiss:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.prompt-dismiss .icon {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Fullscreen notice -------------------------------------------------------------------- */
+
+/* Across the top of the window while a page has just entered HTML fullscreen; main keeps the page's
+   view below it (FULLSCREEN_BANNER_HEIGHT in specs/permissions.spec.ts: keep the height equal). */
+.fullscreen-notice {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 16px;
+  background: #15181d;
+  color: #e7eaf0;
+  font-size: 13px;
+  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.08);
+}
+
+.fullscreen-notice-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fullscreen-notice strong {
+  font-weight: 600;
+}
+
+/* ---- Page area ---------------------------------------------------------------------------- */
+
+/* The tab's WebContentsView is laid over exactly this box by main. */
+.page-area {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-page);
+}
+
+.start {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-bottom: 8vh;
+  background: radial-gradient(ellipse 60% 48% at 50% 42%, var(--start-glow), transparent 70%), var(--bg-page);
+  text-align: center;
+}
+
+.mark {
+  display: block;
+}
+
+.start-mark {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 10px;
+  color: var(--start-mark);
+  animation: mark-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.start-wordmark {
+  margin: 0;
+  font-size: 44px;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
+}
+
+.start-hint {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+@keyframes mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9) rotate(-20deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Error and crash panels --------------------------------------------------------------- */
+
+/* Shown in the page area while main has hidden the tab's view (a failed load, a crashed page). */
+.panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 32px 10vh;
+  overflow: auto;
+  background: var(--bg-page);
+  user-select: text;
+  cursor: auto;
+}
+
+.panel-card {
+  --panel-tone: var(--panel-art);
+  /* Opaque, so the illustration's gap strokes can match it exactly. */
+  --panel-badge-bg: color-mix(in srgb, var(--panel-tone) 10%, var(--bg-page));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: min(100%, 460px);
+  animation: panel-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.panel[data-error-class='certificate'] .panel-card {
+  --panel-tone: var(--danger);
+}
+
+.panel[data-error-class='crashed'] .panel-card {
+  --panel-tone: var(--warn);
+}
+
+.panel-badge {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 22px;
+  border-radius: 22px;
+  background: var(--panel-badge-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--panel-tone) 20%, var(--bg-page));
+  color: var(--panel-tone);
+}
+
+.panel-art {
+  display: block;
+  width: 44px;
+  height: 44px;
+}
+
+/* Cuts a gap in the shape under a slash: the badge's own colour, so it reads as empty space. */
+.panel-art-gap {
+  stroke: var(--panel-badge-bg);
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.25;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.panel-message {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.panel-detail {
+  margin: 12px 0 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text-faint);
+  font: 11.5px/1.6 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.panel-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 15px 0 12px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  box-shadow: var(--shadow-field);
+  color: var(--text);
+  font-weight: 500;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+
+.panel-button .icon {
+  width: 16px;
+  height: 16px;
+  color: var(--icon);
+}
+
+.panel-button:hover {
+  background: var(--bg-field-hover);
+  border-color: color-mix(in srgb, var(--border-field) 70%, var(--text-faint));
+}
+
+.panel-button:active {
+  transform: translateY(1px);
+}
+
+.panel-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.panel-button-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.panel-button-primary .icon {
+  color: currentColor;
+}
+
+.panel-button-primary:hover {
+  border-color: transparent;
+  background: var(--accent-hover);
+}
+
+/* Retrying: the reload arrow turns until the load ends. */
+.panel-button[data-busy='true'] .icon {
+  animation: tab-spin 0.9s linear infinite;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Status bar --------------------------------------------------------------------------- */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  border-top: 1px solid var(--bg-chrome-edge);
+  background: var(--bg-chrome);
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The active page's zoom while it is not 100 % (page-commands.feature.md), next to the indicator. */
+.status-zoom {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--text-faint);
+}
+
+.connection-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.connection[data-state='connected'] .connection-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 22%, transparent);
+}
+
+.connection[data-state='error'] .connection-dot {
+  background: var(--danger);
+}
+
+/* A notice (e.g. the tab limit) replaces the status text while it shows. */
+.status-notice {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-active::after,
+  .start-mark,
+  .tab-spinner,
+  .panel-card,
+  .prompt-bar,
+  .panel-button[data-busy='true'] .icon {
+    animation: none;
+  }
+}

@@ -10,6 +10,13 @@ Runs on every pull request and on pushes to `main`; a superseded PR run is cance
 never is.
 - **Gate: lint-test-build** — `pnpm turbo run lint test build` (strict TypeScript, vitest suites,
   Forge package).
+  - **Scenario: turbo-cache-follows-dependencies** (`ci-workflows.test.ts`) — Turbo's cache never
+    replays a package's `lint` or `test` after a workspace dependency's sources changed: both
+    depend on the package's `transit` task, which depends on its dependencies' `transit`
+    (`^transit`; no package has a `transit` script, so it only carries the dependencies' source
+    hashes). Checked with `pnpm turbo run lint test --dry=json`: a change under `packages/db/src`
+    changes the hashes of `@app/desktop#lint` and `#test`, and likewise for `@app/ipc-contract` and
+    `@app/specs`.
 - **Gate: electronegativity** — `pnpm security:electronegativity`
   (`scripts/electronegativity.mjs`): Electronegativity (pinned devDependency) over
   `apps/desktop/src`, `apps/desktop/forge.config.ts` and `packages`, for the installed Electron
@@ -64,8 +71,8 @@ Electronegativity cannot see a `WebContentsView` and only resolves literal optio
 hardening of new WebContents is pinned structurally: every WebContents is created by an allowlisted
 factory that sets the hardened webPreferences explicitly (`window-hardening.spec.ts`) and is unit
 tested for them. Allowlist (the rule's `paths.exclude`): `apps/desktop/src/main/window.ts`
-(`createMainWindow`). Phase 1 adds its tab-view factory to the allowlist, with its own
-window-hardening tests. Test-only code (`__tests__/`, `*.test.ts`, `apps/desktop/src/test/`,
+(`createMainWindow`; and, since Phase 1, the tab-view factory `createTabView`, whose prefs are
+pinned to `TAB_VIEW_WEB_PREFERENCES` by `browser/__tests__/tab-view.test.ts`). Test-only code (`__tests__/`, `*.test.ts`, `apps/desktop/src/test/`,
 `apps/desktop/e2e/`) is excluded.
 - **Scenario: semgrep-flags-webcontents-outside-factory** — `webcontents-outside-factory`:
   `new BrowserWindow(…)`, `new BrowserView(…)` or `new WebContentsView(…)` (bare, `electron.X`, an

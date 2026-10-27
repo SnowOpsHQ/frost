@@ -1,4 +1,5 @@
-// Spec: specs/security-policy.spec.ts · Acceptance: specs/external-url.feature.md
+// Spec: specs/security-policy.spec.ts, specs/browse-guard.spec.ts
+// Acceptance: specs/external-url.feature.md, specs/browse-guard.feature.md (App-wide)
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { app, shell, type BrowserWindow, type HandlerDetails, type Session } from 'electron';
 import { APP_CSP, PINNED_NAVIGATION_EVENTS, USER_ACTIVATION_WINDOW_MS } from '@app/specs/security-policy.spec';
@@ -105,6 +106,14 @@ describe('window-open handler', () => {
     openWindow(contents, 'https://x.com/2');
     expect(shell.openExternal).toHaveBeenCalledTimes(1);
     expect(shell.openExternal).toHaveBeenCalledWith('https://x.com/1');
+  });
+
+  test('app-gesture-ends-with-navigation', () => {
+    const contents = setup();
+    userInput(contents, 'mouseDown');
+    contents.emit('did-navigate', fakeEvent(), 'app://app/', 200, 'OK');
+    openWindow(contents, 'https://x.com');
+    expect(shell.openExternal).not.toHaveBeenCalled();
   });
 
   test('ignores-expired-gesture', () => {
@@ -273,5 +282,47 @@ describe('app-wide guards', () => {
     expect(() => register(win, { now })).not.toThrow();
     expect(app.listenerCount('web-contents-created')).toBe(1);
     expect(win.webContents.simulateNavigation(`${DEV_SERVER_URL}/`)).toBe(true);
+  });
+});
+
+describe('certificates and downloads', () => {
+  test('certificate-errors-are-refused', () => {
+    registerAppWideGuards({ now });
+    for (const [contents, error] of [
+      [new FakeWebContents(), 'net::ERR_CERT_AUTHORITY_INVALID'],
+      [win.webContents, 'net::ERR_CERT_DATE_INVALID'],
+      [null, 'net::ERR_CERT_COMMON_NAME_INVALID'],
+    ] as const) {
+      const event = fakeEvent();
+      const callback = vi.fn();
+      app.emit('certificate-error', event, contents, 'https://self-signed.test/', error, {}, callback, true);
+      expect(event.defaultPrevented, error).toBe(true);
+      expect(callback, error).toHaveBeenCalledExactlyOnceWith(false);
+    }
+    // Installed once with the app-wide guards.
+    registerAppWideGuards({ now });
+    expect(app.listenerCount('certificate-error')).toBe(1);
+  });
+
+  test('client-certificates-are-not-sent', () => {
+    registerAppWideGuards({ now });
+    const event = fakeEvent();
+    const callback = vi.fn();
+    const certificates = [{ subjectName: 'me' }, { subjectName: 'also me' }];
+    app.emit('select-client-certificate', event, new FakeWebContents(), 'https://x.com/', certificates, callback);
+    expect(event.defaultPrevented).toBe(true);
+    expect(callback).toHaveBeenCalledExactlyOnceWith();
+    expect(app.listenerCount('select-client-certificate')).toBe(1);
+  });
+
+  test('app-session-cancels-downloads', () => {
+    setup();
+    register(new FakeBrowserWindow({}));
+    expect(ses.listenerCount('will-download')).toBe(1);
+    const event = fakeEvent();
+    const item = { cancel: vi.fn() };
+    ses.emit('will-download', event, item, win.webContents);
+    expect(event.defaultPrevented).toBe(true);
+    expect(item.cancel).toHaveBeenCalledTimes(1);
   });
 });

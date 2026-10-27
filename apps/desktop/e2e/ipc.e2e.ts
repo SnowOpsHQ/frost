@@ -6,7 +6,7 @@ import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_BRIDGE_KEY, IPC_BRIDGE_METHODS } from '@app/specs/ipc-transport.spec';
 import { APP_CSP } from '@app/specs/security-policy.spec';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
-import { appEntryScriptUrl, destroyWindows, launchApp, openUntrackedWindow, pageAt, startLoopbackServer } from './harness';
+import { appEntryScriptUrl, closeApp, destroyWindows, launchApp, openUntrackedWindow, pageAt, startLoopbackServer } from './harness';
 
 let app: ElectronApplication;
 let page: Page;
@@ -16,7 +16,46 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  await closeApp(app);
+});
+
+/** Whether a process with this pid exists (signal 0 probes without signalling). */
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+test('close-app-kills-wedged-app', async () => {
+  const wedged = await launchApp();
+  const mainPid = wedged.app.process().pid!;
+  const rendererPids = await wedged.app.evaluate(({ app: electronApp, webContents }) => {
+    // Main refuses every quit: Playwright's own close() would wait forever.
+    electronApp.on('before-quit', (event) => event.preventDefault());
+    return webContents.getAllWebContents().map((contents) => contents.getOSProcessId());
+  });
+  expect(rendererPids.length).toBeGreaterThan(0);
+  let closed = false;
+  wedged.app.once('close', () => {
+    closed = true;
+  });
+  const started = Date.now();
+  await closeApp(wedged.app, { timeoutMs: 1_000 });
+  expect(Date.now() - started).toBeLessThan(8_000);
+  expect(closed).toBe(true);
+  await expect.poll(() => [mainPid, ...rendererPids].filter(processExists)).toEqual([]);
+});
+
+test('close-app-tolerates-app-that-quit', async () => {
+  const quitting = await launchApp();
+  const closed = new Promise<void>((resolve) => quitting.app.once('close', () => resolve()));
+  // Quits on its own (as closing the last window does on Linux); the evaluate may lose its answer.
+  await quitting.app.evaluate(({ app: electronApp }) => void setTimeout(() => electronApp.quit(), 50)).catch(() => undefined);
+  await closed;
+  await expect(closeApp(quitting.app)).resolves.toBeUndefined();
 });
 
 test('loads-app-from-app-scheme', async () => {

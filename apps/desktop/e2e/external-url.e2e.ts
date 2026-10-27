@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { USER_ACTIVATION_INPUT_TYPES } from '@app/specs/security-policy.spec';
-import { destroyWindows, launchApp, openUntrackedWindow, pageAt } from './harness';
+import { closeApp, destroyWindows, launchApp, openUntrackedWindow, pageAt } from './harness';
 
 const ALLOWED_URL = 'https://example.com/';
 const NON_WEB_URLS = ['reaprobe://x', 'vscode://x', 'file:///etc/passwd', 'javascript:void(0)'] as const;
@@ -117,7 +117,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  await closeApp(app);
   await server?.close();
 });
 
@@ -186,8 +186,13 @@ test('opens-allowlisted-url-once-on-real-click', async () => {
   await button(page, ALLOWED_URL).click();
   await expect.poll(async () => (await mainRecord(app)).openExternal).toEqual([ALLOWED_URL]);
   expect(await judgedFor(contentsId, 1)).toEqual([{ contentsId, url: ALLOWED_URL, action: 'deny' }]);
-  // No duplicate open shows up later.
-  await page.waitForTimeout(500);
+  // No duplicate open: a later open from the same frame (never allowlisted) is judged right after
+  // the click's one, with nothing in between, and nothing more was opened.
+  await page.evaluate(() => void window.open('reaprobe://barrier'));
+  expect(await judgedFor(contentsId, 2)).toEqual([
+    { contentsId, url: ALLOWED_URL, action: 'deny' },
+    { contentsId, url: 'reaprobe://barrier', action: 'deny' },
+  ]);
   expect((await mainRecord(app)).openExternal).toEqual([ALLOWED_URL]);
   await expectOnlyTestWindowCreated();
 });

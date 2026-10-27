@@ -1,14 +1,8 @@
-import { app, shell, type BrowserWindow, type Session, type WebContents } from 'electron';
-import {
-  hasTransientActivation,
-  isActivationInput,
-  isAllowedAppNavigation,
-  isAppUrl,
-  isPermissionGranted,
-  parseExternalUrl,
-  resolveExternalOpen,
-  withAppCsp,
-} from './policy';
+import { app, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { guardBrowseContents, type BrowseGuardHooks } from '../browser/guard';
+import { openExternalIfAllowed, trackUserGesture } from './gesture';
+import { isAllowedAppNavigation, isAppUrl, isPermissionGranted, withAppCsp } from './policy';
 
 // Electron wiring for `specs/security-policy.spec.ts` (acceptance: `specs/external-url.feature.md`).
 
@@ -17,15 +11,22 @@ export interface SecurityOptions {
   devServerUrl?: string | undefined;
   /** Monotonic clock in ms for gesture timing; injectable for tests. */
   now?: () => number;
+  /**
+   * What the browse guard (tabs' WebContents) asks of the browser controller: gesture-backed popups
+   * become background tabs (`browse-guard.feature.md`). Without it, popups open nothing.
+   */
+  browse?: BrowseGuardHooks | undefined;
 }
 
 const guarded = new WeakSet<WebContents>();
+/** Sessions whose downloads `registerSecurity` already cancels (its listener is added once). */
+const downloadsRefused = new WeakSet<Session>();
 
 /** The installed app-wide guard: the one source of WebContents guard options. */
 let appWide: { options: SecurityOptions; listener: (event: unknown, contents: WebContents) => void } | undefined;
 
 function sameOptions(a: SecurityOptions, b: SecurityOptions): boolean {
-  return a.devServerUrl === b.devServerUrl && a.now === b.now;
+  return a.devServerUrl === b.devServerUrl && a.now === b.now && a.browse === b.browse;
 }
 
 /** The installed app-wide guard, if its listener is still attached to `app`. */
@@ -71,30 +72,83 @@ export function registerSecurity(session: Session, win: BrowserWindow, options?:
     callback({ responseHeaders: withAppCsp(details.responseHeaders) });
   });
 
+  // The chrome never downloads anything (spec `browse-guard.feature.md`, app-session-cancels-downloads).
+  if (!downloadsRefused.has(session)) {
+    downloadsRefused.add(session);
+    session.on('will-download', (event, item) => {
+      event.preventDefault();
+      item.cancel();
+    });
+  }
+
   registerAppWideGuards(resolved);
   guardWebContents(win.webContents, resolved);
 }
 
 /**
- * Guards every WebContents created from now on, so none is ever left on Electron defaults. This is
- * the only place WebContents guard options come from: calling it again with equal options is a
- * no-op, with different options it throws.
+ * Guards every WebContents created from now on, so none is ever left on Electron defaults. Each is
+ * classified at creation by session: browse-partition contents (tabs) get the browse guard
+ * (`browser/guard.ts`), everything else the app pin below. This is the only place WebContents
+ * guard options come from: calling it again with equal options is a no-op, with different options
+ * it throws.
  */
 export function registerAppWideGuards(options: SecurityOptions = {}): void {
   if (installedAppWide()) {
     resolveOptions(options);
     return;
   }
-  const listener = (_event: unknown, contents: WebContents) => guardWebContents(contents, options);
+  const listener = (_event: unknown, contents: WebContents) => {
+    if (isBrowseContents(contents)) guardBrowseOnce(contents, options);
+    else guardWebContents(contents, options);
+  };
   appWide = { options, listener };
   app.on('web-contents-created', listener);
+  refuseBadCertificates();
 }
 
 /**
- * Per-WebContents guards (idempotent; only reached via the app-wide options above):
+ * Certificates (spec `browse-guard.feature.md`): a certificate error is always refused, for every
+ * WebContents (`preventDefault` + `callback(false)`, never `true`; Electron's default also refuses,
+ * this makes it explicit), and no client certificate is ever sent (Electron's default picks the
+ * first one from the store).
+ */
+function refuseBadCertificates(): void {
+  app.on('certificate-error', (event, _contents, _url, _error, _certificate, callback) => {
+    event.preventDefault();
+    callback(false);
+  });
+  app.on('select-client-certificate', (event, _contents, _url, _list, callback) => {
+    event.preventDefault();
+    callback();
+  });
+}
+
+/**
+ * Classifies a new WebContents by its session (spec `browser-chrome.feature.md`): `true` only for
+ * the browse partition's session. Anything else — the default session, another partition, a
+ * missing or throwing `session` — is app content and keeps the app pin (fail closed).
+ */
+function isBrowseContents(contents: WebContents): boolean {
+  try {
+    const ses: unknown = contents.session;
+    return ses !== undefined && ses !== null && ses === electronSession.fromPartition(BROWSE_PARTITION);
+  } catch {
+    return false;
+  }
+}
+
+function guardBrowseOnce(contents: WebContents, options: SecurityOptions): void {
+  if (guarded.has(contents)) return;
+  guarded.add(contents);
+  guardBrowseContents(contents, { now: options.now ?? (() => performance.now()), hooks: options.browse });
+}
+
+/**
+ * Per-WebContents guards for app content (idempotent; only reached via the app-wide options above):
  * - `window.open` / `target=_blank` never creates a window; the URL goes to `shell.openExternal`
  *   only if allowlisted and backed by a live, unconsumed trusted activation input. Activation is
- *   per-WebContents, not per-frame (spec known limit, revisit in Phase 1).
+ *   per-WebContents, not per-frame (spec known limit: app windows host only the app's own page;
+ *   for tabs see `browse-guard.feature.md`, Gesture attribution).
  * - `will-frame-navigate` (main frame and subframes; `will-navigate` is main-frame-only) and
  *   `will-redirect` are pinned to the app origin (plus the dev server in dev). Off-origin
  *   navigations are dropped, not forwarded to `openExternal`.
@@ -104,23 +158,10 @@ function guardWebContents(contents: WebContents, options: SecurityOptions): void
   if (guarded.has(contents)) return;
   guarded.add(contents);
 
-  const now = options.now ?? (() => performance.now());
-  let lastActivationAt: number | undefined;
-  contents.on('input-event', (_event, input) => {
-    if (isActivationInput(input.type)) lastActivationAt = now();
-  });
-  const consumeUserGesture = (): boolean => {
-    const userGesture = hasTransientActivation(lastActivationAt, now());
-    lastActivationAt = undefined;
-    return userGesture;
-  };
+  const gesture = trackUserGesture(contents, options.now ?? (() => performance.now()));
 
   contents.setWindowOpenHandler(({ url }) => {
-    const userGesture = consumeUserGesture();
-    const target = parseExternalUrl(url);
-    if (target && resolveExternalOpen(url, { userGesture }) === 'allow') {
-      shell.openExternal(target.href).catch((err: unknown) => console.error('openExternal failed', err));
-    }
+    openExternalIfAllowed(url, gesture.consume());
     return { action: 'deny' };
   });
 

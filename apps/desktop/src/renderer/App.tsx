@@ -1,26 +1,38 @@
-import { useEffect, useState } from 'react';
-import type { AppRouter } from '@app/ipc-contract';
-import { createIpcClient } from '@app/ipc-contract/renderer';
+import { FullscreenNotice } from './components/FullscreenNotice';
+import { PageArea } from './components/PagePanels';
+import { PromptBar } from './components/PermissionBar';
+import { StatusBar } from './components/StatusBar';
+import { TabStrip } from './components/TabStrip';
+import { Toolbar } from './components/Toolbar';
+import { useBrowserState } from './hooks/useBrowserState';
+import { useNotice } from './hooks/useNotice';
+import { usePing } from './hooks/usePing';
 
-const ipc = createIpcClient<AppRouter>();
+// The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`): tab strip,
+// toolbar, permission prompt bar, page area, status bar, and the fullscreen notice.
+// All browser state lives in main; this page renders it and sends user intents over the
+// sender-guarded `browser.*` procedures (`ipc.ts`). Styling is the bundled styles.css only
+// (strict CSP). Runtime constants come from the Zod-free specs (`tabs.spec`, `permissions.spec`,
+// `page-commands.spec`, `web-url.spec`); `browser.spec` is imported for its types only (its Zod
+// schemas must stay out of this bundle: strict Trusted Types).
 
 export function App() {
-  const [ping, setPing] = useState('');
-
-  useEffect(() => {
-    let live = true;
-    ipc.ping.query().then(
-      (result) => live && setPing(result),
-      () => live && setPing('error'),
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
-
+  const state = useBrowserState();
+  const { ping, connection } = usePing();
+  const tab = state?.tabs.find((t) => t.id === state.activeTabId);
+  const empty = !tab || (tab.url === '' && !tab.loading);
+  const notice = useNotice(state === null ? undefined : state.notice);
   return (
-    <main>
-      <output data-testid="ping">{ping}</output>
-    </main>
+    <div className="chrome">
+      <TabStrip state={state} />
+      <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} />
+      {/* Always present (empty without a prompt), so the grid rows stay put; polite, not focus-taking. */}
+      <div className="prompt-slot" aria-live="polite">
+        {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} covered={tab.fullscreen !== null} /> : null}
+      </div>
+      <PageArea tab={tab} empty={state !== null && empty} />
+      <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />
+      {tab?.fullscreen === 'notice' ? <FullscreenNotice tab={tab} /> : null}
+    </div>
   );
 }
