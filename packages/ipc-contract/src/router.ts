@@ -14,6 +14,7 @@ import { OpenToolInputSchema, PageCommandInputSchema, SeoCopyValueInputSchema } 
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app/specs/render-profile.schema.spec';
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
+import { checksRouter } from './checks-router';
 import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
@@ -276,6 +277,8 @@ export const appRouter = router({
   find: findRouter,
   history: historyRouter,
   settings: settingsRouter,
+  // Phase 2.5 Task 7 (`seo-checks.feature.md`): link status, sitemap and hreflang reciprocity checks.
+  checks: checksRouter,
 });
 
 export type AppRouter = typeof appRouter;

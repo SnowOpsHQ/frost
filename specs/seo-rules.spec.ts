@@ -19,6 +19,7 @@ import { PERFORMANCE_RULE_SPECS } from './seo-speed.spec';
 import { COMPLIANCE_RULE_SPECS } from './seo-compliance.spec';
 import { DESCRIPTION_WIDTH_RULE, TITLE_WIDTH_RULE } from './seo-content.spec';
 import { JAVASCRIPT_RULE_SPECS } from './seo-javascript.spec';
+import { CHECKS_RULE_SPECS } from './seo-checks.spec';
 
 /** How bad a failing rule is. Ordered: the sidebar ranks issues by it (then by catalog order). */
 export const SEO_SEVERITIES = ['error', 'warning', 'info'] as const;
@@ -778,6 +779,8 @@ export const SEO_RULE_SPECS = [
   ...COMPLIANCE_RULE_SPECS,
   // Served HTML vs the rendered DOM (Phase 2.5 Task 2): `seo-javascript.spec.ts`.
   ...JAVASCRIPT_RULE_SPECS,
+  // Link status, sitemap and hreflang reciprocity checks (Phase 2.5 Task 7): `seo-checks.spec.ts`.
+  ...CHECKS_RULE_SPECS,
 ] as const satisfies readonly SeoRuleSpec[];
 
 export type SeoRuleId = (typeof SEO_RULE_SPECS)[number]['id'];

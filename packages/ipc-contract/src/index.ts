@@ -6,6 +6,7 @@ export type { ContentNotesAnswer, ContentService, ContentVariant, SnippetHtmlSou
 export type { JavascriptService } from './javascript-router';
 export type { DevtoolsService } from './devtools-service';
 export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
+export type { ChecksService } from './checks-service';
 export {
   createContext,
   createSenderPolicy,

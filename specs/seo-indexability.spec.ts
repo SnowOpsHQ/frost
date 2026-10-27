@@ -247,9 +247,10 @@ export type HreflangSource = (typeof HREFLANG_SOURCES)[number];
 
 /**
  * Reciprocity (each alternate listing this page back) needs fetching every alternate: out of scope
- * for Phase 2. The panel says so.
+ * for Phase 2, and checked on request since Phase 2.5 Task 7 (`seo-checks.spec.ts`,
+ * `HREFLANG_CHECK_LIMITS`): the panel offers the check instead of saying it is not done.
  */
-export const HREFLANG_RECIPROCITY_CHECKED = false;
+export const HREFLANG_RECIPROCITY_CHECKED = true;
 
 // ---- Verdict --------------------------------------------------------------------------------------
 

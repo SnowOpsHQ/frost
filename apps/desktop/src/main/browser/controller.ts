@@ -149,6 +149,12 @@ export interface BrowserController extends BrowserService {
    * (`seo-sidebar.feature.md`, Auditor; `seo-panels.feature.md`).
    */
   readonly seo: SeoService;
+  /**
+   * Re-scores the tab's audit (Phase 2.5 Task 7, `seo-checks.feature.md`: a link, sitemap or hreflang
+   * check finished): the active tab at once, keeping its ready audit on screen until the new one; any
+   * other tab when it is next shown. `false` for an id that names no open tab.
+   */
+  rescoreAudit(tabId: number): boolean;
 }
 
 export interface BrowserControllerOptions {
@@ -1129,6 +1135,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     },
 
     openTabFromPage,
+
+    rescoreAudit: (tabId) => {
+      const tab = strip.tabs.find((t) => t.id === tabId);
+      if (!tab) return false;
+      if (hasWindow() && tab.id === strip.activeTabId) return audits.rerun(tab, true);
+      audits.schedule(tab, 'load');
+      return true;
+    },
 
     // Render profiles (`render-profile.feature.md`): any open tab, from the chrome only.
     setRenderProfile: (tabId: number, profile: RenderProfile, pin?: boolean) => {

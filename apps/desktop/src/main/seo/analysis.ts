@@ -2,6 +2,7 @@ import type { SeoAudit, SpeedReport } from '@app/seo-core';
 import type { ServedParseInput, ServedParseResult } from '@app/specs/seo-javascript.schema';
 import { ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import type { RobotsVerdictsResult } from '../devtools/robots-verdicts';
+import type { ChecksAnalysisResult } from './checks-analyse';
 
 // Page-derived analysis off the Electron main thread (spec `seo-limits.spec.ts`,
 // `ANALYSIS_TIMEOUT_MS`; acceptance `seo-schema.feature.md`, Analysis off the main thread). Main posts
@@ -9,7 +10,9 @@ import type { RobotsVerdictsResult } from '../devtools/robots-verdicts';
 // has a hard timeout, after which the worker is terminated and the next analysis spawns a new one.
 // Speed measurements (`seo-speed.feature.md`) go through the same worker and queue, as `speed` jobs,
 // and so does the served HTML's parse (`seo-javascript.feature.md`), as `served` jobs, and the
-// devtools drawer's robots.txt verdicts (`devtools.feature.md`), as `robots` jobs.
+// devtools drawer's robots.txt verdicts (`devtools.feature.md`), as `robots` jobs. The link, sitemap
+// and hreflang checks (`seo-checks.feature.md`) use a second analyzer of their own, as `checks` jobs,
+// so a long check never holds up an audit.
 
 export type AnalysisResult = { readonly ok: true; readonly audit: SeoAudit } | { readonly ok: false; readonly reason: 'invalid-snapshot' | 'analysis-timeout' | 'analysis-failed' };
 export type SpeedAnalysisResult = { readonly ok: true; readonly report: SpeedReport } | { readonly ok: false; readonly reason: 'invalid-measurement' | 'analysis-timeout' | 'analysis-failed' };
@@ -40,11 +43,13 @@ export interface Analyzer {
   parseServed(input: ServedParseInput): Promise<ServedParseResult>;
   /** Validates a robots.txt verdict job (`RobotsVerdictJobSchema`) and decides its URLs in the worker. Never rejects. */
   robotsVerdicts(raw: unknown): Promise<RobotsVerdictsResult>;
+  /** Validates and runs a checks job (`ChecksJobSchema`, Phase 2.5 Task 7: a sitemap, an alternate, robots.txt) in the worker. Never rejects. */
+  analyseCheck(raw: unknown): Promise<ChecksAnalysisResult>;
   /** Terminates the worker (the app is quitting). */
   dispose(): void;
 }
 
-type JobKind = 'audit' | 'speed' | 'served' | 'robots';
+type JobKind = 'audit' | 'speed' | 'served' | 'robots' | 'checks';
 type Settled = { readonly ok: boolean; readonly reason?: string };
 
 interface Job {
@@ -56,16 +61,23 @@ interface Job {
 }
 
 /** The reason a job's input is refused with. */
-const INVALID: Readonly<Record<JobKind, string>> = { audit: 'invalid-snapshot', speed: 'invalid-measurement', served: 'parse-failed', robots: 'invalid-job' };
+const INVALID: Readonly<Record<JobKind, string>> = { audit: 'invalid-snapshot', speed: 'invalid-measurement', served: 'parse-failed', robots: 'invalid-job', checks: 'invalid-job' };
 
-/** The field a job kind's successful result carries its payload in. */
-const PAYLOAD: Readonly<Record<JobKind, string>> = { audit: 'audit', speed: 'report', served: 'snapshot', robots: 'verdicts' };
+/** A job kind's successful payload, read from the worker's answer. */
+const PAYLOAD: Readonly<Record<JobKind, (result: Readonly<Record<string, unknown>>) => unknown>> = {
+  audit: (result) => result.audit,
+  speed: (result) => result.report,
+  served: (result) => result.snapshot,
+  robots: (result) => result.verdicts,
+  // A checks job answers under its own kind's field: a sitemap, an alternate's head or robots.txt.
+  checks: (result) => (result.kind === 'sitemap' || result.kind === 'hreflang' || result.kind === 'robots' ? result[result.kind] : undefined),
+};
 
 /** What the worker answered, if it has the shape of a `kind` job's result. */
 function asResult(kind: JobKind, value: unknown): Settled | null {
   if (typeof value !== 'object' || value === null) return null;
   const result = value as { ok?: unknown; reason?: unknown } & Record<string, unknown>;
-  const payload = result[PAYLOAD[kind]];
+  const payload = PAYLOAD[kind](result);
   if (result.ok === true && typeof payload === 'object' && payload !== null) return result as Settled;
   if (result.ok === false && (result.reason === INVALID[kind] || result.reason === 'analysis-failed')) return result as Settled;
   return null;
@@ -144,6 +156,7 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
     parseServed: (input) =>
       enqueue('served', input, undefined).then((result): ServedParseResult => (result.ok ? (result as ServedParseResult) : { ok: false, reason: result.reason === 'analysis-timeout' ? 'parse-timeout' : 'parse-failed' })),
     robotsVerdicts: (raw) => enqueue('robots', raw, undefined) as Promise<RobotsVerdictsResult>,
+    analyseCheck: (raw) => enqueue('checks', raw, undefined) as Promise<ChecksAnalysisResult>,
     dispose() {
       for (const job of queue.splice(0)) job.settle({ ok: false, reason: 'analysis-failed' });
       if (current) finish({ ok: false, reason: 'analysis-failed' }, true);

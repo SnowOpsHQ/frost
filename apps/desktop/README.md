@@ -188,7 +188,10 @@ Everything the page hands over is untrusted.
   (resetting the host to 100 % removes it).
 - **Highlight host.** While highlight mode is on, the page can see (and remove) its one host
   element, but not its contents; removing it turns the mode off.
-- **Not checked.** hreflang reciprocity, JSON-LD context aliases, accessibility inside frames, and
+- **Link, sitemap and hreflang checks are visible to sites** (Phase 2.5 Task 7,
+  `specs/seo-checks.feature.md`). They run only on request, without cookies, bounded (500 links,
+  2 per origin, 20 sitemap files, 20 alternates), and the sites see the requests in their logs.
+- **Not checked.** JSON-LD context aliases, accessibility inside frames, and
   headers of a page restored from the back/forward cache or reached by `pushState` ("Unknown").
   An accessibility check that times out may leave the page's renderer busy for a while.
 - No download manager (downloads are cancelled with a notice) and no find bar yet.

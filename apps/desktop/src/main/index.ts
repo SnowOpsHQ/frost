@@ -19,6 +19,10 @@ import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { runAccessibilityCheck } from './seo/a11y';
 import { createAnalyzer } from './seo/analysis';
+import { createChecks, type Checks } from './seo/checks';
+import { createCheckFetch, netCheckHop } from './seo/checks-fetch';
+import { CHECKS_ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-checks.spec';
+import { profileUserAgent } from '@app/specs/render-profile.spec';
 import { createContentService } from './seo/content-notes';
 import { confirmClearContentNotes } from './seo/content-notes-dialog';
 import { runExtractor } from './seo/extract';
@@ -27,7 +31,6 @@ import { createResponseRecorder } from './seo/responses';
 import { createRobotsFetcher, netHop, pendingRobots, type RobotsFetcher } from './seo/robots-fetch';
 import { createBoundedFetcher } from './seo/fetcher';
 import { createServedHtml, PENDING_SERVED, type ServedHtml } from './seo/served';
-import { profileUserAgent } from '@app/specs/render-profile.spec';
 import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
 import { observeMainFrames, observeRequests } from './browser/web-request';
@@ -125,6 +128,15 @@ function start(): void {
     spawn: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }),
   });
   app.once('will-quit', () => analyzer.dispose());
+  // Link, sitemap and hreflang checks (specs/seo-checks.feature.md): on request only, through main's
+  // bounded fetcher on the browse session (set up once the session exists, below); what servers send
+  // is parsed in a worker of the checks' own (the same bundle), so a long sitemap never holds an audit back.
+  const checksAnalyzer = createAnalyzer({
+    spawn: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }),
+    timeoutMs: CHECKS_ANALYSIS_TIMEOUT_MS,
+  });
+  app.once('will-quit', () => checksAnalyzer.dispose());
+  let checks: Checks | null = null;
   // Indexability (specs/seo-indexability.feature.md): each tab's main-frame response is recorded
   // from the browse session's webRequest events (status, redirects, allowlisted headers, capped as
   // they arrive) and committed on the tab's `did-navigate`; robots.txt is fetched by main through
@@ -159,6 +171,8 @@ function start(): void {
       robots: robots ? laterInput(robots.get(url), pendingRobots(url), robots.peek(url)) : knownInput(null),
       performance: laterInput(measureForAudit(contents)),
       served: servedInput(contents, url),
+      // The checks that ran on this document and URL (specs/seo-checks.feature.md, Rules).
+      checks: knownInput(checks?.contextFor(contents.id, url)),
     });
   };
   // Served HTML vs the rendered DOM (specs/seo-javascript.feature.md): main fetches the page as
@@ -166,14 +180,16 @@ function start(): void {
   // user agent if it has one in effect), the analysis worker parses it; kept per tab document, URL
   // and user agent (a new document drops it). Set up once the browse session exists (below).
   let served: ServedHtml | null = null;
-  const servedUserAgent = (contents: WebContents): string | null => {
+  // The user agent requests made for a tab send: its render profile's while one is in effect, else
+  // frost's own (`null`). Shared by the served HTML and the link checks.
+  const tabUserAgent = (contents: WebContents): string | null => {
     const tabId = browser.tabIdOf(contents);
     const profile = tabId === null ? null : (browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null);
     return profile && profile.status !== 'failed' ? profileUserAgent(profile.profile, process.versions.chrome) : null;
   };
   const servedInput = (contents: WebContents, url: string) => {
     if (!served) return knownInput(null);
-    const userAgent = servedUserAgent(contents);
+    const userAgent = tabUserAgent(contents);
     return laterInput(served.get(contents.id, url, userAgent), PENDING_SERVED, served.peek(contents.id, url, userAgent));
   };
 
@@ -211,9 +227,17 @@ function start(): void {
       shownTimes.forget(id);
       tabContents.delete(id);
       served?.forget(id);
+      checks?.dropped(id);
     });
-    // A new document fetches its served HTML afresh (seo-javascript.feature.md).
-    contents.on('did-navigate', () => served?.forget(id));
+    // A new document fetches its served HTML afresh (seo-javascript.feature.md); a new document or
+    // an in-page move to another URL cancels the page's checks (seo-checks.feature.md).
+    contents.on('did-navigate', () => {
+      served?.forget(id);
+      checks?.dropped(id);
+    });
+    contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (isMainFrame) checks?.navigatedInPage(id, url);
+    });
   });
   // Per-tab render profiles (specs/render-profile.feature.md): each tab's own debugger, attached
   // only to a browse-session tab's WebContents and only while it has a profile, sending only the
@@ -239,7 +263,8 @@ function start(): void {
     session: sessionStore.writer,
     contextMenu: showContextMenu,
     seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
-    highlight: { paint: runHighlight, ended: watchHighlight },
+    // The `broken` mode outlines the link check's broken targets (specs/seo-checks.feature.md).
+    highlight: { paint: (contents, mode) => runHighlight(contents, mode, mode === 'broken' ? (checks?.brokenFor(contents.id) ?? []) : []), ended: watchHighlight },
     speed: { measure: collect, analyse: (raw) => analyzer.analyseSpeed(raw), times: shownTimes },
     // The accessibility check (specs/seo-compliance.feature.md): axe-core in the tab's own isolated
     // accessibility world, on request only; its answer is validated in the analysis worker.
@@ -300,6 +325,20 @@ function start(): void {
     robots = createRobotsFetcher({ hop, fetcher });
     served = createServedHtml({ fetcher, parse: (input) => analyzer.parseServed(input) });
     observeRequests(browseSession, devtools.observer);
+    const robotsFetcher = robots;
+    checks = createChecks({
+      fetch: createCheckFetch(netCheckHop(net, browseSession)),
+      analyse: (job) => checksAnalyzer.analyseCheck(job),
+      robots: (pageUrl) => robotsFetcher.get(pageUrl),
+      tab: (tabId) => {
+        const state = browser.getState();
+        const tab = state.tabs.find((t) => t.id === tabId);
+        const contents = tab ? webContents.getAllWebContents().find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) : undefined;
+        if (!tab || !contents) return null;
+        return { contentsId: contents.id, url: contents.getURL(), active: state.activeTabId === tabId, userAgent: tabUserAgent(contents), audit: browser.seo.getAudit(tabId) };
+      },
+      rescore: (tabId) => void browser.rescoreAudit(tabId),
+    });
     hardenBrowseSession(browseSession, {
       onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
       permissions: createBrowsePermissionHandlers({
@@ -328,6 +367,7 @@ function start(): void {
             return browser.seo.rerun(tabId) === true;
           },
         },
+        checks,
         // The Content panel's notes (local, in the session database) and Copy as HTML (specs/seo-content.feature.md).
         content: createContentService({
           notes: sessionStore.contentNotes,
@@ -364,6 +404,7 @@ function start(): void {
         responses.clear();
         served?.clear();
         devtools.clear();
+        checks?.clearCache();
         // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
         browser.forgetRenderProfilePins();
       },
