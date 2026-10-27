@@ -64,7 +64,12 @@ export function measurement(changes: Partial<PerformanceMeasurement> = {}): Perf
     ],
     resourceTotal: 3,
     overflow: { transfer: 0, encoded: 0, decoded: 0, weight: 0 },
+    resourceOffset: 0,
+    resourceEpoch: 0,
+    softNavigation: false,
     bufferFull: false,
+    paintUnavailable: false,
+    resourceHints: 3,
     dom: { elements: 400, depth: 12, depthComplete: true },
     ...changes,
   };

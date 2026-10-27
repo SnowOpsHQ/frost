@@ -66,6 +66,52 @@ export type VitalBand = (typeof VITAL_BANDS)[number];
 export const VITAL_BAND_LABELS: Readonly<Record<VitalBand, string>> = { good: 'Good', 'needs-improvement': 'Needs improvement', poor: 'Poor' };
 
 /**
+ * When the page was shown (main owns the signal; spec `seo-speed.feature.md`, Background tabs).
+ * frost's background tabs are detached views that still report `visible` and paint only once they
+ * are shown, so web-vitals alone would measure "time until the user switched". Main records, per
+ * tab's WebContents, when the current document was first shown (attached to the window) and when it
+ * was first hidden after that, and passes both to the collector (epoch ms). A document whose
+ * `performance.timeOrigin` precedes its first-shown time by more than `SHOWN_TOLERANCE_MS`, or that
+ * was hidden before its first contentful paint, loaded hidden: FCP, LCP and CLS are dropped (`null`)
+ * and the panel asks to re-measure.
+ */
+export const SHOWN_TOLERANCE_MS = 20;
+
+/**
+ * Native Wayland: some compositors never give Chromium presentation feedback, so no paint entry is
+ * ever recorded (no FCP, LCP or CLS, in any world). Main tells the collector when the app runs on a
+ * Wayland ozone platform on Linux; if no paint entry exists `PAINT_GRACE_MS` after the load event,
+ * the measurement says `paintUnavailable` and the panel shows `WAYLAND_PAINT_NOTE`. frost does not
+ * force X11.
+ */
+export const PAINT_GRACE_MS = 3_000;
+export const WAYLAND_PAINT_NOTE =
+  'No paint timing was reported: under native Wayland some compositors never tell the browser when a frame was shown, so FCP, LCP and CLS can’t be measured. Launching frost with --ozone-platform=x11 measures them.';
+
+/**
+ * The speed world listens for these events only when the browser itself fired them (`isTrusted`):
+ * before loading web-vitals the collector wraps that world's `EventTarget.prototype.addEventListener`
+ * (and `removeEventListener`, so removals still match) for these types. A synthetic `pageshow`,
+ * `visibilitychange` or `prerenderingchange` dispatched by the page then reaches none of the
+ * library's handlers. The wrapper stays for the document's lifetime: only frost's code runs in the
+ * speed world, and the library registers some of these listeners later.
+ */
+export const TRUSTED_ONLY_EVENTS = ['pageshow', 'visibilitychange', 'prerenderingchange'] as const;
+
+/** The DOM's element count and depth are recomputed on the first collection and every this many after (and after a route change). */
+export const DOM_REFRESH_EVERY = 10;
+
+/**
+ * Too few requests: when the page's elements that usually fetch something (`img[src]`,
+ * `script[src]`, stylesheet links; `resourceHints`) number at least `LOW_RESOURCES_MIN_HINTS` and the
+ * observed requests (the document aside) are fewer than `LOW_RESOURCES_RATIO` of them, the page may
+ * have cleared its timing entries before frost observed, or loaded them from the memory cache: the
+ * panel says so. A heuristic, never a finding.
+ */
+export const LOW_RESOURCES_MIN_HINTS = 4;
+export const LOW_RESOURCES_RATIO = 0.25;
+
+/**
  * What the measurement may hold. The isolated-world collector applies every cap while it reads the
  * Performance API and the DOM; the analysis worker validates the answer against the same caps
  * (`PerformanceMeasurementSchema`).
@@ -224,13 +270,26 @@ export const UNCOMPRESSED_MIN_BYTES = 1_400;
 export const SPEED_PANEL_LIMITS = { largest: 10, uncompressed: 10, hosts: 8 } as const;
 
 /**
- * First- or third-party: a request is first-party when its host is the page's host, or either is a
- * subdomain of the other's site (the host with one leading `www.` dropped): `static.example.com`
- * for a page on `www.example.com`. Everything else (another domain, even of the same organisation)
- * is third-party. frost has no public-suffix list, so `a.co.uk` and `b.co.uk` are never one site
- * (they are not first-party to each other unless one is a subdomain of the other).
+ * First- or third-party: a request is first-party when its host has the page's registrable domain
+ * (`static.example.com` and `shop.example.com` for a page on `www.example.com`; ports do not
+ * matter). frost has no public-suffix list: the registrable domain is the host's last two labels,
+ * or its last three when the last two are one of `MULTI_PART_SUFFIXES` (`example.co.uk`). That is
+ * an approximation: suffixes it does not know (`github.io`, many country codes) make unrelated sites
+ * look first-party to each other. An IP address or a single-label host is its own domain.
  */
-export const THIRD_PARTY_RULE = 'host-or-subdomain' as const;
+export const THIRD_PARTY_RULE = 'registrable-domain' as const;
+export const MULTI_PART_SUFFIXES: readonly string[] = [
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'ltd.uk', 'plc.uk', 'net.uk',
+  'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au',
+  'co.nz', 'org.nz', 'net.nz', 'govt.nz',
+  'co.jp', 'ne.jp', 'or.jp', 'ac.jp', 'go.jp',
+  'co.kr', 'or.kr',
+  'co.in', 'net.in', 'org.in', 'gov.in',
+  'co.za', 'org.za', 'gov.za',
+  'com.br', 'net.br', 'org.br', 'gov.br',
+  'com.mx', 'org.mx', 'gob.mx',
+  'com.ar', 'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'com.hk', 'com.sg', 'com.tw', 'com.tr', 'com.my', 'com.ph', 'com.vn', 'com.pl', 'com.ua', 'co.il', 'co.id', 'co.th',
+];
 
 // ---- Thresholds of the other rules -----------------------------------------------------------
 
@@ -386,3 +445,15 @@ export const SIZE_UNAVAILABLE_LABEL = 'size unavailable';
  * unavailable" and leaves out of byte totals.
  */
 export const SIZE_UNAVAILABLE_NOTE = 'Cross-origin responses without a Timing-Allow-Origin header report no size to the page, so they are not in the byte totals.';
+export const IFRAME_NOTE = 'Requests made inside iframes are not counted.';
+export const BUFFER_FULL_NOTE = 'The browser’s request log was full: some requests may be missing (approximate if the page changed its buffer size). Re-measure to see them all.';
+export const LOW_RESOURCES_NOTE = 'Fewer requests than this page’s elements suggest: it may have cleared its timing entries before frost started measuring, or loaded them from the memory cache. Re-measure to see them.';
+/** The vitals belong to the page load (the hard navigation), never to an in-page route change. */
+export const SINCE_LOAD_LABEL = 'Since the page loaded';
+export const SOFT_NAVIGATION_NOTE =
+  'This address was reached inside the page (a route change): the vitals and navigation timing belong to the page load; the requests are counted since the route changed.';
+export const LOADED_HIDDEN_HINT = 'Loaded in a background tab: re-measure to see it';
+export const WAYLAND_HINT = 'Not reported under native Wayland';
+/** Where the panel's numbers come from: the live measurement, or the one taken with the audit (which the health score and the rail dot always use). */
+export const SPEED_SOURCE_LABELS = { live: 'Live', audit: 'At audit time' } as const;
+export const SCORE_SOURCE_NOTE = 'The health score and the rail dot use the measurement taken with the audit.';

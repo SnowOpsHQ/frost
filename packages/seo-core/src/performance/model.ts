@@ -120,8 +120,14 @@ export interface SpeedSummary {
   };
   readonly dom: { readonly elements: number; readonly depth: number; readonly depthComplete: boolean };
   readonly navigation: NavigationReport | null;
-  /** The resource timing buffer was full before frost observed: early requests may be missing. */
+  /** The resource timing buffer was full (approximate): requests may be missing. */
   readonly bufferFull: boolean;
+  /** The URL changed inside the document: requests are counted from the route change, vitals from the page load. */
+  readonly softNavigation: boolean;
+  /** Native Wayland with no paint entry: FCP, LCP and CLS cannot be measured. */
+  readonly paintUnavailable: boolean;
+  /** Far fewer requests than the page's fetching elements suggest (`LOW_RESOURCES_RATIO`): a note, never a finding. */
+  readonly resourcesLow: boolean;
 }
 
 /** The Speed panel's report: the summary and the measurement's `performance` findings (ranked). */

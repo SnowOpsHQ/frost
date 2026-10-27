@@ -2,8 +2,8 @@
 // Acceptance: specs/seo-speed.feature.md (Renderer helpers)
 import { describe, expect, test } from 'vitest';
 import type { Finding, NavigationReport, SeoAudit, SpeedReport } from '@app/seo-core';
-import { INP_HINT } from '@app/specs/seo-speed.spec';
-import { agoText, barWidth, meterGeometry, missingVitalText, openableResource, shareText, shownSpeed, speedIssues, waterfall } from '../speed-view';
+import { INP_HINT, LOADED_HIDDEN_HINT, SPEED_SOURCE_LABELS, WAYLAND_HINT, WAYLAND_PAINT_NOTE } from '@app/specs/seo-speed.spec';
+import { agoText, barWidth, meterGeometry, missingVitalText, speedNotes, openableResource, shareText, shownSpeed, speedIssues, waterfall } from '../speed-view';
 
 const finding = (ruleId: string, severity: Finding['severity']): Finding => ({ ruleId: ruleId as Finding['ruleId'], category: 'performance', severity, title: ruleId, why: '', fix: '', details: { facts: [], samples: [] } });
 
@@ -17,11 +17,25 @@ describe('speed view helpers', () => {
   });
 
   test('missing-vital-text', () => {
-    expect(missingVitalText({ metric: 'inp', value: null, band: null }, { loadedHidden: false })).toBe(INP_HINT);
+    const ok = { loadedHidden: false, paintUnavailable: false };
+    expect(missingVitalText({ metric: 'inp', value: null, band: null }, ok)).toBe(INP_HINT);
     expect(INP_HINT).toBe('Interact with the page to measure INP');
-    expect(missingVitalText({ metric: 'lcp', value: null, band: null }, { loadedHidden: true })).toMatch(/background/);
-    expect(missingVitalText({ metric: 'lcp', value: null, band: null }, { loadedHidden: false })).toBe('Not reported yet');
-    expect(missingVitalText({ metric: 'lcp', value: 1, band: 'good' }, { loadedHidden: false })).toBeNull();
+    expect(missingVitalText({ metric: 'lcp', value: null, band: null }, { ...ok, loadedHidden: true })).toBe(LOADED_HIDDEN_HINT);
+    expect(missingVitalText({ metric: 'cls', value: null, band: null }, { ...ok, loadedHidden: true })).toBe(LOADED_HIDDEN_HINT);
+    expect(missingVitalText({ metric: 'lcp', value: null, band: null }, ok)).toBe('Not reported yet');
+    expect(missingVitalText({ metric: 'lcp', value: 1, band: 'good' }, ok)).toBeNull();
+    // Native Wayland without paint timing: the paint metrics say why; TTFB and INP do not.
+    for (const metric of ['lcp', 'fcp', 'cls'] as const) expect(missingVitalText({ metric, value: null, band: null }, { ...ok, paintUnavailable: true })).toBe(WAYLAND_HINT);
+    expect(missingVitalText({ metric: 'inp', value: null, band: null }, { ...ok, paintUnavailable: true })).toBe(INP_HINT);
+  });
+
+  test('speed-notes', () => {
+    const base = { softNavigation: false, paintUnavailable: false, resourcesLow: false, bufferFull: false };
+    expect(speedNotes(base).map((n) => n.id)).toEqual(['iframes']);
+    expect(speedNotes({ softNavigation: true, paintUnavailable: true, resourcesLow: true, bufferFull: true }).map((n) => n.id)).toEqual(['wayland', 'soft-navigation', 'low-resources', 'buffer-full', 'iframes']);
+    expect(speedNotes({ ...base, paintUnavailable: true })[0]!.text).toBe(WAYLAND_PAINT_NOTE);
+    expect(WAYLAND_PAINT_NOTE).toContain('--ozone-platform=x11');
+    expect(SPEED_SOURCE_LABELS).toEqual({ live: 'Live', audit: 'At audit time' });
   });
 
   test('waterfall-geometry', () => {

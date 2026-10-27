@@ -1,4 +1,4 @@
-import { RESOURCE_DOCUMENT_INITIATORS, RESOURCE_EXTENSIONS, RESOURCE_FETCH_INITIATORS, RESOURCE_MIME_TYPES, TEXT_MIME_TYPES, UNCOMPRESSED_MIN_BYTES, type ResourceType } from '@app/specs/seo-speed.spec';
+import { MULTI_PART_SUFFIXES, RESOURCE_DOCUMENT_INITIATORS, RESOURCE_EXTENSIONS, RESOURCE_FETCH_INITIATORS, RESOURCE_MIME_TYPES, TEXT_MIME_TYPES, UNCOMPRESSED_MIN_BYTES, type ResourceType } from '@app/specs/seo-speed.spec';
 import type { ResourceRecord } from './model';
 
 // Classifying requests (spec `seo-speed.spec.ts`, `RESOURCE_TYPES`; acceptance `seo-speed.feature.md`,
@@ -60,17 +60,27 @@ export function hostOf(url: string): string {
 }
 
 /**
- * Whether a request to `host` is third-party for a page on `pageHost` (`THIRD_PARTY_RULE`): not the
- * same host, and neither is a subdomain of the other's site. Ports count as part of the host.
+ * A host's registrable domain (`THIRD_PARTY_RULE`, approximate): the port dropped, lowercased; an IP
+ * address or a single-label host is itself; otherwise the last two labels, or the last three when
+ * the last two are one of `MULTI_PART_SUFFIXES`.
  */
+export function registrableDomain(host: string): string {
+  let h = host.trim().toLowerCase();
+  if (h.startsWith('[')) return h.slice(0, h.indexOf(']') + 1) || h;
+  const colon = h.lastIndexOf(':');
+  if (colon >= 0) h = h.slice(0, colon);
+  if (h.endsWith('.')) h = h.slice(0, -1);
+  if (/^\d+(\.\d+){3}$/.test(h)) return h;
+  const labels = h.split('.');
+  if (labels.length <= 2) return h;
+  const lastTwo = labels.slice(-2).join('.');
+  return labels.slice(MULTI_PART_SUFFIXES.includes(lastTwo) ? -3 : -2).join('.');
+}
+
+/** Whether a request to `host` is third-party for a page on `pageHost`: another registrable domain (`THIRD_PARTY_RULE`). */
 export function isThirdParty(host: string, pageHost: string): boolean {
   if (host === '' || pageHost === '') return host !== pageHost;
-  const a = host.toLowerCase();
-  const b = pageHost.toLowerCase();
-  if (a === b) return false;
-  const siteA = siteOf(a);
-  const siteB = siteOf(b);
-  return !(siteA === siteB || a.endsWith(`.${siteB}`) || b.endsWith(`.${siteA}`));
+  return registrableDomain(host) !== registrableDomain(pageHost);
 }
 
 /** A request reported no size (cross-origin without `Timing-Allow-Origin`, or nothing received). */

@@ -3,6 +3,11 @@ import { formatBytes, formatMs, formatVital, type Finding, type LargeResource, t
 import type { TabState } from '@app/specs/browser.spec';
 import {
   LAB_DATA_NOTE,
+  SCORE_SOURCE_NOTE,
+  SINCE_LOAD_LABEL,
+  SOFT_NAVIGATION_NOTE,
+  SPEED_SOURCE_LABELS,
+  WAYLAND_PAINT_NOTE,
   RESOURCE_TYPE_LABELS,
   SIZE_UNAVAILABLE_LABEL,
   SIZE_UNAVAILABLE_NOTE,
@@ -17,7 +22,7 @@ import { OpenTabIcon, ReloadIcon } from '../../icons';
 import { actions } from '../../ipc';
 import { useSpeed } from '../../hooks/useSpeed';
 import { formatCount } from '../../seo-view';
-import { agoText, barWidth, meterGeometry, missingVitalText, openableResource, PHASE_LABELS, shareText, shownSpeed, speedIssues, waterfall } from '../../speed-view';
+import { agoText, barWidth, meterGeometry, missingVitalText, openableResource, PHASE_LABELS, shareText, shownSpeed, speedIssues, speedNotes, waterfall } from '../../speed-view';
 import type { SpeedPollState } from '../../speed-poller';
 import { Flash, useFlash } from './actions';
 import { Issue } from './Overview';
@@ -217,6 +222,11 @@ function VerdictCard({ report, state, source, onResume, onRemeasure }: { readonl
       </div>
       <p className="seo-speed-verdict-summary">{band ? VERDICT_SUMMARY[band] : 'LCP and CLS appear once the page has painted; INP once you interact with it.'}</p>
       <LiveLine state={state} report={report} source={source} onResume={onResume} />
+      {report && report.paintUnavailable ? (
+        <p className="seo-speed-warning" data-testid="seo-speed-wayland">
+          {WAYLAND_PAINT_NOTE}
+        </p>
+      ) : null}
       <p className="seo-speed-lab" data-testid="seo-speed-lab-note">
         <FlaskIcon />
         <span>{LAB_DATA_NOTE}</span>
@@ -257,11 +267,16 @@ function MetricCard({ reading, report }: { readonly reading: VitalReading; reado
   );
 }
 
-function Issues({ findings }: { readonly findings: readonly Finding[] }) {
+function Issues({ findings, source }: { readonly findings: readonly Finding[]; readonly source: 'live' | 'audit' | null }) {
   return (
     <section className="seo-issues" data-testid="seo-speed-issues">
       <header className="seo-section-head">
         <h3 className="seo-section-title">Issues</h3>
+        {source ? (
+          <span className="seo-speed-source" data-testid="seo-speed-source" data-source={source} title={SCORE_SOURCE_NOTE}>
+            {SPEED_SOURCE_LABELS[source]}
+          </span>
+        ) : null}
         {findings.length > 0 ? <span className="seo-badge">{formatCount(findings.length)}</span> : null}
       </header>
       {findings.length === 0 ? (
@@ -273,6 +288,7 @@ function Issues({ findings }: { readonly findings: readonly Finding[] }) {
           ))}
         </ol>
       )}
+      {source === 'live' ? <p className="seo-note">{SCORE_SOURCE_NOTE}</p> : null}
     </section>
   );
 }
@@ -366,7 +382,13 @@ function ResourcesCard({ report }: { readonly report: SpeedReport }) {
       ) : null}
       {requests.cached > 0 ? <p className="seo-note">{formatCount(requests.cached)} came from the cache (counted at their encoded size).</p> : null}
       {requests.notItemised > 0 ? <p className="seo-note">{formatCount(requests.notItemised)} more requests are counted in the totals but not itemised.</p> : null}
-      {report.bufferFull ? <p className="seo-note">The browser’s request log was full before frost started measuring: requests from early in the load may be missing. Re-measure to see them all.</p> : null}
+      {speedNotes(report)
+        .filter((note) => note.id !== 'wayland' && note.id !== 'soft-navigation')
+        .map((note) => (
+          <p key={note.id} className="seo-note" data-testid={`seo-speed-note-${note.id}`}>
+            {note.text}
+          </p>
+        ))}
     </Card>
   );
 }
@@ -473,12 +495,22 @@ export function Speed({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
       <VerdictCard report={report} state={state} source={source} onResume={resume} onRemeasure={remeasure} />
       {report ? (
         <>
+          <header className="seo-speed-since">
+            <span className="seo-eyebrow" data-testid="seo-speed-since">
+              {SINCE_LOAD_LABEL}
+            </span>
+          </header>
+          {report.softNavigation ? (
+            <p className="seo-note seo-speed-soft" data-testid="seo-speed-note-soft-navigation">
+              {SOFT_NAVIGATION_NOTE}
+            </p>
+          ) : null}
           <ul className="seo-speed-metrics" data-testid="seo-speed-metrics">
             {report.vitals.map((reading) => (
               <MetricCard key={reading.metric} reading={reading} report={report} />
             ))}
           </ul>
-          <Issues findings={speedIssues(report, audit)} />
+          <Issues findings={speedIssues(report, audit)} source={source} />
           <NavigationCard nav={report.navigation} />
           <ResourcesCard report={report} />
           <LargestCard report={report} flash={flash} />
@@ -486,7 +518,7 @@ export function Speed({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
           <DomCard report={report} />
         </>
       ) : (
-        <Issues findings={speedIssues(null, audit)} />
+        <Issues findings={speedIssues(null, audit)} source={null} />
       )}
       <Flash message={message} testId="seo-speed-flash" />
     </div>

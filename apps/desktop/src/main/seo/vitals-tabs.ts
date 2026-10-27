@@ -1,11 +1,12 @@
 import type { SpeedResponse } from '@app/seo-core';
-import { SPEED_MEASURE_TIMEOUT_MS, SPEED_MIN_INTERVAL_MS, type SpeedUnavailableReason } from '@app/specs/seo-speed.spec';
+import { SPEED_LIMITS, SPEED_MEASURE_TIMEOUT_MS, SPEED_MIN_INTERVAL_MS, type SpeedUnavailableReason } from '@app/specs/seo-speed.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl } from '../browser/address';
 import { aliveContents, type Tab, type TabView } from '../browser/tab-model';
 import type { SpeedAnalysisResult } from './analysis';
 import { withoutFragment } from './auditor';
-import { withTimeout } from './vitals';
+import { withTimeout, type CollectOptions } from './vitals';
+import type { ShownTimes } from './vitals-shown';
 
 // Live page-speed measurements, per tab (spec `seo-speed.spec.ts`; acceptance `seo-speed.feature.md`,
 // Main). `seo.measureSpeed` asks for the active tab's measurement: main runs the collector in the
@@ -17,14 +18,21 @@ import { withTimeout } from './vitals';
 // `timeout`, and no other one starts until the page has answered it. A measurement belongs to one
 // document and URL (fragment aside): a new document (`navigated`) or another URL drops what was
 // measured and anything in flight, and a late answer for the old page is never shown.
+//
+// Each collection answers only the resources added since the ones main already holds
+// (`CollectOptions.since` / `epoch`); main puts the list back together (`reassemble`: it only checks
+// the answer's shape and caps the list, never reads a record) before the worker validates it. It
+// also tells the collector when the document was first shown and hidden (`ShownTimes`).
 
 type TabContents = TabView['webContents'];
 
 export interface TabSpeedOptions {
-  /** Runs the collector in the tab (`runVitals`); resolves its raw, unvalidated answer. */
-  readonly measure: (contents: TabContents) => Promise<unknown>;
+  /** Runs the collector in the tab (`runVitals`) with `options`; resolves its raw, unvalidated answer. */
+  readonly measure: (contents: TabContents, options: Partial<CollectOptions>) => Promise<unknown>;
   /** Validates and summarises an answer off the main thread (the analysis worker's `analyseSpeed`). Never rejects. */
   readonly analyse: (raw: unknown) => Promise<SpeedAnalysisResult>;
+  /** When each tab's document was first shown and hidden (main's `createShownTimes`); without it, not known. */
+  readonly times?: ShownTimes;
   readonly timeoutMs?: number;
   readonly minIntervalMs?: number;
   readonly now?: () => number;
@@ -42,8 +50,37 @@ export interface TabSpeed {
   measure(tab: Tab | undefined): Promise<SpeedResponse>;
   /** `tab` committed a new document: what was measured, and anything in flight, is dropped. */
   navigated(tab: Tab): void;
+  /** `tab`'s view was attached to the window. */
+  shown(tab: Tab): void;
+  /** `tab`'s view was detached. */
+  hidden(tab: Tab): void;
   /** `tab` closed, or its page went: forgotten. */
   forget(tab: Tab): void;
+}
+
+/** The resources main holds for a document: the records of one epoch, in order. */
+export interface HeldResources {
+  readonly epoch: number;
+  readonly records: readonly unknown[];
+}
+
+/**
+ * The collector's answer with its whole resource list: an answer from offset 0 replaces what is
+ * held, one from the held list's end extends it (capped at `maxResources`); anything else cannot be
+ * put together (`null`: ask again from 0). An answer of another shape passes through unchanged (the
+ * worker rejects it). Only the shape is looked at, never a record.
+ */
+export function reassemble(raw: unknown, held: HeldResources | null, max: number = SPEED_LIMITS.maxResources): { readonly measurement: unknown; readonly held: HeldResources | null } | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { measurement: raw, held: null };
+  const answer = raw as { resources?: unknown; resourceOffset?: unknown; resourceEpoch?: unknown };
+  if (!Array.isArray(answer.resources) || !Number.isInteger(answer.resourceOffset) || !Number.isInteger(answer.resourceEpoch)) return { measurement: raw, held: null };
+  const offset = answer.resourceOffset as number;
+  const epoch = answer.resourceEpoch as number;
+  let records: readonly unknown[];
+  if (offset === 0) records = answer.resources.slice(0, max);
+  else if (held && held.epoch === epoch && held.records.length === offset) records = held.records.concat(answer.resources).slice(0, max);
+  else return null;
+  return { measurement: { ...raw, resources: records, resourceOffset: 0 }, held: { epoch, records } };
 }
 
 interface Entry {
@@ -54,6 +91,7 @@ interface Entry {
   /** A collection the page has not answered yet (it timed out): no other one starts meanwhile. */
   busy: object | null;
   last: { readonly at: number; readonly response: SpeedResponse } | null;
+  held: HeldResources | null;
 }
 
 type Measurable = { readonly ok: true; readonly contents: TabContents; readonly url: string; readonly key: string } | { readonly ok: false; readonly reason: SpeedUnavailableReason };
@@ -67,10 +105,18 @@ function measurable(tab: Tab): Measurable {
   return isWebUrl(url) ? { ok: true, contents, url, key: withoutFragment(url) } : { ok: false, reason: 'no-page' };
 }
 
+/** The WebContents id of `tab`'s view (`null`: none, or a test fake without one). */
+function contentsIdOf(tab: Tab): number | null {
+  const contents = tab.view ? aliveContents(tab.view) : undefined;
+  const id = (contents as { id?: unknown } | undefined)?.id;
+  return typeof id === 'number' ? id : null;
+}
+
 export function createTabSpeed(options: TabSpeedOptions | undefined, ctx: TabSpeedContext): TabSpeed {
   const timeoutMs = options?.timeoutMs ?? SPEED_MEASURE_TIMEOUT_MS;
   const minIntervalMs = options?.minIntervalMs ?? SPEED_MIN_INTERVAL_MS;
   const now = options?.now ?? Date.now;
+  const times = options?.times;
   const entries = new Map<number, Entry>();
 
   const reset = (entry: Entry, key: string): void => {
@@ -79,17 +125,21 @@ export function createTabSpeed(options: TabSpeedOptions | undefined, ctx: TabSpe
     entry.inflight = null;
     entry.busy = null;
     entry.last = null;
+    entry.held = null;
   };
 
-  /** One collection and its analysis, for `key` in generation `generation`. */
+  /** One collection and its analysis, for `key` in the entry's current generation. */
   const run = async (tab: Tab, entry: Entry, contents: TabContents, url: string, key: string): Promise<SpeedResponse> => {
     const generation = entry.generation;
     const shown = displayUrl(url);
     const token = {};
     entry.busy = token;
+    const id = contentsIdOf(tab);
+    const held = entry.held;
+    const collectOptions: Partial<CollectOptions> = { ...(id !== null && times ? times.of(id) : {}), since: held?.records.length ?? 0, epoch: held?.epoch ?? -1 };
     let collection: Promise<unknown>;
     try {
-      collection = options!.measure(contents);
+      collection = options!.measure(contents, collectOptions);
     } catch (error) {
       collection = Promise.reject(error);
     }
@@ -104,13 +154,21 @@ export function createTabSpeed(options: TabSpeedOptions | undefined, ctx: TabSpe
       if (entry.busy === token) entry.busy = null;
     });
     const raw = await withTimeout(settled, timeoutMs, TIMEOUT);
+    const stillHere = () => entries.get(tab.id) === entry && entry.generation === generation;
     let response: SpeedResponse;
     if (raw === TIMEOUT) response = { status: 'unavailable', url: shown, reason: 'timeout' };
     else if (raw === FAILED) response = { status: 'unavailable', url: shown, reason: 'measurement-failed' };
     else {
+      const whole = reassemble(raw, held);
+      if (whole === null) {
+        // Could not be put together (the page's list changed under us): ask from the start next time.
+        if (stillHere()) entry.held = null;
+        return entry.last?.response ?? { status: 'pending', url: shown };
+      }
+      if (stillHere()) entry.held = whole.held;
       let answer: SpeedAnalysisResult;
       try {
-        answer = await options!.analyse(raw);
+        answer = await options!.analyse(whole.measurement);
       } catch {
         answer = { ok: false, reason: 'analysis-failed' };
       }
@@ -119,7 +177,7 @@ export function createTabSpeed(options: TabSpeedOptions | undefined, ctx: TabSpe
       response = answer.ok ? { status: 'ready', url: shown, report: answer.report } : { status: 'unavailable', url: shown, reason: answer.reason };
     }
     const current = measurable(tab);
-    if (entries.get(tab.id) !== entry || entry.generation !== generation || !ctx.isOpen(tab) || !current.ok || current.key !== key) {
+    if (!stillHere() || !ctx.isOpen(tab) || !current.ok || current.key !== key) {
       // The page moved on: this answer is dropped.
       return current.ok ? { status: 'pending', url: displayUrl(current.url) } : { status: 'unavailable', url: tab.state.url, reason: current.reason };
     }
@@ -137,7 +195,7 @@ export function createTabSpeed(options: TabSpeedOptions | undefined, ctx: TabSpe
       if (!options) return Promise.resolve({ status: 'pending', url: shown });
       let entry = entries.get(tab.id);
       if (!entry) {
-        entry = { key: target.key, generation: 0, inflight: null, busy: null, last: null };
+        entry = { key: target.key, generation: 0, inflight: null, busy: null, last: null, held: null };
         entries.set(tab.id, entry);
       } else if (entry.key !== target.key) reset(entry, target.key);
       if (entry.inflight) return entry.inflight;
@@ -155,10 +213,24 @@ export function createTabSpeed(options: TabSpeedOptions | undefined, ctx: TabSpe
     navigated(tab) {
       const entry = entries.get(tab.id);
       if (entry) reset(entry, '');
+      const id = contentsIdOf(tab);
+      if (id !== null) times?.committed(id);
+    },
+
+    shown(tab) {
+      const id = contentsIdOf(tab);
+      if (id !== null) times?.shown(id);
+    },
+
+    hidden(tab) {
+      const id = contentsIdOf(tab);
+      if (id !== null) times?.hidden(id);
     },
 
     forget(tab) {
       entries.delete(tab.id);
+      const id = contentsIdOf(tab);
+      if (id !== null) times?.forget(id);
     },
   };
 }

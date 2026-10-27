@@ -15,7 +15,8 @@
     "verify:mac": "node scripts/verify-mac-package.mjs",
     "test": "vitest run",
     "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p src/renderer/tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "notices": "node third-party-notices.ts"
   },
   "dependencies": {
     "@app/db": "workspace:*",

@@ -7,15 +7,18 @@ import {
   DOM_ELEMENTS_WARN,
   PAGE_WEIGHT_WARN_BYTES,
   PERFORMANCE_RULE_SPECS,
+  LOW_RESOURCES_MIN_HINTS,
+  MULTI_PART_SUFFIXES,
   REQUEST_COUNT_WARN,
   RESOURCE_TYPES,
+  THIRD_PARTY_RULE,
   SPEED_PANEL_LIMITS,
   UNCOMPRESSED_MIN_BYTES,
   VITAL_METRICS,
   VITAL_THRESHOLDS,
   type PerformanceRuleId,
 } from '@app/specs/seo-speed.spec';
-import { panelStatus, RULES, runAudit, summariseSpeed, vitalBand, speedReport, resourceType, isThirdParty, isUncompressedText, formatBytes, formatMs, formatCls, navigationReport, type FindingDetails, type PageSnapshot } from '../index';
+import { panelStatus, RULES, runAudit, summariseSpeed, vitalBand, speedReport, resourceType, isThirdParty, registrableDomain, isUncompressedText, formatBytes, formatMs, formatCls, navigationReport, type FindingDetails, type PageSnapshot } from '../index';
 import { cleanSnapshot, page, PAGE_URL } from './fixtures';
 import { measurement, navigation, resource, withVitals } from './performance-fixtures';
 
@@ -114,7 +117,7 @@ describe('vital rules', () => {
       { label: 'LCP', value: '4.6 s' },
       { label: 'Poor above', value: '4.0 s' },
     ]);
-    expect(fact(fails('cls-needs-improvement', measured(withVitals({ cls: 0.123 }))), 'CLS')).toBe('0.12');
+    expect(fact(fails('cls-needs-improvement', measured(withVitals({ cls: 0.123 }))), 'CLS')).toBe('0.123');
   });
 
   test('poor-is-a-warning-needs-improvement-is-info', () => {
@@ -208,14 +211,28 @@ describe('classification', () => {
     expect(RESOURCE_TYPES).toEqual(['document', 'script', 'stylesheet', 'image', 'font', 'fetch', 'other']);
   });
 
-  test('third-party-is-another-site', () => {
+  test('third-party-is-another-registrable-domain', () => {
+    expect(registrableDomain('www.example.com')).toBe('example.com');
+    expect(registrableDomain('Static.Example.com:8443')).toBe('example.com');
+    expect(registrableDomain('shop.example.co.uk')).toBe('example.co.uk');
+    expect(registrableDomain('a.b.example.com.au')).toBe('example.com.au');
+    expect(registrableDomain('127.0.0.1:8080')).toBe('127.0.0.1');
+    expect(registrableDomain('[::1]:3000')).toBe('[::1]');
+    expect(registrableDomain('localhost')).toBe('localhost');
     expect(isThirdParty('example.com', 'example.com')).toBe(false);
     expect(isThirdParty('static.example.com', 'www.example.com')).toBe(false);
-    expect(isThirdParty('www.example.com', 'shop.example.com')).toBe(false);
-    expect(isThirdParty('example.com:8443', 'example.com')).toBe(true);
+    // Sibling subdomains are one site.
+    expect(isThirdParty('cdn.example.com', 'shop.example.com')).toBe(false);
+    expect(isThirdParty('img.example.co.uk', 'www.example.co.uk')).toBe(false);
+    // Ports do not matter.
+    expect(isThirdParty('example.com:8443', 'example.com')).toBe(false);
     expect(isThirdParty('cdn.other.net', 'example.com')).toBe(true);
     expect(isThirdParty('notexample.com', 'example.com')).toBe(true);
+    expect(isThirdParty('other.co.uk', 'example.co.uk')).toBe(true);
     expect(isThirdParty('upload.wikimedia.org', 'en.wikipedia.org')).toBe(true);
+    expect(isThirdParty('127.0.0.2', '127.0.0.1')).toBe(true);
+    expect(THIRD_PARTY_RULE).toBe('registrable-domain');
+    expect(MULTI_PART_SUFFIXES).toContain('co.uk');
   });
 
   test('uncompressed-detection', () => {
@@ -291,6 +308,20 @@ describe('summary', () => {
     expect(other.ttfb).toBe(100);
   });
 
+  test('summary-notes-route-change-wayland-and-few-requests', () => {
+    const base = summariseSpeed(measurement());
+    expect([base.softNavigation, base.paintUnavailable, base.resourcesLow]).toEqual([false, false, false]);
+    expect(summariseSpeed(measurement({ softNavigation: true })).softNavigation).toBe(true);
+    expect(summariseSpeed(measurement({ paintUnavailable: true })).paintUnavailable).toBe(true);
+    // Far fewer requests than the elements that usually fetch: suspicious (a heuristic, not a finding).
+    const few = measurement({ resources: [], resourceTotal: 0, resourceHints: LOW_RESOURCES_MIN_HINTS * 10 });
+    expect(summariseSpeed(few).resourcesLow).toBe(true);
+    expect(speedReport(few).findings).toEqual([]);
+    expect(summariseSpeed(measurement({ resources: [], resourceTotal: 0, resourceHints: LOW_RESOURCES_MIN_HINTS - 1 })).resourcesLow).toBe(false);
+    // After a route change the requests are counted from it: never "too few".
+    expect(summariseSpeed({ ...few, softNavigation: true }).resourcesLow).toBe(false);
+  });
+
   test('speed-report-has-measured-findings-only', () => {
     const report = speedReport(withVitals({ lcp: 5_000, cls: 0.15 }));
     expect(report.findings.map((f) => f.ruleId)).toEqual(['lcp-poor', 'cls-needs-improvement']);
@@ -301,6 +332,6 @@ describe('summary', () => {
 
 test('formats', () => {
   expect([formatMs(0), formatMs(840.4), formatMs(999.6), formatMs(2_640), formatMs(12_345)]).toEqual(['0 ms', '840 ms', '1.0 s', '2.6 s', '12.3 s']);
-  expect([formatCls(0), formatCls(0.004), formatCls(0.123), formatCls(1.5)]).toEqual(['0.00', '0.004', '0.12', '1.50']);
+  expect([formatCls(0), formatCls(0.004), formatCls(0.1), formatCls(0.1004), formatCls(0.123), formatCls(1.5)]).toEqual(['0.000', '0.004', '0.100', '0.100', '0.123', '1.500']);
   expect([formatBytes(512), formatBytes(12_345), formatBytes(345_678), formatBytes(3_400_000), formatBytes(1_200_000_000)]).toEqual(['512 B', '12.3 kB', '346 kB', '3.4 MB', '1.2 GB']);
 });

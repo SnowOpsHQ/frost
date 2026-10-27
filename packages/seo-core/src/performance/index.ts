@@ -9,7 +9,7 @@ export function speedReport(m: PerformanceMeasurement): SpeedReport {
   return { ...summary, findings: measurementFindings(summary) };
 }
 
-export { extensionOf, fromCache, hostOf, isThirdParty, isUncompressedText, mimeOf, resourceType, siteOf, sizeUnavailable, weightOf } from './classify';
+export { extensionOf, fromCache, hostOf, isThirdParty, isUncompressedText, mimeOf, registrableDomain, resourceType, siteOf, sizeUnavailable, weightOf } from './classify';
 export { formatBytes, formatCls, formatMs, formatVital } from './format';
 export { MEASURED_CHECKS, measurementFindings, PERFORMANCE_CHECKS } from './rules';
 export { navigationReport, summariseSpeed, vitalBand } from './summary';

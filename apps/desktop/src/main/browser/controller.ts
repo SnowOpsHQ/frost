@@ -369,10 +369,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (shown) detach(shown);
     // A fullscreen page that is no longer shown leaves fullscreen.
     if (hidden) fullscreen.leave(hidden);
+    // Page speed: when a document was first shown and hidden (`seo-speed.feature.md`, Background tabs).
+    if (hidden) speeds.hidden(hidden);
     const win = strip.win;
     if (!want || !tab || !win || win.isDestroyed()) return;
     win.contentView.addChildView(want);
     strip.attached = want;
+    speeds.shown(tab);
     applyBounds(tab);
     want.setVisible(true);
     // Chromium completes a hidden page's exit only once it is shown: ask again (once settled).

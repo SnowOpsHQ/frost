@@ -198,6 +198,13 @@ Everything in Phase 0–1's Global Constraints and `CONTRIBUTING.md` still holds
   count, DOM size, render-blocking head scripts (from the snapshot) and uncompressed text. Lab data,
   said in the panel and every rule.
 - [x] commit `feat(seo): page speed panel`
+- Review follow-up (`specs/seo-speed.feature.md`): main records when each tab's document was first
+  shown and hidden, so a page loaded in a background tab gets no false paint metrics; native Wayland
+  without paint timing is detected and explained; only trusted lifecycle events reach the speed world;
+  observers start at `dom-ready`; concurrent first runs share the settle; polls send only new
+  resources and refresh the DOM size every few collections; route changes restart the request count;
+  third parties by registrable domain; `THIRD_PARTY_NOTICES` shipped with the app.
+- [x] commit `fix(seo): address page speed review findings`
 
 ### Task 6: Compliance panel
 

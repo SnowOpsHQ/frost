@@ -6,6 +6,7 @@ import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion, type FuseV1Config } from '@electron/fuses';
+import { NOTICES_FILE } from './third-party-notices.ts';
 import {
   MAC_APP_CATEGORY,
   MAC_BUNDLE_ID,
@@ -73,6 +74,9 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
       appCategoryType: MAC_APP_CATEGORY,
       darwinDarkModeSupport: true,
       asar: true,
+      // The licenses of the bundled third-party packages (third-party-notices.ts), beside app.asar in
+      // resources/ (specs/seo-speed.feature.md, Licenses). Relative to the app directory Forge runs in.
+      extraResource: [NOTICES_FILE],
       ...signing,
     },
     rebuildConfig: {},

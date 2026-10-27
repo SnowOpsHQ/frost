@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { crc32, deflateSync } from 'node:zlib';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
-import { INP_HINT, PAGE_WEIGHT_WARN_BYTES, REQUEST_COUNT_WARN, SPEED_MEASURE_TIMEOUT_MS, SPEED_POLL_MS, SPEED_STATE_KEY, VITAL_THRESHOLDS } from '@app/specs/seo-speed.spec';
+import { INP_HINT, LOADED_HIDDEN_HINT, PAGE_WEIGHT_WARN_BYTES, REQUEST_COUNT_WARN, SPEED_MEASURE_TIMEOUT_MS, SPEED_POLL_MS, SPEED_STATE_KEY, VITAL_THRESHOLDS } from '@app/specs/seo-speed.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -68,6 +68,12 @@ async function startSite() {
       response
         .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         .end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>A page whose largest element is a late image</title></head><body style="margin:0"><img src="/hero.png" width="300" height="180" alt="Hero"><p>Short intro.</p></body></html>`),
+    // A page that opens /lcp in a background tab (a gesture-backed target=_blank link).
+    // The link comes first (the window may be small).
+    '/opener': (_request, response) =>
+      response
+        .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        .end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Opener</title></head><body style="margin:0"><a id="open" href="/lcp?background=1" target="_blank" style="display:block;width:200px;height:60px">Open</a></body></html>`),
     '/hero.png': (_request, response) => {
       setTimeout(() => response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }).end(HERO), 1_400);
     },
@@ -134,7 +140,7 @@ async function startSite() {
 let app: ElectronApplication;
 let chrome: Page;
 let site: Awaited<ReturnType<typeof startSite>>;
-const { go, strip, run, contentsIdAt } = chromeHelpers(
+const { go, strip, run, contentsIdAt, realClick } = chromeHelpers(
   () => app,
   () => chrome,
 );
@@ -203,6 +209,46 @@ test('lcp-late-image-e2e', async () => {
   // Inert: no images, scripts, links or inline styles in the sidebar; bars are SVG attributes.
   expect(await sidebarElements()).toEqual({ img: 0, script: 0, a: 0, style: 0 });
   expect(await chrome.locator('[data-testid="seo-speed-metric"] rect[width]').count()).toBeGreaterThan(5);
+});
+
+test('synthetic-pageshow-cannot-reset-vitals-e2e', async () => {
+  // Its own URL, so every value shown is this document's.
+  const url = await measure('/lcp?spoof=1');
+  await expect.poll(() => valueOf('lcp'), { timeout: 15_000 }).toBeGreaterThan(1_200);
+  const before = { lcp: await valueOf('lcp'), fcp: await valueOf('fcp') };
+  // The page fakes a back/forward-cache restore and a visibility change: web-vitals would start its
+  // metrics over on a pageshow; in the speed world only the browser's own events reach it.
+  await run(await contentsIdAt(url), `(() => { window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })); document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('pagehide')); return true; })()`);
+  await chrome.waitForTimeout(SPEED_POLL_MS * 3);
+  expect({ lcp: await valueOf('lcp'), fcp: await valueOf('fcp') }).toEqual(before);
+  await expect(chrome.getByTestId('seo-speed-live')).toHaveAttribute('data-state', 'live');
+});
+
+test('background-tab-has-no-false-paint-metrics-e2e', async () => {
+  const opener = await measure('/opener');
+  // A real click on a target=_blank link: the page opens in a background tab and loads there.
+  const tabs = await strip().count();
+  await realClick(await contentsIdAt(opener), '#open');
+  await expect(strip()).toHaveCount(tabs + 1);
+  const background = `${site.origin}/lcp?background=1`;
+  await contentsIdAt(background);
+  await chrome.waitForTimeout(4_000);
+  // The user switches to it seconds later: it paints only now, so FCP / LCP / CLS would be "time until the switch".
+  await strip().nth(tabs).click();
+  await expect(chrome.getByTestId('seo-audit-url')).toHaveAttribute('title', `⁨${background}⁩`, { timeout: AUDIT_WAIT });
+  await expect(speed()).toHaveAttribute('data-source', 'live', { timeout: AUDIT_WAIT });
+  await chrome.waitForTimeout(SPEED_POLL_MS * 2);
+  for (const name of ['lcp', 'fcp', 'cls']) {
+    expect(await valueOf(name), name).toBeNull();
+    await expect(metric(name).getByTestId('seo-speed-metric-hint')).toHaveText(LOADED_HIDDEN_HINT);
+  }
+  // TTFB is the server's: still measured. And no paint finding, live or in the audit.
+  expect(await valueOf('ttfb')).toBeGreaterThanOrEqual(0);
+  expect((await issueIds()).filter((id) => /^(lcp|fcp|cls)-/.test(id ?? ''))).toEqual([]);
+  // The audit's own measurement (the health score, the rail dot) has none either: the page has no
+  // other speed issue, so the dot stays green once that measurement is in.
+  await chrome.waitForTimeout(SPEED_MEASURE_TIMEOUT_MS + 1_000);
+  await expect(railItem('speed')).toHaveAttribute('data-status', 'pass');
 });
 
 test('cls-flagged-e2e', async () => {

@@ -1,5 +1,17 @@
 import { rankFindings, type Finding, type NavigationPhase, type NavigationReport, type SeoAudit, type SpeedReport, type SpeedResponse, type SpeedSummary, type VitalReading } from '@app/seo-core';
-import { INP_HINT, SNAPSHOT_PERFORMANCE_RULES, VITAL_THRESHOLDS, type VitalMetric } from '@app/specs/seo-speed.spec';
+import {
+  BUFFER_FULL_NOTE,
+  IFRAME_NOTE,
+  INP_HINT,
+  LOADED_HIDDEN_HINT,
+  LOW_RESOURCES_NOTE,
+  SNAPSHOT_PERFORMANCE_RULES,
+  SOFT_NAVIGATION_NOTE,
+  VITAL_THRESHOLDS,
+  WAYLAND_HINT,
+  WAYLAND_PAINT_NOTE,
+  type VitalMetric,
+} from '@app/specs/seo-speed.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 
 // Pure helpers behind the Speed panel (spec `seo-speed.spec.ts`; acceptance `seo-speed.feature.md`,
@@ -23,11 +35,29 @@ export function meterGeometry(metric: VitalMetric, value: number | null): { read
 }
 
 /** Why a metric has no value (`null` when it has one). */
-export function missingVitalText(reading: VitalReading, summary: Pick<SpeedSummary, 'loadedHidden'>): string | null {
+export function missingVitalText(reading: VitalReading, summary: Pick<SpeedSummary, 'loadedHidden' | 'paintUnavailable'>): string | null {
   if (reading.value !== null) return null;
   if (reading.metric === 'inp') return INP_HINT;
-  if (summary.loadedHidden && (reading.metric === 'lcp' || reading.metric === 'fcp' || reading.metric === 'cls')) return 'Loaded in a background tab: re-measure to see it';
+  const paintMetric = reading.metric === 'lcp' || reading.metric === 'fcp' || reading.metric === 'cls';
+  if (summary.loadedHidden && paintMetric) return LOADED_HIDDEN_HINT;
+  if (summary.paintUnavailable && paintMetric) return WAYLAND_HINT;
   return 'Not reported yet';
+}
+
+export interface SpeedNote {
+  readonly id: 'wayland' | 'soft-navigation' | 'low-resources' | 'buffer-full' | 'iframes';
+  readonly text: string;
+}
+
+/** The panel's notes about the measurement, most important first. */
+export function speedNotes(summary: Pick<SpeedSummary, 'softNavigation' | 'paintUnavailable' | 'resourcesLow' | 'bufferFull'>): SpeedNote[] {
+  const notes: SpeedNote[] = [];
+  if (summary.paintUnavailable) notes.push({ id: 'wayland', text: WAYLAND_PAINT_NOTE });
+  if (summary.softNavigation) notes.push({ id: 'soft-navigation', text: SOFT_NAVIGATION_NOTE });
+  if (summary.resourcesLow) notes.push({ id: 'low-resources', text: LOW_RESOURCES_NOTE });
+  if (summary.bufferFull) notes.push({ id: 'buffer-full', text: BUFFER_FULL_NOTE });
+  notes.push({ id: 'iframes', text: IFRAME_NOTE });
+  return notes;
 }
 
 export const PHASE_LABELS: Readonly<Record<NavigationPhase, string>> = {

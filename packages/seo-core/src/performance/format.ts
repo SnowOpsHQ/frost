@@ -9,10 +9,10 @@ export function formatMs(ms: number): string {
   return `${(Math.round(ms / 100) / 10).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`;
 }
 
-/** A layout-shift score: two decimals, three for a small non-zero value (`0.004`). */
+/** A layout-shift score, always with three decimals, so values near the 0.1 and 0.25 thresholds read right (`0.100`, `0.104`). */
 export function formatCls(value: number): string {
   if (!Number.isFinite(value) || value < 0) return '–';
-  return value > 0 && value < 0.01 ? value.toFixed(3) : value.toFixed(2);
+  return value.toFixed(3);
 }
 
 /** Bytes in SI units: `512 B`, `12.3 kB`, `3.4 MB`, `1.2 GB`. */

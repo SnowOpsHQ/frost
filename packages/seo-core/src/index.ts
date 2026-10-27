@@ -113,6 +113,7 @@ export {
   mimeOf,
   navigationReport,
   NAVIGATION_PHASES,
+  registrableDomain,
   resourceType,
   siteOf,
   sizeUnavailable,

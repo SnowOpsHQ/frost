@@ -79,16 +79,28 @@ export const VitalValuesSchema = z.strictObject(Object.fromEntries(VITAL_METRICS
  * - `url`: the document's URL when measured (`document.URL`, at most `maxUrlChars`, http(s));
  * - `measuredAt` (epoch ms) and `durationMs` (how long this collection took in the page);
  * - `vitals` (`VitalValuesSchema`);
- * - `loadedHidden`: the page was hidden (a background tab) before its first paint, so paint metrics
- *   are not meaningful and web-vitals reports none;
+ * - `loadedHidden`: the page was hidden (a background tab) before its first paint, by the
+ *   `visibility-state` entries or by main's first-shown / first-hidden times (`SHOWN_TOLERANCE_MS`):
+ *   paint metrics are not meaningful, so FCP, LCP and CLS are `null`;
  * - `navigation` (`null` when the document has no navigation entry);
  * - `resources`: the first `maxResources` entries observed, `resourceTotal` all of them, and
  *   `overflow` the summed sizes of those not itemised (`weight`: each one's transfer size, or its
  *   encoded size when it came from the cache);
- * - `bufferFull`: the browser's resource timing buffer was already full when the collector started
- *   observing, so requests made before then may be missing;
+ * - `resourceOffset` / `resourceEpoch`: the collector may answer only the records added since the
+ *   ones main already holds (`resourceOffset` of them, in the same `resourceEpoch`; a route change
+ *   starts a new epoch). Main puts the list back together before the worker sees it, so here the
+ *   offset is always 0 and `resources` is the whole list;
+ * - `softNavigation`: the URL changed inside the document (a route change) since it loaded; the
+ *   resources are counted from that change, the vitals and navigation timing from the page load;
+ * - `bufferFull`: the browser's resource timing buffer was full (Chromium's default size, 250
+ *   entries, reached before the collector observed, or a `resourcetimingbufferfull` event since),
+ *   so requests may be missing. Approximate: a page that changed its buffer size can defeat it;
+ * - `paintUnavailable`: native Wayland with no paint entry `PAINT_GRACE_MS` after the load event;
+ * - `resourceHints`: how many of the page's elements usually fetch something (`img[src]`,
+ *   `script[src]`, stylesheet links), for the "too few requests" note;
  * - `dom`: the document's element count, and its depth (the deepest element, `html` at 1) from a
- *   walk of at most `maxDomWalk` elements within `domWalkBudgetMs` (`depthComplete` false past it).
+ *   walk of at most `maxDomWalk` elements within `domWalkBudgetMs` (`depthComplete` false past it),
+ *   refreshed every `DOM_REFRESH_EVERY` collections.
  */
 export const PerformanceMeasurementSchema = z
   .strictObject({
@@ -101,7 +113,12 @@ export const PerformanceMeasurementSchema = z
     resources: z.array(ResourceRecordSchema).max(S.maxResources),
     resourceTotal: count,
     overflow: z.strictObject({ transfer: bytes, encoded: bytes, decoded: bytes, weight: bytes }),
+    resourceOffset: z.literal(0),
+    resourceEpoch: count,
+    softNavigation: z.boolean(),
     bufferFull: z.boolean(),
+    paintUnavailable: z.boolean(),
+    resourceHints: count,
     dom: z.strictObject({ elements: count, depth: count, depthComplete: z.boolean() }),
   })
   .refine((m) => m.resourceTotal >= m.resources.length, { message: 'a total is below its list' });

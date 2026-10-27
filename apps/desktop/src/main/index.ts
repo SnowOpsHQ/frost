@@ -22,7 +22,8 @@ import { createRobotsFetcher, netHop, pendingRobots, type RobotsFetcher } from '
 import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
 import { observeMainFrames } from './browser/web-request';
-import { runVitals, withTimeout } from './seo/vitals';
+import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './seo/vitals';
+import { createShownTimes } from './seo/vitals-shown';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
 import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
@@ -124,9 +125,14 @@ function start(): void {
   // (web-vitals and frost's observers, never the main world); its answer is validated and summarised
   // in the analysis worker. The audit takes one measurement beside the snapshot (the health score's
   // performance rules); the Speed panel polls `seo.measureSpeed` for live values.
+  // Main owns "when was this document first shown" (frost's background tabs report `visible`), and
+  // knows whether paint timing can arrive at all (native Wayland may never report it).
+  const shownTimes = createShownTimes();
+  const wayland = nativeWayland(process.platform, app.commandLine.getSwitchValue('ozone-platform'), app.commandLine.getSwitchValue('ozone-platform-hint'), process.env);
+  const collect = (contents: WebContents, options: Partial<CollectOptions>): Promise<unknown> => runVitals(contents, { ...shownTimes.of(contents.id), ...options, nativeWayland: wayland });
   const measureForAudit = (contents: WebContents): Promise<unknown> =>
     withTimeout(
-      runVitals(contents).catch(() => null),
+      collect(contents, {}).catch(() => null),
       SPEED_MEASURE_TIMEOUT_MS,
       null,
     );
@@ -143,7 +149,16 @@ function start(): void {
   };
 
   app.on('web-contents-created', (_event, contents) => {
-    if (isBrowseContents(contents)) responses.watch(contents);
+    if (!isBrowseContents(contents)) return;
+    responses.watch(contents);
+    // The speed collector's observers start at `dom-ready` of the active tab's document, before a
+    // page's own scripts can clear the timing buffers for long (seo-speed.feature.md).
+    const id = contents.id;
+    contents.on('dom-ready', () => {
+      const tabId = browser.tabIdOf(contents);
+      if (tabId !== null && tabId === browser.getState().activeTabId) void collect(contents, { prime: true }).catch(() => undefined);
+    });
+    contents.once('destroyed', () => shownTimes.forget(id));
   });
   const browser = createBrowserController({
     createView: createTabView,
@@ -153,7 +168,7 @@ function start(): void {
     contextMenu: showContextMenu,
     seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
     highlight: { paint: runHighlight, ended: watchHighlight },
-    speed: { measure: runVitals, analyse: (raw) => analyzer.analyseSpeed(raw) },
+    speed: { measure: collect, analyse: (raw) => analyzer.analyseSpeed(raw), times: shownTimes },
     // The accessibility check (specs/seo-compliance.feature.md): axe-core in the tab's own isolated
     // accessibility world, on request only; its answer is validated in the analysis worker.
     accessibility: runAccessibilityCheck,

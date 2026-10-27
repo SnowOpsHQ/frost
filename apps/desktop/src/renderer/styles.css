@@ -4483,6 +4483,39 @@ input {
   border-top: 0;
 }
 
+.seo-speed-warning {
+  margin: 10px 0 0;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--caution) 13%, transparent);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.seo-speed-since {
+  margin: 2px 2px -4px;
+}
+
+.seo-speed-soft {
+  margin: 0;
+}
+
+.seo-speed-source {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.seo-speed-source[data-source='live'] {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .seo-speed-live[data-state='live'] .seo-speed-live-dot {
     animation: none;

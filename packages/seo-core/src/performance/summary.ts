@@ -1,4 +1,4 @@
-import { CORE_WEB_VITALS, RESOURCE_TYPES, SPEED_PANEL_LIMITS, VITAL_BANDS, VITAL_METRICS, VITAL_THRESHOLDS, type ResourceType, type VitalBand, type VitalMetric } from '@app/specs/seo-speed.spec';
+import { CORE_WEB_VITALS, LOW_RESOURCES_MIN_HINTS, LOW_RESOURCES_RATIO, RESOURCE_TYPES, SPEED_PANEL_LIMITS, VITAL_BANDS, VITAL_METRICS, VITAL_THRESHOLDS, type ResourceType, type VitalBand, type VitalMetric } from '@app/specs/seo-speed.spec';
 import { fromCache, hostOf, isThirdParty, isUncompressedText, resourceType, sizeUnavailable, weightOf } from './classify';
 import type { HostShare, LargeResource, NavigationPhase, NavigationReport, NavigationSpan, NavigationTiming, PerformanceMeasurement, ResourceBreakdown, ResourceRecord, SpeedSummary, UncompressedResource, VitalReading } from './model';
 
@@ -138,5 +138,8 @@ export function summariseSpeed(m: PerformanceMeasurement): SpeedSummary {
     dom: { ...m.dom },
     navigation: m.navigation ? navigationReport(m.navigation) : null,
     bufferFull: m.bufferFull,
+    softNavigation: m.softNavigation,
+    paintUnavailable: m.paintUnavailable,
+    resourcesLow: !m.softNavigation && m.resourceHints >= LOW_RESOURCES_MIN_HINTS && m.resourceTotal < m.resourceHints * LOW_RESOURCES_RATIO,
   };
 }

@@ -8,7 +8,7 @@ import webVitalsSource from 'virtual:web-vitals-iife';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS } from '@app/specs/seo-limits.spec';
 import { A11Y_WORLD_ID, SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { PageSnapshotSchema } from '@app/specs/seo-snapshot.spec';
-import { MAX_BLOCKING_SCRIPTS, SPEED_LIMITS, SPEED_MEASURE_TIMEOUT_MS, SPEED_MIN_INTERVAL_MS, SPEED_SETTLE_MS, SPEED_STATE_KEY, SPEED_WORLD_ID, type SpeedLimits } from '@app/specs/seo-speed.spec';
+import { DOM_REFRESH_EVERY, MAX_BLOCKING_SCRIPTS, PAINT_GRACE_MS, SHOWN_TOLERANCE_MS, SPEED_LIMITS, TRUSTED_ONLY_EVENTS, SPEED_MEASURE_TIMEOUT_MS, SPEED_MIN_INTERVAL_MS, SPEED_SETTLE_MS, SPEED_STATE_KEY, SPEED_WORLD_ID, type SpeedLimits } from '@app/specs/seo-speed.spec';
 import { PerformanceMeasurementSchema, type PerformanceMeasurement } from '@app/specs/seo-speed.schema.spec';
 import { commit, FakeHostWindow, FakeTabView } from '../../../test/controller-fakes';
 import { rawSnapshot } from '../../../test/seo-fakes';
@@ -20,7 +20,9 @@ import { contextSource, knownInput, laterInput } from '../context-source';
 import { extractPage, type PageDocument } from '../extract';
 import { pendingRobots } from '../robots-fetch';
 import { extractSecurity, RESOURCE_SELECTOR, type SecurityDocument } from '../security-extract';
-import { measurePage, runVitals, VITALS_SCRIPT, type SpeedEnvironment } from '../vitals';
+import { COLLECT_CONSTANTS, DEFAULT_COLLECT_OPTIONS, measurePage, nativeWayland, runVitals, vitalsScript, type CollectOptions, type SpeedEnvironment } from '../vitals';
+import { createShownTimes } from '../vitals-shown';
+import { reassemble } from '../vitals-tabs';
 
 const A = 'https://example.com/a';
 const B = 'https://example.com/b';
@@ -60,7 +62,12 @@ function rawMeasurement(url: string, changes: Partial<PerformanceMeasurement> = 
     resources: [{ url: `${url}.js`, urlCut: false, initiator: 'script', contentType: 'text/javascript', contentEncoding: 'gzip', transfer: 300, encoded: 200, decoded: 900, start: 120, duration: 30, blocking: false }],
     resourceTotal: 1,
     overflow: { transfer: 0, encoded: 0, decoded: 0, weight: 0 },
+    resourceOffset: 0,
+    resourceEpoch: 0,
+    softNavigation: false,
     bufferFull: false,
+    paintUnavailable: false,
+    resourceHints: 1,
     dom: { elements: 50, depth: 6, depthComplete: true },
     ...changes,
   };
@@ -77,7 +84,8 @@ interface FakeEntry {
 }
 
 /** A fake isolated world: its Performance API, its observers, a small DOM and timers. */
-function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[]; paint?: FakeEntry[]; elements?: number; tree?: unknown } = {}) {
+function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[]; paint?: FakeEntry[]; elements?: number; tree?: unknown; hints?: number } = {}) {
+  const domReads = { count: 0 };
   const observers: { callback: (list: { getEntries(): FakeEntry[] }) => void; options: unknown }[] = [];
   const timers: (() => void)[] = [];
   const reports = new Map<string, (metric: { value: number }) => void>();
@@ -89,14 +97,33 @@ function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[];
     onFCP: (report: (m: { value: number }) => void, o: unknown) => (reports.set('fcp', report), libraryOptions.push(o)),
     onTTFB: (report: (m: { value: number }) => void, o: unknown) => (reports.set('ttfb', report), libraryOptions.push(o)),
   };
+  const listeners: { target: unknown; type: string; listener: (event: { isTrusted: boolean }) => unknown }[] = [];
+  /** A world's EventTarget: its prototype's methods record listeners (the collector wraps them). */
+  class Target {
+    addEventListener(type: string, listener: (event: { isTrusted: boolean }) => unknown) {
+      listeners.push({ target: this, type, listener });
+    }
+    removeEventListener(type: string, listener: (event: { isTrusted: boolean }) => unknown) {
+      const at = listeners.findIndex((l) => l.target === this && l.type === type && l.listener === listener);
+      if (at >= 0) listeners.splice(at, 1);
+    }
+  }
+  /** Fires `type` at every listener registered for it, as the browser (trusted) or a page script would. */
+  const fire = (type: string, isTrusted: boolean) => {
+    for (const l of listeners.filter((x) => x.type === type)) l.listener({ isTrusted });
+  };
+  const clock = { now: 1_000, url: A };
   const nav: FakeEntry = { name: A, entryType: 'navigation', startTime: 0, duration: 400, type: 'navigate', redirectCount: 0, responseStart: 90, responseEnd: 100, loadEventEnd: 400, transferSize: 5_000, encodedBodySize: 4_700, decodedBodySize: 20_000, contentType: 'text/html', contentEncoding: 'gzip', domainLookupStart: -5, connectEnd: Number.NaN };
   const leaf = { firstElementChild: null, nextElementSibling: null, parentElement: null };
   const env = {
     performance: {
-      now: () => 1_000,
-      getEntriesByType: (type: string) => (type === 'navigation' ? [nav] : type === 'resource' ? (options.resources ?? []) : type === 'visibility-state' ? (options.visibility ?? [{ name: 'visible', entryType: 'visibility-state', startTime: 0, duration: 0 }]) : []),
+      timeOrigin: 1_760_000_000_000,
+      now: () => clock.now,
+      getEntriesByType: (type: string) =>
+        type === 'navigation' ? [nav] : type === 'resource' ? (options.resources ?? []) : type === 'visibility-state' ? (options.visibility ?? [{ name: 'visible', entryType: 'visibility-state', startTime: 0, duration: 0 }]) : type === 'paint' ? (options.paint ?? []) : [],
       getEntriesByName: (name: string) => (name === 'first-contentful-paint' ? (options.paint ?? []) : []),
     },
+    EventTarget: Target,
     PerformanceObserver: class {
       constructor(callback: (list: { getEntries(): FakeEntry[] }) => void) {
         observers.push({ callback, options: null });
@@ -105,14 +132,26 @@ function fakeWorld(options: { resources?: FakeEntry[]; visibility?: FakeEntry[];
         observers.at(-1)!.options = o;
       }
     },
-    document: { URL: A, documentElement: (options.tree ?? leaf) as never, getElementsByTagName: () => ({ length: options.elements ?? 1 }) },
+    document: {
+      get URL() {
+        return clock.url;
+      },
+      documentElement: (options.tree ?? leaf) as never,
+      getElementsByTagName: () => {
+        domReads.count += 1;
+        return { length: options.elements ?? 1 };
+      },
+      querySelectorAll: () => ({ length: options.hints ?? 2 }),
+    },
     global: {} as Record<string, unknown>,
     setTimeout: (callback: () => void) => timers.push(callback),
   } satisfies SpeedEnvironment;
-  return { env, library, observers, timers, reports, libraryOptions, deliver: (entries: FakeEntry[]) => observers[0]!.callback({ getEntries: () => entries }) };
+  return { env, library, observers, timers, reports, libraryOptions, fire, clock, domReads, deliver: (entries: FakeEntry[]) => observers[0]!.callback({ getEntries: () => entries }) };
 }
 
 const LIMITS: SpeedLimits = { ...SPEED_LIMITS, maxResources: 3, maxResourceUrlChars: 30 };
+const consts = (settleMs: number) => ({ ...COLLECT_CONSTANTS, settleMs });
+const opts = (changes: Partial<CollectOptions> = {}): CollectOptions => ({ ...DEFAULT_COLLECT_OPTIONS, ...changes });
 const entry = (name: string, fields: Partial<FakeEntry> = {}): FakeEntry => ({ name, entryType: 'resource', startTime: 10, duration: 20, initiatorType: 'script', transferSize: 1_300, encodedBodySize: 1_000, decodedBodySize: 4_000, contentType: 'text/javascript', contentEncoding: 'br', renderBlockingStatus: 'non-blocking', ...fields });
 
 describe('collector', () => {
@@ -126,18 +165,22 @@ describe('collector', () => {
     expect(world).toBe(SPEED_WORLD_ID);
     expect([0, 999, SEO_WORLD_ID, A11Y_WORLD_ID]).not.toContain(world);
     expect(new Set([SEO_WORLD_ID, A11Y_WORLD_ID, SPEED_WORLD_ID]).size).toBe(3);
-    expect(scripts).toEqual([{ code: VITALS_SCRIPT }]);
+    expect(scripts).toEqual([{ code: vitalsScript() }]);
     expect(rest).toEqual([]);
   });
 
   test('vitals-script-bundles-web-vitals-and-is-self-contained', () => {
     // The library is in the script, as a local of a function (no `webVitals` global, even in the world).
     expect(webVitalsSource.startsWith('var webVitals=')).toBe(true);
-    expect(VITALS_SCRIPT).toContain(webVitalsSource.trim());
-    expect(VITALS_SCRIPT).toContain('function () {\nvar webVitals=');
-    expect(VITALS_SCRIPT).toContain(JSON.stringify(SPEED_LIMITS));
-    expect(VITALS_SCRIPT).toContain(JSON.stringify(SPEED_STATE_KEY));
-    expect(() => new Function(VITALS_SCRIPT)).not.toThrow();
+    const script = vitalsScript();
+    expect(script).toContain(webVitalsSource.trim());
+    expect(script).toContain('function () {\nvar webVitals=');
+    expect(script).toContain(JSON.stringify(SPEED_LIMITS));
+    expect(script).toContain(JSON.stringify(SPEED_STATE_KEY));
+    expect(() => new Function(script)).not.toThrow();
+    // Each run's options are its last argument, as JSON, cleaned (never code).
+    expect(vitalsScript({ shownAt: 5, since: 3, epoch: 2, nativeWayland: true }).endsWith(`, ${JSON.stringify({ prime: false, shownAt: 5, hiddenAt: null, since: 3, epoch: 2, nativeWayland: true })})`)).toBe(true);
+    expect(vitalsScript({ shownAt: Number.NaN, since: -4, epoch: 1.5 } as Partial<CollectOptions>).endsWith(`, ${JSON.stringify(DEFAULT_COLLECT_OPTIONS)})`)).toBe(true);
     const own = measurePage.toString();
     for (const forbidden of [/\brequire\s*\(/, /\bprocess\./, /\belectron\b/i, /\bipcRenderer\b/, /\binnerHTML\b/, /\.(appendChild|insertBefore|removeChild|setAttribute|remove)\(/, /\beval\s*\(/, /\bwindow\./]) expect(own, String(forbidden)).not.toMatch(forbidden);
   });
@@ -145,7 +188,7 @@ describe('collector', () => {
   test('collector-installs-once-and-waits-for-buffered-entries', async () => {
     const world = fakeWorld({ resources: [entry('https://example.com/early.js')] });
     const load = vi.fn(() => world.library);
-    const first = measurePage(world.env, load, LIMITS, SPEED_SETTLE_MS, SPEED_STATE_KEY, SNAPSHOT_LIMITS.maxUrlChars);
+    const first = measurePage(world.env, load, LIMITS, consts(SPEED_SETTLE_MS), opts());
     // The first run answers only after the settle delay, once the buffered entries arrived.
     expect(first).toBeInstanceOf(Promise);
     expect(load).toHaveBeenCalledOnce();
@@ -170,7 +213,7 @@ describe('collector', () => {
     // Later runs answer at once from the same state, with what arrived since.
     world.reports.get('inp')!({ value: 240 });
     world.reports.get('lcp')!({ value: 2_000 });
-    const second = measurePage(world.env, load, LIMITS, SPEED_SETTLE_MS, SPEED_STATE_KEY, SNAPSHOT_LIMITS.maxUrlChars) as PerformanceMeasurement;
+    const second = measurePage(world.env, load, LIMITS, consts(SPEED_SETTLE_MS), opts()) as PerformanceMeasurement;
     expect(second).not.toBeInstanceOf(Promise);
     expect(load).toHaveBeenCalledOnce();
     expect(world.observers).toHaveLength(1);
@@ -179,7 +222,7 @@ describe('collector', () => {
 
   test('collector-caps-resources-and-keeps-totals', async () => {
     const world = fakeWorld();
-    const run = () => measurePage(world.env, () => world.library, LIMITS, 0, SPEED_STATE_KEY, SNAPSHOT_LIMITS.maxUrlChars);
+    const run = () => measurePage(world.env, () => world.library, LIMITS, consts(0), opts());
     const first = run();
     world.deliver([
       entry('https://example.com/a-very-long-url-that-is-cut-here.js'),
@@ -208,19 +251,19 @@ describe('collector', () => {
     };
     const tree = node([node(), node([node([node()]), node()])]);
     const hidden = fakeWorld({ tree, elements: 6, visibility: [{ name: 'hidden', entryType: 'visibility-state', startTime: 0, duration: 0 }], paint: [{ name: 'first-contentful-paint', entryType: 'paint', startTime: 900, duration: 0 }] });
-    const first = measurePage(hidden.env, () => hidden.library, LIMITS, 0, SPEED_STATE_KEY, SNAPSHOT_LIMITS.maxUrlChars);
+    const first = measurePage(hidden.env, () => hidden.library, LIMITS, consts(0), opts());
     hidden.timers[0]!();
     const m = (await first) as PerformanceMeasurement;
     expect(m.loadedHidden).toBe(true);
     expect(m.dom).toEqual({ elements: 6, depth: 4, depthComplete: true });
     // Hidden only after the first paint: not "loaded hidden".
     const later = fakeWorld({ visibility: [{ name: 'visible', entryType: 'visibility-state', startTime: 0, duration: 0 }, { name: 'hidden', entryType: 'visibility-state', startTime: 5_000, duration: 0 }], paint: [{ name: 'first-contentful-paint', entryType: 'paint', startTime: 300, duration: 0 }] });
-    const second = measurePage(later.env, () => later.library, LIMITS, 0, SPEED_STATE_KEY, SNAPSHOT_LIMITS.maxUrlChars);
+    const second = measurePage(later.env, () => later.library, LIMITS, consts(0), opts());
     later.timers[0]!();
     expect(((await second) as PerformanceMeasurement).loadedHidden).toBe(false);
     // The depth walk is bounded.
     const bounded = fakeWorld({ tree });
-    const third = measurePage(bounded.env, () => bounded.library, { ...LIMITS, maxDomWalk: 3 }, 0, SPEED_STATE_KEY, SNAPSHOT_LIMITS.maxUrlChars);
+    const third = measurePage(bounded.env, () => bounded.library, { ...LIMITS, maxDomWalk: 3 }, consts(0), opts());
     bounded.timers[0]!();
     expect(((await third) as PerformanceMeasurement).dom).toMatchObject({ depthComplete: false });
   });
@@ -230,7 +273,7 @@ describe('collector', () => {
     const env = { ...world.env, PerformanceObserver: undefined };
     const first = measurePage(env, () => {
       throw new Error('no');
-    }, LIMITS, 0, SPEED_STATE_KEY, SNAPSHOT_LIMITS.maxUrlChars);
+    }, LIMITS, consts(0), opts());
     world.timers[0]!();
     const m = PerformanceMeasurementSchema.parse(await first);
     expect(m.vitals).toEqual({ lcp: null, cls: null, inp: null, fcp: null, ttfb: null });
@@ -266,6 +309,210 @@ describe('extractor', () => {
     expect(run().blockingScripts).toEqual({ urls: ['https://example.com/blocking.js', 'https://cdn.example.net/also.js'], total: 2 });
     expect(run(1).blockingScripts).toEqual({ urls: ['https://example.com/blocking.js'], total: 2 });
     expect(MAX_BLOCKING_SCRIPTS).toBe(20);
+  });
+});
+
+describe('collector guards and deltas', () => {
+  test('collector-ignores-synthetic-lifecycle-events', async () => {
+    const world = fakeWorld();
+    const seen: string[] = [];
+    // A library that listens for lifecycle events and something else.
+    const library = {
+      ...world.library,
+      onLCP: (report: (m: { value: number }) => void) => {
+        const target = new world.env.EventTarget();
+        target.addEventListener('pageshow', () => void seen.push('pageshow'));
+        target.addEventListener('click', () => void seen.push('click'));
+        const handler = () => void seen.push('visibilitychange');
+        target.addEventListener('visibilitychange', handler);
+        target.removeEventListener('visibilitychange', handler);
+        report({ value: 10 });
+      },
+    };
+    const first = measurePage(world.env, () => library, LIMITS, consts(0), opts());
+    world.timers[0]!();
+    await first;
+    // A page's synthetic pageshow reaches none of the world's handlers; the browser's does.
+    world.fire('pageshow', false);
+    world.fire('click', false);
+    expect(seen).toEqual(['click']);
+    world.fire('pageshow', true);
+    expect(seen).toEqual(['click', 'pageshow']);
+    // A guarded listener is still removable by its original function.
+    world.fire('visibilitychange', true);
+    expect(seen).toEqual(['click', 'pageshow']);
+    expect(TRUSTED_ONLY_EVENTS).toEqual(['pageshow', 'visibilitychange', 'prerenderingchange']);
+  });
+
+  test('collector-runs-meanwhile-await-the-settle', async () => {
+    const world = fakeWorld();
+    const load = vi.fn(() => world.library);
+    // Main primes at dom-ready: installed, nothing answered.
+    expect(measurePage(world.env, load, LIMITS, consts(SPEED_SETTLE_MS), opts({ prime: true }))).toBeNull();
+    expect(load).toHaveBeenCalledOnce();
+    // Two runs while the buffered entries are still arriving both wait for them.
+    const a = measurePage(world.env, load, LIMITS, consts(SPEED_SETTLE_MS), opts());
+    const b = measurePage(world.env, load, LIMITS, consts(SPEED_SETTLE_MS), opts());
+    expect(a).toBeInstanceOf(Promise);
+    expect(b).toBeInstanceOf(Promise);
+    world.deliver([entry('https://example.com/early.js')]);
+    world.reports.get('fcp')!({ value: 300 });
+    world.timers[0]!();
+    for (const answer of [await a, await b]) expect(answer).toMatchObject({ resourceTotal: 1, vitals: { fcp: 300 } });
+    expect(load).toHaveBeenCalledOnce();
+    expect(world.timers).toHaveLength(1);
+    // Afterwards: at once.
+    expect(measurePage(world.env, load, LIMITS, consts(SPEED_SETTLE_MS), opts())).not.toBeInstanceOf(Promise);
+  });
+
+  test('collector-drops-paint-metrics-for-background-loads', async () => {
+    const paint = [{ name: 'first-contentful-paint', entryType: 'paint', startTime: 300, duration: 0 }];
+    const run = async (o: Partial<CollectOptions>) => {
+      const world = fakeWorld({ paint });
+      const first = measurePage(world.env, () => world.library, LIMITS, consts(0), opts(o));
+      world.reports.get('lcp')!({ value: 2_000 });
+      world.reports.get('fcp')!({ value: 2_000 });
+      world.reports.get('cls')!({ value: 0.2 });
+      world.reports.get('ttfb')!({ value: 50 });
+      world.timers[0]!();
+      return PerformanceMeasurementSchema.parse(await first);
+    };
+    const origin = 1_760_000_000_000;
+    // Shown before the document began (an active tab): measured as is.
+    expect(await run({ shownAt: origin - 5_000 })).toMatchObject({ loadedHidden: false, vitals: { lcp: 2_000, fcp: 2_000, cls: 0.2 } });
+    expect(await run({ shownAt: origin + SHOWN_TOLERANCE_MS })).toMatchObject({ loadedHidden: false });
+    // First shown seconds after it began (opened in a background tab): FCP, LCP and CLS dropped.
+    expect(await run({ shownAt: origin + 4_000 })).toMatchObject({ loadedHidden: true, vitals: { lcp: null, fcp: null, cls: null, ttfb: 50 } });
+    // Hidden before its first paint (the user switched away while it loaded).
+    expect(await run({ shownAt: origin - 10, hiddenAt: origin + 100 })).toMatchObject({ loadedHidden: true, vitals: { lcp: null } });
+    // Hidden only after it painted: kept.
+    expect(await run({ shownAt: origin - 10, hiddenAt: origin + 5_000 })).toMatchObject({ loadedHidden: false, vitals: { lcp: 2_000 } });
+  });
+
+  test('collector-says-when-paint-is-unavailable-under-wayland', async () => {
+    const run = async (o: Partial<CollectOptions>, now: number, paint: FakeEntry[] = []) => {
+      const world = fakeWorld({ paint });
+      world.clock.now = now;
+      const first = measurePage(world.env, () => world.library, LIMITS, consts(0), opts(o));
+      world.timers[0]!();
+      return ((await first) as PerformanceMeasurement).paintUnavailable;
+    };
+    // The load event ended at 400 ms: only after the grace period, only without any paint entry, only on native Wayland.
+    expect(await run({ nativeWayland: true }, 400 + PAINT_GRACE_MS)).toBe(true);
+    expect(await run({ nativeWayland: true }, 400 + PAINT_GRACE_MS - 1)).toBe(false);
+    expect(await run({ nativeWayland: false }, 400 + PAINT_GRACE_MS)).toBe(false);
+    expect(await run({ nativeWayland: true }, 400 + PAINT_GRACE_MS, [{ name: 'first-paint', entryType: 'paint', startTime: 50, duration: 0 }])).toBe(false);
+  });
+
+  test('collector-answers-only-new-resources-and-restarts-on-route-change', async () => {
+    const world = fakeWorld();
+    const run = (o: Partial<CollectOptions>) => measurePage(world.env, () => world.library, { ...SPEED_LIMITS }, consts(0), opts(o)) as PerformanceMeasurement;
+    const first = measurePage(world.env, () => world.library, { ...SPEED_LIMITS }, consts(0), opts());
+    world.deliver([entry('https://example.com/1.js'), entry('https://example.com/2.js')]);
+    world.timers[0]!();
+    expect(await first).toMatchObject({ resourceOffset: 0, resourceEpoch: 0, resourceTotal: 2, softNavigation: false });
+    world.deliver([entry('https://example.com/3.js')]);
+    // Main holds two of epoch 0: only the third comes back.
+    const delta = run({ since: 2, epoch: 0 });
+    expect(delta.resources.map((r) => r.url)).toEqual(['https://example.com/3.js']);
+    expect(delta).toMatchObject({ resourceOffset: 2, resourceTotal: 3 });
+    // Another epoch, or more than there is: the whole list.
+    expect(run({ since: 2, epoch: 5 })).toMatchObject({ resourceOffset: 0, resourceTotal: 3 });
+    expect(run({ since: 9, epoch: 0 })).toMatchObject({ resourceOffset: 0 });
+    // A fragment is no route change; another path is: a new epoch, the requests start again.
+    world.clock.url = `${A}#section`;
+    expect(run({ since: 3, epoch: 0 })).toMatchObject({ resourceEpoch: 0, resourceOffset: 3 });
+    world.clock.url = `${A}/route`;
+    const routed = run({ since: 3, epoch: 0 });
+    expect(routed).toMatchObject({ resourceEpoch: 1, resourceOffset: 0, resourceTotal: 0, resources: [], softNavigation: true });
+    world.deliver([entry('https://example.com/route.json', { initiatorType: 'fetch' })]);
+    expect(run({ since: 0, epoch: 1 })).toMatchObject({ resourceTotal: 1, softNavigation: true });
+  });
+
+  test('collector-refreshes-the-dom-every-n-collections', async () => {
+    const world = fakeWorld({ hints: 7 });
+    const first = measurePage(world.env, () => world.library, LIMITS, consts(0), opts());
+    world.timers[0]!();
+    expect(await first).toMatchObject({ resourceHints: 7, dom: { elements: 1 } });
+    expect(world.domReads.count).toBe(1);
+    for (let i = 1; i < DOM_REFRESH_EVERY; i++) measurePage(world.env, () => world.library, LIMITS, consts(0), opts());
+    expect(world.domReads.count).toBe(1);
+    measurePage(world.env, () => world.library, LIMITS, consts(0), opts());
+    expect(world.domReads.count).toBe(2);
+  });
+
+  test('collector-notes-a-full-timing-buffer', async () => {
+    const full = fakeWorld({ resources: Array.from({ length: 250 }, (_, i) => entry(`https://example.com/${i}.js`)) });
+    const first = measurePage(full.env, () => full.library, LIMITS, consts(0), opts());
+    full.timers[0]!();
+    expect(((await first) as PerformanceMeasurement).bufferFull).toBe(true);
+    // Or the browser says so later.
+    const world = fakeWorld();
+    const listeners: Record<string, () => void> = {};
+    const env = { ...world.env, performance: { ...world.env.performance, addEventListener: (type: string, listener: () => void) => void (listeners[type] = listener) } };
+    const second = measurePage(env, () => world.library, LIMITS, consts(0), opts());
+    world.timers[0]!();
+    expect(((await second) as PerformanceMeasurement).bufferFull).toBe(false);
+    listeners['resourcetimingbufferfull']!();
+    expect((measurePage(env, () => world.library, LIMITS, consts(0), opts()) as PerformanceMeasurement).bufferFull).toBe(true);
+  });
+});
+
+describe('main side', () => {
+  test('native-wayland-detection', () => {
+    expect(nativeWayland('linux', 'wayland', '', {})).toBe(true);
+    expect(nativeWayland('linux', 'x11', '', { XDG_SESSION_TYPE: 'wayland' })).toBe(false);
+    expect(nativeWayland('linux', '', '', { XDG_SESSION_TYPE: 'wayland' })).toBe(true);
+    expect(nativeWayland('linux', '', '', { WAYLAND_DISPLAY: 'wayland-1' })).toBe(true);
+    expect(nativeWayland('linux', 'auto', '', { WAYLAND_DISPLAY: 'wayland-1' })).toBe(true);
+    expect(nativeWayland('linux', '', 'x11', { WAYLAND_DISPLAY: 'wayland-1' })).toBe(false);
+    expect(nativeWayland('linux', '', '', { XDG_SESSION_TYPE: 'x11', DISPLAY: ':0' })).toBe(false);
+    expect(nativeWayland('linux', 'headless', '', { WAYLAND_DISPLAY: 'wayland-1' })).toBe(false);
+    expect(nativeWayland('darwin', 'wayland', '', { WAYLAND_DISPLAY: 'x' })).toBe(false);
+  });
+
+  test('shown-times', () => {
+    let now = 1_000;
+    const times = createShownTimes(() => now);
+    expect(times.of(1)).toEqual({ shownAt: null, hiddenAt: null });
+    // Attached at 1000, then a document commits: shown since 1000.
+    times.shown(1);
+    now = 2_000;
+    times.committed(1);
+    expect(times.of(1)).toEqual({ shownAt: 1_000, hiddenAt: null });
+    // Hidden at 3000, shown again at 4000, hidden again: the first hide is kept.
+    now = 3_000;
+    times.hidden(1);
+    now = 4_000;
+    times.shown(1);
+    now = 4_500;
+    times.hidden(1);
+    expect(times.of(1)).toEqual({ shownAt: 1_000, hiddenAt: 3_000 });
+    // A document committed while detached: not shown until attached.
+    times.committed(1);
+    expect(times.of(1)).toEqual({ shownAt: null, hiddenAt: null });
+    now = 9_000;
+    times.shown(1);
+    expect(times.of(1)).toEqual({ shownAt: 9_000, hiddenAt: null });
+    times.forget(1);
+    expect(times.of(1)).toEqual({ shownAt: null, hiddenAt: null });
+  });
+
+  test('reassemble-puts-the-list-back-together', () => {
+    const r = (n: number) => ({ url: `https://example.com/${n}.js` });
+    const full = reassemble({ x: 1, resources: [r(1), r(2)], resourceOffset: 0, resourceEpoch: 0 }, null)!;
+    expect(full.held).toEqual({ epoch: 0, records: [r(1), r(2)] });
+    const more = reassemble({ x: 2, resources: [r(3)], resourceOffset: 2, resourceEpoch: 0 }, full.held)!;
+    expect(more.measurement).toEqual({ x: 2, resources: [r(1), r(2), r(3)], resourceOffset: 0, resourceEpoch: 0 });
+    // Capped at maxResources.
+    expect(reassemble({ resources: [r(9)], resourceOffset: 2, resourceEpoch: 0 }, full.held, 2)!.held!.records).toHaveLength(2);
+    // Another epoch or a gap cannot be put together; another shape passes through for the worker to reject.
+    expect(reassemble({ resources: [r(3)], resourceOffset: 2, resourceEpoch: 1 }, full.held)).toBeNull();
+    expect(reassemble({ resources: [r(3)], resourceOffset: 5, resourceEpoch: 0 }, full.held)).toBeNull();
+    expect(reassemble('garbage', full.held)).toEqual({ measurement: 'garbage', held: null });
+    expect(reassemble({ resources: 'x', resourceOffset: 0, resourceEpoch: 0 }, null)).toEqual({ measurement: { resources: 'x', resourceOffset: 0, resourceEpoch: 0 }, held: null });
+    // The worker only ever accepts a whole list.
+    expect(analyseSpeed(rawMeasurement(A, { resourceOffset: 1 as 0 }))).toEqual({ ok: false, reason: 'invalid-measurement' });
   });
 });
 
@@ -372,6 +619,7 @@ describe('validation', () => {
 
 interface Collection {
   readonly world: number;
+  readonly options: Partial<CollectOptions>;
   resolve(value: unknown): void;
   reject(error: unknown): void;
 }
@@ -381,25 +629,30 @@ describe('tab speed', () => {
   let controller: BrowserController;
   let collections: Collection[];
   let analyse: (raw: unknown) => Promise<SpeedAnalysisResult>;
+  let times: ReturnType<typeof createShownTimes>;
 
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.setSystemTime(1_760_000_000_000);
     views = [];
     collections = [];
+    times = createShownTimes();
     analyse = async (raw) => analyseSpeed(raw);
     controller = createBrowserController({
       createView: () => {
         const view = new FakeTabView();
+        Object.assign(view.contents, { id: 100 + views.length });
         views.push(view);
         return view as unknown as TabView;
       },
       platform: 'linux',
       speed: {
-        measure: () =>
+        measure: (_contents, options) =>
           new Promise((resolve, reject) => {
-            collections.push({ world: SPEED_WORLD_ID, resolve, reject });
+            collections.push({ world: SPEED_WORLD_ID, options, resolve, reject });
           }),
         analyse: (raw) => analyse(raw),
+        times,
       },
     });
     controller.attach(new FakeHostWindow() as unknown as HostWindow);
@@ -514,6 +767,40 @@ describe('tab speed', () => {
     contents.emit('did-navigate-in-page', {}, `${B}/route`, true, 1, 1);
     collections[3]!.resolve(rawMeasurement(B));
     await expect(before).resolves.toEqual({ status: 'pending', url: `${B}/route` });
+  });
+
+  test('speed-passes-shown-times-and-asks-for-new-resources-only', async () => {
+    const contents = load(A);
+    // The tab was attached before its document loaded: shown since then, never hidden.
+    const first = controller.seo.measureSpeed(activeId());
+    expect(collections[0]!.options).toMatchObject({ shownAt: 1_760_000_000_000, hiddenAt: null, since: 0, epoch: -1 });
+    const resource = rawMeasurement(A).resources[0]!;
+    collections[0]!.resolve({ ...rawMeasurement(A), resources: [resource], resourceTotal: 1 });
+    await expect(first).resolves.toMatchObject({ status: 'ready', report: { requests: { total: 2 } } });
+    // The next collection asks only for what came after the one record main holds; main puts the list back together.
+    await vi.advanceTimersByTimeAsync(SPEED_MIN_INTERVAL_MS);
+    const second = controller.seo.measureSpeed(activeId());
+    expect(collections[1]!.options).toMatchObject({ since: 1, epoch: 0 });
+    collections[1]!.resolve({ ...rawMeasurement(A), resources: [{ ...resource, url: `${A}/2.js` }], resourceTotal: 2, resourceOffset: 1 });
+    await expect(second).resolves.toMatchObject({ status: 'ready', report: { requests: { total: 3, itemised: 3 } } });
+    // A background tab opened from the page: its document loads while detached, then it is shown.
+    const firstId = activeId();
+    const backgroundId = controller.openTabFromPage(contents, B)!;
+    const background = views.at(-1)!.contents;
+    commit(background, B, 'B');
+    await vi.advanceTimersByTimeAsync(4_000);
+    controller.activateTab(backgroundId);
+    const late = controller.seo.measureSpeed(backgroundId);
+    expect(collections[2]!.options).toMatchObject({ shownAt: 1_760_000_000_000 + SPEED_MIN_INTERVAL_MS + 4_000, hiddenAt: null, since: 0 });
+    collections[2]!.resolve(rawMeasurement(B));
+    await late;
+    // Back on the first tab: hidden since it was left (its document was shown before, so not reset).
+    controller.activateTab(firstId);
+    await vi.advanceTimersByTimeAsync(SPEED_MIN_INTERVAL_MS);
+    const back = controller.seo.measureSpeed(firstId);
+    expect(collections[3]!.options).toMatchObject({ shownAt: 1_760_000_000_000, hiddenAt: 1_760_000_000_000 + SPEED_MIN_INTERVAL_MS + 4_000 });
+    collections[3]!.resolve(rawMeasurement(A));
+    await back;
   });
 
   test('speed-forgets-closed-tabs', async () => {
