@@ -273,7 +273,9 @@ test('robots-fetch-sends-no-cookies-e2e', async () => {
     .poll(() => app.evaluate(({ session }, url) => session.fromPartition('persist:frost-browser').cookies.get({ url }).then((cookies) => cookies.map((c) => c.name)), s.origin))
     .toEqual(['sid']);
   await audit(`${s.origin}/page`);
-  expect(s.requestsFor('/page').at(-1)?.cookie).toBe('sid=secret-session');
+  // (The tab's navigation is the first request; main's served-HTML fetch of the page, Phase 2.5
+  // Task 2, comes after it, without cookies.)
+  expect(s.requestsFor('/page')[0]?.cookie).toBe('sid=secret-session');
   // … but main's robots.txt fetch carries none.
   await expect.poll(() => s.requestsFor('/robots.txt').length).toBeGreaterThan(0);
   for (const request of s.requestsFor('/robots.txt')) expect(request.cookie).toBeUndefined();

@@ -23,6 +23,7 @@ export const PALETTE_ICON_NAMES = [
   'panel-indexability',
   'panel-speed',
   'panel-compliance',
+  'panel-javascript',
   'sidebar',
   'highlight',
   'audit',

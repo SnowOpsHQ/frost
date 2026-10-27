@@ -237,6 +237,18 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
   - Rules: canonical, robots or title differs after JS (warning); main content (word count) mostly
     added by JS (info); links only present after rendering (info).
 - **States:** pending, ready, served HTML unavailable (with the reason), identical.
+- As built (`specs/seo-javascript.feature.md`, `specs/seo-javascript.spec.ts`, `specs/fetcher.spec.ts`):
+  - the bounded fetcher is `seo/fetcher.ts` (`createBoundedFetcher`, `netHop`, `isPrivateHost`),
+    one instance in main shared by robots.txt and the served HTML (and Task 7); robots.txt keeps its
+    cache and outcomes on top, unchanged;
+  - the served HTML is a later input of the audit context (`served`), kept per tab document, URL and
+    user agent; the tab's render-profile user agent is sent when one is in effect;
+  - `parse5` parses it in the analysis worker as its own `served` job, bounded by a counting tree
+    adapter (nodes and depth); a parse failure makes only the comparison unavailable;
+  - the comparison, verdict and five `javascript` rules are in `@app/seo-core` (`javascriptReport`);
+    a partial served page is compared but checks no rule;
+  - JavaScript is its own rail panel (the last), with "Fetch again" (`javascript.refetchServed`) and
+    two palette actions.
 - [ ] commit `feat(seo): served vs rendered comparison`
 
 #### Task 5: SEO devtools drawer

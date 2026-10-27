@@ -23,6 +23,7 @@ import {
 } from '../icons';
 import { RenderProfileIcon } from '../components/RenderProfile';
 import { ContentIcon } from '../components/seo/content-icons';
+import { JavascriptIcon } from '../components/seo/javascript-icons';
 import type { PaletteIconName } from './registry';
 
 // The command palette's glyphs: frost's own stroked shapes on the same 24×24 grid as `icons.tsx`
@@ -185,6 +186,7 @@ const ICONS: Readonly<Record<PaletteIconName, (props: GlyphProps) => ReactNode>>
   'panel-indexability': IndexabilityIcon,
   'panel-speed': SpeedIcon,
   'panel-compliance': ComplianceIcon,
+  'panel-javascript': JavascriptIcon,
   sidebar: SidebarIcon,
   highlight: HighlightIcon,
   audit: AuditGlyph,

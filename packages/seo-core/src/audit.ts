@@ -6,6 +6,7 @@ import { described, robotsWith } from './rules/head';
 import { complianceReport } from './compliance';
 import { contentReport } from './content/report';
 import { indexabilityReport } from './indexability';
+import { javascriptReport } from './javascript/report';
 import { speedReport } from './performance';
 import { analyseSchema } from './schema';
 import { tokens } from './util';
@@ -127,5 +128,6 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
     performance: snapshot.performance ? speedReport(snapshot.performance) : null,
     compliance,
     content: contentReport(snapshot),
+    javascript: javascriptReport(snapshot),
   };
 }

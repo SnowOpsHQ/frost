@@ -18,13 +18,14 @@ import { ROBOTS_FETCH_LIMITS } from './seo-indexability.spec';
 import { PERFORMANCE_RULE_SPECS } from './seo-speed.spec';
 import { COMPLIANCE_RULE_SPECS } from './seo-compliance.spec';
 import { DESCRIPTION_WIDTH_RULE, TITLE_WIDTH_RULE } from './seo-content.spec';
+import { JAVASCRIPT_RULE_SPECS } from './seo-javascript.spec';
 
 /** How bad a failing rule is. Ordered: the sidebar ranks issues by it (then by catalog order). */
 export const SEO_SEVERITIES = ['error', 'warning', 'info'] as const;
 export type SeoSeverity = (typeof SEO_SEVERITIES)[number];
 
 /** What a rule is about (the On-Page panel groups facts the same way). */
-export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'indexability', 'hreflang', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social', 'schema', 'performance', 'security', 'accessibility'] as const;
+export const SEO_CATEGORIES = ['title', 'meta-description', 'headings', 'canonical', 'indexing', 'indexability', 'hreflang', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social', 'schema', 'performance', 'security', 'accessibility', 'javascript'] as const;
 export type SeoCategory = (typeof SEO_CATEGORIES)[number];
 
 export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
@@ -46,6 +47,7 @@ export const SEO_CATEGORY_LABELS: Readonly<Record<SeoCategory, string>> = {
   performance: 'Page speed',
   security: 'Security',
   accessibility: 'Accessibility',
+  javascript: 'JavaScript',
 };
 
 // ---- Thresholds ------------------------------------------------------------------------------
@@ -774,6 +776,8 @@ export const SEO_RULE_SPECS = [
   ...PERFORMANCE_RULE_SPECS,
   // Security and accessibility (Phase 2 Task 6): `seo-compliance.spec.ts`.
   ...COMPLIANCE_RULE_SPECS,
+  // Served HTML vs the rendered DOM (Phase 2.5 Task 2): `seo-javascript.spec.ts`.
+  ...JAVASCRIPT_RULE_SPECS,
 ] as const satisfies readonly SeoRuleSpec[];
 
 export type SeoRuleId = (typeof SEO_RULE_SPECS)[number]['id'];

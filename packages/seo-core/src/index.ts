@@ -5,6 +5,7 @@ export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreA
 export { RULES } from './rules';
 export { copyValueOf } from './copy-values';
 export * from './content';
+export * from './javascript';
 export {
   accessibilityReport,
   allowsInlineScripts,

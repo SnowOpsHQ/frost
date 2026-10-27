@@ -62,7 +62,7 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  * Indexability's HTTP / robots.txt / hreflang checks, Page Speed, and Compliance's security and
  * accessibility). Indexability also covers `indexing` (the robots meta tags), which On-Page shows too.
  */
-const OWN_PANEL_CATEGORIES: readonly SeoCategory[] = ['social', 'schema', 'indexability', 'hreflang', 'performance', 'security', 'accessibility'];
+const OWN_PANEL_CATEGORIES: readonly SeoCategory[] = ['social', 'schema', 'indexability', 'hreflang', 'performance', 'security', 'accessibility', 'javascript'];
 const ON_PAGE_CATEGORIES = SEO_CATEGORIES.filter((category) => !OWN_PANEL_CATEGORIES.includes(category));
 const CONTENT_PANEL_CATEGORIES: readonly SeoCategory[] = ['title', 'meta-description', 'content'];
 
@@ -79,6 +79,8 @@ export const SEO_PANELS = [
   { id: 'indexability', label: 'Indexability', available: true, categories: ['indexing', 'indexability', 'hreflang'] },
   { id: 'speed', label: 'Page Speed', available: true, categories: ['performance'] },
   { id: 'compliance', label: 'Compliance', available: true, categories: ['security', 'accessibility'] },
+  // Phase 2.5 Task 2 (`seo-javascript.feature.md`): served HTML vs the rendered DOM.
+  { id: 'javascript', label: 'JavaScript', available: true, categories: ['javascript'] },
 ] as const satisfies readonly { id: string; label: string; available: boolean; categories: readonly SeoCategory[] }[];
 export type SeoPanelId = (typeof SEO_PANELS)[number]['id'];
 export const DEFAULT_SEO_PANEL: SeoPanelId = 'overview';

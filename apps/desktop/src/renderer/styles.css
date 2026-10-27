@@ -6350,3 +6350,162 @@ input {
 }
 
 /* End of Content panel */
+
+/* JavaScript panel (Phase 2.5 Task 2, seo-javascript.feature.md): served HTML vs the rendered page. */
+.seo-js {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.seo-js-state[data-verdict='unavailable'] {
+  --verdict: var(--text-faint);
+}
+
+.seo-js-state[data-verdict='js-independent'] {
+  --verdict: var(--ok);
+}
+
+.seo-js-state[data-verdict='js-partly'] {
+  --verdict: var(--caution);
+}
+
+.seo-js-state[data-verdict='js-heavily'] {
+  --verdict: var(--danger);
+}
+
+.seo-js-state .seo-verdict-summary {
+  margin: 8px 0 0;
+}
+
+.seo-js-refetch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.seo-js-note {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.seo-js-note[data-tone='warn'] {
+  color: var(--caution);
+}
+
+.seo-js-fields,
+.seo-js-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-js-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 0;
+  border-top: 1px solid var(--seo-card-edge);
+}
+
+.seo-js-field:first-child {
+  border-top: 0;
+}
+
+.seo-js-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.seo-js-field-label {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.seo-js-value {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.seo-js-sides {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 8px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.seo-js-sides dt {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.seo-js-sides dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+}
+
+.seo-js-counts {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seo-js-list + .seo-js-list {
+  margin-top: 10px;
+}
+
+.seo-js-list-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.seo-js-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 0;
+  border-top: 1px solid var(--seo-card-edge);
+}
+
+.seo-js-item:first-child {
+  border-top: 0;
+}
+
+.seo-js-item-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.seo-js-item-detail {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.seo-js-open {
+  flex: none;
+}
+
+/* End of JavaScript panel */

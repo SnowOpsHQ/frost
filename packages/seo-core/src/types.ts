@@ -7,6 +7,7 @@ import type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot, PageSo
 import type { ComplianceReport } from './compliance/model';
 import type { ContentReport } from './content/report';
 import type { IndexabilityReport } from './indexability/model';
+import type { JavascriptReport } from './javascript/report';
 import type { SpeedReport } from './performance/model';
 import type { SchemaReport } from './schema/model';
 
@@ -106,6 +107,8 @@ export interface SeoAudit {
   readonly compliance: ComplianceReport;
   /** The page's words, n-grams, readability and snippet widths (the Content panel, Phase 2.5 Task 3). */
   readonly content: ContentReport;
+  /** The served HTML compared with the rendered page (the JavaScript panel, Phase 2.5 Task 2). */
+  readonly javascript: JavascriptReport;
 }
 
 /**

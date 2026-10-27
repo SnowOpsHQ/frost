@@ -9,6 +9,7 @@ import { ANALYSIS_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec
 import { rawSnapshot } from '../../../test/seo-fakes';
 import { analyseSnapshot } from '../analyse';
 import { createAnalyzer, type AnalysisWorker } from '../analysis';
+import { parseServedHtml } from '../served-parse';
 
 const A = 'https://example.com/a';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -135,5 +136,52 @@ describe('analysis worker', () => {
       },
     });
     await expect(unsendable.analyse({ url: A })).resolves.toEqual({ ok: false, reason: 'invalid-snapshot' });
+  });
+});
+
+// Phase 2.5 Task 2 (specs/seo-javascript.feature.md, Parsing): the served HTML's parse is a worker job.
+describe('served HTML in the worker', () => {
+  const body = new TextEncoder().encode('<title>Served</title><p>one two</p>');
+
+  test('served-parse-runs-in-the-worker', async () => {
+    const analyzer = createAnalyzer({ spawn });
+    const parsing = analyzer.parseServed({ url: A, contentType: 'text/html', body });
+    const posted = workers[0]!.posted[0] as unknown as { id: number; kind: string; raw: unknown };
+    expect(posted).toMatchObject({ kind: 'served', raw: { url: A, contentType: 'text/html' } });
+    workers[0]!.emit('message', { id: posted.id, result: parseServedHtml(posted.raw as never) });
+    await expect(parsing).resolves.toMatchObject({ ok: true, snapshot: { url: A, titles: [{ text: 'Served' }], wordCount: 2 } });
+    // Past the timeout the worker is ended and the parse is `parse-timeout`; a failure is `parse-failed`.
+    const slow = analyzer.parseServed({ url: A, contentType: null, body });
+    await vi.advanceTimersByTimeAsync(ANALYSIS_TIMEOUT_MS);
+    await expect(slow).resolves.toEqual({ ok: false, reason: 'parse-timeout' });
+    expect(workers[0]!.terminated).toBe(true);
+    const broken = analyzer.parseServed({ url: A, contentType: null, body });
+    workers[1]!.emit('error', new Error('crash'));
+    await expect(broken).resolves.toEqual({ ok: false, reason: 'parse-failed' });
+    // An answer of the wrong shape is a failure too.
+    const odd = analyzer.parseServed({ url: A, contentType: null, body });
+    const last = workers.at(-1)!;
+    last.emit('message', { id: (last.posted.at(-1) as { id: number }).id, result: { ok: true } });
+    await expect(odd).resolves.toEqual({ ok: false, reason: 'parse-failed' });
+    analyzer.dispose();
+  });
+
+  test('served-state-validated-on-its-own', () => {
+    const parsed = parseServedHtml({ url: A, contentType: 'text/html', body });
+    if (!parsed.ok) throw new Error('parse failed');
+    const fetch = { url: A, finalUrl: A, status: 200, redirects: 0, bytes: body.byteLength, truncated: false, contentType: 'text/html', userAgent: null, durationMs: 3 };
+    const ready = analyseSnapshot(rawSnapshot(A), { response: null, robots: null, served: { status: 'ready', fetch, snapshot: parsed.snapshot } });
+    expect(ready.ok && ready.audit.javascript.status).toMatch(/ready|identical/);
+    // An invalid served state: the comparison is unavailable, the audit still stands.
+    for (const served of [{ status: 'ready', fetch, snapshot: { ...parsed.snapshot, titles: 'x' } }, { status: 'weird' }, 'served', 42]) {
+      const answer = analyseSnapshot(rawSnapshot(A), { response: null, robots: null, served });
+      expect(answer.ok, JSON.stringify(served)).toBe(true);
+      if (answer.ok) expect(answer.audit.javascript).toEqual({ status: 'unavailable', reason: 'invalid', httpStatus: null, finalUrl: null });
+    }
+    // Pending, and nothing collected.
+    const pending = analyseSnapshot(rawSnapshot(A), { response: null, robots: null, served: { status: 'pending' } });
+    expect(pending.ok && pending.audit.javascript).toEqual({ status: 'pending' });
+    const none = analyseSnapshot(rawSnapshot(A), { response: null, robots: null });
+    expect(none.ok && none.audit.javascript).toEqual({ status: 'unavailable', reason: 'not-fetched', httpStatus: null, finalUrl: null });
   });
 });
