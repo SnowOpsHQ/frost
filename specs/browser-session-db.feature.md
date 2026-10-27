@@ -105,7 +105,9 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   cookies, local storage, IndexedDB, service workers, cache storage …) and its HTTP cache
   (`clearCache()`). One part failing is logged and the others still run. No tab is closed or
   reloaded, and the app UI's own session is untouched. Pending prompts stay pending (they are
-  undecided).
+  undecided); one that was narrowed by a now-forgotten decision grants only requests whose every
+  permission is remembered Allowed when it is answered (`permissions.feature.md`, Remembered
+  decisions).
 - **Batched writes.** Tab and visit writes are batched by `SESSION_WRITE_BATCH_MS`: a navigation
   storm writes at most once per batch window (the latest tab list, all its visits, in one
   transaction). Pending writes are flushed on quit: the first `will-quit` is held until the flush

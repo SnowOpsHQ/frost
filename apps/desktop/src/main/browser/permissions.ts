@@ -201,7 +201,9 @@ export interface PermissionBroker {
   check(scope: PermissionScope, permission: SitePermission): boolean;
   /**
    * Forgets every remembered Allow and Block (the store's) and the back-off (Clear Browsing
-   * Data): the next request asks again. Pending prompts stay (they are undecided).
+   * Data): the next request asks again. Pending prompts stay (they are undecided); one narrowed by
+   * a forgotten decision still names only what it named, and its Allow grants only the requests
+   * whose every permission is then remembered Allowed (the others are denied and must ask again).
    */
   forgetDecisions(): void;
   /** Calls `listener` after every change of any tab's prompt; answers the unsubscribe. */
@@ -224,6 +226,11 @@ export interface PermissionBrokerOptions {
 interface Waiter {
   readonly callback: (granted: boolean) => void;
   readonly isCurrent: () => boolean;
+  /**
+   * Everything this request asked for, not only what its prompt names: a grant needs each of
+   * these remembered Allowed when it is settled (a decision may be forgotten meanwhile).
+   */
+  readonly permissions: readonly SitePermission[];
 }
 
 interface Pending {
@@ -284,7 +291,12 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
     }
   };
 
-  /** Removes `entry` from its queue and answers every request coalesced into it. */
+  /**
+   * Removes `entry` from its queue and answers every request coalesced into it. A grant
+   * (`granted`) reaches a request only if **every** permission it asked for is remembered Allowed
+   * now: the prompt may have been narrowed by a decision that has since been forgotten (Clear
+   * Browsing Data) or replaced by a Block, and the answer only covers what the prompt named.
+   */
   const settle = (entry: Pending, granted: boolean): void => {
     clearTimeout(entry.timer);
     const queue = queues.get(entry.tabId);
@@ -296,14 +308,14 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
     for (const waiter of entry.waiters) {
       // A grant reaches only requests whose frame is still the one that asked.
       let current = false;
-      if (granted) {
+      if (granted && evaluate(entry.scope, waiter.permissions) === true) {
         try {
           current = waiter.isCurrent();
         } catch {
           current = false;
         }
       }
-      call(waiter.callback, granted && current);
+      call(waiter.callback, current);
     }
   };
 
@@ -337,7 +349,7 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
       const same = queue.find((entry) => sameScope(entry.scope, scope) && entry.permission === ask.permission && sameSet(entry.undecided, verdict));
       if (same) {
         if (same.waiters.length >= MAX_COALESCED_REQUESTS) return call(callback, false);
-        same.waiters.push({ callback, isCurrent });
+        same.waiters.push({ callback, isCurrent, permissions });
         return;
       }
       if (queue.length >= MAX_PENDING_PROMPTS_PER_TAB) return call(callback, false);
@@ -347,7 +359,7 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
         scope,
         permission: ask.permission,
         undecided: verdict,
-        waiters: [{ callback, isCurrent }],
+        waiters: [{ callback, isCurrent, permissions }],
         timer: setTimeout(() => {
           countIgnored(entry);
           settle(entry, false);
