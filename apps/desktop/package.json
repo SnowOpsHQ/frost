@@ -1,0 +1,52 @@
+{
+  "name": "@app/desktop",
+  "productName": "frost",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "description": "frost desktop app (Electron main, preload, renderer)",
+  "main": ".vite/build/main.cjs",
+  "scripts": {
+    "postinstall": "install-electron",
+    "start": "electron-forge start",
+    "build": "electron-forge package",
+    "make": "electron-forge make",
+    "make:mac": "electron-forge make --platform darwin --arch arm64",
+    "verify:mac": "node scripts/verify-mac-package.mjs",
+    "test": "vitest run",
+    "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p src/renderer/tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
+    "test:e2e": "playwright test",
+    "notices": "node third-party-notices.ts"
+  },
+  "dependencies": {
+    "@app/db": "workspace:*",
+    "@app/ipc-contract": "workspace:*",
+    "@app/seo-core": "workspace:*",
+    "@app/specs": "workspace:*",
+    "axe-core": "4.14.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "web-vitals": "^6.2.3"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^8.0.1",
+    "@electron-forge/maker-dmg": "^8.0.1",
+    "@electron-forge/maker-zip": "^8.0.1",
+    "@electron-forge/plugin-fuses": "^8.0.1",
+    "@electron-forge/plugin-vite": "^8.0.1",
+    "@electron-forge/shared-types": "^8.0.1",
+    "@electron/fuses": "^2.1.3",
+    "@playwright/test": "^1.64.1",
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.0.0",
+    "jsdom": "^30.1.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

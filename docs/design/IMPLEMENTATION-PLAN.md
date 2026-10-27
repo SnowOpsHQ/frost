@@ -39,8 +39,8 @@ change-history store, and an AI agent that can drive the browser and run SEO ski
 | Shell | **Electron (latest stable)** + Electron Forge | Proven for this exact app shape; WebContentsView tabs. |
 | Language/UI | **TypeScript + React** | Matches the domain; large ecosystem. |
 | Monorepo | **pnpm workspaces + Turborepo** | Desktop app, shared packages, backend in one repo. |
-| IPC | **electron-trpc + Zod**, every channel typed, one central `enforceSender` middleware | Root-cause fix for the IPC/sender findings. |
-| Data | **SQLite + Drizzle**, built on **libSQL** | Local-first now; sync later with no rewrite. |
+| IPC | **tRPC v11 + Zod** over a small in-repo link in `@app/ipc-contract` (one `ipcMain.handle` channel `app:trpc`; preload `exposeIpcBridge()` → `window.frostIpc.invoke`), every procedure typed, one central `enforceSender` middleware | Root-cause fix for the IPC/sender findings. In-repo because electron-trpc supports tRPC v10 only, and trpc-electron crashes main on a null `senderFrame`. |
+| Data | **SQLite + Drizzle**: Node's built-in **`node:sqlite`** now (Phase 1), **libSQL** when sync lands (Phase 7) | Local-first now; sync later with no rewrite. `node:sqlite` (`DatabaseSync`, in Electron's main-process Node) ships no native binary, so packaging, ASAR integrity and the fuses are untouched; libSQL's native `.node` module would need unpacking from the ASAR. Drizzle (schema + queries, over its `sqlite-proxy` driver) and an async repository API make the move to libSQL a driver swap. |
 | AI | **Vercel AI SDK** + **AI Gateway** (`provider/model` strings); agent loop in a locked-down utility process | Provider-agnostic, observable, no shipped keys. |
 | On-device ML | **ONNX Runtime native** with Core ML EP (Apple Silicon) | SERP intent classifier; faster/lower-power than WASM. |
 | Backend | **Separate service**: API + **better-auth** + Postgres; billing via Stripe (server-side) | Keep entitlement enforcement off the client. |
@@ -70,8 +70,13 @@ packages/
 ```
 
 **Security model (baked in, not bolted on)**
-- `setWindowOpenHandler`: deny by default; `http/https/mailto` allowlisted; everything else needs an
-  explicit confirmation dialog + a real user gesture. (Directly closes the confirmed High finding.)
+- `setWindowOpenHandler`: always deny (no Electron window is ever created). Only `http/https/mailto`
+  are allowlisted, and only on a real, unconsumed user gesture: in the app's own windows such a
+  popup opens externally (`mailto:` without attachment keys); in a browser tab an `http(s)` popup
+  becomes a background tab and a popup never opens an external handler (a tab reaches `mailto:`
+  only by a main-frame navigation on a gesture). Everything else is dropped outright, with no
+  confirmation dialog to click through (stricter than an allow-on-confirm flow). (Directly closes
+  the confirmed High finding.)
 - Every `WebContentsView`: `sandbox:true`, `contextIsolation:true`, `nodeIntegration:false`,
   `webSecurity:true` set **explicitly**; cookie-encryption fuse on.
 - `will-navigate` guard pins the app frame to its own `app://` origin.

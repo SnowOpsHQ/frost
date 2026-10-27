@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    // The Vite configs import vite.web-vitals.ts with its extension (Vite's native config loader wants it).
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "*.ts"],
+  "exclude": ["src/renderer"]
+}

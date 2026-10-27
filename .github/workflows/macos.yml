@@ -1,0 +1,102 @@
+# macOS package (acceptance: specs/macos-package.feature.md). Builds, tests and packages the app
+# on Apple Silicon, verifies the bundle (verify-mac-package.mjs) and uploads the zip + dmg.
+name: macOS
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/**'
+      - 'specs/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - 'turbo.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseded PR runs are cancelled; every run on main (and every tag) completes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  macos:
+    runs-on: macos-15 # arm64
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Installs the pnpm version pinned by package.json#packageManager.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # @electron/get's download cache (checksum-verified on use), keyed on the lockfile's Electron.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Also fetches Electron's binary (@app/desktop postinstall) and builds the DMG maker's native
+      # addons (pnpm-workspace.yaml allowBuilds).
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint and test
+        run: pnpm turbo run lint test
+
+      - name: Build
+        id: build
+        run: pnpm --filter @app/desktop build
+
+      # A real macOS window (no xvfb), against the unpackaged build.
+      - name: e2e
+        id: e2e
+        run: pnpm --filter @app/desktop test:e2e
+
+      # Ad-hoc signed: no signing secrets are passed (specs/macos-package.spec.ts MAC_SIGNING_ENV).
+      - name: Make (zip + dmg, arm64)
+        id: make
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm make:mac
+
+      - name: Verify package
+        id: verify
+        if: ${{ !cancelled() && steps.make.outcome == 'success' }}
+        run: pnpm verify:mac
+
+      # Only a package whose app passed e2e and whose bundle and artifacts passed verify is published.
+      - name: Upload zip + dmg
+        if: ${{ !cancelled() && steps.e2e.outcome == 'success' && steps.verify.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frost-macos-arm64
+          path: |
+            apps/desktop/out/make/zip/darwin/arm64/*.zip
+            apps/desktop/out/make/dmg/arm64/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report-macos
+          path: |
+            apps/desktop/playwright-report/
+            apps/desktop/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

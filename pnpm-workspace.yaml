@@ -1,0 +1,27 @@
+packages:
+  - apps/*
+  - packages/*
+  - specs
+
+# Electron Forge's packager does not support pnpm's isolated symlinked layout.
+nodeLinker: hoisted
+
+# pnpm blocks dependency lifecycle scripts by default. No current dependency needs one:
+# Electron >=45 ships no postinstall (its binary is fetched by `install-electron`, which
+# @app/desktop runs from its own postinstall). Add packages to `allowBuilds` only when required.
+
+allowBuilds:
+  # Pulled in by @doyensec/electronegativity (via escope). Its postinstall only
+  # prints a message; it is not needed to run.
+  es5-ext: false
+  # macOS only (via @electron-forge/maker-dmg → electron-installer-dmg → appdmg, all darwin-only
+  # optional deps): small native addons appdmg needs to write the DMG's Finder alias and xattrs.
+  # Their install script is `node-gyp rebuild`; never installed on Linux.
+  fs-xattr: true
+  macos-alias: true
+
+overrides:
+  # @doyensec/electronegativity → @mapbox/node-pre-gyp@1 pins tar@^6 (12 advisories, fixed only in
+  # tar >=7.5.21). The gate never loads node-pre-gyp (no install script runs; Electronegativity's
+  # runtime does not require it), and tar 7 keeps the CJS `extract`/`create` API it would call.
+  '@mapbox/node-pre-gyp>tar': ^7.5.21
