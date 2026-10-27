@@ -10,7 +10,7 @@ import { A11Y_DISABLED_RULES, A11Y_IMPACTS, A11Y_LIMITS, A11Y_RUN_TAGS, A11Y_WOR
 import { AccessibilityContextSchema, AccessibilityResultSchema } from '@app/specs/seo-compliance.schema';
 import { SEO_WORLD_ID } from '@app/specs/seo-limits.spec';
 import { rawSnapshot } from '../../../test/seo-fakes';
-import { A11Y_RUN_SCRIPT, AXE_PROBE, AXE_SCRIPT, runAccessibilityCheck, summariseAxe, withinSize } from '../a11y';
+import { A11Y_RUN_SCRIPT, AXE_PROBE, AXE_SCRIPT, buildRunScript, runAccessibilityCheck, summariseAxe, withinSize } from '../a11y';
 import { analyseSnapshot } from '../analyse';
 
 const FIXTURE = JSON.parse(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/axe-results.json'), 'utf8')) as unknown;
@@ -218,6 +218,57 @@ describe('the run', () => {
     expect(parsed.passes).toBeGreaterThan(0);
     // The run leaves the DOM as it was.
     expect(page.window.document.body.innerHTML).toBe('<h1>Checkout</h1><img src="/hero.png"><form><input type="text" name="q"></form><button></button><p>Outside any landmark</p>');
+  });
+
+  test('a11y-run-in-chunks-with-deadline', async () => {
+    const body = '<h1>Checkout</h1><img src="/hero.png"><form><input type="text" name="q"></form><button></button>';
+    // Chunked (the run script) and in one go (by tag) find the same violations.
+    const chunked = dom(body);
+    chunked.window.eval(AXE_SCRIPT);
+    const whole = AccessibilityResultSchema.parse(await (chunked.window.eval(A11Y_RUN_SCRIPT) as Promise<unknown>));
+    expect(whole.partial).toBe(false);
+    const direct = dom(body);
+    direct.window.eval(AXE_SCRIPT);
+    const byTag = (await (direct.window.eval(`axe.run(document, { runOnly: { type: 'tag', values: ${JSON.stringify(A11Y_RUN_TAGS)} }, rules: { region: { enabled: false }, 'frame-tested': { enabled: false } }, iframes: false, preload: false, resultTypes: ['violations'] })`) as Promise<{ violations: { id: string }[]; passes: unknown[]; inapplicable: unknown[]; incomplete: unknown[] }>));
+    expect(whole.violations.map((v) => v.id).sort()).toEqual(byTag.violations.map((v) => v.id).sort());
+    expect(whole.passes + whole.incomplete + whole.inapplicable + whole.violationTotal).toBe(byTag.passes.length + byTag.incomplete.length + byTag.inapplicable.length + byTag.violations.length);
+    // Past its own deadline the script answers what it has, marked partial (with no budget: after one chunk).
+    const late = dom(body);
+    late.window.eval(AXE_SCRIPT);
+    const partial = AccessibilityResultSchema.parse(await (late.window.eval(buildRunScript(0)) as Promise<unknown>));
+    expect(partial.partial).toBe(true);
+    expect(partial.passes + partial.incomplete + partial.inapplicable + partial.violationTotal).toBeLessThan(whole.passes + whole.incomplete + whole.inapplicable + whole.violationTotal);
+    expect(partial.passes + partial.incomplete + partial.inapplicable + partial.violationTotal).toBeGreaterThan(0);
+  });
+
+  test('a11y-run-aborts-if-the-document-changed', async () => {
+    const codes: string[] = [];
+    let current = true;
+    const contents = {
+      executeJavaScriptInIsolatedWorld: async (_world: number, scripts: { code: string }[]) => {
+        const code = scripts[0]!.code;
+        codes.push(code);
+        // The page navigates while the probe is answered.
+        if (code === AXE_PROBE) current = false;
+        return false;
+      },
+    };
+    await expect(runAccessibilityCheck(contents, () => current)).rejects.toThrow(/changed/);
+    // Neither injected nor run in the new document.
+    expect(codes).toEqual([AXE_PROBE]);
+    // And between the injection and the run.
+    codes.length = 0;
+    current = true;
+    const injecting = {
+      executeJavaScriptInIsolatedWorld: async (_world: number, scripts: { code: string }[]) => {
+        const code = scripts[0]!.code;
+        codes.push(code);
+        if (code === AXE_SCRIPT) current = false;
+        return false;
+      },
+    };
+    await expect(runAccessibilityCheck(injecting, () => current)).rejects.toThrow(/changed/);
+    expect(codes).toEqual([AXE_PROBE, AXE_SCRIPT]);
   });
 
   test('a11y-busy-run-is-reported', async () => {

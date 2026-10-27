@@ -20,7 +20,8 @@ function mixedCheck(which: 'active' | 'passive'): Check {
   return (s) => {
     const mixed = analyseSecurity(s).mixed;
     const list = mixed[which];
-    if (list.length === 0) return null;
+    // Upgraded by the CSP (`upgraded`, not listed here), or a cut CSP might upgrade them: no failure.
+    if (list.length === 0 || mixed.upgradeUnknown) return null;
     const kinds = [...new Set(list.map((resource) => INSECURE_RESOURCE_LABELS[resource.kind]))].join(', ');
     return details([fact('Resources', formatCount(list.length)), fact('Kinds', kinds), ...(mixed.truncated ? [fact('Scan', 'Stopped early: there may be more')] : [])], list.map(resourceSample), list.length);
   };
@@ -77,7 +78,7 @@ export const COMPLIANCE_CHECKS = {
   },
   'clickjacking-unprotected': (s) => {
     const f = analyseSecurity(s);
-    if (!f.headersKnown || f.frameOptionsProtect || f.frameAncestors) return null;
+    if (!f.headersKnown || f.frameOptionsProtect || f.frameAncestors || f.cspCut) return null;
     const value = headerValues(s, 'x-frame-options')[0];
     return details([fact('X-Frame-Options', value ?? 'Not sent'), fact('frame-ancestors', 'Not set')]);
   },

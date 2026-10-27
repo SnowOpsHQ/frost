@@ -1,4 +1,4 @@
-import { CSP_INLINE_OVERRIDES } from '@app/specs/seo-compliance.spec';
+import { CSP_INLINE_OVERRIDES, CSP_SCRIPT_ELEMENT_DIRECTIVES, CSP_UPGRADE_DIRECTIVE } from '@app/specs/seo-compliance.spec';
 
 // frost's own Content Security Policy reader (acceptance `seo-compliance.feature.md`, CSP), written
 // from CSP Level 3's parsing rules: a header value is a comma-separated list of policies; a policy
@@ -56,9 +56,16 @@ export function cspDirective(policy: CspPolicy, name: string): CspDirective | un
   return policy.directives.find((directive) => directive.name === name);
 }
 
-/** The source list that governs scripts: `script-src`, else `default-src`; `null` when the policy does not restrict scripts. */
+/**
+ * The source list that governs script elements (`CSP_SCRIPT_ELEMENT_DIRECTIVES`): `script-src-elem`,
+ * else `script-src`, else `default-src`; `null` when the policy does not restrict scripts.
+ */
 export function scriptSources(policy: CspPolicy): readonly string[] | null {
-  return (cspDirective(policy, 'script-src') ?? cspDirective(policy, 'default-src'))?.sources ?? null;
+  for (const name of CSP_SCRIPT_ELEMENT_DIRECTIVES) {
+    const directive = cspDirective(policy, name);
+    if (directive) return directive.sources;
+  }
+  return null;
 }
 
 const lower = (token: string): string => token.toLowerCase();
@@ -84,6 +91,24 @@ export function allowsInlineScripts(policies: readonly CspPolicy[]): boolean {
     explicit = true;
   }
   return explicit;
+}
+
+/**
+ * Whether a `frame-ancestors` source list keeps other sites from framing the page: it holds no source
+ * that matches any site (`FRAME_ANCESTORS_OPEN`: `*`, a bare scheme such as `https:`, a scheme with a
+ * wildcard host such as `https://*`) and is not empty.
+ */
+export function frameAncestorsProtect(sources: readonly string[]): boolean {
+  if (sources.length === 0) return false;
+  return !sources.some((source) => {
+    const s = source.toLowerCase();
+    return s === '*' || /^[a-z][a-z0-9+.-]*:$/.test(s) || /^([a-z][a-z0-9+.-]*|\*):\/\/\*(:[0-9*]+)?\/?$/.test(s);
+  });
+}
+
+/** Whether any of `policies` (enforced ones: header or meta) has `upgrade-insecure-requests`. */
+export function upgradesInsecureRequests(policies: readonly CspPolicy[]): boolean {
+  return policies.some((policy) => cspDirective(policy, CSP_UPGRADE_DIRECTIVE) !== undefined);
 }
 
 /** The `frame-ancestors` source lists of the header policies (a `<meta>` policy cannot set it). */

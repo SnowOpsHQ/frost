@@ -28,6 +28,7 @@ export const RESPONSE_HEADER_ALLOWLIST = [
   'content-language',
   'server',
   'content-security-policy',
+  'content-security-policy-report-only',
   'strict-transport-security',
   'x-content-type-options',
   'x-frame-options',
@@ -36,9 +37,22 @@ export const RESPONSE_HEADER_ALLOWLIST = [
 ] as const;
 export type ResponseHeaderName = (typeof RESPONSE_HEADER_ALLOWLIST)[number];
 
+/** Headers whose values are kept up to `RESPONSE_LIMITS.maxLongHeaderValueChars` (the CSP and its report-only twin). */
+export const LONG_VALUE_HEADERS = ['content-security-policy', 'content-security-policy-report-only'] as const satisfies readonly ResponseHeaderName[];
+
+/** How many characters of a value of header `name` main keeps. */
+export function headerValueCap(name: string): number {
+  return (LONG_VALUE_HEADERS as readonly string[]).includes(name) ? RESPONSE_LIMITS.maxLongHeaderValueChars : RESPONSE_LIMITS.maxHeaderValueChars;
+}
+
 export const RESPONSE_LIMITS = {
-  /** Characters of one header value kept (cut, never split inside a surrogate pair). */
+  /**
+   * Characters of one header value kept (cut, never split inside a surrogate pair; a cut value is
+   * marked `truncated`). `LONG_VALUE_HEADERS` keep up to `maxLongHeaderValueChars` instead.
+   */
   maxHeaderValueChars: 2_048,
+  /** Characters of one value of a `LONG_VALUE_HEADERS` header kept (Content Security Policies are often long; Task 6). */
+  maxLongHeaderValueChars: 16_384,
   /** Instances of one header name kept (`X-Robots-Tag` and `Link` may repeat). */
   maxValuesPerHeader: 8,
   /** Header values kept in all. */

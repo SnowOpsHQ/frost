@@ -10,6 +10,7 @@ import { fakeEvent } from '../../../test/electron-fake';
 import { rawSnapshot } from '../../../test/seo-fakes';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../../browser/controller';
 import { analyseSnapshot } from '../analyse';
+import { contextSource, knownInput, laterInput } from '../context-source';
 
 const A = 'https://example.com/a';
 const B = 'https://example.com/b';
@@ -40,6 +41,7 @@ function answer(url: string, impact: 'critical' | 'serious' = 'critical') {
     passes: 20,
     incomplete: 0,
     inapplicable: 10,
+    partial: false,
   };
 }
 
@@ -260,5 +262,68 @@ describe('run lifecycle', () => {
     await settle();
     expect(contexts.at(-1)).toMatchObject({ accessibility: answer(A) });
     expect(run(first)!.status).toBe('done');
+  });
+
+  test('a11y-answer-while-context-pending', async () => {
+    // main's context: the response known at once, the speed measurement later (one per run).
+    const measurements: { resolve(value: unknown): void }[] = [];
+    const seen: unknown[] = [];
+    const held = createBrowserController({
+      createView: () => {
+        const view = new FakeTabView();
+        views.push(view);
+        return view as unknown as TabView;
+      },
+      platform: 'linux',
+      seo: {
+        extract: async (contents) => rawSnapshot((contents as unknown as FakeTabContents).url),
+        analyse: async (raw, context) => {
+          seen.push(context);
+          return analyseSnapshot(raw, context);
+        },
+        context: () =>
+          contextSource({
+            response: knownInput(null),
+            robots: knownInput(null),
+            performance: laterInput(new Promise<unknown>((resolve) => measurements.push({ resolve }))),
+          }),
+      },
+      accessibility: (contents) =>
+        new Promise<unknown>((resolve, reject) => {
+          runs.push({ contents: contents as unknown as FakeTabContents, resolve, reject });
+        }),
+    });
+    held.attach(new FakeHostWindow() as unknown as HostWindow);
+    const id = held.getState().activeTabId!;
+    held.navigate(A);
+    const contents = views.at(-1)!.contents;
+    commit(contents, A, 'A');
+    contents.emit('did-finish-load');
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS + 10);
+    // Shown at once without the measurement; then final once it settles.
+    expect(held.seo.getAudit(id).status).toBe('ready');
+    measurements[0]!.resolve(null);
+    await vi.advanceTimersByTimeAsync(10);
+    const before = held.seo.getAudit(id);
+    if (before.status !== 'ready') throw new Error('not ready');
+    expect(before.audit.compliance.accessibility.status).toBe('not-run');
+    // The check answers while the re-score's measurement is still pending.
+    expect(held.seo.runAccessibility(id)).toBe(true);
+    runs.at(-1)!.resolve(answer(A));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(measurements).toHaveLength(2);
+    // The first analysis has the answer but not the measurement: the shown audit is held, not replaced.
+    expect(seen.at(-1)).toMatchObject({ accessibility: answer(A) });
+    expect(seen.at(-1)).not.toHaveProperty('performance');
+    const holding = held.seo.getAudit(id);
+    expect(holding.status === 'ready' && holding.audit).toBe(before.audit);
+    // The measurement settles: the final analysis has both, and its audit is shown.
+    measurements[1]!.resolve(null);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(seen.at(-1)).toMatchObject({ accessibility: answer(A), performance: null });
+    const after = held.seo.getAudit(id);
+    if (after.status !== 'ready') throw new Error('not ready');
+    expect(after.audit.compliance.accessibility.status).toBe('done');
+    expect(after.accessibilityRun?.status).toBe('done');
   });
 });

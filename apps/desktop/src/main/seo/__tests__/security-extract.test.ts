@@ -3,14 +3,17 @@
 // Acceptance: specs/seo-compliance.feature.md (Extraction)
 import { JSDOM } from 'jsdom';
 import { describe, expect, test } from 'vitest';
-import { SECURITY_LIMITS, type SecurityLimits } from '@app/specs/seo-compliance.spec';
+import { META_REFERRER_VALUES, SECURITY_LIMITS, type SecurityLimits } from '@app/specs/seo-compliance.spec';
 import { PageSecuritySchema, type PageSecurity } from '@app/specs/seo-compliance.schema';
+import { headerValueCap, RESPONSE_LIMITS } from '@app/specs/seo-indexability.spec';
+import { ResponseHeaderSchema } from '@app/specs/seo-snapshot.spec';
 import { EXTRACTOR_SCRIPT } from '../extract';
+import { captureHeaders } from '../responses';
 import { extractSecurity, RESOURCE_SELECTOR, securityCall, type SecurityDocument } from '../security-extract';
 
 function read(head: string, body: string, { url = 'https://example.com/shop/', limits = {} }: { url?: string; limits?: Partial<SecurityLimits> } = {}): PageSecurity {
   const dom = new JSDOM(`<!doctype html><html><head>${head}</head><body>${body}</body></html>`, { url });
-  const result = extractSecurity(dom.window.document as unknown as SecurityDocument, { ...SECURITY_LIMITS, ...limits }, RESOURCE_SELECTOR);
+  const result = extractSecurity(dom.window.document as unknown as SecurityDocument, { ...SECURITY_LIMITS, ...limits }, RESOURCE_SELECTOR, META_REFERRER_VALUES);
   return PageSecuritySchema.parse(result);
 }
 
@@ -58,13 +61,32 @@ describe('security read', () => {
 
   test('security-read-meta-policies', () => {
     const security = read(
-      `<meta http-equiv="Content-Security-Policy" content="script-src 'self'"><meta http-equiv="content-security-policy" content="img-src *"><meta name="Referrer" content="no-referrer"><meta name="referrer" content="same-origin"><meta http-equiv="refresh" content="5">`,
+      `<meta http-equiv="Content-Security-Policy" content="script-src 'self'"><meta http-equiv="content-security-policy" content="img-src *"><meta name="Referrer" content="no-referrer"><meta name="referrer" content=" Same-Origin "><meta name="referrer" content="bogus"><meta http-equiv="refresh" content="5">`,
       '',
     );
     expect(security.metaCsp).toEqual(["script-src 'self'", 'img-src *']);
-    // The last referrer tag is the one in effect.
-    expect(security.metaReferrer).toBe('same-origin');
+    // The last valid referrer tag is the one in effect: an invalid later one changes nothing.
+    expect(security.metaReferrer).toBe(' Same-Origin ');
+    expect(read('<meta name="referrer" content="always"><meta name="referrer" content="">', '').metaReferrer).toBe('always');
+    expect(read('<meta name="referrer" content="nope">', '').metaReferrer).toBeNull();
     expect(read('', '')).toEqual({ insecureResources: [], insecureResourceTotal: 0, resourcesTruncated: false, metaCsp: [], metaReferrer: null });
+  });
+
+  test('csp-header-cap', () => {
+    const long = `script-src ${"'sha256-x' ".repeat(1_500)}`;
+    const headers = captureHeaders({ 'Content-Security-Policy': [long.slice(0, 10_000)], 'content-security-policy-report-only': ['x'.repeat(20_000)], Server: ['s'.repeat(3_000)] });
+    const byName = Object.fromEntries(headers.map((h) => [h.name, h]));
+    // A CSP of 10 000 characters is kept whole (no mark); past 16 KB it is cut and marked.
+    expect(byName['content-security-policy']).toEqual({ name: 'content-security-policy', value: long.slice(0, 10_000) });
+    expect(byName['content-security-policy-report-only']!.value).toHaveLength(RESPONSE_LIMITS.maxLongHeaderValueChars);
+    expect(byName['content-security-policy-report-only']!.truncated).toBe(true);
+    // Other headers keep their 2 KB cap, and are marked when cut.
+    expect(byName['server']).toEqual({ name: 'server', value: 's'.repeat(RESPONSE_LIMITS.maxHeaderValueChars), truncated: true });
+    expect(headerValueCap('content-security-policy')).toBe(RESPONSE_LIMITS.maxLongHeaderValueChars);
+    // All of it validates; a long value under another header's name does not.
+    for (const header of headers) expect(ResponseHeaderSchema.safeParse(header).success, header.name).toBe(true);
+    expect(ResponseHeaderSchema.safeParse({ name: 'server', value: 's'.repeat(RESPONSE_LIMITS.maxHeaderValueChars + 1) }).success).toBe(false);
+    expect(ResponseHeaderSchema.safeParse({ name: 'server', value: 's', truncated: false }).success).toBe(false);
   });
 
   test('security-read-is-bounded', () => {

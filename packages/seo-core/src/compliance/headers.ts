@@ -53,15 +53,16 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
- * Whether `X-Frame-Options` values protect the page: every comma-separated token (of every value)
- * is `DENY` or `SAMEORIGIN` (case-insensitive), and they agree. `ALLOW-FROM` is obsolete and ignored
- * by current browsers.
+ * Whether `X-Frame-Options` values keep other sites from framing the page, as the HTML Standard reads
+ * them (`XFO_BLOCKING_VALUES`): every value split on commas, trimmed and lowercased, as a set. More than
+ * one distinct value blocks framing if one is `deny`, `sameorigin` or `allowall` (otherwise the header
+ * is ignored); a single value blocks it if it is `deny` or `sameorigin` (a same-origin ancestor still
+ * may, which is what `SAMEORIGIN` asks for). `allowall`, `allow-from` and unknown values allow it.
  */
 export function frameOptionsProtect(values: readonly string[]): boolean {
-  const tokens = values.flatMap((value) => value.split(',')).map((token) => token.trim().toLowerCase()).filter((token) => token !== '');
-  if (tokens.length === 0) return false;
-  const first = tokens[0]!;
-  return (first === 'deny' || first === 'sameorigin') && tokens.every((token) => token === first);
+  const set = new Set(values.flatMap((value) => value.split(',')).map((token) => token.trim().toLowerCase()).filter((token) => token !== ''));
+  if (set.size > 1) return set.has('deny') || set.has('sameorigin') || set.has('allowall');
+  return set.has('deny') || set.has('sameorigin');
 }
 
 /** Whether the first `X-Content-Type-Options` value is `nosniff` (its first comma-separated token, case-insensitive). */

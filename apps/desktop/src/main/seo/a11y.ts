@@ -1,5 +1,5 @@
 import AXE_SOURCE from 'axe-core/axe.min.js?raw';
-import { A11Y_DISABLED_RULES, A11Y_IMPACTS, A11Y_LIMITS, A11Y_RUN_OPTIONS, A11Y_RUN_TAGS, A11Y_WORLD_ID, type A11yLimits } from '@app/specs/seo-compliance.spec';
+import { A11Y_DISABLED_RULES, A11Y_IMPACTS, A11Y_LIMITS, A11Y_PAGE_BUDGET_MS, A11Y_RULE_CHUNKS, A11Y_RUN_OPTIONS, A11Y_RUN_TAGS, A11Y_WORLD_ID, type A11yLimits } from '@app/specs/seo-compliance.spec';
 
 // The accessibility check (spec `seo-compliance.spec.ts`, `A11Y_WORLD_ID`, `A11Y_RUN_TAGS`,
 // `A11Y_DISABLED_RULES`, `A11Y_RUN_OPTIONS`, `A11Y_LIMITS`; acceptance `seo-compliance.feature.md`,
@@ -24,7 +24,7 @@ export interface A11yTarget {
  * (selector and failure summary) and their count, and how many rules passed, were incomplete or
  * did not apply. Self-contained: it is serialised into the run script.
  */
-export function summariseAxe(results: unknown, L: A11yLimits, impacts: readonly string[], url: string, ranAt: number, durationMs: number): unknown {
+export function summariseAxe(results: unknown, L: A11yLimits, impacts: readonly string[], url: string, ranAt: number, durationMs: number, partial = false): unknown {
   const cut = (s: string, max: number): string => {
     if (s.length <= max) return s;
     let end = max;
@@ -80,6 +80,7 @@ export function summariseAxe(results: unknown, L: A11yLimits, impacts: readonly 
     axeVersion: str(field(field(results, 'testEngine'), 'version'), L.maxVersionChars),
     ranAt,
     durationMs: Math.max(0, durationMs),
+    partial: partial === true,
     violations,
     violationTotal: Math.min(all.length, L.maxRuleCount),
     passes: count(field(results, 'passes')),
@@ -99,42 +100,83 @@ export async function runAxe(
   disabled: readonly string[],
   options: Record<string, unknown>,
   impacts: readonly string[],
+  chunks: number,
+  budgetMs: number,
   summarise: typeof summariseAxe,
 ): Promise<unknown> {
-  const axe = (globalThis as { axe?: { run: (context: unknown, options: unknown) => Promise<unknown>; configure: (spec: unknown) => void; _running?: boolean } }).axe;
+  type AxeResults = { violations?: unknown[]; passes?: unknown[]; incomplete?: unknown[]; inapplicable?: unknown[]; testEngine?: unknown };
+  const axe = (
+    globalThis as {
+      axe?: { run: (context: unknown, options: unknown) => Promise<AxeResults>; configure: (spec: unknown) => void; getRules: (tags?: string[]) => { ruleId: string; tags: string[] }[]; _running?: boolean };
+    }
+  ).axe;
   if (!axe || typeof axe.run !== 'function') throw new Error('axe is not loaded');
   if (axe._running === true) return { busy: true };
-  const rules: Record<string, { enabled: boolean }> = {};
-  for (const id of disabled) rules[id] = { enabled: false };
   axe.configure({ noHtml: true });
   const ranAt = Date.now();
   const started = performance.now();
-  let results: unknown;
-  try {
-    results = await axe.run(document, { ...options, runOnly: { type: 'tag', values: [...tags] }, rules });
-  } catch (error) {
-    if (String(error).includes('already running')) return { busy: true };
-    throw error;
+  // The rules the tags select, as a tag run would (experimental and deprecated ones stay off), minus
+  // the disabled ones, run a chunk at a time: axe cannot be stopped, so the deadline is checked between chunks.
+  const ids = axe
+    .getRules([...tags])
+    .filter((rule) => !rule.tags.includes('experimental') && !rule.tags.includes('deprecated') && !disabled.includes(rule.ruleId))
+    .map((rule) => rule.ruleId);
+  const size = Math.max(1, Math.ceil(ids.length / Math.max(1, chunks)));
+  const merged: Required<AxeResults> = { violations: [], passes: [], incomplete: [], inapplicable: [], testEngine: undefined };
+  let partial = false;
+  for (let from = 0; from < ids.length; from += size) {
+    if (from > 0 && performance.now() - started >= budgetMs) {
+      partial = true;
+      break;
+    }
+    let results: AxeResults;
+    try {
+      results = await axe.run(document, { ...options, runOnly: { type: 'rule', values: ids.slice(from, from + size) } });
+    } catch (error) {
+      if (String(error).includes('already running')) return { busy: true };
+      throw error;
+    }
+    for (const key of ['violations', 'passes', 'incomplete', 'inapplicable'] as const) {
+      const list = results[key];
+      if (Array.isArray(list)) for (const item of list) merged[key].push(item);
+    }
+    merged.testEngine = results.testEngine;
   }
-  return summarise(results, L, impacts, document.URL, ranAt, performance.now() - started);
+  return summarise(merged, L, impacts, document.URL, ranAt, performance.now() - started, partial);
 }
 
-/** Whether the world already has axe (answers `true` or `false`; the page cannot define it there). */
+/**
+ * Whether the world already has axe (answers `true` or `false`). The page's scripts cannot reach this
+ * world, but its DOM can still put a named property there (an element with `id="axe"`); that one has
+ * no `run` function, so the probe says no and axe is injected over it.
+ */
 export const AXE_PROBE = "typeof axe === 'object' && axe !== null && typeof axe.run === 'function'";
 
 /** axe's source as injected: its value is never read back (`void 0`: no large result to convert). */
 export const AXE_SCRIPT = `${AXE_SOURCE}\n;void 0;`;
 
 /** The run script: `runAxe` with frost's limits, tags, disabled rules, options and impacts. */
-export const A11Y_RUN_SCRIPT = `(${runAxe.toString()})(${JSON.stringify(A11Y_LIMITS)}, ${JSON.stringify(A11Y_RUN_TAGS)}, ${JSON.stringify(A11Y_DISABLED_RULES)}, ${JSON.stringify(A11Y_RUN_OPTIONS)}, ${JSON.stringify(A11Y_IMPACTS)}, (${summariseAxe.toString()}))`;
+/** The run script: `runAxe` with frost's limits, tags, disabled rules, options, impacts, chunks and its own deadline (`budgetMs`). */
+export function buildRunScript(budgetMs: number = A11Y_PAGE_BUDGET_MS): string {
+  return `(${runAxe.toString()})(${JSON.stringify(A11Y_LIMITS)}, ${JSON.stringify(A11Y_RUN_TAGS)}, ${JSON.stringify(A11Y_DISABLED_RULES)}, ${JSON.stringify(A11Y_RUN_OPTIONS)}, ${JSON.stringify(A11Y_IMPACTS)}, ${A11Y_RULE_CHUNKS}, ${budgetMs}, (${summariseAxe.toString()}))`;
+}
+export const A11Y_RUN_SCRIPT = buildRunScript();
 
 /**
  * Runs the check in `contents`' accessibility world (axe injected first if the world lacks it);
  * resolves the run script's (untrusted, unvalidated) answer, or rejects if a script failed.
  */
-export async function runAccessibilityCheck(contents: A11yTarget): Promise<unknown> {
+export async function runAccessibilityCheck(contents: A11yTarget, stillCurrent: () => boolean = () => true): Promise<unknown> {
+  // Each step answers asynchronously: the page may have moved on to another document meanwhile.
+  const check = (): void => {
+    if (!stillCurrent()) throw new Error('the document changed: check aborted');
+  };
   const loaded = await contents.executeJavaScriptInIsolatedWorld(A11Y_WORLD_ID, [{ code: AXE_PROBE }]);
-  if (loaded !== true) await contents.executeJavaScriptInIsolatedWorld(A11Y_WORLD_ID, [{ code: AXE_SCRIPT }]);
+  check();
+  if (loaded !== true) {
+    await contents.executeJavaScriptInIsolatedWorld(A11Y_WORLD_ID, [{ code: AXE_SCRIPT }]);
+    check();
+  }
   return contents.executeJavaScriptInIsolatedWorld(A11Y_WORLD_ID, [{ code: A11Y_RUN_SCRIPT }]);
 }
 

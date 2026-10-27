@@ -11,7 +11,7 @@
  */
 import { z } from 'zod';
 import { AccessibilityContextSchema, PageSecuritySchema } from './seo-compliance.schema';
-import { RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SOURCES, ROBOTS_FETCH_LIMITS, ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
+import { headerValueCap, RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SOURCES, ROBOTS_FETCH_LIMITS, ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
 import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
 import { BlockingScriptsSchema, type PerformanceContext } from './seo-speed.schema.spec';
@@ -310,8 +310,14 @@ export type ExtractedSnapshot = z.infer<typeof PageSnapshotSchema>;
 
 const status = z.int().min(100).max(999);
 
-/** A response header main kept (`RESPONSE_HEADER_ALLOWLIST`, lowercased), its value cut to `maxHeaderValueChars`. */
-export const ResponseHeaderSchema = z.strictObject({ name: z.enum(RESPONSE_HEADER_ALLOWLIST), value: z.string().max(RESPONSE_LIMITS.maxHeaderValueChars) });
+/**
+ * A response header main kept (`RESPONSE_HEADER_ALLOWLIST`, lowercased), its value cut to
+ * `headerValueCap(name)` (`maxHeaderValueChars`, or `maxLongHeaderValueChars` for the CSP headers);
+ * `truncated: true` when it was cut (absent otherwise).
+ */
+export const ResponseHeaderSchema = z
+  .strictObject({ name: z.enum(RESPONSE_HEADER_ALLOWLIST), value: z.string().max(RESPONSE_LIMITS.maxLongHeaderValueChars), truncated: z.literal(true).optional() })
+  .refine((header) => header.value.length <= headerValueCap(header.name), { message: 'value over its cap' });
 
 /**
  * A redirect the main-frame request went through: the URL that answered, its status and where it

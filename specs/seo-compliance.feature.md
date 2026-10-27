@@ -60,6 +60,28 @@ Each line maps to one named test.
 - **State reaches the chrome without new channels.** `seo.getAudit`'s ready answer carries the
   tab's `accessibilityRun`; its changes bump the tab's `auditVersion` (the auditor's version plus the
   run's), so `browser.watch` wakes the sidebar. `seo.runAccessibility` (sender-guarded) starts a run.
+- **Review fixes** (after the Task 6 review):
+  - `upgrade-insecure-requests` in any enforced policy (header or meta; not report-only) means the
+    browser fetches http subresources over https: they are listed as "Upgraded by CSP", and neither
+    mixed content rule fails (`CSP_UPGRADE_DIRECTIVE`).
+  - X-Frame-Options follows the HTML Standard's algorithm (`XFO_BLOCKING_VALUES`): several distinct
+    values block framing if one of them is DENY, SAMEORIGIN or ALLOWALL; a single ALLOWALL or unknown
+    value allows it. A Content-Security-Policy header's `frame-ancestors` overrides it (the XFO row is
+    then not called weak). `frame-ancestors` holding `*`, a bare scheme or a wildcard host does not
+    protect (`FRAME_ANCESTORS_OPEN`). Inline scripts are decided by `script-src-elem`, then
+    `script-src`, then `default-src` (`CSP_SCRIPT_ELEMENT_DIRECTIVES`).
+  - CSP headers (and Content-Security-Policy-Report-Only, now recorded) are kept up to 16 KB
+    (`LONG_VALUE_HEADERS`, `maxLongHeaderValueChars`); a value still cut is marked `truncated`, and
+    what depends on the policy (inline scripts, frame-ancestors, upgrade-insecure-requests) is
+    unknown: no rule fails because of it, and the CSP row says it was cut (`CSP_CUT_IS_UNKNOWN`).
+  - The run script runs the rules in `A11Y_RULE_CHUNKS` chunks and checks its own deadline
+    (`A11Y_PAGE_BUDGET_MS`) before each; past it, it answers `partial: true`, and the panel says
+    not every rule ran. A chunk that overruns still times out in main, and the panel says the page may
+    stay busy for a while. Before injecting axe and before running it, main checks the run is still
+    for the requested document and URL, and aborts (no injection, no run) if not.
+  - "Local page" only when nothing above info fails; a warning on a loopback page is "Needs attention".
+  - The extractor keeps the last *valid* `<meta name="referrer">` (`META_REFERRER_VALUES`).
+  - axe's summaries and descriptions are bidi-isolated text.
 - **Panel.** A verdict card (Secure / Needs attention / Not secure / Local page, with HTTPS, mixed
   content and HSTS signals), the ranked security issues, the security header table (present / weak /
   missing / unknown / not applicable, the values as text and frost's reading of them), the mixed
@@ -73,15 +95,20 @@ Each line maps to one named test.
 - Policies split on commas, directives on semicolons, first occurrence wins, junk names skipped, a meta policy drops frame-ancestors / report-uri / sandbox; linear → `csp-parser-reads-policies`
 - Inline scripts run only if every policy that governs scripts allows `'unsafe-inline'` without a nonce, hash or `'strict-dynamic'` → `csp-inline-scripts`
 - frame-ancestors counts from header policies only → `csp-frame-ancestors-header-only`
+- frame-ancestors with `*`, a bare scheme or a wildcard host does not protect; `'none'`, `'self'` and hosts do → `frame-ancestors-open-sources`
+- `script-src-elem` decides inline scripts before `script-src` and `default-src` → `csp-script-src-elem-precedence`
+- A cut CSP header leaves inline scripts, frame-ancestors and upgrade-insecure-requests unknown: no rule fails for them → `csp-cut-is-unknown`
 
 ## Headers
 - HSTS parses max-age (quoted too), includeSubDomains, preload; duplicates or a bad max-age make it ignored → `hsts-parser`
-- X-Frame-Options protects only with DENY or SAMEORIGIN that agree; nosniff is the first token → `frame-options-and-nosniff`
+- nosniff is the first token → `frame-options-and-nosniff`
+- X-Frame-Options by the HTML Standard: one DENY / SAMEORIGIN blocks; several distinct values block if one is DENY, SAMEORIGIN or ALLOWALL; ALLOWALL alone and unknown values allow → `frame-options-html-algorithm`
 - The referrer policy is the last known header token, a meta tag (legacy values too) wins → `referrer-policy-reading`
 
 ## Mixed content
 - Active and passive kinds split as `ACTIVE_RESOURCE_KINDS`; an http page has none → `mixed-content-classification`
 - This computer's hosts are loopback → `loopback-hosts`
+- `upgrade-insecure-requests` (header or meta, not report-only) turns http subresources into "upgraded by CSP": no mixed content rule fails, the verdict is not Not secure → `mixed-content-upgraded-by-csp`
 
 ## Rules (one named test per rule; the clean fixture passes all → `compliance-rules-in-catalog`)
 - `https-missing` · `mixed-content-active` · `mixed-content-passive` · `hsts-missing` · `hsts-short-max-age` · `csp-missing` · `csp-unsafe-inline` · `nosniff-missing` · `clickjacking-unprotected` · `referrer-policy-missing` · `referrer-policy-unsafe` · `a11y-critical` · `a11y-serious`
@@ -89,13 +116,14 @@ Each line maps to one named test.
 ## Accessibility scoring and report
 - Not run: not scored; moderate/minor never scored; critical and serious one warning each; another URL's answer is not run; an invalid one is shown as such and not scored → `a11y-only-scored-once-run`
 - Groups by impact, worst first, rules by elements affected → `a11y-report-groups-by-impact`
-- Verdicts: secure / attention / insecure / local from the security rules' severities → `security-verdicts`
-- Header rows: good / weak / missing / unknown / not applicable, meta tags, notes → `security-header-rows`
+- Verdicts: secure / attention / insecure / local from the security rules' severities; local only when nothing above info fails → `security-verdicts`
+- Header rows: good / weak / missing / unknown / not applicable, meta tags, notes; X-Frame-Options is not weak when frame-ancestors protects; a cut CSP says so → `security-header-rows`
 
 ## Extraction (`apps/desktop/src/main/seo/__tests__/security-extract.test.ts`)
 - http subresources of an https page by kind, deduplicated, links and canonicals ignored, loopback hosts skipped → `security-read-finds-http-subresources`
 - Nothing on an http page; a `<base>` can make relative URLs http → `security-read-only-on-https-pages`
-- Meta CSP values and the last meta referrer → `security-read-meta-policies`
+- Meta CSP values and the last valid meta referrer → `security-read-meta-policies`
+- CSP headers are kept up to 16 KB, other headers 2 KB; a cut value is marked `truncated` and still validates → `csp-header-cap`
 - Every cap and the scan limit hold → `security-read-is-bounded`
 - It is part of the extractor's script → `security-read-is-in-the-extractor-script`
 
@@ -110,6 +138,8 @@ Each line maps to one named test.
 - Only the accessibility world is used, axe injected once per document → `a11y-runs-in-its-isolated-world-only`
 - Real axe on a DOM finds missing alt, unlabelled field and empty button; disabled rules never report; the DOM is unchanged → `a11y-real-axe-on-a-dom`
 - An earlier run still going answers busy → `a11y-busy-run-is-reported`
+- The rules run in chunks; past its own deadline the script answers what it has, marked partial → `a11y-run-in-chunks-with-deadline`
+- A document or URL change between the probe and the injection or the run aborts the check (no injection, no run) → `a11y-run-aborts-if-the-document-changed`
 
 ## Run lifecycle and controller (`apps/desktop/src/main/seo/__tests__/a11y-runs.test.ts`)
 - Runs only on request, reports running and bumps the audit version, never doubled → `a11y-run-starts-on-request-only`
@@ -122,6 +152,7 @@ Each line maps to one named test.
 - Busy, script errors, non-objects and oversized answers fail with their reasons → `a11y-run-failures`
 - A crash or a closed tab ends it → `a11y-run-ends-with-the-page`
 - A background tab's answer is scored when it is shown → `a11y-background-tab-scored-when-shown`
+- An answer arriving while a later context input (a speed measurement) is pending: the shown audit stays, then the final audit has both → `a11y-answer-while-context-pending`
 
 ## Router (`packages/ipc-contract/src/__tests__/seo-router.test.ts`)
 - `seo.runAccessibility` is sender-guarded, validates `{ tabId }` strictly, is a mutation answering a boolean → `seo-procedures-*`
@@ -130,6 +161,7 @@ Each line maps to one named test.
 - The verdict card's summary and signals → `security-card-text`
 - Header tones and the "unknown" notes → `header-tones-and-notes`
 - What the accessibility section shows for each run state and report → `a11y-view-states`
+- Upgraded mixed content in the signals; partial and timed-out notes → `compliance-notes`
 - Progress, impact counts and node lists → `a11y-progress-and-counts`
 
 ## End to end (`apps/desktop/e2e/seo-compliance.e2e.ts`)
@@ -139,6 +171,7 @@ certificate helper is shared with the browse guard's certificate-error test (`e2
 - All security headers: Secure, no issues, every row present, no mixed content, the check idle → `secure-page-is-clean-e2e`
 - No headers: Needs attention with the five header issues; weak values flagged; an http loopback page is Local → `missing-headers-show-issues-e2e`
 - Active and passive http subresources reported (Chromium blocks the active ones), loopback ones not; Not secure; text only → `mixed-content-is-detected-e2e`
-- A run reports missing alt, unlabelled field, empty button (critical) and low contrast (serious); a rule opens to its selector and help URL, which opens in a background tab; the score drops and Overview lists both → `accessibility-check-reports-violations-e2e`
+- With `upgrade-insecure-requests` the same subresources are "Upgraded by CSP", no mixed content issue, not Not secure → `mixed-content-upgraded-by-csp-e2e`
+- A run reports missing alt, unlabelled field, empty button (critical) and low contrast (serious); a rule opens to its selector and help URL, which opens in a background tab; the score drops and Overview lists both (once its issue list has settled) → `accessibility-check-reports-violations-e2e`
 - After a run the main world has no `axe` and an unchanged DOM; a page overriding DOM methods and defining its own `axe` gets the same results and keeps its own `axe` → `measurement-runs-isolated-e2e`
-- A 24 000-element page answers within the cap (every list capped) or times out, the app stays responsive, and navigating away cancels a run → `huge-dom-run-stays-bounded-e2e`
+- A 24 000-element page answers within the cap (every list capped) or times out, the app stays responsive, and navigating away cancels a run: back on the page, it is still idle after the cap → `huge-dom-run-stays-bounded-e2e`

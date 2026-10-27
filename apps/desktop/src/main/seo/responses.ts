@@ -1,5 +1,5 @@
 import type { OnBeforeRedirectListenerDetails, OnErrorOccurredListenerDetails, OnResponseStartedListenerDetails } from 'electron';
-import { RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, type ResponseHeaderName } from '@app/specs/seo-indexability.spec';
+import { headerValueCap, RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, type ResponseHeaderName } from '@app/specs/seo-indexability.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import type { RedirectHop, ResponseHeader, ResponseMeta } from '@app/specs/seo-snapshot.spec';
 import type { MainFrameObserver } from '../browser/web-request';
@@ -29,7 +29,8 @@ const httpStatus = (code: unknown): number | null => (typeof code === 'number' &
 
 /**
  * The allowlisted headers of `responseHeaders` (names lowercased, in arrival order): at most
- * `maxValuesPerHeader` values per name and `maxHeaders` in all, each cut to `maxHeaderValueChars`.
+ * `maxValuesPerHeader` values per name and `maxHeaders` in all, each cut to `headerValueCap(name)`
+ * (`maxHeaderValueChars`; `maxLongHeaderValueChars` for the CSP headers) and marked `truncated` if cut.
  */
 export function captureHeaders(responseHeaders: Record<string, string[] | string> | undefined): ResponseHeader[] {
   const out: ResponseHeader[] = [];
@@ -45,7 +46,8 @@ export function captureHeaders(responseHeaders: Record<string, string[] | string
       if (seen >= RESPONSE_LIMITS.maxValuesPerHeader) break;
       if (typeof value !== 'string') continue;
       perName.set(name, seen + 1);
-      out.push({ name: name as ResponseHeaderName, value: cut(value, RESPONSE_LIMITS.maxHeaderValueChars) });
+      const cap = headerValueCap(name);
+      out.push(value.length > cap ? { name: name as ResponseHeaderName, value: cut(value, cap), truncated: true } : { name: name as ResponseHeaderName, value });
     }
   }
   return out;

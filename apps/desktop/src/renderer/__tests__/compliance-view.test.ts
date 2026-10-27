@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'vitest';
 import type { AccessibilityReport, SecurityReport } from '@app/seo-core';
 import { A11Y_FAIL_MESSAGES, A11Y_PANEL_NODES, A11Y_TIMEOUT_MS, IDLE_A11Y_RUN, type AccessibilityRunState } from '@app/specs/seo-compliance.spec';
-import { a11yView, countLabel, elapsedSeconds, headersUnknownNote, headerTone, impactCounts, nodesShown, runButtonLabel, runProgress, securitySignals, securitySummary } from '../compliance-view';
+import { a11yNote, a11yView, countLabel, mixedNote, elapsedSeconds, headersUnknownNote, headerTone, impactCounts, nodesShown, runButtonLabel, runProgress, securitySignals, securitySummary } from '../compliance-view';
 
 const done: Extract<AccessibilityReport, { status: 'done' }> = {
   status: 'done',
@@ -22,6 +22,7 @@ const done: Extract<AccessibilityReport, { status: 'done' }> = {
   passes: 30,
   incomplete: 1,
   inapplicable: 20,
+  partial: false,
 };
 const running = (startedAt = 1_000): AccessibilityRunState => ({ status: 'running', startedAt, finishedAt: null, reason: null });
 const ended = (status: AccessibilityRunState['status'], reason: AccessibilityRunState['reason'] = null): AccessibilityRunState => ({ status, startedAt: 1_000, finishedAt: 2_000, reason });
@@ -37,11 +38,13 @@ function security(changes: Partial<SecurityReport> = {}): SecurityReport {
     cspPolicies: [],
     inlineScriptsAllowed: false,
     frameAncestors: false,
+    upgradeInsecure: false,
+    cspCut: false,
     frameOptionsProtect: true,
     nosniff: true,
     referrerPolicy: 'same-origin',
     referrerFrom: 'header',
-    mixed: { active: [], passive: [], total: 0, truncated: false },
+    mixed: { active: [], passive: [], upgraded: [], upgradeUnknown: false, total: 0, truncated: false },
     verdict: 'secure',
     headers: [{ name: 'strict-transport-security', label: 'Strict-Transport-Security', state: 'good', values: ['max-age=31536000'], fromMeta: false, note: null }],
     ...changes,
@@ -52,14 +55,14 @@ describe('compliance view helpers', () => {
   test('security-card-text', () => {
     expect(securitySummary(security())).toMatch(/HTTPS/);
     expect(securitySummary(security({ verdict: 'insecure', https: false }))).toMatch(/not served over HTTPS/);
-    expect(securitySummary(security({ verdict: 'insecure', mixed: { active: [{ kind: 'script', url: 'http://x/', tag: 'script' }], passive: [], total: 1, truncated: false } }))).toMatch(/scripts, styles or frames/);
+    expect(securitySummary(security({ verdict: 'insecure', mixed: { active: [{ kind: 'script', url: 'http://x/', tag: 'script' }], passive: [], upgraded: [], upgradeUnknown: false, total: 1, truncated: false } }))).toMatch(/scripts, styles or frames/);
     expect(securitySummary(security({ verdict: 'local', https: false, loopback: true }))).toMatch(/this computer/);
     expect(securitySummary(security({ headersKnown: false }))).toMatch(/unknown/);
     const signals = Object.fromEntries(securitySignals(security()).map((s) => [s.id, [s.value, s.tone]]));
     expect(signals).toEqual({ https: ['Yes', 'ok'], mixed: ['None', 'ok'], hsts: ['On', 'ok'] });
     const http = Object.fromEntries(securitySignals(security({ https: false, headers: [{ name: 'strict-transport-security', label: '', state: 'not-applicable', values: [], fromMeta: false, note: null }] })).map((s) => [s.id, [s.value, s.tone]]));
     expect(http).toEqual({ https: ['No', 'error'], mixed: ['N/A', 'muted'], hsts: ['N/A', 'muted'] });
-    const mixed = Object.fromEntries(securitySignals(security({ mixed: { active: [], passive: [{ kind: 'image', url: 'http://x/', tag: 'img' }], total: 3, truncated: false } })).map((s) => [s.id, [s.value, s.tone]]));
+    const mixed = Object.fromEntries(securitySignals(security({ mixed: { active: [], passive: [{ kind: 'image', url: 'http://x/', tag: 'img' }], upgraded: [], upgradeUnknown: false, total: 3, truncated: false } })).map((s) => [s.id, [s.value, s.tone]]));
     expect(mixed['mixed']).toEqual(['3', 'warn']);
   });
 
@@ -93,6 +96,20 @@ describe('compliance view helpers', () => {
     expect(runButtonLabel({ kind: 'idle' })).toBe('Run accessibility check');
     expect(runButtonLabel({ kind: 'running', startedAt: 0 })).toBe('Checking…');
     expect(runButtonLabel({ kind: 'results', report: done })).toBe('Run again');
+  });
+
+  test('compliance-notes', () => {
+    const upgraded = security({ upgradeInsecure: true, mixed: { active: [], passive: [], upgraded: [{ kind: 'script', url: 'http://x/', tag: 'script' }], upgradeUnknown: false, total: 1, truncated: false } });
+    expect(Object.fromEntries(securitySignals(upgraded).map((s) => [s.id, [s.value, s.tone]]))['mixed']).toEqual(['Upgraded', 'ok']);
+    expect(mixedNote(upgraded.mixed)).toMatch(/upgrade-insecure-requests/);
+    const unknown = security({ cspCut: true, mixed: { active: [{ kind: 'script', url: 'http://x/', tag: 'script' }], passive: [], upgraded: [], upgradeUnknown: true, total: 1, truncated: false } });
+    expect(Object.fromEntries(securitySignals(unknown).map((s) => [s.id, [s.value, s.tone]]))['mixed']).toEqual(['Unknown', 'muted']);
+    expect(mixedNote(unknown.mixed)).toMatch(/cut/);
+    expect(mixedNote(security().mixed)).toBeNull();
+    // A partial run says not every rule ran; a timed-out one that the page may stay busy.
+    expect(a11yNote({ kind: 'results', report: { ...done, partial: true } })).toMatch(/not every rule/i);
+    expect(a11yNote({ kind: 'results', report: done })).toBeNull();
+    expect(a11yNote({ kind: 'timed-out' })).toMatch(/busy/);
   });
 
   test('a11y-progress-and-counts', () => {
