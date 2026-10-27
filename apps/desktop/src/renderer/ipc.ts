@@ -31,7 +31,7 @@ export const actions = {
   /** Audits the tab again (`seo.rerun`). */
   rerunAudit: (tabId: number) => ipc.seo.rerun.mutate({ tabId }).catch(ignore),
   /** Opens an `http(s)` URL from a panel in a background tab (main checks the scheme); resolves the tab's id or `null`. */
-  openBackgroundTab: (url: string) => ipc.browser.openBackgroundTab.mutate({ url }).catch(() => null),
+  openBackgroundTab: (url: string, options: { readonly inherit?: boolean } = {}) => ipc.browser.openBackgroundTab.mutate({ url, ...(options.inherit === true ? { inherit: true } : {}) }).catch(() => null),
   /** Sets the tab's highlight overlay (`seo.setHighlight`); resolves whether it was set. */
   setHighlight: (tabId: number, mode: HighlightMode) => ipc.seo.setHighlight.mutate({ tabId, mode }).catch(() => false),
   /** Copies the filtered links of the audit on screen as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
@@ -54,7 +54,7 @@ export const actions = {
   /** Copies one allowlisted value of the audit on screen through main's clipboard; resolves whether it was copied. */
   copyValue: (tabId: number, audit: SeoAuditRef, key: CopyValueKey) => ipc.seo.copyValue.mutate({ tabId, audit, key }).catch(() => false),
   /** Sets the tab's render profile (`pin`: as this site's pin); resolves whether it was set (`render-profile.feature.md`). */
-  setRenderProfile: (tabId: number, profile: RenderProfile, pin: boolean) => ipc.browser.setRenderProfile.mutate({ tabId, profile, pin }).catch(() => false),
+  setRenderProfile: (tabId: number, profile: RenderProfile, pin?: boolean) => ipc.browser.setRenderProfile.mutate({ tabId, profile, ...(pin === undefined ? {} : { pin }) }).catch(() => false),
   /** Reset: the tab's render profile and this site's pin go; resolves whether it had one. */
   clearRenderProfile: (tabId: number) => ipc.browser.clearRenderProfile.mutate({ tabId }).catch(() => false),
 };

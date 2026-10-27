@@ -176,10 +176,8 @@ function start(): void {
   const renderProfiles = {
     pins: renderProfilePins,
     chromeVersion: process.versions.chrome,
-    debuggerFor: (contents: WebContents, detached: (reason: string) => void) => {
-      if (!isBrowseContents(contents)) throw new Error('render profiles apply to browse-session tabs only');
-      return createProfileDebugger(contents, detached);
-    },
+    // createProfileDebugger refuses anything but a browse-session tab's WebContents itself.
+    debuggerFor: (contents: WebContents, detached: (reason: string) => void) => createProfileDebugger(contents, detached),
   };
   const browser = createBrowserController({
     createView: createTabView,

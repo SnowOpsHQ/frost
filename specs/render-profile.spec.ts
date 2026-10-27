@@ -159,6 +159,29 @@ export const USER_AGENT_PLATFORMS: Readonly<Record<Exclude<UserAgentId, 'browser
 export const CLIENT_HINTS_BRAND = 'Chromium' as const;
 
 /**
+ * The GREASE brand the engine itself adds to its client hints ("Not A Brand" with two separator
+ * characters and a version picked from the major version), built the way Chromium builds it, so an
+ * emulated brand list looks like the engine's own: separators from `GREASE_CHARACTERS` at
+ * `major % 11` and `(major + 1) % 11`, version `GREASE_VERSIONS[major % 3]`, and the GREASE brand
+ * first for an even major, second for an odd one (verified against Electron 45 / Chromium 156:
+ * `Not:A-Brand` version `8`, then `Chromium`).
+ */
+export const GREASE_CHARACTERS = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_'] as const;
+export const GREASE_VERSIONS = ['8', '99', '24'] as const;
+
+/** The brand list (`major` version, or the full one for `fullVersionList`) the engine reports for `major`. */
+export function clientHintsBrands(major: number, version: string, greaseFullVersion = false): { readonly brand: string; readonly version: string }[] {
+  const n = Number.isSafeInteger(major) && major >= 0 ? major : 0;
+  const greaseVersion = GREASE_VERSIONS[n % GREASE_VERSIONS.length]!;
+  const grease = {
+    brand: `Not${GREASE_CHARACTERS[n % GREASE_CHARACTERS.length]}A${GREASE_CHARACTERS[(n + 1) % GREASE_CHARACTERS.length]}Brand`,
+    version: greaseFullVersion ? `${greaseVersion}.0.0.0` : greaseVersion,
+  };
+  const engine = { brand: CLIENT_HINTS_BRAND, version };
+  return n % 2 === 0 ? [grease, engine] : [engine, grease];
+}
+
+/**
  * `chromeVersion` as a dotted version (`140.0.7339.80`), else `0.0.0.0`: a malformed version never
  * reaches a header.
  */
@@ -203,6 +226,53 @@ export type RenderProfileCdpMethod = (typeof RENDER_PROFILE_CDP_METHODS)[number]
 /** Whether `method` is on the allowlist (exact match; never a prefix or domain). */
 export function isAllowedCdpMethod(method: unknown): method is RenderProfileCdpMethod {
   return typeof method === 'string' && (RENDER_PROFILE_CDP_METHODS as readonly string[]).includes(method);
+}
+
+/**
+ * CDP methods frost sends only to manage a tab's child targets (cross-site iframes, which run in
+ * their own renderer, and dedicated workers), never as part of a profile:
+ * - `Target.setAutoAttach`, only with `TARGET_AUTO_ATTACH_PARAMS` (on the tab and on each child
+ *   frame, so nested cross-site frames are reached too), so every new child is paused before it runs
+ *   anything;
+ * - `Runtime.runIfWaitingForDebugger`, only on a child session the tab announced
+ *   (`Target.attachedToTarget`), once its profile commands have answered (or after
+ *   `CHILD_RESUME_TIMEOUT_MS`). It resumes the child; it does not enable the Runtime domain.
+ * The two `Target` events are the only protocol events frost reads.
+ */
+export const RENDER_PROFILE_SESSION_METHODS = ['Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger'] as const;
+export type RenderProfileSessionMethod = (typeof RENDER_PROFILE_SESSION_METHODS)[number];
+export const TARGET_AUTO_ATTACH_PARAMS = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true } as const;
+
+/**
+ * A paused child is resumed at the latest this long after it was announced, even if its commands
+ * have not all answered: a child can never hold up the tab. (Resuming before its commands answered
+ * can leave it paused for good in Electron 45, so frost never resumes earlier than that.)
+ */
+export const CHILD_RESUME_TIMEOUT_MS = 1_000;
+
+/**
+ * The profile commands a child frame gets: all of them but the viewport (`Emulation.*DeviceMetrics*`
+ * is refused on anything but the tab's top-level target; a cross-site frame keeps the size its
+ * parent lays it out at). A dedicated worker gets only the user agent and the cache switch.
+ */
+export const TOP_LEVEL_ONLY_METHODS = ['Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride'] as const satisfies readonly RenderProfileCdpMethod[];
+export const WORKER_METHODS = ['Network.setUserAgentOverride', 'Network.setCacheDisabled', 'Network.enable', 'Network.disable'] as const satisfies readonly RenderProfileCdpMethod[];
+export const CHILD_FRAME_TYPES = ['iframe'] as const;
+export const CHILD_WORKER_TYPES = ['worker'] as const;
+
+/**
+ * Whether frost may send `method` with `params` to a session: a profile method anywhere; a session
+ * method only as described above (`child`: the session is an announced child).
+ */
+export function isAllowedCdpCommand(method: unknown, params: unknown, session: 'top' | 'child'): boolean {
+  if (isAllowedCdpMethod(method)) return true;
+  if (method === 'Target.setAutoAttach') {
+    if (typeof params !== 'object' || params === null) return false;
+    const entries = Object.entries(params);
+    return entries.length === 3 && entries.every(([key, value]) => (TARGET_AUTO_ATTACH_PARAMS as Record<string, unknown>)[key] === value);
+  }
+  if (method === 'Runtime.runIfWaitingForDebugger') return session === 'child' && typeof params === 'object' && params !== null && Object.keys(params).length === 0;
+  return false;
 }
 
 /**

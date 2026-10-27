@@ -12,6 +12,7 @@ import { createFullscreen } from './fullscreen';
 import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
 import { createTabRenderProfiles, type RenderProfileOptions } from './render-profile';
+import { withAuditProfiles } from './render-profile-audits';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { createTabA11y, type A11yRunner } from '../seo/a11y-runs';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
@@ -244,14 +245,16 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // The SEO auditor audits only the active tab of an attached window. The accessibility check's
   // answer for the tab's document (Task 6) travels in the page's context, beside what main collects:
   // an input known at once, in the first analysis and the final one alike (`withKnown`).
-  const seoOptions: TabAuditsOptions | undefined = options.seo && {
-    ...options.seo,
-    // Every audit records the render profile its extraction ran under (`render-profile.feature.md`).
-    extract: (contents) => {
+  // Every audit records the render profile its run's extraction started under, kept with that run
+  // (`render-profile.feature.md`, Recorded with audits).
+  const auditProfiles =
+    options.seo &&
+    withAuditProfiles(options.seo, (contents) => {
       const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
-      if (tab) renderProfiles.extractionStarted(tab, contents.getURL());
-      return options.seo!.extract(contents);
-    },
+      return tab ? renderProfiles.auditProfile(tab) : null;
+    });
+  const seoOptions: TabAuditsOptions | undefined = auditProfiles && {
+    ...auditProfiles.options,
     context: (contents) => {
       const base = options.seo!.context?.(contents);
       const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
@@ -655,19 +658,27 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const openTabFromPage = (opener: unknown, url: string): number | null => {
     if (!hasWindow() || !isWebUrl(url)) return null;
     const openerTab = strip.tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === opener);
-    return openerTab ? openTabRightOf(openerTab, url) : null;
+    // A tab the page opens renders as its opener does (`render-profile.feature.md`, Popups).
+    return openerTab ? openTabRightOf(openerTab, url, true) : null;
   };
 
-  /** A link from the SEO sidebar: opened in a background tab right of the active tab (as its popup would be). */
-  const openBackgroundTab = (url: string): number | null => {
+  /**
+   * A link from the SEO sidebar or the palette: opened in a background tab right of the active tab (as
+   * its popup would be). It starts with the active tab's own render profile only with `inherit` (a
+   * page of the audited site); a tool, help page, robots.txt or sitemap does not.
+   */
+  const openBackgroundTab = (url: string, inherit = false): number | null => {
     const parsed = parseWebUrl(url);
     const opener = activeTab();
     if (!hasWindow() || !parsed || !opener) return null;
-    return openTabRightOf(opener, parsed.href);
+    return openTabRightOf(opener, parsed.href, inherit);
   };
 
-  /** Opens the `http(s)` `url` in a new background tab right of `openerTab`, after the tabs it opened. */
-  const openTabRightOf = (openerTab: Tab, url: string): number | null => {
+  /**
+   * Opens the `http(s)` `url` in a new background tab right of `openerTab`, after the tabs it opened;
+   * with `inherit` it starts with the opener's own render profile.
+   */
+  const openTabRightOf = (openerTab: Tab, url: string, inherit: boolean): number | null => {
     const index = strip.tabs.indexOf(openerTab);
     if (index < 0) return null;
     if (strip.tabs.length >= MAX_TABS) {
@@ -680,7 +691,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const tab = createTab(nextTabId++, openerTab.id);
     strip.tabs.splice(at, 0, tab);
     // It starts with the opener's own render profile, in effect before its first request.
-    renderProfiles.inherit(openerTab, tab);
+    if (inherit) renderProfiles.inherit(openerTab, tab);
     const view = ensureView(tab);
     // No opener link, referrer or POST body: the new tab loads the URL on its own.
     if (view) loadInTab(tab, view, url);
@@ -882,7 +893,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         const tab = strip.tabs.find((t) => t.id === tabId);
         const response = audits.response(tab);
         // A ready audit carries the tab's accessibility run (Task 6) and the render profile it ran under.
-        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab), renderProfile: renderProfiles.auditProfile(tab, response.audit.url) } : response;
+        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab), renderProfile: auditProfiles?.profileOf(response.audit) ?? null } : response;
       },
       measureSpeed: (tabId) => speeds.measure(strip.tabs.find((tab) => tab.id === tabId)),
       setHighlight: (tabId, mode) => {
@@ -936,7 +947,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     openTabFromPage,
 
     // Render profiles (`render-profile.feature.md`): any open tab, from the chrome only.
-    setRenderProfile: (tabId: number, profile: RenderProfile, pin: boolean) => {
+    setRenderProfile: (tabId: number, profile: RenderProfile, pin?: boolean) => {
       const tab = strip.tabs.find((t) => t.id === tabId);
       return tab !== undefined && hasWindow() && renderProfiles.set(tab, profile, pin);
     },

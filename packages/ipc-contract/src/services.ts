@@ -47,7 +47,7 @@ export interface BrowserService {
    * Answers the new tab's id, or `null` for any other URL, no window or tab, or `MAX_TABS` (the
    * `tab-limit` notice is raised).
    */
-  openBackgroundTab(url: string): number | null;
+  openBackgroundTab(url: string, inherit?: boolean): number | null;
   back(): void;
   forward(): void;
   reload(): void;
@@ -69,11 +69,12 @@ export interface BrowserService {
   /** The menu's Clear Browsing Data… (which asks first, in main's own dialog). */
   clearBrowsingData(): void;
   /**
-   * Sets the tab's render profile (`render-profile.feature.md`): its own, or with `pin` this site's
-   * pin (`false` removes the site's pin); the default profile is a Reset. `false` (a no-op) for an id
-   * that names no open tab, no window, or `pin` on a tab with no web page.
+   * Sets the tab's render profile (`render-profile.feature.md`): its own, or with `pin: true` the pin
+   * of the site it shows (`false` also removes that site's pin; left out, the site's pin stays); the
+   * default profile is a Reset. `false` (a no-op) for an id that names no open tab, no window, or
+   * `pin` on a tab with no web page.
    */
-  setRenderProfile(tabId: number, profile: RenderProfile, pin: boolean): boolean;
+  setRenderProfile(tabId: number, profile: RenderProfile, pin?: boolean): boolean;
   /** Reset: the tab's render profile and this site's pin go. `false` if the tab had none (or names no open tab). */
   clearRenderProfile(tabId: number): boolean;
   getState(): BrowserState;

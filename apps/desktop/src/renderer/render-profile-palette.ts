@@ -12,7 +12,7 @@ import type { PaletteAction, PaletteSource } from './palette/registry';
 
 /** The procedures the actions call (a subset of `actions` in `ipc.ts`). */
 export interface RenderProfilePaletteApi {
-  setRenderProfile(tabId: number, profile: RenderProfile, pin: boolean): Promise<boolean>;
+  setRenderProfile(tabId: number, profile: RenderProfile, pin?: boolean): Promise<boolean>;
   clearRenderProfile(tabId: number): Promise<boolean>;
 }
 
@@ -38,8 +38,8 @@ function quickActions(api: RenderProfilePaletteApi): PaletteAction[] {
       available: (ctx) => ctx.tab !== undefined && !(ctx.tab.renderProfile !== null && sameRenderProfile(ctx.tab.renderProfile.profile, quick.profile)),
       run: async (ctx) => {
         const tab = ctx.tab!;
-        // As the quick chips: the tab's own profile (never this site's pin).
-        const ok = await api.setRenderProfile(tab.id, quick.profile, false);
+        // As the quick chips: the tab's own profile; the site's pin, if any, stays.
+        const ok = await api.setRenderProfile(tab.id, quick.profile);
         return ok ? `Render profile: ${quick.label}` : RENDER_PROFILE_NOT_SET;
       },
     }),

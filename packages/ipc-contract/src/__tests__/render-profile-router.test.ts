@@ -19,7 +19,7 @@ function fakeService() {
     newTab: vi.fn(() => 1),
     closeTab: vi.fn(() => true),
     activateTab: vi.fn(() => true),
-    openBackgroundTab: vi.fn(() => null),
+    openBackgroundTab: vi.fn((_url: string, _inherit?: boolean): number | null => 9),
     back: vi.fn(),
     forward: vi.fn(),
     reload: vi.fn(),
@@ -36,7 +36,7 @@ function fakeService() {
   } satisfies BrowserService;
 }
 
-function call(service: BrowserService, name: 'setRenderProfile' | 'clearRenderProfile', input: unknown, origin: string = APP_ORIGIN): Promise<unknown> {
+function call(service: BrowserService, name: 'setRenderProfile' | 'clearRenderProfile' | 'openBackgroundTab', input: unknown, origin: string = APP_ORIGIN): Promise<unknown> {
   const ctx: IpcContext = {
     sender: { origin, live: true, windowId: WINDOW_ID, isWindowContents: true, isMainFrame: true },
     policy: createSenderPolicy({ knownWindowIds: new Set([WINDOW_ID]) }),
@@ -73,7 +73,7 @@ describe('render-profile procedures', () => {
     const service = fakeService();
     const bad: unknown[] = [
       undefined,
-      { tabId: 1, profile: PHONE },
+      { tabId: 1, pin: true },
       { tabId: 0, profile: PHONE, pin: false },
       { tabId: 1, profile: { ...PHONE, device: 'watch' }, pin: false },
       { tabId: 1, profile: { ...PHONE, network: '5g' }, pin: false },
@@ -87,6 +87,8 @@ describe('render-profile procedures', () => {
       { tabId: 1, profile: { ...PHONE, userAgent: 'custom', customUserAgent: 'x'.repeat(MAX_CUSTOM_USER_AGENT_LENGTH + 1) }, pin: false },
       { tabId: 1, profile: { ...PHONE, customUserAgent: 'not custom' }, pin: false },
       { tabId: 1, profile: PHONE, pin: false, extra: true },
+      { tabId: 1, profile: PHONE, pin: 'keep' },
+      { tabId: 1, profile: PHONE, pin: null },
     ];
     for (const input of bad) expect(await codeOf(call(service, 'setRenderProfile', input)), JSON.stringify(input)).toBe('BAD_REQUEST');
     expect(service.setRenderProfile).not.toHaveBeenCalled();
@@ -94,6 +96,21 @@ describe('render-profile procedures', () => {
     expect(await call(service, 'setRenderProfile', { tabId: 1, profile: custom, pin: true })).toBe(true);
     expect(service.setRenderProfile).toHaveBeenCalledExactlyOnceWith(1, custom, true);
     expect(await call(service, 'setRenderProfile', { tabId: 2, profile: PHONE, pin: false })).toBe(false);
+    // `pin` left out: the site's pin is left as it is (the service gets `undefined`).
+    expect(await call(service, 'setRenderProfile', { tabId: 1, profile: PHONE })).toBe(true);
+    expect(service.setRenderProfile).toHaveBeenLastCalledWith(1, PHONE, undefined);
+  });
+
+  test('open-background-tab-inherit', async () => {
+    const service = fakeService();
+    // Inherit only when asked: tools, help pages, robots.txt and sitemaps leave it out.
+    expect(await call(service, 'openBackgroundTab', { url: 'https://a.example/' })).toBe(9);
+    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('https://a.example/', false);
+    await call(service, 'openBackgroundTab', { url: 'https://a.example/', inherit: true });
+    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('https://a.example/', true);
+    await call(service, 'openBackgroundTab', { url: 'https://a.example/', inherit: false });
+    expect(service.openBackgroundTab).toHaveBeenLastCalledWith('https://a.example/', false);
+    for (const inherit of ['yes', 1, null]) expect(await codeOf(call(service, 'openBackgroundTab', { url: 'https://a.example/', inherit }))).toBe('BAD_REQUEST');
   });
 
   test('clear-render-profile', async () => {

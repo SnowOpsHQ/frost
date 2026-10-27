@@ -9,8 +9,11 @@
 #
 # The allowlist is `paths.exclude` below (today: the render-profile debugger; the devtools drawer's
 # recorder joins it in its own reviewed PR). Any use of a `debugger` property is flagged elsewhere —
-# `attach` / `sendCommand` / `detach` / `on`, an alias of it, or a destructured binding — so no
-# module can reach a debugger through a helper. Never exclude the fixture (`semgrep --test` would
+# `attach` / `sendCommand` / `detach` / `on`, an alias of it, a destructured binding (typed or not,
+# in a declaration, a parameter or an assignment) or a reflective read by name (`Reflect.get`,
+# `Reflect.getOwnPropertyDescriptor`, `Object.getOwnPropertyDescriptor`) — so no module can reach a
+# debugger through a helper. (A name computed at run time is out of a static rule's reach; review
+# catches that.) Never exclude the fixture (`semgrep --test` would
 # pass vacuously).
 rules:
   - id: debugger-outside-allowlisted-modules
@@ -38,3 +41,10 @@ rules:
       - pattern: "var { ..., debugger: $V, ... } = $E;"
       - pattern: "function $F(..., { ..., debugger: $V, ... }: $T, ...) { ... }"
       - pattern: "(..., { ..., debugger: $V, ... }: $T, ...) => $BODY"
+      # Untyped parameters, a destructuring assignment, and reflective reads by name.
+      - pattern: "function $F(..., { ..., debugger: $V, ... }, ...) { ... }"
+      - pattern: "(..., { ..., debugger: $V, ... }, ...) => $BODY"
+      - pattern: "({ ..., debugger: $V, ... } = $E)"
+      - pattern: Reflect.get($X, "debugger", ...)
+      - pattern: Reflect.getOwnPropertyDescriptor($X, "debugger")
+      - pattern: Object.getOwnPropertyDescriptor($X, "debugger")

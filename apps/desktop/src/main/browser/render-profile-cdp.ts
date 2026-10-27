@@ -4,7 +4,9 @@ import {
   NETWORK_PRESETS,
   TOUCH_POINTS,
   USER_AGENT_PLATFORMS,
-  CLIENT_HINTS_BRAND,
+  TOP_LEVEL_ONLY_METHODS,
+  WORKER_METHODS,
+  clientHintsBrands,
   normalChromeVersion,
   profileUserAgent,
   type RenderFit,
@@ -49,9 +51,9 @@ export function deviceMetricsCommand(profile: RenderProfile, emulation: RenderFi
 }
 
 /**
- * The client hints matching an overriding user agent (`USER_AGENT_PLATFORMS`): brand and version
- * from the app's own engine, the platform and mobile flag the string claims. A custom user agent has
- * none (`undefined`).
+ * The client hints matching an overriding user agent (`USER_AGENT_PLATFORMS`): the engine's own
+ * brand list for its version, GREASE brand included (`clientHintsBrands`), the platform and mobile
+ * flag the string claims. A custom user agent has none (`undefined`).
  */
 export function userAgentMetadata(profile: RenderProfile, chromeVersion: string): Record<string, unknown> | undefined {
   if (profile.userAgent === 'browser' || profile.userAgent === 'custom') return undefined;
@@ -59,8 +61,8 @@ export function userAgentMetadata(profile: RenderProfile, chromeVersion: string)
   const major = version.split('.')[0]!;
   const claim = USER_AGENT_PLATFORMS[profile.userAgent];
   return {
-    brands: [{ brand: CLIENT_HINTS_BRAND, version: major }],
-    fullVersionList: [{ brand: CLIENT_HINTS_BRAND, version }],
+    brands: clientHintsBrands(Number(major), major),
+    fullVersionList: clientHintsBrands(Number(major), version, true),
     platform: claim.platform,
     platformVersion: claim.platformVersion,
     architecture: claim.mobile ? '' : 'x86',
@@ -106,4 +108,14 @@ export function renderProfileCommands(profile: RenderProfile, options: { readonl
   commands.push({ method: 'Emulation.setTouchEmulationEnabled', params: touch ? { enabled: true, maxTouchPoints: TOUCH_POINTS } : { enabled: false } });
   commands.push({ method: 'Emulation.setScriptExecutionDisabled', params: { value: profile.javascriptDisabled } });
   return commands;
+}
+
+/** A profile's commands for a cross-site child frame: all but the viewport (`TOP_LEVEL_ONLY_METHODS`). */
+export function childFrameCommands(commands: readonly CdpCommand[]): CdpCommand[] {
+  return commands.filter((command) => !(TOP_LEVEL_ONLY_METHODS as readonly string[]).includes(command.method));
+}
+
+/** A profile's commands for a dedicated worker: the user agent and the cache switch (`WORKER_METHODS`). */
+export function workerCommands(commands: readonly CdpCommand[]): CdpCommand[] {
+  return commands.filter((command) => (WORKER_METHODS as readonly string[]).includes(command.method));
 }

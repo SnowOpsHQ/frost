@@ -45,10 +45,11 @@ export interface RenderProfileContext {
 
 export interface TabRenderProfiles {
   /**
-   * Sets the tab's profile (`pin`: as this site's pin instead, see the feature file); the default
-   * profile is a Reset. `false` when the options are missing, or `pin` without a site.
+   * Sets the tab's profile; the default profile is a Reset. `pin`: `true` makes it the pin of the site
+   * the tab shows (its committed page) instead, `false` also unpins that site, and leaving it out
+   * keeps the site's pin as it is. `false` when the options are missing, or `pin` without a site.
    */
-  set(tab: Tab, profile: RenderProfile, pin: boolean): boolean;
+  set(tab: Tab, profile: RenderProfile, pin?: boolean): boolean;
   /** Reset: the tab's profile and this site's pin go; a page loaded under the profile reloads. `false` if it had none. */
   clear(tab: Tab): boolean;
   /** `TabState.renderProfile`. */
@@ -66,10 +67,11 @@ export interface TabRenderProfiles {
   inherit(from: Tab, to: Tab): void;
   /** The bounds of the tab's view inside the page area `area` (the frame and the device fit). */
   viewBounds(tab: Tab, area: PageBounds): PageBounds;
-  /** An audit extraction of `url` starts in the tab: it records the profile in effect. */
-  extractionStarted(tab: Tab, url: string): void;
-  /** The profile the tab's audit of `url` ran under (`null`: none, or not known). */
-  auditProfile(tab: Tab | undefined, url: string): AuditRenderProfile | null;
+  /**
+   * The profile an audit extraction starting now in the tab runs under (`null`: none): taken at the
+   * start of each run and kept with it (`render-profile-audits.ts`).
+   */
+  auditProfile(tab: Tab): AuditRenderProfile | null;
   /** Forgets every pin in memory (Clear Browsing Data). */
   forgetPins(): void;
 }
@@ -108,12 +110,6 @@ interface Entry {
   emulation: RenderFit['emulation'];
   /** A detach frost did not ask for was answered already (for this `seq`). */
   reattached: boolean;
-  audit: { readonly key: string; readonly profile: AuditRenderProfile | null } | null;
-}
-
-function withoutFragment(url: string): string {
-  const hash = url.indexOf('#');
-  return hash < 0 ? url : url.slice(0, hash);
 }
 
 function sameEffective(a: Effective | null, b: Effective | null): boolean {
@@ -130,7 +126,7 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
   const entryOf = (tab: Tab): Entry => {
     let entry = entries.get(tab);
     if (!entry) {
-      entry = { own: null, origin: null, effective: null, seq: 0, dispatchedSeq: 0, appliedSeq: 0, status: 'active', nav: null, doc: null, contents: null, dbg: null, emulation: null, reattached: false, audit: null };
+      entry = { own: null, origin: null, effective: null, seq: 0, dispatchedSeq: 0, appliedSeq: 0, status: 'active', nav: null, doc: null, contents: null, dbg: null, emulation: null, reattached: false };
       entries.set(tab, entry);
     }
     return entry;
@@ -225,13 +221,23 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
     return refresh(tab, entry);
   };
 
+  /** The origin of the page the tab shows (its committed URL), if it shows one. */
+  const shownOrigin = (entry: Entry): string | null => (entry.contents && !entry.contents.isDestroyed() ? webOrigin(entry.contents.getURL()) : null);
+
+  /** Removes `origin`'s pin, if it has one. */
+  const unpin = (origin: string | null): void => {
+    if (options && origin !== null && options.pins.get(origin)) options.pins.remove(origin);
+  };
+
   /** Reset (see `TabRenderProfiles.clear`). */
   const clear = (tab: Tab): boolean => {
     const entry = entries.get(tab);
     if (!options || !entry?.effective) return false;
     const profiled = entry.doc?.profiled === true;
+    // The shown site's pin goes, and the pin in effect (a destination's, mid-navigation) too.
+    if (entry.effective.source === 'site') unpin(entry.origin);
+    unpin(shownOrigin(entry));
     entry.own = null;
-    if (entry.origin !== null && options.pins.get(entry.origin)) options.pins.remove(entry.origin);
     refresh(tab, entry);
     // One click back to the defaults: a page loaded under the profile loads again without it (the
     // debugger is detached by now).
@@ -248,17 +254,17 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
         return true;
       }
       const entry = entryOf(tab);
-      const contents = entry.contents && !entry.contents.isDestroyed() ? entry.contents : null;
-      const origin = entry.origin ?? (contents ? webOrigin(contents.getURL()) : null);
-      if (pin) {
-        if (origin === null) return false;
-        options.pins.set(origin, profile);
+      // A pin is for the page the tab shows, never a destination still loading.
+      const site = shownOrigin(entry);
+      if (pin === true) {
+        if (site === null) return false;
+        options.pins.set(site, profile);
         entry.own = null;
       } else {
         entry.own = profile;
-        if (origin !== null && options.pins.get(origin)) options.pins.remove(origin);
+        if (pin === false) unpin(site);
       }
-      entry.origin = origin;
+      entry.origin ??= site;
       refresh(tab, entry);
       // The pin flag may have changed with the same profile in effect.
       ctx.changed();
@@ -270,7 +276,7 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
     state(tab) {
       const entry = entries.get(tab);
       if (!entry?.effective) return null;
-      const pinned = options?.pins.get(entry.origin) ?? null;
+      const pinned = options?.pins.get(shownOrigin(entry) ?? entry.origin) ?? null;
       return {
         profile: entry.effective.profile,
         source: entry.effective.source,
@@ -370,7 +376,7 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
       if (fit.emulation && entry.contents && entry.dbg && entry.dispatchedSeq === entry.seq && entry.status !== 'failed' && !sameEmulation(entry.emulation, fit.emulation)) {
         entry.emulation = fit.emulation;
         try {
-          entry.dbg.send([deviceMetricsCommand(profile, fit.emulation)]).catch(() => undefined);
+          entry.dbg.sendTopLevel([deviceMetricsCommand(profile, fit.emulation)]).catch(() => undefined);
         } catch {
           // The tab is going; its next apply sends the whole profile again.
         }
@@ -378,15 +384,9 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
       return { x: area.x + fit.view.x, y: area.y + fit.view.y, width: fit.view.width, height: fit.view.height };
     },
 
-    extractionStarted(tab, url) {
+    auditProfile(tab) {
       const entry = entries.get(tab);
-      if (!entry) return;
-      entry.audit = { key: withoutFragment(url), profile: entry.effective ? { profile: entry.effective.profile, partial: needsReload(entry) || entry.appliedSeq !== entry.seq } : null };
-    },
-
-    auditProfile(tab, url) {
-      const audit = tab ? entries.get(tab)?.audit : undefined;
-      return audit && audit.key === withoutFragment(url) ? audit.profile : null;
+      return entry?.effective ? { profile: entry.effective.profile, partial: needsReload(entry) || entry.appliedSeq !== entry.seq } : null;
     },
 
     forgetPins() {
