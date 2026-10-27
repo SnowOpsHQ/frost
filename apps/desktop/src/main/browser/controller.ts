@@ -753,7 +753,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (url === null) return { status: 'refused', reason: 'not-public' };
     const address = options.pageAddress?.(contents) ?? null;
     if (address !== null && !isPublicAddress(address)) return { status: 'refused', reason: 'private-address' };
-    const id = openTabRightOf(tab, url);
+    const id = openTabRightOf(tab, url, false); // tools never inherit the tab's render profile (render-profile.feature.md)
     return id === null ? { status: 'refused', reason: 'not-opened' } : { status: 'opened', tabId: id };
   };
 

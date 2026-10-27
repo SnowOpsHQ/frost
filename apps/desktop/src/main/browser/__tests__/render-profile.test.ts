@@ -732,6 +732,18 @@ describe('render profiles in the controller', () => {
     expect(tabState(page).renderProfile).toMatchObject({ profile: PHONE_BOT, source: 'tab' });
   });
 
+  test('palette-tools-do-not-inherit', async () => {
+    // The palette's "Open in" (`browser.openTool`) builds its tab in main: frost's defaults too.
+    const { id } = await openAt('https://www.frost-tools.net/guide');
+    controller.activateTab(id);
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    await settle();
+    const result = controller.openTool('rich-results');
+    expect(result.status).toBe('opened');
+    await settle();
+    expect(tabState((result as { tabId: number }).tabId).renderProfile).toBeNull();
+  });
+
   test('unexpected-detach-reattaches-once', async () => {
     const { id, contents } = await openAt('https://a.example/');
     controller.setRenderProfile(id, PHONE_BOT, false);
