@@ -59,6 +59,11 @@ describe('summary', () => {
 
   test('a11y-summary-caps', () => {
     const big = 'x'.repeat(100_000);
+    // Every rule shares one tags array and one 200-node array (each node a 50-part shadow path):
+    // the same input `summarise` reads, without building 50M array slots first (CI timed out on that).
+    const tags = new Array<string>(100).fill(big);
+    const node = { target: [new Array<string>(50).fill(big)], failureSummary: big, html: big };
+    const nodes = new Array<typeof node>(200).fill(node);
     const hostile = {
       testEngine: { version: big },
       violations: Array.from({ length: 5_000 }, (_, i) => ({
@@ -67,10 +72,10 @@ describe('summary', () => {
         help: big,
         description: big,
         helpUrl: `https://help.example/${big}`,
-        tags: Array.from({ length: 100 }, () => big),
-        nodes: Array.from({ length: 200 }, () => ({ target: [Array.from({ length: 50 }, () => big)], failureSummary: big, html: big })),
+        tags,
+        nodes,
       })),
-      passes: Array.from({ length: 50_000 }, () => ({})),
+      passes: new Array<object>(50_000).fill({}),
     };
     const started = performance.now();
     const summary = summarise(hostile);
