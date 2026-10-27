@@ -63,7 +63,7 @@ describe('site storage', () => {
     expect(big.status === 'ready' && big.cookies[2]).toMatchObject({ valueTruncated: true });
     expect(big.status === 'ready' && big.cookies[2]!.value).toHaveLength(COOKIE_LIMITS.maxValueChars);
     // The next navigation masks everything again.
-    storage.navigated(TAB);
+    storage.committed(TAB);
     expect(await shown()).toEqual({ sid: null, theme: null, big: null });
     // So do Clear this site's data and closing the tab.
     await storage.reveal(TAB, PAGE, { name: 'theme', domain: '.example.com', path: '/' });
@@ -97,5 +97,52 @@ describe('site storage', () => {
     // A failing dialog is a Cancel.
     const failing = createSiteStorage({ cookies: async () => [], confirmClear: async () => Promise.reject(new Error('no dialog')), clearOrigin: vi.fn(), log: vi.fn() });
     expect(await failing.clearSiteData(TAB, PAGE)).toBe('cancelled');
+  });
+
+  test('cookie-reveal-stamped-with-commit', async () => {
+    // The store answers when the test says so: the commit lands while main reads it.
+    let release: () => void = () => undefined;
+    let gate = Promise.resolve();
+    const cookies = vi.fn(async () => {
+      await gate;
+      return [SESSION];
+    });
+    const storage = createSiteStorage({ cookies, confirmClear: async () => false, clearOrigin: async () => undefined });
+    gate = new Promise<void>((resolve) => (release = resolve));
+    const asked = storage.reveal(TAB, PAGE, { name: 'sid', domain: 'shop.example.com', path: '/' });
+    storage.committed(TAB);
+    release();
+    expect(await asked).toBe(false);
+    const after = await storage.storage(TAB, PAGE);
+    expect(after.status === 'ready' && after.cookies[0]!.value).toBeNull();
+    // Asked and answered within one document: shown, until the next commit.
+    expect(await storage.reveal(TAB, PAGE, { name: 'sid', domain: 'shop.example.com', path: '/' })).toBe(true);
+    const shown = await storage.storage(TAB, PAGE);
+    expect(shown.status === 'ready' && shown.cookies[0]!.value).toBe('super-secret-session');
+    storage.committed(TAB);
+    const masked = await storage.storage(TAB, PAGE);
+    expect(masked.status === 'ready' && masked.cookies[0]!.value).toBeNull();
+  });
+
+  test('clear-site-data-one-dialog-per-origin', async () => {
+    let answer: (yes: boolean) => void = () => undefined;
+    const confirmClear = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    const clearOrigin = vi.fn(async (_origin: string) => undefined);
+    const storage = createSiteStorage({ cookies: async () => [], confirmClear, clearOrigin });
+    const first = storage.clearSiteData(TAB, PAGE);
+    // Another origin while the dialog is up: busy, nothing asked, nothing cleared.
+    expect(await storage.clearSiteData(6, 'https://other.example.org/')).toBe('busy');
+    // The same origin (another tab of it): the same dialog and answer.
+    const same = storage.clearSiteData(6, 'https://shop.example.com/other');
+    expect(confirmClear).toHaveBeenCalledExactlyOnceWith('https://shop.example.com');
+    answer(true);
+    expect(await first).toBe('cleared');
+    expect(await same).toBe('cleared');
+    expect(clearOrigin).toHaveBeenCalledExactlyOnceWith('https://shop.example.com');
+    // Once answered, another origin may ask.
+    const next = storage.clearSiteData(6, 'https://other.example.org/');
+    answer(false);
+    expect(await next).toBe('cancelled');
+    expect(confirmClear).toHaveBeenLastCalledWith('https://other.example.org');
   });
 });

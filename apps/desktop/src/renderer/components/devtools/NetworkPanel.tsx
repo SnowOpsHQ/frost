@@ -1,13 +1,51 @@
-import { useMemo, useState } from 'react';
-import { NETWORK_LIMITS, NETWORK_SEARCH_MAX_CHARS, NETWORK_TYPE_FILTERS, NETWORK_TYPE_LABELS, type NetworkEntry, type NetworkHeader, type NetworkTypeFilter } from '@app/specs/devtools.spec';
-import { filterNetwork, formatBytes, formatDuration, isFailed, NO_NETWORK_FILTER, ROBOTS_VERDICT_LABELS, shortName, statusLabel, waterfall, WATERFALL_WIDTH, type NetworkFilter } from '../../devtools-view';
-import { useDevtoolsData } from '../../hooks/useDevtools';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  NETWORK_LIMITS,
+  NETWORK_SEARCH_MAX_CHARS,
+  NETWORK_TYPE_FILTERS,
+  NETWORK_TYPE_LABELS,
+  type NetworkEntry,
+  type NetworkHeader,
+  type NetworkHeadersAnswer,
+  type NetworkLogAnswer,
+  type NetworkTypeFilter,
+} from '@app/specs/devtools.spec';
+import { filterNetwork, formatBytes, formatDuration, isFailed, mergeRows, NO_NETWORK_FILTER, ROBOTS_VERDICT_LABELS, shortName, statusLabel, waterfall, WATERFALL_WIDTH, type NetworkFilter } from '../../devtools-view';
 import { devtoolsApi } from './api';
 import type { DevtoolsPanelProps } from './DevtoolsDrawer';
 
 // The Network tab (spec `devtools.feature.md`, Network): the active tab's requests as main recorded
 // them (masked: secret headers are `•••`, bodies never captured), filters, and a waterfall drawn
-// with SVG `<rect>` attributes (never `style=`). Every URL and header is inert text.
+// with SVG `<rect>` attributes (never `style=`). Every URL and header is inert text. The list is
+// fetched incrementally (rows changed since the last cursor, no headers, `mergeRows`); a row's
+// headers are fetched only when the user opens it (`devtools.requestHeaders`).
+
+type ReadyLog = Extract<NetworkLogAnswer, { status: 'ready' }>;
+
+/** The tab's rows, merged from incremental answers whenever `version` changes; the last answer's counts beside them. */
+function useNetworkRows(tabId: number, version: number): { readonly rows: readonly NetworkEntry[]; readonly meta: ReadyLog | null } {
+  const [state, setState] = useState<{ readonly tabId: number; readonly rows: readonly NetworkEntry[]; readonly meta: ReadyLog | null }>({ tabId, rows: [], meta: null });
+  const cursor = useRef({ tabId, rev: 0, rows: [] as readonly NetworkEntry[] });
+  useEffect(() => {
+    let live = true;
+    if (cursor.current.tabId !== tabId) cursor.current = { tabId, rev: 0, rows: [] };
+    void (async () => {
+      // Pages until main has nothing more (`more`), each merged into what the chrome holds.
+      for (let page = 0; page < 20 && live; page++) {
+        const answer = await devtoolsApi.network(tabId, cursor.current.rev);
+        if (!live || answer === null || answer.status !== 'ready') return;
+        const rows = mergeRows(cursor.current.rows, answer);
+        cursor.current = { tabId, rev: answer.rev, rows };
+        setState({ tabId, rows, meta: answer });
+        if (!answer.more) return;
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [tabId, version]);
+  return state.tabId === tabId ? state : { rows: [], meta: null };
+}
 
 function Headers({ title, headers, omitted, testId }: { readonly title: string; readonly headers: readonly NetworkHeader[]; readonly omitted: number; readonly testId: string }) {
   return (
@@ -30,7 +68,23 @@ function Headers({ title, headers, omitted, testId }: { readonly title: string; 
   );
 }
 
-function Details({ entry }: { readonly entry: NetworkEntry }) {
+/** The open row's headers, fetched on demand (again when the row changes). */
+function useRowHeaders(tabId: number, entry: NetworkEntry): NetworkHeadersAnswer | null {
+  const [answer, setAnswer] = useState<{ readonly key: number; readonly value: NetworkHeadersAnswer } | null>(null);
+  useEffect(() => {
+    let live = true;
+    void devtoolsApi.requestHeaders(tabId, entry.key).then((value) => {
+      if (live && value !== null) setAnswer({ key: entry.key, value });
+    });
+    return () => {
+      live = false;
+    };
+  }, [tabId, entry.key, entry.rev]);
+  return answer?.key === entry.key ? answer.value : null;
+}
+
+function Details({ tabId, entry }: { readonly tabId: number; readonly entry: NetworkEntry }) {
+  const headers = useRowHeaders(tabId, entry);
   return (
     <div className="devtools-details" data-testid="devtools-network-details">
       <p className="devtools-details-url">
@@ -43,23 +97,31 @@ function Details({ entry }: { readonly entry: NetworkEntry }) {
         </p>
       ) : null}
       {entry.error !== null ? <p className="devtools-error-text">{entry.error}</p> : null}
-      <Headers title="Request headers" headers={entry.requestHeaders} omitted={entry.omittedRequestHeaders} testId="devtools-request-headers" />
-      <Headers title="Response headers" headers={entry.responseHeaders} omitted={entry.omittedResponseHeaders} testId="devtools-response-headers" />
+      {headers === null ? (
+        <p className="devtools-muted">Loading headers…</p>
+      ) : headers.status !== 'ready' ? (
+        <p className="devtools-muted">This request is no longer in the log.</p>
+      ) : (
+        <>
+          <Headers title="Request headers" headers={headers.requestHeaders} omitted={headers.omittedRequestHeaders} testId="devtools-request-headers" />
+          <Headers title="Response headers" headers={headers.responseHeaders} omitted={headers.omittedResponseHeaders} testId="devtools-response-headers" />
+          {headers.headersDropped ? <p className="devtools-notice-inline">Some headers weren’t kept: the log’s memory budget was full.</p> : null}
+        </>
+      )}
       <p className="devtools-muted">Bodies are never recorded.</p>
     </div>
   );
 }
 
 export function NetworkPanel({ tab, version }: DevtoolsPanelProps) {
-  const log = useDevtoolsData(devtoolsApi.network, tab.id, version);
+  const { rows: entries, meta: log } = useNetworkRows(tab.id, version);
   const [filter, setFilter] = useState<NetworkFilter>(NO_NETWORK_FILTER);
   const [selected, setSelected] = useState<number | null>(null);
-  const entries = log?.status === 'ready' ? log.entries : [];
   const shown = useMemo(() => filterNetwork(entries, filter), [entries, filter]);
   const bars = useMemo(() => waterfall(shown), [shown]);
   const chosen = selected === null ? undefined : entries.find((e) => e.key === selected);
   const set = (change: Partial<NetworkFilter>) => setFilter((was) => ({ ...was, ...change }));
-  const preserve = log?.status === 'ready' && log.preserve;
+  const preserve = log?.preserve === true;
 
   return (
     <div className="devtools-network" data-testid="devtools-network">
@@ -100,10 +162,13 @@ export function NetworkPanel({ tab, version }: DevtoolsPanelProps) {
           {shown.length === entries.length ? `${entries.length} requests` : `${shown.length} of ${entries.length} requests`}
         </span>
       </div>
-      {log?.status === 'ready' && (log.notKept > 0 || log.dropped > 0) ? (
+      {log && (log.notKept > 0 || log.dropped > 0 || log.overBudget.entries > 0 || log.overBudget.bytes > 0) ? (
         <p className="devtools-notice" data-testid="devtools-network-notice">
           {log.notKept > 0 ? `${log.notKept} earlier requests weren’t kept while the drawer was closed. Reload to record them all. ` : ''}
-          {log.dropped > 0 ? `${log.dropped} more requests weren’t kept (the log keeps the first ${NETWORK_LIMITS.maxPerDocument.toLocaleString('en')} per page).` : ''}
+          {log.dropped > 0 ? `${log.dropped} more requests weren’t kept (the log keeps the first ${NETWORK_LIMITS.maxPerDocument.toLocaleString('en')} per page). ` : ''}
+          {log.overBudget.entries > 0 || log.overBudget.bytes > 0
+            ? `The log’s memory budget is full: ${log.overBudget.entries} requests and ${formatBytes(log.overBudget.bytes)} of headers and text weren’t kept.`
+            : ''}
         </p>
       ) : null}
       <div className="devtools-split">
@@ -168,7 +233,7 @@ export function NetworkPanel({ tab, version }: DevtoolsPanelProps) {
           </table>
           {entries.length === 0 ? <p className="devtools-empty">No requests recorded yet. Reload the page to record its requests.</p> : null}
         </div>
-        {chosen ? <Details entry={chosen} /> : null}
+        {chosen ? <Details tabId={tab.id} entry={chosen} /> : null}
       </div>
     </div>
   );

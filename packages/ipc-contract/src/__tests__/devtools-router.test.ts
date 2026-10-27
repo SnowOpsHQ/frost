@@ -9,13 +9,14 @@ import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { appRouter, createSenderPolicy, type DevtoolsService, type IpcContext } from '../index';
 
 const WINDOW_ID = 7;
-const NETWORK: NetworkLogAnswer = { status: 'ready', tabId: 1, pageUrl: 'https://example.com/', entries: [], dropped: 0, notKept: 0, preserve: false };
+const NETWORK: NetworkLogAnswer = { status: 'ready', tabId: 1, pageUrl: 'https://example.com/', rev: 5, full: false, more: false, entries: [], removed: [], dropped: 0, notKept: 0, overBudget: { entries: 0, bytes: 0 }, preserve: false };
 
 function fakeDevtools() {
   return {
     version: vi.fn((_tabId: number) => 3),
     watch: vi.fn(async (_tabId: number, _since: number, _signal: AbortSignal) => 4),
-    network: vi.fn((_tabId: number) => NETWORK),
+    network: vi.fn((_tabId: number, _since?: number) => NETWORK),
+    requestHeaders: vi.fn((_tabId: number, _key: number) => ({ status: 'gone' as const })),
     redirects: vi.fn((_tabId: number) => ({ status: 'none' as const })),
     console: vi.fn((_tabId: number) => ({ status: 'ready' as const, entries: [], total: 0, dropped: 0 })),
     storage: vi.fn(async (_tabId: number) => ({ status: 'no-page' as const })),
@@ -53,7 +54,8 @@ async function errorOf(run: Promise<unknown>): Promise<TRPCError> {
 const COOKIE = { name: 'sid', domain: 'example.com', path: '/' };
 const VALID_INPUT: Record<string, unknown> = {
   watch: { tabId: 1, sinceVersion: 0 },
-  network: { tabId: 1 },
+  network: { tabId: 1, since: 4 },
+  requestHeaders: { tabId: 1, requestKey: 9 },
   redirects: { tabId: 1 },
   console: { tabId: 1 },
   storage: { tabId: 1 },
@@ -92,7 +94,8 @@ describe('devtools router', () => {
     const badTab = [{ tabId: 0 }, { tabId: -1 }, { tabId: 1.5 }, { tabId: '1' }, {}, undefined, { tabId: 1, extra: true }];
     const bad: Record<string, unknown[]> = {
       watch: [...badTab.map((t) => ({ sinceVersion: 0, ...(t as object) })), { tabId: 1 }, { tabId: 1, sinceVersion: -1 }, { tabId: 1, sinceVersion: 0.5 }],
-      network: badTab,
+      network: [...badTab, { tabId: 1, since: -1 }, { tabId: 1, since: 1.5 }, { tabId: 1, since: '4' }],
+      requestHeaders: [{ tabId: 1 }, { tabId: 1, requestKey: 0 }, { tabId: 1, requestKey: 1.5 }, { tabId: 0, requestKey: 1 }, { tabId: 1, requestKey: 1, headers: true }],
       redirects: badTab,
       console: badTab,
       storage: badTab,
@@ -127,7 +130,12 @@ describe('devtools router', () => {
     // The waiter is released once answered.
     expect(devtools.watch.mock.calls[0]![2].aborted).toBe(true);
     await expect(call('network')).resolves.toEqual(NETWORK);
-    expect(devtools.network).toHaveBeenCalledExactlyOnceWith(1);
+    expect(devtools.network).toHaveBeenCalledExactlyOnceWith(1, 4);
+    // No cursor: everything (0).
+    await procedure(ctxFor(devtools), 'network')({ tabId: 1 });
+    expect(devtools.network).toHaveBeenLastCalledWith(1, 0);
+    await expect(call('requestHeaders')).resolves.toEqual({ status: 'gone' });
+    expect(devtools.requestHeaders).toHaveBeenCalledExactlyOnceWith(1, 9);
     await expect(call('redirects')).resolves.toEqual({ status: 'none' });
     await expect(call('console')).resolves.toEqual({ status: 'ready', entries: [], total: 0, dropped: 0 });
     await expect(call('storage')).resolves.toEqual({ status: 'no-page' });

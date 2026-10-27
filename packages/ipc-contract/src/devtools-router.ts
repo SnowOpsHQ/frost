@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { DEVTOOLS_WATCH_TIMEOUT_MS } from '@app/specs/devtools.spec';
-import { DevtoolsPreserveInputSchema, DevtoolsSetOpenInputSchema, DevtoolsTabInputSchema, DevtoolsWatchInputSchema, RevealCookieInputSchema } from '@app/specs/devtools.schema';
+import { DevtoolsNetworkInputSchema, DevtoolsPreserveInputSchema, RequestHeadersInputSchema, DevtoolsSetOpenInputSchema, DevtoolsTabInputSchema, DevtoolsWatchInputSchema, RevealCookieInputSchema } from '@app/specs/devtools.schema';
 import type { DevtoolsService } from './devtools-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -34,8 +34,9 @@ async function watchVersion(devtools: DevtoolsService, tabId: number, sinceVersi
 }
 
 /**
- * `watch` answers the tab's devtools version; `network`, `redirects`, `console` and `storage` its
- * data (masked); `revealCookie` whether that cookie is now shown; `clearSiteData` what happened
+ * `watch` answers the tab's devtools version (or `DEVTOOLS_WATCH_EVICTED`); `network` its rows changed
+ * since a cursor (no headers), `requestHeaders` one row's headers, `redirects`, `console` and
+ * `storage` its data (masked); `revealCookie` whether that cookie is now shown; `clearSiteData` what happened
  * (`CLEAR_SITE_DATA_RESULTS`); `setOpen` and `setPreserveLog` `null` / whether the tab exists.
  */
 export const devtoolsRouter = router({
@@ -47,8 +48,14 @@ export const devtoolsRouter = router({
   network: publicProcedure
     .use(enforceSender)
     .use(requireDevtools)
-    .input(DevtoolsTabInputSchema)
-    .query(({ ctx, input }) => ctx.devtools.network(input.tabId)),
+    .input(DevtoolsNetworkInputSchema)
+    .query(({ ctx, input }) => ctx.devtools.network(input.tabId, input.since ?? 0)),
+  // Review: headers on demand, for the row the user opens (masked as stored).
+  requestHeaders: publicProcedure
+    .use(enforceSender)
+    .use(requireDevtools)
+    .input(RequestHeadersInputSchema)
+    .query(({ ctx, input }) => ctx.devtools.requestHeaders(input.tabId, input.requestKey)),
   redirects: publicProcedure
     .use(enforceSender)
     .use(requireDevtools)

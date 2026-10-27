@@ -1,4 +1,4 @@
-import type { ClearSiteDataResult, ConsoleLogAnswer, NetworkLogAnswer, RedirectTraceAnswer, StorageAnswer } from '@app/specs/devtools.spec';
+import type { ClearSiteDataResult, ConsoleLogAnswer, NetworkHeadersAnswer, NetworkLogAnswer, RedirectTraceAnswer, StorageAnswer } from '@app/specs/devtools.spec';
 import { ipc } from '../../ipc';
 
 // The SEO devtools drawer's calls to main (spec `devtools.feature.md`, Router): the sender-guarded
@@ -8,7 +8,10 @@ import { ipc } from '../../ipc';
 export const devtoolsApi = {
   /** The tab's next devtools version (a long-poll); `null` on an IPC failure. */
   watch: (tabId: number, sinceVersion: number): Promise<number | null> => ipc.devtools.watch.query({ tabId, sinceVersion }).catch(() => null),
-  network: (tabId: number): Promise<NetworkLogAnswer | null> => ipc.devtools.network.query({ tabId }).catch(() => null),
+  /** The rows changed since cursor `since` (no headers). */
+  network: (tabId: number, since: number): Promise<NetworkLogAnswer | null> => ipc.devtools.network.query({ tabId, since }).catch(() => null),
+  /** One row's headers, on demand (masked by main). */
+  requestHeaders: (tabId: number, requestKey: number): Promise<NetworkHeadersAnswer | null> => ipc.devtools.requestHeaders.query({ tabId, requestKey }).catch(() => null),
   redirects: (tabId: number): Promise<RedirectTraceAnswer | null> => ipc.devtools.redirects.query({ tabId }).catch(() => null),
   console: (tabId: number): Promise<ConsoleLogAnswer | null> => ipc.devtools.console.query({ tabId }).catch(() => null),
   storage: (tabId: number): Promise<StorageAnswer | null> => ipc.devtools.storage.query({ tabId }).catch(() => null),

@@ -286,6 +286,14 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
     has no cheap figure);
   - procedures `devtools.watch` (a version long-poll), `network`, `redirects`, `console`, `storage`,
     `revealCookie`, `clearSiteData`, `setOpen`, `setPreserveLog`, all `enforceSender`-first.
+  - review fixes: the log is bounded in bytes (4 MB per tab, 32 MB in all, headers at most half a
+    tab's budget, 16 response headers), and what does not fit is counted and shown;
+    `devtools.network` sends rows without headers, only those changed since the chrome's cursor
+    (paged), and `devtools.requestHeaders` fetches one row's headers when it is opened. The log,
+    the console and the Reveals reset on commit (`did-navigate`), and Reveals are stamped with
+    the committed document. "Clear this site's data" shows one dialog at a time: a second origin
+    gets `busy`. An evicted watch answers `-1` and the chrome backs off. Every `devtools.*`
+    procedure serves only the active tab.
 - [x] commit `feat(chrome): SEO devtools drawer`
 
 #### Task 6: Browser polish

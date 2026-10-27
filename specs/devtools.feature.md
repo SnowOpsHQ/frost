@@ -24,10 +24,25 @@ named test.
 - **Read-only by design.** No script runs in the page for the drawer and no DOM is edited. The one
   write is "Clear this site's data", which main confirms in its own dialog (Cancel is the default).
 - **Data only through `devtools.*`.** Every procedure is `enforceSender`-first and Zod-validated:
-  `watch` (a long-poll on the tab's devtools version), `network`, `redirects`, `console`,
-  `storage`, `revealCookie`, `clearSiteData`, `setOpen` and `setPreserveLog`. A combined state
-  long-poll was rejected: the network log is large, so the chrome waits on a small version and
-  fetches only the tab it shows (no sooner than `DEVTOOLS_REFRESH_MIN_MS` apart).
+  `watch` (a long-poll on the tab's devtools version), `network`, `requestHeaders`, `redirects`,
+  `console`, `storage`, `revealCookie`, `clearSiteData`, `setOpen` and `setPreserveLog`. A combined
+  state long-poll was rejected: the network log is large, so the chrome waits on a small version and
+  fetches only the tab it shows (no sooner than `DEVTOOLS_REFRESH_MIN_MS` apart). They serve only
+  the active tab (`DEVTOOLS_TAB_SCOPE`): any other id answers `no-tab`.
+- **A light list, headers on demand** (review). `devtools.network` answers rows without headers,
+  only those changed since the chrome's cursor (`since`), at most `maxRowsPerAnswer` at a time, with
+  the keys removed since; the chrome merges them. A row's headers come from `devtools.requestHeaders`
+  when the user opens it. A watch evicted by a newer one answers `DEVTOOLS_WATCH_EVICTED`; the
+  chrome backs off (`DEVTOOLS_WATCH_BACKOFF_MS`) after any answer without news.
+- **Bounded in bytes** (review). Beside the row caps, a tab's log keeps at most `tabBudgetBytes`
+  and all logs together `globalBudgetBytes` (2 bytes per kept UTF-16 unit, plus per-entry and
+  per-header overheads); what does not fit is not kept and is counted (`overBudget`), and the Network
+  tab says so. A response keeps at most `maxHeadersPerMessage` (16) headers.
+- **Reset on commit** (review). The network log, the console and the Reveals reset when a
+  main-frame navigation commits another document (`did-navigate`), not when one starts: a `204`, a
+  download or a cancelled navigation wipes nothing. The committing request's entries (and what was
+  sent after its response started) move into the new document. Each Reveal is stamped with the
+  committed document it was asked in; a stale stamp shows nothing.
 - **Recording: always on, small while closed** (`NETWORK_LIMITS`). The recorder is a subscriber of
   the browse session's one `webRequest` owner (`browser/web-request.ts`, `observeRequests`), with
   observers only (`onSendHeaders`, `onBeforeRedirect`, `onResponseStarted`, `onCompleted`,
@@ -51,8 +66,8 @@ named test.
 - **Console as inert text.** `console-message` events of the current document, deduplicated by
   level, text, source and line with a count, capped (`CONSOLE_LIMITS`).
 - **Cookies masked; Reveal per cookie, per document.** Main keeps which cookies were revealed for
-  the tab and forgets that on its next cross-document navigation, on Clear this site's data and when
-  the tab closes; `devtools.storage` answers `value: null` for every other cookie. Storage usage is
+  the tab, stamped with its committed document, and forgets that on its next committed cross-document
+  navigation, on Clear this site's data and when the tab closes; `devtools.storage` answers `value: null` for every other cookie. Storage usage is
   not shown (`STORAGE_USAGE_NOTE`): Electron has no cheap per-origin figure.
 - **Issues from the shown audit.** The chrome's own audit (the sidebar's), every finding in one
   table sortable by severity, rule and category; clicking a row opens the SEO sidebar on the most
@@ -80,8 +95,22 @@ named test.
   `maxPerDocument` requests and counts the rest.
 - **Scenario: network-log-ring-while-closed** — with the drawer closed a tab keeps the newest
   `closedRingSize` requests plus its main-frame request, counting the ones let go.
-- **Scenario: network-log-resets-on-navigation** — a cross-document main-frame navigation starts a
-  new log; a same-document one does not; late events of the old document's requests are not listed.
+- **Scenario: network-log-resets-on-commit** — a committed cross-document navigation starts a new
+  log, keeping the committing request (and its hops) and what was sent after its response started;
+  late events of the old document's requests are not listed.
+- **Scenario: network-log-survives-uncommitted-navigation** — a main-frame request that never
+  commits (a `204`) leaves the log, and the console, as they were.
+- **Scenario: network-log-byte-budgets** — a tab keeps at most `tabBudgetBytes` and all tabs
+  `globalBudgetBytes`; requests that do not fit are counted (`overBudget.entries`, `bytes`), headers
+  that do not fit are left off (`headersDropped`), and removed entries give their bytes back.
+- **Scenario: network-log-hostile-server-bounded** — 2,000 requests, each with long URLs and 32
+  long `link` headers (a 98 MB log before the fix), stay within the tab budget, rows and headers
+  together.
+- **Scenario: network-rows-incremental** — rows carry no headers; a cursor answers only the rows
+  changed since and the keys removed since; a cursor from before a reset (or too old) gets a full
+  answer; answers are paged at `maxRowsPerAnswer`.
+- **Scenario: network-headers-on-demand** — one row's headers, masked as stored; `gone` for an
+  unknown key.
 - **Scenario: network-preserve-log** — with "Preserve log" on for a tab, earlier documents stay (at
   most `maxPreserved`, oldest first out); other tabs are unaffected; it is per tab and session-only.
 - **Scenario: network-log-tabs-bounded** — at most `maxTrackedTabs` tabs are recorded; a destroyed
@@ -98,23 +127,32 @@ named test.
 ## Console (`main/devtools/__tests__/console-log.test.ts`)
 - **Scenario: console-dedupes-and-caps** — identical messages are one entry with a count; at most
   `maxEntries` distinct entries (later new ones counted); text and source cut to their caps.
-- **Scenario: console-resets-on-navigation** — a cross-document main-frame navigation starts over.
+- **Scenario: console-resets-on-commit** — a committed cross-document navigation starts over.
 
 ## Storage (`main/devtools/__tests__/storage.test.ts`)
 - **Scenario: cookies-masked-by-default** — every cookie of the tab's URL is listed (at most
   `maxCookies`) with its name, domain, path, expiry and flags, and `value: null`.
 - **Scenario: cookie-reveal-lifecycle** — Reveal answers `true` and the next `storage` shows that
   cookie's value (capped) only; an unknown cookie or a non-web page answers `false`; the tab's next
-  cross-document navigation, Clear this site's data and closing the tab mask it again.
+  committed cross-document navigation, Clear this site's data and closing the tab mask it again.
+- **Scenario: cookie-reveal-stamped-with-commit** — a Reveal asked while a navigation is in flight
+  (the commit lands while main reads the cookie store) does not show in the new document.
 - **Scenario: clear-site-data-confirms** — main asks first; Cancel clears nothing (`cancelled`);
   confirmed, the origin's data is cleared from the browse partition (`CLEAR_SITE_DATA.dataTypes`,
   that origin only) and reveals are forgotten (`cleared`); a tab without a web page is `refused`
   without asking.
+- **Scenario: clear-site-data-one-dialog-per-origin** — while a dialog is up, a request for the same
+  origin shares its answer and one for another origin answers `busy` (nothing asked, nothing
+  cleared).
 
 ## Service (`main/devtools/__tests__/service.test.ts`)
 - **Scenario: devtools-watch-wakes-on-change** — `watch` answers at once for an older version, else
   on the tab's next change (a request, a console message, a reveal), or with the current version when
   aborted; at most `MAX_PENDING_DEVTOOLS_WATCHES` wait.
+- **Scenario: devtools-watch-eviction-marker** — a waiter pushed out by a newer one answers
+  `DEVTOOLS_WATCH_EVICTED`, never a version.
+- **Scenario: devtools-active-tab-only** — every procedure answers `no-tab` (`watch`: version 0,
+  `revealCookie` `false`, `clearSiteData` `refused`) for an open tab that is not the active one.
 - **Scenario: devtools-redirect-trace** — the trace is the recorder's committed response: hops with
   status, location and their key headers, the final status and headers; `none` without a response.
 - **Scenario: devtools-open-switches-capture** — `setOpen` from any live window turns full capture
@@ -125,7 +163,7 @@ named test.
   sender before validation or the service, and fails closed without the service.
 - **Scenario: devtools-inputs-validated** — unknown keys, bad ids and over-long values are rejected
   before the service is called.
-- **Scenario: devtools-procedures-call-the-service** — each procedure passes its input (and, for
+- **Scenario: devtools-procedures-call-the-service** — each procedure (with `requestHeaders`) passes its input (and, for
   `setOpen`, the sender's window) to the service and answers what it answers; `watch` times out
   with the current version.
 
@@ -145,6 +183,11 @@ named test.
   defaults for missing or bad values.
 - **Scenario: network-filters** — type, third-party only, failed only (a failure or a status from
   400) and a case-insensitive text search over the URL and method, combined.
+- **Scenario: watch-backs-off-without-news** — the chrome's watch loop waits
+  `DEVTOOLS_WATCH_BACKOFF_MS` after an evicted, unchanged or failed answer and refreshes at once
+  (within `DEVTOOLS_REFRESH_MIN_MS`) after a new version.
+- **Scenario: network-rows-merge** — the chrome's merge of an incremental answer: a full answer
+  replaces, rows replace by key, removed keys go, the order is by key.
 - **Scenario: waterfall-geometry** — each row's bar starts and spans in proportion to the log's
   time range (SVG user units), a pending one runs to the end, a zero span is still visible.
 - **Scenario: issues-sorted** — by severity (errors first), rule or category, either direction,
@@ -165,6 +208,8 @@ named test.
   search narrow the list; robots.txt marks a disallowed script as blocked.
 - **Scenario: network-masks-authorization** — a request sent with an `Authorization` header shows
   it as `•••`, and the secret appears nowhere in the chrome.
+- **Scenario: network-log-survives-uncommitted-navigation** (e2e) — navigating to a `204` keeps the
+  page, its network log and its console.
 - **Scenario: redirects-show-the-chain** — a 301 → 302 → 200 chain lists both hops with their
   status and `Location`, then the final 200.
 - **Scenario: console-dedupes-messages** — the same message logged three times is one row ×3.

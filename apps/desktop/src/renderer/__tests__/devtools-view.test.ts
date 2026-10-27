@@ -2,7 +2,18 @@
 // ISSUE_FALLBACK_PANEL), specs/seo-sidebar.spec.ts (SEO_PANELS)
 // Acceptance: specs/devtools.feature.md (Chrome helpers)
 import { describe, expect, test } from 'vitest';
-import { DEFAULT_DEVTOOLS_TAB, DEVTOOLS_DEFAULT_OPEN, DEVTOOLS_HEIGHT, ISSUE_FALLBACK_PANEL, NETWORK_SEARCH_MAX_CHARS, type NetworkEntry } from '@app/specs/devtools.spec';
+import {
+  DEFAULT_DEVTOOLS_TAB,
+  DEVTOOLS_DEFAULT_OPEN,
+  DEVTOOLS_HEIGHT,
+  DEVTOOLS_REFRESH_MIN_MS,
+  DEVTOOLS_WATCH_BACKOFF_MS,
+  DEVTOOLS_WATCH_EVICTED,
+  ISSUE_FALLBACK_PANEL,
+  NETWORK_SEARCH_MAX_CHARS,
+  type NetworkEntry,
+  type NetworkLogAnswer,
+} from '@app/specs/devtools.spec';
 import { SEO_CATEGORIES } from '@app/specs/seo-rules.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import {
@@ -14,6 +25,8 @@ import {
   heightAfterKey,
   heightFromStorage,
   isFailed,
+  mergeRows,
+  watchStep,
   NO_NETWORK_FILTER,
   openFromStorage,
   panelForCategory,
@@ -91,6 +104,36 @@ describe('devtools drawer helpers', () => {
     expect([formatDuration(null), formatDuration(12.4), formatDuration(1_234)]).toEqual(['—', '12 ms', '1.23 s']);
     expect([shortName('https://a.test/x/app.js?v=1'), shortName('https://a.test/'), shortName('not a url')]).toEqual(['app.js?v=1', 'a.test', 'not a url']);
     expect([formatExpiry(null), formatExpiry(Date.UTC(2030, 0, 2, 3, 4))]).toEqual(['Session', '2030-01-02 03:04 UTC']);
+  });
+
+  test('watch-backs-off-without-news', () => {
+    // Evicted, unchanged (a timeout) or failed: wait before asking again, never a busy loop.
+    expect(watchStep(DEVTOOLS_WATCH_EVICTED, 7, 0, 10_000)).toEqual({ kind: 'backoff', ms: DEVTOOLS_WATCH_BACKOFF_MS });
+    expect(watchStep(7, 7, 0, 10_000)).toEqual({ kind: 'backoff', ms: DEVTOOLS_WATCH_BACKOFF_MS });
+    expect(watchStep(0, 0, 0, 10_000)).toEqual({ kind: 'backoff', ms: DEVTOOLS_WATCH_BACKOFF_MS });
+    expect(watchStep(null, 7, 0, 10_000)).toEqual({ kind: 'backoff', ms: DEVTOOLS_WATCH_BACKOFF_MS });
+    // A new version: refresh, no sooner than the minimum gap after the last refresh.
+    expect(watchStep(8, 7, 0, 10_000)).toEqual({ kind: 'refresh', version: 8, waitMs: 0 });
+    expect(watchStep(8, 7, 10_000 - 100, 10_000)).toEqual({ kind: 'refresh', version: 8, waitMs: DEVTOOLS_REFRESH_MIN_MS - 100 });
+  });
+
+  test('network-rows-merge', () => {
+    const r = (key: number, rev: number, url = `https://a.test/${key}`): NetworkEntry =>
+      ({ key, rev, url, document: 1, method: 'GET', urlTruncated: false, type: 'script', state: 'done', status: 200, error: null, redirectTo: null, size: null, startedAt: 0, durationMs: 1, fromCache: false, thirdParty: false, robots: 'not-checked', requestHeaderCount: 0, responseHeaderCount: 0, headersDropped: false }) as NetworkEntry;
+    const answer = (over: Partial<Extract<NetworkLogAnswer, { status: 'ready' }>>): Extract<NetworkLogAnswer, { status: 'ready' }> => ({ status: 'ready', tabId: 1, pageUrl: '', rev: 0, full: false, more: false, entries: [], removed: [], dropped: 0, notKept: 0, overBudget: { entries: 0, bytes: 0 }, preserve: false, ...over });
+    const first = mergeRows([], answer({ full: true, rev: 3, entries: [r(2, 2), r(1, 1), r(3, 3)] }));
+    expect(first.map((e) => e.key)).toEqual([1, 2, 3]);
+    // Changed rows replace theirs by key; removed ones go; new ones land in key order.
+    const next = mergeRows(first, answer({ rev: 6, entries: [r(2, 5, 'https://a.test/changed'), r(4, 6)], removed: [1] }));
+    expect(next.map((e) => [e.key, e.url])).toEqual([
+      [2, 'https://a.test/changed'],
+      [3, 'https://a.test/3'],
+      [4, 'https://a.test/4'],
+    ]);
+    // A full answer replaces everything.
+    expect(mergeRows(next, answer({ full: true, rev: 9, entries: [r(7, 9)] })).map((e) => e.key)).toEqual([7]);
+    // Nothing changed: the same array (no re-render).
+    expect(mergeRows(next, answer({ rev: 6 }))).toBe(next);
   });
 
   test('waterfall-geometry', () => {

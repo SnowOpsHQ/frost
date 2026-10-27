@@ -1,5 +1,5 @@
 import type { DevtoolsService } from '@app/ipc-contract';
-import { MAX_PENDING_DEVTOOLS_WATCHES, REDIRECT_KEY_HEADERS, ROBOTS_VERDICT_BATCH, type NetworkHeader, type RedirectTraceAnswer } from '@app/specs/devtools.spec';
+import { DEVTOOLS_WATCH_EVICTED, MAX_PENDING_DEVTOOLS_WATCHES, REDIRECT_KEY_HEADERS, ROBOTS_VERDICT_BATCH, type NetworkHeader, type RedirectTraceAnswer } from '@app/specs/devtools.spec';
 import type { ResponseMeta, RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import type { RequestObserver } from '../browser/web-request';
 import { createConsoleLog, type ConsoleLog, type ConsoleMessage } from './console-log';
@@ -18,7 +18,7 @@ export interface DevtoolsContents {
   readonly id: number;
   getURL(): string;
   isDestroyed(): boolean;
-  on(event: 'did-start-navigation', listener: (details: { url?: unknown; isSameDocument?: unknown; isMainFrame?: unknown }, ...rest: unknown[]) => void): unknown;
+  on(event: 'did-navigate', listener: (event: unknown, url: string, ...rest: unknown[]) => void): unknown;
   on(event: 'console-message', listener: (details: ConsoleMessage, ...rest: unknown[]) => void): unknown;
   once(event: 'destroyed', listener: () => void): unknown;
 }
@@ -26,6 +26,8 @@ export interface DevtoolsContents {
 export interface DevtoolsServiceOptions {
   /** The open tab's live WebContents, `null` for an id that names no open tab (or a tab without a page view). */
   readonly contentsOf: (tabId: number) => DevtoolsContents | null;
+  /** The app window's active tab (`DEVTOOLS_TAB_SCOPE`: the only one served), `null` for none. */
+  readonly activeTabId: () => number | null;
   /** The open tab showing WebContents `contentsId`, `null` for none. */
   readonly tabIdOf: (contentsId: number) => number | null;
   /** Phase 2's response recorder (`seo/responses.ts`): the committed main-frame response. */
@@ -71,6 +73,8 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
 
   const versionOfContents = (contentsId: number | undefined): number => (contentsId === undefined ? 0 : (versions.get(contentsId) ?? 0));
   const contents = (tabId: number): DevtoolsContents | null => {
+    // Only the active tab is served (`DEVTOOLS_TAB_SCOPE`): any other id is no tab.
+    if (tabId !== options.activeTabId()) return null;
     const found = options.contentsOf(tabId);
     return found && !found.isDestroyed() ? found : null;
   };
@@ -134,15 +138,12 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
 
     watchContents(tab) {
       const id = tab.id;
-      tab.on('did-start-navigation', (details, ...rest) => {
-        // Electron 45 passes a details object; older releases (url, isInPlace, isMainFrame) positionally.
-        const isMainFrame = typeof details?.isMainFrame === 'boolean' ? details.isMainFrame : rest[2] === true;
-        const sameDocument = typeof details?.isSameDocument === 'boolean' ? details.isSameDocument : rest[1] === true;
-        const url = typeof details?.url === 'string' ? details.url : typeof rest[0] === 'string' ? rest[0] : '';
-        if (!isMainFrame || sameDocument) return;
-        network.navigated(id, url);
+      // A main-frame navigation committed another document (`did-navigate`: main frame, cross-document
+      // only). A navigation that never commits (a 204, a download, one cancelled) resets nothing.
+      tab.on('did-navigate', (_event, url) => {
+        network.committed(id, typeof url === 'string' ? url : '');
         consoleLog.reset(id);
-        storage.navigated(id);
+        storage.committed(id);
       });
       tab.on('console-message', (details) => consoleLog.add(id, details ?? {}));
       tab.once('destroyed', () => {
@@ -156,6 +157,8 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
     version,
 
     watch(tabId, sinceVersion, signal) {
+      // Not the active tab: nothing will ever change for the chrome there.
+      if (tabId !== options.activeTabId()) return Promise.resolve(0);
       const current = version(tabId);
       if (current > sinceVersion) return Promise.resolve(current);
       return new Promise<number>((resolve) => {
@@ -163,7 +166,8 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
         waiters.push(waiter);
         while (waiters.length > MAX_PENDING_DEVTOOLS_WATCHES) {
           const oldest = waiters.shift()!;
-          oldest.resolve(version(oldest.tabId));
+          // Pushed out: a marker, never a version, so the chrome backs off before asking again.
+          oldest.resolve(DEVTOOLS_WATCH_EVICTED);
         }
         const abort = (): void => {
           const at = waiters.indexOf(waiter);
@@ -175,13 +179,18 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
       });
     },
 
-    network(tabId) {
+    network(tabId, since = 0) {
       const tab = contents(tabId);
       if (!tab) return { status: 'no-tab', tabId };
-      const snapshot = network.snapshot(tab.id);
-      if (!snapshot) return { status: 'ready', tabId, pageUrl: tab.getURL(), entries: [], dropped: 0, notKept: 0, preserve: false };
-      resolveRobots(tab.id, snapshot.pageUrl || tab.getURL());
-      return { status: 'ready', tabId, ...snapshot, pageUrl: snapshot.pageUrl || tab.getURL() };
+      const rows = network.rows(tab.id, since);
+      if (!rows) return { status: 'ready', tabId, pageUrl: tab.getURL(), rev: 0, full: true, more: false, entries: [], removed: [], dropped: 0, notKept: 0, overBudget: { entries: 0, bytes: 0 }, preserve: false };
+      resolveRobots(tab.id, rows.pageUrl || tab.getURL());
+      return { status: 'ready', tabId, ...rows, pageUrl: rows.pageUrl || tab.getURL() };
+    },
+
+    requestHeaders(tabId, key) {
+      const tab = contents(tabId);
+      return tab ? network.headers(tab.id, key) : { status: 'gone' };
     },
 
     redirects(tabId): RedirectTraceAnswer {

@@ -7026,6 +7026,11 @@ input {
   color: var(--text-muted);
 }
 
+.devtools-notice-inline {
+  margin: 6px 0;
+  color: var(--caution);
+}
+
 /* End of Devtools drawer */
 
 /* Browser polish (Phase 2.5 Task 6, specs/browser-polish.feature.md): the find bar, the History

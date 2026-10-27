@@ -13,6 +13,7 @@ const CLEAR_MESSAGES: Readonly<Record<ClearSiteDataResult, string>> = {
   cleared: 'This site’s data was cleared.',
   cancelled: 'Nothing was cleared.',
   refused: 'This page has no site data to clear.',
+  busy: 'Another site’s data is being cleared. Try again in a moment.',
 };
 
 export function StoragePanel({ tab, version }: DevtoolsPanelProps) {
