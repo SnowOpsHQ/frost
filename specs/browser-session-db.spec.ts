@@ -32,9 +32,11 @@ export const MIGRATIONS_TABLE = 'schema_migrations' as const;
 /**
  * The tables the migrations create (besides `MIGRATIONS_TABLE`): `0001` the first three, `0003`
  * `render_profile_pins` (Phase 2.5 Task 1, `render-profile.feature.md`: one pinned render profile
- * per origin, as JSON, at most `MAX_RENDER_PROFILE_PINS`).
+ * per origin, as JSON, at most `MAX_RENDER_PROFILE_PINS`), `0004` the Content panel's notes
+ * (Phase 2.5 Task 3, `CONTENT_TABLES` in `seo-content.spec.ts`: target queries and snippet drafts
+ * per page URL).
  */
-export const SESSION_TABLES = ['browser_tabs', 'recent_visits', 'site_permissions', 'render_profile_pins'] as const;
+export const SESSION_TABLES = ['browser_tabs', 'recent_visits', 'site_permissions', 'render_profile_pins', 'seo_target_queries', 'seo_snippet_variants'] as const;
 
 /** At most this many tabs are saved, and restored (the window holds no more). */
 export const MAX_RESTORED_TABS = MAX_TABS;
@@ -84,8 +86,9 @@ export const CORRUPTION_RESULT_CODES = [11, 26] as const;
  * menu item (the File menu; the app menu on macOS) that asks first, in a native message box main
  * shows parented to the window, and on confirmation clears the visits, every permission decision
  * (stored and in memory) with the prompt back-off, every pinned render profile (stored and in memory,
- * `render-profile.feature.md`), and the browse partition's storage and cache.
- * It closes no tab. `buttons[confirmIndex]` clears; Cancel is the default and the cancel answer.
+ * `render-profile.feature.md`), and the browse partition's storage and cache. The Content panel's
+ * target queries and snippet drafts are the user's own work and are kept (`MAX_CONTENT_NOTE_URLS` in
+ * `seo-content.spec.ts`); the dialog says so. It closes no tab. `buttons[confirmIndex]` clears; Cancel is the default and the cancel answer.
  */
 export const CLEAR_BROWSING_DATA = {
   menuItemId: 'clear-browsing-data',
@@ -94,7 +97,7 @@ export const CLEAR_BROWSING_DATA = {
     type: 'warning',
     message: 'Clear browsing data?',
     detail:
-      'This clears your recent visits, every site permission you allowed or blocked, the render profiles pinned to sites, and the cookies, site data and cache of every site. Open tabs stay open.',
+      'This clears your recent visits, every site permission you allowed or blocked, the render profiles pinned to sites, and the cookies, site data and cache of every site. Your target queries and snippet drafts are kept, and open tabs stay open.',
     buttons: ['Clear Browsing Data', 'Cancel'],
     defaultId: 1,
     cancelId: 1,

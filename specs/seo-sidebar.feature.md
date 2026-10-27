@@ -130,7 +130,8 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
 - Overview: the score ring (0–100, coloured by band) with the band's label, error / warning / info
   counts, and the top `OVERVIEW_TOP_ISSUES` ranked issues ("Show all" for the rest). Each issue
   expands to its why, its fix and its facts and samples.
-- On-Page: title (with its length and an indicator against `TITLE_MIN_CHARS`…`TITLE_MAX_CHARS`),
+- On-Page: title (with its length and an indicator against `TITLE_MIN_CHARS`…`TITLE_MAX_CHARS`;
+  since Phase 2.5 Task 3 "too long" is the width a result shows, `seo-content.feature.md`),
   meta description (likewise), URL, canonical, meta robots, lang, viewport, the heading outline
   (indented, `H1`…`H6` tags), word count, link summary (internal, external, nofollow) and image
   summary (total, missing alt).
@@ -161,7 +162,7 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   break opportunities Chromium's own layout of them keeps the page busy for seconds, which is the
   `timeout` case below), a 10 MB title and
   `document.querySelectorAll` / `Array.prototype` / `JSON` overridden in its main world gets a
-  ready audit within `EXTRACT_TIMEOUT_MS` (plus the debounce): `title-too-long` with the full length,
+  ready audit within `EXTRACT_TIMEOUT_MS` (plus the debounce): `title-too-wide` (Phase 2.5 Task 3) for the full title,
   at most `maxLinks` links analysed of the 100 000 reported; the page's overrides never ran for the
   extractor, and the chrome stays responsive (a new tab opens and closes).
 - **Scenario: page-text-is-inert-in-sidebar** — a title, H1 and alt with `<img src=x onerror=…>`,
@@ -181,6 +182,6 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   `<meta name="googlebot" content="noindex">` scores at most `NOINDEX_SCORE_CAP` and its score
   card says "Not indexable" and names googlebot.
 - **Scenario: empty-tab-shows-hint** — an empty tab shows the sidebar's hint, no score; the rail
-  lists all nine panels (`SEO_PANELS`), each with a status.
+  lists all ten panels (`SEO_PANELS`; Content since Phase 2.5 Task 3), each with a status.
 - **Scenario: narrow-window-keeps-page-usable** — with the chrome 500 px wide the tab's view keeps
   `PAGE_MIN_WIDTH`, the sidebar narrows (the rail stays), and a click in the page still lands.

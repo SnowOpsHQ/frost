@@ -14,6 +14,7 @@ import { PageCommandInputSchema, SeoCopyValueInputSchema } from '@app/specs/comm
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app/specs/render-profile.schema.spec';
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
+import { contentRouter } from './content-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -251,6 +252,8 @@ export const appRouter = router({
   ping: publicProcedure.use(enforceSender).query(() => 'pong' as const),
   browser: browserRouter,
   seo: seoRouter,
+  // Phase 2.5 Task 3 (`seo-content.feature.md`): the Content panel's notes and Copy as HTML.
+  content: contentRouter,
 });
 
 export type AppRouter = typeof appRouter;

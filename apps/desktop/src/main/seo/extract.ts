@@ -1,4 +1,5 @@
 import { MAX_BLOCKING_SCRIPTS } from '@app/specs/seo-speed.spec';
+import { VISIBLE_TEXT_BLOCKS, VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
 import { SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SEO_WORLD_ID, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { securityCall } from './security-extract';
@@ -23,6 +24,7 @@ interface PageNode {
 }
 interface PageText extends PageNode {
   readonly length: number;
+  readonly parentElement: PageElement | null;
   substringData(offset: number, count: number): string;
 }
 interface PageElement extends PageNode {
@@ -32,6 +34,7 @@ interface PageElement extends PageNode {
   getAttribute(name: string): string | null;
   hasAttribute(name: string): boolean;
   closest(selectors: string): PageElement | null;
+  contains(other: PageNode | null): boolean;
   /** Chromium has it; some test DOMs do not (then only `[hidden]` hides). */
   checkVisibility?(): boolean;
 }
@@ -106,6 +109,8 @@ export function extractPage(
   socialTags: readonly string[],
   socialUrlTags: readonly string[],
   maxBlockingScripts = 20,
+  maxVisibleText = 0,
+  blocks: readonly string[] = [],
 ): unknown {
   const started = performance.now();
   const deadline = started + budgetMs;
@@ -585,6 +590,35 @@ export function extractPage(
   };
   let wordCount = 0;
   let textTruncated = false;
+  // The same walk keeps the visible text for the content analysis (Phase 2.5 Task 3,
+  // `seo-content.spec.ts`): each node's white space collapsed, a `\n` at a block boundary (entering
+  // a block element, or leaving one: the next text is outside the previous text's block parent), the
+  // first `maxVisibleText` code units.
+  const keptText: string[] = [];
+  let kept = 0;
+  let keptCut = false;
+  let blockBreak = false;
+  let lastParent: PageElement | null = null;
+  const keep = (raw: string, node: PageText): void => {
+    const parent = node.parentElement;
+    if (lastParent !== null && parent !== lastParent && blocks.includes(lastParent.localName) && !lastParent.contains(node)) blockBreak = true;
+    lastParent = parent;
+    const text = raw.replace(/\s+/g, ' ');
+    if (text === '') return;
+    if (kept >= maxVisibleText) {
+      keptCut = true;
+      return;
+    }
+    // White space alone separates words (unless a block boundary already does).
+    if (text === ' ' && (kept === 0 || blockBreak)) return;
+    const piece = (blockBreak && kept > 0 && text !== ' ' ? '\n' : '') + text;
+    if (text !== ' ') blockBreak = false;
+    const room = maxVisibleText - kept;
+    const part = cut(piece, room);
+    if (part.length < piece.length) keptCut = true;
+    keptText.push(part);
+    kept += part.length;
+  };
   if (document.body) {
     let visited = 0;
     let textNodes = 0;
@@ -595,7 +629,9 @@ export function extractPage(
         if (textNodes >= L.maxTextNodes || scanned >= L.maxTextScanChars || visited > L.maxTextNodes * 4 || ((visited & 255) === 1 && late())) throw STOP;
         if (node.nodeType !== ELEMENT_NODE) return FILTER_ACCEPT;
         const el = node as PageElement;
-        return SKIP.includes(el.localName) || el.hasAttribute('hidden') || (typeof el.checkVisibility === 'function' && !el.checkVisibility()) ? FILTER_REJECT : FILTER_SKIP;
+        if (SKIP.includes(el.localName) || el.hasAttribute('hidden') || (typeof el.checkVisibility === 'function' && !el.checkVisibility())) return FILTER_REJECT;
+        if (blocks.includes(el.localName)) blockBreak = true;
+        return FILTER_SKIP;
       },
     });
     try {
@@ -604,13 +640,16 @@ export function extractPage(
         const data = node as PageText;
         const take = Math.min(data.length, L.maxTextScanChars - scanned);
         scanned += take;
-        wordCount += countWords(data.substringData(0, take));
+        const chunk = data.substringData(0, take);
+        wordCount += countWords(chunk);
+        if (maxVisibleText > 0) keep(chunk, data);
       }
     } catch (error) {
       if (error !== STOP) throw error;
       textTruncated = true;
     }
   }
+  const visibleText = { text: keptText.join('').replace(/ *\n */g, '\n').trim(), truncated: keptCut || textTruncated };
 
   return {
     url: cut(document.URL, L.maxUrlChars),
@@ -645,15 +684,17 @@ export function extractPage(
     hreflang,
     hreflangTotal,
     blockingScripts: { urls: blockingUrls, total: total(blockingTotal) },
+    ...(maxVisibleText > 0 ? { visibleText } : {}),
   };
 }
 
 /**
  * The script run in the isolated world: `extractPage` called on its `document` with the spec's
- * limits, deadline, robots meta names and social tags, then the security read (`extractSecurity`,
+ * limits, deadline, robots meta names, social tags and the visible-text cap and blocks (Phase 2.5
+ * Task 3), then the security read (`extractSecurity`,
  * Task 6) as its `security`.
  */
-export const EXTRACTOR_SCRIPT = `Object.assign((${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)}, ${MAX_BLOCKING_SCRIPTS}), { security: ${securityCall(SECURITY_LIMITS)} })`;
+export const EXTRACTOR_SCRIPT = `Object.assign((${extractPage.toString()})(document, ${JSON.stringify(SNAPSHOT_LIMITS)}, ${EXTRACT_BUDGET_MS}, ${JSON.stringify(ROBOTS_META_NAMES)}, ${JSON.stringify(SOCIAL_TAGS)}, ${JSON.stringify(SOCIAL_URL_TAGS)}, ${MAX_BLOCKING_SCRIPTS}, ${VISIBLE_TEXT_LIMITS.maxVisibleTextChars}, ${JSON.stringify(VISIBLE_TEXT_BLOCKS)}), { security: ${securityCall(SECURITY_LIMITS)} })`;
 
 /** The part of a tab's WebContents the extractor needs. */
 export interface ExtractTarget {

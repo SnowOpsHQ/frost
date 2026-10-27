@@ -4,8 +4,11 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 
 // Clear Browsing Data… (spec `browser-session-db.feature.md`, Clear browsing data): the
 // application menu's item asks first, in a native message box main shows, then clears the visits,
-// every permission decision (stored and in memory) with the prompt back-off, the browse
-// partition's storage and cache, and the SEO auditor's robots.txt answers and recorded responses. It closes no tab and leaves the app UI's session alone.
+// every permission decision (stored and in memory) with the prompt back-off, the render profiles
+// pinned to sites (stored and in memory), the browse partition's storage and cache, and the SEO
+// auditor's robots.txt answers and recorded responses. It keeps the Content panel's target queries
+// and snippet drafts (the user's own work; the dialog says so). It closes no tab and leaves the app
+// UI's session alone. The command palette's Clear Browsing Data runs this same action.
 
 /** What clearing is made of (injected, so the order and the failure handling are unit-tested). */
 export interface ClearBrowsingDataParts {

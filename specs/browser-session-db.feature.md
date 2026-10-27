@@ -99,13 +99,16 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   message box (`dialog.showMessageBox`, parented to the focused window, else the app's window;
   Cancel is the default). Cancelling changes nothing. Confirming clears, in this order: every
   permission decision in memory (Allows and Blocks) and the prompt back-off; then, in one
-  transaction after every earlier write, every `recent_visits` and `site_permissions` row (visits
-  still pending in the writer are dropped, so none is written back; the tab strip is kept); then
+  transaction after every earlier write, every `recent_visits`, `site_permissions` and
+  `render_profile_pins` row (visits still pending in the writer are dropped, so none is written
+  back; the tab strip is kept; the in-memory pins go too, `render-profile.feature.md`); then
   the browse partition's storage (`session.fromPartition(BROWSE_PARTITION).clearStorageData()`:
   cookies, local storage, IndexedDB, service workers, cache storage …) and its HTTP cache
   (`clearCache()`); then the SEO auditor's per-origin robots.txt answers and recorded tab responses
   (`seo-indexability.feature.md`). One part failing is logged and the others still run. No tab is closed or
-  reloaded, and the app UI's own session is untouched. Pending prompts stay pending (they are
+  reloaded, and the app UI's own session is untouched. The Content panel's target queries and
+  snippet drafts (`seo_target_queries`, `seo_snippet_variants`) are kept, as the dialog says
+  (`seo-content.spec.ts`, `MAX_CONTENT_NOTE_URLS`). Pending prompts stay pending (they are
   undecided); one that was narrowed by a now-forgotten decision grants only requests whose every
   permission is remembered Allowed when it is answered (`permissions.feature.md`, Remembered
   decisions).

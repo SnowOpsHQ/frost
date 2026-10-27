@@ -17,6 +17,7 @@ import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { runAccessibilityCheck } from './seo/a11y';
 import { createAnalyzer } from './seo/analysis';
+import { createContentService } from './seo/content-notes';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
 import { createResponseRecorder } from './seo/responses';
@@ -251,7 +252,12 @@ function start(): void {
       policy: senderPolicy,
       ipcMain,
       fromWebContents: (contents) => BrowserWindow.fromWebContents(contents),
-      services: { browser, seo: browser.seo },
+      services: {
+        browser,
+        seo: browser.seo,
+        // The Content panel's notes (local, in the session database) and Copy as HTML (specs/seo-content.feature.md).
+        content: createContentService({ notes: sessionStore.contentNotes, audit: (tabId) => browser.seo.getAudit(tabId), clipboard, log: logSession }),
+      },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
     // to the focused window (else the app's), then clears visits, decisions and site storage.

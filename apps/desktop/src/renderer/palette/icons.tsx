@@ -21,6 +21,7 @@ import {
   SpeedIcon,
   StopIcon,
 } from '../icons';
+import { ContentIcon } from '../components/seo/content-icons';
 import type { PaletteIconName } from './registry';
 
 // The command palette's glyphs: frost's own stroked shapes on the same 24×24 grid as `icons.tsx`
@@ -174,6 +175,7 @@ const ICONS: Readonly<Record<PaletteIconName, (props: GlyphProps) => ReactNode>>
   panel: PanelGlyph,
   'panel-overview': OverviewIcon,
   'panel-on-page': OnPageIcon,
+  'panel-content': ContentIcon,
   'panel-links': LinksIcon,
   'panel-images': ImagesIcon,
   'panel-social': SocialIcon,
