@@ -349,6 +349,8 @@ test('devtools-shortcut-not-swallowed', async () => {
   await go(`${site.origin}/greedy`);
   const greedy = await contentsIdAt(`${site.origin}/greedy`);
   await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), greedy);
+  // Its URL commits before its script runs: wait for the key listener, or the control key is lost.
+  await expect.poll(() => run(greedy, 'Array.isArray(window.seen)')).toBe(true);
   // Control: the page really does swallow ordinary keys.
   await press(greedy, 'A');
   await expect.poll(() => run(greedy, 'window.seen.map((k) => k.toLowerCase())')).toEqual(['a']);

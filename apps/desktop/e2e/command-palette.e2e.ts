@@ -130,6 +130,8 @@ test('palette-opens-with-mod-k-even-from-a-greedy-page', async () => {
   await go(`${site.origin}/greedy`);
   const greedy = await contentsIdAt(`${site.origin}/greedy`);
   await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), greedy);
+  // Its URL commits before its script runs: wait for the key listener, or the control key is lost.
+  await expect.poll(() => run(greedy, 'Array.isArray(window.seen)')).toBe(true);
   // Control: the page really does swallow ordinary keys.
   await press(greedy, 'A');
   await expect.poll(() => pageSaw(greedy)).toEqual(['a']);
@@ -421,8 +423,12 @@ test('palette-closes-when-the-page-goes-fullscreen', async () => {
     // Focus was not put back into the hidden chrome.
     expect(await page.evaluate(() => document.activeElement === document.body || document.activeElement === null)).toBe(true);
   } finally {
-    await run(id, 'document.fullscreenElement ? document.exitFullscreen() : null');
+    // Esc, which main takes and leaves fullscreen with at once, asking the page only once the window
+    // settled. Not the page's own `document.exitFullscreen()`: `isFullScreen()` is already true while
+    // the macOS enter animation still runs, and a page exit asked for then never settles there.
+    await press(id, 'Escape');
     await expect.poll(windowFullscreen).toBe(false);
+    await expect.poll(() => run(id, 'document.fullscreenElement === null')).toBe(true);
   }
 });
 
