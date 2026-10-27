@@ -1,5 +1,7 @@
 import type { LinkFilter, SeoAuditResponse, SpeedResponse } from '@app/seo-core';
 import type { BrowserState, PageBounds } from '@app/specs/browser.spec';
+import type { CopyValueKey } from '@app/specs/command-palette.spec';
+import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
@@ -56,6 +58,14 @@ export interface BrowserService {
    * queued, answered, timed-out or unknown one).
    */
   answerPermission(promptId: string, decision: PermissionDecision): boolean;
+  // The command palette's (`command-palette.feature.md`): commands the chrome could reach only
+  // through the menu before.
+  /** Runs a page command on the active tab exactly as its menu item does (`page-commands.feature.md`). */
+  runPageCommand(command: PageCommand): void;
+  /** Gives keyboard focus back to the active tab's page; `false` (focus unchanged) when it shows none. */
+  focusPage(): boolean;
+  /** The menu's Clear Browsing Data… (which asks first, in main's own dialog). */
+  clearBrowsingData(): void;
   getState(): BrowserState;
   /**
    * Resolves with the state once its `version` exceeds `sinceVersion` (at once if it already
@@ -114,6 +124,12 @@ export interface SeoService {
    * `false` (a no-op) otherwise. Its state and results come with the tab's ready audit.
    */
   runAccessibility(tabId: number): boolean;
+  /**
+   * Writes one value of the tab's ready audit (`copyValueOf`, `command-palette.spec.ts`
+   * `COPY_VALUE_KEYS`) to the system clipboard, if that audit is the one the chrome shows (`audit`)
+   * and has that value; else `false`, nothing written (`command-palette.feature.md`).
+   */
+  copyValue(tabId: number, audit: SeoAuditRef, key: CopyValueKey): boolean;
 }
 
 /** Everything main hands to procedures. Optional so that a context without a service fails closed. */

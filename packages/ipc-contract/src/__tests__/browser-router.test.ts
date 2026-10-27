@@ -20,6 +20,7 @@ function stateAt(version: number): BrowserState {
     activeTabId: 1,
     focusAddressBarSeq: 0,
     toggleSidebarSeq: 0,
+    commandPalette: { seq: 0, returnFocus: 'chrome' },
     notice: null,
   };
 }
@@ -39,6 +40,10 @@ function fakeService(version = 3) {
     stop: vi.fn(),
     setPageBounds: vi.fn(),
     answerPermission: vi.fn((promptId: string, _decision: 'allow' | 'block' | 'dismiss') => promptId === PROMPT_ID),
+    // The command palette's (palette-router.test.ts).
+    runPageCommand: vi.fn((_command: string) => undefined),
+    focusPage: vi.fn(() => true),
+    clearBrowsingData: vi.fn(() => undefined),
     getState: vi.fn(() => current),
     watch: vi.fn(
       (_since: number, _signal?: AbortSignal) =>
@@ -98,6 +103,10 @@ const VALID_INPUT: Record<string, unknown> = {
   setPageBounds: { x: 0, y: 48, width: 1280, height: 720 },
   watch: { sinceVersion: 0 },
   answerPermission: { promptId: PROMPT_ID, decision: 'allow' },
+  // The command palette's (palette-router.test.ts).
+  pageCommand: { command: 'zoom-in' },
+  focusPage: undefined,
+  clearBrowsingData: undefined,
 };
 const BROWSER_PROCEDURES = Object.keys(VALID_INPUT);
 

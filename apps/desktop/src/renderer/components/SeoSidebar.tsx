@@ -5,6 +5,7 @@ import { IDLE_A11Y_RUN } from '@app/specs/seo-compliance.spec';
 import { COMING_SOON_LABEL, DEFAULT_SEO_PANEL, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { AuditArt, ChevronIcon, ComplianceIcon, ImagesIcon, IndexabilityIcon, LinksIcon, OnPageIcon, OverviewIcon, ReloadIcon, SchemaIcon, SocialIcon, SpeedIcon } from '../icons';
 import { actions } from '../ipc';
+import type { PanelJump } from '../palette/registry';
 import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
 import { Compliance } from './seo/Compliance';
@@ -160,9 +161,28 @@ function PanelBody({ tab, panel, response }: { readonly tab: TabState | undefine
   }
 }
 
-export function SeoSidebar({ tab, open, response, onOpenChange }: { readonly tab: TabState | undefined; readonly open: boolean; readonly response: SeoAuditResponse | null; readonly onOpenChange: (open: boolean) => void }) {
+export function SeoSidebar({
+  tab,
+  open,
+  response,
+  onOpenChange,
+  jump,
+}: {
+  readonly tab: TabState | undefined;
+  readonly open: boolean;
+  readonly response: SeoAuditResponse | null;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly jump?: PanelJump | null;
+}) {
   const [panel, setPanel] = useState<SeoPanelId>(DEFAULT_SEO_PANEL);
   const railItems = useRef(new Map<SeoPanelId, HTMLButtonElement>()).current;
+  // A command palette jump (`command-palette.feature.md`): open on that panel, focusing its rail item if asked.
+  useEffect(() => {
+    if (!jump) return;
+    setPanel(jump.panel);
+    onOpenChange(true);
+    if (jump.focus) railItems.get(jump.panel)?.focus();
+  }, [jump]);
   const wasOpen = useRef(open);
   // Collapsing from inside the panel (its button, or the shortcut while focus was in it) would drop
   // focus with the panel: it moves to the open panel's rail item instead.

@@ -2,6 +2,8 @@ import type { AppRouter } from '@app/ipc-contract';
 import { createIpcClient } from '@app/ipc-contract/renderer';
 import type { LinkFilter } from '@app/seo-core';
 import type { SeoAuditRef } from '@app/ipc-contract';
+import type { CopyValueKey } from '@app/specs/command-palette.spec';
+import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 
@@ -41,4 +43,13 @@ export const actions = {
   measureSpeed: (tabId: number) => ipc.seo.measureSpeed.mutate({ tabId }).catch(() => null),
   /** Starts the accessibility check on the tab's page (`seo.runAccessibility`); resolves whether one is running. */
   runAccessibility: (tabId: number) => ipc.seo.runAccessibility.mutate({ tabId }).catch(() => false),
+  // The command palette's (`command-palette.feature.md`).
+  /** Runs a page command (zoom …) on the active tab, as its menu item does. */
+  pageCommand: (command: PageCommand) => ipc.browser.pageCommand.mutate({ command }).catch(ignore),
+  /** Gives focus back to the active tab's page; resolves whether a page took it. */
+  focusPage: () => ipc.browser.focusPage.mutate().catch(() => false),
+  /** The menu's Clear Browsing Data… (main asks first). */
+  clearBrowsingData: () => ipc.browser.clearBrowsingData.mutate().catch(ignore),
+  /** Copies one allowlisted value of the audit on screen through main's clipboard; resolves whether it was copied. */
+  copyValue: (tabId: number, audit: SeoAuditRef, key: CopyValueKey) => ipc.seo.copyValue.mutate({ tabId, audit, key }).catch(() => false),
 };

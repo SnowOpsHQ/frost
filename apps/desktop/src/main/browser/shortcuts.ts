@@ -69,6 +69,9 @@ export function matchTabShortcut(input: KeyInput, platform: NodeJS.Platform): Ta
       return { command: 'focus-address-bar' };
     case 'Digit9':
       return { command: 'select-last-tab' };
+    // The command palette (`command-palette.spec.ts`, `COMMAND_PALETTE_SHORTCUT`).
+    case 'KeyK':
+      return { command: 'command-palette' };
   }
   const digit = /^Digit([1-8])$/.exec(code);
   if (digit) return { command: 'select-tab', index: Number(digit[1]) - 1 };

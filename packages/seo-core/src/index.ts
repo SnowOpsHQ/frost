@@ -3,6 +3,7 @@
 // runtime, so main and the chrome renderer can both import it.
 export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreAudit, scoreBand } from './audit';
 export { RULES } from './rules';
+export { copyValueOf } from './copy-values';
 export {
   accessibilityReport,
   allowsInlineScripts,

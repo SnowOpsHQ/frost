@@ -121,6 +121,8 @@ function start(): void {
   // analysis worker beside the extractor's answer, where they are validated and read.
   const responses = createResponseRecorder();
   let robots: RobotsFetcher | null = null;
+  // Clear Browsing Data… (the menu's, and the command palette's through `browser.clearBrowsingData`).
+  let clearBrowsingData: (() => Promise<boolean>) | null = null;
   // Page speed (specs/seo-speed.feature.md): the collector runs in the tab's own isolated speed world
   // (web-vitals and frost's observers, never the main world); its answer is validated and summarised
   // in the analysis worker. The audit takes one measurement beside the snapshot (the health score's
@@ -173,6 +175,9 @@ function start(): void {
     // accessibility world, on request only; its answer is validated in the analysis worker.
     accessibility: runAccessibilityCheck,
     clipboard,
+    // The command palette's Clear Browsing Data… (specs/command-palette.feature.md): the menu's own,
+    // confirming action, set up once the app is ready (below).
+    clearBrowsingData: () => void clearBrowsingData?.(),
   });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
@@ -231,7 +236,7 @@ function start(): void {
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
     // to the focused window (else the app's), then clears visits, decisions and site storage.
-    const clearBrowsingData = createClearBrowsingData({
+    clearBrowsingData = createClearBrowsingData({
       confirm: () => confirmClearBrowsingData(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
       forgetPermissionDecisions: () => permissions.forgetDecisions(),
       clearStoredData: () => sessionStore.writer.clearBrowsingData(),
@@ -245,7 +250,7 @@ function start(): void {
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
     // accelerators calling the controller directly (specs/tabs.feature.md, page-commands.feature.md).
-    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData() });
+    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.() });
     // What the last launch saved, after the sessions are hardened and before any tab or window
     // exists: remembered decisions answer the first requests, and the chrome's first state already
     // has the restored tabs.

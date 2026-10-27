@@ -4986,3 +4986,327 @@ input {
     transition: none;
   }
 }
+
+/* Command palette ---------------------------------------------------------------------------
+   specs/command-palette.spec.ts. Tab views are drawn above the chrome's DOM, so the palette is never
+   an overlay: while open it is a sheet at the top of the page column (PALETTE_SHEET_HEIGHT, at least
+   PALETTE_PAGE_MIN_VISIBLE px of page left below) and the page area shrinks, which moves the view
+   below it. Its height never changes while typing. Light and dark follow the OS. */
+
+:root {
+  --palette-sheet-height: 404px;
+  --palette-page-min-visible: 96px;
+  --palette-width: 640px;
+  --palette-bg: #ffffff;
+  --palette-edge: #dfe4eb;
+  --palette-sheet: linear-gradient(180deg, var(--bg-chrome) 0%, #eceff4 100%);
+  --palette-shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 10px 28px rgb(16 24 40 / 0.1);
+  --palette-row-active: rgb(47 111 228 / 0.1);
+  --palette-hit: rgb(47 111 228 / 0.16);
+  --palette-kbd-bg: #f1f3f7;
+  --palette-kbd-edge: #d7dce4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --palette-bg: #23262d;
+    --palette-edge: #353a44;
+    --palette-sheet: linear-gradient(180deg, var(--bg-chrome) 0%, #191b20 100%);
+    --palette-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 30px rgb(0 0 0 / 0.38);
+    --palette-row-active: rgb(108 157 255 / 0.14);
+    --palette-hit: rgb(108 157 255 / 0.22);
+    --palette-kbd-bg: #2c3038;
+    --palette-kbd-edge: #3d424d;
+  }
+}
+
+/* The page area and, while open, the palette's sheet above it (this column carries the page area's
+   old flex-item rules in the workspace row). */
+.page-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: min(var(--page-min-width), 100%);
+  min-height: 0;
+}
+
+.palette-sheet {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  /* Its content never widens the page column: opening the palette or typing must not move the
+     column / sidebar split (the tab's view would be resized). */
+  contain: inline-size;
+  height: min(var(--palette-sheet-height), calc(100% - var(--palette-page-min-visible)));
+  min-height: 0;
+  padding: 12px 16px 14px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+  background: var(--palette-sheet);
+}
+
+.palette {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(var(--palette-width), 100%);
+  min-height: 0;
+  border: 1px solid var(--palette-edge);
+  border-radius: 14px;
+  background: var(--palette-bg);
+  box-shadow: var(--palette-shadow);
+  overflow: hidden;
+  container: palette / inline-size;
+  animation: palette-in 140ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+}
+
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 50px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--palette-edge);
+}
+
+.palette-search-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+.palette-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  user-select: text;
+  cursor: text;
+}
+
+.palette-input::placeholder {
+  color: var(--text-faint);
+}
+
+.palette-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding: 6px;
+}
+
+.palette-group + .palette-group {
+  margin-top: 4px;
+}
+
+.palette-group-label {
+  padding: 8px 10px 4px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.palette-option {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 38px;
+  padding: 5px 10px;
+  border-radius: 9px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.palette-option[data-active='true'] {
+  background: var(--palette-row-active);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.palette-option-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--palette-edge);
+  border-radius: 8px;
+  background: var(--bg-chrome);
+  color: var(--icon);
+}
+
+.palette-option-icon .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.palette-option[data-active='true'] .palette-option-icon {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.palette-option-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.palette-option-label {
+  overflow: hidden;
+  font-size: 13.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.palette-hit {
+  border-radius: 3px;
+  background: var(--palette-hit);
+  color: inherit;
+  font-weight: 650;
+}
+
+.palette-option-detail {
+  display: block;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.palette-option-group {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.palette-kbd {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--palette-kbd-edge);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--palette-kbd-bg);
+  color: var(--text-muted);
+  font: 500 11px/1 var(--font-ui);
+  white-space: nowrap;
+}
+
+.palette-esc {
+  color: var(--text-faint);
+}
+
+.palette-empty {
+  position: absolute;
+  inset: 50px 0 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.palette-empty-mark {
+  width: 30px;
+  height: 30px;
+  color: var(--text-faint);
+}
+
+.palette-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+  height: 34px;
+  padding: 0 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  border-top: 1px solid var(--palette-edge);
+  background: var(--bg-chrome);
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.palette-foot-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.palette-foot-hint .palette-kbd {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+}
+
+.palette-foot-count {
+  margin-left: auto;
+}
+
+/* A narrow palette keeps the keys and drops the words. */
+@container palette (max-width: 440px) {
+  .palette-foot-label,
+  .palette-option-group {
+    display: none;
+  }
+
+  .palette-foot {
+    gap: 8px;
+  }
+}
+
+/* A handler's status line: over the status bar's middle (chrome the tab's view never covers). */
+.palette-status {
+  position: fixed;
+  bottom: 3px;
+  left: 50%;
+  z-index: 5;
+  max-width: min(60vw, 420px);
+  padding: 3px 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg-chrome);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transform: translateX(-50%);
+  transition: opacity 160ms ease;
+}
+
+.palette-status[data-shown='false'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette,
+  .palette-status {
+    animation: none;
+    transition: none;
+  }
+}

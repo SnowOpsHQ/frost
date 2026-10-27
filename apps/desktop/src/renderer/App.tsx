@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { CommandPalette } from './components/CommandPalette';
 import { FullscreenNotice } from './components/FullscreenNotice';
 import { PageArea } from './components/PagePanels';
 import { PromptBar } from './components/PermissionBar';
@@ -10,10 +12,12 @@ import { useNotice } from './hooks/useNotice';
 import { usePing } from './hooks/usePing';
 import { useSeoAudit } from './hooks/useSeoAudit';
 import { useSidebarOpen } from './hooks/useSidebarOpen';
+import type { PanelJump } from './palette/registry';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`): tab strip,
 // toolbar, permission prompt bar, page area with the SEO sidebar docked on its right
-// (`seo-sidebar.feature.md`), status bar, and the fullscreen notice.
+// (`seo-sidebar.feature.md`) and the command palette's sheet above it while open
+// (`command-palette.feature.md`), status bar, and the fullscreen notice.
 // All browser state lives in main; this page renders it and sends user intents over the
 // sender-guarded `browser.*` procedures (`ipc.ts`). Styling is the bundled styles.css only
 // (strict CSP). Runtime constants come from the Zod-free specs (`tabs.spec`, `permissions.spec`,
@@ -28,6 +32,8 @@ export function App() {
   const notice = useNotice(state === null ? undefined : state.notice);
   const [sidebarOpen, setSidebarOpen, toggleSidebar] = useSidebarOpen(state?.toggleSidebarSeq);
   const audit = useSeoAudit(tab);
+  // The command palette's panel jumps (`command-palette.feature.md`): the sidebar opens on that panel.
+  const [panelJump, setPanelJump] = useState<PanelJump | null>(null);
   return (
     <div className="chrome">
       <TabStrip state={state} />
@@ -37,8 +43,12 @@ export function App() {
         {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} covered={tab.fullscreen !== null} /> : null}
       </div>
       <div className="workspace">
-        <PageArea tab={tab} empty={state !== null && empty} />
-        <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} />
+        {/* The palette's sheet sits above the page area, never under the tab's view (`command-palette.spec.ts`). */}
+        <div className="page-column">
+          <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
+          <PageArea tab={tab} empty={state !== null && empty} />
+        </div>
+        <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} />
       </div>
       <StatusBar tab={tab} notice={notice} ping={ping} connection={connection} />
       {tab?.fullscreen === 'notice' ? <FullscreenNotice tab={tab} /> : null}

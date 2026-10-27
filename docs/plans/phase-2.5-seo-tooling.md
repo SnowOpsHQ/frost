@@ -176,7 +176,15 @@ Everything in the Phase 0–2 Global Constraints and `CONTRIBUTING.md` still hol
 - **Tests.** Unit tests for the registry, the fuzzy matcher, the template table (`https:` only, the URL
   encoded, no page-controlled host) and availability. e2e: open, search, run a jump, run a copy, run
   "Open in", and the page can't block Cmd/Ctrl+K.
-- [ ] commit `feat(chrome): command palette`
+- Decisions (`specs/command-palette.feature.md`, `specs/command-palette.spec.ts`):
+  - the palette is a sheet at the top of the page column, and the page area below it shrinks: the
+    tab's view (drawn above the chrome's DOM) is laid out below it through `browser.setPageBounds`;
+  - other features add actions with one `registerPaletteActions(...)` call in their own file;
+  - copies go through `seo.copyValue` (allowlisted keys, the shown audit only);
+  - new `browser.pageCommand` / `focusPage` / `clearBrowsingData` procedures reach the menu-only
+    commands;
+  - "Open in" is offered only for public hosts and sends the URL without credentials or fragment.
+- [x] commit `feat(chrome): command palette`
 
 ### Batch B (parallel, after Batch A is merged)
 

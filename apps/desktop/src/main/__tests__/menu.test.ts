@@ -1,10 +1,12 @@
 // Spec: specs/browser.spec.ts (TAB_SHORTCUT_COUNT), specs/page-commands.spec.ts
-// Acceptance: specs/tabs.feature.md (Menu), specs/page-commands.feature.md (Menu), specs/seo-sidebar.feature.md (Toggle)
+// Acceptance: specs/tabs.feature.md (Menu), specs/page-commands.feature.md (Menu), specs/seo-sidebar.feature.md (Toggle),
+// specs/command-palette.feature.md (palette-menu-item)
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
 import { SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
+import { COMMAND_PALETTE_MENU_ID, COMMAND_PALETTE_MENU_LABEL } from '@app/specs/command-palette.spec';
 import { appMenuTemplate, installAppMenu, type AppMenuCommands } from '../menu';
 
 vi.mock('electron', async () => (await import('../../test/electron-fake')).electronFake());
@@ -22,6 +24,7 @@ function fakeCommands() {
     activatePreviousTab: vi.fn(),
     runPageCommand: vi.fn(),
     toggleSidebar: vi.fn(),
+    openCommandPalette: vi.fn(),
     clearBrowsingData: vi.fn(),
   } satisfies AppMenuCommands;
 }
@@ -45,6 +48,19 @@ function click(item: MenuItemConstructorOptions): void {
 }
 
 describe('application menu', () => {
+  test.each(PLATFORMS)('palette-menu-item (%s)', (platform) => {
+    const commands = fakeCommands();
+    const template = appMenuTemplate(commands, platform);
+    const item = itemById(template, COMMAND_PALETTE_MENU_ID);
+    expect(item.accelerator).toBe('CmdOrCtrl+K');
+    expect(item.label).toBe(COMMAND_PALETTE_MENU_LABEL);
+    const view = template.find((menu) => menu.label === 'View')!;
+    expect(allItems(view.submenu as MenuItemConstructorOptions[])).toContain(item);
+    click(item);
+    expect(commands.openCommandPalette).toHaveBeenCalledTimes(1);
+    for (const [name, fn] of Object.entries(commands)) if (name !== 'openCommandPalette') expect(fn, name).not.toHaveBeenCalled();
+  });
+
   test.each(PLATFORMS)('menu-toggles-sidebar (%s)', (platform) => {
     const commands = fakeCommands();
     const template = appMenuTemplate(commands, platform);
