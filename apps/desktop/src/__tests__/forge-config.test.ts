@@ -1,5 +1,6 @@
 // Spec: specs/macos-package.spec.ts · Acceptance: specs/macos-package.feature.md (Forge configuration)
 import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { FuseV1Options } from '@electron/fuses';
 import type { MakerBase } from '@electron-forge/maker-base';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
@@ -127,7 +128,7 @@ describe('forge config (macOS package)', () => {
   });
 
   test('ad-hoc-signs-when-unsigned (re-seals the packaged bundle)', async () => {
-    expect(await postPackage({}, 'darwin')).toEqual([AD_HOC_SEAL(`/out/${MAC_PRODUCT_NAME}-darwin-arm64/${MAC_PRODUCT_NAME}.app`)]);
+    expect(await postPackage({}, 'darwin')).toEqual([AD_HOC_SEAL(path.join(`/out/${MAC_PRODUCT_NAME}-darwin-arm64`, `${MAC_PRODUCT_NAME}.app`))]);
     expect(await postPackage({}, 'linux')).toEqual([]);
     expect(await postPackage({ ...SIGNING_ENV }, 'darwin')).toEqual([]);
   });
