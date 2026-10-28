@@ -178,7 +178,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   - the bundled pack verifies with the embedded key (`bundled-pack-is-signed`);
   - the sign script signs and verifies, and refuses without the env var.
 - [x] commit `feat(serp): signed selector packs`
-- [ ] Review fixes: commit `fix(serp): address selector pack review findings`
+- [x] Review fixes: commit `fix(serp): address selector pack review findings`
 
 ### Task 2: On-device intent classifier
 Done second: its native packaging is the riskiest part, so the macOS packaging gate runs early.

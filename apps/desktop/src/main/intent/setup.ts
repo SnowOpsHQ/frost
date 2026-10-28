@@ -8,11 +8,12 @@ import { boundedModelFetch, createModelStore, fileModelStorage, intentModelDir }
 
 // Wires on-device intent for main (spec `intent-classifier.spec.ts`; acceptance
 // `intent-classifier.feature.md`, Setup). The real classifier: the model store in
-// `userData/models/<model id>/` downloading through the given bounded fetcher (main: the `checks`
-// lane) and the host forking `.vite/build/intent-worker.cjs` with Electron's `utilityProcess`. Under
-// `INTENT_E2E_FAKE_SWITCH`, in unpackaged builds only, the same utility process runs the
-// deterministic fake: ready at once, nothing downloaded, ONNX Runtime never loaded. Task 4 calls
-// `createIntent` from main and exposes it to the router; nothing here is wired to the chrome.
+// `userData/models/<model id>/` downloading through the given bounded fetcher (main: the SERP lane,
+// `SERP_FETCHER_LIMITS`) and the host forking `.vite/build/intent-worker.cjs` with Electron's
+// `utilityProcess`. Under `INTENT_E2E_FAKE_SWITCH`, in unpackaged builds only, the same utility
+// process runs the deterministic fake: ready at once, nothing downloaded, ONNX Runtime never loaded.
+// `serp/setup.ts` calls `createIntent` and joins it to the SERP service, which the `serp.*` router
+// procedures (`serp.intentState`, `serp.enableIntent`, `serp.classify`) expose to the chrome.
 
 export interface IntentSetupOptions {
   readonly userData: string;

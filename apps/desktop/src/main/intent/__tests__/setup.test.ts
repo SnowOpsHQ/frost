@@ -2,13 +2,14 @@
 // INTENT_SELFTEST_OK, INTENT_SELFTEST_FAILED, INTENT_MODEL_DIR); specs/security-policy.spec.ts
 // (PACKAGED_FORBIDDEN_SWITCHES) · Acceptance: specs/intent-classifier.feature.md (Setup, Self-test)
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { INTENT_CHILD_ENV, INTENT_E2E_FAKE_SWITCH, INTENT_ENV_CANARY, INTENT_FAKE_MODEL, INTENT_LIMITS, INTENT_SELFTEST_FAILED, INTENT_SELFTEST_OK, INTENT_SELFTEST_SWITCH } from '@app/specs/intent-classifier.spec';
 import { PACKAGED_FORBIDDEN_SWITCHES } from '@app/specs/security-policy.spec';
-import { runIntentSelfTestIfAsked } from '../selftest';
+import { INTENT_SELFTEST_PROFILE_PREFIX, runIntentSelfTestIfAsked } from '../selftest';
 import { createIntent, intentEngine } from '../setup';
 
 // Every test passes its own fork; Electron's must never be reached.
@@ -99,6 +100,7 @@ describe('intent setup', () => {
     const exits: number[] = [];
     const app = (switchOn: boolean) => ({
       commandLine: { hasSwitch: (name: string) => switchOn && name === INTENT_SELFTEST_SWITCH },
+      setPath: () => undefined,
       whenReady: async () => undefined,
       exit: (code: number) => void exits.push(code),
     });
@@ -142,5 +144,60 @@ describe('intent setup', () => {
     await vi.advanceTimersByTimeAsync(INTENT_LIMITS.selftestTimeoutMs);
     expect(exits).toEqual([1]);
     expect(lines).toEqual([`frost: ${INTENT_SELFTEST_FAILED} (timeout)`]);
+  });
+
+  test('intent-selftest-own-profile', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'frost-selftest-root-'));
+    try {
+      const steps: string[] = [];
+      const profiles: string[] = [];
+      const exits: number[] = [];
+      const app = {
+        commandLine: { hasSwitch: (name: string) => name === INTENT_SELFTEST_SWITCH },
+        setPath: (name: string, value: string) => {
+          steps.push(`setPath ${name}`);
+          profiles.push(value);
+        },
+        whenReady: async () => {
+          steps.push(`whenReady ${existsSync(profiles.at(-1) ?? '')}`);
+        },
+        exit: (code: number) => {
+          steps.push(`exit ${existsSync(profiles.at(-1) ?? '')}`);
+          exits.push(code);
+        },
+      };
+      const answer = (message: { type: string; id: number }) => ({ type: 'selftest', id: message.id, backends: ['cpu'], provider: 'cpu', env: { variables: 2, canary: false } });
+      // Without the switch the profile is left alone.
+      runIntentSelfTestIfAsked({ ...app, commandLine: { hasSwitch: () => false } }, { fork: fakeUtilityFork(answer).fork as never, workerPath: '/w', write: () => {}, tempRoot: root });
+      expect(steps).toEqual([]);
+
+      // With it, `userData` is a fresh directory of its own, set before the app is ready (before
+      // anything touches the profile), and removed before the process exits.
+      expect(runIntentSelfTestIfAsked(app, { fork: fakeUtilityFork(answer).fork as never, workerPath: '/w', write: () => {}, tempRoot: root })).toBe(true);
+      await vi.waitFor(() => expect(exits).toEqual([0]));
+      expect(steps).toEqual(['setPath userData', 'whenReady true', 'exit false']);
+      expect(path.dirname(profiles[0]!)).toBe(root);
+      expect(path.basename(profiles[0]!).startsWith(INTENT_SELFTEST_PROFILE_PREFIX)).toBe(true);
+      expect(await readdir(root)).toEqual([]);
+
+      // A failed run removes it too, and every run gets a new one.
+      steps.length = 0;
+      const failed = fakeUtilityFork((message) => ({ type: 'error', id: message.id, reason: 'selftest-failed' }));
+      runIntentSelfTestIfAsked(app, { fork: failed.fork as never, workerPath: '/w', write: () => {}, tempRoot: root });
+      await vi.waitFor(() => expect(exits).toEqual([0, 1]));
+      expect(steps).toEqual(['setPath userData', 'whenReady true', 'exit false']);
+      expect(profiles[1]).not.toBe(profiles[0]);
+      expect(await readdir(root)).toEqual([]);
+
+      // A profile that cannot be made fails at once, before the app is ready.
+      steps.length = 0;
+      const lines: string[] = [];
+      runIntentSelfTestIfAsked(app, { fork: vi.fn() as never, workerPath: '/w', write: (line) => lines.push(line), tempRoot: path.join(root, 'missing') });
+      expect(exits).toEqual([0, 1, 1]);
+      expect(steps).toEqual(['exit false']);
+      expect(lines).toEqual([expect.stringMatching(new RegExp(`^frost: ${INTENT_SELFTEST_FAILED} \\(profile: `))]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

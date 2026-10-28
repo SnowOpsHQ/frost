@@ -61,6 +61,13 @@
  * `perOriginConcurrency` of each (4 requests in flight) and each lane's rate. robots.txt itself stays
  * in the `audit` lane (cached per origin): the checks ask main's robots.txt fetcher for it.
  *
+ * **The SERP lane (Phase 3).** A third instance, outside `FETCHER_LANES`, serves what the SERP
+ * features fetch on the user's request: the visibility probes, "Check for selector updates" and the
+ * intent model's download. It is created by `apps/desktop/src/main/serp/setup.ts` over the same hop
+ * and resolver, with `SERP_FETCHER_LIMITS` (`serp-service.spec.ts`: the `checks` lane's limits) and
+ * per-origin queues of its own, so a link check never makes a probe wait. A site can then see up to
+ * three lanes' requests at once.
+ *
  * Sites can see these requests: every surface that makes them says so (`FETCH_DISCLOSURE`).
  */
 

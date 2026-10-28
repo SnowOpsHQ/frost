@@ -238,7 +238,7 @@ describe('intent model store', () => {
     await storage.clean(); // a missing directory is nothing to clean
   });
 
-  test('intent-model-download-uses-checks-lane', async () => {
+  test('intent-model-download-uses-serp-lane', async () => {
     const requests: BoundedFetchRequest[] = [];
     const answer = (partial: Partial<BoundedFetchResult>): BoundedFetchResult => ({
       url: '',

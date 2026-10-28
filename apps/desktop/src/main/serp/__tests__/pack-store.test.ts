@@ -302,7 +302,7 @@ describe('pack fetch over the bounded fetcher', () => {
     return { fetcher, requests };
   }
 
-  test('pack-fetch-uses-checks-lane', async () => {
+  test('pack-fetch-uses-serp-lane', async () => {
     const ok = fakeFetcher((request) => answer(request));
     expect(await boundedPackFetch(ok.fetcher)(URL_, 1_000)).toEqual({ ok: true, bytes: encode('{}') });
     expect(ok.requests).toEqual([expect.objectContaining({ url: URL_, page: URL_, method: 'GET', maxBytes: 1_000, timeoutMs: SERP_PACK_FETCH_LIMITS.timeoutMs, maxRedirects: SERP_PACK_FETCH_LIMITS.maxRedirects, userAgent: null })]);

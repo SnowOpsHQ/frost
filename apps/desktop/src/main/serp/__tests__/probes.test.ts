@@ -40,7 +40,7 @@ const result = (request: BoundedFetchRequest, extra: Partial<BoundedFetchResult>
   ...extra,
 });
 
-/** A `checks` lane whose answers the test gives, one call at a time (an abort answers `aborted`). */
+/** A SERP lane whose answers the test gives, one call at a time (an abort answers `aborted`). */
 function controlledFetcher() {
   const calls: { request: BoundedFetchRequest; answer: (extra?: Partial<BoundedFetchResult>) => void; settled: boolean }[] = [];
   let inFlight = 0;

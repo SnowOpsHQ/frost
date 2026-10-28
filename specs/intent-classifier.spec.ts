@@ -315,7 +315,8 @@ export const INTENT_E2E_FAKE_SWITCH = 'frost-e2e-intent-fake' as const;
  * environment just before the fork); main prints `frost: <INTENT_SELFTEST_OK> (…; env isolated, <n>
  * variables)` or `frost: <INTENT_SELFTEST_FAILED> (<reason>)` to stderr and exits 0 or 1. A process
  * that sees the canary (main's environment leaked) is a failure (`env-inherited`). Allowed in packaged
- * builds: it reads no profile data and downloads nothing.
+ * builds: it reads no profile data and downloads nothing. It runs before the single-instance lock,
+ * so `userData` is a throwaway temporary directory, removed before it exits (`selftest.ts`).
  */
 export const INTENT_SELFTEST_SWITCH = 'frost-intent-selftest' as const;
 export const INTENT_SELFTEST_OK = 'intent self-test ok' as const;

@@ -77,7 +77,9 @@ Spec: `specs/intent-classifier.spec.ts` (`INTENT_LABELS`, `INTENT_LABEL_NAMES`,
   own environment just before the fork, and prints `frost: intent self-test ok (provider …;
   backends …; env isolated, <n> variables)`, or `frost: intent self-test failed (…)` (including
   `env-inherited` when the process sees the canary), to stderr, and exits 0 or 1 within 30 s.
-  `verify:mac` runs it.
+  `verify:mac` runs it. It runs before main claims the single-instance lock, so it never uses the
+  real profile: `userData` is a fresh temporary directory, set before the app is ready and removed
+  just before the process exits.
 
 ## Tokenizer (`apps/desktop/src/workers/intent/__tests__/tokenizer.test.ts`)
 - `intent-tokenizer-vocab` — `vocab.txt` lines are ids from 0, CRLF and a missing final newline read the same; a vocabulary without `[CLS]`, `[SEP]` or `[UNK]` gives no tokenizer.
@@ -135,7 +137,7 @@ Spec: `specs/intent-classifier.spec.ts` (`INTENT_LABELS`, `INTENT_LABEL_NAMES`,
 - `intent-model-rehashed-on-load` — every load reads no more than one byte past each pin and hashes it; a file changed on disk (same size) is `model-missing` and removed; a file that cannot be read (EACCES, EIO) is `unreadable` and left in place; a longer file is `model-missing`.
 - `intent-model-load-and-download-are-serialised` — a load called while a download replaces a corrupt model waits for it and removes nothing; each operation first sweeps leftover temporary files; a failed operation does not block the next.
 - `intent-model-file-storage-is-atomic` — the file storage round-trips, caps reads, leaves no temporary files, removes idempotently, refuses a name that is a path, and sweeps a crash's leftover `*.<pid>.<hex>.tmp` files (only those) before the next load or write.
-- `intent-model-download-uses-checks-lane` — the fetch asks the given bounded fetcher with the file URL as the page, frost's user agent, the cap, `INTENT_DOWNLOAD_LIMITS`' deadline and redirect cap; `truncated` is `too-large`; a non-200, a failed fetch, or a non-`https:` URL, hop or final URL is `unreachable` (a non-`https:` URL is never requested).
+- `intent-model-download-uses-serp-lane` — the fetch asks the given bounded fetcher with the file URL as the page, frost's user agent, the cap, `INTENT_DOWNLOAD_LIMITS`' deadline and redirect cap; `truncated` is `too-large`; a non-200, a failed fetch, or a non-`https:` URL, hop or final URL is `unreachable` (a non-`https:` URL is never requested).
 
 ## Classifier states (`classifier.test.ts`)
 - `intent-classifier-states` — starts `model-missing` (or `ready` when the files are there); `classify` answers the state and never downloads; `ensureModel` goes through `downloading` to `ready` (or back to `model-missing` with the outcome), shared by concurrent calls; a blank query is `no-query`; a query is trimmed and cut to `maxQueryChars`; the runtime failing is `unavailable` until the next success; a model that fails its load check is `model-missing`; a throwing store never rejects.
@@ -144,6 +146,7 @@ Spec: `specs/intent-classifier.spec.ts` (`INTENT_LABELS`, `INTENT_LABEL_NAMES`,
 - `intent-e2e-fake-switch-unpackaged-only` — the fake engine only under `--frost-e2e-intent-fake` in an unpackaged build, in the real utility process, ready at once with nothing fetched; the switch is in `PACKAGED_FORBIDDEN_SWITCHES`, the self-test switch is not.
 - `intent-setup-real-classifier` — the real classifier stores under `userData/models/<model id>/`, forks nothing until asked, and is `disabled` without a fetcher.
 - `intent-selftest-switch` — without the switch main starts as usual; with it, one `frost: intent self-test ok (…; env isolated, <n> variables)` line and exit 0, or `frost: intent self-test failed (<reason>)` and exit 1, within `selftestTimeoutMs`; a process that inherits main's environment (sees the canary) fails with `env-inherited`; the canary is gone from main's environment afterwards.
+- `intent-selftest-own-profile` — with the switch, `userData` is set to a new directory under the OS temp directory (`INTENT_SELFTEST_PROFILE_PREFIX`) before the app is ready, a new one each run, and it is removed before the process exits, whether the self-test passed or failed; a directory that cannot be made fails the self-test at once (`profile: …`); without the switch the profile is left alone.
 
 ## Packaging (`apps/desktop/src/__tests__/forge-config.test.ts`, `third-party-notices.test.ts`, `scripts/verify-mac-package.mjs`)
 - `intent-runtime-files-per-platform` — darwin/arm64 copies only `bin/napi-v6/darwin/arm64/{onnxruntime_binding.node, libonnxruntime.1.dylib}`, linux/x64 and linux/arm64 only their `{onnxruntime_binding.node, libonnxruntime.so.1}`, plus both packages' `package.json` and CommonJS `dist` JavaScript; no maps, typings, sources or scripts; an unsupported target throws.

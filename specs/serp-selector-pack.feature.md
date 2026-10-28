@@ -61,7 +61,7 @@ line maps to one named test.
 - `pack-update-installs-newer` — a newer verified pack is written, used at once and announced; checking again is `not-newer` against it.
 - `pack-update-outcomes` — a failed pack or signature fetch is `unreachable`, an oversize one `too-large`, no fetcher `disabled`, a non-`https:` URL `unreachable` with nothing requested; a write failure still uses the pack.
 - `pack-update-is-user-action-only` — creating the store and `load()` request nothing; only `checkForUpdate()` does, and concurrent checks share one run.
-- `pack-fetch-uses-checks-lane` — the fetch adapter asks the given bounded fetcher for the pack with the pack URL as the page and the spec's caps and deadline; `truncated` is `too-large`, a non-200 answer or a non-`https:` hop `unreachable`.
+- `pack-fetch-uses-serp-lane` — the fetch adapter asks the given bounded fetcher for the pack with the pack URL as the page and the spec's caps and deadline; `truncated` is `too-large`, a non-200 answer or a non-`https:` hop `unreachable`.
 - `pack-file-storage-is-atomic` — the file storage round-trips, answers `null` when empty, reads no more than the cap, and leaves no temporary files.
 - `pack-e2e-switches-refused-when-packaged` — both e2e switches are in `PACKAGED_FORBIDDEN_SWITCHES`.
 
