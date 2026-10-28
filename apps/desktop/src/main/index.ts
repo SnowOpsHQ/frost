@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, ipcMain, net, session, shell, webContents, type WebContents } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, safeStorage, session, shell, webContents, type WebContents } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -47,6 +47,7 @@ import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './sess
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
 import { handleSquirrelEvent } from './update/squirrel-events';
 import { startUpdateService } from './update/service';
+import { startSyncService } from './sync/service';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
@@ -391,6 +392,9 @@ function start(): void {
     // Never throws and returns at once (the client is built in the background; a failure leaves updates disabled).
     const update = startUpdateService({ app, net, session, shell, log: logSession });
     app.once('will-quit', () => update.dispose());
+    // Sync (specs/sync-engine.feature.md): off unless userData/frost-sync.json turns it on; never throws, runs in the background.
+    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession });
+    app.once('will-quit', () => void sync.dispose());
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,

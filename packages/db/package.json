@@ -6,7 +6,10 @@
   "type": "module",
   "description": "Local browser-session database for the main process: Drizzle schema, forward-only migrations and a small repository over node:sqlite.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./driver-libsql": "./src/driver-libsql.ts",
+    "./driver-node-sqlite": "./src/driver-node-sqlite.ts",
+    "./driver-types": "./src/driver-types.ts"
   },
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",

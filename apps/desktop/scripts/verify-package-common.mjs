@@ -2,16 +2,19 @@
 // verify-windows-package.mjs): the check runner, process helpers, and the checks every packaged
 // build must pass whatever the platform: the fuse wire (PACKAGED_FUSES, specs/macos-package.spec.ts),
 // the `resources/` and `app.asar` allowlists, libSQL's unpacked prebuild and runtime packages and
-// that they load (specs/sync-package.spec.ts), launching on a throwaway profile, and refusing remote
+// that they load (specs/sync-package.spec.ts), launching on a throwaway profile, the packaged
+// executable opening the sync replica through libSQL (`sync-replica-opens`), and refusing remote
 // debugging (specs/security-policy.spec.ts). The macOS verifier uses the libSQL checks too.
 //
 // The specs are plain erasable TypeScript, loaded with Node's built-in type stripping (Node >= 22.18).
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { getRawHeader, listPackage } from '@electron/asar';
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses';
 import { PACKAGED_FUSES } from '../../../specs/macos-package.spec.ts';
@@ -21,6 +24,11 @@ import {
   PACKAGED_ASAR_NODE_MODULES,
   PACKAGED_UNPACKED_ALLOWLIST,
   PACKAGED_UNPACKED_DIR,
+  SYNC_CONFIG_FILE_NAME,
+  SYNC_PACKAGED_PROBE_CONFIG,
+  SYNC_REPLICA_FILE_NAME,
+  SYNC_REPLICA_OPENS_MS,
+  SYNC_STATE_TABLE,
   libsqlPrebuildPackage,
 } from '../../../specs/sync-package.spec.ts';
 import { PACKAGED_DEBUG_REFUSAL, PACKAGED_FORBIDDEN_SWITCHES } from '../../../specs/security-policy.spec.ts';
@@ -316,6 +324,88 @@ export function assertLibsqlLoads(resourcesDir, { target, where, electronVersion
     const prebuild = path.join(asar, 'node_modules', ...libsqlPrebuildPackage(target).split('/'), LIBSQL_PREBUILD_FILE);
     assert(native.join() === prebuild, `${where}: native modules loaded: ${native.join(', ') || '(none)'}, expected ${prebuild}`);
   });
+}
+
+/** Whether `file` is a SQLite database holding `SYNC_STATE_TABLE` (read-only; `false` while it is still being written). */
+function hasSyncStateTable(file) {
+  let db;
+  try {
+    db = new DatabaseSync(file, { readOnly: true, timeout: 1_000 });
+    return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(SYNC_STATE_TABLE) !== undefined;
+  } catch {
+    return false;
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * `sync-replica-opens` (specs/sync-package.feature.md): the packaged executable itself, with its
+ * fuses (and on macOS its re-signed bundle), loads libSQL's unpacked prebuild. A throwaway profile
+ * gets `SYNC_PACKAGED_PROBE_CONFIG` (local staging: no endpoint, no token, so neither the network nor
+ * `safeStorage` is involved) as `SYNC_CONFIG_FILE_NAME`; the app is started on it, and within
+ * `SYNC_REPLICA_OPENS_MS` `SYNC_REPLICA_FILE_NAME` must appear there holding `SYNC_STATE_TABLE`
+ * (read with Node's `node:sqlite`), with mode 0600 on POSIX, while the app keeps running. The app is
+ * then terminated by its PID and the profile removed. Answers how long the replica took (ms).
+ */
+export async function assertSyncReplicaOpens(executable, { where }) {
+  const profile = mkdtempSync(path.join(tmpdir(), 'frost-verify-sync-'));
+  try {
+    writeFileSync(path.join(profile, SYNC_CONFIG_FILE_NAME), `${JSON.stringify(SYNC_PACKAGED_PROBE_CONFIG)}\n`);
+    const replica = path.join(profile, SYNC_REPLICA_FILE_NAME);
+    const started = Date.now();
+    const child = spawn(executable, [`--user-data-dir=${profile}`], { env: appEnv(), stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    let exited = null;
+    let spawnError = null;
+    const gone = new Promise((resolve) => {
+      child.once('exit', (code, signal) => {
+        exited = { code, signal };
+        resolve();
+      });
+      child.once('error', (error) => {
+        spawnError = error;
+        resolve();
+      });
+    });
+    let openedAfter = null;
+    try {
+      while (exited === null && spawnError === null && Date.now() - started < SYNC_REPLICA_OPENS_MS) {
+        if (existsSync(replica) && hasSyncStateTable(replica)) {
+          openedAfter = Date.now() - started;
+          break;
+        }
+        await sleep(250);
+      }
+      const tail = () => stderr.trim().slice(-800);
+      assert(spawnError === null, `${where}: could not start ${executable}: ${spawnError?.message}`);
+      assert(exited === null, `${where}: the app exited (code ${exited?.code}, signal ${exited?.signal}) before opening ${SYNC_REPLICA_FILE_NAME}: ${tail()}`);
+      assert(
+        openedAfter !== null,
+        `${where}: no ${SYNC_STATE_TABLE} in ${SYNC_REPLICA_FILE_NAME} after ${SYNC_REPLICA_OPENS_MS / 1000} s ` +
+          `(${existsSync(replica) ? 'the file exists' : 'no file'}; the packaged main may not have loaded libSQL): ${tail()}`,
+      );
+      if (process.platform !== 'win32') {
+        const mode = statSync(replica).mode & 0o777;
+        assert(mode === 0o600, `${where}: ${SYNC_REPLICA_FILE_NAME} has mode ${mode.toString(8)}, expected 600`);
+      }
+      // Still running a moment later: opening the replica did not crash main.
+      await sleep(1_000);
+      assert(exited === null, `${where}: the app exited (code ${exited?.code}, signal ${exited?.signal}) after opening ${SYNC_REPLICA_FILE_NAME}: ${tail()}`);
+      return openedAfter;
+    } finally {
+      if (exited === null && spawnError === null) {
+        // By its PID only: nothing else named frost is touched.
+        process.kill(child.pid, 'SIGTERM');
+        const killer = setTimeout(() => exited === null && process.kill(child.pid, 'SIGKILL'), 5_000);
+        await gone;
+        clearTimeout(killer);
+      }
+    }
+  } finally {
+    removeTree(profile);
+  }
 }
 
 /** `launches-and-stays-alive`: no arguments but a throwaway profile; still running after `ms`. */

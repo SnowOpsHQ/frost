@@ -29,7 +29,7 @@ import {
 } from '../../../specs/macos-package.spec.ts';
 import { PACKAGED_DEBUG_REFUSAL, PACKAGED_FORBIDDEN_SWITCHES } from '../../../specs/security-policy.spec.ts';
 // libSQL's unpacked prebuild and runtime packages (specs/sync-package.spec.ts), checked as on Linux and Windows.
-import { assertAsarNodeModules, assertLibsqlLoads, assertUnpackedAllowlist } from './verify-package-common.mjs';
+import { assertAsarNodeModules, assertLibsqlLoads, assertSyncReplicaOpens, assertUnpackedAllowlist } from './verify-package-common.mjs';
 
 const DESKTOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -197,6 +197,13 @@ await check('libsql-loads', () => {
 await check('launches-and-stays-alive', async () => {
   const result = await launch([], MAC_LAUNCH_ALIVE_MS);
   assert(result.alive, `exited after <${MAC_LAUNCH_ALIVE_MS} ms (code ${result.code}, signal ${result.signal}): ${result.stderr.trim()}`);
+});
+
+// The packaged, re-signed executable loading the unpacked prebuild: this is where library
+// validation under the hardened runtime would refuse it (specs/sync-package.feature.md).
+await check('sync-replica-opens', async () => {
+  const ms = await assertSyncReplicaOpens(executable, { where: artifacts.app });
+  console.log(`INFO sync-replica-opens: the ${mode}-signed executable loaded libSQL's unpacked prebuild and opened the replica (local staging) in ${ms} ms`);
 });
 
 await check('refuses-remote-debugging', async () => {

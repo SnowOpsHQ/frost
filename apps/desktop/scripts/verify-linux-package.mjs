@@ -55,6 +55,7 @@ import {
   assertPackagedFuses,
   assertPackagedResources,
   assertRefusesRemoteDebugging,
+  assertSyncReplicaOpens,
   assertUnpackedAllowlist,
   createChecks,
   fuseState,
@@ -156,11 +157,16 @@ await checks.check('libsql-loads', async () => {
   checks.info(
     'libsql-loads',
     `loaded from app.asar under the repository's Electron ${electronVersion} as Node (the packaged binary's RunAsNode fuse ` +
-      'is off; the packaged executable loading it is not proven here)',
+      'is off; sync-replica-opens covers the packaged executable)',
   );
 });
 
 await checks.check('launches-and-stays-alive', () => assertLaunchesAndStaysAlive(executable, LINUX_LAUNCH_ALIVE_MS));
+
+await checks.check('sync-replica-opens', async () => {
+  const ms = await assertSyncReplicaOpens(executable, { where: artifacts.packaged });
+  checks.info('sync-replica-opens', `the packaged executable loaded libSQL's unpacked prebuild and opened the replica (local staging) in ${ms} ms`);
+});
 
 await checks.check('refuses-remote-debugging', () => assertRefusesRemoteDebugging(executable));
 

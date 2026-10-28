@@ -353,7 +353,8 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   done, this PR ships Tasks 6 and 7 and the parts of Task 8 that don't need those tables (config,
   token storage, and the engine against fixtures). Turning on sync of the real Phase 6 tables, and
   any UI for it, is then listed as not done.
-- [ ] commit `feat(sync): opt-in libSQL sync config and row-mirror engine`
+- [x] commit `feat(sync): opt-in libSQL sync config and row-mirror engine` (Phase 6 not merged: the
+  real tables, and any UI or IPC, are not done; see As built)
 
 ---
 
@@ -878,3 +879,145 @@ sync.
     where nothing is unpacked. That case fails closed in `unpacked-allowlist`. With
     `platform: 'win32'`, a Windows path matched by hand too. Not rebuilt: unit tests, lint and a
     synthetic asar exercised the verifier changes.
+
+### Task 8 (sync config and row-mirror engine)
+Phase 6 is not merged into this branch, so this ships the parts that don't need its tables, tested
+against fixtures, plus the packaged-app proof that Task 7 left open.
+
+- **Spec.**
+  - `sync.spec.ts` gained "Sync tables": `SYNC_MERGE_RULES` (`append-only`, `mutable-lww`,
+    `purge-log`, `tombstone`) and `SYNC_TABLES`, the nine `ci_*` tables in apply order (mutable,
+    purges, tombstones, then captured), each with its rule, key (`id`), time column (`updated_at`
+    for mutable, else `created_at`), `deleted_at` for mutable, and every column from Phase 6's
+    Schema. It also has `SYNC_PURGE_DELETE_ORDER`, `SYNC_LOG_TABLE`, `SYNC_PAGE_ROWS` (500),
+    `SYNC_MAX_PAGES_PER_PASS` (20), `SYNC_PUSH_SETTLE_MS` (60 s), `SYNC_INTERVAL_MS` (5 min) and
+    `SYNC_SKIP_REASONS`.
+  - It also gained "Sync config": `SyncConfigFile`, `MAX_SYNC_CONFIG_BYTES` (32 KiB), the endpoint
+    and token rules (`syncEndpointProblem` reuses `libsqlConfigProblem`'s `syncUrl` rules, never
+    with loopback `http:`; `syncTokenProblem`), `SYNC_CONFIG_PROBLEMS` and
+    `SYNC_WEAK_STORAGE_BACKENDS` (`basic_text`).
+  - The Zod side is `sync-config.schema.ts`. `SYNC_REPLICA_FILE_NAME` moved to
+    `sync-package.spec.ts`, which `sync.spec.ts` re-exports (the verifiers can't load
+    `sync.spec.ts`). That file also gained `SYNC_CONFIG_FILE_NAME`, `SYNC_STATE_TABLE`,
+    `SYNC_PACKAGED_PROBE_CONFIG` and `SYNC_REPLICA_OPENS_MS`.
+  - The scenarios are in `sync-config.feature.md`, `sync-engine.feature.md` (Engine and Service)
+    and `sync-package.feature.md` (`sync-replica-opens`).
+- **Config** (`src/main/sync/config.ts`).
+  - The file is `userData/frost-sync.json`. It is mode 0600 (a lax mode is narrowed through the
+    open handle when read) and written atomically, as `update/prefs.ts` does. It is read without
+    following a final symlink and without blocking, size-capped, with repeated keys refused
+    (`readJson`) and a strict schema.
+  - A tampered file means sync is off for the run, with one log line and no content; unlike the
+    update prefs, the file is not reset.
+  - `encryptedToken` is `safeStorage.encryptString` ciphertext in base64, and needs a `url`. The
+    store refuses to write one when encryption is unavailable, or when Linux's backend is
+    `basic_text`. Reading one under either condition, or failing to decrypt it, turns sync off.
+  - The store answers `hasToken`, never the token. The service gets a `SyncToken`, whose
+    `String`, `JSON` and `inspect` forms are `[redacted]`.
+  - `write()` exists for tests and the future UI; nothing in the app calls it.
+  - `deviceId` (a UUID v4) is made the first time sync runs and written back. See Marks below for
+    why.
+- **Engine** (`src/main/sync/engine.ts`). It is pure over two `SqlDriver`s. Only `SYNC_TABLES`
+  names and columns and its own two tables reach SQL, through `quoteIdentifier`. Everything else is
+  bound. A tombstone's `table_name` is only compared with `SYNC_PURGE_DELETE_ORDER`. Every insert
+  is `INSERT … SELECT … WHERE NOT EXISTS`. Deviations from the design note, and decisions it left
+  open:
+  - **Pull reads a change log, not row times.** A push appends `(seq AUTOINCREMENT, table_name,
+    row_id)` to `frost_sync_log` in the replica for each row it inserts or changes. Pull reads the
+    log by `seq`, which is the primary's commit order. With a `(time, id)` mark, a row from a device
+    whose clock is behind, or that was offline, would be older than the mark and never pulled
+    (`engine-late-rows-still-pulled`). Push still marks by `(time, id)`, over this device's own
+    rows. That mark never passes `now − SYNC_PUSH_SETTLE_MS`, so a row committed late with an
+    earlier time is read again.
+  - **Marks** live in `frost_sync_state`, in the replica only, keyed by `(device_id, direction,
+    table_name)`. With an endpoint the replica is the primary's copy, so a mark not keyed by device
+    would be shared by every device. The device ID is random, made locally, and identifies nothing
+    but these marks.
+  - **LWW ties.** "A tie goes to the larger `id`" can't separate two versions of the same row,
+    since they share their `id`. On an equal `updated_at` with different values, the version whose
+    spec'd values sort larger as JSON wins, so both sides converge. When a push loses to the
+    replica's newer version, the pull in the same pass fetches the winner back.
+  - **Paging.** A table's page holds `SYNC_PAGE_ROWS` rows, and a full page stops that direction
+    there, so later tables wait and a child never arrives before its parent. `ci_purges` and
+    `ci_tombstones` are read whole, so a purge's tombstones and their children-first deletes land in
+    one page. Up to 20 pages run per direction per pass.
+  - **Transactions.** Each pull page is one `BEGIN IMMEDIATE` batch on the session database. The
+    pull marks move in a separate replica batch only after that commits, so a crash re-applies
+    idempotently. Each push page (rows, log and marks) is one replica batch.
+  - **Tombstones.** Arriving tombstones delete the rows they name, children first, in the same
+    batch: in the replica on push, in the session database on pull. So purged content also leaves
+    the replica.
+  - **Missing tables.** A table missing on either side is skipped and reported, as is one lacking a
+    spec'd column, or a captured table without `ci_tombstones` on both sides. Today every table is
+    `missing-in-source`; the service logs that once.
+- **Service** (`src/main/sync/service.ts`). `startSyncService({ app, safeStorage, sessionFile, log })`
+  never throws, returns at once, and does its work in the background.
+  - When off, it reads only the config: no libSQL, no file, no timer.
+  - When on, it opens `frost-sync.db` through `openLibsqlDriver`, passing `syncUrl` and `authToken`
+    only when configured. It chmods the file and any sidecar (`-journal`, `-wal`, `-shm`, `-info`,
+    `-client_wal_index`) to 0600 after opening and after each pass; libSQL creates the file 0644.
+    It creates the state tables, then runs a pass at once and every `SYNC_INTERVAL_MS` (an
+    `unref`'d interval; a pass already running is not doubled).
+  - With an endpoint, `runSyncPass` calls `sync()` after the push and pulls even if `sync()`
+    failed. Every log line has the token's text replaced by `[redacted]`. `dispose()` stops the
+    timer, waits for a running pass and closes both databases.
+  - **Session handle: a second `DatabaseSync`** on `SessionStore.file`, with `DB_BUSY_TIMEOUT_MS`,
+    rather than the store's handle. The store's index exports no handle and isn't Phase 7's to
+    change. Two handles on one file is ordinary SQLite (rollback journal, as `open.ts` leaves it),
+    and a pull page is one short write transaction. When the store fell back to `:memory:`, an empty
+    in-memory database stands in and every table is skipped.
+  - `index.ts` gained `safeStorage` in its Electron import, one import line, and two lines after
+    the update service: start, and `dispose` on `will-quit`.
+- **`@app/db` subpath exports.** `package.json` gained `./driver-libsql`, `./driver-node-sqlite`
+  and `./driver-types`; the index is unchanged, so `libsql-not-loaded-by-default` still holds.
+  `main.cjs` now contains `require("@libsql/client/sqlite3")`, and only `openLibsqlDriver` reaches
+  it: the service calls that only when sync is on.
+- **Packaged-app proof (`sync-replica-opens`).** This is in `verify-package-common.mjs`, and used
+  by `verify-linux-package.mjs`, `verify-windows-package.mjs` (skipped under `--static`) and
+  `verify-mac-package.mjs`.
+  - It writes `{"enabled":true}` as the throwaway profile's `frost-sync.json`, then starts the
+    packaged executable with `--user-data-dir` first.
+  - Within 20 s, `frost-sync.db` must appear and hold `frost_sync_state` (read with `node:sqlite`,
+    read-only), with mode 0600 on POSIX, and the app must still be running a second later. The app
+    is then killed by its PID.
+  - The `libsql-loads` INFO lines now point to it.
+  - Locally on Linux it passed in 503 ms. Negative trial: with `app.asar.unpacked` moved away it
+    failed ("no frost_sync_state … after 20 s"), and the app stayed up and logged "sync is off for
+    this run: … index.node: cannot open shared object file". So main is fail-safe when the
+    prebuild is missing.
+- **Tests.** 29 in `src/main/sync/__tests__/`:
+  - `engine.test.ts` (13): push, pull, late rows, LWW including both tie orders, tombstones across
+    three devices, never-resurrect, missing tables, idempotence with 2-row pages, pull rollback,
+    state in the replica only, identifiers. It uses fixture `ci_*` tables and Phase 6's guard
+    triggers (`fixtures.ts`), over `node:sqlite` sources and a libSQL `file:` replica.
+  - `config.test.ts` (10): a fake `safeStorage`.
+  - `service.test.ts` (6): fake `setInterval`.
+
+  Hand mutations of the engine (tie rule, pull-back, tombstone veto, delete order, per-statement
+  pull) each failed a test.
+- **Verified locally** (Arch Linux):
+  - `pnpm --filter @app/desktop lint test` (917 passed, 1 skipped);
+  - `pnpm --filter @app/db test` (75);
+  - `specs` lint;
+  - `electron-forge package --platform linux --arch x64`, then `verify-linux-package.mjs` on the
+    packaged tree: every packaged-tree check passed, including `sync-replica-opens`. `deb-metadata`,
+    `appimage-contents` and `zip-contents` failed only because `make:linux` wasn't run;
+  - `security:electronegativity` (OK, no new findings) and `security:semgrep:scan` (0 findings).
+- **Left to CI.** `sync-replica-opens` on Windows and on macOS. The macOS CI build is ad-hoc signed (the
+  `postPackage` re-seal, with `codesign --deep` over the unpacked `.node`). A FAIL there whose
+  stderr names the prebuild would be macOS refusing to load it, and should be reported as such. A Developer ID build is exercised only when one is
+  made.
+- **Not done.**
+  - Syncing the real Phase 6 tables. That needs Phase 6 merged, and the replica then needs the
+    `ci_*` tables, for example by running Phase 6's `0040`/`0041` migrations over it. Until then
+    every table is skipped.
+  - Any UI or IPC to turn sync on, or to show its status. No `sync-router.ts` exists; only a
+    hand-written `frost-sync.json` enables sync.
+  - A remote `sync()` against a real server: no `sqld` was available, and the optional `SQLD_BIN`
+    test was not written. Remote mode is tested only with a fake `sync()`.
+  - Screenshot blobs: only `ci_screenshots` rows would sync.
+  - Live-key collisions: two devices adding the same live `(project_id, url)` page or query under
+    different ids would violate Phase 6's unique live indexes and abort the pull page.
+  - Compacting `frost_sync_log`.
+  - An unpackaged e2e: the packaged check covers more.
+

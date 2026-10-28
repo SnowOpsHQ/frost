@@ -396,6 +396,22 @@ manifest).
   update itself: once verified, the notice says "This build can't update itself: install it by
   hand" and **Show file** reveals the file in your file manager (frost never opens or runs it).
 
+## Sync (groundwork, off)
+Acceptance: `specs/sync-config.feature.md`, `specs/sync-engine.feature.md`.
+- **Off, and nothing in the app turns it on.** There is no setting, command or IPC for sync yet.
+  Only a hand-written `frost-sync.json` in the profile directory (`userData`) enables it; without
+  one, frost never loads libSQL and creates no sync file.
+- **`{"enabled": true}` with no `url` is local staging only.** Rows are mirrored into the local
+  replica `frost-sync.db` beside the session database, and **nothing leaves the device**.
+- **With a `url`** (`libsql:` or `https:`), the replica is a libSQL embedded replica of that
+  endpoint. A token is kept only as `safeStorage` ciphertext, and frost refuses to store or use one
+  when `safeStorage` can't encrypt (or, on Linux, uses the `basic_text` backend). Talking to a real
+  server has not been tested yet.
+- **What would sync.** Only Phase 6's change-intelligence tables (`ci_*`), copied row by row. Never
+  the session database's history, permission decisions, render-profile pins or content notes.
+  Phase 6 isn't merged into this branch, so today every table is skipped and the replica holds
+  only the engine's own bookkeeping. Screenshot files are not synced.
+
 ## Known limits
 - **Lab data only.** Speed values are one visit in this tab on this machine, not field data; the
   panel and every rule say so. INP needs an interaction; LCP stops at the first input or scroll; a
@@ -536,9 +552,10 @@ vouches for its bytes). Every verifier also checks the following:
 - `app.asar/node_modules` holds exactly the allowed packages (`asar-node-modules-allowlist`);
 - libSQL loads from the packaged `app.asar` (`libsql-loads`). This check runs the repository's
   Electron, at the packaged version, as Node, because the packaged binary's `RunAsNode` fuse is
-  off. So it does not yet prove that the packaged executable loads the prebuild; for example,
-  macOS library validation in a hardened-runtime build could refuse it. Task 8's packaged-app sync
-  check adds that proof.
+  off;
+- the packaged executable itself loads the prebuild (`sync-replica-opens`): started on a throwaway
+  profile whose `frost-sync.json` turns local staging on, its main opens `frost-sync.db` through
+  libSQL. On macOS this is also where library validation would refuse the prebuild.
 
 ## Building on a Mac
 Prerequisites:

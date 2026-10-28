@@ -25,13 +25,15 @@
  * (`signature-verifies`). `OnlyLoadAppFromAsar` and every other `PACKAGED_FUSES` entry are
  * unchanged.
  *
- * **Not yet proven (as of Task 7): the packaged binary itself loading the prebuild.** The package
- * verifiers' `libsql-loads` runs the repository's Electron (the same version) as Node against the
- * packaged `app.asar`, because the packaged binary's `RunAsNode` fuse is off; that proves the files
- * are complete and that this Electron loads them, not that the packaged executable does. In
- * particular macOS library validation under the hardened runtime (a Developer ID build) could
- * refuse the prebuild. Task 8 adds that proof: a packaged-app check in all three verifiers that
- * enables sync through the profile's sync config and confirms main opens the replica.
+ * **The packaged binary loading the prebuild (Task 8).** The package verifiers' `libsql-loads`
+ * runs the repository's Electron (the same version) as Node against the packaged `app.asar`,
+ * because the packaged binary's `RunAsNode` fuse is off; that proves the files are complete and
+ * that this Electron loads them, not that the packaged executable does. `sync-replica-opens` (all
+ * three verifiers) proves the rest: it writes `SYNC_PACKAGED_PROBE_CONFIG` as `SYNC_CONFIG_FILE_NAME`
+ * into a throwaway profile, launches the packaged, fused (and, on macOS, re-signed) executable on
+ * it, and within `SYNC_REPLICA_OPENS_MS` main has opened `SYNC_REPLICA_FILE_NAME` through libSQL
+ * and created `SYNC_STATE_TABLE` in it, while the app keeps running. On macOS that also answers
+ * whether library validation lets the hardened-runtime binary load the unpacked prebuild.
  *
  * Self-contained (no imports, erasable TypeScript only) so the verify scripts can load it with
  * Node's built-in type stripping.
@@ -46,6 +48,31 @@
  * `sync.spec.ts`; here so the package verifiers (`libsql-loads`) can read it.
  */
 export const LIBSQL_SQLITE_VERSION = '3.45.1' as const;
+
+/**
+ * The local file of the libSQL embedded replica (Task 8), directly in `app.getPath('userData')`.
+ * The only file opened with a `syncUrl`, so the only one that talks to the sync endpoint.
+ * Re-exported by `sync.spec.ts`; here so the package verifiers (`sync-replica-opens`) can read it.
+ */
+export const SYNC_REPLICA_FILE_NAME = 'frost-sync.db' as const;
+
+/** The sync config (`userData/frost-sync.json`, Task 8; rules in `sync.spec.ts`). */
+export const SYNC_CONFIG_FILE_NAME = 'frost-sync.json' as const;
+
+/**
+ * The engine's bookkeeping table, created in the replica (never in the session database) when sync
+ * starts: per device, direction and table, how far each pass has got (`sync.spec.ts`).
+ */
+export const SYNC_STATE_TABLE = 'frost_sync_state' as const;
+
+/**
+ * What `sync-replica-opens` writes as the profile's sync config: sync on, local staging only (no
+ * endpoint, no token, so neither the network nor `safeStorage` is involved).
+ */
+export const SYNC_PACKAGED_PROBE_CONFIG = { enabled: true } as const;
+
+/** How long `sync-replica-opens` waits for the replica and its state table to appear (ms). */
+export const SYNC_REPLICA_OPENS_MS = 20_000;
 
 /**
  * The packages `@libsql/client/sqlite3` loads at runtime, copied flat into the packaged app's

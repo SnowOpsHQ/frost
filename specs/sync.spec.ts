@@ -12,9 +12,11 @@
  * Sync itself (Task 8) mirrors rows, not files (plan, Sync design note): the session database is
  * never a libSQL embedded replica, because it also holds history, permission decisions, render
  * profile pins and content notes, which stay local. Task 8 adds `SYNC_TABLES` and the merge rules
- * here; this file only fixes which file may carry a `syncUrl`.
+ * (Sync tables, below; acceptance `sync-engine.feature.md`) and the config rules (Sync config;
+ * acceptance `sync-config.feature.md`, Zod side `sync-config.schema.ts`).
  */
 import { DB_FILE_NAME } from './browser-session-db.spec';
+import { SYNC_CONFIG_FILE_NAME, SYNC_REPLICA_FILE_NAME, SYNC_STATE_TABLE } from './sync-package.spec';
 
 /** The SQL drivers Drizzle can run over (`SqlDriver.kind`). */
 export const DB_DRIVER_IDS = ['node-sqlite', 'libsql'] as const;
@@ -25,9 +27,10 @@ export const DEFAULT_DB_DRIVER: DbDriverId = 'node-sqlite';
 
 /**
  * The local file of the libSQL embedded replica (Task 8), directly in `app.getPath('userData')`.
- * The only file opened with a `syncUrl`, so the only one that talks to the sync endpoint.
+ * The only file opened with a `syncUrl`, so the only one that talks to the sync endpoint. Defined
+ * in `sync-package.spec.ts`, which the package verifiers load (`sync-replica-opens`).
  */
-export const SYNC_REPLICA_FILE_NAME = 'frost-sync.db' as const;
+export { SYNC_REPLICA_FILE_NAME };
 
 /** Files that are never opened with a `syncUrl`, whatever directory they are in. */
 export const NEVER_SYNCED_FILE_NAMES = [DB_FILE_NAME] as const;
@@ -193,4 +196,279 @@ export function libsqlConfigProblem(config: LibsqlConfig, options: LibsqlUrlOpti
   const name = baseName(path);
   if ((NEVER_SYNCED_FILE_NAMES as readonly string[]).includes(name) || name !== SYNC_REPLICA_FILE_NAME) return 'sync-file-not-replica';
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sync tables (Task 8; acceptance `sync-engine.feature.md`; plan, Sync design note)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * How a table's rows merge (Phase 6's conventions, `docs/plans/phase-6-change-intelligence.md`,
+ * Schema):
+ * - `append-only`: captured rows, immutable. Inserted by `id` when missing, never updated, and never
+ *   inserted when a `ci_tombstones` row names them (Phase 6's `no_resurrect`). Deleted only by an
+ *   arriving tombstone, children first (`SYNC_PURGE_DELETE_ORDER`).
+ * - `mutable-lww`: inserted by `id` when missing; otherwise the version with the later `updated_at`
+ *   wins. Deletion is a `deleted_at` value carried like any other column, never a `DELETE`.
+ * - `purge-log`: `ci_purges`, the audit log of deletions. Inserted by `id` when missing.
+ * - `tombstone`: `ci_tombstones`. Inserted by `id` when missing and when no tombstone for the same
+ *   `(table_name, row_id)` exists yet (its `UNIQUE` key: two devices may purge the same row); each
+ *   one that arrives deletes the row it names, if that table is an `append-only` one.
+ *
+ * Every insert is `INSERT … SELECT … WHERE NOT EXISTS (…)`: Phase 6's `_no_replace` triggers abort
+ * even `ON CONFLICT DO NOTHING`.
+ */
+export const SYNC_MERGE_RULES = ['append-only', 'mutable-lww', 'purge-log', 'tombstone'] as const;
+export type SyncMergeRule = (typeof SYNC_MERGE_RULES)[number];
+
+/** One table the engine mirrors, with every column it copies (Phase 6's Schema, in its order). */
+export interface SyncTable {
+  readonly name: string;
+  readonly rule: SyncMergeRule;
+  /** The primary key: a lowercase UUIDv7, the same on every device. */
+  readonly key: 'id';
+  /** The time a push pass orders and marks by: `updated_at` for `mutable-lww`, else `created_at`. */
+  readonly time: 'created_at' | 'updated_at';
+  /** The tombstone column of a `mutable-lww` table. */
+  readonly deleted?: 'deleted_at';
+  /** Every column copied, `key` first. Nothing else is read or written. */
+  readonly columns: readonly string[];
+}
+
+/**
+ * The tables sync mirrors, in the order a pass applies them (parents before children, purges and
+ * tombstones before the captured rows they may veto). Exactly Phase 6's nine `ci_*` tables; every
+ * other table of the session database (history, permissions, render-profile pins, content notes,
+ * settings) is never read by the engine. Identifiers here, and only these, are put into SQL (quoted).
+ */
+export const SYNC_TABLES = [
+  {
+    name: 'ci_projects',
+    rule: 'mutable-lww',
+    key: 'id',
+    time: 'updated_at',
+    deleted: 'deleted_at',
+    columns: ['id', 'name', 'render_profile', 'retention_mode', 'retention_value', 'created_at', 'updated_at', 'deleted_at'],
+  },
+  {
+    name: 'ci_project_pages',
+    rule: 'mutable-lww',
+    key: 'id',
+    time: 'updated_at',
+    deleted: 'deleted_at',
+    columns: ['id', 'project_id', 'url', 'created_at', 'updated_at', 'deleted_at'],
+  },
+  {
+    name: 'ci_project_queries',
+    rule: 'mutable-lww',
+    key: 'id',
+    time: 'updated_at',
+    deleted: 'deleted_at',
+    columns: ['id', 'project_id', 'query', 'search_params', 'created_at', 'updated_at', 'deleted_at'],
+  },
+  {
+    name: 'ci_purges',
+    rule: 'purge-log',
+    key: 'id',
+    time: 'created_at',
+    columns: ['id', 'reason', 'project_id', 'policy', 'captures', 'versions', 'diffs', 'screenshots', 'bytes', 'created_at'],
+  },
+  {
+    name: 'ci_tombstones',
+    rule: 'tombstone',
+    key: 'id',
+    time: 'created_at',
+    columns: ['id', 'purge_id', 'table_name', 'row_id', 'created_at'],
+  },
+  {
+    name: 'ci_versions',
+    rule: 'append-only',
+    key: 'id',
+    time: 'created_at',
+    columns: [
+      'id',
+      'lane_key',
+      'page_url',
+      'render_profile',
+      'search_params',
+      'snapshot',
+      'snapshot_hash',
+      'snapshot_bytes',
+      'schema_version',
+      'parent_version_id',
+      'created_at',
+    ],
+  },
+  {
+    name: 'ci_captures',
+    rule: 'append-only',
+    key: 'id',
+    time: 'created_at',
+    columns: [
+      'id',
+      'project_id',
+      'version_id',
+      'lane_key',
+      'page_url',
+      'render_profile',
+      'render_profile_partial',
+      'search_params',
+      'source',
+      'audit_taken_at',
+      'created_at',
+    ],
+  },
+  {
+    name: 'ci_diffs',
+    rule: 'append-only',
+    key: 'id',
+    time: 'created_at',
+    columns: ['id', 'lane_key', 'from_version_id', 'to_version_id', 'engine_version', 'diff', 'summary', 'change_count', 'created_at'],
+  },
+  {
+    name: 'ci_screenshots',
+    rule: 'append-only',
+    key: 'id',
+    time: 'created_at',
+    columns: [
+      'id',
+      'project_id',
+      'page_url',
+      'capture_id',
+      'kind',
+      'rect',
+      'width',
+      'height',
+      'bytes',
+      'sha256',
+      'segments',
+      'render_profile',
+      'search_params',
+      'created_at',
+    ],
+  },
+] as const satisfies readonly SyncTable[];
+export type SyncTableName = (typeof SYNC_TABLES)[number]['name'];
+
+/** The tombstone table: an `append-only` row is never inserted while one of its rows names it. */
+export const SYNC_TOMBSTONE_TABLE = 'ci_tombstones' as const satisfies SyncTableName;
+
+/**
+ * The order arriving tombstones delete rows in, children first, as Phase 6's purge path does
+ * (diffs, screenshots, captures, then versions), so its `_purge_only` and
+ * `ci_versions_unreferenced_only` triggers still pass. Exactly the `append-only` tables.
+ */
+export const SYNC_PURGE_DELETE_ORDER = ['ci_diffs', 'ci_screenshots', 'ci_captures', 'ci_versions'] as const satisfies readonly SyncTableName[];
+
+/**
+ * The replica-only change log: one row (`seq`, `table_name`, `row_id`) for each row a push inserted
+ * or changed in the replica. Pull reads it by `seq` (the primary's commit order), not by row time,
+ * so a row whose `created_at` / `updated_at` is older than a mark (another device's clock, or a
+ * device that was offline) still arrives.
+ */
+export const SYNC_LOG_TABLE = 'frost_sync_log' as const;
+
+/**
+ * `SYNC_STATE_TABLE` (`frost_sync_state`): per `device_id` (`SyncConfig.deviceId`), direction and
+ * table, a pass's high-water mark. Push: the last `(time, id)` of the session database's rows
+ * copied (never later than `now − SYNC_PUSH_SETTLE_MS`, so a row committed late with an earlier
+ * time is read again). Pull: the last `SYNC_LOG_TABLE` `seq` applied. Lives in the replica only,
+ * never in the session database. With an endpoint the replica is the primary's copy, hence the
+ * device key; the device ID is random and local, and identifies nothing but these marks.
+ */
+export { SYNC_STATE_TABLE };
+
+/** The directions of a pass: push (session database → replica), then pull (replica → session). */
+export const SYNC_DIRECTIONS = ['push', 'pull'] as const;
+export type SyncDirection = (typeof SYNC_DIRECTIONS)[number];
+
+/** Rows per table read in one page of a pass (`ci_purges` and `ci_tombstones` are never split). */
+export const SYNC_PAGE_ROWS = 500;
+
+/** Pages a pass runs in each direction before it stops until the next one. */
+export const SYNC_MAX_PAGES_PER_PASS = 20;
+
+/** How far behind `now` a push mark stays, so rows committed late are not skipped (ms). */
+export const SYNC_PUSH_SETTLE_MS = 60_000;
+
+/** How often the service runs a pass (push, `sync()` with an endpoint, pull) after the first (ms). */
+export const SYNC_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * Why a table is left out of a pass: it is not in the session database or not in the replica
+ * (today, before Phase 6 merges, every `ci_*` table is missing), a `SyncTable.columns` entry is
+ * missing on one side, or (an `append-only` table) `SYNC_TOMBSTONE_TABLE` is not on both sides.
+ */
+export const SYNC_SKIP_REASONS = ['missing-in-source', 'missing-in-replica', 'columns-missing', 'needs-tombstones'] as const;
+export type SyncSkipReason = (typeof SYNC_SKIP_REASONS)[number];
+
+// ---------------------------------------------------------------------------------------------
+// Sync config (Task 8; acceptance `sync-config.feature.md`; Zod side `sync-config.schema.ts`)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `userData/SYNC_CONFIG_FILE_NAME`: mode 0600 on POSIX, written atomically (a 0600 temporary file
+ * renamed over it), read with the strict `SyncConfigFileSchema`. A file that is not a regular
+ * file, is larger than `MAX_SYNC_CONFIG_BYTES`, has a repeated key or does not match the schema is
+ * tampered: sync is off for that run (one log line, no content) and the file is left alone. No file
+ * means sync is off.
+ */
+export { SYNC_CONFIG_FILE_NAME };
+
+/** The largest sync config file read (bytes). */
+export const MAX_SYNC_CONFIG_BYTES = 32 * 1024;
+
+/**
+ * The file's shape:
+ * - `enabled`: sync on or off;
+ * - `url`: the endpoint (`syncEndpointProblem`). **No `url` means local staging only**: rows are
+ *   mirrored into the local replica file and nothing leaves the device;
+ * - `encryptedToken`: the endpoint's token as `safeStorage.encryptString` ciphertext, base64. Only
+ *   with a `url`. The token itself is never written, logged, returned to the chrome or kept in state;
+ * - `deviceId`: random (UUID v4), made locally the first time sync runs; keys the replica's marks.
+ */
+export interface SyncConfigFile {
+  enabled: boolean;
+  url?: string;
+  encryptedToken?: string;
+  deviceId?: string;
+}
+
+/** The endpoint schemes (`LIBSQL_SYNC_URL_SCHEMES`): `libsql:` (TLS) or `https:`; never `http:`. */
+export const SYNC_ENDPOINT_SCHEMES = LIBSQL_SYNC_URL_SCHEMES;
+
+/** Longest endpoint and token accepted (`MAX_LIBSQL_URL_CHARS`, `MAX_LIBSQL_AUTH_TOKEN_CHARS`). */
+export const MAX_SYNC_ENDPOINT_CHARS = MAX_LIBSQL_URL_CHARS;
+export const MAX_SYNC_TOKEN_CHARS = MAX_LIBSQL_AUTH_TOKEN_CHARS;
+
+/** Why a sync config is refused (as it is written, or as it is read). */
+export const SYNC_CONFIG_PROBLEMS = [
+  'endpoint-invalid',
+  'token-invalid',
+  'token-needs-endpoint',
+  'encryption-unavailable',
+  'encryption-weak',
+  'tampered',
+  'token-undecryptable',
+] as const;
+export type SyncConfigProblem = (typeof SYNC_CONFIG_PROBLEMS)[number];
+
+/**
+ * Linux `safeStorage` backends that are no real protection: `basic_text` encrypts with a key
+ * hard-coded in Chromium. A token is never stored or read through one (`encryption-weak`).
+ */
+export const SYNC_WEAK_STORAGE_BACKENDS = ['basic_text'] as const;
+
+/**
+ * Whether `url` may be the sync endpoint: `libsql:` or `https:` with a host, written lowercase, at
+ * most `MAX_SYNC_ENDPOINT_CHARS`, with no user name or password, query, fragment, backslash, space
+ * or non-ASCII (the `syncUrl` rules of `libsqlConfigProblem`, never with loopback `http:`).
+ */
+export function syncEndpointProblem(url: string): 'endpoint-invalid' | null {
+  return typeof url === 'string' && syncUrlProblem(url, { allowLoopbackHttp: false }) === null ? null : 'endpoint-invalid';
+}
+
+/** Whether `token` may be stored: printable ASCII, no space, 1 to `MAX_SYNC_TOKEN_CHARS` characters. */
+export function syncTokenProblem(token: string): 'token-invalid' | null {
+  return typeof token === 'string' && token.length <= MAX_SYNC_TOKEN_CHARS && PRINTABLE.test(token) ? null : 'token-invalid';
 }

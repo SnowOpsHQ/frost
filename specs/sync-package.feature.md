@@ -7,7 +7,7 @@ of `linux-package.spec.ts` / `windows-package.spec.ts`. Phase 7 Task 7 (the driv
 `sync-driver.feature.md`). Code: `apps/desktop/libsql-packaging.ts` (registered in
 `forge.config.ts`), `apps/desktop/vite.main.config.ts`.
 Config tests: `apps/desktop/src/__tests__/libsql-packaging.test.ts` (every CI run).
-Package checks: `verify-package-common.mjs`, run by `verify-linux-package.mjs`,
+Package checks: `verify-package-common.mjs` (`sync-replica-opens` is Task 8's), run by `verify-linux-package.mjs`,
 `verify-windows-package.mjs` and `verify-mac-package.mjs`. Each scenario maps to one named test or
 check.
 
@@ -30,12 +30,11 @@ check.
   macOS, signing can rewrite the Mach-O after the header was written: a Developer ID run does, and
   the ad-hoc re-seal may. So the bundle signature alone vouches for its bytes
   (`signature-verifies`).
-- **Not yet proven (as of Task 7): the packaged binary itself loading the prebuild.**
-  `libsql-loads` runs the repository's Electron, at the packaged version, as Node. It cannot run
-  the packaged executable, whose `RunAsNode` fuse is off. In particular, macOS library validation
-  under the hardened runtime (a Developer ID build) could refuse the prebuild. Task 8 adds that
-  proof: a packaged-app check in all three verifiers that enables sync through the profile's sync
-  config and confirms main opens the replica.
+- **The packaged binary loading the prebuild (Task 8).** `libsql-loads` runs the repository's
+  Electron, at the packaged version, as Node. It cannot run the packaged executable, whose
+  `RunAsNode` fuse is off. `sync-replica-opens` runs the packaged executable itself, with its fuses
+  (and on macOS its re-signed bundle, so library validation decides), on a profile whose sync
+  config turns local staging on, and confirms main opened the replica through libSQL.
 - **Cross-target builds fail closed.** pnpm installs only the build machine's own prebuild, so
   packaging another platform (`--platform win32` on Linux) fails in the hook with a message naming
   the missing package. CI packages each platform on its own runner.
@@ -110,11 +109,26 @@ These checks run on the packaged tree. On Linux and Windows they also run on eve
   Electron version. Under `verify-windows-package.mjs --static` off Windows, this check is skipped
   with an `INFO` line, because a win32 prebuild loads only on Windows.
 
+- **Scenario: sync-replica-opens**: on the packaged tree only (never an extracted one). A fresh
+  profile directory gets `SYNC_CONFIG_FILE_NAME` holding `SYNC_PACKAGED_PROBE_CONFIG`
+  (`{"enabled":true}`: local staging, no endpoint, no token, so neither the network nor
+  `safeStorage` is involved). The packaged executable is started with `--user-data-dir=<profile>`
+  first (as `launches-and-stays-alive`). Within `SYNC_REPLICA_OPENS_MS`:
+  - `SYNC_REPLICA_FILE_NAME` appears in the profile, and Node's `node:sqlite`, opening it
+    read-only, finds `SYNC_STATE_TABLE` in it (so the packaged main loaded libSQL's unpacked
+    prebuild, opened the replica and ran SQL in it);
+  - on POSIX the file's mode is 0600;
+  - the app is still running.
+
+  It is then terminated by its PID, and the profile removed. A failure prints the app's stderr
+  tail. Under `verify-windows-package.mjs --static` it is skipped with an `INFO` line, like the
+  other launch checks.
+
 ## Known limits
 - The unpacked `index.node` is not checked at runtime on Windows or Linux (see Integrity above).
 - `libsql-loads` runs the repository's Electron with Node's loader, not the packaged executable
-  with its fuses. The packaged binary loading the prebuild (macOS library validation included) is
-  not yet proven; Task 8's packaged-app sync check proves it.
+  with its fuses; `sync-replica-opens` covers the packaged executable. On macOS the CI build is
+  ad-hoc signed: a Developer ID build's library validation is exercised only when one is made.
 - `LIBSQL_ASAR_UNPACK` allows at most `LIBSQL_ASAR_UNPACK_DOT_DIRS` dot directories in the build
   path. Beyond that, the prebuild stays packed and the verifiers fail.
 - Linux ships the glibc prebuild only. On a musl system libSQL (and so sync) is unavailable.
