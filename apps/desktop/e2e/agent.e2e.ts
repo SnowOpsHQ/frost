@@ -13,6 +13,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
 import { AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
+import { SKILL_USER_MARK } from '@app/specs/skills.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
@@ -492,10 +493,10 @@ test('agent-skill-editor-saves', async () => {
   await expect(mine.getByTestId('agent-skill-name')).toHaveText('My page audit');
   await expect(mine.getByTestId('agent-skill-badge')).toHaveText(SKILL_USER_LABEL);
 
-  // It appears in the composer's picker.
+  // It appears in the composer's picker, marked as the user's own.
   await backToChat();
   const option = page.getByTestId('agent-skill-picker').locator('option[value="audit-this-page-copy"]');
-  await expect(option).toHaveText('My page audit');
+  await expect(option).toHaveText(`My page audit (${SKILL_USER_MARK})`);
 });
 
 test('agent-chat-export-and-restore', async () => {

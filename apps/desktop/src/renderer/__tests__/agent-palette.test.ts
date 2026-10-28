@@ -42,7 +42,8 @@ describe('agent palette actions', () => {
     registry.register(...builtinPaletteSources(new Proxy({}, { get: () => vi.fn(async () => true) }) as PaletteApi));
     const unregister = registry.register(...agentPaletteSources(request, () => current));
     const skillActions = () => registry.resolve(ctx).filter((a) => a.id.startsWith(AGENT_PALETTE_SKILL_ID_PREFIX));
-    expect(skillActions().map((a) => [a.id, a.label])).toEqual(SKILLS.map((skill) => [`agent.skill.${skill.id}`, `Run skill: ${skill.name}`]));
+    // The user's own skills are marked "Your skill".
+    expect(skillActions().map((a) => [a.id, a.label])).toEqual(SKILLS.map((skill) => [`agent.skill.${skill.id}`, skill.builtin ? `Run skill: ${skill.name}` : `Run skill: ${skill.name} (Your skill)`]));
     expect(skillActions()[0]!.detail?.(ctx)).toBe(SKILLS[0]!.description);
     await skillActions()[1]!.run(ctx);
     expect(request).toHaveBeenLastCalledWith({ kind: 'run-skill', skillId: 'rewrite-title-meta' });

@@ -131,10 +131,14 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     grants: agent.grants,
     start: () => agent.start(),
     activeTabId: () => deps.browser.getState().activeTabId,
-    // A skill's `pageUrl` and `pageTitle`: the chat tab's, as the tab strip shows them.
+    // A skill's `pageUrl` and `pageTitle`: one source, the chat tab's live page at send time (its
+    // WebContents' URL and title, as the page tools read it), never the tab strip's copy.
     tabPage: (tabId) => {
-      const tab = tabOf(tabId);
-      return tab === undefined ? null : { url: tab.url === '' ? null : tab.url, title: tab.title === '' ? null : tab.title };
+      const contents = deps.webContents.getAllWebContents().find((item) => !item.isDestroyed() && deps.browser.tabIdOf(item) === tabId);
+      if (contents === undefined) return null;
+      const url = contents.getURL();
+      const title = contents.getTitle();
+      return { url: url === '' ? null : url, title: title === '' ? null : title };
     },
     skills: userSkills.registry,
     userSkills,

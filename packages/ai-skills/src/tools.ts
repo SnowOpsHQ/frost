@@ -72,7 +72,7 @@ export const pageAuditTool = defineTool(
 
 export const pageDataTool = defineTool(
   'page_data',
-  `Returns facts about the page in the user's current tab: URL, title, meta description, canonical, robots directives, headings, counts of internal and external links, structured data types and whether search engines may index it. ${UNTRUSTED_OUTPUT_NOTE}`,
+  `Returns facts about the page in the user's current tab: URL, title, meta description, canonical, robots directives, headings, counts of internal and external links, a capped list of its internal links (address and anchor text), structured data types and whether search engines may index it. ${UNTRUSTED_OUTPUT_NOTE}`,
   z.strictObject({}),
 );
 

@@ -127,14 +127,8 @@ function fitString<T extends Record<string, unknown>>(data: T, key: keyof T & st
 
 export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
   const now = deps.now ?? Date.now;
-  const search = createSearchTools({
-    ...(deps.ports ? { ports: deps.ports } : {}),
-    // `gsc_performance` without a `url`: the page the chat's tab shows now.
-    tabUrl: (tabId) => {
-      const contents = deps.contentsOf(tabId);
-      return contents === null || contents.isDestroyed() ? null : contents.getURL();
-    },
-  });
+  // `gsc_performance`'s page is in its input: the broker fills in the tab's as the call arrives.
+  const search = createSearchTools(deps.ports ? { ports: deps.ports } : {});
 
   /** The tab's live page, if it is (still) the expected one; else why not. */
   const livePage = (context: ToolRunContext, expected: PageExpectation): PageContents | ToolErrorCode => {

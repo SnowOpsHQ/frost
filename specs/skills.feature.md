@@ -16,7 +16,8 @@ one named test.
   the user fills (`inputs`, optional) and a version. Nothing in a skill runs as code.
 - **Slots are an allowlist.** A template may hold `{{pageUrl}}`, `{{pageTitle}}`, `{{targetQuery}}`
   and `{{userNote}}` only; any other placeholder, or a stray `{{` / `}}`, makes the skill invalid.
-  Main fills `pageUrl` (the chat tab's page without its fragment) and `pageTitle` (the tab's title);
+  Main fills `pageUrl` (the chat tab's live page without user info or fragment) and `pageTitle` (its
+  live title), both read at send time;
   the user may fill `targetQuery` and `userNote` when the skill declares them as inputs. A declared
   input must be a slot the template reads.
 - **Values are quoted data.** Rendering replaces each placeholder with a reference (`[pageTitle]`)
@@ -51,6 +52,8 @@ one named test.
 - **Scenario: skill-render-missing-and-unknown-slots** — missing values say `(not given)`; unknown
   keys are ignored; an invalid skill renders nothing; the same input gives the same text.
 - **Scenario: skill-render-caps-and-strips-values** — invisible characters removed, values cut.
+- **Scenario: skill-render-normalises-lookalikes** — full-width brackets escaped like `<` `>`; the
+  framing says page values are untrusted and the user's inputs are preferences.
 
 ## Registry (`packages/ai-skills/src/__tests__/skills.test.ts`)
 - **Scenario: skill-registry-builtins-and-composition** — the built-ins in order; an invalid or
@@ -63,17 +66,23 @@ one named test.
   skill is answered `not-allowed`.
 - **Scenario: skill-run-shows-name-and-note** — the chat shows the skill and the note; the history
   holds the rendered text with the tab's URL and title in the data block.
+- **Scenario: skill-run-cleans-invisible-characters** — an emoji sequence and a soft hyphen in a
+  note run (cleaned), as the chat shows and the model reads.
 - **Scenario: skill-run-refusals** — an unknown skill, an input the skill doesn't declare, the
-  `agent.skills` entitlement off; nothing changes in the chat.
+  `agent.skills` entitlement off (checked first; no skills listed); nothing changes in the chat.
 - **Scenario: skill-run-state-lists-skills** — `AgentState.skills` from the registry.
 
 ## Router (`packages/ipc-contract/src/__tests__/agent-router.test.ts`)
-- **Scenario: agent-send-skill-input-bounds** — a skill id, a note and a query within bounds pass; a
-  bad id, an over-long note, text beside a skill or an unknown key is refused before the service.
+- **Scenario: agent-send-skill-input-bounds** — a skill id, a note and a query within bounds pass (a
+  note with an emoji sequence or a soft hyphen too: main cleans it); a bad id, an over-long note,
+  text beside a skill or an unknown key is refused before the service.
 
 ## Renderer (`renderer/__tests__/agent-view.test.ts`, `agent-palette.test.ts`, `agent-components.test.ts`)
 - **Scenario: skill-view-helpers** — picker options, the request built from the fields, the user
   message's skill label.
+- **Scenario: skill-view-review-helpers** — invisible characters dropped, surrogate-safe cut,
+  "Your skill" marks, the palette's chat for the active tab, the editor's warnings.
+- **Scenario: skill-editor-warns-about-builtin-names-and-acting-tools** (`agent-data-components.test.ts`).
 - **Scenario: skill-palette-actions** — "Run skill: {name}" per listed skill, not offered while a
   turn runs.
 - **Scenario: composer-skill-picker** — picking a skill shows its fields; Run sends the skill

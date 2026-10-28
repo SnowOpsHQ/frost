@@ -12,6 +12,7 @@
  * block, so a page title can't become an instruction.
  */
 import { AGENT_TOOL_INPUT_LIMITS } from './agent-tools.spec';
+import { parseWebUrl } from './web-url.spec';
 
 // ---- Ids -------------------------------------------------------------------------------------
 
@@ -106,9 +107,36 @@ export const SKILL_SLOT_MAX_CHARS: Readonly<Record<SkillSlotName, number>> = {
   userNote: 2000,
 };
 
+/** A page's address as a skill's `pageUrl` slot: an `http(s)` URL without user info or fragment, or `null`. */
+export function skillPageUrl(url: unknown): string | null {
+  const parsed = parseWebUrl(url);
+  if (parsed === null) return null;
+  parsed.username = '';
+  parsed.password = '';
+  parsed.hash = '';
+  return parsed.href;
+}
+
 /** What the data block says for a slot with no value (a missing input, an empty tab). */
 export const SKILL_SLOT_MISSING = '(not given)';
 
 /** The data block's first and last lines (see `@app/ai-skills` `renderSkill`). */
 export const SKILL_DATA_OPEN = '<skill-inputs>';
 export const SKILL_DATA_CLOSE = '</skill-inputs>';
+
+// ---- The skills editor's warnings (Task 7 review) --------------------------------------------
+
+/**
+ * Tools a user skill may list that act on pages or send model-chosen text to a third party: the
+ * editor warns when a skill lists one (each call still needs the approval its risk class needs).
+ */
+export const SKILL_ACTING_TOOLS = ['navigate', 'click', 'execute_javascript', 'run_ai_search'] as const;
+
+export const SKILL_WARNINGS = {
+  builtinName: "A built-in skill already has this name. Choose another, so the two can't be confused.",
+  actingTools: 'This skill may open pages, click, run JavaScript or send a query out. frost still asks you before each of those, but text on a page could try to steer them.',
+} as const;
+
+/** How the picker and the palette mark the user's own skills. */
+export const SKILL_USER_MARK = 'Your skill';
+

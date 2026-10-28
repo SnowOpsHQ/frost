@@ -1,6 +1,5 @@
 import { SEARCH_INTENTS, type GscPort, type IntentPort, type PortAnswer, type SearchIntent, type SerpPort } from '@app/ai-skills';
-import { pageUrlOf } from '@app/specs/agent-approvals.spec';
-import { GSC_NO_PAGE_REASON, SEARCH_TOOL_LIMITS as L, SEARCH_TOOL_SOURCES, SEARCH_TOOL_TIMEOUT_MS, type SearchToolName } from '@app/specs/agent-search-tools.spec';
+import { GSC_NO_PAGE_REASON, GSC_NOT_PUBLIC_REASON, gscPageUrl, isGscReadablePage, SEARCH_TOOL_LIMITS as L, SEARCH_TOOL_SOURCES, SEARCH_TOOL_TIMEOUT_MS, type SearchToolName } from '@app/specs/agent-search-tools.spec';
 import { AGENT_TOOL_INPUT_LIMITS, UNSAFE_INPUT_CHARS, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 
@@ -10,7 +9,14 @@ import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 // a signal that aborts when the chat stops or after `SEARCH_TOOL_TIMEOUT_MS`, and maps the answer:
 // `ok` to bounded data, `unavailable` to data `{ unavailable: reason }` (the broker's errors carry
 // fixed messages, so the reason travels as untrusted data the model can explain), anything else to
-// a fixed error. No port changes anything; none sees a key or the page.
+// a fixed error. No port changes anything; none sees a key or the page. Every answer's JSON text is
+// trimmed to `SEARCH_TOOL_LIMITS.budgetChars` (list entries dropped from the end, then the AI
+// answer's text cut), so the broker's cap never has to cut it blindly.
+//
+// `gsc_performance` reads only the `url` in its input: main's broker fills in the chat tab's page as
+// the call arrives (`completeToolInput`), so the approval shows the page read. A call that still has
+// none answers `GSC_NO_PAGE_REASON`; a page that isn't public answers `GSC_NOT_PUBLIC_REASON`; the
+// port is asked for neither.
 
 export interface SearchToolPorts {
   readonly serp?: SerpPort | null;
@@ -20,8 +26,6 @@ export interface SearchToolPorts {
 
 export interface SearchToolDeps {
   readonly ports?: SearchToolPorts;
-  /** The URL the chat's tab shows now (for `gsc_performance` without a `url`), or `null`. */
-  readonly tabUrl: (tabId: number) => string | null;
   readonly setTimeout?: (callback: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
 }
@@ -57,6 +61,36 @@ const within = (value: unknown, min: number, max: number): number | null => {
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const list = (value: unknown): readonly unknown[] | null => (Array.isArray(value) ? value : null);
 
+/**
+ * `data` with entries dropped from the end of its list `key` (its `<key>Total` stays) until its JSON
+ * text fits `SEARCH_TOOL_LIMITS.budgetChars`; then, if `textKey` is given, that text cut (and
+ * `<textKey>Truncated` set). Never longer than the budget unless the rest alone is.
+ */
+export function fitBudget<T extends Record<string, unknown>>(data: T, key: keyof T & string, textKey?: keyof T & string): T {
+  const size = (value: unknown) => JSON.stringify(value).length;
+  let current = data;
+  const items = current[key];
+  if (Array.isArray(items) && size(current) > L.budgetChars) {
+    // Halve, then step: never more than a few dozen serialisations.
+    let kept = items.length;
+    while (kept > 0 && size({ ...current, [key]: items.slice(0, kept) }) > L.budgetChars) kept = kept > 8 ? Math.floor(kept / 2) : kept - 1;
+    current = { ...current, [key]: items.slice(0, kept) };
+  }
+  if (textKey !== undefined && size(current) > L.budgetChars) {
+    const text = current[textKey];
+    if (typeof text === 'string') {
+      let cut: string = text;
+      for (let guard = 0; guard < 32 && cut.length > 0; guard += 1) {
+        const over = size({ ...current, [textKey]: cut }) - L.budgetChars;
+        if (over <= 0) break;
+        cut = cleanText(cut, Math.max(0, cut.length - Math.max(over, 16)))!;
+      }
+      current = { ...current, [textKey]: cut, [`${textKey}Truncated`]: true };
+    }
+  }
+  return current;
+}
+
 // ---- Mapping each port's data (`null`: not the port's shape) ----
 
 function mapSerp(data: unknown) {
@@ -64,7 +98,7 @@ function mapSerp(data: unknown) {
   const results = list(data.results);
   const features = list(data.features);
   if (results === null || features === null) return null;
-  return {
+  return fitBudget({
     query: cleanText(data.query, L.maxQueryChars),
     locale: cleanText(data.locale, L.maxShortChars),
     device: data.device === 'mobile' ? 'mobile' : 'desktop',
@@ -85,7 +119,7 @@ function mapSerp(data: unknown) {
       return name === null || name === '' ? [] : [name];
     }),
     featuresTotal: features.length,
-  };
+  }, 'results');
 }
 
 function mapAiSearch(data: unknown) {
@@ -93,7 +127,7 @@ function mapAiSearch(data: unknown) {
   const citations = list(data.citations);
   if (citations === null) return null;
   const answer = cleanText(data.answer, L.maxAnswerChars)!;
-  return {
+  return fitBudget({
     query: cleanText(data.query, L.maxQueryChars),
     answer,
     answerTruncated: answer.length < cleanText(data.answer, Number.MAX_SAFE_INTEGER)!.length,
@@ -103,7 +137,7 @@ function mapAiSearch(data: unknown) {
     }),
     citationsTotal: citations.length,
     fetchedAt: cleanText(data.fetchedAt, L.maxShortChars),
-  };
+  }, 'citations', 'answer');
 }
 
 const isIntent = (value: unknown): value is SearchIntent => typeof value === 'string' && (SEARCH_INTENTS as readonly string[]).includes(value);
@@ -127,7 +161,7 @@ function mapGsc(data: unknown) {
   if (!isRecord(data)) return null;
   const queries = list(data.queries);
   if (queries === null) return null;
-  return {
+  return fitBudget({
     url: cleanText(data.url, L.maxUrlChars),
     days: num(data.days),
     clicks: num(data.clicks),
@@ -139,7 +173,7 @@ function mapGsc(data: unknown) {
       return { query: cleanText(item.query, L.maxQueryChars), clicks: num(item.clicks), impressions: num(item.impressions), ctr: within(item.ctr, 0, 1), position: num(item.position) };
     }),
     queriesTotal: queries.length,
-  };
+  }, 'queries');
 }
 
 export function createSearchTools(deps: SearchToolDeps) {
@@ -205,7 +239,7 @@ export function createSearchTools(deps: SearchToolDeps) {
         const port = ports.serp;
         if (!port) return Promise.resolve(fail('unavailable'));
         const { query, locale, device } = call.input;
-        return ask('serp_results', (signal) => port.results({ query, ...(locale !== undefined ? { locale } : {}), ...(device !== undefined ? { device } : {}) }, { signal }), mapSerp, context);
+        return ask('serp_results', (signal) => port.results({ query, ...(locale !== undefined ? { locale } : {}), ...(device !== undefined ? { device } : {}) }, { signal, tabId: context.tabId }), mapSerp, context);
       }
       case 'run_ai_search': {
         const port = ports.serp;
@@ -213,20 +247,23 @@ export function createSearchTools(deps: SearchToolDeps) {
         // An `act` tool, never grantable: only the user's approval of this call sends the query out.
         if (context.via !== 'approval') return Promise.resolve(fail('not-allowed'));
         const { query, locale } = call.input;
-        return ask('run_ai_search', (signal) => port.aiSearch({ query, ...(locale !== undefined ? { locale } : {}) }, { signal }), mapAiSearch, context);
+        return ask('run_ai_search', (signal) => port.aiSearch({ query, ...(locale !== undefined ? { locale } : {}) }, { signal, tabId: context.tabId }), mapAiSearch, context);
       }
       case 'search_intent': {
         const port = ports.intent;
         if (!port) return Promise.resolve(fail('unavailable'));
-        return ask('search_intent', (signal) => port.classify({ query: call.input.query }, { signal }), mapIntent, context);
+        return ask('search_intent', (signal) => port.classify({ query: call.input.query }, { signal, tabId: context.tabId }), mapIntent, context);
       }
       case 'gsc_performance': {
         const port = ports.gsc;
         if (!port) return Promise.resolve(fail('unavailable'));
-        const url = pageUrlOf(call.input.url ?? deps.tabUrl(context.tabId));
-        if (url === null) return Promise.resolve({ ok: true, data: { unavailable: GSC_NO_PAGE_REASON }, source: SEARCH_TOOL_SOURCES.gsc_performance });
+        const source = SEARCH_TOOL_SOURCES.gsc_performance;
+        // The page is the input's (the broker filled in the tab's): never the tab's at run time.
+        const url = gscPageUrl(call.input.url);
+        if (url === null) return Promise.resolve({ ok: true, data: { unavailable: GSC_NO_PAGE_REASON }, source });
+        if (!isGscReadablePage(url)) return Promise.resolve({ ok: true, data: { unavailable: GSC_NOT_PUBLIC_REASON, url: cleanText(url, L.maxUrlChars) }, source });
         const days = call.input.days ?? AGENT_TOOL_INPUT_LIMITS.defaultGscDays;
-        return ask('gsc_performance', (signal) => port.performance({ url, days }, { signal }), mapGsc, context);
+        return ask('gsc_performance', (signal) => port.performance({ url, days }, { signal, tabId: context.tabId }), mapGsc, context);
       }
     }
   };

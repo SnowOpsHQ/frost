@@ -14,8 +14,16 @@
  * - a tool error: `unavailable` when no port is wired at all, `timeout` past
  *   `SEARCH_TOOL_TIMEOUT_MS`, `failed` when the port throws, is stopped or answers something
  *   malformed.
+ *
+ * `gsc_performance` reads the site owner's data for one public page: its `url` (the chat tab's page
+ * when the model gives none, filled in by main's broker as the call arrives, so the approval card
+ * and its input hash show the page that will be read: `completeToolInput`) is stripped of user info
+ * and fragment, and a page that isn't public (`isPublicPage`) is refused as data
+ * (`GSC_NOT_PUBLIC_REASON`) without asking the port.
  */
-import { AGENT_TOOL_INPUT_LIMITS } from './agent-tools.spec';
+import { isPublicPage } from './agent-approvals.spec';
+import { AGENT_TOOL_INPUT_LIMITS, TOOL_RESULT_MAX_CHARS } from './agent-tools.spec';
+import { parseWebUrl } from './web-url.spec';
 
 /** The tools this covers (`AGENT_TOOL_NAMES`' search tools). */
 export const SEARCH_TOOL_NAMES = ['serp_results', 'search_intent', 'run_ai_search', 'gsc_performance'] as const;
@@ -35,7 +43,7 @@ export const SEARCH_TOOL_LIMITS = {
   maxSerpFeatures: 20,
   maxFeatureChars: 64,
   /** A result's or citation's URL, title and snippet. */
-  maxUrlChars: AGENT_TOOL_INPUT_LIMITS.maxUrlChars,
+  maxUrlChars: 500,
   maxTitleChars: 300,
   maxSnippetChars: 500,
   /** `run_ai_search`: the answer's text and the citations kept. */
@@ -50,6 +58,12 @@ export const SEARCH_TOOL_LIMITS = {
   maxShortChars: 64,
   /** An `unavailable` answer's reason. */
   maxReasonChars: 500,
+  /**
+   * The JSON text a tool's data trims itself to (characters), under `TOOL_RESULT_MAX_CHARS` so the
+   * untrusted wrapper never cuts it: list entries are dropped from the end (the total stays), then
+   * the AI answer's text is cut.
+   */
+  budgetChars: TOOL_RESULT_MAX_CHARS - 2_000,
 } as const;
 
 /** Each tool's result `source` (the untrusted wrapper's). */
@@ -72,3 +86,38 @@ export const PORT_NOT_CONNECTED_REASONS = {
 
 /** `gsc_performance` with no `url` when the chat's tab shows no web page. */
 export const GSC_NO_PAGE_REASON = "The chat's tab shows no web page, so there is no page to look up. Give the page's address.";
+/** `gsc_performance` for a page that isn't on a public host (a local or private address). */
+export const GSC_NOT_PUBLIC_REASON = 'Search performance data is only read for public web pages, and this address is not one.';
+
+/** The page `gsc_performance` reads for `url`: an `http(s)` URL without user info or fragment, or `null`. */
+export function gscPageUrl(url: unknown): string | null {
+  const parsed = parseWebUrl(url);
+  if (parsed === null) return null;
+  parsed.username = '';
+  parsed.password = '';
+  parsed.hash = '';
+  return parsed.href;
+}
+
+/** Whether `gsc_performance` may read `url` (`gscPageUrl` of it is a public page). */
+export function isGscReadablePage(url: unknown): boolean {
+  const page = gscPageUrl(url);
+  return page !== null && isPublicPage(page);
+}
+
+/**
+ * A tool call's input with the defaults main fills in as the call arrives (before the broker parses,
+ * shows and hashes it), so what is approved is what runs: `gsc_performance` without a `url` gets the
+ * chat tab's page (`gscPageUrl(tabUrl)`, when the tab shows a web page) and without `days`
+ * `defaultGscDays`. Any other input is returned as it is (the tool's schema still checks it).
+ */
+export function completeToolInput(toolName: string, input: unknown, tabUrl: string | null): unknown {
+  if (toolName !== 'gsc_performance' || typeof input !== 'object' || input === null || Array.isArray(input)) return input;
+  const given = input as Record<string, unknown>;
+  const page = Object.hasOwn(given, 'url') ? null : gscPageUrl(tabUrl);
+  return {
+    ...given,
+    ...(page !== null ? { url: page } : {}),
+    ...(Object.hasOwn(given, 'days') ? {} : { days: AGENT_TOOL_INPUT_LIMITS.defaultGscDays }),
+  };
+}

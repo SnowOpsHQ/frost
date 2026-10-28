@@ -24,7 +24,15 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function setup(options: { packaged?: boolean; script?: unknown } & Pick<AgentServiceDeps, 'ports' | 'entitlements' | 'now' | 'setInterval' | 'clearInterval'> & { sessionStore?: AgentServiceDeps['sessionStore'] } = {}) {
+function setup(
+  options: { packaged?: boolean; script?: unknown; liveTab?: { url: string; title: string } } & Pick<AgentServiceDeps, 'ports' | 'entitlements' | 'now' | 'setInterval' | 'clearInterval'> & {
+    sessionStore?: AgentServiceDeps['sessionStore'];
+  } = {},
+) {
+  // The tab's live page (its WebContents), when a test gives one.
+  const live = options.liveTab
+    ? { executeJavaScriptInIsolatedWorld: async () => null, getURL: () => options.liveTab!.url, getTitle: () => options.liveTab!.title, isDestroyed: () => false, on: () => undefined, removeListener: () => undefined }
+    : null;
   const userData = mkdtempSync(path.join(tmpdir(), 'frost-agent-service-'));
   dirs.push(userData);
   let switchValue = '';
@@ -63,7 +71,7 @@ function setup(options: { packaged?: boolean; script?: unknown } & Pick<AgentSer
     session: { fromPartition: () => ({ fetch: async () => Promise.reject(new Error('no network')) }) },
   };
   const browser = {
-    tabIdOf: () => null,
+    tabIdOf: (contents: unknown) => (live !== null && contents === live ? 2 : null),
     getState: () => ({ activeTabId: 2, tabs: [{ id: 2, url: 'https://example.com/', title: 'Example' }] }),
     navigate: () => false,
     seo: { getAudit: () => ({ status: 'unavailable' as const, url: '', reason: 'no-tab' as const }) },
@@ -72,7 +80,7 @@ function setup(options: { packaged?: boolean; script?: unknown } & Pick<AgentSer
     app,
     electron,
     browser,
-    webContents: { getAllWebContents: () => [] },
+    webContents: { getAllWebContents: () => (live !== null ? [live] : []) },
     sessionStore: options.sessionStore ?? { agentGrants: createMemoryGrantsStore() },
     buildDir: '/app/.vite/build',
     ...(options.now ? { now: options.now } : {}),
@@ -166,5 +174,15 @@ describe('agent service wiring', () => {
     expect(timers.map((timer) => timer.ms)).toEqual([CHAT_PRUNE_INTERVAL_MS]);
     quit[0]!();
     expect(cleared).toEqual(['timer-1']);
+  });
+
+  test('service-skill-slots-from-the-live-page', async () => {
+    // The tab strip says one thing; the live page another: a skill reads the live page.
+    const { service, quit } = setup({ script: { steps: [{ text: ['Done.'] }] }, liveTab: { url: 'https://user:pw@example.com/live?x=1#top', title: 'Live title' } });
+    await vi.waitFor(() => expect(service.getState().version).toBeGreaterThan(1));
+    expect(await service.send(null, { skillId: 'audit-this-page' })).toBe('started');
+    await vi.waitFor(() => expect(service.getState().running).toBe(false));
+    expect(service.getState().active!.messages[0]).toMatchObject({ kind: 'user', text: 'Page: https://example.com/live?x=1', skill: { id: 'audit-this-page' } });
+    quit.forEach((listener) => listener());
   });
 });

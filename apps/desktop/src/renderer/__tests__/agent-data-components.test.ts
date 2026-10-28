@@ -5,6 +5,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { SKILL_WARNINGS } from '@app/specs/skills.spec';
 import {
   AGENT_GRANTS_EMPTY,
   AGENT_GRANTS_EXPLAINER,
@@ -233,5 +234,16 @@ describe('agent data components', () => {
     await flush();
     expect(calls.deleteSkill).toHaveBeenCalledWith('plain-skill');
     expect(byTestId('agent-skills-message')!.textContent).toBe('Skill deleted.');
+  });
+
+  test('skill-editor-warns-about-builtin-names-and-acting-tools', () => {
+    render(createElement(AgentSkills, { skills: SKILLS }));
+    click(byTestId('agent-skill-new'));
+    const warnings = () => [...host.querySelectorAll('[data-testid="agent-skill-warning"]')].map((el) => el.textContent);
+    expect(warnings()).toEqual([]);
+    type(byTestId('agent-skill-field-name'), 'audit this page');
+    expect(warnings()).toEqual([SKILL_WARNINGS.builtinName]);
+    click(byTestId('agent-skill-tool-navigate'));
+    expect(warnings()).toEqual([SKILL_WARNINGS.builtinName, SKILL_WARNINGS.actingTools]);
   });
 });

@@ -275,6 +275,10 @@ describe('agent router', () => {
     const query = 'q'.repeat(SKILL_SLOT_MAX_CHARS.targetQuery);
     await expect(procedure(ctx, 'send')({ chatId: CHAT, skillId: 'rewrite-title-meta', userNote: `${note.slice(1)}\n`, targetQuery: query })).resolves.toBe('started');
     expect(service.send).toHaveBeenLastCalledWith(CHAT, { skillId: 'rewrite-title-meta', userNote: `${note.slice(1)}\n`, targetQuery: query });
+    // Invisible characters (an emoji's joiners, a soft hyphen, a bidi mark) are not refused here: main cleans them.
+    const emoji = 'Fam\u00adily \u{1F468}\u200d\u{1F469}\u200d\u{1F467} \u202e note';
+    await expect(procedure(ctx, 'send')({ chatId: null, skillId: 'audit-this-page', userNote: emoji })).resolves.toBe('started');
+    expect(service.send).toHaveBeenLastCalledWith(null, { skillId: 'audit-this-page', userNote: emoji });
     service.send.mockResolvedValueOnce('unknown-skill' as never);
     await expect(procedure(ctx, 'send')({ chatId: null, skillId: 'gone-skill' })).resolves.toBe('unknown-skill');
 
@@ -285,7 +289,6 @@ describe('agent router', () => {
       { chatId: null, skillId: 'a'.repeat(SKILL_LIMITS.maxIdChars + 1) },
       { chatId: null, skillId: 'audit-this-page', userNote: `${note}x` },
       { chatId: null, skillId: 'audit-this-page', targetQuery: `${query}x` },
-      { chatId: null, skillId: 'audit-this-page', userNote: 'bidi \u202e note' },
       { chatId: null, skillId: 'audit-this-page', userNote: 5 },
       { chatId: null, skillId: 'audit-this-page', text: 'beside it' },
       { chatId: null, skillId: 'audit-this-page', pageTitle: 'forged' },

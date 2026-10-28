@@ -32,13 +32,13 @@ export const rewriteTitleMetaSkill: BuiltinSkill = {
   id: 'rewrite-title-meta',
   name: 'Rewrite title and meta description',
   description: "Propose three titles and three meta descriptions for this page that fit the search snippet's length limits, with the reason for each.",
-  allowedTools: ['page_data', 'page_text'],
+  allowedTools: ['page_audit', 'page_data', 'page_text'],
   instructions: [
     'Write new snippet text for the page at {{pageUrl}} (titled {{pageTitle}}).',
     '',
     'Steps:',
     '1. Read the current title and meta description, with their lengths, using page_data. Skim page_text to learn what the page actually offers.',
-    "2. Use the length limits the page's facts or audit state for titles and descriptions. If none are stated, keep titles to about 60 characters and descriptions to about 155, so the search engine is unlikely to cut them.",
+    "2. Read frost's audit with page_audit and use the length or width limits its title and description checks state. If it states none, keep titles to about 60 characters and descriptions to about 155, so the search engine is unlikely to cut them.",
     '3. Propose exactly three title options and exactly three meta description options. Give each one its character count and one sentence on why it would earn the click.',
     '4. Aim them at this search query, if one is given: {{targetQuery}}. If none is given, aim them at the main topic the page text shows, and say which topic you chose.',
     '',
@@ -50,7 +50,7 @@ export const rewriteTitleMetaSkill: BuiltinSkill = {
     { slot: 'targetQuery', label: 'Target query (optional)', placeholder: 'The search the page should win' },
     { slot: 'userNote', label: 'Note (optional)', placeholder: 'Tone, brand name, words to avoid' },
   ],
-  version: 1,
+  version: 2,
 };
 
 export const internalLinkSuggestionsSkill: BuiltinSkill = {
@@ -62,16 +62,17 @@ export const internalLinkSuggestionsSkill: BuiltinSkill = {
     'Suggest internal links for the page at {{pageUrl}}.',
     '',
     'Steps:',
-    '1. Read the page text with page_text, and the page facts (its address and link counts) with page_data.',
-    '2. Find passages that talk about a topic another page on the same site covers: a page this one already links to, or one its text names. Stay on this site only.',
-    '3. Suggest at most eight links. For each: the exact phrase on this page to use as anchor text, the page it should point to (its address when you know it, otherwise describe it), and one sentence on why a reader would follow it.',
-    '4. Point out vague anchors this page already uses, such as "click here", when you see them.',
+    '1. Read the page text with page_text, and the page facts with page_data: its internal links list the addresses on this site the page already links to, with their anchor text (the list may be capped).',
+    '2. Find passages that talk about a topic one of those pages covers, where this page does not link to it yet. Stay on this site only.',
+    '3. Suggest at most eight links. For each: the exact phrase on this page to use as anchor text, the address it should point to (one from the internal links list), and one sentence on why a reader would follow it.',
+    '4. If a passage names a topic none of the listed pages covers, you may say a page on it would help, but never invent an address: say plainly that you could not see one.',
+    '5. Point out vague anchors this page already uses, such as "click here", when you see them in the list.',
     '',
     'This is advice only: do not open, click or change anything, and never say a link was added.',
     'Take this note from the user into account, if one is given: {{userNote}}',
   ].join('\n'),
   inputs: [{ slot: 'userNote', label: 'Note (optional)', placeholder: 'Pages or sections to favour' }],
-  version: 1,
+  version: 2,
 };
 
 /** The built-ins, in the order the skill picker lists them (`BUILTIN_SKILL_IDS`). */

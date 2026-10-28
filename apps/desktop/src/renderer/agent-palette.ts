@@ -1,5 +1,6 @@
 import { AGENT_PALETTE_NEW_CHAT_ID, AGENT_PALETTE_SETTINGS_ID, AGENT_PALETTE_SKILL_ID_PREFIX, AGENT_PALETTE_TOGGLE_ID } from '@app/specs/agent-panel.spec';
 import type { AgentSkillView } from '@app/specs/agent-session.spec';
+import { SKILL_USER_MARK } from '@app/specs/skills.spec';
 import type { PaletteAction, PaletteSource } from './palette/registry';
 
 // The agent panel in the command palette (spec `agent-panel.spec.ts`; the registration API of
@@ -34,7 +35,7 @@ const KEYWORDS = ['ai', 'agent', 'assistant', 'chat', 'model'];
 
 /** What the skill actions offer: the skills in the panel's last state, and whether a turn runs. */
 export interface PaletteSkills {
-  readonly skills: readonly Pick<AgentSkillView, 'id' | 'name' | 'description'>[];
+  readonly skills: readonly Pick<AgentSkillView, 'id' | 'name' | 'description' | 'builtin'>[];
   readonly running: boolean;
 }
 
@@ -49,7 +50,8 @@ export function setPaletteSkills(next: PaletteSkills): void {
 export function skillPaletteActions(current: PaletteSkills, request: (r: AgentPanelRequest) => void = requestAgentPanel): PaletteAction[] {
   return current.skills.map((skill) => ({
     id: `${AGENT_PALETTE_SKILL_ID_PREFIX}${skill.id}`,
-    label: `Run skill: ${skill.name}`,
+    // The user's own skills are marked, so one can't pass for a built-in.
+    label: skill.builtin ? `Run skill: ${skill.name}` : `Run skill: ${skill.name} (${SKILL_USER_MARK})`,
     group: 'browser',
     keywords: [...KEYWORDS, 'skill', 'seo'],
     icon: 'sidebar',

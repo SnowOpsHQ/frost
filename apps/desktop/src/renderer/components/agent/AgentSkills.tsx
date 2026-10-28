@@ -11,6 +11,7 @@ import {
   fieldErrors,
   saveSkillMessage,
   setInputField,
+  skillDraftWarnings,
   skillListItems,
   slotHelp,
   toggleInput,
@@ -39,8 +40,9 @@ function FieldError({ field, message }: { readonly field: string; readonly messa
   );
 }
 
-function SkillEditor({ editing, onDone }: { readonly editing: Editing; readonly onDone: (message: string | null) => void }) {
+function SkillEditor({ editing, onDone, builtinNames }: { readonly editing: Editing; readonly onDone: (message: string | null) => void; readonly builtinNames: readonly string[] }) {
   const [draft, setDraft] = useState(editing.draft);
+  const warnings = skillDraftWarnings(draft, builtinNames);
   const [result, setResult] = useState<AgentSaveSkillResult | null>(null);
   const [busy, setBusy] = useState(false);
   const errors = fieldErrors(result);
@@ -175,6 +177,11 @@ function SkillEditor({ editing, onDone }: { readonly editing: Editing; readonly 
       </fieldset>
       <FieldError field="inputs" message={errors.inputs} />
 
+      {warnings.map((warning) => (
+        <p key={warning} className="agent-field-warning" role="note" data-testid="agent-skill-warning">
+          {warning}
+        </p>
+      ))}
       {result !== null ? (
         <p className="agent-key-message" role="status" data-testid="agent-skill-message">
           {saveSkillMessage(result)}
@@ -230,6 +237,7 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
         <SkillEditor
           key={`${editing.mode}:${editing.draft.id}`}
           editing={editing}
+          builtinNames={skills.filter((skill) => skill.builtin).map((skill) => skill.name)}
           onDone={(next) => {
             setEditing(null);
             setMessage(next);

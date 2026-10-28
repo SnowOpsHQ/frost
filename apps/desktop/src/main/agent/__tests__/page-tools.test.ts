@@ -173,6 +173,30 @@ describe('page reads', () => {
     expect(data.hreflang).toMatchObject({ total: audit.indexability.hreflang.total });
   });
 
+  test('page-data-internal-links', async () => {
+    const link = (href: string, text: string, kind: 'internal' | 'external' = 'internal') => ({ href, scheme: 'https:', rel: '', text, kind, target: null });
+    const audit = readyAudit('https://example.com/guides/page?x=1', {
+      links: [
+        link('https://example.com/tea#brew', '  Green\n tea  '),
+        link('https://example.com/tea', 'Tea again'),
+        link('https://other.example/', 'Elsewhere', 'external'),
+        ...Array.from({ length: 60 }, (_, i) => link(`https://example.com/p/${i}/${'x'.repeat(900)}`, 't'.repeat(200))),
+      ],
+      linkTotal: 63,
+    });
+    const { tools } = runner({ audit: () => ({ status: 'ready', url: PAGE, audit, renderProfile: null }) });
+    const links = dataOf(await run(tools, 'page_data', {}, 'read')).internalLinks;
+    // Distinct addresses without their fragment, in page order, the first anchor text for each, collapsed.
+    expect(links.list[0]).toEqual({ text: 'Green tea', href: 'https://example.com/tea' });
+    expect(links.list.every((item: { href: string }) => !item.href.startsWith('https://other.example'))).toBe(true);
+    expect(links.distinct).toBe(61);
+    expect(links.list.length + links.omitted).toBe(61);
+    expect(links.list.length).toBeLessThanOrEqual(PAGE_AUDIT_LIMITS.maxInternalLinks);
+    expect(links.list[1].text).toHaveLength(PAGE_AUDIT_LIMITS.maxLinkTextChars);
+    expect(links.list[1].href).toHaveLength(PAGE_AUDIT_LIMITS.maxUrlChars);
+    expect(JSON.stringify(links).length).toBeLessThanOrEqual(PAGE_AUDIT_LIMITS.internalLinksBudgetChars);
+  });
+
   test('audit-tools-refuse-other-page', async () => {
     // The audit is of another origin.
     const other = runner({ audit: () => ({ status: 'ready', url: 'https://other.example/', audit: readyAudit('https://other.example/') }) });

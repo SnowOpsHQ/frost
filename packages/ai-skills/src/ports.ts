@@ -13,6 +13,11 @@ export type PortAnswer<T> = { readonly status: 'ok'; readonly data: T } | { read
 export interface PortQueryOptions {
   /** Aborted when the chat stops: the port may give up, rejecting with `signal.reason`. */
   readonly signal?: AbortSignal;
+  /**
+   * The tab the chat works on (Task 8 review): a source that reads what a tab shows (Phase 3's
+   * SERP reading is per tab) answers for this one. Query-based sources ignore it.
+   */
+  readonly tabId?: number;
 }
 
 /**

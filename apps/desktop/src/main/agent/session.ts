@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { createBuiltinSkillRegistry, renderSkill, type Skill, type SkillRegistry } from '@app/ai-skills/skills';
+import { cleanSlotValue, createBuiltinSkillRegistry, renderSkill, type Skill, type SkillRegistry } from '@app/ai-skills/skills';
 import type { AgentService } from '@app/ipc-contract';
-import { isApprovalDecision, pageUrlOf, type ApprovalDecision, type ToolActivityStatus } from '@app/specs/agent-approvals.spec';
+import { isApprovalDecision, type ApprovalDecision, type ToolActivityStatus } from '@app/specs/agent-approvals.spec';
 import { AGENT_PROTOCOL_LIMITS, CHAT_BUSY_MESSAGE, type ChatMessage, type LockdownTarget, type ToolCall, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { ROUTE_CREDENTIAL_SLOT, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
 import {
@@ -34,8 +34,8 @@ import {
   type AgentToolCardView,
   type AgentUsageView,
 } from '@app/specs/agent-session.spec';
-import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, isSafeInputText, MAX_TOOL_STEPS, routeModelId, type AgentToolName, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
-import { BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, type SkillInputSlot } from '@app/specs/skills.spec';
+import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, MAX_TOOL_STEPS, routeModelId, type AgentToolName, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, skillPageUrl as skillPageUrlOf, type SkillInputSlot } from '@app/specs/skills.spec';
 import {
   DEFAULT_CHAT_RETENTION,
   isChatRetention,
@@ -322,9 +322,10 @@ export function pairedHistory(messages: readonly ChatMessage[]): ChatMessage[] {
   return out;
 }
 
-/** What a skill run's user entry says: the target query and the note the user gave (`''` for neither). */
-export function skillEntryText(inputs: SkillRun['inputs']): string {
+/** What a skill run's user entry says: the page it ran on, the target query and the note the user gave (`''` for none). */
+export function skillEntryText(inputs: SkillRun['inputs'], pageUrl: string | null = null): string {
   const lines: string[] = [];
+  if (pageUrl !== null) lines.push(`Page: ${pageUrl}`);
   if (inputs.targetQuery !== undefined) lines.push(`Target query: ${inputs.targetQuery}`);
   if (inputs.userNote !== undefined) lines.push(inputs.userNote);
   return lines.join('\n');
@@ -368,6 +369,14 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     }
   };
   let grantsVersion = 1;
+
+  const skillsEntitled = (): boolean => {
+    try {
+      return deps.entitlements.allowed('agent.skills') === true;
+    } catch {
+      return false;
+    }
+  };
 
   /** The registry's skills (a registry that throws lists none). */
   const listSkills = (): readonly Skill[] => {
@@ -470,7 +479,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         runtime: { status: deps.host.status(), lastFailure: deps.host.lastFailure() },
         isolation: isolationView(deps.host.lockdown()),
       },
-      skills: listSkills().map((skill) => skillView(skill, isBuiltinSkill(skill.id))),
+      // Without the `agent.skills` entitlement the panel offers none.
+      skills: skillsEntitled() ? listSkills().map((skill) => skillView(skill, isBuiltinSkill(skill.id))) : [],
       chats: summaries,
       active:
         active === undefined
@@ -800,9 +810,10 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   // ---- Sending ----
 
   /**
-   * A skill request's inputs, checked: only the slots the skill declares, each a bounded string
-   * without control or invisible characters (line feeds and tabs aside); a blank one counts as not
-   * given. `null` when an input is out of bounds or the skill doesn't declare it.
+   * A skill request's inputs, checked: only the slots the skill declares, each a bounded string,
+   * cleaned as `renderSkill` quotes it (`cleanSlotValue`: NFKC, invisible characters such as an
+   * emoji's joiner or a soft hyphen removed, one line), so the chat shows what the model reads; a
+   * blank one counts as not given. `null` when an input is out of bounds or the skill doesn't declare it.
    */
   const skillInputs = (skill: Skill, request: AgentSkillRequest): SkillRun['inputs'] | null => {
     const declared = new Set<string>((skill.inputs ?? []).map((input) => input.slot));
@@ -810,8 +821,9 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     for (const slot of SKILL_INPUT_SLOTS) {
       const value: unknown = Object.hasOwn(request, slot) ? request[slot] : undefined;
       if (value === undefined) continue;
-      if (typeof value !== 'string' || value.length > SKILL_SLOT_MAX_CHARS[slot] || !isSafeInputText(value, 'code') || !declared.has(slot)) return null;
-      if (value.trim() !== '') inputs[slot] = value.trim();
+      if (typeof value !== 'string' || value.length > SKILL_SLOT_MAX_CHARS[slot] || !declared.has(slot)) return null;
+      const cleaned = cleanSlotValue(slot, value);
+      if (cleaned !== null) inputs[slot] = cleaned;
     }
     return inputs;
   };
@@ -835,6 +847,11 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         return 'invalid';
       }
     } else {
+      // Not entitled to skills: said before anything about the skill itself.
+      if (!deps.entitlements.allowed('agent') || !deps.entitlements.allowed('agent.skills')) {
+        raise('not-entitled');
+        return 'not-entitled';
+      }
       const resolved = resolveSkill(message);
       if (resolved === 'invalid' || resolved === 'unknown-skill') {
         raise(resolved);
@@ -917,6 +934,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     if (tabId === null) return refuse('no-tab');
     let content = text;
     let allowedTools: readonly AgentToolName[] = ALL_TOOLS;
+    /** The page a skill ran on, as its `pageUrl` slot (shown in the chat). */
+    let skillPageUrl: string | null = null;
     if (run !== null) {
       let page: { readonly url: string | null; readonly title: string | null } | null = null;
       try {
@@ -924,7 +943,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       } catch {
         page = null;
       }
-      const rendered = renderSkill(run.skill, { pageUrl: pageUrlOf(page?.url ?? null), pageTitle: page?.title ?? null, ...run.inputs });
+      skillPageUrl = cleanSlotValue('pageUrl', skillPageUrlOf(page?.url ?? null));
+      const rendered = renderSkill(run.skill, { pageUrl: skillPageUrl, pageTitle: page?.title ?? null, ...run.inputs });
       const skillTools = new Set<string>(run.skill.allowedTools);
       allowedTools = ALL_TOOLS.filter((name) => skillTools.has(name));
       if (rendered === null || rendered.length > L.maxMessageChars || allowedTools.length === 0) return refuse('unknown-skill');
@@ -953,7 +973,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     current.historyBefore = chat.history.length;
     current.entriesBefore = chat.entries.length;
     chat.history.push({ role: 'user', content });
-    chat.entries.push(run !== null ? { ...newEntry('user', skillEntryText(run.inputs)), skill: { id: run.skill.id, name: run.skill.name } } : newEntry('user', text));
+    chat.entries.push(run !== null ? { ...newEntry('user', skillEntryText(run.inputs, skillPageUrl)), skill: { id: run.skill.id, name: run.skill.name } } : newEntry('user', text));
     chat.error = null;
     chat.modelId = modelId;
     selected = chat.id;

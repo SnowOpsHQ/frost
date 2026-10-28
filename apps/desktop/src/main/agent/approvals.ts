@@ -24,6 +24,7 @@ import {
   type ToolRunVia,
 } from '@app/specs/agent-approvals.spec';
 import { ToolInputSchema, type JsonValue, type ToolResult } from '@app/specs/agent-protocol.schema';
+import { completeToolInput } from '@app/specs/agent-search-tools.spec';
 import { AGENT_TOOLS, isAgentToolName, isGrantable, isMcpToolName, TOOL_ERROR_CODES, toolRisk, type AgentToolRisk, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import type { AgentEntitlements } from './entitlements';
 import type { AgentGrants } from './grants';
@@ -493,13 +494,15 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
         fail(call, 'not-allowed');
         return;
       }
-      const input = reparse(invoke.toolName, invoke.input);
+      const tabUrl = deps.tabUrl(chat.tabId);
+      // Defaults that depend on the tab (Task 8 review: `gsc_performance`'s page) are filled in
+      // before the input is parsed, so the approval shows, hashes and runs exactly that input.
+      const input = reparse(invoke.toolName, completeToolInput(invoke.toolName, invoke.input, tabUrl));
       if (input === null) {
         stats.refused += 1;
         fail(call, 'invalid-input');
         return;
       }
-      const tabUrl = deps.tabUrl(chat.tabId);
       const pageUrl = isTabBound(invoke.toolName) ? pageUrlOf(tabUrl) : null;
       if (isTabBound(invoke.toolName) && pageUrl === null) {
         // A page tool with no web page in the tab: nothing to read or act on.

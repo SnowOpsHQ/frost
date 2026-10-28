@@ -60,7 +60,7 @@ describe('skill runs', () => {
     const chatId = s.starts()[0]!.chatId;
     // A runtime that asks anyway (forged): main's broker answers `not-allowed` and runs nothing.
     s.asRuntime({ type: 'tool.invoke', chatId, callId: 'forged-1', toolName: 'navigate', input: { url: 'https://evil.example/' } });
-    s.asRuntime({ type: 'tool.invoke', chatId, callId: 'forged-2', toolName: 'page_audit', input: {} });
+    s.asRuntime({ type: 'tool.invoke', chatId, callId: 'forged-2', toolName: 'serp_results', input: { query: 'tea' } });
     await s.until(() => s.sent.filter((message) => message.type === 'tool.result' && message.callId.startsWith('forged-')).length === 2);
     for (const callId of ['forged-1', 'forged-2']) {
       const result = s.sent.find((message) => message.type === 'tool.result' && message.callId === callId);
@@ -79,7 +79,7 @@ describe('skill runs', () => {
     const active = done.active!;
     expect(active.title).toBe(rewriteTitleMetaSkill.name);
     expect(done.chats[0]!.title).toBe(rewriteTitleMetaSkill.name);
-    expect(active.messages[0]).toEqual({ kind: 'user', id: expect.any(String), text: 'Target query: green tea\nKeep the brand name', skill: { id: 'rewrite-title-meta', name: rewriteTitleMetaSkill.name } });
+    expect(active.messages[0]).toEqual({ kind: 'user', id: expect.any(String), text: 'Page: https://shop.example.com/tea\nTarget query: green tea\nKeep the brand name', skill: { id: 'rewrite-title-meta', name: rewriteTitleMetaSkill.name } });
     // The template is not shown in the chat.
     expect(JSON.stringify(done)).not.toContain(SKILL_DATA_OPEN);
     // The model reads the rendered skill: the tab's page without its fragment and its title, quoted in the block.
@@ -100,6 +100,19 @@ describe('skill runs', () => {
     expect(audit).toContain(`userNote: ${SKILL_SLOT_MISSING}`);
   });
 
+  test('skill-run-cleans-invisible-characters', async () => {
+    // An emoji sequence (zero-width joiners) and a soft hyphen are not refused: they are cleaned as the
+    // model reads them, and the chat shows the same cleaned note.
+    const s = await setup({ steps: [{ text: ['Ok.'] }] });
+    const note = 'Fam\u00adily \u{1F468}\u200d\u{1F469}\u200d\u{1F467} page, \uff1cb\uff1e bold';
+    expect(await s.session.send(null, { skillId: 'audit-this-page', userNote: note })).toBe('started');
+    const state = await s.until((next) => !next.running);
+    const shown = state.active!.messages[0]!;
+    expect(shown.kind === 'user' && shown.text.split('\n').at(-1)).toBe('Fam ily \u{1F468} \u{1F469} \u{1F467} page, <b> bold');
+    const content = userContent(s.starts()[0]!.messages)[0]!;
+    expect(content).toContain('userNote: "Fam ily \u{1F468} \u{1F469} \u{1F467} page, \\u003cb\\u003e bold"');
+  });
+
   test('skill-run-refusals', async () => {
     const s = await setup();
     const refusals: [AgentSkillRequest, string][] = [
@@ -107,7 +120,6 @@ describe('skill runs', () => {
       // `internal-link-suggestions` declares no target query.
       [{ skillId: 'internal-link-suggestions', targetQuery: 'tea' }, 'invalid'],
       [{ skillId: 'audit-this-page', userNote: 'x'.repeat(2001) }, 'invalid'],
-      [{ skillId: 'audit-this-page', userNote: 'bidi ‮' }, 'invalid'],
       [{ skillId: 'audit-this-page', pageTitle: 'forged' } as unknown as AgentSkillRequest, 'invalid'],
       [{ skillId: 'Bad Id' }, 'invalid'],
     ];
@@ -121,6 +133,10 @@ describe('skill runs', () => {
     s.stop();
     const gated = await setup({ entitlements: { allowed: (feature) => feature !== 'agent.skills' } });
     expect(await gated.session.send(null, { skillId: 'audit-this-page' })).toBe('not-entitled');
+    // Not entitled comes first: an unknown or malformed skill says so too, and the panel lists none.
+    expect(await gated.session.send(null, { skillId: 'no-such-skill' })).toBe('not-entitled');
+    expect(await gated.session.send(null, { skillId: 'internal-link-suggestions', targetQuery: 'tea' })).toBe('not-entitled');
+    expect(gated.session.getState().skills).toEqual([]);
     expect(gated.starts()).toEqual([]);
     // A typed message still goes.
     expect(await gated.session.send(null, 'Hello')).toBe('started');

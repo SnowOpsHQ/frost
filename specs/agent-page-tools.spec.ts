@@ -163,6 +163,14 @@ export const PAGE_AUDIT_LIMITS = {
   maxHreflang: 20,
   /** Indexability reasons listed. */
   maxReasons: 6,
+  /**
+   * `page_data`'s internal links (Task 7 review: the link skill needs them): distinct addresses
+   * (fragment dropped) in page order, each with its anchor text, at most this many, the list's JSON
+   * trimmed to `internalLinksBudgetChars`; the total counted says how many there were.
+   */
+  maxInternalLinks: 40,
+  maxLinkTextChars: 100,
+  internalLinksBudgetChars: 8_000,
 } as const;
 
 /** Characters of a page title any tool reports. */

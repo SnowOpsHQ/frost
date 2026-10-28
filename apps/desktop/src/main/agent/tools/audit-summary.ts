@@ -97,7 +97,8 @@ export function summariseAudit(audit: SeoAudit, renderProfile?: AuditRenderProfi
 
 /**
  * `page_data`'s data for a ready audit: the page's facts (title, meta description, canonical,
- * robots, language, headings outline, link and image counts, structured-data types, hreflang),
+ * robots, language, headings outline, link and image counts, its internal links with their anchor
+ * text, structured-data types, hreflang),
  * the indexability verdict and its reasons, and the render profile the audit ran under.
  */
 export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderProfile | null): Record<string, unknown> {
@@ -143,5 +144,33 @@ export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderPr
     partial: page.partial,
   };
   const outline = page.headings.slice(0, L.maxHeadings).map((heading) => ({ level: heading.level, text: clip(heading.text, L.maxHeadingChars) }));
-  return trimToBudget(outline, (kept, omitted) => ({ ...base, headings: { total: page.headingTotal, outline: kept, omitted: omitted + (page.headings.length - outline.length) } }), L.budgetChars);
+  const withLinks = { ...base, internalLinks: internalLinksOf(audit) };
+  return trimToBudget(outline, (kept, omitted) => ({ ...withLinks, headings: { total: page.headingTotal, outline: kept, omitted: omitted + (page.headings.length - outline.length) } }), L.budgetChars);
+}
+
+/**
+ * The page's internal links as `page_data` lists them: distinct addresses (fragment dropped) in page
+ * order with the first anchor text seen for each (collapsed, cut), capped and trimmed to
+ * `internalLinksBudgetChars`. Read from the audit's link list (the first `links.analysed` links), so
+ * `analysed` and `distinct` say what the list covers.
+ */
+export function internalLinksOf(audit: SeoAudit): Record<string, unknown> {
+  const seen = new Set<string>();
+  const links: { text: string; href: string }[] = [];
+  for (const link of audit.page.linkList) {
+    if (link.kind !== 'internal') continue;
+    let href: string;
+    try {
+      const parsed = new URL(link.href);
+      parsed.hash = '';
+      href = parsed.href;
+    } catch {
+      continue;
+    }
+    if (seen.has(href)) continue;
+    seen.add(href);
+    links.push({ text: clip(link.text.replace(/\s+/g, ' ').trim(), L.maxLinkTextChars), href: clip(href, L.maxUrlChars) });
+  }
+  const listed = links.slice(0, L.maxInternalLinks);
+  return trimToBudget(listed, (kept, omitted) => ({ analysed: audit.page.links.analysed, internal: audit.page.links.internal, distinct: links.length, list: kept, omitted: omitted + (links.length - listed.length) }), L.internalLinksBudgetChars);
 }

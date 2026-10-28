@@ -11,7 +11,7 @@ import { APPROVAL_DECISIONS, MAX_GRANT_ORIGIN_CHARS } from './agent-approvals.sp
 import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_RETENTIONS } from './agent-data.spec';
 import { CREDENTIAL_LIMITS, CREDENTIAL_SLOTS, isValidModelSettings } from './agent-proxy.spec';
 import { CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
-import { ALLOWED_MODEL_IDS, isSafeInputText, MODEL_ROUTES } from './agent-tools.spec';
+import { ALLOWED_MODEL_IDS, MODEL_ROUTES } from './agent-tools.spec';
 import { SKILL_ID_PATTERN, SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from './skills.spec';
 
 /** A chat id: main makes them with `crypto.randomUUID`. */
@@ -32,12 +32,13 @@ export const AgentSendTextInputSchema = z.strictObject({
     .refine((text) => text.trim() !== '', { message: 'empty message' }),
 });
 
-/** A skill input the user typed: bounded, no control or invisible character but line feeds and tabs (main cleans it again when it renders). */
-const skillValue = (max: number) =>
-  z
-    .string()
-    .max(max)
-    .refine((text) => isSafeInputText(text, 'code'), { message: 'holds a control or invisible character' });
+/**
+ * A skill input the user typed: bounded only. Its text is never shown as an approval and never runs:
+ * main cleans it (NFKC, control and invisible characters such as an emoji's joiner or a soft hyphen
+ * removed, one line) and quotes it as data (`renderSkill`), so a note with an emoji sequence is
+ * accepted rather than refused (Task 7 review).
+ */
+const skillValue = (max: number) => z.string().max(max);
 
 /**
  * A skill run (Task 7; `AgentSkillRequest`): the skill's id and the inputs the user filled, never

@@ -4,7 +4,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import { AGENT_PANEL_TITLE } from '@app/specs/agent-panel.spec';
 import { agentActions } from '../../agent-actions';
 import { agentPaletteSources, onAgentPanelRequest, setPaletteSkills } from '../../agent-palette';
-import { chatHeading, railBadge, runningChatId } from '../../agent-view';
+import { chatHeading, railBadge, runningChatId, skillRunChatId } from '../../agent-view';
 import { useAgentState } from '../../hooks/useAgentState';
 import { ChevronIcon, PlusIcon } from '../../icons';
 import { registerPaletteActions } from '../../palette/registry';
@@ -63,6 +63,8 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   // The latest state, for the palette's requests (a skill runs in the chat on screen).
   const latest = useRef(state);
   latest.current = state;
+  const activeTab = useRef(tab);
+  activeTab.current = tab;
 
   // The palette's "Run skill" actions offer what main lists now, and nothing while a turn runs.
   const skills = state?.skills;
@@ -92,11 +94,13 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
           setOpen(true);
           setView('settings');
         } else if (request.kind === 'run-skill') {
-          // Runs at once with no inputs (the composer's picker is where a note is added).
+          // Runs at once with no inputs (the composer's picker is where a note is added), on the
+          // active tab: in the chat on screen if that chat works on it, else in a new chat (which
+          // main binds to the active tab).
           focusAfter.current = null;
           setOpen(true);
           setView('chat');
-          void agentActions.send(latest.current?.active?.id ?? null, { skillId: request.skillId });
+          void agentActions.send(skillRunChatId(latest.current?.active ?? null, activeTab.current?.id ?? null), { skillId: request.skillId });
         } else {
           focusAfter.current = 'input';
           setOpen(true);

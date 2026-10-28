@@ -1,5 +1,5 @@
 // Spec: specs/agent-search-tools.spec.ts (SEARCH_TOOL_LIMITS, SEARCH_TOOL_SOURCES, SEARCH_TOOL_TIMEOUT_MS,
-// PORT_NOT_CONNECTED_REASONS, GSC_NO_PAGE_REASON) · specs/agent-tools.spec.ts (AGENT_TOOL_INPUT_LIMITS) ·
+// PORT_NOT_CONNECTED_REASONS, GSC_NO_PAGE_REASON, GSC_NOT_PUBLIC_REASON, gscPageUrl, completeToolInput) · specs/agent-tools.spec.ts (AGENT_TOOL_INPUT_LIMITS) ·
 // packages/ai-skills/src/ports.ts (the ports and their fakes)
 // Acceptance: specs/agent-search-tools.feature.md (Handlers)
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -7,8 +7,8 @@ import { unavailable, type PortAnswer, type SerpResults } from '@app/ai-skills';
 import { createFakeGscPort, createFakeIntentPort, createFakeSerpPort, FAKE_AI_SEARCH_ANSWER, FAKE_GSC_PERFORMANCE, FAKE_INTENT, FAKE_SERP_RESULTS } from '@app/ai-skills/fakes';
 import type { ToolRunVia } from '@app/specs/agent-approvals.spec';
 import type { JsonValue } from '@app/specs/agent-protocol.schema';
-import { GSC_NO_PAGE_REASON, PORT_NOT_CONNECTED_REASONS, SEARCH_TOOL_LIMITS as L, SEARCH_TOOL_SOURCES, SEARCH_TOOL_TIMEOUT_MS } from '@app/specs/agent-search-tools.spec';
-import { AGENT_TOOL_INPUT_LIMITS } from '@app/specs/agent-tools.spec';
+import { completeToolInput, GSC_NO_PAGE_REASON, GSC_NOT_PUBLIC_REASON, gscPageUrl, PORT_NOT_CONNECTED_REASONS, SEARCH_TOOL_LIMITS as L, SEARCH_TOOL_SOURCES, SEARCH_TOOL_TIMEOUT_MS } from '@app/specs/agent-search-tools.spec';
+import { AGENT_TOOL_INPUT_LIMITS, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
 import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 import { resolveAgentPorts } from '../ports';
 import { createPageToolRunner, type PageContents, type PageToolDeps } from '../tools';
@@ -43,8 +43,10 @@ const CALLS = [
   ['serp_results', { query: 'green tea' }],
   ['search_intent', { query: 'buy green tea' }],
   ['run_ai_search', { query: 'best green tea' }],
-  ['gsc_performance', {}],
+  ['gsc_performance', { url: 'https://shop.example.com/tea' }],
 ] as const;
+/** `gsc_performance`'s input as main's broker completes it for the tab at `TAB_URL`. */
+const GSC_DEFAULT = completeToolInput('gsc_performance', {}, TAB_URL) as Record<string, unknown>;
 
 describe('search tools', () => {
   test('search-tools-unavailable-without-a-port', async () => {
@@ -91,8 +93,9 @@ describe('search tools', () => {
     expect(dataOf(await run(tools, 'search_intent', { query: 'buy green tea' }))).toEqual({ query: 'buy green tea', primary: FAKE_INTENT.primary, intents: FAKE_INTENT.intents });
     expect(intent.calls).toEqual([{ query: 'buy green tea' }]);
 
-    // No url: the tab's page without its fragment, over the default days.
-    const performance = dataOf(await run(tools, 'gsc_performance', {}));
+    // No url: the broker fills in the tab's page without its fragment, over the default days.
+    expect(GSC_DEFAULT).toEqual({ url: 'https://shop.example.com/tea?x=1', days: AGENT_TOOL_INPUT_LIMITS.defaultGscDays });
+    const performance = dataOf(await run(tools, 'gsc_performance', GSC_DEFAULT));
     expect(performance).toEqual({ ...FAKE_GSC_PERFORMANCE, url: 'https://shop.example.com/tea?x=1', days: AGENT_TOOL_INPUT_LIMITS.defaultGscDays, queriesTotal: 1 });
     expect(gsc.calls[0]).toEqual({ url: 'https://shop.example.com/tea?x=1', days: AGENT_TOOL_INPUT_LIMITS.defaultGscDays });
     await run(tools, 'gsc_performance', { url: 'https://shop.example.com/other#frag', days: 90 });
@@ -109,7 +112,7 @@ describe('search tools', () => {
     expect(data.unavailable.startsWith('Quota used up for today. xxx')).toBe(true);
     expect(data.unavailable).toHaveLength(L.maxReasonChars);
     expect(Object.keys(data)).toEqual(['unavailable']);
-    expect(dataOf(await run(tools, 'gsc_performance', {}))).toEqual({ unavailable: 'This data source gave no reason.' });
+    expect(dataOf(await run(tools, 'gsc_performance', GSC_DEFAULT))).toEqual({ unavailable: 'This data source gave no reason.' });
   });
 
   test('search-tools-cap-results', async () => {
@@ -147,7 +150,7 @@ describe('search tools', () => {
 
     expect(dataOf(await run(tools, 'search_intent', { query: 'tea' })).intents).toEqual([{ intent: 'commercial', confidence: 1 }, { intent: 'informational', confidence: null }]);
 
-    const performance = dataOf(await run(tools, 'gsc_performance', {}));
+    const performance = dataOf(await run(tools, 'gsc_performance', GSC_DEFAULT));
     expect(performance.queries).toHaveLength(L.maxGscQueries);
     expect(performance.queriesTotal).toBe(60);
     expect(performance).toMatchObject({ ctr: null, position: null });
@@ -168,7 +171,7 @@ describe('search tools', () => {
       );
     }
     const gscPort = { performance: async () => ({ status: 'ok', data: { queries: {} } }) } as never;
-    expect(await run(runner({ gsc: gscPort }), 'gsc_performance', {})).toEqual({ ok: false, code: 'failed' });
+    expect(await run(runner({ gsc: gscPort }), 'gsc_performance', GSC_DEFAULT)).toEqual({ ok: false, code: 'failed' });
     // A port that throws fails the call.
     const throwing = { results: () => { throw new Error('boom https://secret.example/?token=1'); }, aiSearch: async () => Promise.reject(new Error('x')) } as never;
     expect(await run(runner({ serp: throwing }), 'serp_results', { query: 'tea' })).toEqual({ ok: false, code: 'failed' });
@@ -201,7 +204,7 @@ describe('search tools', () => {
     const asked = createFakeGscPort();
     const stopped = new AbortController();
     stopped.abort();
-    expect(await run(runner({ gsc: asked }), 'gsc_performance', {}, ctx('read', stopped.signal))).toEqual({ ok: false, code: 'failed' });
+    expect(await run(runner({ gsc: asked }), 'gsc_performance', GSC_DEFAULT, ctx('read', stopped.signal))).toEqual({ ok: false, code: 'failed' });
     expect(asked.calls).toEqual([]);
     // A port that never answers times out, and its signal is aborted then.
     vi.useFakeTimers();
@@ -215,12 +218,51 @@ describe('search tools', () => {
 
   test('search-tools-gsc-needs-a-page', async () => {
     const gsc = createFakeGscPort();
-    for (const tabUrl of [null, '', 'about:blank', 'app://app/newtab']) {
-      expect(await run(runner({ gsc }, tabUrl), 'gsc_performance', {})).toEqual({ ok: true, data: { unavailable: GSC_NO_PAGE_REASON }, source: SEARCH_TOOL_SOURCES.gsc_performance });
+    const source = SEARCH_TOOL_SOURCES.gsc_performance;
+    // The runner reads only the input's url: none, and the tab's page is never used at run time.
+    expect(await run(runner({ gsc }), 'gsc_performance', {})).toEqual({ ok: true, data: { unavailable: GSC_NO_PAGE_REASON }, source });
+    // No web page in the tab: the broker fills in nothing.
+    for (const tabUrl of [null, '', 'about:blank', 'app://app/newtab']) expect(completeToolInput('gsc_performance', {}, tabUrl)).toEqual({ days: AGENT_TOOL_INPUT_LIMITS.defaultGscDays });
+    // A given url or days are kept; other tools' inputs are left alone.
+    expect(completeToolInput('gsc_performance', { url: 'https://a.example/', days: 7 }, TAB_URL)).toEqual({ url: 'https://a.example/', days: 7 });
+    expect(completeToolInput('serp_results', { query: 'x' }, TAB_URL)).toEqual({ query: 'x' });
+    expect(completeToolInput('gsc_performance', 'x', TAB_URL)).toBe('x');
+    // User info and fragment never reach the port.
+    expect(gscPageUrl('https://user:pw@shop.example.com/a?b=1#c')).toBe('https://shop.example.com/a?b=1');
+    expect(completeToolInput('gsc_performance', {}, 'https://user:pw@shop.example.com/a#c')).toMatchObject({ url: 'https://shop.example.com/a' });
+    // A page that isn't public is refused as data, without asking the port.
+    for (const url of ['http://localhost:3000/', 'http://192.168.1.4/admin', 'http://intranet/', 'https://printer.local/']) {
+      expect(await run(runner({ gsc }), 'gsc_performance', { url })).toEqual({ ok: true, data: { unavailable: GSC_NOT_PUBLIC_REASON, url: gscPageUrl(url) }, source });
     }
     expect(gsc.calls).toEqual([]);
-    // With a url the tab doesn't matter.
     expect(dataOf(await run(runner({ gsc }, null), 'gsc_performance', { url: 'https://example.com/' })).url).toBe('https://example.com/');
+  });
+
+  test('search-tools-worst-case-fits-the-budget', async () => {
+    // Every string at its cap and made of characters JSON escapes (`"` doubles), every list at its cap.
+    const q = (n: number) => '"'.repeat(n);
+    const url = `https://e.example/${'"'.repeat(3000)}`;
+    const tools = runner({
+      serp: createFakeSerpPort({
+        results: { status: 'ok', data: { query: q(300), locale: q(80), device: 'desktop', fetchedAt: q(80), results: Array.from({ length: 50 }, (_, i) => ({ position: i + 1, url, title: q(2000), snippet: q(5000) })), features: Array.from({ length: 50 }, () => q(200)) } },
+        aiSearch: { status: 'ok', data: { query: q(300), answer: q(50_000), citations: Array.from({ length: 50 }, () => ({ url, title: q(2000) })), fetchedAt: q(80) } },
+      }),
+      intent: createFakeIntentPort({ answer: { status: 'ok', data: { query: q(300), primary: 'commercial', intents: [] } } }),
+      gsc: createFakeGscPort({ answer: { status: 'ok', data: { url, days: 28, clicks: 1, impressions: 1, ctr: 1, position: 1, queries: Array.from({ length: 100 }, () => ({ query: q(500), clicks: 1e15, impressions: 1e15, ctr: 0.123456789, position: 1.23456789 })) } } }),
+    });
+    for (const [tool, input] of CALLS) {
+      const data = dataOf(await run(tools, tool, input));
+      const size = JSON.stringify(data).length;
+      expect(size, tool).toBeLessThanOrEqual(L.budgetChars);
+      expect(L.budgetChars).toBeLessThan(TOOL_RESULT_MAX_CHARS);
+      if (tool === 'serp_results') {
+        expect(data.results.length).toBeGreaterThan(0);
+        expect(data.resultsTotal).toBe(50);
+        expect(data.results[0].url.length).toBeLessThanOrEqual(L.maxUrlChars);
+      }
+      if (tool === 'run_ai_search') expect(data.answerTruncated).toBe(true);
+      if (tool === 'gsc_performance') expect(data.queriesTotal).toBe(100);
+    }
   });
 
   test('run-ai-search-needs-approval', async () => {

@@ -35,14 +35,24 @@ and 4 merge), `service.ts` (`ports`, `entitlements`). Each line maps to one name
   cut; bad numbers `null`; unknown intents dropped; malformed answers fail.
 - **Scenario: search-tools-abort-propagates** — Stop aborts the port's signal and fails the call; a
   port that never answers times out and its signal is aborted.
-- **Scenario: search-tools-gsc-needs-a-page** — no `url` and no web page in the tab: data with
-  `GSC_NO_PAGE_REASON`, and the port is not asked.
+- **Scenario: search-tools-gsc-needs-a-page** — the broker fills in the tab's page (`completeToolInput`;
+  user info and fragment dropped); no web page: `GSC_NO_PAGE_REASON`; a page that isn't public:
+  `GSC_NOT_PUBLIC_REASON`; the port is asked for neither.
+- **Scenario: search-tools-worst-case-fits-the-budget** — every string at its cap in escaped
+  characters, every list at its cap: each tool's data within `budgetChars`.
 - **Scenario: run-ai-search-needs-approval** — `via` other than `approval` is refused.
 
 ## Wiring (`apps/desktop/src/main/agent/__tests__/agent-ports.test.ts`)
 - **Scenario: agent-ports-default-to-not-connected** — `resolveAgentPorts()` answers
   `unavailable` with `PORT_NOT_CONNECTED_REASONS`; a given port is used as is.
-- **Scenario: agent-port-adapters-are-thin** — an adapter over a read service maps its data to
-  `ok`, a missing answer and a thrown error to `unavailable`, and passes the signal on.
+- **Scenario: agent-port-adapters-are-thin** — SERP from the chat tab's `ready` reading for the same
+  query (else a reason), no AI answer read; intent from `classifyIntent` (states explained); GSC
+  page scope, nearest range, totals merged with top queries, reason codes in words; a throw is a
+  fixed reason; an abort goes on.
+- **Scenario: agent-port-adapters-accept-the-real-shapes** — local copies of Phase 3's
+  `SerpReadApi` and Phase 4's `GscService` type-check against the adapters, and the plan's wiring
+  block compiles against `createAgentService`'s options.
+- **Scenario: gsc-default-url-is-in-the-approved-input** — the approval shows the tab's page in the
+  input and its hash; the approved page is read after the tab moves; a private page is refused.
 - **Scenario: agent-search-tools-through-the-broker** — a scripted turn calls `serp_results` and
   the model's history holds the wrapped, mapped answer.

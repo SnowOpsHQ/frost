@@ -11,12 +11,15 @@ import {
 } from '@app/specs/agent-panel.spec';
 import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS } from '@app/specs/agent-session.spec';
 import { ALLOWED_MODEL_IDS } from '@app/specs/agent-tools.spec';
-import { SKILL_SLOT_MAX_CHARS } from '@app/specs/skills.spec';
+import { SKILL_SLOT_MAX_CHARS, SKILL_WARNINGS } from '@app/specs/skills.spec';
 import { SKILLS } from './agent-fixtures';
 import {
   pickedSkill,
+  skillDisplayName,
+  skillDraftWarnings,
   skillOptions,
   skillRequest,
+  skillRunChatId,
   userMessageSkillLabel,
   agentPanelOpenFromStorage,
   answerMessage,
@@ -218,5 +221,26 @@ describe('agent panel view model', () => {
     expect(userMessageSkillLabel({ kind: 'user', id: 'e1', text: 'note', skill: { id: 'audit-this-page', name: 'Audit this page' } })).toBe('Skill: Audit this page');
     expect(userMessageSkillLabel({ kind: 'user', id: 'e1', text: 'hi' })).toBeNull();
     expect(userMessageSkillLabel({ kind: 'assistant', id: 'e2', text: 'x', tools: [], streaming: false })).toBeNull();
+  });
+
+  test('skill-view-review-helpers', () => {
+    // Invisible characters dropped before the IPC; a cut never splits a surrogate pair.
+    const rewrite = SKILLS[1]!;
+    expect(skillRequest(rewrite, { userNote: 'Fam\u00adily \u{1F468}\u200d\u{1F469} \u202enote' })).toEqual({ skillId: 'rewrite-title-meta', userNote: 'Family \u{1F468}\u{1F469} note' });
+    const long = skillRequest(rewrite, { userNote: `${'n'.repeat(SKILL_SLOT_MAX_CHARS.userNote - 1)}\u{1F600}` }).userNote!;
+    expect(long).toHaveLength(SKILL_SLOT_MAX_CHARS.userNote - 1);
+    // The user's own skills are marked.
+    expect(skillDisplayName({ name: 'Mine', builtin: false })).toBe('Mine (Your skill)');
+    expect(skillDisplayName({ name: 'Audit this page', builtin: true })).toBe('Audit this page');
+    // A palette run goes to the chat on screen only when it works on the active tab.
+    expect(skillRunChatId({ id: 'c1', tabId: 3 }, 3)).toBe('c1');
+    expect(skillRunChatId({ id: 'c1', tabId: 3 }, 4)).toBeNull();
+    expect(skillRunChatId({ id: 'c1', tabId: null }, 4)).toBeNull();
+    expect(skillRunChatId(null, 4)).toBeNull();
+    expect(skillRunChatId({ id: 'c1', tabId: 3 }, null)).toBeNull();
+    // The editor warns about a built-in's name and acting tools (it still saves).
+    expect(skillDraftWarnings({ name: 'Mine', allowedTools: ['page_text'] }, ['Audit this page'])).toEqual([]);
+    expect(skillDraftWarnings({ name: '  audit THIS   page ', allowedTools: ['page_text'] }, ['Audit this page'])).toEqual([SKILL_WARNINGS.builtinName]);
+    for (const tool of ['navigate', 'click', 'execute_javascript', 'run_ai_search']) expect(skillDraftWarnings({ name: 'Mine', allowedTools: ['page_text', tool] }, [])).toEqual([SKILL_WARNINGS.actingTools]);
   });
 });

@@ -26,8 +26,8 @@ import type {
   AgentState,
   AgentToolCardView,
 } from '@app/specs/agent-session.spec';
-import { SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_NAMES, templateSlots, type SkillInputSlot, type SkillSlotName } from '@app/specs/skills.spec';
-import { AGENT_TOOL_NAMES, AGENT_TOOLS, ALLOWED_MODEL_IDS, MODEL_ROUTES, isMcpToolName, routeModelId, type AgentToolName, type AgentToolRisk, type ModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
+import { SKILL_ACTING_TOOLS, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_NAMES, SKILL_USER_MARK, SKILL_WARNINGS, templateSlots, type SkillInputSlot, type SkillSlotName } from '@app/specs/skills.spec';
+import { AGENT_TOOL_NAMES, AGENT_TOOLS, ALLOWED_MODEL_IDS, MODEL_ROUTES, UNSAFE_INPUT_CHARS, isMcpToolName, routeModelId, type AgentToolName, type AgentToolRisk, type ModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
 import {
   AGENT_SAVE_SKILL_MESSAGES,
   CHAT_EXPORT_MESSAGES,
@@ -383,9 +383,23 @@ export function railBadge(state: Pick<AgentState, 'approval' | 'running'> | null
 /** What a skill input field holds, by slot (the composer's fields). */
 export type SkillFieldValues = { readonly [S in SkillInputSlot]?: string };
 
+/** A skill's name as the picker and the palette show it: the user's own marked "Your skill". */
+export function skillDisplayName(skill: Pick<AgentSkillView, 'name' | 'builtin'>): string {
+  return skill.builtin ? skill.name : `${skill.name} (${SKILL_USER_MARK})`;
+}
+
 /** The picker's choices: "no skill" (a typed message), then main's skills in order. */
 export function skillOptions(skills: readonly AgentSkillView[]): readonly { readonly value: string; readonly label: string }[] {
-  return [{ value: '', label: 'Write a message' }, ...skills.map((skill) => ({ value: skill.id, label: skill.name }))];
+  return [{ value: '', label: 'Write a message' }, ...skills.map((skill) => ({ value: skill.id, label: skillDisplayName(skill) }))];
+}
+
+const UNSAFE_ALL = new RegExp(UNSAFE_INPUT_CHARS.source, 'gu');
+
+/** `text` cut at `max` UTF-16 units, never between a surrogate pair. */
+function cutText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
 }
 
 /** The skill picked (`''`: none), or `null` when main no longer lists it. */
@@ -400,8 +414,9 @@ export function pickedSkill(skills: readonly AgentSkillView[], id: string): Agen
 export function skillRequest(skill: AgentSkillView, values: SkillFieldValues): AgentSkillRequest {
   const request: { skillId: string; userNote?: string; targetQuery?: string } = { skillId: skill.id };
   for (const input of skill.inputs) {
-    const value = values[input.slot]?.trim() ?? '';
-    if (value !== '') request[input.slot] = value.slice(0, SKILL_SLOT_MAX_CHARS[input.slot]);
+    // Invisible characters (an emoji's joiner, a soft hyphen) are dropped here too; main cleans again.
+    const value = (values[input.slot] ?? '').replace(UNSAFE_ALL, '').trim();
+    if (value !== '') request[input.slot] = cutText(value, SKILL_SLOT_MAX_CHARS[input.slot]);
   }
   return request;
 }
@@ -557,4 +572,25 @@ export function fieldErrors(result: AgentSaveSkillResult | null): Partial<Record
 export function saveSkillMessage(result: AgentSaveSkillResult | null): string | null {
   if (result === null) return null;
   return AGENT_SAVE_SKILL_MESSAGES[result.result] ?? AGENT_SAVE_SKILL_MESSAGES.failed;
+}
+
+/**
+ * What the skills editor warns about a draft (it still saves): a name a built-in skill already has
+ * (`builtinNames`, compared case- and space-insensitively), and acting tools (`SKILL_ACTING_TOOLS`).
+ */
+export function skillDraftWarnings(draft: Pick<SkillEditorDraft, 'name' | 'allowedTools'>, builtinNames: readonly string[]): readonly string[] {
+  const key = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+  const warnings: string[] = [];
+  if (draft.name.trim() !== '' && builtinNames.some((name) => key(name) === key(draft.name))) warnings.push(SKILL_WARNINGS.builtinName);
+  if (draft.allowedTools.some((tool) => (SKILL_ACTING_TOOLS as readonly string[]).includes(tool))) warnings.push(SKILL_WARNINGS.actingTools);
+  return warnings;
+}
+
+/**
+ * The chat a palette "Run skill" runs in: the chat on screen when it works on the active tab, else
+ * `null` (a new chat, which main binds to the active tab), so a skill never runs on a tab the user
+ * isn't looking at.
+ */
+export function skillRunChatId(active: Pick<AgentActiveChatView, 'id' | 'tabId'> | null, activeTabId: number | null): string | null {
+  return active !== null && activeTabId !== null && active.tabId === activeTabId ? active.id : null;
 }

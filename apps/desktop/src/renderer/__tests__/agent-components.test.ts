@@ -185,7 +185,7 @@ describe('agent panel components', () => {
 
     render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills: SKILLS }));
     const picker = byTestId('agent-skill-picker') as HTMLSelectElement;
-    expect([...picker.options].map((option) => option.textContent)).toEqual(['Write a message', ...SKILLS.map((skill) => skill.name)]);
+    expect([...picker.options].map((option) => option.textContent)).toEqual(['Write a message', ...SKILLS.map((skill) => (skill.builtin ? skill.name : `${skill.name} (Your skill)`))]);
     expect(byTestId('agent-input')).not.toBeNull();
     typeInto(picker, 'rewrite-title-meta');
     // The message field gives way to the skill's description and its inputs; Send to Run.
