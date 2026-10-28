@@ -156,10 +156,15 @@ For the Phase 7 (libSQL sync) teammate. The tables are in the session database
 Indexes:
 - `ci_versions (lane_key, created_at)` and `(page_url, created_at)`;
 - `ci_captures (project_id, created_at)`, `(version_id)` and `(page_url, created_at)`;
-- `ci_diffs (to_version_id)`;
+- `ci_diffs (to_version_id)` and `(from_version_id)`;
 - `ci_screenshots (project_id, created_at)`, `(page_url, created_at)` and `(sha256)`;
-- `ci_project_pages (project_id)`, `ci_project_queries (project_id)`;
-- `ci_tombstones (purge_id)`.
+- `ci_project_pages (project_id)` and the unique live key `ci_project_pages_live_url`
+  (`(project_id, url) WHERE deleted_at IS NULL`);
+- `ci_project_queries (project_id)` and the unique live key `ci_project_queries_live_query`
+  (`(project_id, query, search_params) WHERE deleted_at IS NULL`);
+- `ci_tombstones (purge_id)`, plus its `UNIQUE (table_name, row_id)`.
+
+Each index is named `<table>_<columns>`, e.g. `ci_versions_lane_key_created_at`.
 
 ### Triggers (`0041_change_intelligence_guards`)
 For each captured table `T` in `ci_versions`, `ci_captures`, `ci_diffs` and `ci_screenshots`:
@@ -169,14 +174,25 @@ For each captured table `T` in `ci_versions`, `ci_captures`, `ci_diffs` and `ci_
   rows are deleted only by a recorded purge'); END`.
 - `T_no_resurrect`: `BEFORE INSERT ON T WHEN EXISTS (SELECT 1 FROM ci_tombstones WHERE table_name =
   'T' AND row_id = NEW.id) BEGIN SELECT RAISE(ABORT, 'T row was purged'); END`.
+- `T_no_replace`: `BEFORE INSERT ON T WHEN EXISTS (SELECT 1 FROM T WHERE id = NEW.id)`, which aborts.
+  `REPLACE` / `INSERT OR REPLACE` delete the conflicting row without firing delete triggers (while
+  `recursive_triggers` is off), and this guard runs before conflict resolution. Even `ON CONFLICT DO
+  NOTHING` aborts, so **sync must insert with `INSERT … SELECT … WHERE NOT EXISTS`**.
+- `ci_versions_unreferenced_only`: a version cannot be deleted while any capture still points at it.
 
-`ci_purges` and `ci_tombstones` reject every `UPDATE` and `DELETE`.
+`ci_purges` and `ci_tombstones` reject every `UPDATE` and `DELETE` (`_no_update`, `_no_delete`), and
+have `_no_replace`. On `ci_tombstones` it also refuses an existing `(table_name, row_id)`.
 
-On the mutable tables:
-- `ci_projects_no_delete` and the pages' and queries' `_no_delete` triggers reject `DELETE`
-  (tombstone with `deleted_at` instead);
-- `ci_projects_unfiled_stays` rejects an `UPDATE` of `UNFILED_PROJECT_ID` that sets `deleted_at` or
-  changes `id`.
+On the mutable tables (`ci_projects`, `ci_project_pages`, `ci_project_queries`):
+- `_no_delete` rejects `DELETE` (tombstone with `deleted_at` instead);
+- `_id_stays` rejects an `UPDATE` that changes `id`;
+- `_no_replace` guards inserts as above;
+- pages' and queries' `_live_key_unique` also guards `UPDATE OR REPLACE` on the live key;
+- `ci_projects_unfiled_stays` rejects an `UPDATE` of `UNFILED_PROJECT_ID` that sets `deleted_at`,
+  renames it or changes `id`.
+
+**What the triggers guard against:** frost's own code and any SQL that respects the schema. Anyone
+who can write the database file can also `DROP TRIGGER`, and triggers cannot prevent that.
 
 ### The purge path
 One transaction (`BEGIN IMMEDIATE`, the store's batch):
@@ -194,7 +210,10 @@ What a purge removes:
   - `versions N` keeps, in each lane, the captures of the project's newest N versions.
   - `days N` keeps captures newer than N days, but always the captures of each lane's newest
     version, so the next capture still has something to compare with.
-- **Screenshots** follow the same window, by `created_at`.
+- **Screenshots** are grouped by `(page_url, kind, render_profile, search_params)`.
+  - `versions N` keeps the newest N per group.
+  - `days N` purges those older than the cutoff, but always keeps the newest of each group.
+- The `all` policy is for `project-deleted` only, and only on a tombstoned project.
 - A **version** is purged once no capture references it. Diffs touching a purged version go with it.
 - `project-deleted` purges every capture and screenshot of the project.
 
