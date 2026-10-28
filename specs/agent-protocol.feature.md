@@ -1,0 +1,76 @@
+# Feature: Agent protocol, tool catalogue and ports
+
+Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeToMainMessageSchema`,
+`AGENT_PROTOCOL_LIMITS`, `RUNTIME_TO_MAIN_MESSAGE_TYPES`, `ToolResultSchema`, `ChatMessageSchema`),
+`specs/agent-tools.spec.ts` (`AGENT_TOOLS`, the caps, `ALLOWED_MODEL_IDS`, `routeModelId`,
+`MODEL_ENDPOINTS`, `isAllowedModelUrl`). Phase 5 Task 1 (`docs/plans/phase-5-ai-agent.md`,
+decisions 5, 7 and 9). Package: `packages/ai-skills` (tool definitions and ports). Each line maps to
+one named test.
+
+## Decisions
+- **One MessagePort, two unions.** Every message between main and the agent runtime is one of
+  `MainToRuntimeMessageSchema` or `RuntimeToMainMessageSchema`, discriminated on `type`. Every
+  object is strict and every string, array and byte buffer bounded; the receiver drops a message
+  that fails to parse.
+- **The runtime asks; main decides.** The runtime's messages report (`ready`, `chat.*`) or request
+  (`tool.invoke`, `fetch.request`, `fetch.abort`). None approves a call, grants a tool, changes a
+  setting or carries a key: approvals arrive only over the app window's `enforceSender` IPC.
+- **Model requests are main's.** The runtime's `fetch.request` names a URL, a method (`GET` or
+  `POST`), headers and a body; main checks the URL with `isAllowedModelUrl` for the configured route,
+  then answers `fetch.response-start`, `fetch.chunk`… and `fetch.end`, or `fetch.error`. Bytes travel
+  as `Uint8Array`, which a MessagePort's structured clone copies as is.
+- **Tool output is untrusted data.** A `tool.result` carries `{ ok: true, output: { untrusted: true,
+  source, data } }` (the JSON text of `data` at most `TOOL_RESULT_MAX_CHARS`) or `{ ok: false,
+  error: { code, message } }`; a chat's history keeps tool results in that same wrapper.
+- **Risk classes.** `read` tools run (an implied grant), `act` tools may be covered by a standing
+  grant, `execute_javascript` and MCP tools (`external`, named `mcp__<server>__<tool>`) never.
+- **Ports.** SERP, intent and GSC data come through `SerpPort`, `IntentPort` and `GscPort`; each
+  answers `{ status: 'ok', data }` or `{ status: 'unavailable', reason }`, and an unconnected port is
+  `unavailablePort(reason)`.
+
+## Protocol (`packages/ai-skills/src/__tests__/agent-protocol.test.ts`)
+- **Scenario: protocol-round-trip** — one valid message of every main → runtime and runtime → main
+  type parses to an equal value, a `Uint8Array` chunk and body included.
+- **Scenario: protocol-types-listed** — `MAIN_TO_RUNTIME_MESSAGE_TYPES` and
+  `RUNTIME_TO_MAIN_MESSAGE_TYPES` are exactly the types of their unions.
+- **Scenario: unknown-messages-rejected** — an unknown `type`, a missing `type`, a non-object, a
+  message for the other direction and a known message with an extra field are refused.
+- **Scenario: malformed-messages-rejected** — an id with a space or over `maxIdChars`, a delta over
+  `maxDeltaChars`, a chunk over `maxChunkBytes`, more than `CHAT_MAX_MESSAGES` messages, a turn not
+  ending with a user message, a tool named twice, an unknown tool name, a status out of range and a
+  `PUT` request are refused.
+- **Scenario: tool-input-is-bounded-json** — a tool input deeper than `maxJsonDepth`, longer than
+  `maxToolInputChars`, holding a non-finite number, a function, a class instance or an own
+  `__proto__` key is refused, without exhausting the stack.
+- **Scenario: tool-results-are-wrapped** — a successful result without `untrusted: true`, without a
+  `source`, or with `data` over `TOOL_RESULT_MAX_CHARS` is refused; a failure needs a known code.
+- **Scenario: agent-cannot-approve** (Review Focus) — no runtime → main type or field name, at any
+  depth, matches `/approv|grant|setting|key|credential/i`; `approval.answer`, `grant.add`,
+  `settings.set`, `key.set` and a `tool.invoke` carrying `approved: true` are refused.
+
+## Catalogue (`packages/ai-skills/src/__tests__/agent-tools.test.ts`)
+- **Scenario: catalogue-risk-classes** — `read` tools grantable, `navigate` and `click` `act` and
+  grantable, `execute_javascript` `execute` and not grantable; every tool has a label.
+- **Scenario: mcp-tools-are-external** — an `mcp__<server>__<tool>` name is `external` and not
+  grantable; other names (and a catalogue name) are not MCP tools; an unknown name has no risk.
+- **Scenario: caps-are-sane** — the caps are positive integers and the default model is allowed.
+- **Scenario: route-model-id** — the gateway keeps `provider/model`; a bring-your-own-key route drops
+  the prefix; a model of the other provider, or one not allowed, is refused (`null`).
+- **Scenario: model-url-allowlist** — each route's endpoint path is allowed; another route's host,
+  `http:`, a non-default port, the default port written out (allowed: it normalises away), user
+  info, a fragment, a path outside the prefix (also via `..`, `%2e%2e` and `%2f`), a look-alike host
+  and a non-URL are refused.
+
+## Tool definitions and ports (`packages/ai-skills/src/__tests__/tools.test.ts`, `ports.test.ts`)
+- **Scenario: every-catalogue-tool-has-a-definition** — each catalogue name has exactly one
+  definition, and each definition names a catalogue tool; every description is non-empty.
+- **Scenario: tool-inputs-validated** — `navigate` takes only an `http(s)` URL within
+  `maxUrlChars`; `click` takes exactly one of `selector` and `text`; `execute_javascript` refuses
+  code over `EXECUTE_JS_MAX_SOURCE_CHARS`; `page_text`'s `maxChars` is within
+  `TOOL_RESULT_MAX_CHARS`; `gsc_performance`'s `days` within `maxGscDays`; unknown keys are refused.
+- **Scenario: tool-inputs-have-json-schemas** — every input schema converts to a JSON Schema object
+  with no extra properties (what the runtime hands the model).
+- **Scenario: ports-fakes-satisfy-interfaces** — the fakes answer `ok` with data and record their
+  queries.
+- **Scenario: unavailable-port** — `unavailablePort(reason)` answers `unavailable` with that reason
+  from every method of every port.

@@ -131,7 +131,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Tests:** schema round-trips; malformed and unknown messages rejected; no runtime→main message
   type can carry an approval (`agent-cannot-approve`); every catalogue tool has a definition; ports'
   fakes satisfy the interfaces.
-- [ ] commit `feat(agent): protocol, tool catalogue and ports`
+- [x] commit `feat(agent): protocol, tool catalogue and ports`
 
 ### Task 2: Agent runtime (utility process) and chat loop
 - **Files:** `apps/agent-runtime/` (`@app/agent-runtime`): `src/index.ts` (utility-process entry:
