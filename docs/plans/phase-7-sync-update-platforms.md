@@ -178,7 +178,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   (`windows-ci-job`).
 - **Files:** the Forge config (one maker line, one zip platform), `apps/desktop/package.json`, root
   `package.json`, and the new spec, script, test and workflow files.
-- [ ] commit `feat(packaging): Windows Squirrel and zip packages, verify:win and its CI job`
+- [x] commit `feat(packaging): Windows Squirrel and zip packages, verify:win and its CI job`
 
 ### Batch B — Signed, staged auto-update
 
@@ -422,3 +422,43 @@ sync.
   (`appimage-runtime-fails-closed`). `deb-metadata` allows only the exact `LINUX_DEB_INSTALL_PATHS`;
   `zip-contents` checks the unzipped tree; every external command in the verifier is killed after
   5 minutes. Re-verified locally: all eight checks pass.
+
+### Task 2 (Windows packages)
+- **Makers.** `@electron-forge/maker-squirrel` 8.0.1 with `electron-winstaller` 5.4.4 as a direct
+  devDependency (the maker lists it only as an optional dependency, and the maker refuses to run
+  without it; a direct dependency keeps it locked and installed). Its install script only copies the bundled 7-Zip for the host arch, so it is allowed in
+  `pnpm-workspace.yaml` (`allowBuilds`, with a comment). The Windows makers live in
+  `apps/desktop/windows-makers.ts`: Squirrel (`WIN_SQUIRREL_OPTIONS`: `name` `frost`, since the
+  maker's default would be `@app/desktop`; `authors`, which NuGet requires; `noMsi`, `noDelta`;
+  setup file `frost-<version>-x64-setup.exe`; an arch outside `WIN_ARCHS` throws) and a zip maker
+  of its own for `win32`. `forge.config.ts` only spreads them in; the darwin/linux zip maker is
+  unchanged. `resedit` 2.x became a direct devDependency (the verifier reads PE resources with it).
+- **Facts checked against the packaged output** (`electron-forge package --platform win32 --arch
+  x64` on Linux; Packager writes the PE resources with resedit, no Wine): `frost.exe` carries one
+  `INTEGRITY`/`ELECTRONASAR` resource, `[{"file":"resources\\app.asar","alg":"SHA256","value":…}]`,
+  whose value is the SHA-256 of `getRawHeader().headerString`; the exe and the vendored Squirrel
+  `Setup.exe` / `Squirrel.exe` have no certificate table. Forge's zip on Windows holds the tree's
+  contents without a top folder (cross-zip uses .NET's `CreateFromDirectory`), unlike macOS/Linux.
+- **Verify.** `verify:win` runs every planned check plus `zip-contents`; `squirrel-artifacts` also
+  checks the `RELEASES` SHA-1 and size and runs the tree checks on the `.nupkg`'s `lib/net45`.
+  `--static` runs `fuses-read-back`, `asar-integrity`, `no-stray-files` and
+  `unsigned-as-documented` (`frost.exe` only) off Windows. `verify-package-common.mjs` now removes
+  temporary trees with retries (Windows file locks right after an app exits).
+- **Verified locally** (Linux, `--static` against the win32 package): the four static checks pass;
+  a copy with one header letter changed fails `asar-integrity`, and a copy with a forged
+  certificate-table entry fails `unsigned-as-documented`. **Left to Windows CI:** `make:win`
+  (NuGet, Squirrel, 7-Zip), `asar-tamper-refused` (that Electron really refuses the tampered copy
+  and exits rather than waiting on a crash dialog), `launches-and-stays-alive`,
+  `refuses-remote-debugging` (stderr from a GUI-subsystem exe), `squirrel-artifacts` (the
+  `RELEASES` format), `zip-contents`, `unsigned-as-documented` on `Setup.exe`, and the whole
+  `turbo run lint test` suite on Windows.
+- **e2e on Windows.** The e2e is its own step with `continue-on-error: true` while it is being
+  evaluated (a failure still uploads its Playwright report); the lead decides after the first CI
+  run whether it gates the job or moves to `workflow_dispatch` only, and records the reason here.
+- **Line endings.** The job runs `git config --global core.autocrlf false` before checkout:
+  `ci-workflows.test.ts`, `platform-workflows.test.ts` and other tests read repo files and match
+  on `\n`. No `.gitattributes` was added.
+- **Known limits.** frost does not handle Squirrel's `--squirrel-*` events yet (Electron's exe is
+  Squirrel-aware, `SquirrelAwareVersion` 1), so installing creates no shortcut and frost starts
+  during install and uninstall; installing and uninstalling are not exercised by any check
+  (`windows-package.feature.md`).

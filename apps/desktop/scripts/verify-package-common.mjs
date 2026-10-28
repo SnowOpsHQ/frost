@@ -59,13 +59,21 @@ export function run(command, argv, options = {}) {
   return { status: result.status, stdout: result.stdout, out: `${result.stdout}${result.stderr}`.trim() };
 }
 
+/**
+ * Removes a temporary tree. Retries for a few seconds: on Windows a just-exited app's child
+ * processes can hold files in its profile for a moment (EBUSY / EPERM).
+ */
+export function removeTree(dir) {
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+}
+
 /** Runs `fn(dir)` with a fresh temporary directory, always removed afterwards. */
 export async function withTempDir(prefix, fn) {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
   try {
     return await fn(dir);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 
@@ -102,7 +110,7 @@ export function launch(executable, argv, ms) {
       clearTimeout(timer);
       resolve({ alive: false, code, signal, stderr });
     });
-  }).finally(() => rmSync(profile, { recursive: true, force: true }));
+  }).finally(() => removeTree(profile));
 }
 
 /** The state of one fuse (`FuseV1Options` name) in an Electron binary, as `ENABLE` / `DISABLE` / …. */

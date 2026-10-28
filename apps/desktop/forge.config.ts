@@ -7,6 +7,7 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion, type FuseV1Config } from '@electron/fuses';
 import { linuxMakers } from './linux-makers.ts';
+import { windowsMakers } from './windows-makers.ts';
 import { NOTICES_FILE } from './third-party-notices.ts';
 import {
   MAC_APP_CATEGORY,
@@ -99,7 +100,7 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
         }
       },
     },
-    makers: [new MakerZIP({}, ['darwin', 'linux']), new MakerDMG({ format: MAC_DMG_FORMAT }, ['darwin']), ...linuxMakers()],
+    makers: [new MakerZIP({}, ['darwin', 'linux']), new MakerDMG({ format: MAC_DMG_FORMAT }, ['darwin']), ...linuxMakers(), ...windowsMakers()],
     plugins: [
       new VitePlugin({
         // Object entries name the bundles (.vite/build/main.cjs, .vite/build/preload.cjs) so the two

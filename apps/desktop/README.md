@@ -454,6 +454,8 @@ From the repo root (`pnpm install` first):
   and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
 - `pnpm make:linux`, `pnpm verify:linux` (on Linux) — the AppImage, deb and zip for x64, and their
   checks (see [Building on Linux](#building-on-linux)). CI: `.github/workflows/linux-package.yml`.
+- `pnpm make:win`, `pnpm verify:win` (on Windows) — the Squirrel installer and zip for x64, and
+  their checks (see [Building on Windows](#building-on-windows)). CI: `.github/workflows/windows.yml`.
 
 If your shell exports `ELECTRON_RUN_AS_NODE` (some terminals and agent harnesses do), unset it for
 manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it itself.
@@ -478,8 +480,8 @@ manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it i
 - `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string),
   `third-party-notices.ts` and `THIRD_PARTY_NOTICES`; `scripts/measure-snippet-font.mjs` (builds the
   snippet width table, run in Electron), `scripts/verify-mac-package.mjs`, and
-  `scripts/verify-linux-package.mjs` with the checks it shares with Windows in
-  `scripts/verify-package-common.mjs`.
+  `scripts/verify-linux-package.mjs` and `scripts/verify-windows-package.mjs` with the checks they
+  share in `scripts/verify-package-common.mjs`.
 - The audit engine itself is `packages/seo-core` (`@app/seo-core`): pure TypeScript, no Electron,
   DOM or Zod.
 
@@ -573,5 +575,43 @@ is unavailable, and its setuid fallback (`chrome-sandbox`) cannot work inside th
 job sets that sysctl before `verify:linux` (and launches the packaged tree, not the AppImage), so a
 passing run does not mean the AppImage starts on a stock Ubuntu 24.04.
 
+## Building on Windows
+Prerequisites: Windows 10 or later (x64), Node ≥ 22.18 and pnpm 12.15.0 (as above). The Squirrel
+maker's tools (NuGet, Squirrel, 7-Zip) come with the `electron-winstaller` package; `verify:win`
+uses Windows' own `tar.exe` to read the zip and the `.nupkg`.
+
+```sh
+pnpm install
+pnpm make:win
+pnpm verify:win
+```
+
+Artifacts, under `apps/desktop/out/`:
+- `frost-win32-x64/` (the packaged tree; `frost.exe` is the executable)
+- `make/squirrel.windows/x64/frost-<version>-x64-setup.exe` (the installer), with
+  `frost-<version>-full.nupkg` and `RELEASES` beside it
+- `make/zip/win32/x64/frost-win32-x64-<version>.zip` (the packaged tree's contents, no top folder)
+
+**The installer and the app are unsigned.** frost has no Authenticode certificate, so SmartScreen
+warns before `Setup.exe` runs ("Windows protected your PC": More info › Run anyway). The
+`frost-windows-x64` artifact of the Windows workflow is built and checked in CI; trust it as far as
+you trust that run. `verify:win` fails if a signature ever appears, until the docs say otherwise.
+
+`Setup.exe` installs per user into `%LocalAppData%\frost` (no administrator rights; there is no MSI)
+and starts frost. Squirrel's `Update.exe` is installed with it, but frost never runs it: there is
+no auto-update yet. Known limit: frost does not handle Squirrel's install and uninstall events yet,
+so no Start-menu or desktop shortcut is created (start `%LocalAppData%\frost\app-<version>\frost.exe`),
+and frost also starts while installing and uninstalling (`specs/windows-package.feature.md`). The zip
+needs no installer: unzip it anywhere and run `frost.exe`.
+
+`verify:win` checks the fuses, the files in `resources/` and `app.asar`, the ASAR integrity
+resource in `frost.exe` (Electron checks `app.asar`'s header hash at startup on Windows) and that a
+copy with a tampered header refuses to start, launch and debugging lockdown, the Squirrel artifacts
+(the `RELEASES` hash and size, the app tree inside the `.nupkg`), the zip's contents and the absence
+of signatures. Off Windows, `node apps/desktop/scripts/verify-windows-package.mjs --static` runs the
+file checks against `pnpm --filter @app/desktop exec electron-forge package --platform win32 --arch x64`
+output (no Wine needed); making the installer needs Windows.
+
 ## Follow-ups
-App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update.
+App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update,
+handling Squirrel's install events on Windows (shortcuts).
