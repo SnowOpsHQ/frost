@@ -175,7 +175,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   - a corrupt stored pack falls back to the bundled one;
   - the bundled pack verifies with the embedded key (`bundled-pack-is-signed`);
   - the sign script signs and verifies, and refuses without the env var.
-- [ ] commit `feat(serp): signed selector packs`
+- [x] commit `feat(serp): signed selector packs`
 - [ ] Review fixes: commit `fix(serp): address selector pack review findings`
 
 ### Task 2: On-device intent classifier
