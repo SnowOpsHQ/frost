@@ -129,7 +129,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   password refused, magic link sent through the transport and verifying it signs in, session
   endpoint answers the user for a signed-in cookie and 401 otherwise, env refuses a missing secret.
 - **Turbo:** the package's `test` and `lint` scripts are picked up by `turbo run lint test build`.
-- [ ] commit `feat(backend): auth API with email/password and magic link`
+- [x] commit `feat(backend): auth API with email/password and magic link`
 
 ### Task 2: Backend — signed entitlement snapshots and the admin CLI
 - **Spec:** `specs/entitlements-snapshot.spec.ts`: `PLANS`, `FEATURE_FLAGS`, `PLAN_FEATURES`
