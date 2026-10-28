@@ -149,7 +149,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   `chat.delta`, `tool.invoke`, then continues with the result; Stop aborts mid-stream; the step cap
   holds; invalid inbound messages are dropped; the proxied fetch streams a body; lockdown removes the
   globals; the bundle's sources import no network or process module (`runtime-has-no-network`).
-- [ ] commit `feat(agent): agent runtime utility process and chat loop`
+- [x] commit `feat(agent): agent runtime utility process and chat loop`
 
 ### Task 3: Main host, key store and model proxy (security review)
 - **Files:** `apps/desktop/src/main/agent/`: `host.ts` (forks the runtime as decision 6, wires a
@@ -237,3 +237,11 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 
 ## As built
 _Filled in as tasks land._
+- **Task 2.** `@app/agent-runtime` exports `startRuntime(port, { modelFactory?, newRequestId? })`
+  and `runAgentRuntimeProcess(options)` (lockdown, then the first `parentPort` message carrying a
+  port, i.e. `child.postMessage(null, [port])`). The Forge build emits `agent-runtime.cjs` plus two
+  chunks beside it (`runtime-entry-<hash>.cjs`, `token-<hash>.cjs`), so `--allow-fs-read` must
+  cover `.vite/build`, not one file. The bundle requires `fs`, `os` and `path` (from the gateway
+  provider's OIDC helper, reached only without an API key) and no network or process module.
+  `maxRetries` is 1: the gateway provider reads a refused request as a retryable server error and
+  asks once more.
