@@ -98,7 +98,7 @@ describe('CI workflows (platform packages)', () => {
     // Lean: ci.yml runs lint, test and e2e on Linux already.
     for (const { run } of steps) expect(run ?? '').not.toMatch(/turbo run|test:e2e|\blint\b/);
 
-    // Only packages that passed verify:linux are published.
+    // Only packages that passed verify:linux are uploaded (CI artifacts only; nothing is published).
     const upload = stepNamed(steps, 'Upload AppImage + deb');
     expect(upload.uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}\b/);
     expect(upload.if).toContain("steps.verify.outcome == 'success'");
@@ -163,7 +163,7 @@ describe('CI workflows (platform packages)', () => {
     // Never run with fewer checks in CI.
     expect(workflow).not.toContain('--static');
 
-    // Only packages that passed verify:win are published.
+    // Only packages that passed verify:win are uploaded (CI artifacts only; nothing is published).
     const upload = stepNamed(steps, 'Upload Setup.exe + zip');
     expect(upload.uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}\b/);
     expect(upload.if).toContain("steps.verify.outcome == 'success'");

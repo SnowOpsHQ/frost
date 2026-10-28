@@ -396,6 +396,31 @@ sync.
 - **Tokens.** The endpoint and token come from the user. The token is kept only as `safeStorage`
   ciphertext and is never sent to the chrome.
 
+## Integration notes (for merging with Phases 3–6)
+- **Native modules: Phase 3 and Phase 7 claim the same slots.** Both use the single
+  `packagerConfig.asar.unpack`, the single `hooks.packageAfterCopy` and the app's one
+  `node_modules`: Phase 3 for onnxruntime, Phase 7 for libSQL. Merging them needs real work, not a
+  pick-one:
+  - one `packageAfterCopy` that runs both copies;
+  - an unpack glob covering both;
+  - Phase 7's allowlists (`PACKAGED_UNPACKED_ALLOWLIST`, `PACKAGED_ASAR_NODE_MODULES` in
+    `specs/sync-package.spec.ts`) extended with Phase 3's files.
+
+  `libsql-packaging.ts` refuses a `node_modules` that already exists in the build path, and the
+  verifiers refuse any package they don't list, so a half-merge fails loudly rather than shipping
+  unchecked native code. Phase 3's native files have no `win32-x64` entry, so `make:win` (the
+  `windows` job) also needs one.
+- **`main/index.ts` startup guard.** Phase 7 turns `} else {` into
+  `} else if (!handleSquirrelEvent(app)) {`. Phase 3 adds its own guard on the same line, so the two
+  must be chained.
+- **New platforms run everyone's tests.** The `windows` job runs `turbo run lint test` on Windows for
+  pull requests that touch `packages/**` or `specs/**`. Tests in Phases 3–6 have never run on
+  Windows, and Windows-only file-lock and path failures are likely. Phase 7 had to fix two in
+  Phase 2.5 tests. Re-run `windows` and `linux-package` on the integrated `main`, and make `windows`
+  a required check only once it's green there.
+- **Shared one-line lists.** `PACKAGED_FORBIDDEN_SWITCHES` (`security-policy.spec.ts`) is a single
+  line that several phases append to. Keep every entry.
+
 ## As built
 (filled in as tasks land)
 
