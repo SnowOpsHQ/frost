@@ -13,7 +13,9 @@ import { AgentChat } from './AgentChat';
 import { AgentChatList } from './AgentChatList';
 import { AgentComposer } from './AgentComposer';
 import { AgentContextMeter } from './AgentContextMeter';
+import { AgentGrants } from './AgentGrants';
 import { AgentSettings } from './AgentSettings';
+import { AgentSkills } from './AgentSkills';
 import { AgentSparkIcon, ChatsIcon, SlidersIcon } from './agent-icons';
 import { useAgentPanelOpen } from './useAgentPanelOpen';
 import './agent.css';
@@ -31,7 +33,10 @@ import './agent.css';
 const unregisterPaletteActions = registerPaletteActions(...agentPaletteSources());
 import.meta.hot?.dispose(unregisterPaletteActions);
 
-type View = 'chat' | 'chats' | 'settings';
+/** The panel's views: Task 9 adds the grants page and the skills editor (reached from settings). */
+type View = 'chat' | 'chats' | 'settings' | 'grants' | 'skills';
+
+const VIEW_TITLES: Readonly<Record<View, string>> = { chat: AGENT_PANEL_TITLE, chats: 'Chats', settings: 'Agent settings', grants: 'Site grants', skills: 'Skills' };
 
 export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   const state = useAgentState();
@@ -145,7 +150,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
             <AgentSparkIcon />
           </span>
           <div className="agent-head-text">
-            <h2 className="agent-head-title">{view === 'settings' ? 'Agent settings' : view === 'chats' ? 'Chats' : AGENT_PANEL_TITLE}</h2>
+            <h2 className="agent-head-title">{VIEW_TITLES[view]}</h2>
             <span className="agent-head-sub" data-testid="agent-chat-heading">
               {chatHeading(active)}
             </span>
@@ -167,7 +172,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
           <button type="button" className="tool agent-head-tool" data-testid="agent-chats-toggle" aria-label="Chats" title="Chats" aria-pressed={view === 'chats'} onClick={() => setView(view === 'chats' ? 'chat' : 'chats')}>
             <ChatsIcon />
           </button>
-          <button type="button" className="tool agent-head-tool" data-testid="agent-settings-toggle" aria-label="Agent settings" title="Agent settings" aria-pressed={view === 'settings'} onClick={() => setView(view === 'settings' ? 'chat' : 'settings')}>
+          <button type="button" className="tool agent-head-tool" data-testid="agent-settings-toggle" aria-label="Agent settings" title="Agent settings" aria-pressed={view === 'settings' || view === 'grants' || view === 'skills'} onClick={() => setView(view === 'settings' ? 'chat' : 'settings')}>
             <SlidersIcon />
           </button>
           <button type="button" className="tool agent-head-tool" data-testid="agent-collapse" aria-label="Collapse the AI agent" title="Collapse the AI agent" onClick={() => show(false)}>
@@ -185,11 +190,19 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
             <div className="agent-body">
               {view === 'settings' ? (
                 <div className="agent-scroll">
-                  <AgentSettings setup={state.setup} grantsCount={state.grantsCount} readToolsAllowed={state.readToolsAllowed} />
+                  <AgentSettings setup={state.setup} grantsCount={state.grantsCount} readToolsAllowed={state.readToolsAllowed} chatRetention={state.chatRetention} onOpen={setView} />
+                </div>
+              ) : view === 'grants' ? (
+                <div className="agent-scroll">
+                  <AgentGrants grantsVersion={state.grantsVersion} readToolsAllowed={state.readToolsAllowed} />
+                </div>
+              ) : view === 'skills' ? (
+                <div className="agent-scroll">
+                  <AgentSkills skills={state.skills} />
                 </div>
               ) : view === 'chats' ? (
                 <div className="agent-scroll">
-                  <AgentChatList chats={state.chats} activeId={active?.id ?? null} onSelected={() => setView('chat')} />
+                  <AgentChatList chats={state.chats} activeId={active?.id ?? null} onSelected={() => setView('chat')} chatRetention={state.chatRetention} />
                 </div>
               ) : (
                 <AgentChat active={active} setup={state.setup} notice={state.notice} onOpenSettings={() => setView('settings')} />

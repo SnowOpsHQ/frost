@@ -9,6 +9,7 @@
  * secret is ever in it; tool output appears only as bounded, inert preview text.
  */
 import { MAX_TOOL_CALLS_PER_TURN, type ApprovalDecision, type ToolActivityStatus } from './agent-approvals.spec';
+import type { ChatRetention } from './agent-data.spec';
 import type { KeyProtection } from './agent-proxy.spec';
 import type { AgentToolRisk, ModelId, ModelRoute, ToolErrorCode } from './agent-tools.spec';
 import type { SkillInputSlot } from './skills.spec';
@@ -20,8 +21,8 @@ export const CHAT_TEXT_MAX_CHARS = 32_000;
 /** A chat's title: the first line of its first message, cut (characters). */
 export const CHAT_TITLE_MAX_CHARS = 80;
 /**
- * Chats kept in memory (Task 9 adds storage); past it the least recently used idle chat is dropped.
- * A running chat is never dropped.
+ * Chats kept in memory; past it the least recently used idle chat is dropped (Task 9 stores the same
+ * most recent chats on disk, `MAX_STORED_CHATS`). A running chat is never dropped.
  */
 export const MAX_CHATS_KEPT_IN_MEMORY = 50;
 /** Entries (user messages and assistant steps) the panel is sent for the selected chat: the latest. */
@@ -251,6 +252,8 @@ export interface AgentSkillView {
   readonly description: string;
   /** The fields the user may fill (each optional), in the skill's order. */
   readonly inputs: readonly { readonly slot: SkillInputSlot; readonly label: string; readonly placeholder: string | null }[];
+  /** frost's own (read-only) skill, or the user's (Task 9's editor). */
+  readonly builtin: boolean;
 }
 
 /**
@@ -283,6 +286,10 @@ export interface AgentState {
   readonly readToolsAllowed: boolean;
   /** Standing grants stored. */
   readonly grantsCount: number;
+  /** Raised whenever the grants change (the grants page then reads `agent.listGrants` again; Task 9). */
+  readonly grantsVersion: number;
+  /** How long chats are kept on disk (Task 9, `agent-data.spec.ts`). */
+  readonly chatRetention: ChatRetention;
 }
 
 /** What a refused send says (the panel shows it as a notice). */

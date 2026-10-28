@@ -274,7 +274,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   grants page lists and revokes standing grants, and says plainly that a click grant lets text on
   that site's pages steer the agent's clicks there (prompt injection) without asking; the skills editor creates, edits and deletes user
   skills validated by Task 7's schema.
-- [ ] commit `feat(agent): grants page, chat retention and export, skills editor`
+- [x] commit `feat(agent): grants page, chat retention and export, skills editor`
 
 ### Task 10: MCP connections (untrusted)
 - HTTP and stdio MCP servers configured by the user, labelled untrusted; each tool needs per-call
@@ -585,3 +585,52 @@ _Filled in as tasks land._
   `requireFeature(flag)` throws or is async, wrap it (`try { requireFeature(flag); return true } catch
   { return false }`, or read a cached plan). The broker checks `agent` (and `agent.mcp` for MCP
   tools) per call; the session checks `agent` per send and `agent.skills` per skill run.
+- **Task 9.** Spec `specs/agent-data.spec.ts` (Zod-free: the grants page's words, `CHAT_RETENTIONS`,
+  `DEFAULT_CHAT_RETENTION`, `retentionCutoff`, `CHAT_PRUNE_INTERVAL_MS`, `MAX_STORED_CHATS`,
+  `DELETE_ALL_CHATS`, the export formats and `ChatExportV1`, the skill draft / detail / save answers,
+  `duplicateSkillId`), inputs in `agent-ipc.schema.ts`, acceptance `specs/agent-data.feature.md`.
+  **Migrations** `0031_agent_chats` (`agent_chats`, `agent_chat_messages` — the protocol
+  `ChatMessage`s, one JSON row each — and `agent_chat_entries`, the display copy with the bounded
+  tool previews) and `0032_agent_skills` (`agent_skills`: the `SkillSchema`-validated JSON), in
+  `packages/db/src/agent-chats*.ts` / `agent-skills*.ts`, appended after `...AGENT_GRANTS_MIGRATIONS`
+  (Phase 5's block `0030`–`0032` stays contiguous; a test checks it); `SessionStore` gains
+  `agentChats` and `agentSkills`, so main's `index.ts` is unchanged. The retention lives in
+  `agent_preferences` (key `chat_retention`). **Retention default: `30d`.** Chats then survive a
+  restart (the point of storing them) and expire on their own; the database is the owner-only
+  profile file, stores no key, approval id or input hash, and tool output only as main's bounded,
+  untrusted-wrapped results and previews. `off` was the alternative: it would make chats vanish at
+  quit by surprise (the panel's earlier "kept until frost quits"), and the user can pick it in one
+  click (it also deletes what is stored); `forever` would keep page text indefinitely unasked. Main:
+  `chat-record.ts` (snapshot ↔ rows; rows read back are re-validated with the protocol's schemas,
+  and the session re-pairs results with their calls, `pairedHistory`), `chat-history.ts` (writes in
+  order after the setting is read, so nothing is written under an `off` that hadn't loaded yet;
+  prune at startup, daily — an unref'd timer cleared on `will-quit` — and at once on a change; `off`
+  deletes every stored chat, a finite window also drops idle chats past it from memory),
+  `chat-export.ts`, `user-skills.ts` (the registry is `composeSkillRegistries(builtins, user)`; its
+  `onChange` bumps the session), `dialogs.ts` (Electron: `showMessageBox` / `showSaveDialog`
+  parented to the focused window; `wire.ts` passes it). The session saves a chat when a turn ends
+  (not a chat deleted meanwhile), restores at most `MAX_CHATS_KEPT_IN_MEMORY` stored chats at startup
+  with `tabId: null` (the next message binds the active tab), and stores at most `MAX_STORED_CHATS`
+  (50, the same as memory: older ones aren't paged, the oldest is dropped). **New IPC procedures**
+  (all `enforceSender` first, strict bounded inputs, answers rebuilt from fixed values):
+  `agent.listGrants` (query; the page re-reads it when `AgentState.grantsVersion` rises),
+  `agent.revokeGrant({ tool, origin })`, `agent.revokeAllGrants` (confirmed in the panel),
+  `agent.setReadToolsAllowed({ allowed })`, `agent.setChatRetention({ retention })`,
+  `agent.deleteAllChats` (main's native confirm; `deleted | cancelled | failed`),
+  `agent.exportChat({ chatId, format })` (`saved | cancelled | failed`), `agent.skillDetail({ id })`
+  (query), `agent.saveSkill({ skill, mode: 'create' | 'update' })`, `agent.deleteSkill({ id })`,
+  `agent.duplicateSkill({ id })`. `AgentState` gains `grantsVersion` and `chatRetention`;
+  `AgentSkillView` gains `builtin`. The skill draft is bounded only loosely at the IPC so a mistake
+  comes back as inline errors: main validates it with `SkillSchema` and answers each field's error
+  in frost's words (a refinement's own phrase, else a fixed sentence; never Zod's text). Choices: a
+  user skill's id is fixed once created (the editor shows it read-only when editing); "Duplicate to
+  edit" stores the copy at once (`<id>-copy`, "<name> (copy)") and opens it; the export is built from
+  the display entries (tool cards' bounded previews), not the full results, and the Markdown fences
+  each card with a fence longer than any backtick run inside it. Renderer: two views reached from the
+  settings (`AgentGrants.tsx`, `AgentSkills.tsx`), a Chat history section in the settings (retention,
+  "Delete all chats…"), per-chat export in the chat list, `agent-view.ts` / `agent-actions.ts`
+  helpers. E2e (3 new): `agent-grants-revoke` (an https loopback site under the public-looking name,
+  its self-signed certificate trusted for that name only, in that app), `agent-skill-editor-saves`,
+  and `agent-chat-export-and-restore` — export is covered end to end without an app seam: the test
+  replaces `dialog.showSaveDialog` in main through Playwright's `app.evaluate`, so main's own code
+  path runs; it also restarts on the same profile and finds the chat listed.

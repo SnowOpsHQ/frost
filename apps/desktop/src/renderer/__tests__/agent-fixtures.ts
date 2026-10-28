@@ -44,12 +44,12 @@ export function card(changes: Partial<AgentToolCardView> = {}): AgentToolCardVie
 }
 
 export function state(changes: Partial<AgentState> = {}): AgentState {
-  return { version: 2, setup: setup(), skills: [], chats: [], active: null, running: false, approval: null, notice: null, readToolsAllowed: true, grantsCount: 0, ...changes };
+  return { version: 2, setup: setup(), skills: [], chats: [], active: null, running: false, approval: null, notice: null, readToolsAllowed: true, grantsCount: 0, grantsVersion: 1, chatRetention: '30d', ...changes };
 }
 
 /** Skills as main lists them (`AgentState.skills`). */
 export const SKILLS: readonly AgentSkillView[] = [
-  { id: 'audit-this-page', name: 'Audit this page', description: 'Summarise the audit.', inputs: [{ slot: 'userNote', label: 'Focus on (optional)', placeholder: 'For example: mobile' }] },
+  { id: 'audit-this-page', name: 'Audit this page', description: 'Summarise the audit.', inputs: [{ slot: 'userNote', label: 'Focus on (optional)', placeholder: 'For example: mobile' }], builtin: true },
   {
     id: 'rewrite-title-meta',
     name: 'Rewrite title and meta description',
@@ -58,6 +58,7 @@ export const SKILLS: readonly AgentSkillView[] = [
       { slot: 'targetQuery', label: 'Target query (optional)', placeholder: null },
       { slot: 'userNote', label: 'Note (optional)', placeholder: null },
     ],
+    builtin: true,
   },
-  { id: 'plain-skill', name: 'Plain skill', description: 'No inputs.', inputs: [] },
+  { id: 'plain-skill', name: 'Plain skill', description: 'No inputs.', inputs: [], builtin: false },
 ];

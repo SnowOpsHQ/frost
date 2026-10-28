@@ -9,7 +9,7 @@ import type { MainToRuntimeMessage } from '@app/specs/agent-protocol.schema';
 import type { AgentState } from '@app/specs/agent-session.spec';
 import { createDefaultAgentEntitlements, type AgentEntitlements } from '../entitlements';
 import { createAgent } from '../index';
-import { createAgentSession } from '../session';
+import { createAgentSession, type AgentSessionDeps } from '../session';
 import { createFakeRunner } from './approval-fakes';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, createMemoryFs, type FakePort } from './fakes';
 
@@ -27,6 +27,9 @@ export async function setupSession(
     tabUrl?: string | null;
     tabTitle?: string | null;
     skills?: SkillRegistry;
+    /** Task 9's stored chats, skills editor and dialogs. */
+    data?: Pick<AgentSessionDeps, 'history' | 'userSkills' | 'confirmDeleteAllChats' | 'exportChat'>;
+    now?: () => number;
   } = {},
 ) {
   const memory = createMemoryFs();
@@ -95,6 +98,8 @@ export async function setupSession(
     activeTabId: () => TAB,
     tabPage: (tabId) => (tabId === TAB ? { url: tab.url, title: tab.title } : null),
     ...(options.skills ? { skills: options.skills } : {}),
+    ...(options.data ?? {}),
+    ...(options.now ? { now: options.now } : {}),
     scripted: options.scripted === true,
     randomId: () => `00000000-0000-4000-8000-${String((ids += 1)).padStart(12, '0')}`,
     log: (line) => logs.push(line),

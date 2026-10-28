@@ -14,13 +14,17 @@ import type { AgentElectron } from '../index';
 import { createAgentServiceFrom, type AgentServiceApp, type AgentServiceDeps } from '../service';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, type FakePort } from './fakes';
 import { createMemoryGrantsStore } from '../grants';
+import { createMemoryChatsStore } from '../chat-history';
+import { encodeChat } from '../chat-record';
+import { createMemorySkillsStore } from '../user-skills';
+import { CHAT_PRUNE_INTERVAL_MS } from '@app/specs/agent-data.spec';
 
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function setup(options: { packaged?: boolean; script?: unknown } & Pick<AgentServiceDeps, 'ports' | 'entitlements'> = {}) {
+function setup(options: { packaged?: boolean; script?: unknown } & Pick<AgentServiceDeps, 'ports' | 'entitlements' | 'now' | 'setInterval' | 'clearInterval'> & { sessionStore?: AgentServiceDeps['sessionStore'] } = {}) {
   const userData = mkdtempSync(path.join(tmpdir(), 'frost-agent-service-'));
   dirs.push(userData);
   let switchValue = '';
@@ -69,8 +73,11 @@ function setup(options: { packaged?: boolean; script?: unknown } & Pick<AgentSer
     electron,
     browser,
     webContents: { getAllWebContents: () => [] },
-    sessionStore: { agentGrants: createMemoryGrantsStore() },
+    sessionStore: options.sessionStore ?? { agentGrants: createMemoryGrantsStore() },
     buildDir: '/app/.vite/build',
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.setInterval ? { setInterval: options.setInterval } : {}),
+    ...(options.clearInterval ? { clearInterval: options.clearInterval } : {}),
     ...(options.ports ? { ports: options.ports } : {}),
     ...(options.entitlements ? { entitlements: options.entitlements } : {}),
   });
@@ -130,5 +137,34 @@ describe('agent service wiring', () => {
     await vi.waitFor(() => expect(gated.service.getState().version).toBeGreaterThan(1));
     expect(await gated.service.send(null, 'Hi')).toBe('not-entitled');
     gated.quit[0]!();
+  });
+
+  test('service-restores-prunes-and-composes-skills', async () => {
+    const DAY = 86_400_000;
+    const now = 1000 * DAY;
+    const chat = (id: string, updatedAt: number) =>
+      encodeChat({ id, title: `Chat ${id.slice(-1)}`, createdAt: updatedAt, updatedAt, modelId: null, usage: null, contextTokens: null, truncated: false, history: [{ role: 'user', content: 'hi' }], entries: [{ kind: 'user', text: 'hi', tools: [] }] });
+    const agentChats = createMemoryChatsStore({ chats: [chat('00000000-0000-4000-8000-000000000001', now - 40 * DAY), chat('00000000-0000-4000-8000-000000000002', now - DAY)] });
+    const agentSkills = createMemorySkillsStore();
+    await agentSkills.saveSkill('my-skill', JSON.stringify({ id: 'my-skill', name: 'Mine', description: 'Mine.', allowedTools: ['page_data'], instructions: 'Check {{pageUrl}}.', version: 1 }), 1);
+    const timers: { callback: () => void; ms: number }[] = [];
+    const cleared: unknown[] = [];
+    const { service, quit } = setup({
+      script: { steps: [{ text: ['unused'] }] },
+      sessionStore: { agentGrants: createMemoryGrantsStore(), agentChats, agentSkills },
+      now: () => now,
+      setInterval: (callback, ms) => (timers.push({ callback, ms }), 'timer-1'),
+      clearInterval: (handle) => cleared.push(handle),
+    });
+    // Startup: the 30-day default dropped the old chat on disk; the recent one is listed (no tab yet).
+    await vi.waitFor(() => expect(service.getState().chats.map((item) => item.title)).toEqual(['Chat 2']));
+    expect(agentChats.rows.size).toBe(1);
+    expect(service.getState().chats[0]!.tabId).toBeNull();
+    // The user's skill comes after the built-ins, labelled theirs.
+    expect(service.getState().skills.map((skill) => [skill.id, skill.builtin])).toEqual([['audit-this-page', true], ['rewrite-title-meta', true], ['internal-link-suggestions', true], ['my-skill', false]]);
+    // A daily prune, cleared on quit.
+    expect(timers.map((timer) => timer.ms)).toEqual([CHAT_PRUNE_INTERVAL_MS]);
+    quit[0]!();
+    expect(cleared).toEqual(['timer-1']);
   });
 });

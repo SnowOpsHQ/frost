@@ -1,15 +1,33 @@
 import { useRef, useState } from 'react';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
+import type { ChatRetention } from '@app/specs/agent-data.spec';
 import type { AgentSetupView } from '@app/specs/agent-session.spec';
 import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import { agentActions } from '../../agent-actions';
-import { isolationLine, keySlotsFor, keyStateLabel, modelForRoute, modelOptions, protectionMessage, routeOptions, runtimeLine, setKeyMessage, slotForRoute, slotLabel } from '../../agent-view';
+import {
+  deleteAllChatsMessage,
+  isolationLine,
+  keySlotsFor,
+  keyStateLabel,
+  modelForRoute,
+  modelOptions,
+  protectionMessage,
+  retentionHint,
+  retentionOptions,
+  routeOptions,
+  runtimeLine,
+  setKeyMessage,
+  slotForRoute,
+  slotLabel,
+} from '../../agent-view';
 
 // The agent's settings (`agent-panel.feature.md`, Settings): the model route, the model (only the
 // ones the route serves), a key field per slot, and plainly what protects a key and isolates the
 // agent process. A stored key is never shown, nor any part of it: a slot says only "Key saved".
 // The key field is a password input the panel never keeps in state: Save reads it, empties it at
-// once, and shows main's answer (`AGENT_SET_KEY_MESSAGES`).
+// once, and shows main's answer (`AGENT_SET_KEY_MESSAGES`). Task 9 (`agent-data.feature.md`): how
+// long chats are kept and "Delete all chats" (main confirms in its own dialog), and the ways to the
+// grants page and the skills editor.
 
 function KeyRow({ slot, set, primary }: { readonly slot: CredentialSlot; readonly set: boolean; readonly primary: boolean }) {
   const field = useRef<HTMLInputElement>(null);
@@ -86,7 +104,73 @@ function KeyRow({ slot, set, primary }: { readonly slot: CredentialSlot; readonl
   );
 }
 
-export function AgentSettings({ setup, grantsCount, readToolsAllowed }: { readonly setup: AgentSetupView; readonly grantsCount: number; readonly readToolsAllowed: boolean }) {
+function ChatHistorySection({ chatRetention }: { readonly chatRetention: ChatRetention }) {
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <section className="agent-section" data-testid="agent-chat-history">
+      <h3 className="agent-section-title">Chat history</h3>
+      <label className="agent-field-label" htmlFor="agent-retention">
+        How long frost keeps chats
+      </label>
+      <select
+        id="agent-retention"
+        className="agent-select"
+        data-testid="agent-retention"
+        value={chatRetention}
+        onChange={(event) => {
+          void agentActions.setChatRetention(event.target.value as ChatRetention).then((ok) => setMessage(ok ? null : 'That choice could not be saved.'));
+        }}
+      >
+        {retentionOptions().map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <p className="agent-section-text agent-muted" data-testid="agent-retention-hint">
+        {retentionHint(chatRetention)} Saved chats never hold a key.
+      </p>
+      <div className="agent-key-row">
+        <button
+          type="button"
+          className="agent-button"
+          data-testid="agent-delete-all-chats"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setMessage(null);
+            void agentActions.deleteAllChats().then((result) => {
+              setBusy(false);
+              setMessage(deleteAllChatsMessage(result));
+            });
+          }}
+        >
+          Delete all chats…
+        </button>
+      </div>
+      {message !== null ? (
+        <p className="agent-key-message" role="status" data-testid="agent-chat-history-message">
+          {message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+export function AgentSettings({
+  setup,
+  grantsCount,
+  readToolsAllowed,
+  chatRetention,
+  onOpen,
+}: {
+  readonly setup: AgentSetupView;
+  readonly grantsCount: number;
+  readonly readToolsAllowed: boolean;
+  readonly chatRetention: ChatRetention;
+  readonly onOpen: (view: 'grants' | 'skills') => void;
+}) {
   const [saveFailed, setSaveFailed] = useState(false);
   const choose = (route: ModelRoute, modelId: ModelId | null) => {
     if (modelId === null) return;
@@ -148,7 +232,16 @@ export function AgentSettings({ setup, grantsCount, readToolsAllowed }: { readon
           {readToolsAllowed ? 'Reading tools run without asking on public pages.' : 'Every tool asks before it runs.'} Opening pages and clicking ask first unless you
           allowed a site; running JavaScript asks every time. Standing site grants: {grantsCount}.
         </p>
+        <div className="agent-key-row">
+          <button type="button" className="agent-button" data-testid="agent-open-grants" onClick={() => onOpen('grants')}>
+            Site grants…
+          </button>
+          <button type="button" className="agent-button" data-testid="agent-open-skills" onClick={() => onOpen('skills')}>
+            Skills…
+          </button>
+        </div>
       </section>
+      <ChatHistorySection chatRetention={chatRetention} />
     </div>
   );
 }

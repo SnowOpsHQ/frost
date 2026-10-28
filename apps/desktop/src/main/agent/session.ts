@@ -35,14 +35,28 @@ import {
   type AgentUsageView,
 } from '@app/specs/agent-session.spec';
 import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, isSafeInputText, MAX_TOOL_STEPS, routeModelId, type AgentToolName, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
-import { isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, type SkillInputSlot } from '@app/specs/skills.spec';
+import { BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, type SkillInputSlot } from '@app/specs/skills.spec';
+import {
+  DEFAULT_CHAT_RETENTION,
+  isChatRetention,
+  type AgentDeleteAllChatsResult,
+  type AgentGrantView,
+  type AgentSaveSkillResult,
+  type AgentSkillDetail,
+  type ChatExportFormat,
+  type ChatExportResult,
+  type ChatRetention,
+} from '@app/specs/agent-data.spec';
 import { toolLabel, type ApprovalBroker, type ApprovalRequestView } from './approvals';
+import type { ChatHistory } from './chat-history';
+import type { ChatSnapshot, EntrySnapshot } from './chat-record';
 import type { CredentialSettings } from './credentials';
 import type { AgentEntitlements } from './entitlements';
 import type { AgentGrants } from './grants';
 import { AGENT_CRASHED_MESSAGE, type AgentChatEvent, type AgentHost } from './host';
 import type { AgentSettings } from './settings';
 import { AGENT_SYSTEM_PROMPT } from './system-prompt';
+import { skillDetail, type UserSkills } from './user-skills';
 
 // The agent's chat session manager (Phase 5 Task 6a; spec `specs/agent-session.spec.ts`; acceptance
 // `specs/agent-session.feature.md`, Session). Main keeps the chats (in memory until Task 9) and runs
@@ -60,6 +74,13 @@ import { AGENT_SYSTEM_PROMPT } from './system-prompt';
 // skill with the tab's page and the user's inputs as quoted data (`renderSkill`), sends that as the
 // user turn, and offers the model only the skill's tools for the turn (`chat.start.allowedTools` and
 // the broker's registration alike). The chat shows the skill's name and the note, not the template.
+//
+// Task 9 (acceptance `specs/agent-data.feature.md`): a chat is saved (`ChatHistory`, unless the
+// retention is `off`) each time one of its turns ends and removed when the user deletes it; the
+// stored chats are restored at startup (`restore`, without a tab: the next message binds the active
+// one) and pruned with the retention. The grants page's revokes, the read-tools switch, the
+// retention, "Delete all chats" (after main's own confirmation), export (`exportChat`, through
+// main's save dialog) and the skills editor (`UserSkills`) all go through here.
 
 export interface AgentSessionDeps {
   readonly host: Pick<AgentHost, 'send' | 'onChat' | 'onStatus' | 'status' | 'lastFailure' | 'lockdown' | 'activeChats' | 'strike' | 'restart'>;
@@ -67,7 +88,7 @@ export interface AgentSessionDeps {
   readonly credentials: CredentialSettings;
   readonly settings: Pick<AgentSettings, 'current' | 'set' | 'onChange'>;
   readonly entitlements: AgentEntitlements;
-  readonly grants: Pick<AgentGrants, 'list' | 'readToolsAllowed' | 'onChange'>;
+  readonly grants: Pick<AgentGrants, 'list' | 'readToolsAllowed' | 'onChange' | 'revoke' | 'revokeAll' | 'setReadToolsAllowed'>;
   /** Loads the settings and grants and starts the runtime (`createAgent().start`): `false` if it failed. */
   readonly start: () => Promise<boolean>;
   /** The tab a new chat works on: the active tab. */
@@ -78,6 +99,14 @@ export interface AgentSessionDeps {
   readonly tabPage?: (tabId: number) => { readonly url: string | null; readonly title: string | null } | null;
   /** The e2e seam is on: the runtime plays a script, so a turn needs no key. */
   readonly scripted?: boolean;
+  /** Where chats are stored (Task 9); default: nowhere (chats live in memory, retention reads the default). */
+  readonly history?: ChatHistory;
+  /** The skills editor (Task 9); default: none (the built-ins only, read-only). */
+  readonly userSkills?: Pick<UserSkills, 'detail' | 'save' | 'remove' | 'duplicate' | 'onChange' | 'isBuiltin'>;
+  /** Asks the user, in main's own dialog, before every chat is deleted; default: never confirmed. */
+  readonly confirmDeleteAllChats?: () => Promise<boolean>;
+  /** Writes a chat's export where the user chooses, in main's own save dialog; default: `failed`. */
+  readonly exportChat?: (chat: ChatSnapshot, format: ChatExportFormat) => Promise<ChatExportResult>;
   readonly now?: () => number;
   readonly setTimeout?: (callback: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
@@ -90,6 +119,12 @@ export interface AgentSessionDeps {
 export interface AgentSession extends AgentService {
   /** Reads which keys are set and how they'd be protected (after start-up; `send` and `setKey` do it too). */
   refreshSetup(): Promise<void>;
+  /** Adds stored chats (most recent first) to the ones in memory, within `MAX_CHATS_KEPT_IN_MEMORY`; an id already open is skipped. */
+  restore(chats: readonly ChatSnapshot[]): void;
+  /** A chat as it would be stored or exported now, or `null`. */
+  snapshot(chatId: string): ChatSnapshot | null;
+  /** Deletes what the retention no longer keeps, stored and idle in memory (startup, daily). */
+  prune(): Promise<void>;
   dispose(): void;
 }
 
@@ -122,7 +157,9 @@ interface SkillRun {
 interface Chat {
   readonly id: string;
   readonly title: string;
-  readonly tabId: number;
+  /** The tab it works on; `null` for a chat restored from disk until its next message binds one. */
+  tabId: number | null;
+  readonly createdAt: number;
   updatedAt: number;
   /** What the model is sent (protocol shape). */
   history: ChatMessage[];
@@ -257,13 +294,32 @@ function approvalView(request: ApprovalRequestView): AgentApprovalView {
 }
 
 /** A skill as the panel's picker shows it (field by field: never its template). */
-export function skillView(skill: Skill): AgentSkillView {
+export function skillView(skill: Skill, builtin: boolean): AgentSkillView {
   return {
     id: skill.id,
     name: skill.name,
     description: skill.description,
     inputs: (skill.inputs ?? []).map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? null })),
+    builtin,
   };
+}
+
+/**
+ * A stored history as the model may be sent it: from its first user message on, each tool result
+ * kept only where it answers a call of the assistant message before it (`attachToolResult`), so
+ * a history with a row left out never pairs a result with the wrong call.
+ */
+export function pairedHistory(messages: readonly ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      attachToolResult(out, message);
+      continue;
+    }
+    if (out.length === 0 && message.role !== 'user') continue;
+    out.push(message);
+  }
+  return out;
 }
 
 /** What a skill run's user entry says: the target query and the note the user gave (`''` for neither). */
@@ -294,6 +350,24 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   const scripted = deps.scripted === true;
   const skills = deps.skills ?? createBuiltinSkillRegistry();
   const tabPage = deps.tabPage ?? (() => null);
+  const history = deps.history ?? null;
+  const userSkills = deps.userSkills ?? null;
+  const isBuiltinSkill = (id: string): boolean => {
+    try {
+      return userSkills !== null ? userSkills.isBuiltin(id) : (BUILTIN_SKILL_IDS as readonly string[]).includes(id);
+    } catch {
+      return false;
+    }
+  };
+  const retention = (): ChatRetention => {
+    try {
+      const value = history?.retention();
+      return isChatRetention(value) ? value : DEFAULT_CHAT_RETENTION;
+    } catch {
+      return DEFAULT_CHAT_RETENTION;
+    }
+  };
+  let grantsVersion = 1;
 
   /** The registry's skills (a registry that throws lists none). */
   const listSkills = (): readonly Skill[] => {
@@ -396,7 +470,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         runtime: { status: deps.host.status(), lastFailure: deps.host.lastFailure() },
         isolation: isolationView(deps.host.lockdown()),
       },
-      skills: listSkills().map(skillView),
+      skills: listSkills().map((skill) => skillView(skill, isBuiltinSkill(skill.id))),
       chats: summaries,
       active:
         active === undefined
@@ -419,6 +493,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       notice,
       readToolsAllowed: deps.grants.readToolsAllowed(),
       grantsCount: deps.grants.list().length,
+      grantsVersion,
+      chatRetention: retention(),
     };
     return cached;
   };
@@ -447,6 +523,31 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
 
   const touch = (chat: Chat) => {
     chat.updatedAt = Math.max(now(), chat.updatedAt);
+  };
+
+  // ---- Stored chats (Task 9) ----
+  const entrySnapshot = (entry: Entry): EntrySnapshot => ({
+    kind: entry.kind,
+    text: entry.text,
+    tools: entry.tools.map((card) => ({ callId: card.callId, toolName: card.toolName, status: card.status, code: card.code, inputPreview: card.inputPreview, outputPreview: card.outputPreview })),
+    ...(entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}),
+  });
+  const snapshotOf = (chat: Chat): ChatSnapshot => ({
+    id: chat.id,
+    title: chat.title,
+    createdAt: chat.createdAt,
+    updatedAt: chat.updatedAt,
+    modelId: chat.modelId,
+    usage: chat.usage === null ? null : { ...chat.usage },
+    contextTokens: chat.contextTokens,
+    truncated: chat.truncated,
+    history: structuredClone(chat.history),
+    entries: chat.entries.map(entrySnapshot),
+  });
+  /** Saves a chat still open (one deleted meanwhile is not written back). */
+  const persist = (chat: Chat) => {
+    if (history === null || chats.get(chat.id) !== chat) return;
+    void history.save(snapshotOf(chat)).catch(() => log('agent session: a chat could not be saved'));
   };
 
   // ---- Setup ----
@@ -549,6 +650,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     if (current.chat !== null) {
       touch(current.chat);
       trim(current.chat);
+      persist(current.chat);
     }
     bump();
   };
@@ -688,7 +790,11 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     deps.approvals.onChange(onActivity),
     deps.approvals.onResult(onResult),
     deps.settings.onChange(() => bump()),
-    deps.grants.onChange(() => bump()),
+    deps.grants.onChange(() => {
+      grantsVersion += 1;
+      bump();
+    }),
+    ...(userSkills !== null ? [userSkills.onChange(() => bump())] : []),
   ];
 
   // ---- Sending ----
@@ -806,6 +912,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     const created = chat === undefined;
     // What the model reads and the tools it is offered: the typed text and the whole catalogue, or
     // the rendered skill and the skill's tools (in catalogue order).
+    // A restored chat has no tab: its next message binds the active one.
     const tabId = chat?.tabId ?? deps.activeTabId();
     if (tabId === null) return refuse('no-tab');
     let content = text;
@@ -828,6 +935,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         id: randomId(),
         title: chatTitle(run !== null ? run.skill.name : text),
         tabId,
+        createdAt: now(),
         updatedAt: now(),
         history: [],
         entries: [],
@@ -840,6 +948,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       chats.set(chat.id, chat);
     }
     current.chat = chat;
+    chat.tabId = tabId;
     current.before = { error: chat.error, modelId: chat.modelId, updatedAt: chat.updatedAt, selected, created };
     current.historyBefore = chat.history.length;
     current.entriesBefore = chat.entries.length;
@@ -893,6 +1002,27 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     return true;
   };
 
+  /** Deletes what the retention no longer keeps: on disk, and the idle chats in memory past a finite window. */
+  const prune = async (): Promise<void> => {
+    if (history === null) return;
+    let cutoff: number | null = null;
+    try {
+      cutoff = await history.prune();
+    } catch {
+      cutoff = null;
+    }
+    // `off` keeps chats in memory until quit; a finite window drops the idle ones it no longer keeps.
+    if (cutoff === null || !Number.isFinite(cutoff) || disposed) return;
+    let dropped = false;
+    for (const chat of [...chats.values()]) {
+      if (chat.updatedAt >= cutoff || turn?.chat === chat || chat.id === selected) continue;
+      chats.delete(chat.id);
+      deps.approvals.forget(chat.id);
+      dropped = true;
+    }
+    if (dropped) bump();
+  };
+
   return {
     getState: state,
     watch(sinceVersion, signal) {
@@ -935,6 +1065,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       chats.delete(chatId);
       deps.approvals.forget(chatId);
       if (selected === chatId) selected = null;
+      if (history !== null) void history.remove(chatId).catch(() => log('agent session: a chat could not be deleted from disk'));
       bump();
       return true;
     },
@@ -982,6 +1113,155 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       return cleared;
     },
     refreshSetup,
+
+    // ---- Task 9: stored chats ----
+    restore(stored) {
+      if (disposed || !Array.isArray(stored)) return;
+      let added = false;
+      for (const snapshot of stored as readonly ChatSnapshot[]) {
+        if (chats.size >= MAX_CHATS_KEPT_IN_MEMORY) break;
+        if (chats.has(snapshot.id)) continue;
+        chats.set(snapshot.id, {
+          id: snapshot.id,
+          title: snapshot.title,
+          tabId: null,
+          createdAt: snapshot.createdAt,
+          updatedAt: snapshot.updatedAt,
+          history: pairedHistory(snapshot.history),
+          entries: snapshot.entries.map((entry) => ({
+            ...newEntry(entry.kind, entry.text),
+            streaming: false,
+            tools: entry.tools.map((card) => ({ ...card, label: toolLabel(card.toolName) })),
+            ...(entry.kind === 'user' && entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}),
+          })),
+          truncated: snapshot.truncated,
+          error: null,
+          usage: snapshot.usage === null ? null : { ...snapshot.usage },
+          contextTokens: snapshot.contextTokens,
+          modelId: snapshot.modelId,
+        });
+        added = true;
+      }
+      if (added) bump();
+    },
+    snapshot(chatId) {
+      const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
+      return chat === undefined ? null : snapshotOf(chat);
+    },
+    prune,
+    async setChatRetention(next) {
+      if (history === null || !isChatRetention(next)) return false;
+      let stored = false;
+      try {
+        stored = (await history.setRetention(next)) === true;
+      } catch {
+        stored = false;
+      }
+      bump();
+      if (stored) await prune();
+      return stored;
+    },
+    async deleteAllChats(): Promise<AgentDeleteAllChatsResult> {
+      let confirmed = false;
+      try {
+        confirmed = deps.confirmDeleteAllChats !== undefined && (await deps.confirmDeleteAllChats()) === true;
+      } catch {
+        confirmed = false;
+      }
+      if (!confirmed || disposed) return 'cancelled';
+      for (const chatId of [...chats.keys()]) {
+        stop(chatId);
+        chats.delete(chatId);
+        deps.approvals.forget(chatId);
+      }
+      selected = null;
+      bump();
+      if (history === null) return 'deleted';
+      let removed = false;
+      try {
+        removed = (await history.removeAll()) === true;
+      } catch {
+        removed = false;
+      }
+      return removed ? 'deleted' : 'failed';
+    },
+    async exportChat(chatId, format): Promise<ChatExportResult> {
+      const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
+      if (chat === undefined || deps.exportChat === undefined || (format !== 'markdown' && format !== 'json')) return 'failed';
+      try {
+        const result = await deps.exportChat(snapshotOf(chat), format);
+        return result === 'saved' || result === 'cancelled' ? result : 'failed';
+      } catch {
+        return 'failed';
+      }
+    },
+
+    // ---- Task 9: grants page ----
+    listGrants(): AgentGrantView[] {
+      return deps.grants.list().map((grant) => ({ tool: grant.tool, label: toolLabel(grant.tool), origin: grant.origin, createdAt: grant.createdAt }));
+    },
+    async revokeGrant(tool, origin) {
+      try {
+        return (await deps.grants.revoke(tool, origin)) === true;
+      } catch {
+        return false;
+      }
+    },
+    async revokeAllGrants() {
+      try {
+        return (await deps.grants.revokeAll()) === true;
+      } catch {
+        return false;
+      }
+    },
+    async setReadToolsAllowed(allowed) {
+      if (typeof allowed !== 'boolean') return false;
+      try {
+        return (await deps.grants.setReadToolsAllowed(allowed)) === true;
+      } catch {
+        return false;
+      } finally {
+        bump();
+      }
+    },
+
+    // ---- Task 9: skills editor ----
+    skillDetail(id): AgentSkillDetail | null {
+      if (!isSkillId(id)) return null;
+      if (userSkills !== null) {
+        try {
+          return userSkills.detail(id);
+        } catch {
+          return null;
+        }
+      }
+      const skill = findSkill(id);
+      return skill === null ? null : skillDetail(skill, isBuiltinSkill(id));
+    },
+    async saveSkill(draft, mode): Promise<AgentSaveSkillResult> {
+      if (userSkills === null) return { result: 'failed' };
+      try {
+        return await userSkills.save(draft, mode);
+      } catch {
+        return { result: 'failed' };
+      }
+    },
+    async deleteSkill(id) {
+      if (userSkills === null) return false;
+      try {
+        return (await userSkills.remove(id)) === true;
+      } catch {
+        return false;
+      }
+    },
+    async duplicateSkill(id): Promise<AgentSaveSkillResult> {
+      if (userSkills === null) return { result: 'failed' };
+      try {
+        return await userSkills.duplicate(id);
+      } catch {
+        return { result: 'failed' };
+      }
+    },
     dispose() {
       if (disposed) return;
       disposed = true;

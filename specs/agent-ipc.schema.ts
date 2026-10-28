@@ -7,7 +7,8 @@
  * error or state carries a key back (main's store answers `hasKey` only).
  */
 import { z } from 'zod';
-import { APPROVAL_DECISIONS } from './agent-approvals.spec';
+import { APPROVAL_DECISIONS, MAX_GRANT_ORIGIN_CHARS } from './agent-approvals.spec';
+import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_RETENTIONS } from './agent-data.spec';
 import { CREDENTIAL_LIMITS, CREDENTIAL_SLOTS, isValidModelSettings } from './agent-proxy.spec';
 import { CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
 import { ALLOWED_MODEL_IDS, isSafeInputText, MODEL_ROUTES } from './agent-tools.spec';
@@ -70,3 +71,45 @@ export const AgentSetModelInputSchema = z
 export const AgentSetKeyInputSchema = z.strictObject({ slot: z.enum(CREDENTIAL_SLOTS), key: z.string().min(1).max(CREDENTIAL_LIMITS.maxKeyChars * 2) });
 
 export const AgentClearKeyInputSchema = z.strictObject({ slot: z.enum(CREDENTIAL_SLOTS) });
+
+// ---- Task 9: grants page, chat data, skills editor (`agent-data.spec.ts`) --------------------
+
+/** A grant to revoke: a tool name and an origin, bounded (main revokes only what `canGrant` allows). */
+export const AgentRevokeGrantInputSchema = z.strictObject({
+  tool: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/),
+  origin: z.string().min(1).max(MAX_GRANT_ORIGIN_CHARS),
+});
+
+export const AgentSetReadToolsAllowedInputSchema = z.strictObject({ allowed: z.boolean() });
+
+export const AgentSetChatRetentionInputSchema = z.strictObject({ retention: z.enum(CHAT_RETENTIONS) });
+
+export const AgentExportChatInputSchema = z.strictObject({ chatId: AgentChatIdSchema, format: z.enum(CHAT_EXPORT_FORMATS) });
+
+/** A skill id to look up, delete or duplicate (well-formed; main resolves it). */
+export const AgentSkillIdInputSchema = z.strictObject({ id: z.string().min(SKILL_LIMITS.minIdChars).max(SKILL_LIMITS.maxIdChars).regex(SKILL_ID_PATTERN) });
+
+/**
+ * A skill draft from the editor (`AgentSkillDraft`): only its shape is bounded here, loosely, so a
+ * mistake comes back from main as inline errors (`agent.saveSkill` validates it with `SkillSchema`)
+ * rather than a refused call. Strings are bounded a little past the schema's caps.
+ */
+const draftText = (max: number) => z.string().max(max * 2);
+export const AgentSkillDraftSchema = z.strictObject({
+  id: draftText(SKILL_LIMITS.maxIdChars),
+  name: draftText(SKILL_LIMITS.maxNameChars),
+  description: draftText(SKILL_LIMITS.maxDescriptionChars),
+  allowedTools: z.array(z.string().max(64)).max(32),
+  instructions: draftText(SKILL_LIMITS.maxInstructionChars),
+  inputs: z
+    .array(
+      z.strictObject({
+        slot: z.string().max(32),
+        label: draftText(SKILL_LIMITS.maxInputLabelChars),
+        placeholder: draftText(SKILL_LIMITS.maxInputPlaceholderChars).optional(),
+      }),
+    )
+    .max(8),
+});
+
+export const AgentSaveSkillInputSchema = z.strictObject({ skill: AgentSkillDraftSchema, mode: z.enum(AGENT_SKILL_SAVE_MODES) });

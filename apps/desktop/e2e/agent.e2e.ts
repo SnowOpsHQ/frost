@@ -1,18 +1,24 @@
 // Specs: specs/agent-panel.spec.ts (AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS, AGENT_APPROVAL_BUTTONS),
 // specs/agent-session.spec.ts (AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE),
 // specs/agent-e2e-script.schema.ts (the script format)
-// Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools)
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL)
+// Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools),
+// specs/agent-data.feature.md (End to end)
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
+import { AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
+import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
+import { selfSignedCertificate } from './tls';
 
 // The agent panel end to end, on the unpackaged build's scripted model seam
 // (`--frost-e2e-agent-script=<file>`): the runtime plays a JSON script as its model, so no provider
@@ -45,11 +51,34 @@ async function startSite() {
   };
 }
 
+/**
+ * The same pages over https (a fresh self-signed certificate the browse session is told to trust
+ * for `SITE_HOST` only): a standing grant needs a public `https:` origin.
+ */
+async function startTlsSite() {
+  const server = createHttpsServer(selfSignedCertificate(), (request, response) => {
+    const pathname = new URL(request.url ?? '/', 'https://x').pathname;
+    const title = pathname === '/next' ? 'Secure next' : 'Secure start';
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${title}</h1></body></html>`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    origin: `https://${SITE_HOST}:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
 type Step = { text?: string[]; toolCalls?: { toolName: string; input: Record<string, unknown> }[]; usage?: { input: number; output: number } };
 
 let app: ElectronApplication | undefined;
 let page: Page;
 let site: Awaited<ReturnType<typeof startSite>>;
+let tlsSite: Awaited<ReturnType<typeof startTlsSite>>;
 let scripts: string;
 const { go, contentsIdAt, urlOf } = chromeHelpers(
   () => app!,
@@ -61,17 +90,27 @@ const approvalCard = () => page.getByTestId('agent-approval');
 const toolCards = () => page.getByTestId('agent-tool-card');
 const assistantTexts = () => page.getByTestId('agent-assistant-text');
 
-/** Launches the app playing `steps`, opens `start` in the tab, and opens the agent panel. */
-async function launchWith(steps: Step[], start: string | null = '/start'): Promise<number | null> {
+/** Launches the app playing `steps`, opens `start` in the tab, and opens the agent panel (`userDataDir`: a profile the caller keeps). */
+async function launchWith(steps: Step[], start: string | null = '/start', options: { userDataDir?: string } = {}): Promise<number | null> {
   const file = path.join(scripts, `script-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   await writeFile(file, JSON.stringify({ steps }));
-  ({ app, page } = await launchApp([
-    `--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1`,
-    `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST}`,
-    `--${AGENT_E2E_SCRIPT_SWITCH}=${file}`,
-    // Chromium's fixed-key store: the key store answers `no-keychain` and never touches a real keychain.
-    '--password-store=basic',
-  ]));
+  ({ app, page } = await launchApp(
+    [
+      `--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1`,
+      `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST}`,
+      `--${AGENT_E2E_SCRIPT_SWITCH}=${file}`,
+      // Chromium's fixed-key store: the key store answers `no-keychain` and never touches a real keychain.
+      '--password-store=basic',
+    ],
+    options,
+  ));
+  // The https pages' certificate is trusted for the site's name only, in this app only.
+  await app.evaluate(
+    ({ session }, { partition, host }) => {
+      session.fromPartition(partition).setCertificateVerifyProc((request, callback) => callback(request.hostname === host ? 0 : -3));
+    },
+    { partition: BROWSE_PARTITION, host: SITE_HOST },
+  );
   await page.waitForLoadState('domcontentloaded');
   // The SEO sidebar's panel collapsed, so the agent panel has its full width whatever the window size.
   if ((await page.getByTestId('seo-sidebar').getAttribute('data-open')) === 'true') await page.getByTestId('seo-toggle').click();
@@ -80,10 +119,13 @@ async function launchWith(steps: Step[], start: string | null = '/start'): Promi
     await go(`${site.origin}${start}`);
     id = await contentsIdAt(`${site.origin}${start}`);
   }
-  await expect(panel()).toHaveAttribute('data-open', 'false');
-  await page.getByTestId('agent-toggle').click();
-  await expect(panel()).toHaveAttribute('data-open', 'true');
-  await expect(page.getByTestId('agent-input')).toBeFocused();
+  if (options.userDataDir === undefined) await expect(panel()).toHaveAttribute('data-open', 'false');
+  // A kept profile remembers the panel open.
+  if ((await panel().getAttribute('data-open')) !== 'true') {
+    await page.getByTestId('agent-toggle').click();
+    await expect(panel()).toHaveAttribute('data-open', 'true');
+    await expect(page.getByTestId('agent-input')).toBeFocused();
+  }
   return id;
 }
 
@@ -127,6 +169,7 @@ const viewBounds = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getA
 
 test.beforeAll(async () => {
   site = await startSite();
+  tlsSite = await startTlsSite();
   scripts = await mkdtemp(path.join(tmpdir(), 'frost-e2e-agent-'));
 });
 
@@ -137,6 +180,7 @@ test.afterEach(async () => {
 
 test.afterAll(async () => {
   await site?.close();
+  await tlsSite?.close();
   await rm(scripts, { recursive: true, force: true });
 });
 
@@ -357,4 +401,145 @@ test('agent-skill-narrows-tools', async () => {
   expect(await urlOf(id!)).toBe(`${site.origin}/start`);
   // Back to a message field once the run started.
   await expect(page.getByTestId('agent-input')).toBeVisible();
+});
+
+/** Opens a view reached from the settings (`agent-open-grants`, `agent-open-skills`). */
+async function openFromSettings(button: 'agent-open-grants' | 'agent-open-skills'): Promise<void> {
+  await page.getByTestId('agent-settings-toggle').click();
+  await expect(page.getByTestId('agent-settings')).toBeVisible();
+  await page.getByTestId(button).click();
+}
+
+/** Back to the chat from a view reached from the settings. */
+async function backToChat(): Promise<void> {
+  await page.getByTestId('agent-settings-toggle').click();
+  await expect(page.getByTestId('agent-settings')).toBeVisible();
+  await page.getByTestId('agent-settings-toggle').click();
+  await expect(page.getByTestId('agent-input')).toBeVisible();
+}
+
+test('agent-grants-revoke', async () => {
+  const next = `${tlsSite.origin}/next`;
+  const start = `${tlsSite.origin}/start`;
+  const id = await launchWith([
+    { toolCalls: [{ toolName: 'navigate', input: { url: next } }] },
+    { text: ['Opened the next page.'] },
+    { toolCalls: [{ toolName: 'navigate', input: { url: start } }] },
+    { text: ['Back at the start.'] },
+    { toolCalls: [{ toolName: 'navigate', input: { url: next } }] },
+    { text: ['Not this time.'] },
+  ]);
+  await send('Open the secure next page');
+  // A public https origin: "Always allow on this site" is offered.
+  await expect(approvalCard()).toBeVisible();
+  const always = page.getByTestId('agent-allow-always');
+  await expect(always).toBeEnabled();
+  await always.click();
+  await expect(approvalCard()).toHaveCount(0);
+  await expect.poll(() => urlOf(id!)).toBe(next);
+  await expect(assistantTexts().last()).toHaveText('Opened the next page.');
+
+  // The grant covers the next navigate on that site: it runs without asking.
+  await send('Go back to the start');
+  await expect(assistantTexts().last()).toHaveText('Back at the start.');
+  await expect.poll(() => urlOf(id!)).toBe(start);
+  await expect(toolCards().last()).toHaveAttribute('data-status', 'done');
+
+  // The grants page lists it, says what it means, and revokes it.
+  await openFromSettings('agent-open-grants');
+  await expect(page.getByTestId('agent-grants-explainer')).toHaveText(AGENT_GRANTS_EXPLAINER);
+  const grant = page.getByTestId('agent-grant');
+  await expect(grant).toHaveCount(1);
+  await expect(grant).toHaveAttribute('data-tool', 'navigate');
+  await expect(grant.getByTestId('agent-grant-origin')).toHaveText(tlsSite.origin);
+  await grant.getByTestId('agent-grant-revoke').click();
+  await expect(page.getByTestId('agent-grant')).toHaveCount(0);
+  await expect(page.getByTestId('agent-grants-empty')).toBeVisible();
+
+  // Revoked: the next navigate on that site asks again.
+  await backToChat();
+  await send('Open the secure next page again');
+  await expect(approvalCard()).toBeVisible();
+  await expect(page.getByTestId('agent-approval-title')).toHaveText(`Allow navigation to ${tlsSite.origin}?`);
+  await page.getByTestId('agent-deny').click();
+  await expect(assistantTexts().last()).toHaveText('Not this time.');
+  expect(await urlOf(id!)).toBe(start);
+});
+
+test('agent-skill-editor-saves', async () => {
+  await launchWith([{ text: ['unused'] }]);
+  await openFromSettings('agent-open-skills');
+  const builtin = page.locator('[data-testid="agent-skill-item"][data-skill-id="audit-this-page"]');
+  await expect(builtin).toHaveAttribute('data-builtin', 'true');
+  await expect(builtin.getByTestId('agent-skill-edit')).toHaveCount(0);
+  // Duplicate a built-in, rename it, save it.
+  await builtin.getByTestId('agent-skill-duplicate').click();
+  const editor = page.getByTestId('agent-skill-editor');
+  await expect(editor).toHaveAttribute('data-mode', 'update');
+  await expect(page.getByTestId('agent-skill-field-id')).toHaveValue('audit-this-page-copy');
+  await expect(page.getByTestId('agent-skill-tool-page_audit')).toBeChecked();
+  await page.getByTestId('agent-skill-field-name').fill('My page audit');
+  // A placeholder outside the allowlist is refused inline by main, and nothing is saved.
+  const instructions = page.getByTestId('agent-skill-field-instructions');
+  const original = await instructions.inputValue();
+  await instructions.fill(`${original}\nAlso see {{url}}.`);
+  await page.getByTestId('agent-skill-save').click();
+  await expect(page.getByTestId('agent-skill-error-instructions')).toBeVisible();
+  await instructions.fill(original);
+  await page.getByTestId('agent-skill-save').click();
+  await expect(editor).toHaveCount(0);
+  const mine = page.locator('[data-testid="agent-skill-item"][data-skill-id="audit-this-page-copy"]');
+  await expect(mine.getByTestId('agent-skill-name')).toHaveText('My page audit');
+  await expect(mine.getByTestId('agent-skill-badge')).toHaveText(SKILL_USER_LABEL);
+
+  // It appears in the composer's picker.
+  await backToChat();
+  const option = page.getByTestId('agent-skill-picker').locator('option[value="audit-this-page-copy"]');
+  await expect(option).toHaveText('My page audit');
+});
+
+test('agent-chat-export-and-restore', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-agent-profile-'));
+  try {
+    await launchWith([{ toolCalls: [{ toolName: 'page_text', input: {} }] }, { text: ['The page says where the agent begins.'] }], '/start', { userDataDir: profile });
+    await send('What does this page say?');
+    await expect(assistantTexts().last()).toHaveText('The page says where the agent begins.');
+
+    // Export: main's save dialog (stubbed here, in main, to answer a file) decides where it goes.
+    const file = path.join(scripts, `export-${Date.now()}.md`);
+    await app!.evaluate(({ dialog }, target) => {
+      const holder = dialog as unknown as { showSaveDialog: (...args: unknown[]) => Promise<{ canceled: boolean; filePath?: string }> };
+      holder.showSaveDialog = async () => (target === '' ? { canceled: true } : { canceled: false, filePath: target });
+    }, '');
+    await page.getByTestId('agent-chats-toggle').click();
+    await page.getByTestId('agent-chat-export-toggle').first().click();
+    await page.getByTestId('agent-export-markdown').click();
+    await expect(page.getByTestId('agent-export-message')).toHaveText(CHAT_EXPORT_MESSAGES.cancelled);
+    await app!.evaluate(({ dialog }, target) => {
+      const holder = dialog as unknown as { showSaveDialog: (...args: unknown[]) => Promise<{ canceled: boolean; filePath?: string }> };
+      holder.showSaveDialog = async () => ({ canceled: false, filePath: target });
+    }, file);
+    await page.getByTestId('agent-export-markdown').click();
+    await expect(page.getByTestId('agent-export-message')).toHaveText(CHAT_EXPORT_MESSAGES.saved);
+    const text = await readFile(file, 'utf8');
+    expect(text.startsWith('# What does this page say?\n')).toBe(true);
+    expect(text).toContain(CHAT_EXPORT_UNTRUSTED_NOTE);
+    expect(text).toContain('tool page_text (Done)');
+    expect(text).toContain('Agent start');
+    await closeApp(app);
+    app = undefined;
+
+    // Restarted on the same profile: the chat is listed again (the default retention keeps it).
+    await launchWith([{ text: ['unused'] }], null, { userDataDir: profile });
+    await page.getByTestId('agent-chats-toggle').click();
+    const item = page.getByTestId('agent-chat-item');
+    await expect(item).toHaveCount(1);
+    await expect(item).toContainText('What does this page say?');
+    await item.locator('.agent-chat-select').click();
+    await expect(assistantTexts().last()).toHaveText('The page says where the agent begins.');
+  } finally {
+    await closeApp(app);
+    app = undefined;
+    await rm(profile, { recursive: true, force: true });
+  }
 });

@@ -1,4 +1,15 @@
 import type { ApprovalDecision } from '@app/specs/agent-approvals.spec';
+import type {
+  AgentDeleteAllChatsResult,
+  AgentGrantView,
+  AgentSaveSkillResult,
+  AgentSkillDetail,
+  AgentSkillDraft,
+  AgentSkillSaveMode,
+  ChatExportFormat,
+  ChatExportResult,
+  ChatRetention,
+} from '@app/specs/agent-data.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
 import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
@@ -42,4 +53,28 @@ export interface AgentService {
   setKey(slot: CredentialSlot, key: string): Promise<AgentSetKeyResult>;
   /** Removes the slot's key; `false` if it couldn't be removed. */
   clearKey(slot: CredentialSlot): Promise<boolean>;
+
+  // ---- Task 9 (`agent-data.spec.ts`; acceptance `agent-data.feature.md`) ----
+  /** The standing grants, oldest first (the grants page). */
+  listGrants(): readonly AgentGrantView[];
+  /** Revokes one grant (at once); `false` if it couldn't be written (it stays revoked for this run). */
+  revokeGrant(tool: string, origin: string): Promise<boolean>;
+  /** Revokes every grant (the panel confirmed first); `false` if it couldn't be written. */
+  revokeAllGrants(): Promise<boolean>;
+  /** Turns the read tools' implied grant on or off; `false` if it couldn't be stored. */
+  setReadToolsAllowed(allowed: boolean): Promise<boolean>;
+  /** Sets how long chats are kept on disk and prunes under it at once; `false` if it couldn't be stored. */
+  setChatRetention(retention: ChatRetention): Promise<boolean>;
+  /** Deletes every chat, in memory and on disk, once main's own dialog confirmed it. */
+  deleteAllChats(): Promise<AgentDeleteAllChatsResult>;
+  /** Exports a chat, written only where the user chooses in main's save dialog. */
+  exportChat(chatId: string, format: ChatExportFormat): Promise<ChatExportResult>;
+  /** A skill in full for the editor (a built-in is read-only), or `null`. */
+  skillDetail(id: string): AgentSkillDetail | null;
+  /** Validates (`SkillSchema`) and stores a user skill; a built-in's id is refused. */
+  saveSkill(draft: AgentSkillDraft, mode: AgentSkillSaveMode): Promise<AgentSaveSkillResult>;
+  /** Deletes a user skill; `false` for a built-in or an unknown id. */
+  deleteSkill(id: string): Promise<boolean>;
+  /** Stores a copy of a skill (to start from a built-in) under a free id. */
+  duplicateSkill(id: string): Promise<AgentSaveSkillResult>;
 }

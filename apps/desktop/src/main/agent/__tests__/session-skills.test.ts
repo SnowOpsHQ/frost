@@ -134,6 +134,7 @@ describe('skill runs', () => {
       name: rewriteTitleMetaSkill.name,
       description: rewriteTitleMetaSkill.description,
       inputs: rewriteTitleMetaSkill.inputs!.map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? null })),
+      builtin: true,
     });
     // The view never carries the template or the tool list.
     expect(JSON.stringify(s.session.getState().skills)).not.toMatch(/instructions|allowedTools|\{\{/);
@@ -143,7 +144,7 @@ describe('skill runs', () => {
       skills: createStaticSkillRegistry([{ id: 'headings', name: 'Headings', description: 'Check headings.', allowedTools: ['page_data'], instructions: 'Check {{pageUrl}}.', version: 1 }]),
       steps: [{ text: ['Fine.'] }],
     });
-    expect(custom.session.getState().skills).toEqual([{ id: 'headings', name: 'Headings', description: 'Check headings.', inputs: [] }]);
+    expect(custom.session.getState().skills).toEqual([{ id: 'headings', name: 'Headings', description: 'Check headings.', inputs: [], builtin: false }]);
     expect(await custom.session.send(null, { skillId: 'audit-this-page' })).toBe('unknown-skill');
     expect(await custom.session.send(null, { skillId: 'headings' })).toBe('started');
     await custom.until((state) => !state.running);

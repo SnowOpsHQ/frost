@@ -26,8 +26,26 @@ import type {
   AgentState,
   AgentToolCardView,
 } from '@app/specs/agent-session.spec';
-import { SKILL_SLOT_MAX_CHARS, type SkillInputSlot } from '@app/specs/skills.spec';
-import { ALLOWED_MODEL_IDS, MODEL_ROUTES, isMcpToolName, routeModelId, type ModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
+import { SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_NAMES, templateSlots, type SkillInputSlot, type SkillSlotName } from '@app/specs/skills.spec';
+import { AGENT_TOOL_NAMES, AGENT_TOOLS, ALLOWED_MODEL_IDS, MODEL_ROUTES, isMcpToolName, routeModelId, type AgentToolName, type AgentToolRisk, type ModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
+import {
+  AGENT_SAVE_SKILL_MESSAGES,
+  CHAT_EXPORT_MESSAGES,
+  CHAT_RETENTION_HINTS,
+  CHAT_RETENTION_LABELS,
+  CHAT_RETENTIONS,
+  DEFAULT_CHAT_RETENTION,
+  SKILL_BUILTIN_LABEL,
+  SKILL_USER_LABEL,
+  type AgentDeleteAllChatsResult,
+  type AgentGrantView,
+  type AgentSaveSkillResult,
+  type AgentSkillDetail,
+  type AgentSkillDraft,
+  type ChatExportResult,
+  type ChatRetention,
+  type SkillEditorField,
+} from '@app/specs/agent-data.spec';
 
 // The agent panel's view model (spec `agent-panel.spec.ts`; acceptance `agent-panel.feature.md`):
 // pure functions from main's `AgentState` (`agent-session.spec.ts`) to what the components draw.
@@ -391,4 +409,152 @@ export function skillRequest(skill: AgentSkillView, values: SkillFieldValues): A
 /** The label a user message carries in the chat: the skill it ran, or `null` for a typed message. */
 export function userMessageSkillLabel(message: AgentMessageView): string | null {
   return message.kind === 'user' && message.skill !== undefined ? `Skill: ${message.skill.name}` : null;
+}
+
+// ---- Grants page, chat data and skills editor (Task 9; `agent-data.spec.ts`) ----------------
+
+export interface GrantItem {
+  readonly key: string;
+  readonly tool: string;
+  readonly label: string;
+  readonly origin: string;
+  /** When it was given, as a short local date and time. */
+  readonly since: string;
+}
+
+/** A local date and time, short (`28 Oct 2026, 14:05`), or `''` for a time that isn't one. */
+export function formatWhen(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  try {
+    return new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return new Date(ms).toISOString();
+  }
+}
+
+/** The grants page's rows, oldest first (main's order). */
+export function grantItems(grants: readonly AgentGrantView[]): readonly GrantItem[] {
+  return grants.map((grant) => ({ key: `${grant.tool}\n${grant.origin}`, tool: grant.tool, label: grant.label, origin: grant.origin, since: formatWhen(grant.createdAt) }));
+}
+
+export function retentionOptions(): readonly { readonly value: ChatRetention; readonly label: string }[] {
+  return CHAT_RETENTIONS.map((value) => ({ value, label: CHAT_RETENTION_LABELS[value] }));
+}
+
+export const retentionHint = (retention: ChatRetention): string => CHAT_RETENTION_HINTS[retention] ?? CHAT_RETENTION_HINTS[DEFAULT_CHAT_RETENTION];
+export const exportMessage = (result: ChatExportResult): string => CHAT_EXPORT_MESSAGES[result] ?? CHAT_EXPORT_MESSAGES.failed;
+
+export function deleteAllChatsMessage(result: AgentDeleteAllChatsResult): string | null {
+  if (result === 'deleted') return 'Every chat was deleted.';
+  if (result === 'failed') return 'Some saved chats could not be deleted. Try again.';
+  return null;
+}
+
+/** What the skills list shows for each skill: built-ins read-only (duplicate to edit), the user's editable. */
+export interface SkillListItem {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly builtin: boolean;
+  readonly badge: string;
+}
+
+export function skillListItems(skills: readonly AgentSkillView[]): readonly SkillListItem[] {
+  return skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, builtin: skill.builtin, badge: skill.builtin ? SKILL_BUILTIN_LABEL : SKILL_USER_LABEL }));
+}
+
+/** The editor's working copy (`AgentSkillDraft`, mutable by replacing it). */
+export interface SkillEditorDraft {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly allowedTools: readonly string[];
+  readonly instructions: string;
+  readonly inputs: readonly { readonly slot: SkillInputSlot; readonly label: string; readonly placeholder: string }[];
+}
+
+export function emptySkillDraft(): SkillEditorDraft {
+  return { id: '', name: '', description: '', allowedTools: ['page_audit', 'page_data', 'page_text'], instructions: 'Review the page at {{pageUrl}} (titled {{pageTitle}}).\n', inputs: [] };
+}
+
+export function draftFromDetail(detail: AgentSkillDetail): SkillEditorDraft {
+  return {
+    id: detail.id,
+    name: detail.name,
+    description: detail.description,
+    allowedTools: [...detail.allowedTools],
+    instructions: detail.instructions,
+    inputs: detail.inputs.map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? '' })),
+  };
+}
+
+/** The draft as `agent.saveSkill` takes it (tools in catalogue order; blank placeholders left out). */
+export function draftToSkill(draft: SkillEditorDraft): AgentSkillDraft {
+  const chosen = new Set(draft.allowedTools);
+  return {
+    id: draft.id.trim(),
+    name: draft.name,
+    description: draft.description,
+    allowedTools: [...AGENT_TOOL_NAMES.filter((name) => chosen.has(name)), ...draft.allowedTools.filter((name) => !(AGENT_TOOL_NAMES as readonly string[]).includes(name))],
+    instructions: draft.instructions,
+    inputs: draft.inputs.map((input) => ({ slot: input.slot, label: input.label, ...(input.placeholder.trim() !== '' ? { placeholder: input.placeholder } : {}) })),
+  };
+}
+
+export const SKILL_RISK_LABELS: Readonly<Record<AgentToolRisk, string>> = {
+  read: 'Reads only',
+  act: 'Acts: asks first unless you allowed the site',
+  execute: 'Runs code: asks every time',
+  external: 'Untrusted: asks every time',
+};
+
+/** The editor's tool checkboxes: frost's catalogue in order, each with its risk said plainly. */
+export function toolChoices(): readonly { readonly name: AgentToolName; readonly label: string; readonly risk: AgentToolRisk; readonly riskLabel: string }[] {
+  return AGENT_TOOL_NAMES.map((name) => ({ name, label: AGENT_TOOLS[name].label, risk: AGENT_TOOLS[name].risk, riskLabel: SKILL_RISK_LABELS[AGENT_TOOLS[name].risk] }));
+}
+
+export function toggleTool(draft: SkillEditorDraft, name: string, on: boolean): SkillEditorDraft {
+  const rest = draft.allowedTools.filter((tool) => tool !== name);
+  return { ...draft, allowedTools: on ? [...rest, name] : rest };
+}
+
+/** What each `{{slot}}` holds, for the editor's list of allowed placeholders. */
+export const SKILL_SLOT_HELP: Readonly<Record<SkillSlotName, string>> = {
+  pageUrl: "The tab's page address (filled by frost)",
+  pageTitle: "The tab's page title (filled by frost)",
+  targetQuery: 'A search query the user types (an input)',
+  userNote: 'A note the user types (an input)',
+};
+
+export function slotHelp(): readonly { readonly slot: SkillSlotName; readonly placeholder: string; readonly help: string; readonly input: boolean }[] {
+  return SKILL_SLOT_NAMES.map((slot) => ({ slot, placeholder: `{{${slot}}}`, help: SKILL_SLOT_HELP[slot], input: (SKILL_INPUT_SLOTS as readonly string[]).includes(slot) }));
+}
+
+/** The slots the instructions use, or `null` when a placeholder isn't allowed (main says so too). */
+export const draftSlots = (draft: Pick<SkillEditorDraft, 'instructions'>): readonly SkillSlotName[] | null => templateSlots(draft.instructions);
+
+/** Turns asking the user for `slot` on (with a default label) or off. */
+export function toggleInput(draft: SkillEditorDraft, slot: SkillInputSlot, on: boolean): SkillEditorDraft {
+  const rest = draft.inputs.filter((input) => input.slot !== slot);
+  if (!on) return { ...draft, inputs: rest };
+  const label = slot === 'targetQuery' ? 'Target query (optional)' : 'Note (optional)';
+  return { ...draft, inputs: SKILL_INPUT_SLOTS.flatMap((name) => (name === slot ? [{ slot, label, placeholder: '' }] : rest.filter((input) => input.slot === name))) };
+}
+
+export function setInputField(draft: SkillEditorDraft, slot: SkillInputSlot, field: 'label' | 'placeholder', value: string): SkillEditorDraft {
+  return { ...draft, inputs: draft.inputs.map((input) => (input.slot === slot ? { ...input, [field]: value } : input)) };
+}
+
+/** Main's inline errors by field (the first per field). */
+export function fieldErrors(result: AgentSaveSkillResult | null): Partial<Record<SkillEditorField, string>> {
+  if (result === null || result.result !== 'invalid') return {};
+  const out: Partial<Record<SkillEditorField, string>> = {};
+  for (const error of result.errors) out[error.field] ??= error.message;
+  return out;
+}
+
+/** What the editor says after Save (or Duplicate), `null` for nothing. */
+export function saveSkillMessage(result: AgentSaveSkillResult | null): string | null {
+  if (result === null) return null;
+  return AGENT_SAVE_SKILL_MESSAGES[result.result] ?? AGENT_SAVE_SKILL_MESSAGES.failed;
 }

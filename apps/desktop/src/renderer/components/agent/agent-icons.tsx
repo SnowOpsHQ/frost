@@ -89,3 +89,14 @@ export function TrashIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Export: an arrow leaving a tray. */
+export function ExportIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 4v10" />
+      <path d="M8 8l4-4 4 4" />
+      <path d="M5 14v5h14v-5" />
+    </Icon>
+  );
+}

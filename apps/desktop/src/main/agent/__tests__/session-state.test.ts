@@ -64,7 +64,7 @@ function fakeDeps() {
     credentials: { protection: async () => 'os' as const, hasKey: async () => true, setKey: async () => 'stored' as const, clearKey: async () => true },
     settings: { current: () => ({ route: 'gateway' as const, modelId: DEFAULT_MODEL_ID as ModelId }), set: async () => true, onChange: () => () => undefined },
     entitlements: { allowed: () => true },
-    grants: { list: () => [], readToolsAllowed: () => true, onChange: () => () => undefined },
+    grants: { list: () => [], readToolsAllowed: () => true, onChange: () => () => undefined, revoke: async () => true, revokeAll: async () => true, setReadToolsAllowed: async () => true },
     start: async () => true,
     activeTabId: (): number | null => 3,
     randomId: (() => {

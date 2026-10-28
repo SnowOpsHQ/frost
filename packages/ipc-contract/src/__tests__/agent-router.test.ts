@@ -3,6 +3,7 @@
 // Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { AgentDeleteAllChatsResult, AgentGrantView, AgentSaveSkillResult, AgentSkillDetail, ChatExportResult } from '@app/specs/agent-data.spec';
 import { CREDENTIAL_LIMITS } from '@app/specs/agent-proxy.spec';
 import { AGENT_WATCH_TIMEOUT_MS, CHAT_TEXT_MAX_CHARS, type AgentSetKeyResult, type AgentState } from '@app/specs/agent-session.spec';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
@@ -38,6 +39,8 @@ function stateAt(version: number): AgentState {
     notice: null,
     readToolsAllowed: true,
     grantsCount: 0,
+    grantsVersion: 1,
+    chatRetention: '30d',
   };
 }
 
@@ -61,6 +64,17 @@ function fakeAgent(version = 3) {
     setModel: vi.fn(async () => true),
     setKey: vi.fn(async (_slot: string, _key: string): Promise<AgentSetKeyResult> => 'stored'),
     clearKey: vi.fn(async () => true),
+    listGrants: vi.fn((): AgentGrantView[] => [{ tool: 'navigate', label: 'Open a web address in this tab', origin: 'https://example.com', createdAt: 5 }]),
+    revokeGrant: vi.fn(async (_tool: string, _origin: string) => true),
+    revokeAllGrants: vi.fn(async () => true),
+    setReadToolsAllowed: vi.fn(async (_allowed: boolean) => true),
+    setChatRetention: vi.fn(async (_retention: string) => true),
+    deleteAllChats: vi.fn(async (): Promise<AgentDeleteAllChatsResult> => 'deleted'),
+    exportChat: vi.fn(async (_chatId: string, _format: string): Promise<ChatExportResult> => 'saved'),
+    skillDetail: vi.fn((_id: string): AgentSkillDetail | null => null),
+    saveSkill: vi.fn(async (_draft: unknown, _mode: string): Promise<AgentSaveSkillResult> => ({ result: 'saved', id: 'my-skill' })),
+    deleteSkill: vi.fn(async (_id: string) => true),
+    duplicateSkill: vi.fn(async (_id: string): Promise<AgentSaveSkillResult> => ({ result: 'saved', id: 'audit-this-page-copy' })),
   } satisfies AgentService;
   return {
     service,
@@ -109,6 +123,17 @@ const VALID_INPUT: Record<string, unknown> = {
   setModel: { route: 'byok-anthropic', modelId: 'anthropic/claude-opus-5-5' },
   setKey: { slot: 'anthropic', key: KEY },
   clearKey: { slot: 'anthropic' },
+  listGrants: undefined,
+  revokeGrant: { tool: 'navigate', origin: 'https://example.com' },
+  revokeAllGrants: undefined,
+  setReadToolsAllowed: { allowed: false },
+  setChatRetention: { retention: '7d' },
+  deleteAllChats: undefined,
+  exportChat: { chatId: CHAT, format: 'markdown' },
+  skillDetail: { id: 'audit-this-page' },
+  saveSkill: { skill: { id: 'my-skill', name: 'Mine', description: 'D', allowedTools: ['page_text'], instructions: 'Read {{pageUrl}}', inputs: [] }, mode: 'create' },
+  deleteSkill: { id: 'my-skill' },
+  duplicateSkill: { id: 'audit-this-page' },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 
@@ -185,6 +210,24 @@ describe('agent router', () => {
         { slot: 'anthropic', key: KEY, extra: 1 },
       ],
       clearKey: [undefined, { slot: 'all' }, { slot: 'gateway', key: KEY }],
+      listGrants: [],
+      revokeGrant: [undefined, { tool: 'navigate' }, { tool: '', origin: 'https://a.example' }, { tool: 'nav igate', origin: 'https://a.example' }, { tool: 'navigate', origin: 'o'.repeat(2049) }, { tool: 'navigate', origin: 'https://a.example', all: true }],
+      revokeAllGrants: [],
+      setReadToolsAllowed: [undefined, { allowed: 'yes' }, { allowed: true, extra: 1 }],
+      setChatRetention: [undefined, { retention: '1y' }, { retention: 30 }, { retention: '7d', extra: 1 }],
+      deleteAllChats: [],
+      exportChat: [undefined, { chatId: CHAT }, { chatId: CHAT, format: 'html' }, { chatId: 'chat-1', format: 'json' }, { chatId: CHAT, format: 'json', path: '/tmp/x' }],
+      skillDetail: [undefined, { id: 'No' }, { id: 'a'.repeat(SKILL_LIMITS.maxIdChars + 1) }],
+      saveSkill: [
+        undefined,
+        { skill: VALID_INPUT['saveSkill'] },
+        { ...(VALID_INPUT['saveSkill'] as object), mode: 'upsert' },
+        { skill: { id: 'my-skill', name: 'Mine', description: 'D', allowedTools: ['page_text'], instructions: 'x'.repeat(SKILL_LIMITS.maxInstructionChars * 2 + 1), inputs: [] }, mode: 'create' },
+        { skill: { id: 'my-skill', name: 'Mine', description: 'D', allowedTools: ['page_text'], instructions: 'x', inputs: [], version: 9 }, mode: 'create' },
+        { skill: { id: 'my-skill', name: 'Mine', description: 'D', allowedTools: Array.from({ length: 33 }, () => 'page_text'), instructions: 'x', inputs: [] }, mode: 'create' },
+      ],
+      deleteSkill: [undefined, { id: 'Bad Id' }],
+      duplicateSkill: [undefined, { id: 5 }],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -255,6 +298,40 @@ describe('agent router', () => {
       expect(error.code, JSON.stringify(input).slice(0, 80)).toBe('BAD_REQUEST');
       untouched(fresh.service);
     }
+  });
+
+  test('agent-data-procedures-call-service', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'listGrants')()).resolves.toEqual([{ tool: 'navigate', label: 'Open a web address in this tab', origin: 'https://example.com', createdAt: 5 }]);
+    await expect(procedure(ctx, 'revokeGrant')({ tool: 'click', origin: 'https://shop.example.com' })).resolves.toBe(true);
+    expect(service.revokeGrant).toHaveBeenLastCalledWith('click', 'https://shop.example.com');
+    await expect(procedure(ctx, 'revokeAllGrants')()).resolves.toBe(true);
+    await expect(procedure(ctx, 'setReadToolsAllowed')({ allowed: false })).resolves.toBe(true);
+    expect(service.setReadToolsAllowed).toHaveBeenLastCalledWith(false);
+    await expect(procedure(ctx, 'setChatRetention')({ retention: 'off' })).resolves.toBe(true);
+    expect(service.setChatRetention).toHaveBeenLastCalledWith('off');
+    await expect(procedure(ctx, 'deleteAllChats')()).resolves.toBe('deleted');
+    await expect(procedure(ctx, 'exportChat')({ chatId: CHAT, format: 'json' })).resolves.toBe('saved');
+    expect(service.exportChat).toHaveBeenLastCalledWith(CHAT, 'json');
+    await expect(procedure(ctx, 'skillDetail')({ id: 'audit-this-page' })).resolves.toBeNull();
+    await expect(procedure(ctx, 'saveSkill')(VALID_INPUT['saveSkill'])).resolves.toEqual({ result: 'saved', id: 'my-skill' });
+    expect(service.saveSkill).toHaveBeenLastCalledWith({ id: 'my-skill', name: 'Mine', description: 'D', allowedTools: ['page_text'], instructions: 'Read {{pageUrl}}', inputs: [] }, 'create');
+    await expect(procedure(ctx, 'deleteSkill')({ id: 'my-skill' })).resolves.toBe(true);
+    await expect(procedure(ctx, 'duplicateSkill')({ id: 'audit-this-page' })).resolves.toEqual({ result: 'saved', id: 'audit-this-page-copy' });
+    // Answers outside their fixed shapes never leave main as they are.
+    service.exportChat.mockResolvedValueOnce('/home/me/secret.md' as never);
+    await expect(procedure(ctx, 'exportChat')({ chatId: CHAT, format: 'json' })).resolves.toBe('failed');
+    service.deleteAllChats.mockResolvedValueOnce('maybe' as never);
+    await expect(procedure(ctx, 'deleteAllChats')()).resolves.toBe('failed');
+    service.saveSkill.mockResolvedValueOnce({ result: 'invalid', errors: [{ field: 'name', message: 'Too long.' }, { field: 'secret', message: 'x' }, { field: 'id' }], extra: KEY } as never);
+    await expect(procedure(ctx, 'saveSkill')(VALID_INPUT['saveSkill'])).resolves.toStrictEqual({ result: 'invalid', errors: [{ field: 'name', message: 'Too long.' }] });
+    service.saveSkill.mockResolvedValueOnce({ result: 'exists', id: KEY } as never);
+    await expect(procedure(ctx, 'saveSkill')(VALID_INPUT['saveSkill'])).resolves.toStrictEqual({ result: 'exists' });
+    service.duplicateSkill.mockResolvedValueOnce({ result: 'saved', id: 5 } as never);
+    await expect(procedure(ctx, 'duplicateSkill')({ id: 'audit-this-page' })).resolves.toStrictEqual({ result: 'failed' });
+    service.listGrants.mockReturnValueOnce([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1, approvalId: 'leak' } as never]);
+    await expect(procedure(ctx, 'listGrants')()).resolves.toStrictEqual([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1 }]);
   });
 
   test('agent-set-key-answer-has-no-key', async () => {

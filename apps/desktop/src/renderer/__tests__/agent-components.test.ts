@@ -127,7 +127,7 @@ describe('agent panel components', () => {
 
   test('settings-key-field-never-keeps-the-key', async () => {
     const secret = 'sk-test-0123456789abcdef';
-    render(createElement(AgentSettings, { setup: setup({ protection: 'weak' }), grantsCount: 0, readToolsAllowed: true }));
+    render(createElement(AgentSettings, { setup: setup({ protection: 'weak' }), grantsCount: 0, readToolsAllowed: true, chatRetention: '30d', onOpen: () => undefined }));
     const field = host.querySelector<HTMLInputElement>('[data-slot="gateway"] [data-testid="agent-key-input"]')!;
     expect(field.type).toBe('password');
     expect(field.autocomplete).toBe('off');
