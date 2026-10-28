@@ -167,20 +167,76 @@ export type OutlineReader = typeof readSerp;
 
 /**
  * Removes any outline this world drew, then (unless `layout` is `null`, off) draws a new one with
- * the pack's `layout`. Runs in the SERP world only; self-contained (`plan` is `planOutlines`, `read`
- * is `readSerp`, `store` the world's global). Resolves once the first pass is done.
+ * the pack's `layout`, but only on the document main meant (`expectedUrl`: its URL, the fragment
+ * aside; a paint that arrives after a navigation installs nothing). Runs in the SERP world only;
+ * self-contained (`plan` is `planOutlines`, `read` is `readSerp`, `store` the world's global).
+ * Resolves once the first pass is done.
+ *
+ * Every method and getter it calls on `document` and its window is taken from the prototypes of its
+ * own world (never a property of the page's objects by name) and called with `.call`, as the reader
+ * does: a `<img name="removeEventListener">` (which shadows `document.removeEventListener` in every
+ * world) or an element with `id="addEventListener"` (the window's named properties) cannot stand in
+ * for one.
  */
-export function paintOutlines(document: OutlineDocument, layout: EngineLayout | null, config: OutlineConfig, plan: typeof planOutlines, read: OutlineReader, store: Record<string, unknown>): Promise<OutlineResult> {
+export function paintOutlines(document: OutlineDocument, layout: EngineLayout | null, config: OutlineConfig, plan: typeof planOutlines, read: OutlineReader, store: Record<string, unknown>, expectedUrl: string | null = null): Promise<OutlineResult> {
   const previous = store[config.key] as OutlineState | undefined;
   if (previous) previous.stop(layout === null ? 'off' : 'replaced');
-  const root = document.documentElement;
-  const view = document.defaultView;
-  if (layout === null || !root || !view) return Promise.resolve({ on: false, boxes: 0 });
+  if (layout === null) return Promise.resolve({ on: false, boxes: 0 });
+
+  // The DOM's own methods and getters, from the prototype chain (never an own, clobberable property).
+  type Fn = (...args: unknown[]) => unknown;
+  const describe = (object: object, name: string): PropertyDescriptor | undefined => {
+    for (let proto = Object.getPrototypeOf(object) as object | null; proto !== null; proto = Object.getPrototypeOf(proto) as object | null) {
+      const descriptor = Object.getOwnPropertyDescriptor(proto, name);
+      if (descriptor) return descriptor;
+    }
+    return undefined;
+  };
+  const method = (object: object, name: string): Fn => {
+    const fn = describe(object, name)?.value as unknown;
+    if (typeof fn !== 'function') throw new Error(name);
+    return fn as Fn;
+  };
+  const getter = (object: object, name: string): Fn => {
+    const fn = describe(object, name)?.get;
+    if (typeof fn !== 'function') throw new Error(name);
+    return fn as Fn;
+  };
+  const call = <T>(fn: Fn, self: unknown, ...args: unknown[]): T => Reflect.apply(fn, self, args) as T;
+  const withoutFragment = (url: string): string => {
+    const hash = url.indexOf('#');
+    return hash < 0 ? url : url.slice(0, hash);
+  };
+  let dom: { createElement: Fn; listen: Fn; unlisten: Fn; root: OutlineDocument['documentElement']; view: OverlayView | null; body: unknown; url: string };
+  try {
+    // `addEventListener` is EventTarget's (the document's chain has no named properties): called on the window too.
+    const listen = method(document, 'addEventListener');
+    const unlisten = method(document, 'removeEventListener');
+    dom = {
+      createElement: method(document, 'createElement'),
+      listen,
+      unlisten,
+      root: call(getter(document, 'documentElement'), document),
+      view: call(getter(document, 'defaultView'), document),
+      body: call(getter(document, 'body'), document),
+      url: String(call(getter(document, 'URL'), document)),
+    };
+  } catch {
+    return Promise.resolve({ on: false, boxes: 0 });
+  }
+  const root = dom.root;
+  const view = dom.view;
+  if (!root || !view) return Promise.resolve({ on: false, boxes: 0 });
+  // Another document than main meant (a paint that crossed a navigation): nothing is installed.
+  if (expectedUrl !== null && withoutFragment(dom.url) !== withoutFragment(expectedUrl)) return Promise.resolve({ on: false, boxes: 0 });
+  const create = (name: string): OverlayElement => call<OverlayElement>(dom.createElement, document, name);
+  const on = (target: unknown, type: string, listener: Listener, options?: unknown): void => void call(dom.listen, target, type, listener, options);
+  const off = (target: unknown, type: string, listener: Listener, options?: unknown): void => void call(dom.unlisten, target, type, listener, options);
 
   const css = (el: OverlayElement, props: Record<string, string>): void => {
     for (const name of Object.keys(props)) el.style.setProperty(name, props[name]!, 'important');
   };
-  const host = document.createElement('div');
+  const host = create('div');
   host.setAttribute('aria-hidden', 'true');
   css(host, { all: 'initial', display: 'block', position: 'absolute', top: '0px', left: '0px', width: '0px', height: '0px', margin: '0px', padding: '0px', overflow: 'visible', 'z-index': '2147483647', 'pointer-events': 'none' });
   const shadow = host.attachShadow({ mode: 'closed' });
@@ -193,9 +249,9 @@ export function paintOutlines(document: OutlineDocument, layout: EngineLayout | 
   }
   const kept: Box[] = [];
   const make = (): Box => {
-    const outline = document.createElement('div');
+    const outline = create('div');
     css(outline, { position: 'absolute', 'box-sizing': 'border-box', 'border-width': '2px', 'border-style': 'solid', 'border-radius': '4px', 'pointer-events': 'none' });
-    const label = document.createElement('span');
+    const label = create('span');
     css(label, {
       position: 'absolute',
       left: '-2px',
@@ -303,34 +359,48 @@ export function paintOutlines(document: OutlineDocument, layout: EngineLayout | 
   function stop(reason: OutlineEnd): void {
     if (stopped) return;
     stopped = true;
-    observer?.disconnect();
-    view!.removeEventListener('resize', request);
-    view!.removeEventListener('pagehide', gone);
-    document.removeEventListener('scroll', request, { capture: true });
-    if (timer !== undefined) clearTimeout(timer);
-    if (frame !== undefined) {
-      if (typeof view!.cancelAnimationFrame === 'function') view!.cancelAnimationFrame(frame);
-      else clearTimeout(frame);
+    // Whatever the page did to its objects, the host goes and the end is reported.
+    try {
+      if (timer !== undefined) clearTimeout(timer);
+      if (frame !== undefined) {
+        if (typeof view!.cancelAnimationFrame === 'function') view!.cancelAnimationFrame(frame);
+        else clearTimeout(frame);
+      }
+      timer = undefined;
+      frame = undefined;
+      observer?.disconnect();
+      off(view, 'resize', request);
+      off(view, 'pagehide', gone);
+      off(document, 'scroll', request, { capture: true });
+    } catch {
+      // A listener left behind finds `stopped` and does nothing.
+    } finally {
+      try {
+        host.remove();
+      } finally {
+        if (store[config.key] === state) store[config.key] = undefined;
+        settleFirst({ on: false, boxes: 0 });
+        finish(reason);
+      }
     }
-    timer = undefined;
-    frame = undefined;
-    host.remove();
-    if (store[config.key] === state) store[config.key] = undefined;
-    settleFirst({ on: false, boxes: 0 });
-    finish(reason);
   }
 
   const state: OutlineState = { root: shadow, boxes: () => drawn, draws: () => passes, ended, stop };
   store[config.key] = state;
-  root.appendChild(host);
-  if (observer) {
-    observer.observe(root);
-    if (document.body) observer.observe(document.body);
+  try {
+    root.appendChild(host);
+    if (observer) {
+      observer.observe(root);
+      if (dom.body) observer.observe(dom.body);
+    }
+    on(view, 'resize', request);
+    on(view, 'pagehide', gone);
+    // Inner scroll containers' `scroll` events do not bubble: heard in the capture phase.
+    on(document, 'scroll', request, { capture: true, passive: true });
+  } catch {
+    stop('removed');
+    return first;
   }
-  view.addEventListener('resize', request);
-  view.addEventListener('pagehide', gone);
-  // Inner scroll containers' `scroll` events do not bubble: heard in the capture phase.
-  document.addEventListener('scroll', request, { capture: true, passive: true });
   pass();
   return first;
 }
@@ -348,9 +418,9 @@ export const OUTLINE_CONFIG: OutlineConfig = {
  * removes them (`null`). The layout (only the fields the reader uses) and the config are JSON, never
  * code; the planner and the reader are frost's own functions' source.
  */
-export function outlineScript(layout: EngineLayout | null): string {
+export function outlineScript(layout: EngineLayout | null, expectedUrl: string | null = null): string {
   const argument = layout === null ? null : layoutArgument(layout);
-  return `(${paintOutlines.toString()})(document, ${JSON.stringify(argument)}, ${JSON.stringify(OUTLINE_CONFIG)}, ${planOutlines.toString()}, ${readSerp.toString()}, globalThis)`;
+  return `(${paintOutlines.toString()})(document, ${JSON.stringify(argument)}, ${JSON.stringify(OUTLINE_CONFIG)}, ${planOutlines.toString()}, ${readSerp.toString()}, globalThis, ${JSON.stringify(layout === null ? null : expectedUrl)})`;
 }
 
 /** The script that settles with why the current outline ended (`OutlineEnd`), or `none` without one. */
@@ -358,9 +428,12 @@ export function outlineEndedScript(): string {
   return `(() => { const s = globalThis[${JSON.stringify(SERP_OUTLINE_KEY)}]; return s ? s.ended : 'none'; })()`;
 }
 
-/** Draws (or with `null` removes) the outlines in `contents`' SERP world; resolves the script's (untrusted) answer. */
-export function runOutline(contents: SerpReadTarget, layout: EngineLayout | null): Promise<unknown> {
-  return contents.executeJavaScriptInIsolatedWorld(SERP_WORLD_ID, [{ code: outlineScript(layout) }]);
+/**
+ * Draws (or with `null` removes) the outlines in `contents`' SERP world, on the document at
+ * `expectedUrl` only; resolves the script's (untrusted) answer.
+ */
+export function runOutline(contents: SerpReadTarget, layout: EngineLayout | null, expectedUrl: string | null = null): Promise<unknown> {
+  return contents.executeJavaScriptInIsolatedWorld(SERP_WORLD_ID, [{ code: outlineScript(layout, expectedUrl) }]);
 }
 
 /** Waits, in `contents`' SERP world, for the current outline to end; resolves why (untrusted). */

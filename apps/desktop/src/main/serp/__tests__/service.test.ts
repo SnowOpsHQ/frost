@@ -302,7 +302,7 @@ describe('SERP service', () => {
     await s.settle();
     expect(valid(s.serp.state(1)).pack).toMatchObject({ state: 'ready', version: 3, source: 'remote', lastUpdate: { outcome: 'installed', at: expect.any(Number) }, checking: false });
     // Outlines go; the active tab is read again at once with the new layout; the other when asked.
-    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null, null);
     expect(s.serp.state(1).outlines).toBe(false);
     expect(s.read).toHaveBeenCalledTimes(3);
     expect(s.read.mock.calls[2]![1]).toMatchObject({ results: '#results-v3' });
@@ -349,14 +349,15 @@ describe('SERP service', () => {
     expect(s.outline.paint).not.toHaveBeenCalled();
     // On: drawn in the active tab's page with the engine's layout; the state says so.
     expect(s.serp.setOutlines(1, true)).toBe(true);
-    expect(s.outline.paint).toHaveBeenCalledExactlyOnceWith(s.t.get(1).page, expect.objectContaining({ results: expect.any(String) }));
+    // On the document at the reading's URL only.
+    expect(s.outline.paint).toHaveBeenCalledExactlyOnceWith(s.t.get(1).page, expect.objectContaining({ results: expect.any(String) }), GOOGLE);
     await vi.advanceTimersByTimeAsync(0);
     expect(valid(s.serp.state(1)).outlines).toBe(true);
     expect(s.serp.setOutlines(1, true)).toBe(true);
     expect(s.outline.paint).toHaveBeenCalledTimes(1);
     // Off by the toggle.
     expect(s.serp.setOutlines(1, false)).toBe(false);
-    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null, null);
     expect(s.serp.state(1).outlines).toBe(false);
     // Off on a tab switch (checked while one is drawn).
     s.serp.setOutlines(1, true);
@@ -364,7 +365,7 @@ describe('SERP service', () => {
     s.t.activate(2);
     await vi.advanceTimersByTimeAsync(SERP_OUTLINE_ACTIVE_POLL_MS);
     expect(s.serp.state(1).outlines).toBe(false);
-    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null, null);
     // Off on an in-page navigation (removed from the page), and on a new document (gone with it).
     s.t.activate(1);
     s.serp.setOutlines(1, true);
@@ -372,7 +373,7 @@ describe('SERP service', () => {
     s.t.get(1).url = GOOGLE_2;
     s.serp.navigatedInPage(s.t.get(1).contentsId, GOOGLE_2);
     expect(s.serp.state(1).outlines).toBe(false);
-    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null, null);
     await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS);
     s.serp.setOutlines(1, true);
     await vi.advanceTimersByTimeAsync(0);
@@ -380,7 +381,9 @@ describe('SERP service', () => {
     s.t.navigate(1, GOOGLE);
     s.serp.navigated(s.t.get(1).contentsId);
     expect(s.serp.state(1).outlines).toBe(false);
-    expect(s.outline.paint).toHaveBeenCalledTimes(paints);
+    // An off paint goes to the page even so (harmless on the fresh document).
+    expect(s.outline.paint).toHaveBeenCalledTimes(paints + 1);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null, null);
     // The page removed the overlay (`ended`): off.
     s.serp.loaded(s.t.get(1).contentsId);
     await vi.advanceTimersByTimeAsync(0);
@@ -426,11 +429,23 @@ describe('SERP service', () => {
     await load(s, 2, GOOGLE);
     expect(s.serp.state(2).intent).toEqual(ready);
     expect(s.classify).toHaveBeenCalledTimes(calls);
-    // A classifier that becomes unavailable is not asked again by the overlay.
+    // A classifier that becomes unavailable is asked once per reading (its process restarts on a
+    // request), never in a loop.
     s.classifier.setState('unavailable');
     await load(s, 1, GOOGLE_2);
     expect(s.serp.state(1).intent).toEqual({ state: 'unavailable' });
-    expect(s.classify).toHaveBeenCalledTimes(calls);
+    expect(s.classify).toHaveBeenCalledTimes(calls + 1);
+    for (let i = 0; i < 3; i++) s.serp.state(1);
+    await s.settle();
+    expect(s.classify).toHaveBeenCalledTimes(calls + 1);
+    // A restarted process recovers: the next reading's one attempt succeeds.
+    s.classify.mockImplementationOnce(async (query: string) => {
+      s.classifier.setState('ready');
+      return s.classifier.classify(query);
+    });
+    await load(s, 1, 'https://www.google.com/search?q=hiking+boots');
+    await s.settle();
+    expect(s.serp.state(1).intent).toMatchObject({ state: 'ready' });
     expect(s.ensureModel).toHaveBeenCalledTimes(1);
   });
 
@@ -446,13 +461,92 @@ describe('SERP service', () => {
     const classified = s.classify.mock.calls.length;
     s.serp.forget();
     // The reading, the outline and the session's intent answers go; the page is read afresh when next asked for.
-    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null, null);
     const after = s.serp.state(1);
     expect(after.serp.status).toBe('pending');
     expect(after.outlines).toBe(false);
     await vi.advanceTimersByTimeAsync(0);
     expect(s.serp.state(1).intent).toMatchObject({ state: 'ready' });
     expect(s.classify.mock.calls.length).toBe(classified + 1);
+  });
+
+  test('serp-service-forget-drops-inflight-intent', async () => {
+    const s = setup();
+    s.t.add(1, 'about:blank');
+    let answer: (value: Awaited<ReturnType<typeof s.classifier.classify>>) => void = () => undefined;
+    s.classify.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    await load(s, 1, GOOGLE);
+    expect(s.classify).toHaveBeenCalledTimes(1);
+    // Clear Browsing Data while the query is being classified: its answer is not kept.
+    s.serp.forget();
+    answer({ state: 'ready', result: { label: 'commercial', confidence: 0.9, scores: { informational: 0.05, navigational: 0.03, commercial: 0.9, transactional: 0.02 }, model: 'fake' } });
+    await s.settle();
+    // Read afresh, the query is classified again (nothing was remembered from before the clear).
+    s.serp.state(1);
+    await s.settle();
+    expect(s.classify).toHaveBeenCalledTimes(2);
+    expect(s.serp.state(1).intent).toMatchObject({ state: 'ready', result: { model: 'fake' } });
+    expect(s.serp.state(1).intent).not.toMatchObject({ result: { label: 'commercial', confidence: 0.9 } });
+  });
+
+  test('serp-service-analysis-drop-is-transient', async () => {
+    const s = setup();
+    s.t.add(1, 'about:blank');
+    const dropped = (_raw: unknown, context: { params: unknown; packVersion: number }) => Promise.resolve({ status: 'unreadable' as const, reason: 'timeout' as const, params: context.params as never, packVersion: context.packVersion });
+    // Dropped once (a full queue): read again at once, and ready.
+    s.analyzer.analyse.mockImplementationOnce(dropped);
+    await load(s, 1, GOOGLE);
+    expect(s.read).toHaveBeenCalledTimes(2);
+    expect(s.serp.state(1).serp.status).toBe('ready');
+    // Dropped twice: still pending (never "couldn't read"), and read afresh when next asked for.
+    s.analyzer.analyse.mockImplementationOnce(dropped).mockImplementationOnce(dropped);
+    await load(s, 1, GOOGLE_2);
+    expect(s.read).toHaveBeenCalledTimes(4);
+    expect(s.serp.state(1).serp.status).toBe('pending');
+    await s.settle();
+    expect(s.read).toHaveBeenCalledTimes(5);
+    expect(s.serp.state(1).serp.status).toBe('ready');
+    // The reader's own timeout (it did not finish reading) is a real "couldn't read".
+    s.read.mockResolvedValueOnce({ ok: false, reason: 'timeout', stats: { nodes: 20_000, elapsedMs: 150, truncated: false, organicCut: false } });
+    await load(s, 1, GOOGLE);
+    expect(s.serp.state(1).serp).toMatchObject({ status: 'unreadable', reason: 'timeout' });
+    expect(s.read).toHaveBeenCalledTimes(6);
+  });
+
+  test('serp-service-paint-across-navigation', async () => {
+    const s = setup();
+    s.t.add(1, 'about:blank');
+    await load(s, 1, GOOGLE);
+    // A paint in flight when the tab navigates (a reload, the same URL): the off paint follows it,
+    // and once it answers that it drew anyway, it is removed again.
+    let drew: (value: { on: boolean; boxes: number }) => void = () => undefined;
+    s.outline.paint.mockImplementationOnce(() => new Promise((resolve) => (drew = resolve)));
+    expect(s.serp.setOutlines(1, true)).toBe(true);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, expect.anything(), GOOGLE);
+    s.t.navigate(1, GOOGLE);
+    s.serp.navigated(s.t.get(1).contentsId);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null, null);
+    const calls = s.outline.paint.mock.calls.length;
+    drew({ on: true, boxes: 3 });
+    await s.settle();
+    expect(s.outline.paint).toHaveBeenCalledTimes(calls + 1);
+    expect(s.outline.paint).toHaveBeenLastCalledWith(s.t.get(1).page, null, null);
+    expect(s.outline.ended).not.toHaveBeenCalled();
+    expect(s.serp.state(1).outlines).toBe(false);
+  });
+
+  test('serp-service-watch-abort-is-passive', async () => {
+    const s = setup();
+    s.t.add(1, GOOGLE, { loading: true });
+    const aborted = new AbortController();
+    const parked = s.serp.watch(1, s.serp.state(1).version, aborted.signal);
+    // Loaded meanwhile, with no event yet: an aborted watch answers without starting a read.
+    s.t.get(1).loading = false;
+    aborted.abort();
+    await expect(parked).resolves.toMatchObject({ serp: { status: 'pending' } });
+    expect(s.read).not.toHaveBeenCalled();
+    s.serp.state(1);
+    expect(s.read).toHaveBeenCalledTimes(1);
   });
 
   test('serp-read-api', async () => {

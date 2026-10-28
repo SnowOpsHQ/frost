@@ -30,9 +30,14 @@ import type { SerpAnalyzer } from './serp-analyzer';
 // - Every change bumps `version` and wakes the watchers (at most `MAX_PENDING_SERP_WATCHES`).
 // - Intent: a `ready` reading's query is classified only while the classifier is `ready` (never a
 //   download); answers are kept per query (`SERP_INTENT_CACHE_SIZE`).
-// - Outlines: drawn for the active tab's `ready` reading only; removed on a navigation, a tab switch
-//   (polled every `SERP_OUTLINE_ACTIVE_POLL_MS` while one is drawn), a pack swap, Clear Browsing Data
-//   or the toggle; off when the page ends them.
+// - A reader answer whose analysis timed out (an overrun worker, a job dropped from a full queue)
+//   is transient: read once more, then left `pending` for the next ask, never "couldn't read".
+// - Outlines: drawn for the active tab's `ready` reading only, on the document at its URL (the paint
+//   script refuses another); removed on a new document, an in-page move to another search, a tab
+//   switch (polled every `SERP_OUTLINE_ACTIVE_POLL_MS` while one is drawn), a pack swap, Clear
+//   Browsing Data or the toggle, always with an `off` paint to the page (harmless on a fresh
+//   document, so a paint that crossed a navigation is removed too); off when the page ends them. An
+//   in-page move within the same search keeps the reading and the outlines.
 
 /** A tab as the service sees it, now. */
 export interface SerpTab {
@@ -57,9 +62,12 @@ export interface SerpTabs {
   activeTabId(): number | null;
 }
 
-/** Draws the outlines in a page (`runOutline`; `null`: off) and waits for them to end (`watchOutline`). Answers are page data. */
+/**
+ * Draws the outlines in a page (`runOutline`; `null`: off), on the document at `expectedUrl` only
+ * (the fragment aside; `null` for off), and waits for them to end (`watchOutline`). Answers are page data.
+ */
 export interface SerpOutliner {
-  paint(page: SerpReadTarget, layout: EngineLayout | null): Promise<unknown>;
+  paint(page: SerpReadTarget, layout: EngineLayout | null, expectedUrl: string | null): Promise<unknown>;
   ended(page: SerpReadTarget): Promise<unknown>;
 }
 
@@ -114,6 +122,10 @@ interface Entry {
   reading: Reading;
   intent: IntentAnswer | null;
   classifying: boolean;
+  /** One classification was tried for this reading (so an `unavailable` classifier is asked once, never in a loop). */
+  attempted: boolean;
+  /** The analysis was retried once after a transient worker timeout (a dropped or overrun job). */
+  retried: boolean;
   /** The drawn outline (its token), or `null`. */
   outline: { readonly token: number } | null;
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -150,6 +162,8 @@ export function createSerpService(options: SerpServiceOptions): Serp {
   let lastUpdate: PackStatus['lastUpdate'] = null;
   let checking: Promise<PackUpdateOutcome> | null = null;
   let disposed = false;
+  /** Raised by Clear Browsing Data: a classification begun before it is never kept. */
+  let generation = 0;
 
   const bump = (): void => {
     version += 1;
@@ -169,11 +183,17 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       poll = undefined;
     }
   };
-  /** Turns `entry`'s outlines off; `paint`: remove them from the page (its document is still there). */
-  const outlinesOff = (entry: Entry, paint: boolean): void => {
+  /** Removes any outline from `page`: harmless on a document without one, and a gone page just refuses. */
+  const clearPage = (page: SerpReadTarget): void => void attempt(() => outline.paint(page, null, null)).catch(() => undefined);
+  /**
+   * Turns `entry`'s outlines off and removes them from its page. Sent on a navigation too: a paint
+   * still in flight may land on the next document (one at the same URL, a reload, passes the
+   * paint's own URL check), and removing nothing from a fresh document is harmless.
+   */
+  const outlinesOff = (entry: Entry): void => {
     if (!entry.outline) return;
     entry.outline = null;
-    if (paint) void attempt(() => outline.paint(entry.page, null)).catch(() => undefined);
+    clearPage(entry.page);
     stopPollIfIdle();
   };
   /** A tab switch removes the outlines (`SERP_OUTLINE_ACTIVE_POLL_MS` while one is drawn). */
@@ -183,7 +203,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       let changed = false;
       for (const entry of entries.values()) {
         if (entry.outline && entry.tabId !== active) {
-          outlinesOff(entry, true);
+          outlinesOff(entry);
           changed = true;
         }
       }
@@ -193,11 +213,11 @@ export function createSerpService(options: SerpServiceOptions): Serp {
     (poll as { unref?: () => void }).unref?.();
   };
 
-  /** Drops `entry` (its timer, its outlines; `paint`: removed from a page still showing it). */
-  const retire = (entry: Entry, paint: boolean): void => {
+  /** Drops `entry` (its timer, and its outlines, removed from its page). */
+  const retire = (entry: Entry): void => {
     clearTimeout(entry.timer);
     entry.timer = undefined;
-    outlinesOff(entry, paint);
+    outlinesOff(entry);
     if (entries.get(entry.tabId) === entry) entries.delete(entry.tabId);
   };
 
@@ -229,6 +249,17 @@ export function createSerpService(options: SerpServiceOptions): Serp {
           ? unreadable(entry, 'invalid-answer')
           : await attempt(() => analyzer.analyse(raw, { params: entry.params, packVersion: entry.packVersion, redirects: redirectRules(entry.engine) })).catch(() => unreadable(entry, 'invalid-answer'));
     if (!live(entry)) return;
+    // The reader answered, but the analysis timed out: the worker was overrun or the job dropped
+    // from a full queue (`SERP_ANALYSIS_MAX_QUEUED`). Transient, so never shown as "couldn't read":
+    // read once more; after that the reading goes (still `pending`), read afresh when next asked for.
+    const answered = typeof raw === 'object' && raw !== null && (raw as { ok?: unknown }).ok === true;
+    if (answered && snapshot.status === 'unreadable' && snapshot.reason === 'timeout') {
+      if (!entry.retried) {
+        entry.retried = true;
+        void run(entry);
+      } else retire(entry);
+      return;
+    }
     entry.reading = { kind: 'done', snapshot, readAt: now() };
     classifyEntry(entry);
     bump();
@@ -237,7 +268,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
   /** A fresh reading of `tab` (replacing the tab's last); read now, or after `delayMs`. */
   const begin = (tabId: number, tab: SerpTab, match: SerpMatch, pack: Extract<ActivePack, { status: 'ready' }>, delayMs: number | null): Entry => {
     const previous = entries.get(tabId);
-    if (previous) retire(previous, previous.contentsId === tab.contentsId && previous.documentSeq === tab.documentSeq);
+    if (previous) retire(previous);
     const entry: Entry = {
       tabId,
       contentsId: tab.contentsId,
@@ -251,6 +282,8 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       reading: { kind: 'pending' },
       intent: null,
       classifying: false,
+      attempted: false,
+      retried: false,
       outline: null,
       timer: undefined,
     };
@@ -269,8 +302,11 @@ export function createSerpService(options: SerpServiceOptions): Serp {
   const isCurrent = (entry: Entry, tab: SerpTab, pack: Extract<ActivePack, { status: 'ready' }>): boolean =>
     entry.contentsId === tab.contentsId && entry.documentSeq === tab.documentSeq && entry.url === tab.url && entry.device === tab.device && entry.packVersion === pack.version;
 
-  /** The tab's SERP state (a loaded result page with no current reading is read now) and its current entry. */
-  const serpState = (tabId: number): { serp: SerpState; entry: Entry | null } => {
+  /**
+   * The tab's SERP state and its current entry. A loaded result page with no current reading is read
+   * now, unless `passive` (an answer nobody waits for: nothing is started or dropped).
+   */
+  const serpState = (tabId: number, passive = false): { serp: SerpState; entry: Entry | null } => {
     const pack = readyPack();
     if (!pack) return { serp: { status: 'disabled', tabId, reason: 'pack-invalid' }, entry: null };
     const tab = tabs.tab(tabId);
@@ -278,10 +314,10 @@ export function createSerpService(options: SerpServiceOptions): Serp {
     let entry = entries.get(tabId) ?? null;
     if (!entry || !isCurrent(entry, tab, pack)) {
       // A reading of something the tab no longer shows goes (removed from the page if it is still that document).
-      if (entry) retire(entry, entry.contentsId === tab.contentsId && entry.documentSeq === tab.documentSeq);
+      if (entry && !passive) retire(entry);
       const match = disposed ? null : matchSerp(tab.url, pack.pack, tab.device);
       if (!match) return { serp: { status: 'not-serp', tabId, url: tab.url.length <= SERP_PARAM_LIMITS.maxUrlChars ? tab.url : '' }, entry: null };
-      if (tab.loading) return { serp: { status: 'pending', tabId, documentSeq: tab.documentSeq, url: tab.url, params: match.params }, entry: null };
+      if (tab.loading || passive) return { serp: { status: 'pending', tabId, documentSeq: tab.documentSeq, url: tab.url, params: match.params }, entry: null };
       entry = begin(tabId, tab, match, pack, null);
     }
     return { serp: stateOf(entry), entry };
@@ -303,21 +339,30 @@ export function createSerpService(options: SerpServiceOptions): Serp {
     while (intents.size > SERP_INTENT_CACHE_SIZE) intents.delete(intents.keys().next().value!);
   };
 
-  /** Classifies a `ready` reading's query, locally, if the classifier is `ready` (a kept answer first). */
+  /**
+   * Classifies a `ready` reading's query, locally (a kept answer first): while the classifier is
+   * `ready`, or once per reading while it is `unavailable` (its process restarts on a request, so a
+   * crash recovers; never a loop). Never while the model is missing or downloading.
+   */
   function classifyEntry(entry: Entry): void {
     if (entry.intent || entry.classifying || entry.reading.kind !== 'done' || entry.reading.snapshot.status !== 'ready') return;
-    if (classifier.state() !== 'ready') return;
     const query = entry.params.query;
     const kept = intents.get(query);
     if (kept) {
       entry.intent = kept;
       return;
     }
+    const state = classifier.state();
+    if (state !== 'ready' && !(state === 'unavailable' && !entry.attempted)) return;
+    entry.attempted = true;
     entry.classifying = true;
+    const asked = generation;
     void attempt(() => classifier.classify(query))
       .catch((): IntentAnswer => ({ state: 'unavailable' }))
       .then((answer) => {
         entry.classifying = false;
+        // Cleared meanwhile (Clear Browsing Data): the answer is not kept.
+        if (asked !== generation) return;
         if (answer.state === 'ready' || answer.state === 'no-query') {
           remember(query, answer);
           if (live(entry)) entry.intent = answer;
@@ -326,9 +371,9 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       });
   }
 
-  const intentOf = (entry: Entry | null, serp: SerpState): IntentAnswer | null => {
+  const intentOf = (entry: Entry | null, serp: SerpState, passive: boolean): IntentAnswer | null => {
     if (!entry || serp.status !== 'ready') return null;
-    classifyEntry(entry);
+    if (!passive) classifyEntry(entry);
     if (entry.intent) return entry.intent;
     const state = classifier.state();
     return state === 'ready' ? null : { state };
@@ -346,7 +391,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
   /** Every reading was made with another pack: all go (outlines too); the active tab is read again now, the others when asked for. */
   const unsubscribePacks = packs.onChanged(() => {
     if (disposed) return;
-    for (const entry of [...entries.values()]) retire(entry, true);
+    for (const entry of [...entries.values()]) retire(entry);
     bump();
     const active = tabs.activeTabId();
     if (active !== null) serpState(active);
@@ -358,9 +403,10 @@ export function createSerpService(options: SerpServiceOptions): Serp {
   /** The page of `contentsId`'s entry. */
   const entryOf = (contentsId: number): Entry | undefined => [...entries.values()].find((entry) => entry.contentsId === contentsId);
 
-  const tabState = (tabId: number): SerpTabState => {
-    const { serp, entry } = serpState(tabId);
-    const intent = intentOf(entry, serp);
+  /** The tab's `SerpTabState`; `passive`: start and drop nothing (an answer nobody waits for). */
+  const tabState = (tabId: number, passive = false): SerpTabState => {
+    const { serp, entry } = serpState(tabId, passive);
+    const intent = intentOf(entry, serp, passive);
     return { version, tabId, serp, outlines: entry?.outline != null, intent, pack: packStatus() };
   };
 
@@ -376,10 +422,11 @@ export function createSerpService(options: SerpServiceOptions): Serp {
             resolve(tabState(tabId));
           },
         };
+        // Aborted: the caller has its answer already (`serp.watch` timed out); a passive one, so no read starts.
         const onAbort = (): void => {
           const index = waiters.indexOf(waiter);
           if (index >= 0) waiters.splice(index, 1);
-          resolve(tabState(tabId));
+          resolve(tabState(tabId, true));
         };
         signal?.addEventListener('abort', onAbort, { once: true });
         waiters.push(waiter);
@@ -392,7 +439,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       const { serp: state, entry } = serpState(tabId);
       if (!on) {
         if (entry?.outline) {
-          outlinesOff(entry, true);
+          outlinesOff(entry);
           bump();
         }
         return false;
@@ -404,12 +451,17 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       const mine = (): boolean => live(entry) && entry.outline?.token === token;
       const off = (): void => {
         if (!mine()) return;
-        outlinesOff(entry, false);
+        outlinesOff(entry);
         bump();
       };
-      void attempt(() => outline.paint(entry.page, entry.engine.layout)).then(
+      // Only on the document main means (the paint script checks its URL, the fragment aside).
+      void attempt(() => outline.paint(entry.page, entry.engine.layout, entry.url)).then(
         (answer) => {
-          if (!mine()) return;
+          if (!mine()) {
+            // Superseded while in flight, yet it drew (a reload at the same URL): removed, unless the tab draws again.
+            if (drawnAnswer(answer) && !entries.get(entry.tabId)?.outline) clearPage(entry.page);
+            return;
+          }
           if (!drawnAnswer(answer)) {
             off();
             return;
@@ -466,7 +518,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       }
       const previous = entries.get(tabId);
       if (previous) {
-        retire(previous, previous.documentSeq === tab.documentSeq);
+        retire(previous);
         bump();
       }
     },
@@ -474,7 +526,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
     navigated(contentsId) {
       const entry = entryOf(contentsId);
       if (!entry) return;
-      retire(entry, false);
+      retire(entry);
       bump();
     },
 
@@ -491,7 +543,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
         entry.url = url;
         return;
       }
-      if (entry) retire(entry, true);
+      if (entry) retire(entry);
       if (match) begin(tabId, { ...tab, url }, match, pack, debounceMs);
       else bump();
     },
@@ -499,13 +551,14 @@ export function createSerpService(options: SerpServiceOptions): Serp {
     closed(contentsId) {
       const entry = entryOf(contentsId);
       if (!entry) return;
-      retire(entry, false);
+      retire(entry);
       bump();
     },
 
     forget() {
-      for (const entry of [...entries.values()]) retire(entry, true);
+      for (const entry of [...entries.values()]) retire(entry);
       intents.clear();
+      generation += 1;
       bump();
     },
 
@@ -514,7 +567,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       disposed = true;
       unsubscribePacks();
       unsubscribeIntent();
-      for (const entry of [...entries.values()]) retire(entry, false);
+      for (const entry of [...entries.values()]) retire(entry);
       if (poll !== undefined) clearInterval(poll);
       poll = undefined;
       bump();

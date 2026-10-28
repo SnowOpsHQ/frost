@@ -188,10 +188,10 @@ describe('outline overlay (jsdom)', () => {
   test('serp-outline-off-removes-everything', async () => {
     const { dom, document, before, paint, state } = pageWith([answer(0, 100)]);
     const view = dom.window as unknown as Window;
-    const added = vi.spyOn(view, 'addEventListener');
-    const removed = vi.spyOn(view, 'removeEventListener');
-    const docAdded = vi.spyOn(document, 'addEventListener');
-    const docRemoved = vi.spyOn(document, 'removeEventListener');
+    // The overlay calls EventTarget's own methods on the window and the document (never theirs by name).
+    const proto = dom.window.EventTarget.prototype;
+    const added = vi.spyOn(proto, 'addEventListener');
+    const removed = vi.spyOn(proto, 'removeEventListener');
     await paint();
     const first = state()!;
     await paint();
@@ -201,14 +201,58 @@ describe('outline overlay (jsdom)', () => {
     await expect(second.ended).resolves.toBe('off');
     expect(document.documentElement.outerHTML).toBe(before);
     expect(state()).toBeUndefined();
-    const pairs = [...added.mock.calls.map((call) => [view, call] as const), ...docAdded.mock.calls.map((call) => [document, call] as const)];
+    const ours = (spy: typeof added) => spy.mock.calls.map((call, i) => [spy.mock.contexts[i], call] as const).filter(([target]) => target === view || target === document);
+    const pairs = ours(added);
     expect(pairs.map(([, [type]]) => type).sort()).toEqual(['pagehide', 'pagehide', 'resize', 'resize', 'scroll', 'scroll']);
     for (const [target, [type, listener, options]] of pairs) {
-      const calls = (target === view ? removed : docRemoved).mock.calls;
-      expect(calls.some(([t, l, o]) => t === type && l === listener && (o as { capture?: boolean } | undefined)?.capture === (options as { capture?: boolean } | undefined)?.capture), String(type)).toBe(true);
+      const calls = ours(removed);
+      expect(calls.some(([t, [ty, l, o]]) => t === target && ty === type && l === listener && (o as { capture?: boolean } | undefined)?.capture === (options as { capture?: boolean } | undefined)?.capture), String(type)).toBe(true);
     }
     // Off with nothing drawn is a no-op; stopped, scrolling reads nothing.
     await expect(paint(null)).resolves.toEqual({ on: false, boxes: 0 });
+    expect(document.documentElement.outerHTML).toBe(before);
+  });
+
+  test('serp-outline-resists-clobbering', async () => {
+    // Named elements shadow `document`'s methods and getters in every world: the overlay still
+    // draws, and off still removes everything, so main's "off" is never a lie. (The window's
+    // listeners go through the same EventTarget methods, taken from the document's chain.)
+    const names = ['addEventListener', 'removeEventListener', 'createElement', 'documentElement', 'defaultView', 'body', 'URL'];
+    const { dom, document, before, paint, state, boxes } = pageWith([answer(0, 100)], `<div id="results"></div>${names.map((name) => `<img name="${name}">`).join('')}<form name="querySelector"></form>`);
+    // The page's names really do shadow them here.
+    for (const name of names) expect((document as unknown as Record<string, unknown>)[name], name).toBeInstanceOf(dom.window.HTMLImageElement);
+    await expect(paint()).resolves.toEqual({ on: true, boxes: 2 });
+    expect(boxes()).toHaveLength(2);
+    const drawn = state()!;
+    await expect(paint(null)).resolves.toEqual({ on: false, boxes: 0 });
+    await expect(drawn.ended).resolves.toBe('off');
+    expect(state()).toBeUndefined();
+    expect(document.documentElement.outerHTML).toBe(before);
+    // Even if the page breaks a cleanup step, stop still removes the host and reports the end.
+    await paint();
+    const again = state()!;
+    const disconnect = vi.spyOn(dom.window.EventTarget.prototype, 'removeEventListener').mockImplementation(() => {
+      throw new Error('hostile');
+    });
+    await paint(null);
+    disconnect.mockRestore();
+    await expect(again.ended).resolves.toBe('off');
+    expect(state()).toBeUndefined();
+    expect(document.documentElement.outerHTML).toBe(before);
+  });
+
+  test('serp-outline-only-on-the-expected-document', async () => {
+    const { document, before, paint, state } = pageWith([answer(0)]);
+    const config = { ...OUTLINE_CONFIG, minIntervalMs: 10 };
+    const at = (url: string) => paintOutlines(document as unknown as OutlineDocument, LAYOUT, config, planOutlines, (() => answer(0)) as unknown as typeof readSerp, {}, url);
+    // A paint meant for another document (it crossed a navigation) installs nothing.
+    await expect(at('https://www.google.com/search?q=other')).resolves.toEqual({ on: false, boxes: 0 });
+    expect(document.documentElement.outerHTML).toBe(before);
+    // The fragment aside, the same document draws.
+    const store: Record<string, unknown> = {};
+    await expect(paintOutlines(document as unknown as OutlineDocument, LAYOUT, config, planOutlines, (() => answer(0)) as unknown as typeof readSerp, store, 'https://www.google.com/search?q=x#top')).resolves.toEqual({ on: true, boxes: 1 });
+    await paintOutlines(document as unknown as OutlineDocument, null, config, planOutlines, (() => answer(0)) as unknown as typeof readSerp, store);
+    expect(state()).toBeUndefined();
     expect(document.documentElement.outerHTML).toBe(before);
   });
 
@@ -255,9 +299,11 @@ describe('outline overlay (jsdom)', () => {
 describe('outline script', () => {
   test('serp-outline-script-is-self-contained', () => {
     for (const layout of [LAYOUT, null]) {
-      const script = outlineScript(layout);
+      const script = outlineScript(layout, 'https://www.google.com/search?q=x');
       expect(() => new Function(script)).not.toThrow();
       expect(script).toContain(`(document, ${JSON.stringify(layout)}, ${JSON.stringify(OUTLINE_CONFIG)}, `);
+      // The expected document's URL is JSON too (none for off: off removes whatever this world drew).
+      expect(script.endsWith(`, globalThis, ${JSON.stringify(layout === null ? null : 'https://www.google.com/search?q=x')})`)).toBe(true);
       for (const forbidden of [/\binnerHTML\b/, /\bouterHTML\b/, /\binsertAdjacentHTML\b/, /document\.write/, /\badoptedStyleSheets\b/, /CSSStyleSheet/, /createElement\(['"]style/, /setAttribute\(['"]style/, /\.cssText\b/, /\beval\s*\(/, /\brequire\s*\(/, /\bprocess\./, /\bipcRenderer\b/, /__vite/]) {
         expect(script, String(forbidden)).not.toMatch(forbidden);
       }
@@ -272,8 +318,8 @@ describe('outline script', () => {
 
   test('serp-outline-runs-in-serp-world', async () => {
     const contents = { executeJavaScriptInIsolatedWorld: vi.fn(async (_world: number, _scripts: { code: string }[]) => ({ on: true, boxes: 2 })) };
-    await expect(runOutline(contents, LAYOUT)).resolves.toEqual({ on: true, boxes: 2 });
-    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledExactlyOnceWith(SERP_WORLD_ID, [{ code: outlineScript(LAYOUT) }]);
+    await expect(runOutline(contents, LAYOUT, 'https://www.google.com/search?q=x')).resolves.toEqual({ on: true, boxes: 2 });
+    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledExactlyOnceWith(SERP_WORLD_ID, [{ code: outlineScript(LAYOUT, 'https://www.google.com/search?q=x') }]);
     contents.executeJavaScriptInIsolatedWorld.mockResolvedValueOnce('removed' as never);
     await expect(watchOutline(contents)).resolves.toBe('removed');
     expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(SERP_WORLD_ID, [{ code: outlineEndedScript() }]);

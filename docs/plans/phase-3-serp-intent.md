@@ -340,7 +340,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - outlines plan: boxes and labels per type;
   - a pack update swaps the pack live.
 - [x] commit `feat(serp): SERP service, router and outlines`
-- [ ] Review fixes: commit `fix(serp): address SERP service review findings`
+- [x] Review fixes: commit `fix(serp): address SERP service review findings`
 
 ### Task 5: Indexability and AI-readiness probes
 - **Spec:**
@@ -439,7 +439,8 @@ Stable after merge. Import the schemas from `@app/specs/...` and the types from 
 - **Phase 5 (agent tools):** `packages/ipc-contract/src/serp-service.ts` exports `SerpReadApi`. Each
   answer is Zod-typed by `specs/serp-service.schema.ts`, and none of these calls fetch anything:
   - `snapshot(tabId) → SerpState`: `SerpStateSchema`, the tab's SERP reading (`not-serp`,
-    `pending`, `ready` with a `SerpSnapshot`, or `unreadable` with its reason);
+    `pending`, `ready` with a `SerpSnapshot`, `unreadable` with its reason, or `disabled` when the
+    bundled pack failed verification);
   - `classifyIntent(query) → Promise<IntentAnswer>`: `IntentAnswerSchema`, either `ready` with an
     `IntentResult` or a state such as `model-missing`. It never downloads the model; only the user
     enables it;

@@ -133,7 +133,7 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
     packs,
     analyzer,
     read: async (page, layout) => runSerpRead(alive(page), layout),
-    outline: { paint: async (page, layout) => runOutline(alive(page), layout), ended: async (page) => watchOutline(alive(page)) },
+    outline: { paint: async (page, layout, expectedUrl) => runOutline(alive(page), layout, expectedUrl), ended: async (page) => watchOutline(alive(page)) },
     classifier,
     tabs,
     log,
