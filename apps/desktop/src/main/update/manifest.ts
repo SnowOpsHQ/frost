@@ -1,11 +1,14 @@
 import { createHash, createPublicKey, verify, type KeyObject } from 'node:crypto';
 import {
   ED25519_SIGNATURE_BYTES,
+  MAX_CLOCK_SKEW_MS,
   MAX_ENVELOPE_BYTES,
   MAX_MANIFEST_BYTES,
+  MAX_MANIFEST_LIFETIME_MS,
   MAX_VERSION_CHARS,
   ROLLOUT_BUCKETS,
   UPDATE_PUBLIC_KEYS,
+  UPDATE_SIGNATURE_CONTEXT,
   VERSION_PATTERN,
   isCanonicalBase64,
   type UpdateDecideInput,
@@ -22,9 +25,10 @@ import { UpdateEnvelopeSchema, UpdateManifestSchema } from '@app/specs/update-ma
  * maintainer's signer (`scripts/sign-update-manifest.mjs`, loaded there with Node's type stripping,
  * so erasable TypeScript only) both use it.
  *
- * Nothing in the feed's bytes is believed before the Ed25519 signature over the exact payload bytes
- * verifies against a trusted key: the size is capped first, then the envelope is parsed, and only
- * the verified payload is decoded and parsed as a manifest.
+ * Nothing in the feed's bytes is believed before the Ed25519 signature over
+ * `UPDATE_SIGNATURE_CONTEXT` + the exact payload bytes verifies against a trusted key: the size is
+ * capped first, then the envelope is parsed, and only the verified payload is decoded and parsed as
+ * a manifest, which must then be fresh against the caller's clock.
  */
 
 const refuse = (reason: UpdateVerifyReason): UpdateVerifyResult => ({ ok: false, reason });
@@ -38,13 +42,61 @@ const decodeUtf8 = (bytes: Uint8Array): string | null => {
   }
 };
 
-const parseJson = (text: string): { value: unknown } | null => {
-  try {
-    return { value: JSON.parse(text) as unknown };
-  } catch {
-    return null;
+/**
+ * Whether JSON text repeats a key in any object, at any depth (`"a"` and `"\u0061"` are the same
+ * key). For text `JSON.parse` has already accepted: it only tracks strings, braces, brackets and
+ * commas, so it relies on the text being valid JSON.
+ */
+export function hasDuplicateKeys(text: string): boolean {
+  // One entry per open container: the keys seen so far for an object, `null` for an array.
+  const open: (Set<string> | null)[] = [];
+  let expectKey = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      let end = i + 1;
+      while (text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+      const keys = open.at(-1);
+      if (expectKey && keys instanceof Set) {
+        const key = JSON.parse(text.slice(i, end + 1)) as string;
+        if (keys.has(key)) return true;
+        keys.add(key);
+        expectKey = false;
+      }
+      i = end;
+    } else if (char === '{') {
+      open.push(new Set());
+      expectKey = true;
+    } else if (char === '[') {
+      open.push(null);
+      expectKey = false;
+    } else if (char === '}' || char === ']') {
+      open.pop();
+      expectKey = false;
+    } else if (char === ',') {
+      expectKey = open.at(-1) instanceof Set;
+    }
   }
-};
+  return false;
+}
+
+/** UTF-8 JSON with no repeated key in any object: its value, or why not. */
+export function readJson(bytes: Uint8Array): { ok: true; value: unknown } | { ok: false; reason: 'not-json' | 'duplicate-key' } {
+  const text = decodeUtf8(bytes);
+  if (text === null) return { ok: false, reason: 'not-json' };
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { ok: false, reason: 'not-json' };
+  }
+  return hasDuplicateKeys(text) ? { ok: false, reason: 'duplicate-key' } : { ok: true, value };
+}
+
+/** What is signed and verified: `UPDATE_SIGNATURE_CONTEXT` (UTF-8) followed by the payload bytes. */
+export function signatureInput(payload: Uint8Array): Buffer {
+  return Buffer.concat([Buffer.from(UPDATE_SIGNATURE_CONTEXT, 'utf8'), payload]);
+}
 
 /**
  * Strict base64 to bytes: `null` unless `text` is canonical (`isCanonicalBase64`), and, as a second
@@ -71,8 +123,10 @@ function trustedKey(keys: Readonly<Record<string, string>>, keyId: string): KeyO
 }
 
 /**
- * A manifest from parsed JSON: `UpdateManifestSchema`, and a `minimumVersion` (if any) not above
- * `version`. `error` names the first problems (paths and messages, for the signer).
+ * A manifest from parsed JSON: `UpdateManifestSchema`, a `minimumVersion` (if any) not above
+ * `version`, and an `expiresAt` after `releasedAt` by at most `MAX_MANIFEST_LIFETIME_MS`. `error`
+ * names the first problems (paths and messages, for the signer). Freshness against a clock is
+ * `checkFreshness`.
  */
 export function parseManifest(value: unknown): { ok: true; manifest: UpdateManifest } | { ok: false; error: string } {
   const parsed = UpdateManifestSchema.safeParse(value);
@@ -87,21 +141,38 @@ export function parseManifest(value: unknown): { ok: true; manifest: UpdateManif
   if (manifest.minimumVersion !== undefined && compareVersions(manifest.minimumVersion, manifest.version) > 0) {
     return { ok: false, error: 'minimumVersion: above version' };
   }
+  const lifetime = Date.parse(manifest.expiresAt) - Date.parse(manifest.releasedAt);
+  if (!(lifetime > 0)) return { ok: false, error: 'expiresAt: not after releasedAt' };
+  if (lifetime > MAX_MANIFEST_LIFETIME_MS) return { ok: false, error: 'expiresAt: more than MAX_MANIFEST_LIFETIME_MS after releasedAt' };
   return { ok: true, manifest };
 }
 
 /**
- * Verifies the feed's bytes against the trusted keys (`UPDATE_PUBLIC_KEYS` unless a test injects
- * its own) and, only if the signature verifies, parses the signed payload as a manifest.
+ * Whether a manifest is usable at `now` (ms since the epoch): `expired` once `now` reaches
+ * `expiresAt` (or `now` is not a number), `not-yet-valid` while `releasedAt` is more than
+ * `MAX_CLOCK_SKEW_MS` ahead of `now`, else `null`.
  */
-export function verifyEnvelope(bytes: Uint8Array, keys: Readonly<Record<string, string>> = UPDATE_PUBLIC_KEYS): UpdateVerifyResult {
+export function checkFreshness(manifest: Pick<UpdateManifest, 'releasedAt' | 'expiresAt'>, now: number): 'expired' | 'not-yet-valid' | null {
+  if (!Number.isFinite(now) || now >= Date.parse(manifest.expiresAt)) return 'expired';
+  if (Date.parse(manifest.releasedAt) - now > MAX_CLOCK_SKEW_MS) return 'not-yet-valid';
+  return null;
+}
+
+/**
+ * Verifies the feed's bytes against the trusted keys (`UPDATE_PUBLIC_KEYS` unless a test injects
+ * its own) and, only if the signature verifies, parses the signed payload as a manifest and checks
+ * it is fresh at `now` (the caller's clock, ms since the epoch).
+ */
+export function verifyEnvelope(
+  bytes: Uint8Array,
+  { now, keys = UPDATE_PUBLIC_KEYS }: { now: number; keys?: Readonly<Record<string, string>> },
+): UpdateVerifyResult {
   // 1. The size, before anything is parsed.
   if (bytes.byteLength > MAX_ENVELOPE_BYTES) return refuse('too-large');
 
-  // 2. The envelope: UTF-8 JSON, strictly shaped, strict base64.
-  const text = decodeUtf8(bytes);
-  const json = text === null ? null : parseJson(text);
-  if (json === null) return refuse('not-json');
+  // 2. The envelope: UTF-8 JSON without repeated keys, strictly shaped, strict base64.
+  const json = readJson(bytes);
+  if (!json.ok) return refuse(json.reason);
   const envelope = UpdateEnvelopeSchema.safeParse(json.value);
   if (!envelope.success) return refuse('bad-envelope');
   const { keyId } = envelope.data;
@@ -110,24 +181,25 @@ export function verifyEnvelope(bytes: Uint8Array, keys: Readonly<Record<string, 
   if (payload === null || signature === null || signature.length !== ED25519_SIGNATURE_BYTES) return refuse('bad-envelope');
   if (payload.length > MAX_MANIFEST_BYTES) return refuse('too-large');
 
-  // 3. The key and the signature over the exact payload bytes.
+  // 3. The key and the signature over the context prefix and the exact payload bytes.
   const key = trustedKey(keys, keyId);
   if (key === 'unknown') return refuse('unknown-key');
   if (key === 'bad') return refuse('bad-key');
   let valid = false;
   try {
-    valid = verify(null, payload, key, signature);
+    valid = verify(null, signatureInput(payload), key, signature);
   } catch {
     valid = false;
   }
   if (!valid) return refuse('bad-signature');
 
-  // 4. Only now: the signed bytes as a manifest.
-  const manifestText = decodeUtf8(payload);
-  const manifestJson = manifestText === null ? null : parseJson(manifestText);
-  if (manifestJson === null) return refuse('bad-payload');
+  // 4. Only now: the signed bytes as a manifest, fresh at `now`.
+  const manifestJson = readJson(payload);
+  if (!manifestJson.ok) return refuse(manifestJson.reason === 'duplicate-key' ? 'duplicate-key' : 'bad-payload');
   const manifest = parseManifest(manifestJson.value);
   if (!manifest.ok) return refuse('bad-manifest');
+  const stale = checkFreshness(manifest.manifest, now);
+  if (stale !== null) return refuse(stale);
   return { ok: true, manifest: manifest.manifest, keyId };
 }
 
@@ -191,13 +263,17 @@ export function rolloutBucket(installId: string, version: string): number {
   return createHash('sha256').update(`${installId}:${version}`, 'utf8').digest().readUInt32BE(0) % ROLLOUT_BUCKETS;
 }
 
+const isPrerelease = (version: string) => version.includes('-');
+
 /**
- * What a verified manifest means for this install (`UPDATE_DECISIONS`, in that order). Decided on
- * the device: nothing about the install leaves it. Throws if `currentVersion` is not a version.
+ * What a verified, fresh manifest means for this install (`UPDATE_DECISIONS`, in that order).
+ * Decided on the device: nothing about the install leaves it, and the bucket is not reported.
+ * Throws if `currentVersion` is not a version.
  */
 export function decide(manifest: UpdateManifest, input: UpdateDecideInput): UpdateDecision {
   const { version } = manifest;
   if (compareVersions(version, input.currentVersion) <= 0) return { kind: 'up-to-date', version };
+  if (isPrerelease(version) && !isPrerelease(input.currentVersion)) return { kind: 'prerelease-ignored', version };
   const artifact = Object.hasOwn(manifest.artifacts, input.platformKey) ? manifest.artifacts[input.platformKey] : undefined;
   if (artifact === undefined) return { kind: 'no-artifact', version };
   const offer = { version, releasedAt: manifest.releasedAt, notes: manifest.notes, artifact };
@@ -205,7 +281,6 @@ export function decide(manifest: UpdateManifest, input: UpdateDecideInput): Upda
     return { kind: 'required', ...offer };
   }
   if (input.skippedVersion === version) return { kind: 'skipped', version };
-  const bucket = rolloutBucket(input.installId, version);
-  if (bucket >= manifest.rolloutPercent) return { kind: 'staged-out', version, bucket };
+  if (rolloutBucket(input.installId, version) >= manifest.rolloutPercent) return { kind: 'staged-out', version };
   return { kind: 'available', ...offer };
 }

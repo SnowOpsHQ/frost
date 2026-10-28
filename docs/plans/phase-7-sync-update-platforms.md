@@ -186,23 +186,31 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Spec:** `specs/update-manifest.spec.ts`, `specs/update-manifest.schema.ts` (Zod) and
   `specs/update-manifest.feature.md`.
   - **Envelope:** `{ format: 1, keyId, payload, signature }`. `payload` is the base64 of the exact
-    manifest JSON bytes, and `signature` is the base64 Ed25519 signature over those bytes (no
-    canonicalization).
+    manifest JSON bytes, and `signature` is the base64 Ed25519 signature over
+    `UPDATE_SIGNATURE_CONTEXT` (`frost-update-manifest-v1` + NUL) followed by those bytes (no
+    canonicalization). No object in the envelope or the manifest may repeat a key.
   - **Manifest:**
-    - `{ version, releasedAt, notes }`;
+    - `{ version, releasedAt, expiresAt, notes }`; `expiresAt` (required) is after `releasedAt`
+      and at most `MAX_MANIFEST_LIFETIME_MS` (90 days) after it; notes are plain text (no
+      controls, bidi controls, line/paragraph separators or lone surrogates);
     - `minimumVersion`: an install older than this has a required update, which still waits for
       consent, but staging doesn't hold it back;
     - `rolloutPercent` (0–100);
     - `artifacts`: one per `platform-arch`, each `{ url (https), sha256 (hex), size }`.
-  - **Constants:** the embedded public key (SPKI DER, base64) and its `keyId`, and the size caps
-    (manifest 64 KiB, notes 8 KiB, artifact 1 GiB).
+  - **Constants:** the embedded public key (SPKI DER, base64) and its `keyId`, the size caps
+    (manifest 64 KiB, notes 8 KiB, artifact 1 GiB), the signature context, the lifetime and clock
+    skew (`MAX_CLOCK_SKEW_MS`, 1 day), and `artifactFileName(version, platformKey)` (the client's
+    fixed download file name). The spec also records the high-water mark Task 4 keeps.
 - **Code:** `apps/desktop/src/main/update/manifest.ts`, with these functions:
-  - `verifyEnvelope(bytes, keys)`, using `node:crypto` `verify(null, …)` with Ed25519 keys only;
+  - `verifyEnvelope(bytes, { now, keys })`, using `node:crypto` `verify(null, …)` with Ed25519 keys
+    only; a manifest past `expiresAt` is `expired`, one released more than the skew ahead of `now`
+    is `not-yet-valid`;
   - `parseManifest`;
   - `compareVersions` (semver core plus pre-release);
   - `rolloutBucket(installId, version)`: the first 32 bits of SHA-256(`installId:version`) mod 100;
-  - `decide(manifest, { current, platform, arch, installId })`, which returns `none`,
-    `up-to-date`, `staged-out`, `available` or `required`.
+  - `decide(manifest, { currentVersion, platformKey, installId, skippedVersion })`, which returns
+    `up-to-date`, `prerelease-ignored` (a pre-release, for a release build), `no-artifact`,
+    `required`, `skipped`, `staged-out` or `available`.
 - **Script:** `scripts/sign-update-manifest.mjs` (root `pnpm sign:update-manifest <manifest.json>
   [--out envelope.json]`).
   - It reads the PEM path from `FROST_UPDATE_SIGNING_KEY` and refuses a key file readable by group
@@ -478,16 +486,37 @@ sync.
   was checked once by hand: a throwaway manifest outside the repo signed with
   `pnpm sign:update-manifest` verified against the embedded key, and the same envelope with one
   payload byte flipped was `bad-signature`; the files were deleted.
+- **Security review fixes** (`fix(update): harden the manifest format and signer after security
+  review`):
+  - repeated keys in any object of the envelope or the manifest are refused (`duplicate-key`;
+    `hasDuplicateKeys`, a small scanner over text `JSON.parse` accepted, comparing decoded keys),
+    in `verifyEnvelope` and in the signer;
+  - a required, signed `expiresAt` with `MAX_MANIFEST_LIFETIME_MS` and `MAX_CLOCK_SKEW_MS`
+    (`expired`, `not-yet-valid`; `checkFreshness` for re-checking later), and the spec's
+    `UpdateHighWaterMark` note for Task 4;
+  - the signature covers `UPDATE_SIGNATURE_CONTEXT` + the payload (so the envelope from the first
+    manual check no longer verifies);
+  - `decide` gives `prerelease-ignored` for a pre-release offered to a release build (before
+    `required`), and `staged-out` no longer reports the bucket;
+  - notes refuse C1 controls, bidi controls, U+2028/U+2029 and lone surrogates;
+  - `artifactFileName` and `UPDATE_ARTIFACT_KINDS[platform].extension`;
+  - the signer prints a summary (version, minimum version, rollout, release and expiry times, each
+    artifact, the manifest's SHA-256) before writing; writes through a temporary file and a hard
+    link (or a rename with `--force`), keeping an existing output unless `--force`; refuses an
+    output that is the key or the manifest by device and inode; opens files with `O_NONBLOCK` and
+    requires the key file to be owned by the current user (POSIX), warning on Windows that ACLs
+    aren't checked;
+  - `.gitignore` ignores `*.pem` and `*.signed.json`.
 - **Caps.** The 64 KiB cap (`MAX_MANIFEST_BYTES`) is on the manifest, the signed bytes. The
   envelope cap `MAX_ENVELOPE_BYTES` (88,408 bytes) is its base64 length plus 1 KiB; it is what
   `verifyEnvelope` checks before parsing, and what Task 4's feed read should cap at.
-- **API.** `verifyEnvelope(bytes, keys?)` answers `{ ok, manifest, keyId }` or one of
+- **API.** `verifyEnvelope(bytes, { now, keys? })` answers `{ ok, manifest, keyId }` or one of
   `UPDATE_VERIFY_REASONS`. `parseManifest(value)` (the schema plus `minimumVersion` not above
   `version`) is shared with the signer. `decide(manifest, { currentVersion, platformKey,
   installId, skippedVersion? })` replaces the plan's `{ current, platform, arch }`
   (`updatePlatformKey(platform, arch)` in the spec maps to `platformKey`, `null` off
-  `UPDATE_PLATFORMS`); its kinds are `up-to-date`, `no-artifact` (the plan's `none`), `required`,
-  `skipped`, `staged-out`, `available`, in that order, so skip is decided here and Task 4 only
+  `UPDATE_PLATFORMS`); its kinds are `up-to-date`, `prerelease-ignored`, `no-artifact` (the plan's
+  `none`), `required`, `skipped`, `staged-out`, `available`, in that order, so skip is decided here and Task 4 only
   passes `skippedVersion`. `compareVersions` throws on a non-version (so does `decide`, for a bad
   `currentVersion`).
 - **Stricter than the plan.** Base64 is canonical (the standard alphabet, padded, no whitespace,
@@ -506,4 +535,7 @@ sync.
   `apps/desktop/src/main/update/__tests__/sign-update-manifest.test.ts` (no vitest runs at the
   root). It calls the script's `main` in-process (trusted keys injected) and also spawns it under
   plain Node (`runs-under-node`). Added scenarios: `decide-eligibility`, `compare-versions`,
-  `production-key-is-ed25519`, `refuses-unusable-key`, `runs-under-node`.
+  `production-key-is-ed25519`, `refuses-unusable-key`, `runs-under-node`, and after the review
+  `domain-separated-signature`, `rejects-duplicate-keys`, `notes-are-plain-text`,
+  `rejects-stale`, `prerelease-only-for-prerelease`, `artifact-file-name`, `output-is-safe` (and
+  `warns-acls-unchecked-on-windows`, Windows only).

@@ -2,16 +2,23 @@
 import { createHash, generateKeyPairSync, randomUUID, sign, type KeyObject } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
 import {
+  MAX_CLOCK_SKEW_MS,
   MAX_ENVELOPE_BYTES,
   MAX_MANIFEST_BYTES,
+  MAX_MANIFEST_LIFETIME_MS,
   MAX_NOTES_CHARS,
   MAX_VERSION_CHARS,
   ROLLOUT_BUCKETS,
+  UPDATE_ARTIFACT_KINDS,
+  UPDATE_PLATFORMS,
   UPDATE_PUBLIC_KEYS,
+  UPDATE_SIGNATURE_CONTEXT,
+  artifactFileName,
   type UpdateDecideInput,
   type UpdateManifest,
+  type UpdatePlatform,
 } from '@app/specs/update-manifest.spec';
-import { compareVersions, decide, isVersion, rolloutBucket, verifyEnvelope } from '../manifest';
+import { checkFreshness, compareVersions, decide, hasDuplicateKeys, isVersion, rolloutBucket, verifyEnvelope } from '../manifest';
 
 const KEY_ID = 'test-key';
 
@@ -34,6 +41,7 @@ const MANIFEST = {
   format: 1,
   version: '1.2.0',
   releasedAt: '2026-10-28T12:00:00Z',
+  expiresAt: '2026-12-01T00:00:00Z',
   notes: 'Fixes.\n\n- One thing\n- Another',
   rolloutPercent: 100,
   artifacts: {
@@ -43,18 +51,22 @@ const MANIFEST = {
   },
 } as const;
 
+/** The verifier's clock in these tests: half a day after the release, well before expiry. */
+const NOW = Date.parse('2026-10-29T00:00:00Z');
+
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
 
-/** An envelope (as an object) over `payload` bytes, signed by `key`. */
-function envelopeOf(payload: Uint8Array, key: KeyObject = TRUSTED.privateKey, keyId = KEY_ID) {
-  return { format: 1, keyId, payload: b64(payload), signature: b64(sign(null, payload, key)) };
+/** An envelope (as an object) over `payload` bytes, signed by `key` over `context` + the payload. */
+function envelopeOf(payload: Uint8Array, key: KeyObject = TRUSTED.privateKey, keyId = KEY_ID, context = UPDATE_SIGNATURE_CONTEXT) {
+  const signedBytes = Buffer.concat([Buffer.from(context, 'utf8'), payload]);
+  return { format: 1, keyId, payload: b64(payload), signature: b64(sign(null, signedBytes, key)) };
 }
 const bytesOf = (envelope: unknown) => encode(envelope);
 const signed = (manifest: unknown, key?: KeyObject, keyId?: string) => bytesOf(envelopeOf(encode(manifest), key, keyId));
 
-const reasonOf = (bytes: Uint8Array, keys: Readonly<Record<string, string>> = KEYS) => {
-  const result = verifyEnvelope(bytes, keys);
+const reasonOf = (bytes: Uint8Array, keys: Readonly<Record<string, string>> = KEYS, now = NOW) => {
+  const result = verifyEnvelope(bytes, { now, keys });
   return result.ok ? 'ok' : result.reason;
 };
 
@@ -84,12 +96,24 @@ function payloadWhere(predicate: (base64: string) => boolean) {
 
 describe('verifyEnvelope', () => {
   test('accepts-signed-manifest', () => {
-    const result = verifyEnvelope(signed(MANIFEST), KEYS);
+    const result = verifyEnvelope(signed(MANIFEST), { now: NOW, keys: KEYS });
     expect(result).toEqual({ ok: true, manifest: MANIFEST, keyId: KEY_ID });
     // Whitespace around the envelope's JSON and a minimum version are fine too.
     const withMinimum = { ...MANIFEST, minimumVersion: '1.0.0-beta.2' };
     const pretty = new TextEncoder().encode(`${JSON.stringify(envelopeOf(encode(withMinimum)), null, 2)}\n`);
-    expect(verifyEnvelope(pretty, KEYS)).toEqual({ ok: true, manifest: withMinimum, keyId: KEY_ID });
+    expect(verifyEnvelope(pretty, { now: NOW, keys: KEYS })).toEqual({ ok: true, manifest: withMinimum, keyId: KEY_ID });
+  });
+
+  test('domain-separated-signature', () => {
+    expect(UPDATE_SIGNATURE_CONTEXT).toBe('frost-update-manifest-v1\u0000');
+    const payload = encode(MANIFEST);
+    expect(reasonOf(bytesOf(envelopeOf(payload)))).toBe('ok');
+    // The bare payload, signed by the trusted key, is not a manifest signature; nor is another prefix.
+    const bare = { format: 1, keyId: KEY_ID, payload: b64(payload), signature: b64(sign(null, payload, TRUSTED.privateKey)) };
+    expect(reasonOf(bytesOf(bare))).toBe('bad-signature');
+    for (const context of ['', 'frost-update-manifest-v1', 'frost-update-manifest-v2\u0000', 'frost-update-manifest-v1\u0000\u0000']) {
+      expect([context, reasonOf(bytesOf(envelopeOf(payload, TRUSTED.privateKey, KEY_ID, context)))]).toEqual([context, 'bad-signature']);
+    }
   });
 
   test('rejects-bad-signature', () => {
@@ -112,9 +136,16 @@ describe('verifyEnvelope', () => {
     const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
     const ec = generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
     const x25519 = generateKeyPairSync('x25519').publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
-    for (const spki of [rsa, ec, x25519, 'AAAA', '', 'not base64!', ` ${TRUSTED.spki}`]) {
+    const ed448 = generateKeyPairSync('ed448').publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
+    for (const spki of [rsa, ec, x25519, ed448, 'AAAA', '', 'not base64!', ` ${TRUSTED.spki}`]) {
       expect(reasonOf(bytesOf(good), { [KEY_ID]: spki })).toBe('bad-key');
     }
+
+    // A bad signature over a payload that is not even JSON: the signature is checked first.
+    const notJson = envelopeOf(new TextEncoder().encode('not json at all'));
+    expect(reasonOf(bytesOf(notJson))).toBe('bad-payload');
+    expect(reasonOf(bytesOf({ ...notJson, signature: flipByte(notJson.signature, 5) }))).toBe('bad-signature');
+    expect(reasonOf(bytesOf({ ...envelopeOf(new Uint8Array([0xff, 0xfe])), signature: good.signature }))).toBe('bad-signature');
 
     // Signatures that are not exactly 64 bytes of strict base64.
     const sig = Buffer.from(good.signature, 'base64');
@@ -205,9 +236,10 @@ describe('verifyEnvelope', () => {
       { ...MANIFEST, rolloutPercent: 101 },
       { ...MANIFEST, rolloutPercent: -1 },
       { ...MANIFEST, rolloutPercent: 50.5 },
-      { ...MANIFEST, notes: 'x'.repeat(MAX_NOTES_CHARS + 1) },
-      { ...MANIFEST, notes: 'bell\u0007' },
-      { ...MANIFEST, notes: 'escape\u001b[31m' },
+      { ...MANIFEST, expiresAt: '2026-12-01T01:00:00+01:00' },
+      { ...MANIFEST, expiresAt: '2026-12-01' },
+      { ...MANIFEST, expiresAt: null },
+      (({ expiresAt: _expires, ...rest }) => rest)(MANIFEST),
       { ...MANIFEST, artifacts: {} },
       { ...MANIFEST, artifacts: [] },
       { ...MANIFEST, artifacts: { 'linux-arm64': linux } },
@@ -223,9 +255,6 @@ describe('verifyEnvelope', () => {
 
     // The boundaries themselves are fine.
     for (const manifest of [
-      { ...MANIFEST, notes: 'x'.repeat(MAX_NOTES_CHARS) },
-      { ...MANIFEST, notes: '' },
-      { ...MANIFEST, notes: 'tab\tand\r\nlines, ünïcödé ❄' },
       { ...MANIFEST, rolloutPercent: 0 },
       { ...MANIFEST, minimumVersion: '1.2.0' },
       withLinux({ size: 1024 ** 3 }),
@@ -233,6 +262,115 @@ describe('verifyEnvelope', () => {
       withLinux({ url: 'https://updates.example.invalid:8443/frost.AppImage?x=1' }),
     ]) {
       expect(reasonOf(signed(manifest))).toBe('ok');
+    }
+  });
+});
+
+describe('freshness, duplicates, notes', () => {
+  const at = (iso: string) => Date.parse(iso);
+
+  test('rejects-stale', () => {
+    const expires = at(MANIFEST.expiresAt);
+    const released = at(MANIFEST.releasedAt);
+    expect(reasonOf(signed(MANIFEST), KEYS, expires - 1)).toBe('ok');
+    expect(reasonOf(signed(MANIFEST), KEYS, expires)).toBe('expired');
+    expect(reasonOf(signed(MANIFEST), KEYS, expires + 365 * 86_400_000)).toBe('expired');
+    // A clock up to MAX_CLOCK_SKEW_MS behind the release is tolerated; more is not.
+    expect(reasonOf(signed(MANIFEST), KEYS, released - MAX_CLOCK_SKEW_MS)).toBe('ok');
+    expect(reasonOf(signed(MANIFEST), KEYS, released - MAX_CLOCK_SKEW_MS - 1)).toBe('not-yet-valid');
+    expect(reasonOf(signed(MANIFEST), KEYS, 0)).toBe('not-yet-valid');
+
+    // expiresAt after releasedAt, at most MAX_MANIFEST_LIFETIME_MS after it.
+    const iso = (ms: number) => new Date(ms).toISOString();
+    expect(reasonOf(signed({ ...MANIFEST, expiresAt: MANIFEST.releasedAt }))).toBe('bad-manifest');
+    expect(reasonOf(signed({ ...MANIFEST, expiresAt: iso(released - 1000) }))).toBe('bad-manifest');
+    expect(reasonOf(signed({ ...MANIFEST, expiresAt: iso(released + MAX_MANIFEST_LIFETIME_MS + 1) }))).toBe('bad-manifest');
+    expect(reasonOf(signed({ ...MANIFEST, expiresAt: iso(released + MAX_MANIFEST_LIFETIME_MS) }))).toBe('ok');
+    expect(MAX_MANIFEST_LIFETIME_MS).toBe(90 * 86_400_000);
+    expect(MAX_CLOCK_SKEW_MS).toBe(86_400_000);
+
+    // The same rule for a manifest already parsed (the client re-checks before a later download).
+    const manifest = MANIFEST as unknown as UpdateManifest;
+    expect(checkFreshness(manifest, NOW)).toBeNull();
+    expect(checkFreshness(manifest, expires)).toBe('expired');
+    expect(checkFreshness(manifest, released - MAX_CLOCK_SKEW_MS - 1)).toBe('not-yet-valid');
+    expect(checkFreshness(manifest, Number.NaN)).toBe('expired');
+  });
+
+  test('rejects-duplicate-keys', () => {
+    // In the envelope: refused before the signature is looked at.
+    const good = JSON.stringify(envelopeOf(encode(MANIFEST)));
+    expect(reasonOf(new TextEncoder().encode(good.replace('{', '{"format":1,')))).toBe('duplicate-key');
+    expect(reasonOf(new TextEncoder().encode(good.replace('{', '{"keyId":"other-key",')))).toBe('duplicate-key');
+    expect(reasonOf(new TextEncoder().encode(good.replace('{', '{"\\u0066ormat":1,')))).toBe('duplicate-key');
+
+    // In the signed manifest: at the top, in artifacts, in one artifact, spelled with escapes.
+    const text = JSON.stringify(MANIFEST);
+    const linux = JSON.stringify(MANIFEST.artifacts['linux-x64']);
+    const duplicated = [
+      text.replace('{', '{"version":"9.9.9",'),
+      text.replace('{', '{"rolloutPercent":0,'),
+      text.replace('{', '{"\\u0076ersion":"9.9.9",'),
+      text.replace('"artifacts":{', `"artifacts":{"linux-x64":${linux},`),
+      text.replace(linux, linux.replace('{', '{"url":"https://elsewhere.example.invalid/x",')),
+      text.replace(linux, linux.replace('{', '{"\\u0075rl":"https://elsewhere.example.invalid/x",')),
+    ];
+    for (const manifest of duplicated) {
+      expect(JSON.parse(manifest)).toBeTruthy();
+      expect([manifest.slice(0, 80), reasonOf(bytesOf(envelopeOf(new TextEncoder().encode(manifest))))]).toEqual([manifest.slice(0, 80), 'duplicate-key']);
+    }
+
+    // The detector itself (on text JSON.parse accepts).
+    const table: [string, boolean][] = [
+      ['{}', false],
+      ['[]', false],
+      ['"a"', false],
+      ['{"a":1,"b":{"a":1},"c":[{"a":1},{"a":2}]}', false],
+      ['{"a":"a","b":"a"}', false],
+      ['{"a":{"b":1},"b":{"a":1}}', false],
+      ['{"a":"x\\"y","a\\"":1}', false],
+      ['{"a\\"":1,"a\\"":2}', true],
+      ['{"a":1,"a":1}', true],
+      ['{"a":1, "b":2 ,\n "a" : 3}', true],
+      ['{"a":{"b":1,"b":2}}', true],
+      ['[{"a":1},{"b":1,"b":1}]', true],
+      ['{"x":[1,{"y":[{"z":0,"z":0}]}]}', true],
+      ['{"":1,"":2}', true],
+      ['{"\\u00e9":1,"é":2}', true],
+      ['{"a":"}","a":1}', true],
+      ['{"a":"{\\"a\\":1}","b":"{\\"a\\":1}"}', false],
+    ];
+    for (const [json, expected] of table) {
+      JSON.parse(json);
+      expect([json, hasDuplicateKeys(json)]).toEqual([json, expected]);
+    }
+  });
+
+  test('notes-are-plain-text', () => {
+    const refused = [
+      'x'.repeat(MAX_NOTES_CHARS + 1),
+      'nul\u0000',
+      'bell\u0007',
+      'vt\u000b',
+      'escape\u001b[31m',
+      'del\u007f',
+      'c1 nel\u0085',
+      'c1 csi\u009b31m',
+      'lre\u202a',
+      'rlo\u202e',
+      'lri\u2066',
+      'pdi\u2069',
+      'line\u2028sep',
+      'para\u2029sep',
+      'lone high\ud800',
+      'lone low\udc00 here',
+      'reversed pair\udc00\ud800',
+    ];
+    for (const notes of refused) {
+      expect([JSON.stringify(notes).slice(0, 40), reasonOf(signed({ ...MANIFEST, notes }))]).toEqual([JSON.stringify(notes).slice(0, 40), 'bad-manifest']);
+    }
+    for (const notes of ['', 'x'.repeat(MAX_NOTES_CHARS), 'tab\tand\r\nlines, ünïcödé ❄', 'emoji \ud83d\ude80 ok', 'nbsp\u00a0 and zwj\u200d', 'ŝ\u00ff']) {
+      expect([JSON.stringify(notes).slice(0, 40), reasonOf(signed({ ...MANIFEST, notes }))]).toEqual([JSON.stringify(notes).slice(0, 40), 'ok']);
     }
   });
 });
@@ -281,11 +419,39 @@ describe('decide', () => {
     expect(decide(manifest(), { ...INSTALL, skippedVersion: '1.1.5' }).kind).toBe('available');
     // An install outside the rollout.
     const id = installInBucket('1.2.0', (bucket) => bucket >= 50);
-    expect(decide(manifest({ rolloutPercent: 50 }), { ...INSTALL, installId: id })).toEqual({
-      kind: 'staged-out',
-      version: '1.2.0',
-      bucket: rolloutBucket(id, '1.2.0'),
-    });
+    expect(decide(manifest({ rolloutPercent: 50 }), { ...INSTALL, installId: id })).toEqual({ kind: 'staged-out', version: '1.2.0' });
+  });
+
+  test('prerelease-only-for-prerelease', () => {
+    // A release build is never offered a pre-release, required or not.
+    for (const overrides of [{}, { minimumVersion: '1.2.0-rc.1' }, { rolloutPercent: 100 }]) {
+      expect(decide(manifest({ version: '1.2.0-rc.1', ...overrides }), INSTALL)).toEqual({ kind: 'prerelease-ignored', version: '1.2.0-rc.1' });
+    }
+    // Older pre-releases are still just up-to-date.
+    expect(decide(manifest({ version: '1.1.0-rc.1' }), INSTALL).kind).toBe('up-to-date');
+    // A pre-release build is offered newer pre-releases and releases.
+    const beta = { ...INSTALL, currentVersion: '1.2.0-beta.1' };
+    expect(decide(manifest({ version: '1.2.0-rc.1' }), beta).kind).toBe('available');
+    expect(decide(manifest({ version: '1.3.0-alpha' }), beta).kind).toBe('available');
+    expect(decide(manifest({ version: '1.2.0' }), beta).kind).toBe('available');
+    expect(decide(manifest({ version: '1.2.0-alpha' }), beta).kind).toBe('up-to-date');
+    expect(decide(manifest({ version: '1.2.0-rc.1', minimumVersion: '1.2.0-rc.1', rolloutPercent: 0 }), beta).kind).toBe('required');
+  });
+
+  test('artifact-file-name', () => {
+    expect(artifactFileName('1.2.0', 'darwin-arm64')).toBe('frost-1.2.0-darwin-arm64.zip');
+    expect(artifactFileName('1.2.0-rc.1', 'linux-x64')).toBe('frost-1.2.0-rc.1-linux-x64.AppImage');
+    expect(artifactFileName('10.0.3', 'win32-x64')).toBe('frost-10.0.3-win32-x64.exe');
+    for (const platform of UPDATE_PLATFORMS) {
+      expect(artifactFileName('1.0.0', platform)).toBe(`frost-1.0.0-${platform}.${UPDATE_ARTIFACT_KINDS[platform].extension}`);
+      expect(artifactFileName('1.0.0', platform)).toMatch(/^[0-9A-Za-z.-]+$/);
+    }
+    for (const version of ['../x', '1.2', '1.2.0/../../x', '1.2.0+b', '', `1.2.0-${'a'.repeat(MAX_VERSION_CHARS)}`]) {
+      expect(() => artifactFileName(version, 'linux-x64')).toThrow(TypeError);
+    }
+    for (const platform of ['linux-arm64', '__proto__', '', 'linux-x64/../x']) {
+      expect(() => artifactFileName('1.2.0', platform as UpdatePlatform)).toThrow(TypeError);
+    }
   });
 
   test('rollout-is-deterministic', () => {
@@ -395,6 +561,6 @@ describe('versions', () => {
     expect(key.export({ format: 'der', type: 'spki' }).toString('base64')).toBe(spki);
     // The default trusted keys are the production ones: a test key's envelope is refused by them.
     expect(reasonOf(signed(MANIFEST), UPDATE_PUBLIC_KEYS)).toBe('unknown-key');
-    expect(verifyEnvelope(signed(MANIFEST, TRUSTED.privateKey, 'frost-update-2026-10'))).toEqual({ ok: false, reason: 'bad-signature' });
+    expect(verifyEnvelope(signed(MANIFEST, TRUSTED.privateKey, 'frost-update-2026-10'), { now: NOW })).toEqual({ ok: false, reason: 'bad-signature' });
   });
 });

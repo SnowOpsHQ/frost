@@ -74,13 +74,16 @@ const UpdateArtifactsSchema = z
   .refine((artifacts) => Object.keys(artifacts).length > 0, { message: 'artifacts: at least one platform' });
 
 /**
- * The manifest (the signed JSON). `minimumVersion` above `version` is refused by `parseManifest`
- * (`apps/desktop/src/main/update/manifest.ts`), which owns version precedence.
+ * The manifest (the signed JSON). `parseManifest` (`apps/desktop/src/main/update/manifest.ts`, which
+ * owns version precedence and time) also refuses `minimumVersion` above `version`, and an
+ * `expiresAt` not after `releasedAt` or more than `MAX_MANIFEST_LIFETIME_MS` after it. Date-times are
+ * UTC (`…Z`).
  */
 export const UpdateManifestSchema = z.strictObject({
   format: z.literal(UPDATE_MANIFEST_FORMAT),
   version: UpdateVersionSchema,
   releasedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
   notes: z.string().max(MAX_NOTES_CHARS).regex(UPDATE_NOTES_PATTERN),
   minimumVersion: UpdateVersionSchema.optional(),
   rolloutPercent: z.int().min(0).max(100),
