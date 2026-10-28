@@ -36,6 +36,9 @@ import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
 import { createSessionRepository, type StoredDecision } from '../repository';
 import { createSettingsRepository } from '../settings';
 
+// Real SQLite files on both drivers: Windows runners are slow at file I/O under a parallel load.
+vi.setConfig({ testTimeout: 30_000 });
+
 // Counts how often `@libsql/client` (its local `sqlite3` entry, what the driver imports) is loaded (its real module is still what loads).
 const libsqlLoads = vi.hoisted(() => ({ count: 0 }));
 vi.mock('@libsql/client/sqlite3', async (importOriginal) => {

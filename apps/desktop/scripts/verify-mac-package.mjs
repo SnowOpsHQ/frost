@@ -187,11 +187,15 @@ const target = `darwin-${args.arch}`;
 await check('unpacked-allowlist', () => assertUnpackedAllowlist(resources, { target, where: artifacts.app }));
 await check('asar-node-modules-allowlist', () => assertAsarNodeModules(resources, { target, where: artifacts.app }));
 await check('libsql-loads', () => {
-  // The packaged Electron version: the bundled framework's Info.plist.
+  // The packaged Electron version: the bundled framework's Info.plist (CFBundleShortVersionString, or
+  // CFBundleVersion where the framework sets only that), accepted only if it looks like a version.
   const framework = path.join(appPath, 'Contents/Frameworks/Electron Framework.framework/Resources/Info.plist');
-  const read = run('plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', framework]);
-  assert(read.status === 0, `cannot read the Electron version from ${framework}: ${read.out}`);
-  return assertLibsqlLoads(resources, { target, where: artifacts.app, electronVersion: read.out.trim() });
+  const electronVersion = ['CFBundleShortVersionString', 'CFBundleVersion']
+    .map((key) => run('plutil', ['-extract', key, 'raw', '-o', '-', framework]))
+    .find((read) => read.status === 0 && /^\d+\.\d+\.\d+/.test(read.out.trim()))
+    ?.out.trim();
+  assert(electronVersion, `cannot read the Electron version from ${framework}`);
+  return assertLibsqlLoads(resources, { target, where: artifacts.app, electronVersion });
 });
 
 await check('launches-and-stays-alive', async () => {

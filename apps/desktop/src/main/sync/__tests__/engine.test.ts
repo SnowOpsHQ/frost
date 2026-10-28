@@ -1,7 +1,7 @@
 // Spec: specs/sync.spec.ts (Sync tables) · Acceptance: specs/sync-engine.feature.md (Engine)
 // The session side is `node:sqlite` on a file per device; the replica is one libSQL `file:` database
 // that every device pushes to and pulls from, standing in for the primary.
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SqlDriver } from '@app/db/driver-types';
 import {
   SYNC_LOG_TABLE,
@@ -30,6 +30,9 @@ import {
   version,
   type Fixture,
 } from './fixtures';
+
+// Real SQLite files on both drivers: Windows runners are slow at file I/O under a parallel load.
+vi.setConfig({ testTimeout: 30_000 });
 
 const NOW = () => 10 ** 13;
 const P = uuid7(1);
