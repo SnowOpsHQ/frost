@@ -119,6 +119,8 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
           // The intent utility process (.vite/build/intent-worker.cjs), forked by main with
           // utilityProcess.fork; onnxruntime-node stays external (specs/intent-classifier.feature.md).
           { entry: { 'intent-worker': 'src/workers/intent/index.ts' }, config: 'vite.intent.config.ts', target: 'main' },
+          // The SERP analysis worker (.vite/build/serp-analysis.cjs; specs/serp-overlay.feature.md, Analysis).
+          { entry: { 'serp-analysis': 'src/main/serp/serp-worker.ts' }, config: 'vite.main.config.ts', target: 'main' },
         ],
         renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],
       }),

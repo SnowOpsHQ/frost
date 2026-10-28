@@ -35,7 +35,7 @@
           { "type": "people-also-ask", "container": "#rso [data-initq]", "item": "[data-q]" },
           { "type": "video", "container": "#rso video-voyager", "link": "a[href]", "title": "h3" },
           { "type": "images", "container": "#iur", "item": "a[href]" },
-          { "type": "organic", "container": "#rso", "item": "div.g", "link": "a[href]", "title": "h3", "required": true },
+          { "type": "organic", "container": "#rso", "item": "a[href]:has(h3)", "title": "h3", "required": true },
           { "type": "knowledge-panel", "container": "#rhs", "title": "[data-attrid=\"title\"]" },
           { "type": "related-searches", "container": "#bres", "item": "a[href]" }
         ]

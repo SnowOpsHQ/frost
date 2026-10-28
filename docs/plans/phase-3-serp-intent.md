@@ -295,7 +295,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - a hostile page (`serp-reader-is-bounded`);
   - ownership share;
   - the bundled pack against each fixture.
-- [ ] commit `feat(serp): read result pages with the selector pack`
+- [x] commit `feat(serp): read result pages with the selector pack`
 - [ ] Review fixes: commit `fix(serp): address SERP reading review findings`
 
 ### Task 4: SERP service, router and outlines
