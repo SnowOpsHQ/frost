@@ -800,9 +800,8 @@ sync.
     found, or the target isn't packaged.
 
   `forge.config.ts` gained one hook line and `asar: { unpack: LIBSQL_ASAR_UNPACK }`. The plan said
-  `**/*.node`; the pattern is now `**/{.**,**}/**/node_modules/@libsql/*/index.node`. Its
-  `{.**,**}/**` lets `**` cross a dot directory in the build path, as Packager's own default does,
-  and the test packs under `.cache/` to prove it. `forge-config.test.ts`'s `identifies-the-mac-bundle`
+  `**/*.node`; the pattern now names only `node_modules/@libsql/*/index.node` (see Review fixes for
+  its final form). `forge-config.test.ts`'s `identifies-the-mac-bundle`
   and its feature line now expect that object instead of `asar: true`.
 - **Integrity.** `@electron/asar` records the unpacked file in the header with `unpacked`, `size`
   and a SHA-256 `integrity`, and the header hash is what Electron checks on macOS and Windows. A
@@ -853,3 +852,29 @@ sync.
     (`signature-verifies`, `zip-app-verifies`, `dmg-app-verifies`);
   - the nupkg and Windows-zip trees;
   - the Ubuntu run.
+- **Not yet proven (as of Task 7): the packaged binary itself loading the prebuild.**
+  `libsql-loads` runs the repository's Electron, at the packaged version, as Node against the
+  packaged `app.asar`. It does not run the packaged executable, whose `RunAsNode` fuse is off. In
+  particular, macOS library validation under the hardened runtime (a Developer ID build) could
+  refuse the prebuild. Task 8 adds that proof: a packaged-app check in all three verifiers that
+  enables sync through the profile's sync config and confirms main opens the replica.
+- **Review fixes.**
+  - **Bytes on macOS.** `unpacked-allowlist` checks only the set of unpacked files there. A
+    Developer ID `osxSign` run re-signs the `.node` after the asar header recorded its size and
+    SHA-256, and the ad-hoc `--force --deep` re-seal may as well. The bundle seal
+    (`signature-verifies`) vouches for the bytes instead. Linux and Windows still compare the
+    bytes with the header.
+  - **Electron version.** `libsql-loads` asserts that the probe's `process.versions.electron`
+    equals the packaged app's. On Linux and Windows that comes from the packaged tree's `version`
+    file; the nupkg has none, so every extracted tree is compared with the packaged tree's. On
+    macOS it comes from the `Electron Framework.framework` Info.plist.
+  - **Module paths.** The `app.asar` prefix is realpath'd before module paths are compared with
+    it. A trial through a symlinked resources directory passed only with this.
+  - **Unpack pattern.** `@electron/asar` matches `unpack` against absolute paths with minimatch
+    10. Its only option is `matchBase` (no `dot`), so `**` never crosses a dot directory. The
+    pattern is now `**/{.*/**/,}{.*/**/,}{.*/**/,}{.*/**/,}node_modules/@libsql/*/index.node`,
+    which allows up to `LIBSQL_ASAR_UNPACK_DOT_DIRS` (4) dot directories anywhere in the build
+    path. The test packs under `.cache/build/.tmp`, under 0 and 4 dot directories, and under 5,
+    where nothing is unpacked. That case fails closed in `unpacked-allowlist`. With
+    `platform: 'win32'`, a Windows path matched by hand too. Not rebuilt: unit tests, lint and a
+    synthetic asar exercised the verifier changes.

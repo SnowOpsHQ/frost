@@ -53,9 +53,10 @@ Every check prints `PASS <name>` or `FAIL <name>: <reason>`; any failure exits n
 - **Scenario: fuses-read-back** — `@electron/fuses` reads the packaged app's fuse wire and every
   `PACKAGED_FUSES` entry has its configured state.
 - **libSQL** (`sync-package.feature.md`): `unpacked-allowlist`, `asar-node-modules-allowlist` and
-  `libsql-loads` run on `Contents/Resources` with target `darwin-<arch>`. The unpacked prebuild is
-  inside the bundle seal, so `signature-verifies` (`codesign --verify --deep --strict`) also covers
-  its bytes.
+  `libsql-loads` run on `Contents/Resources` with target `darwin-<arch>`. `libsql-loads` compares
+  against the framework's Electron version. `unpacked-allowlist` checks only which files are
+  unpacked, because signing may rewrite the prebuild after the asar header recorded it. Its bytes
+  are covered by the bundle seal instead (`signature-verifies`, `codesign --verify --deep --strict`).
 - **Scenario: launches-and-stays-alive** — the packaged executable, started with no arguments
   other than a fresh throwaway `--user-data-dir` (so a running installed frost, which holds the
   single-instance lock on the default profile, cannot make it hand over and exit), is still running

@@ -531,10 +531,14 @@ naming the missing `@libsql/win32-x64-msvc`. CI builds each platform on its own 
 records the unpacked file's size and SHA-256. It does not check the unpacked file's bytes when the
 file is loaded. On macOS the bundle's code signature seals the file. On Windows and Linux nothing
 checks it at runtime; the package verifiers compare it with the header at build time
-(`unpacked-allowlist`). Every verifier also checks the following:
+(`unpacked-allowlist`, Linux and Windows; on macOS signing may rewrite the file, so the seal
+vouches for its bytes). Every verifier also checks the following:
 - `app.asar/node_modules` holds exactly the allowed packages (`asar-node-modules-allowlist`);
 - libSQL loads from the packaged `app.asar` (`libsql-loads`). This check runs the repository's
-  Electron as Node, because the packaged binary's `RunAsNode` fuse is off.
+  Electron, at the packaged version, as Node, because the packaged binary's `RunAsNode` fuse is
+  off. So it does not yet prove that the packaged executable loads the prebuild; for example,
+  macOS library validation in a hardened-runtime build could refuse it. Task 8's packaged-app sync
+  check adds that proof.
 
 ## Building on a Mac
 Prerequisites:

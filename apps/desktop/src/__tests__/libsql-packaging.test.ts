@@ -9,6 +9,7 @@ import { LINUX_ARCHS } from '@app/specs/linux-package.spec';
 import { MAC_ARCHS } from '@app/specs/macos-package.spec';
 import {
   LIBSQL_ASAR_UNPACK,
+  LIBSQL_ASAR_UNPACK_DOT_DIRS,
   LIBSQL_PREBUILD_TARGETS,
   LIBSQL_RUNTIME_PACKAGES,
   LIBSQL_SQLITE_VERSION,
@@ -185,22 +186,9 @@ describe('libSQL in the packaged app', () => {
     expect(() => copyLibsqlRuntime(buildPath, 'linux', 'x64', fakeInstall())).toThrow(/already exists/);
   });
 
-  test('libsql-unpack-pattern', async () => {
-    expect(makeForgeConfig({}).packagerConfig?.asar).toEqual({ unpack: LIBSQL_ASAR_UNPACK });
-    // Packed with @electron/asar as Packager packs it (absolute paths, here under a dot directory):
-    // only a prebuild's index.node is unpacked.
-    const app = path.join(tempDir('frost-libsql-asar-'), '.cache', 'app');
-    const files = [
-      '.vite/build/main.cjs',
-      '.vite/build/stray.node',
-      'package.json',
-      'node_modules/@libsql/linux-x64-gnu/index.node',
-      'node_modules/@libsql/linux-x64-gnu/package.json',
-      'node_modules/@libsql/linux-x64-gnu/other.node',
-      'node_modules/@libsql/client/lib-cjs/sqlite3.js',
-      'node_modules/libsql/index.node',
-      'node_modules/libsql/index.js',
-    ];
+  /** Packs `files` under `<temp>/<dotDirs…>/app` with @electron/asar as Packager does; the entries it marks unpacked. */
+  async function unpackedWith(dotDirs: string[], files: string[]) {
+    const app = path.join(tempDir('frost-libsql-asar-'), ...dotDirs, 'app');
     for (const file of files) writeFile(path.join(app, file), 'x');
     const asar = path.join(path.dirname(app), 'app.asar');
     await createPackageWithOptions(app, asar, { unpack: LIBSQL_ASAR_UNPACK });
@@ -213,8 +201,31 @@ describe('libSQL in the packaged app', () => {
       }
     };
     walk(getRawHeader(asar).header as never, '');
-    expect(unpacked).toEqual(['node_modules/@libsql/linux-x64-gnu/index.node']);
-    expect(filesUnder(`${asar}.unpacked`)).toEqual(['node_modules/@libsql/linux-x64-gnu/index.node']);
+    return { unpacked, onDisk: existsSync(`${asar}.unpacked`) ? filesUnder(`${asar}.unpacked`) : [] };
+  }
+
+  test('libsql-unpack-pattern', async () => {
+    expect(makeForgeConfig({}).packagerConfig?.asar).toEqual({ unpack: LIBSQL_ASAR_UNPACK });
+    // @electron/asar matches the absolute path, without minimatch's `dot`: only a prebuild's
+    // index.node is unpacked, here under two dot directories in the build path.
+    const files = [
+      '.vite/build/main.cjs',
+      '.vite/build/stray.node',
+      'package.json',
+      'node_modules/@libsql/linux-x64-gnu/index.node',
+      'node_modules/@libsql/linux-x64-gnu/package.json',
+      'node_modules/@libsql/linux-x64-gnu/other.node',
+      'node_modules/@libsql/client/lib-cjs/sqlite3.js',
+      'node_modules/libsql/index.node',
+      'node_modules/libsql/index.js',
+    ];
+    const prebuild = ['node_modules/@libsql/linux-x64-gnu/index.node'];
+    expect(await unpackedWith(['.cache', 'build', '.tmp'], files)).toEqual({ unpacked: prebuild, onDisk: prebuild });
+    // Up to LIBSQL_ASAR_UNPACK_DOT_DIRS dot directories (and none); one more unpacks nothing, which
+    // fails closed in the verifiers' unpacked-allowlist.
+    const dots = (n: number) => Array.from({ length: n }, (_, i) => `.d${i}`);
+    for (const n of [0, LIBSQL_ASAR_UNPACK_DOT_DIRS]) expect((await unpackedWith(dots(n), prebuild)).unpacked, `${n} dot dirs`).toEqual(prebuild);
+    expect((await unpackedWith(dots(LIBSQL_ASAR_UNPACK_DOT_DIRS + 1), prebuild)).unpacked).toEqual([]);
     // The allowlist is that one file per target.
     for (const target of Object.keys(LIBSQL_PREBUILD_TARGETS) as PackagedTarget[]) {
       expect(PACKAGED_UNPACKED_ALLOWLIST[target]).toEqual([`app.asar.unpacked/node_modules/${libsqlPrebuildPackage(target)}/index.node`]);

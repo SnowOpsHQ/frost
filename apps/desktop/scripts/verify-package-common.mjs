@@ -8,7 +8,7 @@
 // The specs are plain erasable TypeScript, loaded with Node's built-in type stripping (Node >= 22.18).
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -193,9 +193,11 @@ function filesUnder(dir, base) {
 
 /**
  * `unpacked-allowlist`: the entries `app.asar`'s header marks unpacked, and the files in
- * `resources/app.asar.unpacked/`, are each exactly `PACKAGED_UNPACKED_ALLOWLIST[target]`, and each
- * unpacked file has the size and SHA-256 the header records. (Electron itself never checks an
- * unpacked file's bytes; this build-time comparison is the only one, specs/sync-package.spec.ts.)
+ * `resources/app.asar.unpacked/`, are each exactly `PACKAGED_UNPACKED_ALLOWLIST[target]`. Off
+ * macOS, each unpacked file also has the size and SHA-256 the header records (Electron itself never
+ * checks an unpacked file's bytes; this build-time comparison is the only one). On macOS signing
+ * may rewrite the Mach-O after the header was written, so its bytes are left to the bundle seal
+ * (`signature-verifies`; specs/sync-package.spec.ts, Integrity).
  */
 export function assertUnpackedAllowlist(resourcesDir, { target, where }) {
   const expected = [...PACKAGED_UNPACKED_ALLOWLIST[target]].sort();
@@ -214,6 +216,7 @@ export function assertUnpackedAllowlist(resourcesDir, { target, where }) {
     throw new Error(`${where} ${PACKAGED_UNPACKED_DIR}/: ${error.message}`);
   }
   assert(onDisk.join() === expected.join(), `${where} ${PACKAGED_UNPACKED_DIR}/ holds ${onDisk.join(', ') || '(nothing)'}, expected ${expected.join(', ')}`);
+  if (target.startsWith('darwin-')) return;
   for (const { file, entry } of marked) {
     const bytes = readFileSync(path.join(resourcesDir, ...file.split('/')));
     assert(bytes.length === entry.size, `${where} ${file} is ${bytes.length} bytes, the asar header says ${entry.size}`);
@@ -272,14 +275,24 @@ client.execute('SELECT sqlite_version() AS version').then(
 `;
 
 /**
- * `libsql-loads`: the repository's Electron (the version Forge packaged; the packaged binary's
- * RunAsNode fuse is off, so it cannot run this) as Node loads `@libsql/client/sqlite3` from the
- * packaged `resources/app.asar`, opens a temporary `file:` database and reads
- * `SELECT sqlite_version()` = `LIBSQL_SQLITE_VERSION`. Every module it loaded lies inside that
- * `app.asar` (nothing resolved from the repository's `node_modules`), and the native module is the
- * target's prebuild. Returns the Electron version, for an `INFO` line.
+ * The Electron version of a packaged Linux or Windows tree: its `version` file (Electron's own,
+ * kept by Packager). The macOS verifier reads the bundled framework's Info.plist instead.
  */
-export function assertLibsqlLoads(resourcesDir, { target, where }) {
+export function packagedElectronVersion(appDir) {
+  return readFileSync(path.join(appDir, 'version'), 'utf8').trim().replace(/^v/, '');
+}
+
+/**
+ * `libsql-loads`: the repository's Electron as Node (the packaged binary's RunAsNode fuse is off,
+ * so it cannot run this) loads `@libsql/client/sqlite3` from the packaged `resources/app.asar`,
+ * opens a temporary `file:` database and reads `SELECT sqlite_version()` = `LIBSQL_SQLITE_VERSION`.
+ * That Electron is exactly `electronVersion`, the packaged app's. Every module it loaded lies inside
+ * that `app.asar` (nothing resolved from the repository's `node_modules`), and the native module is
+ * the target's prebuild. This proves the packaged files are complete and load under the packaged
+ * Electron version; not that the packaged executable loads them (specs/sync-package.spec.ts).
+ */
+export function assertLibsqlLoads(resourcesDir, { target, where, electronVersion }) {
+  assert(typeof electronVersion === 'string' && electronVersion !== '', `${where}: the packaged app's Electron version is unknown`);
   const electron = createRequire(import.meta.url)('electron');
   return withTempDir('frost-libsql-', (dir) => {
     const probe = path.join(dir, 'probe.cjs');
@@ -289,15 +302,19 @@ export function assertLibsqlLoads(resourcesDir, { target, where }) {
     env.ELECTRON_RUN_AS_NODE = '1';
     const result = run(electron, [probe, path.resolve(resourcesDir), path.join(dir, 'probe.db')], { env, cwd: dir });
     assert(result.status === 0, `${where}: the libSQL probe exited ${result.status}: ${result.out.slice(-800)}`);
-    const { version, electron: electronVersion, modules } = JSON.parse(result.stdout);
+    const { version, electron: probeElectron, modules } = JSON.parse(result.stdout);
+    assert(
+      probeElectron === electronVersion,
+      `${where}: the probe ran Electron ${probeElectron}, but the packaged app is Electron ${electronVersion}; reinstall so they match`,
+    );
     assert(version === LIBSQL_SQLITE_VERSION, `${where}: sqlite_version() is ${version}, expected ${LIBSQL_SQLITE_VERSION}`);
-    const asar = `${path.resolve(resourcesDir, 'app.asar')}${path.sep}`;
+    // Module paths are resolved through realpath (e.g. macOS /var -> /private/var), so the prefix is too.
+    const asar = `${realpathSync(path.resolve(resourcesDir, 'app.asar'))}${path.sep}`;
     const outside = modules.filter((file) => !file.startsWith(asar));
     assert(outside.length === 0, `${where}: the probe loaded modules from outside app.asar: ${outside.slice(0, 5).join(', ')}`);
     const native = modules.filter((file) => file.endsWith('.node'));
     const prebuild = path.join(asar, 'node_modules', ...libsqlPrebuildPackage(target).split('/'), LIBSQL_PREBUILD_FILE);
     assert(native.join() === prebuild, `${where}: native modules loaded: ${native.join(', ') || '(none)'}, expected ${prebuild}`);
-    return electronVersion;
   });
 }
 

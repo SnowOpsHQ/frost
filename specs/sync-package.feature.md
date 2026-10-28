@@ -25,9 +25,17 @@ check.
   other fuses are unchanged.
 - **Integrity, honestly.** `app.asar`'s header records the unpacked file (`unpacked`, size,
   SHA-256), and that header is covered by Electron's ASAR integrity check on macOS and Windows.
-  Electron never hashes the unpacked file's bytes when it loads them. On macOS the bundle signature
-  seals the file (`signature-verifies`). On Windows and Linux nothing does at runtime;
-  `unpacked-allowlist` compares it with the header at build time only.
+  Electron never hashes the unpacked file's bytes when it loads them. On Windows and Linux nothing
+  does at runtime; `unpacked-allowlist` compares the file with the header at build time only. On
+  macOS, signing can rewrite the Mach-O after the header was written: a Developer ID run does, and
+  the ad-hoc re-seal may. So the bundle signature alone vouches for its bytes
+  (`signature-verifies`).
+- **Not yet proven (as of Task 7): the packaged binary itself loading the prebuild.**
+  `libsql-loads` runs the repository's Electron, at the packaged version, as Node. It cannot run
+  the packaged executable, whose `RunAsNode` fuse is off. In particular, macOS library validation
+  under the hardened runtime (a Developer ID build) could refuse the prebuild. Task 8 adds that
+  proof: a packaged-app check in all three verifiers that enables sync through the profile's sync
+  config and confirms main opens the replica.
 - **Cross-target builds fail closed.** pnpm installs only the build machine's own prebuild, so
   packaging another platform (`--platform win32` on Linux) fails in the hook with a message naming
   the missing package. CI packages each platform on its own runner.
@@ -55,10 +63,13 @@ check.
   - a `.node` file is found anywhere except the prebuild's `index.node`;
   - the build path already has a `node_modules/`.
 - **Scenario: libsql-unpack-pattern**: `packagerConfig.asar` is `{ unpack: LIBSQL_ASAR_UNPACK }`.
-  The test packs a tree with `@electron/asar`, from absolute paths under a dot directory. Only
+  `@electron/asar` matches the pattern against absolute paths, with no `dot` option. The test packs
+  a tree with `@electron/asar` under two dot directories (`.cache/build/.tmp/app`). Only
   `node_modules/@libsql/<prebuild>/index.node` is marked unpacked and written to
   `app.asar.unpacked/`. Another `.node` in that package, `libsql/index.node`, `.vite/**/*.node` and
-  every JavaScript file stay packed. `PACKAGED_UNPACKED_ALLOWLIST[target]` is that one file per
+  every JavaScript file stay packed. With no dot directory, and with `LIBSQL_ASAR_UNPACK_DOT_DIRS`
+  (4) of them, the prebuild is unpacked. With one more, nothing is unpacked, which
+  `unpacked-allowlist` would fail. `PACKAGED_UNPACKED_ALLOWLIST[target]` is that one file per
   target.
 - **Scenario: libsql-external-in-main**: `vite.main.config.ts` makes `@libsql/client`,
   `@libsql/client/sqlite3`, `libsql`, `libsql/promise` and `node:sqlite` external. It does not make
@@ -73,8 +84,9 @@ These checks run on the packaged tree. On Linux and Windows they also run on eve
 (deb, AppImage, zip, nupkg), as part of that tree's checks. `target` is `<platform>-<arch>`.
 - **Scenario: unpacked-allowlist**: every entry that `app.asar`'s header marks `unpacked` is listed
   in `PACKAGED_UNPACKED_ALLOWLIST[target]`, and every listed entry is marked. The same holds for the
-  files in `resources/app.asar.unpacked/`; a symlink there fails. Each unpacked file's size and
-  SHA-256 equal the header's `size` and `integrity.hash`.
+  files in `resources/app.asar.unpacked/`; a symlink there fails. Off macOS, each unpacked file's
+  size and SHA-256 equal the header's `size` and `integrity.hash`. On macOS only the set of files
+  is checked, and the bytes are left to `signature-verifies` (see Integrity).
 - **Scenario: asar-node-modules-allowlist**: the packages in `app.asar/node_modules/` are exactly
   `PACKAGED_ASAR_NODE_MODULES[target]`. Any other entry there fails, such as a lock file or an
   unknown scope. No `node_modules/` is nested anywhere in the archive, and no `.node` file is packed
@@ -88,7 +100,11 @@ These checks run on the packaged tree. On Linux and Windows they also run on eve
   - opens a `file:` database in a temporary directory (always removed);
   - reads `SELECT sqlite_version()`, which must be `LIBSQL_SQLITE_VERSION`.
 
-  Every module it loads lies inside that `app.asar`, so nothing comes from the repository's
+  The probe's `process.versions.electron` must equal the packaged app's Electron. That version comes
+  from the packaged tree's `version` file on Linux and Windows, and from the bundled
+  `Electron Framework.framework`'s `CFBundleShortVersionString` on macOS. Every module it loads lies
+  inside that `app.asar` (the prefix is compared after `realpath`, since module paths are resolved
+  through it, e.g. macOS `/var` → `/private/var`), so nothing comes from the repository's
   `node_modules`. The only native module it loads is the target's prebuild. `NODE_OPTIONS`,
   `NODE_PATH` and `LIBSQL_JS_DEV` are removed from its environment. An `INFO` line states the
   Electron version. Under `verify-windows-package.mjs --static` off Windows, this check is skipped
@@ -97,7 +113,10 @@ These checks run on the packaged tree. On Linux and Windows they also run on eve
 ## Known limits
 - The unpacked `index.node` is not checked at runtime on Windows or Linux (see Integrity above).
 - `libsql-loads` runs the repository's Electron with Node's loader, not the packaged executable
-  with its fuses. Main opening libSQL in the packaged app is first exercised by Task 8's sync e2e.
+  with its fuses. The packaged binary loading the prebuild (macOS library validation included) is
+  not yet proven; Task 8's packaged-app sync check proves it.
+- `LIBSQL_ASAR_UNPACK` allows at most `LIBSQL_ASAR_UNPACK_DOT_DIRS` dot directories in the build
+  path. Beyond that, the prebuild stays packed and the verifiers fail.
 - Linux ships the glibc prebuild only. On a musl system libSQL (and so sync) is unavailable.
 - `THIRD_PARTY_NOTICES` lists the shipped JavaScript packages and `libsql`, whose MIT license
   covers its `@libsql/<target>` prebuilds; the prebuild package ships no license file of its own.

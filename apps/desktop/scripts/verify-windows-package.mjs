@@ -46,6 +46,7 @@ import {
   assertUnpackedAllowlist,
   createChecks,
   fuseState,
+  packagedElectronVersion,
   launch,
   run,
   withTempDir,
@@ -149,7 +150,8 @@ async function assertAppTree(appDir, where) {
   assertPackagedResources(treeResources, { ...resourceRules, where });
   assertUnpackedAllowlist(treeResources, { target, where });
   assertAsarNodeModules(treeResources, { target, where });
-  await assertLibsqlLoads(treeResources, { target, where });
+  // Every tree is the same build: compared with the packaged tree's Electron (the nupkg has no `version` file).
+  await assertLibsqlLoads(treeResources, { target, where, electronVersion: packagedElectronVersion(packaged) });
   await assertPackagedFuses(exe).catch((error) => {
     throw new Error(`${where}: ${error.message}`);
   });
@@ -213,8 +215,13 @@ await checks.check('asar-node-modules-allowlist', () => assertAsarNodeModules(re
 // The win32 prebuild loads only on Windows, so off Windows (`--static`) this is skipped.
 if (process.platform === 'win32') {
   await checks.check('libsql-loads', async () => {
-    const electron = await assertLibsqlLoads(resources, { target, where: artifacts.packaged });
-    checks.info('libsql-loads', `loaded from app.asar under Electron ${electron} as Node (the packaged binary's RunAsNode fuse is off)`);
+    const electronVersion = packagedElectronVersion(packaged);
+    await assertLibsqlLoads(resources, { target, where: artifacts.packaged, electronVersion });
+    checks.info(
+      'libsql-loads',
+      `loaded from app.asar under the repository's Electron ${electronVersion} as Node (the packaged binary's RunAsNode ` +
+        'fuse is off; the packaged executable loading it is not proven here)',
+    );
   });
 } else {
   checks.info('libsql-loads', 'skipped (off Windows: the win32 prebuild loads only on Windows)');

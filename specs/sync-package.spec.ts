@@ -16,10 +16,22 @@
  * **Integrity.** `app.asar`'s header lists the unpacked `index.node` (marked `unpacked`, with its
  * size and SHA-256), so Electron's ASAR integrity check (macOS and Windows) covers that metadata.
  * It does **not** cover the unpacked file's bytes: Electron never hashes an unpacked file when it
- * loads it (a known Electron limit). On macOS the bundle's code signature seals it (`codesign
- * --deep` puts it in the seal; `signature-verifies` checks it). On Windows and Linux nothing at
- * runtime does; the verifiers compare it with the header (`unpacked-allowlist`), at build time
- * only. `OnlyLoadAppFromAsar` and every other `PACKAGED_FUSES` entry are unchanged.
+ * loads it (a known Electron limit). On Windows and Linux nothing at runtime does; the verifiers
+ * compare the file with the header (`unpacked-allowlist`), at build time only. On macOS the
+ * header's size and SHA-256 are those of the file before signing: signing (a Developer ID
+ * `osxSign` run, and possibly the ad-hoc `codesign --force --deep` re-seal) may rewrite the Mach-O
+ * after Packager wrote the header, so `unpacked-allowlist` checks only which files are unpacked
+ * there, and the bytes are left to the bundle's code signature, which seals the file
+ * (`signature-verifies`). `OnlyLoadAppFromAsar` and every other `PACKAGED_FUSES` entry are
+ * unchanged.
+ *
+ * **Not yet proven (as of Task 7): the packaged binary itself loading the prebuild.** The package
+ * verifiers' `libsql-loads` runs the repository's Electron (the same version) as Node against the
+ * packaged `app.asar`, because the packaged binary's `RunAsNode` fuse is off; that proves the files
+ * are complete and that this Electron loads them, not that the packaged executable does. In
+ * particular macOS library validation under the hardened runtime (a Developer ID build) could
+ * refuse the prebuild. Task 8 adds that proof: a packaged-app check in all three verifiers that
+ * enables sync through the profile's sync config and confirms main opens the replica.
  *
  * Self-contained (no imports, erasable TypeScript only) so the verify scripts can load it with
  * Node's built-in type stripping.
@@ -91,11 +103,17 @@ export function packagedTarget(platform: string, arch: string): PackagedTarget |
 }
 
 /**
- * `packagerConfig.asar.unpack` (an `@electron/asar` minimatch pattern, matched against each file's
- * absolute path): a prebuild's `index.node` only, never JavaScript. `{.**,**}/**` lets
- * `**` cross a dot directory in the build path (as Packager's own default does).
+ * `packagerConfig.asar.unpack`: a prebuild's `index.node` only, never JavaScript. `@electron/asar`
+ * matches it with minimatch against each file's **absolute** path, with no `dot` option (only
+ * `matchBase`), and `**` never crosses a dot directory. So the pattern spells out up to
+ * `LIBSQL_ASAR_UNPACK_DOT_DIRS` dot directories (`.*`) anywhere in the build path, each optional
+ * brace group allowing one. A build path with more of them unpacks nothing; that fails
+ * closed at verify time (`unpacked-allowlist`), never ships JavaScript unpacked.
  */
-export const LIBSQL_ASAR_UNPACK = '**/{.**,**}/**/node_modules/@libsql/*/index.node' as const;
+export const LIBSQL_ASAR_UNPACK = '**/{.*/**/,}{.*/**/,}{.*/**/,}{.*/**/,}node_modules/@libsql/*/index.node' as const;
+
+/** How many dot directories in the build path `LIBSQL_ASAR_UNPACK` allows. */
+export const LIBSQL_ASAR_UNPACK_DOT_DIRS = 4;
 
 /**
  * Files of a runtime package that are not copied, since the app never reads them (docs, types,

@@ -186,7 +186,13 @@ const resources = path.join(appPath, 'Contents/Resources');
 const target = `darwin-${args.arch}`;
 await check('unpacked-allowlist', () => assertUnpackedAllowlist(resources, { target, where: artifacts.app }));
 await check('asar-node-modules-allowlist', () => assertAsarNodeModules(resources, { target, where: artifacts.app }));
-await check('libsql-loads', () => assertLibsqlLoads(resources, { target, where: artifacts.app }));
+await check('libsql-loads', () => {
+  // The packaged Electron version: the bundled framework's Info.plist.
+  const framework = path.join(appPath, 'Contents/Frameworks/Electron Framework.framework/Resources/Info.plist');
+  const read = run('plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', framework]);
+  assert(read.status === 0, `cannot read the Electron version from ${framework}: ${read.out}`);
+  return assertLibsqlLoads(resources, { target, where: artifacts.app, electronVersion: read.out.trim() });
+});
 
 await check('launches-and-stays-alive', async () => {
   const result = await launch([], MAC_LAUNCH_ALIVE_MS);
