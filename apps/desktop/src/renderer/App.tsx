@@ -50,7 +50,7 @@ export function App() {
   // Browser polish (`browser-polish.feature.md`): the History sheet (per window) and the active tab's find bar.
   const [historyOpen, closeHistory] = useHistoryView(state?.historyViewSeq, tab);
   // Projects (`projects.feature.md`): the Projects sheet over the page column, like History.
-  const [projectsOpen, closeProjects] = useProjectsSheet();
+  const [projectsOpen, closeProjects] = useProjectsSheet(historyOpen, closeHistory);
   return (
     <div className="chrome">
       <TabStrip state={state} />
@@ -66,7 +66,7 @@ export function App() {
       <div className="workspace-stack">
         <div className="workspace">
           {/* The palette's sheet and the History sheet sit above the page area, never under the tab's view (`command-palette.spec.ts`). */}
-          <div className="page-column" data-history={historyOpen ? 'open' : undefined} data-projects={projectsOpen ? 'open' : undefined}>
+          <div className="page-column" data-history={historyOpen ? 'open' : undefined}>
             <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
             {historyOpen ? <HistoryView onClose={closeHistory} /> : null}
             {projectsOpen ? <Projects tab={tab} onClose={closeProjects} /> : null}

@@ -71,10 +71,73 @@ const summaryOf = (project: Project): ProjectSummary => ({
   retention: { mode: project.retention.mode, value: project.retention.value },
 });
 
-export function createProjectsService(deps: ProjectsServiceDeps): ProjectsService {
+/** Main's projects service: the procedures', and the retry of deleted projects' purges. */
+export interface MainProjectsService extends ProjectsService {
+  /**
+   * Purges every tombstoned project that still has captures or screenshots (a delete whose purge
+   * failed): `mode: 'all'`, `project-deleted`, files unlinked as for a delete. Answers how many were
+   * purged; never rejects. Run at startup and before each capture run.
+   */
+  purgeDeleted(): Promise<number>;
+}
+
+type PurgedCounts = { captures: number; versions: number; diffs: number; screenshots: number };
+
+export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsService {
   const { store, runs } = deps;
   const now = deps.now ?? Date.now;
   const log = (message: string): void => deps.log?.(`projects: ${message}`);
+
+  /**
+   * A tombstoned project's `project-deleted` purge (planned again if a row moved meanwhile), then each
+   * of its unreferenced files, checked once more first. `null` when the purge did not run.
+   */
+  const purgeProject = async (projectId: string, at: number): Promise<PurgedCounts | null> => {
+    let purged: PurgedCounts | null = null;
+    let hashes: readonly string[] = [];
+    try {
+      for (let attempt = 0; attempt < 3 && purged === null; attempt++) {
+        const plan = await store.planPurge({ projectId, policy: { mode: 'all' }, now: at });
+        if (plan === null) break;
+        const result = await store.executePurge(plan, 'project-deleted', at);
+        if (result === null) break;
+        if (result.status === 'empty') purged = { captures: 0, versions: 0, diffs: 0, screenshots: 0 };
+        if (result.status === 'purged') {
+          purged = { ...result.plan.counts };
+          hashes = result.plan.unreferencedHashes;
+        }
+      }
+    } catch (error) {
+      log(`the purge of a deleted project failed (${codeOf(error)})`);
+    }
+    if (purged === null) log('a deleted project’s captures were not purged (retried later)');
+    for (const hash of hashes) {
+      try {
+        if (!(await store.isHashReferenced(hash))) await deps.files.unlink(hash);
+      } catch (error) {
+        log(`a screenshot file could not be removed (${codeOf(error)})`);
+      }
+    }
+    return purged;
+  };
+
+  /** One retry at a time (startup and runs may ask together). */
+  let retrying: Promise<number> | null = null;
+  const purgeDeleted = (): Promise<number> => {
+    retrying ??= (async () => {
+      try {
+        let done = 0;
+        for (const projectId of await store.deletedProjectsWithRows()) if ((await purgeProject(projectId, now())) !== null) done += 1;
+        return done;
+      } catch (error) {
+        log(`deleted projects could not be read (${codeOf(error)})`);
+        return 0;
+      } finally {
+        retrying = null;
+      }
+    })();
+    return retrying;
+  };
 
   /** `run`'s answer, or `fallback` (logged) when the database fails. */
   const guarded = async <T>(what: string, run: () => Promise<T>, fallback: T): Promise<T> => {
@@ -184,33 +247,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): ProjectsServic
           if (runs.running() === projectId) return refused<ProjectRefusal>('running');
           const at = now();
           if (!(await store.tombstoneProject(projectId, at))) return refused<ProjectRefusal>('not-found');
-          // 2. Its captures and screenshots, as one recorded purge (planned again if a row moved meanwhile).
-          let purged: { captures: number; versions: number; diffs: number; screenshots: number } | null = null;
-          let hashes: readonly string[] = [];
-          try {
-            for (let attempt = 0; attempt < 3 && purged === null; attempt++) {
-              const plan = await store.planPurge({ projectId, policy: { mode: 'all' }, now: at });
-              if (plan === null) break;
-              const result = await store.executePurge(plan, 'project-deleted', at);
-              if (result === null) break;
-              if (result.status === 'empty') purged = { captures: 0, versions: 0, diffs: 0, screenshots: 0 };
-              if (result.status === 'purged') {
-                purged = { ...result.plan.counts };
-                hashes = result.plan.unreferencedHashes;
-              }
-            }
-          } catch (error) {
-            log(`the purge of a deleted project failed (${codeOf(error)})`);
-          }
-          if (purged === null) log('a deleted project’s captures were not purged');
-          // 3. The files no row names any more, each checked once more first.
-          for (const hash of hashes) {
-            try {
-              if (!(await store.isHashReferenced(hash))) await deps.files.unlink(hash);
-            } catch (error) {
-              log(`a screenshot file could not be removed (${codeOf(error)})`);
-            }
-          }
+          // 2–3. Its captures and screenshots, and the files no row names any more (retried later if it fails).
+          const purged = await purgeProject(projectId, at);
           return { status: 'deleted' as const, purged };
         },
         storeFailed,
@@ -255,6 +293,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): ProjectsServic
         'start a run',
         async () => {
           if (runs.running() !== null) return refused<RunRefusal>('busy');
+          // A deleted project's purge that failed earlier is retried first.
+          await purgeDeleted();
           const project = await store.project(projectId);
           if (project === null) return refused<RunRefusal>('not-found');
           const targets: RunPlanTarget[] = (await store.projectPages(projectId)).map((page) => ({ kind: 'page', label: page.url, url: page.url, searchParams: null }));
@@ -271,5 +311,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): ProjectsServic
     cancelRun: () => runs.cancel(),
 
     runState: (sinceVersion) => runs.watch(sinceVersion),
+
+    purgeDeleted,
   };
 }

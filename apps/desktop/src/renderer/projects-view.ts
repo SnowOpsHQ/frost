@@ -74,12 +74,28 @@ export function queryFromForm(form: QueryForm): { readonly params: SearchParams 
   return { params: { engine, query, country: country === '' ? null : country, language: language === '' ? null : language, location: location === '' ? null : location, device } };
 }
 
-/** A page address as typed: `http(s)` as it is, or a bare host (and path) as `https://`; `null` when neither. */
+/** Loopback hosts a scheme-less address gets `http:` for (as the address bar: `LOOPBACK_HTTP_HOSTS`, `LOOPBACK_IPV4_PATTERN`). */
+const LOOPBACK_HOSTS: readonly string[] = ['localhost', '[::1]', '0.0.0.0'];
+const LOOPBACK_IPV4 = /^127(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+/** A typed host with a port and no scheme (`localhost:3000/x`): not a scheme. */
+const HOST_WITH_PORT = /^[^/?#:@]+:\d+(?:[/?#]|$)/;
+
+/**
+ * A page address as typed, resolved as the address bar resolves it (`main/browser/address.ts`, which
+ * the chrome cannot bundle): `http(s)` as it is; a scheme-less address (`example.com/x`,
+ * `localhost:3000/x`) with `http:` for a loopback host and `https:` for any other; `null` for another
+ * scheme, userinfo or spaces.
+ */
 export function pageUrlFromInput(text: string): string | null {
   const value = text.trim();
-  if (value === '') return null;
-  const parsed = parseWebUrl(value) ?? (/^[a-z][a-z0-9+.-]*:/i.test(value) ? null : parseWebUrl(`https://${value}`));
-  return parsed?.href ?? null;
+  if (value === '' || /\s/.test(value)) return null;
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(value);
+  if (scheme && !HOST_WITH_PORT.test(value)) return parseWebUrl(value)?.href ?? null;
+  const authority = /^[^/?#]*/.exec(value)?.[0] ?? '';
+  if (authority.includes('@')) return null;
+  const host = authority.replace(/:\d+$/, '').toLowerCase();
+  const parsed = parseWebUrl(`${LOOPBACK_HOSTS.includes(host) || LOOPBACK_IPV4.test(host) ? 'http' : 'https'}://${value}`);
+  return parsed && parsed.port !== '0' ? parsed.href : null;
 }
 
 /** When a page or query was last captured into the project. */
@@ -132,6 +148,15 @@ export function addPageText(answer: AddPageAnswer | null): string {
  */
 export function defaultCaptureProject(forPage: readonly Pick<ProjectSummary, 'id'>[]): string | undefined {
   return forPage.find((project) => project.id !== UNFILED_PROJECT_ID)?.id;
+}
+
+/**
+ * The project the picker keeps: the current choice while it is listed, else the page's default (if
+ * listed), else Unfiled (`undefined`).
+ */
+export function pickedProject(list: readonly Pick<ProjectSummary, 'id'>[], current: string | undefined, fallback: string | undefined): string | undefined {
+  if (current === undefined || list.some((project) => project.id === current)) return current;
+  return fallback !== undefined && list.some((project) => project.id === fallback) ? fallback : undefined;
 }
 
 /** Projects as the picker lists them: Unfiled first (as main answers), each once. */

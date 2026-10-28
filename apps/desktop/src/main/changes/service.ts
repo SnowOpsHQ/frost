@@ -52,6 +52,8 @@ export interface CaptureOptions {
   readonly projectId?: string;
   readonly source?: CaptureSource;
   readonly searchParams?: SearchParams | null;
+  /** A capture run's: the page (stored form) the tab must show, else the capture is refused `no-audit` (the user navigated it). */
+  readonly pageUrl?: string;
 }
 
 /** Main's changes service: the procedures' (`ChangesService`) and Phase 5's reads (`ChangesReadService`). */
@@ -162,6 +164,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     }
     if (typeof tab === 'string') return notReady(tab);
     const { contents, response, page } = tab;
+    if (options.pageUrl !== undefined && page !== options.pageUrl) return refused('no-audit');
 
     const projectId = options.projectId ?? UNFILED_PROJECT_ID;
     try {

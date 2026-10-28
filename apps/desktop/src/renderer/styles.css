@@ -8135,21 +8135,22 @@ input {
 /* Projects (Phase 6) ------------------------------------------------------------------------------
    Phase 6 Task 6, specs/projects.feature.md: the Projects sheet over the page column (like History:
    while open it fills the column and the page area shrinks to nothing; while a capture run is under
-   way it shrinks to a band and the page area takes the rest, so the run's tab is on screen), and the
-   Changes panel's project picker. */
+   way it is a band of fixed height and the page area takes the rest, so the run's tab is on screen
+   and its viewport screenshots are of the page area below the band), and the Changes panel's
+   project picker. */
 
 :root {
   --projects-width: 980px;
-  --projects-run-band: min(46%, 340px);
+  --projects-run-band: min(300px, 50%);
 }
 
-.page-column[data-projects='open'] > .page-area {
+.page-column:has(> .projects-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
 }
 
 /* A run under way: the run's tab shows below the band. */
-.page-column[data-projects='open']:has(> .projects-sheet[data-running='true']) > .page-area {
+.page-column:has(> .projects-sheet[data-running='true']) > .page-area {
   flex: 1 1 auto;
   height: auto;
 }

@@ -1,10 +1,10 @@
 import { BrowserWindow } from 'electron';
 import type { ChangeIntelRepository } from '@app/db';
-import type { BrowserService, ProjectsService } from '@app/ipc-contract';
+import type { BrowserService } from '@app/ipc-contract';
 import type { MainScreenshotsService } from '../screenshots/service';
 import { createScreenshotFiles } from '../screenshots/store';
 import { createCaptureRuns } from './capture-run';
-import { createProjectsService } from './projects';
+import { createProjectsService, type MainProjectsService } from './projects';
 import { confirmDeleteProject } from './projects-dialog';
 import type { MainChangesService } from './service';
 
@@ -12,7 +12,8 @@ import type { MainChangesService } from './service';
 // capture runs drive the browser controller's own tabs (an ordinary browse tab: no WebContents of
 // their own), capture through the changes service and take screenshots through the screenshots
 // service; a delete asks in a message box parented to the focused window (else the app's) and
-// unlinks files through the screenshot store. Main `index.ts` creates it with one line.
+// unlinks files through the screenshot store; at startup it retries the purge of deleted projects
+// that still have rows. Main `index.ts` creates it with one line.
 
 export interface MainProjectsDeps {
   /** `SessionStore.changeIntel`. */
@@ -25,7 +26,7 @@ export interface MainProjectsDeps {
   readonly log: (message: string) => void;
 }
 
-export function createMainProjects({ store, userData, browser, changes, screenshots, log }: MainProjectsDeps): ProjectsService {
+export function createMainProjects({ store, userData, browser, changes, screenshots, log }: MainProjectsDeps): MainProjectsService {
   const runs = createCaptureRuns({
     browser: {
       getState: () => browser.getState(),
@@ -33,15 +34,16 @@ export function createMainProjects({ store, userData, browser, changes, screensh
       navigate: (input) => browser.navigate(input),
       activateTab: (tabId) => browser.activateTab(tabId),
       closeTab: (tabId) => browser.closeTab(tabId),
-      // The tab's own profile, never a site's pin.
+      // A fresh tab's own profile (never the default, never a pin: the run only sets one before its first load).
       setRenderProfile: (tabId, profile) => browser.setRenderProfile(tabId, profile),
     },
+    isLive: async (projectId) => (await store.project(projectId)) !== null,
     capture: (tabId, options) => changes.capture(tabId, options),
     screenshot: (tabId, options) => screenshots.take(tabId, options),
     log,
   });
   const parent = () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null;
-  return createProjectsService({
+  const projects = createProjectsService({
     store,
     files: createScreenshotFiles(userData),
     confirmDelete: (name) => confirmDeleteProject(parent(), name),
@@ -52,4 +54,7 @@ export function createMainProjects({ store, userData, browser, changes, screensh
     runs,
     log,
   });
+  // A delete whose purge failed earlier (a crash, a full disk) is purged again at startup.
+  void projects.purgeDeleted();
+  return projects;
 }

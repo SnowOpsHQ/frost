@@ -6,6 +6,7 @@ import {
   AddPageInputSchema,
   AddQueryAnswerSchema,
   AddQueryInputSchema,
+  CancelRunAnswerSchema,
   CreateProjectAnswerSchema,
   CreateProjectInputSchema,
   DeleteProjectAnswerSchema,
@@ -160,6 +161,7 @@ export const projectsRouter = router({
   cancelRun: publicProcedure
     .use(enforceSender)
     .use(requireProjects)
+    .output(CancelRunAnswerSchema)
     .mutation(({ ctx }) => ctx.projects.cancelRun() === true),
   runState: publicProcedure
     .use(enforceSender)

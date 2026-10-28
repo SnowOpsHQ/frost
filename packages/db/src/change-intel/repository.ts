@@ -231,6 +231,8 @@ export interface ChangeIntelRepository extends PurgeOperations {
   tombstoneProject(id: string, now: number): Promise<boolean>;
   /** Live projects, Unfiled first, then by creation. */
   projects(): Promise<Project[]>;
+  /** Tombstoned projects that still have captures or screenshots (a `project-deleted` purge that did not run), oldest deletion first. */
+  deletedProjectsWithRows(): Promise<string[]>;
   /** A live project. */
   project(id: string): Promise<Project | null>;
   /** Adds a page (its live row if it has one already); `null` if invalid or past the cap. */
@@ -694,6 +696,21 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
 
     async projects() {
       return (await liveProjects(undefined)).map(projectOf).filter(present);
+    },
+
+    async deletedProjectsWithRows() {
+      const rows = await db
+        .select({ id: ciProjects.id })
+        .from(ciProjects)
+        .where(
+          and(
+            sql`${ciProjects.deletedAt} IS NOT NULL`,
+            sql`(EXISTS (SELECT 1 FROM ci_captures c WHERE c.project_id = ${ciProjects.id}) OR EXISTS (SELECT 1 FROM ci_screenshots s WHERE s.project_id = ${ciProjects.id}))`,
+          ),
+        )
+        .orderBy(asc(ciProjects.deletedAt), asc(ciProjects.id))
+        .limit(MAX_PROJECTS);
+      return rows.map((row) => row.id).filter(isId);
     },
 
     async project(id) {

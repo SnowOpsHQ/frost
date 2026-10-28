@@ -48,27 +48,49 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
    of the project goes in one recorded purge; a version another project also captured stays.
 5. Each hash of the purge's `unreferencedHashes` is checked again with `isHashReferenced`, and its file
    unlinked only if no row names it.
+6. If the purge fails (after the tombstone), the delete still answers `deleted`, with `purged: null`;
+   the sheet says `DELETED_NOT_PURGED`. `purgeDeleted` retries every tombstoned project that still has
+   captures or screenshots (`deletedProjectsWithRows`), at startup and before each run.
 
 ## Capture now
-- One run at a time, app-wide (`busy`). A project with no pages or queries is `no-targets`.
-- **Start:** remember the active tab; open a new browse tab through the browser controller (it is
-  active); a tab limit is `no-tab`.
+- One run at a time, app-wide (`busy`, reserved as it starts). A project with no pages or queries is
+  `no-targets`; the project is checked again as the run starts (`not-found`).
+- **Start:** remember the active tab.
 - **Targets:** each page, then each query's search URL, at most `maxRunTargets` (the rest are
   `omitted`, and the progress says so).
+- **Render profiles:** the targets are grouped by the profile they need (a `mobile` query's
+  `MOBILE_QUERY_PROFILE`, else the project's), groups in the order of their first target, and listed in
+  the order they are visited. Each group gets a fresh browse tab through the browser controller (it
+  is active; a tab limit is `no-tab`, or `failed` for a later group), whose own profile is set once,
+  without `pin`, before its first navigation; a group needing the default gets no profile set at all.
+  The run never sets the default profile on a tab (a Reset, which also unpins the site the tab shows)
+  and never changes a tab's profile after it has loaded, so it never removes a pin. A site's pinned
+  profile still applies in a run tab without one of its own (pins are the user's choice); the capture
+  records the profile actually in effect (the audit's `renderProfile`). The next group's tab opens
+  only with the last one in front.
 - **For each target**, only while the run's tab is the active one:
-  1. set its tab's own profile (never a site pin) when it differs: a `mobile` query's
-     `MOBILE_QUERY_PROFILE`, else the project's (or Default);
-  2. `navigate(url)` (which acts on the active tab);
-  3. once a new document has committed and finished loading, `changes.capture(runTab, { projectId,
-     source: 'project', searchParams })` (the query's parameters, else none), asked again every
-     `captureRetryMs` while it answers `no-audit` or `busy`; any other refusal fails the target;
-  4. with screenshots asked, a viewport screenshot linked to the capture (`captureId`, the same search
-     parameters);
-  5. the outcome (`RUN_TARGET_OUTCOMES`), with the capture's change count.
+  1. `navigate(url)` (which acts on the active tab);
+  2. once a new document has committed and finished loading, the page of that first commit is the
+     target's (a redirect is allowed); if the tab moves to another page afterwards (the user navigated
+     it), the target fails;
+  3. a load that fails is a failed target at once: an error that is new since the navigation (its text
+     differs from the one before, or the URL changed), or one after a load was seen;
+  4. `changes.capture(runTab, { projectId, source: 'project', searchParams, pageUrl })` (the query's
+     parameters, else none; `pageUrl` the landed page, which the capture's audit must be of), asked
+     again every `captureRetryMs` while it answers `no-audit`, `busy` or `not-active`; `no-tab` ends the
+     run (`tab-closed`), `no-project` ends it (`cancelled`), any other refusal fails the target;
+  5. with screenshots asked, a viewport screenshot linked to the capture (`captureId`, the same search
+     parameters), asked again while it answers `not-active` and the target's time lasts; its size is
+     the page area's below the sheet's band;
+  6. the outcome (`RUN_TARGET_OUTCOMES`), with the capture's change count.
 - **Timing:** while its tab is not active the run waits (`waiting-for-tab`) and that time does not
-  count; a target gives up after `targetActiveTimeoutMs` of active time (`timed-out`).
-- **Cancel:** Cancel, or its tab closing (`tab-closed`); the remaining targets are `cancelled`.
-- **End:** its tab closes if still open, and the remembered tab is activated again if still open.
+  count; a target gives up after `targetActiveTimeoutMs` of active time (`timed-out`). Time counts from
+  one look at the tab to the next with it in front at both; time inside a capture or a screenshot
+  counts the same way (an approximation).
+- **Cancel:** Cancel, or its tab closing (`tab-closed`, also while a capture is under way); the
+  remaining targets are `cancelled`. A capture under way when Cancel comes stays, without its screenshot.
+- **End:** its tab closes if still open; the remembered tab is activated again only if the run's tab
+  was the one in front (else the user's choice of tab stays) and the remembered one is still open.
 - **State:** `RunState`, served by the long-poll `projects.runState(sinceVersion)` (answers at once
   when newer, else on the next change or after `runStateWatchTimeoutMs`; at most
   `maxPendingRunWatches` wait).
@@ -90,18 +112,33 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   country, language, device, location; remove), its render profile, and "Capture now" with "with
   viewport screenshots", the honesty note, the progress (current of total, each target's outcome) and
   Cancel. A page or query shows its last capture and change count; a click opens it in the active tab.
-- While a run is under way the sheet shrinks to a band (`data-running`) so the run's tab is on screen.
+- While a run is under way the sheet is a band of fixed height (`data-running`) so the run's tab is on
+  screen, and its pages and queries do not open (the run's tab is in front).
+- The History sheet and this one never show together: opening one closes the other.
+- The page column gives way by `.page-column:has(> .projects-sheet)` (no attribute on `App.tsx`'s column).
 - A region is kept for Task 7's retention and disk usage.
 
 ## Changes panel
 - A project picker next to Capture now: it lists the projects, starts on the first project listing the
   page (Unfiled aside), else Unfiled, and drives `setCaptureProject`, the seam the palette's "Capture
-  this page" reads too. When the page or panel goes, captures go to Unfiled again.
+  this page" reads too. When the page or panel goes, captures go to Unfiled again. A choice the user made
+  is never overridden by the default arriving late; a chosen project that is deleted falls back to the
+  default; when the sheet changes the projects or their pages the picker reads them again (and the
+  default with them, unless the user chose). "Projects" opens the sheet on the chosen project.
+
+## Command palette
+- "Open projects" opens the sheet; "Add this page to a project" (a web page in the tab) opens it asking
+  which project; "Capture project now" (once a project was opened in the sheet this session) opens the
+  sheet on it and starts its run (no screenshots). Deleting that project withdraws the action.
 
 ## Known limits
 - A search engine that redirects (a consent page on another URL) is captured at the URL it ended on;
   `get` looks the query up at its search URL, so that capture is not shown on the query's row.
 - A run waits for its tab with no end while another tab is in front; Cancel or closing the tab ends it.
+- A page that redirects itself by script after its first commit is taken as the tab moving away: that
+  target fails.
+- Two targets of one group at the same URL that fail with the same error: the second is told only
+  after a load is seen, else it times out.
 
 ## Scenarios
 - **Scenario: search-url-for-params** — each engine's URL and parameters, encoding (the query never
@@ -121,6 +158,9 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   versions kept, only unreferenced files unlinked. Tests: `projects.test.ts`
   `delete-project-purges-and-unlinks`, `delete-project-unlinks-only-unreferenced`,
   `delete-project-asks-first`.
+- **Scenario: deleted-project-purge-is-retried** — a failed purge is retried at startup and before a run.
+  Tests: `projects.test.ts` `deleted-project-purge-is-retried`; `packages/db/src/change-intel/__tests__/projects.test.ts`
+  `deleted-projects-with-rows`.
 - **Scenario: unfiled-cannot-be-deleted** — Test: `projects.test.ts` `unfiled-cannot-be-deleted`.
 - **Scenario: start-run-plans-pages-then-queries** — Test: `projects.test.ts`
   `start-run-plans-pages-then-queries`.
@@ -128,22 +168,28 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - **Scenario: capture run** — Tests in `apps/desktop/src/main/changes/__tests__/capture-run.test.ts`:
   `capture-run-visits-each-target-in-its-own-tab`, `capture-run-waits-for-active-tab`,
   `capture-run-retries-until-settled`, `capture-run-waits-for-its-navigation`,
-  `capture-run-records-query-params`, `capture-run-applies-profiles`,
-  `capture-run-cancels-on-tab-close`, `capture-run-cancels`, `capture-run-times-out-per-target`,
-  `capture-run-restores-previous-tab`, `one-run-at-a-time`, `capture-run-caps-targets`,
-  `run-state-long-polls`.
+  `capture-run-refuses-a-moved-tab`, `capture-run-fails-fast-on-a-load-error`,
+  `capture-run-records-query-params`, `capture-run-retries-a-screenshot-behind-another-tab`,
+  `capture-run-applies-profiles`, `capture-run-never-removes-a-pin`, `capture-run-cancels-on-tab-close`,
+  `capture-run-cancels`, `capture-run-cancel-during-a-capture`, `capture-run-times-out-per-target`,
+  `capture-run-restores-previous-tab`, `capture-run-keeps-the-users-tab`, `one-run-at-a-time`,
+  `capture-run-caps-targets`, `run-state-long-polls`; and over the real controller, render profiles and
+  pins, `capture-run-pins.test.ts` `capture-run-never-removes-a-pin`. The capture's `pageUrl`:
+  `service.test.ts` `capture-records-profile-and-params`.
 - **Scenario: router** — Tests in `packages/ipc-contract/src/__tests__/projects-router.test.ts`:
   `every-projects-procedure-enforces-sender` (and fail-closed), `projects-inputs-are-validated`,
   `projects-procedures-call-service`, `projects-answers-are-checked`.
 - **Scenario: the sheet's helpers and palette** — Tests in
   `apps/desktop/src/renderer/__tests__/projects-view.test.ts`: `projects-view-profile-choice`,
   `projects-view-query-form`, `projects-view-page-input`, `projects-view-wording`,
-  `projects-view-default-capture-project`, `projects-palette-actions`; and
+  `projects-view-picked-project`, `projects-view-default-capture-project`, `projects-palette-actions`;
+  `use-projects-sheet.test.ts` `projects-and-history-sheets-exclude-each-other`; and
   `palette-all-features.test.ts` `palette-features-register-together`.
 
 ## End to end (`apps/desktop/e2e/projects.e2e.ts`, two loopback pages)
 - **Scenario: projects-create-and-add-pages** — open the sheet (the page area gives way), create a
-  project, add two URLs; a non-web address is refused; Esc closes it.
+  project, add two URLs; a non-web address is refused; opening History closes it, and opening it
+  closes History; Esc closes it.
 - **Scenario: projects-capture-now** — Capture now with screenshots: both targets captured with their
   screenshots, the run's tab closes, the tab in front before is again, and the Changes panel of one of
   the pages starts its picker on the project and shows its version.

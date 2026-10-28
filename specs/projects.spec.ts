@@ -24,7 +24,9 @@ import { DEFAULT_RENDER_PROFILE, type RenderProfile } from './render-profile.spe
  * - `maxRunTargets`: the most targets one run visits, all pages first, then queries (a project can
  *   hold more: the rest are `omitted`, and the run says so);
  * - `targetActiveTimeoutMs`: how long one target may take, counting only time while the run's tab is
- *   the active one; past it the target is `timed-out` and the run moves on;
+ *   the active one (from one look at the tab to the next, in front at both; time inside a capture or
+ *   a screenshot counts the same way, an approximation); past it the target is `timed-out` and the
+ *   run moves on;
  * - `captureRetryMs`: how often the run looks at its tab, and asks again while a capture answers
  *   `no-audit` or `busy` (the page is still loading, or its audit is not settled yet);
  * - `runStateWatchTimeoutMs`: how long one `projects.runState` long-poll waits for a change (the
@@ -70,7 +72,11 @@ export type RunTargetKind = (typeof RUN_TARGET_KINDS)[number];
 /** A target's screenshot, when the run takes them: `saved`, or `failed`; `null` when not asked (or not reached). */
 export const RUN_SCREENSHOT_OUTCOMES = ['saved', 'failed'] as const;
 export type RunScreenshotOutcome = (typeof RUN_SCREENSHOT_OUTCOMES)[number];
-/** The screenshot a run takes of each captured target. */
+/**
+ * The screenshot a run takes of each captured target. Its size is the page area's as shown: while a
+ * run is under way the Projects sheet is a band of fixed height above the page area, so a run's
+ * screenshots are smaller than the page area with the sheet closed.
+ */
 export const RUN_SCREENSHOT_KIND: ScreenshotKind = 'viewport';
 
 export interface RunTarget {
@@ -100,8 +106,13 @@ export interface RunState {
 }
 
 /**
- * The render profile a query with device `mobile` is visited with, for that target only: a phone
- * with a mobile browser's user agent, otherwise frost's defaults. Other targets use the project's.
+ * The render profile a query with device `mobile` is visited with: a phone with a mobile browser's
+ * user agent, otherwise frost's defaults. Other targets use the project's. A run groups its targets
+ * by the profile they need and visits each group in a fresh tab whose profile is set once, before its
+ * first navigation, with no pin; a group needing the default gets no profile set (setting the default
+ * is a Reset, which would also unpin the site the tab shows). A site's pinned profile still applies in
+ * a run tab without one of its own: pins are the user's choice, and the capture records the profile
+ * actually in effect (the audit's `renderProfile`).
  */
 export const MOBILE_QUERY_PROFILE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'mobile' };
 
@@ -286,6 +297,9 @@ export const RUN_TARGET_OUTCOME_LABELS: Readonly<Record<RunTargetOutcome, string
 
 /** Capture refusals a run waits through (the page is not ready yet); any other fails the target. */
 export const RUN_RETRY_REFUSALS = ['no-audit', 'busy'] as const satisfies readonly CaptureRefusal[];
+
+/** Said when a project was deleted but its captures could not be purged yet (retried at startup and before each run). */
+export const DELETED_NOT_PURGED = 'Project deleted; its captures could not be removed yet.' as const;
 
 /** "Delete project": the confirmation main shows (Cancel is the default and the cancel answer). */
 export const DELETE_PROJECT = {

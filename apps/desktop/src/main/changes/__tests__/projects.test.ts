@@ -11,7 +11,7 @@ import { canonicalJson } from '@app/change-intel';
 import { openSessionStore, uuidv7, type ChangeIntelRepository } from '@app/db';
 import { MAX_PROJECT_PAGES, PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME } from '@app/specs/capture-db.spec';
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
-import { CreateProjectAnswerSchema, ProjectDetailSchema, ProjectsAnswerSchema, searchUrlFor, type RunState } from '@app/specs/projects.schema';
+import { CreateProjectAnswerSchema, ProjectDetailSchema, ProjectsAnswerSchema, searchUrlFor, type RunState, type StartRunAnswer } from '@app/specs/projects.schema';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { CaptureRuns, RunPlan } from '../capture-run';
 import { createProjectsService, type ProjectsServiceDeps } from '../projects';
@@ -46,7 +46,7 @@ function setup(deps: Partial<ProjectsServiceDeps> = {}) {
   const confirmDelete = vi.fn(async (_name: string) => true);
   const state = { activeUrl: A as string | null, running: null as string | null };
   const runs = {
-    start: vi.fn((_plan: RunPlan) => ({ status: 'started' as const, runId: uuidv7(tick()) })),
+    start: vi.fn(async (_plan: RunPlan): Promise<StartRunAnswer> => ({ status: 'started', runId: uuidv7(tick()) })),
     cancel: vi.fn(() => true),
     running: vi.fn(() => state.running),
     state: vi.fn(() => IDLE),
@@ -240,6 +240,36 @@ describe('projects service', () => {
     expect(await second.service.remove(id)).toMatchObject({ status: 'deleted', purged: { screenshots: 1 } });
     expect(isHashReferenced).toHaveBeenCalledWith(sha('png raced'));
     expect(second.files.unlink).not.toHaveBeenCalled();
+  });
+
+  test('deleted-project-purge-is-retried', async () => {
+    // The purge fails as the project is deleted: deleted (and said so), its rows kept for now.
+    const first = setup();
+    const id = await created(first.service, 'To delete');
+    await capture(first.repo, id, A, 'one');
+    await screenshot(first.repo, id, A, 'png left');
+    const failing = Object.assign(Object.create(first.repo) as ChangeIntelRepository, {
+      executePurge: vi.fn(async () => {
+        throw Object.assign(new Error('disk full'), { code: 'SQLITE_FULL' });
+      }),
+    });
+    const broken = setup({ store: failing });
+    expect(await broken.service.remove(id)).toEqual({ status: 'deleted', purged: null });
+    expect(first.count('SELECT count(*) AS n FROM ci_captures WHERE project_id = ?', id)).toBe(1);
+    expect(await first.repo.deletedProjectsWithRows()).toEqual([id]);
+    // The retry (at startup, and before each run) purges it, and its file goes.
+    const retry = setup({ store: first.repo });
+    expect(await retry.service.purgeDeleted()).toBe(1);
+    expect(first.count('SELECT count(*) AS n FROM ci_captures WHERE project_id = ?', id)).toBe(0);
+    expect(first.count('SELECT count(*) AS n FROM ci_screenshots WHERE project_id = ?', id)).toBe(0);
+    expect(first.count("SELECT count(*) AS n FROM ci_purges WHERE project_id = ? AND reason = 'project-deleted'", id)).toBe(1);
+    expect(retry.unlinked).toEqual([sha('png left')]);
+    expect(await retry.service.purgeDeleted()).toBe(0);
+    // Starting a run retries it first.
+    const deletedProjectsWithRows = vi.fn(async () => [] as string[]);
+    const before = setup({ store: Object.assign(Object.create(first.repo) as ChangeIntelRepository, { deletedProjectsWithRows }) });
+    await before.service.startRun(id, false);
+    expect(deletedProjectsWithRows).toHaveBeenCalledOnce();
   });
 
   test('delete-project-asks-first', async () => {

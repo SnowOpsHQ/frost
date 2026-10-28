@@ -103,6 +103,9 @@ export const StartRunAnswerSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('refused'), reason: z.enum(RUN_REFUSALS) }),
 ]) satisfies z.ZodType<StartRunAnswer>;
 
+/** `cancelRun`: whether a run was under way. */
+export const CancelRunAnswerSchema = z.boolean();
+
 export const RunStateSchema = z.strictObject({
   version: count,
   runId: id.nullable(),

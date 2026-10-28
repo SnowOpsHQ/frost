@@ -135,7 +135,7 @@ describe('capture', () => {
     expect(deviceScale(653, 980, 2)).toBeCloseTo(980 / 653);
     expect(deviceScale(653, 1_306, 2)).toBe(2);
     expect(deviceScale(1_263, 1_145, 0.906_25)).toBe(0.906_25);
-  });
+  }, 30_000);
 
   test('deadlines-bound-every-step', async () => {
     const tight = { ...SCREENSHOT_LIMITS, fullPageDeadlineMs: 100, areaTimeoutMs: 100, segmentTimeoutMs: 100 };

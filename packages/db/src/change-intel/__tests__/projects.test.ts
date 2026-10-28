@@ -160,4 +160,21 @@ describe('projects', () => {
     for (let i = 1; i < MAX_PROJECT_QUERIES; i++) expect(await t.repo.addQuery(site.id, `q${i}`, PARAMS, 6_000)).not.toBeNull();
     expect(await t.repo.addQuery(site.id, 'one more', PARAMS, 7_000)).toBeNull();
   });
+
+  test('deleted-projects-with-rows', async () => {
+    const kept = (await t.repo.createProject('Kept', 1_000))!;
+    const purged = (await t.repo.createProject('Purged', 1_000))!;
+    const leftover = (await t.repo.createProject('Leftover', 1_000))!;
+    const shotOnly = (await t.repo.createProject('Shot only', 1_000))!;
+    const empty = (await t.repo.createProject('Empty', 1_000))!;
+    await capture(t.repo, { url: PAGE, snapshot: 'a', at: 1_100, projectId: kept.id });
+    await capture(t.repo, { url: PAGE, snapshot: 'b', at: 1_200, projectId: purged.id });
+    await capture(t.repo, { url: PAGE, snapshot: 'c', at: 1_300, projectId: leftover.id });
+    await t.repo.appendScreenshot(screenshotInput({ pageUrl: PAGE, createdAt: 1_400, projectId: shotOnly.id }));
+    for (const [project, at] of [[purged, 2_000], [leftover, 2_100], [shotOnly, 2_200], [empty, 2_300]] as const) expect(await t.repo.tombstoneProject(project.id, at)).toBe(true);
+    const plan = (await t.repo.planPurge({ projectId: purged.id, policy: { mode: 'all' }, now: 3_000 }))!;
+    expect((await t.repo.executePurge(plan, 'project-deleted', 3_000))?.status).toBe('purged');
+    // Only tombstoned projects with rows left: never a live one, a purged one or an empty one.
+    expect(await t.repo.deletedProjectsWithRows()).toEqual([leftover.id, shotOnly.id]);
+  });
 });

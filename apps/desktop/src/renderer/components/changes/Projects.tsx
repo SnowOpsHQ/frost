@@ -3,6 +3,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import { PROJECT_NAME_MAX_CHARS, PROJECT_QUERY_MAX_CHARS } from '@app/specs/capture-db.spec';
 import {
   CAPTURE_RUN_NOTE,
+  DELETED_NOT_PURGED,
   PROJECTS_TITLE,
   QUERY_FIELD_MAX_CHARS,
   QUERY_LOCATION_NOTE,
@@ -36,7 +37,7 @@ import {
   type QueryForm,
 } from '../../projects-view';
 import { isolatedTooltip } from '../../seo-view';
-import { lastOpenedProject, openProjects, setLastOpenedProject, useProjectsRequest } from './projects-sheet';
+import { lastOpenedProject, notifyProjectsChanged, openProjects, setLastOpenedProject, useProjectsRequest } from './projects-sheet';
 
 // The Projects sheet (acceptance `projects.feature.md`, The sheet): over the page column like
 // History, it lists the projects (Unfiled first) with create, inline rename and delete (main asks
@@ -162,10 +163,11 @@ function ProjectItem({
 
 // ---- One project ---------------------------------------------------------------------------------
 
-function EntryRow({ testId, url, label, lastCapturedAt, changeCount, onOpen, onRemove }: { readonly testId: string; readonly url: string; readonly label: string; readonly lastCapturedAt: number | null; readonly changeCount: number | null; readonly onOpen: () => void; readonly onRemove: () => void }) {
+/** A page or query: a click opens it in the active tab (not while a run is under way: the run's tab is in front). */
+function EntryRow({ testId, url, label, lastCapturedAt, changeCount, running, onOpen, onRemove }: { readonly testId: string; readonly url: string; readonly label: string; readonly lastCapturedAt: number | null; readonly changeCount: number | null; readonly running: boolean; readonly onOpen: () => void; readonly onRemove: () => void }) {
   return (
     <li className="projects-entry" data-testid={testId} data-url={url} data-captured={lastCapturedAt !== null}>
-      <button type="button" className="projects-entry-open" data-testid={`${testId}-open`} title={isolatedTooltip(url)} onClick={onOpen}>
+      <button type="button" className="projects-entry-open" data-testid={`${testId}-open`} title={isolatedTooltip(url)} disabled={running} onClick={onOpen}>
         <Text value={label} className="projects-entry-label" />
         <span className="projects-entry-meta">
           <span data-testid={`${testId}-last`}>{lastCaptureText(lastCapturedAt)}</span>
@@ -240,6 +242,7 @@ function ProjectView({
     const problem = refusalText(await answer);
     if (problem !== null) say(problem);
     else if (done) say(done);
+    notifyProjectsChanged();
     onChanged();
     return problem === null;
   };
@@ -251,11 +254,13 @@ function ProjectView({
     const answer = await ipc.projects.addPage.mutate({ projectId, url }).catch(() => null);
     say(addPageText(answer));
     if (answer?.status === 'added') setPageInput('');
+    notifyProjectsChanged();
     onChanged();
   };
   const addCurrent = async () => {
     const answer = await ipc.projects.addCurrentPage.mutate({ projectId }).catch(() => null);
     say(addPageText(answer));
+    notifyProjectsChanged();
     onChanged();
   };
   const addQuery = async (event: FormEvent) => {
@@ -271,7 +276,7 @@ function ProjectView({
   const remove = async () => {
     const answer = await ipc.projects.remove.mutate({ projectId }).catch(() => null);
     if (answer?.status === 'deleted') {
-      say(answer.purged === null ? 'Project deleted.' : `Project deleted, with ${answer.purged.captures} captures and ${answer.purged.screenshots} screenshots.`);
+      say(answer.purged === null ? DELETED_NOT_PURGED : `Project deleted, with ${answer.purged.captures} captures and ${answer.purged.screenshots} screenshots.`);
       onDeleted();
     } else say(refusalText(answer) ?? '');
   };
@@ -337,6 +342,7 @@ function ProjectView({
               label={page.url}
               lastCapturedAt={page.lastCapturedAt}
               changeCount={page.changeCount}
+              running={busy}
               onOpen={() => onOpenUrl(page.url)}
               onRemove={() => void change(ipc.projects.removePage.mutate({ projectId, pageId: page.id }).catch(() => null))}
             />
@@ -368,6 +374,7 @@ function ProjectView({
               label={queryLabel(query.params)}
               lastCapturedAt={query.lastCapturedAt}
               changeCount={query.changeCount}
+              running={busy}
               onOpen={() => onOpenUrl(query.url)}
               onRemove={() => void change(ipc.projects.removeSearch.mutate({ projectId, queryId: query.id }).catch(() => null))}
             />
@@ -505,6 +512,7 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
       setNewName('');
       setSelected(answer.project.id);
       setStatus(`Created ${answer.project.name}.`);
+      notifyProjectsChanged();
       reload();
     } else setStatus(refusalText(answer) ?? '');
   };
@@ -512,6 +520,7 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
     const answer = await ipc.projects.rename.mutate({ projectId, name }).catch(() => null);
     const problem = refusalText(answer);
     setStatus(problem ?? 'Renamed.');
+    notifyProjectsChanged();
     reload();
     return problem === null;
   };
@@ -519,6 +528,7 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
     if (addUrl === null) return;
     const answer = await ipc.projects.addPage.mutate({ projectId, url: addUrl }).catch(() => null);
     setStatus(addPageText(answer));
+    notifyProjectsChanged();
     if (answer?.status === 'added') {
       setAddUrl(null);
       setSelected(projectId);
@@ -585,6 +595,9 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
                 tab={tab}
                 onChanged={reload}
                 onDeleted={() => {
+                  // "Capture project now" no longer offers it.
+                  if (lastOpenedProject() === detail.project.id) setLastOpenedProject(undefined);
+                  notifyProjectsChanged();
                   setSelected(null);
                   setDetail(undefined);
                   reload();

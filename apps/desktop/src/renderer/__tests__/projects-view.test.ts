@@ -16,6 +16,7 @@ import {
   defaultCaptureProject,
   lastCaptureText,
   pageUrlFromInput,
+  pickedProject,
   profileChoiceOf,
   profileOfChoice,
   queryFromForm,
@@ -62,7 +63,12 @@ describe('projects view', () => {
     expect(pageUrlFromInput(' https://example.com/a ')).toBe('https://example.com/a');
     expect(pageUrlFromInput('http://127.0.0.1:8080/x')).toBe('http://127.0.0.1:8080/x');
     expect(pageUrlFromInput('example.com/guide')).toBe('https://example.com/guide');
-    for (const bad of ['', '   ', 'javascript:alert(1)', 'file:///etc/passwd', 'app://frost/index.html', 'data:text/html,x']) expect(pageUrlFromInput(bad), bad).toBeNull();
+    // host:port is a host, not a scheme; loopback gets http:, as in the address bar.
+    expect(pageUrlFromInput('localhost:3000/x')).toBe('http://localhost:3000/x');
+    expect(pageUrlFromInput('127.0.0.1:8080')).toBe('http://127.0.0.1:8080/');
+    expect(pageUrlFromInput('example.com:8443/a')).toBe('https://example.com:8443/a');
+    expect(pageUrlFromInput('localhost/x')).toBe('http://localhost/x');
+    for (const bad of ['', '   ', 'javascript:alert(1)', 'file:///etc/passwd', 'app://frost/index.html', 'data:text/html,x', 'user@example.com/x', 'two words', 'example.com:0/x', 'mailto:x@example.com']) expect(pageUrlFromInput(bad), bad).toBeNull();
   });
 
   test('projects-view-wording', () => {
@@ -93,6 +99,15 @@ describe('projects view', () => {
     expect(startRunText({ status: 'refused', reason: 'busy' })).toBe(RUN_REFUSAL_MESSAGES.busy);
     expect(addPageText({ status: 'added', page: { id: P1, url: 'https://example.com/' } })).toBe('Page added.');
     expect(addPageText({ status: 'refused', reason: 'limit' })).toBe(PROJECT_REFUSAL_MESSAGES.limit);
+  });
+
+  test('projects-view-picked-project', () => {
+    const list = [{ id: UNFILED_PROJECT_ID }, { id: P1 }, { id: P2 }];
+    expect(pickedProject(list, P2, P1)).toBe(P2);
+    expect(pickedProject(list, undefined, P1)).toBeUndefined();
+    // The chosen project was deleted: the page's default, else Unfiled.
+    expect(pickedProject([{ id: UNFILED_PROJECT_ID }, { id: P1 }], P2, P1)).toBe(P1);
+    expect(pickedProject([{ id: UNFILED_PROJECT_ID }], P2, P1)).toBeUndefined();
   });
 
   test('projects-view-default-capture-project', () => {

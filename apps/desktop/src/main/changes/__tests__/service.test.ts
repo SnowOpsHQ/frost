@@ -235,6 +235,9 @@ describe('changes service', () => {
     const run = captured(await service.capture(1, { projectId: project.id, source: 'project', searchParams: query }));
     expect(rows('ci_captures', 'id = ?', run.captureId)).toMatchObject([{ project_id: project.id, source: 'project', search_params: canonicalJson(query), lane_key: laneKeyFor(PAGE, PHONE, query) }]);
     expect(run.newVersion).toBe(true);
+    // A run's capture is of the page its navigation landed on, or none (the user navigated the tab).
+    expect(refused(await service.capture(1, { projectId: project.id, source: 'project', searchParams: query, pageUrl: OTHER }))).toBe('no-audit');
+    expect(captured(await service.capture(1, { projectId: project.id, source: 'project', searchParams: query, pageUrl: PAGE })).newVersion).toBe(false);
     // Search parameters that do not fit their schema are refused.
     expect(refused(await service.capture(1, { searchParams: { ...PARAMS, extra: 1 } as SearchParams }))).toBe('invalid-page');
     state.params = { ...PARAMS, country: 'DE' };

@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { HISTORY_MENU_ID } from '@app/specs/browser-polish.spec';
 import { CAPTURES_DIR_NAME } from '@app/specs/capture-db.spec';
 import { CAPTURE_RUN_NOTE, DELETE_PROJECT, PROJECTS_TITLE } from '@app/specs/projects.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
@@ -47,7 +48,7 @@ async function startSite() {
 let app: ElectronApplication;
 let page: Page;
 let site: Awaited<ReturnType<typeof startSite>>;
-const { go, strip, activeTab } = chromeHelpers(
+const { go, menu, strip, activeTab } = chromeHelpers(
   () => app,
   () => page,
 );
@@ -117,7 +118,7 @@ test('projects-create-and-add-pages', async () => {
   await openSheet();
   await expect(sheet().getByRole('heading', { level: 1 })).toHaveText(PROJECTS_TITLE);
   // Over the page column, like History: the page area gives way.
-  await expect(page.locator('.page-column')).toHaveAttribute('data-projects', 'open');
+  await expect(page.locator('.page-column > .projects-sheet')).toHaveCount(1);
   await expect.poll(async () => (await page.locator('.page-area').boundingBox())?.height ?? 0).toBe(0);
   // Unfiled first.
   await expect(page.getByTestId('projects-item').first()).toHaveAttribute('data-unfiled', 'true');
@@ -139,6 +140,13 @@ test('projects-create-and-add-pages', async () => {
   await page.getByTestId('projects-page-url').fill('javascript:alert(1)');
   await page.getByTestId('projects-page-add').click();
   await expect(page.getByTestId('projects-status')).toHaveText('Enter an http or https address.');
+  await expect(pages()).toHaveCount(2);
+  // The History sheet and this one never show together.
+  await menu(HISTORY_MENU_ID);
+  await expect(page.getByTestId('history-view')).toBeVisible();
+  await expect(sheet()).toHaveCount(0);
+  await openSheet();
+  await expect(page.getByTestId('history-view')).toHaveCount(0);
   await expect(pages()).toHaveCount(2);
   // Esc closes the sheet; the page is back.
   await page.getByTestId('projects-page-url').press('Escape');
