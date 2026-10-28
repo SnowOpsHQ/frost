@@ -77,8 +77,8 @@ function start(): void {
   if (!claimSingleInstance(app, windowOptions)) return;
 
   // Telemetry (specs/telemetry.feature.md, Desktop): its consent read synchronously, before any window
-  // (off by default); `telemetry.telemetry` is the `span` / `captureException` handle for main.
-  const telemetry = createTelemetryMain(started);
+  // (off by default); `telemetryMain.telemetry` is the `span` / `captureException` handle for main.
+  const telemetryMain = createTelemetryMain(started);
 
   // Global backstop: every renderer is sandboxed even if a future WebContents forgets the explicit pref.
   app.enableSandbox();
@@ -433,7 +433,7 @@ function start(): void {
         }),
         settings: searchEngine,
         account: account.service,
-        telemetry: telemetry.service,
+        telemetry: telemetryMain.service,
         gsc: gsc.service,
       },
     });

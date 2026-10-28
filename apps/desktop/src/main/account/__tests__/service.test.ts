@@ -730,7 +730,7 @@ describe('account sign-in flow', () => {
     // The redactor also scrubs a secret-shaped value that would reach it some other way.
     const redacting = harness();
     await toSignedIn(redacting);
-    const { redact } = await import('../service');
+    const { redact } = await import('../redact');
     for (const leaked of [TOKEN, EMAIL, SNAPSHOT, `code=${CODE}&state=abc`]) expect(redact(`x ${leaked} y`)).not.toMatch(/frost_dt_|@|eyJ|codeCODE/);
   });
 });

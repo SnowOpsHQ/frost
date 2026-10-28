@@ -10,7 +10,8 @@ import { createWindowGestures, type WindowGestures } from './gestures';
 import { startLoopback } from './loopback';
 import { holdQuitFor } from './quit';
 import { createSecretStore, type SecretStore } from './secret-store';
-import { createAccountService, redact, type AccountMainService } from './service';
+import { redact } from './redact';
+import { createAccountService, type AccountMainService } from './service';
 import { createSettingsRequestsMain } from './settings-requests';
 
 // The account in the main process (Phase 4 Task 5; acceptance `account-signin.feature.md`): the one

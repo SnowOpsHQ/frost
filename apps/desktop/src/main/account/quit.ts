@@ -2,7 +2,7 @@ import { QUIT_REVOKE_TIMEOUT_MS } from '@app/specs/account-state.schema';
 
 // Holding the quit for the account's revocations (acceptance `account-signin.feature.md`, Quitting):
 // a token exchanged but never confirmed (or a sign-out still revoking) is revoked before frost exits,
-// waiting at most `QUIT_REVOKE_TIMEOUT_MS`. Held the way telemetry holds it for its flush
+// waiting at most `QUIT_REVOKE_TIMEOUT_MS`. Telemetry holds it the same way for its flush
 // (`../telemetry/install.ts`): only when there is something to wait for; while held, every `will-quit`
 // is prevented; once done, one `app.quit()` from a task of its own, and every later `will-quit`
 // passes. Two such holders never fight: each re-quits once and the app quits after the last.

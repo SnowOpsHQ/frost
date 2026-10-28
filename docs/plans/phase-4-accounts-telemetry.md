@@ -318,7 +318,7 @@ Stable and Zod-typed; changing one is a breaking change that needs the owning ph
 - **Telemetry:** `@app/telemetry` `span(name, attrs, fn)` and `captureException(error)`; only
   `SPAN_ATTRIBUTE_ALLOWLIST` keys are exported, so a phase adds its attribute keys there. Main's
   instance is the `TelemetryHandle` from `createTelemetryMain(started).telemetry`
-  (`apps/desktop/src/main/telemetry/install.ts`; `telemetry` in `main/index.ts`); consent changes only
+  (`apps/desktop/src/main/telemetry/install.ts`; `telemetryMain` in `main/index.ts`); consent changes only
   through `telemetry.setConsent`.
 
 ## As built

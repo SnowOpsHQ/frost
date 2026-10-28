@@ -1,4 +1,4 @@
-import { redact } from '../account/service';
+import { redact } from '../account/redact';
 
 // Search Console's log (acceptance `gsc.feature.md`, Decisions, "Logs carry no secret"; plan Global
 // Constraint "Logs never carry secrets"). The modules log fixed messages only; as a second line of
@@ -13,7 +13,7 @@ const GOOGLE_REDACTIONS: readonly RegExp[] = [
   /\b(client_secret|code_challenge)=[^&\s"']*/gi,
 ];
 
-/** `redact` (`../account/service.ts`) plus Google's token shapes. */
+/** `redact` (`../account/redact.ts`) plus Google's token shapes. */
 export function redactGsc(message: string): string {
   let out = redact(message);
   for (const pattern of GOOGLE_REDACTIONS) out = out.replace(pattern, '[redacted]');

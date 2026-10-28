@@ -17,6 +17,7 @@ import type { AccountConfig } from './config';
 import type { EntitlementsController } from './entitlements';
 import type { Loopback, LoopbackCallback, StartLoopbackOptions } from './loopback';
 import { createSignInRequest, type SignInRequest } from './pkce';
+import { redact } from './redact';
 import type { SecretStore } from './secret-store';
 
 // The desktop sign-in flow and the account (spec `account-state.schema.ts`; acceptance
@@ -36,7 +37,7 @@ import type { SecretStore } from './secret-store';
 // 4. Refresh at start, every `ACCOUNT_REFRESH_INTERVAL_MS` and on `refresh()`: 401 signs out
 //    (`session-ended`), a network failure keeps grace, a bad snapshot is `invalid` (free).
 //
-// Logs: fixed messages through `redact`, which also replaces any token, JWS, email or code/state
+// Logs: fixed messages through `redact` (`./redact.ts`), which also replaces any token, JWS, email or code/state
 // query value that might reach it.
 
 /** The secret blob the account (token, its expiry, the user) lives in. */
@@ -88,23 +89,6 @@ export interface AccountMainService extends AccountService {
    * watchers. Answers the revocations still running (to hold the quit for, bounded), or `null`.
    */
   dispose(): Promise<void> | null;
-}
-
-// ---- Redaction ----------------------------------------------------------------------------------
-
-const REDACTIONS: readonly RegExp[] = [
-  /frost_dt_[A-Za-z0-9_-]*/g,
-  /\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g,
-  /[^\s@"'<>]+@[^\s@"'<>]+/g,
-  /\b(code|state|code_verifier|token|access_token|refresh_token)=[^&\s"']*/gi,
-  /\bBearer\s+\S+/gi,
-];
-
-/** Replaces token-, snapshot-, email- and code-shaped values in `message`. */
-export function redact(message: string): string {
-  let out = message;
-  for (const pattern of REDACTIONS) out = out.replace(pattern, '[redacted]');
-  return out;
 }
 
 // ---- The service --------------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import type { TelemetryService } from '@app/ipc-contract';
 import { createTelemetry, type Send, type SpanAttributes, type Telemetry } from '@app/telemetry';
 import { RENDERER_ERROR_MECHANISMS, type RendererErrorInput, type RendererErrorResult, type TelemetryState } from '@app/specs/telemetry-consent.schema';
 import { TELEMETRY_LIMITS, TELEMETRY_PLATFORMS, type TelemetryChannel } from '@app/specs/telemetry-privacy.spec';
+import { holdQuitFor } from '../account/quit';
 import type { TelemetryConfig } from './config';
 import type { ConsentStore } from './consent-store';
 
@@ -172,26 +173,21 @@ export function installTelemetry(deps: TelemetryMainDeps): TelemetryMain {
   // ---- Quitting -------------------------------------------------------------------------------
   // With a channel on, the first `will-quit` waits for `shutdown` (flush, then drop the rest), at most
   // `shutdownTimeoutMs`, then quits again; that `will-quit` passes. With both off nothing is held.
-  let quit: 'running' | 'holding' | 'done' = 'running';
-  app.on('will-quit', (event) => {
-    if (quit === 'done') return;
-    const consent = telemetry.consent();
-    const configured = telemetry.configured();
-    const sending = (consent.usage && configured.usage) || (consent.errors && configured.errors);
-    if (quit === 'running' && !sending) {
-      quit = 'done';
-      void telemetry.shutdown({ timeoutMs: 0 });
-      return;
-    }
-    event.preventDefault();
-    if (quit === 'holding') return;
-    quit = 'holding';
-    void telemetry.shutdown({ timeoutMs: TELEMETRY_LIMITS.shutdownTimeoutMs }).then(() => {
-      quit = 'done';
-      // From a task of its own: a quit from a microtask still runs inside the `will-quit` dispatch.
-      setImmediate(() => app.quit());
-    });
-  });
+  // The hold is the account's (`../account/quit.ts`), so the two holders never fight.
+  holdQuitFor(
+    app,
+    () => {
+      const consent = telemetry.consent();
+      const configured = telemetry.configured();
+      const sending = (consent.usage && configured.usage) || (consent.errors && configured.errors);
+      if (!sending) {
+        void telemetry.shutdown({ timeoutMs: 0 });
+        return null;
+      }
+      return telemetry.shutdown({ timeoutMs: TELEMETRY_LIMITS.shutdownTimeoutMs });
+    },
+    TELEMETRY_LIMITS.shutdownTimeoutMs,
+  );
 
   // ---- The IPC service ------------------------------------------------------------------------
   let version = 0;
