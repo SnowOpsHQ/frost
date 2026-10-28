@@ -308,7 +308,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Failing tests:** `packages/db/src/__tests__/driver.test.ts`. The repository suites (session,
   history, settings) run over both drivers, then migrations over both, then a batch rollback over
   both.
-- [ ] commit `feat(db): driver seam with a libSQL driver behind the repository API`
+- [x] commit `feat(db): driver seam with a libSQL driver behind the repository API`
 
 #### Task 7: libSQL's native module in the packaged app
 - **Spec:** `linux-package.spec.ts` / `windows-package.spec.ts` / `sync.spec.ts`,
@@ -694,3 +694,52 @@ sync.
   `https:` host (none is hosted), and the real `shell.showItemInFolder` (stubbed in the e2e). The
   e2e ran locally on Linux only; macOS (and, non-gating, Windows) are left to CI.
 
+
+### Task 6 (driver seam)
+- **Versions.** `@libsql/client` 0.18.0 (pinned exactly, like `drizzle-orm`), which pulls
+  `libsql` 0.5.29 (the Neon/N-API binding) with `@libsql/core` 0.18.0, `@libsql/hrana-client`
+  0.10.0, `@libsql/isomorphic-ws` 0.1.5 → `ws`, `js-base64`, `promise-limit`, `@neon-rs/load`
+  0.0.4 and `detect-libc` 2.0.2. The native code is in per-target optional packages, version
+  0.5.29: `@libsql/linux-x64-gnu`, `-linux-x64-musl`, `-linux-arm64-gnu`, `-linux-arm64-musl`,
+  `-linux-arm-gnueabihf`, `-linux-arm-musleabihf`, `@libsql/darwin-arm64`, `@libsql/darwin-x64`,
+  `@libsql/win32-x64-msvc` (no Windows arm64). Each holds one `index.node` (linux-x64-gnu:
+  9.7 MB). pnpm installs only the host's. **No install script**: `libsql`'s scripts are
+  build/publish only (`prepack`, `build`, …), so `allowBuilds` is unchanged.
+- **How the prebuild loads.** `libsql/index.js` asks `@neon-rs/load`'s `currentTarget()` for
+  `<platform>-<arch>-<abi>` (glibc/musl via `detect-libc` on Linux), then
+  `require('@libsql/<target>')` → its `index.node`, by ordinary Node resolution from `libsql`'s
+  directory. N-API, so the same file runs under Node and Electron's main (no rebuild).
+  `LIBSQL_JS_DEV` set in the environment makes it load `libsql/index.node` instead (Task 7).
+- **Seam.** `SqlDriver` (`driver-types.ts`) has `execute`, `batch`, `exec`, `close`, `isOpen`,
+  `kind`. `batch` items are statements or scripts (`{ script }`): `runMigrationsOver` runs each
+  migration's SQL and its id row as one batch, so a migration is one transaction on both drivers
+  (libSQL's pool rolls back anything left open whenever a connection is released, so separate
+  `BEGIN`/`exec`/`COMMIT` calls cannot work there). `client.ts`'s `createDrizzle(db)` now delegates
+  to `createDrizzleOver(createNodeSqliteDriver(db))`; every existing test passes unchanged. One
+  intended difference: a failed batch rolls back only if a transaction is still open (before, an
+  unconditional `ROLLBACK` after SQLite had already rolled back would throw "no transaction is
+  active" and hide the real error). `@app/db`'s index exports none of the drivers;
+  `pnpm --filter @app/desktop build` gives a `main.cjs` with no `libsql` string (`node:sqlite`
+  still external).
+- **intMode.** `'number'`. Integers are exact to 2^53 − 1; reading a larger one throws a
+  `RangeError` on both drivers (`node:sqlite`'s `ERR_OUT_OF_RANGE` too), never rounds.
+- **Differences between the drivers** (otherwise rows, values and `sqlite_master` are identical):
+  - libSQL returns blobs as `ArrayBuffer`; the driver converts them to `Uint8Array`.
+  - Errors: `node:sqlite` throws `ERR_SQLITE_ERROR` with a numeric `errcode` (`open.ts`'s
+    move-aside rule reads it); libSQL throws `LibsqlError`/`LibsqlBatchError` with `code`
+    (`SQLITE_CONSTRAINT`), `extendedCode` and `rawCode`. Nothing maps one to the other yet.
+  - libSQL runs one connection (`concurrency: 1`). A batch holding a script uses an explicit write
+    transaction, and a call that arrives while it is open is refused (`TRANSACTION_ACTIVE`), not
+    queued. Statement-only batches run inside one `client.batch(…, 'write')` call. `node:sqlite`
+    batches are synchronous.
+  - libSQL creates its file with the umask's mode (0644 here); only `open.ts` narrows to 0600, and
+    only for `node:sqlite`. Task 8 must narrow `frost-sync.db` and its sidecars itself.
+  - The busy timeout (`DB_BUSY_TIMEOUT_MS`) applies to libSQL only without a `syncUrl` (libSQL
+    ignores `timeout` for embedded replicas).
+- **URL rules** (`libsqlConfigProblem`) are checked on the string, before libSQL loads, so libSQL's
+  own parser can't read them differently: no query on either URL (`?authToken=`, `?tls=0` would
+  turn `libsql:` into `http:`), loopback `http:` only as the literal written. A `syncUrl` is
+  accepted only for a file named `frost-sync.db`, never `frost-browser.db`.
+- **Not done here.** No driver was opened with a `syncUrl` (that needs a server; Task 8's `sqld`
+  test). `libsqlFileUrl` on Windows gives `file:///C:/…`, which libSQL reads as `/C:/…`; whether
+  SQLite opens that on Windows is unverified.

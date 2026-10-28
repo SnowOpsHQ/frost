@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@app/specs": "workspace:*",
+    "@libsql/client": "0.18.0",
     "drizzle-orm": "0.45.4"
   },
   "devDependencies": {
