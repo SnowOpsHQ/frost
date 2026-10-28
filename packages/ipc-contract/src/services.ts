@@ -6,6 +6,7 @@ import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import type { ChecksService } from './checks-service';
+import type { AgentService } from './agent-service';
 import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
@@ -170,4 +171,6 @@ export interface IpcServices {
   readonly settings?: SettingsService;
   /** The link, sitemap and hreflang checks (Phase 2.5 Task 7, `checks-service.ts`). */
   readonly checks?: ChecksService;
+  /** The agent panel (Phase 5 Task 6a, `agent-service.ts`). */
+  readonly agent?: AgentService;
 }

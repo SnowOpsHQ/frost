@@ -7,6 +7,7 @@ import {
   type RuntimeToMainMessage,
 } from '@app/specs/agent-protocol.schema';
 import { AGENT_HOST_LIMITS, AGENT_PROXY_LIMITS, AGENT_RUNTIME_FILE, AGENT_SERVICE_NAME, MAX_MODEL_REQUESTS_PER_TURN, restartDelayMs } from '@app/specs/agent-proxy.spec';
+import { AGENT_E2E_SCRIPT_ENV } from '@app/specs/agent-session.spec';
 import { coalescedLog } from './log';
 
 // The agent host (Phase 5 Task 3, plan decision 6; acceptance `specs/agent-host.feature.md`, Host):
@@ -54,6 +55,12 @@ export interface AgentHostDeps {
   readonly packaged: boolean;
   /** The runtime's `NODE_ENV` (default `production`). */
   readonly nodeEnv?: string;
+  /**
+   * The e2e seam's script (Task 6a; `agent-session.spec.ts`, `AGENT_E2E_SCRIPT_ENV`): its canonical
+   * JSON, passed in the runtime's environment so it plays it instead of a provider. Ignored in a
+   * packaged build (which also refuses to start with the switch that names it).
+   */
+  readonly e2eAgentScript?: string | null;
   readonly setTimeout?: (callback: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
   readonly now?: () => number;
@@ -390,7 +397,7 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
       const { port1, port2 } = deps.createChannel();
       const child = deps.fork(path.join(deps.buildDir, AGENT_RUNTIME_FILE), [], {
         serviceName: AGENT_SERVICE_NAME,
-        env: { NODE_ENV: deps.nodeEnv ?? 'production' },
+        env: { NODE_ENV: deps.nodeEnv ?? 'production', ...(!deps.packaged && typeof deps.e2eAgentScript === 'string' ? { [AGENT_E2E_SCRIPT_ENV]: deps.e2eAgentScript } : {}) },
         execArgv: ['--permission', `--allow-fs-read=${deps.buildDir}`],
         stdio: deps.packaged ? 'ignore' : 'inherit',
       });

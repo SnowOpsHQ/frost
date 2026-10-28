@@ -234,8 +234,8 @@ describe('chat loop', () => {
     h.send({ type: 'tool.result', chatId: 'chat-1', callId: 'call-1', result: pageTextResult });
     await h.next('chat.finish');
     expect(h.of('chat.step')).toEqual([
-      { type: 'chat.step', chatId: 'chat-1', step: 1, text: '', toolCalls: [{ callId: 'call-1', toolName: 'page_text', input: { maxChars: 500 } }] },
-      { type: 'chat.step', chatId: 'chat-1', step: 2, text: 'It welcomes visitors.', toolCalls: [] },
+      { type: 'chat.step', chatId: 'chat-1', step: 1, text: '', toolCalls: [{ callId: 'call-1', toolName: 'page_text', input: { maxChars: 500 } }], usage: { input: 20, output: 8 } },
+      { type: 'chat.step', chatId: 'chat-1', step: 2, text: 'It welcomes visitors.', toolCalls: [], usage: { input: 10, output: 5 } },
     ]);
     // Each step is posted before the turn's end.
     expect(h.received.at(-1)?.type).toBe('chat.finish');
@@ -264,7 +264,7 @@ describe('chat loop', () => {
     h.send(chatStart());
     await h.next('chat.finish');
     expect(h.of('tool.invoke').map((message) => message.callId)).toEqual(['good-1']);
-    expect(h.of('chat.step')[0]).toEqual({ type: 'chat.step', chatId: 'chat-1', step: 1, text: 'Opening it.', toolCalls: [{ callId: 'good-1', toolName: 'page_audit', input: {} }] });
+    expect(h.of('chat.step')[0]).toEqual({ type: 'chat.step', chatId: 'chat-1', step: 1, text: 'Opening it.', toolCalls: [{ callId: 'good-1', toolName: 'page_audit', input: {} }], usage: { input: 1, output: 1 } });
   });
 
   test('chat-step-posted (a step cut by Stop)', async () => {
@@ -274,6 +274,7 @@ describe('chat loop', () => {
     await h.next('tool.invoke');
     h.send({ type: 'chat.stop', chatId: 'chat-1' });
     await h.next('chat.finish');
+    // Cut short: no usage of its own.
     expect(h.of('chat.step')).toEqual([{ type: 'chat.step', chatId: 'chat-1', step: 1, text: '', toolCalls: [{ callId: 'call-2', toolName: 'page_audit', input: {} }] }]);
     expect(h.received.findIndex((message) => message.type === 'chat.step')).toBeLessThan(h.received.findIndex((message) => message.type === 'chat.finish'));
   });

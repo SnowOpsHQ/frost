@@ -46,6 +46,7 @@ import { registerAppWideGuards, registerSecurity, type SecurityOptions } from '.
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
 import { createMainWindow, createTabView, loadRenderer } from './window';
+import { createAgentService } from './agent/wire';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -420,6 +421,7 @@ function start(): void {
           log: logSession,
         }),
         settings: searchEngine,
+        agent: createAgentService({ app, browser, webContents, sessionStore, log: logSession }),
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

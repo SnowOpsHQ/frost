@@ -246,7 +246,11 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Tests:** router tests (sender rejection, key never in an answer), view-model tests, e2e:
   `agent-approval-flow` (scripted navigate → approval prompt → Allow → the tab navigates; Deny →
   no navigation), Stop.
-- [ ] commit `feat(agent): agent sidebar panel and IPC`
+- **Split (lead):** **6a** is main's side: the chat session manager, the `agent.*` router and
+  service, the e2e seam and the wiring into main; **6b** is the renderer panel and the e2e
+  (`agent-approval-flow`, Stop) on 6a's `AgentState` and procedures.
+- [x] 6a commit `feat(agent): chat session manager, agent IPC and e2e seam`
+- [ ] 6b commit `feat(agent): agent sidebar panel and IPC`
 
 ### Task 7: Declarative SEO skills
 - **Spec:** `specs/skills-schema.ts` (a skill: id, name, description, allowed tools, instruction
@@ -428,3 +432,38 @@ _Filled in as tasks land._
   answer, and clobbered `document` members don't affect the page scripts. The exact-URL check is a
   staleness guard, not a boundary against the page; the redirect cancel is a partial exfiltration
   guard (`specs/agent-page-tools.spec.ts`).
+- **Task 6a.** Spec `specs/agent-session.spec.ts` (Zod-free: `AgentState` and its views, the caps,
+  `MODEL_CONTEXT_WINDOWS`, the answers' sets, the seam's switch and variable), `agent-ipc.schema.ts`
+  (the inputs), `agent-e2e-script.schema.ts`; acceptance `specs/agent-session.feature.md`. Main:
+  `session.ts` (`createAgentSession`, the `AgentService` the router calls), `system-prompt.ts`,
+  `service.ts` (`createAgentServiceFrom`: `createAgent` with the real page tools, the tab controller's
+  URLs, `grantsStore: sessionStore.agentGrants`, the seam; disposed on `will-quit`; the runtime forks
+  on the first message), `wire.ts` (Electron's modules); `main/index.ts` gains one import and the
+  services line `agent: createAgentService({ app, browser, webContents, sessionStore, log: logSession })`.
+  Choices: one turn app-wide (a send while one runs is refused `busy`, held from the call, so two
+  quick sends can't both start); a chat keeps the tab it started on (a closed tab makes page tools
+  answer `unavailable`; a new chat binds the active tab); chats live in memory (at most
+  `MAX_CHATS_KEPT_IN_MEMORY`) until Task 9; a refused send changes no chat; `newChat()` only
+  deselects (the next `send(null, …)` creates it); Stop is accepted once the turn has posted
+  `chat.start` (the start phase is a few hundred milliseconds). The broker gained `onResult` (each
+  `tool.result` the host accepted), so the history holds exactly what the model was told; results
+  wait for their step, and the ones the broker sends as a stopped turn ends are appended after its
+  step. **Protocol version 5:** `chat.step` carries the step's own `usage`, because `chat.finish`
+  sums the steps and the context meter needs the last step's input (`contextTokens` = its input plus
+  output); `CHAT_BUSY_MESSAGE` moved to `agent-protocol.schema.ts` (the runtime re-exports it) so
+  main can tell the busy reply from a failure without importing the runtime's bundle. Context
+  windows: both Anthropic models 1,000,000 tokens (the provider's documentation); the OpenAI ids are
+  `null` (the installed `@ai-sdk/openai` publishes no figure; frost doesn't guess). The isolation
+  view is computed from the runtime's `ready.lockdown` (`fileSandbox` is its `permissionModel`,
+  `false` on Electron 45). E2e seam: `--frost-e2e-agent-script=<file>` (appended to
+  `PACKAGED_FORBIDDEN_SWITCHES`); main reads and validates the file once, the host passes its
+  canonical JSON as `FROST_E2E_AGENT_SCRIPT` (unpackaged only; capped at 64,000 characters), and the
+  runtime plays it with a hand-rolled `LanguageModelV4` (`scripted-model.ts`; nothing from `ai/test`
+  is bundled), one step per model response across turns, with no proxied fetch; with the seam on a
+  turn needs no key. A throwaway smoke on the built app (Playwright `launchApp` with the switch)
+  sent two turns through `window.frostIpc`: the scripted text arrived in `agent.watch`, the runtime
+  reported `ready` with its network globals removed and no file sandbox, and a `page_data` call on
+  the empty tab answered `unavailable`. **For 6b:** the panel reads `AgentState` only; approval
+  cards show `state.approval.request` (one at a time, oldest first, `queued` behind it), enable Allow
+  after `APPROVAL_ENABLE_DELAY_MS`, and show `note` beside `execute_javascript`'s code; tool output
+  previews are inert text.

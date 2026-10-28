@@ -196,6 +196,11 @@ export interface ApprovalBroker {
   activity(chatId: string): readonly ToolActivity[];
   /** Called after any change to `pending()` or `activity()`. */
   onChange(listener: () => void): () => void;
+  /**
+   * Called with each `tool.result` the broker sent the runtime (Task 6a: the session manager keeps
+   * what the model was told in its history). Only results the host accepted.
+   */
+  onResult(listener: (chatId: string, callId: string, toolName: string, result: ToolResult) => void): () => void;
   stats(): Readonly<ApprovalBrokerStats>;
   /** Ends every turn and stops listening to the host. */
   dispose(): void;
@@ -289,6 +294,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
   const activities = new Map<string, Map<string, Call>>();
   const pendings = new Map<string, Pending>();
   const listeners = new Set<() => void>();
+  const resultListeners = new Set<(chatId: string, callId: string, toolName: string, result: ToolResult) => void>();
   let disposed = false;
 
   const changed = () => {
@@ -308,11 +314,20 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
     changed();
   };
 
-  const send = (chatId: string, callId: string, result: ToolResult) => {
+  const send = (chatId: string, callId: string, toolName: string, result: ToolResult) => {
+    let sent = false;
     try {
-      deps.host.send({ type: 'tool.result', chatId, callId, result });
+      sent = deps.host.send({ type: 'tool.result', chatId, callId, result }) === true;
     } catch {
       log('agent approvals: a tool result could not be sent');
+    }
+    if (!sent) return;
+    for (const listener of [...resultListeners]) {
+      try {
+        listener(chatId, callId, toolName, result);
+      } catch {
+        log('agent approvals: a result listener failed');
+      }
     }
   };
 
@@ -323,7 +338,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
     if (call.settled) return;
     call.settled = true;
     call.controller = null;
-    send(call.chatId, call.callId, errorResult(code));
+    send(call.chatId, call.callId, call.toolName, errorResult(code));
     setStatus(call, activityStatusFor(code), code);
   };
 
@@ -387,7 +402,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
       }
       call.settled = true;
       call.controller = null;
-      send(call.chatId, call.callId, result);
+      send(call.chatId, call.callId, call.toolName, result);
       setStatus(call, 'done');
     } catch {
       // A dependency threw (the tab lookup, a listener): the call fails rather than stays running.
@@ -440,7 +455,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
     const chat = chats.get(invoke.chatId);
     if (chat === undefined) {
       stats.unregistered += 1;
-      send(invoke.chatId, invoke.callId, errorResult('not-allowed'));
+      send(invoke.chatId, invoke.callId, invoke.toolName, errorResult('not-allowed'));
       return;
     }
     if (chat.seen.has(invoke.callId)) {
@@ -451,7 +466,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
     }
     if (chat.seen.size >= MAX_TOOL_CALLS_PER_TURN) {
       stats.refused += 1;
-      send(invoke.chatId, invoke.callId, errorResult('not-allowed'));
+      send(invoke.chatId, invoke.callId, invoke.toolName, errorResult('not-allowed'));
       return;
     }
     chat.seen.add(invoke.callId);
@@ -605,6 +620,10 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
     onChange(listener) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
+    },
+    onResult(listener) {
+      resultListeners.add(listener);
+      return () => void resultListeners.delete(listener);
     },
     stats: () => ({ ...stats }),
     dispose() {

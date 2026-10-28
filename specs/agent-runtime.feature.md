@@ -133,6 +133,8 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
   sent to the model.
 - **Scenario: chat-step-posted** — each step posts `chat.step` with its text and the calls main
   was asked to run; a call to a tool not offered is left out; a step cut by Stop is still posted.
+  Since protocol version 5 (Task 6a) a completed step carries its own `usage` (the panel's context
+  meter); a step cut short has none.
 - **Scenario: chat-no-download** — the AI SDK's URL download is replaced by one that refuses.
 - **Scenario: chat-stop-aborts** — `chat.stop` while a tool call waits rejects it and finishes the
   turn `aborted`.
@@ -162,3 +164,13 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
   `createRequire`, `process.binding`, `_linkedBinding` or `dlopen` except `lockdown.ts`, which
   removes them. The test reads the runtime's own sources only: third-party code in the bundle is
   not scanned by a test (the lockdown covers what it can reach).
+
+## Scripted model (`scripted-model.test.ts`; Task 6a, the e2e seam: `agent-session.feature.md`)
+- **Scenario: scripted-model-plays-steps-across-turns** — the script's steps play in order, one per
+  model response and across turns (one cursor per runtime), text chunks as `chat.delta`, tool
+  calls invoked as `e2e-call-<n>`, each step's usage reported; past the end a fixed reply; no
+  `fetch.request` at all.
+- **Scenario: scripted-model-from-env** — no `AGENT_E2E_SCRIPT_ENV`: the providers; a valid script:
+  the scripted model; anything else: every turn fails (never a provider fallback).
+- **Scenario: scripted-script-bounded** — a script longer than `AGENT_E2E_SCRIPT_MAX_CHARS`, with no
+  steps, an empty step or chunk, or a forbidden key in a tool input is refused.

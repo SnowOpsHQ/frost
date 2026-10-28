@@ -1,0 +1,78 @@
+import type { AgentGrantsStore } from './grants';
+import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
+import { e2eAgentScriptFrom } from './e2e-seam';
+import { createAgent, type AgentElectron } from './index';
+import { createAgentSession, type AgentSession } from './session';
+import { createBrowserPageToolRunner, type PageToolsBrowser, type PageToolsWebContents } from './tools';
+
+// The agent's main-side composition for the IPC (Phase 5 Task 6a; acceptance
+// `specs/agent-session.feature.md`, Wiring): `createAgent` (host, key store, proxy, settings,
+// grants, approval broker) with the real page tools and the tab controller's URLs, the session
+// manager over it, the e2e seam (unpackaged only), and disposal when the app quits. The runtime is
+// forked on the first message (the session calls `start()`), not at launch. `wire.ts` passes the
+// Electron modules; tests pass fakes.
+
+/** The parts of Electron's `app` used here. */
+export interface AgentServiceApp {
+  readonly isPackaged: boolean;
+  getPath(name: 'userData'): string;
+  readonly commandLine: { getSwitchValue(name: string): string };
+  once(event: 'will-quit', listener: () => void): unknown;
+}
+
+/** The tab controller as the agent sees it: the page tools' calls, and each tab's URL. */
+export interface AgentServiceBrowser extends PageToolsBrowser {
+  getState(): { readonly activeTabId: number | null; readonly tabs: readonly { readonly id: number; readonly url: string }[] };
+}
+
+export interface AgentServiceDeps {
+  readonly app: AgentServiceApp;
+  readonly electron: AgentElectron;
+  readonly browser: AgentServiceBrowser;
+  readonly webContents: PageToolsWebContents;
+  /** The browser-session database (`agentGrants`: the standing grants' table). */
+  readonly sessionStore: { readonly agentGrants: AgentGrantsStore };
+  /** Main's build directory (`__dirname`): the runtime's bundle is beside main's. */
+  readonly buildDir: string;
+  readonly log?: (line: string) => void;
+}
+
+export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
+  const log = deps.log ?? (() => undefined);
+  const e2eAgentScript = e2eAgentScriptFrom({ packaged: deps.app.isPackaged, switchValue: deps.app.commandLine.getSwitchValue(AGENT_E2E_SCRIPT_SWITCH), log });
+  const tabUrl = (tabId: number): string | null => {
+    const tab = deps.browser.getState().tabs.find((item) => item.id === tabId);
+    return tab === undefined || tab.url === '' ? null : tab.url;
+  };
+  const agent = createAgent({
+    electron: deps.electron,
+    userData: deps.app.getPath('userData'),
+    buildDir: deps.buildDir,
+    packaged: deps.app.isPackaged,
+    log,
+    grantsStore: deps.sessionStore.agentGrants,
+    toolRunner: createBrowserPageToolRunner({ browser: deps.browser, webContents: deps.webContents }),
+    tabUrl,
+    e2eAgentScript,
+  });
+  const session = createAgentSession({
+    host: agent.host,
+    approvals: agent.approvals,
+    credentials: agent.credentials,
+    settings: agent.settings,
+    entitlements: agent.entitlements,
+    grants: agent.grants,
+    start: () => agent.start(),
+    activeTabId: () => deps.browser.getState().activeTabId,
+    scripted: e2eAgentScript !== null,
+    log,
+  });
+  // The stored route, model and grants, and which keys are set, for the panel's first state; the
+  // runtime itself waits for the first message.
+  void Promise.all([agent.settings.load(), agent.grants.load()]).then(() => session.refreshSetup());
+  deps.app.once('will-quit', () => {
+    session.dispose();
+    agent.dispose();
+  });
+  return session;
+}

@@ -264,9 +264,9 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
     // The step being streamed: its text and the ids of the calls the model made in it.
     let stepText = '';
     let stepCallIds: string[] = [];
-    const postStep = (step: number) => {
+    const postStep = (step: number, usage?: { input: number | null; output: number | null }) => {
       const toolCalls = stepCallIds.flatMap((id) => invoked.get(id) ?? []).slice(0, L.maxToolCallsPerMessage);
-      post({ type: 'chat.step', chatId, step: Math.min(Math.max(step, 1), MAX_TOOL_STEPS), text: cut(stepText, L.maxMessageChars), toolCalls });
+      post({ type: 'chat.step', chatId, step: Math.min(Math.max(step, 1), MAX_TOOL_STEPS), text: cut(stepText, L.maxMessageChars), toolCalls, ...(usage ? { usage } : {}) });
       stepText = '';
       stepCallIds = [];
     };
@@ -303,7 +303,8 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
             input = addCount(input, part.usage.inputTokens);
             output = addCount(output, part.usage.outputTokens);
             reason = part.finishReason;
-            postStep(steps);
+            // This step's own usage too: the panel's context meter reads the last step's.
+            postStep(steps, { input: addCount(null, part.usage.inputTokens), output: addCount(null, part.usage.outputTokens) });
             break;
           case 'finish':
             reason = part.finishReason;

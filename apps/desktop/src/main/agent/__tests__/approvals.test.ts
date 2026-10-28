@@ -741,3 +741,30 @@ describe('approval broker', () => {
     expect(broker.pending().at(-1)).toMatchObject({ callId: 'call-5', origin: 'https://bank.example.net' });
   });
 });
+
+describe('approval broker results (Task 6a)', () => {
+  test('broker-reports-results-it-sent', async () => {
+    const { fake, broker } = await setupBroker();
+    const seen: [string, string, string, ToolResult][] = [];
+    const off = broker.onResult((chatId, callId, toolName, result) => seen.push([chatId, callId, toolName, result]));
+    fake.invoke('call-1', 'page_audit', {});
+    fake.invoke('call-2', 'navigate', { url: 'https://example.com/next' });
+    await flush();
+    // A ran read tool's wrapped output, exactly as sent to the runtime.
+    expect(seen.map(([chatId, callId, toolName]) => [chatId, callId, toolName])).toEqual([['chat-1', 'call-1', 'page_audit']]);
+    expect(seen[0]![3]).toEqual(fake.results('call-1')[0]);
+    // A denied call's error result, and a refusal for a chat the broker doesn't know.
+    await broker.answer(broker.pending()[0]!.id, 'deny');
+    fake.invoke('call-9', 'page_audit', {}, 'chat-unknown');
+    expect(seen.slice(1).map(([chatId, callId, toolName, result]) => [chatId, callId, toolName, errorCode(result)])).toEqual([
+      ['chat-1', 'call-2', 'navigate', 'denied'],
+      ['chat-unknown', 'call-9', 'page_audit', 'not-allowed'],
+    ]);
+    // A result the host didn't accept is not reported (the runtime never saw it).
+    fake.host.send = () => false;
+    fake.invoke('call-3', 'page_audit', {});
+    await flush();
+    expect(seen.length).toBe(3);
+    off();
+  });
+});

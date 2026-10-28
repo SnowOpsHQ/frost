@@ -126,7 +126,8 @@ export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
  * `frost-e2e-public-hosts` too (Phase 2.5 Task 2 review): the e2e seam that exempts those names
  * from the bounded fetcher's DNS check (`E2E_PUBLIC_HOSTS_SWITCH`, `fetcher.spec.ts`).
  */
-export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts'] as const;
+// `frost-e2e-agent-script` too (Phase 5 Task 6a): the agent's scripted-model seam (`AGENT_E2E_SCRIPT_SWITCH`, `agent-session.spec.ts`).
+export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-e2e-agent-script'] as const;
 export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;
 
 /**

@@ -24,7 +24,14 @@ import {
 } from './agent-tools.spec';
 
 /** Bumped when a message changes shape; the runtime reports it in `ready` and main refuses another. */
-export const AGENT_PROTOCOL_VERSION = 4;
+export const AGENT_PROTOCOL_VERSION = 5;
+
+/**
+ * The runtime's `chat.error` for a `chat.start` whose chat already has a turn running (that turn
+ * goes on). Here, not in the runtime, so main can tell it from a failure without importing the
+ * runtime's bundle.
+ */
+export const CHAT_BUSY_MESSAGE = 'This chat is already answering. Stop it or wait for it to finish.';
 
 /** Every bound the schemas enforce. */
 export const AGENT_PROTOCOL_LIMITS = {
@@ -328,7 +335,9 @@ export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
    * `maxMessageChars`. `toolCalls` holds the calls main was asked to run (`tool.invoke`), in order;
    * a call the runtime rejected (invalid input, a tool not offered, out of bounds) is left out with
    * its error result, so the history pairs up. Posted after the step's calls were answered; a step
-   * cut short by Stop or a failure is posted before `chat.finish` / `chat.error`.
+   * cut short by Stop or a failure is posted before `chat.finish` / `chat.error`. `usage` (since
+   * protocol version 5, Task 6a) is this step's own input and output size, for the panel's context
+   * meter (`chat.finish` sums the steps); a step cut short has none.
    */
   z.strictObject({
     type: z.literal('chat.step'),
@@ -336,6 +345,7 @@ export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
     step: z.int().min(1).max(MAX_TOOL_STEPS),
     text: z.string().max(L.maxMessageChars),
     toolCalls: z.array(ToolCallSchema).max(L.maxToolCallsPerMessage),
+    usage: z.strictObject({ input: count, output: count }).optional(),
   }),
 ]);
 export type RuntimeToMainMessage = z.infer<typeof RuntimeToMainMessageSchema>;

@@ -46,6 +46,8 @@ export interface CreateAgentDeps {
   readonly toolRunner?: ToolRunner;
   /** The URL a tab shows now (main's tab controller); default: none. */
   readonly tabUrl?: (tabId: number) => string | null;
+  /** The e2e seam's validated script (unpackaged only, Task 6a; `e2e-seam.ts`); default none. */
+  readonly e2eAgentScript?: string | null;
 }
 
 export interface Agent {
@@ -77,6 +79,7 @@ export function createAgent(deps: CreateAgentDeps): Agent {
     createChannel: () => new electron.MessageChannelMain(),
     buildDir: deps.buildDir,
     packaged: deps.packaged,
+    ...(deps.e2eAgentScript != null ? { e2eAgentScript: deps.e2eAgentScript } : {}),
     log,
   });
   const store = createCredentialStore({ safeStorage: electron.safeStorage, file: path.join(deps.userData, CREDENTIALS_FILE), fs: files, log, ...(deps.platform ? { platform: deps.platform } : {}) });

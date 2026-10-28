@@ -1,6 +1,6 @@
 // The agent runtime (Phase 5 Task 2; acceptance `specs/agent-runtime.feature.md`, Runtime): routes
 // main's messages to the chat turns and the proxied fetch, one turn at a time per chat id.
-import { AGENT_PROTOCOL_VERSION, type RuntimeToMainMessage, type ToolResult } from '@app/specs/agent-protocol.schema';
+import { AGENT_PROTOCOL_VERSION, CHAT_BUSY_MESSAGE, type RuntimeToMainMessage, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { runChat, chatErrorMessage, type ChatRun, type ChatStart } from './chat';
 import { createModel, type ModelFactory } from './provider';
 import { createProxyFetch, type ProxyFetch } from './proxy-fetch';
@@ -17,8 +17,8 @@ export interface RuntimeOptions {
 
 export type ReadyLockdown = Extract<RuntimeToMainMessage, { type: 'ready' }>['lockdown'];
 
-/** Answered to a `chat.start` for a chat whose turn is still running. */
-export const CHAT_BUSY_MESSAGE = 'This chat is already answering. Stop it or wait for it to finish.';
+/** Answered to a `chat.start` for a chat whose turn is still running (`agent-protocol.schema.ts`). */
+export { CHAT_BUSY_MESSAGE };
 
 export interface RuntimeStats extends ChannelStats {
   /** `chat.start`s refused (`chat.error`, busy) because that chat id already had a turn running. */
