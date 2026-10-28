@@ -9,7 +9,7 @@ import {
   sanitizeStatusText,
   type ProxyRefusal,
 } from '@app/specs/agent-proxy.spec';
-import { isAllowedModelRequest, MODEL_REQUESTS } from '@app/specs/agent-tools.spec';
+import { isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES } from '@app/specs/agent-tools.spec';
 import type { CredentialStore } from './credentials';
 import type { AgentFetchEvent, AgentHost } from './host';
 import { coalescedLog } from './log';
@@ -95,6 +95,9 @@ interface Live {
   reader: ReadableStreamDefaultReader<Uint8Array> | null;
 }
 
+/** Refusals that are not the runtime's doing (no strike; see `refuse`). */
+const NOT_THE_RUNTIMES_FAULT: ReadonlySet<ProxyRefusal> = new Set(['no-key', 'key-unavailable', 'redirect', 'model']);
+
 /** A `fetch` rejection from a redirect (Electron 45's `redirect: 'error'` message), told apart from a network failure. */
 const isRedirectError = (error: unknown): boolean => error instanceof Error && /redirect/i.test(error.message);
 
@@ -115,11 +118,16 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     deps.host.send(message);
   };
 
-  const refuse = (requestId: string, reason: ProxyRefusal) => {
+  /**
+   * Refuses a request. A refusal the runtime caused counts against it (a flood restarts it: the
+   * host's strike window); one that comes from main's side or upstream does not: no key or one that
+   * won't decrypt, a redirect, or a request made for the route or model the user just switched away
+   * from (`endpoint` for another route's URL, `model`).
+   */
+  const refuse = (requestId: string, reason: ProxyRefusal, strike = !NOT_THE_RUNTIMES_FAULT.has(reason)) => {
     lastRefusal = reason;
     log(`refused:${reason}`, `agent proxy: refused a model request (${reason})`);
-    // Refusals count against the runtime: a flood of them restarts it (the host's strike window).
-    deps.host.strike();
+    if (strike) deps.host.strike();
     send({ type: 'fetch.error', requestId, code: 'refused', message: ERROR_TEXT.refused });
   };
 
@@ -225,7 +233,8 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     }
     const { route, modelId } = deps.settings.current();
     if (!isAllowedModelRequest(route, request.method, request.url)) {
-      refuse(requestId, 'endpoint');
+      // Another route's endpoint: the turn began before the user switched routes.
+      refuse(requestId, 'endpoint', !MODEL_ROUTES.some((other) => isAllowedModelRequest(other, request.method, request.url)));
       return;
     }
     // The URL sent is the allowlist's own string (equal to the one checked).

@@ -1,4 +1,5 @@
 import { CREDENTIAL_LIMITS, isCredentialSlot, normalizeKey, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
+import { syncDirectoryOf, type DirectorySync } from './durable';
 
 // The agent's key store (Phase 5 Task 3, plan decision 1; acceptance `specs/agent-host.feature.md`,
 // Credentials): one key per slot (`anthropic`, `openai`, `gateway`), each encrypted with Electron's
@@ -19,6 +20,11 @@ import { CREDENTIAL_LIMITS, isCredentialSlot, normalizeKey, type CredentialSlot,
 // Chromium's fixed key, or write a blob of its own for main to send: `setKey` refuses
 // (`no-keychain`), `withKey` and `hasKey` treat any stored key as absent, and on Linux a stored blob
 // must carry the secret service's `v11` tag (a `v10` blob, which anyone can make, is never used).
+//
+// Each blob is bound to its slot (Task 3 re-review): what is encrypted is `KEY_ENVELOPE`, the slot
+// and the key, and a blob that decrypts to another slot's envelope is refused, so moving the
+// OpenAI blob into the Anthropic slot can't send one provider's key to another. A blob from before
+// the envelope (no prefix) counts as no key: the user enters it again.
 
 /** The part of Electron's `safeStorage` the store uses (the asynchronous API). */
 export interface SafeStorageLike {
@@ -28,7 +34,7 @@ export interface SafeStorageLike {
 }
 
 /** The file operations the store uses (`node:fs/promises` in main; a memory fake in tests). */
-export interface CredentialFs {
+export interface CredentialFs extends DirectorySync {
   readFile(file: string): Promise<Uint8Array>;
   /** Writes a new file (`wx`) and flushes it to disk before resolving (`flush`). */
   writeFile(file: string, data: string, options: { readonly mode: number; readonly flag: 'wx'; readonly flush: true }): Promise<void>;
@@ -86,6 +92,20 @@ const EMPTY: StoredFile = { version: 1, keys: {} };
 
 /** Chromium's tag for data keyed by the desktop's secret service (Linux); `v10` is its fixed key. */
 const LINUX_SECRET_SERVICE_TAG = 'v11';
+/** What a blob holds: this prefix, the slot, a line break, the key. */
+export const KEY_ENVELOPE = 'frost-agent-key/2\n';
+
+const seal = (slot: CredentialSlot, key: string): string => `${KEY_ENVELOPE}${slot}\n${key}`;
+
+/** The key in `text` if it is `slot`'s envelope; `old` for a blob from before the envelope, `other` for another slot's. */
+function open(slot: CredentialSlot, text: string): { readonly key: string } | 'old' | 'other' {
+  if (!text.startsWith(KEY_ENVELOPE)) return 'old';
+  const rest = text.slice(KEY_ENVELOPE.length);
+  const newline = rest.indexOf('\n');
+  if (newline < 0 || rest.slice(0, newline) !== slot) return 'other';
+  return { key: rest.slice(newline + 1) };
+}
+
 /** A constant encrypted once to see which key the encryptor uses (never stored). */
 const PROBE = 'frost-protection-probe';
 
@@ -161,6 +181,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
     try {
       await deps.fs.writeFile(temp, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: 'wx', flush: true });
       await deps.fs.rename(temp, deps.file);
+      await syncDirectoryOf(deps.fs, deps.file);
       loaded = Promise.resolve(next);
       return true;
     } catch {
@@ -180,7 +201,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
   const store = async (slot: CredentialSlot, key: string): Promise<'stored' | 'failed'> => {
     let blob: string;
     try {
-      blob = Buffer.from(await deps.safeStorage.encryptStringAsync(key)).toString('base64');
+      blob = Buffer.from(await deps.safeStorage.encryptStringAsync(seal(slot, key))).toString('base64');
     } catch {
       log('agent credentials: encryption failed');
       return 'failed';
@@ -202,8 +223,10 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
     if (platform === 'linux' && bytes.subarray(0, LINUX_SECRET_SERVICE_TAG.length).toString('latin1') !== LINUX_SECRET_SERVICE_TAG) return 'failed';
     try {
       const decrypted = await deps.safeStorage.decryptStringAsync(bytes);
-      if (normalizeKey(decrypted.result) !== decrypted.result) return 'failed';
-      return { key: decrypted.result, blob, reEncrypt: decrypted.shouldReEncrypt };
+      const opened = open(slot, decrypted.result);
+      if (opened === 'old') return 'no-key';
+      if (opened === 'other' || normalizeKey(opened.key) !== opened.key) return 'failed';
+      return { key: opened.key, blob, reEncrypt: decrypted.shouldReEncrypt };
     } catch {
       log('agent credentials: a stored key could not be decrypted');
       return 'failed';

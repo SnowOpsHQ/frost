@@ -67,11 +67,15 @@ export function lockdownProcess(target: object = process): LockdownReport {
 /** The part of Node's `Module` class the loader lockdown replaces. */
 interface ModuleClass {
   _load?: unknown;
-  prototype?: { require?: unknown };
+  prototype?: { require?: unknown; _compile?: unknown };
 }
 
 const refuseLoad = function require(): never {
   throw new Error('frost: the agent runtime loads no module after startup');
+};
+
+const refuseCompile = function _compile(): never {
+  throw new Error('frost: the agent runtime compiles no module source after startup');
 };
 
 /** Replaces `owner[name]` (own or inherited) with `value`: whether it now holds `value`. Never throws. */
@@ -95,8 +99,9 @@ function replace(owner: object, name: string, value: unknown): boolean {
 /**
  * Stops module loading once the bundle has loaded (Task 3 review): Node's `Module._load` and
  * `Module.prototype.require` (which every `require`, a bundle's own included, and `createRequire`
- * go through) are replaced with functions that throw, and `process.mainModule` (the way to
- * `Module` from anywhere) is removed. `Module` is found through `target.mainModule` (`process` by
+ * go through) and `Module.prototype._compile` (which runs a source string as a module, no `eval`
+ * needed) are replaced with functions that throw, and `process.mainModule` (the way to `Module`
+ * from anywhere) is removed. `Module` is found through `target.mainModule` (`process` by
  * default); without one (an ES module entry, a test) only what is there is reported. Never throws.
  */
 export function lockdownModuleLoader(target: object = process): LockdownReport {
@@ -114,6 +119,8 @@ export function lockdownModuleLoader(target: object = process): LockdownReport {
     if ('_load' in Module) (replace(Module, '_load', refuseLoad) ? removed : failed).push('Module._load');
     const prototype = Module.prototype;
     if (typeof prototype === 'object' && prototype !== null && 'require' in prototype) (replace(prototype, 'require', refuseLoad) ? removed : failed).push('Module.prototype.require');
+    // `new module.constructor()._compile(source, name)` runs source as a module without `eval`.
+    if (typeof prototype === 'object' && prototype !== null && '_compile' in prototype) (replace(prototype, '_compile', refuseCompile) ? removed : failed).push('Module.prototype._compile');
   }
   if ('mainModule' in target) (remove(target, 'mainModule') ? removed : failed).push('process.mainModule');
   return { removed, failed };

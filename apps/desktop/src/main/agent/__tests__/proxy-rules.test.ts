@@ -205,7 +205,10 @@ describe('proxy rules', () => {
     const anthropic = (role: 'user' | 'assistant', block: object) => reason('byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, messages: [{ role, content: [block] }] });
     expect(anthropic('user', { type: 'text', text: 'x', cache_control: { type: 'ephemeral' } })).toBe('ok');
     expect(anthropic('user', { type: 'text', text: 'x', citations: [{ type: 'web_search_result_location', url: 'https://x.example' }] })).toBe('content');
-    expect(anthropic('assistant', { type: 'tool_use', id: 't', name: 'x', input: {}, caller: { type: 'code_execution_20250825' } })).toBe('content');
+    expect(anthropic('assistant', { type: 'tool_use', id: 't', name: 'x', input: {}, caller: { type: 'code_execution_20250825', tool_id: 'srv' } })).toBe('content');
+    expect(anthropic('assistant', { type: 'tool_use', id: 't', name: 'x', input: {}, caller: { type: 'direct' } })).toBe('ok');
+    expect(anthropic('assistant', { type: 'tool_use', id: 't', name: 'x', input: {}, caller: { type: 'direct', tool_id: 'srv' } })).toBe('content');
+    expect(anthropic('assistant', { type: 'tool_use', id: 't', name: 'x', input: {}, caller: {} })).toBe('content');
     expect(anthropic('user', { type: 'tool_use', id: 't', name: 'x', input: {} })).toBe('content');
     expect(anthropic('assistant', { type: 'tool_result', tool_use_id: 't', content: 'x' })).toBe('content');
     expect(anthropic('user', { type: 'thinking', thinking: 'x', signature: 's' })).toBe('content');
@@ -236,8 +239,29 @@ describe('proxy rules', () => {
     expect(gateway('user', { type: 'text', text: 'x', extra: 1 })).toBe('content');
     expect(gateway('assistant', { type: 'text', text: 'x', providerOptions: { anthropic: { citations: { enabled: true } } } })).toBe('provider-options');
     expect(gateway('assistant', { type: 'tool-call', toolCallId: 'c', toolName: 'x', input: {}, providerOptions: { openai: { itemId: 'fc', approvalRequestId: 'a' } } })).toBe('provider-options');
+    expect(gateway('assistant', { type: 'tool-call', toolCallId: 'c', toolName: 'x', input: {}, providerOptions: { anthropic: { caller: { type: 'direct' } } } })).toBe('ok');
+    expect(gateway('assistant', { type: 'tool-call', toolCallId: 'c', toolName: 'x', input: {}, providerOptions: { anthropic: { caller: { type: 'code_execution_20260120', toolId: 'srv' } } } })).toBe('provider-options');
     expect(reason('gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, prompt: [{ role: 'user', content: [{ type: 'text', text: 'x' }], providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }] })).toBe('ok');
     expect(reason('gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, tools: [{ type: 'function', name: 'x', inputSchema: {}, inputExamples: [] }] })).toBe('tool');
+  });
+
+  test('proxy-gateway-option-values', () => {
+    const options = (providerOptions: object, maxOutputTokens = 1024) => reason('gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, maxOutputTokens, providerOptions });
+    expect(options({ openai: { store: false, reasoningEffort: 'low', reasoningSummary: 'auto', textVerbosity: 'low', parallelToolCalls: false } })).toBe('ok');
+    expect(options({ anthropic: { sendReasoning: true, effort: 'medium', disableParallelToolUse: true } })).toBe('ok');
+    for (const bad of [{ openai: { reasoningEffort: 'ultra' } }, { openai: { reasoningSummary: 1 } }, { openai: { parallelToolCalls: 'yes' } }, { openai: { textVerbosity: { x: 1 } } }, { anthropic: { effort: 'max' } }, { anthropic: { sendReasoning: 'true' } }]) {
+      expect(options(bad), JSON.stringify(bad)).toBe('provider-options');
+    }
+    // The provider asks for maxOutputTokens + budgetTokens: a budget past the cap is refused.
+    expect(options({ anthropic: { thinking: { type: 'enabled', budgetTokens: 200_000 } } })).toBe('output-cap');
+    expect(options({ anthropic: { thinking: { type: 'enabled', budgetTokens: MAX_OUTPUT_TOKENS - 1024 } } })).toBe('ok');
+    expect(options({ anthropic: { thinking: { type: 'enabled', budgetTokens: MAX_OUTPUT_TOKENS - 1023 } } })).toBe('output-cap');
+    // No budget: the provider uses 1024.
+    expect(options({ anthropic: { thinking: { type: 'enabled' } } }, MAX_OUTPUT_TOKENS)).toBe('output-cap');
+    expect(options({ anthropic: { thinking: { type: 'enabled' } } }, MAX_OUTPUT_TOKENS - 1024)).toBe('ok');
+    expect(options({ anthropic: { thinking: { type: 'disabled' } } })).toBe('ok');
+    expect(options({ anthropic: { thinking: { type: 'adaptive', display: 'full' } } })).toBe('output-cap');
+    expect(options({ anthropic: { thinking: { type: 'enabled', budgetTokens: 0 } } })).toBe('output-cap');
   });
 
   test('proxy-output-cap', () => {
@@ -278,6 +302,8 @@ describe('proxy rules', () => {
             expect(typeof request.body).toBe('string');
             const text = request.body as string;
             if (which === 2) expect(text).toMatch(route === 'byok-openai' || modelId.startsWith('openai/') ? /ZW5jcnlwdGVk/ : /c2lnbmF0dXJl/);
+            // The Anthropic provider passes a response's `caller` back on the next step.
+            if (which === 2 && modelId.startsWith('anthropic/')) expect(text).toContain('"caller":{"type":"direct"}');
             // Accepted, and sent exactly as the provider wrote it (it writes no repeated key).
             expect(checkModelRequestBody(route, modelId, text, headers), `${route} ${modelId} request ${which}`).toEqual({ ok: true, body: text });
             // The same request is refused under another configured model.

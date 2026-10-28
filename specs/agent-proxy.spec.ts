@@ -356,6 +356,12 @@ export const BODY_FIELDS: Readonly<Record<ModelRoute, readonly string[]>> = {
 // text, tool calls and results, thinking with its signature, and redacted thinking). No image,
 // document, file, citation, search result, server tool, MCP or container block; no `caller`.
 const cacheControl = (value: unknown) => shaped(value, { type: oneOf('ephemeral'), ttl: isString });
+/**
+ * The only tool caller passed back: `{ type: 'direct' }` (the model called the tool itself). The
+ * Anthropic provider turns a response's `tool_use.caller` into metadata and sends it back on the
+ * next step; a caller naming a code execution tool (a server tool) is refused.
+ */
+const directCaller = (value: unknown) => isObject(value) && shaped(value, { type: oneOf('direct') }) && value.type === 'direct';
 const anthropicText = (value: unknown) => shaped(value, { type: oneOf('text'), text: isString, cache_control: cacheControl }) && isObject(value) && value.type === 'text';
 const ANTHROPIC_BLOCKS: Readonly<Record<'user' | 'assistant', Readonly<Record<string, Readonly<Record<string, (value: unknown) => boolean>>>>>> = {
   user: {
@@ -364,7 +370,7 @@ const ANTHROPIC_BLOCKS: Readonly<Record<'user' | 'assistant', Readonly<Record<st
   },
   assistant: {
     text: { type: any, text: isString, cache_control: cacheControl },
-    tool_use: { type: any, id: isString, name: isString, input: isObject, cache_control: cacheControl },
+    tool_use: { type: any, id: isString, name: isString, input: isObject, cache_control: cacheControl, caller: directCaller },
     thinking: { type: any, thinking: isString, signature: isString },
     redacted_thinking: { type: any, data: isString },
   },
@@ -395,7 +401,7 @@ const openaiTool = (value: unknown) => shaped(value, { type: oneOf('function'), 
 // signature and redacted data, OpenAI's item ids and encrypted reasoning) and cache control.
 const partOptions = (value: unknown) =>
   shaped(value, {
-    anthropic: (options) => shaped(options, { signature: isString, redactedData: isString, cacheControl }),
+    anthropic: (options) => shaped(options, { signature: isString, redactedData: isString, cacheControl, caller: directCaller }),
     openai: (options) => shaped(options, { itemId: isString, reasoningEncryptedContent: (content) => content === null || isString(content) }),
   });
 const toolOutput = (value: unknown) =>
@@ -414,14 +420,41 @@ const GATEWAY_PARTS: Readonly<Record<'user' | 'assistant' | 'tool', Readonly<Rec
 /** Gateway prompt part types allowed, any role (for the record; `GATEWAY_PARTS` is the rule). */
 export const GATEWAY_PART_TYPES: readonly string[] = ['text', 'reasoning', 'tool-call', 'tool-result'];
 /**
- * Provider options the gateway route may carry, per provider: OpenAI's `store` (must be `false`) and
- * reasoning or verbosity knobs, Anthropic's thinking knobs. Anything else (MCP servers, containers,
- * gateway routing, BYOK credentials) is refused.
+ * Provider options the gateway route may carry, per provider, each with the values it may take:
+ * OpenAI's `store` (only `false`) and reasoning, summary, verbosity and parallel-call knobs;
+ * Anthropic's reasoning and parallel-call knobs, and `thinking` only as `checkGatewayThinking`
+ * allows. Anything else (MCP servers, containers, gateway routing, BYOK credentials) is refused.
  */
-export const GATEWAY_PROVIDER_OPTIONS: Readonly<Record<string, readonly string[]>> = {
-  openai: ['store', 'reasoningEffort', 'reasoningSummary', 'textVerbosity', 'parallelToolCalls'],
-  anthropic: ['thinking', 'sendReasoning', 'effort', 'disableParallelToolUse'],
+export const GATEWAY_PROVIDER_OPTIONS: Readonly<Record<string, Readonly<Record<string, (value: unknown) => boolean>>>> = {
+  openai: {
+    store: oneOf(false),
+    reasoningEffort: oneOf('minimal', 'low', 'medium', 'high'),
+    reasoningSummary: oneOf('auto', 'concise', 'detailed'),
+    textVerbosity: oneOf('low', 'medium', 'high'),
+    parallelToolCalls: oneOf(true, false),
+  },
+  anthropic: {
+    thinking: isObject,
+    sendReasoning: oneOf(true, false),
+    effort: oneOf('low', 'medium', 'high'),
+    disableParallelToolUse: oneOf(true, false),
+  },
 };
+
+/**
+ * Whether the gateway's Anthropic `thinking` option keeps the output within `MAX_OUTPUT_TOKENS`:
+ * the provider asks for `maxOutputTokens + budgetTokens` (a budget of 1024 when none is given), so
+ * an `enabled` budget must fit beside the output cap; `disabled` and `adaptive` (thinking within
+ * the output) are fine. The runtime sends none today.
+ */
+export function checkGatewayThinking(thinking: unknown, maxOutputTokens: number): boolean {
+  if (!isObject(thinking)) return false;
+  if (shaped(thinking, { type: oneOf('disabled', 'adaptive') }) && thinking.type !== undefined) return true;
+  if (!shaped(thinking, { type: oneOf('enabled'), budgetTokens: Number.isInteger }) || thinking.type !== 'enabled') return false;
+  const budget = thinking.budgetTokens === undefined ? 1024 : (thinking.budgetTokens as number);
+  return budget >= 1 && budget + maxOutputTokens <= MAX_OUTPUT_TOKENS;
+}
+
 const gatewayTool = (value: unknown) => shaped(value, { type: oneOf('function'), name: isString, description: isString, inputSchema: isObject, strict: oneOf(true, false) }) && isObject(value) && value.type === 'function' && isString(value.name);
 
 /** The model header the gateway reads (its body names no model). */
@@ -538,14 +571,17 @@ function checkGateway(body: Json, openAiModel: boolean): BodyCheck {
   }
   if (tools !== undefined && !arrayOf(gatewayTool)(tools)) return refuse('tool');
   if (toolChoice !== undefined && !(isObject(toolChoice) && (shaped(toolChoice, { type: oneOf('auto', 'none', 'required') }) || shaped(toolChoice, { type: oneOf('tool'), toolName: isString })) && toolChoice.type !== undefined)) return refuse('tool');
-  if (providerOptions !== undefined) {
-    if (!isObject(providerOptions)) return refuse('provider-options');
-    for (const [provider, options] of Object.entries(providerOptions)) {
-      if (!Object.hasOwn(GATEWAY_PROVIDER_OPTIONS, provider) || !isObject(options) || !onlyKeys(options, GATEWAY_PROVIDER_OPTIONS[provider]!)) return refuse('provider-options');
-    }
-  }
+  // `store` first, so a stored conversation is refused as such.
   const openai = isObject(providerOptions) && isObject(providerOptions.openai) ? providerOptions.openai : undefined;
   if (openai?.store !== undefined && openai.store !== false) return refuse('store');
   if (openAiModel && openai?.store !== false) return refuse('store');
+  if (providerOptions !== undefined) {
+    if (!isObject(providerOptions)) return refuse('provider-options');
+    for (const [provider, options] of Object.entries(providerOptions)) {
+      if (!Object.hasOwn(GATEWAY_PROVIDER_OPTIONS, provider) || !shaped(options, GATEWAY_PROVIDER_OPTIONS[provider]!)) return refuse('provider-options');
+    }
+    const anthropic = providerOptions.anthropic;
+    if (isObject(anthropic) && anthropic.thinking !== undefined && !checkGatewayThinking(anthropic.thinking, body.maxOutputTokens as number)) return refuse('output-cap');
+  }
   return OK;
 }

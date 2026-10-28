@@ -77,15 +77,20 @@ describe('lockdown', () => {
       require(id: string) {
         return FakeModule._load(id);
       }
+      _compile(source: string) {
+        return `ran ${source}`;
+      }
     }
     const main = new FakeModule();
     const fake: { mainModule?: FakeModule; exit: () => void } = { mainModule: main, exit: () => {} };
     const report = lockdownModuleLoader(fake);
-    expect(report).toEqual({ removed: ['Module._load', 'Module.prototype.require', 'process.mainModule'], failed: [] });
+    expect(report).toEqual({ removed: ['Module._load', 'Module.prototype.require', 'Module.prototype._compile', 'process.mainModule'], failed: [] });
     expect('mainModule' in fake).toBe(false);
     expect(() => FakeModule._load('node:net')).toThrow('loads no module after startup');
     // A `require` a module already holds goes through the prototype: refused too.
     expect(() => main.require('node:child_process')).toThrow('loads no module after startup');
+    // Compiling a source string as a module: refused too (it needs no `eval`).
+    expect(() => new FakeModule()._compile('process.exit()')).toThrow('compiles no module source after startup');
     expect(typeof fake.exit).toBe('function');
     // Without a main module (an ES module entry), nothing to report.
     expect(lockdownModuleLoader({})).toEqual({ removed: [], failed: [] });

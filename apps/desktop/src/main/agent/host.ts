@@ -196,7 +196,13 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
   let consecutiveFailures = 0;
   let restartTimer: unknown = null;
   const pendingChats = new Set<string>();
-  /** Model requests the running turns may still make. */
+  /**
+   * Model requests the running turns may still make: `MAX_MODEL_REQUESTS_PER_TURN` for each turn
+   * started, shared by the turns running at once. Shared on purpose: a `fetch.request` names no chat
+   * (the proxied fetch serves every turn), and a chat id the runtime claimed would be the runtime's
+   * word, so a split per chat would bound nothing the shared total doesn't: the runtime can never
+   * make more requests than the running turns' budgets add up to, and none with no turn running.
+   */
   let fetchBudget = 0;
   /** The current flood window: when it started, and what it has counted. */
   let flood = { start: 0, strikes: 0, inbound: 0 };

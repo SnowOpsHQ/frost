@@ -28,7 +28,7 @@ describe('agent credentials', () => {
     expect(text).not.toContain('SECRET');
     expect(JSON.parse(text)).toEqual({ version: 1, keys: { anthropic: expect.stringMatching(/^[A-Za-z0-9+/]+=*$/) } });
     // Written to a new 0600 file, then renamed over the old one.
-    expect(memory.ops.filter((op) => !op.startsWith('read'))).toEqual([`write ${FILE}.t1.tmp 600 wx flush`, `rename ${FILE}.t1.tmp ${FILE}`]);
+    expect(memory.ops.filter((op) => !op.startsWith('read'))).toEqual([`write ${FILE}.t1.tmp 600 wx flush`, `rename ${FILE}.t1.tmp ${FILE}`, 'sync /user-data']);
     expect(memory.files.get(FILE)!.mode).toBe(0o600);
     expect([...memory.files.keys()]).toEqual([FILE]);
   });
@@ -86,20 +86,46 @@ describe('agent credentials', () => {
     expect(await later.store.protection()).toBe('os');
   });
 
+  test('credentials-bound-to-slot', async () => {
+    const { store, memory, safe } = setup();
+    await store.setKey('openai', `${KEY}-openai`);
+    await store.setKey('anthropic', `${KEY}-anthropic`);
+    // Moving the OpenAI blob into the Anthropic slot doesn't send OpenAI's key to Anthropic.
+    const stored = JSON.parse(memory.text(FILE)!) as { version: 1; keys: Record<string, string> };
+    memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: stored.keys.openai, openai: stored.keys.openai } })), mode: 0o600 });
+    const moved = createCredentialStore({ safeStorage: safe.storage, file: FILE, fs: memory.fs, platform: 'linux' });
+    expect(await moved.hasKey('anthropic')).toBe(false);
+    expect(await moved.withKey('anthropic', () => 'never')).toEqual({ ok: false, reason: 'failed' });
+    expect(await moved.withKey('openai', (key) => key)).toEqual({ ok: true, value: `${KEY}-openai` });
+    // What is encrypted is the envelope: the slot, then the key.
+    const decrypted = await safe.storage.decryptStringAsync(Buffer.from(stored.keys.anthropic!, 'base64'));
+    expect(decrypted.result).toBe(`frost-agent-key/2\nanthropic\n${KEY}-anthropic`);
+  });
+
+  test('credentials-old-format-is-no-key', async () => {
+    // A blob from before the envelope (the bare key): no key; the user enters it again.
+    const { store, memory, safe } = setup();
+    memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: safe.blob(KEY, 'v11') } })), mode: 0o600 });
+    expect(await store.hasKey('anthropic')).toBe(false);
+    expect(await store.withKey('anthropic', () => 'never')).toEqual({ ok: false, reason: 'no-key' });
+    expect(await store.setKey('anthropic', KEY)).toBe('stored');
+    expect(await store.withKey('anthropic', (key) => key === KEY)).toEqual({ ok: true, value: true });
+  });
+
   test('credentials-weak-blob-never-used', async () => {
     // A `v10` blob (anyone can make one: the agent process could plant its own key) is never used on Linux.
     const planted = setup();
-    planted.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: planted.safe.blob('sk-attacker-key-123456', 'v10') } })), mode: 0o600 });
+    planted.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: planted.safe.blob('frost-agent-key/2\nanthropic\nsk-attacker-key-123456', 'v10') } })), mode: 0o600 });
     expect(await planted.store.hasKey('anthropic')).toBe(false);
     expect(await planted.store.withKey('anthropic', () => 'never')).toEqual({ ok: false, reason: 'failed' });
     // With only the fixed key on this machine, even a good blob is not used.
     const weak = setup({ weak: true });
-    weak.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: weak.safe.blob(KEY, 'v11') } })), mode: 0o600 });
+    weak.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: weak.safe.blob(`frost-agent-key/2\nanthropic\n${KEY}`, 'v11') } })), mode: 0o600 });
     expect(await weak.store.hasKey('anthropic')).toBe(false);
     expect(await weak.store.withKey('anthropic', () => 'never')).toEqual({ ok: false, reason: 'unavailable' });
     // On macOS and Windows the tag says nothing about the key source.
     const mac = setup({ platform: 'darwin' });
-    mac.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: mac.safe.blob(KEY, 'v10') } })), mode: 0o600 });
+    mac.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: mac.safe.blob(`frost-agent-key/2\nanthropic\n${KEY}`, 'v10') } })), mode: 0o600 });
     expect(await mac.store.withKey('anthropic', (key) => key === KEY)).toEqual({ ok: true, value: true });
   });
 

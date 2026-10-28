@@ -87,6 +87,11 @@
      only, within a per-turn budget, to one allowlisted URL per route, with checked bodies;
    - **main decides every action** (decision 7), and no agent tool touches the file system.
 
+   None of this stops a malicious dependency **at import time**: the lockdown runs after the
+   bundle's modules have loaded, so code a compromised package runs while loading runs with the
+   process's full reach. Trust in the bundled packages rests on pinned exact versions, the
+   committed lockfile and its review (and the install's release-age policy), not on the lockdown.
+
 7. **Approvals live entirely in main.** Each tool's `execute` in the runtime is only a request
    (`tool.invoke`) to main. Main's broker decides: run on a standing grant, ask the user, or refuse;
    main runs the tool and answers `tool.result`. The protocol has **no message** by which the agent
@@ -300,9 +305,16 @@ _Filled in as tasks land._
   `os` protection (`setKey` answers `no-keychain` otherwise; on Linux a blob must be `v11`). The
   host accepts model requests only for running turns (`MAX_MODEL_REQUESTS_PER_TURN` = 24 each),
   restarts a runtime that floods it (`misbehaved`), and refusal logs are coalesced. The runtime's
-  lockdown now also stops module loading and code generation from strings (protocol version 3);
+  lockdown now also stops module loading (`_compile` too, since the re-review) and code generation
+  from strings (protocol version 4);
   Zod runs `jitless` in the runtime (set before any schema is built), since it would otherwise
   compile parsers with `new Function` after the lockdown. Verified in a real utility process.
+  Re-review: every gateway provider option has a value shape and Anthropic `thinking` must fit its
+  budget beside the output cap; `caller: { type: 'direct' }` is passed back (the Anthropic
+  provider returns it); refusals from main's side don't strike the runtime; the request budget is
+  shared by the running turns on purpose (requests name no chat); key blobs are bound to their slot
+  (an older blob counts as no key: the user enters it again); directories are flushed after a
+  rename where the platform allows.
 - **Task 4.** Policy and constants are plain functions in `specs/agent-approvals.spec.ts` (`decide`,
   `grantOriginFor`, `approvalOriginFor`, `isGrantOrigin`, `canGrant`, `APPROVAL_TIMEOUT_MS` 5 min,
   `TOOL_ERROR_MESSAGES`); acceptance `specs/agent-approvals.feature.md`. `createAgent` now also takes

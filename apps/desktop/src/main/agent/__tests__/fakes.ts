@@ -124,6 +124,12 @@ export function createMemoryFs() {
       files.delete(from);
       files.set(to, entry);
     },
+    async open(file: string) {
+      return {
+        sync: async () => void ops.push(`sync ${file}`),
+        close: async () => undefined,
+      };
+    },
     async rm(file) {
       ops.push(`rm ${file}`);
       files.delete(file);

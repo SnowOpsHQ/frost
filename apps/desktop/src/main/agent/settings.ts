@@ -1,4 +1,5 @@
 import { DEFAULT_AGENT_MODEL_SETTINGS, isValidModelSettings, type AgentModelSettings } from '@app/specs/agent-proxy.spec';
+import { syncDirectoryOf, type DirectorySync } from './durable';
 
 // The agent's model settings (Phase 5 Task 3, plan decision 1; acceptance
 // `specs/agent-host.feature.md`, Settings): the route (bring-your-own-key Anthropic or OpenAI, or the
@@ -9,7 +10,7 @@ import { DEFAULT_AGENT_MODEL_SETTINGS, isValidModelSettings, type AgentModelSett
 // the route serves); a missing, unreadable or tampered file reads as the defaults.
 
 /** The file operations the settings use (`node:fs/promises` in main; a memory fake in tests). */
-export interface SettingsFs {
+export interface SettingsFs extends DirectorySync {
   readFile(file: string): Promise<Uint8Array>;
   /** Writes a new file (`wx`) and flushes it to disk before resolving (`flush`). */
   writeFile(file: string, data: string, options: { readonly mode: number; readonly flag: 'wx'; readonly flush: true }): Promise<void>;
@@ -87,6 +88,7 @@ export function createAgentSettings(deps: AgentSettingsDeps): AgentSettings {
         try {
           await deps.fs.writeFile(temp, `${JSON.stringify({ route: merged.route, modelId: merged.modelId })}\n`, { mode: 0o600, flag: 'wx', flush: true });
           await deps.fs.rename(temp, deps.file);
+          await syncDirectoryOf(deps.fs, deps.file);
         } catch {
           log('agent settings: the settings file could not be written');
           await deps.fs.rm(temp, { force: true }).catch(() => undefined);

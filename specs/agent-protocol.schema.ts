@@ -24,7 +24,7 @@ import {
 } from './agent-tools.spec';
 
 /** Bumped when a message changes shape; the runtime reports it in `ready` and main refuses another. */
-export const AGENT_PROTOCOL_VERSION = 3;
+export const AGENT_PROTOCOL_VERSION = 4;
 
 /** Every bound the schemas enforce. */
 export const AGENT_PROTOCOL_LIMITS = {
@@ -69,8 +69,8 @@ export const AGENT_PROTOCOL_LIMITS = {
 /**
  * What the runtime removes at startup (Phase 5 Tasks 2 and 3): the network globals; the `process`
  * functions that reach a builtin or native module around the bundle's imports; the module loader
- * (`process.mainModule`, `Module._load`, `Module.prototype.require`: no module loads once the
- * bundle has); and code generation from strings (`eval`, the `Function` constructors).
+ * (`process.mainModule`, `Module._load`, `Module.prototype.require`, `Module.prototype._compile`:
+ * no module loads, and no source is compiled as a module, once the bundle has); and code generation from strings (`eval`, the `Function` constructors).
  */
 export const LOCKDOWN_TARGETS = [
   'fetch',
@@ -85,6 +85,7 @@ export const LOCKDOWN_TARGETS = [
   'process.mainModule',
   'Module._load',
   'Module.prototype.require',
+  'Module.prototype._compile',
   'eval',
   'Function',
 ] as const;

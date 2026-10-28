@@ -1,7 +1,8 @@
 // Captures the requests the installed providers really send, through the real runtime on in-memory
-// ports (no network): a turn's first request, or, with `reasoningStep`, the second request of a turn
-// whose first step answered with reasoning (thinking, a signature, a redacted block, encrypted
-// reasoning) and two tool calls, so the history carries every shape a multi-step turn sends.
+// ports (no network): a turn's first request, or the second request of a turn whose first step
+// answered with reasoning (thinking, a signature, a redacted block, encrypted reasoning) and two tool
+// calls (one with Anthropic's `caller: { type: 'direct' }`, which the provider sends back), so the
+// history carries every shape a multi-step turn sends.
 import { vi } from 'vitest';
 import { createMemoryPortPair, createModel, startRuntime } from '@app/agent-runtime';
 import type { MainToRuntimeMessage, RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
@@ -23,7 +24,7 @@ const ANTHROPIC_STEP = sse([
   ['content_block_start', { type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } }],
   ['content_block_delta', { type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: 'Reading the page.' } }],
   ['content_block_stop', { type: 'content_block_stop', index: 2 }],
-  ['content_block_start', { type: 'content_block_start', index: 3, content_block: { type: 'tool_use', id: 'toolu_1', name: 'page_audit', input: {} } }],
+  ['content_block_start', { type: 'content_block_start', index: 3, content_block: { type: 'tool_use', id: 'toolu_1', name: 'page_audit', input: {}, caller: { type: 'direct' } } }],
   ['content_block_delta', { type: 'content_block_delta', index: 3, delta: { type: 'input_json_delta', partial_json: '{}' } }],
   ['content_block_stop', { type: 'content_block_stop', index: 3 }],
   ['content_block_start', { type: 'content_block_start', index: 4, content_block: { type: 'tool_use', id: 'toolu_2', name: 'page_text', input: {} } }],
@@ -69,7 +70,7 @@ const gatewayStep = (provider: 'anthropic' | 'openai') =>
     [null, { type: 'text-start', id: 't1', ...(provider === 'openai' ? { providerMetadata: { openai: { itemId: 'msg_1' } } } : {}) }],
     [null, { type: 'text-delta', id: 't1', delta: 'Reading the page.' }],
     [null, { type: 'text-end', id: 't1' }],
-    [null, { type: 'tool-call', toolCallId: 'call_1', toolName: 'page_audit', input: '{}', ...(provider === 'openai' ? { providerMetadata: { openai: { itemId: 'fc_1' } } } : {}) }],
+    [null, { type: 'tool-call', toolCallId: 'call_1', toolName: 'page_audit', input: '{}', providerMetadata: provider === 'openai' ? { openai: { itemId: 'fc_1' } } : { anthropic: { caller: { type: 'direct' } } } }],
     [null, { type: 'tool-call', toolCallId: 'call_2', toolName: 'page_text', input: '{"maxChars":100}', ...(provider === 'openai' ? { providerMetadata: { openai: { itemId: 'fc_2' } } } : {}) }],
     [null, { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_use' }, usage: { inputTokens: { total: 10, noCache: 10 }, outputTokens: { total: 20, text: 20 } } }],
   ]);
