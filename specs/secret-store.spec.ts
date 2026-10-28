@@ -6,7 +6,10 @@
  * Electron's `safeStorage` (the OS keychain), written atomically (a temporary file, then a rename)
  * with owner-only permissions. When the keychain is unavailable, or on Linux only `basic_text` (a
  * fixed key: obfuscation, not encryption) or an unknown backend is selected, the store is
- * **memory-only** for that run: nothing is written to disk, and Settings says so (Task 9).
+ * **memory-only** for that run: nothing is written to disk, and Settings says so (Task 9). That is
+ * decided once, when the store is created, which must be after the app is ready (before it, Linux's
+ * `safeStorage` answers wrongly). A blob that does not decrypt is kept while the keychain has not
+ * worked yet in the run (it may only be locked), and deleted as corrupt after.
  *
  * Depends on nothing.
  */

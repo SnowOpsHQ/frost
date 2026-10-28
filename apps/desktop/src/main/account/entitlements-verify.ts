@@ -9,7 +9,7 @@ import {
   EntitlementJwksSchema,
   FEATURE_FLAGS,
   INVALID_ENTITLEMENTS,
-  MAX_CLOCK_SKEW_SECONDS,
+  MAX_FUTURE_IAT_SECONDS,
   MAX_SNAPSHOT_CHARS,
   OFFLINE_GRACE_MS,
   PLANS,
@@ -28,7 +28,9 @@ import {
 // (`EntitlementHeaderSchema`: this is what refuses `alg: none`, HMAC, an embedded `jwk`, `jku`,
 // `crit`, `b64`); the key by `kid` from the JWKS only; the EdDSA signature (jose, `algorithms:
 // ['EdDSA']`); the claims (`EntitlementClaimsSchema`: `iss`, `aud`, `ver`, the TTL cap); `sub`;
-// `iat` against the effective now plus skew. Any failure is `INVALID_ENTITLEMENTS`.
+// `iat` at most `MAX_FUTURE_IAT_SECONDS` after the effective now. Any failure is `INVALID_ENTITLEMENTS`.
+// A future `iat` within that bound is signed server time (the client clock is slow): the snapshot is
+// judged from `max(effective now, iat)`, so its life is never lengthened.
 
 /** Why a snapshot was refused: a fixed word, safe to log (never the snapshot or a claim). */
 export type SnapshotRefusal = 'format' | 'jwks' | 'header' | 'kid' | 'signature' | 'claims' | 'sub' | 'iat';
@@ -85,12 +87,13 @@ export function parseEntitlementJwks(raw: unknown): EntitlementJwks | null {
 }
 
 /**
- * The entitlements of verified `claims` at `clock` (sync; main re-evaluates as time passes):
+ * The entitlements of verified `claims` at `clock` (sync; main re-evaluates as time passes), judged
+ * at `max(now, highWaterMs, iat)` (a snapshot is never judged before its own signed time):
  * `active` before `exp`; after it `grace` until `exp + OFFLINE_GRACE_SECONDS` only when `offline`;
  * else `expired` (free). A plan this build does not know shows as `free`; flags count regardless.
  */
 export function evaluateClaims(claims: VerifiedClaims, clock: SnapshotClock): Entitlements {
-  const at = effectiveNow(clock.now, clock.highWaterMs);
+  const at = Math.max(effectiveNow(clock.now, clock.highWaterMs), claims.iat * 1000);
   const expiresAtMs = claims.exp * 1000;
   const graceEndsAtMs = expiresAtMs + OFFLINE_GRACE_MS;
   const times = { expiresAtMs, graceEndsAtMs };
@@ -158,7 +161,7 @@ export async function verifySnapshot(jws: unknown, options: VerifyOptions): Prom
   if (!claims.success || claims.data.exp - claims.data.iat > ENTITLEMENT_TTL_SECONDS) return refuse('claims');
   if (options.expectedSub.length === 0 || claims.data.sub !== options.expectedSub) return refuse('sub');
   const at = effectiveNow(options.now, options.highWaterMs);
-  if (claims.data.iat * 1000 > at + MAX_CLOCK_SKEW_SECONDS * 1000) return refuse('iat');
+  if (claims.data.iat * 1000 > at + MAX_FUTURE_IAT_SECONDS * 1000) return refuse('iat');
 
   const plan: Plan = KNOWN_PLANS.has(claims.data.plan) ? (claims.data.plan as Plan) : DEFAULT_PLAN;
   const features = claims.data.features.filter((flag): flag is FeatureFlag => KNOWN_FLAGS.has(flag));

@@ -1,5 +1,5 @@
 // Spec: specs/entitlements-snapshot.spec.ts (EntitlementHeaderSchema, EntitlementClaimsSchema,
-// EntitlementJwksSchema, EntitlementsSchema, MAX_CLOCK_SKEW_SECONDS, OFFLINE_GRACE_SECONDS)
+// EntitlementJwksSchema, EntitlementsSchema, MAX_FUTURE_IAT_SECONDS, OFFLINE_GRACE_SECONDS)
 // Acceptance: specs/entitlements-client.feature.md (Verification) · review focus "A snapshot cannot be
 // forged or replayed past its life"
 import { createHmac } from 'node:crypto';
@@ -9,7 +9,7 @@ import {
   ENTITLEMENT_JWS_TYPE,
   ENTITLEMENT_TTL_SECONDS,
   EntitlementsSchema,
-  MAX_CLOCK_SKEW_SECONDS,
+  MAX_FUTURE_IAT_SECONDS,
   MAX_SNAPSHOT_CHARS,
   OFFLINE_GRACE_MS,
   PLAN_FEATURES,
@@ -27,6 +27,7 @@ beforeAll(async () => {
   rotated = await testKey('k2');
   stranger = await testKey('k3');
   jwks = jwksOf(key, rotated);
+  forgeries = await buildForgeries();
 });
 
 const EXP_MS = T0_MS + ENTITLEMENT_TTL_SECONDS * 1000;
@@ -41,8 +42,45 @@ async function expectInvalid(jws: unknown, options: VerifyOptions = at(T0_MS + 1
   return result;
 }
 
-/** Every forgery the suite builds, for `snapshot-fails-closed`. */
-const forgeries: { name: string; jws: () => Promise<string> | string; jwks?: () => unknown }[] = [];
+type Forgery = { readonly name: string; readonly jws: string; readonly jwks?: unknown };
+
+/** Every forgery the cases below build, for `snapshot-fails-closed` (built up front, independent of test order). */
+async function buildForgeries(): Promise<Forgery[]> {
+  const list: Forgery[] = [];
+  const good = await sign(key);
+  const [h, p, s] = parts(good);
+  const [fh, , fs] = parts(await sign(key, proClaims(T0, { plan: 'free', features: [] })));
+  for (const claims of [proClaims(), proClaims(T0, { sub: 'user-2' }), proClaims(T0, { plan: 'free', features: ['sync'] })]) {
+    list.push({ name: 'tampered payload', jws: `${fh}.${b64url(JSON.stringify(claims))}.${fs}` });
+  }
+  const bytes = Buffer.from(s, 'base64url');
+  bytes[0] = (bytes[0] ?? 0) ^ 0xff;
+  list.push({ name: 'tampered signature', jws: `${h}.${p}.${b64url(bytes)}` });
+  list.push({ name: 'stranger under k1', jws: await sign(stranger, proClaims(), { alg: 'EdDSA', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE }) });
+  const none = b64url(JSON.stringify({ alg: 'none', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE }));
+  list.push({ name: 'alg none', jws: `${none}.${p}.` }, { name: 'alg none', jws: `${none}.${p}.AA` });
+  const hs = { alg: 'HS256', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE };
+  for (const secret of [Buffer.from(key.publicJwk.x, 'base64url'), encoder.encode(key.publicJwk.x), encoder.encode(JSON.stringify(key.publicJwk))]) {
+    list.push({ name: 'HS256', jws: await new CompactSign(encoder.encode(JSON.stringify(proClaims()))).setProtectedHeader(hs).sign(secret) });
+  }
+  list.push({ name: 'unknown kid', jws: await sign(stranger) });
+  const x = key.publicJwk.x;
+  for (const set of [{ keys: [{ ...key.publicJwk, crv: 'X25519' }] }, { keys: [{ kty: 'EC', crv: 'P-256', x, y: x, kid: 'k1' }] }, { keys: [{ ...key.publicJwk, d: x }] }]) {
+    list.push({ name: 'bad jwks', jws: good, jwks: set });
+  }
+  list.push({ name: 'embedded jwk', jws: await sign(stranger, proClaims(), { alg: 'EdDSA', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE, jwk: { kty: 'OKP', crv: 'Ed25519', x: stranger.publicJwk.x } }) });
+  for (const extra of [{ jku: 'https://evil.test/keys' }, { crit: ['exp'], exp: 1 }, { b64: false, crit: ['b64'] }]) {
+    list.push({ name: 'header extra', jws: await signRaw(key, { alg: 'EdDSA', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE, ...extra }) });
+  }
+  for (const overrides of [{ iss: 'someone-else' }, { aud: 'frost-web' }, { ver: 2 }]) list.push({ name: 'claims', jws: await sign(key, proClaims(T0, overrides)) });
+  list.push({ name: 'typ JWT', jws: await sign(key, proClaims(), { alg: 'EdDSA', kid: 'k1', typ: 'JWT' }) });
+  list.push({ name: 'other account', jws: await sign(key, proClaims(T0, { sub: 'user-2' })) });
+  list.push({ name: 'long ttl', jws: await sign(key, proClaims(T0, { exp: T0 + ENTITLEMENT_TTL_SECONDS + 1 })) });
+  list.push({ name: 'iat beyond bound', jws: await sign(key, proClaims(T0 + 30 * 86400)) });
+  return list;
+}
+
+let forgeries: Forgery[] = [];
 
 describe('verifySnapshot', () => {
   test('valid-snapshot-is-active', async () => {
@@ -72,7 +110,6 @@ describe('verifySnapshot', () => {
     const [h, , s] = parts(await sign(key, proClaims(T0, { plan: 'free', features: [] })));
     for (const claims of [proClaims(), proClaims(T0, { sub: 'user-2' }), proClaims(T0, { plan: 'free', features: ['sync'] })]) {
       const jws = `${h}.${b64url(JSON.stringify(claims))}.${s}`;
-      forgeries.push({ name: 'tampered payload', jws: () => jws });
       await expectInvalid(jws, at(T0_MS), 'signature');
     }
   });
@@ -82,11 +119,9 @@ describe('verifySnapshot', () => {
     const bytes = Buffer.from(s, 'base64url');
     bytes[0] = (bytes[0] ?? 0) ^ 0xff;
     const jws = `${h}.${p}.${b64url(bytes)}`;
-    forgeries.push({ name: 'tampered signature', jws: () => jws });
     await expectInvalid(jws, at(T0_MS), 'signature');
     // A signature by another key under a trusted kid.
     const other = await sign(stranger, proClaims(), { alg: 'EdDSA', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE });
-    forgeries.push({ name: 'stranger under k1', jws: () => other });
     await expectInvalid(other, at(T0_MS), 'signature');
   });
 
@@ -94,7 +129,6 @@ describe('verifySnapshot', () => {
     const h = b64url(JSON.stringify({ alg: 'none', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE }));
     const p = b64url(JSON.stringify(proClaims()));
     for (const jws of [`${h}.${p}.`, `${h}.${p}.AA`]) {
-      forgeries.push({ name: 'alg none', jws: () => jws });
       await expectInvalid(jws, at(T0_MS));
     }
   });
@@ -105,7 +139,6 @@ describe('verifySnapshot', () => {
     const secrets = [Buffer.from(key.publicJwk.x, 'base64url'), encoder.encode(key.publicJwk.x), encoder.encode(JSON.stringify(key.publicJwk))];
     for (const secret of secrets) {
       const jws = await new CompactSign(claims).setProtectedHeader(header).sign(secret);
-      forgeries.push({ name: 'HS256', jws: () => jws });
       await expectInvalid(jws, at(T0_MS), 'header');
     }
     // The same, hand-rolled with node:crypto (no library check in the way).
@@ -116,7 +149,6 @@ describe('verifySnapshot', () => {
 
   test('unknown-kid-is-invalid', async () => {
     const jws = await sign(stranger);
-    forgeries.push({ name: 'unknown kid', jws: () => jws });
     await expectInvalid(jws, at(T0_MS), 'kid');
   });
 
@@ -132,7 +164,6 @@ describe('verifySnapshot', () => {
       { keys: [{ ...key.publicJwk, alg: 'HS256' }] },
     ];
     for (const set of bad) {
-      forgeries.push({ name: 'bad jwks', jws: () => jws, jwks: () => set });
       await expectInvalid(jws, at(T0_MS, { jwks: set }), 'jwks');
     }
   });
@@ -140,12 +171,10 @@ describe('verifySnapshot', () => {
   test('embedded-jwk-header-is-ignored', async () => {
     const header = { alg: 'EdDSA', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE, jwk: { kty: 'OKP', crv: 'Ed25519', x: stranger.publicJwk.x } };
     const jws = await sign(stranger, proClaims(), header);
-    forgeries.push({ name: 'embedded jwk', jws: () => jws });
     await expectInvalid(jws, at(T0_MS), 'header');
     for (const extra of [{ jku: 'https://evil.test/keys' }, { x5u: 'https://evil.test/c' }, { crit: ['exp'], exp: 1 }, { cty: 'JWT' }]) {
       // Signed by the trusted key itself: only the header's extra member is wrong.
       const other = await signRaw(key, { alg: 'EdDSA', kid: 'k1', typ: ENTITLEMENT_JWS_TYPE, ...extra });
-      forgeries.push({ name: 'header extra', jws: () => other });
       await expectInvalid(other, at(T0_MS), 'header');
     }
     // b64: false (RFC 7797, unencoded payload) is refused before any verification.
@@ -157,12 +186,10 @@ describe('verifySnapshot', () => {
     const cases: Record<string, unknown>[] = [{ iss: 'someone-else' }, { aud: 'frost-web' }, { aud: ['frost-desktop'] }, { ver: 2 }, { ver: undefined }, { email: 'not-an-email' }];
     for (const overrides of cases) {
       const jws = await sign(key, proClaims(T0, overrides));
-      forgeries.push({ name: `claims ${JSON.stringify(overrides)}`, jws: () => jws });
       await expectInvalid(jws, at(T0_MS), 'claims');
     }
     for (const typ of ['JWT', 'at+jwt']) {
       const jws = await sign(key, proClaims(), { alg: 'EdDSA', kid: 'k1', typ });
-      forgeries.push({ name: `typ ${typ}`, jws: () => jws });
       await expectInvalid(jws, at(T0_MS), 'header');
     }
     // A payload that is not JSON, under a valid signature.
@@ -172,23 +199,30 @@ describe('verifySnapshot', () => {
 
   test('wrong-sub-is-invalid', async () => {
     const jws = await sign(key, proClaims(T0, { sub: 'user-2' }));
-    forgeries.push({ name: 'other account', jws: () => jws });
     await expectInvalid(jws, at(T0_MS), 'sub');
     await expectInvalid(await sign(key), at(T0_MS, { expectedSub: 'user-2' }), 'sub');
     await expectInvalid(await sign(key), at(T0_MS, { expectedSub: '' }), 'sub');
   });
 
-  test('future-iat-beyond-skew-is-invalid', async () => {
-    const skew = MAX_CLOCK_SKEW_SECONDS;
-    await expectInvalid(await sign(key, proClaims(T0 + skew + 1)), at(T0_MS), 'iat');
-    expect((await verifySnapshot(await sign(key, proClaims(T0 + skew)), at(T0_MS))).entitlements.status).toBe('active');
-    // The skew is measured from the effective now (the high-water mark), not a clock set back.
-    expect((await verifySnapshot(await sign(key, proClaims(T0 + 3600)), at(T0_MS, { highWaterMs: T0_MS + 3600_000 }))).entitlements.status).toBe('active');
+  test('future-iat-is-bounded', async () => {
+    const bound = MAX_FUTURE_IAT_SECONDS;
+    // A clock an hour (or up to a TTL) slow: the signed iat is real server time, accepted.
+    for (const ahead of [3600, bound]) {
+      const result = await verifySnapshot(await sign(key, proClaims(T0 + ahead)), at(T0_MS));
+      expect(result.ok, String(ahead)).toBe(true);
+      // Judged from its own iat: active, with its own exp (the life is not lengthened).
+      expect(result.entitlements).toMatchObject({ status: 'active', expiresAtMs: (T0 + ahead + ENTITLEMENT_TTL_SECONDS) * 1000 });
+      if (result.ok) expect(result.iat).toBe(T0 + ahead);
+    }
+    await expectInvalid(await sign(key, proClaims(T0 + bound + 1)), at(T0_MS), 'iat');
+    // The bound is measured from the effective now (the high-water mark), not a clock set back.
+    expect((await verifySnapshot(await sign(key, proClaims(T0 + bound + 3600)), at(T0_MS, { highWaterMs: T0_MS + 3600_000 }))).entitlements.status).toBe('active');
+    // Judged from iat even offline at a clock long before it: never grace or expired early.
+    expect((await verifySnapshot(await sign(key, proClaims(T0 + 3600)), at(T0_MS - 2 * DAY_MS, { offline: true }))).entitlements.status).toBe('active');
   });
 
   test('ttl-over-limit-is-invalid', async () => {
     const jws = await sign(key, proClaims(T0, { exp: T0 + ENTITLEMENT_TTL_SECONDS + 1 }));
-    forgeries.push({ name: 'long ttl', jws: () => jws });
     await expectInvalid(jws, at(T0_MS), 'claims');
     await expectInvalid(await sign(key, proClaims(T0, { exp: T0 + 365 * 86400 })), at(T0_MS), 'claims');
   });
@@ -269,10 +303,9 @@ describe('verifySnapshot', () => {
     expect(forgeries.length).toBeGreaterThan(20);
     const times = [T0_MS, EXP_MS - 1, EXP_MS + 1, GRACE_END_MS - 1, GRACE_END_MS + 1];
     for (const forgery of forgeries) {
-      const jws = await forgery.jws();
       for (const now of times) {
         for (const offline of [false, true]) {
-          const result = await verifySnapshot(jws, at(now, { offline, ...(forgery.jwks ? { jwks: forgery.jwks() } : {}) }));
+          const result = await verifySnapshot(forgery.jws, at(now, { offline, ...(forgery.jwks === undefined ? {} : { jwks: forgery.jwks }) }));
           expect(result.entitlements.status, forgery.name).toBe('invalid');
           expect(result.entitlements.features, forgery.name).toEqual([]);
           expect(result.entitlements.plan, forgery.name).toBe('free');

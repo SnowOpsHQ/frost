@@ -151,6 +151,42 @@ describe('entitlements store', () => {
     expect(seen).toEqual(['active', 'grace', 'expired']);
   });
 
+  test('onchange-in-order-when-reentrant', async () => {
+    const { entitlements } = await open(memoryStore());
+    const first: string[] = [];
+    const second: string[] = [];
+    entitlements.onChange((e) => {
+      first.push(e.status);
+      // Sign out from inside the notification (as a UI reaction might).
+      if (e.status === 'active') entitlements.clear();
+    });
+    entitlements.onChange((e) => second.push(e.status));
+    await entitlements.update(await sign(key), SUB);
+    expect(first).toEqual(['active', 'none']);
+    expect(second).toEqual(['active', 'none']);
+    expect(entitlements.current()).toEqual(NO_ENTITLEMENTS);
+  });
+
+  test('reads-do-not-rearm-timer', async () => {
+    const { entitlements } = await open(memoryStore());
+    await entitlements.update(await sign(key), SUB);
+    const setTimer = vi.spyOn(globalThis, 'setTimeout');
+    const clearTimer = vi.spyOn(globalThis, 'clearTimeout');
+    for (let i = 0; i < 50; i++) {
+      entitlements.current();
+      entitlements.has('sync');
+      entitlements.requireFeature('ai-agent');
+    }
+    expect(setTimer).not.toHaveBeenCalled();
+    expect(clearTimer).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+    // The boundary moves (a network failure past exp): re-armed once.
+    vi.setSystemTime(EXP_MS + 1);
+    entitlements.markRefreshFailed('network');
+    expect(entitlements.current().status).toBe('grace');
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
   test('entitlements-persist-across-instances', async () => {
     const store = memoryStore();
     const first = await open(store);
@@ -207,6 +243,58 @@ describe('entitlements store', () => {
     vi.setSystemTime(T0_MS + HIGH_WATER_PERSIST_INTERVAL_MS);
     entitlements.has('sync');
     expect(store.write.mock.calls.length).toBe(writes + 1);
+  });
+
+  test('clock-jump-ahead-does-not-lock-out', async () => {
+    const store = memoryStore();
+    const { entitlements } = await open(store);
+    await entitlements.update(await sign(key), SUB);
+    // The clock jumps to 2099 for a moment: the held snapshot is expired (as that clock says).
+    vi.setSystemTime(Date.UTC(2099, 0, 1));
+    expect(entitlements.current().status).toBe('expired');
+    // Back to the real time: the held snapshot stays expired (a clock set back revives nothing) …
+    vi.setSystemTime(T0_MS + 3600_000);
+    expect(entitlements.current().status).toBe('expired');
+    // … but a fresh snapshot is active.
+    await entitlements.update(await sign(key, proClaims(T0 + 3600)), SUB);
+    expect(entitlements.current()).toMatchObject({ status: 'active', features: [...PLAN_FEATURES.pro] });
+    entitlements.dispose();
+
+    // Across a restart and a sign-out too.
+    vi.setSystemTime(Date.UTC(2099, 0, 1));
+    const second = await open(store);
+    expect(second.entitlements.current().status).toBe('expired');
+    second.entitlements.clear();
+    second.entitlements.dispose();
+    vi.setSystemTime(T0_MS + 7200_000);
+    const third = await open(store);
+    await third.entitlements.update(await sign(key, proClaims(T0 + 7200)), SUB);
+    expect(third.entitlements.current().status).toBe('active');
+    // An older snapshot replayed with the clock set back is still judged at the mark.
+    third.entitlements.clear();
+    vi.setSystemTime(GRACE_END_MS + 2 * DAY_MS);
+    third.entitlements.current();
+    third.entitlements.markRefreshFailed('network');
+    vi.setSystemTime(T0_MS);
+    await third.entitlements.update(await sign(key, proClaims(T0 + 7200)), SUB);
+    expect(third.entitlements.current().status).toBe('expired');
+  });
+
+  test('slow-clock-accepts-fresh-snapshot', async () => {
+    const store = memoryStore();
+    const { entitlements } = await open(store);
+    await entitlements.update(await sign(key), SUB);
+    // The client clock is an hour slow; the server signs real time.
+    const iat = T0 + 2 * 3600;
+    vi.setSystemTime(T0_MS + 3600_000);
+    await expect(entitlements.update(await sign(key, proClaims(iat)), SUB)).resolves.toMatchObject({ status: 'active', expiresAtMs: (iat + ENTITLEMENT_TTL_SECONDS) * 1000 });
+    // The mark was raised to the signed iat: a restart with the clock further back still judges from it.
+    entitlements.dispose();
+    vi.setSystemTime((iat + ENTITLEMENT_TTL_SECONDS) * 1000 - 1000);
+    const next = await open(store);
+    vi.setSystemTime(T0_MS);
+    expect(next.entitlements.current().status).toBe('active');
+    expect(JSON.parse(store.blobs.get('entitlements') ?? '{}')).toMatchObject({ highWaterMs: (iat + ENTITLEMENT_TTL_SECONDS) * 1000 - 1000 });
   });
 
   test('unverified-update-fails-closed', async () => {

@@ -2,8 +2,8 @@
 
 Spec: `specs/entitlements-snapshot.spec.ts` (the wire format, `EntitlementsSchema`, `NO_ENTITLEMENTS`,
 `INVALID_ENTITLEMENTS`, `ENTITLED_STATUSES`, `TIMED_STATUSES`, `OFFLINE_GRACE_MS`, `entitlementGrants`,
-`FEATURE_NOT_ENTITLED_CODE`, `ENTITLEMENT_REFRESH_FAILURES`, `HIGH_WATER_PERSIST_INTERVAL_MS`,
-`ENTITLEMENT_HEARTBEAT_MS`) and `specs/secret-store.spec.ts` (`SECRET_NAMES`, `SECRETS_DIR_NAME`,
+`FEATURE_NOT_ENTITLED_CODE`, `MAX_FUTURE_IAT_SECONDS`, `MAX_CLOCK_SKEW_SECONDS`, `CLOCK_MARK_HORIZON_MS`,
+`ENTITLEMENT_REFRESH_FAILURES`, `HIGH_WATER_PERSIST_INTERVAL_MS`, `ENTITLEMENT_HEARTBEAT_MS`) and `specs/secret-store.spec.ts` (`SECRET_NAMES`, `SECRETS_DIR_NAME`,
 `SECRET_FILE_SUFFIX`, `SECRET_TEMP_SUFFIX`, `SECRET_FILE_MODE`, `SECRETS_DIR_MODE`, `MAX_SECRET_CHARS`,
 `INSECURE_LINUX_BACKENDS`). Phase 4 Task 4; the backend side is `entitlements.feature.md`. Review
 focus "A snapshot cannot be forged or replayed past its life". Each line maps to one named test.
@@ -17,16 +17,27 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
   header's `kid` (unknown `kid` → `invalid`), and the signature is checked with EdDSA only.
 - **Claims.** The verified payload must match `EntitlementClaimsSchema` (`iss`, `aud`, `ver`,
   `exp - iat <= ENTITLEMENT_TTL_SECONDS`), its `sub` must be the signed-in user's ID, and its `iat`
-  at most `MAX_CLOCK_SKEW_SECONDS` after the effective now. Any failure is `INVALID_ENTITLEMENTS`.
-- **Effective now never moves back.** Main keeps a time high-water mark: the latest of every clock
-  reading and every verified `iat` (server time). Status is computed at `max(now, highWater)`, so
-  setting the clock back neither revives an expired snapshot nor extends grace. The mark is stored
-  with the snapshot (in the same blob, so one cannot be dropped without the other), written when it
-  changes state and at most every `HIGH_WATER_PERSIST_INTERVAL_MS` otherwise; a heartbeat raises it
-  at least every `ENTITLEMENT_HEARTBEAT_MS` while a snapshot is held. It survives sign-out.
+  at most `MAX_FUTURE_IAT_SECONDS` (one TTL) after the effective now. Any failure is
+  `INVALID_ENTITLEMENTS`. A future `iat` within that bound is signed server time, not a forgery: the
+  client clock is slow. The snapshot is judged from `max(effective now, iat)` and the high-water mark
+  is raised to it, so a slow clock neither refuses fresh snapshots nor lengthens their life.
+- **Effective now never moves back.** Main keeps a time high-water mark, and status is computed at
+  `max(now, highWater, iat)`, so setting the clock back neither revives an expired snapshot nor
+  extends grace. A verified `iat` (signed server time) raises the mark fully. A clock reading raises
+  it only up to `CLOCK_MARK_HORIZON_MS` past the latest verified `iat` (that snapshot's end of grace
+  plus skew): enough to keep every snapshot main has seen expired under a clock set back, no more.
+  A verified `iat` newer than any seen before supersedes what clock readings added, so a clock that
+  jumped ahead (to 2099) and came back does not lock out the next fresh snapshot. The mark and the
+  latest `iat` are stored with the snapshot (in the same blob, so one cannot be dropped without the
+  other), written when the state changes and, while a snapshot is held, at most every
+  `HIGH_WATER_PERSIST_INTERVAL_MS` otherwise; a heartbeat raises the mark at least every
+  `ENTITLEMENT_HEARTBEAT_MS`. Both survive sign-out.
 - **Status over time.** `active` before `exp`; after it, `grace` until `exp + OFFLINE_GRACE_SECONDS`
   only while the last refresh failed for a network reason; otherwise `expired` (free). Status is
-  recomputed on every read and at the next boundary (a timer), and `onChange` fires when it changes.
+  recomputed on every read and at the next boundary (one timer, re-armed only when the boundary
+  changes, heartbeat at most `ENTITLEMENT_HEARTBEAT_MS`), and `onChange` fires when it changes.
+  Notifications are queued: a listener that changes the state (`clear()` …) from inside `onChange`
+  never makes another listener see the changes out of order.
 - **A refresh that fails.** `network` keeps the snapshot and allows grace; `auth` (the server refused
   the credential) drops it (`none`); `invalid` (an answer that does not verify) and an `update` with
   a snapshot that does not verify replace whatever was held with `invalid` (free), logged with a
@@ -35,8 +46,22 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
   `free` (its known flags still count, since gating reads flags).
 - **Secrets need a real keychain.** The secret store encrypts with `safeStorage`; it is memory-only
   (nothing written, `persistent: false`) when encryption is unavailable or Linux selected
-  `basic_text` or `unknown`. A blob that does not decrypt or parse is treated as absent and deleted.
-  Logs name the blob, never its content.
+  `basic_text` or `unknown`. That is decided once, at creation, so it must be created after the app
+  is ready (`isReady`; before it, Linux answers wrongly): creating it earlier throws. A blob that does
+  not decrypt reads as absent; its file is kept (the keyring may only be locked, as at login) unless
+  the keychain already worked in this run (a decrypt or encrypt succeeded), when it is deleted as
+  corrupt. An empty file, or one that decrypts to something the store never wrote, is deleted at
+  once. Logs name the blob, never its content.
+
+## Accepted residual risks
+- **Offline replay with a restored state and a clock set back.** Someone who copies the
+  `entitlements` blob aside while a snapshot is valid, later puts it back and sets the clock back
+  into that snapshot's life gets its features until its `exp` (in that clock's terms). The blob is
+  encrypted by the keychain but readable by the same OS user, and a client without a trusted clock
+  cannot tell. The same holds for a stockpiled snapshot replayed through a forged server answer (a
+  user-trusted TLS root). Bounded by the TTL (3 days of the moved clock per snapshot); it ends at the
+  next refresh the server answers. Not mitigated further in v1 (a mirrored mark in a second blob
+  would be restored the same way).
 
 ## Spec schemas (`apps/desktop/src/main/account/__tests__/entitlements-spec.test.ts`)
 - `header-schema-is-exact` — the header schema refuses `jwk`, `jku`, `x5u`, `crit`, `b64`, another `alg` (`none`, `HS256`, `ES256`) and another `typ`.
@@ -57,7 +82,7 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
 - `embedded-jwk-header-is-ignored` — a snapshot signed by another key that embeds it as `jwk` (with a trusted `kid`) is `invalid`.
 - `wrong-claims-are-invalid` — another `iss`, `aud`, `typ` or `ver` is `invalid`.
 - `wrong-sub-is-invalid` — a snapshot for another account is `invalid`.
-- `future-iat-beyond-skew-is-invalid` — `iat` beyond `MAX_CLOCK_SKEW_SECONDS` after the effective now is `invalid`; within it, `active`.
+- `future-iat-is-bounded` — an `iat` up to `MAX_FUTURE_IAT_SECONDS` after the effective now (a slow clock) is `active` with its own `exp`, judged from `iat`; beyond it, `invalid`.
 - `ttl-over-limit-is-invalid` — `exp - iat > ENTITLEMENT_TTL_SECONDS` is `invalid` even when signed.
 - `expired-online-is-free` — past `exp` without a network failure: `expired`, `free`, no features.
 - `expired-offline-within-grace-is-grace` — past `exp`, offline, before `graceEndsAtMs`: `grace` with the flags.
@@ -72,8 +97,12 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
 - `reader-current-has-require` — `current()`, `has(flag)` and `requireFeature(flag)` agree with the verified snapshot.
 - `require-feature-throws-coded-error` — `requireFeature` throws `FeatureNotEntitledError` with `code = FEATURE_NOT_ENTITLED_CODE` and the flag.
 - `onchange-fires-at-boundary` — an `active` snapshot becomes `expired` (online) or `grace` then `expired` (offline) at its boundaries without a new update, and `onChange` fires once per change; unsubscribing stops it.
+- `onchange-in-order-when-reentrant` — a listener that calls `clear()` from `onChange` does not make another listener see `none` before `active`.
+- `reads-do-not-rearm-timer` — repeated `current()`, `has()` and `requireFeature()` create no new timer while the boundary is unchanged.
 - `entitlements-persist-across-instances` — a new instance over the same store answers the same entitlements (offline flag included).
 - `high-water-persists` — a restart with the clock set back does not revive an expired snapshot; between state changes reads write the mark at most every `HIGH_WATER_PERSIST_INTERVAL_MS`.
+- `clock-jump-ahead-does-not-lock-out` — with the clock at 2099 and back (also across a restart and a sign-out), the held snapshot stays expired, but a fresh snapshot is `active`.
+- `slow-clock-accepts-fresh-snapshot` — with the clock an hour slow, a fresh snapshot replaces the held one as `active` (not `invalid`), and the mark is raised to its `iat`.
 - `older-snapshot-does-not-replace-newer` — a verified snapshot with an earlier `iat` than the held one (same account) is ignored.
 - `update-racing-clear-does-not-revive` — an `update` whose verification finishes after `clear()` changes nothing.
 - `missing-jwks-makes-every-snapshot-invalid` — without a usable JWKS every update is `invalid`, and a stored snapshot is re-verified at start against this build's keys.
@@ -88,7 +117,9 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
 - `basic-text-is-memory-only` — with Linux `basic_text` nothing is written to disk and `persistent` is false; values live for the run.
 - `unknown-backend-is-memory-only` — with Linux `unknown`, as `basic_text`.
 - `encryption-unavailable-is-memory-only` — with encryption unavailable, as `basic_text`.
-- `corrupt-secret-is-absent` — a blob that does not decrypt reads as absent, is deleted, and the log names the blob only.
+- `undecryptable-secret-is-kept` — before the keychain worked in this run, a blob that does not decrypt reads as absent but its file stays (a later read may succeed); the log names the blob only.
+- `corrupt-secret-is-deleted` — after a decrypt or encrypt succeeded, a blob that does not decrypt is deleted; an empty file is deleted at once.
+- `secret-store-needs-app-ready` — creating the store before the app is ready throws.
 - `secret-names-allowlisted` — a name outside `SECRET_NAMES` (or a path) is refused, as is an over-long value.
 - `secret-delete-and-clear` — `delete(name)` and `clear()` remove blobs (and stray temporary files).
 - `failed-write-leaves-no-stale-value` — when the rename fails, the old file is removed and the run keeps the new value.

@@ -33,6 +33,12 @@ export type SecretStoreFs = Pick<typeof nodeFs, 'mkdirSync' | 'chmodSync' | 'rea
 export interface CreateSecretStoreOptions {
   /** The blobs' directory: main passes `path.join(app.getPath('userData'), SECRETS_DIR_NAME)`. */
   readonly dir: string;
+  /**
+   * Whether the app is ready (main passes `() => app.isReady()`). Whether the keychain is usable is
+   * decided once, at creation, and on Linux `safeStorage` answers wrongly before `ready`; so creating
+   * the store earlier throws. Create it after `app.whenReady()`.
+   */
+  readonly isReady: () => boolean;
   readonly safeStorage: SafeStorageLike;
   readonly fs?: SecretStoreFs;
   readonly log: (message: string) => void;
@@ -46,7 +52,12 @@ export interface SecretStore {
    * memory-only, because encryption is unavailable or Linux selected `basic_text` / `unknown`.
    */
   readonly persistent: boolean;
-  /** The value, or `null` when absent (a blob that does not decrypt is absent, and is deleted). */
+  /**
+   * The value, or `null` when absent. A blob that does not decrypt is absent: its file is kept while
+   * the keychain has not worked yet in this run (it may only be locked; a later read retries), and
+   * deleted as corrupt once a decrypt or encrypt has succeeded. An empty file, or one that decrypts
+   * to something the store never wrote, is deleted at once.
+   */
   read(name: SecretName): string | null;
   /** Stores `value`. A failed disk write keeps it for this run and removes the stale file. */
   write(name: SecretName, value: string): void;
@@ -81,10 +92,13 @@ export function keychainAvailable(safeStorage: SafeStorageLike, platform: NodeJS
 
 export function createSecretStore(options: CreateSecretStoreOptions): SecretStore {
   const { dir, safeStorage, log } = options;
+  if (!options.isReady()) throw new Error('secret store: create it after the app is ready (app.whenReady())');
   const fs = options.fs ?? nodeFs;
   const persistent = keychainAvailable(safeStorage, options.platform ?? process.platform);
   /** Values of this run: every value in memory-only mode, a read-through cache otherwise. */
   const values = new Map<SecretName, string>();
+  /** Whether `safeStorage` encrypted or decrypted successfully in this run (the keychain is unlocked). */
+  let keychainWorked = false;
   const fileOf = (name: SecretName) => path.join(dir, `${name}${SECRET_FILE_SUFFIX}`);
 
   const removeFile = (file: string): void => {
@@ -106,6 +120,7 @@ export function createSecretStore(options: CreateSecretStoreOptions): SecretStor
     const temp = `${file}.${randomBytes(6).toString('hex')}${SECRET_TEMP_SUFFIX}`;
     try {
       const encrypted = safeStorage.encryptString(value);
+      keychainWorked = true;
       ensureDir();
       fs.writeFileSync(temp, encrypted, { mode: SECRET_FILE_MODE, flag: 'wx' });
       fs.chmodSync(temp, SECRET_FILE_MODE);
@@ -127,15 +142,24 @@ export function createSecretStore(options: CreateSecretStoreOptions): SecretStor
       if (errorCode(error) !== 'ENOENT') log(`secret store: could not read ${name} (${errorCode(error)})`);
       return null;
     }
-    try {
-      const value = safeStorage.decryptString(encrypted);
-      if (typeof value !== 'string' || value.length > MAX_SECRET_CHARS) throw new Error('not a stored value');
-      return value;
-    } catch {
-      log(`secret store: ${name} could not be decrypted; discarded`);
+    const discard = (): null => {
+      log(`secret store: ${name} is corrupt; discarded`);
       removeFile(file);
       return null;
+    };
+    if (encrypted.length === 0) return discard();
+    let value: unknown;
+    try {
+      value = safeStorage.decryptString(encrypted);
+    } catch {
+      // Before the keychain worked in this run, it may only be locked (as at login): keep the file.
+      if (keychainWorked) return discard();
+      log(`secret store: ${name} could not be decrypted (keychain locked?); left in place`);
+      return null;
     }
+    keychainWorked = true;
+    if (typeof value !== 'string' || value.length > MAX_SECRET_CHARS) return discard();
+    return value;
   };
 
   return {

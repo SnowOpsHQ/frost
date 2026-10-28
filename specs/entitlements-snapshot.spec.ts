@@ -28,8 +28,10 @@
  *   display value) may ship under the same `ver`; one that restricts (a device binding, a
  *   `not-before` …) must raise `ENTITLEMENT_CLAIMS_VERSION`, which older clients refuse (fail closed).
  * - **What a schema cannot check.** `EntitlementClaimsSchema` has no clock: the client checks
- *   `iat <= now + MAX_CLOCK_SKEW_SECONDS` itself (against its time high-water mark, never a clock that
- *   moved back), and `sub` against the signed-in user. Desktop rules: `entitlements-client.feature.md`.
+ *   `iat <= effective now + MAX_FUTURE_IAT_SECONDS` itself (effective now: its time high-water mark,
+ *   never a clock that moved back) and judges the snapshot from `max(effective now, iat)`, so a slow
+ *   client clock neither refuses a fresh snapshot nor lengthens its life; and it checks `sub` against
+ *   the signed-in user. Desktop rules: `entitlements-client.feature.md`.
  *
  * Depends only on Zod.
  */
@@ -96,8 +98,17 @@ export const ENTITLEMENT_TTL_SECONDS = 3 * 24 * 60 * 60;
  * this long (`grace`): 7 days. Never after a refusal from the server, and never on a moved-back clock.
  */
 export const OFFLINE_GRACE_SECONDS = 7 * 24 * 60 * 60;
-/** How far `iat` may be in the client's future (clock skew) before the snapshot is refused. */
+/**
+ * Clock skew allowance between client and server: the slack above a snapshot's end of grace up to
+ * which a clock reading may still raise the client's time high-water mark (`CLOCK_MARK_HORIZON_MS`).
+ */
 export const MAX_CLOCK_SKEW_SECONDS = 5 * 60;
+/**
+ * How far `iat` (signed server time) may be ahead of the client's effective now before the snapshot is
+ * refused: one TTL. A client clock that runs slow still accepts fresh snapshots; the snapshot is judged
+ * from its own `iat` (and the high-water mark is raised to it), so this never extends its life.
+ */
+export const MAX_FUTURE_IAT_SECONDS = ENTITLEMENT_TTL_SECONDS;
 
 /** A key ID: letters, digits, `.`, `_`, `-` (an RFC 7638 thumbprint fits). */
 export const ENTITLEMENT_KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
@@ -128,7 +139,7 @@ const NumericDateSchema = z.int().nonnegative();
  * the account's user ID, which the client compares with the signed-in user; `plan` and `features`
  * may hold values this build does not know (unknown flags are ignored, never an error). `exp` is
  * after `iat` by at most `ENTITLEMENT_TTL_SECONDS`. The client checks `iat` against its own clock
- * (`MAX_CLOCK_SKEW_SECONDS`): this schema cannot.
+ * (`MAX_FUTURE_IAT_SECONDS`): this schema cannot.
  */
 export const EntitlementClaimsSchema = z
   .object({
@@ -281,6 +292,15 @@ export const FEATURE_NOT_ENTITLED_CODE = 'FEATURE_NOT_ENTITLED';
  */
 export const ENTITLEMENT_REFRESH_FAILURES = ['network', 'auth', 'invalid'] as const;
 export type EntitlementRefreshFailure = (typeof ENTITLEMENT_REFRESH_FAILURES)[number];
+
+/**
+ * How far past the latest verified `iat` a **clock reading** may raise main's time high-water mark:
+ * that snapshot's end of grace plus `MAX_CLOCK_SKEW_SECONDS`. Far enough that a clock set back never
+ * revives any snapshot main has seen; no further, so a clock that jumped ahead (to 2099, say) and came
+ * back does not lock out the next fresh snapshot. A verified `iat` raises the mark without this cap, and
+ * a newer verified `iat` supersedes what clock readings added before it.
+ */
+export const CLOCK_MARK_HORIZON_MS = (ENTITLEMENT_TTL_SECONDS + OFFLINE_GRACE_SECONDS + MAX_CLOCK_SKEW_SECONDS) * 1000;
 
 /** Main writes its time high-water mark at most this often while the clock only moves forward. */
 export const HIGH_WATER_PERSIST_INTERVAL_MS = 60_000;

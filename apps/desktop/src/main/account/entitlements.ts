@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  CLOCK_MARK_HORIZON_MS,
   COMPACT_JWS_PATTERN,
   ENTITLEMENT_HEARTBEAT_MS,
   ENTITLEMENT_REFRESH_FAILURES,
@@ -22,10 +23,16 @@ import type { SecretStore } from './secret-store';
 // No Electron import: main passes the secret store, the build's JWKS and a log.
 //
 // State: what is held (nothing, a refused snapshot, or a verified snapshot with its account), whether
-// the last refresh failed for a network reason, and the time high-water mark. It lives in one secret
-// blob (`ENTITLEMENTS_SECRET`), so the mark cannot be dropped without the snapshot. `current()`
-// recomputes the status from the verified claims at `max(now, highWater)` on every read; a timer at
-// the next boundary (and a heartbeat) recomputes it unasked and fires `onChange`.
+// the last refresh failed for a network reason, the time high-water mark and the latest verified
+// `iat`. It lives in one secret blob (`ENTITLEMENTS_SECRET`), so the mark cannot be dropped without
+// the snapshot. `current()` recomputes the status from the verified claims at `max(now, highWater,
+// iat)` on every read; a timer at the next boundary (and a heartbeat) recomputes it unasked and fires
+// `onChange` (notifications queued, so a listener that changes the state keeps them in order).
+//
+// The mark: a verified `iat` (signed server time) raises it fully; a clock reading only up to
+// `CLOCK_MARK_HORIZON_MS` past the latest verified `iat` (past every seen snapshot's end of grace, so
+// a clock set back revives none of them); and a verified `iat` newer than any before supersedes what
+// clock readings added, so a clock that jumped ahead and came back does not lock out a fresh snapshot.
 //
 // A snapshot that does not verify fails closed: whatever was held is replaced by `invalid` (free),
 // persisted, so neither a restart nor a later read brings an older valid snapshot back.
@@ -97,6 +104,8 @@ const StoredSnapshotSchema = z.strictObject({
 const PersistedStateSchema = z.strictObject({
   v: z.literal(1),
   highWaterMs: z.int().nonnegative(),
+  /** The latest verified `iat` (epoch ms), `0` before any. Survives sign-out, like the mark. */
+  maxIatMs: z.int().nonnegative(),
   offline: z.boolean(),
   held: z.discriminatedUnion('kind', [z.strictObject({ kind: z.literal('none') }), z.strictObject({ kind: z.literal('invalid') }), StoredSnapshotSchema]),
 });
@@ -133,7 +142,10 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
   const now = options.now ?? (() => Date.now());
 
   const stored = readState(store, log);
-  let highWaterMs = Math.max(stored?.highWaterMs ?? 0, now());
+  let maxIatMs = stored?.maxIatMs ?? 0;
+  /** A clock reading, capped: it may raise the mark only up to the horizon past the latest verified `iat`. */
+  const clockReading = (): number => Math.min(now(), maxIatMs + CLOCK_MARK_HORIZON_MS);
+  let highWaterMs = Math.max(stored?.highWaterMs ?? 0, clockReading());
   let persistedHighWaterMs = stored?.highWaterMs ?? -1;
   let offline = stored?.offline ?? false;
   let held: Held = stored?.held.kind === 'invalid' ? { kind: 'invalid' } : { kind: 'none' };
@@ -141,22 +153,27 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
   let generation = 0;
   let last: Entitlements | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** The boundary the armed timer leads to (re-armed only when it changes). */
+  let timerBoundary: number | null = null;
   let disposed = false;
   const listeners = new Set<(entitlements: Entitlements) => void>();
+  /** Changes not yet delivered to every listener, in order. */
+  const pending: Entitlements[] = [];
+  let delivering = false;
 
   const persist = (): void => {
     const heldState: PersistedState['held'] = held.kind === 'snapshot' ? { kind: 'snapshot', jws: held.jws, sub: held.sub } : { kind: held.kind };
-    const state: PersistedState = { v: 1, highWaterMs, offline, held: heldState };
+    const state: PersistedState = { v: 1, highWaterMs, maxIatMs, offline, held: heldState };
     store.write(ENTITLEMENTS_SECRET, JSON.stringify(state));
     persistedHighWaterMs = highWaterMs;
   };
 
   /**
-   * Raises the mark to the clock. While a snapshot is held, writes it when it moved by
+   * Raises the mark to the (capped) clock. While a snapshot is held, writes it when it moved by
    * `HIGH_WATER_PERSIST_INTERVAL_MS` (any amount with `force`); every change of state writes it too.
    */
   const tick = (force = false): void => {
-    highWaterMs = Math.max(highWaterMs, now());
+    highWaterMs = Math.max(highWaterMs, clockReading());
     if (held.kind !== 'snapshot') return;
     if (force ? highWaterMs > persistedHighWaterMs : highWaterMs - persistedHighWaterMs >= HIGH_WATER_PERSIST_INTERVAL_MS) persist();
   };
@@ -172,21 +189,56 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
     }
   };
 
-  const schedule = (entitlements: Entitlements): void => {
+  const disarm = (): void => {
     clearTimeout(timer);
     timer = undefined;
-    if (disposed || held.kind !== 'snapshot' || entitlements.graceEndsAtMs === null || entitlements.expiresAtMs === null) return;
-    const at = effectiveNow(now(), highWaterMs);
-    // The next boundary: exp while active; the end of grace after it (a heartbeat in between).
-    const boundary = at < entitlements.expiresAtMs ? entitlements.expiresAtMs : entitlements.graceEndsAtMs;
-    if (at >= entitlements.graceEndsAtMs) return;
+    timerBoundary = null;
+  };
+
+  /**
+   * Arms one timer for the next boundary (exp while active; the end of grace after it), firing at
+   * most `ENTITLEMENT_HEARTBEAT_MS` later. Left alone while the boundary is unchanged, so reads do not
+   * re-arm it; the heartbeat bounds how late a jump of the mark is noticed unasked.
+   */
+  const schedule = (entitlements: Entitlements): void => {
+    let boundary: number | null = null;
+    let at = 0;
+    if (!disposed && held.kind === 'snapshot' && entitlements.expiresAtMs !== null && entitlements.graceEndsAtMs !== null) {
+      at = Math.max(effectiveNow(now(), highWaterMs), held.claims.iat * 1000);
+      if (at < entitlements.graceEndsAtMs) boundary = at < entitlements.expiresAtMs ? entitlements.expiresAtMs : entitlements.graceEndsAtMs;
+    }
+    if (boundary === null) return disarm();
+    if (timer !== undefined && boundary === timerBoundary) return;
+    disarm();
     const delay = Math.min(Math.max(boundary - at, 0), ENTITLEMENT_HEARTBEAT_MS, MAX_TIMER_MS);
+    timerBoundary = boundary;
     timer = setTimeout(() => {
       timer = undefined;
+      timerBoundary = null;
       tick(true);
       refresh();
     }, delay);
     (timer as { unref?: () => void }).unref?.();
+  };
+
+  /** Delivers queued changes in order; a change made by a listener is delivered after the current one. */
+  const notify = (entitlements: Entitlements): void => {
+    pending.push(entitlements);
+    if (delivering) return;
+    delivering = true;
+    try {
+      for (let next = pending.shift(); next !== undefined; next = pending.shift()) {
+        for (const listener of [...listeners]) {
+          try {
+            listener(next);
+          } catch {
+            log('entitlements: a change listener threw');
+          }
+        }
+      }
+    } finally {
+      delivering = false;
+    }
   };
 
   /** Recomputes, notifies on a change and re-arms the timer. */
@@ -195,15 +247,7 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
     const changed = last === null || JSON.stringify(last) !== JSON.stringify(entitlements);
     last = entitlements;
     schedule(entitlements);
-    if (changed) {
-      for (const listener of [...listeners]) {
-        try {
-          listener(entitlements);
-        } catch {
-          log('entitlements: a change listener threw');
-        }
-      }
-    }
+    if (changed) notify(entitlements);
     return entitlements;
   };
 
@@ -254,7 +298,14 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
         return current();
       } else {
         held = { kind: 'snapshot', jws: snapshot, sub, claims: result.claims };
-        highWaterMs = Math.max(highWaterMs, result.iat * 1000);
+        const iatMs = result.iat * 1000;
+        if (iatMs > maxIatMs) {
+          // Newer signed time than any seen: it supersedes what (capped) clock readings added.
+          maxIatMs = iatMs;
+          highWaterMs = Math.max(iatMs, clockReading());
+        } else {
+          highWaterMs = Math.max(highWaterMs, iatMs);
+        }
       }
       offline = false;
       tick();
@@ -284,9 +335,9 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
     },
     dispose() {
       disposed = true;
-      clearTimeout(timer);
-      timer = undefined;
+      disarm();
       listeners.clear();
+      pending.length = 0;
     },
   };
 }
