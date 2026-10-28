@@ -427,7 +427,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
     - intent from the fake engine in the real utility process;
     - probes against a site with per-agent robots.txt and headers;
     - nothing is requested before the user acts.
-- [ ] commit `feat(chrome): SERP and Visibility panels`
+- [x] commit `feat(chrome): SERP and Visibility panels`
 - [ ] Review fixes: commit `fix(chrome): address SERP panels review findings`
 
 ### Task 7: Release check and docs

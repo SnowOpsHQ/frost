@@ -23,11 +23,11 @@ export function lengthIndicator(length: number | null | undefined, min: number, 
   return 'ok';
 }
 
-/** Each available panel's rail dot for a ready audit (`panelStatus`); none otherwise, and never for unavailable panels. */
+/** Each available panel's rail dot for a ready audit (`panelStatus`); none otherwise, never for unavailable panels, nor for a panel without rule categories. */
 export function railStatuses(response: SeoAuditResponse | null): Partial<Record<SeoPanelId, PanelStatus>> {
   if (response?.status !== 'ready') return {};
   const statuses: Partial<Record<SeoPanelId, PanelStatus>> = {};
-  for (const panel of SEO_PANELS) if (panel.available) statuses[panel.id] = panelStatus(response.audit.findings, panel.categories);
+  for (const panel of SEO_PANELS) if (panel.available && panel.categories.length > 0) statuses[panel.id] = panelStatus(response.audit.findings, panel.categories);
   return statuses;
 }
 
