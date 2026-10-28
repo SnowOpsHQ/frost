@@ -71,9 +71,15 @@ line maps to one named test.
   `FROST_PUBLIC_*` value baked in at all (the account's and telemetry's included) reads them from the
   run-time environment, and only such a build reads the `GSC_ENDPOINT_ENV` fakes (`https:`, or `http:`
   on loopback). Anything missing or malformed is `unconfigured`.
+- **Startup never stops the window.** Any exception while Search Console is set up in main
+  (`createGscMain`) falls back to an `unconfigured` service, logged with a fixed message, so the
+  first window always opens.
 - **Logs carry no secret:** fixed messages through the account's redactor, plus Google's token shapes
   and every token, code, verifier, `state` and the client secret seen in the run (the client secret and
   refresh tokens are kept outside the recent-values cap, so they are scrubbed for the whole run).
+
+## Startup (`apps/desktop/src/main/__tests__/startup-fallback.test.ts`, faked Electron)
+- `gsc-start-failure-is-unconfigured` — an exception while Search Console is set up answers an `unconfigured`, not connected service, logged with a fixed message only.
 
 ## Spec schema (`apps/desktop/src/main/gsc/__tests__/gsc-spec.test.ts`)
 - `gsc-scope-constant-is-read-only` — `GSC_SCOPE` is exactly the `webmasters.readonly` scope, and the fixed consent parameters ask for it alone (S256, offline, consent).

@@ -57,6 +57,9 @@ renderer never sees a token". Each line maps to one named test.
   snapshot or email that might still reach it is replaced.
 - **Fails closed.** `entitlements` is `none` unless `signed-in`, so `requireFeature` never passes on a
   request that was not confirmed, nor on a snapshot left behind without an account.
+- **Startup never stops the window.** Any exception while the account is set up in main
+  (`createAccountMain`) falls back to an `unconfigured` account (memory-only store, no entitlements:
+  the reader answers `none`), logged with a fixed message, so the first window always opens.
 
 ## Spec schema (`apps/desktop/src/main/account/__tests__/account-state-spec.test.ts`)
 - `state-schema-has-no-secret-fields` — a state with a `token`, `code`, `verifier`, `state`, `snapshot` or `userId` member is refused; the user carries only `email` and `name`.
@@ -126,6 +129,9 @@ renderer never sees a token". Each line maps to one named test.
 - `memory-only-token-revoked-on-dispose` — with a memory-only store, `dispose()` (the quit) revokes the signed-in account's token and answers the revocation to hold the quit for; with a persistent store it revokes nothing (the token outlives the run).
 - `watch-long-polls` — `watch` answers at once for an older version, else at the next change; aborting releases it; more than `MAX_PENDING_ACCOUNT_WATCHES` answer the oldest early.
 - `logs-carry-no-secret` — across every path above, the log never contains the fake token, code, verifier, `state`, snapshot or email.
+
+## Startup (`apps/desktop/src/main/__tests__/startup-fallback.test.ts`, faked Electron)
+- `account-start-failure-is-unconfigured` — an exception while the account is set up answers an `unconfigured` account whose reader is `none`, logged with a fixed message only.
 
 ## Quitting (`apps/desktop/src/main/account/__tests__/quit.test.ts`, fake app)
 - `quit-held-only-for-revocations` — with nothing to revoke (a memory-only account counts: its token is revoked at quit), `will-quit` passes; otherwise it is held until the revocations settle or `QUIT_REVOKE_TIMEOUT_MS` passes, then quits again once; another holder (telemetry) holding the same quit does not make it hang or quit twice.

@@ -282,3 +282,17 @@ export async function createSecretStore(options: CreateSecretStoreOptions): Prom
     },
   };
 }
+
+/** A store that keeps nothing beyond this run (main's fallback when the real one cannot be created). */
+export function memorySecretStore(): SecretStore {
+  const values = new Map<SecretName, string>();
+  return {
+    persistent: false,
+    read: (name) => (checkName(name), Promise.resolve(values.get(name) ?? null)),
+    write: (name, value) => (checkName(name), values.set(name, value), Promise.resolve()),
+    delete: (name) => (checkName(name), values.delete(name), Promise.resolve()),
+    clear: () => (values.clear(), Promise.resolve()),
+    pending: () => false,
+    whenIdle: () => Promise.resolve(),
+  };
+}

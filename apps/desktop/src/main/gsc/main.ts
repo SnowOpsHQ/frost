@@ -3,6 +3,7 @@ import { GSC_QUIT_REVOKE_TIMEOUT_MS } from '@app/specs/gsc.spec';
 import { startLoopback } from '../account/loopback';
 import type { AccountMain } from '../account/main';
 import { holdQuitFor } from '../account/quit';
+import { memorySecretStore } from '../account/secret-store';
 import { openExternalIfAllowed } from '../security/gesture';
 import { buildTimePublicEnv } from '../account/build-config';
 import { resolveGscConfig } from './config';
@@ -19,7 +20,38 @@ export interface GscMain {
 
 const log = (message: string): void => console.warn(`frost: ${message}`);
 
+/**
+ * Search Console in main. Never rejects: any exception while it is set up answers an unconfigured
+ * service, logged with a fixed message, so the first window always opens (`gsc.feature.md`, "Startup
+ * never stops the window").
+ */
 export async function createGscMain(account: AccountMain): Promise<GscMain> {
+  try {
+    return await startGscMain(account);
+  } catch {
+    log('gsc: could not start; unconfigured for this run');
+    return { service: await unconfiguredGscService() };
+  }
+}
+
+/** A service that is off for this run: nothing is read, stored or sent. */
+function unconfiguredGscService(): Promise<GscMainService> {
+  return createGscService({
+    config: null,
+    fetch: () => Promise.reject(new Error('gsc: unconfigured')),
+    store: memorySecretStore(),
+    entitled: () => false,
+    onEntitlementsChange: () => () => undefined,
+    userId: () => null,
+    onAccountChange: () => () => undefined,
+    startLoopback,
+    openInBrowser: () => false,
+    consumeGesture: () => false,
+    log,
+  });
+}
+
+async function startGscMain(account: AccountMain): Promise<GscMain> {
   // Build-time values; only an unpackaged build with none baked in reads them (and the fakes' endpoints) from its environment.
   const config = resolveGscConfig({ isPackaged: app.isPackaged, buildTime: buildTimePublicEnv(), runtime: process.env });
   const service = await createGscService({

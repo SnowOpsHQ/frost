@@ -1,7 +1,7 @@
 import type { TelemetryService } from '@app/ipc-contract';
 import { createTelemetry, type Send, type SpanAttributes, type Telemetry } from '@app/telemetry';
 import { RENDERER_ERROR_MECHANISMS, type RendererErrorInput, type RendererErrorResult, type TelemetryState } from '@app/specs/telemetry-consent.schema';
-import { TELEMETRY_LIMITS, TELEMETRY_PLATFORMS, type TelemetryChannel } from '@app/specs/telemetry-privacy.spec';
+import { DEFAULT_CONSENT, TELEMETRY_LIMITS, TELEMETRY_PLATFORMS, type TelemetryChannel } from '@app/specs/telemetry-privacy.spec';
 import { holdQuitFor } from '../account/quit';
 import type { TelemetryConfig } from './config';
 import type { ConsentStore } from './consent-store';
@@ -220,4 +220,26 @@ export function installTelemetry(deps: TelemetryMainDeps): TelemetryMain {
     flush: (options) => telemetry.flush(options),
   };
   return { telemetry: handle, service };
+}
+
+/**
+ * Telemetry that is unconfigured and off for this run (main's fallback when it cannot be set up):
+ * `span` runs its function and records nothing, `captureException` does nothing, nothing is ever
+ * sent, and `setConsent` changes nothing (there is nowhere to send to).
+ */
+export function unconfiguredTelemetryMain(): TelemetryMain {
+  const state = (): TelemetryState => ({ consent: { ...DEFAULT_CONSENT }, configured: { usage: false, errors: false }, persisted: true, version: 0 });
+  const telemetry: TelemetryHandle = {
+    span: (_name, _attributes, fn) => fn({ setAttributes: () => undefined }),
+    captureException: () => undefined,
+    consent: () => ({ ...DEFAULT_CONSENT }),
+    configured: () => ({ usage: false, errors: false }),
+    flush: () => Promise.resolve(),
+  };
+  const service: TelemetryService = {
+    state,
+    setConsent: () => state(),
+    reportError: () => 'dropped',
+  };
+  return { telemetry, service };
 }

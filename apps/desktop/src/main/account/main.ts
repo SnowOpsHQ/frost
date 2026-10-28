@@ -9,7 +9,7 @@ import { createEntitlements, entitlementsReaderOf, type EntitlementsController, 
 import { createWindowGestures, type WindowGestures } from './gestures';
 import { startLoopback } from './loopback';
 import { holdQuitFor } from './quit';
-import { createSecretStore, type SecretStore } from './secret-store';
+import { createSecretStore, memorySecretStore, type SecretStore } from './secret-store';
 import { redact } from './redact';
 import { createAccountService, type AccountMainService } from './service';
 import { createSettingsRequestsMain } from './settings-requests';
@@ -38,20 +38,6 @@ export interface AccountMain {
 
 const log = (message: string): void => console.warn(`frost: ${redact(message)}`);
 
-/** A store that keeps nothing beyond this run (used only if the real one cannot be created). */
-function memoryStore(): SecretStore {
-  const values = new Map<string, string>();
-  return {
-    persistent: false,
-    read: async (name) => values.get(name) ?? null,
-    write: async (name, value) => void values.set(name, value),
-    delete: async (name) => void values.delete(name),
-    clear: async () => values.clear(),
-    pending: () => false,
-    whenIdle: async () => undefined,
-  };
-}
-
 function focusWindow(windowId: number): void {
   const win = BrowserWindow.fromId(windowId);
   if (!win || win.isDestroyed()) return;
@@ -59,13 +45,58 @@ function focusWindow(windowId: number): void {
   win.focus();
 }
 
+/**
+ * The account in main. Never rejects: any exception while it is set up answers an unconfigured
+ * account (memory-only store, entitlements `none`), logged with a fixed message, so the first window
+ * always opens (`account-signin.feature.md`, "Startup never stops the window").
+ */
 export async function createAccountMain(): Promise<AccountMain> {
+  try {
+    return await startAccountMain();
+  } catch {
+    log('account: could not start; unconfigured for this run');
+    return unconfiguredAccountMain();
+  }
+}
+
+/** An account that is off for this run: nothing is sent, stored or entitled. */
+async function unconfiguredAccountMain(): Promise<AccountMain> {
+  const secretStore = memorySecretStore();
+  const service = await createAccountService({
+    config: null,
+    api: null,
+    store: secretStore,
+    entitlements: null,
+    startLoopback,
+    openInBrowser: () => false,
+    consumeGesture: () => false,
+    focusWindow: () => undefined,
+    log,
+  });
+  const gestures: WindowGestures = { consume: () => false, dispose: () => undefined };
+  let settings: ReturnType<typeof createSettingsRequestsMain> | null = null;
+  try {
+    settings = createSettingsRequestsMain();
+    app.once('will-quit', () => settings?.dispose());
+  } catch {
+    // Without it the menu's Settings… does nothing; the window still opens.
+  }
+  return {
+    service: settings ? Object.assign(service, { settings }) : service,
+    secretStore,
+    entitlements: entitlementsReaderOf(service),
+    gestures,
+    menu: { showSettings: (windowId) => settings?.show(windowId) },
+  };
+}
+
+async function startAccountMain(): Promise<AccountMain> {
   let secretStore: SecretStore;
   try {
     secretStore = await createSecretStore({ dir: path.join(app.getPath('userData'), SECRETS_DIR_NAME), safeStorage, isReady: () => app.isReady(), log });
   } catch {
     log('account: the secret store could not be created; memory only');
-    secretStore = memoryStore();
+    secretStore = memorySecretStore();
   }
   // Build-time values; only an unpackaged build with none baked in reads them from its environment.
   let config = resolveAccountConfig({ isPackaged: app.isPackaged, buildTime: buildTimePublicEnv(), runtime: process.env });

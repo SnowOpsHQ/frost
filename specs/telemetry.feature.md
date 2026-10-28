@@ -126,6 +126,10 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   (a locked file on Windows), overwritten in place with both off, so the next start is off (fail
   closed: a turn-off never survives as on). The state then says `persisted: false` (Settings: "for
   this run only") until a later write succeeds.
+- **Startup never stops the window.** Any exception while telemetry is set up in main
+  (`createTelemetryMain`: the consent file, the configuration, the package) falls back to telemetry
+  that is unconfigured and off (`span` runs its function and sends nothing, `captureException` does
+  nothing, `setConsent` changes nothing), logged with a fixed message, so the first window always opens.
 - **Toggling is synchronous.** `telemetry.setConsent` changes main's telemetry and writes the file
   before it answers; off drops what is queued at once (no flush).
 - **Configured, not revealed.** The build's DSN and OTLP endpoint (`FROST_PUBLIC_SENTRY_DSN`,
@@ -156,6 +160,9 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 - **Renderer errors** are the chrome's `error` and `unhandledrejection` events, cut to
   `RENDERER_ERROR_LIMITS`, at most `RENDERER_ERROR_RATE_LIMIT` per window of time (in the chrome and
   again in the router), scrubbed by the package and dropped when `errors` is off.
+
+### Startup (`apps/desktop/src/main/__tests__/startup-fallback.test.ts`, faked Electron)
+- `telemetry-start-failure-is-unconfigured` — an exception while telemetry is set up answers telemetry that is unconfigured and off: `span` runs its function, nothing is sent, `setConsent` leaves both off; logged with a fixed message only.
 
 ### Residual risks (accepted)
 - **Free text in renderer errors.** The scrub rules remove patterns (URLs, hosts, emails, paths, tokens,
