@@ -13,8 +13,9 @@ then `node apps/desktop/scripts/verify-mac-package.mjs`.
 ## Forge configuration (`forge-config.test.ts`)
 - **Scenario: identifies-the-mac-bundle** — `packagerConfig` sets `name` = `MAC_PRODUCT_NAME`,
   `executableName` = `MAC_EXECUTABLE_NAME`, `appBundleId` = `MAC_BUNDLE_ID`, `appCategoryType` =
-  `MAC_APP_CATEGORY`, `darwinDarkModeSupport: true` and `asar: true`; `package.json#productName`
-  is `MAC_PRODUCT_NAME`.
+  `MAC_APP_CATEGORY`, `darwinDarkModeSupport: true` and an ASAR (`asar: { unpack }`, the intent
+  runtime's native files unpacked: `intent-classifier.feature.md`, Packaging);
+  `package.json#productName` is `MAC_PRODUCT_NAME`.
 - **Scenario: flips-the-spec-fuses** — the FusesPlugin config holds exactly `PACKAGED_FUSES`.
 - **Scenario: ad-hoc-signs-when-unsigned** — without the full `MAC_SIGNING_ENV` set (each variable
   missing or empty in turn), there is no `osxSign` / `osxNotarize`, and the fuse flip resets the
@@ -60,6 +61,12 @@ Every check prints `PASS <name>` or `FAIL <name>: <reason>`; any failure exits n
   for every `PACKAGED_FORBIDDEN_SWITCHES` name, and with `--inspect=0` (`PACKAGED_FORBIDDEN_ARGV`),
   it exits with code 1 and its stderr contains `PACKAGED_DEBUG_REFUSAL`
   (`security-policy.spec.ts`).
+- **Scenario: intent-runtime-loads** — `Contents/Resources/app.asar.unpacked` holds the darwin
+  binaries of `onnxruntime-node` for the arch (`intent-runtime.ts`, `INTENT_NATIVE_FILES`), and the
+  packaged executable started with `--frost-intent-selftest` (`intent-classifier.spec.ts`) forks
+  the intent utility process, loads ONNX Runtime and runs its built-in model there, prints
+  `INTENT_SELFTEST_OK` to stderr and exits 0 within `INTENT_LIMITS.selftestTimeoutMs` (with a
+  fresh throwaway profile, opening no window).
 - **Scenario: zip-and-dmg-produced** — `macArtifacts().zip` and `.dmg` exist and are non-empty;
   `hdiutil imageinfo` reports the DMG format `MAC_DMG_FORMAT`.
 - **Scenario: zip-app-verifies** — the published zip, unpacked with `ditto -x -k` into a temporary

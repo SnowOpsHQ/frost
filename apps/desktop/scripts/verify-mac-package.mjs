@@ -28,6 +28,8 @@ import {
   macArtifacts,
 } from '../../../specs/macos-package.spec.ts';
 import { PACKAGED_DEBUG_REFUSAL, PACKAGED_FORBIDDEN_SWITCHES } from '../../../specs/security-policy.spec.ts';
+import { INTENT_LIMITS, INTENT_SELFTEST_FAILED, INTENT_SELFTEST_OK, INTENT_SELFTEST_SWITCH } from '../../../specs/intent-classifier.spec.ts';
+import { INTENT_NATIVE_FILES } from '../intent-runtime.ts';
 
 const DESKTOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -195,6 +197,20 @@ await check('refuses-remote-debugging', async () => {
       `${arg}: stderr lacks "${PACKAGED_DEBUG_REFUSAL}": ${result.stderr.trim()}`,
     );
   }
+});
+
+// The intent classifier's native runtime (specs/intent-classifier.feature.md, Packaging): unpacked
+// beside the archive, and loading and running in the packaged app's utility process (the self-test
+// switch starts no window, reads no profile data and downloads nothing).
+await check('intent-runtime-loads', async () => {
+  const unpacked = path.join(appPath, 'Contents/Resources/app.asar.unpacked/node_modules/onnxruntime-node/bin/napi-v6/darwin', args.arch);
+  for (const file of INTENT_NATIVE_FILES[`darwin-${args.arch}`] ?? []) assert(existsSync(path.join(unpacked, file)), `missing ${path.join(unpacked, file)}`);
+  const result = await launch([`--${INTENT_SELFTEST_SWITCH}`], INTENT_LIMITS.selftestTimeoutMs + 10_000);
+  assert(!result.alive, `--${INTENT_SELFTEST_SWITCH}: still running after ${INTENT_LIMITS.selftestTimeoutMs + 10_000} ms`);
+  assert(!result.stderr.includes(INTENT_SELFTEST_FAILED), result.stderr.trim());
+  assert(result.code === 0, `--${INTENT_SELFTEST_SWITCH}: exit code ${result.code} (signal ${result.signal}): ${result.stderr.trim()}`);
+  assert(result.stderr.includes(INTENT_SELFTEST_OK), `stderr lacks "${INTENT_SELFTEST_OK}": ${result.stderr.trim()}`);
+  console.log(`  ${result.stderr.trim().split('\n').find((line) => line.includes(INTENT_SELFTEST_OK))}`);
 });
 
 await check('zip-and-dmg-produced', () => {

@@ -7,6 +7,7 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion, type FuseV1Config } from '@electron/fuses';
 import { NOTICES_FILE } from './third-party-notices.ts';
+import { copyIntentRuntime, INTENT_ASAR_UNPACK } from './intent-runtime.ts';
 import {
   MAC_APP_CATEGORY,
   MAC_BUNDLE_ID,
@@ -73,7 +74,9 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
       appBundleId: MAC_BUNDLE_ID,
       appCategoryType: MAC_APP_CATEGORY,
       darwinDarkModeSupport: true,
-      asar: true,
+      // The intent runtime's native binding and library (intent-runtime.ts) cannot be loaded from
+      // inside the archive: they go to app.asar.unpacked (specs/intent-classifier.feature.md, Packaging).
+      asar: { unpack: INTENT_ASAR_UNPACK },
       // The licenses of the bundled third-party packages (third-party-notices.ts), beside app.asar in
       // resources/ (specs/seo-speed.feature.md, Licenses). Relative to the app directory Forge runs in.
       extraResource: [NOTICES_FILE],
@@ -97,6 +100,10 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
           ]);
         }
       },
+      // Forge's Vite plugin packages only .vite/: copy the intent utility process's native runtime
+      // (onnxruntime-node and onnxruntime-common, the target's binaries only) into the app before the
+      // ASAR is made (intent-runtime.ts; specs/intent-classifier.feature.md, Packaging).
+      packageAfterCopy: async (_config, buildPath, _electronVersion, platform, arch) => copyIntentRuntime(buildPath, platform, arch),
     },
     makers: [new MakerZIP({}, ['darwin', 'linux']), new MakerDMG({ format: MAC_DMG_FORMAT }, ['darwin'])],
     plugins: [
@@ -109,6 +116,9 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
           { entry: { main: 'src/main/index.ts' }, config: 'vite.main.config.ts', target: 'main' },
           { entry: { 'seo-analysis': 'src/main/seo/analysis-worker.ts' }, config: 'vite.main.config.ts', target: 'main' },
           { entry: { preload: 'src/preload/index.ts' }, config: 'vite.preload.config.ts', target: 'preload' },
+          // The intent utility process (.vite/build/intent-worker.cjs), forked by main with
+          // utilityProcess.fork; onnxruntime-node stays external (specs/intent-classifier.feature.md).
+          { entry: { 'intent-worker': 'src/workers/intent/index.ts' }, config: 'vite.intent.config.ts', target: 'main' },
         ],
         renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],
       }),

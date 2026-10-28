@@ -42,6 +42,7 @@ import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './se
 import { createShownTimes } from './seo/vitals-shown';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
 import { remoteDebuggingRefusal } from './security/policy';
+import { runIntentSelfTestIfAsked } from './intent/selftest';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
@@ -58,7 +59,8 @@ const debugRefusal = remoteDebuggingRefusal({
 if (debugRefusal !== null) {
   console.error(`frost: ${debugRefusal}`);
   app.exit(1);
-} else {
+} else if (!runIntentSelfTestIfAsked(app)) {
+  // `--frost-intent-selftest` (specs/intent-classifier.spec.ts) runs instead of the app: no window.
   start();
 }
 

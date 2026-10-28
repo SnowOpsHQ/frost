@@ -245,7 +245,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - packaging: the hook's file selection, and the unpack glob, in `forge-config.test.ts`.
   - The real-model test (`intent-model.test.ts`) classifies a few clear queries. It is skipped when
     the pinned files are not cached (`FROST_INTENT_MODEL_DIR`, default `~/.cache/frost-models`).
-- [ ] commit `feat(intent): on-device intent classifier in a utility process`
+- [x] commit `feat(intent): on-device intent classifier in a utility process`
 - [ ] Review fixes: commit `fix(intent): address intent classifier review findings`
 
 ### Task 3: SERP reading
