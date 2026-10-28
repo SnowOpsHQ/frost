@@ -2,6 +2,7 @@
 // ONE_DOT_HOST_TLDS, MIN_LITERAL_REDACTION_CHARS, MIN_UNBOUNDED_LITERAL_CHARS, LITERAL_REDACTION,
 // APP_FRAME_PREFIX, TELEMETRY_LIMITS)
 // Acceptance: specs/telemetry.feature.md (Scrubbing)
+import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -24,6 +25,18 @@ afterEach(() => {
 
 /** Per rule: text containing a secret, and the secret that must not survive. */
 const EXAMPLES: Record<ScrubRuleId, [text: string, secret: string][]> = {
+  'desktop-token': [
+    ['token frost_dt_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ refused', 'abcdefghijklmnop'],
+    ['frost_dt_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_ was revoked', '-_-_-_-_'],
+  ],
+  'google-access-token': [['sent ya29.a0AfH6SMBx-yZ_0123456789abcdefABCDEF.more~chars/x+y answered 401', 'a0AfH6SMBx']],
+  'google-refresh-token': [['refresh 1//0gAbCdEfGhIjKlMnOpQrStUvWx-yz_0123 refused', '0gAbCdEfGh']],
+  'google-auth-code': [['exchange of 4/0AbCdEfGhIjKlMnOpQrStUvWxYz-_0123456789 failed', 'AbCdEfGhIj']],
+  'google-client-secret': [['client GOCSPX-AbCdEfGhIjKlMnOpQrStUvWxYz01 unknown', 'AbCdEfGhIj']],
+  'pkce-code': [
+    ['exchange code=abcdefghijklmnopqrstuvwxyzabcdefghijklmnopq failed', 'abcdefghijklmnop'],
+    ['{"code_verifier": "abcdefghijklmnopqrstuvwxyz-._~abcdefghijklmnopqrstuvwxyz"}', 'abcdefghijklmnop'],
+  ],
   'auth-header': [
     ['Authorization header was Bearer abcDEF123.456-xyz_789~', 'abcDEF123'],
     ['retrying with basic YWxpY2U6aHVudGVyMg==', 'YWxpY2U6aHVudGVyMg'],
@@ -118,6 +131,36 @@ describe('scrubbing', () => {
     expect(scrub('see https://example.com/a and alice@example.com')).toBe('see [url] and [email]');
   });
 
+  test('token-shapes-are-scrubbed-whole', () => {
+    // Random values of each shape frost and Google issue: none escapes, whatever its letters (a
+    // generic rule needs digits and both cases, which some random values lack).
+    const b64url = (bytes: number) => randomBytes(bytes).toString('base64url');
+    const shapes: [label: string, make: () => string][] = [
+      ['desktop token', () => `frost_dt_${b64url(32)}`],
+      ['access token', () => `ya29.${b64url(90)}`],
+      ['refresh token', () => `1//0${b64url(75)}`],
+      ['auth code', () => `4/0${b64url(55)}`],
+      ['client secret', () => `GOCSPX-${b64url(21)}`],
+    ];
+    for (const [label, make] of shapes) {
+      for (let i = 0; i < 2_000; i += 1) {
+        const value = make();
+        expect(scrub(`it was ${value} here`), label).toBe('it was [token] here');
+      }
+    }
+    // PKCE verifiers and codes (43 to 128 unreserved characters) after `code=` / `code_verifier=`.
+    for (let i = 0; i < 2_000; i += 1) {
+      const verifier = randomBytes(32 + (i % 65)).toString('base64url').slice(0, 43 + (i % 86));
+      for (const key of ['code', 'code_verifier']) {
+        expect(scrub(`sent ${key}=${verifier} back`), key).toBe(`sent ${key}=[redacted] back`);
+        expect(scrub(`{"${key}":"${verifier}"}`), key).toBe(`{"${key}":"[redacted]"}`);
+      }
+    }
+    // A short `code=` value is an exit or error code, not a secret.
+    expect(scrub('exited with code=1')).toBe('exited with code=1');
+    expect(scrub('error code: 404')).toBe('error code: 404');
+  });
+
   test('scrub-keeps-plain-text', () => {
     for (const text of [
       "Cannot read properties of undefined (reading 'title')",
@@ -158,7 +201,7 @@ describe('scrubbing', () => {
 
   test('scrubbing-is-linear', () => {
     const size = 1_000_000;
-    const shapes = ['a', '?', 'eyJ-', 'a.', 'a@', '-@', 'x@a.', '/a', ' /a', 'a/', ':', '::', '1:', '%', 'a-', 'aA1', '0', '.', '\\', 'C:', 'password ', 'Bearer ', 'token=', '"', 'www.', 'a.b.c '];
+    const shapes = ['a', '?', 'eyJ-', 'a.', 'a@', '-@', 'x@a.', '/a', ' /a', 'a/', ':', '::', '1:', '%', 'a-', 'aA1', '0', '.', '\\', 'C:', 'password ', 'Bearer ', 'token=', '"', 'www.', 'a.b.c ', 'frost_dt_', 'ya29.', '1//', '4/0', 'GOCSPX-', 'code=', 'code_verifier=a'];
     // Measured at under 50 ms per rule; the budget leaves room for a slow CI machine.
     const budgetMs = 250;
     for (const shape of shapes) {

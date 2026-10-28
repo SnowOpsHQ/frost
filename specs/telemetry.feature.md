@@ -87,6 +87,11 @@ Review focus "Telemetry UI matches behaviour". Each line maps to one named test.
 ## Scrubbing (`packages/telemetry/src/__tests__/scrub.test.ts`)
 - `scrub-rules` — every `SCRUB_RULES` rule removes its examples (quoted secrets whole, paths with
   spaces, bare hosts with their port and path).
+- `token-shapes-are-scrubbed-whole` — thousands of random desktop tokens (`frost_dt_…`), Google access
+  tokens (`ya29.…`), refresh tokens (`1//…`), authorization codes (`4/0…`) and client secrets
+  (`GOCSPX-…`) each become `[token]`, and PKCE verifiers and codes of 43 to 128 characters after
+  `code=` / `code_verifier=` (or quoted, as JSON) become `[redacted]`, whatever their letters; a short
+  `code=1` is kept.
 - `scrub-keeps-plain-text` — ordinary error text, line numbers, `a::b`, identifiers (`page.reload`,
   `console.log`, `Server.emit`), file names (`index.ts`, `seo-analysis.cjs`), relative paths, media
   types and dates are left alone.

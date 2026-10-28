@@ -101,6 +101,12 @@ export const SPAN_ATTRIBUTE_WORDS: Readonly<Record<SpanAttributeKey, string>> = 
  * (`telemetry-privacy.spec.ts`). Rules that remove the same kind of thing share their words.
  */
 export const SCRUB_RULE_WORDS: Readonly<Record<ScrubRuleId, string>> = Object.freeze({
+  'desktop-token': 'tokens and keys',
+  'google-access-token': 'tokens and keys',
+  'google-refresh-token': 'tokens and keys',
+  'google-auth-code': 'tokens and keys',
+  'google-client-secret': 'tokens and keys',
+  'pkce-code': 'tokens and keys',
   'auth-header': 'tokens and keys',
   'secret-assignment': 'tokens and keys',
   jwt: 'tokens and keys',

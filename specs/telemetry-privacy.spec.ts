@@ -159,6 +159,12 @@ export const TELEMETRY_LIMITS = {
 // ---- Scrubbing --------------------------------------------------------------------------------
 
 export const SCRUB_RULE_IDS = [
+  'desktop-token',
+  'google-access-token',
+  'google-refresh-token',
+  'google-auth-code',
+  'google-client-secret',
+  'pkce-code',
   'auth-header',
   'secret-assignment',
   'jwt',
@@ -230,6 +236,19 @@ const HOST_END = '(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_])';
  * Every pattern runs in time linear in its input: a pattern that scans a run of characters only
  * starts where that run starts (a lookbehind), and the text is cut to
  * `TELEMETRY_LIMITS.maxScrubInputChars` first anyway.
+ *
+ * First, the token shapes frost and Search Console handle, whole, whatever their letters (the
+ * generic `base64-token` rule needs digits and both cases, which some random values lack):
+ * - `desktop-token`: frost's desktop token, `frost_dt_…`;
+ * - `google-access-token`: an OAuth access token as Google issues it, `ya29.…`;
+ * - `google-refresh-token`: a Google refresh token, `1//…` (20 or more characters after it);
+ * - `google-auth-code`: a Google authorization code, `4/0…` (20 or more characters after it);
+ * - `google-client-secret`: an installed app's client secret, `GOCSPX-…`;
+ * - `pkce-code`: a PKCE verifier or a code (43 or more unreserved characters, RFC 7636) after
+ *   `code=`, `code: ` or `code_verifier=` (also quoted, as in JSON); a short value (`code=1`) is an
+ *   exit or error code and is kept.
+ *
+ * Then the generic rules:
  * - `auth-header`: `Bearer|Basic|Token <credential>` (`bearer`, `basic` too; not `token`, an
  *   ordinary word in parser errors);
  * - `secret-assignment`: `password=…`, `pwd: …`, `passphrase=…`, `token: …`, `api_key=…`,
@@ -258,6 +277,12 @@ const HOST_END = '(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_])';
  * - `base64-token`: 32 or more base64(url) characters mixing digits, lower and upper case.
  */
 export const SCRUB_RULES: readonly { readonly id: ScrubRuleId; readonly pattern: RegExp; readonly replacement: string }[] = [
+  { id: 'desktop-token', pattern: /(?<![A-Za-z0-9_-])frost_dt_[A-Za-z0-9_-]*/g, replacement: '[token]' },
+  { id: 'google-access-token', pattern: /(?<![A-Za-z0-9._~+/-])ya29\.[A-Za-z0-9._~+/-]*/g, replacement: '[token]' },
+  { id: 'google-refresh-token', pattern: /(?<![A-Za-z0-9._~+/:-])1\/\/[A-Za-z0-9_-]{20}[A-Za-z0-9._~+/-]*/g, replacement: '[token]' },
+  { id: 'google-auth-code', pattern: /(?<![A-Za-z0-9._~+/:-])4\/0[A-Za-z0-9_-]{20}[A-Za-z0-9._~+/-]*/g, replacement: '[token]' },
+  { id: 'google-client-secret', pattern: /(?<![A-Za-z0-9_-])GOCSPX-[A-Za-z0-9_-]*/g, replacement: '[token]' },
+  { id: 'pkce-code', pattern: /(?<![A-Za-z0-9_-])(code(?:_verifier)?)(["']?\s*[:=]\s*["']?)[A-Za-z0-9._~-]{43,}/gi, replacement: '$1$2[redacted]' },
   { id: 'auth-header', pattern: /\b(Bearer|bearer|Basic|basic|Token)\s+[A-Za-z0-9._~+/-]{8,}=*/g, replacement: '$1 [redacted]' },
   {
     id: 'secret-assignment',
