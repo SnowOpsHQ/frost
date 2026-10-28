@@ -223,7 +223,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   `off-stops-export-immediately` (queued spans and events are dropped), `on-again-resumes`,
   `events-are-scrubbed` (URL, email, path, token in messages, stack frames and attributes), only
   allowlisted span attributes leave, no identifier in the resource.
-- [ ] commit `feat(telemetry): consent-gated OpenTelemetry and Sentry`
+- [x] commit `feat(telemetry): consent-gated OpenTelemetry and Sentry`
 
 ### Task 7: Desktop — telemetry wiring, consent store and router
 - **Spec:** `specs/telemetry-consent.schema.ts` (`TelemetryStateSchema`: consent per channel,
