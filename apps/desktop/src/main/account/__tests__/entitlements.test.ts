@@ -83,6 +83,18 @@ describe('entitlements store', () => {
     expect(entitlements.has('ai-agent')).toBe(false);
   });
 
+  test('current-for-is-the-accounts-only', async () => {
+    const { entitlements } = await open(memoryStore());
+    expect(entitlements.currentFor(SUB)).toEqual(NO_ENTITLEMENTS);
+    await entitlements.update(await sign(key), SUB);
+    expect(entitlements.currentFor(SUB)).toEqual(active());
+    // A snapshot held for another account entitles nobody else.
+    expect(entitlements.currentFor('someone-else')).toEqual(NO_ENTITLEMENTS);
+    // A refused snapshot is `invalid` whoever asks.
+    await entitlements.update('not.a.snapshot', SUB);
+    expect(entitlements.currentFor('someone-else')).toEqual(INVALID_ENTITLEMENTS);
+  });
+
   test('require-feature-throws-coded-error', async () => {
     const { entitlements } = await open(memoryStore());
     const error = (() => {

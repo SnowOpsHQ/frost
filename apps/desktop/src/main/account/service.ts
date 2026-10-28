@@ -155,9 +155,9 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
     return account ? 'signed-in' : 'signed-out';
   };
 
-  /** Entitlements count only for a confirmed account (fails closed otherwise). */
+  /** Entitlements count only for a confirmed account, and only its own snapshot (fails closed otherwise). */
   const currentEntitlements = (): Entitlements =>
-    status() === 'signed-in' && entitlements ? entitlements.current() : { ...NO_ENTITLEMENTS, features: [] };
+    status() === 'signed-in' && account && entitlements ? entitlements.currentFor(account.user.id) : { ...NO_ENTITLEMENTS, features: [] };
 
   const state = (): AccountState => {
     const s = status();

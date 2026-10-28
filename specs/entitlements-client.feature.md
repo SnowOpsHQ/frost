@@ -38,6 +38,13 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
   changes, heartbeat at most `ENTITLEMENT_HEARTBEAT_MS`), and `onChange` fires when it changes.
   Notifications are queued: a listener that changes the state (`clear()` …) from inside `onChange`
   never makes another listener see the changes out of order.
+- **One gate for main.** Other phases gate on `createAccountMain(...).entitlements`, a non-null
+  `EntitlementsReader` over the account service's entitlements: `none` unless an account is signed in
+  (confirmed) and the held snapshot is that account's (`sub` equals its user ID). Its `onChange`
+  fires whenever what it answers changes: sign-in, sign-out, a session that ended, a new or refused
+  snapshot, and status changes with time. When the build is unconfigured (or the account could not
+  start) it is a reader that always answers `none`. The store's controller (update, clear) stays
+  private to the account.
 - **A refresh that fails.** `network` keeps the snapshot and allows grace; `auth` (the server refused
   the credential) drops it (`none`); `invalid` (an answer that does not verify) and an `update` with
   a snapshot that does not verify replace whatever was held with `invalid` (free), logged with a
@@ -110,6 +117,14 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
 - `refresh-failure-kinds` — `network` allows grace, `auth` drops to `none`, `invalid` is `invalid`; a later valid update clears it.
 - `clear-drops-snapshot-keeps-high-water` — `clear()` is `none` and survives a restart; the high-water mark stays.
 - `corrupt-state-is-none` — a stored state that does not parse is `none`, deleted and logged without content.
+
+## Main's reader (`apps/desktop/src/main/account/__tests__/service.test.ts`)
+- `reader-is-none-signed-out` — with a snapshot still held but no account signed in (or a sign-in not
+  yet confirmed), the reader answers `none`, `has` is false and `requireFeature` throws.
+- `reader-flips-on-confirm-and-sign-out` — confirming a sign-in makes the reader answer the account's
+  entitlements and fires `onChange` once with them; signing out answers `none` and fires again.
+- `unconfigured-reader-is-none` — an unconfigured account (and `noEntitlementsReader()`) answers
+  `none` for every flag and never fires.
 
 ## Secret store (`apps/desktop/src/main/account/__tests__/secret-store.test.ts`)
 - `secret-round-trip` — a written blob reads back, also from a new instance; on disk it is the `safeStorage` ciphertext, not the value.

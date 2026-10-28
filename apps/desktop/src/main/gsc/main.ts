@@ -1,5 +1,4 @@
 import { app, net } from 'electron';
-import { entitlementGrants } from '@app/specs/entitlements-snapshot.spec';
 import { GSC_QUIT_REVOKE_TIMEOUT_MS } from '@app/specs/gsc.spec';
 import { startLoopback } from '../account/loopback';
 import type { AccountMain } from '../account/main';
@@ -27,9 +26,9 @@ export function createGscMain(account: AccountMain): GscMain {
     config,
     fetch: (url, init) => net.fetch(url, init),
     store: account.secretStore,
-    // The account service's entitlements are `none` unless signed in (fails closed).
-    entitled: () => entitlementGrants(account.service.entitlements(), 'search-console'),
-    onEntitlementsChange: (listener) => account.entitlements?.onChange(() => listener()) ?? (() => undefined),
+    // Main's entitlements gate: `none` unless signed in with the account's own snapshot (fails closed).
+    entitled: () => account.entitlements.has('search-console'),
+    onEntitlementsChange: (listener) => account.entitlements.onChange(() => listener()),
     // The connection belongs to the frost account that made it; a different account's sign-in drops it.
     userId: () => account.service.userId(),
     onAccountChange: (listener) => account.service.onChange(listener),

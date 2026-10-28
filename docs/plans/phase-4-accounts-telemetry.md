@@ -299,10 +299,18 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 ## Interfaces for other phases
 Stable and Zod-typed; changing one is a breaking change that needs the owning phase's review.
 
-- **Entitlements (main):** `apps/desktop/src/main/account/entitlements.ts`
-  - `EntitlementsReader.current(): Entitlements` (`specs/entitlements-snapshot.spec.ts`
-    `EntitlementsSchema`), `has(flag: FeatureFlag): boolean`, `requireFeature(flag)` (throws
-    `FeatureNotEntitledError`), `onChange(listener): () => void`.
+- **Entitlements (main):** the one gate is `createAccountMain(...).entitlements`
+  (`apps/desktop/src/main/account/main.ts`; the reader is built by `entitlementsReaderOf(service)` in
+  `apps/desktop/src/main/account/entitlements.ts`). It is never `null`: an `EntitlementsReader`
+  - `current(): Entitlements` (`specs/entitlements-snapshot.spec.ts` `EntitlementsSchema`): `none`
+    unless an account is signed in (confirmed) and the held snapshot's `sub` is that account's user ID;
+  - `has(flag: FeatureFlag): boolean`; `requireFeature(flag: FeatureFlag): void` (throws
+    `FeatureNotEntitledError`, `code` `FEATURE_NOT_ENTITLED_CODE`);
+  - `onChange(listener: (entitlements: Entitlements) => void): () => void`: fires whenever what
+    `current()` answers changes (sign-in, sign-out, a session that ended, a new or refused snapshot,
+    time passing); answers the unsubscribe.
+  - Unconfigured (or an account that could not start): a reader that always answers `none`. The
+    store's own controller (`createEntitlements`) is private to the account; gate on the reader only.
   - Flags (`FEATURE_FLAGS`): `ai-agent`, `search-console`, `sync`. Unknown flags in a snapshot are
     ignored, so the server can add one before the client knows it.
 - **Entitlements (IPC):** `requireFeature(flag)` middleware from `@app/ipc-contract`
@@ -315,6 +323,11 @@ Stable and Zod-typed; changing one is a breaking change that needs the owning ph
   `{ status: 'unavailable', reason }` and never throws. Main's instance is
   `createGscService(...)` in `apps/desktop/src/main/gsc/service.ts`; the Phase 5 agent tool calls it
   in main (it is gated on `search-console` itself).
+- **Build configuration:** `specs/build-config.spec.ts` is the one rule for every public build value
+  (`PUBLIC_CONFIG_ENV`: the account's, telemetry's and Search Console's): `bakedAny(buildTime)` and
+  `runtimeOverridesAllowed(isPackaged, buildTime)`. If any value is baked in, the run-time environment
+  is read for none of them; only an unpackaged build with nothing baked in reads them at run time. A
+  phase that adds a `FROST_PUBLIC_*` value adds it to `PUBLIC_CONFIG_ENV` (through its module's `*_CONFIG_ENV`).
 - **Telemetry:** `@app/telemetry` `span(name, attrs, fn)` and `captureException(error)`; only
   `SPAN_ATTRIBUTE_ALLOWLIST` keys are exported, so a phase adds its attribute keys there. Main's
   instance is the `TelemetryHandle` from `createTelemetryMain(started).telemetry`

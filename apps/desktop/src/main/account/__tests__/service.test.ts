@@ -16,7 +16,7 @@ import {
 import { NO_ENTITLEMENTS, OFFLINE_GRACE_MS, type Entitlements, type EntitlementRefreshFailure } from '@app/specs/entitlements-snapshot.spec';
 import type { AccountApi, ApiResult } from '../api-client';
 import type { AccountConfig } from '../config';
-import type { EntitlementsController } from '../entitlements';
+import { entitlementsReaderOf, FeatureNotEntitledError, noEntitlementsReader, type EntitlementsController, type EntitlementsReader } from '../entitlements';
 import { startLoopback as realStartLoopback, type Loopback, type LoopbackCallback, type StartLoopbackOptions } from '../loopback';
 import { ACCOUNT_SECRET, createAccountService, type AccountServiceDeps } from '../service';
 
@@ -47,23 +47,27 @@ function fakeStore(persistent = true, initial: Record<string, string> = {}) {
   };
 }
 
-function fakeEntitlements(initial: Entitlements = NO_ENTITLEMENTS) {
+function fakeEntitlements(initial: Entitlements = NO_ENTITLEMENTS, initialSub: string | null = initial.status === 'none' ? null : USER.id) {
   let current: Entitlements = initial;
+  /** The account the held snapshot is for. */
+  let sub: string | null = initialSub;
   const listeners = new Set<(e: Entitlements) => void>();
-  const set = (next: Entitlements) => {
+  const set = (next: Entitlements, nextSub: string | null = sub) => {
     current = next;
+    sub = nextSub;
     for (const l of listeners) l(next);
   };
   const controller = {
     current: vi.fn(() => current),
+    currentFor: vi.fn((who: string) => (current.status === 'invalid' || sub === who ? current : NO_ENTITLEMENTS)),
     has: vi.fn(() => false),
     requireFeature: vi.fn(),
     onChange: vi.fn((l: (e: Entitlements) => void) => {
       listeners.add(l);
       return () => listeners.delete(l);
     }),
-    update: vi.fn(async (_snapshot: string, _sub: string) => {
-      set(PRO);
+    update: vi.fn(async (_snapshot: string, who: string) => {
+      set(PRO, who);
       return current;
     }),
     markRefreshFailed: vi.fn((kind: EntitlementRefreshFailure) => {
@@ -732,5 +736,76 @@ describe('account sign-in flow', () => {
     await toSignedIn(redacting);
     const { redact } = await import('../redact');
     for (const leaked of [TOKEN, EMAIL, SNAPSHOT, `code=${CODE}&state=abc`]) expect(redact(`x ${leaked} y`)).not.toMatch(/frost_dt_|@|eyJ|codeCODE/);
+  });
+});
+
+describe("main's entitlements reader", () => {
+  const expectNone = (reader: EntitlementsReader) => {
+    expect(reader.current()).toEqual(NO_ENTITLEMENTS);
+    for (const flag of ['ai-agent', 'search-console', 'sync'] as const) {
+      expect(reader.has(flag)).toBe(false);
+      expect(() => reader.requireFeature(flag)).toThrow(FeatureNotEntitledError);
+    }
+  };
+
+  test('reader-is-none-signed-out', async () => {
+    // A snapshot is still held (left behind, and its clear did nothing), but nobody is signed in.
+    const ents = fakeEntitlements(PRO);
+    ents.controller.clear.mockImplementation(() => ents.controller.current());
+    const h = harness({ entitlements: ents.controller });
+    const reader = entitlementsReaderOf(h.service);
+    expect(ents.controller.current()).toEqual(PRO);
+    expectNone(reader);
+    // Nor while a sign-in waits for its confirmation.
+    await toConfirming(h);
+    expectNone(reader);
+    // Signed in, but the held snapshot is another account's: still none.
+    ents.set(PRO, 'someone-else');
+    h.api.entitlements.mockResolvedValue(fail('network'));
+    expect(await confirm(h, stateOf(h).requestId!)).toBe(true);
+    expect(stateOf(h).status).toBe('signed-in');
+    expectNone(reader);
+  });
+
+  test('reader-flips-on-confirm-and-sign-out', async () => {
+    const h = harness();
+    const reader = entitlementsReaderOf(h.service);
+    const seen: Entitlements[] = [];
+    const unsubscribe = reader.onChange((entitlements) => void seen.push(entitlements));
+    expectNone(reader);
+    await toConfirming(h);
+    await Promise.resolve();
+    expect(seen).toEqual([]);
+    expect(await confirm(h, stateOf(h).requestId!)).toBe(true);
+    await h.service.whenIdle();
+    await vi.waitFor(() => expect(seen).toEqual([PRO]));
+    expect(reader.current()).toEqual(PRO);
+    expect(reader.has('ai-agent')).toBe(true);
+    expect(() => reader.requireFeature('search-console')).not.toThrow();
+    expect(await h.service.signOut()).toBe(true);
+    await vi.waitFor(() => expect(seen).toEqual([PRO, NO_ENTITLEMENTS]));
+    expectNone(reader);
+    // A session the backend ended answers none too.
+    await toSignedIn(h);
+    await vi.waitFor(() => expect(seen).toHaveLength(3));
+    h.api.session.mockResolvedValueOnce(fail('auth'));
+    await h.service.refresh();
+    await vi.waitFor(() => expect(seen).toEqual([PRO, NO_ENTITLEMENTS, PRO, NO_ENTITLEMENTS]));
+    unsubscribe();
+    await toSignedIn(h);
+    await Promise.resolve();
+    expect(seen).toHaveLength(4);
+  });
+
+  test('unconfigured-reader-is-none', async () => {
+    const h = harness({ config: null, api: null, entitlements: null });
+    for (const reader of [entitlementsReaderOf(h.service), noEntitlementsReader()]) {
+      const listener = vi.fn();
+      reader.onChange(listener);
+      expectNone(reader);
+      await h.service.signIn(WINDOW);
+      await Promise.resolve();
+      expect(listener).not.toHaveBeenCalled();
+    }
   });
 });

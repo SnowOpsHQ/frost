@@ -56,7 +56,7 @@ export interface GscServiceDeps {
   readonly config: GscConfig | null;
   readonly fetch: FetchLike;
   readonly store: Pick<SecretStore, 'persistent' | 'read' | 'write' | 'delete'>;
-  /** Whether the plan includes `search-console` now (main: `entitlementGrants(account.entitlements(), 'search-console')`). */
+  /** Whether the plan includes `search-console` now (main: `account.entitlements.has('search-console')`). */
   readonly entitled: () => boolean;
   /** Subscribes to entitlement changes (so watchers learn `entitled` changed); answers the unsubscribe. */
   readonly onEntitlementsChange?: (listener: () => void) => () => void;

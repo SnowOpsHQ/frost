@@ -5,7 +5,7 @@ import { openExternalIfAllowed, trackUserGesture } from '../security/gesture';
 import { createAccountApi } from './api-client';
 import { buildTimePublicEnv } from './build-config';
 import { resolveAccountConfig } from './config';
-import { createEntitlements, type EntitlementsReader } from './entitlements';
+import { createEntitlements, entitlementsReaderOf, type EntitlementsController, type EntitlementsReader } from './entitlements';
 import { createWindowGestures, type WindowGestures } from './gestures';
 import { startLoopback } from './loopback';
 import { holdQuitFor } from './quit';
@@ -24,8 +24,12 @@ export interface AccountMain {
   readonly service: AccountMainService;
   /** The secret store (the account, entitlements and, from Task 8, Search Console blobs). */
   readonly secretStore: SecretStore;
-  /** Main's entitlements (`null` when unconfigured: nothing is entitled). Gate in main on `service.entitlements()`. */
-  readonly entitlements: EntitlementsReader | null;
+  /**
+   * Main's one entitlements gate (Phase 5 gates its agent on it): `none` unless an account is signed
+   * in and the held snapshot is that account's; `onChange` fires on sign-in, sign-out, account and
+   * entitlement changes. Unconfigured: always `none`. The store's controller stays private.
+   */
+  readonly entitlements: EntitlementsReader;
   /** Live user gestures per app window (Search Console's connect spends them too, Task 8). */
   readonly gestures: WindowGestures;
   /** The application menu's account commands (Task 9: Settings…, `account-settings.feature.md`). */
@@ -63,10 +67,10 @@ export async function createAccountMain(): Promise<AccountMain> {
   }
   // Build-time values; only an unpackaged build with none baked in reads them from its environment.
   let config = resolveAccountConfig({ isPackaged: app.isPackaged, buildTime: buildTimePublicEnv(), runtime: process.env });
-  let entitlements: Awaited<ReturnType<typeof createEntitlements>> | null = null;
+  let entitlementsStore: EntitlementsController | null = null;
   if (config !== null) {
     try {
-      entitlements = await createEntitlements({ jwks: config.jwks, store: secretStore, log });
+      entitlementsStore = await createEntitlements({ jwks: config.jwks, store: secretStore, log });
     } catch {
       // Never stops the app from starting: without entitlements the account is off for this run.
       log('account: entitlements could not be loaded; account disabled for this run');
@@ -82,7 +86,7 @@ export async function createAccountMain(): Promise<AccountMain> {
     config,
     api: config === null ? null : createAccountApi({ apiBase: config.apiBase, fetch: (url, init) => net.fetch(url, init) }),
     store: secretStore,
-    entitlements,
+    entitlements: entitlementsStore,
     startLoopback,
     openInBrowser: openExternalIfAllowed,
     consumeGesture: (windowId) => gestures.consume(windowId),
@@ -93,11 +97,12 @@ export async function createAccountMain(): Promise<AccountMain> {
   // holding the quit at most QUIT_REVOKE_TIMEOUT_MS (only when there is one).
   holdQuitFor(app, () => {
     gestures.dispose();
-    entitlements?.dispose();
+    entitlementsStore?.dispose();
     return service.dispose();
   });
   // The menu's Settings… requests (Task 9), served as `account.settingsWatch`.
   const settings = createSettingsRequestsMain();
   app.once('will-quit', () => settings.dispose());
+  const entitlements = entitlementsReaderOf(service);
   return { service: Object.assign(service, { settings }), secretStore, entitlements, gestures, menu: { showSettings: (windowId) => settings.show(windowId) } };
 }

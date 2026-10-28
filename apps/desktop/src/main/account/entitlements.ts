@@ -52,8 +52,13 @@ export interface EntitlementsReader {
   onChange(listener: (entitlements: Entitlements) => void): () => void;
 }
 
-/** Main's side: what the account service (Task 5) drives. */
+/** Main's side: what the account service (Task 5) drives. Private to the account: gate on `entitlementsReaderOf`. */
 export interface EntitlementsController extends EntitlementsReader {
+  /**
+   * `current()` for the account `sub`: `none` when the held snapshot is another account's (an
+   * `invalid` one is `invalid` whoever asks: it entitles nothing either way).
+   */
+  currentFor(sub: string): Entitlements;
   /**
    * A snapshot the server answered for the signed-in user `sub`. Verified first: if it does not
    * verify (signature, `kid`, claims, another account, skew), the held state becomes `invalid` (free)
@@ -275,6 +280,10 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
 
   return {
     current,
+    currentFor(sub) {
+      const entitlements = current();
+      return held.kind === 'snapshot' && held.sub !== sub ? NO_ENTITLEMENTS : entitlements;
+    },
     has: (flag) => entitlementGrants(current(), flag),
     requireFeature(flag) {
       if (!entitlementGrants(current(), flag)) throw new FeatureNotEntitledError(flag);
@@ -340,4 +349,62 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
       pending.length = 0;
     },
   };
+}
+
+// ---- Main's reader --------------------------------------------------------------------------------
+
+/** What `entitlementsReaderOf` reads: the account service (`AccountMainService`). */
+export interface EntitlementsSource {
+  /** `none` unless an account is signed in and the held snapshot is that account's. */
+  entitlements(): Entitlements;
+  /** Called after every change of the account's state (sign-in, sign-out, new entitlements …). */
+  onChange(listener: () => void): () => void;
+}
+
+/**
+ * Main's one entitlements gate (plan "Interfaces for other phases": `createAccountMain(...).entitlements`):
+ * an `EntitlementsReader` over the account service's entitlements, so it answers `none` unless an
+ * account is signed in (confirmed) and the snapshot is that account's. `onChange` fires with the new
+ * entitlements whenever what it answers changes (sign-in, sign-out, a session that ended, a new or
+ * refused snapshot, time passing); never for a change that leaves the answer as it was.
+ */
+export function entitlementsReaderOf(source: EntitlementsSource): EntitlementsReader {
+  const listeners = new Set<(entitlements: Entitlements) => void>();
+  const read = (): Entitlements => {
+    try {
+      return source.entitlements();
+    } catch {
+      return { ...NO_ENTITLEMENTS, features: [] };
+    }
+  };
+  let last = JSON.stringify(read());
+  source.onChange(() => {
+    const entitlements = read();
+    const text = JSON.stringify(entitlements);
+    if (text === last) return;
+    last = text;
+    for (const listener of [...listeners]) {
+      try {
+        listener(entitlements);
+      } catch {
+        // A listener's failure is not the gate's.
+      }
+    }
+  });
+  return {
+    current: read,
+    has: (flag) => entitlementGrants(read(), flag),
+    requireFeature(flag) {
+      if (!entitlementGrants(read(), flag)) throw new FeatureNotEntitledError(flag);
+    },
+    onChange(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  };
+}
+
+/** A reader that always answers `none` (an unconfigured build, or an account that could not start). */
+export function noEntitlementsReader(): EntitlementsReader {
+  return entitlementsReaderOf({ entitlements: () => ({ ...NO_ENTITLEMENTS, features: [] }), onChange: () => () => undefined });
 }
