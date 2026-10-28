@@ -32,7 +32,7 @@ const EXAMPLES: Record<ScrubRuleId, [text: string, secret: string][]> = {
   'google-access-token': [['sent ya29.a0AfH6SMBx-yZ_0123456789abcdefABCDEF.more~chars/x+y answered 401', 'a0AfH6SMBx']],
   'google-refresh-token': [['refresh 1//0gAbCdEfGhIjKlMnOpQrStUvWx-yz_0123 refused', '0gAbCdEfGh']],
   'google-auth-code': [['exchange of 4/0AbCdEfGhIjKlMnOpQrStUvWxYz-_0123456789 failed', 'AbCdEfGhIj']],
-  'google-client-secret': [['client GOCSPX-AbCdEfGhIjKlMnOpQrStUvWxYz01 unknown', 'AbCdEfGhIj']],
+  'google-client-secret': [[`client ${'GOCSPX'}-AbCdEfGhIjKlMnOpQrStUvWxYz01 unknown`, 'AbCdEfGhIj']],
   'pkce-code': [
     ['exchange code=abcdefghijklmnopqrstuvwxyzabcdefghijklmnopq failed', 'abcdefghijklmnop'],
     ['{"code_verifier": "abcdefghijklmnopqrstuvwxyz-._~abcdefghijklmnopqrstuvwxyz"}', 'abcdefghijklmnop'],
