@@ -41,9 +41,9 @@ function fakeStore(persistent = true, initial: Record<string, string> = {}) {
   return {
     persistent,
     values,
-    read: vi.fn((name: string) => values.get(name) ?? null),
-    write: vi.fn((name: string, value: string) => void values.set(name, value)),
-    delete: vi.fn((name: string) => void values.delete(name)),
+    read: vi.fn(async (name: string) => values.get(name) ?? null),
+    write: vi.fn(async (name: string, value: string) => void values.set(name, value)),
+    delete: vi.fn(async (name: string) => void values.delete(name)),
   };
 }
 
@@ -121,7 +121,7 @@ function fakeLoopbacks() {
   return { started, start };
 }
 
-function harness(overrides: Partial<AccountServiceDeps> & { gestures?: number[] } = {}) {
+async function harness(overrides: Partial<AccountServiceDeps> & { gestures?: number[] } = {}) {
   const log: string[] = [];
   const store = fakeStore();
   const ents = fakeEntitlements();
@@ -145,11 +145,11 @@ function harness(overrides: Partial<AccountServiceDeps> & { gestures?: number[] 
     log: (message: string) => void log.push(message),
     ...overrides,
   };
-  const service = createAccountService(deps);
+  const service = await createAccountService(deps);
   const secrets = new Set<string>([TOKEN, TOKEN_2, CODE, EMAIL, SNAPSHOT]);
   return { service, deps, store, ents, api, loops, gestures, opened, log, secrets };
 }
-type Harness = ReturnType<typeof harness>;
+type Harness = Awaited<ReturnType<typeof harness>>;
 
 /** The state, validated against the strict spec schema. */
 const stateOf = (h: Harness): AccountState => AccountStateSchema.parse(h.service.state());
@@ -192,7 +192,7 @@ const storedAccount = (overrides: Record<string, unknown> = {}) => JSON.stringif
 
 describe('account sign-in flow', () => {
   test('sign-in-unconfigured', async () => {
-    const h = harness({ config: null, api: null, entitlements: null });
+    const h = await harness({ config: null, api: null, entitlements: null });
     expect(stateOf(h)).toMatchObject({ status: 'unconfigured', user: null, entitlements: NO_ENTITLEMENTS });
     expect(await h.service.signIn(WINDOW)).toBe('unconfigured');
     expect(await h.service.refresh()).toBe(false);
@@ -204,7 +204,7 @@ describe('account sign-in flow', () => {
   });
 
   test('sign-in-without-gesture-opens-nothing', async () => {
-    const h = harness({ gestures: [OTHER_WINDOW] });
+    const h = await harness({ gestures: [OTHER_WINDOW] });
     expect(await h.service.signIn(WINDOW)).toBe('needs-gesture');
     expect(h.loops.start).not.toHaveBeenCalled();
     expect(h.deps.openInBrowser).not.toHaveBeenCalled();
@@ -215,7 +215,7 @@ describe('account sign-in flow', () => {
   });
 
   test('sign-in-opens-authorize-url', async () => {
-    const h = harness();
+    const h = await harness();
     expect(await h.service.signIn(WINDOW)).toBe('started');
     expect(h.deps.consumeGesture).toHaveBeenCalledWith(WINDOW);
     expect(h.loops.started).toHaveLength(1);
@@ -233,7 +233,7 @@ describe('account sign-in flow', () => {
   });
 
   test('sign-in-needs-confirmation', async () => {
-    const h = harness();
+    const h = await harness();
     await h.service.signIn(WINDOW);
     const loop = h.loops.started[0]!;
     const challenge = new URL(h.opened[0]!).searchParams.get('code_challenge')!;
@@ -258,7 +258,7 @@ describe('account sign-in flow', () => {
   });
 
   test('state-mismatch-refused', async () => {
-    const h = harness({ startLoopback: realStartLoopback });
+    const h = await harness({ startLoopback: realStartLoopback });
     expect(await h.service.signIn(WINDOW)).toBe('started');
     const url = new URL(h.opened[0]!);
     const redirect = new URL(url.searchParams.get('redirect_uri')!);
@@ -284,7 +284,7 @@ describe('account sign-in flow', () => {
   });
 
   test('callback-without-pending-ignored', async () => {
-    const h = harness();
+    const h = await harness();
     await h.service.signIn(WINDOW);
     const first = h.loops.started[0]!;
     expect(await h.service.cancelSignIn(stateOf(h).requestId!)).toBe(true);
@@ -305,7 +305,7 @@ describe('account sign-in flow', () => {
   });
 
   test('second-callback-ignored', async () => {
-    const h = harness();
+    const h = await harness();
     const loop = await toConfirming(h);
     loop.callback();
     loop.callback({ code: 'other-code-0123456789' });
@@ -315,7 +315,7 @@ describe('account sign-in flow', () => {
   });
 
   test('browser-error-is-cancelled', async () => {
-    const h = harness();
+    const h = await harness();
     await h.service.signIn(WINDOW);
     h.loops.started[0]!.callback({ code: null, error: 'access_denied' });
     await h.service.whenIdle();
@@ -325,7 +325,7 @@ describe('account sign-in flow', () => {
 
   test('timeout-is-timed-out', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
-    const h = harness();
+    const h = await harness();
     await h.service.signIn(WINDOW);
     h.loops.started[0]!.timeout();
     expect(stateOf(h)).toMatchObject({ status: 'signed-out', error: 'timed-out' });
@@ -342,7 +342,7 @@ describe('account sign-in flow', () => {
   });
 
   test('new-sign-in-replaces-pending', async () => {
-    const h = harness();
+    const h = await harness();
     await h.service.signIn(WINDOW);
     const first = h.loops.started[0]!;
     const firstId = stateOf(h).requestId;
@@ -370,7 +370,7 @@ describe('account sign-in flow', () => {
   });
 
   test('cancel-revokes-exchanged-token', async () => {
-    const h = harness();
+    const h = await harness();
     await toConfirming(h);
     const { requestId } = stateOf(h);
     expect(await h.service.cancelSignIn('BBBBBBBBBBBBBBBBBBBBBB')).toBe(false);
@@ -384,7 +384,7 @@ describe('account sign-in flow', () => {
   });
 
   test('confirm-stale-request-refused', async () => {
-    const h = harness();
+    const h = await harness();
     await h.service.signIn(WINDOW);
     const awaitingId = stateOf(h).requestId!;
     // Not exchanged yet: nothing to confirm.
@@ -401,7 +401,7 @@ describe('account sign-in flow', () => {
   });
 
   test('confirm-needs-gesture-in-starting-window', async () => {
-    const h = harness();
+    const h = await harness();
     await toConfirming(h);
     const { requestId } = stateOf(h);
     // No live gesture left in the window that started it (signIn spent it).
@@ -418,7 +418,7 @@ describe('account sign-in flow', () => {
   });
 
   test('confirm-stores-and-fetches-entitlements', async () => {
-    const h = harness();
+    const h = await harness();
     await toConfirming(h);
     const before = stateOf(h).version;
     expect(await confirm(h, stateOf(h).requestId!)).toBe(true);
@@ -438,7 +438,7 @@ describe('account sign-in flow', () => {
   });
 
   test('exchange-failures', async () => {
-    const h = harness();
+    const h = await harness();
     h.api.exchange.mockResolvedValueOnce(fail('invalid'));
     await h.service.signIn(WINDOW);
     h.loops.started[0]!.callback();
@@ -497,7 +497,7 @@ describe('account sign-in flow', () => {
   });
 
   test('sign-out-revokes-and-drops-to-free', async () => {
-    const h = harness();
+    const h = await harness();
     await toSignedIn(h);
     expect(h.service.entitlements()).toEqual(PRO);
     expect(await h.service.signOut()).toBe(true);
@@ -518,7 +518,7 @@ describe('account sign-in flow', () => {
   test('stored-account-restores-and-refreshes', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     const store = fakeStore(true, { [ACCOUNT_SECRET]: storedAccount() });
-    const h = harness({ store });
+    const h = await harness({ store });
     expect(stateOf(h)).toMatchObject({ status: 'signed-in', user: { email: EMAIL, name: 'Dana' } });
     await h.service.whenIdle();
     expect(h.api.session).toHaveBeenCalledTimes(1);
@@ -538,7 +538,7 @@ describe('account sign-in flow', () => {
 
     // Expired or malformed stored accounts are dropped, without a call.
     for (const stored of [storedAccount({ expiresAt: 1 }), storedAccount({ token: 'not-a-token' }), storedAccount({ extra: 1 }), 'not json']) {
-      const dropped = harness({ store: fakeStore(true, { [ACCOUNT_SECRET]: stored }) });
+      const dropped = await harness({ store: fakeStore(true, { [ACCOUNT_SECRET]: stored }) });
       expect(stateOf(dropped).status, stored).toBe('signed-out');
       expect(dropped.store.values.has(ACCOUNT_SECRET)).toBe(false);
       await dropped.service.whenIdle();
@@ -550,7 +550,7 @@ describe('account sign-in flow', () => {
 
   test('refresh-401-signs-out', async () => {
     for (const where of ['session', 'entitlements'] as const) {
-      const h = harness();
+      const h = await harness();
       await toSignedIn(h);
       h.api[where].mockResolvedValueOnce(fail('auth'));
       expect(await h.service.refresh()).toBe(true);
@@ -563,7 +563,7 @@ describe('account sign-in flow', () => {
   });
 
   test('refresh-not-reused-across-accounts', async () => {
-    const h = harness();
+    const h = await harness();
     await toSignedIn(h);
     let release!: (r: ApiResult<{ user: typeof USER }>) => void;
     h.api.session.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
@@ -589,9 +589,9 @@ describe('account sign-in flow', () => {
   });
 
   test('revocations-awaited-on-dispose', async () => {
-    const idle = harness();
+    const idle = await harness();
     expect(idle.service.dispose()).toBeNull();
-    const h = harness();
+    const h = await harness();
     await toConfirming(h);
     let release!: () => void;
     h.api.signOut.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(ok(null)))));
@@ -606,7 +606,7 @@ describe('account sign-in flow', () => {
     await wait;
     expect(settled).toBe(true);
     // A sign-out whose revocation is still running is waited for too.
-    const out = harness();
+    const out = await harness();
     await toSignedIn(out);
     out.api.signOut.mockImplementationOnce(() => new Promise(() => undefined));
     void out.service.signOut();
@@ -615,7 +615,7 @@ describe('account sign-in flow', () => {
 
   test('refresh-network-keeps-grace', async () => {
     for (const where of ['session', 'entitlements'] as const) {
-      const h = harness();
+      const h = await harness();
       await toSignedIn(h);
       h.api[where].mockResolvedValueOnce(fail('network'));
       expect(await h.service.refresh()).toBe(true);
@@ -627,7 +627,7 @@ describe('account sign-in flow', () => {
   });
 
   test('refresh-invalid-snapshot-is-free', async () => {
-    const h = harness();
+    const h = await harness();
     await toSignedIn(h);
     h.api.entitlements.mockResolvedValueOnce(fail('invalid'));
     await h.service.refresh();
@@ -638,7 +638,7 @@ describe('account sign-in flow', () => {
   test('entitlements-none-unless-signed-in', async () => {
     // A snapshot left behind without an account is cleared at start.
     const ents = fakeEntitlements(PRO);
-    const h = harness({ entitlements: ents.controller });
+    const h = await harness({ entitlements: ents.controller });
     expect(ents.controller.clear).toHaveBeenCalled();
     expect(h.service.entitlements()).toEqual(NO_ENTITLEMENTS);
     // While confirming, even a controller that holds something answers none.
@@ -649,7 +649,7 @@ describe('account sign-in flow', () => {
   });
 
   test('user-id-for-main-only', async () => {
-    const h = harness();
+    const h = await harness();
     let changes = 0;
     const unsubscribe = h.service.onChange(() => void changes++);
     expect(h.service.userId()).toBeNull();
@@ -679,14 +679,14 @@ describe('account sign-in flow', () => {
   });
 
   test('memory-only-keychain-signs-in', async () => {
-    const h = harness({ store: fakeStore(false) });
+    const h = await harness({ store: fakeStore(false) });
     expect(stateOf(h).keychain).toBe('memory-only');
     await toSignedIn(h);
     expect(stateOf(h)).toMatchObject({ status: 'signed-in', keychain: 'memory-only', entitlements: PRO });
   });
 
   test('watch-long-polls', async () => {
-    const h = harness();
+    const h = await harness();
     const v0 = stateOf(h).version;
     await expect(h.service.watch(v0 - 1)).resolves.toMatchObject({ version: v0 });
     const next = h.service.watch(v0);
@@ -711,7 +711,7 @@ describe('account sign-in flow', () => {
   });
 
   test('logs-carry-no-secret', async () => {
-    const h = harness();
+    const h = await harness();
     // Every path that logs: a no-gesture try, a replaced request, a failed exchange, a sign-in, a refresh
     // that fails, a sign-out, a 401.
     h.gestures.clear();
@@ -732,7 +732,7 @@ describe('account sign-in flow', () => {
     expect(h.log.length).toBeGreaterThan(0);
     expectLogClean(h);
     // The redactor also scrubs a secret-shaped value that would reach it some other way.
-    const redacting = harness();
+    const redacting = await harness();
     await toSignedIn(redacting);
     const { redact } = await import('../redact');
     for (const leaked of [TOKEN, EMAIL, SNAPSHOT, `code=${CODE}&state=abc`]) expect(redact(`x ${leaked} y`)).not.toMatch(/frost_dt_|@|eyJ|codeCODE/);
@@ -752,7 +752,7 @@ describe("main's entitlements reader", () => {
     // A snapshot is still held (left behind, and its clear did nothing), but nobody is signed in.
     const ents = fakeEntitlements(PRO);
     ents.controller.clear.mockImplementation(() => ents.controller.current());
-    const h = harness({ entitlements: ents.controller });
+    const h = await harness({ entitlements: ents.controller });
     const reader = entitlementsReaderOf(h.service);
     expect(ents.controller.current()).toEqual(PRO);
     expectNone(reader);
@@ -768,7 +768,7 @@ describe("main's entitlements reader", () => {
   });
 
   test('reader-flips-on-confirm-and-sign-out', async () => {
-    const h = harness();
+    const h = await harness();
     const reader = entitlementsReaderOf(h.service);
     const seen: Entitlements[] = [];
     const unsubscribe = reader.onChange((entitlements) => void seen.push(entitlements));
@@ -798,7 +798,7 @@ describe("main's entitlements reader", () => {
   });
 
   test('unconfigured-reader-is-none', async () => {
-    const h = harness({ config: null, api: null, entitlements: null });
+    const h = await harness({ config: null, api: null, entitlements: null });
     for (const reader of [entitlementsReaderOf(h.service), noEntitlementsReader()]) {
       const listener = vi.fn();
       reader.onChange(listener);

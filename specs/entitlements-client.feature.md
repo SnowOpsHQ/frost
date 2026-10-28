@@ -51,9 +51,13 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
   fixed reason only. A newer valid snapshot clears the failure.
 - **Flags, not plans.** Only `FEATURE_FLAGS` are kept; a plan this build does not know is shown as
   `free` (its known flags still count, since gating reads flags).
-- **Secrets need a real keychain.** The secret store encrypts with `safeStorage`; it is memory-only
-  (nothing written, `persistent: false`) when encryption is unavailable or Linux selected
-  `basic_text` or `unknown`. That is decided once, at creation, so it must be created after the app
+- **Secrets need a real keychain.** The secret store encrypts with `safeStorage`'s asynchronous API
+  (`isAsyncEncryptionAvailable`, `encryptStringAsync`, `decryptStringAsync`; the synchronous calls
+  are deprecated in Electron 45); it is memory-only (nothing written, `persistent: false`) when
+  asynchronous encryption is unavailable or Linux selected `basic_text` or `unknown`. A write or
+  delete changes what the run reads at once; the disk follows in order, and quitting waits for it
+  (bounded, with the account's revocations). A decrypt that answers `shouldReEncrypt` is written
+  again with the current key. That is decided once, at creation, so it must be created after the app
   is ready (`isReady`; before it, Linux answers wrongly): creating it earlier throws. A blob that does
   not decrypt reads as absent; its file is kept (the keyring may only be locked, as at login) unless
   the keychain already worked in this run (a decrypt or encrypt succeeded), when it is deleted as
@@ -138,6 +142,9 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
 - `secret-names-allowlisted` — a name outside `SECRET_NAMES` (or a path) is refused, as is an over-long value.
 - `secret-delete-and-clear` — `delete(name)` and `clear()` remove blobs (and stray temporary files).
 - `failed-write-leaves-no-stale-value` — when the rename fails, the old file is removed and the run keeps the new value.
+- `secret-reencrypts-when-asked` — a blob whose decrypt answers `shouldReEncrypt` reads its value and is written again with the current key.
+- `keychain-check-is-bounded` — an asynchronous encryptor that never answers whether it is available makes the store memory-only after `KEYCHAIN_CHECK_TIMEOUT_MS`.
+- `secret-writes-are-ordered` — a write, a delete and a write in a row leave the last on disk; a read whose decrypt finishes after a newer write answers the newer value and does not bring the old one back; `whenIdle()` resolves once the disk has caught up, and `pending()` says whether it has not.
 
 ## Router (`packages/ipc-contract/src/__tests__/account-router.test.ts`)
 - `account-procedures-enforce-sender` — `account.*` rejects a foreign sender before the service is called.

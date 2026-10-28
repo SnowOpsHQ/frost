@@ -19,10 +19,10 @@ export interface GscMain {
 
 const log = (message: string): void => console.warn(`frost: ${message}`);
 
-export function createGscMain(account: AccountMain): GscMain {
+export async function createGscMain(account: AccountMain): Promise<GscMain> {
   // Build-time values; only an unpackaged build with none baked in reads them (and the fakes' endpoints) from its environment.
   const config = resolveGscConfig({ isPackaged: app.isPackaged, buildTime: buildTimePublicEnv(), runtime: process.env });
-  const service = createGscService({
+  const service = await createGscService({
     config,
     fetch: (url, init) => net.fetch(url, init),
     store: account.secretStore,

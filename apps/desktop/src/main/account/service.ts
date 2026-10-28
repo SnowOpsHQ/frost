@@ -115,7 +115,8 @@ interface Waiter {
 
 const errorOfFailure = (failure: ApiFailure): AccountError => (failure === 'network' ? 'network' : 'exchange-failed');
 
-export function createAccountService(deps: AccountServiceDeps): AccountMainService {
+/** The account service, after the stored account (if any) is read from `store`. */
+export async function createAccountService(deps: AccountServiceDeps): Promise<AccountMainService> {
   const { config, api, store, entitlements } = deps;
   const now = deps.now ?? (() => Date.now());
   /** Secrets seen in this run, scrubbed from every message as a second line of defence. */
@@ -223,8 +224,12 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
     return true;
   };
 
+  /** This run reads it at once; the disk follows in order (the store's queue; the quit waits for it). */
   const writeAccount = (value: StoredAccount): void => {
-    store.write(ACCOUNT_SECRET, JSON.stringify(value));
+    void store.write(ACCOUNT_SECRET, JSON.stringify(value));
+  };
+  const deleteAccount = (): void => {
+    void store.delete(ACCOUNT_SECRET);
   };
 
   /** The backend no longer accepts the token (or it expired): signed out, nothing kept. */
@@ -232,7 +237,7 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
     if (account?.token !== acc.token) return;
     account = null;
     refreshing = null;
-    store.delete(ACCOUNT_SECRET);
+    deleteAccount();
     entitlements?.markRefreshFailed('auth');
     error = 'session-ended';
     log('account: the session ended; signed out');
@@ -361,7 +366,7 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
   // ---- Start ----------------------------------------------------------------------------------
 
   if (config !== null) {
-    const text = store.read(ACCOUNT_SECRET);
+    const text = await store.read(ACCOUNT_SECRET);
     if (text !== null) {
       let value: unknown;
       try {
@@ -372,10 +377,10 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
       const parsed = StoredAccountSchema.safeParse(value);
       if (!parsed.success) {
         log('account: the stored account is unreadable; discarded');
-        store.delete(ACCOUNT_SECRET);
+        deleteAccount();
       } else if (parsed.data.expiresAt <= now()) {
         log('account: the stored account expired; discarded');
-        store.delete(ACCOUNT_SECRET);
+        deleteAccount();
       } else {
         account = parsed.data;
         remember(account.token, account.user.email);
@@ -505,7 +510,7 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
       if (!acc) return false;
       account = null;
       refreshing = null;
-      store.delete(ACCOUNT_SECRET);
+      deleteAccount();
       entitlements?.clear();
       error = null;
       log('account: signed out');

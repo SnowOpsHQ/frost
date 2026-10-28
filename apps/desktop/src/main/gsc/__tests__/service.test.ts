@@ -43,8 +43,8 @@ afterEach(async () => {
   await h.close();
 });
 
-function serviceWith(overrides: Partial<GscServiceDeps> = {}): GscMainService {
-  const service = createGscService({
+async function serviceWith(overrides: Partial<GscServiceDeps> = {}): Promise<GscMainService> {
+  const service = await createGscService({
     config: h.config,
     fetch: h.fetch,
     store: h.store,
@@ -70,7 +70,7 @@ function serviceWith(overrides: Partial<GscServiceDeps> = {}): GscMainService {
 }
 
 async function connected(overrides: Partial<GscServiceDeps> = {}): Promise<GscMainService> {
-  const service = serviceWith(overrides);
+  const service = await serviceWith(overrides);
   h.grant();
   expect(await service.connect(WINDOW_ID)).toBe('started');
   await h.follow();
@@ -85,7 +85,7 @@ describe('Search Console service', () => {
   test('not-entitled-refused-before-network', async () => {
     h.store.write(GSC_SECRET, storedBlob());
     entitled = false;
-    const service = serviceWith();
+    const service = await serviceWith();
     expect(service.status()).toMatchObject({ configured: true, entitled: false, connected: true });
     const unavailable = { status: 'unavailable', reason: 'not-entitled' };
     expect(await service.properties()).toEqual(unavailable);
@@ -103,7 +103,7 @@ describe('Search Console service', () => {
   });
 
   test('unconfigured-and-not-connected', async () => {
-    const bare = serviceWith({ config: null });
+    const bare = await serviceWith({ config: null });
     expect(GscStatusSchema.parse(bare.status())).toMatchObject({ configured: false, connected: false, connecting: false });
     for (const answer of [await bare.properties(), await bare.propertyFor(PAGE), await bare.performance(QUERY), await bare.topQueries(QUERY)]) {
       expect(answer).toEqual({ status: 'unavailable', reason: 'unconfigured' });
@@ -112,13 +112,13 @@ describe('Search Console service', () => {
     expect(await bare.connect(WINDOW_ID)).toBe('unconfigured');
     expect(await bare.cancelConnect()).toBe(false);
     expect(await bare.disconnect()).toBe(false);
-    const service = serviceWith();
+    const service = await serviceWith();
     expect(service.status()).toMatchObject({ configured: true, entitled: true, connected: false, connecting: false, keychain: 'persistent', error: null });
     for (const answer of [await service.properties(), await service.propertyFor(PAGE), await service.performance(QUERY), await service.topQueries(QUERY)]) {
       expect(answer).toEqual({ status: 'unavailable', reason: 'not-connected' });
     }
     expect(h.fetched).toEqual([]);
-    expect(serviceWith({ store: memoryStore(false) }).status().keychain).toBe('memory-only');
+    expect(await (await serviceWith({ store: memoryStore(false) })).status().keychain).toBe('memory-only');
   });
 
   test('not-a-web-page-and-invalid', async () => {
@@ -246,7 +246,7 @@ describe('Search Console service', () => {
     h.google.expireAccessTokens();
     expect(await service.performance({ ...QUERY, days: 90 })).toEqual({ status: 'unavailable', reason: 'auth-expired' });
     expect(service.status()).toMatchObject({ connected: false, error: 'auth-expired' });
-    expect(h.store.read(GSC_SECRET)).toBeNull();
+    expect(await h.store.read(GSC_SECRET)).toBeNull();
     expect(await service.performance({ ...QUERY, days: 90 })).toEqual({ status: 'unavailable', reason: 'not-connected' });
   });
 
@@ -316,7 +316,7 @@ describe('Search Console service', () => {
 
   test('never-throws', async () => {
     // A fetch that throws synchronously is a network failure, in the exchange as in the reads.
-    const throwing = serviceWith({
+    const throwing = await serviceWith({
       store: memoryStore(),
       fetch: () => {
         throw new Error('boom');
@@ -329,7 +329,7 @@ describe('Search Console service', () => {
     expect(throwing.status()).toMatchObject({ connected: false, connecting: false, error: 'network' });
     const store = memoryStore();
     store.write(GSC_SECRET, storedBlob());
-    const service = serviceWith({
+    const service = await serviceWith({
       store,
       fetch: () => {
         throw new Error('boom');
@@ -337,7 +337,7 @@ describe('Search Console service', () => {
     });
     expect(await service.performance(QUERY)).toEqual({ status: 'unavailable', reason: 'network' });
     expect(await service.properties()).toEqual({ status: 'unavailable', reason: 'network' });
-    const broken = serviceWith({
+    const broken = await serviceWith({
       store: {
         persistent: true,
         read: () => {
@@ -353,7 +353,7 @@ describe('Search Console service', () => {
     });
     expect(broken.status().connected).toBe(false);
     expect(await broken.performance(QUERY)).toEqual({ status: 'unavailable', reason: 'not-connected' });
-    const angry = serviceWith({
+    const angry = await serviceWith({
       entitled: () => {
         throw new Error('entitlements');
       },
@@ -368,7 +368,7 @@ describe('Search Console service', () => {
   });
 
   test('status-watch-long-polls', async () => {
-    const service = serviceWith();
+    const service = await serviceWith();
     const first = service.status();
     expect(await service.watch(-1)).toEqual(first);
     const next = service.watch(first.version);
@@ -400,7 +400,7 @@ describe('Search Console service', () => {
   });
 
   test('dispose-awaits-revocation', async () => {
-    const idle = serviceWith({ store: memoryStore() });
+    const idle = await serviceWith({ store: memoryStore() });
     expect(idle.dispose()).toBeNull();
     const service = await connected();
     const release = h.hold('revoke');
@@ -416,7 +416,7 @@ describe('Search Console service', () => {
     await disconnecting;
     expect(h.google.revoked).toHaveLength(1);
     // A pending connect is dropped (its listener closed).
-    const pending = serviceWith({ store: memoryStore() });
+    const pending = await serviceWith({ store: memoryStore() });
     h.grant();
     expect(await pending.connect(WINDOW_ID)).toBe('started');
     expect(pending.dispose()).toBeNull();
@@ -450,7 +450,7 @@ describe('Search Console service', () => {
 
   test('connection-belongs-to-frost-account', async () => {
     const service = await connected();
-    expect(JSON.parse(h.store.read(GSC_SECRET)!).owner).toBe(OWNER);
+    expect(JSON.parse((await h.store.read(GSC_SECRET))!).owner).toBe(OWNER);
     const notify = () => {
       for (const listener of [...listeners]) listener();
     };
@@ -477,15 +477,15 @@ describe('Search Console service', () => {
     expect(h.google.apiTokens).toHaveLength(apiCalls);
     notify();
     await expect.poll(() => h.google.revoked.includes(refresh)).toBe(true);
-    expect(h.store.read(GSC_SECRET)).toBeNull();
+    expect(await h.store.read(GSC_SECRET)).toBeNull();
     expect(service.status()).toMatchObject({ connected: false });
     // A stored connection of another account is dropped at start.
     const store = memoryStore();
     store.write(GSC_SECRET, storedBlob('stored-refresh-token-2', 'user-9'));
-    const other = serviceWith({ store });
+    const other = await serviceWith({ store });
     expect(other.status().connected).toBe(false);
     await expect.poll(() => h.google.revoked.includes('stored-refresh-token-2')).toBe(true);
-    expect(store.read(GSC_SECRET)).toBeNull();
+    expect(await store.read(GSC_SECRET)).toBeNull();
   });
 
   test('identical-reads-merged', async () => {
@@ -523,7 +523,7 @@ describe('Search Console service', () => {
     const failing = { ...memoryStore(), write: () => { throw new Error('keychain'); } };
     const unsaved = await connected({ store: failing });
     expect(unsaved.status()).toMatchObject({ connected: true, keychain: 'memory-only' });
-    expect(serviceWith({ store: memoryStore() }).status().keychain).toBe('persistent');
+    expect(await (await serviceWith({ store: memoryStore() })).status().keychain).toBe('persistent');
     expect((await connected({ store: memoryStore() })).status().keychain).toBe('persistent');
   });
 });

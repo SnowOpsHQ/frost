@@ -21,7 +21,7 @@ afterEach(async () => {
   await h.close();
 });
 
-const authWith = (overrides: Partial<GscAuthDeps> = {}): GscAuth =>
+const authWith = (overrides: Partial<GscAuthDeps> = {}): Promise<GscAuth> =>
   createGscAuth({
     config: h.config,
     fetch: h.fetch,
@@ -48,7 +48,7 @@ async function connect(auth: GscAuth): Promise<void> {
 
 describe('Search Console connection', () => {
   test('gsc-scope-is-read-only', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     h.grant();
     expect(await auth.connect(WINDOW_ID)).toBe('started');
     expect(auth.connecting()).toBe(true);
@@ -70,20 +70,20 @@ describe('Search Console connection', () => {
     // A grant of anything more than the read-only scope (or no scope at all) is refused and revoked.
     for (const grant of [`${GSC_SCOPE} https://www.googleapis.com/auth/webmasters`, `openid ${GSC_SCOPE}`, 'https://www.googleapis.com/auth/webmasters', '', null]) {
       const store = memoryStore();
-      const refused = authWith({ store });
+      const refused = await authWith({ store });
       h.google.grantScope = grant;
       await connect(refused);
       const refresh = h.google.refreshTokens.at(-1)!;
       expect(refused.connected(), String(grant)).toBe(false);
       expect(refused.error()).toBe('scope-refused');
-      expect(store.read(GSC_SECRET)).toBeNull();
+      expect(await store.read(GSC_SECRET)).toBeNull();
       await expect.poll(() => h.google.revoked.includes(refresh)).toBe(true);
       expect(await refused.accessToken()).toEqual({ ok: false, failure: 'not-connected' });
     }
   });
 
   test('connect-without-gesture-opens-nothing', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     expect(await auth.connect(WINDOW_ID)).toBe('needs-gesture');
     h.grant();
     expect(await auth.connect(OTHER_WINDOW_ID)).toBe('needs-gesture');
@@ -93,7 +93,7 @@ describe('Search Console connection', () => {
     expect(h.google.requests).toEqual([]);
     expect(auth.connecting()).toBe(false);
     // The browser opener refuses without a gesture verdict too: the gesture is passed on.
-    const refusing = authWith({ openInBrowser: (_url, gesture) => gesture && false });
+    const refusing = await authWith({ openInBrowser: (_url, gesture) => gesture && false });
     h.grant();
     expect(await refusing.connect(WINDOW_ID)).toBe('browser-failed');
     expect(refusing.error()).toBe('browser-failed');
@@ -101,7 +101,7 @@ describe('Search Console connection', () => {
   });
 
   test('pkce-s256-and-state-checked', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     h.grant();
     expect(await auth.connect(WINDOW_ID)).toBe('started');
     const consentUrl = new URL(h.opened[0]!);
@@ -133,12 +133,12 @@ describe('Search Console connection', () => {
   });
 
   test('connect-stores-refresh-token-only', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     await connect(auth);
     expect(auth.connected()).toBe(true);
     expect(auth.connecting()).toBe(false);
     expect(auth.error()).toBeNull();
-    const blob = h.store.read(GSC_SECRET)!;
+    const blob = (await h.store.read(GSC_SECRET))!;
     expect(JSON.parse(blob)).toEqual({ v: 1, refreshToken: h.google.refreshTokens[0], scope: GSC_SCOPE, owner: OWNER });
     expect(blob).not.toContain(h.google.accessTokens[0]!);
     // The access token is kept in memory: no new token request.
@@ -154,7 +154,7 @@ describe('Search Console connection', () => {
   test('connect-cancelled-denied-or-replaced', async () => {
     // The browser reports the consent as refused.
     h.google.consentError = 'access_denied';
-    const denied = authWith({ store: memoryStore() });
+    const denied = await authWith({ store: memoryStore() });
     await connect(denied);
     expect(denied.connected()).toBe(false);
     expect(denied.connecting()).toBe(false);
@@ -163,7 +163,7 @@ describe('Search Console connection', () => {
     h.google.consentError = null;
 
     // Cancelled in the app: the listener is closed.
-    const cancelled = authWith({ store: memoryStore() });
+    const cancelled = await authWith({ store: memoryStore() });
     h.grant();
     expect(await cancelled.connect(WINDOW_ID)).toBe('started');
     expect(cancelled.cancelConnect()).toBe(true);
@@ -173,7 +173,7 @@ describe('Search Console connection', () => {
     expect(cancelled.cancelConnect()).toBe(false);
 
     // Replaced while the first one's code is being exchanged: what that exchange got is revoked.
-    const auth = authWith();
+    const auth = await authWith();
     const release = h.hold('token');
     h.grant();
     expect(await auth.connect(WINDOW_ID)).toBe('started');
@@ -192,22 +192,22 @@ describe('Search Console connection', () => {
     await h.follow(second);
     await auth.whenIdle();
     expect(auth.connected()).toBe(true);
-    expect(JSON.parse(h.store.read(GSC_SECRET)!).refreshToken).toBe(h.google.refreshTokens.at(-1));
+    expect(JSON.parse((await h.store.read(GSC_SECRET))!).refreshToken).toBe(h.google.refreshTokens.at(-1));
     expect(h.google.refreshTokens.at(-1)).not.toBe(late);
   });
 
   test('connect-without-refresh-token-fails', async () => {
     h.google.issueRefreshToken = false;
-    const auth = authWith();
+    const auth = await authWith();
     await connect(auth);
     expect(auth.connected()).toBe(false);
     expect(auth.error()).toBe('exchange-failed');
-    expect(h.store.read(GSC_SECRET)).toBeNull();
+    expect(await h.store.read(GSC_SECRET)).toBeNull();
     await expect.poll(() => h.google.revoked.includes(h.google.accessTokens[0]!)).toBe(true);
   });
 
   test('refresh-on-expiry', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     await connect(auth);
     const ttlMs = h.google.accessTokenTtlSeconds * 1000;
     h.clock.now += ttlMs - GSC_ACCESS_TOKEN_SKEW_MS - 1;
@@ -237,31 +237,31 @@ describe('Search Console connection', () => {
   });
 
   test('refresh-invalid-grant-disconnects', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     await connect(auth);
     h.google.revokeRefreshTokens();
     h.clock.now += h.google.accessTokenTtlSeconds * 1000;
     expect(await auth.accessToken()).toEqual({ ok: false, failure: 'auth-expired' });
     expect(auth.connected()).toBe(false);
     expect(auth.error()).toBe('auth-expired');
-    expect(h.store.read(GSC_SECRET)).toBeNull();
+    expect(await h.store.read(GSC_SECRET)).toBeNull();
     expect(await auth.accessToken()).toEqual({ ok: false, failure: 'not-connected' });
     // Unreachable Google is not the end of the connection.
     const store = memoryStore();
     store.write(GSC_SECRET, storedBlob());
-    const offline = authWith({ fetch: () => Promise.reject(new TypeError('fetch failed')), store });
+    const offline = await authWith({ fetch: () => Promise.reject(new TypeError('fetch failed')), store });
     expect(await offline.accessToken()).toEqual({ ok: false, failure: 'network' });
     expect(offline.connected()).toBe(true);
-    expect(store.read(GSC_SECRET)).not.toBeNull();
+    expect(await store.read(GSC_SECRET)).not.toBeNull();
   });
 
   test('disconnect-revokes-and-deletes-blob', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     await connect(auth);
     const refresh = h.google.refreshTokens[0]!;
     expect(await auth.disconnect()).toBe(true);
     expect(h.google.revoked).toEqual([refresh]);
-    expect(h.store.read(GSC_SECRET)).toBeNull();
+    expect(await h.store.read(GSC_SECRET)).toBeNull();
     expect(auth.connected()).toBe(false);
     expect(auth.error()).toBeNull();
     expect(await auth.accessToken()).toEqual({ ok: false, failure: 'not-connected' });
@@ -269,37 +269,37 @@ describe('Search Console connection', () => {
     // A revocation that fails still disconnects (best effort).
     const store = memoryStore();
     store.write(GSC_SECRET, storedBlob());
-    const stored = authWith({ fetch: () => Promise.reject(new TypeError('fetch failed')), store });
+    const stored = await authWith({ fetch: () => Promise.reject(new TypeError('fetch failed')), store });
     expect(await stored.disconnect()).toBe(true);
-    expect(store.read(GSC_SECRET)).toBeNull();
+    expect(await store.read(GSC_SECRET)).toBeNull();
     expect(stored.connected()).toBe(false);
   });
 
   test('stored-connection-restores', async () => {
     const store = memoryStore();
     store.write(GSC_SECRET, storedBlob());
-    expect(authWith({ store }).connected()).toBe(true);
+    expect(await (await authWith({ store })).connected()).toBe(true);
     for (const bad of ['not json', '{}', JSON.stringify({ v: 2, refreshToken: 'x', scope: GSC_SCOPE }), JSON.stringify({ v: 1, refreshToken: 'x', scope: 'https://www.googleapis.com/auth/webmasters' }), JSON.stringify({ v: 1, refreshToken: 'x', scope: GSC_SCOPE, owner: OWNER, accessToken: 'y' }), JSON.stringify({ v: 1, refreshToken: 'x', scope: GSC_SCOPE }), JSON.stringify({ v: 1, refreshToken: 'x', scope: GSC_SCOPE, owner: '' })]) {
       const broken = memoryStore();
       broken.write(GSC_SECRET, bad);
-      expect(authWith({ store: broken }).connected(), bad).toBe(false);
-      expect(broken.read(GSC_SECRET), bad).toBeNull();
+      expect(await (await authWith({ store: broken })).connected(), bad).toBe(false);
+      expect(await broken.read(GSC_SECRET), bad).toBeNull();
     }
   });
 
   test('logs-carry-no-secret', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     await connect(auth);
     h.clock.now += h.google.accessTokenTtlSeconds * 1000;
     expect((await auth.accessToken()).ok).toBe(true);
     h.google.grantScope = `${GSC_SCOPE} openid`;
-    const refused = authWith({ store: memoryStore() });
+    const refused = await authWith({ store: memoryStore() });
     await connect(refused);
     h.google.grantScope = GSC_SCOPE;
     h.google.revokeRefreshTokens();
     h.clock.now += h.google.accessTokenTtlSeconds * 1000;
     await auth.accessToken();
-    const again = authWith({ store: memoryStore() });
+    const again = await authWith({ store: memoryStore() });
     await connect(again);
     await again.disconnect();
     expect(h.logs.length).toBeGreaterThan(3);
@@ -314,7 +314,7 @@ describe('Search Console connection', () => {
   test('refresh-backs-off', async () => {
     let down = false;
     let attempts = 0;
-    const auth = authWith({
+    const auth = await authWith({
       fetch: (url, init) => {
         if (url.startsWith(h.google.endpoints.tokenUrl)) attempts++;
         return down ? Promise.reject(new TypeError('fetch failed')) : h.fetch(url, init);
@@ -365,9 +365,9 @@ describe('Search Console connection', () => {
   });
 
   test('connection-owned-by-account', async () => {
-    const auth = authWith();
+    const auth = await authWith();
     await connect(auth);
-    expect(JSON.parse(h.store.read(GSC_SECRET)!).owner).toBe(OWNER);
+    expect(JSON.parse((await h.store.read(GSC_SECRET))!).owner).toBe(OWNER);
     expect(auth.owner()).toBe(OWNER);
     h.clock.now += h.google.accessTokenTtlSeconds * 1000;
     const sent = h.fetched.length;
@@ -383,7 +383,7 @@ describe('Search Console connection', () => {
     expect((await auth.accessToken()).ok).toBe(true);
     // A connect whose exchange lands after the frost account changed is revoked, nothing kept.
     const store = memoryStore();
-    const late = authWith({ store });
+    const late = await authWith({ store });
     const release = h.hold('token');
     h.grant();
     expect(await late.connect(WINDOW_ID)).toBe('started');
@@ -392,19 +392,19 @@ describe('Search Console connection', () => {
     release();
     await late.whenIdle();
     expect(late.held()).toBe(false);
-    expect(store.read(GSC_SECRET)).toBeNull();
+    expect(await store.read(GSC_SECRET)).toBeNull();
     expect(late.error()).toBe('exchange-failed');
     await expect.poll(() => h.google.revoked.includes(h.google.refreshTokens.at(-1)!)).toBe(true);
     // Connecting needs a signed-in frost account.
     h.account.userId = null;
     h.grant();
-    expect(await authWith({ store: memoryStore() }).connect(WINDOW_ID)).toBe('no-account');
+    expect(await (await authWith({ store: memoryStore() })).connect(WINDOW_ID)).toBe('no-account');
     expect(h.opened).toHaveLength(2);
   });
 
   test('memory-only-revoked-on-dispose', async () => {
     const memory = memoryStore(false);
-    const auth = authWith({ store: memory });
+    const auth = await authWith({ store: memory });
     await connect(auth);
     expect(auth.persisted()).toBe(false);
     const refresh = h.google.refreshTokens.at(-1)!;
@@ -414,14 +414,14 @@ describe('Search Console connection', () => {
     expect(h.google.revoked).toContain(refresh);
     // A write that fails: the same.
     const failing = { ...memoryStore(), write: () => { throw new Error('keychain'); } };
-    const unsaved = authWith({ store: failing });
+    const unsaved = await authWith({ store: failing });
     await connect(unsaved);
     expect(unsaved.persisted()).toBe(false);
     const second = h.google.refreshTokens.at(-1)!;
     await unsaved.dispose();
     expect(h.google.revoked).toContain(second);
     // Persisted: kept for the next run, not revoked.
-    const kept = authWith({ store: memoryStore() });
+    const kept = await authWith({ store: memoryStore() });
     await connect(kept);
     expect(kept.persisted()).toBe(true);
     const revoked = h.google.revoked.length;
@@ -429,11 +429,11 @@ describe('Search Console connection', () => {
     expect(h.google.revoked).toHaveLength(revoked);
     const restored = memoryStore();
     restored.write(GSC_SECRET, storedBlob());
-    expect(authWith({ store: restored }).persisted()).toBe(true);
+    expect(await (await authWith({ store: restored })).persisted()).toBe(true);
   });
 
   test('dispose-during-exchange-awaited', async () => {
-    const auth = authWith({ store: memoryStore() });
+    const auth = await authWith({ store: memoryStore() });
     const release = h.hold('token');
     h.grant();
     expect(await auth.connect(WINDOW_ID)).toBe('started');

@@ -43,10 +43,12 @@ function memoryStore(): SecretStore {
   const values = new Map<string, string>();
   return {
     persistent: false,
-    read: (name) => values.get(name) ?? null,
-    write: (name, value) => void values.set(name, value),
-    delete: (name) => void values.delete(name),
-    clear: () => values.clear(),
+    read: async (name) => values.get(name) ?? null,
+    write: async (name, value) => void values.set(name, value),
+    delete: async (name) => void values.delete(name),
+    clear: async () => values.clear(),
+    pending: () => false,
+    whenIdle: async () => undefined,
   };
 }
 
@@ -60,7 +62,7 @@ function focusWindow(windowId: number): void {
 export async function createAccountMain(): Promise<AccountMain> {
   let secretStore: SecretStore;
   try {
-    secretStore = createSecretStore({ dir: path.join(app.getPath('userData'), SECRETS_DIR_NAME), safeStorage, isReady: () => app.isReady(), log });
+    secretStore = await createSecretStore({ dir: path.join(app.getPath('userData'), SECRETS_DIR_NAME), safeStorage, isReady: () => app.isReady(), log });
   } catch {
     log('account: the secret store could not be created; memory only');
     secretStore = memoryStore();
@@ -82,7 +84,7 @@ export async function createAccountMain(): Promise<AccountMain> {
     existing: () => BrowserWindow.getAllWindows(),
     track: (contents: Electron.WebContents) => trackUserGesture(contents, () => performance.now()),
   });
-  const service = createAccountService({
+  const service = await createAccountService({
     config,
     api: config === null ? null : createAccountApi({ apiBase: config.apiBase, fetch: (url, init) => net.fetch(url, init) }),
     store: secretStore,
@@ -93,12 +95,15 @@ export async function createAccountMain(): Promise<AccountMain> {
     focusWindow,
     log,
   });
-  // On quit: a token exchanged but not confirmed (or a sign-out still revoking) is revoked first,
-  // holding the quit at most QUIT_REVOKE_TIMEOUT_MS (only when there is one).
+  // On quit: a token exchanged but not confirmed (or a sign-out still revoking) is revoked first, and
+  // secrets still on their way to disk are written, holding the quit at most QUIT_REVOKE_TIMEOUT_MS
+  // (only when there is either).
   holdQuitFor(app, () => {
     gestures.dispose();
     entitlementsStore?.dispose();
-    return service.dispose();
+    const revoking = service.dispose();
+    if (revoking === null && !secretStore.pending()) return null;
+    return Promise.allSettled([revoking, secretStore.whenIdle()]);
   });
   // The menu's Settings… requests (Task 9), served as `account.settingsWatch`.
   const settings = createSettingsRequestsMain();

@@ -163,7 +163,8 @@ interface Pending {
 
 const FORM_HEADERS = (): Headers => new Headers({ Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' });
 
-export function createGscAuth(deps: GscAuthDeps): GscAuth {
+/** The connection, after the stored one (if any) is read from the store. */
+export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
   const { config, store, log, remember } = deps;
   const pin = deps.pin ?? remember;
   const timeouts = deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs };
@@ -202,7 +203,8 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
   /** Whether the token reached the keychain (a memory-only store, or a failed write: this run only). */
   const save = (token: string, by: string): boolean => {
     try {
-      store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: token, scope: GSC_SCOPE, owner: by }));
+      // This run reads it at once; the disk follows in order (the store's queue).
+      void store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: token, scope: GSC_SCOPE, owner: by }));
       return store.persistent;
     } catch {
       log('gsc: the connection could not be stored; kept for this run only');
@@ -211,7 +213,7 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
   };
   const forget = (): void => {
     try {
-      store.delete(GSC_SECRET);
+      void store.delete(GSC_SECRET);
     } catch {
       log('gsc: the stored connection could not be deleted');
     }
@@ -248,7 +250,7 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
 
   let text: string | null = null;
   try {
-    text = store.read(GSC_SECRET);
+    text = await store.read(GSC_SECRET);
   } catch {
     log('gsc: the stored connection could not be read');
   }

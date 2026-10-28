@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import {
   INSECURE_LINUX_BACKENDS,
+  KEYCHAIN_CHECK_TIMEOUT_MS,
   MAX_SECRET_CHARS,
   SECRET_FILE_MODE,
   SECRET_FILE_SUFFIX,
@@ -14,15 +15,23 @@ import {
 
 // Main's secret store (spec `secret-store.spec.ts`; acceptance `entitlements-client.feature.md`,
 // Secret store; plan decision "Secrets need a real keychain"). No Electron import: main passes
-// `safeStorage`. Values are strings; on disk each is `safeStorage.encryptString(value)` in
+// `safeStorage`. Values are strings; on disk each is `await safeStorage.encryptStringAsync(value)` in
 // `<dir>/<name>.bin`, written to a temporary file (owner-only) and renamed over the old one.
-// Logs name the blob and an error code, never a value, a ciphertext or a path.
+// `safeStorage`'s asynchronous API only: the synchronous calls are deprecated in Electron 45, and on
+// Linux `isEncryptionAvailable()` can answer false where the asynchronous encryptor works.
+//
+// A write or delete changes what this run reads at once (a map of the run's values); the disk follows
+// through one queue, in call order, so a write, a delete and a write in a row leave the last on disk.
+// A read that has to decrypt a file runs in that queue too, and answers (and keeps) a newer value
+// written meanwhile instead of the one it decrypted. `whenIdle()` waits for the disk to catch up (the
+// quit waits for it). Logs name the blob and an error code, never a value, a ciphertext or a path.
 
-/** What the store uses of Electron's `safeStorage`. */
+/** What the store uses of Electron's `safeStorage` (its asynchronous API). */
 export interface SafeStorageLike {
-  isEncryptionAvailable(): boolean;
-  encryptString(plainText: string): Buffer;
-  decryptString(encrypted: Buffer): string;
+  isAsyncEncryptionAvailable(): Promise<boolean>;
+  encryptStringAsync(plainText: string): Promise<Buffer>;
+  /** `shouldReEncrypt`: the key rotated (or a better one is available); write the value again. */
+  decryptStringAsync(encrypted: Buffer): Promise<{ readonly shouldReEncrypt: boolean; readonly result: string }>;
   /** Linux only (Electron throws or is absent elsewhere). */
   getSelectedStorageBackend?(): string;
 }
@@ -36,7 +45,7 @@ export interface CreateSecretStoreOptions {
   /**
    * Whether the app is ready (main passes `() => app.isReady()`). Whether the keychain is usable is
    * decided once, at creation, and on Linux `safeStorage` answers wrongly before `ready`; so creating
-   * the store earlier throws. Create it after `app.whenReady()`.
+   * the store earlier rejects. Create it after `app.whenReady()`.
    */
   readonly isReady: () => boolean;
   readonly safeStorage: SafeStorageLike;
@@ -49,21 +58,32 @@ export interface CreateSecretStoreOptions {
 export interface SecretStore {
   /**
    * Whether values outlive this run (written to disk, encrypted by the OS keychain). `false`:
-   * memory-only, because encryption is unavailable or Linux selected `basic_text` / `unknown`.
+   * memory-only, because asynchronous encryption is unavailable or Linux selected `basic_text` /
+   * `unknown`.
    */
   readonly persistent: boolean;
   /**
    * The value, or `null` when absent. A blob that does not decrypt is absent: its file is kept while
    * the keychain has not worked yet in this run (it may only be locked; a later read retries), and
    * deleted as corrupt once a decrypt or encrypt has succeeded. An empty file, or one that decrypts
-   * to something the store never wrote, is deleted at once.
+   * to something the store never wrote, is deleted at once. A blob whose decrypt answers
+   * `shouldReEncrypt` is written again. Throws (synchronously) for an unknown name.
    */
-  read(name: SecretName): string | null;
-  /** Stores `value`. A failed disk write keeps it for this run and removes the stale file. */
-  write(name: SecretName, value: string): void;
-  delete(name: SecretName): void;
+  read(name: SecretName): Promise<string | null>;
+  /**
+   * Stores `value`: this run reads it at once; resolves once it is on disk (never rejects). A failed
+   * disk write keeps it for this run and removes the stale file. Throws (synchronously) for an unknown
+   * name, a value that is not a string, or one longer than `MAX_SECRET_CHARS`.
+   */
+  write(name: SecretName, value: string): Promise<void>;
+  /** Deletes `name`: this run reads `null` at once; resolves once the file is gone (never rejects). */
+  delete(name: SecretName): Promise<void>;
   /** Deletes every blob (and stray temporary files). */
-  clear(): void;
+  clear(): Promise<void>;
+  /** Whether a disk write, delete or read is still queued or running. */
+  pending(): boolean;
+  /** Resolves once every disk operation queued so far is done. */
+  whenIdle(): Promise<void>;
 }
 
 const NAMES: ReadonlySet<string> = new Set(SECRET_NAMES);
@@ -78,10 +98,27 @@ function errorCode(error: unknown): string {
   return typeof code === 'string' && /^[A-Z0-9_]{1,32}$/.test(code) ? code : 'error';
 }
 
-/** Whether `safeStorage` really encrypts here (see `INSECURE_LINUX_BACKENDS`). */
-export function keychainAvailable(safeStorage: SafeStorageLike, platform: NodeJS.Platform): boolean {
+/** `isAsyncEncryptionAvailable()`, or `false` when it does not answer within `KEYCHAIN_CHECK_TIMEOUT_MS`. */
+function asyncEncryptionAvailable(safeStorage: SafeStorageLike): Promise<boolean> {
+  let check: Promise<boolean>;
   try {
-    if (!safeStorage.isEncryptionAvailable()) return false;
+    check = Promise.resolve(safeStorage.isAsyncEncryptionAvailable()).then((available) => available === true);
+  } catch {
+    return Promise.resolve(false);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), KEYCHAIN_CHECK_TIMEOUT_MS)));
+  return Promise.race([check, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Whether `safeStorage` really encrypts here (see `INSECURE_LINUX_BACKENDS`): its asynchronous
+ * encryptor is available (answering within `KEYCHAIN_CHECK_TIMEOUT_MS`) and, on Linux, the selected
+ * backend is a real keyring.
+ */
+export async function keychainAvailable(safeStorage: SafeStorageLike, platform: NodeJS.Platform): Promise<boolean> {
+  try {
+    if (!(await asyncEncryptionAvailable(safeStorage))) return false;
     if (platform !== 'linux') return true;
     const backend = safeStorage.getSelectedStorageBackend?.();
     return typeof backend === 'string' && !INSECURE_LINUX_BACKENDS.includes(backend);
@@ -90,16 +127,36 @@ export function keychainAvailable(safeStorage: SafeStorageLike, platform: NodeJS
   }
 }
 
-export function createSecretStore(options: CreateSecretStoreOptions): SecretStore {
+export async function createSecretStore(options: CreateSecretStoreOptions): Promise<SecretStore> {
   const { dir, safeStorage, log } = options;
   if (!options.isReady()) throw new Error('secret store: create it after the app is ready (app.whenReady())');
   const fs = options.fs ?? nodeFs;
-  const persistent = keychainAvailable(safeStorage, options.platform ?? process.platform);
+  const persistent = await keychainAvailable(safeStorage, options.platform ?? process.platform);
   /** Values of this run: every value in memory-only mode, a read-through cache otherwise. */
   const values = new Map<SecretName, string>();
+  /** Bumped by every write and delete of a name, so a decrypt that finishes late does not undo one. */
+  const generations = new Map<SecretName, number>();
+  const generationOf = (name: SecretName): number => generations.get(name) ?? 0;
+  const changed = (name: SecretName): void => void generations.set(name, generationOf(name) + 1);
   /** Whether `safeStorage` encrypted or decrypted successfully in this run (the keychain is unlocked). */
   let keychainWorked = false;
   const fileOf = (name: SecretName) => path.join(dir, `${name}${SECRET_FILE_SUFFIX}`);
+
+  // ---- The disk queue: one operation at a time, in call order; none ever rejects ---------------
+  let queue: Promise<void> = Promise.resolve();
+  let queued = 0;
+  const enqueue = <T>(operation: () => Promise<T> | T, fallback: T): Promise<T> => {
+    queued++;
+    const run = queue.then(operation).then(
+      (value) => value,
+      () => fallback,
+    );
+    queue = run.then(
+      () => void queued--,
+      () => void queued--,
+    );
+    return run;
+  };
 
   const removeFile = (file: string): void => {
     try {
@@ -115,11 +172,12 @@ export function createSecretStore(options: CreateSecretStoreOptions): SecretStor
     fs.chmodSync(dir, SECRETS_DIR_MODE);
   };
 
-  const persist = (name: SecretName, value: string): void => {
+  const persist = async (name: SecretName, value: string): Promise<void> => {
     const file = fileOf(name);
     const temp = `${file}.${randomBytes(6).toString('hex')}${SECRET_TEMP_SUFFIX}`;
     try {
-      const encrypted = safeStorage.encryptString(value);
+      const encrypted = await safeStorage.encryptStringAsync(value);
+      if (!Buffer.isBuffer(encrypted) || encrypted.length === 0) throw new Error('secret store: the keychain answered no ciphertext');
       keychainWorked = true;
       ensureDir();
       fs.writeFileSync(temp, encrypted, { mode: SECRET_FILE_MODE, flag: 'wx' });
@@ -133,7 +191,8 @@ export function createSecretStore(options: CreateSecretStoreOptions): SecretStor
     }
   };
 
-  const load = (name: SecretName): string | null => {
+  /** The file's value (`null` when absent or unusable), and whether the keychain asked to re-encrypt it. */
+  const load = async (name: SecretName): Promise<{ readonly value: string; readonly reEncrypt: boolean } | null> => {
     const file = fileOf(name);
     let encrypted: Buffer;
     try {
@@ -148,9 +207,9 @@ export function createSecretStore(options: CreateSecretStoreOptions): SecretStor
       return null;
     };
     if (encrypted.length === 0) return discard();
-    let value: unknown;
+    let answer: { readonly shouldReEncrypt?: unknown; readonly result?: unknown } | null;
     try {
-      value = safeStorage.decryptString(encrypted);
+      answer = await safeStorage.decryptStringAsync(encrypted);
     } catch {
       // Before the keychain worked in this run, it may only be locked (as at login): keep the file.
       if (keychainWorked) return discard();
@@ -158,8 +217,9 @@ export function createSecretStore(options: CreateSecretStoreOptions): SecretStor
       return null;
     }
     keychainWorked = true;
+    const value = answer?.result;
     if (typeof value !== 'string' || value.length > MAX_SECRET_CHARS) return discard();
-    return value;
+    return { value, reEncrypt: answer?.shouldReEncrypt === true };
   };
 
   return {
@@ -167,36 +227,58 @@ export function createSecretStore(options: CreateSecretStoreOptions): SecretStor
     read(name) {
       checkName(name);
       const known = values.get(name);
-      if (known !== undefined) return known;
-      if (!persistent) return null;
-      const value = load(name);
-      if (value !== null) values.set(name, value);
-      return value;
+      if (known !== undefined) return Promise.resolve(known);
+      if (!persistent) return Promise.resolve(null);
+      const started = generationOf(name);
+      return enqueue(async () => {
+        // Written or deleted since the read was asked for (or read by an earlier call): that answers it.
+        if (generationOf(name) !== started || values.has(name)) return values.get(name) ?? null;
+        const loaded = await load(name);
+        if (generationOf(name) !== started) return values.get(name) ?? null;
+        if (loaded === null) return null;
+        values.set(name, loaded.value);
+        if (loaded.reEncrypt) {
+          log(`secret store: ${name} is written again with the current key`);
+          await persist(name, loaded.value);
+        }
+        return loaded.value;
+      }, null);
     },
     write(name, value) {
       checkName(name);
       if (typeof value !== 'string') throw new Error('secret store: a value must be a string');
       if (value.length > MAX_SECRET_CHARS) throw new Error('secret store: value too long');
       values.set(name, value);
-      if (persistent) persist(name, value);
+      changed(name);
+      if (!persistent) return Promise.resolve();
+      return enqueue(() => persist(name, value), undefined);
     },
     delete(name) {
       checkName(name);
       values.delete(name);
-      if (persistent) removeFile(fileOf(name));
+      changed(name);
+      if (!persistent) return Promise.resolve();
+      return enqueue(() => removeFile(fileOf(name)), undefined);
     },
     clear() {
       values.clear();
-      if (!persistent) return;
-      let entries: string[] = [];
-      try {
-        entries = fs.readdirSync(dir);
-      } catch (error) {
-        if (errorCode(error) !== 'ENOENT') log(`secret store: could not list the directory (${errorCode(error)})`);
-      }
-      const ours = (entry: string) => SECRET_NAMES.some((name) => entry === `${name}${SECRET_FILE_SUFFIX}` || (entry.startsWith(`${name}${SECRET_FILE_SUFFIX}.`) && entry.endsWith(SECRET_TEMP_SUFFIX)));
-      for (const entry of entries.filter(ours)) removeFile(path.join(dir, entry));
-      for (const name of SECRET_NAMES) removeFile(fileOf(name));
+      for (const name of SECRET_NAMES) changed(name);
+      if (!persistent) return Promise.resolve();
+      return enqueue(() => {
+        let entries: string[] = [];
+        try {
+          entries = fs.readdirSync(dir);
+        } catch (error) {
+          if (errorCode(error) !== 'ENOENT') log(`secret store: could not list the directory (${errorCode(error)})`);
+        }
+        const ours = (entry: string) => SECRET_NAMES.some((name) => entry === `${name}${SECRET_FILE_SUFFIX}` || (entry.startsWith(`${name}${SECRET_FILE_SUFFIX}.`) && entry.endsWith(SECRET_TEMP_SUFFIX)));
+        for (const entry of entries.filter(ours)) removeFile(path.join(dir, entry));
+        for (const name of SECRET_NAMES) removeFile(fileOf(name));
+      }, undefined);
+    },
+    pending: () => queued > 0,
+    async whenIdle() {
+      while (queued > 0) await queue;
     },
   };
 }

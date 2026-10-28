@@ -151,7 +151,8 @@ export function totalsOf(rows: readonly GscPerformanceRow[]): GscTotals {
   };
 }
 
-export function createGscService(deps: GscServiceDeps): GscMainService {
+/** Search Console's service, after the stored connection (if any) is read. */
+export async function createGscService(deps: GscServiceDeps): Promise<GscMainService> {
   const { config, store } = deps;
   const now = deps.now ?? (() => Date.now());
   const { log, remember, pin } = createRedactingLog(deps.log);
@@ -180,7 +181,7 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
   const auth =
     config === null
       ? null
-      : createGscAuth({
+      : await createGscAuth({
           config,
           fetch: deps.fetch,
           store,

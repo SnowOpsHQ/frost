@@ -395,7 +395,7 @@ function start(): void {
     // check), before the first window (its gestures are tracked from creation).
     const account = await createAccountMain();
     // Search Console (specs/gsc.feature.md): read-only, gated on `search-console`; reuses the account's store and gestures.
-    const gsc = createGscMain(account);
+    const gsc = await createGscMain(account);
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,

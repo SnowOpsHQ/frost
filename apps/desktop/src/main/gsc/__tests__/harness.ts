@@ -21,9 +21,9 @@ export const storedBlob = (refreshToken = 'stored-refresh-token-1', owner: strin
 export interface MemoryStore {
   persistent: boolean;
   readonly values: Map<SecretName, string>;
-  read(name: SecretName): string | null;
-  write(name: SecretName, value: string): void;
-  delete(name: SecretName): void;
+  read(name: SecretName): Promise<string | null>;
+  write(name: SecretName, value: string): Promise<void>;
+  delete(name: SecretName): Promise<void>;
 }
 
 export function memoryStore(persistent = true): MemoryStore {
@@ -31,9 +31,9 @@ export function memoryStore(persistent = true): MemoryStore {
   return {
     persistent,
     values,
-    read: (name) => values.get(name) ?? null,
-    write: (name, value) => void values.set(name, value),
-    delete: (name) => void values.delete(name),
+    read: async (name) => values.get(name) ?? null,
+    write: async (name, value) => void values.set(name, value),
+    delete: async (name) => void values.delete(name),
   };
 }
 

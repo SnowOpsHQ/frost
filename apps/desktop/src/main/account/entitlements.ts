@@ -122,8 +122,8 @@ const FAILURES: ReadonlySet<string> = new Set(ENTITLEMENT_REFRESH_FAILURES);
 /** `setTimeout`'s longest delay. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
-function readState(store: CreateEntitlementsOptions['store'], log: (message: string) => void): PersistedState | null {
-  const text = store.read(ENTITLEMENTS_SECRET);
+async function readState(store: CreateEntitlementsOptions['store'], log: (message: string) => void): Promise<PersistedState | null> {
+  const text = await store.read(ENTITLEMENTS_SECRET);
   if (text === null) return null;
   let value: unknown;
   try {
@@ -134,7 +134,7 @@ function readState(store: CreateEntitlementsOptions['store'], log: (message: str
   const parsed = PersistedStateSchema.safeParse(value);
   if (parsed.success) return parsed.data;
   log('entitlements: stored state unreadable; discarded');
-  store.delete(ENTITLEMENTS_SECRET);
+  void store.delete(ENTITLEMENTS_SECRET);
   return null;
 }
 
@@ -146,7 +146,7 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
   const { jwks, store, log } = options;
   const now = options.now ?? (() => Date.now());
 
-  const stored = readState(store, log);
+  const stored = await readState(store, log);
   let maxIatMs = stored?.maxIatMs ?? 0;
   /** A clock reading, capped: it may raise the mark only up to the horizon past the latest verified `iat`. */
   const clockReading = (): number => Math.min(now(), maxIatMs + CLOCK_MARK_HORIZON_MS);
@@ -169,7 +169,8 @@ export async function createEntitlements(options: CreateEntitlementsOptions): Pr
   const persist = (): void => {
     const heldState: PersistedState['held'] = held.kind === 'snapshot' ? { kind: 'snapshot', jws: held.jws, sub: held.sub } : { kind: held.kind };
     const state: PersistedState = { v: 1, highWaterMs, maxIatMs, offline, held: heldState };
-    store.write(ENTITLEMENTS_SECRET, JSON.stringify(state));
+    // This run reads it at once; the disk follows in order (the store's queue).
+    void store.write(ENTITLEMENTS_SECRET, JSON.stringify(state));
     persistedHighWaterMs = highWaterMs;
   };
 

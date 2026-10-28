@@ -52,9 +52,13 @@ Decisions this plan makes (each recorded again under As built if it changes):
 - **Search Console is a `pro` feature** (`search-console`). Phase 4 gates it, which is the phase's
   own demonstration of plan gating. Moving it to `free` is a one-line server change.
 - **Secrets need a real keychain.** `safeStorage` with Linux's `basic_text` backend (no keyring) is
-  obfuscation, so frost keeps tokens in memory only for that run and says so in Settings.
+  obfuscation, so frost keeps tokens in memory only for that run and says so in Settings. The store
+  uses `safeStorage`'s asynchronous API (`isAsyncEncryptionAvailable`, `encryptStringAsync`,
+  `decryptStringAsync`): the synchronous calls are deprecated in Electron 45, and on Linux
+  `isEncryptionAvailable()` can answer false where the asynchronous encryptor works.
 - **No desktop database migrations.** Secrets and the telemetry consent are small files in
-  `userData` (sync reads at startup; consent must be known before anything could be sent). The
+  `userData` (read at startup, before the first window: secrets asynchronously after `ready`, the
+  consent synchronously since it must be known before anything could be sent). The
   `0020`–`0029` migration range stays reserved for Phase 4 should a later change need a table.
 - **Telemetry has no persistent identifier.** No install ID, user ID, machine name or IP. A span
   carries only allowlisted attributes; URLs and PII are stripped from every event.

@@ -183,13 +183,13 @@ test('account-tampered-snapshot-is-free', async () => {
   // A stored snapshot changed on disk (only with a keychain: memory-only writes nothing).
   if ((await accountState()).keychain !== 'persistent') return;
   const file = path.join(profile, SECRETS_DIR_NAME, `entitlements${SECRET_FILE_SUFFIX}`);
-  const plain = await app!.evaluate(({ safeStorage }, b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')), (await readFile(file)).toString('base64'));
+  const plain = await app!.evaluate(async ({ safeStorage }, b64) => (await safeStorage.decryptStringAsync(Buffer.from(b64, 'base64'))).result, (await readFile(file)).toString('base64'));
   const stored = JSON.parse(plain) as { held: { kind: string; jws: string } };
   expect(stored.held.kind).toBe('snapshot');
   const [header, payload, signature] = stored.held.jws.split('.');
   const claims = JSON.parse(Buffer.from(payload!, 'base64url').toString('utf8')) as { exp: number };
   stored.held.jws = `${header}.${Buffer.from(JSON.stringify({ ...claims, exp: claims.exp + 365 * 86_400 })).toString('base64url')}.${signature}`;
-  const encrypted = await app!.evaluate(({ safeStorage }, text) => safeStorage.encryptString(text).toString('base64'), JSON.stringify(stored));
+  const encrypted = await app!.evaluate(async ({ safeStorage }, text) => (await safeStorage.encryptStringAsync(text)).toString('base64'), JSON.stringify(stored));
   await closeApp(app);
   await writeFile(file, Buffer.from(encrypted, 'base64'));
   // The backend is unreachable, so the start-up refresh cannot replace what was read.

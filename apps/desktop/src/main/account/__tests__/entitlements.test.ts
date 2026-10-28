@@ -36,9 +36,9 @@ function memoryStore() {
   const blobs = new Map<SecretName, string>();
   return {
     blobs,
-    read: vi.fn((name: SecretName) => blobs.get(name) ?? null),
-    write: vi.fn((name: SecretName, value: string) => void blobs.set(name, value)),
-    delete: vi.fn((name: SecretName) => void blobs.delete(name)),
+    read: vi.fn(async (name: SecretName) => blobs.get(name) ?? null),
+    write: vi.fn(async (name: SecretName, value: string) => void blobs.set(name, value)),
+    delete: vi.fn(async (name: SecretName) => void blobs.delete(name)),
   };
 }
 
