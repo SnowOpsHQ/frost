@@ -23,13 +23,12 @@
  *   label; the label is the most probable one and its probability is the confidence shown.
  *
  * ## Least privilege (review focus `intent-host-protocol-is-closed`)
- * - The utility process gets an empty environment, no `execArgv`, and no Electron API beyond
- *   `process.parentPort`. It never opens a file or a socket: main reads the model and vocabulary,
+ * - The utility process gets a minimal environment of its own (`INTENT_CHILD_ENV`, never main's),
+ *   no `execArgv`, and no Electron API beyond `process.parentPort`. It never opens a file or a socket: main reads the model and vocabulary,
  *   checks their sha256, and posts their bytes (`load`); the process only ever gets bytes and
  *   queries. Electron cannot apply Chromium's OS sandbox to a Node utility process, so this is
  *   least privilege by design (a source scan in the tests keeps file, network, process and Electron
- *   imports out of the worker's sources), not a sandbox. The native runtime itself may still use the
- *   system's temporary directory (on macOS, the Core ML provider compiles the model there).
+ *   imports out of the worker's sources), not a sandbox.
  * - Every message either way is validated (`IntentRequestSchema` in the process,
  *   `IntentResponseSchema` in main); a malformed one is dropped, an answer to an unknown request is
  *   dropped. A request that gets no answer within `INTENT_LIMITS.requestTimeoutMs`, or whose process
@@ -42,6 +41,25 @@
  * under which licence. Pinned by URL (a fixed revision) and sha256, capped at its pinned size, written
  * atomically to `userData/INTENT_MODEL_DIR/<model id>/` only after its sha256 matched, and hashed
  * again every time it is loaded (a file that no longer matches is removed: `model-missing`).
+ *
+ * ## Decisions
+ * - **CPU only.** The session runs on ONNX Runtime's CPU execution provider on every platform. The
+ *   model is int8 dynamically quantised, and Core ML does not run those operators (they would fall
+ *   back to CPU inside a Core ML session anyway); one query takes milliseconds on CPU; and another
+ *   provider could drift numerically from the CPU outputs `INTENT_TEMPERATURE` and the cue weights
+ *   were tuned on.
+ *
+ * ## Known limits
+ * - **Not an OS sandbox** (see Least privilege).
+ * - **ASAR integrity does not cover `app.asar.unpacked`.** Electron's embedded ASAR integrity check
+ *   (the `EnableEmbeddedAsarIntegrityValidation` fuse) vouches for the files inside `app.asar`. The
+ *   native binding and ONNX Runtime library are unpacked beside it (they cannot be loaded from an
+ *   archive), so what vouches for them is the app's code signature and the macOS bundle seal, not
+ *   the ASAR header.
+ * - **Redirect schemes are checked after the fact.** The bounded fetcher follows redirects itself
+ *   (each hop checked for private addresses); the model store checks that the URL, every hop and the
+ *   final URL were `https:` once the answer is in, and refuses the file otherwise. What guarantees
+ *   the file is the pinned one is its sha256, checked before anything is written, not the transport.
  *
  * Clean-room: the labels, their definitions, the cues, their weights, the prototype queries, the
  * temperature and every message are frost's own, from SEO practice.
@@ -113,11 +131,24 @@ export const INTENT_FAKE_MODEL = 'fake' as const;
 export const INTENT_MODEL_DIR = 'models' as const;
 
 /**
+ * The utility process's whole environment. It cannot be empty: Electron 45 treats an empty `env`
+ * map as "not given" and passes main's entire environment on (tokens, proxies, `ELECTRON_*`). A
+ * non-empty map replaces it (Electron adds only what its own runtime needs, such as the D-Bus
+ * session address on Linux). `INTENT_ENV_CANARY` is how the self-test proves it: main sets it in its
+ * own environment before forking, and the process must not see it.
+ */
+export const INTENT_CHILD_ENV: Readonly<Record<string, string>> = { FROST_INTENT_WORKER: '1' };
+
+/** The variable the self-test sets in main's environment and expects the utility process not to see. */
+export const INTENT_ENV_CANARY = 'FROST_INTENT_ENV_CANARY' as const;
+
+/**
  * How the model is downloaded (the bounded fetcher's `checks` lane, `fetcher.spec.ts`: browse
  * session, frost's own user agent, no cookies, each redirect checked, private hosts refused; the
  * file's URL is the request's page):
  * - `schemes`: the URL, every redirect hop (Hugging Face sends a file to its CDN host) and the final
- *   URL must be `https:`;
+ *   URL must be `https:` (hops are checked once the answer is in; the sha256 pin is the guarantee,
+ *   see Known limits);
  * - `slackBytes`: each file is read up to its pinned size plus this, so a longer file is refused as
  *   `too-large` without reading it whole, and a file of the wrong length as `integrity`;
  * - `timeoutMs`: one deadline per file (23 MB on a slow connection);
@@ -243,9 +274,11 @@ export const INTENT_BARE_DOMAIN_WEIGHT = 0.1;
 /**
  * The softmax temperature: probabilities are `exp(score / T)` normalised. A query's cosine
  * similarities to the centroids differ by a few hundredths to a few tenths, so a small temperature
- * turns those differences into a readable confidence. Chosen, with the cue weights, for the lowest
- * log-loss on frost's own held-out queries (`intent-model.test.ts`): a lower one makes wrong answers
- * look as sure as right ones, a higher one flattens clear answers.
+ * turns those differences into a readable confidence. Chosen, with the cue weights (two global
+ * numbers, no per-query tuning), for the lowest log-loss on frost's own evaluation queries
+ * (`intent-model.test.ts`). That set overlaps the queries the two numbers were tuned on, so its
+ * accuracy is an evaluation, not a held-out estimate. A lower temperature makes wrong answers look as
+ * sure as right ones, a higher one flattens clear answers.
  */
 export const INTENT_TEMPERATURE = 0.04;
 
@@ -278,8 +311,10 @@ export const INTENT_E2E_FAKE_SWITCH = 'frost-e2e-intent-fake' as const;
 /**
  * The packaged self-test (`verify:mac`, `macos-package.feature.md`): `--frost-intent-selftest`
  * starts no window; main forks the utility process, which loads ONNX Runtime, runs a tiny built-in
- * model on it and reports its backends; main prints `frost: <INTENT_SELFTEST_OK> (<backends>)` or
- * `frost: <INTENT_SELFTEST_FAILED> (<reason>)` to stderr and exits 0 or 1. Allowed in packaged
+ * model on it and reports its backends and whether it can see `INTENT_ENV_CANARY` (set in main's
+ * environment just before the fork); main prints `frost: <INTENT_SELFTEST_OK> (…; env isolated, <n>
+ * variables)` or `frost: <INTENT_SELFTEST_FAILED> (<reason>)` to stderr and exits 0 or 1. A process
+ * that sees the canary (main's environment leaked) is a failure (`env-inherited`). Allowed in packaged
  * builds: it reads no profile data and downloads nothing.
  */
 export const INTENT_SELFTEST_SWITCH = 'frost-intent-selftest' as const;

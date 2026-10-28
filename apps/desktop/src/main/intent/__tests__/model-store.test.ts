@@ -21,29 +21,36 @@ const PINS: PinnedFiles = {
 };
 
 /** An in-memory model directory, recording writes and removals. */
-function memoryStorage(initial: Record<string, Uint8Array> = {}, options: { writeFails?: boolean } = {}) {
+function memoryStorage(initial: Record<string, Uint8Array> = {}, options: { writeFails?: boolean; readFails?: string } = {}) {
   const files = new Map(Object.entries(initial));
   const writes: string[] = [];
   const removed: string[] = [];
   const reads: { name: string; maxBytes: number }[] = [];
+  const events: string[] = [];
   const storage: ModelStorage = {
     size: async (name) => files.get(name)?.byteLength ?? null,
     read: async (name, maxBytes) => {
       reads.push({ name, maxBytes });
+      events.push(`read ${name}`);
+      if (options.readFails === name) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
       const bytes = files.get(name);
       return bytes === undefined ? null : bytes.slice(0, maxBytes);
     },
     write: async (name, bytes) => {
       if (options.writeFails) throw new Error('ENOSPC');
+      // A write takes a moment (a concurrent load must not see the file half-replaced).
+      await new Promise((resolve) => setTimeout(resolve, 5));
       writes.push(name);
+      events.push(`write ${name}`);
       files.set(name, bytes);
     },
     remove: async (name) => {
       removed.push(name);
       files.delete(name);
     },
+    clean: async () => void events.push('clean'),
   };
-  return { storage, files, writes, removed, reads };
+  return { storage, files, writes, removed, reads, events };
 }
 
 /** A fetch answering `answers` (URL → bytes or failure), recording each URL and cap asked for. */
@@ -169,9 +176,36 @@ describe('intent model store', () => {
     expect(bad.removed).toEqual([PINS.model.name]);
     expect(await store.present()).toBe(false);
 
+    // A file that cannot be read (permissions, I/O) is left alone: unreadable, nothing removed.
+    const locked = memoryStorage({ [PINS.model.name]: MODEL_BYTES, [PINS.vocab.name]: VOCAB_BYTES }, { readFails: PINS.model.name });
+    expect(await createModelStore({ storage: locked.storage, fetchFile: null, files: PINS }).load()).toEqual({ ok: false, reason: 'unreadable' });
+    expect(locked.removed).toEqual([]);
+    expect(locked.files.get(PINS.model.name)).toBe(MODEL_BYTES);
+
     // A longer file is never read whole, and is model-missing too.
     const longer = memoryStorage({ [PINS.model.name]: new Uint8Array(PINS.model.bytes + 100), [PINS.vocab.name]: VOCAB_BYTES });
     expect(await createModelStore({ storage: longer.storage, fetchFile: null, files: PINS }).load()).toEqual({ ok: false, reason: 'model-missing' });
+  });
+
+  test('intent-model-load-and-download-are-serialised', async () => {
+    // A corrupt model being replaced by a download: the load waits for the download, so it reads the
+    // new file and removes nothing.
+    const corrupt = MODEL_BYTES.slice();
+    corrupt[0] = corrupt[0]! ^ 1;
+    const { storage, removed, events } = memoryStorage({ [PINS.model.name]: corrupt, [PINS.vocab.name]: VOCAB_BYTES });
+    const store = createModelStore({ storage, fetchFile: fakeFetch(GOOD).fetchFile, files: PINS });
+    const [downloaded, loaded] = await Promise.all([store.download(), store.load()]);
+    expect(downloaded).toBe('ready');
+    expect(loaded.ok).toBe(true);
+    expect(removed).toEqual([]);
+    // Each operation sweeps leftover temporary files first, and the load starts after the write.
+    expect(events.filter((event) => event === 'clean')).toHaveLength(2);
+    expect(events.indexOf(`write ${PINS.model.name}`)).toBeLessThan(events.lastIndexOf('clean'));
+    // A failed operation does not wedge the lock.
+    const failing = memoryStorage({}, { writeFails: true });
+    const failingStore = createModelStore({ storage: failing.storage, fetchFile: fakeFetch(GOOD).fetchFile, files: PINS });
+    expect(await failingStore.download()).toBe('storage');
+    expect(await failingStore.load()).toEqual({ ok: false, reason: 'model-missing' });
   });
 
   test('intent-model-file-storage-is-atomic', async () => {
@@ -191,8 +225,17 @@ describe('intent model store', () => {
     expect(await readdir(modelDir)).toEqual([]);
     // A name is a file name, never a path.
     await expect(storage.write('../escape', MODEL_BYTES)).rejects.toThrow(/name/);
-    await writeFile(path.join(modelDir, 'x'), 'y');
-    expect(await readFile(path.join(modelDir, 'x'), 'utf8')).toBe('y');
+    // Temporary files a crash left behind are swept (before the next write or load), nothing else.
+    await storage.write('model.onnx', MODEL_BYTES);
+    await writeFile(path.join(modelDir, 'model.onnx.4242.0123456789ab.tmp'), 'partial');
+    await createModelStore({ storage, fetchFile: null, files: { ...PINS, model: { ...PINS.model, name: 'model.onnx' } } }).load();
+    expect((await readdir(modelDir)).sort()).toEqual(['model.onnx']);
+    // Only files of the temporary pattern go.
+    await writeFile(path.join(modelDir, 'notes.tmp'), 'kept');
+    await storage.clean();
+    expect(await readFile(path.join(modelDir, 'notes.tmp'), 'utf8')).toBe('kept');
+    await rm(modelDir, { recursive: true });
+    await storage.clean(); // a missing directory is nothing to clean
   });
 
   test('intent-model-download-uses-checks-lane', async () => {

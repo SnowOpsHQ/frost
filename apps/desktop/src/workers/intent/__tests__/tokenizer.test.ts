@@ -33,8 +33,10 @@ describe('intent tokenizer', () => {
     // CJK ideographs are words of their own.
     expect(basicTokenize('中国abc')).toEqual(['中', '国', 'abc']);
     // Control and format characters removed; tabs, newlines and no-break spaces are whitespace.
-    expect(basicTokenize('a\u0000b​c')).toEqual(['abc']);
-    expect(basicTokenize(' a\tb c\n')).toEqual(['a', 'b', 'c']);
+    expect(basicTokenize('a\u0000b\u200bc')).toEqual(['abc']);
+    expect(basicTokenize(' a\tb\u00a0c\n')).toEqual(['a', 'b', 'c']);
+    // The line and paragraph separators too.
+    expect(basicTokenize('a\u2028b\u2029c')).toEqual(['a', 'b', 'c']);
     // Every Unicode punctuation and ASCII symbol is split off.
     expect(basicTokenize("it's 1.5$ «x»")).toEqual(['it', "'", 's', '1', '.', '5', '$', '«', 'x', '»']);
     expect(basicTokenize('')).toEqual([]);

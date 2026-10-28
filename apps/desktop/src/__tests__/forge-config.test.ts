@@ -3,7 +3,10 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { builtinModules } from 'node:module';
 import { createPackageWithOptions, listPackage } from '@electron/asar';
+import { build, mergeConfig, type InlineConfig } from 'vite';
+import intentViteConfig from '../../vite.intent.config';
 import { FuseV1Options } from '@electron/fuses';
 import type { MakerBase } from '@electron-forge/maker-base';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
@@ -255,5 +258,35 @@ describe('forge config (macOS package)', () => {
     // .vite/build/intent-worker.cjs, beside main.cjs (main forks it from there).
     expect(vite.config.build).toContainEqual({ entry: { 'intent-worker': 'src/workers/intent/index.ts' }, config: 'vite.intent.config.ts', target: 'main' });
     expect(existsSync(new URL('../../vite.intent.config.ts', import.meta.url))).toBe(true);
+  });
+
+  test('intent-worker-requires-the-runtime', { timeout: 60_000 }, async () => {
+    // The worker bundle, built as Forge's main target builds it (CJS lib, Node builtins external)
+    // with vite.intent.config.ts: onnxruntime-node is left out and loaded with a plain require
+    // (Node's CommonJS loader, with Electron's ASAR redirect), never import() (the ESM loader).
+    const outDir = mkdtempSync(path.join(tmpdir(), 'frost-intent-vite-'));
+    try {
+      const forgeLike: InlineConfig = {
+        configFile: false,
+        logLevel: 'silent',
+        root: path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..'),
+        build: {
+          outDir,
+          emptyOutDir: true,
+          minify: true,
+          lib: { entry: { 'intent-worker': 'src/workers/intent/index.ts' }, fileName: () => '[name].cjs', formats: ['cjs'] },
+          rollupOptions: { external: ['electron', ...builtinModules.flatMap((name) => [name, `node:${name}`])] },
+        },
+        resolve: { conditions: ['node'], mainFields: ['module', 'jsnext:main', 'jsnext'] },
+      };
+      await build(mergeConfig(forgeLike, intentViteConfig as InlineConfig));
+      const bundle = readFileSync(path.join(outDir, 'intent-worker.cjs'), 'utf8');
+      expect(bundle).toContain('require("onnxruntime-node")');
+      expect(bundle).not.toMatch(/import\(\s*[`'"]onnxruntime-node/);
+      // Not bundled: the runtime's own code is not in the worker.
+      expect(bundle).not.toContain('initOrtOnce');
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });

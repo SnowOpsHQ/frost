@@ -2,7 +2,7 @@
 // output, dimensions) · Acceptance: specs/intent-classifier.feature.md (Embedding)
 import { describe, expect, test } from 'vitest';
 import { INTENT_MODEL } from '@app/specs/intent-classifier.spec';
-import { createEmbedder, createSession, executionProviders, l2Normalise, meanPool, type OrtLike, type OrtSession, type OrtTensor } from '../embed';
+import { createEmbedder, createSession, EXECUTION_PROVIDERS, l2Normalise, meanPool, type OrtLike, type OrtSession, type OrtTensor } from '../embed';
 
 const close = (actual: ArrayLike<number>, expected: readonly number[]) => {
   expect(actual.length).toBe(expected.length);
@@ -47,23 +47,15 @@ describe('intent embedding', () => {
     expect(() => meanPool(new Float32Array(3), [1, 2, 2], [1, 1])).toThrow(/shape/);
   });
 
-  test('intent-session-provider-fallback', async () => {
-    // Core ML first on macOS arm64, CPU as the fallback; CPU only elsewhere.
-    expect(executionProviders('darwin', 'arm64')).toEqual([['coreml', 'cpu'], ['cpu']]);
-    expect(executionProviders('linux', 'x64')).toEqual([['cpu']]);
-    expect(executionProviders('linux', 'arm64')).toEqual([['cpu']]);
-    expect(executionProviders('darwin', 'x64')).toEqual([['cpu']]);
-
-    const coreml = fakeOrt();
-    expect((await createSession(coreml.ort, new Uint8Array(1), 'darwin', 'arm64')).provider).toBe('coreml');
-    expect(coreml.created).toEqual([['coreml', 'cpu']]);
-
-    const refused = fakeOrt({ refuse: (providers) => providers.includes('coreml') });
-    expect((await createSession(refused.ort, new Uint8Array(1), 'darwin', 'arm64')).provider).toBe('cpu');
-    expect(refused.created).toEqual([['coreml', 'cpu'], ['cpu']]);
-
+  test('intent-session-is-cpu-only', async () => {
+    // The CPU execution provider on every platform (spec, Decisions: CPU only), from the model's bytes.
+    expect(EXECUTION_PROVIDERS).toEqual(['cpu']);
+    const cpu = fakeOrt();
+    expect((await createSession(cpu.ort, new Uint8Array(1))).provider).toBe('cpu');
+    expect(cpu.created).toEqual([['cpu']]);
+    // A session that cannot be created is an error (the worker answers load-failed).
     const none = fakeOrt({ refuse: () => true });
-    await expect(createSession(none.ort, new Uint8Array(1), 'linux', 'x64')).rejects.toThrow(/provider/);
+    await expect(createSession(none.ort, new Uint8Array(1))).rejects.toThrow(/provider/);
   });
 
   test('intent-embedder-feeds-the-model', async () => {
@@ -83,7 +75,7 @@ describe('intent embedding', () => {
         return { [INTENT_MODEL.output]: { type: 'float32', data, dims: [batch, tokens, dims] } };
       },
     });
-    const { session } = await createSession(ort, new Uint8Array(1), 'linux', 'x64');
+    const { session } = await createSession(ort, new Uint8Array(1));
     const tokenizer = { encode: (text: string) => (text === 'a' ? [2, 7, 3] : [2, 3]) };
     const vectors = await createEmbedder(ort, session, tokenizer).embed(['a', 'b']);
     // One batch, padded to the longest row with id 0 and mask 0; token types all 0; int64 tensors.
@@ -105,10 +97,10 @@ describe('intent embedding', () => {
 
   test('intent-embedder-refuses-a-wrong-output', async () => {
     const { ort } = fakeOrt({ run: async () => ({ [INTENT_MODEL.output]: { type: 'float32', data: new Float32Array(2), dims: [1, 2] } }) });
-    const { session } = await createSession(ort, new Uint8Array(1), 'linux', 'x64');
+    const { session } = await createSession(ort, new Uint8Array(1));
     await expect(createEmbedder(ort, session, { encode: () => [2, 3] }).embed(['a'])).rejects.toThrow(/shape/);
     const { ort: missing } = fakeOrt({ run: async () => ({}) });
-    const { session: empty } = await createSession(missing, new Uint8Array(1), 'linux', 'x64');
+    const { session: empty } = await createSession(missing, new Uint8Array(1));
     await expect(createEmbedder(missing, empty, { encode: () => [2, 3] }).embed(['a'])).rejects.toThrow(INTENT_MODEL.output);
   });
 });

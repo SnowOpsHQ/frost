@@ -201,7 +201,8 @@ await check('refuses-remote-debugging', async () => {
 
 // The intent classifier's native runtime (specs/intent-classifier.feature.md, Packaging): unpacked
 // beside the archive, and loading and running in the packaged app's utility process (the self-test
-// switch starts no window, reads no profile data and downloads nothing).
+// switch starts no window, reads no profile data and downloads nothing), which must not see main's
+// environment (the self-test's canary, INTENT_ENV_CANARY).
 await check('intent-runtime-loads', async () => {
   const unpacked = path.join(appPath, 'Contents/Resources/app.asar.unpacked/node_modules/onnxruntime-node/bin/napi-v6/darwin', args.arch);
   for (const file of INTENT_NATIVE_FILES[`darwin-${args.arch}`] ?? []) assert(existsSync(path.join(unpacked, file)), `missing ${path.join(unpacked, file)}`);
@@ -210,6 +211,7 @@ await check('intent-runtime-loads', async () => {
   assert(!result.stderr.includes(INTENT_SELFTEST_FAILED), result.stderr.trim());
   assert(result.code === 0, `--${INTENT_SELFTEST_SWITCH}: exit code ${result.code} (signal ${result.signal}): ${result.stderr.trim()}`);
   assert(result.stderr.includes(INTENT_SELFTEST_OK), `stderr lacks "${INTENT_SELFTEST_OK}": ${result.stderr.trim()}`);
+  assert(/env isolated, \d+ variables/.test(result.stderr), `the utility process's environment is not reported isolated: ${result.stderr.trim()}`);
   console.log(`  ${result.stderr.trim().split('\n').find((line) => line.includes(INTENT_SELFTEST_OK))}`);
 });
 

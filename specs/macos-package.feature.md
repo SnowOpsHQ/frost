@@ -65,8 +65,9 @@ Every check prints `PASS <name>` or `FAIL <name>: <reason>`; any failure exits n
   binaries of `onnxruntime-node` for the arch (`intent-runtime.ts`, `INTENT_NATIVE_FILES`), and the
   packaged executable started with `--frost-intent-selftest` (`intent-classifier.spec.ts`) forks
   the intent utility process, loads ONNX Runtime and runs its built-in model there, prints
-  `INTENT_SELFTEST_OK` to stderr and exits 0 within `INTENT_LIMITS.selftestTimeoutMs` (with a
-  fresh throwaway profile, opening no window).
+  `INTENT_SELFTEST_OK` with `env isolated` (the process does not see `INTENT_ENV_CANARY`, set in
+  main's environment) to stderr and exits 0 within `INTENT_LIMITS.selftestTimeoutMs` (with a fresh
+  throwaway profile, opening no window).
 - **Scenario: zip-and-dmg-produced** — `macArtifacts().zip` and `.dmg` exist and are non-empty;
   `hdiutil imageinfo` reports the DMG format `MAC_DMG_FORMAT`.
 - **Scenario: zip-app-verifies** — the published zip, unpacked with `ditto -x -k` into a temporary

@@ -33,13 +33,24 @@ function specifiers(text: string): string[] {
 /** Globals that reach the network or the OS without an import. */
 const FORBIDDEN_GLOBALS = /\b(fetch|WebSocket|EventSource|XMLHttpRequest|process\.binding|process\.dlopen|process\.env|createRequire)\b/;
 
+/**
+ * The one allowance: the entry (`index.ts`) reports to the self-test how many variables its
+ * environment holds and whether main's canary is one of them (`INTENT_ENV_CANARY`); these exact
+ * reads, and no other use of `process.env`, anywhere.
+ */
+const ALLOWED_ENV_READS: Readonly<Record<string, readonly string[]>> = { 'index.ts': ['Object.keys(process.env).length', 'INTENT_ENV_CANARY in process.env'] };
+
 describe('intent worker sources', () => {
   test('intent-worker-imports-nothing-privileged', () => {
     expect(sources.map(({ file }) => file).sort()).toEqual(expect.arrayContaining(['embed.ts', 'fake.ts', 'index.ts', 'prototypes.ts', 'tokenizer.ts', 'worker.ts']));
     for (const { file, text } of sources) {
       for (const specifier of specifiers(text)) expect(ALLOWED.some((pattern) => pattern.test(specifier)), `${file} imports ${specifier}`).toBe(true);
       // Comments may name them; code may not.
-      const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      let code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      for (const read of ALLOWED_ENV_READS[file] ?? []) {
+        expect(code, `${file}: ${read}`).toContain(read);
+        code = code.split(read).join('');
+      }
       expect(FORBIDDEN_GLOBALS.exec(code)?.[0], file).toBeUndefined();
       expect(/['"`](node:)?(fs|fs\/promises|net|tls|dgram|dns|http|https|http2|child_process|cluster|worker_threads|electron|inspector|module)['"`]/.exec(code)?.[0], file).toBeUndefined();
     }

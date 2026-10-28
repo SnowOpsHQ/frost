@@ -52,13 +52,13 @@ describe('intent protocol', () => {
 
   test('intent-protocol-schemas (responses)', () => {
     const valid: unknown[] = [
-      { type: 'loaded', id: 1, model: INTENT_MODEL.id, provider: 'coreml' },
+      { type: 'loaded', id: 1, model: INTENT_MODEL.id, provider: 'cpu' },
       { type: 'loaded', id: 1, model: INTENT_FAKE_MODEL, provider: 'fake' },
       { type: 'result', id: 2, result: RESULT },
       { type: 'error', id: 2, reason: 'classify-failed' },
       { type: 'error', reason: 'crashed' },
       { type: 'pong', id: 3 },
-      { type: 'selftest', id: 4, backends: ['cpu', 'webgpu'], provider: 'cpu' },
+      { type: 'selftest', id: 4, backends: ['cpu', 'webgpu'], provider: 'cpu', env: { variables: 2, canary: false } },
     ];
     for (const value of valid) expect(IntentResponseSchema.safeParse(value).success).toBe(true);
     const refused: unknown[] = [
@@ -66,8 +66,10 @@ describe('intent protocol', () => {
       { type: 'loaded', id: 1, model: INTENT_MODEL.id, provider: 'CPU <script>' },
       { type: 'result', id: 2, result: { ...RESULT, confidence: 3 } },
       { type: 'error', id: 2, reason: 'something else' },
-      { type: 'selftest', id: 4, backends: [], provider: 'cpu' },
-      { type: 'selftest', id: 4, backends: Array.from({ length: 17 }, () => 'cpu'), provider: 'cpu' },
+      { type: 'selftest', id: 4, backends: [], provider: 'cpu', env: { variables: 2, canary: false } },
+      { type: 'selftest', id: 4, backends: Array.from({ length: 17 }, () => 'cpu'), provider: 'cpu', env: { variables: 2, canary: false } },
+      { type: 'selftest', id: 4, backends: ['cpu'], provider: 'cpu' },
+      { type: 'selftest', id: 4, backends: ['cpu'], provider: 'cpu', env: { variables: 2, canary: false, names: ['PATH'] } },
       { type: 'log', id: 5, line: 'x' },
     ];
     for (const value of refused) expect(IntentResponseSchema.safeParse(value).success).toBe(false);

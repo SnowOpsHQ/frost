@@ -3,9 +3,9 @@
 // specs/intent-classifier.feature.md (Host); review focus intent-host-protocol-is-closed
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { INTENT_FAKE_MODEL, INTENT_LIMITS, INTENT_MODEL, INTENT_SERVICE_NAME, type IntentResult } from '@app/specs/intent-classifier.spec';
+import { INTENT_CHILD_ENV, INTENT_FAKE_MODEL, INTENT_LIMITS, INTENT_MODEL, INTENT_SERVICE_NAME, type IntentResult } from '@app/specs/intent-classifier.spec';
 import { IntentRequestSchema } from '@app/specs/intent-classifier.schema';
-import { createIntentHost, intentForkOptions, utilityIntentChild, type IntentChild, type IntentHostOptions } from '../host';
+import { createIntentHost, intentForkOptions, stderrLine, utilityIntentChild, type IntentChild, type IntentHostOptions } from '../host';
 import type { ModelLoadResult } from '../model-store';
 
 const RESULT = (model: IntentResult['model'] = INTENT_MODEL.id): IntentResult => ({
@@ -23,7 +23,7 @@ const healthy: Behaviour = (message, child) => {
   if (message.type === 'load-fake') child.reply({ type: 'loaded', id: message.id, model: INTENT_FAKE_MODEL, provider: 'fake' });
   if (message.type === 'classify') child.reply({ type: 'result', id: message.id, result: RESULT(child.model) });
   if (message.type === 'ping') child.reply({ type: 'pong', id: message.id });
-  if (message.type === 'selftest') child.reply({ type: 'selftest', id: message.id, backends: ['cpu'], provider: 'cpu' });
+  if (message.type === 'selftest') child.reply({ type: 'selftest', id: message.id, backends: ['cpu'], provider: 'cpu', env: { variables: 2, canary: false } });
 };
 
 class FakeChild implements IntentChild {
@@ -87,34 +87,58 @@ afterEach(() => {
 
 describe('intent host', () => {
   test('intent-host-env-is-minimal', () => {
-    // An empty environment, no execArgv, its own service name, stdin and stdout closed, stderr kept (capped) for the log.
+    // An environment of its own, no execArgv, its own service name, stdin and stdout closed, stderr kept (capped) for the log.
     const options = intentForkOptions();
-    expect(options).toEqual({ env: {}, serviceName: INTENT_SERVICE_NAME, stdio: ['ignore', 'ignore', 'pipe'] });
+    expect(options).toEqual({ env: { ...INTENT_CHILD_ENV }, serviceName: INTENT_SERVICE_NAME, stdio: ['ignore', 'ignore', 'pipe'] });
     expect('execArgv' in options).toBe(false);
+    // Never empty: Electron passes main's whole environment on for an empty map.
+    expect(Object.keys(options.env ?? {}).length).toBeGreaterThan(0);
+    // Nothing of main's environment: only frost's own marker, whose value is not main's.
+    process.env['FROST_INTENT_TEST_SECRET'] = 'x';
+    try {
+      const env = intentForkOptions().env ?? {};
+      expect(Object.keys(env)).toEqual(Object.keys(INTENT_CHILD_ENV));
+      for (const [key, value] of Object.entries(env)) expect(process.env[key] === value && !(key in INTENT_CHILD_ENV), key).toBe(false);
+      expect(env).not.toHaveProperty('FROST_INTENT_TEST_SECRET');
+      for (const key of ['PATH', 'HOME', 'ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS']) expect(env).not.toHaveProperty(key);
+    } finally {
+      delete process.env['FROST_INTENT_TEST_SECRET'];
+    }
+    // A copy: changing it does not change the next fork's.
+    (intentForkOptions().env as Record<string, string>)['X'] = '1';
+    expect(intentForkOptions().env).toEqual(INTENT_CHILD_ENV);
 
     const stderr = new EventEmitter();
-    const process = Object.assign(new EventEmitter(), { postMessage: vi.fn(), kill: vi.fn(() => true), stderr });
-    const fork = vi.fn(() => process);
+    const utility = Object.assign(new EventEmitter(), { postMessage: vi.fn(), kill: vi.fn(() => true), stderr });
+    const fork = vi.fn(() => utility);
     const lines: string[] = [];
     const child = utilityIntentChild(fork as never, '/app/.vite/build/intent-worker.cjs', (line) => lines.push(line))();
     expect(fork).toHaveBeenCalledWith('/app/.vite/build/intent-worker.cjs', [], intentForkOptions());
     // Messages arrive as their data; posts and kills go to the process.
     const received: unknown[] = [];
     child.onMessage((data) => received.push(data));
-    process.emit('message', { type: 'pong', id: 1 });
+    utility.emit('message', { type: 'pong', id: 1 });
     expect(received).toEqual([{ type: 'pong', id: 1 }]);
     child.postMessage({ type: 'ping', id: 2 });
-    expect(process.postMessage).toHaveBeenCalledWith({ type: 'ping', id: 2 });
+    expect(utility.postMessage).toHaveBeenCalledWith({ type: 'ping', id: 2 });
     // stderr is drained, kept up to the cap, and logged when the process exits.
     stderr.emit('data', Buffer.from('x'.repeat(INTENT_LIMITS.maxStderrChars + 500)));
     const exits: number[] = [];
     child.onExit((code) => exits.push(code));
-    process.emit('exit', 3);
+    utility.emit('exit', 3);
     expect(exits).toEqual([3]);
     expect(lines).toHaveLength(1);
     expect(lines[0]!.length).toBeLessThanOrEqual(INTENT_LIMITS.maxStderrChars + 100);
     child.kill();
-    expect(process.kill).toHaveBeenCalled();
+    expect(utility.kill).toHaveBeenCalled();
+  });
+
+  test('intent-host-sanitises-stderr', () => {
+    // Escapes and control characters go; whitespace collapses; one line, capped.
+    expect(stderrLine('\u001b[31mfatal\u001b[0m: \u001b]0;title\u0007bad\r\n\u0000model\u0008\t  x')).toBe('fatal: bad model x');
+    expect(stderrLine('a\u2028b\u202ec')).toBe('a b c');
+    expect(stderrLine('y'.repeat(INTENT_LIMITS.maxStderrChars * 2))).toHaveLength(INTENT_LIMITS.maxStderrChars);
+    expect(stderrLine(' \u001b[2K ')).toBe('');
   });
 
   test('intent-host-loads-verified-bytes', async () => {
@@ -138,6 +162,10 @@ describe('intent host', () => {
     const missing = harness({ loadModel: async () => ({ ok: false, reason: 'model-missing' }) });
     expect(await missing.host.classify('x')).toEqual({ ok: false, reason: 'model-missing' });
     expect(missing.children).toHaveLength(0);
+    // Files that cannot be read (for now) are unavailable, not missing; nothing is forked either.
+    const unreadable = harness({ loadModel: async () => ({ ok: false, reason: 'unreadable' }) });
+    expect(await unreadable.host.classify('x')).toEqual({ ok: false, reason: 'unavailable' });
+    expect(unreadable.children).toHaveLength(0);
   });
 
   test('intent-host-protocol-is-closed (malformed and unknown responses are dropped)', async () => {
@@ -262,7 +290,7 @@ describe('intent host', () => {
 
   test('intent-host-selftest-and-dispose', async () => {
     const { host, children } = harness();
-    expect(await host.selftest()).toEqual({ ok: true, backends: ['cpu'], provider: 'cpu' });
+    expect(await host.selftest()).toEqual({ ok: true, backends: ['cpu'], provider: 'cpu', env: { variables: 2, canary: false } });
     expect(children[0]!.received.map((message) => message.type)).toEqual(['selftest']);
 
     const broken = harness({ behaviour: (message, child) => child.reply({ type: 'error', id: message.id, reason: 'selftest-failed' }) });

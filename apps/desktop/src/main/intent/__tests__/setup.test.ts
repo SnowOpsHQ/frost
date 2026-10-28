@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { INTENT_E2E_FAKE_SWITCH, INTENT_FAKE_MODEL, INTENT_LIMITS, INTENT_SELFTEST_FAILED, INTENT_SELFTEST_OK, INTENT_SELFTEST_SWITCH } from '@app/specs/intent-classifier.spec';
+import { INTENT_CHILD_ENV, INTENT_E2E_FAKE_SWITCH, INTENT_ENV_CANARY, INTENT_FAKE_MODEL, INTENT_LIMITS, INTENT_SELFTEST_FAILED, INTENT_SELFTEST_OK, INTENT_SELFTEST_SWITCH } from '@app/specs/intent-classifier.spec';
 import { PACKAGED_FORBIDDEN_SWITCHES } from '@app/specs/security-policy.spec';
 import { runIntentSelfTestIfAsked } from '../selftest';
 import { createIntent, intentEngine } from '../setup';
@@ -20,23 +20,29 @@ vi.mock('electron', () => ({
   },
 }));
 
-/** A utility process `fork` whose processes answer like the real one would, recording what was posted. */
-function fakeUtilityFork(answer: (message: { type: string; id: number }) => unknown) {
+/**
+ * A utility process `fork` whose processes answer like the real one would, recording what was
+ * posted. Each process's environment follows Electron's rule: the `env` given, or main's whole
+ * environment when that map is empty (or `inherit` forces it, a leak).
+ */
+function fakeUtilityFork(answer: (message: { type: string; id: number }, env: Readonly<Record<string, string | undefined>>) => unknown, options: { inherit?: boolean } = {}) {
   const posted: { type: string; id: number }[] = [];
-  const fork = vi.fn(() => {
-    const process = Object.assign(new EventEmitter(), {
+  const fork = vi.fn((_path: string, _args: string[], forkOptions: { env?: Record<string, string> }) => {
+    const given = forkOptions.env ?? {};
+    const env = options.inherit || Object.keys(given).length === 0 ? { ...process.env } : { ...given };
+    const utility = Object.assign(new EventEmitter(), {
       stderr: new EventEmitter(),
       kill: vi.fn(() => {
-        queueMicrotask(() => process.emit('exit', 0));
+        queueMicrotask(() => utility.emit('exit', 0));
         return true;
       }),
       postMessage: (message: { type: string; id: number }) => {
         posted.push(message);
-        const reply = answer(message);
-        if (reply !== undefined) queueMicrotask(() => process.emit('message', reply));
+        const reply = answer(message, env);
+        if (reply !== undefined) queueMicrotask(() => utility.emit('message', reply));
       },
     });
-    return process;
+    return utility;
   });
   return { fork, posted };
 }
@@ -69,7 +75,7 @@ describe('intent setup', () => {
     const intent = createIntent({ userData: '/nonexistent', fetcher, isPackaged: false, switches: { has }, fork: fork as never, workerPath: '/w/intent-worker.cjs' });
     expect(await intent.classify('buy shoes')).toMatchObject({ state: 'ready', result: { model: INTENT_FAKE_MODEL } });
     expect(posted.map((message) => message.type)).toEqual(['load-fake', 'classify']);
-    expect(fork).toHaveBeenCalledWith('/w/intent-worker.cjs', [], expect.objectContaining({ env: {} }));
+    expect(fork).toHaveBeenCalledWith('/w/intent-worker.cjs', [], expect.objectContaining({ env: INTENT_CHILD_ENV }));
     expect(await intent.ensureModel()).toBe('ready');
     expect(fetcher.fetch).not.toHaveBeenCalled();
     intent.dispose();
@@ -100,11 +106,25 @@ describe('intent setup', () => {
     expect(runIntentSelfTestIfAsked(app(false), { fork: vi.fn() as never, workerPath: '/w', write: (line) => lines.push(line) })).toBe(false);
     expect(lines).toEqual([]);
 
-    const ok = fakeUtilityFork((message) => (message.type === 'selftest' ? { type: 'selftest', id: message.id, backends: ['cpu', 'coreml'], provider: 'coreml' } : undefined));
+    // The process reports what its environment holds, as the real one does.
+    const selftestAnswer = (message: { type: string; id: number }, env: Readonly<Record<string, string | undefined>>) =>
+      message.type === 'selftest' ? { type: 'selftest', id: message.id, backends: ['cpu', 'webgpu'], provider: 'cpu', env: { variables: Object.keys(env).length, canary: INTENT_ENV_CANARY in env } } : undefined;
+    const ok = fakeUtilityFork(selftestAnswer);
     expect(runIntentSelfTestIfAsked(app(true), { fork: ok.fork as never, workerPath: '/w', write: (line) => lines.push(line) })).toBe(true);
     await vi.waitFor(() => expect(exits).toEqual([0]));
-    expect(lines).toEqual([`frost: ${INTENT_SELFTEST_OK} (provider coreml; backends cpu, coreml)`]);
+    expect(lines).toEqual([`frost: ${INTENT_SELFTEST_OK} (provider cpu; backends cpu, webgpu; env isolated, ${Object.keys(INTENT_CHILD_ENV).length} variables)`]);
     expect(ok.posted.map((message) => message.type)).toEqual(['selftest']);
+    // The canary was set in main's environment only for the fork.
+    expect(process.env).not.toHaveProperty(INTENT_ENV_CANARY);
+
+    // A process that sees main's environment fails the self-test.
+    lines.length = 0;
+    exits.length = 0;
+    const leaky = fakeUtilityFork(selftestAnswer, { inherit: true });
+    runIntentSelfTestIfAsked(app(true), { fork: leaky.fork as never, workerPath: '/w', write: (line) => lines.push(line) });
+    await vi.waitFor(() => expect(exits).toEqual([1]));
+    expect(lines).toEqual([`frost: ${INTENT_SELFTEST_FAILED} (env-inherited: the utility process sees ${INTENT_ENV_CANARY})`]);
+    expect(process.env).not.toHaveProperty(INTENT_ENV_CANARY);
 
     lines.length = 0;
     exits.length = 0;

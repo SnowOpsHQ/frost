@@ -1,5 +1,5 @@
 import { utilityProcess } from 'electron';
-import { INTENT_LIMITS, INTENT_SELFTEST_FAILED, INTENT_SELFTEST_OK, INTENT_SELFTEST_SWITCH } from '@app/specs/intent-classifier.spec';
+import { INTENT_ENV_CANARY, INTENT_LIMITS, INTENT_SELFTEST_FAILED, INTENT_SELFTEST_OK, INTENT_SELFTEST_SWITCH } from '@app/specs/intent-classifier.spec';
 import { createIntentHost, utilityIntentChild, type UtilityFork } from './host';
 import { defaultIntentWorkerPath } from './setup';
 
@@ -8,7 +8,9 @@ import { defaultIntentWorkerPath } from './setup';
 // `--frost-intent-selftest`, main does nothing else: no window, no profile data, no network. Once the
 // app is ready it forks the intent utility process exactly as the classifier would, asks it to load
 // ONNX Runtime and run its built-in model, prints one line to stderr, and exits 0 (ok) or 1. A
-// deadline (`INTENT_LIMITS.selftestTimeoutMs`) bounds the whole run.
+// deadline (`INTENT_LIMITS.selftestTimeoutMs`) bounds the whole run. It also proves the process does
+// not inherit main's environment: `INTENT_ENV_CANARY` is set in main's just before the fork, and a
+// process that sees it fails the self-test (`env-inherited`).
 
 /** The parts of Electron's `app` the self-test uses. */
 export interface SelftestApp {
@@ -22,12 +24,15 @@ export interface SelftestOptions {
   readonly workerPath?: string;
   /** Where the result line goes (default: stderr). */
   readonly write?: (line: string) => void;
+  /** Main's environment, where the canary is set (default `process.env`). */
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 /** Runs the self-test if the switch is present (then returns `true`: main must not start); otherwise returns `false`. */
 export function runIntentSelfTestIfAsked(app: SelftestApp, options: SelftestOptions = {}): boolean {
   if (!app.commandLine.hasSwitch(INTENT_SELFTEST_SWITCH)) return false;
   const write = options.write ?? ((line: string) => console.error(line));
+  const env = options.env ?? process.env;
   let done = false;
   const finish = (ok: boolean, detail: string): void => {
     if (done) return;
@@ -45,10 +50,18 @@ export function runIntentSelfTestIfAsked(app: SelftestApp, options: SelftestOpti
         loadModel: async () => ({ ok: false, reason: 'model-missing' }),
         log: () => {},
       });
-      const answer = await host.selftest();
+      env[INTENT_ENV_CANARY] = '1';
+      let answer;
+      try {
+        answer = await host.selftest();
+      } finally {
+        delete env[INTENT_ENV_CANARY];
+      }
       host.dispose();
       clearTimeout(deadline);
-      finish(answer.ok, answer.ok ? `provider ${answer.provider}; backends ${answer.backends.join(', ')}` : answer.reason);
+      if (!answer.ok) return finish(false, answer.reason);
+      if (answer.env.canary) return finish(false, `env-inherited: the utility process sees ${INTENT_ENV_CANARY}`);
+      finish(true, `provider ${answer.provider}; backends ${answer.backends.join(', ')}; env isolated, ${answer.env.variables} variables`);
     })
     .catch((error: unknown) => {
       clearTimeout(deadline);

@@ -75,24 +75,31 @@ export type IntentRequest = z.infer<typeof IntentRequestSchema>;
 export const INTENT_ERROR_REASONS = ['load-failed', 'bad-vocab', 'not-loaded', 'classify-failed', 'selftest-failed', 'crashed'] as const;
 export type IntentErrorReason = (typeof INTENT_ERROR_REASONS)[number];
 
-/** An ONNX Runtime backend or execution provider name (`cpu`, `coreml`, `webgpu` …). */
+/** An ONNX Runtime backend or execution provider name (`cpu`, `webgpu` …). */
 const BackendNameSchema = z.string().regex(/^[a-z0-9_-]{1,32}$/);
 
 /**
  * Utility process → main.
  * - `loaded`: the model (or the fake) is loaded; `provider` is the execution provider the session
- *   runs on (`coreml`, `cpu`), or `fake`;
+ *   runs on (`cpu`), or `fake`;
  * - `result`: a classification for request `id`;
  * - `error`: request `id` (if any) failed, for `reason`;
  * - `pong`: request `id`'s answer;
- * - `selftest`: ONNX Runtime loaded and ran the built-in model; `backends` are its backends and
- *   `provider` the execution provider that ran it.
+ * - `selftest`: ONNX Runtime loaded and ran the built-in model; `backends` are its backends,
+ *   `provider` the execution provider that ran it, and `env` what the process's environment holds:
+ *   how many variables, and whether `INTENT_ENV_CANARY` (main's) is among them.
  */
 export const IntentResponseSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('loaded'), id: RequestIdSchema, model: z.union([z.literal(INTENT_MODEL.id), z.literal(INTENT_FAKE_MODEL)]), provider: BackendNameSchema }),
   z.strictObject({ type: z.literal('result'), id: RequestIdSchema, result: IntentResultSchema }),
   z.strictObject({ type: z.literal('error'), id: RequestIdSchema.optional(), reason: z.enum(INTENT_ERROR_REASONS) }),
   z.strictObject({ type: z.literal('pong'), id: RequestIdSchema }),
-  z.strictObject({ type: z.literal('selftest'), id: RequestIdSchema, backends: z.array(BackendNameSchema).min(1).max(16), provider: BackendNameSchema }),
+  z.strictObject({
+    type: z.literal('selftest'),
+    id: RequestIdSchema,
+    backends: z.array(BackendNameSchema).min(1).max(16),
+    provider: BackendNameSchema,
+    env: z.strictObject({ variables: z.int().min(0).max(100_000), canary: z.boolean() }),
+  }),
 ]);
 export type IntentResponse = z.infer<typeof IntentResponseSchema>;

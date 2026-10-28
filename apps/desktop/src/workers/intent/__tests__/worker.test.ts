@@ -48,7 +48,7 @@ function fakeOrt(options: { createFails?: boolean } = {}): OrtLike {
 function harness(ort: () => Promise<OrtLike> = async () => fakeOrt()) {
   const posted: IntentResponse[] = [];
   const loadOrt = vi.fn(ort);
-  const worker = createIntentWorker({ post: (message) => void posted.push(message), loadOrt, platform: 'linux', arch: 'x64' });
+  const worker = createIntentWorker({ post: (message) => void posted.push(message), loadOrt, env: () => ({ variables: 2, canary: false }) });
   return { posted, loadOrt, worker };
 }
 
@@ -135,7 +135,7 @@ describe('intent utility process', () => {
   test('intent-worker-selftest', async () => {
     const { posted, worker } = harness();
     await worker.handle({ type: 'selftest', id: 1 });
-    expect(posted).toEqual([{ type: 'selftest', id: 1, backends: ['cpu', 'webgpu'], provider: 'cpu' }]);
+    expect(posted).toEqual([{ type: 'selftest', id: 1, backends: ['cpu', 'webgpu'], provider: 'cpu', env: { variables: 2, canary: false } }]);
 
     const broken = harness(async () => {
       throw new Error('cannot dlopen');

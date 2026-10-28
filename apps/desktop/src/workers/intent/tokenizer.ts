@@ -25,7 +25,8 @@ export function parseVocab(text: string): Vocab {
 
 /** Control and format characters (`\p{C}`), except the tab and line breaks BERT treats as spaces. */
 const CONTROL = /[\p{C}]/u;
-const WHITESPACE = /[ \t\n\r\p{Zs}]/u;
+/** Spaces: the ASCII ones, every space separator (`Zs`), and the line and paragraph separators U+2028 and U+2029. */
+const WHITESPACE = /[ \t\n\r\u2028\u2029\p{Zs}]/u;
 const COMBINING_MARK = /\p{Mn}/gu;
 const PUNCTUATION = /\p{P}/u;
 

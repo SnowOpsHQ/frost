@@ -19,8 +19,8 @@ export interface IntentWorkerDeps {
   readonly post: (message: IntentResponse) => void;
   /** Loads `onnxruntime-node` (lazily, once). */
   readonly loadOrt: () => Promise<OrtLike>;
-  readonly platform: string;
-  readonly arch: string;
+  /** What the process's environment holds (the self-test reports it): how many variables, and whether main's `INTENT_ENV_CANARY` is one. */
+  readonly env: () => { readonly variables: number; readonly canary: boolean };
 }
 
 export interface IntentWorker {
@@ -56,7 +56,7 @@ export function createIntentWorker(deps: IntentWorkerDeps): IntentWorker {
     }
     try {
       const loaded = await runtime();
-      const { session, provider } = await createSession(loaded, model, deps.platform, deps.arch);
+      const { session, provider } = await createSession(loaded, model);
       const embedder = createEmbedder(loaded, session, tokenizer);
       const centroids = await buildCentroids((texts) => embedder.embed(texts));
       engine = async (query) => {
@@ -73,12 +73,12 @@ export function createIntentWorker(deps: IntentWorkerDeps): IntentWorker {
     try {
       const loaded = await runtime();
       const backends = [...new Set(loaded.listSupportedBackends().filter((backend) => backend.bundled !== false).map((backend) => backend.name.toLowerCase()))].filter((name) => /^[a-z0-9_-]{1,32}$/.test(name)).slice(0, 16);
-      const { session, provider } = await createSession(loaded, SELFTEST_MODEL, deps.platform, deps.arch);
+      const { session, provider } = await createSession(loaded, SELFTEST_MODEL);
       const input = Float32Array.from({ length: SELFTEST_SIZE }, (_, index) => index + 1);
       const output = (await session.run({ [SELFTEST_INPUT]: new loaded.Tensor('float32', input, [SELFTEST_SIZE]) }))[SELFTEST_OUTPUT];
       const data = output?.data;
       if (!(data instanceof Float32Array) || data.length !== SELFTEST_SIZE || !input.every((value, index) => data[index] === value * 2) || backends.length === 0) throw new Error('wrong answer');
-      deps.post({ type: 'selftest', id, backends, provider });
+      deps.post({ type: 'selftest', id, backends, provider, env: deps.env() });
     } catch {
       fail(id, 'selftest-failed');
     }

@@ -36,10 +36,12 @@ const CLEAR: readonly (readonly [string, IntentLabel])[] = [
 ];
 
 /**
- * Held-out queries frost wrote for this test only (none is a prototype). Reported as accuracy; the
- * test asserts a floor, not perfection: intent is often ambiguous.
+ * Evaluation queries frost wrote for this test (none is a prototype). The temperature and the cue
+ * weights (two global numbers, spec `INTENT_TEMPERATURE`) were chosen on a set that overlaps these,
+ * so the accuracy reported is an evaluation, not a held-out estimate. The test asserts a floor, not
+ * perfection: intent is often ambiguous.
  */
-const HELD_OUT: readonly (readonly [string, IntentLabel])[] = [
+const EVALUATION: readonly (readonly [string, IntentLabel])[] = [
   ['what causes inflation', 'informational'],
   ['why do cats purr', 'informational'],
   ['history of the roman empire', 'informational'],
@@ -93,7 +95,7 @@ describe.skipIf(!cached)('intent real model', () => {
     const tokenizer = createTokenizer(parseVocab(new TextDecoder('utf-8', { fatal: true }).decode(vocab!)));
     // The tokenizer agrees with the model's own vocabulary on a known sentence.
     expect(tokenizer.encode('Hello, world!')).toEqual([101, 7592, 1010, 2088, 999, 102]);
-    const { session } = await createSession(ort, model!, process.platform, process.arch);
+    const { session } = await createSession(ort, model!);
     const embedder = createEmbedder(ort, session, tokenizer);
     const centroids = await buildCentroids((texts) => embedder.embed(texts));
     for (const label of INTENT_LABELS) expect(centroids[label]).toHaveLength(INTENT_MODEL.dimensions);
@@ -107,13 +109,13 @@ describe.skipIf(!cached)('intent real model', () => {
       expect(result.label, query).toBe(expected);
     }
     let right = 0;
-    for (const [query, expected] of HELD_OUT) {
+    for (const [query, expected] of EVALUATION) {
       const result = await classify(query);
       if (result.label === expected) right += 1;
       lines.push(`${result.label === expected ? 'ok ' : 'BAD'} ${query} → ${result.label} ${(result.confidence * 100).toFixed(0)}% (expected ${expected})`);
     }
-    lines.push(`held-out accuracy: ${right}/${HELD_OUT.length}`);
+    lines.push(`evaluation accuracy: ${right}/${EVALUATION.length}`);
     console.log(lines.join('\n'));
-    expect(right / HELD_OUT.length).toBeGreaterThanOrEqual(0.75);
+    expect(right / EVALUATION.length).toBeGreaterThanOrEqual(0.75);
   });
 });

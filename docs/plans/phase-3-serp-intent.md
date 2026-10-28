@@ -246,7 +246,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - The real-model test (`intent-model.test.ts`) classifies a few clear queries. It is skipped when
     the pinned files are not cached (`FROST_INTENT_MODEL_DIR`, default `~/.cache/frost-models`).
 - [x] commit `feat(intent): on-device intent classifier in a utility process`
-- [ ] Review fixes: commit `fix(intent): address intent classifier review findings`
+- [x] Review fixes: commit `fix(intent): address intent classifier review findings`
 
 ### Task 3: SERP reading
 - **Spec:**

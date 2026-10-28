@@ -6,7 +6,7 @@ import type { Tokenizer } from './tokenizer';
 // model's per-token hidden states averaged over the attention mask, then L2-normalised. The session
 // wrapper takes ONNX Runtime as a parameter (the utility process loads `onnxruntime-node` lazily; the
 // tests pass a fake, the real-model test the real one) and creates the session from the model's
-// bytes, never a path: Core ML first on macOS arm64 with CPU as its fallback, CPU elsewhere.
+// bytes, never a path, on the CPU execution provider everywhere (spec, Decisions: CPU only).
 
 /** The parts of an ONNX Runtime tensor used here. */
 export interface OrtTensor {
@@ -38,30 +38,17 @@ export interface OrtLike {
   listSupportedBackends(): readonly { readonly name: string; readonly bundled?: boolean }[];
 }
 
-/**
- * The execution-provider lists to try, in order: Core ML (with CPU for what it does not cover) then
- * CPU alone on macOS arm64; CPU alone elsewhere.
- */
-export function executionProviders(platform: string, arch: string): string[][] {
-  return platform === 'darwin' && arch === 'arm64' ? [['coreml', 'cpu'], ['cpu']] : [['cpu']];
-}
+/** The execution providers a session uses: CPU only, on every platform (spec, Decisions: CPU only). */
+export const EXECUTION_PROVIDERS: readonly string[] = ['cpu'];
 
 /**
- * A session over `model` (its bytes) on the first provider list that works; `provider` names the
- * first provider of that list. Small thread pools: a query is a few dozen tokens, and the process
- * should not take every core from the browser.
+ * A session over `model` (its bytes) on `EXECUTION_PROVIDERS`; `provider` names the one used. Small
+ * thread pools: a query is a few dozen tokens, and the process should not take every core from the
+ * browser.
  */
-export async function createSession(ort: OrtLike, model: Uint8Array, platform: string, arch: string): Promise<{ session: OrtSession; provider: string }> {
-  let failure: unknown = new Error('no execution provider');
-  for (const providers of executionProviders(platform, arch)) {
-    try {
-      const session = await ort.InferenceSession.create(model, { executionProviders: providers, graphOptimizationLevel: 'all', intraOpNumThreads: 2, interOpNumThreads: 1 });
-      return { session, provider: providers[0]! };
-    } catch (error) {
-      failure = error;
-    }
-  }
-  throw failure instanceof Error ? failure : new Error(String(failure));
+export async function createSession(ort: OrtLike, model: Uint8Array): Promise<{ session: OrtSession; provider: string }> {
+  const session = await ort.InferenceSession.create(model, { executionProviders: EXECUTION_PROVIDERS, graphOptimizationLevel: 'all', intraOpNumThreads: 2, interOpNumThreads: 1 });
+  return { session, provider: EXECUTION_PROVIDERS[0]! };
 }
 
 /** Mean of each row's hidden states over its unmasked tokens (`hidden` is `[batch, tokens, dims]`, `mask` `[batch, tokens]`). */

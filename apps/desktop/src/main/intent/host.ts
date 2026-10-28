@@ -1,12 +1,13 @@
 import type { ForkOptions, UtilityProcess } from 'electron';
-import { INTENT_FAKE_MODEL, INTENT_LIMITS, INTENT_MODEL, INTENT_SERVICE_NAME, type IntentResult } from '@app/specs/intent-classifier.spec';
+import { INTENT_CHILD_ENV, INTENT_FAKE_MODEL, INTENT_LIMITS, INTENT_MODEL, INTENT_SERVICE_NAME, type IntentResult } from '@app/specs/intent-classifier.spec';
 import { IntentResponseSchema, type IntentRequest, type IntentResponse } from '@app/specs/intent-classifier.schema';
 import type { ModelLoadResult } from './model-store';
 
 // The intent utility process, from main's side (spec `intent-classifier.spec.ts`, Least privilege;
 // protocol `intent-classifier.schema.ts`; acceptance `intent-classifier.feature.md`, Host; review
 // focus `intent-host-protocol-is-closed`). The process is forked lazily, on the first request, with
-// an empty environment, no `execArgv` and its stdout closed (`intentForkOptions`); main reads and
+// an environment of its own (`INTENT_CHILD_ENV`), no `execArgv` and its stdout closed
+// (`intentForkOptions`); main reads and
 // checks the model (`loadModel`, `model-store.ts`) and posts its bytes in `load`. Requests are
 // numbered; every answer is validated with `IntentResponseSchema` and matched to its request by id,
 // and anything else (malformed, an unknown id, a model that is not this engine's, a stale process) is
@@ -37,11 +38,16 @@ export interface IntentHostOptions {
   readonly log?: (message: string) => void;
 }
 
-/** A classification, or why there is none: the process could not answer (`unavailable`), or the model no longer verifies (`model-missing`). */
+/**
+ * A classification, or why there is none: the process could not answer, or the model's files could
+ * not be read (`unavailable`), or the model no longer verifies (`model-missing`).
+ */
 export type HostAnswer = { readonly ok: true; readonly result: IntentResult } | { readonly ok: false; readonly reason: 'unavailable' | 'model-missing' };
 
-/** The self-test's answer: the runtime's backends and the provider that ran the built-in model, or why not. */
-export type SelftestAnswer = { readonly ok: true; readonly backends: readonly string[]; readonly provider: string } | { readonly ok: false; readonly reason: string };
+/** The self-test's answer: the runtime's backends, the provider that ran the built-in model and what the process's environment holds, or why not. */
+export type SelftestAnswer =
+  | { readonly ok: true; readonly backends: readonly string[]; readonly provider: string; readonly env: { readonly variables: number; readonly canary: boolean } }
+  | { readonly ok: false; readonly reason: string };
 
 export interface IntentHost {
   /** Classifies one query (already trimmed and cut). Never rejects. */
@@ -53,14 +59,28 @@ export interface IntentHost {
 }
 
 /**
- * How the process is forked: an empty environment (nothing of main's, no `ELECTRON_RUN_AS_NODE`,
- * proxies or tokens), no `execArgv` (Electron's default is none), its service name, and stdio
- * `['ignore', 'ignore', 'pipe']`: no stdin (Electron's only option), stdout closed (the process
- * answers through its port only), stderr piped and kept (capped) for main's log, so a native crash
- * message is not lost and is never written to a terminal the app does not own.
+ * How the process is forked: `INTENT_CHILD_ENV` as its whole environment (nothing of main's: no
+ * `ELECTRON_RUN_AS_NODE`, proxies or tokens; it must not be empty, as Electron passes main's whole
+ * environment on for an empty map), no `execArgv` (Electron's default is none), its service name,
+ * and stdio `['ignore', 'ignore', 'pipe']`: no stdin (Electron's only option), stdout closed (the
+ * process answers through its port only), stderr piped and kept (capped, sanitised) for main's log,
+ * so a native crash message is not lost and is never written to a terminal the app does not own.
  */
 export function intentForkOptions(): ForkOptions {
-  return { env: {}, serviceName: INTENT_SERVICE_NAME, stdio: ['ignore', 'ignore', 'pipe'] };
+  return { env: { ...INTENT_CHILD_ENV }, serviceName: INTENT_SERVICE_NAME, stdio: ['ignore', 'ignore', 'pipe'] };
+}
+
+/** ANSI escape sequences (CSI, OSC and single-character escapes). */
+const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
+
+/** The process's stderr as one log line: escapes and control characters dropped, whitespace collapsed, at most `INTENT_LIMITS.maxStderrChars`. */
+export function stderrLine(text: string): string {
+  return text
+    .replace(ANSI, '')
+    .replace(/[\p{C}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, INTENT_LIMITS.maxStderrChars);
 }
 
 /** Electron's `utilityProcess.fork`, as far as the host uses it. */
@@ -82,7 +102,8 @@ export function utilityIntentChild(fork: UtilityFork, modulePath: string, log: (
       onMessage: (listener) => void child.on('message', (data: unknown) => listener(data)),
       onExit: (listener) =>
         void child.on('exit', (code: number) => {
-          if (stderr.trim() !== '') log(`intent: the utility process said: ${stderr.trim().replace(/\s+/g, ' ')}`);
+          const line = stderrLine(stderr);
+          if (line !== '') log(`intent: the utility process said: ${line}`);
           stderr = '';
           listener(code);
         }),
@@ -187,8 +208,8 @@ export function createIntentHost(options: IntentHostOptions): IntentHost {
     if (disposed || inBackoff()) return 'unavailable';
     let load: ModelLoadResult | null = null;
     if (options.engine === 'onnx') {
-      load = await options.loadModel().catch((): ModelLoadResult => ({ ok: false, reason: 'model-missing' }));
-      if (!load.ok) return 'model-missing';
+      load = await options.loadModel().catch((): ModelLoadResult => ({ ok: false, reason: 'unreadable' }));
+      if (!load.ok) return load.reason === 'unreadable' ? 'unavailable' : 'model-missing';
     }
     if (disposed) return 'unavailable';
     const proc = running ?? spawn();
@@ -233,7 +254,7 @@ export function createIntentHost(options: IntentHostOptions): IntentHost {
       if (proc === null) return { ok: false, reason: 'fork-failed' };
       const answer = await request(proc, (id) => ({ type: 'selftest', id }), INTENT_LIMITS.selftestTimeoutMs);
       if (answer === 'timeout' || answer === 'exit') return { ok: false, reason: answer === 'exit' ? 'crashed' : 'timeout' };
-      if (answer.type === 'selftest') return { ok: true, backends: answer.backends, provider: answer.provider };
+      if (answer.type === 'selftest') return { ok: true, backends: answer.backends, provider: answer.provider, env: answer.env };
       return { ok: false, reason: answer.type === 'error' ? answer.reason : `unexpected ${answer.type}` };
     },
     dispose() {
