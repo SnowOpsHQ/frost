@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    // Node types for the tests only; the engine is plain ECMAScript: `purity.test.ts` checks it
+    // imports no Electron, DOM, Node or Zod.
+    "types": ["node"]
+  },
+  "include": ["src", "*.ts"]
+}
