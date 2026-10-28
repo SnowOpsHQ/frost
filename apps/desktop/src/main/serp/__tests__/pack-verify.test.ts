@@ -38,6 +38,11 @@ describe('verifyPack', () => {
     expect(verifyPack(bytes, signature.replace(/[A-Za-z]/, '*'), [KEY.spki])).toEqual({ ok: false, reason: 'bad-signature' });
     expect(verifyPack(bytes, '', [KEY.spki])).toEqual({ ok: false, reason: 'bad-signature' });
     expect(verifyPack(bytes, `${signature.slice(0, 20)} ${signature.slice(20)}`, [KEY.spki])).toEqual({ ok: false, reason: 'bad-signature' });
+    // Non-canonical base64: the last character's unused bits set decodes to the same bytes, but is refused.
+    const last = signature.at(-3)!;
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const sloppy = `${signature.slice(0, -3)}${alphabet[alphabet.indexOf(last) | 0x03]}${signature.slice(-2)}`;
+    if (sloppy !== signature) expect(verifyPack(bytes, sloppy, [KEY.spki])).toEqual({ ok: false, reason: 'bad-signature' });
     const raw = Buffer.from(signature, 'base64');
     expect(verifyPack(bytes, raw.subarray(0, 63).toString('base64'), [KEY.spki])).toEqual({ ok: false, reason: 'bad-signature' });
     expect(verifyPack(bytes, Buffer.concat([raw, Buffer.of(0)]).toString('base64'), [KEY.spki])).toEqual({ ok: false, reason: 'bad-signature' });

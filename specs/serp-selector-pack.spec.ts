@@ -93,13 +93,18 @@ export const SERP_E2E_PACK_URL_SWITCH = 'frost-e2e-serp-pack-url' as const;
  * - `maxSelectorChars`: one CSS selector (a selector list counts as one);
  * - `maxIdChars`, `maxLabelChars`, `maxHostChars`, `maxPathChars`, `maxParamChars`: string lengths;
  * - `maxPerPage`: an offset parameter's results per page.
+ *
+ * These caps and the strict objects ship in every app, so a pack that needs more (a new field, a
+ * longer list) is refused by every installed app: such a pack is a new `format`, never `format: 1`.
+ * `maxHostsPerEngine` leaves room for every country domain of one engine (hosts are exact names;
+ * the byte cap still bounds the whole pack).
  */
 export const SELECTOR_PACK_LIMITS = {
   maxPackBytes: 262_144,
   signatureBytes: 64,
   maxSignatureChars: 256,
   maxEngines: 16,
-  maxHostsPerEngine: 64,
+  maxHostsPerEngine: 256,
   maxPathsPerEngine: 8,
   maxParamNames: 8,
   maxBlocksPerEngine: 32,
@@ -120,7 +125,8 @@ export const SELECTOR_PACK_LIMITS = {
  * - `maxBytes`: the pack's body cap (`SELECTOR_PACK_LIMITS.maxPackBytes`; more is `too-large`);
  * - `maxSignatureBytes`: the `.sig` body's cap (`maxSignatureChars`; more is `bad-signature`);
  * - `timeoutMs`: one deadline per request (the pack, then its signature);
- * - `maxRedirects`: a release asset redirects once, to its download host.
+ * - `maxRedirects`: a `releases/latest/download` asset redirects twice (to the tag's asset, then
+ *   its download host).
  */
 export const SERP_PACK_FETCH_LIMITS = {
   schemes: ['https:'],

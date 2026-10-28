@@ -152,23 +152,37 @@ export function createPackStore(options: PackStoreOptions): PackStore {
     }
   }
 
+  /** Fetches the `.sig` for `bytes` (the pack file just fetched) and verifies the pair. */
+  async function fetchAndVerify(bytes: Uint8Array): Promise<{ ok: true; result: { ok: true; pack: SelectorPack }; signature: string; bytes: Uint8Array } | { ok: false; reason: PackUpdateOutcome }> {
+    const signatureFile = await fetchFile(packSignatureUrl(url), SERP_PACK_FETCH_LIMITS.maxSignatureBytes);
+    if (!signatureFile.ok) return { ok: false, reason: signatureFile.reason === 'too-large' ? 'bad-signature' : 'unreachable' };
+    const signature = signatureText(signatureFile.bytes);
+    if (signature === null) return { ok: false, reason: 'bad-signature' };
+    const result = verifyPack(bytes, signature, publicKeys);
+    if (!result.ok) return { ok: false, reason: result.reason };
+    return { ok: true, result, signature, bytes };
+  }
+
   async function update(): Promise<PackUpdateOutcome> {
     if (fetchPack === null || active.status !== 'ready') return 'disabled';
     if (!isAllowedPackUrl(url, allowHttp)) return 'unreachable';
     const packFile = await fetchFile(url, SERP_PACK_FETCH_LIMITS.maxBytes);
     if (!packFile.ok) return packFile.reason;
     if (packFile.bytes.byteLength > SELECTOR_PACK_LIMITS.maxPackBytes) return 'too-large';
-    const signatureFile = await fetchFile(packSignatureUrl(url), SERP_PACK_FETCH_LIMITS.maxSignatureBytes);
-    if (!signatureFile.ok) return signatureFile.reason === 'too-large' ? 'bad-signature' : 'unreachable';
-    const signature = signatureText(signatureFile.bytes);
-    if (signature === null) return 'bad-signature';
-    const result = verifyPack(packFile.bytes, signature, publicKeys);
-    if (!result.ok) return result.reason;
+    let verified = await fetchAndVerify(packFile.bytes);
+    // The pack and its `.sig` resolve `releases/latest` separately: a release published between the
+    // two requests pairs one release's pack with the next one's signature. Ask once more for both.
+    if (!verified.ok && verified.reason === 'bad-signature') {
+      const again = await fetchFile(url, SERP_PACK_FETCH_LIMITS.maxBytes);
+      if (again.ok && again.bytes.byteLength <= SELECTOR_PACK_LIMITS.maxPackBytes) verified = await fetchAndVerify(again.bytes);
+    }
+    if (!verified.ok) return verified.reason;
+    const { result, signature, bytes } = verified;
     if (!isNewer(result.pack)) return 'not-newer';
     // Used at once; stored for the next start (a failed write only loses that).
     adopt(result.pack);
     try {
-      await storage.write(packFile.bytes, `${signature.trim()}\n`);
+      await storage.write(bytes, `${signature.trim()}\n`);
     } catch (error) {
       log(`serp: the selector pack update is in use but could not be stored: ${message(error)}`);
     }

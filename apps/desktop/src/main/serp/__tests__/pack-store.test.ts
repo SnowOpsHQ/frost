@@ -219,6 +219,48 @@ describe('pack store', () => {
     for (const outcome of PACK_UPDATE_OUTCOMES) expect(PACK_UPDATE_MESSAGES[outcome].length).toBeGreaterThan(0);
   });
 
+  test('pack-update-retries-a-mismatched-pair-once', async () => {
+    // `releases/latest` moved between the pack and its `.sig`: the first pair does not verify, the second does.
+    const old = signedPack(KEY, { version: 6 });
+    const newer = signedPack(KEY, { version: 7 });
+    let packAsks = 0;
+    const asked: string[] = [];
+    const fetchPack: PackFetch = async (url) => {
+      asked.push(url);
+      if (url === URL_) return { ok: true, bytes: packAsks++ === 0 ? old.bytes : newer.bytes };
+      return { ok: true, bytes: encode(newer.signature) };
+    };
+    const packs = store({ fetchPack });
+    expect(await packs.checkForUpdate()).toBe('installed');
+    expect(packs.current()).toMatchObject({ source: 'remote', version: 7 });
+    expect(asked).toEqual([URL_, `${URL_}.sig`, URL_, `${URL_}.sig`]);
+    // A forged pair still fails after the one retry, and nothing more is asked.
+    const forged = signedPack(OTHER, { version: 9 });
+    const { fetchPack: forgedFetch, asked: forgedAsks } = fakeFetch(remote(forged));
+    expect(await store({ fetchPack: forgedFetch }).checkForUpdate()).toBe('bad-signature');
+    expect(forgedAsks).toHaveLength(4);
+  });
+
+  test('load-and-update-interleaved-never-downgrade', async () => {
+    // An update installed while `load()` still reads storage is never replaced by an older stored pack.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const stored = signedPack(KEY, { version: 5 });
+    const storage: PackStorage = {
+      read: async () => {
+        await gate;
+        return stored;
+      },
+      write: async () => {},
+    };
+    const packs = store({ storage, fetchPack: fakeFetch(remote(signedPack(KEY, { version: 8 }))).fetchPack });
+    const loading = packs.load();
+    expect(await packs.checkForUpdate()).toBe('installed');
+    release();
+    expect(await loading).toMatchObject({ source: 'remote', version: 8 });
+    expect(packs.current()).toMatchObject({ version: 8 });
+  });
+
   test('pack-update-is-user-action-only', async () => {
     const { fetchPack, asked } = fakeFetch(remote(signedPack(KEY, { version: 7 })));
     const packs = store({ fetchPack, storage: memoryStorage(signedPack(KEY, { version: 4 })).storage });

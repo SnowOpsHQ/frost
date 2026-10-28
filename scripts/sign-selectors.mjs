@@ -77,7 +77,7 @@ function signPack(file) {
     fail(`cannot read the key file ${SIGNING_KEY_ENV} names. Nothing was signed.`);
   }
   const inRepo = path.relative(realpathSync(ROOT), realKeyPath);
-  if (!inRepo.startsWith('..') && !path.isAbsolute(inRepo)) fail(`the signing key must live outside the repo, never in it. Nothing was signed.`);
+  if (inRepo !== '..' && !inRepo.startsWith(`..${path.sep}`) && !path.isAbsolute(inRepo)) fail(`the signing key must live outside the repo, never in it. Nothing was signed.`);
   let privateKey;
   try {
     privateKey = createPrivateKey(readFileSync(realKeyPath));
