@@ -6,8 +6,9 @@
  * The tables live in the session database (`DB_FILE_NAME`, `browser-session-db.spec.ts`), created by
  * migrations `0040_change_intelligence` and `0041_change_intelligence_guards`, and are reached only
  * through `@app/db`'s change-intelligence repository (`packages/db/src/change-intel/`). Captured rows
- * are append-only: SQLite triggers refuse every `UPDATE`, and a `DELETE` of a row that no recorded
- * purge's tombstone names. Mutable rows (projects, their pages and queries) are tombstoned with
+ * are append-only: SQLite triggers refuse every `UPDATE`, every `INSERT` over an existing row (so
+ * `REPLACE` cannot delete one unseen), and a `DELETE` of a row that no recorded purge's tombstone
+ * names. Mutable rows (projects, their pages and queries) are tombstoned with
  * `deleted_at`, never deleted, so a later sync can carry the deletion.
  *
  * The repository is Zod-free and never parses JSON: main hands it canonical JSON text, hashes and

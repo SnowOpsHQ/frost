@@ -3,7 +3,7 @@
 // Acceptance: specs/capture-db.feature.md (Captures)
 import { beforeEach, describe, expect, test } from 'vitest';
 import { MAX_HISTORY_PAGE, MAX_PROFILE_JSON_BYTES, MAX_SNAPSHOT_JSON_BYTES, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import { uuidv7 } from '../ids';
+import { createUuidv7, uuidv7 } from '../ids';
 import type { AppendCaptureInput } from '../repository';
 import { appended, capture, captureInput, count, counts, laneOf, openTestDb, screenshotInput, sha256, utf8, type TestDb } from './fixtures';
 
@@ -77,10 +77,75 @@ describe('captures', () => {
     // A capture row records what it was given.
     const row = { ...t.raw.prepare('SELECT * FROM ci_captures WHERE id = ?').get(second.captureId) };
     expect(row).toMatchObject({ project_id: UNFILED_PROJECT_ID, version_id: second.versionId, lane_key: laneOf(PAGE), page_url: PAGE, render_profile_partial: 0, source: 'manual', audit_taken_at: 2_000, created_at: 2_000 });
-    // A version is never older than its parent: a clock gone back takes the parent's time.
-    const third = appended(await capture(t.repo, { url: PAGE, snapshot: '{"title":"Later"}', at: 1_500 }));
-    expect((await t.repo.version(third.versionId))?.createdAt).toBe(2_000);
-    expect((await t.repo.latestVersion(laneOf(PAGE)))?.id).toBe(third.versionId);
+  });
+
+  test('new-version-sorts-after-its-parent', async () => {
+    const parent = appended(await capture(t.repo, { url: PAGE, snapshot: '{"v":1}', at: 2_000 }));
+    const diffFrom = (from: string) => ({ id: uuidv7(), fromVersionId: from, engineVersion: 1, diffJson: '{}', summaryJson: '{}', changeCount: 0 });
+    // The same time and an id that sorts lower (made by another device's earlier clock): parent's time + 1.
+    const lowId = createUuidv7()(1);
+    expect(lowId < parent.versionId).toBe(true);
+    const same = appended(await t.repo.appendCapture(captureInput({ url: PAGE, snapshot: '{"v":2}', at: 2_000, versionId: lowId, diff: diffFrom(parent.versionId) })));
+    expect((await t.repo.version(same.versionId))?.createdAt).toBe(2_001);
+    expect((await t.repo.latestVersion(laneOf(PAGE)))?.id).toBe(lowId);
+    expect((await t.repo.diffFor(parent.versionId, lowId))?.createdAt).toBe(2_001);
+    // A clock gone back: the same.
+    const back = appended(await t.repo.appendCapture(captureInput({ url: PAGE, snapshot: '{"v":3}', at: 1_500, diff: diffFrom(lowId) })));
+    expect((await t.repo.version(back.versionId))?.createdAt).toBe(2_002);
+    // The capture keeps the time it was given.
+    expect(Number(t.raw.prepare('SELECT created_at FROM ci_captures WHERE id = ?').get(back.captureId)!['created_at'])).toBe(1_500);
+    // An equal time with a higher id stays as given.
+    const later = appended(await t.repo.appendCapture(captureInput({ url: PAGE, snapshot: '{"v":4}', at: 2_002, diff: diffFrom(back.versionId) })));
+    expect((await t.repo.version(later.versionId))?.createdAt).toBe(2_002);
+    expect((await t.repo.latestVersion(laneOf(PAGE)))?.id).toBe(later.versionId);
+  });
+
+  test('tampered-lane-head-does-not-block', async () => {
+    const real = appended(await capture(t.repo, { url: PAGE, snapshot: '{"v":1}', at: 1_000 }));
+    const insertVersion = t.raw.prepare(
+      'INSERT INTO ci_versions (id, lane_key, page_url, render_profile, search_params, snapshot, snapshot_hash, snapshot_bytes, schema_version, parent_version_id, created_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, 1, 1, NULL, ?)',
+    );
+    // Later rows with a malformed id, hash or time are never the lane's head.
+    insertVersion.run('X'.repeat(36), laneOf(PAGE), PAGE, '{}', sha256('a'), 5_000);
+    insertVersion.run(uuidv7(), laneOf(PAGE), PAGE, '{}', 'not-a-hash', 5_000);
+    insertVersion.run(uuidv7(), laneOf(PAGE), PAGE, '{}', sha256('c'), 'soon');
+    expect((await t.repo.latestVersion(laneOf(PAGE)))?.id).toBe(real.versionId);
+    const next = appended(await capture(t.repo, { url: PAGE, snapshot: '{"v":2}', at: 2_000 }));
+    expect((await t.repo.version(next.versionId))?.parentVersionId).toBe(real.versionId);
+
+    // A well-formed head with a tampered URL reads as no version: main hands no diff, and the new
+    // version still goes in after it (with no stored diff), so the lane moves on.
+    const bad = uuidv7();
+    insertVersion.run(bad, laneOf(PAGE), 'javascript:alert(1)', '{}', sha256('d'), 6_000);
+    expect(await t.repo.latestVersion(laneOf(PAGE))).toBeNull();
+    const after = appended(await capture(t.repo, { url: PAGE, snapshot: '{"v":3}', at: 7_000 }));
+    expect((await t.repo.version(after.versionId))?.parentVersionId).toBe(bad);
+    expect(await t.repo.diffFor(bad, after.versionId)).toBeNull();
+    expect((await t.repo.latestVersion(laneOf(PAGE)))?.id).toBe(after.versionId);
+    // A diff from the unreadable head is refused: main could not have read it.
+    const diff = { id: uuidv7(), fromVersionId: bad, engineVersion: 1, diffJson: '{}', summaryJson: '{}', changeCount: 0 };
+    expect(await t.repo.appendCapture(captureInput({ url: PAGE, snapshot: '{"v":4}', at: 8_000, diff }))).toEqual({ status: 'stale' });
+  });
+
+  test('omitted-limit-is-a-full-page', async () => {
+    for (let i = 0; i < 3; i++) {
+      await capture(t.repo, { url: PAGE, snapshot: `{"v":${i}}`, at: 1_000 + i });
+      await capture(t.repo, { url: `https://example.com/p${i}`, snapshot: '{}', at: 1_000 + i });
+      expect(await t.repo.appendScreenshot(screenshotInput({ pageUrl: PAGE, createdAt: 1_000 + i }))).toBe(true);
+    }
+    expect((await t.repo.history({ pageUrl: PAGE })).entries).toHaveLength(3);
+    expect(await t.repo.pages({})).toHaveLength(4);
+    expect((await t.repo.screenshots({ pageUrl: PAGE })).screenshots).toHaveLength(3);
+    const project = (await t.repo.createProject('P', 1))!;
+    for (const at of [2_000, 3_000]) {
+      await capture(t.repo, { url: PAGE, snapshot: `{"p":${at}}`, at, projectId: project.id });
+      await capture(t.repo, { url: PAGE, snapshot: `{"q":${at}}`, at: at + 1, projectId: project.id });
+      const plan = await t.repo.planPurge({ projectId: project.id, policy: { mode: 'versions', value: 1 }, now: at + 2 });
+      expect((await t.repo.executePurge(plan!, 'purge-now', at + 2))?.status).toBe('purged');
+    }
+    expect(await t.repo.purges({})).toHaveLength(2);
+    // An explicit limit still caps it.
+    expect((await t.repo.history({ pageUrl: PAGE, limit: 1 })).entries).toHaveLength(1);
   });
 
   test('stale-diff-parent-is-refused', async () => {

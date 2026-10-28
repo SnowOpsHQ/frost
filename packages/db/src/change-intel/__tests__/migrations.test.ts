@@ -71,6 +71,7 @@ describe('change-intelligence migrations', () => {
         'ci_captures_version_id',
         'ci_captures_page_url_created_at',
         'ci_diffs_to_version_id',
+        'ci_diffs_from_version_id',
         'ci_screenshots_project_id_created_at',
         'ci_screenshots_page_url_created_at',
         'ci_screenshots_sha256',
@@ -84,11 +85,11 @@ describe('change-intelligence migrations', () => {
 
     // Triggers, by name.
     const triggers = [
-      ...CAPTURED_TABLES.flatMap((t) => [`${t}_no_update`, `${t}_purge_only`, `${t}_no_resurrect`]),
-      ...AUDIT_TABLES.flatMap((t) => [`${t}_no_update`, `${t}_no_delete`]),
-      'ci_projects_no_delete',
-      'ci_project_pages_no_delete',
-      'ci_project_queries_no_delete',
+      ...CAPTURED_TABLES.flatMap((t) => [`${t}_no_update`, `${t}_purge_only`, `${t}_no_resurrect`, `${t}_no_replace`]),
+      ...AUDIT_TABLES.flatMap((t) => [`${t}_no_update`, `${t}_no_delete`, `${t}_no_replace`]),
+      ...['ci_projects', 'ci_project_pages', 'ci_project_queries'].flatMap((t) => [`${t}_no_delete`, `${t}_id_stays`, `${t}_no_replace`]),
+      'ci_project_pages_live_key_unique',
+      'ci_project_queries_live_key_unique',
       'ci_projects_unfiled_stays',
       'ci_versions_unreferenced_only',
     ];
@@ -116,6 +117,8 @@ describe('change-intelligence migrations', () => {
     tombstone.run('0190a000-0000-7000-8000-000000000003', 'ci_versions');
     // One tombstone per (table, row).
     expect(() => tombstone.run('0190a000-0000-7000-8000-000000000004', 'ci_versions')).toThrow();
+    // Every migration statement is plain SQL a fresh database accepts again (no IF NOT EXISTS needed).
+    expect(() => runMigrations(new DatabaseSync(':memory:'))).not.toThrow();
   });
 
   test('change-intel-sql-is-portable', () => {

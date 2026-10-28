@@ -10,7 +10,12 @@ import { ciCaptures, ciDiffs, ciProjects, ciPurges, ciScreenshots, ciTombstones,
 // `planPurge` is a dry run over one project; `executePurge` plans again and, if nothing moved,
 // records the purge and its tombstones and deletes the rows in one transaction (the store's batch).
 // A row of a captured table can be deleted only that way: its `_purge_only` trigger looks for the
-// tombstone and the purge written just before it in the same transaction.
+// tombstone and the purge written just before it in the same transaction. Those triggers bind the app
+// and any SQL that respects the schema; whoever can write the database file can also `DROP TRIGGER`,
+// which no trigger can prevent.
+//
+// After a purge, main unlinks the files of the answer's `plan.unreferencedHashes` (the plan executed,
+// planned again here), checking `isHashReferenced` once more before each unlink.
 
 /** What to purge: a project's retention policy, or `all` (internal: the `project-deleted` purge). */
 export type PurgePolicy = { readonly mode: 'forever' } | { readonly mode: 'versions' | 'days'; readonly value: number } | { readonly mode: 'all' };
@@ -53,9 +58,17 @@ export interface PurgeRecord {
 }
 
 export interface PurgeOperations {
-  /** A dry run for `projectId` (live or tombstoned); `null` for an invalid policy, time or project. */
+  /**
+   * A dry run for `projectId`; `null` for an invalid policy, time or project. `all` is only for a
+   * tombstoned project (its `project-deleted` purge); the retention policies for any project.
+   */
   planPurge(input: { readonly projectId: string; readonly policy: PurgePolicy; readonly now: number }): Promise<PurgePlan | null>;
-  /** Plans again with `plan`'s inputs; deletes only if the id sets are unchanged. `null` for invalid input. */
+  /**
+   * Plans again with `plan`'s inputs; deletes only if the id sets are unchanged. `null` for invalid
+   * input, and for `project-deleted` with any policy but `all` (or `all` with another reason). A
+   * failed transaction is rolled back: `stale` if planning again then gives other rows (a capture
+   * raced in), else the error is thrown.
+   */
   executePurge(plan: PurgePlan, reason: PurgeReason, now: number): Promise<ExecutePurgeResult | null>;
   /** The purge log, newest first, of one project or of all. */
   purges(filter: { readonly projectId?: string; readonly limit?: number }): Promise<PurgeRecord[]>;
@@ -105,7 +118,7 @@ function purgedCaptures(rows: readonly CaptureRow[], policy: PurgePolicy, now: n
   const kept = new Set<string>();
   const keep = policy.mode === 'versions' ? policy.value : 1;
   for (const lane of groupBy(rows, (row) => row.laneKey).values()) {
-    const versions = [...groupBy(lane, (row) => row.versionId)].map(([id, captures]) => ({ id, at: Math.max(...captures.map((c) => c.at)) }));
+    const versions = [...groupBy(lane, (row) => row.versionId)].map(([id, captures]) => ({ id, at: captures.reduce((newest, c) => Math.max(newest, c.at), Number.NEGATIVE_INFINITY) }));
     for (const version of versions.sort(newestFirst).slice(0, keep)) kept.add(version.id);
   }
   if (policy.mode === 'versions') return rows.filter((row) => !kept.has(row.versionId));
@@ -121,15 +134,17 @@ interface ScreenshotRow {
   readonly bytes: unknown;
 }
 
-/** The project's screenshots the policy purges: the same window per `(page_url, kind)`. */
+/** The project's screenshots the policy purges: the same window per lane and kind (`group`). */
 function purgedScreenshots(rows: readonly ScreenshotRow[], policy: PurgePolicy, now: number): ScreenshotRow[] {
   if (policy.mode === 'forever') return [];
   if (policy.mode === 'all') return [...rows];
   const purged: ScreenshotRow[] = [];
+  const cutoff = now - policy.value * DAY_MS;
   for (const group of groupBy(rows, (row) => row.group).values()) {
-    const [newest, ...older] = group.sort(newestFirst);
-    if (policy.mode === 'versions') purged.push(...[newest!, ...older].slice(policy.value));
-    else purged.push(...older.filter((row) => row.at < now - policy.value * DAY_MS));
+    // Newest first; the newest always stays.
+    group.sort(newestFirst).forEach((row, rank) => {
+      if (policy.mode === 'versions' ? rank >= policy.value : rank > 0 && row.at < cutoff) purged.push(row);
+    });
   }
   return purged;
 }
@@ -166,20 +181,31 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
     const policy = normalPolicy(input.policy);
     const { projectId, now } = input;
     if (policy === null || !isId(projectId) || !isTime(now)) return null;
-    const [project] = await db.select({ id: ciProjects.id }).from(ciProjects).where(eq(ciProjects.id, projectId)).limit(1);
-    if (!project) return null;
+    const [project] = await db.select({ deletedAt: ciProjects.deletedAt }).from(ciProjects).where(eq(ciProjects.id, projectId)).limit(1);
+    // Everything of a project goes only once the project itself has gone.
+    if (!project || (policy.mode === 'all' && project.deletedAt === null)) return null;
 
     const captureRows = (await db.select({ id: ciCaptures.id, versionId: ciCaptures.versionId, laneKey: ciCaptures.laneKey, at: ciCaptures.createdAt }).from(ciCaptures).where(eq(ciCaptures.projectId, projectId)))
       .filter((row) => typeof row.id === 'string' && typeof row.versionId === 'string')
       .map((row) => ({ id: row.id, versionId: row.versionId, laneKey: String(row.laneKey), at: time(row.at) }));
     const screenshotRows = (
       await db
-        .select({ id: ciScreenshots.id, pageUrl: ciScreenshots.pageUrl, kind: ciScreenshots.kind, at: ciScreenshots.createdAt, sha256: ciScreenshots.sha256, bytes: ciScreenshots.bytes })
+        .select({
+          id: ciScreenshots.id,
+          pageUrl: ciScreenshots.pageUrl,
+          kind: ciScreenshots.kind,
+          renderProfile: ciScreenshots.renderProfile,
+          searchParams: ciScreenshots.searchParams,
+          at: ciScreenshots.createdAt,
+          sha256: ciScreenshots.sha256,
+          bytes: ciScreenshots.bytes,
+        })
         .from(ciScreenshots)
         .where(eq(ciScreenshots.projectId, projectId))
     )
       .filter((row) => typeof row.id === 'string')
-      .map((row) => ({ id: row.id, group: JSON.stringify([row.pageUrl, row.kind]), at: time(row.at), sha256: row.sha256, bytes: row.bytes }));
+      // A screenshot's lane is its page, render profile and search parameters: a phone's and a desktop's never compete.
+      .map((row) => ({ id: row.id, group: JSON.stringify([row.pageUrl, row.kind, row.renderProfile, row.searchParams]), at: time(row.at), sha256: row.sha256, bytes: row.bytes }));
 
     const captures = purgedCaptures(captureRows, policy, now);
     const screenshots = purgedScreenshots(screenshotRows, policy, now);
@@ -230,6 +256,7 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
 
     async executePurge(plan, reason, now) {
       if (typeof plan !== 'object' || plan === null || !isOneOf(PURGE_REASONS, reason) || !isTime(now)) return null;
+      if ((reason === 'project-deleted') !== (normalPolicy(plan.policy)?.mode === 'all')) return null;
       const fresh = await planPurge({ projectId: plan.projectId, policy: plan.policy, now: plan.now });
       if (fresh === null) return null;
       if (!sameRows(fresh, plan)) return { status: 'stale' };

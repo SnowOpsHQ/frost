@@ -109,7 +109,7 @@ export const ciDiffs = sqliteTable(
     changeCount: integer('change_count').notNull(),
     createdAt: integer('created_at').notNull(),
   },
-  (table) => [index('ci_diffs_to_version_id').on(table.toVersionId)],
+  (table) => [index('ci_diffs_to_version_id').on(table.toVersionId), index('ci_diffs_from_version_id').on(table.fromVersionId)],
 );
 
 /** Screenshots: the PNG is `<CAPTURES_DIR_NAME>/screenshots/<sha256>.png`, shared by hash (append-only). */

@@ -23,7 +23,7 @@ import {
   type ScreenshotKind,
 } from '@app/specs/capture-db.spec';
 import type { SessionDatabase } from '../client';
-import { capped, isCount, isHash, isId, isJson, isJsonOrNull, isOneOf, isRetention, isStoredUrl, isTime, pageKey, pageSize, trimmedText, utf8Bytes } from './checks';
+import { capped, isCount, isHash, isId, isJson, isJsonOrNull, isOneOf, isRetention, isStoredUrl, isTime, pageKey, pageSize, SHA256_GLOB, trimmedText, utf8Bytes, UUIDV7_GLOB } from './checks';
 import { uuidv7 } from './ids';
 import { createPurgeOperations, type PurgeOperations } from './purge';
 import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciScreenshots, ciTombstones, ciVersions } from './schema';
@@ -65,7 +65,10 @@ export interface AppendCaptureInput {
   readonly snapshotHash: string;
   readonly schemaVersion: number;
   readonly createdAt: number;
-  /** Required when the lane has a latest version with another hash; absent when the lane is empty. */
+  /**
+   * Required when the lane's latest version (as `latestVersion` answers it) has another hash; absent
+   * when `latestVersion` answers `null` (an empty lane, or a latest row that fails its checks).
+   */
   readonly diff?: AppendDiffInput;
 }
 
@@ -206,7 +209,7 @@ export interface ChangeIntelRepository extends PurgeOperations {
   /** Appends a capture (and a new version and its diff when the snapshot changed) in one transaction; `null` for invalid input. */
   appendCapture(input: AppendCaptureInput): Promise<AppendCaptureResult | null>;
   appendScreenshot(input: AppendScreenshotInput): Promise<boolean>;
-  /** The lane's latest version (greatest `(created_at, id)`). */
+  /** The lane's latest version (greatest `(created_at, id)` among rows with a well-formed id, hash and time); `null` if that row fails its checks. */
   latestVersion(laneKey: string): Promise<VersionSummary | null>;
   version(id: string): Promise<StoredVersion | null>;
   /** A page's versions across lanes, newest first. */
@@ -267,8 +270,15 @@ function insertWhere<T extends SQLiteTable>(db: SessionDatabase, table: T, row: 
 }
 
 const liveProject = (projectId: string): SQL => sql`EXISTS (SELECT 1 FROM ci_projects WHERE id = ${projectId} AND deleted_at IS NULL)`;
+/**
+ * The rows that can be a lane's latest version: those whose id, hash and time are well-formed. The
+ * read (`latestVersion`), `appendCapture`'s read and its in-transaction check all use it, so a
+ * tampered row never becomes a head the reads cannot see (which would block the lane for good).
+ */
+const laneHeads = (laneKey: string): SQL =>
+  sql`lane_key = ${laneKey} AND id GLOB ${UUIDV7_GLOB} AND snapshot_hash GLOB ${SHA256_GLOB} AND typeof(created_at) = 'integer' AND created_at >= 0`;
 /** The lane's latest version id, as `latestVersion` orders it. */
-const latestIdOf = (laneKey: string): SQL => sql`(SELECT id FROM ci_versions WHERE lane_key = ${laneKey} ORDER BY created_at DESC, id DESC LIMIT 1)`;
+const latestIdOf = (laneKey: string): SQL => sql`(SELECT id FROM ci_versions WHERE ${laneHeads(laneKey)} ORDER BY created_at DESC, id DESC LIMIT 1)`;
 
 /** Rows after `cursor` in `(createdAt, id)` descending order. */
 function olderThan(createdAt: typeof ciVersions.createdAt | typeof ciScreenshots.createdAt, id: typeof ciVersions.id | typeof ciScreenshots.id, cursor: ChangeIntelCursor): SQL | undefined {
@@ -443,12 +453,9 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
       const { captureId, versionId, projectId, laneKey, snapshotHash, createdAt, diff } = input;
       if (!(await isLiveProject(projectId)) || (await idTaken(ciCaptures, 'ci_captures', captureId)) || (await idTaken(ciVersions, 'ci_versions', versionId))) return null;
       if (diff && (await idTaken(ciDiffs, 'ci_diffs', diff.id))) return null;
-      const [latest] = await db
-        .select({ id: ciVersions.id, snapshotHash: ciVersions.snapshotHash, createdAt: ciVersions.createdAt })
-        .from(ciVersions)
-        .where(eq(ciVersions.laneKey, laneKey))
-        .orderBy(desc(ciVersions.createdAt), desc(ciVersions.id))
-        .limit(1);
+      const [head] = await db.select(versionColumns).from(ciVersions).where(laneHeads(laneKey)).orderBy(desc(ciVersions.createdAt), desc(ciVersions.id)).limit(1);
+      // `laneHeads` vouches for these three; the rest of the row is checked as `latestVersion` checks it.
+      const latest = head ? { id: head.id as string, snapshotHash: head.snapshotHash as string, createdAt: head.createdAt as number, readable: versionOf(head) !== null } : null;
       const captureRow = (id: string) => ({
         id: captureId,
         projectId,
@@ -474,11 +481,14 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         const unchanged = sql`${liveProject(projectId)} AND ${latestIdOf(laneKey)} = ${latest.id}`;
         return appended([insertWhere(db, ciCaptures, captureRow(latest.id), unchanged)], { status: 'appended', captureId, versionId: latest.id, newVersion: false });
       }
-      // A new version: with a parent it needs the diff from that parent, and without one no diff.
-      if (latest ? diff?.fromVersionId !== latest.id : diff !== undefined) return { status: 'stale' };
+      // A new version: with a parent main can read (`latestVersion` answers it) it needs the diff from
+      // that parent; with none, or one whose row is tampered (main saw `null`), no diff.
+      if (latest?.readable ? diff?.fromVersionId !== latest.id : diff !== undefined) return { status: 'stale' };
       const parentId = latest?.id ?? null;
-      // Never older than its parent, so the lane's latest is always its newest version.
-      const versionAt = latest && typeof latest.createdAt === 'number' ? Math.max(createdAt, latest.createdAt) : createdAt;
+      // Strictly after its parent by (created_at, id), so the new version is the lane's latest; a
+      // clock gone back, or an equal time with a lower id, takes the parent's time plus one.
+      const afterParent = !latest || createdAt > latest.createdAt || (createdAt === latest.createdAt && versionId > latest.id);
+      const versionAt = afterParent ? createdAt : latest.createdAt + 1;
       const version = {
         id: versionId,
         laneKey,
@@ -505,16 +515,18 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
       if (typeof input !== 'object' || input === null) return false;
       const pageUrl = pageKey(input.pageUrl);
       const shot = pageUrl === null ? null : screenshotOf({ ...input, pageUrl });
-      if (shot === null || !(await isLiveProject(shot.projectId)) || (await idTaken(ciScreenshots, 'ci_screenshots', shot.id))) return false;
-      if (shot.captureId !== null && !(await captureExists(shot.captureId))) return false;
+      if (shot === null || (await idTaken(ciScreenshots, 'ci_screenshots', shot.id))) return false;
       const { rectJson, renderProfileJson, searchParamsJson, ...rest } = shot;
-      await db.insert(ciScreenshots).values({ ...rest, rect: rectJson, renderProfile: renderProfileJson, searchParams: searchParamsJson });
-      return true;
+      // The project's liveness and the capture's existence are checked in the insert itself.
+      const capture = shot.captureId === null ? sql`1` : sql`EXISTS (SELECT 1 FROM ci_captures WHERE id = ${shot.captureId})`;
+      const row = { ...rest, rect: rectJson, renderProfile: renderProfileJson, searchParams: searchParamsJson };
+      await batch(db, [insertWhere(db, ciScreenshots, row, sql`${liveProject(shot.projectId)} AND ${capture}`)]);
+      return (await db.select({ id: ciScreenshots.id }).from(ciScreenshots).where(eq(ciScreenshots.id, shot.id)).limit(1)).length > 0;
     },
 
     async latestVersion(laneKey) {
       if (!isHash(laneKey)) return null;
-      const [row] = await db.select(versionColumns).from(ciVersions).where(eq(ciVersions.laneKey, laneKey)).orderBy(desc(ciVersions.createdAt), desc(ciVersions.id)).limit(1);
+      const [row] = await db.select(versionColumns).from(ciVersions).where(laneHeads(laneKey)).orderBy(desc(ciVersions.createdAt), desc(ciVersions.id)).limit(1);
       return row ? versionOf(row) : null;
     },
 

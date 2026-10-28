@@ -1,7 +1,7 @@
 // Spec: specs/capture-db.spec.ts (PURGE_REASONS, RETENTION_MODES, CAPTURED_TABLES, MAX_HISTORY_PAGE)
 // Acceptance: specs/capture-db.feature.md (Retention planning, Usage)
 import { beforeEach, describe, expect, test } from 'vitest';
-import { CAPTURED_TABLES } from '@app/specs/capture-db.spec';
+import { CAPTURED_TABLES, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { uuidv7 } from '../ids';
 import type { PurgePlan } from '../repository';
 import { appended, capture, count, counts, DAY, ids, openTestDb, screenshotInput, sha256, utf8, type TestDb } from './fixtures';
@@ -100,8 +100,8 @@ describe('retention', () => {
   });
 
   test('screenshots-follow-the-retention-window', async () => {
-    const shot = async (pageUrl: string, kind: 'viewport' | 'full', at: number, projectId = p) => {
-      const input = screenshotInput({ pageUrl, kind, createdAt: at, projectId });
+    const shot = async (pageUrl: string, kind: 'viewport' | 'full', at: number, projectId = p, renderProfileJson: string | null = null) => {
+      const input = screenshotInput({ pageUrl, kind, createdAt: at, projectId, renderProfileJson });
       expect(await t.repo.appendScreenshot(input)).toBe(true);
       return input.id;
     };
@@ -109,13 +109,15 @@ describe('retention', () => {
     const full1 = await shot(PAGE, 'full', days(1));
     const [o2, o95, o96] = [await shot(OTHER, 'viewport', days(2)), await shot(OTHER, 'viewport', days(9.5)), await shot(OTHER, 'viewport', days(9.6))];
     await shot(PAGE, 'viewport', days(1), q);
-    expect((await plan(p, { mode: 'versions', value: 1 })).screenshotIds).toEqual([vp1, vp2, o2, o95].sort());
+    // A phone's viewport screenshots are a lane of their own: they never compete with the desktop's.
+    const [phone1, phone2] = [await shot(PAGE, 'viewport', days(1), p, PHONE), await shot(PAGE, 'viewport', days(1.5), p, PHONE)];
+    expect((await plan(p, { mode: 'versions', value: 1 })).screenshotIds).toEqual([vp1, vp2, o2, o95, phone1].sort());
     expect((await plan(p, { mode: 'versions', value: 2 })).screenshotIds).toEqual([vp1, o2].sort());
     const days1 = await plan(p, { mode: 'days', value: 1 }, days(10));
-    expect(days1.screenshotIds).toEqual([vp1, vp2, o2].sort());
-    expect(days1.counts.screenshots).toBe(3);
+    expect(days1.screenshotIds).toEqual([vp1, vp2, o2, phone1].sort());
+    expect(days1.counts.screenshots).toBe(4);
     expect((await t.repo.executePurge(days1, 'retention', days(10)))?.status).toBe('purged');
-    expect(ids(t.raw, 'ci_screenshots', 'project_id = ?', p)).toEqual([vp3, full1, o95, o96].sort());
+    expect(ids(t.raw, 'ci_screenshots', 'project_id = ?', p)).toEqual([vp3, full1, o95, o96, phone2].sort());
     expect(count(t.raw, 'ci_screenshots', 'project_id = ?', q)).toBe(1);
   });
 
@@ -147,6 +149,7 @@ describe('retention', () => {
     const reused = appended(await capture(t.repo, { url: PAGE, snapshot: snap(1), at: 2_000, projectId: q }));
     expect(reused.versionId).toBe(v1);
     expect((await t.repo.usage(p))?.sharedVersions).toBe(1);
+    expect(await t.repo.tombstoneProject(p, 2_500)).toBe(true);
     const all = await plan(p, { mode: 'all' });
     expect(all.captureIds).toHaveLength(1);
     expect(all.versionIds).toEqual([]);
@@ -219,6 +222,7 @@ describe('retention', () => {
 
   test('purge-raced-by-a-capture-is-stale', async () => {
     const v1 = appended(await capture(t.repo, { url: PAGE, snapshot: snap(1), at: 1_000, projectId: p })).versionId;
+    expect(await t.repo.tombstoneProject(p, 2_500)).toBe(true);
     const all = await plan(p, { mode: 'all' });
     expect(all.versionIds).toEqual([v1]);
     // A capture reusing v1 commits after executePurge's re-plan, just before its transaction begins.
@@ -243,10 +247,29 @@ describe('retention', () => {
     expect(await t.repo.version(v1)).not.toBeNull();
   });
 
+  test('project-deleted-purges-everything-of-a-deleted-project', async () => {
+    await capture(t.repo, { url: PAGE, snapshot: snap(1), at: 1_000, projectId: p });
+    await capture(t.repo, { url: PAGE, snapshot: snap(2), at: 2_000, projectId: p });
+    // `all` is for a deleted project only; `project-deleted` goes only with `all`.
+    expect(await t.repo.planPurge({ projectId: p, policy: { mode: 'all' }, now: 3_000 })).toBeNull();
+    const keep1 = await plan(p, { mode: 'versions', value: 1 });
+    expect(await t.repo.executePurge(keep1, 'project-deleted', 3_000)).toBeNull();
+    expect(await t.repo.tombstoneProject(p, 3_000)).toBe(true);
+    const all = await plan(p, { mode: 'all' });
+    expect(all.counts.captures).toBe(2);
+    for (const reason of ['purge-now', 'retention'] as const) expect(await t.repo.executePurge(all, reason, 4_000), reason).toBeNull();
+    expect(count(t.raw, 'ci_purges')).toBe(0);
+    expect((await t.repo.executePurge(all, 'project-deleted', 4_000))?.status).toBe('purged');
+    expect(count(t.raw, 'ci_captures', 'project_id = ?', p)).toBe(0);
+    // Unfiled is never deleted, so it never has an `all` plan.
+    expect(await t.repo.planPurge({ projectId: UNFILED_PROJECT_ID, policy: { mode: 'all' }, now: 5_000 })).toBeNull();
+  });
+
   test('execute-purge-is-one-transaction', async () => {
     await capture(t.repo, { url: PAGE, snapshot: snap(1), at: 1_000, projectId: p });
     await capture(t.repo, { url: PAGE, snapshot: snap(2), at: 2_000, projectId: p });
     await t.repo.appendScreenshot(screenshotInput({ pageUrl: PAGE, createdAt: 1_000, projectId: p }));
+    expect(await t.repo.tombstoneProject(p, 2_500)).toBe(true);
     const all = await plan(p, { mode: 'all' });
     expect(all.counts).toEqual({ captures: 2, versions: 2, diffs: 1, screenshots: 1 });
     const before = counts(t.raw);

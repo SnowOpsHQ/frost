@@ -43,8 +43,13 @@ export function isRetention(mode: unknown, value: unknown): mode is RetentionMod
   return isCount(value, 1) && value <= (mode === 'versions' ? MAX_RETENTION_VERSIONS : MAX_RETENTION_DAYS);
 }
 
-/** A page of reads: `limit` clamped to 1…`MAX_HISTORY_PAGE`. */
-export const pageSize = (limit: unknown): number => Math.min(Math.max(Math.trunc(Number(limit)) || 1, 1), MAX_HISTORY_PAGE);
+/** A page of reads: `limit` clamped to 1…`MAX_HISTORY_PAGE`; a full page when it is omitted. */
+export const pageSize = (limit: unknown): number => (limit === undefined ? MAX_HISTORY_PAGE : Math.min(Math.max(Math.trunc(Number(limit)) || 1, 1), MAX_HISTORY_PAGE));
+
+/** `UUIDV7_PATTERN` and `SHA256_HEX_PATTERN` as SQL `GLOB` patterns (case-sensitive), for checks SQL must make itself. */
+const HEX = (n: number) => '[0-9a-f]'.repeat(n);
+export const UUIDV7_GLOB = `${HEX(8)}-${HEX(4)}-7${HEX(3)}-[89ab]${HEX(3)}-${HEX(12)}`;
+export const SHA256_GLOB = HEX(64);
 
 /** A column read no further than `max` characters plus one: a tampered huge value is never read whole, and fails its check. */
 export const capped = (column: SQLiteColumn, max: number): SQL<unknown> => sql<unknown>`substr(${column}, 1, ${max + 1})`;
