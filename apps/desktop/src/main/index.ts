@@ -4,6 +4,7 @@ import { app, BrowserWindow, clipboard, ipcMain, net, session, webContents, type
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { createAccountMain } from './account/main';
 import { createWindowRegistry } from './app-windows';
 import { contextMenuTemplate } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
@@ -384,6 +385,9 @@ function start(): void {
     });
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
+    // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
+    // check), before the first window (its gestures are tracked from creation).
+    const account = await createAccountMain();
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,
@@ -420,6 +424,7 @@ function start(): void {
           log: logSession,
         }),
         settings: searchEngine,
+        account: account.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

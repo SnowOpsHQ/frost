@@ -26,15 +26,19 @@ export const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url))
  * frost profile, and no launch sees another's tabs or permission decisions. Pass `userDataDir` to
  * relaunch on the same profile (the caller then owns that directory); otherwise a temporary one is
  * created and removed when the app closes.
+ *
+ * `env` adds (or overrides) variables of the app's environment, e.g. the unpackaged-only
+ * `FROST_PUBLIC_*` run-time configuration (`specs/account-state.schema.ts`, `ACCOUNT_CONFIG_ENV`).
  */
 export async function launchApp(
   extraArgs: readonly string[] = [],
-  options: { userDataDir?: string } = {},
+  options: { userDataDir?: string; env?: Readonly<Record<string, string>> } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
   }
+  Object.assign(env, options.env);
   const ownProfile = options.userDataDir === undefined ? await mkdtemp(path.join(tmpdir(), 'frost-e2e-profile-')) : null;
   const userDataDir = options.userDataDir ?? ownProfile!;
   let app: ElectronApplication;

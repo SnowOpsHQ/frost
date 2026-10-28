@@ -280,7 +280,7 @@ export const appRouter = router({
   settings: settingsRouter,
   // Phase 2.5 Task 7 (`seo-checks.feature.md`): link status, sitemap and hreflang reciprocity checks.
   checks: checksRouter,
-  // Phase 4 Task 4 (`entitlements-client.feature.md`): the verified entitlements (Task 5 adds sign-in).
+  // Phase 4 Tasks 4 and 5 (`entitlements-client.feature.md`, `account-signin.feature.md`): entitlements and sign-in.
   account: accountRouter,
 });
 

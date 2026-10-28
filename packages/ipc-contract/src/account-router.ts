@@ -1,5 +1,14 @@
 import { TRPCError } from '@trpc/server';
 import {
+  AccountActionResultSchema,
+  AccountRequestInputSchema,
+  AccountStateSchema,
+  AccountWatchInputSchema,
+  SignInResultSchema,
+  type AccountState,
+} from '@app/specs/account-state.schema';
+import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
+import {
   EntitlementsSchema,
   entitlementGrants,
   FEATURE_FLAGS,
@@ -7,11 +16,14 @@ import {
   type FeatureFlag,
 } from '@app/specs/entitlements-snapshot.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
+import type { AccountService } from './account-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
-// The account ↔ main (Phase 4; spec `entitlements-snapshot.spec.ts`; acceptance
-// `entitlements-client.feature.md`, Router). Every procedure starts `publicProcedure.use(enforceSender)`.
-// Task 4 ships `account.entitlements` and the `requireFeature` gate; Task 5 adds the sign-in flow.
+// The account ↔ main (Phase 4; specs `entitlements-snapshot.spec.ts`, `account-state.schema.ts`;
+// acceptance `entitlements-client.feature.md` and `account-signin.feature.md`, Router). Every procedure
+// starts `publicProcedure.use(enforceSender)`. Task 4: `account.entitlements` and the `requireFeature`
+// gate; Task 5: the sign-in flow. Every output is validated with a strict schema, so a service answer
+// that carries anything else (a token, a snapshot) is a masked internal error, never forwarded.
 
 /** Hands the procedure main's `AccountService` (after `enforceSender`; fails closed without it). */
 const requireAccount = middleware(({ ctx, next }) => {
@@ -46,10 +58,30 @@ export function requireFeature(flag: FeatureFlag) {
   });
 }
 
+/** The long-poll behind `account.watch` (as `browser.watch`): the state at once if newer, else at the next change, else after `WATCH_TIMEOUT_MS`. */
+async function watchAccount(account: AccountService, sinceVersion: number): Promise<AccountState> {
+  const release = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      account.watch(sinceVersion, release.signal),
+      new Promise<AccountState>((resolve) => {
+        timer = setTimeout(() => resolve(account.state()), WATCH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    release.abort();
+  }
+}
+
 /**
- * `entitlements` answers main's verified `Entitlements` (strictly `EntitlementsSchema`: a service
- * answer with any other member, such as a snapshot, is refused as a masked internal error rather
- * than forwarded).
+ * - `entitlements`: main's verified `Entitlements` (strictly `EntitlementsSchema`).
+ * - `state` / `watch`: the account (`AccountStateSchema`; `watch` long-polls on `sinceVersion`).
+ * - `signIn`: starts a sign-in for the sender's window (`SignInResult`; `needs-gesture` without a live
+ *   user gesture there).
+ * - `confirmSignIn` / `cancelSignIn` (`{ requestId }`), `signOut`, `refresh`: a boolean (see
+ *   `AccountService`).
  */
 export const accountRouter = router({
   entitlements: publicProcedure
@@ -57,4 +89,47 @@ export const accountRouter = router({
     .use(requireAccount)
     .output(EntitlementsSchema)
     .query(({ ctx }) => ctx.account.entitlements()),
+  state: publicProcedure
+    .use(enforceSender)
+    .use(requireAccount)
+    .output(AccountStateSchema)
+    .query(({ ctx }) => ctx.account.state()),
+  watch: publicProcedure
+    .use(enforceSender)
+    .use(requireAccount)
+    .input(AccountWatchInputSchema)
+    .output(AccountStateSchema)
+    .query(({ ctx, input }) => watchAccount(ctx.account, input.sinceVersion)),
+  signIn: publicProcedure
+    .use(enforceSender)
+    .use(requireAccount)
+    .output(SignInResultSchema)
+    .mutation(({ ctx }) => {
+      // `enforceSender` admitted only a known app window, so there is a window ID.
+      const windowId = ctx.sender?.windowId;
+      if (typeof windowId !== 'number') throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'no sender window' });
+      return ctx.account.signIn(windowId);
+    }),
+  confirmSignIn: publicProcedure
+    .use(enforceSender)
+    .use(requireAccount)
+    .input(AccountRequestInputSchema)
+    .output(AccountActionResultSchema)
+    .mutation(({ ctx, input }) => ctx.account.confirmSignIn(input.requestId)),
+  cancelSignIn: publicProcedure
+    .use(enforceSender)
+    .use(requireAccount)
+    .input(AccountRequestInputSchema)
+    .output(AccountActionResultSchema)
+    .mutation(({ ctx, input }) => ctx.account.cancelSignIn(input.requestId)),
+  signOut: publicProcedure
+    .use(enforceSender)
+    .use(requireAccount)
+    .output(AccountActionResultSchema)
+    .mutation(({ ctx }) => ctx.account.signOut()),
+  refresh: publicProcedure
+    .use(enforceSender)
+    .use(requireAccount)
+    .output(AccountActionResultSchema)
+    .mutation(({ ctx }) => ctx.account.refresh()),
 });

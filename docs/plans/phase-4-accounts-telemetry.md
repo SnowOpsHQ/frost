@@ -205,7 +205,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   `answers-carry-no-secret`; e2e `account.e2e.ts` against an in-test fake backend
   (`e2e/fake-backend.ts`, ephemeral Ed25519 key): sign in, confirm, plan shows `pro`, restart keeps the
   account when a keychain is available, tampered stored snapshot reads `free`.
-- [ ] commit `feat(account): desktop sign-in with loopback redirect and in-app confirmation`
+- [x] commit `feat(account): desktop sign-in with loopback redirect and in-app confirmation`
 - [ ] Security review of Tasks 4–5 before Task 6.
 
 ### Task 6: `packages/telemetry` — consent-gated OpenTelemetry and Sentry
