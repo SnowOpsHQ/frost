@@ -52,7 +52,9 @@ fields, the `find.*` / `history.*` / `settings.*` inputs). Shortcuts: `RESERVED_
   (`historyViewSeq`). (`history-menu-and-palette`)
 - It is a sheet filling the page column; the page area below shrinks to nothing (zero-high view),
   so nothing is drawn over the tab's view. Esc, Close, opening a visit here, showing another tab or a
-  new document committing in this one closes it. (e2e `history-lists-searches-deletes-clears`)
+  new document committing in this one closes it, unless the request to open it arrives with that
+  change (the request came after it). (e2e `history-lists-searches-deletes-clears`,
+  `history-sheet-opens-with-a-new-document`)
 - It lists `recent_visits` newest first, grouped by local day, `HISTORY_PAGE_SIZE` per page with
   "Show more" (keyset pagination: `(last_visit_at, url)` after the last row). The search box filters
   by title or URL substring (case-insensitive for ASCII, `%` / `_` literal). Main flushes pending
