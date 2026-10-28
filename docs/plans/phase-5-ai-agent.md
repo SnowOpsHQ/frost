@@ -487,3 +487,13 @@ _Filled in as tasks land._
   and Escape always work. Key fields are password inputs emptied before `setKey` is called; the
   e2e launches with `--password-store=basic` so Linux answers `no-keychain` and no real keychain is
   touched. E2e `agent.e2e.ts` (6 tests, one launch each with its own script).
+- **Task 6a review.** A turn accepts at most `MAX_TOOL_STEPS` steps and `MAX_TOOL_CARDS_PER_TURN`
+  cards (past them: ignored, a host strike); a step's calls reach the history only if the runtime
+  announced each (`chat.tool-call`, same input) and the broker saw it; calls the broker handled whose
+  step never came (a crash) are written with main's results; cards left in progress get an end
+  status. Stop has a deadline (`STOP_DEADLINE_MS` 5 s): then main ends the turn and calls the new
+  `host.restart()` (failure `unresponsive`). `historyWindow` keeps the request of a turn longer than
+  the window plus its latest steps. A refused send restores the chat (error, model, selection). The
+  system prompt says "the tab this chat works on" and no longer claims the agent can't fetch (the
+  search tools exist). The IPC's error formatter now masks every `BAD_REQUEST` message (Zod's
+  `unrecognized_keys` issue quotes the key's name, so `setKey` could have echoed a key).

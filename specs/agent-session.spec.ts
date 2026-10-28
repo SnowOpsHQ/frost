@@ -1,13 +1,14 @@
 /**
  * The agent panel's view of main's chat sessions (Phase 5 Task 6a; acceptance
  * `agent-session.feature.md`). Plain values and types with no Zod, so the chrome renderer imports
- * them as they are (the `agent.*` procedures' inputs are in `agent-ipc.schema.ts`).
+ * them as they are (the `agent.*` procedures' inputs are in `agent-ipc.schema.ts`). It imports only
+ * the plain, Zod-free `agent-approvals.spec.ts` values.
  *
  * Main keeps the chats (`apps/desktop/src/main/agent/session.ts`) and answers `agent.watch` with an
  * `AgentState`: what the panel shows and nothing more. No key, no part of one and no plaintext
  * secret is ever in it; tool output appears only as bounded, inert preview text.
  */
-import type { ApprovalDecision, ToolActivityStatus } from './agent-approvals.spec';
+import { MAX_TOOL_CALLS_PER_TURN, type ApprovalDecision, type ToolActivityStatus } from './agent-approvals.spec';
 import type { KeyProtection } from './agent-proxy.spec';
 import type { AgentToolRisk, ModelId, ModelRoute, ToolErrorCode } from './agent-tools.spec';
 
@@ -28,6 +29,18 @@ export const MAX_DISPLAY_ENTRIES = 200;
 export const TOOL_CARD_INPUT_PREVIEW_CHARS = 1000;
 /** A tool card's output preview (JSON text of the untrusted data, or the error message; characters). */
 export const TOOL_CARD_OUTPUT_PREVIEW_CHARS = 2000;
+/**
+ * Tool cards one turn may show: the broker's `MAX_TOOL_CALLS_PER_TURN`. A turn's `chat.step`s are
+ * capped at `MAX_TOOL_STEPS`. Past either, main ignores what the runtime sends and counts a strike.
+ */
+export const MAX_TOOL_CARDS_PER_TURN = MAX_TOOL_CALLS_PER_TURN;
+/**
+ * How long a turn may go on after Stop before main ends it itself and restarts the runtime
+ * (milliseconds): a runtime that ignores `chat.stop` can't keep every send `busy`.
+ */
+export const STOP_DEADLINE_MS = 5_000;
+/** The chat's error when that happens. */
+export const STOP_DEADLINE_MESSAGE = 'The agent did not stop in time, so frost restarted it.';
 /** Streaming text is published at most this often (milliseconds), so long-polls aren't flooded. */
 export const AGENT_DELTA_COALESCE_MS = 50;
 /**
@@ -105,7 +118,7 @@ export type AgentAnswerResult = (typeof AGENT_ANSWER_RESULTS)[number];
 
 /** The agent process, as the host reports it. */
 export type AgentRuntimeStatus = 'stopped' | 'starting' | 'ready' | 'crashed';
-export type AgentRuntimeFailure = 'exited' | 'ready-timeout' | 'protocol-mismatch' | 'fork-failed' | 'misbehaved';
+export type AgentRuntimeFailure = 'exited' | 'ready-timeout' | 'protocol-mismatch' | 'fork-failed' | 'misbehaved' | 'unresponsive';
 
 /** What the agent process's isolation is, said plainly (plan decision 6); never claims more. */
 export interface AgentIsolationView {

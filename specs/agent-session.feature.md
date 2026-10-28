@@ -27,7 +27,9 @@ Each line maps to one named test.
   broker sent (`onResult`). A step is reported after its calls were answered, so a result waits for
   its step; a result that comes after its step (Stop: the broker expires the call as the turn ends)
   is appended while only results follow that step. A call with no result is left to the runtime,
-  which reads it as aborted. A turn sends at most `CHAT_MAX_MESSAGES`, starting at a user message.
+  which reads it as aborted. A turn sends at most `CHAT_MAX_MESSAGES`, starting at a user message;
+  when one long turn alone fills the window, the user message that asked for it is kept, followed
+  by the latest messages from an assistant message on (`history-window`).
 - **The busy reply is not a failure.** The runtime answers `CHAT_BUSY_MESSAGE` to a `chat.start` for
   a chat it is still running; before any output of the new turn that reply takes the user's message
   back and raises `busy`. Any other `chat.error` (the host's crash message included) ends the turn
@@ -41,6 +43,17 @@ Each line maps to one named test.
 - **The meter.** `usage` is the last turn's tokens summed over its steps (`chat.finish`);
   `contextTokens` is the last completed step's input plus output (`chat.step.usage`, protocol 5),
   against `MODEL_CONTEXT_WINDOWS[modelId]` (`null`: no published figure; no percentage).
+- **A misbehaving runtime is bounded (review).** A turn accepts at most `MAX_TOOL_STEPS` steps and
+  `MAX_TOOL_CARDS_PER_TURN` cards; anything past them (text, cards, steps) is ignored and counted as
+  a host strike. A step's calls are written to the history only if the runtime announced each one
+  (`chat.tool-call`, same tool and input) and the broker was asked to run it (else a strike). A
+  turn that ended before its step came (a crash, a cut-off) still writes the calls the broker
+  handled, with main's results, so the model learns they ran. Cards still in progress when their
+  step or turn ends get an end status. After Stop, a turn that hasn't ended within
+  `STOP_DEADLINE_MS` is ended by main (`STOP_DEADLINE_MESSAGE`) and the runtime restarted
+  (`host.restart()`, failure `unresponsive`).
+- **A refused send changes no chat**: its message, error, model, selection and time are put back,
+  and a chat it created is removed.
 - **Watch.** Every change raises `version`; streaming text is published at most every
   `AGENT_DELTA_COALESCE_MS`. `agent.watch` long-polls as `browser.watch` does.
 - **IPC.** Every `agent.*` procedure is `publicProcedure.use(enforceSender).use(requireAgent)` with a
@@ -95,11 +108,26 @@ Each line maps to one named test.
 - **Scenario: chats-kept-in-memory-are-bounded** — past `MAX_CHATS_KEPT_IN_MEMORY` the least recently
   used idle chat goes.
 - **Scenario: invalid-and-unknown-sends** — empty text, an unknown chat, no tab: refused, nothing sent.
+- **Scenario: turn-steps-and-cards-are-capped** — steps past `MAX_TOOL_STEPS`, text or cards after
+  the last step, and cards past `MAX_TOOL_CARDS_PER_TURN` are ignored, each a strike.
+- **Scenario: stop-has-a-deadline** — a runtime that ignores Stop: after `STOP_DEADLINE_MS` the turn
+  ends with `STOP_DEADLINE_MESSAGE`, the host restarts the runtime and the next send starts; a turn
+  that stops in time cancels the deadline.
+- **Scenario: refused-send-changes-no-chat** — a refused send leaves the chat's messages, error,
+  model and the selection as they were.
+- **Scenario: cards-left-requested-get-an-end-status** — at their step or the turn's end.
+- **Scenario: crash-before-the-step-keeps-what-ran** — the next turn's history holds the call the
+  broker ran, with its result; a card the broker never saw is not written.
+- **Scenario: step-calls-are-checked-against-the-broker** — a step's call with another input, never
+  announced, or never seen by the broker is not written (a strike).
+- **Scenario: dispose-while-starting-clears-the-turn** — nothing is sent and nothing stays running.
 - **Scenario: model-context-windows-cover-allowed-models**, **chat-title**, **history-window**,
   **attach-tool-result**, **isolation-view-is-honest**,
   **system-prompt-is-stable-and-says-tool-output-is-untrusted** — the helpers.
 
 ## Broker results (`approvals.test.ts`)
+- **Scenario: host-restart-on-request** (`host.test.ts`) — `restart()` kills the runtime, fails its
+  chats (`unresponsive`) and forks another after the backoff.
 - **Scenario: broker-reports-results-it-sent** — `onResult` hears each `tool.result` the host
   accepted (ran, denied, refused for an unknown chat), and none it refused.
 
@@ -111,7 +139,8 @@ Each line maps to one named test.
 - **Scenario: agent-procedures-call-service** — each procedure calls the service with its input; an
   answer outside its fixed set is replaced.
 - **Scenario: agent-set-key-answer-has-no-key** — `setKey` answers only a fixed result; a refused
-  input's error over the transport holds no part of the key.
+  input's error over the transport holds no part of the key (its message is `BAD_REQUEST`, even for
+  an unrecognized key named after the key).
 - **Scenario: agent-watch-timeout-matches-browser-watch**, **agent-watch-returns-immediately-when-newer**,
   **agent-watch-resolves-on-change**, **agent-watch-times-out-with-current-state**,
   **agent-watch-clamps-future-version** — the long-poll.

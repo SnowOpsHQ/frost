@@ -241,10 +241,11 @@ describe('agent router', () => {
     const window = { id: WINDOW_ID, webContents: sender, isDestroyed: () => false };
     const handle = createIpcRequestHandler({ router: appRouter, policy: createSenderPolicy({ knownWindowIds: new Set([WINDOW_ID]) }), fromWebContents: () => window, services: { agent: service } });
     const long = `${KEY}${'z'.repeat(CREDENTIAL_LIMITS.maxKeyChars * 2)}`;
-    for (const input of [{ slot: 'anthropic', key: long }, { slot: 'nope', key: KEY }, { slot: 'anthropic', key: KEY, extra: KEY }]) {
+    // An unrecognized key named after the key: Zod's issue would quote it.
+    for (const input of [{ slot: 'anthropic', key: long }, { slot: 'nope', key: KEY }, { slot: 'anthropic', key: KEY, extra: KEY }, { [KEY]: 1, slot: 'anthropic', key: KEY }]) {
       const response = await handle({ sender, senderFrame }, { type: 'mutation', path: 'agent.setKey', input });
       expect(JSON.stringify(response)).not.toContain('sk-ant-secret');
-      expect(response).toHaveProperty('error');
+      expect(response).toMatchObject({ error: { message: 'BAD_REQUEST', data: { code: 'BAD_REQUEST' } } });
     }
     const ok = await handle({ sender, senderFrame }, { type: 'mutation', path: 'agent.setKey', input: { slot: 'anthropic', key: KEY } });
     expect(ok).toStrictEqual({ result: { data: 'stored' } });

@@ -3,18 +3,21 @@
 // specs/agent-protocol.schema.ts (CHAT_BUSY_MESSAGE)
 // Acceptance: specs/agent-session.feature.md (State, Watch)
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { CHAT_BUSY_MESSAGE, type ChatMessage, type MainToRuntimeMessage } from '@app/specs/agent-protocol.schema';
+import { CHAT_BUSY_MESSAGE, type ChatMessage, type MainToRuntimeMessage, type ToolResult } from '@app/specs/agent-protocol.schema';
 import {
   AGENT_DELTA_COALESCE_MS,
   CHAT_TITLE_MAX_CHARS,
   EXECUTE_JS_APPROVAL_NOTE,
   MAX_CHATS_KEPT_IN_MEMORY,
   MAX_PENDING_AGENT_WATCHES,
+  MAX_TOOL_CARDS_PER_TURN,
   MODEL_CONTEXT_WINDOWS,
+  STOP_DEADLINE_MESSAGE,
+  STOP_DEADLINE_MS,
   type AgentState,
 } from '@app/specs/agent-session.spec';
-import { ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, DEFAULT_MODEL_ID, type ModelId } from '@app/specs/agent-tools.spec';
-import type { ApprovalRequestView } from '../approvals';
+import { ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, DEFAULT_MODEL_ID, MAX_TOOL_STEPS, type ModelId } from '@app/specs/agent-tools.spec';
+import type { ApprovalRequestView, ToolActivity } from '../approvals';
 import type { AgentChatEvent, AgentHostStatus } from '../host';
 import { attachToolResult, chatTitle, createAgentSession, historyWindow, isolationView } from '../session';
 import { AGENT_SYSTEM_PROMPT } from '../system-prompt';
@@ -23,11 +26,13 @@ function fakeDeps() {
   const chat = new Set<(event: AgentChatEvent) => void>();
   const statuses = new Set<(status: AgentHostStatus) => void>();
   const changes = new Set<() => void>();
+  const results = new Set<(chatId: string, callId: string, toolName: string, result: ToolResult) => void>();
   const sent: MainToRuntimeMessage[] = [];
   const fake = {
     status: 'ready' as AgentHostStatus,
     active: [] as string[],
     pending: [] as ApprovalRequestView[],
+    activity: [] as ToolActivity[],
     hostAccepts: true,
   };
   const deps = {
@@ -43,15 +48,17 @@ function fakeDeps() {
       lastFailure: () => null,
       lockdown: () => null,
       activeChats: () => fake.active,
+      strike: vi.fn(),
+      restart: vi.fn(),
     },
     approvals: {
       register: vi.fn(),
       unregister: vi.fn(),
       forget: vi.fn(),
       pending: () => fake.pending,
-      activity: () => [],
+      activity: () => fake.activity,
       onChange: (listener: () => void) => (changes.add(listener), () => void changes.delete(listener)),
-      onResult: () => () => undefined,
+      onResult: (listener: (chatId: string, callId: string, toolName: string, result: ToolResult) => void) => (results.add(listener), () => void results.delete(listener)),
       answer: vi.fn(async () => ({ ok: true as const, granted: false })),
     },
     credentials: { protection: async () => 'os' as const, hasKey: async () => true, setKey: async () => 'stored' as const, clearKey: async () => true },
@@ -78,6 +85,12 @@ function fakeDeps() {
     },
     changed: () => {
       for (const listener of [...changes]) listener();
+    },
+    /** The broker runs (or refuses) a call: its activity, then its result. */
+    brokerRan: (chatId: string, callId: string, toolName: string, result: ToolResult) => {
+      fake.activity.push({ chatId, callId, toolName, status: result.ok ? 'done' : 'denied', code: result.ok ? null : result.error.code, approvalId: null, updatedAt: 1 });
+      for (const listener of [...changes]) listener();
+      for (const listener of [...results]) listener(chatId, callId, toolName, result);
     },
   };
 }
@@ -239,6 +252,166 @@ describe('session state', () => {
   });
 });
 
+describe('session review fixes (Task 6a)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const startOf = (sent: MainToRuntimeMessage[], index = -1) => sent.filter((m): m is Extract<MainToRuntimeMessage, { type: 'chat.start' }> => m.type === 'chat.start').at(index)!;
+  const ok: ToolResult = { ok: true, output: { untrusted: true, source: 'page_audit https://example.com/', data: { score: 90 } } };
+  const finish = (chatId: string) => ({ type: 'chat.finish' as const, chatId, finishReason: 'stop' as const, steps: 1, usage: { input: null, output: null } });
+
+  test('turn-steps-and-cards-are-capped', async () => {
+    const f = fakeDeps();
+    const session = createAgentSession(f.deps);
+    await session.send(null, 'Go');
+    const chatId = startOf(f.sent).chatId;
+    for (let i = 0; i < MAX_TOOL_STEPS + 3; i += 1) f.emit({ type: 'chat.step', chatId, step: Math.min(i + 1, MAX_TOOL_STEPS), text: `step ${i}`, toolCalls: [] });
+    expect(f.deps.host.strike).toHaveBeenCalledTimes(3);
+    // Nothing past the last step: no text, no card.
+    f.emit({ type: 'chat.delta', chatId, text: 'more' });
+    f.emit({ type: 'chat.tool-call', chatId, callId: 'late', toolName: 'page_audit', input: {} });
+    expect(f.deps.host.strike).toHaveBeenCalledTimes(5);
+    f.emit(finish(chatId));
+    await session.send(chatId, 'Again');
+    const history = startOf(f.sent).messages;
+    expect(history.filter((message) => message.role === 'assistant').length).toBe(MAX_TOOL_STEPS);
+    expect(session.getState().active!.messages.filter((message) => message.kind === 'assistant').length).toBe(MAX_TOOL_STEPS);
+
+    // Cards: at most MAX_TOOL_CARDS_PER_TURN in one turn.
+    for (let i = 0; i < MAX_TOOL_CARDS_PER_TURN + 2; i += 1) f.emit({ type: 'chat.tool-call', chatId, callId: `c${i}`, toolName: 'page_audit', input: {} });
+    const cards = session.getState().active!.messages.flatMap((message) => (message.kind === 'assistant' ? message.tools : []));
+    expect(cards.length).toBe(MAX_TOOL_CARDS_PER_TURN);
+    expect(f.deps.host.strike).toHaveBeenCalledTimes(7);
+  });
+
+  test('stop-has-a-deadline', async () => {
+    const f = fakeDeps();
+    const session = createAgentSession(f.deps);
+    await session.send(null, 'Go');
+    const chatId = startOf(f.sent).chatId;
+    expect(session.stop(chatId)).toBe(true);
+    await vi.advanceTimersByTimeAsync(STOP_DEADLINE_MS - 1);
+    expect(session.getState().running).toBe(true);
+    expect(f.deps.host.restart).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(session.getState()).toMatchObject({ running: false, active: { error: STOP_DEADLINE_MESSAGE } });
+    expect(f.deps.host.restart).toHaveBeenCalledOnce();
+    expect(await session.send(chatId, 'Next')).toBe('started');
+    // A turn that stops in time cancels the deadline.
+    session.stop(chatId);
+    f.emit(finish(chatId));
+    await vi.advanceTimersByTimeAsync(STOP_DEADLINE_MS);
+    expect(f.deps.host.restart).toHaveBeenCalledOnce();
+    expect(session.getState().active!.error).toBeNull();
+  });
+
+  test('refused-send-changes-no-chat', async () => {
+    const f = fakeDeps();
+    const session = createAgentSession(f.deps);
+    await session.send(null, 'First');
+    const chatId = startOf(f.sent).chatId;
+    f.emit({ type: 'chat.error', chatId, message: 'The chat failed.' });
+    session.newChat();
+    const before = session.getState();
+    f.fake.hostAccepts = false;
+    expect(await session.send(chatId, 'Second')).toBe('unavailable');
+    const after = session.getState();
+    expect(after.active).toBeNull();
+    expect(after.chats).toEqual(before.chats);
+    expect(session.selectChat(chatId)).toBe(true);
+    expect(session.getState().active).toMatchObject({ error: 'The chat failed.', modelId: DEFAULT_MODEL_ID });
+    expect(session.getState().active!.messages.map((message) => message.kind)).toEqual(['user']);
+  });
+
+  test('cards-left-requested-get-an-end-status', async () => {
+    const f = fakeDeps();
+    const session = createAgentSession(f.deps);
+    await session.send(null, 'Go');
+    const chatId = startOf(f.sent).chatId;
+    f.emit({ type: 'chat.tool-call', chatId, callId: 'c1', toolName: 'page_audit', input: {} });
+    expect(session.getState().active!.messages[1]).toMatchObject({ tools: [{ status: 'requested' }] });
+    f.emit({ type: 'chat.step', chatId, step: 1, text: '', toolCalls: [] });
+    expect(session.getState().active!.messages[1]).toMatchObject({ tools: [{ status: 'failed', code: 'failed' }] });
+    f.emit({ type: 'chat.tool-call', chatId, callId: 'c2', toolName: 'page_audit', input: {} });
+    f.emit(finish(chatId));
+    expect(session.getState().active!.messages.at(-1)).toMatchObject({ tools: [{ callId: 'c2', status: 'failed' }] });
+  });
+
+  test('crash-before-the-step-keeps-what-ran', async () => {
+    const f = fakeDeps();
+    const session = createAgentSession(f.deps);
+    await session.send(null, 'Audit');
+    const chatId = startOf(f.sent).chatId;
+    f.emit({ type: 'chat.delta', chatId, text: 'Reading.' });
+    f.emit({ type: 'chat.tool-call', chatId, callId: 'c1', toolName: 'page_audit', input: {} });
+    f.brokerRan(chatId, 'c1', 'page_audit', ok);
+    // A card the broker never saw is not written as a call.
+    f.emit({ type: 'chat.tool-call', chatId, callId: 'c2', toolName: 'page_text', input: {} });
+    f.emit({ type: 'chat.error', chatId, message: 'The agent stopped unexpectedly. Send your message again to retry.' });
+    await session.send(chatId, 'Retry');
+    expect(startOf(f.sent).messages).toEqual([
+      { role: 'user', content: 'Audit' },
+      { role: 'assistant', content: 'Reading.', toolCalls: [{ callId: 'c1', toolName: 'page_audit', input: {} }] },
+      { role: 'tool', callId: 'c1', toolName: 'page_audit', result: ok },
+      { role: 'user', content: 'Retry' },
+    ]);
+  });
+
+  test('step-calls-are-checked-against-the-broker', async () => {
+    const f = fakeDeps();
+    const session = createAgentSession(f.deps);
+    await session.send(null, 'Go');
+    const chatId = startOf(f.sent).chatId;
+    f.emit({ type: 'chat.tool-call', chatId, callId: 'c1', toolName: 'navigate', input: { url: 'https://example.com/a' } });
+    f.brokerRan(chatId, 'c1', 'navigate', ok);
+    f.emit({ type: 'chat.tool-call', chatId, callId: 'c3', toolName: 'page_text', input: {} });
+    f.emit({
+      type: 'chat.step',
+      chatId,
+      step: 1,
+      text: 'Done.',
+      toolCalls: [
+        // Announced and run, but reported with another input: refused.
+        { callId: 'c1', toolName: 'navigate', input: { url: 'https://evil.example.net/' } },
+        // Never announced.
+        { callId: 'c2', toolName: 'click', input: { selector: '#buy' } },
+        // Announced, never seen by the broker.
+        { callId: 'c3', toolName: 'page_text', input: {} },
+      ],
+    });
+    expect(f.deps.host.strike).toHaveBeenCalledOnce();
+    f.emit(finish(chatId));
+    await session.send(chatId, 'Next');
+    const history = startOf(f.sent).messages;
+    expect(history[1]).toEqual({ role: 'assistant', content: 'Done.', toolCalls: [] });
+    // The call the broker ran is still written, from what was announced, with its result.
+    expect(history.slice(2)).toEqual([
+      { role: 'assistant', content: '', toolCalls: [{ callId: 'c1', toolName: 'navigate', input: { url: 'https://example.com/a' } }] },
+      { role: 'tool', callId: 'c1', toolName: 'navigate', result: ok },
+      { role: 'user', content: 'Next' },
+    ]);
+  });
+
+  test('dispose-while-starting-clears-the-turn', async () => {
+    const f = fakeDeps();
+    let release!: (ready: boolean) => void;
+    f.deps.start = () => new Promise<boolean>((resolve) => (release = resolve));
+    const session = createAgentSession(f.deps);
+    const sending = session.send(null, 'Go');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(session.getState().running).toBe(true);
+    session.dispose();
+    release(true);
+    expect(await sending).toBe('unavailable');
+    expect(session.getState().running).toBe(false);
+    expect(f.sent).toEqual([]);
+  });
+});
+
 describe('session helpers', () => {
   test('model-context-windows-cover-allowed-models', () => {
     expect(Object.keys(MODEL_CONTEXT_WINDOWS).sort()).toEqual([...ALLOWED_MODEL_IDS].sort());
@@ -263,6 +436,23 @@ describe('session helpers', () => {
     expect(window.length).toBeLessThanOrEqual(CHAT_MAX_MESSAGES);
     expect(window[0]!.role).toBe('user');
     expect(window.at(-1)).toEqual(user('last'));
+
+    // One turn longer than the window: the user's request and the latest steps are kept.
+    const call = (id: number): ChatMessage => ({ role: 'assistant', content: `step ${id}`, toolCalls: [{ callId: `c${id}`, toolName: 'page_audit', input: {} }] });
+    const result = (id: number): ChatMessage => ({ role: 'tool', callId: `c${id}`, toolName: 'page_audit', result: { ok: false, error: { code: 'failed', message: 'The tool failed.' } } });
+    const turn: ChatMessage[] = [user('earlier'), reply, user('do a lot')];
+    for (let i = 0; i < CHAT_MAX_MESSAGES; i += 1) turn.push(call(i), result(i));
+    turn.push(user('and now?'));
+    const kept = historyWindow(turn);
+    expect(kept.length).toBeLessThanOrEqual(CHAT_MAX_MESSAGES);
+    expect(kept[0]).toEqual(user('do a lot'));
+    expect(kept[1]!.role).toBe('assistant');
+    expect(kept.at(-2)).toEqual(result(CHAT_MAX_MESSAGES - 1));
+    expect(kept.at(-1)).toEqual(user('and now?'));
+    // Every result still follows its call.
+    for (let i = 2; i < kept.length - 1; i += 1) if (kept[i]!.role === 'tool') expect(['assistant', 'tool']).toContain(kept[i - 1]!.role);
+    // Short histories are sent whole.
+    expect(historyWindow(turn.slice(0, 3))).toEqual(turn.slice(0, 3));
   });
 
   test('attach-tool-result', () => {

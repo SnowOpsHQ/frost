@@ -40,8 +40,9 @@ export const AgentSetModelInputSchema = z
 
 /**
  * A key to store. Bounded loosely (whitespace around a pasted key is trimmed by main's store,
- * `normalizeKey`, which refuses anything that isn't a key with `invalid`). Zod's issues never echo
- * the value, so a refused input's error carries no key either.
+ * `normalizeKey`, which refuses anything that isn't a key with `invalid`). Zod's issues can quote
+ * parts of an input (an unrecognized key's name), so the IPC's error formatter replaces every
+ * refused input's message with its code (`BAD_REQUEST`): no error carries a key back.
  */
 export const AgentSetKeyInputSchema = z.strictObject({ slot: z.enum(CREDENTIAL_SLOTS), key: z.string().min(1).max(CREDENTIAL_LIMITS.maxKeyChars * 2) });
 

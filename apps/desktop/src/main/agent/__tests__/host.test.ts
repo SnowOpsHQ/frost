@@ -252,6 +252,24 @@ describe('agent host', () => {
     expect(forks.calls.length).toBe(1);
   });
 
+  test('host-restart-on-request', async () => {
+    // Task 6a review: the session restarts a runtime that ignored Stop past its deadline.
+    const { host, forks, children, runtimes, chat } = setup();
+    host.restart();
+    expect(forks.calls.length).toBe(0);
+    const started = host.start();
+    runtimes[0]!.postMessage(ready());
+    await started;
+    host.send(chatStart('chat-a'));
+    host.restart();
+    expect(children[0]!.killed).toBe(true);
+    expect(chat).toEqual([{ type: 'chat.error', chatId: 'chat-a', message: AGENT_CRASHED_MESSAGE }]);
+    expect(host.activeChats()).toEqual([]);
+    expect(host.lastFailure()).toBe('unresponsive');
+    await vi.advanceTimersByTimeAsync(restartDelayMs(1));
+    expect(forks.calls.length).toBe(2);
+  });
+
   test('host-crash-fails-chats', async () => {
     const { host, forks, children, runtimes, chat } = setup();
     const started = host.start();

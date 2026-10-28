@@ -78,7 +78,7 @@ export interface AgentHostDeps {
 export type AgentHostStatus = 'stopped' | 'starting' | 'ready' | 'crashed';
 
 /** Why the runtime last failed, for the settings page (`null`: it hasn't). */
-export type AgentHostFailure = 'exited' | 'ready-timeout' | 'protocol-mismatch' | 'fork-failed' | 'misbehaved';
+export type AgentHostFailure = 'exited' | 'ready-timeout' | 'protocol-mismatch' | 'fork-failed' | 'misbehaved' | 'unresponsive';
 
 /** What the runtime's lockdown did (`ready.lockdown`), as last reported. */
 export type AgentLockdown = Extract<RuntimeToMainMessage, { type: 'ready' }>['lockdown'];
@@ -135,6 +135,11 @@ export interface AgentHost {
   /** Chat ids with a turn running (started, not yet finished or failed). */
   activeChats(): readonly string[];
   stats(): Readonly<AgentHostStats>;
+  /**
+   * Kills the running runtime and starts another after the backoff (Task 6a review: it ignored a
+   * Stop past `STOP_DEADLINE_MS`). Its running chats fail. A no-op with none running.
+   */
+  restart(): void;
   /** Stops the runtime for good (app quit): no restart; `start()` answers `false` from then on. */
   dispose(): void;
 }
@@ -145,6 +150,7 @@ const FAILURE_TEXT: Readonly<Record<AgentHostFailure, string>> = {
   'fork-failed': 'could not be started',
   'protocol-mismatch': 'speaks another protocol version',
   misbehaved: 'sent too many invalid or refused messages; restarting it',
+  unresponsive: 'did not stop a chat when asked; restarting it',
 };
 
 type Listener<T> = (value: T) => void;
@@ -263,7 +269,7 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
   const failed = (instance: Instance, reason: AgentHostFailure) => {
     if (instance.abandoned) return;
     // A runtime that ran well for a while starts the count afresh, unless it was killed for flooding.
-    const wasStable = reason !== 'misbehaved' && instance.ready && now() - instance.readyAt >= AGENT_HOST_LIMITS.stableAfterMs;
+    const wasStable = reason !== 'misbehaved' && reason !== 'unresponsive' && instance.ready && now() - instance.readyAt >= AGENT_HOST_LIMITS.stableAfterMs;
     abandon(instance);
     failure = reason;
     consecutiveFailures = wasStable ? 1 : consecutiveFailures + 1;
@@ -481,6 +487,9 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
     lockdown: () => (lockdown === null ? null : { removed: [...lockdown.removed], failed: [...lockdown.failed], permissionModel: lockdown.permissionModel }),
     activeChats: () => [...pendingChats],
     stats: () => ({ ...stats }),
+    restart() {
+      if (current !== null && !current.abandoned) failed(current, 'unresponsive');
+    },
     dispose() {
       if (disposed) return;
       disposed = true;

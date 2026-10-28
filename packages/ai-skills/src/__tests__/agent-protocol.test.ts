@@ -307,3 +307,16 @@ function fieldNames(root: z.ZodType): Set<string> {
   }
   return names;
 }
+
+describe('chat.step usage (protocol version 5, Task 6a)', () => {
+  test('chat-step-usage-bounded', () => {
+    const step = { type: 'chat.step', chatId: CHAT, step: 1, text: 'Done.', toolCalls: [] };
+    expect(runtimeOk(step)).toBe(true);
+    expect(runtimeOk({ ...step, usage: { input: 1200, output: 40 } })).toBe(true);
+    expect(runtimeOk({ ...step, usage: { input: null, output: null } })).toBe(true);
+    expect(runtimeOk({ ...step, usage: { input: 0, output: null } })).toBe(true);
+    for (const usage of [{ input: -1, output: 0 }, { input: 1.5, output: 0 }, { input: 1, output: 1, cached: 3 }, { input: 1 }, null, '1200']) {
+      expect(runtimeOk({ ...step, usage }), JSON.stringify(usage)).toBe(false);
+    }
+  });
+});

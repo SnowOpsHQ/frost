@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentService } from '@app/ipc-contract';
 import { isApprovalDecision, type ApprovalDecision, type ToolActivityStatus } from '@app/specs/agent-approvals.spec';
-import { AGENT_PROTOCOL_LIMITS, CHAT_BUSY_MESSAGE, type ChatMessage, type LockdownTarget, type ToolResult } from '@app/specs/agent-protocol.schema';
+import { AGENT_PROTOCOL_LIMITS, CHAT_BUSY_MESSAGE, type ChatMessage, type LockdownTarget, type ToolCall, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { ROUTE_CREDENTIAL_SLOT, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
 import {
   AGENT_DELTA_COALESCE_MS,
@@ -13,7 +13,10 @@ import {
   MAX_CHATS_KEPT_IN_MEMORY,
   MAX_DISPLAY_ENTRIES,
   MAX_PENDING_AGENT_WATCHES,
+  MAX_TOOL_CARDS_PER_TURN,
   MODEL_CONTEXT_WINDOWS,
+  STOP_DEADLINE_MESSAGE,
+  STOP_DEADLINE_MS,
   TOOL_CARD_INPUT_PREVIEW_CHARS,
   TOOL_CARD_OUTPUT_PREVIEW_CHARS,
   type AgentAnswerResult,
@@ -28,7 +31,7 @@ import {
   type AgentToolCardView,
   type AgentUsageView,
 } from '@app/specs/agent-session.spec';
-import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, routeModelId, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, MAX_TOOL_STEPS, routeModelId, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import { toolLabel, type ApprovalBroker, type ApprovalRequestView } from './approvals';
 import type { CredentialSettings } from './credentials';
 import type { AgentEntitlements } from './entitlements';
@@ -49,7 +52,7 @@ import { AGENT_SYSTEM_PROMPT } from './system-prompt';
 // key: the key store answers `hasKey` only, and tool output appears only as bounded preview text.
 
 export interface AgentSessionDeps {
-  readonly host: Pick<AgentHost, 'send' | 'onChat' | 'onStatus' | 'status' | 'lastFailure' | 'lockdown' | 'activeChats'>;
+  readonly host: Pick<AgentHost, 'send' | 'onChat' | 'onStatus' | 'status' | 'lastFailure' | 'lockdown' | 'activeChats' | 'strike' | 'restart'>;
   readonly approvals: Pick<ApprovalBroker, 'register' | 'unregister' | 'forget' | 'pending' | 'activity' | 'onChange' | 'onResult' | 'answer'>;
   readonly credentials: CredentialSettings;
   readonly settings: Pick<AgentSettings, 'current' | 'set' | 'onChange'>;
@@ -122,6 +125,16 @@ interface Turn {
   readonly results: Map<string, Extract<ChatMessage, { role: 'tool' }>>;
   /** Every card of the turn, by call id. */
   readonly cards: Map<string, ToolCard>;
+  /** The calls the runtime reported (`chat.tool-call`), with their full input, in order. */
+  readonly calls: Map<string, ToolCall>;
+  /** The calls already written to the history by a step. */
+  readonly landed: Set<string>;
+  /** Steps reported (at most `MAX_TOOL_STEPS`). */
+  steps: number;
+  /** Ends the turn locally if the runtime ignores Stop (`STOP_DEADLINE_MS`). */
+  stopTimer: unknown;
+  /** The chat as it was before the user's message (a refused send changes nothing). */
+  before: { readonly error: string | null; readonly modelId: ModelId | null; readonly updatedAt: number; readonly selected: string | null; readonly created: boolean } | null;
   /** Whether the runtime said anything for this turn (a busy reply comes before anything else). */
   sawOutput: boolean;
   /** The history's and entries' lengths before the user's message (to take it back). */
@@ -150,12 +163,30 @@ export function chatTitle(text: string): string {
 
 /**
  * The part of `history` a turn sends: at most `CHAT_MAX_MESSAGES` messages, starting at a user
- * message (never an orphaned reply or result).
+ * message. When the latest messages alone don't start at one (one long turn of tool calls), it keeps
+ * the nearest user message before them, then the latest messages from an assistant message on, so
+ * the model keeps both what it was asked and what it did last (never an orphaned result).
  */
 export function historyWindow(history: readonly ChatMessage[]): ChatMessage[] {
-  let start = Math.max(0, history.length - CHAT_MAX_MESSAGES);
-  while (start < history.length && history[start]!.role !== 'user') start += 1;
-  return history.slice(start);
+  const cut = history.length - CHAT_MAX_MESSAGES;
+  if (cut <= 0) return history.slice();
+  let anchor = -1;
+  for (let index = cut; index >= 0; index -= 1) {
+    if (history[index]!.role === 'user') {
+      anchor = index;
+      break;
+    }
+  }
+  if (anchor === -1) {
+    // No user message that early: the first one after it (the window then fits on its own).
+    anchor = cut;
+    while (anchor < history.length && history[anchor]!.role !== 'user') anchor += 1;
+    return history.slice(anchor);
+  }
+  if (anchor === cut) return history.slice(anchor);
+  let tail = Math.max(anchor + 1, history.length - (CHAT_MAX_MESSAGES - 1));
+  while (tail < history.length && history[tail]!.role === 'tool') tail += 1;
+  return [history[anchor]!, ...history.slice(tail)];
 }
 
 /**
@@ -381,9 +412,70 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     return entry;
   };
 
+  /** Whether main's broker saw the runtime ask for `call` this turn (`tool.invoke`). */
+  const brokerSaw = (chat: Chat, call: ToolCall) => deps.approvals.activity(chat.id).some((item) => item.callId === call.callId && item.toolName === call.toolName);
+
+  /**
+   * The calls the runtime reported in a step that main can vouch for: each one it announced
+   * (`chat.tool-call`, same tool and input) and the broker was asked to run, not already in the
+   * history, at most once. Anything else is a strike.
+   */
+  const vouched = (current: Turn, chat: Chat, calls: readonly ToolCall[]): ToolCall[] => {
+    const kept: ToolCall[] = [];
+    const seen = new Set<string>();
+    let refused = false;
+    for (const call of calls) {
+      const announced = current.calls.get(call.callId);
+      const same = announced !== undefined && announced.toolName === call.toolName && JSON.stringify(announced.input) === JSON.stringify(call.input);
+      if (!same || seen.has(call.callId) || current.landed.has(call.callId) || !brokerSaw(chat, announced)) {
+        refused = true;
+        continue;
+      }
+      seen.add(call.callId);
+      kept.push(announced);
+    }
+    if (refused) deps.host.strike();
+    return kept;
+  };
+
+  /** Writes `calls` to the history as an assistant message, each followed by main's result if it has one. */
+  const writeStep = (current: Turn, chat: Chat, text: string, calls: readonly ToolCall[]) => {
+    chat.history.push({ role: 'assistant', content: text, toolCalls: calls.map((call) => ({ ...call })) });
+    for (const call of calls) {
+      current.landed.add(call.callId);
+      const result = current.results.get(call.callId);
+      if (result === undefined) continue;
+      current.results.delete(call.callId);
+      attachToolResult(chat.history, result);
+    }
+  };
+
+  /** Gives every card still in progress an end status. */
+  const settleCards = (cards: Iterable<ToolCard>, unanswered: 'failed' | 'expired') => {
+    for (const card of cards) {
+      if (card.status === 'requested') {
+        card.status = 'failed';
+        card.code = 'failed';
+      } else if (card.status === 'running' || card.status === 'awaiting-approval') {
+        card.status = unanswered;
+        card.code = unanswered;
+      }
+    }
+  };
+
   /** Ends the turn (its chat stays as it is now). */
   const endTurn = (current: Turn) => {
     if (turn !== current) return;
+    if (current.stopTimer !== null) clearTimer(current.stopTimer);
+    current.stopTimer = null;
+    const chat = current.chat;
+    if (chat !== null) {
+      // Calls the broker handled whose step never came (the runtime died or was cut off): the
+      // history still says they were made, with main's own results, so the model learns they ran.
+      const unlanded = [...current.calls.values()].filter((call) => !current.landed.has(call.callId) && brokerSaw(chat, call)).slice(0, L.maxToolCallsPerMessage);
+      if (unlanded.length > 0) writeStep(current, chat, current.entry?.text ?? '', unlanded);
+      settleCards(current.cards.values(), 'expired');
+    }
     if (current.entry !== null) {
       current.entry.streaming = false;
       if (current.entry.text === '' && current.entry.tools.length === 0 && current.chat !== null) current.chat.entries = current.chat.entries.filter((entry) => entry !== current.entry);
@@ -397,12 +489,18 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     bump();
   };
 
-  /** Takes the user's message back (the turn never ran). */
+  /** Takes the user's message back (the turn never ran): the chat is as it was, or gone if this send made it. */
   const takeBack = (current: Turn) => {
     const chat = current.chat;
-    if (chat === null) return;
+    const before = current.before;
+    if (chat === null || before === null) return;
     chat.history = chat.history.slice(0, current.historyBefore);
     chat.entries = chat.entries.slice(0, current.entriesBefore);
+    chat.error = before.error;
+    chat.modelId = before.modelId;
+    chat.updatedAt = before.updatedAt;
+    selected = before.selected;
+    if (before.created) chats.delete(chat.id);
   };
 
   const onChat = (event: AgentChatEvent) => {
@@ -412,6 +510,11 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     switch (event.type) {
       case 'chat.delta': {
         current.sawOutput = true;
+        if (current.entry === null && current.steps >= MAX_TOOL_STEPS) {
+          // No step can follow the last one: text past it is the runtime misbehaving.
+          deps.host.strike();
+          return;
+        }
         const entry = ensureEntry(current, chat);
         if (entry.text.length < L.maxMessageChars) entry.text = cutText(entry.text + event.text, L.maxMessageChars);
         bumpSoon();
@@ -419,8 +522,13 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       }
       case 'chat.tool-call': {
         current.sawOutput = true;
-        const entry = ensureEntry(current, chat);
         if (current.cards.has(event.callId)) return;
+        if (current.cards.size >= MAX_TOOL_CARDS_PER_TURN || (current.entry === null && current.steps >= MAX_TOOL_STEPS)) {
+          deps.host.strike();
+          return;
+        }
+        const entry = ensureEntry(current, chat);
+        current.calls.set(event.callId, { callId: event.callId, toolName: event.toolName, input: event.input });
         const activity = deps.approvals.activity(chat.id).find((item) => item.callId === event.callId);
         const card: ToolCard = {
           callId: event.callId,
@@ -438,20 +546,19 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       }
       case 'chat.step': {
         current.sawOutput = true;
+        if (current.steps >= MAX_TOOL_STEPS) {
+          deps.host.strike();
+          return;
+        }
+        current.steps += 1;
         const entry = ensureEntry(current, chat);
         entry.text = event.text;
         entry.streaming = false;
         current.entry = null;
-        if (event.text === '' && event.toolCalls.length === 0 && entry.tools.length === 0) chat.entries = chat.entries.filter((item) => item !== entry);
-        if (event.text !== '' || event.toolCalls.length > 0) {
-          chat.history.push({ role: 'assistant', content: event.text, toolCalls: event.toolCalls.map((call) => ({ ...call })) });
-          for (const call of event.toolCalls) {
-            const result = current.results.get(call.callId);
-            if (result === undefined) continue;
-            current.results.delete(call.callId);
-            attachToolResult(chat.history, result);
-          }
-        }
+        settleCards(entry.tools, 'expired');
+        const calls = vouched(current, chat, event.toolCalls);
+        if (event.text === '' && calls.length === 0 && entry.tools.length === 0) chat.entries = chat.entries.filter((item) => item !== entry);
+        if (event.text !== '' || calls.length > 0) writeStep(current, chat, event.text, calls);
         if (event.usage !== undefined && event.usage.input !== null) chat.contextTokens = event.usage.input + (event.usage.output ?? 0);
         touch(chat);
         bump();
@@ -540,7 +647,22 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       return 'unknown-chat';
     }
     // Held from here, so a second send while this one awaits is refused.
-    const current: Turn = { phase: 'starting', chat: null, stopping: false, entry: null, results: new Map(), cards: new Map(), sawOutput: false, historyBefore: 0, entriesBefore: 0 };
+    const current: Turn = {
+      phase: 'starting',
+      chat: null,
+      stopping: false,
+      entry: null,
+      results: new Map(),
+      cards: new Map(),
+      calls: new Map(),
+      landed: new Set(),
+      steps: 0,
+      stopTimer: null,
+      sawOutput: false,
+      historyBefore: 0,
+      entriesBefore: 0,
+      before: null,
+    };
     turn = current;
     notice = null;
     bump();
@@ -567,7 +689,10 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     } catch {
       started = false;
     }
-    if (disposed) return 'unavailable';
+    if (disposed) {
+      if (turn === current) turn = null;
+      return 'unavailable';
+    }
     if (!started) return refuse('unavailable');
 
     // The runtime is ready: from here everything is synchronous until `chat.start` is posted.
@@ -575,6 +700,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     if (routeModelId(route, modelId) === null) return refuse('setup-needed');
     let chat = chatId === null ? undefined : chats.get(chatId);
     if (chatId !== null && chat === undefined) return refuse('unknown-chat');
+    const created = chat === undefined;
     if (chat === undefined) {
       const tabId = deps.activeTabId();
       if (tabId === null) return refuse('no-tab');
@@ -582,6 +708,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       chats.set(chat.id, chat);
     }
     current.chat = chat;
+    current.before = { error: chat.error, modelId: chat.modelId, updatedAt: chat.updatedAt, selected, created };
     current.historyBefore = chat.history.length;
     current.entriesBefore = chat.entries.length;
     chat.history.push({ role: 'user', content: text });
@@ -605,10 +732,6 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     if (!posted) {
       deps.approvals.unregister(chat.id);
       takeBack(current);
-      if (chat.history.length === 0) {
-        chats.delete(chat.id);
-        selected = null;
-      }
       log('agent session: a turn could not be started');
       return refuse('unavailable');
     }
@@ -623,6 +746,16 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     current.stopping = true;
     deps.host.send({ type: 'chat.stop', chatId });
     deps.approvals.unregister(chatId);
+    // A runtime that ignores Stop can't hold the agent busy: past the deadline main ends the turn
+    // itself and restarts the runtime (which also clears the host's running chats).
+    current.stopTimer = setTimer(() => {
+      current.stopTimer = null;
+      if (turn !== current || current.chat === null) return;
+      log('agent session: the runtime did not stop a turn in time; restarting it');
+      current.chat.error = STOP_DEADLINE_MESSAGE;
+      endTurn(current);
+      deps.host.restart();
+    }, STOP_DEADLINE_MS);
     bump();
     return true;
   };
@@ -720,6 +853,10 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       if (disposed) return;
       disposed = true;
       for (const off of unsubscribe) off();
+      if (turn?.stopTimer != null) clearTimer(turn.stopTimer);
+      turn = null;
+      version += 1;
+      cached = null;
       if (deltaTimer !== null) clearTimer(deltaTimer);
       deltaTimer = null;
       const woken = waiters;
