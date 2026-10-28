@@ -16,6 +16,7 @@ import { DEFAULT_CONSENT, type TelemetryConsent } from '@app/specs/telemetry-pri
 
 /** The parts of `node:fs` the store uses. */
 export interface ConsentFs {
+  statSync(file: string): { readonly size: number };
   readFileSync(file: string, encoding: 'utf8'): string;
   writeFileSync(file: string, data: string, options: { encoding: 'utf8'; mode: number }): void;
   renameSync(from: string, to: string): void;
@@ -28,7 +29,8 @@ export interface ConsentStore {
   consent(): TelemetryConsent;
   /**
    * Writes `consent` atomically (a temporary file renamed over the file, `0600`). `false` when the
-   * write failed; the file is then removed, so the next start reads both off (fail closed).
+   * write failed; the file is then removed or, if it cannot be (a file locked on Windows), written
+   * all off in place, so the next start reads both off (fail closed): a turn-off never survives as on.
    */
   write(consent: TelemetryConsent): boolean;
 }
@@ -52,7 +54,7 @@ function errorCode(error: unknown): string | undefined {
 
 /** The consent `text` holds, or `null` when it is not a consent file frost wrote. */
 function parseConsentFile(text: string): TelemetryConsent | null {
-  if (text.length > TELEMETRY_CONSENT_FILE_MAX_BYTES) return null;
+  if (Buffer.byteLength(text, 'utf8') > TELEMETRY_CONSENT_FILE_MAX_BYTES) return null;
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -70,7 +72,8 @@ export function createConsentStore(options: ConsentStoreOptions): ConsentStore {
 
   let current: TelemetryConsent = { ...DEFAULT_CONSENT };
   try {
-    const read = parseConsentFile(fs.readFileSync(file, 'utf8'));
+    // The size first: a large file is not read at all (and is checked again, in bytes, once read).
+    const read = fs.statSync(file).size > TELEMETRY_CONSENT_FILE_MAX_BYTES ? null : parseConsentFile(fs.readFileSync(file, 'utf8'));
     if (read === null) log('telemetry: the consent file is not valid; telemetry is off');
     else current = read;
   } catch (error) {
@@ -89,11 +92,21 @@ export function createConsentStore(options: ConsentStoreOptions): ConsentStore {
         return true;
       } catch (error) {
         log(`telemetry: the consent could not be saved (${errorCode(error) ?? 'error'}); the next start is off`);
-        for (const leftover of [temporary, file]) {
+        try {
+          fs.rmSync(temporary, { force: true });
+        } catch {
+          // A temporary file that stays is never read.
+        }
+        try {
+          fs.rmSync(file, { force: true });
+        } catch {
+          // Last resort: the file cannot be replaced or removed, so overwrite it in place (not
+          // atomic) with both off. A torn write reads as invalid, which is off too.
           try {
-            fs.rmSync(leftover, { force: true });
+            const off: TelemetryConsentFile = { ...content, usage: false, errors: false };
+            fs.writeFileSync(file, `${JSON.stringify(off)}\n`, { encoding: 'utf8', mode: FILE_MODE });
           } catch {
-            // Nothing more to do: a file that cannot be removed was not written either.
+            log('telemetry: the consent file could not be reset either');
           }
         }
         return false;

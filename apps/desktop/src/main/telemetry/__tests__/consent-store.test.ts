@@ -21,8 +21,14 @@ function fakeFs(initial: Record<string, string> = {}) {
   const files = new Map(Object.entries(initial));
   const modes = new Map<string, number>();
   const calls: string[] = [];
-  const fail = { read: false, write: false, rename: false };
+  const fail = { read: false, write: false, rename: false, rm: false };
   const fs = {
+    statSync: vi.fn((file: string) => {
+      calls.push(`stat ${file}`);
+      const text = files.get(file);
+      if (text === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return { size: Buffer.byteLength(text, 'utf8') };
+    }),
     readFileSync: vi.fn((file: string, _encoding: 'utf8') => {
       calls.push(`read ${file}`);
       if (fail.read) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
@@ -47,6 +53,7 @@ function fakeFs(initial: Record<string, string> = {}) {
     }),
     rmSync: vi.fn((file: string, _options: { force: true }) => {
       calls.push(`rm ${file}`);
+      if (fail.rm && files.has(file)) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
       files.delete(file);
     }),
     mkdirSync: vi.fn((dir: string, _options: { recursive: true }) => {
@@ -94,6 +101,11 @@ describe('telemetry consent store', () => {
       expect(create(fs, log).consent(), text.slice(0, 40)).toEqual(DEFAULT_CONSENT);
       expect(fs.writeFileSync).not.toHaveBeenCalled();
     }
+    // An over-large file is not even read.
+    const big = fakeFs({ [FILE]: `${fileText(valid)}${' '.repeat(TELEMETRY_CONSENT_FILE_MAX_BYTES)}` });
+    expect(create(big.fs).consent()).toEqual(DEFAULT_CONSENT);
+    expect(big.fs.statSync).toHaveBeenCalledTimes(1);
+    expect(big.fs.readFileSync).not.toHaveBeenCalled();
     // A read error (not a missing file) is the defaults too, and says so without the path's contents.
     const { fs, fail } = fakeFs({ [FILE]: fileText(valid) });
     fail.read = true;
@@ -108,7 +120,7 @@ describe('telemetry consent store', () => {
     const { fs, calls } = fakeFs({ [FILE]: fileText({ v: 1, usage: false, errors: true, decidedAt: NOW }) });
     const store = create(fs);
     // Read once, synchronously, while the store was created: the answer is a plain value, not a promise.
-    expect(calls).toEqual([`read ${FILE}`]);
+    expect(calls).toEqual([`stat ${FILE}`, `read ${FILE}`]);
     const consent = store.consent();
     expect(consent).not.toBeInstanceOf(Promise);
     expect(consent).toEqual({ usage: false, errors: true });
@@ -149,5 +161,16 @@ describe('telemetry consent store', () => {
       expect(create(disk.fs).consent()).toEqual(DEFAULT_CONSENT);
       expect(failing.consent()).toEqual({ usage: true, errors: true });
     }
+
+    // The file can be neither replaced nor removed (locked): it is written all off in place.
+    const locked = fakeFs({ [FILE]: fileText({ v: 1, usage: true, errors: true, decidedAt: NOW }) });
+    const store2 = create(locked.fs);
+    locked.fail.rename = true;
+    locked.fail.rm = true;
+    expect(store2.write({ usage: false, errors: true })).toBe(false);
+    expect(JSON.parse(locked.files.get(FILE)!)).toEqual({ v: TELEMETRY_CONSENT_FILE_VERSION, usage: false, errors: false, decidedAt: NOW });
+    locked.fail.rename = false;
+    locked.fail.rm = false;
+    expect(create(locked.fs).consent()).toEqual(DEFAULT_CONSENT);
   });
 });

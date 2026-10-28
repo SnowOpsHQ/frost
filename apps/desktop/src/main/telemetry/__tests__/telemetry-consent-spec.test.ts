@@ -13,7 +13,7 @@ import {
 } from '@app/specs/telemetry-consent.schema';
 import { TELEMETRY_LIMITS } from '@app/specs/telemetry-privacy.spec';
 
-const STATE = { consent: { usage: false, errors: true }, configured: { usage: true, errors: false }, version: 3 };
+const STATE = { consent: { usage: false, errors: true }, configured: { usage: true, errors: false }, persisted: true, version: 3 };
 const ERROR = { source: 'error', name: 'TypeError', message: 'x is not a function', stack: 'TypeError: x\n    at f (app://app/assets/index.js:1:2)' } as const;
 
 describe('telemetry consent spec', () => {
@@ -27,7 +27,9 @@ describe('telemetry consent spec', () => {
       { ...STATE, consent: { usage: true } },
       { ...STATE, consent: { usage: true, errors: false, installId: 'abc' } },
       { ...STATE, version: -1 },
-      { consent: STATE.consent, configured: STATE.configured },
+      { ...STATE, persisted: 'yes' },
+      { consent: STATE.consent, configured: STATE.configured, version: 3 },
+      { consent: STATE.consent, configured: STATE.configured, persisted: true },
     ]) {
       expect(TelemetryStateSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
     }

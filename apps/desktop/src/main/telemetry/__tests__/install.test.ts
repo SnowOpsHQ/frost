@@ -8,7 +8,7 @@ import { RENDERER_ERROR_MECHANISMS, TelemetryStateSchema, type RendererErrorInpu
 import { APP_FRAME_PREFIX, DEFAULT_CONSENT, RESOURCE_ATTRIBUTE_KEYS, TELEMETRY_LIMITS, type TelemetryConsent } from '@app/specs/telemetry-privacy.spec';
 import type { ConsentStore } from '../consent-store';
 import type { TelemetryConfig } from '../config';
-import { installTelemetry, type TelemetryAppLike, type TelemetryFetch, type TelemetryMain, type TelemetryProcessLike } from '../install';
+import { installTelemetry, TELEMETRY_REQUEST_HEADERS, type TelemetryAppLike, type TelemetryFetch, type TelemetryMain, type TelemetryProcessLike } from '../install';
 
 const OTEL_ENDPOINT = 'https://otel.example.test/v1/traces';
 const SENTRY_DSN = 'https://publickey@errors.example.test/42';
@@ -17,10 +17,14 @@ const APP_ROOT = '/opt/frost/resources/app';
 
 // ---- Fakes ----------------------------------------------------------------------------------------
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
+function deferred(): { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } {
   let resolve!: () => void;
-  const promise = new Promise<void>((r) => (resolve = r));
-  return { promise, resolve };
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((r, j) => {
+    resolve = r;
+    reject = j;
+  });
+  return { promise, resolve, reject };
 }
 
 function fakeApp(options: { ready?: Promise<unknown> } = {}) {
@@ -83,13 +87,16 @@ function fakeFetch() {
 
 function fakeStore(initial: TelemetryConsent = DEFAULT_CONSENT) {
   let current = { ...initial };
+  let failing = false;
   const store = {
     consent: () => ({ ...current }),
     write: vi.fn((consent: TelemetryConsent) => {
       current = { ...consent };
-      return true;
+      return !failing;
     }),
-  } satisfies ConsentStore;
+    /** Makes later writes fail (the disk is then off, as the real store leaves it). */
+    failWrites: (on: boolean) => (failing = on),
+  } satisfies ConsentStore & Record<string, unknown>;
   return store;
 }
 
@@ -183,7 +190,7 @@ const RENDERER_ERROR: RendererErrorInput = {
 describe('telemetry main wiring', () => {
   test('consent-off-sends-nothing', async () => {
     const { main, app, proc, net, started } = setup();
-    expect(main.service.state()).toEqual({ consent: { usage: false, errors: false }, configured: { usage: true, errors: true }, version: 0 });
+    expect(main.service.state()).toEqual({ consent: { usage: false, errors: false }, configured: { usage: true, errors: true }, persisted: true, version: 0 });
     started.resolve();
     await tick();
     proc.emit('uncaughtExceptionMonitor', new Error('main crash'), 'uncaughtException');
@@ -205,7 +212,7 @@ describe('telemetry main wiring', () => {
     started.resolve();
     const on = main.service.setConsent('errors', true);
     // Answered after the store and the telemetry changed, synchronously.
-    expect(TelemetryStateSchema.parse(on)).toEqual({ consent: { usage: false, errors: true }, configured: { usage: true, errors: true }, version: 1 });
+    expect(TelemetryStateSchema.parse(on)).toEqual({ consent: { usage: false, errors: true }, configured: { usage: true, errors: true }, persisted: true, version: 1 });
     expect(store.write).toHaveBeenCalledExactlyOnceWith({ usage: false, errors: true });
     expect(main.telemetry.consent()).toEqual({ usage: false, errors: true });
     expect(main.service.state()).toEqual(on);
@@ -226,6 +233,33 @@ describe('telemetry main wiring', () => {
     main.service.setConsent('errors', true);
     main.telemetry.captureException(new Error('after on'));
     await vi.waitFor(() => expect(sentryEvents(net.calls)).toHaveLength(1));
+
+    // A failed write still applies the consent, for this run only (`persisted: false`); a later good write clears it.
+    store.failWrites(true);
+    expect(main.service.setConsent('usage', true)).toMatchObject({ consent: { usage: true, errors: true }, persisted: false });
+    expect(main.telemetry.consent().usage).toBe(true);
+    expect(main.service.state().persisted).toBe(false);
+    store.failWrites(false);
+    expect(main.service.setConsent('usage', false)).toMatchObject({ consent: { usage: false, errors: true }, persisted: true });
+  });
+
+  test('off-drops-queued-span', async () => {
+    vi.useFakeTimers();
+    const { main, net, started } = setup({ consent: { usage: true, errors: false } });
+    started.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    // The `app.start` span is queued (its batch leaves `exportDelayMs` after it ended) ...
+    expect(net.fetch).not.toHaveBeenCalled();
+    main.service.setConsent('usage', false);
+    // ... and turning `usage` off drops it: nothing leaves, at the delay or on flush.
+    await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.exportDelayMs * 2);
+    await main.telemetry.flush({ timeoutMs: 10 });
+    expect(net.fetch).not.toHaveBeenCalled();
+    // Turned on again, the old span stays dropped; only new spans leave.
+    main.service.setConsent('usage', true);
+    main.telemetry.span('seo.audit', { outcome: 'ok' }, () => undefined);
+    await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.exportDelayMs + 10);
+    expect(otlp(net.calls).spans.map((span) => span.name)).toEqual(['seo.audit']);
   });
 
   test('transport-is-net-fetch', async () => {
@@ -243,7 +277,12 @@ describe('telemetry main wiring', () => {
     expect(call!.url.startsWith('https://errors.example.test/api/42/envelope/')).toBe(true);
     expect(call!.init).toMatchObject({ method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error' });
     expect(call!.init.signal).toBeInstanceOf(AbortSignal);
-    expect(new Headers(call!.init.headers).get('content-type')).toBe('application/x-sentry-envelope');
+    const headers = new Headers(call!.init.headers);
+    expect(headers.get('content-type')).toBe('application/x-sentry-envelope');
+    // Chromium's detailed user agent and the user's locale are replaced.
+    expect(TELEMETRY_REQUEST_HEADERS).toEqual({ 'user-agent': 'frost-telemetry', 'accept-language': '' });
+    expect(headers.get('user-agent')).toBe('frost-telemetry');
+    expect(headers.get('accept-language')).toBe('');
     // `retry-after` reached Sentry: the next event within the minute is not sent.
     main.telemetry.captureException(new Error('rate limited'));
     await tick(30);
@@ -301,6 +340,18 @@ describe('telemetry main wiring', () => {
     expect(resources.map((list) => list.map((a) => a.key).sort())).toEqual([[...RESOURCE_ATTRIBUTE_KEYS].sort()]);
     expect(attrs(resources[0]!)).toMatchObject({ 'service.version': '1.2.3', 'os.type': 'linux' });
     expect(net.calls[0]!.init).toMatchObject({ method: 'POST', credentials: 'omit', redirect: 'error' });
+    expect(new Headers(net.calls[0]!.init.headers).get('user-agent')).toBe('frost-telemetry');
+
+    // A startup that rejects (main's never does) ends the span as an error, without an outcome, and
+    // is not an unhandled rejection.
+    const failed = setup({ consent: { usage: true, errors: false } });
+    failed.started.reject(new Error('startup failed'));
+    await tick();
+    await failed.main.telemetry.flush({ timeoutMs: 1_000 });
+    const [errored] = otlp(failed.net.calls).spans as (OtlpSpan & { status: { code: number } })[];
+    expect(errored?.name).toBe('app.start');
+    expect(errored?.status.code).toBe(2);
+    expect(attrs(errored!.attributes)).toEqual({ platform: 'linux' });
   });
 
   test('shutdown-on-will-quit-is-bounded', async () => {
@@ -345,7 +396,7 @@ describe('telemetry main wiring', () => {
     expect(main.service.reportError(RENDERER_ERROR)).toBe('dropped');
     // Not configured: dropped whatever the consent.
     const unconfigured = setup({ consent: { usage: true, errors: true }, config: { otelEndpoint: null, sentryDsn: null } });
-    expect(unconfigured.main.service.state()).toMatchObject({ consent: { usage: true, errors: true }, configured: { usage: false, errors: false } });
+    expect(unconfigured.main.service.state()).toMatchObject({ consent: { usage: true, errors: true }, configured: { usage: false, errors: false }, persisted: true });
     expect(unconfigured.main.service.reportError(RENDERER_ERROR)).toBe('dropped');
     await tick(30);
     expect(unconfigured.net.fetch).not.toHaveBeenCalled();

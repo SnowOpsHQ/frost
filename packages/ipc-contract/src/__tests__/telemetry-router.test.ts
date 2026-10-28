@@ -26,7 +26,7 @@ const SECRETS = [FAKE_DSN, FAKE_ENDPOINT, '0123456789abcdef0123456789abcdef', 'e
 const ERROR: RendererErrorInput = { source: 'error', name: 'TypeError', message: 'x is not a function', stack: 'TypeError: x is not a function\n    at f (app://app/assets/index.js:1:2)' };
 
 function fakeTelemetry() {
-  let state: TelemetryState = { consent: { usage: false, errors: false }, configured: { usage: true, errors: true }, version: 0 };
+  let state: TelemetryState = { consent: { usage: false, errors: false }, configured: { usage: true, errors: true }, persisted: true, version: 0 };
   const service = {
     // The service knows the DSN and endpoint; none of it may reach an answer.
     dsn: FAKE_DSN,
@@ -97,7 +97,7 @@ describe('telemetry router', () => {
     const answers: unknown[] = [];
     answers.push(await call(ctxFor(telemetry), 'state'));
     const on = await call(ctxFor(telemetry), 'setConsent', { channel: 'errors', on: true });
-    expect(on).toEqual({ consent: { usage: false, errors: true }, configured: { usage: true, errors: true }, version: 1 });
+    expect(on).toEqual({ consent: { usage: false, errors: true }, configured: { usage: true, errors: true }, persisted: true, version: 1 });
     expect(telemetry.setConsent).toHaveBeenCalledExactlyOnceWith('errors', true);
     answers.push(on, await call(ctxFor(telemetry), 'reportError', ERROR));
     expect(answers.at(-1)).toBe('reported');
@@ -108,7 +108,7 @@ describe('telemetry router', () => {
     const bad: [string, unknown, (t: ReturnType<typeof fakeTelemetry>) => void][] = [
       ['state', undefined, (t) => t.state.mockReturnValue({ ...t.state(), dsn: FAKE_DSN } as TelemetryState)],
       ['state', undefined, (t) => t.state.mockReturnValue({ ...t.state(), configured: { usage: FAKE_ENDPOINT, errors: true } } as unknown as TelemetryState)],
-      ['setConsent', { channel: 'usage', on: true }, (t) => t.setConsent.mockReturnValue({ consent: { usage: true, errors: false }, configured: { usage: true, errors: true, endpoint: FAKE_ENDPOINT }, version: 1 } as unknown as TelemetryState)],
+      ['setConsent', { channel: 'usage', on: true }, (t) => t.setConsent.mockReturnValue({ consent: { usage: true, errors: false }, configured: { usage: true, errors: true, endpoint: FAKE_ENDPOINT }, persisted: true, version: 1 } as unknown as TelemetryState)],
       ['reportError', ERROR, (t) => t.reportError.mockReturnValue(FAKE_DSN as RendererErrorResult)],
     ];
     for (const [name, input, poison] of bad) {

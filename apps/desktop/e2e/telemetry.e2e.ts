@@ -3,8 +3,8 @@
 // RESOURCE_ATTRIBUTE_KEYS), specs/ipc-transport.spec.ts (IPC_BRIDGE_KEY)
 // Acceptance: specs/telemetry.feature.md (Desktop, End to end) · review focus "Telemetry UI matches behaviour"
 // (`nothing-sent-before-consent`, `off-stops-export-immediately`, `events-are-scrubbed`)
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { IPC_BRIDGE_KEY } from '@app/specs/ipc-transport.spec';
@@ -16,9 +16,9 @@ import {
   TelemetryStateSchema,
   type TelemetryState,
 } from '@app/specs/telemetry-consent.schema';
-import { RESOURCE_ATTRIBUTE_KEYS, TELEMETRY_LIMITS } from '@app/specs/telemetry-privacy.spec';
+import { MIN_LITERAL_REDACTION_CHARS, MIN_UNBOUNDED_LITERAL_CHARS, RESOURCE_ATTRIBUTE_KEYS, TELEMETRY_LIMITS } from '@app/specs/telemetry-privacy.spec';
 import { envelopeEvents, spanNames, startFakeTelemetry, type FakeTelemetry } from './fake-telemetry';
-import { closeApp, launchApp } from './harness';
+import { APP_DIR, closeApp, launchApp } from './harness';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -31,9 +31,25 @@ let page: Page;
 const QUIET_MS = TELEMETRY_LIMITS.exportDelayMs + 2_000;
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** This machine's names (the package redacts them by default) and the checkout's path. */
+const HOST_NAME = os.hostname();
+const HOST_LABEL = HOST_NAME.split('.')[0] ?? '';
+const USER_NAME = os.userInfo().username;
+const COOKIE_VALUE = 'frost-e2e-cookie-0123456789';
+
 /** What a renderer or main error carries: none of it may arrive. */
-const PRIVATE = ['private-site.example.com', 'alice@example.com', '/home/alice', 'secret-project', 'token=abc123'];
-const privateMessage = (where: string) => `${where} failed for https://private-site.example.com/account?token=abc123 (alice@example.com) at /home/alice/secret-project/notes.txt`;
+const PRIVATE = ['private-site.example.com', 'alice@example.com', '/home/alice', 'secret-project', 'token=abc123', APP_DIR, COOKIE_VALUE];
+/**
+ * The machine's names, planted in parentheses. A name of `MIN_UNBOUNDED_LITERAL_CHARS` or more must not
+ * appear anywhere; a shorter one is redacted only as a whole word (it may be part of other words), so
+ * its planted `(name)` must not; one shorter than `MIN_LITERAL_REDACTION_CHARS` is not redacted.
+ */
+const MACHINE = [...new Set([HOST_NAME, HOST_LABEL, USER_NAME])].filter((name) => name.length >= MIN_LITERAL_REDACTION_CHARS);
+const machineLeaks = (body: string): string[] =>
+  MACHINE.filter((name) => (name.length >= MIN_UNBOUNDED_LITERAL_CHARS ? body.includes(name) : body.includes(`(${name})`)));
+const privateMessage = (where: string) =>
+  `${where} failed for https://private-site.example.com/account?token=abc123 (alice@example.com) at /home/alice/secret-project/notes.txt ` +
+  `on (${HOST_NAME}) (${HOST_LABEL}) as (${USER_NAME}) in ${APP_DIR}/src/main/index.ts`;
 
 async function launch(): Promise<void> {
   ({ app, page } = await launchApp([], {
@@ -79,7 +95,20 @@ test.beforeAll(async () => {
   fake = await startFakeTelemetry();
   profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-telemetry-'));
   await launch();
+  // A cookie for the collector's origin in main's session: `credentials: 'omit'` must keep it home.
+  await app!.evaluate(({ session }, { url, value }) => session.defaultSession.cookies.set({ url, name: 'frost_e2e', value }), { url: fake.origin, value: COOKIE_VALUE });
+  expect(await app!.evaluate(async ({ session }, url) => (await session.defaultSession.cookies.get({ url })).length, fake.origin)).toBe(1);
 });
+
+/** What every request frost sent carries: no cookie, no detailed user agent, no locale. */
+function expectAnonymousRequests(): void {
+  for (const request of fake.posts()) {
+    expect(request.headers['cookie']).toBeUndefined();
+    expect(request.headers['user-agent']).toBe('frost-telemetry');
+    expect(request.headers['accept-language'] ?? '').toBe('');
+    expect(request.body).not.toContain(COOKIE_VALUE);
+  }
+}
 
 test.afterAll(async () => {
   await closeApp(app);
@@ -89,7 +118,7 @@ test.afterAll(async () => {
 
 test('telemetry-nothing-before-consent', async () => {
   test.setTimeout(60_000);
-  expect(await telemetryState()).toEqual({ consent: { usage: false, errors: false }, configured: { usage: true, errors: true }, version: 0 });
+  expect(await telemetryState()).toEqual({ consent: { usage: false, errors: false }, configured: { usage: true, errors: true }, persisted: true, version: 0 });
   await rendererErrors('default');
   await mainRejection('default');
   // The startup span has ended by now; with the defaults neither it nor the errors leave.
@@ -99,15 +128,17 @@ test('telemetry-nothing-before-consent', async () => {
 
 test('telemetry-errors-on-sends-scrubbed', async () => {
   const on = await setConsent('errors', true);
-  expect(on).toEqual({ consent: { usage: false, errors: true }, configured: { usage: true, errors: true }, version: 1 });
+  expect(on).toEqual({ consent: { usage: false, errors: true }, configured: { usage: true, errors: true }, persisted: true, version: 1 });
   await rendererErrors('on');
   await mainRejection('on');
   await expect.poll(mechanisms).toEqual(expect.arrayContaining([RENDERER_ERROR_MECHANISMS.error, RENDERER_ERROR_MECHANISMS.unhandledrejection, 'onunhandledrejection']));
   // Only error events, and none of what they carried about the user or the site.
   expect(fake.traces()).toEqual([]);
+  expect(fake.envelopes().length).toBeGreaterThan(0);
+  expectAnonymousRequests();
   for (const request of fake.envelopes()) {
-    expect(request.headers['cookie']).toBeUndefined();
     for (const secret of PRIVATE) expect(request.body, secret).not.toContain(secret);
+    expect(machineLeaks(request.body)).toEqual([]);
   }
   const messages = allEvents().map((event) => JSON.stringify(event['exception']));
   expect(messages.some((text) => text.includes('renderer on failed for'))).toBe(true);
@@ -123,6 +154,20 @@ test('telemetry-off-stops-at-once', async () => {
   await wait(3_000);
   expect(fake.posts().length).toBe(before);
   expect(allEvents().some((event) => JSON.stringify(event).includes(' off failed for'))).toBe(false);
+
+  // End to end, a queued span: start with `usage` on (written before launch), turn it off before the
+  // startup span's batch leaves (`exportDelayMs`), and it never reaches the collector.
+  await closeApp(app);
+  app = undefined;
+  await writeFile(path.join(profile, TELEMETRY_CONSENT_FILE), JSON.stringify({ v: 1, usage: true, errors: false, decidedAt: Date.now() }));
+  const posts = fake.posts().length;
+  const launchedAt = Date.now();
+  await launch();
+  expect((await setConsent('usage', false)).consent).toEqual({ usage: false, errors: false });
+  expect(Date.now() - launchedAt).toBeLessThan(TELEMETRY_LIMITS.exportDelayMs);
+  await wait(QUIET_MS);
+  expect(fake.posts().length).toBe(posts);
+  expect(fake.traces().flatMap(spanNames)).not.toContain('app.start');
 });
 
 test('telemetry-consent-persists', async () => {
@@ -141,6 +186,8 @@ test('telemetry-consent-persists', async () => {
   await expect.poll(() => fake.traces().slice(tracesBefore).flatMap(spanNames), { timeout: QUIET_MS + 10_000 }).toContain('app.start');
   const trace = JSON.parse(fake.traces().at(-1)!.body) as { resourceSpans: { resource: { attributes: { key: string }[] } }[] };
   expect(trace.resourceSpans[0]!.resource.attributes.map((a) => a.key).sort()).toEqual([...RESOURCE_ATTRIBUTE_KEYS].sort());
+  expectAnonymousRequests();
+  for (const request of fake.traces()) expect(machineLeaks(request.body)).toEqual([]);
 
   // Back off, so the profile ends as it began.
   await setConsent('usage', false);

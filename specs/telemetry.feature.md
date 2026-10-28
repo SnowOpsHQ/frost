@@ -115,9 +115,12 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 ### Decisions
 - **Consent is known before anything could leave.** `userData/telemetry-consent.json` is read
   synchronously when main starts, before any window opens and before telemetry is created. Missing,
-  unreadable, too large, not JSON, another version or any other shape reads as both off. Writes are
-  atomic (a temporary file renamed over it, `0600`); if a write fails the file is removed, so the next
-  start is off (fail closed).
+  unreadable, larger than `TELEMETRY_CONSENT_FILE_MAX_BYTES` (checked with `stat` before reading, and
+  in bytes after), not JSON, another version or any other shape reads as both off. Writes are atomic
+  (a temporary file renamed over it, `0600`); if a write fails the file is removed or, if it cannot be
+  (a locked file on Windows), overwritten in place with both off, so the next start is off (fail
+  closed: a turn-off never survives as on). The state then says `persisted: false` (Settings: "for
+  this run only") until a later write succeeds.
 - **Toggling is synchronous.** `telemetry.setConsent` changes main's telemetry and writes the file
   before it answers; off drops what is queued at once (no flush).
 - **Configured, not revealed.** The build's DSN and OTLP endpoint (`FROST_PUBLIC_SENTRY_DSN`,
@@ -125,7 +128,12 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   unpackaged build with neither value baked in reads the run-time environment; packaged requires `https:`, unpackaged may use
   `http://127.0.0.1`). The chrome sees only whether each is configured, as a boolean.
 - **One door: `net.fetch`.** `POST`, `credentials: 'omit'`, `cache: 'no-store'`, `redirect: 'error'`,
-  the package's abort signal passed through, and not before the app is ready.
+  the package's abort signal passed through, and not before the app is ready. `net.fetch` would add
+  Chromium's detailed `user-agent` and the user's locale in `accept-language`; both are replaced
+  (`TELEMETRY_REQUEST_HEADERS`: `user-agent: frost-telemetry`, `accept-language` empty). What else a
+  request carries is Chromium's transport: `host`, `connection`, `content-length`, `content-type`,
+  `accept-encoding` and `sec-fetch-site: none`, `sec-fetch-mode: no-cors`, `sec-fetch-dest: empty`
+  (the same on every machine). No cookie, even with one stored for the collector's origin.
 - **No identifier.** The resource is the app's version and platform (and the runtime's name and
   version for error events); stack frames are relative to the app's root.
 - **Crashes behave as before.** Main's uncaught exceptions are observed with Node's
@@ -134,17 +142,29 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   listener would silence that warning, so main's listener emits the same
   `UnhandledPromiseRejectionWarning` itself, and the process keeps running as before. An error seen by
   both is reported once.
-- **One `app.start` span** from telemetry's creation to the first window (`platform`, `outcome`,
-  `duration_ms`).
+- **One `app.start` span** from telemetry's creation to the first window (`platform`, `outcome: ok`,
+  `duration_ms`). Main's startup promise never rejects: a startup that does not complete leaves the
+  span open, and it is never sent. (One that rejected would end it with the error status only.)
 - **Quitting is bounded.** On `will-quit`, with a channel on, the quit waits for `shutdown()` (at most
   `shutdownTimeoutMs`) and then goes on; with both off it is not held.
 - **Renderer errors** are the chrome's `error` and `unhandledrejection` events, cut to
   `RENDERER_ERROR_LIMITS`, at most `RENDERER_ERROR_RATE_LIMIT` per window of time (in the chrome and
   again in the router), scrubbed by the package and dropped when `errors` is off.
 
+### Residual risks (accepted)
+- **Free text in renderer errors.** The scrub rules remove patterns (URLs, hosts, emails, paths, tokens,
+  IDs, the machine's names). A message that quotes free text, such as a tab's title or a query the user
+  typed, keeps that text (cut to `maxMessageChars`) when `errors` is on.
+- **Node's rejection mode.** The `unhandledRejection` listener assumes Electron's `warn` mode. Under
+  `--unhandled-rejections=throw` or `strict` (not used by frost) a listener stops Node from raising the
+  rejection as an uncaught exception, so such a rejection would no longer end in Electron's error
+  dialog; only its warning is printed.
+- **Version in the resource.** The app's version (and platform) is sent, as the plan allows; it is the
+  same for every install of a release.
+
 ### Spec schema (`apps/desktop/src/main/telemetry/__tests__/telemetry-consent-spec.test.ts`)
-- `telemetry-state-is-strict` — a state with an endpoint, DSN or any other member is refused;
-  `configured` is booleans only.
+- `telemetry-state-is-strict` — a state with an endpoint, DSN or any other member, or without
+  `persisted`, is refused; `configured` is booleans only.
 - `telemetry-inputs-are-strict` — `SetConsentInputSchema` and `RendererErrorInputSchema` refuse
   unknown channels, extra members, non-booleans and fields over `RENDERER_ERROR_LIMITS`.
 - `consent-file-schema-is-strict` — another `v`, an extra member or a wrong type is refused.
@@ -154,11 +174,12 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 ### Consent store (`apps/desktop/src/main/telemetry/__tests__/consent-store.test.ts`, fake fs)
 - `consent-store-defaults` — no file: both off, nothing written.
 - `consent-store-corrupt-is-default` — not JSON, another version, an extra member, a wrong type, an
-  over-large file and a read error all read as both off.
-- `consent-store-reads-sync` — the file is read once, synchronously, when the store is created.
+  over-large file (not even read: its size comes first) and a read error all read as both off.
+- `consent-store-reads-sync` — the file is stat'ed and read once, synchronously, when the store is created.
 - `consent-store-writes-atomically` — a write goes to a temporary file (`0600`) renamed over the
   file, valid against `TelemetryConsentFileSchema` with `decidedAt`; a failed write removes the
-  temporary file and the file, and answers `false`; a store created afterwards reads what was written.
+  temporary file and the file, and answers `false`; a file that can be neither replaced nor removed is
+  overwritten with both off; a store created afterwards reads what was written.
 
 ### Configuration (`apps/desktop/src/main/telemetry/__tests__/config.test.ts`)
 - `telemetry-config-missing-is-not-configured` — no value, or an empty one, is `null` per channel.
@@ -176,14 +197,19 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 - `consent-off-sends-nothing` — with the defaults, the `app.start` span, a main uncaught exception, an
   unhandled rejection and a renderer error make no fetch, also after flush and quit; quitting is not held.
 - `set-consent-is-synchronous` — `setConsent` has changed the telemetry and written the store when it
-  returns; turning `errors` off drops a queued event (no fetch afterwards); the state's version goes up.
+  returns; turning `errors` off drops a queued event (no fetch afterwards); the state's version goes up;
+  a failed write still applies the consent and answers `persisted: false` until a write succeeds.
+- `off-drops-queued-span` — the `app.start` span queued with `usage` on is never sent once `usage` is
+  turned off before its batch leaves, nor after turning on again.
 - `transport-is-net-fetch` — `POST` with `credentials: 'omit'`, `cache: 'no-store'`,
-  `redirect: 'error'` and the abort signal, only after the app is ready; `retry-after` is passed back.
+  `redirect: 'error'`, the abort signal and `TELEMETRY_REQUEST_HEADERS`, only after the app is ready;
+  `retry-after` is passed back.
 - `crash-behaviour-is-unchanged` — no `uncaughtException` listener is added (the monitor is used); an
   unhandled rejection still emits `UnhandledPromiseRejectionWarning`; with `errors` on both are
   reported (an error seen twice once), unhandled, with their mechanism.
 - `app-start-span` — one `app.start` span ends when startup completes, with `platform`, `outcome` and
-  `duration_ms`; the resource carries the version and platform only.
+  `duration_ms`; the resource carries the version and platform only; a rejected startup ends it with
+  the error status and no outcome, and is not an unhandled rejection.
 - `shutdown-on-will-quit-is-bounded` — with a channel on, the first `will-quit` is held until
   `shutdown` finishes (at most `shutdownTimeoutMs` with a collector that never answers), then the app
   quits again and that `will-quit` passes.
@@ -210,7 +236,11 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 - `telemetry-nothing-before-consent` — with the defaults, the startup span, a renderer error and a
   main unhandled rejection send nothing; the state says both off and both configured.
 - `telemetry-errors-on-sends-scrubbed` — after `setConsent` on, a renderer error and a main rejection
-  arrive at the Sentry endpoint without the URL, host, email or path they carried.
-- `telemetry-off-stops-at-once` — after `setConsent` off, nothing more arrives.
+  arrive at the Sentry endpoint without the URL, host, email, paths (the checkout's too), the
+  machine's host name, its first label or the login name they carried; no request carries the cookie
+  stored for the collector's origin, a detailed user agent or a locale.
+- `telemetry-off-stops-at-once` — after `setConsent` off, nothing more arrives; started with `usage` on
+  (a consent file written before launch) and turned off before the startup span's batch leaves, the
+  `app.start` span never reaches the collector.
 - `telemetry-consent-persists` — consent survives a restart on the same profile (the file is
   `TelemetryConsentFileSchema`), and with `usage` on the `app.start` span arrives at the collector.

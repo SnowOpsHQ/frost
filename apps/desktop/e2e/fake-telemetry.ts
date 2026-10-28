@@ -15,6 +15,8 @@ export interface RecordedTelemetryRequest {
 }
 
 export interface FakeTelemetry {
+  /** `http://127.0.0.1:<port>` (a cookie set for it must never be sent). */
+  readonly origin: string;
   /** `FROST_PUBLIC_OTEL_ENDPOINT`. */
   readonly otelEndpoint: string;
   /** `FROST_PUBLIC_SENTRY_DSN` (`http://<key>@127.0.0.1:<port>/1`). */
@@ -51,6 +53,7 @@ export async function startFakeTelemetry(): Promise<FakeTelemetry> {
   const origin = `http://127.0.0.1:${port}`;
   const publicKey = randomBytes(16).toString('hex');
   return {
+    origin,
     otelEndpoint: `${origin}/v1/traces`,
     sentryDsn: `http://${publicKey}@127.0.0.1:${port}/1`,
     requests,

@@ -60,7 +60,7 @@ export const DSN_PROJECT_ID_PATTERN = /^[0-9]{1,20}$/;
 /** The consent's file in `userData` (no database: the plan's "No desktop database migrations"). */
 export const TELEMETRY_CONSENT_FILE = 'telemetry-consent.json';
 export const TELEMETRY_CONSENT_FILE_VERSION = 1;
-/** A consent file larger than this is not read (it is not one frost wrote): defaults. */
+/** A consent file larger than this many bytes is not read (it is not one frost wrote): defaults. */
 export const TELEMETRY_CONSENT_FILE_MAX_BYTES = 1_024;
 
 /**
@@ -87,11 +87,14 @@ export const TelemetryConfiguredSchema = z.strictObject({
 
 /**
  * `telemetry.state` and `telemetry.setConsent`'s answer. `consent` is what main's telemetry does now
- * (a channel not configured may be on and still sends nothing); `version` goes up at every change.
+ * (a channel not configured may be on and still sends nothing). `persisted` is `false` once saving
+ * the consent failed (the file was removed or written all off): the consent shown holds for this run
+ * only, and the next start is off. `version` goes up at every change.
  */
 export const TelemetryStateSchema = z.strictObject({
   consent: TelemetryConsentSchema,
   configured: TelemetryConfiguredSchema,
+  persisted: z.boolean(),
   version: z.number().int().nonnegative(),
 });
 export type TelemetryState = z.infer<typeof TelemetryStateSchema>;

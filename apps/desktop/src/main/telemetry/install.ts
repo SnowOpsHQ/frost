@@ -40,8 +40,12 @@ export interface TelemetryMainDeps {
   /** Read already (synchronously, before any window): its consent is where telemetry starts. */
   readonly store: ConsentStore;
   readonly config: TelemetryConfig;
-  /** Settles when startup is complete (the first window is open): the end of the `app.start` span. */
-  readonly started: Promise<unknown>;
+  /**
+   * Resolves when startup is complete (the first window is open): the end of the `app.start` span.
+   * Main's never rejects (a startup that does not complete leaves the span open: it is never sent);
+   * one that did would end the span as an error.
+   */
+  readonly started: Promise<void>;
   readonly log: (message: string) => void;
   /** Milliseconds for the `app.start` span's duration (default `performance.now`). */
   readonly now?: () => number;
@@ -63,6 +67,12 @@ export interface TelemetryMain {
   readonly service: TelemetryService;
 }
 
+/**
+ * Headers that replace what `net.fetch` would add on its own: Chromium's detailed `user-agent` (its
+ * and Electron's build) and the user's locale in `accept-language`. Neither is sent as it is.
+ */
+export const TELEMETRY_REQUEST_HEADERS = { 'user-agent': 'frost-telemetry', 'accept-language': '' } as const;
+
 /** The `Send` the package calls: one `POST` through `fetch`, with no cookies, cache or redirects. */
 function netSend(app: TelemetryAppLike, fetch: TelemetryFetch): Send {
   return async (url, { headers, body, signal }) => {
@@ -71,7 +81,7 @@ function netSend(app: TelemetryAppLike, fetch: TelemetryFetch): Send {
     signal.throwIfAborted();
     const response = await fetch(url, {
       method: 'POST',
-      headers,
+      headers: { ...headers, ...TELEMETRY_REQUEST_HEADERS },
       body: body as BodyInit,
       signal,
       credentials: 'omit',
@@ -154,12 +164,10 @@ export function installTelemetry(deps: TelemetryMainDeps): TelemetryMain {
   const startedAt = now();
   const platform = (TELEMETRY_PLATFORMS as readonly string[]).includes(proc.platform) ? proc.platform : undefined;
   const startAttributes: SpanAttributes = platform ? { platform } : {};
-  void telemetry.span('app.start', startAttributes, (span) =>
-    Promise.resolve(deps.started).then(
-      () => span.setAttributes({ outcome: 'ok', duration_ms: Math.max(0, now() - startedAt) }),
-      () => span.setAttributes({ outcome: 'error' }),
-    ),
-  );
+  telemetry
+    .span('app.start', startAttributes, (span) => Promise.resolve(deps.started).then(() => span.setAttributes({ outcome: 'ok', duration_ms: Math.max(0, now() - startedAt) })))
+    // A rejected `started` has ended the span as an error already; it is not an unhandled rejection.
+    .catch(() => undefined);
 
   // ---- Quitting -------------------------------------------------------------------------------
   // With a channel on, the first `will-quit` waits for `shutdown` (flush, then drop the rest), at most
@@ -187,14 +195,17 @@ export function installTelemetry(deps: TelemetryMainDeps): TelemetryMain {
 
   // ---- The IPC service ------------------------------------------------------------------------
   let version = 0;
-  const state = (): TelemetryState => ({ consent: telemetry.consent(), configured: telemetry.configured(), version });
+  // `false` once a write failed: what is shown holds for this run only (the next start is off).
+  let persisted = true;
+  const state = (): TelemetryState => ({ consent: telemetry.consent(), configured: telemetry.configured(), persisted, version });
   const service: TelemetryService = {
     state,
     setConsent(channel: TelemetryChannel, on: boolean) {
       if (telemetry.consent()[channel] === on) return state();
       // The telemetry first (off stops export at once), then the file.
       telemetry.setConsent(channel, on);
-      if (!store.write(telemetry.consent())) log('telemetry: consent applied for this run only');
+      persisted = store.write(telemetry.consent());
+      if (!persisted) log('telemetry: consent applied for this run only');
       version += 1;
       return state();
     },
