@@ -263,7 +263,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   shared with e2e): `gsc-scope-is-read-only`, PKCE and state checked, refresh on 401, disconnect
   revokes and deletes, property matching, not-entitled refused, `answers-carry-no-secret`.
 - [x] commit `feat(gsc): read-only Search Console connection and performance API`
-- [ ] Security review of Task 8 before Task 9.
+- [x] Security review of Task 8 before Task 9.
 
 ### Task 9: Settings view
 - **Spec:** `specs/account-settings.feature.md`.
@@ -272,7 +272,9 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   `account-view.ts`, `settings-telemetry.tsx`, `settings-gsc.tsx`: account (sign in, the in-app
   confirmation, sign out, plan and features, keychain notice), telemetry (two toggles with plain
   descriptions of what is sent, "not configured in this build"), Search Console (connect,
-  disconnect, connected account, plan requirement). Own CSS file. Hub: one `App.tsx` slot.
+  disconnect, "Connected" without a Google account name (by design: frost asks Google for none), plan
+  requirement). Own CSS file. Hub: one `App.tsx` slot; the menu's requests are the account's
+  `account.settingsWatch` (`main/account/settings-requests.ts`).
 - **Failing tests:** unit tests for the view models; e2e `settings.e2e.ts`: sign in through the
   view against the fake backend (confirmation shown and required), toggles persist across restart and
   reflect main's state, Search Console connect and disconnect against the fakes.

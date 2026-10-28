@@ -17,7 +17,6 @@ import { createProfileDebugger } from './browser/render-profile-debugger';
 import { createRenderProfilePins } from './browser/render-profile-pins';
 import { clearBrowseStorage, confirmClearBrowsingData, createClearBrowsingData } from './clear-browsing-data';
 import { installAppMenu, popupContextMenu } from './menu';
-import { createSettingsView } from './settings-view';
 import { handleAppProtocol, registerAppScheme } from './protocol/register';
 import { restrictAppRequests } from './protocol/requests';
 import { runAccessibilityCheck } from './seo/a11y';
@@ -397,13 +396,6 @@ function start(): void {
     const account = await createAccountMain();
     // Search Console (specs/gsc.feature.md): read-only, gated on `search-console`; reuses the account's store and gestures.
     const gsc = createGscMain(account);
-    // The menu's Settings… (specs/account-settings.feature.md): a counter the chrome of the focused app window long-polls.
-    const settingsView = createSettingsView({
-      chrome: () => {
-        const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null;
-        return win && !win.isDestroyed() && windows.knownWindowIds.has(win.id) ? win.webContents : null;
-      },
-    });
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,
@@ -443,7 +435,6 @@ function start(): void {
         account: account.service,
         telemetry: telemetry.service,
         gsc: gsc.service,
-        settingsView,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -474,7 +465,7 @@ function start(): void {
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
     // accelerators calling the controller directly (specs/tabs.feature.md, page-commands.feature.md).
-    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.(), showSettings: () => settingsView.show() });
+    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.(), ...account.menu });
     // What the last launch saved, after the sessions are hardened and before any tab or window
     // exists: remembered decisions answer the first requests, and the chrome's first state already
     // has the restored tabs.

@@ -11,6 +11,7 @@ import { startLoopback } from './loopback';
 import { holdQuitFor } from './quit';
 import { createSecretStore, type SecretStore } from './secret-store';
 import { createAccountService, redact, type AccountMainService } from './service';
+import { createSettingsRequestsMain } from './settings-requests';
 
 // The account in the main process (Phase 4 Task 5; acceptance `account-signin.feature.md`): the one
 // Electron-facing wiring of the pure modules beside it. Call once, after `app.whenReady()` (the secret
@@ -26,6 +27,8 @@ export interface AccountMain {
   readonly entitlements: EntitlementsReader | null;
   /** Live user gestures per app window (Search Console's connect spends them too, Task 8). */
   readonly gestures: WindowGestures;
+  /** The application menu's account commands (Task 9: Settings…, `account-settings.feature.md`). */
+  readonly menu: { showSettings(windowId?: number): void };
 }
 
 const log = (message: string): void => console.warn(`frost: ${redact(message)}`);
@@ -92,5 +95,8 @@ export async function createAccountMain(): Promise<AccountMain> {
     entitlements?.dispose();
     return service.dispose();
   });
-  return { service, secretStore, entitlements, gestures };
+  // The menu's Settings… requests (Task 9), served as `account.settingsWatch`.
+  const settings = createSettingsRequestsMain();
+  app.once('will-quit', () => settings.dispose());
+  return { service: Object.assign(service, { settings }), secretStore, entitlements, gestures, menu: { showSettings: (windowId) => settings.show(windowId) } };
 }

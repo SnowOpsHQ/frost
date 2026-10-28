@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest';
 import { ACCOUNT_SETTINGS_TEXT, FEATURE_LABELS } from '@app/specs/account-settings.spec';
 import { ACCOUNT_ERRORS, AccountStateSchema, SIGN_IN_RESULTS, type AccountState } from '@app/specs/account-state.schema';
 import { FEATURE_FLAGS, NO_ENTITLEMENTS, OFFLINE_GRACE_MS, PLAN_FEATURES, type Entitlements } from '@app/specs/entitlements-snapshot.spec';
-import { ACCOUNT_ERROR_MESSAGES, accountSection, planView, signInResultMessage } from '../account-view';
+import { ACCOUNT_ERROR_MESSAGES, accountSection, initialOf, planView, signInResultMessage } from '../account-view';
 
 const EXP = Date.UTC(2026, 9, 30);
 const day = (ms: number) => `day ${new Date(ms).toISOString().slice(0, 10)}`;
@@ -47,13 +47,20 @@ describe('account view model', () => {
 
   test('account-view-confirming', () => {
     const section = accountSection(state({ status: 'confirming', user: USER, ...pending }));
-    expect(section.view).toMatchObject({ kind: 'confirming', question: 'Sign in to frost as alice@example.com?', fingerprint: 'ABCD-EF12', buttons: ['confirm', 'cancel'] });
+    // Cancel first, then the confirmation's own words (never "Sign in" where Sign in was).
+    expect(section.view).toMatchObject({ kind: 'confirming', question: 'Sign in to frost as alice@example.com?', fingerprint: 'ABCD-EF12', buttons: ['cancel', 'confirm'] });
+    expect(ACCOUNT_SETTINGS_TEXT.confirmLabel).toBe('Confirm sign-in');
     expect(section.requestId).toBe(pending.requestId);
   });
 
   test('account-view-signed-in-plan', () => {
     const section = accountSection(state({ status: 'signed-in', user: USER, entitlements: PRO }), day);
-    expect(section.view).toMatchObject({ kind: 'signed-in', email: 'alice@example.com', name: 'Alice', buttons: ['refresh', 'sign-out'] });
+    expect(section.view).toMatchObject({ kind: 'signed-in', email: 'alice@example.com', name: 'Alice', initial: 'A', buttons: ['refresh', 'sign-out'] });
+    // A whole grapheme, never half a surrogate pair or a bare combining mark.
+    expect(initialOf('\u{1F469}\u200D\u{1F4BB} Dev', 'x@example.com')).toBe('\u{1F469}\u200D\u{1F4BB}');
+    expect(initialOf('e\u0301mile', 'x@example.com')).toBe('E\u0301');
+    expect(initialOf(null, 'bo@example.com')).toBe('B');
+    expect(initialOf('  ', 'zed@example.com')).toBe('Z');
     if (section.view.kind !== 'signed-in') throw new Error('not signed in');
     expect(section.view.plan).toMatchObject({ label: 'Pro', pro: true, tone: 'ok' });
     // Every feature this build knows, in plain words (no flag IDs), in the spec's order.
@@ -72,9 +79,13 @@ describe('account view model', () => {
   test('account-view-entitlement-status', () => {
     expect(planView(PRO, day)).toMatchObject({ status: 'Pro is active.', tone: 'ok' });
     expect(planView({ ...PRO, status: 'grace' }, day).status).toBe(`Offline — Pro stays available until ${day(EXP + OFFLINE_GRACE_MS)}`);
+    // The default format carries the time as well as the date.
+    expect(planView({ ...PRO, status: 'grace' }).status).toMatch(/\d{1,2}:\d{2}/);
     const expired = planView({ ...PRO, plan: 'free', features: [], status: 'expired' }, day);
     expect(expired).toMatchObject({ label: 'Free', tone: 'error' });
     expect(expired.status).toMatch(/^Free — .+/);
+    // Expired is not only "offline": the copy does not claim so.
+    expect(expired.status).not.toMatch(/offline|online/i);
     const invalid = planView({ ...NO_ENTITLEMENTS, status: 'invalid' }, day);
     expect(invalid).toMatchObject({ label: 'Free', tone: 'error' });
     expect(invalid.status).toMatch(/^Free — .*verified/);

@@ -19,6 +19,11 @@
   height: 0;
 }
 
+/* The find bar's row is hidden while Settings shows (as while History does). */
+.chrome:has(.settings-sheet) > .find-slot {
+  display: none;
+}
+
 .settings-sheet {
   flex: 1 1 auto;
   display: flex;
@@ -324,7 +329,7 @@
   white-space: nowrap;
 }
 
-.settings-button:hover:not(:disabled) {
+.settings-button:hover:not([aria-disabled='true']) {
   background: var(--bg-hover);
 }
 
@@ -334,13 +339,29 @@
   color: var(--on-accent);
 }
 
-.settings-button-primary:hover:not(:disabled) {
+.settings-button-primary:hover:not([aria-disabled='true']) {
   background: var(--accent-hover);
 }
 
-.settings-button:disabled,
-.settings-switch:disabled {
+.settings-button[aria-disabled='true'],
+.settings-switch[aria-disabled='true'] {
   opacity: 0.55;
+  cursor: default;
+}
+
+/* The confirmation's own row, inside its card (never where Sign in was). */
+.settings-confirm-actions {
+  margin: 12px 0 0;
+}
+
+.settings-question:focus {
+  outline: 0;
+}
+
+.settings-question:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .settings-button:focus-visible,

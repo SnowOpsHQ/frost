@@ -31,8 +31,8 @@ export interface AppMenuCommands extends TabCommands {
   stepFind?(forward: boolean): unknown;
   reopenClosedTab?(): unknown;
   showHistory?(): void;
-  // The Settings view (`account-settings.feature.md`); optional so other fakes need not grow.
-  showSettings?(): void;
+  // The Settings view (`account-settings.feature.md`), in the window the menu acted on; optional so other fakes need not grow.
+  showSettings?(windowId?: number): void;
 }
 
 /** The menu items browser polish adds (`browser-polish.spec.ts`, `POLISH_MENU_IDS`): File, Edit and History. */
@@ -56,7 +56,7 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
   const mac = platform === 'darwin';
   const polish = polishItems(commands);
   // Settings… (`account-settings.feature.md`): the macOS app menu, elsewhere the end of Edit.
-  const settings: MenuItemConstructorOptions = { id: SETTINGS_MENU.id, label: SETTINGS_MENU.label, accelerator: SETTINGS_MENU.accelerator, click: () => commands.showSettings?.() };
+  const settings: MenuItemConstructorOptions = { id: SETTINGS_MENU.id, label: SETTINGS_MENU.label, accelerator: SETTINGS_MENU.accelerator, click: (_item, win) => commands.showSettings?.(win?.id) };
   const selectTab: MenuItemConstructorOptions[] = [];
   for (let n = 1; n < TAB_SHORTCUT_COUNT; n++) {
     selectTab.push({ id: `select-tab-${n}`, label: `Tab ${n}`, accelerator: `CmdOrCtrl+${n}`, click: () => void commands.activateTabAt(n - 1) });

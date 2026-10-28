@@ -1,5 +1,6 @@
 import type { AccountState, SignInResult } from '@app/specs/account-state.schema';
 import type { Entitlements } from '@app/specs/entitlements-snapshot.spec';
+import type { SettingsViewState } from '@app/specs/account-settings.schema';
 
 // The account as the `account.*` procedures and `requireFeature` see it (Phase 4; specs
 // `entitlements-snapshot.spec.ts`, `account-state.schema.ts`; acceptance `entitlements-client.feature.md`
@@ -37,4 +38,21 @@ export interface AccountService {
   signOut(): Promise<boolean>;
   /** Refreshes the session and entitlements now: `true` if signed in (a refresh ran). */
   refresh(): Promise<boolean>;
+  /**
+   * The menu's requests to open the account's Settings view (Phase 4 Task 9, `account-settings.feature.md`):
+   * `account.settingsWatch`. Optional so other fakes need not grow; without it the procedure fails closed.
+   */
+  readonly settings?: SettingsRequests;
+}
+
+/** Main's per-window counters of the menu's Settings… requests (`account.settingsWatch`). */
+export interface SettingsRequests {
+  /** App window `windowId`'s count of requests so far. */
+  state(windowId: number): SettingsViewState;
+  /**
+   * Resolves with window `windowId`'s state once its `seq` exceeds `sinceSeq` (at once if it already
+   * does), or when `signal` aborts. At most `MAX_PENDING_SETTINGS_WATCHES` wait; one more answers the
+   * oldest early.
+   */
+  watch(windowId: number, sinceSeq: number, signal?: AbortSignal): Promise<SettingsViewState>;
 }

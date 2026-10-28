@@ -31,6 +31,8 @@ export type AccountView =
       readonly kind: 'signed-in';
       readonly email: string;
       readonly name: string | null;
+      /** The avatar's initial (`initialOf`). */
+      readonly initial: string;
       readonly plan: PlanView;
       readonly buttons: readonly AccountButton[];
     };
@@ -70,13 +72,20 @@ export function signInResultMessage(result: SignInResult): string | null {
 
 const PLAN_LABELS: Readonly<Record<Plan, string>> = Object.freeze({ free: 'Free', pro: 'Pro' });
 
-/** A day as the section shows it (the user's locale). */
-export function formatDay(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+/** A moment as the section shows it: date and time, in the user's locale. */
+export function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+/** The avatar's initial: the first grapheme of the name (else the email), upper-cased. */
+export function initialOf(name: string | null, email: string): string {
+  const text = (name ?? '').trim() || email;
+  const first = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)[Symbol.iterator]().next().value?.segment : Array.from(text)[0];
+  return (first ?? '').toUpperCase();
 }
 
 /** The plan as the signed-in section shows it. */
-export function planView(entitlements: Entitlements, formatDate: (ms: number) => string = formatDay): PlanView {
+export function planView(entitlements: Entitlements, formatDate: (ms: number) => string = formatDateTime): PlanView {
   const features = (Object.keys(FEATURE_LABELS) as FeatureFlag[]).map((flag) => ({ flag, label: FEATURE_LABELS[flag], included: entitlements.features.includes(flag) }));
   const label = PLAN_LABELS[entitlements.plan];
   const base = { label, pro: entitlements.plan === 'pro', features };
@@ -86,7 +95,7 @@ export function planView(entitlements: Entitlements, formatDate: (ms: number) =>
     case 'grace':
       return { ...base, status: `Offline — ${label} stays available until ${formatDate(entitlements.graceEndsAtMs ?? 0)}`, tone: 'warn' };
     case 'expired':
-      return { ...base, status: "Free — frost couldn't confirm your plan for too long. Refresh when you're online.", tone: 'error' };
+      return { ...base, status: "Free — your plan's last check has run out and no newer one was confirmed. Refresh to check again.", tone: 'error' };
     case 'invalid':
       return { ...base, status: "Free — your plan couldn't be verified. Refresh to try again.", tone: 'error' };
     case 'none':
@@ -95,7 +104,7 @@ export function planView(entitlements: Entitlements, formatDate: (ms: number) =>
 }
 
 /** The Account section for `state` (`null`: main has not answered yet). */
-export function accountSection(state: AccountState, formatDate: (ms: number) => string = formatDay): AccountSection {
+export function accountSection(state: AccountState, formatDate: (ms: number) => string = formatDateTime): AccountSection {
   const error = state.error === null ? null : ACCOUNT_ERROR_MESSAGES[state.error];
   const keychain = state.keychain === 'memory-only' && state.status !== 'unconfigured' && state.status !== 'signed-out' ? ACCOUNT_SETTINGS_TEXT.keychain : null;
   const requestId = state.requestId;
@@ -118,7 +127,7 @@ export function accountSection(state: AccountState, formatDate: (ms: number) => 
           question: ACCOUNT_SETTINGS_TEXT.confirmQuestion(state.user?.email ?? ''),
           fingerprint: state.fingerprint ?? '',
           hint: ACCOUNT_SETTINGS_TEXT.confirmHint,
-          buttons: ['confirm', 'cancel'],
+          buttons: ['cancel', 'confirm'],
         },
         error,
         keychain,
@@ -126,7 +135,7 @@ export function accountSection(state: AccountState, formatDate: (ms: number) => 
       };
     case 'signed-in':
       return {
-        view: { kind: 'signed-in', email: state.user?.email ?? '', name: state.user?.name ?? null, plan: planView(state.entitlements, formatDate), buttons: ['refresh', 'sign-out'] },
+        view: { kind: 'signed-in', email: state.user?.email ?? '', name: state.user?.name ?? null, initial: initialOf(state.user?.name ?? null, state.user?.email ?? ''), plan: planView(state.entitlements, formatDate), buttons: ['refresh', 'sign-out'] },
         error,
         keychain,
         requestId: null,

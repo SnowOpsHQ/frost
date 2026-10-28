@@ -47,7 +47,8 @@ export function gscConnectResultMessage(result: GscConnectResult): string | null
 /** The Search Console section for `status`. */
 export function gscSection(status: GscStatus): GscSection {
   const error = status.error === null ? null : GSC_ERROR_MESSAGES[status.error];
-  const keychain = status.configured && status.keychain === 'memory-only' && (status.connected || status.connecting || status.entitled) ? GSC_SETTINGS_TEXT.keychain : null;
+  // Only while there is a connection (or a connect) that the quit would end.
+  const keychain = status.configured && status.keychain === 'memory-only' && (status.connected || status.connecting) ? GSC_SETTINGS_TEXT.keychain : null;
   if (!status.configured) return { kind: 'unconfigured', headline: null, message: GSC_SETTINGS_TEXT.unconfigured, buttons: [], error: null, keychain: null };
   if (!status.entitled) {
     // A connection left from before the plan changed can still be removed.

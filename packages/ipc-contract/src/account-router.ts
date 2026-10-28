@@ -7,6 +7,7 @@ import {
   SignInResultSchema,
   type AccountState,
 } from '@app/specs/account-state.schema';
+import { SettingsViewStateSchema, SettingsViewWatchInputSchema, type SettingsViewState } from '@app/specs/account-settings.schema';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import {
   EntitlementsSchema,
@@ -16,7 +17,7 @@ import {
   type FeatureFlag,
 } from '@app/specs/entitlements-snapshot.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import type { AccountService } from './account-service';
+import type { AccountService, SettingsRequests } from './account-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
 // The account ↔ main (Phase 4; specs `entitlements-snapshot.spec.ts`, `account-state.schema.ts`;
@@ -84,6 +85,23 @@ async function watchAccount(account: AccountService, sinceVersion: number): Prom
  *   `AccountService`; `confirmSignIn` also hands over the sender's window, which must have started the
  *   request and have a live gesture).
  */
+/** The long-poll behind `account.settingsWatch` (as `watchAccount`), for the sender's window. */
+async function watchSettings(settings: SettingsRequests, windowId: number, sinceSeq: number): Promise<SettingsViewState> {
+  const release = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      settings.watch(windowId, sinceSeq, release.signal),
+      new Promise<SettingsViewState>((resolve) => {
+        timer = setTimeout(() => resolve(settings.state(windowId)), WATCH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    release.abort();
+  }
+}
+
 export const accountRouter = router({
   entitlements: publicProcedure
     .use(enforceSender)
@@ -138,4 +156,17 @@ export const accountRouter = router({
     .use(requireAccount)
     .output(AccountActionResultSchema)
     .mutation(({ ctx }) => ctx.account.refresh()),
+  // The Settings view (Task 9, `account-settings.feature.md`): the menu's requests to open it in the
+  // sender's window (a counter, long-polled).
+  settingsWatch: publicProcedure
+    .use(enforceSender)
+    .use(requireAccount)
+    .input(SettingsViewWatchInputSchema)
+    .output(SettingsViewStateSchema)
+    .query(({ ctx, input }) => {
+      const windowId = ctx.sender?.windowId;
+      const settings = ctx.account.settings;
+      if (typeof windowId !== 'number' || !settings) throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'settings requests unavailable' });
+      return watchSettings(settings, windowId, input.sinceSeq);
+    }),
 });

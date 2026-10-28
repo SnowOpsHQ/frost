@@ -13,7 +13,6 @@ import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
 import type { TelemetryService } from './telemetry-service';
 import type { GscIpcService } from './gsc-service';
-import type { SettingsViewService } from './settings-view-router';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -180,6 +179,4 @@ export interface IpcServices {
   readonly telemetry?: TelemetryService;
   /** The read-only Search Console connection and read API (Phase 4 Task 8, `gsc-service.ts`). */
   readonly gsc?: GscIpcService;
-  /** The menu's requests to open the Settings view (Phase 4 Task 9, `settings-view-router.ts`). */
-  readonly settingsView?: SettingsViewService;
 }

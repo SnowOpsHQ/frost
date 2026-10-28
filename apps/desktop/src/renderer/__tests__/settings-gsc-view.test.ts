@@ -47,6 +47,9 @@ describe('Search Console view model', () => {
     for (const result of GSC_CONNECT_RESULTS.filter((r) => r !== 'started')) expect(gscConnectResultMessage(result), result).toMatch(/\w{3,}/);
     expect(gscSection(status({ connected: true, keychain: 'memory-only' })).keychain).toBe('This system has no keychain; Search Console will be disconnected when frost quits');
     expect(gscSection(status({ connected: true })).keychain).toBeNull();
+    expect(gscSection(status({ connecting: true, keychain: 'memory-only' })).keychain).toBe(GSC_SETTINGS_TEXT.keychain);
+    // Nothing connected: nothing to lose at quit, no notice.
+    expect(gscSection(status({ keychain: 'memory-only' })).keychain).toBeNull();
     expect(gscSection(status({ entitled: false, keychain: 'memory-only' })).keychain).toBeNull();
   });
 });

@@ -201,19 +201,36 @@ test('settings-sign-in-needs-confirmation', async () => {
   expect(toLoopback.status).toBe(303);
   expect((await fetch(toLoopback.headers.get('location')!, { redirect: 'manual' })).status).toBe(303);
 
-  // The in-app confirmation: the account named, the same code, nothing signed in yet.
+  // The in-app confirmation: the account named, the same code, the question focused, nothing signed in yet.
+  const confirm = page.getByTestId('account-confirm');
   await expect(page.getByTestId('account-question')).toHaveText(`Sign in to frost as ${backend.user.email}?`);
+  await expect(page.getByTestId('account-question')).toBeFocused();
   await expect(page.getByTestId('account-fingerprint')).toHaveText(fingerprint);
-  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  await expect(confirm).toHaveText(ACCOUNT_SETTINGS_TEXT.confirmLabel);
+  // A click or Enter right away (meant for the Sign in button before it) does nothing.
+  await expect(confirm).toHaveAttribute('aria-disabled', 'true');
+  await confirm.click({ force: true });
+  await confirm.focus();
+  await page.keyboard.press('Enter');
   expect(await accountState()).toMatchObject({ status: 'confirming', entitlements: { plan: 'free', status: 'none' } });
-  expect(backend.tokens.length).toBeGreaterThan(0);
+  await expect(page.getByTestId('account-section')).toHaveAttribute('data-status', 'confirming');
 
-  await page.getByTestId('account-confirm').click();
+  // A deliberate click once it is armed signs in.
+  await expect(confirm).not.toHaveAttribute('aria-disabled', 'true', { timeout: 5_000 });
+  expect(await accountState()).toMatchObject({ status: 'confirming' });
+  await confirm.click();
   await expect(page.getByTestId('account-plan')).toHaveText('Pro');
   await expect(page.getByTestId('account-email')).toHaveText(backend.user.email);
   await expect(page.getByTestId('account-plan-status')).toHaveText('Pro is active.');
   expect(await accountState()).toMatchObject({ status: 'signed-in', entitlements: { plan: 'pro', status: 'active' } });
-  await page.screenshot({ path: '/tmp/frost-settings.png' }).catch(() => undefined);
+
+  // Signed in: the palette no longer offers "Sign in to frost".
+  await press('chrome', 'K', ['mod']);
+  await page.getByTestId('command-palette-input').fill('sign in to frost');
+  await expect(page.locator('[data-testid="command-palette-option"][data-action="settings.sign-in"]')).toHaveCount(0);
+  await page.getByTestId('command-palette-input').press('Escape');
+  await expect(page.getByTestId('command-palette')).toHaveCount(0);
+  await page.getByTestId('settings-nav-account').click();
 });
 
 test('settings-search-console-connect-disconnect', async () => {

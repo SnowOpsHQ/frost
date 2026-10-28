@@ -3,7 +3,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { SETTINGS_SECTIONS } from '@app/specs/account-settings.spec';
 import { ACCOUNT_STATUSES } from '@app/specs/account-state.schema';
-import { holdsSheet, isMenuRequest, onSettingsRequest, opensForConfirmation, requestSettings, SETTINGS_CLOSED, settingsReducer, type SettingsEvent } from '../settings-open';
+import { closeCancelsSignIn, holdsSheet, isMenuRequest, onSettingsRequest, opensForConfirmation, requestSettings, SETTINGS_CLOSED, settingsReducer, type SettingsEvent } from '../settings-open';
 
 const run = (...events: SettingsEvent[]) => events.reduce(settingsReducer, SETTINGS_CLOSED);
 
@@ -26,7 +26,7 @@ describe('opening and closing the Settings sheet', () => {
   test('settings-closes', () => {
     const open = run({ type: 'request', section: 'telemetry' });
     expect(settingsReducer(open, { type: 'close' })).toMatchObject({ open: false, section: 'telemetry' });
-    expect(settingsReducer(open, { type: 'history-opened' }).open).toBe(false);
+    expect(settingsReducer(open, { type: 'history-opened', holding: false }).open).toBe(false);
     // Closing a closed sheet changes nothing.
     expect(settingsReducer(SETTINGS_CLOSED, { type: 'close' })).toBe(SETTINGS_CLOSED);
   });
@@ -37,6 +37,16 @@ describe('opening and closing the Settings sheet', () => {
     expect(settingsReducer(open, { type: 'page-changed', holding: true })).toBe(open);
     for (const status of ACCOUNT_STATUSES) expect(holdsSheet(status), status).toBe(status === 'confirming');
     expect(holdsSheet(null)).toBe(false);
+  });
+
+  test('settings-hold-keeps-confirmation', () => {
+    const open = run({ type: 'request', section: 'account' });
+    // History opening while a confirmation waits leaves the sheet (History is closed instead).
+    expect(settingsReducer(open, { type: 'history-opened', holding: true })).toBe(open);
+    // Close / Esc then cancel the sign-in first; otherwise they only close.
+    for (const status of ACCOUNT_STATUSES) expect(closeCancelsSignIn(status), status).toBe(status === 'confirming');
+    expect(closeCancelsSignIn(null)).toBe(false);
+    expect(settingsReducer(open, { type: 'close' }).open).toBe(false);
   });
 
   test('settings-opens-for-confirmation', () => {

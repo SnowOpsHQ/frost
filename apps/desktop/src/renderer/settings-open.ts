@@ -3,7 +3,7 @@ import type { SettingsSectionId } from '@app/specs/account-settings.spec';
 
 // When the Settings sheet shows (Phase 4 Task 9; acceptance `account-settings.feature.md`, Opening and
 // closing). Pure: the sheet's open state and the events that change it, and the chrome-side request
-// bus the palette's actions use (main's menu requests arrive over `settingsView.watch`).
+// bus the palette's actions use (main's menu requests arrive over `account.settingsWatch`).
 
 export interface SettingsOpenState {
   readonly open: boolean;
@@ -17,8 +17,8 @@ export type SettingsEvent =
   | { readonly type: 'request'; readonly section: SettingsSectionId }
   /** Close or Esc. */
   | { readonly type: 'close' }
-  /** The History sheet opened (only one of the two shows). */
-  | { readonly type: 'history-opened' }
+  /** The History sheet opened (only one of the two shows); `holding` while a sign-in waits for its confirmation (History closes instead). */
+  | { readonly type: 'history-opened'; readonly holding: boolean }
   /** Another tab shows, or a new document committed in this one; `holding` while a sign-in waits for its confirmation. */
   | { readonly type: 'page-changed'; readonly holding: boolean };
 
@@ -29,8 +29,8 @@ export function settingsReducer(state: SettingsOpenState, event: SettingsEvent):
     case 'request':
       return { open: true, section: event.section, focusSeq: state.focusSeq + 1 };
     case 'close':
-    case 'history-opened':
       return state.open ? { ...state, open: false } : state;
+    case 'history-opened':
     case 'page-changed':
       return state.open && !event.holding ? { ...state, open: false } : state;
   }
@@ -41,9 +41,17 @@ export function opensForConfirmation(previous: AccountStatus | null, next: Accou
   return next === 'confirming' && previous !== 'confirming';
 }
 
-/** Whether a sign-in holds the sheet open across page changes (its confirmation is shown there). */
+/**
+ * Whether a sign-in holds the sheet open (its confirmation is shown there): page changes and History
+ * do not close it, and Close / Esc cancel the sign-in before closing (`closeCancelsSignIn`).
+ */
 export function holdsSheet(status: AccountStatus | null): boolean {
   return status === 'confirming';
+}
+
+/** Whether closing the sheet now must cancel the pending sign-in first (a waiting confirmation is never hidden). */
+export function closeCancelsSignIn(status: AccountStatus | null): boolean {
+  return holdsSheet(status);
 }
 
 /**

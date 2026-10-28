@@ -5,6 +5,7 @@ import { gscConnectResultMessage, gscSection, type GscButton } from './settings-
 // The Settings view's Search Console section (Phase 4 Task 9; acceptance `account-settings.feature.md`):
 // renders `gscSection(status)` from `gsc.watch` and calls one `gsc.*` procedure per click (Connect from
 // the click itself: main needs a live user gesture in this window). Without Pro it points to Account.
+// A button whose call runs is `aria-disabled` (it keeps focus).
 
 const LABELS: Readonly<Record<GscButton, string>> = { connect: 'Connect', cancel: 'Cancel', disconnect: 'Disconnect', 'go-to-account': 'Go to Account' };
 
@@ -16,6 +17,7 @@ export function GscSettings({ onGoToAccount }: { readonly onGoToAccount: () => v
   const section = gscSection(status);
 
   const press = (button: GscButton) => {
+    if (busy !== null) return;
     setNote(null);
     if (button === 'go-to-account') {
       onGoToAccount();
@@ -28,7 +30,7 @@ export function GscSettings({ onGoToAccount }: { readonly onGoToAccount: () => v
   };
 
   return (
-    <div className="settings-gsc" data-testid="gsc-section" data-kind={section.kind}>
+    <div className="settings-gsc" data-testid="gsc-section" data-kind={section.kind} aria-live="polite">
       {section.headline ? (
         <p className="settings-headline" data-testid="gsc-headline" data-connected={section.kind === 'connected' ? 'true' : undefined}>
           {section.headline}
@@ -43,7 +45,7 @@ export function GscSettings({ onGoToAccount }: { readonly onGoToAccount: () => v
               type="button"
               className={button === 'connect' ? 'settings-button settings-button-primary' : 'settings-button'}
               data-testid={`gsc-${button}`}
-              disabled={busy !== null}
+              aria-disabled={busy !== null ? 'true' : undefined}
               onClick={() => press(button)}
             >
               {LABELS[button]}

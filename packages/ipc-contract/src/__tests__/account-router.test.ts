@@ -1,7 +1,8 @@
 // Spec: specs/entitlements-snapshot.spec.ts (EntitlementsSchema, FEATURE_NOT_ENTITLED_CODE, entitlementGrants),
 // specs/account-state.schema.ts (AccountStateSchema, AccountWatchInputSchema, AccountRequestInputSchema, SIGN_IN_RESULTS),
 // specs/ipc-sender.spec.ts, specs/ipc-transport.spec.ts (IPC_INTERNAL_ERROR_CODE), specs/browser.spec.ts (WATCH_TIMEOUT_MS)
-// Acceptance: specs/entitlements-client.feature.md (Router), specs/account-signin.feature.md (Router)
+// Acceptance: specs/entitlements-client.feature.md (Router), specs/account-signin.feature.md (Router),
+// specs/account-settings.feature.md (Router: account.settingsWatch, specs/account-settings.schema.ts)
 // · plan Global Constraint "Tokens stay in main"
 import { getTRPCErrorShape, TRPCError } from '@trpc/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -20,7 +21,8 @@ import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { requireFeature } from '../account-router';
-import { appRouter, createSenderPolicy, type AccountService, type IpcContext } from '../index';
+import type { SettingsViewState } from '@app/specs/account-settings.schema';
+import { appRouter, createSenderPolicy, type AccountService, type IpcContext, type SettingsRequests } from '../index';
 import { enforceSender, publicProcedure, router } from '../trpc';
 
 const WINDOW_ID = 7;
@@ -73,6 +75,7 @@ function fakeAccount(entitlements: Entitlements = entitled('active')) {
     cancelSignIn: vi.fn(async (requestId: string) => requestId === REQUEST_ID),
     signOut: vi.fn(async () => true),
     refresh: vi.fn(async () => true),
+    settings: fakeSettings() as SettingsRequests | undefined,
   } satisfies AccountService;
   return Object.assign(account, { push: (s: AccountState) => release?.(s) });
 }
@@ -87,6 +90,7 @@ const ACCOUNT_PROCEDURES: Record<string, { type: 'query' | 'mutation'; input?: u
   cancelSignIn: { type: 'mutation', input: { requestId: REQUEST_ID } },
   signOut: { type: 'mutation' },
   refresh: { type: 'mutation' },
+  settingsWatch: { type: 'query', input: { sinceSeq: -1 } },
 };
 
 function call(ctx: IpcContext, name: string, input?: unknown): Promise<unknown> {
@@ -301,5 +305,53 @@ describe('account router', () => {
     const shape = getTRPCErrorShape({ config: gated._def._config, error, type: 'query', path: 'agent', input: undefined, ctx: undefined });
     expect(shape.message).toBe(IPC_INTERNAL_ERROR_CODE);
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+function fakeSettings(seq = 0) {
+  return {
+    state: vi.fn((_windowId: number): SettingsViewState => ({ seq })),
+    watch: vi.fn(async (_windowId: number, since: number, _signal?: AbortSignal): Promise<SettingsViewState> => ({ seq: Math.max(seq, since + 1) })),
+  } satisfies SettingsRequests;
+}
+
+const settingsWatch = (ctx: IpcContext, input: unknown): Promise<unknown> => call(ctx, 'settingsWatch', input);
+
+describe('account.settingsWatch', () => {
+  test('settings-watch-passes-window-id', async () => {
+    const settings = fakeSettings(3);
+    const account = Object.assign(fakeAccount(), { settings });
+    expect(await settingsWatch(ctxFor(account), { sinceSeq: 7 })).toEqual({ seq: 8 });
+    expect(settings.watch).toHaveBeenCalledWith(WINDOW_ID, 7, expect.any(AbortSignal));
+    // Without the account's settings requests: a masked internal error.
+    expect((await errorOf(settingsWatch(ctxFor({ ...fakeAccount(), settings: undefined }), { sinceSeq: -1 }))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    // No change in time: the window's current state after WATCH_TIMEOUT_MS, and the waiter released.
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    const waiting = fakeSettings(3);
+    waiting.watch.mockImplementation((_windowId: number, _since: number, s?: AbortSignal) => {
+      signal = s;
+      return new Promise(() => {});
+    });
+    const answer = settingsWatch(ctxFor(Object.assign(fakeAccount(), { settings: waiting })), { sinceSeq: 3 });
+    await vi.advanceTimersByTimeAsync(WATCH_TIMEOUT_MS);
+    expect(await answer).toEqual({ seq: 3 });
+    expect(waiting.state).toHaveBeenCalledWith(WINDOW_ID);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  test('settings-watch-output-is-strict', async () => {
+    for (const bad of [{ seq: 1, token: FAKE_TOKEN }, { seq: -1 }, { seq: '1' }, {}]) {
+      const settings = fakeSettings();
+      settings.watch.mockResolvedValue(bad as unknown as SettingsViewState);
+      const error = await errorOf(settingsWatch(ctxFor(Object.assign(fakeAccount(), { settings })), { sinceSeq: -1 }));
+      expect(error.code, JSON.stringify(bad)).toBe(IPC_INTERNAL_ERROR_CODE);
+      expect(error.message).not.toContain(FAKE_TOKEN);
+    }
+    for (const input of [undefined, {}, { sinceSeq: -2 }, { sinceSeq: 1.5 }, { sinceSeq: 0, windowId: 1 }]) {
+      const settings = fakeSettings();
+      expect((await errorOf(settingsWatch(ctxFor(Object.assign(fakeAccount(), { settings })), input))).code, JSON.stringify(input)).toBe('BAD_REQUEST');
+      expect(settings.watch).not.toHaveBeenCalled();
+    }
   });
 });
