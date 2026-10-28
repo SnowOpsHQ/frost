@@ -3,7 +3,7 @@
 // specs/serp.spec.ts (SERP_READ_TIMEOUT_MS), specs/browser.spec.ts (WATCH_TIMEOUT_MS)
 // Acceptance: specs/serp-overlay.feature.md (Service, Outlines)
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { appRouter, createSenderPolicy, type IpcContext } from '@app/ipc-contract';
+import { appRouter, createSenderPolicy, type IpcContext, type SerpService } from '@app/ipc-contract';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { SERP_PACK_PUBLIC_KEYS } from '@app/specs/serp-selector-pack.spec';
@@ -266,7 +266,8 @@ describe('SERP service', () => {
     const ctx: IpcContext = {
       sender: { origin: APP_ORIGIN, live: true, windowId: 7, isWindowContents: true, isMainFrame: true },
       policy: createSenderPolicy({ knownWindowIds: new Set([7]) }),
-      services: { serp: s.serp },
+      // The overlay's part of the service (the probes' part, joined in `setup.ts`, is not called here).
+      services: { serp: s.serp as unknown as SerpService },
     };
     const idle = appRouter.createCaller(ctx).serp.watch({ tabId: 1, sinceVersion: s.serp.state(1).version });
     await vi.advanceTimersByTimeAsync(WATCH_TIMEOUT_MS);

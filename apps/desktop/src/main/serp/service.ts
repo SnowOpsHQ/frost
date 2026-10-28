@@ -1,4 +1,4 @@
-import type { SerpReadApi, SerpService } from '@app/ipc-contract';
+import type { SerpProbesService, SerpReadApi, SerpService } from '@app/ipc-contract';
 import type { IntentAnswer } from '@app/specs/intent-classifier.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
 import type { EngineLayout, SelectorEngine } from '@app/specs/serp-selector-pack.schema';
@@ -86,9 +86,13 @@ export interface SerpServiceOptions {
   readonly activePollMs?: number;
 }
 
-export interface Serp extends SerpService {
-  /** The read API for Phase 5 (`SerpReadApi`). */
-  readonly readApi: SerpReadApi;
+/** The SERP overlay's read API (`SerpReadApi` without the probes, which `setup.ts` joins from `probes.ts`). */
+export type SerpOverlayReadApi = Omit<SerpReadApi, 'probes' | 'runProbes'>;
+
+/** The SERP overlay's part of `SerpService` (the probes' part is `probes.ts`, joined in `setup.ts`). */
+export interface Serp extends Omit<SerpService, keyof SerpProbesService> {
+  /** The read API for Phase 5 (`SerpReadApi`, the probes aside). */
+  readonly readApi: SerpOverlayReadApi;
   /** A page finished loading (`did-finish-load`): read it if it is a result page. */
   loaded(contentsId: number): void;
   /** A page's document went (`did-navigate`): its reading and outlines go. */

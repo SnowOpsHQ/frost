@@ -325,7 +325,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - `serp.setOutlines`;
   - `serp.checkPackUpdate`, `serp.packStatus`;
   - `serp.intentState`, `serp.enableIntent`, `serp.classify`;
-  - Task 5 adds `serp.runProbes`, `serp.probes` and `serp.stopProbes`.
+  - Task 5 adds `serp.runProbes`, `serp.stopProbes`, `serp.probes` and `serp.watchProbes`.
 - **Read API** (`serp-service.ts`): a `SerpService` interface the router uses, and the exported
   `SerpReadApi` subset for Phase 5 (see Interfaces).
 - **Files:**
@@ -381,7 +381,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
     the baseline;
   - bounded: 6 fetches, at most 2 at once, a private host refused, no run without the action, cancel
     on a new document (`probes-are-bounded`).
-- [ ] commit `feat(serp): indexability and AI-readiness probes`
+- [x] commit `feat(serp): indexability and AI-readiness probes`
 - [ ] Review fixes: commit `fix(serp): address probes review findings`
 
 ### Task 6: SERP and Visibility panels, palette, e2e
@@ -444,10 +444,21 @@ Stable after merge. Import the schemas from `@app/specs/...` and the types from 
   - `classifyIntent(query) → Promise<IntentAnswer>`: `IntentAnswerSchema`, either `ready` with an
     `IntentResult` or a state such as `model-missing`. It never downloads the model; only the user
     enables it;
-  - `probes(tabId) → ProbesState`: `ProbesStateSchema`, the tab's last probe run.
+  - `probes(tabId) → ProbesState`: `ProbesStateSchema` (`specs/visibility-probes.schema.ts`), the
+    tab's last probe run for the page it shows now: `idle` / `running` / `done` / `stopped`, one
+    `ProbeRow` per agent (`PROBE_AGENTS`: status, redirect hops, robots.txt verdict for its token,
+    meta robots and `X-Robots-Tag` directives general and its own, effective `noindex`, canonical,
+    bytes, word count, text hash, title), the `ProbeDiff`s against the browser baseline, the
+    robots.txt read, and when it started and finished. Read-only.
 
   Starting probes stays a user action: an agent tool must go through Phase 5's approval model and
-  call `runProbes(tabId)`, which the interface marks as fetching.
+  call `runProbes(tabId) → boolean`, which the interface marks as **fetching** (one GET per agent
+  through the `checks` lane, robots.txt from main's cache; only the active tab showing an `http(s)`
+  page; one run per tab; `true` if a run is under way).
+- **The chrome (Task 6):** the `serp.*` procedures add `serp.runProbes` / `serp.stopProbes`
+  (`{ tabId }` → boolean), `serp.probes` (`{ tabId }` → `ProbesState`) and `serp.watchProbes`
+  (`{ tabId, sinceVersion }` → `ProbesState`, a long-poll as `serp.watch`); labels, outcomes, diff
+  facts and the honesty note are `specs/visibility-probes.spec.ts` (Zod-free).
 
 ## Self-review notes
 - **Covered:**

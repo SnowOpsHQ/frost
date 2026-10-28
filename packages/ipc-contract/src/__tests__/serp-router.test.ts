@@ -1,7 +1,7 @@
 // Spec: specs/serp-service.schema.ts (SerpTabInputSchema, SerpWatchInputSchema, SerpOutlinesInputSchema,
 // SerpClassifyInputSchema, SerpTabStateSchema), specs/serp-service.spec.ts, specs/ipc-sender.spec.ts,
-// specs/browser.spec.ts (WATCH_TIMEOUT_MS)
-// Acceptance: specs/serp-overlay.feature.md (Router)
+// specs/browser.spec.ts (WATCH_TIMEOUT_MS), specs/visibility-probes.schema.ts (ProbesStateSchema)
+// Acceptance: specs/serp-overlay.feature.md (Router), specs/visibility-probes.feature.md (Router and setup)
 import { TRPCError } from '@trpc/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
@@ -11,6 +11,7 @@ import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
 import { SerpTabStateSchema, type PackStatus, type SerpTabState } from '@app/specs/serp-service.schema';
+import { ProbesStateSchema, type ProbesState } from '@app/specs/visibility-probes.schema';
 import { appRouter, createSenderPolicy, type IpcContext, type SerpService } from '../index';
 
 afterEach(() => vi.useRealTimers());
@@ -18,9 +19,11 @@ afterEach(() => vi.useRealTimers());
 const WINDOW_ID = 7;
 const PACK: PackStatus = { state: 'ready', version: 3, source: 'bundled', published: '2026-10-28', lastUpdate: null, checking: false };
 const state = (version: number): SerpTabState => ({ version, tabId: 1, serp: { status: 'not-serp', tabId: 1, url: 'https://example.com/' }, outlines: false, intent: null, pack: PACK });
+const probesState = (version: number): ProbesState => ({ version, tabId: 1, url: 'https://example.com/', status: 'idle', rows: [], diffs: [], robotsTxt: null, startedAt: null, finishedAt: null });
 
 function fakeSerp() {
   let release: ((s: SerpTabState) => void) | null = null;
+  let releaseProbes: ((s: ProbesState) => void) | null = null;
   const serp = {
     state: vi.fn((_tabId: number) => state(3)),
     watch: vi.fn((_tabId: number, since: number, signal?: AbortSignal) =>
@@ -37,8 +40,19 @@ function fakeSerp() {
     intentState: vi.fn((): IntentState => 'model-missing'),
     enableIntent: vi.fn(async (): Promise<IntentEnableOutcome> => 'ready'),
     classify: vi.fn(async (_query: string): Promise<IntentAnswer> => ({ state: 'model-missing' })),
+    runProbes: vi.fn((tabId: number) => tabId === 1),
+    stopProbes: vi.fn((tabId: number) => tabId === 1),
+    probes: vi.fn((_tabId: number) => probesState(5)),
+    watchProbes: vi.fn((_tabId: number, since: number, signal?: AbortSignal) =>
+      since < 5
+        ? Promise.resolve(probesState(5))
+        : new Promise<ProbesState>((resolve) => {
+            releaseProbes = resolve;
+            signal?.addEventListener('abort', () => resolve(probesState(5)));
+          }),
+    ),
   } satisfies SerpService;
-  return { serp, push: (s: SerpTabState) => release?.(s) };
+  return { serp, push: (s: SerpTabState) => release?.(s), pushProbes: (s: ProbesState) => releaseProbes?.(s) };
 }
 
 function ctxFor(serp: SerpService | undefined, origin: string = APP_ORIGIN): IpcContext {
@@ -74,6 +88,10 @@ const VALID_INPUT: Record<string, unknown> = {
   intentState: undefined,
   enableIntent: undefined,
   classify: { query: 'best running shoes' },
+  runProbes: { tabId: 1 },
+  stopProbes: { tabId: 1 },
+  probes: { tabId: 1 },
+  watchProbes: { tabId: 1, sinceVersion: -1 },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (serp: ReturnType<typeof fakeSerp>['serp']) => {
@@ -109,6 +127,11 @@ describe('serp router', () => {
       state: [{ tabId: 0 }, { tabId: -1 }, { tabId: '1' }, { tabId: 1, url: 'https://www.google.com/search?q=x' }, {}, undefined],
       setOutlines: [{ tabId: 1 }, { tabId: 1, on: 'yes' }, { tabId: 0, on: true }, { tabId: 1, on: true, layout: { results: 'body' } }, undefined],
       classify: [{}, { query: 1 }, { query: 'x'.repeat(10_000) }, { query: 'x', model: 'other' }, undefined],
+      // The probes take the tab alone: never a URL, a user agent or an agent list to fetch with.
+      runProbes: [{ tabId: 0 }, { tabId: 1.5 }, { tabId: '1' }, { tabId: 1, url: 'http://10.0.0.1/' }, { tabId: 1, userAgent: 'x' }, { tabId: 1, agents: ['gptbot'] }, {}, undefined],
+      stopProbes: [{ tabId: 0 }, { tabId: 1, all: true }, undefined],
+      probes: [{ tabId: -1 }, { tabId: 1, url: 'https://example.com/' }, undefined],
+      watchProbes: [{ tabId: 1 }, { tabId: 1, sinceVersion: -2 }, { tabId: 1, sinceVersion: 0, extra: 1 }, undefined],
     };
     for (const name of Object.keys(bad)) {
       for (const input of bad[name]!) {
@@ -134,6 +157,11 @@ describe('serp router', () => {
     await expect(procedure(ctx, 'enableIntent')()).resolves.toBe('ready');
     await expect(procedure(ctx, 'classify')({ query: 'best running shoes' })).resolves.toEqual({ state: 'model-missing' });
     expect(serp.classify).toHaveBeenCalledWith('best running shoes');
+    await expect(procedure(ctx, 'runProbes')({ tabId: 1 })).resolves.toBe(true);
+    await expect(procedure(ctx, 'runProbes')({ tabId: 2 })).resolves.toBe(false);
+    await expect(procedure(ctx, 'stopProbes')({ tabId: 1 })).resolves.toBe(true);
+    await expect(procedure(ctx, 'probes')({ tabId: 1 })).resolves.toEqual(probesState(5));
+    expect(ProbesStateSchema.safeParse(probesState(5)).success).toBe(true);
   });
 
   test('serp-watch-long-polls', async () => {
@@ -153,5 +181,30 @@ describe('serp router', () => {
     expect(serp.state).toHaveBeenCalledWith(1);
     const signal = serp.watch.mock.calls.at(-1)![2];
     expect(signal?.aborted).toBe(true);
+  });
+
+  test('serp-probes-procedures', async () => {
+    // Exactly the four probe procedures, each refusing a foreign sender before the service is touched (above).
+    const paths = Object.keys(appRouter._def.procedures).filter((p) => p.startsWith('serp.') && /probes/i.test(p));
+    expect(paths.sort()).toEqual(['serp.probes', 'serp.runProbes', 'serp.stopProbes', 'serp.watchProbes']);
+    const { serp, pushProbes } = fakeSerp();
+    const ctx = ctxFor(serp);
+    await procedure(ctx, 'runProbes')({ tabId: 1 });
+    expect(serp.runProbes).toHaveBeenCalledWith(1);
+    expect(serp.probes).not.toHaveBeenCalled();
+    // `watchProbes`: at once when newer, at the next change, else the current state after WATCH_TIMEOUT_MS.
+    await expect(procedure(ctx, 'watchProbes')({ tabId: 1, sinceVersion: -1 })).resolves.toMatchObject({ version: 5 });
+    const waiting = procedure(ctx, 'watchProbes')({ tabId: 1, sinceVersion: 5 });
+    await vi.waitFor(() => expect(serp.watchProbes).toHaveBeenCalledTimes(2));
+    pushProbes(probesState(6));
+    await expect(waiting).resolves.toMatchObject({ version: 6 });
+    vi.useFakeTimers();
+    const idle = procedure(ctx, 'watchProbes')({ tabId: 1, sinceVersion: 5 });
+    await vi.advanceTimersByTimeAsync(WATCH_TIMEOUT_MS);
+    await expect(idle).resolves.toMatchObject({ version: 5 });
+    expect(serp.probes).toHaveBeenCalledWith(1);
+    expect(serp.watchProbes.mock.calls.at(-1)![2]?.aborted).toBe(true);
+    // Reading never runs anything.
+    expect(serp.runProbes).toHaveBeenCalledTimes(1);
   });
 });

@@ -7,7 +7,7 @@ export type { JavascriptService } from './javascript-router';
 export type { DevtoolsService } from './devtools-service';
 export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
 export type { ChecksService } from './checks-service';
-export type { SerpReadApi, SerpService } from './serp-service';
+export type { SerpProbesService, SerpReadApi, SerpService } from './serp-service';
 export {
   createContext,
   createSenderPolicy,

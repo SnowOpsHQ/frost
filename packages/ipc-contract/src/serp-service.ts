@@ -1,14 +1,37 @@
 import type { IntentAnswer, IntentEnableOutcome, IntentState } from '@app/specs/intent-classifier.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
 import type { PackStatus, SerpState, SerpTabState } from '@app/specs/serp-service.schema';
+import type { ProbesState } from '@app/specs/visibility-probes.schema';
 
 // The SERP overlay as the `serp.*` procedures and other phases see it (Phase 3 Task 4; spec
 // `serp-service.spec.ts`, `serp-service.schema.ts`; acceptance `serp-overlay.feature.md`, Router and
-// Service). Main implements it (`apps/desktop/src/main/serp/service.ts`); this package only knows
-// the interfaces.
+// Service), and the visibility probes (Task 5; `visibility-probes.spec.ts`,
+// `visibility-probes.schema.ts`; acceptance `visibility-probes.feature.md`). Main implements it
+// (`apps/desktop/src/main/serp/service.ts`, `probes.ts`, joined in `setup.ts`); this package only
+// knows the interfaces.
+
+/** The visibility probes' part of `SerpService` (Task 5). */
+export interface SerpProbesService {
+  /**
+   * The user's "Run visibility probes" on the tab: fetches its current URL once per agent
+   * (`PROBE_AGENTS`) through the `checks` lane, robots.txt once from main's cache. Only for the
+   * active tab showing an `http(s)` page; `true` if a run is under way (started now, or already:
+   * one run per tab). **Fetches.** Never throws.
+   */
+  runProbes(tabId: number): boolean;
+  /** Stops the tab's run, keeping what it found; `true` if one was running. */
+  stopProbes(tabId: number): boolean;
+  /** The tab's run for the page it shows now (`ProbesStateSchema`; `idle` without one). Never fetches; never throws. */
+  probes(tabId: number): ProbesState;
+  /**
+   * Resolves with the tab's probes state once its `version` exceeds `sinceVersion` (at once if it
+   * already does), or when `signal` aborts. At most `MAX_PENDING_PROBE_WATCHES` wait.
+   */
+  watchProbes(tabId: number, sinceVersion: number, signal?: AbortSignal): Promise<ProbesState>;
+}
 
 /** What the `serp.*` procedures call (each one after `enforceSender`). */
-export interface SerpService {
+export interface SerpService extends SerpProbesService {
   /**
    * The tab's SERP state (`SerpTabStateSchema`): its reading of the page it shows now, whether its
    * outlines are drawn, its query's intent and the pack's status. A result page with no reading yet
@@ -48,11 +71,9 @@ export interface SerpService {
 
 /**
  * The read API for Phase 5's agent tools (stable after merge; answers Zod-typed by
- * `serp-service.schema.ts`). None of these calls fetch anything or download a model.
- *
- * Task 5 adds `probes(tabId) → ProbesState` (the tab's last probe run, read-only) and
- * `runProbes(tabId)`, which **fetches**: an agent tool calls it only through Phase 5's approval
- * model, never on its own.
+ * `serp-service.schema.ts` and `visibility-probes.schema.ts`). None of these calls fetch anything or
+ * download a model, **except `runProbes`**, which fetches on the user's behalf: an agent tool calls
+ * it only through Phase 5's approval model, never on its own.
  */
 export interface SerpReadApi {
   /**
@@ -67,4 +88,16 @@ export interface SerpReadApi {
    * enables it); never rejects.
    */
   classifyIntent(query: string): Promise<IntentAnswer>;
+  /**
+   * The tab's last probe run for the page it shows now (`ProbesStateSchema`: rows per agent, diffs
+   * against the browser baseline; `idle` without one). Read-only: never fetches; never throws.
+   */
+  probes(tabId: number): ProbesState;
+  /**
+   * **Fetches on the user's behalf**: starts the visibility probes on the tab, as the user's "Run
+   * visibility probes" does (one GET per agent through the bounded fetcher's `checks` lane, robots.txt
+   * once from main's cache; only the active tab showing an `http(s)` page; one run per tab). Phase 5
+   * must gate it behind its approval model; `true` if a run is under way. Never throws.
+   */
+  runProbes(tabId: number): boolean;
 }

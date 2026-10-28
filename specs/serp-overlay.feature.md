@@ -176,7 +176,8 @@ Procedures (each `publicProcedure.use(enforceSender).use(requireSerp)` first): `
 (`{ tabId }` → `SerpTabState`), `serp.setOutlines` (`{ tabId, on }` → whether drawn),
 `serp.packStatus` (→ `PackStatus`), `serp.checkPackUpdate` (→ `PackUpdateOutcome`),
 `serp.intentState` (→ `IntentState`), `serp.enableIntent` (→ `IntentEnableOutcome`) and
-`serp.classify` (`{ query }` → `IntentAnswer`). Task 5 adds `runProbes`, `probes` and `stopProbes`.
+`serp.classify` (`{ query }` → `IntentAnswer`). Task 5 adds `runProbes`, `stopProbes`, `probes` and
+`watchProbes` (`visibility-probes.feature.md`, `serp-probes-procedures`).
 - `serp-procedures-enforce-sender` — every `serp.*` procedure (exactly these) refuses a foreign origin, an unknown window and a subframe, with any input, before the service is touched.
 - `serp-inputs-validated` — strict inputs: a missing, non-positive or non-integer tab id, a version below −1, a non-boolean `on`, an extra field (a URL, a layout, a model), an over-long query are `BAD_REQUEST`, the service untouched.
 - `serp-without-service-fail-closed` — without the service every procedure is a masked internal error; with it, each answers the service's value.
