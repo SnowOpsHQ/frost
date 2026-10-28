@@ -205,8 +205,10 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - The fake is a deterministic keyword-based classifier for unit tests and e2e, behind the same
     interface.
 - **Runtime.**
-  - `onnxruntime-node` (MIT) in the utility process. The Core ML execution provider is tried first on
-    macOS arm64, with CPU as the fallback.
+  - `onnxruntime-node` (MIT) in the utility process, on the CPU execution provider on every platform.
+    (The plan first tried Core ML on macOS arm64; the Task 2 review dropped it: the int8 model's
+    operators fall back to CPU inside a Core ML session anyway, and another provider could drift
+    numerically from the CPU outputs the temperature was tuned on. See As built.)
   - The Forge build adds a `intent-worker` entry (`src/workers/intent/index.ts`, its own
     `vite.intent.config.ts` with `onnxruntime-node` external).
   - A packaging hook copies `onnxruntime-node` and `onnxruntime-common`, with only the target
@@ -364,11 +366,13 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - `specs/visibility-probes.feature.md`.
 - **Run.** "Run visibility probes" (the Visibility panel or the palette) starts a run on the active
   tab's current URL:
-  - each agent's GET goes through the `checks` lane, `page` the tab's URL, `userAgent` the agent's;
-  - robots.txt is read once through main's robots.txt fetcher and decided per token with
-    `@app/seo-core` `matchRobots`;
-  - the bodies are parsed in the served-HTML worker (`parseServed`), and the text hash is computed
-    there;
+  - each agent's GET goes through the SERP lane (`SERP_FETCHER_LIMITS`; the Task 5 review moved it
+    off the `checks` lane), `page` the tab's URL, `userAgent` the agent's;
+  - robots.txt is read through main's robots.txt fetcher, once per origin an agent ended on, and
+    decided per token with `@app/seo-core` `matchRobots`;
+  - the bodies are parsed in a SERP worker of the probes' own (`probe-parser.ts` driving
+    `serp-analysis.cjs`): its `probe` job reuses the served view's `parseServedHtml` by import, and
+    computes the text hash and similarity signature there;
   - results stream through `serp.probes`.
 
   A new document, Stop, a closed tab or Clear Browsing Data cancels the run.
@@ -431,8 +435,10 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
 - [x] Review fixes: commit `fix(chrome): address SERP panels review findings`
 
 ### Task 7: Release check and docs
-- [ ] Whole-branch review; `make:mac` / `verify:mac` green on the macOS runner.
-- [ ] README status, `apps/desktop/README.md` and this plan's As built: commit `docs: phase 3 serp, intent and indexability`.
+- [x] Whole-branch review; its cross-task fixes: commit
+  `fix(serp): name the SERP fetcher lane and isolate the intent self-test profile`.
+- [ ] `make:mac` / `verify:mac` green on the macOS runner.
+- [x] README status, `apps/desktop/README.md` and this plan's As built: commit `docs: phase 3 serp, intent and indexability`.
 
 ## Interfaces for other phases
 Stable after merge. Import the schemas from `@app/specs/...` and the types from `@app/ipc-contract`.
@@ -450,18 +456,269 @@ Stable after merge. Import the schemas from `@app/specs/...` and the types from 
   - `probes(tabId) → ProbesState`: `ProbesStateSchema` (`specs/visibility-probes.schema.ts`), the
     tab's last probe run for the page it shows now: `idle` / `running` / `done` / `stopped`, one
     `ProbeRow` per agent (`PROBE_AGENTS`: status, redirect hops, robots.txt verdict for its token,
-    meta robots and `X-Robots-Tag` directives general and its own, effective `noindex`, canonical,
-    bytes, word count, text hash, title), the `ProbeDiff`s against the browser baseline, the
-    robots.txt read, and when it started and finished. Read-only.
+    meta robots and `X-Robots-Tag` directives general and its own, effective `noindex` and
+    `nofollow`, canonicals, bytes, word count, text hash and similarity signature, title, and
+    whether its text was cut), the `ProbeDiff`s against the browser baseline, the robots.txt files
+    read (`robotsTxt`, with when), and when the run started and finished. Read-only.
 
   Starting probes stays a user action: an agent tool must go through Phase 5's approval model and
   call `runProbes(tabId) → boolean`, which the interface marks as **fetching** (one GET per agent
   through the SERP lane, robots.txt from main's cache; only the active tab showing an `http(s)`
   page; one run per tab; `true` if a run is under way).
+
+  `setupSerp` (`apps/desktop/src/main/serp/setup.ts`) returns it as `readApi`; nothing consumes it
+  yet. Phase 5 wires it to its agent tools.
 - **The chrome (Task 6):** the `serp.*` procedures add `serp.runProbes` / `serp.stopProbes`
   (`{ tabId }` → boolean), `serp.probes` (`{ tabId }` → `ProbesState`) and `serp.watchProbes`
   (`{ tabId, sinceVersion }` → `ProbesState`, a long-poll as `serp.watch`); labels, outcomes, diff
   facts and the honesty note are `specs/visibility-probes.spec.ts` (Zod-free).
+
+## As built
+
+Tasks 1–6 are implemented and reviewed on `phase-3/serp-intent`, each followed by a review-fix
+commit. The whole-branch review's cross-task fixes are one more commit (Task 7). What the app does
+now is in `apps/desktop/README.md`; each behaviour, with its named tests, is in the feature file
+named under each task below. Where the build departs from or adds to the plan:
+
+### Across the phase
+- **The SERP lane** (Task 5 review). Probes, "Check for selector updates" and the model download
+  use a third bounded-fetcher instance. It is created in `main/serp/setup.ts` over main's hop and
+  resolver, with `SERP_FETCHER_LIMITS` (`serp-service.spec.ts`, the `checks` lane's per-origin
+  limits) and per-origin queues of its own.
+  - The plan put them on the `checks` lane. A link check can hold both of that lane's slots on a
+    site for minutes, and a probe's deadline counts its wait in the queue, so probes timed out
+    behind it (`serp-lane-own-queues`).
+  - `FETCHER_LANES` still lists only `audit` and `checks`; `fetcher.spec.ts`'s Lanes text names the
+    third. The cost: a site can see three lanes' requests at once.
+- **Repeated headers** (Task 5 review). The bounded fetcher gains an additive `separateHeaders`
+  option, `PROBE_SEPARATE_HEADERS` = `x-robots-tag`:
+  - each named header keeps its repeated values apart, joined with `\n`;
+  - the values come from Electron's `rawHeaders`, which `netHop` now passes on;
+  - without it, `X-Robots-Tag: googlebot: nofollow` and a second `X-Robots-Tag: noindex` joined into
+    one value read as Googlebot's alone and hid everyone's `noindex`;
+  - the default is unchanged (`fetcher-separates-repeated-headers`, `seo-javascript.feature.md`).
+- **Two SERP workers of one bundle.** `serp-worker.ts` is built as `serp-analysis.cjs`, a Forge
+  entry of its own. It runs twice, each with a capped heap and a hard deadline:
+  - the readings' analysis (`serp-analyzer.ts`);
+  - the probes' parse (`probe-parser.ts`, `probe` jobs), so a slow page never holds a reading back.
+- **Thirteen panels, and no rail dot for the new ones.** SERP and Visibility come after JavaScript
+  in `SEO_PANELS`, with no audit categories, so the rail shows no dot for them. A dot is an audit
+  verdict; a reading or a probe run is an observation. Neither panel waits for the audit.
+- **Palette** (`serp-palette.ts`, one `registerPaletteActions` call; `serp` and `visibility` in
+  `FEATURE_PANEL_JUMPS`). The plan's six actions are built, plus "Hide SERP outlines" and "Stop
+  visibility probes". The palette confirms the download and the probes inline before it fetches.
+- **e2e seams.** Three, all in `PACKAGED_FORBIDDEN_SWITCHES`: `frost-e2e-serp-pack-key`,
+  `frost-e2e-serp-pack-url` (it may be `http:`; the signature, not the transport, is what makes a
+  pack trusted) and `frost-e2e-intent-fake`.
+- **The read API for Phase 5.** `setupSerp` returns `readApi` (`SerpReadApi`), but nothing consumes
+  it yet; Phase 5 wires it to its agent tools, with `runProbes` behind its approval model.
+- **Byte-exact packs.** A root `.gitattributes` marks `apps/desktop/src/main/serp/packs/*` `-text`, so
+  git never converts a signed pack's line endings; the signature covers its exact bytes.
+- **e2e certificates** (Task 6). `e2e/tls.ts`'s `derInteger` now strips leading zero bytes. A
+  random certificate serial that started with `0x00` failed with "asn1 illegal padding".
+- **No DB migrations.** These live on disk:
+  - the stored pack, a file pair under `userData/serp-selectors/`;
+  - the model, under `userData/models/all-MiniLM-L6-v2/`.
+
+  Readings, intent answers and probe runs live in memory. Clear Browsing Data drops the readings
+  and the intent answers, and cancels a probe run; it keeps the model and the stored pack.
+
+### Task 1: signed selector packs
+`specs/serp-selector-pack.feature.md`, `specs/serp-selector-pack.spec.ts`,
+`specs/serp-selector-pack.schema.ts`.
+- **Format 1, as finalised.** Task 3's review added `redirects`, `params.reject`, `notInside` and
+  `box`. Every object is strict and every list and string is capped, so a pack that needs more is a
+  new `format`, never `format: 1`. An engine has:
+  - `hosts`: exact names, at most `maxHostsPerEngine` 256 (raised in review so every country
+    domain of one engine fits);
+  - `paths`: exact pathnames, so a trailing slash counts (DuckDuckGo lists `/html` and `/html/`);
+  - `params`: the query, `gl`, `hl` and the page. An offset page parameter counts from
+    `offsetBase` 0 or 1 in steps of `perPage`, so page = (value − `offsetBase`) / `perPage` + 1
+    (Google `start` from 0, Bing `first` from 1). `params.reject` names the parameters, by
+    `values` or `except`, that make a URL another vertical;
+  - `layout`: the `results` anchor and its blocks. A block has `notInside`, the feature wrappers
+    its items are never inside, and `box`, the wrapper outlined;
+  - `redirects`: click redirects as data (path, parameter, `plain` or `bing-a1` decoding,
+    optional hosts).
+
+  The whole pack is capped at 256 KB.
+- **The bundled pack** is version 1, published 2026-10-28, signed with the real key. It covers web
+  results only:
+  - Google: 11 hosts (`www.google.com` and ten country domains), at `/search`;
+  - Bing: `www.bing.com/search`;
+  - DuckDuckGo: `duckduckgo.com/` and `html.duckduckgo.com/html`.
+
+  It was re-signed after Tasks 3 and 3's review and stays version 1, since none was published.
+- **Updates.** The pack, then its `.sig`, from `SERP_PACK_REMOTE_URL` through the SERP lane:
+  `https:` only, 10 s and 5 redirects each. The review added one retry of the pair, for when
+  `releases/latest` moved between the two requests.
+- **Signing** (`scripts/sign-selectors.mjs`). It refuses a key path inside the repo (an exact `..`
+  check, review). It checks the signature before writing it, and says whether the key is one the
+  app embeds. `--verify` checks a pack.
+
+### Task 2: on-device intent
+`specs/intent-classifier.feature.md`, `specs/intent-classifier.spec.ts`,
+`specs/intent-classifier.schema.ts`; `specs/macos-package.feature.md` (`intent-runtime-loads`).
+- **`onnxruntime-node` 1.31.1 kept, with no WASM fallback.** The macOS CI `verify:mac` passed
+  `intent-runtime-loads` with the fuses and ASAR integrity on and an ad-hoc signature. Its output:
+  `frost: intent self-test ok (provider cpu; backends cpu, webgpu, coreml; env isolated, 3 variables)`.
+- **Packaging.** `asar.unpack` (`INTENT_ASAR_UNPACK`, `*.{node,dylib,so,so.*}`) plus the
+  `packageAfterCopy` hook (`intent-runtime.ts`), because Forge's Vite plugin packages only `.vite/`:
+  - the hook copies `onnxruntime-node` and `onnxruntime-common`: each `package.json`, the CommonJS
+    `dist/` JavaScript, and only the target's binding and the one library it links. darwin-arm64
+    gets `libonnxruntime.1.dylib`; linux x64 and arm64 get `libonnxruntime.so.1`;
+  - the worker loads the runtime with a plain `require`, never the ESM loader from inside
+    `app.asar` (review);
+  - `THIRD_PARTY_NOTICES` carries both packages and ONNX Runtime's own notices.
+- **A non-empty, explicit env** (review). Electron 45 treats an empty `env` map as "not given" and
+  passes main's whole environment on.
+  - The utility process now gets `INTENT_CHILD_ENV` (`FROST_INTENT_WORKER=1`). Electron adds only
+    what its runtime needs; CI's self-test saw 3 variables.
+  - The self-test proves it: main sets `INTENT_ENV_CANARY`, and a process that sees it fails
+    (`env-inherited`).
+  - Main reads the model and vocabulary, checks them, and posts their bytes (`load`). The process
+    never opens a file or socket, and a source scan of the worker keeps those imports out.
+- **The model.**
+  - `sentence-transformers/all-MiniLM-L6-v2` (Apache-2.0), pinned to revision
+    `1110a243fdf4706b3f48f1d95db1a4f5529b4d41` by URL, sha256 and exact size;
+  - the int8 `model_qint8_arm64.onnx` (23,026,053 bytes; it runs on any CPU despite its name) and
+    `vocab.txt` (231,508 bytes), 23.3 MB in the prompt;
+  - the sha256 is checked before the atomic write and again on every load. Review: a read error
+    is `unreadable` and keeps the file; only a file read and mismatched is removed. Loads and
+    downloads share one lock.
+- **CPU only** (review; the plan tried Core ML first on macOS arm64). The int8 operators fall back
+  to CPU inside a Core ML session anyway, a query takes milliseconds, and another provider could
+  drift numerically from the CPU outputs the temperature and cue weights were tuned on.
+- **The prototype classifier.**
+  - 30 of frost's own prototype queries per label give each label a normalised centroid. The
+    query's cosine similarity to each is nudged by the plain cues (+0.03 to +0.045 per label, +0.1
+    for a bare domain), and a softmax at `INTENT_TEMPERATURE` 0.04 gives the confidence.
+  - Evaluation (`intent-model.test.ts`, run when the pinned files are cached): the plan's four clear
+    queries are right, and so are 43 of 45 evaluation queries. The test's floor is 75 %. The two
+    misses ("what is a 401k", "spanish verb conjugation") come out navigational.
+  - The temperature and the cue weights were chosen on a set that overlaps the evaluation set, so
+    this is not a held-out estimate.
+- **The self-test** (`--frost-intent-selftest`) runs before the single-instance lock. Since Task 7
+  it sets `userData` to a fresh temporary directory, removed before it exits
+  (`intent-selftest-own-profile`).
+
+### Task 3: SERP reading
+`specs/serp-overlay.feature.md` (Detection, Reading, Analysis), `specs/serp.spec.ts`,
+`specs/serp-search-params.schema.ts`, `specs/serp-snapshot.schema.ts`.
+- **Detection is exact.** Host and pathname are compared exactly, and the query must be non-blank.
+  Other verticals are refused by `params.reject` (Google's `tbm` unless empty and `udm` unless 14;
+  DuckDuckGo's `ia=news|images|videos|shopping|maps`). `SearchParams.url` is canonical: only the
+  known parameters, in order. `offset` keeps the offset parameter as given.
+- **Precedence.** Blocks are read in pack order, and an item is skipped when:
+  - its closest match of another block's container lies inside this block's container (the most
+    specific block wins);
+  - its closest `notInside` match lies inside the container;
+  - it is, or is inside, an item already taken (pack order, then document order).
+
+  A block that names a `title` takes no item without one.
+- **Reader hardening** (review).
+  - Every DOM method is taken from the world's own prototypes, so named elements cannot clobber
+    them.
+  - Each block is capped first. The items taken are then cut, in document order, to `maxResults`,
+    so the bottom of the page goes first. When organic results are cut, `organicCut` is set and
+    `ownership.complete` is `false`.
+- **Click redirects are unwrapped in the worker** (review): Google `/url`, Bing `/ck/a` (`a1` plus
+  base64url) and DuckDuckGo `/l/?uddg=`. The destination is validated again. A failed unwrap keeps
+  the link with no domain, so the engine never owns a result.
+- **Ownership** counts organic results only. Ads are paid, and their links go through the engine.
+  - Owners are registrable domains, except that a subdomain of a shared host is its own owner. The
+    private-suffix list is `SERP_OWNER_SUFFIXES` (`github.io`, `blogspot.com`, …).
+  - `complete` is `false` when organic results were cut.
+- **Google's organic results** are `a[href]:has(h3)` inside `#rso`, since `div.g` is being phased
+  out; `div.g` stays as the `box`.
+
+### Task 4: service, router and outlines
+`specs/serp-overlay.feature.md` (Service, Outlines, Router, Setup), `specs/serp-service.spec.ts`,
+`specs/serp-service.schema.ts`.
+- **Per-tab readings.** A reading is keyed by WebContents, document, URL, device and pack version.
+  `SerpState` gained `disabled`, for when the bundled pack failed verification. A pack update swaps
+  the pack live.
+- **Outlines.** They are re-read with the fixed reader so they follow the page, and draw at most
+  120 boxes. Review: they use their own world's prototypes. The paint checks the expected
+  document's URL, and every retire sends an off paint.
+- **Review fixes to the service.**
+  - Clear Browsing Data bumps a generation, so late intent answers are not kept.
+  - A dropped or overrun analysis is retried once, then left `pending`: never a false "couldn't
+    read".
+  - `setupSerp` runs after `hardenBrowseSession`.
+
+### Task 5: indexability and AI-readiness probes
+`specs/visibility-probes.feature.md`, `specs/visibility-probes.spec.ts`,
+`specs/visibility-probes.schema.ts`.
+- **Agents.**
+  - The baseline is frost's own browser user agent.
+  - Googlebot smartphone and Bingbot send the render profiles' strings with the app's Chromium
+    version.
+  - GPTBot, ClaudeBot and PerplexityBot send their strings verbatim. ClaudeBot's is marked as
+    observed, not published by its operator.
+- **Bounds.** One call per agent (6), 3 redirects each (24 requests at most), 2 at once, 5 MB and
+  10 s each, through the SERP lane (not the `checks` lane the plan named).
+- **robots.txt is reported, not obeyed** (review).
+  - Each agent is judged on its final URL, from that origin's file, which is asked once per origin
+    and never a private host's for a public page.
+  - The files read are listed with when, as served to frost.
+- **Directives.** `X-Robots-Tag` and `<meta>` are scoped per agent. The AI crawlers' operators
+  document only their robots.txt tokens, so frost's handling of their meta robots and
+  `X-Robots-Tag` rows is labelled frost's model (`PROBE_MODELLED_DIRECTIVES_NOTE`).
+- **Text.** Text similarity is a 64-value MinHash of word 3-shingles, so below 0.8 the text
+  differs (review; the plan had a sha256 only, which differs on any change). The word count may
+  differ by 10 % and bytes by 20 %. Canonical conflicts are reported, and a non-HTML answer keeps
+  its `Link` canonical.
+- **Parse.** Pages are parsed in the probes' own SERP worker (see Across the phase), not the
+  served-HTML worker the plan named. The `probe` job reuses `parseServedHtml` by import. Review:
+  Stop ends a running job and its worker.
+- **Disclosure.** One `PROBE_DISCLOSURE`, with `FETCH_DISCLOSURE`, on every surface.
+
+### Task 6: SERP and Visibility panels
+`specs/serp-panels.feature.md`.
+- **Built as planned.** The e2e suites are `e2e/serp.e2e.ts` and `e2e/visibility.e2e.ts`, sharing
+  `e2e/serp-fixtures.ts`.
+- **A model-missing e2e** (review). The test pack is installed and the intent fake is off. The chip
+  states the size, host and licence before any click; Enable is never clicked, so no model file
+  appears.
+- **Other review fixes.**
+  - The Visibility panel forgets a tab's probes when it unmounts or changes tab (`forgetProbes`), so
+    the palette never offers only Stop for a run that ended unseen.
+  - The watch loops back off exponentially on failure.
+  - The outline toggle marks its request at once.
+  - Probe tooltips are bidi-isolated.
+
+### Task 7: release check
+The whole-branch review's fixes:
+- `fetcher.spec.ts` names the SERP lane;
+- the scenarios `pack-fetch-uses-serp-lane` and `intent-model-download-uses-serp-lane` are renamed
+  from `…-checks-lane`;
+- the self-test's own profile (above);
+- the sidebar e2e's rail count follows `SEO_PANELS`.
+
+### Known limits
+Listed in `apps/desktop/README.md`:
+- **No OS sandbox.** Electron cannot apply Chromium's OS sandbox to a Node utility process. The
+  intent process is least privilege by design: bytes in, an explicit env, no `execArgv`, and no
+  file, network or Electron imports.
+- **`app.asar.unpacked` is outside ASAR integrity.** The native binding and ONNX Runtime library
+  are vouched for by the code signature and the macOS bundle seal, not the ASAR header.
+- **A user agent is not a crawler.** Probes come from the user's network and IP, are not rendered as
+  the crawler renders them, and fail any bot verification. Sites that verify bots answer the real
+  ones differently.
+- **No remote pack is published yet.** "Check for selector updates" reports `unreachable` until a
+  maintainer publishes `serp-selectors.json` and its `.sig` as a GitHub release asset.
+- **Web results of Google, Bing and DuckDuckGo only.**
+- **Selectors are unchecked against live pages.** They were written from public markup knowledge
+  and tested on frost's synthetic pages only. A live layout they miss shows "couldn't read this
+  layout", never a guess.
+- **No scheduled pack checks.** Updates are on request only.
+- **Clear Browsing Data keeps the downloaded model and the stored pack.**
+- **Repeated headers are joined** everywhere except `X-Robots-Tag` in the probes
+  (`separateHeaders`).
+- **The DNS-rebinding window** is inherited from the fetcher (`fetcher.spec.ts`), and redirect
+  schemes in the model download are checked once the answer is in. The sha256 pin is the
+  guarantee.
 
 ## Self-review notes
 - **Covered:**
@@ -471,8 +728,16 @@ Stable after merge. Import the schemas from `@app/specs/...` and the types from 
   - intent (2);
   - probes (5);
   - panels (6).
+- **Departures, recorded above:**
+  - the SERP lane (not the `checks` lane);
+  - the probes' own SERP worker (not the served-HTML worker);
+  - CPU only (not Core ML);
+  - MinHash similarity beside the text hash;
+  - robots.txt judged on each agent's final URL.
+- **Owed:** `make:mac` / `verify:mac` on this branch's head (Task 7's open box).
 - **Deferred:**
   - publishing the first remote pack as a GitHub release asset (a maintainer action with the
     private key);
   - automatic, scheduled pack checks (opt-in, later);
-  - engines beyond Google, Bing and DuckDuckGo web results.
+  - engines beyond Google, Bing and DuckDuckGo web results;
+  - wiring `SerpReadApi` to agent tools (Phase 5).

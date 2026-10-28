@@ -25,7 +25,20 @@ browser and run SEO skills.
   sidebar gains Content and JavaScript panels (eleven, with 111 rules). What the app does now:
   [`apps/desktop/README.md`](apps/desktop/README.md); the plan and how it was built:
   [`docs/plans/phase-2.5-seo-tooling.md`](docs/plans/phase-2.5-seo-tooling.md).
-- **Next:** Phase 3, SERP + intent + indexability (`docs/design/IMPLEMENTATION-PLAN.md` §4).
+- **Phase 3 — SERP, intent and indexability:** built (Tasks 1–7); its macOS release check runs on
+  the macOS CI runner. Two new sidebar panels (thirteen in all):
+  - **SERP**, on a Google, Bing or DuckDuckGo result page you load. It shows the page's composition,
+    page-1 ownership by domain, outlines of the features on the page, the tab's search parameters,
+    and an honest "couldn't read this layout" state. It reads the page with selectors that are
+    signed data, updatable without an app release.
+  - **Visibility**, which on request fetches the page as Googlebot, Bingbot and AI crawlers fetch it,
+    beside a normal browser, and marks the differences.
+
+  An optional on-device intent classifier labels queries with its confidence; its model is
+  downloaded only after you agree. The plan and how it was built:
+  [`docs/plans/phase-3-serp-intent.md`](docs/plans/phase-3-serp-intent.md).
+- **Next:** Phase 4, accounts, entitlements and telemetry (sign-in, plan gating, consent-gated
+  telemetry, a read-only Search Console connection; `docs/design/IMPLEMENTATION-PLAN.md` §4).
 
 ## Clean-room note
 frost is a **clean-room** build. It is designed from a written behavioral/design
@@ -34,7 +47,8 @@ no third-party code, bundles, or UI assets.** Third-party open-source libraries 
 only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOTICES`).
 
 ## Layout
-- `apps/desktop/` — the Electron app (main, preload, the React chrome), packaged with Electron Forge.
+- `apps/desktop/` — the Electron app (main, preload, the React chrome, the on-device intent utility
+  process), packaged with Electron Forge.
 - `packages/seo-core/` — the SEO audit engine (`@app/seo-core`): the rule catalog's checks, the
   health score, the schema, robots.txt, hreflang, page speed and security readers, the content
   report, the served-vs-rendered comparison and the link, sitemap and hreflang check readers. Pure
@@ -45,8 +59,9 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
 - `specs/` — machine-checkable spec artifacts (constants, Zod schemas, `*.feature.md` acceptance
   lists); every scenario maps to a named test.
 - `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, 8-phase roadmap).
-- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–2.5).
-- `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner.
+- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–3).
+- `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner, and
+  `scripts/sign-selectors.mjs` (`pnpm sign:selectors`, for maintainers signing a selector pack).
 
 ## Getting started
 1. Node ≥ 22.18 and pnpm 12.15.0 (`package.json#packageManager`); `pnpm install`.
