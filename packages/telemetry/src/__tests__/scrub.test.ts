@@ -1,9 +1,26 @@
-// Spec: specs/telemetry-privacy.spec.ts (SCRUB_RULES, SCRUB_RULE_IDS, MIN_LITERAL_REDACTION_CHARS,
-// LITERAL_REDACTION, APP_FRAME_PREFIX)
+// Spec: specs/telemetry-privacy.spec.ts (SCRUB_RULES, SCRUB_RULE_IDS, HOST_FILE_EXTENSIONS,
+// ONE_DOT_HOST_TLDS, MIN_LITERAL_REDACTION_CHARS, MIN_UNBOUNDED_LITERAL_CHARS, LITERAL_REDACTION,
+// APP_FRAME_PREFIX, TELEMETRY_LIMITS)
 // Acceptance: specs/telemetry.feature.md (Scrubbing)
-import { describe, expect, test } from 'vitest';
-import { APP_FRAME_PREFIX, LITERAL_REDACTION, SCRUB_RULE_IDS, SCRUB_RULES, type ScrubRuleId } from '@app/specs/telemetry-privacy.spec';
+import os from 'node:os';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import {
+  APP_FRAME_PREFIX,
+  HOST_FILE_EXTENSIONS,
+  LITERAL_REDACTION,
+  MIN_UNBOUNDED_LITERAL_CHARS,
+  ONE_DOT_HOST_TLDS,
+  SCRUB_RULE_IDS,
+  SCRUB_RULES,
+  TELEMETRY_LIMITS,
+  type ScrubRuleId,
+} from '@app/specs/telemetry-privacy.spec';
 import { appRelativeFilename, createScrubber } from '../index';
+import { machineLiterals } from '../scrub';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 /** Per rule: text containing a secret, and the secret that must not survive. */
 const EXAMPLES: Record<ScrubRuleId, [text: string, secret: string][]> = {
@@ -16,6 +33,13 @@ const EXAMPLES: Record<ScrubRuleId, [text: string, secret: string][]> = {
     ['{"api_key": "k_live_9f8e7d"}', 'k_live_9f8e7d'],
     ['Cookie: sid=abc123; theme=dark', 'sid=abc123'],
     ['refresh_token=rt-998877 expired', 'rt-998877'],
+    ['login failed: password="hunter two" for user', 'two'],
+    ["pwd='hunter two'", 'two'],
+    ['{"password":"a \\"quoted\\" secret"}', 'secret'],
+    ['passphrase=correct-horse-battery', 'correct-horse'],
+    ['sid=abc123xyz expired', 'abc123xyz'],
+    ['session: s-998877 not found', 's-998877'],
+    ['session_id=s-112233', 's-112233'],
   ],
   jwt: [['token eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxIn0.c2ln was rejected', 'eyJhbGciOiJFZERTQSJ9']],
   url: [
@@ -39,6 +63,28 @@ const EXAMPLES: Record<ScrubRuleId, [text: string, secret: string][]> = {
     ['"path":"C:\\\\Users\\\\alice\\\\AppData"', 'alice'],
     ['C:/Users/alice/Desktop', 'alice'],
     ['/root/.cache/frost', '.cache/frost'],
+    ['/Users/alice/Library/Application Support/Acme Corp/x.json', 'Acme Corp'],
+    ['~/Clients/AcmeCorp/notes.txt', 'AcmeCorp'],
+  ],
+  'abs-path': [
+    ["ENOENT: no such file or directory, open 'D:\\Clients\\AcmeCorp\\audit.csv'", 'AcmeCorp'],
+    ['"path":"D:\\\\Clients\\\\AcmeCorp"', 'AcmeCorp'],
+    ['mkdir E:/Clients/Acme Corp/2026', 'Acme Corp'],
+    ['open /mnt/data/clients/acme/report.pdf', 'acme'],
+    ['EACCES /Volumes/AcmeClientDrive/audit.csv', 'AcmeClientDrive'],
+    ['/Volumes/Acme Client Drive/audit.csv', 'Client Drive'],
+    ['copy to /run/media/bob/USB/x.txt failed', 'bob'],
+    ['share \\\\fileserver\\clients\\acme.xlsx offline', 'fileserver'],
+    ['at loadPage (/opt/frost/resources/app/out/main/index.js:10:5)', 'opt/frost'],
+  ],
+  host: [
+    ['getaddrinfo ENOTFOUND client-private-site.com', 'client-private-site'],
+    ["Hostname/IP does not match certificate's altnames: Host: acme-intranet.corp. is not in the cert's altnames", 'acme-intranet'],
+    ['see www.example.com/alice/profile for details', 'alice'],
+    ['connect to api.acme.co.uk:8443 refused', 'acme'],
+    ['ENOTFOUND acme-shop.de', 'acme-shop'],
+    ['shop.example.rs did not answer', 'example'],
+    ['read clients/acme.com/report.pdf', 'acme'],
   ],
   uuid: [['install 3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b unknown', '3f2b8c1e']],
   ipv4: [['connect ECONNREFUSED 10.0.0.12:443', '10.0.0.12']],
@@ -82,9 +128,73 @@ describe('scrubbing', () => {
       'Request timed out after 10000 ms',
       'createSessionRepository is not a function',
       'version 1.4.0-beta.2',
+      // Identifiers and file names are not host names.
+      "Unknown command 'page.reload'",
+      'browser.clear-data',
+      'console.log is not a function',
+      'net.fetch failed',
+      'Server.emit',
+      'Object.loadPage',
+      'process.processTicksAndRejections',
+      'Cannot find module index.ts',
+      'main.cjs',
+      'seo-analysis.cjs exited',
+      'vendor.min.js',
+      'app.asar',
+      'e.g. this',
+      // Relative paths, one segment, media types, dates.
+      'out/main/index.js',
+      './x/y',
+      'node_modules/@scope/pkg/index.js',
+      'node:internal/process/task_queues',
+      'text/html; charset=utf-8',
+      'and/or',
+      'on 10/28/2026',
+      'rm -rf /tmp',
     ]) {
       expect(scrub(text)).toBe(text);
     }
+  });
+
+  test('scrubbing-is-linear', () => {
+    const size = 1_000_000;
+    const shapes = ['a', '?', 'eyJ-', 'a.', 'a@', '-@', 'x@a.', '/a', ' /a', 'a/', ':', '::', '1:', '%', 'a-', 'aA1', '0', '.', '\\', 'C:', 'password ', 'Bearer ', 'token=', '"', 'www.', 'a.b.c '];
+    // Measured at under 50 ms per rule; the budget leaves room for a slow CI machine.
+    const budgetMs = 250;
+    for (const shape of shapes) {
+      const text = shape.repeat(Math.ceil(size / shape.length));
+      // Each rule on its own, on the whole megabyte (no cut first): linear in its input.
+      for (const rule of SCRUB_RULES) {
+        const start = performance.now();
+        text.replace(rule.pattern, rule.replacement);
+        const ms = performance.now() - start;
+        expect(ms, `${rule.id} on ${JSON.stringify(shape)} x ${text.length}`).toBeLessThan(budgetMs);
+      }
+      // The scrubber cuts first, so it is fast whatever the patterns.
+      const start = performance.now();
+      const scrubbed = scrub(text);
+      const ms = performance.now() - start;
+      expect(ms, `scrubber on ${JSON.stringify(shape)}`).toBeLessThan(budgetMs / 5);
+      expect(scrubbed.length).toBeLessThanOrEqual(TELEMETRY_LIMITS.maxScrubInputChars * 4);
+    }
+  });
+
+  test('scrubbing-cuts-before-and-after', () => {
+    // A secret cut in half at the input limit does not leave its first half behind.
+    const filler = 'x '.repeat(TELEMETRY_LIMITS.maxScrubInputChars / 2 - 4);
+    const scrubbed = scrub(`${filler}alice@example.com and more`);
+    expect(scrubbed).not.toContain('alice');
+    expect(scrubbed.length).toBeLessThanOrEqual(TELEMETRY_LIMITS.maxScrubInputChars);
+    // Code points are never split.
+    expect(scrub('😀'.repeat(TELEMETRY_LIMITS.maxScrubInputChars))).not.toMatch(/[\uD800-\uDBFF]$/);
+  });
+
+  test('host-rule-lists', () => {
+    // An extension is never also a one-dot host label, and both are lower-case words.
+    for (const extension of HOST_FILE_EXTENSIONS) expect(ONE_DOT_HOST_TLDS as readonly string[]).not.toContain(extension);
+    for (const word of [...HOST_FILE_EXTENSIONS, ...ONE_DOT_HOST_TLDS]) expect(word).toMatch(/^[a-z0-9]+$/);
+    for (const extension of HOST_FILE_EXTENSIONS) expect(scrub(`seo-analysis.${extension}`)).toBe(`seo-analysis.${extension}`);
+    for (const tld of ONE_DOT_HOST_TLDS) expect(scrub(`client-site.${tld}`)).toBe('[host]');
   });
 
   test('literal-redaction', () => {
@@ -97,6 +207,21 @@ describe('scrubbing', () => {
     expect(named('mail alice@example.com')).toBe('mail [email]');
     // Regex characters in a name are literal.
     expect(createScrubber({ literals: ['a.b+c'] })('x a.b+c y axbbc')).toBe(`x ${LITERAL_REDACTION} y axbbc`);
+    // A short name is only replaced as a whole word; a long one anywhere.
+    expect('ann'.length).toBeLessThan(MIN_UNBOUNDED_LITERAL_CHARS);
+    const short = createScrubber({ literals: ['ann'] });
+    expect(short('Cannot reach ann (ann.smith, ANN_2)')).toBe(`Cannot reach ${LITERAL_REDACTION} (${LITERAL_REDACTION}.smith, ${LITERAL_REDACTION}_2)`);
+    expect(short('Joanna annotated')).toBe('Joanna annotated');
+    expect(named('malice')).toBe('malice');
+    expect(createScrubber({ literals: ['alices-laptop'] })('xalices-laptopx')).toBe(`x${LITERAL_REDACTION}x`);
+    // The machine's names by default: the host name, its first label and the login name.
+    vi.spyOn(os, 'hostname').mockReturnValue('Alices-Laptop.local');
+    vi.spyOn(os, 'userInfo').mockReturnValue({ username: 'ann', uid: 1, gid: 1, shell: null, homedir: '/home/ann' });
+    expect(machineLiterals()).toEqual(expect.arrayContaining(['Alices-Laptop.local', 'Alices-Laptop', 'ann']));
+    const machine = createScrubber({ literals: machineLiterals() });
+    expect(machine('Cannot sync Alices-Laptop.local; built on Alices-Laptop by ann')).toBe(
+      `Cannot sync ${LITERAL_REDACTION}; built on ${LITERAL_REDACTION} by ${LITERAL_REDACTION}`,
+    );
   });
 
   test('frames-are-app-relative', () => {
@@ -114,6 +239,9 @@ describe('scrubbing', () => {
       ['https://example.com/alice/app.js', '[url]'],
       ['file:///home/alice/Projects/frost/apps/desktop/out/main/index.js', `${APP_FRAME_PREFIX}out/main/index.js`],
       ['<anonymous>', '<anonymous>'],
+      ['</home/alice/x.js>', '<[path]>'],
+      ['<https://example.com/alice/app.js>', '<[url]>'],
+      ['/mnt/data/3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b.js', '[id].js'],
       ['', ''],
     ];
     for (const [filename, expected] of cases) expect(appRelativeFilename(filename, root), filename).toBe(expected);
@@ -121,5 +249,11 @@ describe('scrubbing', () => {
     expect(appRelativeFilename(`${root}/out/main/index.js`, undefined)).toBe('index.js');
     // A base name is itself scrubbed.
     expect(appRelativeFilename('/tmp/3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b.js', root)).toBe('[id].js');
+    // A file is capped, and a hostile one is handled in linear time.
+    const start = performance.now();
+    const long = appRelativeFilename(`${root}/out/${'?'.repeat(500_000)}\n${'a/'.repeat(250_000)}x.js`, root);
+    expect(performance.now() - start).toBeLessThan(250);
+    expect(long.length).toBeLessThanOrEqual(TELEMETRY_LIMITS.maxFilenameChars);
+    expect(appRelativeFilename(`${root}/out/${'a'.repeat(1_000)}.js`, root).length).toBeLessThanOrEqual(TELEMETRY_LIMITS.maxFilenameChars);
   });
 });

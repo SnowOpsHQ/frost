@@ -6,7 +6,11 @@
  * Consent is checked four times: before capturing, in `beforeSend` (which also rebuilds the event
  * from the allowlists), when the transport is handed an envelope, and when the queued request is
  * about to go out. Requests wait in a small queue for the next macrotask; turning `errors` off
- * empties it and aborts the request in flight.
+ * empties it and aborts the request in flight, and starts a new consent epoch: an event captured
+ * before is dropped wherever it is in Sentry's pipeline.
+ *
+ * The transport only sends `event` items that `rebuild` produced in the current epoch (Sentry skips
+ * `beforeSend` for its own internal error reports); anything else in an envelope is dropped.
  */
 import {
   Client,
@@ -31,13 +35,15 @@ import {
   type TransportMakeRequestResponse,
 } from '@sentry/core';
 import { nodeStackLineParser } from '@sentry/core/server';
-import { SENTRY_ENVELOPE_ITEM_TYPES, TELEMETRY_LIMITS } from '@app/specs/telemetry-privacy.spec';
+import { SENTRY_ENVELOPE_ITEM_TYPES, SENTRY_EVENT_KEYS, TELEMETRY_LIMITS } from '@app/specs/telemetry-privacy.spec';
 import { osType, serviceVersion } from './otel';
 import { appRelativeFilename, cap, type Scrubber } from './scrub';
 import { httpUrl, sendOnce } from './send';
 import type { CaptureHint, Send, TelemetryResource } from './types';
 
 const TOKEN = /^[a-z0-9][a-z0-9._-]{0,47}$/;
+/** The key in a capture's hint data that carries the consent epoch it was captured in. */
+const EPOCH = 'frostConsentEpoch';
 const LEVELS: readonly SeverityLevel[] = ['fatal', 'error', 'warning'];
 
 class MinimalClient extends Client<ClientOptions> {
@@ -80,6 +86,10 @@ export class SentryChannel {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private abort = new AbortController();
   private closed = false;
+  /** Bumped at every turn-off: an event is only sent in the epoch it was captured in. */
+  private epoch = 0;
+  /** The events `rebuild` produced, and the epoch each was captured in. */
+  private readonly rebuilt = new WeakMap<object, number>();
 
   /** A channel for `dsn`, or `undefined` when it is not an `http(s)` Sentry DSN. */
   static create(options: Omit<SentryChannelOptions, 'dsn'> & { dsn: string | undefined }): SentryChannel | undefined {
@@ -117,7 +127,7 @@ export class SentryChannel {
         stackFrameVariables: false,
         frameContextLines: 0,
       },
-      beforeSend: (event, hint) => (this.sending() ? this.rebuild(event, hint) : null),
+      beforeSend: (event, hint) => (this.sending() && hint.data?.[EPOCH] === this.epoch ? this.rebuild(event, hint, this.epoch) : null),
       beforeSendLog: () => null,
       beforeSendMetric: () => null,
     });
@@ -129,7 +139,7 @@ export class SentryChannel {
     if (!this.sending()) return;
     const mechanism = { type: hint?.mechanism && TOKEN.test(hint.mechanism) ? hint.mechanism : 'generic', handled: hint?.handled ?? true };
     try {
-      this.client.captureException(error, { mechanism }, this.scope);
+      this.client.captureException(error, { mechanism, data: { [EPOCH]: this.epoch } }, this.scope);
     } catch {
       // Reporting an error never throws into the app.
     }
@@ -138,6 +148,7 @@ export class SentryChannel {
   setEnabled(on: boolean): void {
     if (on) return;
     // Off: answer every queued request without sending it, and abort the one in flight.
+    this.epoch += 1;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     for (const item of this.queue.splice(0)) item.resolve({});
@@ -145,15 +156,16 @@ export class SentryChannel {
     this.abort = new AbortController();
   }
 
-  async flush(): Promise<void> {
+  /** Sends what is queued and waits (up to `timeoutMs`) for Sentry's pipeline and the requests in flight. */
+  async flush(timeoutMs: number): Promise<void> {
     if (!this.sending()) return;
     this.drain();
-    await Promise.resolve(this.client.flush(TELEMETRY_LIMITS.sendTimeoutMs)).catch(() => undefined);
+    await Promise.resolve(this.client.flush(Math.max(1, timeoutMs))).catch(() => undefined);
   }
 
-  async shutdown(): Promise<void> {
+  /** Stops for good: drops the queue and aborts the request in flight. */
+  close(): void {
     if (this.closed) return;
-    await this.flush();
     this.closed = true;
     this.setEnabled(false);
   }
@@ -166,7 +178,7 @@ export class SentryChannel {
     const inner = createTransport(transportOptions, (request) => this.enqueue(transportOptions.url, request.body));
     return {
       send: (envelope) => {
-        const onlyEvents = this.sending() ? eventsOnly(envelope) : undefined;
+        const onlyEvents = this.sending() ? eventsOnly(envelope, (payload) => this.rebuilt.get(payload) === this.epoch) : undefined;
         return onlyEvents ? inner.send(onlyEvents) : Promise.resolve({});
       },
       flush: (timeout) => inner.flush(timeout),
@@ -206,7 +218,7 @@ export class SentryChannel {
   }
 
   /** The event as sent: rebuilt from `SENTRY_EVENT_KEYS`, every string scrubbed and capped. */
-  private rebuild(event: ErrorEvent, hint: EventHint): ErrorEvent {
+  private rebuild(event: ErrorEvent, hint: EventHint, epoch: number): ErrorEvent {
     const { scrub, appRoot, resource } = this.options;
     const text = (value: unknown, max: number) => (typeof value === 'string' ? cap(scrub(value), max) : undefined);
     const out: ErrorEvent = { type: undefined };
@@ -241,6 +253,7 @@ export class SentryChannel {
       app: { app_version: serviceVersion(resource, scrub) },
       ...(resource.runtime ? { runtime: { name: cap(scrub(resource.runtime.name), 32), version: cap(scrub(resource.runtime.version), 32) } } : {}),
     };
+    this.rebuilt.set(out, epoch);
     return out;
   }
 
@@ -258,10 +271,21 @@ export class SentryChannel {
   }
 }
 
-/** The envelope with only `SENTRY_ENVELOPE_ITEM_TYPES` items and no trace header, or `undefined` when nothing is left. */
-function eventsOnly(envelope: Envelope): Envelope | undefined {
+/**
+ * The envelope with only `SENTRY_ENVELOPE_ITEM_TYPES` items whose payload `rebuilt` accepts (each cut
+ * back to `SENTRY_EVENT_KEYS`, in case anything was added after `beforeSend`) and no trace header, or
+ * `undefined` when nothing is left.
+ */
+export function eventsOnly(envelope: Envelope, rebuilt: (payload: object) => boolean): Envelope | undefined {
   const [headers, items] = envelope;
-  const kept = (items as readonly [{ type: string }, unknown][]).filter(([itemHeader]) => (SENTRY_ENVELOPE_ITEM_TYPES as readonly string[]).includes(itemHeader.type));
+  const kept: [{ type: string }, Record<string, unknown>][] = [];
+  for (const [itemHeader, payload] of items as readonly [{ type: string }, unknown][]) {
+    if (!(SENTRY_ENVELOPE_ITEM_TYPES as readonly string[]).includes(itemHeader.type)) continue;
+    if (typeof payload !== 'object' || payload === null || !rebuilt(payload)) continue;
+    const event: Record<string, unknown> = {};
+    for (const key of SENTRY_EVENT_KEYS) if (Object.hasOwn(payload, key)) event[key] = (payload as Record<string, unknown>)[key];
+    kept.push([{ type: itemHeader.type }, event]);
+  }
   if (kept.length === 0) return undefined;
   const { trace: _trace, ...rest } = headers as Record<string, unknown>;
   return createEnvelope(rest as Envelope[0], kept as never) as Envelope;

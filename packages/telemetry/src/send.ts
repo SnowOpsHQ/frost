@@ -41,3 +41,24 @@ export function httpUrl(value: string | undefined): URL | undefined {
   }
   return url.protocol === 'https:' || url.protocol === 'http:' ? url : undefined;
 }
+
+/** The longest delay a timer takes (a longer one fires at once). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** `timeoutMs` when it is a finite, non-negative number of milliseconds (at most a timer's longest), else `fallback`. */
+export function deadlineMs(timeoutMs: unknown, fallback: number): number {
+  return typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs >= 0 ? Math.min(timeoutMs, MAX_TIMER_MS) : fallback;
+}
+
+/** Settles (never rejects) when `work` settles or after `timeoutMs`, whichever comes first. */
+export function withDeadline(work: Promise<unknown>, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    // Not `unref`ed: a caller awaiting a shutdown must get its answer even when nothing else is pending.
+    const timer = setTimeout(resolve, timeoutMs);
+    const settle = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    work.then(settle, settle);
+  });
+}

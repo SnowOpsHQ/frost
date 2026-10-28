@@ -8,7 +8,9 @@
  *   form there: allowlisted attributes, scrubbed, fixed name);
  * - batches leave `exportDelayMs` after the first queued span, or at once when a batch is full;
  * - turning off empties the queue, cancels the timer and aborts the request in flight; nothing is
- *   flushed. Turning on again starts from an empty queue.
+ *   flushed. Turning on again starts from an empty queue, and a span started before turning off is
+ *   dropped when it ends (each turn-off starts a new consent epoch; a span keeps the one it started in);
+ * - `flush` exports the batches queued when it is called, not the spans that end meanwhile.
  *
  * The resource is built here from the three `RESOURCE_ATTRIBUTE_KEYS`; no resource detector runs,
  * and the exporter never reads a span's own resource.
@@ -86,6 +88,9 @@ export class OtelChannel {
   private abort = new AbortController();
   private inFlight: Promise<void> | undefined;
   private closed = false;
+  /** Bumped at every turn-off: a span is only exported in the epoch it started in. */
+  private epoch = 0;
+  private readonly startEpochs = new WeakMap<object, number>();
 
   constructor(private readonly options: OtelChannelOptions) {
     this.scopeVersion = serviceVersion(options.resource, options.scrub);
@@ -110,6 +115,7 @@ export class OtelChannel {
     if (this.closed || !this.options.enabled()) return fn(NOOP_HANDLE);
     const parent = this.active.getStore() ?? ROOT_CONTEXT;
     const span = this.tracer.startSpan(name, { attributes: definedAttributes(attributes) }, parent);
+    this.startEpochs.set(span, this.epoch);
     const handle: SpanHandle = { setAttributes: (more) => void span.setAttributes(definedAttributes(more)) };
     const fail = () => span.setStatus({ code: SpanStatusCode.ERROR });
     let result: T;
@@ -120,8 +126,11 @@ export class OtelChannel {
       span.end();
       throw error;
     }
-    if (isPromiseLike(result)) {
-      return Promise.resolve(result).then(
+    // Only a plain promise is followed to its end (and comes back as one that settles the same way,
+    // so a rejection nobody handles is still reported as unhandled). Anything else, thenables and
+    // subclasses included, is handed back as it is.
+    if (isPlainPromise(result)) {
+      return result.then(
         (value) => {
           span.end();
           return value;
@@ -139,7 +148,8 @@ export class OtelChannel {
 
   setEnabled(on: boolean): void {
     if (on) return;
-    // Off: drop the queue and stop at once. No flush.
+    // Off: drop the queue and stop at once. No flush. Spans still running belong to the old epoch.
+    this.epoch += 1;
     this.queue = [];
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
@@ -148,22 +158,27 @@ export class OtelChannel {
     this.inFlight = undefined;
   }
 
+  /** Exports the request in flight and the batches queued now (not spans that end meanwhile); stops if turned off. */
   async flush(): Promise<void> {
-    while (this.options.enabled() && !this.closed && (this.queue.length > 0 || this.inFlight)) {
+    const epoch = this.epoch;
+    let rounds = Math.ceil(this.queue.length / TELEMETRY_LIMITS.maxExportBatch) + (this.inFlight ? 1 : 0);
+    while (rounds > 0 && epoch === this.epoch && this.options.enabled() && !this.closed && (this.queue.length > 0 || this.inFlight)) {
+      rounds -= 1;
       await this.exportNext();
     }
   }
 
-  async shutdown(): Promise<void> {
+  /** Stops for good: drops the queue, aborts the request in flight, ends nothing more. */
+  close(): void {
     if (this.closed) return;
-    await this.flush();
     this.closed = true;
     this.setEnabled(false);
-    await this.provider.shutdown().catch(() => undefined);
+    void this.provider.shutdown().catch(() => undefined);
   }
 
   private onEnd(span: ReadableSpan): void {
     if (this.closed || !this.options.enabled()) return;
+    if (this.startEpochs.get(span) !== this.epoch) return;
     if (this.queue.length >= TELEMETRY_LIMITS.maxQueuedSpans) return;
     this.queue.push(this.toOtlp(span));
     this.schedule(this.queue.length >= TELEMETRY_LIMITS.maxExportBatch ? 0 : TELEMETRY_LIMITS.exportDelayMs);
@@ -227,6 +242,7 @@ function definedAttributes(attributes: SpanAttributes): Attributes {
   return out;
 }
 
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return typeof value === 'object' && value !== null && typeof (value as { then?: unknown }).then === 'function';
+/** A native `Promise` itself (not a subclass, not a thenable, without fields of its own). */
+function isPlainPromise(value: unknown): value is Promise<unknown> {
+  return value instanceof Promise && Object.getPrototypeOf(value) === Promise.prototype && Reflect.ownKeys(value).length === 0;
 }

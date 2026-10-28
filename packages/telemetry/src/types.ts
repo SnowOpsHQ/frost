@@ -63,8 +63,20 @@ export interface CaptureHint {
   handled?: boolean;
 }
 
+/** How long `flush` or `shutdown` may take: at the deadline it gives up (shutdown drops what is left). */
+export interface FlushOptions {
+  /** Milliseconds; defaults to `TELEMETRY_LIMITS.flushTimeoutMs` (flush) or `shutdownTimeoutMs` (shutdown). */
+  timeoutMs?: number;
+}
+
 export interface Telemetry {
-  /** Runs `fn` in a span named `name` (a fixed identifier, `SPAN_NAME_PATTERN`) and returns its result; a throw or rejection marks the span an error and is rethrown. */
+  /**
+   * Runs `fn` in a span named `name` (a fixed identifier, `SPAN_NAME_PATTERN`) and returns its result
+   * as it is, on or off. A throw marks the span an error and is rethrown. A plain `Promise` ends the
+   * span when it settles (a rejection marks it an error); what comes back is then a promise that
+   * settles the same way. Any other value, thenables and promise subclasses included, comes back
+   * unchanged and the span ends when `fn` returns.
+   */
   span<T>(name: string, attributes: SpanAttributes, fn: (span: SpanHandle) => T): T;
   /** Reports an error when `errors` is on (scrubbed); otherwise does nothing. Never throws. */
   captureException(error: unknown, hint?: CaptureHint): void;
@@ -74,8 +86,12 @@ export interface Telemetry {
   consent(): TelemetryConsent;
   /** Whether this build has an endpoint (or DSN) for each channel. */
   configured(): Record<TelemetryChannel, boolean>;
-  /** Sends what is queued on the channels that are on. Never rejects. */
-  flush(): Promise<void>;
-  /** Flushes the channels that are on, then stops both; later calls do nothing. Never rejects. */
-  shutdown(): Promise<void>;
+  /** Sends what is queued (when called) on the channels that are on, until the deadline. Never rejects. */
+  flush(options?: FlushOptions): Promise<void>;
+  /**
+   * Flushes the channels that are on until the deadline (default `TELEMETRY_LIMITS.shutdownTimeoutMs`),
+   * then stops both, dropping what is still queued and aborting what is in flight. Later calls
+   * answer the first call's promise. Never rejects.
+   */
+  shutdown(options?: FlushOptions): Promise<void>;
 }

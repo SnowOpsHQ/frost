@@ -212,13 +212,22 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Spec:** `specs/telemetry-privacy.spec.ts` (`TELEMETRY_CHANNELS` `usage | errors`,
   `DEFAULT_CONSENT` both off, `SPAN_ATTRIBUTE_ALLOWLIST`, scrub patterns: URLs, emails, IPv4/IPv6,
   home-directory paths, query strings, long hex/base64 tokens) and `specs/telemetry.feature.md`.
-- **Build:** `@app/telemetry`: `createTelemetry({ consent, otel: { endpoint, send }, sentry: { dsn,
-  send } })` → `span(name, attrs, fn)`, `captureException(error)`, `setConsent(channel, on)`,
-  `shutdown()`. OTel `BasicTracerProvider` with a gated span processor (drops when off; turning off
-  discards the batch queue without flushing); OTLP/HTTP JSON export through the injected `send`.
-  Sentry through `@sentry/core` with no default integrations, `sendDefaultPii: false`, no
-  breadcrumbs, a `beforeSend` that returns `null` without consent and scrubs otherwise, and a
-  transport that re-checks consent at send time. No Electron import.
+- **Build:** `@app/telemetry`: `createTelemetry({ consent, resource, otel: { endpoint, send },
+  sentry: { dsn, send }, appRoot, redact })` → `span(name, attrs, fn)`, `captureException(error,
+  hint)`, `setConsent(channel, on)`, `consent()`, `configured()`, `flush({ timeoutMs })`,
+  `shutdown({ timeoutMs })` (deadlines `TELEMETRY_LIMITS.flushTimeoutMs` / `shutdownTimeoutMs`; at
+  shutdown's deadline the rest is dropped and requests in flight aborted). Spans from
+  `@opentelemetry/sdk-trace`'s `TracerProvider` (explicit resource, no detectors) feeding frost's own
+  gated batching processor (drops when off; turning off discards the queue without flushing and
+  starts a new consent epoch, so a span begun before is dropped) and its own OTLP/HTTP JSON writer,
+  sent through the injected `send`. Sentry through a minimal `@sentry/core` `Client` with no
+  integrations, every `dataCollection` category off (Sentry 11's replacement for `sendDefaultPii`),
+  no breadcrumbs or client reports and a private scope; a `beforeSend` that returns `null` without
+  consent and otherwise rebuilds the event from the allowlists, scrubbed; and a transport that
+  re-checks consent at send time and sends only `event` items `beforeSend` rebuilt. Scrubbing
+  (`SCRUB_RULES`, linear-time, input cut to `maxScrubInputChars` first) removes URLs, emails,
+  tokens, IDs, IPs, home and other absolute paths and bare host names, plus the machine's names. No
+  Electron import.
 - **Failing tests:** with fake transports: `nothing-sent-before-consent`,
   `off-stops-export-immediately` (queued spans and events are dropped), `on-again-resumes`,
   `events-are-scrubbed` (URL, email, path, token in messages, stack frames and attributes), only

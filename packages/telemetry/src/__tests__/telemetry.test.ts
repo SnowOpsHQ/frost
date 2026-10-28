@@ -1,7 +1,7 @@
 // Spec: specs/telemetry-privacy.spec.ts (TELEMETRY_CHANNELS, DEFAULT_CONSENT, RESOURCE_ATTRIBUTE_KEYS,
 // FORBIDDEN_RESOURCE_PREFIXES, OS_TYPE_BY_PLATFORM, SPAN_ATTRIBUTE_ALLOWLIST, SPAN_NAME_FALLBACK,
 // TELEMETRY_LIMITS, TELEMETRY_SERVICE_NAME, SENTRY_EVENT_KEYS, SENTRY_CONTEXT_ALLOWLIST,
-// SENTRY_FRAME_KEYS, APP_FRAME_PREFIX, SENTRY_ENVELOPE_ITEM_TYPES)
+// SENTRY_FRAME_KEYS, APP_FRAME_PREFIX, SENTRY_ENVELOPE_ITEM_TYPES, MIN_LITERAL_REDACTION_CHARS)
 // Acceptance: specs/telemetry.feature.md (Package)
 import os from 'node:os';
 import { getCurrentScope, getGlobalScope, getIsolationScope } from '@sentry/core';
@@ -10,6 +10,7 @@ import {
   APP_FRAME_PREFIX,
   DEFAULT_CONSENT,
   FORBIDDEN_RESOURCE_PREFIXES,
+  MIN_LITERAL_REDACTION_CHARS,
   OS_TYPE_BY_PLATFORM,
   RESOURCE_ATTRIBUTE_KEYS,
   SENTRY_CONTEXT_ALLOWLIST,
@@ -21,7 +22,13 @@ import {
   TELEMETRY_SERVICE_NAME,
 } from '@app/specs/telemetry-privacy.spec';
 import { createTelemetry, type Telemetry, type TelemetryOptions } from '../index';
+import { eventsOnly, SentryChannel } from '../sentry';
 import { attributeMap, fakeTransport, OTEL_ENDPOINT, otlpBodies, otlpSpans, parseEnvelope, RESOURCE, SENTRY_DSN, sentryEvents, tick, type FakeTransport } from './fakes';
+
+/** Let promise callbacks run without letting any timer fire. */
+async function microtasks(rounds = 100): Promise<void> {
+  for (let i = 0; i < rounds; i += 1) await Promise.resolve();
+}
 
 const created: Telemetry[] = [];
 afterEach(async () => {
@@ -33,7 +40,7 @@ afterEach(async () => {
   }
   // Undo what `events-are-scrubbed` put on Sentry's shared scopes.
   getIsolationScope().setUser(null).setTags({ page: undefined }).setExtras({ cookie: undefined }).clearBreadcrumbs();
-  getGlobalScope().setContext('device', null);
+  getGlobalScope().setContext('device', null).clearAttachments();
   getCurrentScope().setTags({ user: undefined });
 });
 
@@ -129,6 +136,30 @@ describe('telemetry consent gate', () => {
       expect(otel.calls).toHaveLength(1);
       otel.release();
     }
+    // Errors: an event already past `beforeSend`, waiting in the transport's queue, is dropped when
+    // errors is turned off (and not sent when it is turned on again).
+    {
+      const { telemetry, sentry } = setup({ otel: undefined, consent: { usage: false, errors: true } });
+      // Without turning off, the queued event leaves on the next macrotask (not before).
+      telemetry.captureException(new Error('queued, kept'));
+      await microtasks();
+      expect(sentry.calls).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sentry.calls).toHaveLength(1);
+      // Turned off while queued: never sent.
+      telemetry.captureException(new Error('queued, then off'));
+      await microtasks();
+      expect(sentry.calls).toHaveLength(1);
+      telemetry.setConsent('errors', false);
+      telemetry.setConsent('errors', true);
+      await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.exportDelayMs);
+      vi.useRealTimers();
+      await telemetry.flush();
+      await tick(20);
+      expect(sentry.calls).toHaveLength(1);
+      expect(JSON.stringify(sentryEvents(sentry))).not.toContain('queued, then off');
+      vi.useFakeTimers();
+    }
     vi.useRealTimers();
     // Errors: an event captured and not yet sent is dropped when errors is turned off.
     {
@@ -183,6 +214,18 @@ describe('telemetry consent gate', () => {
     const events = sentryEvents(sentry);
     expect(events).toHaveLength(1);
     expect(JSON.stringify(events[0])).toContain('third error');
+
+    // A span started before turning off and ending after turning on again is dropped (it belongs
+    // to the consent that was withdrawn); one started after on again is sent.
+    let finish!: () => void;
+    const early = telemetry.span('early.span', {}, () => new Promise<void>((resolve) => (finish = resolve)));
+    telemetry.setConsent('usage', false);
+    telemetry.setConsent('usage', true);
+    telemetry.span('late.span', {}, () => undefined);
+    finish();
+    await early;
+    await telemetry.flush();
+    expect(otlpSpans(otel).map((span) => span.name)).toEqual(['third.span', 'late.span']);
   });
 });
 
@@ -199,7 +242,7 @@ describe('what leaves', () => {
     getCurrentScope().setTag('user', 'alice');
 
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGljZSJ9.c2lnbmF0dXJlLXZhbHVl';
-    const message = `Failed to load https://example.com/p?q=tea for alice@example.com from /home/alice/notes/tea.txt on alice-laptop with Bearer abcdefghijklmnop and ${jwt} at 192.168.1.20`;
+    const message = `Failed to load https://example.com/p?q=tea for alice@example.com from '/home/alice/notes/tea.txt' on alice-laptop with Bearer abcdefghijklmnop and ${jwt} at 192.168.1.20`;
     const error = errorWithStack(message, [
       `loadPage (${appRoot}/out/main/index.js:10:5)`,
       'Object.<anonymous> (/Users/alice/Library/Scripts/hook.js:3:1)',
@@ -210,18 +253,66 @@ describe('what leaves', () => {
       'eval (https://example.com/alice/app.js:1:1)',
     ]);
     telemetry.captureException(error);
-    telemetry.span('seo.audit', { command: 'open alice@example.com', 'app.version': 'https://example.com/alice', outcome: 'ok' }, (span) => {
+    // A browser's errors name the sites it visits: bare host names, and paths outside the home folder.
+    const network = [
+      'getaddrinfo ENOTFOUND client-private-site.com',
+      "Host: acme-intranet.corp. is not in the cert's altnames",
+      'see www.example.com/alice/profile',
+      "open 'D:\\Clients\\AcmeCorp\\audit.csv'",
+      "open '/mnt/data/clients/acme/report.pdf'",
+      "open '/Volumes/AcmeClientDrive/audit.csv'",
+      "open '/run/media/bob/USB/x.txt'",
+      "open '\\\\fileserver\\clients\\acme.xlsx'",
+    ];
+    telemetry.captureException(new Error(network.join('; ')));
+    // Token attributes that pass their pattern but carry an ID, a host or a name are dropped; the
+    // ones left prove scrubbing did not drop everything.
+    telemetry.span('seo.audit', { command: '3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b', 'app.version': '1.4.0-alice', outcome: 'ok' }, (span) => {
       span.setAttributes({ panel: 'links' });
     });
+    telemetry.span('seo.audit', { command: 'client-private-site.com' }, () => undefined);
+    telemetry.span('seo.audit', { command: 'alice-laptop' }, () => undefined);
+    telemetry.span('seo.audit', { command: 'page.reload', 'app.version': '1.4.0-beta.2' }, () => undefined);
     await telemetry.flush();
 
     const sent = [...otel.calls, ...sentry.calls].map((call) => call.body).join('\n');
-    for (const secret of ['alice', 'example.com', 'abcdefghijklmnop', jwt, 'eyJ', '192.168.1.20', 's3cr3t', '203.0.113.9', 'u-1', '/home/', '/Users/', 'C:\\']) {
+    for (const secret of [
+      'alice',
+      'example.com',
+      'abcdefghijklmnop',
+      jwt,
+      'eyJ',
+      '192.168.1.20',
+      's3cr3t',
+      '203.0.113.9',
+      'u-1',
+      '/home/',
+      '/Users/',
+      'C:\\',
+      'client-private-site',
+      'acme',
+      'Acme',
+      'bob',
+      'fileserver',
+      '/mnt/',
+      '/Volumes/',
+      '3f2b8c1e',
+    ]) {
       expect(sent, secret).not.toContain(secret);
     }
 
-    const [event] = sentryEvents(sentry);
+    const [event, networkEvent] = sentryEvents(sentry);
     expect(event).toBeDefined();
+    const networkValue = (networkEvent!['exception'] as { values: { value: string }[] }).values[0]!.value;
+    // A host takes its path with it, to the next space (like a URL), so `see …;` loses its `;`.
+    expect(networkValue).toBe(
+      [
+        'getaddrinfo ENOTFOUND [host]; ',
+        "Host: [host]. is not in the cert's altnames; ",
+        'see [host] ',
+        "open '[path]'; open '[path]'; open '[path]'; open '[path]'; open '[path]'",
+      ].join(''),
+    );
     for (const key of Object.keys(event!)) expect(SENTRY_EVENT_KEYS).toContain(key);
     for (const key of ['request', 'user', 'server_name', 'extra', 'breadcrumbs', 'tags', 'modules', 'debug_meta', 'transaction', 'sdk']) expect(event).not.toHaveProperty(key);
     const contexts = (event!['contexts'] ?? {}) as Record<string, Record<string, unknown>>;
@@ -232,7 +323,7 @@ describe('what leaves', () => {
     expect(contexts['app']).toEqual({ app_version: RESOURCE.serviceVersion });
 
     const exception = (event!['exception'] as { values: { type: string; value: string; stacktrace: { frames: Record<string, unknown>[] } }[] }).values[0]!;
-    expect(exception.value).toContain('Failed to load [url] for [email] from [path] on [redacted] with Bearer [redacted] and [token] at [ip]');
+    expect(exception.value).toContain("Failed to load [url] for [email] from '[path]' on [redacted] with Bearer [redacted] and [token] at [ip]");
     const frames = exception.stacktrace.frames;
     for (const frame of frames) for (const key of Object.keys(frame)) expect(SENTRY_FRAME_KEYS).toContain(key);
     // Sentry orders frames outermost first.
@@ -246,8 +337,8 @@ describe('what leaves', () => {
       '[url]',
     ]);
 
-    const [span] = otlpSpans(otel);
-    expect(attributeMap(span!.attributes)).toEqual({ outcome: 'ok', panel: 'links' });
+    const spans = otlpSpans(otel);
+    expect(spans.map((span) => attributeMap(span.attributes))).toEqual([{ outcome: 'ok', panel: 'links' }, {}, {}, { command: 'page.reload', 'app.version': '1.4.0-beta.2' }]);
   });
 
   test('only-allowlisted-attributes-leave', async () => {
@@ -313,8 +404,16 @@ describe('what leaves', () => {
 
   test('resource-has-no-identifier', async () => {
     const { telemetry, otel, sentry } = setup({ consent: { usage: true, errors: true }, redact: undefined });
+    let username = '';
+    try {
+      username = os.userInfo().username;
+    } catch {
+      // No passwd entry: nothing to leak.
+    }
+    const hostname = os.hostname();
     telemetry.span('app.start', {}, () => undefined);
-    telemetry.captureException(new Error('boom'));
+    // The machine's own names are redacted by default, also when an error carries them.
+    telemetry.captureException(new Error(`boom on ${hostname} (${hostname.split('.')[0]}) as ${username}`));
     await telemetry.flush();
 
     const [body] = otlpBodies(otel);
@@ -328,15 +427,10 @@ describe('what leaves', () => {
     expect(sent).not.toContain('host.name');
     expect(sent).not.toContain('server_name');
     expect(sent).not.toContain(process.execPath);
-    const hostname = os.hostname();
-    if (hostname.length >= 4) expect(sent).not.toContain(hostname);
-    let username = '';
-    try {
-      username = os.userInfo().username;
-    } catch {
-      // No passwd entry: nothing to leak.
+    expect(sentryEvents(sentry)).toHaveLength(1);
+    for (const name of [hostname, hostname.split('.')[0]!, username]) {
+      if (name.length >= MIN_LITERAL_REDACTION_CHARS) expect(sent, 'a machine name').not.toContain(`${name}`);
     }
-    if (username.length >= 4) expect(sent).not.toContain(username);
   });
 
   test('missing-endpoint-is-noop', async () => {
@@ -439,6 +533,47 @@ describe('export formats', () => {
     expect(exception.type).toBe('Error');
     expect(exception.value).toBe('boom');
     expect(exception.mechanism).toEqual({ type: 'onuncaughtexception', handled: false });
+
+    // A non-event item (an attachment another library put on a shared scope) is dropped; the event
+    // it came with is sent.
+    getGlobalScope().addAttachment({ filename: 'notes.txt', data: 'alice private notes' });
+    telemetry.captureException(new Error('with an attachment'));
+    await telemetry.flush();
+    expect(sentry.calls).toHaveLength(2);
+    expect(parseEnvelope(sentry.calls[1]!.body).items.map((item) => item.header.type)).toEqual(['event']);
+    expect(sentry.calls[1]!.body).not.toContain('alice private notes');
+    getGlobalScope().clearAttachments();
+
+    // An event that did not go through `beforeSend` (Sentry reports its own pipeline failures as
+    // internal events, which skip it) is not one the channel rebuilt: it never leaves.
+    const direct = fakeTransport();
+    const channel = SentryChannel.create({ dsn: SENTRY_DSN, send: direct.send, resource: RESOURCE, appRoot: undefined, scrub: (text) => text, enabled: () => true })!;
+    const client = channel['client'];
+    client.captureException(new Error('internal for alice@example.com'), { data: { __sentry__: true } });
+    channel.captureException(new Error('rebuilt'), undefined);
+    await channel.flush(1_000);
+    await tick(20);
+    expect(direct.calls).toHaveLength(1);
+    expect(direct.calls[0]!.body).not.toContain('alice');
+    expect(direct.calls[0]!.body).toContain('rebuilt');
+    channel.close();
+
+    // The filter on its own: by item type (even for a payload it would accept), by payload, and
+    // each kept event cut back to `SENTRY_EVENT_KEYS`, without the trace header.
+    const accepted = { event_id: 'a'.repeat(32), level: 'error', user: { email: 'alice@example.com' } };
+    const mixed = [
+      { event_id: 'a'.repeat(32), trace: { trace_id: 'b'.repeat(32) } },
+      [
+        [{ type: 'attachment' }, accepted],
+        [{ type: 'client_report' }, accepted],
+        [{ type: 'event' }, { event_id: 'c'.repeat(32), message: 'not rebuilt' }],
+        [{ type: 'event' }, accepted],
+      ],
+    ] as unknown as Parameters<typeof eventsOnly>[0];
+    const filtered = eventsOnly(mixed, (payload) => payload === accepted)!;
+    expect(filtered[0]).toEqual({ event_id: 'a'.repeat(32) });
+    expect(filtered[1]).toEqual([[{ type: 'event' }, { event_id: 'a'.repeat(32), level: 'error' }]]);
+    expect(eventsOnly([{}, [[{ type: 'attachment' }, accepted]]] as unknown as Parameters<typeof eventsOnly>[0], () => true)).toBeUndefined();
   });
 
   test('span-runs-the-function', async () => {
@@ -452,6 +587,106 @@ describe('export formats', () => {
         }),
       ).toThrow(TypeError);
       await expect(telemetry.span('a.reject', {}, () => Promise.reject(new RangeError('async')))).rejects.toThrow(RangeError);
+      // Anything but a plain promise comes back as it is: a thenable (a query builder, say), a
+      // promise subclass or a promise with its own fields, an object.
+      const thenable = { then: (resolve: (value: number) => void) => resolve(3), where: () => thenable };
+      expect(telemetry.span('a.thenable', {}, () => thenable)).toBe(thenable);
+      class Deferred<T> extends Promise<T> {}
+      const deferred = Deferred.resolve(4);
+      expect(telemetry.span('a.subclass', {}, () => deferred)).toBe(deferred);
+      const cancellable = Object.assign(Promise.resolve(5), { cancel: () => undefined });
+      expect(telemetry.span('a.cancellable', {}, () => cancellable)).toBe(cancellable);
+      const object = { value: 6 };
+      expect(telemetry.span('a.object', {}, () => object)).toBe(object);
+      // A plain promise settles with the same value either way.
+      const plain = telemetry.span('a.plain', {}, () => Promise.resolve(7));
+      expect(Object.getPrototypeOf(plain)).toBe(Promise.prototype);
+      await expect(plain).resolves.toBe(7);
+    }
+  });
+
+  test('flush-and-shutdown-have-deadlines', async () => {
+    // A black-holed collector and Sentry endpoint: `flush` and `shutdown` still end at their deadline.
+    {
+      const { telemetry, otel, sentry } = setup({ consent: { usage: true, errors: true } });
+      otel.hold();
+      sentry.hold();
+      telemetry.span('app.start', {}, () => undefined);
+      telemetry.captureException(new Error('boom'));
+      await tick(20);
+      let started = performance.now();
+      await telemetry.flush({ timeoutMs: 50 });
+      expect(performance.now() - started).toBeLessThan(1_000);
+      expect(otel.calls).toHaveLength(1);
+      expect(sentry.calls).toHaveLength(1);
+      started = performance.now();
+      await telemetry.shutdown({ timeoutMs: 50 });
+      expect(performance.now() - started).toBeLessThan(1_000);
+      // At the deadline whatever is still in flight is aborted, and nothing leaves afterwards.
+      expect(otel.calls[0]!.signal.aborted).toBe(true);
+      expect(sentry.calls[0]!.signal.aborted).toBe(true);
+      telemetry.span('after.shutdown', {}, () => undefined);
+      telemetry.captureException(new Error('after shutdown'));
+      await telemetry.flush();
+      await tick(20);
+      expect(otel.calls).toHaveLength(1);
+      expect(sentry.calls).toHaveLength(1);
+      otel.release();
+      sentry.release();
+    }
+    // Without a deadline given, shutdown ends after `shutdownTimeoutMs`; a second call shares it.
+    {
+      vi.useFakeTimers();
+      const { telemetry, otel } = setup({ sentry: undefined, consent: { usage: true, errors: false } });
+      otel.hold();
+      telemetry.span('app.start', {}, () => undefined);
+      let done = false;
+      const shutdown = telemetry.shutdown().then(() => (done = true));
+      expect(telemetry.shutdown()).toBe(telemetry.shutdown());
+      await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.shutdownTimeoutMs - 1);
+      expect(otel.calls).toHaveLength(1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
+      expect(done).toBe(true);
+      expect(otel.calls[0]!.signal.aborted).toBe(true);
+      vi.useRealTimers();
+    }
+    // Without a usable deadline given, flush ends after `flushTimeoutMs`.
+    for (const options of [undefined, { timeoutMs: Number.NaN }, { timeoutMs: -1 }]) {
+      vi.useFakeTimers();
+      const { telemetry, otel } = setup({ sentry: undefined, consent: { usage: true, errors: false } });
+      otel.hold();
+      telemetry.span('app.start', {}, () => undefined);
+      let done = false;
+      const flushing = telemetry.flush(options).then(() => (done = true));
+      await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.flushTimeoutMs - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await flushing;
+      expect(done).toBe(true);
+      otel.release();
+      vi.useRealTimers();
+    }
+    // Flush exports what was queued when it was called: spans that keep ending meanwhile do not
+    // keep it going.
+    {
+      const { telemetry, otel } = setup({ sentry: undefined, consent: { usage: true, errors: false } });
+      const send = otel.send;
+      const busy: FakeTransport = {
+        ...otel,
+        send: (url, request) => {
+          for (let i = 0; i < TELEMETRY_LIMITS.maxExportBatch; i += 1) telemetry.span('busy.span', {}, () => undefined);
+          return send(url, request);
+        },
+      };
+      const loaded = setup({ sentry: undefined, consent: { usage: true, errors: false }, otel: { endpoint: OTEL_ENDPOINT, send: busy.send } });
+      for (let i = 0; i < TELEMETRY_LIMITS.maxExportBatch * 2; i += 1) loaded.telemetry.span('queued.span', {}, () => undefined);
+      await loaded.telemetry.flush({ timeoutMs: 60_000 });
+      expect(otel.calls.length).toBeGreaterThanOrEqual(2);
+      expect(otel.calls.length).toBeLessThanOrEqual(3);
+      loaded.telemetry.setConsent('usage', false);
+      telemetry.setConsent('usage', false);
     }
   });
 

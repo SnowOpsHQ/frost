@@ -120,29 +120,40 @@ export const SPAN_NAME_FALLBACK = 'span';
 
 /**
  * - `maxSpanNameChars`: a longer name is `SPAN_NAME_FALLBACK`;
+ * - `maxScrubInputChars`: a string is cut to this before it is scrubbed (the partial token at the
+ *   cut is dropped), so the patterns only ever see bounded text; what is scrubbed is capped again to
+ *   its own limit below;
  * - `maxMessageChars`: an error's message (after scrubbing) is cut to this;
  * - `maxTypeChars`: an error's type (its class name) is cut to this;
  * - `maxFrames`: stack frames kept per exception (the innermost);
  * - `maxExceptions`: exceptions kept per event (a cause chain);
- * - `maxFunctionChars`: a frame's function name is cut to this;
+ * - `maxFunctionChars`: a frame's function name (and module) is cut to this;
+ * - `maxFilenameChars`: a frame's file (after `appRelativeFilename`) is cut to this;
  * - `maxQueuedSpans`: spans waiting for export (more are dropped);
  * - `maxExportBatch`: spans per OTLP request;
  * - `exportDelayMs`: how long an ended span waits before its batch is exported;
  * - `maxQueuedEvents`: error envelopes waiting to be sent (more are dropped);
- * - `sendTimeoutMs`: one request's deadline (OTLP or Sentry).
+ * - `sendTimeoutMs`: one request's deadline (OTLP or Sentry);
+ * - `flushTimeoutMs`: `flush()`'s deadline when the caller gives none;
+ * - `shutdownTimeoutMs`: `shutdown()`'s deadline when the caller gives none (quitting must not hang
+ *   on an unreachable collector); at the deadline whatever is still queued or in flight is dropped.
  */
 export const TELEMETRY_LIMITS = {
   maxSpanNameChars: 64,
+  maxScrubInputChars: 16_384,
   maxMessageChars: 1_024,
   maxTypeChars: 128,
   maxFrames: 50,
   maxExceptions: 5,
   maxFunctionChars: 128,
+  maxFilenameChars: 256,
   maxQueuedSpans: 512,
   maxExportBatch: 128,
   exportDelayMs: 5_000,
   maxQueuedEvents: 30,
   sendTimeoutMs: 10_000,
+  flushTimeoutMs: 10_000,
+  shutdownTimeoutMs: 2_000,
 } as const;
 
 // ---- Scrubbing --------------------------------------------------------------------------------
@@ -154,6 +165,8 @@ export const SCRUB_RULE_IDS = [
   'url',
   'email',
   'home-path',
+  'abs-path',
+  'host',
   'uuid',
   'ipv4',
   'ipv6',
@@ -165,23 +178,79 @@ export type ScrubRuleId = (typeof SCRUB_RULE_IDS)[number];
 
 /** A run of base64 or base64url characters (the base64-token rule's alphabet). */
 const B64 = '[A-Za-z0-9+/_-]';
-/** Where a path or URL ends: whitespace, a quote, an angle bracket or a backtick. */
+/** Where a URL or a host's path ends: whitespace, a quote, an angle bracket or a backtick. */
 const STOP = '\\s"\'<>`';
+/** Where an absolute path ends: a quote, an angle bracket, a backtick or the line's end (folder names have spaces). */
+const PATH_STOP = '\\r\\n"\'<>`';
+/** One path segment (no whitespace, slash or backslash). */
+const SEGMENT = `[^${STOP}/\\\\]+`;
+
+/**
+ * File extensions that are never a host's top-level label, so `index.ts`, `main.cjs`,
+ * `seo-analysis.cjs`, `vendor.min.js` or `app.asar` are not host names. Two-letter extensions
+ * that are also country-code TLDs (`md`, `rs`, `sh`, `py` …) are left out on purpose: a host in
+ * such a TLD is scrubbed, and a file with such an extension then reads `[host]`.
+ */
+export const HOST_FILE_EXTENSIONS = [
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx', 'json', 'json5', 'map', 'node', 'wasm', 'asar',
+  'html', 'htm', 'css', 'scss', 'less', 'mdx', 'txt', 'log', 'csv', 'tsv', 'pdf', 'png', 'jpg', 'jpeg',
+  'gif', 'svg', 'webp', 'avif', 'ico', 'bmp', 'db', 'sqlite', 'sqlite3', 'lock', 'yml', 'yaml', 'toml',
+  'xml', 'ini', 'conf', 'cfg', 'env', 'bash', 'zsh', 'bat', 'cmd', 'rb', 'go', 'java', 'kt', 'swift',
+  'cpp', 'hpp', 'php', 'dll', 'dylib', 'exe', 'msi', 'dmg', 'pkg', 'deb', 'rpm', 'zip', 'gz', 'tgz',
+  'tar', 'bz2', 'xz', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'mp3', 'mp4', 'mov',
+  'wav', 'webm', 'ogg', 'woff', 'woff2', 'ttf', 'otf', 'eot', 'bak', 'tmp', 'old', 'plist', 'icns',
+] as const;
+
+/**
+ * The top-level labels that make a name with a single dot a host (`client-site.com`,
+ * `acme-intranet.corp`); any two-letter label (a country code) does too. A single-dot name with
+ * another label (`page.reload`, `console.log`, `net.fetch`) is an identifier, not a host: frost's
+ * command IDs and code names look like that. A name with two or more dots is a host whatever its
+ * last label (unless it is a `HOST_FILE_EXTENSIONS` one).
+ */
+export const ONE_DOT_HOST_TLDS = [
+  'com', 'net', 'org', 'edu', 'gov', 'mil', 'info', 'biz', 'pro', 'mobi', 'app', 'dev', 'xyz', 'site',
+  'online', 'shop', 'tech', 'cloud', 'blog', 'agency', 'studio', 'digital', 'solutions', 'company',
+  'consulting', 'law', 'corp', 'local', 'internal', 'lan', 'home', 'intranet', 'localdomain', 'localhost',
+  'test', 'example', 'invalid', 'onion', 'arpa',
+] as const;
+
+const LABEL = '[a-z0-9-]{1,63}';
+/** Not a file extension (checked where the top-level label starts). */
+const NOT_EXTENSION = `(?!(?:${HOST_FILE_EXTENSIONS.join('|')})(?![a-z0-9-]))`;
+/** A host's last label ends here: not followed by more of a name, nor by `.` and more of one. */
+const HOST_END = '(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_])';
 
 /**
  * Applied in this order to every string that leaves (an error's message and type, a frame's
- * function and module, a token-kind span attribute). Every pattern is global and is only ever
- * used with `String.prototype.replace`. Earlier rules see the raw text: a bearer token or a JWT is
- * replaced before the URL or base64 rules could split it.
+ * function, module and file, a token-kind span attribute). Every pattern is global and is only
+ * ever used with `String.prototype.replace`. Earlier rules see the raw text: a bearer token or a JWT
+ * is replaced before the URL or base64 rules could split it, an address before the host rule.
+ *
+ * Every pattern runs in time linear in its input: a pattern that scans a run of characters only
+ * starts where that run starts (a lookbehind), and the text is cut to
+ * `TELEMETRY_LIMITS.maxScrubInputChars` first anyway.
  * - `auth-header`: `Bearer|Basic|Token <credential>` (`bearer`, `basic` too; not `token`, an
  *   ordinary word in parser errors);
- * - `secret-assignment`: `password=…`, `token: …`, `api_key=…`, `authorization: …`, `cookie: …`;
+ * - `secret-assignment`: `password=…`, `pwd: …`, `passphrase=…`, `token: …`, `api_key=…`,
+ *   `authorization: …`, `cookie: …`, `sid=…`, `session=…`; a quoted value is replaced whole
+ *   (`password="hunter two"`);
  * - `jwt`: three dot-separated base64url parts starting `eyJ`;
  * - `url`: any `scheme://…` (`https:`, `app:`, `file:`, `chrome-extension:` …) and `data:`,
  *   `blob:`, `mailto:`, `javascript:`, `about:` URIs, whole;
  * - `email`: an address;
- * - `home-path`: a path in a home directory (`/home/x/…`, `/var/home/x/…`, `/Users/x/…`, `/root/…`,
- *   `C:\Users\x\…` with either slash, also JSON-escaped), whole;
+ * - `home-path`: a path in a home directory (`~/…`, `/home/x/…`, `/var/home/x/…`, `/Users/x/…`,
+ *   `/root/…`, `C:\Users\x\…` with either slash, also JSON-escaped), to the end of the path (spaces
+ *   included: up to a quote, an angle bracket, a backtick or the line's end);
+ * - `abs-path`: any other absolute path, the same way: a drive letter (`D:\…`, `D:/…`), a UNC path
+ *   (`\\server\share\…`), or a `/`-rooted path of two or more segments (`/mnt/data/…`,
+ *   `/Volumes/…`, `/run/media/…`). Relative paths (`out/main/index.js`, `./x/y`) and one segment
+ *   (`/tmp`) are kept;
+ * - `host`: a lower-case host name, as Node and Chromium print them in DNS and TLS errors
+ *   (`getaddrinfo ENOTFOUND client-site.com`, `Host: acme-intranet.corp. is not in the cert's
+ *   altnames`), with its port and path (`www.example.com/alice/profile`): two or more dots, or one dot
+ *   and a `ONE_DOT_HOST_TLDS` (or two-letter) last label; never a `HOST_FILE_EXTENSIONS` last label.
+ *   Mixed-case names (`Server.emit`, `Object.loadPage`) are code, not hosts;
  * - `uuid`: an RFC 9562 UUID (install IDs are often one);
  * - `ipv4`, `ipv6`: an address (IPv4 first, so a mapped `::ffff:a.b.c.d` loses its IPv4 part whole);
  * - `query-string`: `?key=value…` outside a URL;
@@ -192,16 +261,33 @@ export const SCRUB_RULES: readonly { readonly id: ScrubRuleId; readonly pattern:
   { id: 'auth-header', pattern: /\b(Bearer|bearer|Basic|basic|Token)\s+[A-Za-z0-9._~+/-]{8,}=*/g, replacement: '$1 [redacted]' },
   {
     id: 'secret-assignment',
-    pattern: /\b(authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|client[_-]?secret|api[_-]?key|access[_-]?token|refresh[_-]?token|token)(["']?\s*[:=]\s*["']?)[^\s"',;&]+/gi,
+    pattern:
+      /\b(authorization|proxy-authorization|cookie|set-cookie|password|passwd|pwd|passphrase|secret|client[_-]?secret|api[_-]?key|access[_-]?token|refresh[_-]?token|token|session(?:[_-]?id)?|sid)(["']?\s*[:=]\s*)(?:"(?:[^"\\\r\n]|\\.)*"?|'(?:[^'\\\r\n]|\\.)*'?|[^\s"',;&]+)/gi,
     replacement: '$1$2[redacted]',
   },
-  { id: 'jwt', pattern: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?/g, replacement: '[token]' },
-  { id: 'url', pattern: new RegExp(`\\b(?:[a-z][a-z0-9+.-]*:\\/\\/|(?:data|blob|mailto|javascript|about):)[^${STOP}]*`, 'gi'), replacement: '[url]' },
-  { id: 'email', pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, replacement: '[email]' },
+  { id: 'jwt', pattern: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?/g, replacement: '[token]' },
+  { id: 'url', pattern: new RegExp(`(?<![a-z0-9+.-])(?:[a-z][a-z0-9+.-]*:\\/\\/|(?:data|blob|mailto|javascript|about):)[^${STOP}]*`, 'gi'), replacement: '[url]' },
+  { id: 'email', pattern: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+){0,126}\.[A-Za-z]{2,}/g, replacement: '[email]' },
   {
     id: 'home-path',
-    pattern: new RegExp(`(?:\\/(?:(?:var\\/)?home|Users|root)\\/|\\b[A-Za-z]:(?:\\\\{1,2}|\\/)Users(?:\\\\{1,2}|\\/))[^${STOP}]*`, 'gi'),
+    pattern: new RegExp(`(?:(?<![\\w~])~\\/|\\/(?:(?:var\\/)?home|Users|root)\\/|(?<![A-Za-z0-9_])[A-Za-z]:(?:\\\\{1,2}|\\/)Users(?:\\\\{1,2}|\\/))[^${PATH_STOP}]*`, 'gi'),
     replacement: '[path]',
+  },
+  {
+    id: 'abs-path',
+    pattern: new RegExp(
+      `(?:(?<![\\w.~%+@:/\\\\-])\\/\\/?${SEGMENT}\\/|(?<![A-Za-z0-9_])[A-Za-z]:(?:\\\\{1,2}|\\/)|(?<![\\w\\\\])\\\\{2}(?:\\\\{2})?${SEGMENT}\\\\{1,2})[^${PATH_STOP}]*`,
+      'g',
+    ),
+    replacement: '[path]',
+  },
+  {
+    id: 'host',
+    pattern: new RegExp(
+      `(?<![A-Za-z0-9_.@%+-])(?:(?:${LABEL}\\.){2,126}${NOT_EXTENSION}[a-z]{2,63}|${LABEL}\\.${NOT_EXTENSION}(?:${ONE_DOT_HOST_TLDS.join('|')}|[a-z]{2}))${HOST_END}(?::\\d{1,5})?(?:[/?#][^${STOP}]*)?`,
+      'g',
+    ),
+    replacement: '[host]',
   },
   { id: 'uuid', pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, replacement: '[id]' },
   { id: 'ipv4', pattern: /\b\d{1,3}(?:\.\d{1,3}){3}\b/g, replacement: '[ip]' },
@@ -210,16 +296,20 @@ export const SCRUB_RULES: readonly { readonly id: ScrubRuleId; readonly pattern:
     pattern: /(?<![\w:.])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?)(?:%[\w.-]+)?(?![\w:])/gi,
     replacement: '[ip]',
   },
-  { id: 'query-string', pattern: new RegExp(`\\?[^${STOP}#]*=[^${STOP}#]*`, 'g'), replacement: '?[query]' },
+  { id: 'query-string', pattern: new RegExp(`\\?[^${STOP}#=?]*=[^${STOP}#]*`, 'g'), replacement: '?[query]' },
   { id: 'hex-token', pattern: /\b[0-9a-f]{32,}\b/gi, replacement: '[token]' },
   { id: 'base64-token', pattern: new RegExp(`(?<!${B64})(?=${B64}*\\d)(?=${B64}*[a-z])(?=${B64}*[A-Z])${B64}{32,}={0,2}`, 'g'), replacement: '[token]' },
 ];
 
 /**
- * Besides the patterns, the machine's host name and the user's login name are replaced wherever
- * they appear (when at least this long, so a one-letter name does not blank out text).
+ * Besides the patterns, the machine's host name (and its first label: `Alices-Laptop.local` and
+ * `Alices-Laptop`) and the user's login name are replaced wherever they appear, case-insensitively,
+ * when at least `MIN_LITERAL_REDACTION_CHARS` long (so a one-letter name does not blank out text).
+ * One shorter than `MIN_UNBOUNDED_LITERAL_CHARS` is only replaced as a whole word (not next to a
+ * letter or digit), so a login `ann` leaves `Cannot` alone.
  */
 export const MIN_LITERAL_REDACTION_CHARS = 3;
+export const MIN_UNBOUNDED_LITERAL_CHARS = 8;
 export const LITERAL_REDACTION = '[redacted]';
 
 // ---- Error events -----------------------------------------------------------------------------
@@ -238,7 +328,7 @@ export const SENTRY_CONTEXT_ALLOWLIST = {
   app: ['app_version'],
 } as const;
 
-/** The fields a stack frame keeps (`filename` app-relative, `function` and `module` scrubbed). */
+/** The fields a stack frame keeps (`filename` app-relative, `function` and `module` scrubbed; all capped). */
 export const SENTRY_FRAME_KEYS = ['filename', 'function', 'module', 'lineno', 'colno', 'in_app'] as const;
 
 /**
@@ -248,5 +338,9 @@ export const SENTRY_FRAME_KEYS = ['filename', 'function', 'module', 'lineno', 'c
  */
 export const APP_FRAME_PREFIX = 'app:///';
 
-/** The only Sentry envelope item type ever sent (no sessions, client reports, attachments, spans or logs). */
+/**
+ * The only Sentry envelope item type ever sent (no sessions, client reports, attachments, spans or
+ * logs), and only an event the channel rebuilt itself (Sentry skips `beforeSend` for its own
+ * internal errors; such an event is dropped at the transport).
+ */
 export const SENTRY_ENVELOPE_ITEM_TYPES = ['event'] as const;

@@ -3,17 +3,18 @@
  * acceptance `telemetry.feature.md`). Consent lives here; each channel reads it live, so turning a
  * channel off takes effect at every check point at once.
  */
-import { DEFAULT_CONSENT, TELEMETRY_CHANNELS, TelemetryConsentSchema, type TelemetryChannel, type TelemetryConsent } from '@app/specs/telemetry-privacy.spec';
+import { DEFAULT_CONSENT, TELEMETRY_CHANNELS, TELEMETRY_LIMITS, TelemetryConsentSchema, type TelemetryChannel, type TelemetryConsent } from '@app/specs/telemetry-privacy.spec';
 import { OtelChannel } from './otel';
 import { createScrubber, machineLiterals } from './scrub';
 import { SentryChannel } from './sentry';
-import { httpUrl } from './send';
+import { deadlineMs, httpUrl, withDeadline } from './send';
 import type { Telemetry, TelemetryOptions } from './types';
 
 export function createTelemetry(options: TelemetryOptions): Telemetry {
   const consent: TelemetryConsent = { ...TelemetryConsentSchema.parse(options.consent ?? DEFAULT_CONSENT) };
   const scrub = createScrubber({ literals: options.redact ?? machineLiterals() });
   let closed = false;
+  let shuttingDown: Promise<void> | undefined;
 
   const endpoint = httpUrl(options.otel?.endpoint);
   const otel =
@@ -48,13 +49,20 @@ export function createTelemetry(options: TelemetryOptions): Telemetry {
     },
     consent: () => ({ ...consent }),
     configured: () => ({ usage: otel !== undefined, errors: sentry !== undefined }),
-    async flush() {
-      await Promise.all([otel?.flush(), sentry?.flush()]).catch(() => undefined);
+    flush(flushOptions) {
+      const timeoutMs = deadlineMs(flushOptions?.timeoutMs, TELEMETRY_LIMITS.flushTimeoutMs);
+      return withDeadline(Promise.all([otel?.flush(), sentry?.flush(timeoutMs)]), timeoutMs);
     },
-    async shutdown() {
-      if (closed) return;
-      await Promise.all([otel?.shutdown(), sentry?.shutdown()]).catch(() => undefined);
-      closed = true;
+    shutdown(shutdownOptions) {
+      shuttingDown ??= (async () => {
+        const timeoutMs = deadlineMs(shutdownOptions?.timeoutMs, TELEMETRY_LIMITS.shutdownTimeoutMs);
+        await withDeadline(Promise.all([otel?.flush(), sentry?.flush(timeoutMs)]), timeoutMs);
+        // At the deadline (or once flushed): drop what is left and abort what is in flight.
+        closed = true;
+        otel?.close();
+        sentry?.close();
+      })();
+      return shuttingDown;
     },
   };
 }
