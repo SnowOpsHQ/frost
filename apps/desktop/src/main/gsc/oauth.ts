@@ -5,6 +5,7 @@ import {
   GSC_ACCESS_TOKEN_SKEW_MS,
   GSC_AUTH_FIXED_PARAMS,
   GSC_CONNECT_TIMEOUT_MS,
+  GSC_REFRESH_BACKOFF,
   GSC_SCOPE,
   type GoogleTokenResponse,
   type GscError,
@@ -31,6 +32,12 @@ import { parseJson, send, type FetchLike } from './http';
 //    expiry, refreshed `GSC_ACCESS_TOKEN_SKEW_MS` early (one refresh at a time). `invalid_grant` on a
 //    refresh ends the connection (`auth-expired`).
 // 4. `disconnect()` deletes the blob at once and revokes the refresh token (best effort).
+// 5. The connection belongs to the frost account signed in when it was made (`currentUser()`, stored
+//    as the blob's `owner`): for any other account (or none) it is not `connected` and neither token
+//    is sent. An exchange that lands after the account changed is revoked.
+// 6. A failed refresh (`network`, `invalid`) is not retried for `GSC_REFRESH_BACKOFF` (doubling).
+// 7. `dispose()` (quit) revokes a refresh token that was never written to the keychain, and answers
+//    what is still running (an exchange in flight, revocations) for the quit to wait for.
 //
 // Logs: fixed messages only (the caller's log redacts as a second line of defence; `remember` feeds it
 // every secret seen). Nothing here ever logs a URL, a body or a token.
@@ -43,6 +50,8 @@ const StoredGscSchema = z.strictObject({
   v: z.literal(1),
   refreshToken: z.string().min(1).max(4_096),
   scope: z.literal(GSC_SCOPE),
+  /** The frost account (user ID) that made the connection. */
+  owner: z.string().min(1).max(256),
 });
 
 /** An authorization code as it may arrive (printable ASCII; the listener caps its length). */
@@ -77,12 +86,16 @@ export function gscAuthorizeUrl(config: GscConfig, request: { readonly redirectU
   return `${config.endpoints.authUrl}?${query.toString()}`;
 }
 
-export type GscAuthConnectResult = 'started' | 'needs-gesture' | 'already-connected' | 'browser-failed';
+/** `no-account`: no frost account is signed in (the connection would belong to nobody). */
+export type GscAuthConnectResult = 'started' | 'needs-gesture' | 'already-connected' | 'browser-failed' | 'no-account';
 
 export interface GscAuthDeps {
   readonly config: GscConfig;
   readonly fetch: FetchLike;
-  readonly store: Pick<SecretStore, 'read' | 'write' | 'delete'>;
+  /** `persistent`: whether a write reaches the OS keychain (else the token lasts this run only). */
+  readonly store: Pick<SecretStore, 'persistent' | 'read' | 'write' | 'delete'>;
+  /** The signed-in frost account's user ID (`null`: none). The connection belongs to the one that made it. */
+  readonly currentUser: () => string | null;
   readonly startLoopback: (options: StartLoopbackOptions) => Promise<Loopback>;
   /** Opens `url` in the system browser: main passes `openExternalIfAllowed` (scheme allowlist, given the gesture verdict). */
   readonly openInBrowser: (url: string, userGesture: boolean) => boolean;
@@ -90,8 +103,10 @@ export interface GscAuthDeps {
   readonly consumeGesture: (windowId: number) => boolean;
   /** Receives fixed messages. */
   readonly log: (message: string) => void;
-  /** Hands over every secret seen (to be scrubbed from logs). */
+  /** Hands over every short-lived secret seen (codes, access tokens, nonces), to be scrubbed from logs. */
   readonly remember: (...values: string[]) => void;
+  /** Hands over long-lived secrets (refresh tokens), scrubbed for the whole run; defaults to `remember`. */
+  readonly pin?: (...values: string[]) => void;
   /** Called after each change of `connected`, `connecting` or `error`. */
   readonly onChange: () => void;
   /** Epoch ms. */
@@ -103,8 +118,16 @@ export interface GscAuthDeps {
 }
 
 export interface GscAuth {
-  /** A refresh token is held. */
+  /** A refresh token is held, for the signed-in frost account. */
   connected(): boolean;
+  /** A refresh token is held (for whichever account). */
+  held(): boolean;
+  /** The frost account the held connection belongs to, or `null`. */
+  owner(): string | null;
+  /** The frost account a pending connect is for, or `null`. */
+  pendingOwner(): string | null;
+  /** Whether the held refresh token was written to the OS keychain (else: this run only). */
+  persisted(): boolean;
   /** A connect is waiting for the browser (or its exchange). */
   connecting(): boolean;
   /** Why the last connect failed or the connection ended (cleared by the next connect). */
@@ -122,11 +145,15 @@ export interface GscAuth {
   rejectAccessToken(token: string): void;
   /** Resolves once no exchange, refresh or revocation started so far is still running. */
   whenIdle(): Promise<void>;
-  /** Drops a pending connect; answers the revocations still running (to hold the quit for), or `null`. */
+  /**
+   * Drops a pending connect and revokes a refresh token never written to the keychain; answers what is
+   * still running (exchanges, refreshes, revocations) for the quit to wait for, or `null`.
+   */
   dispose(): Promise<void> | null;
 }
 
 interface Pending {
+  readonly owner: string;
   readonly state: string;
   readonly verifier: string;
   readonly challenge: string;
@@ -138,6 +165,7 @@ const FORM_HEADERS = (): Headers => new Headers({ Accept: 'application/json', 'C
 
 export function createGscAuth(deps: GscAuthDeps): GscAuth {
   const { config, store, log, remember } = deps;
+  const pin = deps.pin ?? remember;
   const timeouts = deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs };
   const changed = (): void => {
     try {
@@ -148,6 +176,12 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
   };
 
   let refreshToken: string | null = null;
+  let owner: string | null = null;
+  let persisted = false;
+  /** Consecutive failed refreshes, and when the next may be sent. */
+  let refreshFailures = 0;
+  let retryAt = 0;
+  let lastFailure: 'network' | 'invalid' = 'network';
   let access: { readonly token: string; readonly expiresAt: number } | null = null;
   let pending: Pending | null = null;
   let error: GscError | null = null;
@@ -165,11 +199,14 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
 
   // ---- The store (never throws: a failing keychain keeps the connection for this run) ------------
 
-  const save = (token: string): void => {
+  /** Whether the token reached the keychain (a memory-only store, or a failed write: this run only). */
+  const save = (token: string, by: string): boolean => {
     try {
-      store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: token, scope: GSC_SCOPE }));
+      store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: token, scope: GSC_SCOPE, owner: by }));
+      return store.persistent;
     } catch {
       log('gsc: the connection could not be stored; kept for this run only');
+      return false;
     }
   };
   const forget = (): void => {
@@ -219,7 +256,9 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
     const parsed = StoredGscSchema.safeParse(parseJson(text));
     if (parsed.success) {
       refreshToken = parsed.data.refreshToken;
-      remember(refreshToken);
+      owner = parsed.data.owner;
+      persisted = true;
+      pin(refreshToken);
     } else {
       log('gsc: the stored connection is unreadable; discarded');
       forget();
@@ -241,6 +280,8 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
   /** The connection is over (refused refresh token, or a widened grant): nothing kept. */
   const endConnection = (why: GscError): void => {
     refreshToken = null;
+    owner = null;
+    persisted = false;
     access = null;
     refreshing = null;
     generation++;
@@ -268,7 +309,10 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
     }
     p.phase = 'exchanging';
     const result = await grant({ grant_type: 'authorization_code', code, code_verifier: p.verifier, redirect_uri: p.loopback?.redirectUri ?? '' });
-    if (result.ok) remember(result.value.access_token, result.value.refresh_token ?? '');
+    if (result.ok) {
+      remember(result.value.access_token);
+      pin(result.value.refresh_token ?? '');
+    }
     if (pending !== p) {
       // Replaced or cancelled while exchanging: what it got is not kept.
       if (result.ok) void revoke(result.value.refresh_token ?? result.value.access_token);
@@ -292,11 +336,20 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
       dropPending(p, 'exchange-failed', { closeListener: false });
       return;
     }
+    if (deps.currentUser() !== p.owner) {
+      log('gsc: the frost account changed during the connect; refused and revoked');
+      void revoke(newRefresh);
+      dropPending(p, 'exchange-failed', { closeListener: false });
+      return;
+    }
     pending = null;
     refreshToken = newRefresh;
+    owner = p.owner;
     access = { token: accessToken, expiresAt: deps.now() + expiresIn * 1000 };
+    refreshFailures = 0;
+    retryAt = 0;
     generation++;
-    save(newRefresh);
+    persisted = save(newRefresh, p.owner);
     error = null;
     log('gsc: connected');
     changed();
@@ -311,9 +364,14 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
         endConnection('auth-expired');
         return { ok: false, failure: 'auth-expired' };
       }
-      log(`gsc: refreshing the access token failed (${result.failure})`);
+      refreshFailures++;
+      lastFailure = result.failure;
+      retryAt = deps.now() + Math.min(GSC_REFRESH_BACKOFF.maxMs, GSC_REFRESH_BACKOFF.initialMs * 2 ** Math.min(refreshFailures - 1, 30));
+      log(`gsc: refreshing the access token failed (${result.failure}); backing off`);
       return { ok: false, failure: result.failure };
     }
+    refreshFailures = 0;
+    retryAt = 0;
     const value = result.value;
     remember(value.access_token);
     // The grant was checked at the exchange; a refresh cannot widen it, but one that names more is not used.
@@ -324,33 +382,59 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
       return { ok: false, failure: 'auth-expired' };
     }
     if (value.refresh_token !== undefined && value.refresh_token !== token) {
-      remember(value.refresh_token);
+      pin(value.refresh_token);
       refreshToken = value.refresh_token;
-      save(value.refresh_token);
+      persisted = save(value.refresh_token, owner ?? '');
     }
     access = { token: value.access_token, expiresAt: deps.now() + value.expires_in * 1000 };
     return { ok: true, token: value.access_token };
   };
 
+  const disconnect = async (): Promise<boolean> => {
+    if (pending) dropPending(pending, null, { closeListener: true });
+    const token = refreshToken;
+    if (token === null) return false;
+    refreshToken = null;
+    owner = null;
+    persisted = false;
+    access = null;
+    refreshing = null;
+    generation++;
+    forget();
+    error = null;
+    log('gsc: disconnected');
+    changed();
+    await revoke(token);
+    return true;
+  };
+
   return {
-    connected: () => refreshToken !== null,
+    connected: () => refreshToken !== null && owner !== null && owner === deps.currentUser(),
+    held: () => refreshToken !== null,
+    owner: () => (refreshToken === null ? null : owner),
+    pendingOwner: () => pending?.owner ?? null,
+    persisted: () => refreshToken !== null && persisted,
     connecting: () => pending !== null,
     error: () => error,
     generation: () => generation,
 
     async connect(windowId) {
       if (disposed) return 'browser-failed';
-      if (refreshToken !== null) return 'already-connected';
+      const user = deps.currentUser();
+      if (user === null) return 'no-account';
+      if (refreshToken !== null && owner === user) return 'already-connected';
       if (!deps.consumeGesture(windowId)) {
         log('gsc: connect refused without a user gesture');
         return 'needs-gesture';
       }
+      // Another account's connection is not kept alongside (normally already dropped on the account change).
+      if (refreshToken !== null) await disconnect();
       if (pending) dropPending(pending, null, { closeListener: true });
       const verifier = createVerifier();
       const challenge = challengeOf(verifier);
       const state = createState();
       remember(verifier, challenge, state);
-      const p: Pending = { state, verifier, challenge, phase: 'awaiting', loopback: null };
+      const p: Pending = { owner: user, state, verifier, challenge, phase: 'awaiting', loopback: null };
       pending = p;
       error = null;
       changed();
@@ -393,27 +477,15 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
       return true;
     },
 
-    async disconnect() {
-      if (pending) dropPending(pending, null, { closeListener: true });
-      const token = refreshToken;
-      if (token === null) return false;
-      refreshToken = null;
-      access = null;
-      refreshing = null;
-      generation++;
-      forget();
-      error = null;
-      log('gsc: disconnected');
-      changed();
-      await revoke(token);
-      return true;
-    },
+    disconnect,
 
     accessToken() {
       const token = refreshToken;
-      if (token === null) return Promise.resolve({ ok: false, failure: 'not-connected' });
+      // Another frost account's (or nobody's): neither token is sent.
+      if (token === null || owner === null || owner !== deps.currentUser()) return Promise.resolve({ ok: false, failure: 'not-connected' });
       if (access && access.expiresAt - GSC_ACCESS_TOKEN_SKEW_MS > deps.now()) return Promise.resolve({ ok: true, token: access.token });
       if (refreshing?.refreshToken === token) return refreshing.run;
+      if (refreshFailures > 0 && deps.now() < retryAt) return Promise.resolve({ ok: false, failure: lastFailure });
       const run: Promise<TokenResult> = doRefresh(token)
         .catch((): TokenResult => ({ ok: false, failure: 'invalid' }))
         .finally(() => {
@@ -434,7 +506,21 @@ export function createGscAuth(deps: GscAuthDeps): GscAuth {
     dispose() {
       disposed = true;
       if (pending) dropPending(pending, null, { closeListener: true });
-      return revoking.size === 0 ? null : Promise.allSettled([...revoking]).then(() => undefined);
+      // A grant this run cannot keep is not left alive at Google.
+      if (refreshToken !== null && !persisted) {
+        const token = refreshToken;
+        refreshToken = null;
+        owner = null;
+        access = null;
+        refreshing = null;
+        generation++;
+        log('gsc: revoking a connection kept for this run only');
+        void revoke(token);
+      }
+      if (inflight.size === 0) return null;
+      return (async () => {
+        while (inflight.size > 0) await Promise.allSettled([...inflight]);
+      })();
     },
   };
 }

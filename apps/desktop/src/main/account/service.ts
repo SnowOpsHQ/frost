@@ -74,6 +74,13 @@ export interface AccountServiceDeps {
 
 /** Main's account service: the IPC `AccountService` plus what main and tests drive. */
 export interface AccountMainService extends AccountService {
+  /**
+   * The signed-in (confirmed) account's user ID, or `null` (signed out, or a sign-in not confirmed
+   * yet). Main only: never part of an IPC answer. Search Console binds its connection to it.
+   */
+  userId(): string | null;
+  /** Calls `listener` after every change of the state (with the watchers). Answers the unsubscribe. */
+  onChange(listener: () => void): () => void;
   /** Resolves once no exchange, refresh or revocation started so far is still running. */
   whenIdle(): Promise<void>;
   /**
@@ -145,6 +152,7 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
   let version = 0;
   let disposed = false;
   const waiters: Waiter[] = [];
+  const listeners = new Set<() => void>();
   const inflight = new Set<Promise<unknown>>();
   /** Revocations still running (a quit waits for them, bounded). */
   const revoking = new Set<Promise<void>>();
@@ -194,6 +202,13 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
         if (current.version > waiter.since) {
           waiters.splice(i, 1);
           waiter.resolve(current);
+        }
+      }
+      for (const listener of [...listeners]) {
+        try {
+          listener();
+        } catch {
+          log('account: a change listener failed');
         }
       }
     });
@@ -397,6 +412,11 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
   return {
     entitlements: currentEntitlements,
     state,
+    userId: () => (status() === 'signed-in' ? (account?.user.id ?? null) : null),
+    onChange(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
     watch(sinceVersion, signal) {
       const current = state();
       if (current.version > sinceVersion || disposed) return Promise.resolve(current);
@@ -522,6 +542,7 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
       unsubscribe?.();
       if (pending) dropPending(pending, null, { closeListener: true });
       for (const waiter of waiters.splice(0)) waiter.resolve(state());
+      listeners.clear();
       return revoking.size === 0 ? null : Promise.allSettled([...revoking]).then(() => undefined);
     },
   };

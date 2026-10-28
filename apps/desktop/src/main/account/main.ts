@@ -3,7 +3,8 @@ import { app, BrowserWindow, net, safeStorage } from 'electron';
 import { SECRETS_DIR_NAME } from '@app/specs/secret-store.spec';
 import { openExternalIfAllowed, trackUserGesture } from '../security/gesture';
 import { createAccountApi } from './api-client';
-import { buildTimeAccountEnv, resolveAccountConfig } from './config';
+import { buildTimePublicEnv } from './build-config';
+import { resolveAccountConfig } from './config';
 import { createEntitlements, type EntitlementsReader } from './entitlements';
 import { createWindowGestures, type WindowGestures } from './gestures';
 import { startLoopback } from './loopback';
@@ -57,7 +58,7 @@ export async function createAccountMain(): Promise<AccountMain> {
     secretStore = memoryStore();
   }
   // Build-time values; only an unpackaged build with none baked in reads them from its environment.
-  let config = resolveAccountConfig({ isPackaged: app.isPackaged, buildTime: buildTimeAccountEnv(), runtime: process.env });
+  let config = resolveAccountConfig({ isPackaged: app.isPackaged, buildTime: buildTimePublicEnv(), runtime: process.env });
   let entitlements: Awaited<ReturnType<typeof createEntitlements>> | null = null;
   if (config !== null) {
     try {

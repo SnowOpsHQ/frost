@@ -30,10 +30,11 @@ export const GSC_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
  * The build's public Search Console values (plan "Configuration"), read like the account's
  * (`account-state.schema.ts`, `ACCOUNT_CONFIG_ENV`): baked in at build time (`import.meta.env`,
  * `envPrefix` `FROST_PUBLIC_`). The installed-app client secret is not confidential by Google's own
- * definition, but it is still never committed. **A build that has either value baked in never reads
- * the run-time environment** (for either, nor for `GSC_ENDPOINT_ENV`); only an unpackaged build with
- * neither baked in (dev, e2e) reads them from it. Both are needed: a missing or malformed one leaves
- * Search Console `unconfigured`.
+ * definition, but it is still never committed. **One rule for every public value
+ * (`build-config.spec.ts`)**: a build with any `FROST_PUBLIC_*` value baked in (Search Console's, the
+ * account's or telemetry's) reads none of them from the run-time environment, nor `GSC_ENDPOINT_ENV`;
+ * only an unpackaged build with nothing baked in (dev, e2e) does. Both are needed: a missing or
+ * malformed one leaves Search Console `unconfigured`.
  */
 export const GSC_CONFIG_ENV = {
   clientId: 'FROST_PUBLIC_GSC_CLIENT_ID',
@@ -59,7 +60,8 @@ export type GscEndpoints = { readonly [K in keyof typeof GSC_ENDPOINTS]: string 
 
 /**
  * Test fakes' endpoints (plan "Configuration", `FROST_GSC_*_URL`): read **only** by an unpackaged
- * build that reads its configuration from the run-time environment (nothing baked in). Each, when
+ * build that reads its configuration from the run-time environment (no `FROST_PUBLIC_*` value baked
+ * in at all, `runtimeOverridesAllowed`). Each, when
  * set, replaces its `GSC_ENDPOINTS` value; it must be `https:`, or `http:` on
  * `UNPACKAGED_HTTP_GSC_HOSTS`, with no credentials, query or fragment (else Search Console is
  * `unconfigured`: a refused override never falls back to Google silently).
@@ -115,8 +117,28 @@ export const GSC_CACHE_TTL_MS = 15 * 60_000;
 export const GSC_ACCESS_TOKEN_SKEW_MS = 60_000;
 /** How long a connect waits for the browser's callback (the loopback closes then). */
 export const GSC_CONNECT_TIMEOUT_MS = 10 * 60_000;
-/** On quit, a revocation still running may hold the quit at most this long. */
+/**
+ * On quit, what is still running may hold the quit at most this long: a revocation, an exchange in
+ * flight (its tokens are revoked when it lands), and the revocation of a refresh token that was never
+ * written to the keychain (memory-only, or the write failed): a grant this run cannot keep is not left
+ * alive at Google.
+ */
 export const GSC_QUIT_REVOKE_TIMEOUT_MS = 2_000;
+
+/**
+ * Calls to the Search Console API go through a token bucket: at most `burst` at once, refilled at
+ * `perSecond`. A call with no token left is not sent and answers `quota`. (The token and revoke
+ * endpoints are not counted: a revocation is never held back.) Identical reads in flight at once are
+ * merged into one call.
+ */
+export const GSC_RATE_LIMIT = { perSecond: 10, burst: 20 } as const;
+
+/**
+ * After a token refresh fails for a `network` or `invalid` reason, no refresh is tried again for
+ * `initialMs`, doubling after each further failure up to `maxMs`; calls meanwhile answer that failure
+ * without sending anything. A successful refresh (or a new connection) resets it.
+ */
+export const GSC_REFRESH_BACKOFF = { initialMs: 1_000, maxMs: 5 * 60_000 } as const;
 
 // ---- Status -------------------------------------------------------------------------------------
 
@@ -145,17 +167,28 @@ export type GscError = (typeof GSC_ERRORS)[number];
 export const GSC_CONNECT_RESULTS = ['started', 'needs-gesture', 'unconfigured', 'not-entitled', 'already-connected', 'browser-failed'] as const;
 export type GscConnectResult = (typeof GSC_CONNECT_RESULTS)[number];
 
-/** `gsc.status` / `gsc.watch` (`GscStatusSchema`): never a token, a code or an account name. */
+/**
+ * `gsc.status` / `gsc.watch` (`GscStatusSchema`): never a token, a code or an account name.
+ *
+ * **The connection belongs to the frost account that made it.** The `gsc` blob carries that
+ * account's user ID; while another account (or none) is signed in the connection is not
+ * `connected`, nothing reads with it and its tokens are never sent. Signing in as a different account
+ * disconnects it (revoked and deleted); signing out and back in as the same account keeps it.
+ */
 export interface GscStatus {
   /** This build has a Search Console client. */
   configured: boolean;
   /** The plan includes `search-console` now. */
   entitled: boolean;
-  /** A refresh token is held. */
+  /** A refresh token is held for the signed-in frost account. */
   connected: boolean;
   /** A connect is waiting for the browser. Never with `connected`. */
   connecting: boolean;
-  /** Where the refresh token is kept: the OS keychain, or this run only. */
+  /**
+   * Connected: `persistent` only if the refresh token was written to the OS keychain, else
+   * `memory-only` (no keychain, or the write failed: it lasts this run and is revoked at quit). Not
+   * connected: where a connection would be kept.
+   */
   keychain: 'persistent' | 'memory-only';
   error: GscError | null;
   version: number;
@@ -223,10 +256,13 @@ export function gscDateRange(days: number, nowMs: number): GscDateRange {
  * Why an answer has no data:
  * - `unconfigured`: no Search Console client in this build.
  * - `not-entitled`: the plan does not include `search-console` (checked before anything is sent).
- * - `not-connected`: no Google account is connected.
+ * - `not-connected`: no Google account is connected for the signed-in frost account (or the
+ *   connection changed, by a disconnect or a new connection, while the read was running: what it read
+ *   belongs to the old one and is not answered).
  * - `no-property`: no verified property covers the URL (or Google refused access to it).
  * - `auth-expired`: Google refused the credentials, even after a refresh.
- * - `quota`: Google's quota or rate limit (429, or 403 with a quota reason).
+ * - `quota`: Google's quota or rate limit (429, or 403 with a quota reason), or frost's own
+ *   (`GSC_RATE_LIMIT`: nothing was sent).
  * - `network`: Google could not be reached (no answer, timeout, 408, 5xx).
  * - `invalid`: a malformed query, or an answer that is not what the API documents.
  * - `not-a-web-page`: the URL is not `http(s)`.

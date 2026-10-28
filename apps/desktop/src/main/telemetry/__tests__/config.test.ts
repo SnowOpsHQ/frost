@@ -1,7 +1,9 @@
 // Spec: specs/telemetry-consent.schema.ts (TELEMETRY_CONFIG_ENV, UNPACKAGED_HTTP_TELEMETRY_HOSTS,
-// DSN_PUBLIC_KEY_PATTERN, DSN_PROJECT_ID_PATTERN)
+// DSN_PUBLIC_KEY_PATTERN, DSN_PROJECT_ID_PATTERN), specs/build-config.spec.ts (runtimeOverridesAllowed)
 // Acceptance: specs/telemetry.feature.md (Desktop, Configuration) · plan "Configuration"
 import { describe, expect, test } from 'vitest';
+import { ACCOUNT_CONFIG_ENV } from '@app/specs/account-state.schema';
+import { GSC_CONFIG_ENV } from '@app/specs/gsc.spec';
 import { TELEMETRY_CONFIG_ENV } from '@app/specs/telemetry-consent.schema';
 import { resolveTelemetryConfig, type TelemetryEnv } from '../config';
 
@@ -58,6 +60,9 @@ describe('telemetry configuration', () => {
       // Either one baked in: the run-time environment is ignored for both.
       expect(resolve(isPackaged, env(ENDPOINT, undefined), runtime)).toEqual({ otelEndpoint: ENDPOINT, sentryDsn: null });
       expect(resolve(isPackaged, env(undefined, DSN), runtime)).toEqual({ otelEndpoint: null, sentryDsn: DSN });
+      // Another module's value baked in pins the whole build too (build-config.spec.ts).
+      expect(resolve(isPackaged, { [ACCOUNT_CONFIG_ENV.apiBaseUrl]: 'https://api.example.test' }, runtime)).toEqual({ otelEndpoint: null, sentryDsn: null });
+      expect(resolve(isPackaged, { [GSC_CONFIG_ENV.clientSecret]: 'built-secret' }, runtime)).toEqual({ otelEndpoint: null, sentryDsn: null });
     }
   });
 

@@ -23,19 +23,29 @@ export function redactGsc(message: string): string {
 export interface RedactingLog {
   /** Writes `message` to the sink, scrubbed. */
   readonly log: (message: string) => void;
-  /** Values (of at least 6 characters) scrubbed from every later message. */
+  /** Values (of at least 6 characters) scrubbed from every later message: the latest 64 (codes, access tokens, nonces). */
   readonly remember: (...values: string[]) => void;
+  /**
+   * Long-lived values (the client secret, refresh tokens) scrubbed for the whole run, outside the cap
+   * of `remember` (a run sees only a handful of them).
+   */
+  readonly pin: (...values: string[]) => void;
 }
 
 export function createRedactingLog(sink: (message: string) => void): RedactingLog {
   const known = new Set<string>();
+  const pinned = new Set<string>();
   return {
     remember: (...values) => {
       for (const value of values) if (value.length >= 6) known.add(value);
       while (known.size > 64) known.delete(known.values().next().value as string);
     },
+    pin: (...values) => {
+      for (const value of values) if (value.length >= 6) pinned.add(value);
+    },
     log: (message) => {
       let out = message;
+      for (const secret of pinned) out = out.split(secret).join('[redacted]');
       for (const secret of known) out = out.split(secret).join('[redacted]');
       try {
         sink(redactGsc(out));

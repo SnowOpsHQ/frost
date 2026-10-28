@@ -21,12 +21,12 @@ import { EntitlementsSchema } from './entitlements-snapshot.spec';
  * The build's public account values (plan "Configuration"). Read from the build environment (Vite
  * `import.meta.env`, `envPrefix` `FROST_PUBLIC_`).
  *
- * **A build that has a value baked in never reads it from the run-time environment.** If either
- * value is baked in, the run-time environment is ignored for both (a swapped JWKS would self-sign
- * `pro`; a swapped API base would open a look-alike authorize page). Only an **unpackaged** build with
- * neither baked in (a dev or source build, which has no real keys to protect: anyone can rebuild the
- * source with their own) reads them from the run-time environment (dev, e2e). `app.isPackaged` alone
- * is not enough: it only looks at the executable's name.
+ * **One rule for every public value (`build-config.spec.ts`):** if any `FROST_PUBLIC_*` value (the
+ * account's, telemetry's or Search Console's) is baked into the build, the run-time environment is read
+ * for none of them (a swapped JWKS would self-sign `pro`; a swapped API base would open a look-alike
+ * authorize page). Only an **unpackaged** build with nothing baked in (a dev or source build, which has
+ * no real keys to protect: anyone can rebuild the source with their own) reads them from the run-time
+ * environment (dev, e2e). `app.isPackaged` alone is not enough: it only looks at the executable's name.
  */
 export const ACCOUNT_CONFIG_ENV = {
   apiBaseUrl: 'FROST_PUBLIC_API_BASE_URL',

@@ -1,7 +1,9 @@
-// Spec: specs/account-state.schema.ts (ACCOUNT_CONFIG_ENV, UNPACKAGED_HTTP_API_HOSTS), specs/entitlements-snapshot.spec.ts (EntitlementJwksSchema)
+// Spec: specs/account-state.schema.ts (ACCOUNT_CONFIG_ENV, UNPACKAGED_HTTP_API_HOSTS), specs/build-config.spec.ts (runtimeOverridesAllowed), specs/entitlements-snapshot.spec.ts (EntitlementJwksSchema)
 // Acceptance: specs/account-signin.feature.md (Configuration) · plan "Configuration"
 import { describe, expect, test } from 'vitest';
 import { ACCOUNT_CONFIG_ENV } from '@app/specs/account-state.schema';
+import { GSC_CONFIG_ENV } from '@app/specs/gsc.spec';
+import { TELEMETRY_CONFIG_ENV } from '@app/specs/telemetry-consent.schema';
 import { resolveAccountConfig, type AccountEnv } from '../config';
 
 const JWKS = { keys: [{ kty: 'OKP', crv: 'Ed25519', x: 'A'.repeat(43), kid: 'k1' }] };
@@ -59,6 +61,9 @@ describe('account configuration', () => {
       expect(resolve(isPackaged, { [ACCOUNT_CONFIG_ENV.entitlementJwks]: JWKS_TEXT }, runtime)).toBeNull();
       // Even an invalid baked-in value pins the build: no fallback to the environment.
       expect(resolve(isPackaged, env('not a url', 'not json'), runtime)).toBeNull();
+      // Another module's value baked in pins the whole build too (build-config.spec.ts).
+      expect(resolve(isPackaged, { [TELEMETRY_CONFIG_ENV.sentryDsn]: 'https://key@errors.example.test/1' }, env('http://127.0.0.1:9999'))).toBeNull();
+      expect(resolve(isPackaged, { [GSC_CONFIG_ENV.clientId]: 'built-client-id' }, env('http://127.0.0.1:9999'))).toBeNull();
     }
   });
 

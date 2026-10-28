@@ -110,6 +110,7 @@ test.afterAll(async () => {
     expect(printed).not.toContain(secret);
   }
   expect(answered).not.toContain(FAKE_GSC_CLIENT_SECRET);
+  expect(printed).not.toContain(FAKE_GSC_CLIENT_SECRET);
 });
 
 test('gsc-connect-needs-gesture', async () => {

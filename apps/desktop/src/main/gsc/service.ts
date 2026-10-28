@@ -3,6 +3,7 @@ import {
   GSC_CACHE_TTL_MS,
   GSC_DATE_PATTERN,
   GSC_LIMITS,
+  GSC_RATE_LIMIT,
   GscPerformanceAnswerSchema,
   GscPerformanceQuerySchema,
   GscQueriesAnswerSchema,
@@ -42,8 +43,12 @@ import { createRedactingLog } from './redact';
 //   before anything is sent. `disconnect` always works.
 // - Never throws: every answer is `ok` or `unavailable` with a reason, in the order the spec gives.
 // - Ranges end `GSC_DATA_LAG_DAYS` before today's UTC date (`gscDateRange`).
+// - The connection belongs to the frost account that made it (`userId()`): another account's is never
+//   read with, and is disconnected (revoked, deleted) when a different account signs in.
 // - The property list and each `ok` answer are kept `GSC_CACHE_TTL_MS` per key; a new connection or a
-//   disconnect clears them, and a read that finishes after one keeps nothing.
+//   disconnect clears them, and a read whose connection changed while it waited answers
+//   `not-connected` (never the old connection's data) and keeps nothing.
+// - Identical reads in flight are merged; API calls pass a token bucket (`GSC_RATE_LIMIT`).
 // - `watch` long-polls the status (the chrome's Settings and panel).
 
 export interface GscServiceDeps {
@@ -55,6 +60,10 @@ export interface GscServiceDeps {
   readonly entitled: () => boolean;
   /** Subscribes to entitlement changes (so watchers learn `entitled` changed); answers the unsubscribe. */
   readonly onEntitlementsChange?: (listener: () => void) => () => void;
+  /** The signed-in frost account's user ID, or `null` (main: the account service's `userId()`). */
+  readonly userId: () => string | null;
+  /** Subscribes to account changes (sign-in, sign-out); answers the unsubscribe. */
+  readonly onAccountChange?: (listener: () => void) => () => void;
   readonly startLoopback: (options: StartLoopbackOptions) => Promise<Loopback>;
   /** Opens `url` in the system browser: main passes `openExternalIfAllowed`. */
   readonly openInBrowser: (url: string, userGesture: boolean) => boolean;
@@ -145,8 +154,16 @@ export function totalsOf(rows: readonly GscPerformanceRow[]): GscTotals {
 export function createGscService(deps: GscServiceDeps): GscMainService {
   const { config, store } = deps;
   const now = deps.now ?? (() => Date.now());
-  const { log, remember } = createRedactingLog(deps.log);
-  if (config) remember(config.clientSecret);
+  const { log, remember, pin } = createRedactingLog(deps.log);
+  if (config) pin(config.clientSecret);
+  const currentUser = (): string | null => {
+    try {
+      const id = deps.userId();
+      return typeof id === 'string' && id !== '' ? id : null;
+    } catch {
+      return null;
+    }
+  };
 
   let version = 0;
   let disposed = false;
@@ -170,8 +187,10 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
           startLoopback: deps.startLoopback,
           openInBrowser: deps.openInBrowser,
           consumeGesture: deps.consumeGesture,
+          currentUser,
           log,
           remember,
+          pin,
           onChange: () => bump(),
           now,
         });
@@ -182,7 +201,8 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
     entitled: isEntitled(),
     connected: auth?.connected() ?? false,
     connecting: auth?.connecting() ?? false,
-    keychain: store.persistent ? 'persistent' : 'memory-only',
+    // Connected: where the refresh token really is; else where a connection would be kept.
+    keychain: (auth?.connected() ? auth.persisted() : store.persistent) ? 'persistent' : 'memory-only',
     error: auth?.error() ?? null,
     version,
   });
@@ -202,18 +222,40 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
     });
   }
 
-  let lastEntitled = isEntitled();
-  let unsubscribe: (() => void) | undefined;
-  try {
-    unsubscribe = deps.onEntitlementsChange?.(() => {
-      const entitled = isEntitled();
-      if (entitled === lastEntitled) return;
-      lastEntitled = entitled;
-      bump();
-    });
-  } catch {
-    log('gsc: entitlement changes could not be followed');
+  /**
+   * The signed-in frost account changed: another account's connection (or connect) is dropped, revoked
+   * and deleted; signed out, it is kept (unused) for when the same account signs in again.
+   */
+  const followAccount = (): void => {
+    if (!auth) return;
+    const user = currentUser();
+    if (user === null) return;
+    if (auth.connecting() && auth.pendingOwner() !== user) void auth.cancelConnect();
+    if (auth.held() && auth.owner() !== user) {
+      log('gsc: another frost account signed in; the old connection is revoked');
+      void auth.disconnect().catch(() => undefined);
+    }
+  };
+
+  const seen = (): string => `${isEntitled()}|${auth?.connected() ?? false}`;
+  let lastSeen = seen();
+  const onExternalChange = (): void => {
+    followAccount();
+    const now = seen();
+    if (now === lastSeen) return;
+    lastSeen = now;
+    bump();
+  };
+  const unsubscribes: (() => void)[] = [];
+  for (const subscribe of [deps.onEntitlementsChange, deps.onAccountChange]) {
+    try {
+      const off = subscribe?.(onExternalChange);
+      if (off) unsubscribes.push(off);
+    } catch {
+      log('gsc: account changes could not be followed');
+    }
   }
+  followAccount();
 
   // ---- The cache --------------------------------------------------------------------------------
 
@@ -246,6 +288,30 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
     while (cache.size > GSC_LIMITS.maxCacheEntries) cache.delete(cache.keys().next().value as string);
   };
 
+  // ---- Merging and rate ---------------------------------------------------------------------------
+
+  /** Identical reads in flight (same key, same connection) share one call. */
+  const running = new Map<string, Promise<unknown>>();
+  const merged = <T>(key: string, work: () => Promise<T>): Promise<T> => {
+    const known = running.get(key);
+    if (known) return known as Promise<T>;
+    const run = work().finally(() => running.delete(key));
+    running.set(key, run);
+    return run;
+  };
+
+  /** The API's token bucket (`GSC_RATE_LIMIT`), on the injected clock. */
+  let bucket: number = GSC_RATE_LIMIT.burst;
+  let filledAt = now();
+  const takeToken = (): boolean => {
+    const at = now();
+    if (at > filledAt) bucket = Math.min(GSC_RATE_LIMIT.burst, bucket + ((at - filledAt) / 1000) * GSC_RATE_LIMIT.perSecond);
+    filledAt = at;
+    if (bucket < 1) return false;
+    bucket -= 1;
+    return true;
+  };
+
   // ---- Reads ------------------------------------------------------------------------------------
 
   /** The first reason nothing can be read (before any input is looked at), or `null`. */
@@ -256,13 +322,24 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
     return null;
   };
 
-  /** Calls Google with a live access token; a 401 forgets it, refreshes and retries once. */
-  const withToken = async <T>(run: (token: string) => Promise<GscApiResult<T>>): Promise<Read<T>> => {
+  /**
+   * Calls Google with a live access token; a 401 forgets it, refreshes and retries once. If the
+   * connection changed (`generation`) or is no longer the signed-in account's while it waited, the
+   * answer is `not-connected`: it read for another connection.
+   */
+  const withToken = async <T>(generation: number, run: (token: string) => Promise<GscApiResult<T>>): Promise<Read<T>> => {
     if (!auth) return { ok: false, reason: 'unconfigured' };
+    const stale = (): boolean => auth.generation() !== generation || !auth.connected();
     for (let attempt = 0; ; attempt++) {
       const token = await auth.accessToken();
       if (!token.ok) return { ok: false, reason: TOKEN_REASONS[token.failure] };
+      if (stale()) return { ok: false, reason: 'not-connected' };
+      if (!takeToken()) {
+        log('gsc: the API rate limit was reached; a call was not sent');
+        return { ok: false, reason: 'quota' };
+      }
       const result = await run(token.token);
+      if (stale()) return { ok: false, reason: 'not-connected' };
       if (result.ok) return result;
       if (result.failure !== 'auth') return { ok: false, reason: API_REASONS[result.failure] };
       auth.rejectAccessToken(token.token);
@@ -277,11 +354,13 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
     const known = cached<GscProperty[]>('properties');
     if (known) return { ok: true, value: known };
     const generation = auth?.generation() ?? 0;
-    const sites = await withToken((token) => api!.sites(token));
-    if (!sites.ok) return sites;
-    const properties = propertiesFromSites(sites.value.siteEntry ?? []);
-    keep('properties', properties, generation);
-    return { ok: true, value: properties };
+    return merged(`properties|${generation}`, async (): Promise<Read<GscProperty[]>> => {
+      const sites = await withToken(generation, (token) => api!.sites(token));
+      if (!sites.ok) return sites;
+      const properties = propertiesFromSites(sites.value.siteEntry ?? []);
+      keep('properties', properties, generation);
+      return { ok: true, value: properties };
+    });
   };
 
   const parseQuery = (query: unknown): Read<GscPerformanceQuery> => {
@@ -333,19 +412,21 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
     const known = cached<T>(key);
     if (known) return known;
     const generation = auth?.generation() ?? 0;
-    const body = searchAnalyticsBody({ range, dimension: kind === 'performance' ? 'date' : 'query', pageUrl: filter, rowLimit: kind === 'performance' ? query.days : GSC_LIMITS.maxTopQueries });
-    const result = await withToken((token) => api!.query(token, property.siteUrl, body));
-    if (!result.ok) {
-      if (result.reason === 'no-property') dropProperties();
-      return unavailable(result.reason);
-    }
-    const checked = schema.safeParse(build({ query, property, range, rows: result.value.rows }));
-    if (!checked.success) {
-      log('gsc: an answer did not match its schema');
-      return unavailable('invalid');
-    }
-    keep(key, checked.data, generation);
-    return checked.data;
+    return merged(`${key}|${generation}`, async (): Promise<T | GscUnavailable> => {
+      const body = searchAnalyticsBody({ range, dimension: kind === 'performance' ? 'date' : 'query', pageUrl: filter, rowLimit: kind === 'performance' ? query.days : GSC_LIMITS.maxTopQueries });
+      const result = await withToken(generation, (token) => api!.query(token, property.siteUrl, body));
+      if (!result.ok) {
+        if (result.reason === 'no-property') dropProperties();
+        return unavailable(result.reason);
+      }
+      const checked = schema.safeParse(build({ query, property, range, rows: result.value.rows }));
+      if (!checked.success) {
+        log('gsc: an answer did not match its schema');
+        return unavailable('invalid');
+      }
+      keep(key, checked.data, generation);
+      return checked.data;
+    });
   };
 
   return {
@@ -374,7 +455,9 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
       if (!auth || disposed) return 'unconfigured';
       if (!isEntitled()) return 'not-entitled';
       try {
-        return await auth.connect(windowId);
+        const result = await auth.connect(windowId);
+        // No signed-in frost account: nothing to connect for (the plan is what the chrome can act on).
+        return result === 'no-account' ? 'not-entitled' : result;
       } catch {
         log('gsc: connect failed unexpectedly');
         return 'browser-failed';
@@ -441,7 +524,7 @@ export function createGscService(deps: GscServiceDeps): GscMainService {
 
     dispose() {
       disposed = true;
-      unsubscribe?.();
+      for (const off of unsubscribes.splice(0)) off();
       const revoking = auth?.dispose() ?? null;
       for (const waiter of waiters.splice(0)) waiter.resolve(status());
       return revoking;

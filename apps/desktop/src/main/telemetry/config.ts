@@ -4,19 +4,22 @@ import {
   TELEMETRY_CONFIG_ENV,
   UNPACKAGED_HTTP_TELEMETRY_HOSTS,
 } from '@app/specs/telemetry-consent.schema';
+import { runtimeOverridesAllowed, type PublicEnv } from '@app/specs/build-config.spec';
 
 // The build's telemetry configuration (spec `telemetry-consent.schema.ts`, `TELEMETRY_CONFIG_ENV`;
 // acceptance `telemetry.feature.md`, Desktop, Configuration; plan "Configuration"). Read the way the
 // account's is (`../account/config.ts`): baked in at build time (Vite replaces
-// `import.meta.env.FROST_PUBLIC_*`, `envPrefix` in `vite.main.config.ts`). A build that has a value
-// baked in never reads it from the run-time environment: if either value is baked in, the environment
-// is ignored for both (`app.isPackaged` only looks at the executable's name, so it is not the guard).
-// Only an unpackaged build with neither baked in (dev, e2e) reads the environment. Packaged requires
+// `import.meta.env.FROST_PUBLIC_*`, `envPrefix` in `vite.main.config.ts`). One rule for every public
+// value (`build-config.spec.ts`, `runtimeOverridesAllowed`): if any `FROST_PUBLIC_*` value (this
+// module's, the account's or Search Console's) is baked in, the environment is ignored for all of them
+// (`app.isPackaged` only looks at the executable's name, so it is not the guard). Only an unpackaged
+// build with nothing baked in (dev, e2e) reads the environment. Packaged requires
 // `https:`. A missing or refused value leaves its channel not
 // configured: it sends nothing, whatever the consent.
 
 type EnvName = (typeof TELEMETRY_CONFIG_ENV)[keyof typeof TELEMETRY_CONFIG_ENV];
-export type TelemetryEnv = Partial<Record<EnvName, string | undefined>>;
+/** The build's public values (all modules': any one baked in pins the build). */
+export type TelemetryEnv = PublicEnv;
 
 export interface TelemetryConfig {
   /** The OTLP/HTTP traces endpoint (`usage`), or `null`. */
@@ -27,19 +30,10 @@ export interface TelemetryConfig {
 
 export interface TelemetryConfigSources {
   readonly isPackaged: boolean;
-  /** The values baked into the build (`buildTimeTelemetryEnv()`). */
+  /** The values baked into the build (`buildTimePublicEnv()`, `../account/build-config.ts`). */
   readonly buildTime: TelemetryEnv;
   /** The run-time environment (`process.env`); read only unpackaged, and only with nothing baked in. */
   readonly runtime: Readonly<Record<string, string | undefined>>;
-}
-
-/** The values Vite baked into this bundle (each `undefined` when the build had none). */
-export function buildTimeTelemetryEnv(): TelemetryEnv {
-  // Written out literally: Vite replaces each `import.meta.env.<NAME>` expression statically.
-  return {
-    FROST_PUBLIC_SENTRY_DSN: import.meta.env.FROST_PUBLIC_SENTRY_DSN,
-    FROST_PUBLIC_OTEL_ENDPOINT: import.meta.env.FROST_PUBLIC_OTEL_ENDPOINT,
-  };
 }
 
 /** `value` as an `http(s)` URL this build may send to (no query or fragment), or `null`. */
@@ -71,8 +65,7 @@ function dsnOf(value: string | undefined, isPackaged: boolean): string | null {
 
 /** The telemetry configuration for this build (each channel `null` when not configured). */
 export function resolveTelemetryConfig(sources: TelemetryConfigSources): TelemetryConfig {
-  const baked = Object.values(TELEMETRY_CONFIG_ENV).some((name) => (sources.buildTime[name] ?? '') !== '');
-  const source = sources.isPackaged || baked ? sources.buildTime : sources.runtime;
+  const source: Readonly<Record<string, string | undefined>> = runtimeOverridesAllowed(sources.isPackaged, sources.buildTime) ? sources.runtime : sources.buildTime;
   const pick = (name: EnvName): string | undefined => source[name];
   return {
     otelEndpoint: endpointOf(pick(TELEMETRY_CONFIG_ENV.otelEndpoint), sources.isPackaged),

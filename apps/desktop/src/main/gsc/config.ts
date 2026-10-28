@@ -7,21 +7,23 @@ import {
   UNPACKAGED_HTTP_GSC_HOSTS,
   type GscEndpoints,
 } from '@app/specs/gsc.spec';
+import { runtimeOverridesAllowed, type PublicEnv } from '@app/specs/build-config.spec';
 
 // The build's Search Console configuration (spec `gsc.spec.ts`, `GSC_CONFIG_ENV`, `GSC_ENDPOINTS`,
 // `GSC_ENDPOINT_ENV`; acceptance `gsc.feature.md`, Configuration; plan "Configuration"). Read the way
 // the account's is (`../account/config.ts`): the client ID and secret are baked in at build time (Vite
 // replaces `import.meta.env.FROST_PUBLIC_*`, `envPrefix` in `vite.main.config.ts`).
 //
-// A build that has either value baked in never reads the run-time environment (for either), and talks
-// to Google's fixed endpoints only. `app.isPackaged` is not the guard (it only looks at the
-// executable's name). Only an unpackaged build with neither value baked in (dev, e2e) reads the
-// environment, and only such a build may point an endpoint at a fake (`FROST_GSC_*`): a swapped token
+// One rule for every public value (`build-config.spec.ts`, `runtimeOverridesAllowed`): a build with any
+// `FROST_PUBLIC_*` value baked in (this module's, the account's or telemetry's) never reads the
+// run-time environment, and talks to Google's fixed endpoints only. `app.isPackaged` is not the guard
+// (it only looks at the executable's name). Only an unpackaged build with nothing baked in (dev, e2e)
+// reads the environment, and only such a build may point an endpoint at a fake (`FROST_GSC_*`): a swapped token
 // endpoint would receive the codes and refresh tokens. A refused override is unconfigured, never a
 // silent fall-back to Google.
 
-type ClientEnvName = (typeof GSC_CONFIG_ENV)[keyof typeof GSC_CONFIG_ENV];
-export type GscEnv = Partial<Record<ClientEnvName, string | undefined>>;
+/** The build's public values (all modules': any one baked in pins the build). */
+export type GscEnv = PublicEnv;
 
 export interface GscConfig {
   readonly clientId: string;
@@ -32,19 +34,10 @@ export interface GscConfig {
 
 export interface GscConfigSources {
   readonly isPackaged: boolean;
-  /** The values baked into the build (`buildTimeGscEnv()`). */
+  /** The values baked into the build (`buildTimePublicEnv()`, `../account/build-config.ts`). */
   readonly buildTime: GscEnv;
   /** The run-time environment (`process.env`); read only unpackaged, and only with nothing baked in. */
   readonly runtime: Readonly<Record<string, string | undefined>>;
-}
-
-/** The values Vite baked into this bundle (each `undefined` when the build had none). */
-export function buildTimeGscEnv(): GscEnv {
-  // Written out literally: Vite replaces each `import.meta.env.<NAME>` expression statically.
-  return {
-    FROST_PUBLIC_GSC_CLIENT_ID: import.meta.env.FROST_PUBLIC_GSC_CLIENT_ID,
-    FROST_PUBLIC_GSC_CLIENT_SECRET: import.meta.env.FROST_PUBLIC_GSC_CLIENT_SECRET,
-  };
 }
 
 /** A fake's endpoint (`https:`, or `http:` on a loopback host; no credentials, query or fragment), or `null`. */
@@ -64,8 +57,7 @@ function overrideOf(value: string): string | null {
 
 /** The Search Console configuration for this build, or `null` (unconfigured: nothing is sent to Google). */
 export function resolveGscConfig(sources: GscConfigSources): GscConfig | null {
-  const baked = Object.values(GSC_CONFIG_ENV).some((name) => (sources.buildTime[name] ?? '') !== '');
-  const fromRuntime = !sources.isPackaged && !baked;
+  const fromRuntime = runtimeOverridesAllowed(sources.isPackaged, sources.buildTime);
   const source: Readonly<Record<string, string | undefined>> = fromRuntime ? sources.runtime : sources.buildTime;
   const clientId = source[GSC_CONFIG_ENV.clientId];
   const clientSecret = source[GSC_CONFIG_ENV.clientSecret];

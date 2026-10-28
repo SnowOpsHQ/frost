@@ -124,8 +124,9 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 - **Toggling is synchronous.** `telemetry.setConsent` changes main's telemetry and writes the file
   before it answers; off drops what is queued at once (no flush).
 - **Configured, not revealed.** The build's DSN and OTLP endpoint (`FROST_PUBLIC_SENTRY_DSN`,
-  `FROST_PUBLIC_OTEL_ENDPOINT`) are read like the account's configuration (build time; only an
-  unpackaged build with neither value baked in reads the run-time environment; packaged requires `https:`, unpackaged may use
+  `FROST_PUBLIC_OTEL_ENDPOINT`) are read like the account's configuration (build time; one rule for
+  every public value, `build-config.spec.ts`: only an unpackaged build with no `FROST_PUBLIC_*` value
+  baked in at all reads the run-time environment; packaged requires `https:`, unpackaged may use
   `http://127.0.0.1`). The chrome sees only whether each is configured, as a boolean.
 - **One door: `net.fetch`.** `POST`, `credentials: 'omit'`, `cache: 'no-store'`, `redirect: 'error'`,
   the package's abort signal passed through, and not before the app is ready. `net.fetch` would add
@@ -188,7 +189,8 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   other `http:` hosts refused.
 - `telemetry-config-runtime-env-only-unpackaged` — the run-time environment is read only unpackaged.
 - `telemetry-config-baked-build-ignores-runtime` — a build with either value baked in ignores the
-  run-time environment for both, packaged or not (a renamed executable reads as unpackaged).
+  run-time environment for both, packaged or not (a renamed executable reads as unpackaged); so does a
+  build with only another module's value baked in (the account's, Search Console's).
 - `telemetry-config-shapes` — an endpoint with credentials, a query or a fragment is refused; a DSN
   needs a public key (`DSN_PUBLIC_KEY_PATTERN`), no password, a project (`DSN_PROJECT_ID_PATTERN`),
   no query or fragment.

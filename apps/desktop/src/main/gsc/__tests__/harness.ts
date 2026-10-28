@@ -1,6 +1,7 @@
 // Test-only: the pieces the Search Console unit tests share: the fake Google (`e2e/fake-google.ts`), a
 // memory secret store, a fake gesture tracker and browser opener, the real loopback listener, a clock,
 // and a `fetch` that can hold calls to one endpoint until released.
+import { GSC_SCOPE } from '@app/specs/gsc.spec';
 import type { SecretName } from '@app/specs/secret-store.spec';
 import { FAKE_GSC_CLIENT_ID, FAKE_GSC_CLIENT_SECRET, startFakeGoogle, type FakeGoogle } from '../../../../e2e/fake-google';
 import { startLoopback, type Loopback, type StartLoopbackOptions } from '../../account/loopback';
@@ -11,6 +12,11 @@ export const WINDOW_ID = 7;
 export const OTHER_WINDOW_ID = 8;
 /** 2026-10-28 12:00 UTC: a range of 28 days is 2026-09-29 … 2026-10-26. */
 export const START_MS = Date.UTC(2026, 9, 28, 12);
+/** The signed-in frost account's user ID the connection belongs to. */
+export const OWNER = 'user-1';
+
+/** A stored connection blob (`gsc`), owned by `owner`. */
+export const storedBlob = (refreshToken = 'stored-refresh-token-1', owner: string = OWNER): string => JSON.stringify({ v: 1, refreshToken, scope: GSC_SCOPE, owner });
 
 export interface MemoryStore {
   persistent: boolean;
@@ -41,6 +47,9 @@ export interface Harness {
   readonly opened: string[];
   readonly loopbacks: Loopback[];
   readonly clock: { now: number };
+  /** The signed-in frost account (`null`: signed out). */
+  readonly account: { userId: string | null };
+  readonly currentUser: () => string | null;
   /** Makes one user gesture live in `WINDOW_ID` (spent by the next `consumeGesture`). */
   grant(): void;
   /** Calls to `endpoint` wait until the returned function is called. */
@@ -67,6 +76,7 @@ export async function createHarness(): Promise<Harness> {
   const loopbacks: Loopback[] = [];
   const fetched: string[] = [];
   const clock = { now: START_MS };
+  const account: { userId: string | null } = { userId: OWNER };
   let gestures = 0;
   const holds = new Map<Endpoint, Promise<void>>();
 
@@ -93,6 +103,8 @@ export async function createHarness(): Promise<Harness> {
     opened,
     loopbacks,
     clock,
+    account,
+    currentUser: () => account.userId,
     fetched,
     grant: () => void (gestures = 1),
     hold: (endpoint) => {

@@ -644,6 +644,36 @@ describe('account sign-in flow', () => {
     expect(stateOf(h).entitlements).toEqual(NO_ENTITLEMENTS);
   });
 
+  test('user-id-for-main-only', async () => {
+    const h = harness();
+    let changes = 0;
+    const unsubscribe = h.service.onChange(() => void changes++);
+    expect(h.service.userId()).toBeNull();
+    await toConfirming(h);
+    expect(h.service.userId()).toBeNull();
+    expect(changes).toBeGreaterThan(0);
+    expect(await confirm(h, stateOf(h).requestId!)).toBe(true);
+    await h.service.whenIdle();
+    expect(h.service.userId()).toBe(USER.id);
+    const before = changes;
+    await h.service.signOut();
+    await Promise.resolve();
+    expect(h.service.userId()).toBeNull();
+    expect(changes).toBeGreaterThan(before);
+    unsubscribe();
+    const after = changes;
+    await toConfirming(h);
+    expect(changes).toBe(after);
+    // A listener that throws does not break the account.
+    h.service.onChange(() => {
+      throw new Error('listener');
+    });
+    await h.service.cancelSignIn(stateOf(h).requestId!);
+    expect(stateOf(h).status).toBe('signed-out');
+    // Neither is part of the IPC interface (the chrome never sees a user ID).
+    expect(JSON.stringify(stateOf(h))).not.toContain(USER.id);
+  });
+
   test('memory-only-keychain-signs-in', async () => {
     const h = harness({ store: fakeStore(false) });
     expect(stateOf(h).keychain).toBe('memory-only');

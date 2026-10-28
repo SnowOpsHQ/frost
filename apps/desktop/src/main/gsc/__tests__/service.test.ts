@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   GSC_CACHE_TTL_MS,
   GSC_LIMITS,
-  GSC_SCOPE,
+  GSC_RATE_LIMIT,
   GscPerformanceAnswerSchema,
   GscQueriesAnswerSchema,
   GscStatusSchema,
@@ -17,7 +17,7 @@ import { fakeDateRows } from '../../../../e2e/fake-google';
 import { searchAnalyticsBody } from '../api';
 import { GSC_SECRET } from '../oauth';
 import { createGscService, type GscMainService, type GscServiceDeps } from '../service';
-import { createHarness, memoryStore, WINDOW_ID, type Harness } from './harness';
+import { createHarness, memoryStore, OWNER, storedBlob, WINDOW_ID, type Harness } from './harness';
 
 const SITE = 'https://www.example.com/';
 const PAGE = 'https://www.example.com/blog/post?x=1';
@@ -53,6 +53,11 @@ function serviceWith(overrides: Partial<GscServiceDeps> = {}): GscMainService {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    userId: h.currentUser,
+    onAccountChange: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     startLoopback: h.startLoopback,
     openInBrowser: h.openInBrowser,
     consumeGesture: h.consumeGesture,
@@ -78,7 +83,7 @@ const range28 = () => gscDateRange(28, h.clock.now);
 
 describe('Search Console service', () => {
   test('not-entitled-refused-before-network', async () => {
-    h.store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: 'stored-refresh-token-1', scope: GSC_SCOPE }));
+    h.store.write(GSC_SECRET, storedBlob());
     entitled = false;
     const service = serviceWith();
     expect(service.status()).toMatchObject({ configured: true, entitled: false, connected: true });
@@ -323,7 +328,7 @@ describe('Search Console service', () => {
     await throwing.whenIdle();
     expect(throwing.status()).toMatchObject({ connected: false, connecting: false, error: 'network' });
     const store = memoryStore();
-    store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: 'stored-refresh-token-1', scope: GSC_SCOPE }));
+    store.write(GSC_SECRET, storedBlob());
     const service = serviceWith({
       store,
       fetch: () => {
@@ -419,5 +424,106 @@ describe('Search Console service', () => {
     expect(pending.status().connecting).toBe(false);
     h.grant();
     expect(await pending.connect(WINDOW_ID)).toBe('unconfigured');
+  });
+
+  test('read-across-reconnect-not-answered', async () => {
+    const service = await connected();
+    expect(await service.performance(QUERY)).toMatchObject({ status: 'ok' });
+    const release = h.hold('api');
+    const running = service.performance({ ...QUERY, days: 7 });
+    const listing = service.properties();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(await service.disconnect()).toBe(true);
+    h.grant();
+    expect(await service.connect(WINDOW_ID)).toBe('started');
+    await h.follow();
+    await service.whenIdle();
+    expect(service.status().connected).toBe(true);
+    release();
+    expect(await running).toEqual({ status: 'unavailable', reason: 'not-connected' });
+    // Nothing of it was kept: the new connection reads afresh.
+    const queries = h.google.queries.length;
+    expect(await service.performance({ ...QUERY, days: 7 })).toMatchObject({ status: 'ok' });
+    expect(h.google.queries).toHaveLength(queries + 1);
+    await listing;
+  });
+
+  test('connection-belongs-to-frost-account', async () => {
+    const service = await connected();
+    expect(JSON.parse(h.store.read(GSC_SECRET)!).owner).toBe(OWNER);
+    const notify = () => {
+      for (const listener of [...listeners]) listener();
+    };
+    // Signed out: not entitled, not connected, nothing sent.
+    h.account.userId = null;
+    entitled = false;
+    notify();
+    h.clock.now += h.google.accessTokenTtlSeconds * 1000;
+    const sent = h.fetched.length;
+    expect(service.status()).toMatchObject({ entitled: false, connected: false });
+    expect(await service.performance(QUERY)).toEqual({ status: 'unavailable', reason: 'not-entitled' });
+    // Back as the same account: the connection is still there.
+    h.account.userId = OWNER;
+    entitled = true;
+    notify();
+    expect(service.status()).toMatchObject({ entitled: true, connected: true });
+    expect(h.fetched).toHaveLength(sent);
+    expect(await service.performance(QUERY)).toMatchObject({ status: 'ok' });
+    // Another account: never read with, and disconnected (revoked and deleted).
+    const refresh = h.google.refreshTokens.at(-1)!;
+    h.account.userId = 'user-2';
+    const apiCalls = h.google.apiTokens.length;
+    expect(await service.performance({ ...QUERY, days: 90 })).toEqual({ status: 'unavailable', reason: 'not-connected' });
+    expect(h.google.apiTokens).toHaveLength(apiCalls);
+    notify();
+    await expect.poll(() => h.google.revoked.includes(refresh)).toBe(true);
+    expect(h.store.read(GSC_SECRET)).toBeNull();
+    expect(service.status()).toMatchObject({ connected: false });
+    // A stored connection of another account is dropped at start.
+    const store = memoryStore();
+    store.write(GSC_SECRET, storedBlob('stored-refresh-token-2', 'user-9'));
+    const other = serviceWith({ store });
+    expect(other.status().connected).toBe(false);
+    await expect.poll(() => h.google.revoked.includes('stored-refresh-token-2')).toBe(true);
+    expect(store.read(GSC_SECRET)).toBeNull();
+  });
+
+  test('identical-reads-merged', async () => {
+    const service = await connected();
+    const [a, b, c] = await Promise.all([service.performance(QUERY), service.performance(QUERY), service.performance({ ...QUERY, url: PAGE })]);
+    expect(a).toMatchObject({ status: 'ok' });
+    expect(b).toEqual(a);
+    expect(c).toEqual(a);
+    expect(h.google.queries).toHaveLength(1);
+    expect(h.google.sitesCalls).toBe(1);
+    const [p, q] = await Promise.all([service.topQueries(QUERY), service.topQueries(QUERY)]);
+    expect(q).toEqual(p);
+    expect(h.google.queries).toHaveLength(2);
+  });
+
+  test('api-rate-limited', async () => {
+    const service = await connected();
+    // The property list takes one token.
+    expect(await service.properties()).toMatchObject({ status: 'ok' });
+    const reads = Array.from({ length: GSC_RATE_LIMIT.burst + 5 }, (_, i) => service.performance({ ...QUERY, url: `${SITE}page-${i}` }));
+    const answers = await Promise.all(reads);
+    const ok = answers.filter((a) => a.status === 'ok').length;
+    expect(ok).toBe(GSC_RATE_LIMIT.burst - 1);
+    expect(answers.filter((a) => a.status === 'unavailable' && a.reason === 'quota')).toHaveLength(6);
+    expect(h.google.queries).toHaveLength(GSC_RATE_LIMIT.burst - 1);
+    // A second later, `perSecond` more.
+    h.clock.now += 1000;
+    const more = await Promise.all(Array.from({ length: GSC_RATE_LIMIT.perSecond + 2 }, (_, i) => service.performance({ ...QUERY, url: `${SITE}more-${i}` })));
+    expect(more.filter((a) => a.status === 'ok')).toHaveLength(GSC_RATE_LIMIT.perSecond);
+    expect(h.google.queries).toHaveLength(GSC_RATE_LIMIT.burst - 1 + GSC_RATE_LIMIT.perSecond);
+  });
+
+  test('keychain-reports-this-run-only', async () => {
+    expect((await connected({ store: memoryStore(false) })).status().keychain).toBe('memory-only');
+    const failing = { ...memoryStore(), write: () => { throw new Error('keychain'); } };
+    const unsaved = await connected({ store: failing });
+    expect(unsaved.status()).toMatchObject({ connected: true, keychain: 'memory-only' });
+    expect(serviceWith({ store: memoryStore() }).status().keychain).toBe('persistent');
+    expect((await connected({ store: memoryStore() })).status().keychain).toBe('persistent');
   });
 });

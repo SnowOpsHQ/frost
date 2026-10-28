@@ -1,7 +1,7 @@
 # Feature: read-only Search Console connection and performance API
 
 Spec: `specs/gsc.spec.ts` (Zod-free: `GSC_SCOPE`, `GSC_CONFIG_ENV`, `GSC_ENDPOINTS`, `GSC_ENDPOINT_ENV`,
-`GSC_AUTH_FIXED_PARAMS`, `GSC_LIMITS`, `GSC_CACHE_TTL_MS`, `GSC_ERRORS`, `GSC_CONNECT_RESULTS`,
+`GSC_AUTH_FIXED_PARAMS`, `GSC_LIMITS`, `GSC_CACHE_TTL_MS`, `GSC_RATE_LIMIT`, `GSC_REFRESH_BACKOFF`, `GSC_ERRORS`, `GSC_CONNECT_RESULTS`,
 `GSC_PROPERTY_KINDS`, `GSC_PERMISSION_LEVELS`, `GSC_QUERY_SCOPES`, `GSC_RANGE_DAYS`, `GSC_DATA_LAG_DAYS`,
 `gscDateRange`, `GSC_UNAVAILABLE_REASONS`) and `specs/gsc.schema.ts` (`GscStatusSchema`,
 `GscPropertySchema`, `GscPerformanceQuerySchema`, `GscPerformanceAnswerSchema`, `GscQueriesAnswerSchema`,
@@ -24,9 +24,19 @@ line maps to one named test.
   The callback's code is exchanged with the verifier (and the installed-app client secret, which Google
   does not treat as confidential). One connect at a time: a new one replaces the pending one;
   `cancelConnect` drops it. A callback with an OAuth `error` is `cancelled`.
+- **The connection belongs to the frost account that made it.** The `gsc` blob carries the signed-in
+  frost account's user ID (main only; it never crosses IPC). While another account, or none, is signed
+  in, the status is not `connected`, reads answer `not-entitled` (none) or `not-connected` (another),
+  and neither token is ever sent. Signing in as a different account disconnects the old connection
+  (revoked and deleted); signing out and back in as the same account keeps it. A connect whose exchange
+  lands after the account changed is revoked.
 - **Tokens stay in main.** The refresh token lives in the secret store's `gsc` blob (memory-only
   without a real keychain); the access token only in memory, with its expiry (refreshed
-  `GSC_ACCESS_TOKEN_SKEW_MS` early, one refresh at a time). An API 401 forgets the access token,
+  `GSC_ACCESS_TOKEN_SKEW_MS` early, one refresh at a time; after a failed refresh none is tried for
+  `GSC_REFRESH_BACKOFF`, doubling up to 5 minutes, reset on success). `keychain` says `persistent` only
+  if the refresh token really was written to the keychain; a refresh token that was not (memory-only,
+  or the write failed) is revoked at quit, so no grant outlives the run that cannot keep it. A quit also
+  waits for an exchange in flight (whose tokens are then revoked). An API 401 forgets the access token,
   refreshes once and retries once; a second 401 is `auth-expired`. A refresh refused with
   `invalid_grant` ends the connection (blob deleted, error `auth-expired`). `disconnect` deletes the blob
   at once and revokes the refresh token at Google's revoke endpoint (best effort; a quit waits for it at
@@ -47,18 +57,23 @@ line maps to one named test.
   `property` scope has no filter. Performance asks `dimensions: ['date']`, top queries
   `dimensions: ['query']` with `rowLimit` `GSC_LIMITS.maxTopQueries`; both `type: 'web'`,
   `dataState: 'final'`. Rows outside the range are dropped; totals are computed from the rows.
-- **Cache.** The property list and each answer are kept `GSC_CACHE_TTL_MS` per key (at most
-  `GSC_LIMITS.maxCacheEntries`); only `ok` answers are kept; a disconnect or a new connection clears it,
-  and a read that finishes after that keeps nothing.
+- **Cache, merging and rate.** The property list and each answer are kept `GSC_CACHE_TTL_MS` per key
+  (at most `GSC_LIMITS.maxCacheEntries`); only `ok` answers are kept; a disconnect or a new connection
+  clears it. A read whose connection changed (a disconnect or a new connection) while it waited for
+  Google answers `not-connected`, never the old account's data. Identical reads in flight at once are
+  merged into one call; API calls pass a token bucket (`GSC_RATE_LIMIT`, 10 per second, burst 20; a
+  call without a token is not sent and answers `quota`).
 - **Outbound calls** use `net.fetch` with `credentials: 'omit'`, `cache: 'no-store'`, `redirect: 'error'`,
   a timeout (`GSC_LIMITS.timeoutMs`) and a body cap (`GSC_LIMITS.maxBodyBytes`); Google's answers are
   parsed with `Google*Schema` and rebuilt, and every answer is validated against its strict schema.
 - **Configuration.** `GSC_CONFIG_ENV` (client ID and secret) baked in at build time; Google's endpoints
-  are fixed. Only an unpackaged build with neither value baked in reads them from the run-time
-  environment, and only such a build reads the `GSC_ENDPOINT_ENV` fakes (`https:`, or `http:` on
-  loopback). Anything missing or malformed is `unconfigured`.
+  are fixed. One rule for every public value (`build-config.spec.ts`): only an unpackaged build with no
+  `FROST_PUBLIC_*` value baked in at all (the account's and telemetry's included) reads them from the
+  run-time environment, and only such a build reads the `GSC_ENDPOINT_ENV` fakes (`https:`, or `http:`
+  on loopback). Anything missing or malformed is `unconfigured`.
 - **Logs carry no secret:** fixed messages through the account's redactor, plus Google's token shapes
-  and every token, code, verifier, `state` and the client secret seen in the run.
+  and every token, code, verifier, `state` and the client secret seen in the run (the client secret and
+  refresh tokens are kept outside the recent-values cap, so they are scrubbed for the whole run).
 
 ## Spec schema (`apps/desktop/src/main/gsc/__tests__/gsc-spec.test.ts`)
 - `gsc-scope-constant-is-read-only` — `GSC_SCOPE` is exactly the `webmasters.readonly` scope, and the fixed consent parameters ask for it alone (S256, offline, consent).
@@ -70,7 +85,7 @@ line maps to one named test.
 
 ## Configuration (`apps/desktop/src/main/gsc/__tests__/config.test.ts`)
 - `gsc-config-missing-is-unconfigured` — no client ID, or no client secret, is `null`.
-- `gsc-config-baked-uses-google-endpoints` — a build with a value baked in uses Google's endpoints and ignores every run-time value (client and `FROST_GSC_*`), packaged or not.
+- `gsc-config-baked-build-ignores-runtime` — a build with a value baked in uses Google's endpoints and ignores every run-time value (client and `FROST_GSC_*`), packaged or not; so does a build with only the account's or telemetry's value baked in.
 - `gsc-config-runtime-only-unpackaged-unbaked` — only an unpackaged build with nothing baked in reads the run-time client and endpoint overrides; a packaged one never does.
 - `gsc-config-endpoint-overrides-validated` — an override must be `https:` or loopback `http:` without credentials, query or fragment; a refused one leaves Search Console unconfigured.
 - `gsc-config-malformed-client-refused` — a client ID or secret outside its pattern is unconfigured.
@@ -103,6 +118,13 @@ line maps to one named test.
 - `disconnect-revokes-and-deletes-blob` — `disconnect` deletes the blob, revokes the refresh token at the revoke endpoint, and is not connected; a second `disconnect` answers `false`.
 - `stored-connection-restores` — a stored blob starts connected; a malformed one is discarded.
 - `logs-carry-no-secret` — across the whole flow no log line carries a token, code, verifier, `state` or the client secret.
+- `refresh-backs-off` — after a failed refresh no refresh is sent within the backoff (1 s, doubling, at most 5 minutes) and callers get the failure; a success resets it.
+- `connection-owned-by-account` — the blob carries the owner; `accessToken` for another (or no) account answers `not-connected` and sends nothing; a connect whose exchange lands for another account is revoked.
+- `memory-only-revoked-on-dispose` — a refresh token never written to the keychain (memory-only store, or a failed write) is reported `memory-only` and revoked by `dispose`, which answers that revocation; a persisted one is not revoked.
+- `dispose-during-exchange-awaited` — `dispose` while a code is being exchanged answers a promise that settles only after the exchange landed and its tokens were revoked.
+
+## Redaction (`apps/desktop/src/main/gsc/__tests__/redact.test.ts`)
+- `redactor-keeps-long-lived-secrets` — the client secret and refresh tokens stay scrubbed however many other values were remembered after them; Google's token shapes are scrubbed without being remembered.
 
 ## Service (`apps/desktop/src/main/gsc/__tests__/service.test.ts`)
 - `not-entitled-refused-before-network` — without `search-console` every read answers `not-entitled` and `connect` answers `not-entitled`, with no request to Google.
@@ -118,6 +140,11 @@ line maps to one named test.
 - `never-throws` — a fetch that throws, a store that throws and garbage inputs still answer `unavailable`.
 - `status-watch-long-polls` — `watch` answers at once when newer, else on the next change (connect, disconnect, entitlement change).
 - `dispose-awaits-revocation` — `dispose` drops a pending connect and answers the revocations still running; nothing to wait for answers `null`.
+- `read-across-reconnect-not-answered` — a read waiting for Google while the account disconnects and reconnects answers `not-connected`, not the old connection's data, and keeps nothing.
+- `connection-belongs-to-frost-account` — signed out: `not-entitled`, not connected, nothing sent; another account: not connected, `not-connected`, nothing sent, and the old connection revoked and deleted; the same account again: connected and read as before.
+- `identical-reads-merged` — identical reads in flight at once make one call to Google and get the same answer.
+- `api-rate-limited` — more than `GSC_RATE_LIMIT.burst` API calls at once: the rest answer `quota` unsent; tokens come back at `perSecond`.
+- `keychain-reports-this-run-only` — connected with a memory-only store, or after a failed write, the status says `memory-only`; a persisted connection says `persistent`.
 
 ## Router (`packages/ipc-contract/src/__tests__/gsc-router.test.ts`)
 - `gsc-procedures-enforce-sender` — every `gsc.*` procedure refuses a foreign sender before the service is reached, and is the right type.
@@ -130,5 +157,5 @@ line maps to one named test.
 
 ## End to end (`apps/desktop/e2e/gsc.e2e.ts`; fake backend (pro) and fake Google)
 - `gsc-connect-needs-gesture` — signed in as `pro`, `gsc.connect` without a click answers `needs-gesture` and opens nothing.
-- `gsc-connect-read-only-and-performance` — with a real click `connect` opens the read-only consent URL; following it as the browser connects; `gsc.performance` for a page on the loopback test site answers the fake rows for its URL-prefix property, and `gsc.topQueries` the fake queries; no answer carries a token or code.
+- `gsc-connect-read-only-and-performance` — with a real click `connect` opens the read-only consent URL; following it as the browser connects; `gsc.performance` for a page on the loopback test site answers the fake rows for its URL-prefix property, and `gsc.topQueries` the fake queries; no answer carries a token or code, and neither does anything main printed (nor the client secret).
 - `gsc-disconnect-revokes` — `gsc.disconnect` makes the fake see the revocation; reads answer `not-connected`.

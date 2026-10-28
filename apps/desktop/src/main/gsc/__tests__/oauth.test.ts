@@ -4,11 +4,11 @@
 // · plan Global Constraints "Tokens stay in main", "Logs never carry secrets", "The system browser opens only …"
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { LOOPBACK_REDIRECT_PATTERN } from '@app/specs/account-api.schema';
-import { GSC_ACCESS_TOKEN_SKEW_MS, GSC_AUTH_FIXED_PARAMS, GSC_AUTH_PARAMS, GSC_SCOPE } from '@app/specs/gsc.spec';
+import { GSC_ACCESS_TOKEN_SKEW_MS, GSC_AUTH_FIXED_PARAMS, GSC_AUTH_PARAMS, GSC_REFRESH_BACKOFF, GSC_SCOPE } from '@app/specs/gsc.spec';
 import { FAKE_GSC_CLIENT_ID, FAKE_GSC_CLIENT_SECRET } from '../../../../e2e/fake-google';
 import { challengeOf } from '../../account/pkce';
 import { createGscAuth, GSC_SECRET, type GscAuth, type GscAuthDeps } from '../oauth';
-import { createHarness, memoryStore, OTHER_WINDOW_ID, WINDOW_ID, type Harness } from './harness';
+import { createHarness, memoryStore, OTHER_WINDOW_ID, OWNER, storedBlob, WINDOW_ID, type Harness } from './harness';
 
 let h: Harness;
 let changes = 0;
@@ -29,8 +29,10 @@ const authWith = (overrides: Partial<GscAuthDeps> = {}): GscAuth =>
     startLoopback: h.startLoopback,
     openInBrowser: h.openInBrowser,
     consumeGesture: h.consumeGesture,
+    currentUser: h.currentUser,
     log: h.log,
     remember: () => undefined,
+    pin: () => undefined,
     onChange: () => void changes++,
     now: h.now,
     ...overrides,
@@ -137,7 +139,7 @@ describe('Search Console connection', () => {
     expect(auth.connecting()).toBe(false);
     expect(auth.error()).toBeNull();
     const blob = h.store.read(GSC_SECRET)!;
-    expect(JSON.parse(blob)).toEqual({ v: 1, refreshToken: h.google.refreshTokens[0], scope: GSC_SCOPE });
+    expect(JSON.parse(blob)).toEqual({ v: 1, refreshToken: h.google.refreshTokens[0], scope: GSC_SCOPE, owner: OWNER });
     expect(blob).not.toContain(h.google.accessTokens[0]!);
     // The access token is kept in memory: no new token request.
     expect(await auth.accessToken()).toEqual({ ok: true, token: h.google.accessTokens[0] });
@@ -246,7 +248,7 @@ describe('Search Console connection', () => {
     expect(await auth.accessToken()).toEqual({ ok: false, failure: 'not-connected' });
     // Unreachable Google is not the end of the connection.
     const store = memoryStore();
-    store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: 'stored-refresh-token-1', scope: GSC_SCOPE }));
+    store.write(GSC_SECRET, storedBlob());
     const offline = authWith({ fetch: () => Promise.reject(new TypeError('fetch failed')), store });
     expect(await offline.accessToken()).toEqual({ ok: false, failure: 'network' });
     expect(offline.connected()).toBe(true);
@@ -266,7 +268,7 @@ describe('Search Console connection', () => {
     expect(await auth.disconnect()).toBe(false);
     // A revocation that fails still disconnects (best effort).
     const store = memoryStore();
-    store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: 'stored-refresh-token-1', scope: GSC_SCOPE }));
+    store.write(GSC_SECRET, storedBlob());
     const stored = authWith({ fetch: () => Promise.reject(new TypeError('fetch failed')), store });
     expect(await stored.disconnect()).toBe(true);
     expect(store.read(GSC_SECRET)).toBeNull();
@@ -275,9 +277,9 @@ describe('Search Console connection', () => {
 
   test('stored-connection-restores', async () => {
     const store = memoryStore();
-    store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: 'stored-refresh-token-1', scope: GSC_SCOPE }));
+    store.write(GSC_SECRET, storedBlob());
     expect(authWith({ store }).connected()).toBe(true);
-    for (const bad of ['not json', '{}', JSON.stringify({ v: 2, refreshToken: 'x', scope: GSC_SCOPE }), JSON.stringify({ v: 1, refreshToken: 'x', scope: 'https://www.googleapis.com/auth/webmasters' }), JSON.stringify({ v: 1, refreshToken: 'x', scope: GSC_SCOPE, accessToken: 'y' })]) {
+    for (const bad of ['not json', '{}', JSON.stringify({ v: 2, refreshToken: 'x', scope: GSC_SCOPE }), JSON.stringify({ v: 1, refreshToken: 'x', scope: 'https://www.googleapis.com/auth/webmasters' }), JSON.stringify({ v: 1, refreshToken: 'x', scope: GSC_SCOPE, owner: OWNER, accessToken: 'y' }), JSON.stringify({ v: 1, refreshToken: 'x', scope: GSC_SCOPE }), JSON.stringify({ v: 1, refreshToken: 'x', scope: GSC_SCOPE, owner: '' })]) {
       const broken = memoryStore();
       broken.write(GSC_SECRET, bad);
       expect(authWith({ store: broken }).connected(), bad).toBe(false);
@@ -307,5 +309,145 @@ describe('Search Console connection', () => {
     for (const secret of [...h.google.codes, ...h.google.accessTokens, ...h.google.refreshTokens, ...h.google.verifiers, ...states, ...challenges, FAKE_GSC_CLIENT_SECRET]) {
       expect(text).not.toContain(secret);
     }
+  });
+
+  test('refresh-backs-off', async () => {
+    let down = false;
+    let attempts = 0;
+    const auth = authWith({
+      fetch: (url, init) => {
+        if (url.startsWith(h.google.endpoints.tokenUrl)) attempts++;
+        return down ? Promise.reject(new TypeError('fetch failed')) : h.fetch(url, init);
+      },
+    });
+    await connect(auth);
+    expect(attempts).toBe(1);
+    down = true;
+    h.clock.now += h.google.accessTokenTtlSeconds * 1000;
+    expect(await auth.accessToken()).toEqual({ ok: false, failure: 'network' });
+    expect(attempts).toBe(2);
+    // Within the backoff: the failure again, nothing sent.
+    expect(await auth.accessToken()).toEqual({ ok: false, failure: 'network' });
+    h.clock.now += GSC_REFRESH_BACKOFF.initialMs - 1;
+    expect(await auth.accessToken()).toEqual({ ok: false, failure: 'network' });
+    expect(attempts).toBe(2);
+    h.clock.now += 1;
+    await auth.accessToken();
+    expect(attempts).toBe(3);
+    // Doubling: 2 s now.
+    h.clock.now += 2 * GSC_REFRESH_BACKOFF.initialMs - 1;
+    await auth.accessToken();
+    expect(attempts).toBe(3);
+    h.clock.now += 1;
+    await auth.accessToken();
+    expect(attempts).toBe(4);
+    // Capped at maxMs.
+    for (let i = 0; i < 20; i++) {
+      h.clock.now += GSC_REFRESH_BACKOFF.maxMs;
+      await auth.accessToken();
+    }
+    const capped = attempts;
+    h.clock.now += GSC_REFRESH_BACKOFF.maxMs - 1;
+    await auth.accessToken();
+    expect(attempts).toBe(capped);
+    h.clock.now += 1;
+    down = false;
+    expect((await auth.accessToken()).ok).toBe(true);
+    expect(auth.connected()).toBe(true);
+    // A success resets it: the next failure backs off from the start again.
+    down = true;
+    auth.rejectAccessToken(h.google.accessTokens.at(-1)!);
+    const before = attempts;
+    await auth.accessToken();
+    h.clock.now += GSC_REFRESH_BACKOFF.initialMs;
+    await auth.accessToken();
+    expect(attempts).toBe(before + 2);
+  });
+
+  test('connection-owned-by-account', async () => {
+    const auth = authWith();
+    await connect(auth);
+    expect(JSON.parse(h.store.read(GSC_SECRET)!).owner).toBe(OWNER);
+    expect(auth.owner()).toBe(OWNER);
+    h.clock.now += h.google.accessTokenTtlSeconds * 1000;
+    const sent = h.fetched.length;
+    for (const other of ['user-2', null]) {
+      h.account.userId = other;
+      expect(auth.connected(), String(other)).toBe(false);
+      expect(auth.held()).toBe(true);
+      expect(await auth.accessToken()).toEqual({ ok: false, failure: 'not-connected' });
+    }
+    expect(h.fetched).toHaveLength(sent);
+    h.account.userId = OWNER;
+    expect(auth.connected()).toBe(true);
+    expect((await auth.accessToken()).ok).toBe(true);
+    // A connect whose exchange lands after the frost account changed is revoked, nothing kept.
+    const store = memoryStore();
+    const late = authWith({ store });
+    const release = h.hold('token');
+    h.grant();
+    expect(await late.connect(WINDOW_ID)).toBe('started');
+    await h.follow();
+    h.account.userId = 'user-2';
+    release();
+    await late.whenIdle();
+    expect(late.held()).toBe(false);
+    expect(store.read(GSC_SECRET)).toBeNull();
+    expect(late.error()).toBe('exchange-failed');
+    await expect.poll(() => h.google.revoked.includes(h.google.refreshTokens.at(-1)!)).toBe(true);
+    // Connecting needs a signed-in frost account.
+    h.account.userId = null;
+    h.grant();
+    expect(await authWith({ store: memoryStore() }).connect(WINDOW_ID)).toBe('no-account');
+    expect(h.opened).toHaveLength(2);
+  });
+
+  test('memory-only-revoked-on-dispose', async () => {
+    const memory = memoryStore(false);
+    const auth = authWith({ store: memory });
+    await connect(auth);
+    expect(auth.persisted()).toBe(false);
+    const refresh = h.google.refreshTokens.at(-1)!;
+    const held = auth.dispose();
+    expect(held).toBeInstanceOf(Promise);
+    await held;
+    expect(h.google.revoked).toContain(refresh);
+    // A write that fails: the same.
+    const failing = { ...memoryStore(), write: () => { throw new Error('keychain'); } };
+    const unsaved = authWith({ store: failing });
+    await connect(unsaved);
+    expect(unsaved.persisted()).toBe(false);
+    const second = h.google.refreshTokens.at(-1)!;
+    await unsaved.dispose();
+    expect(h.google.revoked).toContain(second);
+    // Persisted: kept for the next run, not revoked.
+    const kept = authWith({ store: memoryStore() });
+    await connect(kept);
+    expect(kept.persisted()).toBe(true);
+    const revoked = h.google.revoked.length;
+    expect(kept.dispose()).toBeNull();
+    expect(h.google.revoked).toHaveLength(revoked);
+    const restored = memoryStore();
+    restored.write(GSC_SECRET, storedBlob());
+    expect(authWith({ store: restored }).persisted()).toBe(true);
+  });
+
+  test('dispose-during-exchange-awaited', async () => {
+    const auth = authWith({ store: memoryStore() });
+    const release = h.hold('token');
+    h.grant();
+    expect(await auth.connect(WINDOW_ID)).toBe('started');
+    await h.follow();
+    const held = auth.dispose();
+    expect(held).toBeInstanceOf(Promise);
+    let settled = false;
+    void held!.then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    release();
+    await held;
+    expect(h.google.refreshTokens).toHaveLength(1);
+    expect(h.google.revoked).toContain(h.google.refreshTokens[0]);
+    expect(auth.held()).toBe(false);
   });
 });

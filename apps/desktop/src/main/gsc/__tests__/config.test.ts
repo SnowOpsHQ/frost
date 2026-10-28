@@ -1,8 +1,10 @@
 // Spec: specs/gsc.spec.ts (GSC_CONFIG_ENV, GSC_ENDPOINTS, GSC_ENDPOINT_ENV, UNPACKAGED_HTTP_GSC_HOSTS,
-// GSC_CLIENT_ID_PATTERN, GSC_CLIENT_SECRET_PATTERN)
+// GSC_CLIENT_ID_PATTERN, GSC_CLIENT_SECRET_PATTERN), specs/build-config.spec.ts (runtimeOverridesAllowed)
 // Acceptance: specs/gsc.feature.md (Configuration) · plan "Configuration"
 import { describe, expect, test } from 'vitest';
+import { ACCOUNT_CONFIG_ENV } from '@app/specs/account-state.schema';
 import { GSC_CONFIG_ENV, GSC_ENDPOINT_ENV, GSC_ENDPOINTS } from '@app/specs/gsc.spec';
+import { TELEMETRY_CONFIG_ENV } from '@app/specs/telemetry-consent.schema';
 import { resolveGscConfig, type GscEnv } from '../config';
 
 /** The client values (`null`: absent). */
@@ -30,12 +32,15 @@ describe('Search Console configuration', () => {
     expect(resolve(true, client())).toEqual({ clientId: 'test-client-id', clientSecret: 'test-client-secret', endpoints: GSC_ENDPOINTS });
   });
 
-  test('gsc-config-baked-uses-google-endpoints', () => {
+  test('gsc-config-baked-build-ignores-runtime', () => {
     for (const isPackaged of [true, false]) {
       const runtime = { ...client('other-client', 'other-secret'), ...FAKES };
       expect(resolve(isPackaged, client(), runtime)).toEqual({ clientId: 'test-client-id', clientSecret: 'test-client-secret', endpoints: GSC_ENDPOINTS });
       // Only one value baked in: the run-time environment is still ignored for both (unconfigured).
       expect(resolve(isPackaged, client('test-client-id', null), runtime)).toBeNull();
+      // Only the account's or telemetry's value baked in: Search Console's run-time values (and fakes) are ignored too.
+      expect(resolve(isPackaged, { [ACCOUNT_CONFIG_ENV.apiBaseUrl]: 'https://api.example.test' }, runtime)).toBeNull();
+      expect(resolve(isPackaged, { [TELEMETRY_CONFIG_ENV.otelEndpoint]: 'https://otel.example.test/v1/traces' }, runtime)).toBeNull();
     }
   });
 

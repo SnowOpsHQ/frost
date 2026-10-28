@@ -41,9 +41,10 @@ renderer never sees a token". Each line maps to one named test.
   `refresh`: `/v1/session` then `/v1/entitlements`. A 401 drops the token and signs out
   (`markRefreshFailed('auth')`, error `session-ended`); a network failure keeps the account and allows
   offline grace (`markRefreshFailed('network')`); an answer that does not verify is `invalid` (free).
-- **Configuration.** `ACCOUNT_CONFIG_ENV` from the build. A build with either value baked in never
-  reads the run-time environment (for either); only an unpackaged build with neither baked in does
-  (dev, e2e). `app.isPackaged` only looks at the executable's name, so it is not the guard. Packaged requires an `https:` API base; unpackaged also allows `http:` on
+- **Configuration.** `ACCOUNT_CONFIG_ENV` from the build. One rule for every public value
+  (`build-config.spec.ts`, `runtimeOverridesAllowed`): a build with any `FROST_PUBLIC_*` value baked in
+  (the account's, telemetry's or Search Console's) never reads the run-time environment (for any of
+  them); only an unpackaged build with nothing baked in does (dev, e2e). `app.isPackaged` only looks at the executable's name, so it is not the guard. Packaged requires an `https:` API base; unpackaged also allows `http:` on
   `UNPACKAGED_HTTP_API_HOSTS`. The base is an origin only. A missing or invalid base or JWKS is
   `unconfigured`: nothing is sent, `signIn` answers `unconfigured`.
 - **Keychain.** The token lives in the secret store's `account` blob; memory-only (no real keychain)
@@ -66,7 +67,7 @@ renderer never sees a token". Each line maps to one named test.
 - `config-packaged-requires-https` — packaged: `http:` (even loopback) is refused; `https:` is accepted.
 - `config-unpackaged-allows-loopback-http` — unpackaged: `http://127.0.0.1:<port>` and `http://localhost` are accepted, `http:` elsewhere refused.
 - `config-runtime-env-only-unpackaged` — an unpackaged build with nothing baked in reads the run-time environment; a packaged one never does.
-- `config-baked-build-ignores-runtime` — a build with either value baked in ignores the run-time environment for both, packaged or not (a renamed executable reads as unpackaged).
+- `config-baked-build-ignores-runtime` — a build with either value baked in ignores the run-time environment for both, packaged or not (a renamed executable reads as unpackaged); so does a build with only another module's value baked in (telemetry's, Search Console's).
 - `config-api-base-is-origin-only` — a path, query, fragment or credentials is refused; a trailing slash is dropped.
 - `config-malformed-jwks-is-unconfigured` — a JWKS that is not JSON or not `EntitlementJwksSchema` is unconfigured.
 
@@ -118,6 +119,7 @@ renderer never sees a token". Each line maps to one named test.
 - `refresh-network-keeps-grace` — a network failure keeps the account and calls `markRefreshFailed('network')`.
 - `refresh-invalid-snapshot-is-free` — an entitlements answer that does not parse is `markRefreshFailed('invalid')`.
 - `entitlements-none-unless-signed-in` — a snapshot held without a stored account is cleared at start; `entitlements()` is `none` while `confirming`.
+- `user-id-for-main-only` — main's `userId()` is the confirmed account's ID (`null` while signed out or `confirming`), and `onChange` listeners are called after each change (Search Console binds its connection to that ID); neither is on the IPC `AccountService`.
 - `memory-only-keychain-signs-in` — with a memory-only store sign-in works for the run and the state says `memory-only`.
 - `watch-long-polls` — `watch` answers at once for an older version, else at the next change; aborting releases it; more than `MAX_PENDING_ACCOUNT_WATCHES` answer the oldest early.
 - `logs-carry-no-secret` — across every path above, the log never contains the fake token, code, verifier, `state`, snapshot or email.
