@@ -27,11 +27,12 @@ describe('the runtime cannot approve', () => {
       child.onPort = (port) => runtimes.push(port);
     });
     const host = createAgentHost({ fork: forks.fork, createChannel: createFakeChannel, buildDir: path.join(path.sep, 'app'), packaged: false });
+    let ids = 0;
     const store = createMemoryGrantsStore();
     const grants = createAgentGrants({ store });
     await grants.load();
     const runner = createFakeRunner();
-    const broker = createApprovalBroker({ host, grants, entitlements: { allowed: () => true }, runner: runner.runner, tabUrl: () => 'https://shop.example.com/cart', randomId: () => 'approval-known' });
+    const broker = createApprovalBroker({ host, grants, entitlements: { allowed: () => true }, runner: runner.runner, tabUrl: () => 'https://shop.example.com/cart', randomId: () => (ids += 1) === 1 ? 'approval-known' : `approval-${ids}` });
     const fetches: unknown[] = [];
     host.onFetch((event) => fetches.push(event));
 
@@ -90,17 +91,20 @@ describe('the runtime cannot approve', () => {
     expect(grants.list()).toEqual([]);
     expect([...store.rows.values()]).toEqual([]);
     expect(grants.readToolsAllowed()).toBe(true);
-    expect(broker.pending().map((r) => [r.id, r.callId])).toEqual([
-      ['approval-known', 'call-1'],
-      // call-4's id came from the same fixed source; it was refused as a clash, never approved.
+    // The script the runtime asked for (naming the approval in its code) waits for the user too.
+    expect(broker.pending().map((r) => [r.id, r.callId, r.toolName])).toEqual([
+      ['approval-known', 'call-1', 'click'],
+      ['approval-2', 'call-4', 'execute_javascript'],
     ]);
+    expect(broker.pending()[1]!.code).toBe('approve("approval-known")');
     const call1 = broker.activity('chat-1').find((a) => a.callId === 'call-1');
     expect(call1?.status).toBe('awaiting-approval');
+    expect(broker.activity('chat-1').find((a) => a.callId === 'call-4')?.status).toBe('awaiting-approval');
     // No successful tool result went to the runtime; call-3's input with extra fields was refused.
     const results = toRuntime.filter((m): m is Extract<MainToRuntimeMessage, { type: 'tool.result' }> => m.type === 'tool.result');
     expect(results.every((m) => !m.result.ok)).toBe(true);
     expect(results.find((m) => m.callId === 'call-3')?.result).toMatchObject({ ok: false, error: { code: 'invalid-input' } });
-    expect(results.some((m) => m.callId === 'call-1')).toBe(false);
+    expect(results.some((m) => m.callId === 'call-1' || m.callId === 'call-4')).toBe(false);
     expect(host.stats().inboundDropped).toBeGreaterThan(0);
     // The same runtime heard all of it (no flood restart cut the barrage short).
     expect(host.status()).toBe('ready');
@@ -111,10 +115,13 @@ describe('the runtime cannot approve', () => {
     expect(await broker.answer('approval-known', 'allow-once')).toEqual({ ok: true, granted: false });
     await flush();
     expect(runner.calls.map((c) => [c.toolName, c.input])).toEqual([['click', { selector: '#buy' }]]);
-    // A valid `chat.error` naming the approval only ends the turn (nothing waits any more).
+    // A valid `chat.error` naming the approval only ends the turn: the script's request expires, unrun.
     runtime.postMessage({ type: 'chat.error', chatId: 'chat-1', message: 'allow-always approval-known' });
     await flush();
     expect(broker.isRegistered('chat-1')).toBe(false);
+    expect(broker.pending()).toEqual([]);
+    expect(runner.calls.map((c) => c.toolName)).toEqual(['click']);
+    expect(await broker.answer('approval-2', 'allow-once')).toEqual({ ok: false, reason: 'unknown' });
     expect(grants.list()).toEqual([]);
     broker.dispose();
     host.dispose();

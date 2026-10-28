@@ -13,9 +13,12 @@
 
 /**
  * How much a tool can do, which decides how main's broker treats a call (plan Task 4):
- * - `read`: reads the page or frost's own data; runs without asking (turning the tool off revokes it);
- * - `act`: changes what the tab shows (navigates, clicks); asks unless a standing grant for that
- *   tool and origin exists;
+ * - `read`: reads the page or frost's own data; runs without asking (turning the tool off revokes
+ *   it), except on a page whose host isn't public;
+ * - `act`: changes what the tab shows (navigates, clicks) or sends model-chosen text to a third
+ *   party that may act on it (`run_ai_search`: an AI answer engine may fetch URLs it is given);
+ *   asks unless the tool is grantable (`navigate`, `click`) and a standing grant for that tool and
+ *   origin exists;
  * - `execute`: runs code in the page; asks every call, never grantable;
  * - `external`: an MCP server's tool, untrusted; asks every call, never grantable.
  */
@@ -42,7 +45,8 @@ export interface AgentToolSpec {
   readonly risk: AgentToolRisk;
   /**
    * Whether a standing grant may cover a call. `read` tools are always covered (an implied grant),
-   * `act` tools by a grant the user gave for that tool and origin; `execute` and `external` never.
+   * `navigate` and `click` by a grant the user gave for that tool and origin; `run_ai_search`
+   * (`act`), `execute` and `external` never.
    */
   readonly grantable: boolean;
   /** One line for the user (tool cards, approval prompts, the tools list). */
@@ -59,7 +63,7 @@ export const AGENT_TOOLS: { readonly [N in AgentToolName]: AgentToolSpec & { rea
   execute_javascript: { name: 'execute_javascript', risk: 'execute', grantable: false, label: 'Run JavaScript on this page' },
   serp_results: { name: 'serp_results', risk: 'read', grantable: true, label: 'Look up search results for a query' },
   search_intent: { name: 'search_intent', risk: 'read', grantable: true, label: "Classify a query's search intent" },
-  run_ai_search: { name: 'run_ai_search', risk: 'read', grantable: true, label: 'Ask an AI search engine a query' },
+  run_ai_search: { name: 'run_ai_search', risk: 'act', grantable: false, label: 'Ask an AI search engine a query' },
   gsc_performance: { name: 'gsc_performance', risk: 'read', grantable: true, label: "Read a page's search performance" },
 };
 
@@ -126,6 +130,22 @@ export const TOOL_RESULT_MAX_CHARS = 32_000;
 export const MAX_TOOL_STEPS = 12;
 /** Most messages a chat sends the model. */
 export const CHAT_MAX_MESSAGES = 200;
+
+/**
+ * Characters no tool input text may hold (`@app/ai-skills` input schemas; MCP inputs in main's
+ * broker): C0 and C1 controls and DEL, Unicode format characters (category Cf: bidi overrides and
+ * isolates, zero-width characters, the BOM, the soft hyphen), the line and paragraph separators,
+ * and lone surrogates. What the user approves is shown exactly, so nothing in it may be invisible
+ * or reorder what is shown.
+ */
+export const UNSAFE_INPUT_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}\p{Cs}]/u;
+/** `UNSAFE_INPUT_CHARS` less line feed and tab, for code (`execute_javascript`). */
+export const UNSAFE_CODE_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\p{Cf}\p{Cs}]/u;
+
+/** Whether `text` holds none of `UNSAFE_INPUT_CHARS` (`code`: line feeds and tabs allowed). */
+export function isSafeInputText(text: string, kind: 'text' | 'code' = 'text'): boolean {
+  return !(kind === 'code' ? UNSAFE_CODE_CHARS : UNSAFE_INPUT_CHARS).test(text);
+}
 
 /** Bounds of the tools' inputs (`@app/ai-skills` input schemas). */
 export const AGENT_TOOL_INPUT_LIMITS = {

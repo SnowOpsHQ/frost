@@ -102,6 +102,8 @@ describe('agent grants (db)', () => {
       ['navigate', 'https://example.com/'],
       ['navigate', 'https://example.com/path'],
       ['navigate', 'HTTPS://EXAMPLE.COM'],
+      ['navigate', 'http://example.com'],
+      ['navigate', 'https://example.com.'],
       ['navigate', ''],
     ];
     for (const [tool, origin] of refused) {

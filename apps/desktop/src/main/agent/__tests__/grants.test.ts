@@ -68,6 +68,9 @@ describe('agent grants', () => {
       ['navigate', 'http://10.1.2.3'],
       ['navigate', 'https://example.com/'],
       ['click', 'about:blank'],
+      // Plain http and a trailing-dot host are never granted.
+      ['navigate', 'http://example.com'],
+      ['click', 'https://example.com.'],
     ] as const) {
       expect(await grants.add(tool, origin), `${tool} ${origin}`).toBe(false);
       expect(grants.has(tool, origin)).toBe(false);
@@ -109,6 +112,42 @@ describe('agent grants', () => {
     await loading;
     await revoked;
     expect(early.has('click', 'https://example.com')).toBe(false);
+  });
+
+  test('grants-revoked-before-load', async () => {
+    // Revokes (one, all) and read tools off, queued while the store is still being read, hold once it is.
+    const rows = [
+      { tool: 'navigate', origin: 'https://a.example.com', createdAt: 1 },
+      { tool: 'click', origin: 'https://b.example.com', createdAt: 2 },
+    ];
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const store = createMemoryGrantsStore({ grants: rows, readToolsAllowed: true });
+    const slow: AgentGrantsStore = { ...store, grants: async () => (await gate, store.grants()) };
+    const one = createAgentGrants({ store: slow });
+    const loading = one.load();
+    const revoked = one.revoke('navigate', 'https://a.example.com');
+    const off = one.setReadToolsAllowed(false);
+    open();
+    await loading;
+    // Checked right after the load, before the queued writes ran.
+    expect(one.has('navigate', 'https://a.example.com')).toBe(false);
+    expect(one.has('click', 'https://b.example.com')).toBe(true);
+    expect(one.readToolsAllowed()).toBe(false);
+    await Promise.all([revoked, off]);
+    expect(store.rows.size).toBe(1);
+
+    let openAll: () => void = () => undefined;
+    const gateAll = new Promise<void>((resolve) => (openAll = resolve));
+    const storeAll = createMemoryGrantsStore({ grants: rows });
+    const all = createAgentGrants({ store: { ...storeAll, grants: async () => (await gateAll, storeAll.grants()) } });
+    const loadingAll = all.load();
+    const cleared = all.revokeAll();
+    openAll();
+    await loadingAll;
+    expect(all.list()).toEqual([]);
+    await cleared;
+    expect(storeAll.rows.size).toBe(0);
   });
 
   test('grants-db-round-trip', async () => {

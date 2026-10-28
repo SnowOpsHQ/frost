@@ -10,16 +10,21 @@ import {
   grantOriginFor,
   isApprovalDecision,
   isGrantOrigin,
+  isPublicPage,
+  isSafeInputJson,
   isTabBound,
   MAX_PENDING_APPROVALS_PER_CHAT,
   MAX_TOOL_CALLS_PER_TURN,
+  pageUrlOf,
+  runTargetFor,
   TOOL_ERROR_MESSAGES,
   type ApprovalDecision,
+  type RunTarget,
   type ToolActivityStatus,
+  type ToolRunVia,
 } from '@app/specs/agent-approvals.spec';
 import { ToolInputSchema, type JsonValue, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { AGENT_TOOLS, isAgentToolName, isGrantable, isMcpToolName, TOOL_ERROR_CODES, toolRisk, type AgentToolRisk, type ToolErrorCode } from '@app/specs/agent-tools.spec';
-import { webOrigin } from '@app/specs/web-url.spec';
 import type { AgentEntitlements } from './entitlements';
 import type { AgentGrants } from './grants';
 import type { AgentHost, AgentToolInvoke } from './host';
@@ -31,10 +36,11 @@ import { wrapToolOutput } from './tool-output';
 // the tool's schema, it runs the call (a read tool, or an act tool under a standing grant), asks
 // the user, or refuses it, and answers `tool.result`. Approvals are answered only through
 // `answer()`, which only main's code calls (the panel's sender-guarded IPC, Task 6): the host hands
-// this module `tool.invoke` and nothing else, and no runtime message reaches `answer()` or the
-// grants. An approval is bound to one call (its chat, call id, tool and the SHA-256 of its exact
-// canonical input), answered once, and expires after `APPROVAL_TIMEOUT_MS` or when its chat's turn
-// ends. The run uses the input main stored, never anything sent later.
+// this module `tool.invoke` (and the turn's end) and nothing else, and no runtime message reaches
+// `answer()` or the grants. An approval is bound to one call (its chat, call id, tool, exact
+// canonical input and, for a page tool, the exact page), answered once, and expires after
+// `APPROVAL_TIMEOUT_MS` or when its chat's turn ends. The run uses the input main stored, never
+// anything sent later, and the runner is told what the page must still be (`ToolRunContext`).
 
 /** What a tool run gets besides its input. */
 export interface ToolRunContext {
@@ -42,6 +48,20 @@ export interface ToolRunContext {
   readonly tabId: number;
   /** Aborted when the chat's turn ends (Stop) or the broker is disposed. */
   readonly signal: AbortSignal;
+  /** Why it runs: a read tool on its own, an act tool under a grant, or the user's approval. */
+  readonly via: ToolRunVia;
+  /**
+   * The origin the run must find before it acts (`runTargetFor`): the tab page's for a page tool
+   * (checked as `location.origin` inside the isolated world, Task 5), the destination's for
+   * `navigate`; `null` for tools that don't act on a site.
+   */
+  readonly expectedOrigin: string | null;
+  /**
+   * The exact URL: for a page tool, the tab's URL without its fragment when main decided the call
+   * (a `via: 'approval'` page tool acts only if the page is still exactly it); for `navigate`, the
+   * URL to load (`parseWebUrl(url).href`); `null` otherwise.
+   */
+  readonly expectedUrl: string | null;
 }
 
 /** A tool run's outcome: data and where it came from, or why there is none. */
@@ -49,8 +69,10 @@ export type ToolRunOutcome = { readonly ok: true; readonly data: unknown; readon
 
 /**
  * Runs tools for the broker (Task 5's page tools, Task 8's port tools, Task 10's MCP tools). It is
- * handed only calls the broker decided to run, with input re-parsed by main. Its data is wrapped
- * untrusted and capped by the broker; its error codes become fixed messages (`TOOL_ERROR_MESSAGES`).
+ * handed only calls the broker decided to run, with input re-parsed by main, and must check
+ * `expectedOrigin` / `expectedUrl` itself before acting (the plan's Task 5 requirements). Its data
+ * is wrapped untrusted and capped by the broker; its error codes become fixed messages
+ * (`TOOL_ERROR_MESSAGES`).
  */
 export interface ToolRunner {
   run(toolName: string, input: JsonValue, context: ToolRunContext): Promise<ToolRunOutcome>;
@@ -78,12 +100,13 @@ export interface ApprovalRequestView {
   readonly risk: AgentToolRisk;
   /** The site the call acts on (`approvalOriginFor`), `null` for none. */
   readonly origin: string | null;
-  /** The exact canonical input (JSON text), cut at `APPROVAL_DISPLAY_MAX_CHARS`. */
+  /** For a page tool, the exact page it acts on (the tab's URL without its fragment); `null` otherwise. */
+  readonly pageUrl: string | null;
+  /** The exact canonical input (JSON text), in full: never longer than `APPROVAL_DISPLAY_MAX_CHARS`. */
   readonly input: string;
-  readonly inputTruncated: boolean;
-  /** SHA-256 (hex) of the full canonical input. */
+  /** SHA-256 (hex) of `input`, for display and logs only (main keeps the input itself). */
   readonly inputSha256: string;
-  /** `execute_javascript`'s exact code, in full; `null` for other tools. */
+  /** `execute_javascript`'s exact code (also in `input`, JSON-escaped); `null` for other tools. */
   readonly code: string | null;
   /** Whether `allow-always` is offered (`canGrant`). */
   readonly grantable: boolean;
@@ -165,7 +188,8 @@ export interface ApprovalBroker {
   pending(): readonly ApprovalRequestView[];
   /**
    * Answers an approval request once (main's IPC only). Resolves once the decision is applied (and
-   * an `allow-always` grant stored); an allowed call then runs on its own.
+   * an `allow-always` grant stored); an allowed call then runs on its own. A request past its
+   * `expiresAt` is `unknown` (and its call ends `expired`), whether or not its timer has fired.
    */
   answer(approvalId: string, decision: ApprovalDecision): Promise<AnswerResult>;
   /** The chat's tool calls this turn (or last turn), in call order. */
@@ -191,18 +215,21 @@ interface Call {
   controller: AbortController | null;
 }
 
-interface Approved {
+/** What main decided a call is: its exact input and what it acts on. */
+interface Decided {
   readonly risk: AgentToolRisk;
   /** The exact canonical input (JSON text of the re-parsed input). */
   readonly canonical: string;
-  readonly sha256: string;
   readonly origin: string | null;
+  /** The tab's page (no fragment) for a page tool, `null` otherwise. */
+  readonly pageUrl: string | null;
+  readonly target: RunTarget;
 }
 
 interface Pending {
   readonly view: ApprovalRequestView;
   readonly call: Call;
-  readonly approved: Approved;
+  readonly decided: Decided;
   readonly timer: unknown;
 }
 
@@ -228,8 +255,11 @@ interface InputParser {
 }
 
 /**
- * `input` re-parsed in main: a catalogue tool's own strict schema (`@app/ai-skills`), or bounded
- * JSON for an MCP tool (its server's schema is Task 10's). `null` when it doesn't match.
+ * `input` re-parsed in main: a catalogue tool's own strict schema (`@app/ai-skills`), or, for an MCP
+ * tool (its server's schema is Task 10's), bounded JSON with no unsafe character in a key or string
+ * (`isSafeInputJson`). The canonical input must fit `APPROVAL_DISPLAY_MAX_CHARS`, so the user always
+ * sees all of it (a catalogue input always does; a longer MCP input is refused rather than shown
+ * cut). `null` when any of that fails.
  */
 function reparse(toolName: string, input: unknown): { canonical: string; value: JsonValue } | null {
   // Each tool's schema, seen as a plain parser (their union of output types is too deep to infer).
@@ -238,8 +268,11 @@ function reparse(toolName: string, input: unknown): { canonical: string; value: 
   const parsed = schema?.safeParse(input);
   if (parsed === undefined || !parsed.success) return null;
   const canonical = JSON.stringify(parsed.data ?? null);
+  if (canonical.length > APPROVAL_DISPLAY_MAX_CHARS) return null;
   const checked = ToolInputSchema.safeParse(JSON.parse(canonical));
-  return checked.success ? { canonical, value: checked.data } : null;
+  if (!checked.success) return null;
+  if (definition === undefined && !isSafeInputJson(checked.data)) return null;
+  return { canonical, value: checked.data };
 }
 
 export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
@@ -276,7 +309,11 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
   };
 
   const send = (chatId: string, callId: string, result: ToolResult) => {
-    deps.host.send({ type: 'tool.result', chatId, callId, result });
+    try {
+      deps.host.send({ type: 'tool.result', chatId, callId, result });
+    } catch {
+      log('agent approvals: a tool result could not be sent');
+    }
   };
 
   const errorResult = (code: ToolErrorCode): ToolResult => ({ ok: false, error: { code, message: TOOL_ERROR_MESSAGES[code] } });
@@ -301,57 +338,64 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
 
   const entitled = (risk: AgentToolRisk) => deps.entitlements.allowed('agent') && (risk !== 'external' || deps.entitlements.allowed('agent.mcp'));
 
-  /** Runs `call` with the stored input. `recheck`: an approved call whose tab must still show the approved origin. */
-  const run = async (call: Call, approved: Approved, recheck: boolean) => {
-    if (call.settled) return;
-    const chat = call.chat;
-    if (!chat.active || chats.get(call.chatId) !== chat) {
-      fail(call, 'expired');
-      return;
-    }
-    if (!entitled(approved.risk)) {
-      fail(call, 'not-allowed');
-      return;
-    }
-    if (recheck && isTabBound(call.toolName) && webOrigin(deps.tabUrl(chat.tabId)) !== approved.origin) {
-      // The tab left the site the user approved the call for.
-      fail(call, 'expired');
-      return;
-    }
-    if (sha256(approved.canonical) !== approved.sha256) {
-      fail(call, 'failed');
-      return;
-    }
-    const controller = new AbortController();
-    call.controller = controller;
-    setStatus(call, 'running');
-    let outcome: ToolRunOutcome;
+  /** Runs `call` with the stored input, `via` the read setting, a grant, or the user's approval. */
+  const run = async (call: Call, decided: Decided, via: ToolRunVia) => {
     try {
-      outcome = await runner.run(call.toolName, JSON.parse(approved.canonical) as JsonValue, { tabId: chat.tabId, signal: controller.signal });
+      if (call.settled) return;
+      const chat = call.chat;
+      if (!chat.active || chats.get(call.chatId) !== chat) {
+        fail(call, 'expired');
+        return;
+      }
+      if (!entitled(decided.risk)) {
+        fail(call, 'not-allowed');
+        return;
+      }
+      // An approved page tool runs only on the exact page the user saw in the request.
+      if (via === 'approval' && isTabBound(call.toolName) && pageUrlOf(deps.tabUrl(chat.tabId)) !== decided.pageUrl) {
+        fail(call, 'expired');
+        return;
+      }
+      const controller = new AbortController();
+      call.controller = controller;
+      setStatus(call, 'running');
+      let outcome: ToolRunOutcome;
+      try {
+        outcome = await runner.run(call.toolName, JSON.parse(decided.canonical) as JsonValue, {
+          tabId: chat.tabId,
+          signal: controller.signal,
+          via,
+          expectedOrigin: decided.target.expectedOrigin,
+          expectedUrl: decided.target.expectedUrl,
+        });
+      } catch {
+        outcome = { ok: false, code: 'failed' };
+      }
+      if (call.settled) return;
+      if ((outcome as unknown) === null || typeof outcome !== 'object') {
+        fail(call, 'failed');
+        return;
+      }
+      if (!outcome.ok) {
+        fail(call, (TOOL_ERROR_CODES as readonly string[]).includes(outcome.code) ? outcome.code : 'failed');
+        return;
+      }
+      const result = wrapToolOutput(call.toolName, outcome.source, outcome.data);
+      if (result === null) {
+        fail(call, 'failed');
+        return;
+      }
+      call.settled = true;
+      call.controller = null;
+      send(call.chatId, call.callId, result);
+      setStatus(call, 'done');
     } catch {
-      outcome = { ok: false, code: 'failed' };
-    }
-    if (call.settled) return;
-    if ((outcome as unknown) === null || typeof outcome !== 'object') {
+      // A dependency threw (the tab lookup, a listener): the call fails rather than stays running.
       fail(call, 'failed');
-      return;
     }
-    if (!outcome.ok) {
-      fail(call, (TOOL_ERROR_CODES as readonly string[]).includes(outcome.code) ? outcome.code : 'failed');
-      return;
-    }
-    const result = wrapToolOutput(call.toolName, outcome.source, outcome.data);
-    if (result === null) {
-      fail(call, 'failed');
-      return;
-    }
-    call.settled = true;
-    call.controller = null;
-    send(call.chatId, call.callId, result);
-    setStatus(call, 'done');
   };
 
-  const ask = (call: Call, approved: Approved) => {
+  const ask = (call: Call, decided: Decided) => {
     const chatPending = [...pendings.values()].filter((entry) => entry.call.chat === call.chat).length;
     if (chatPending >= MAX_PENDING_APPROVALS_PER_CHAT) {
       stats.refused += 1;
@@ -364,20 +408,20 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
       return;
     }
     const createdAt = now();
-    const code = call.toolName === 'execute_javascript' ? (JSON.parse(approved.canonical) as { code: string }).code : null;
+    const code = call.toolName === 'execute_javascript' ? (JSON.parse(decided.canonical) as { code: string }).code : null;
     const view: ApprovalRequestView = {
       id,
       chatId: call.chatId,
       callId: call.callId,
       toolName: call.toolName,
       label: toolLabel(call.toolName),
-      risk: approved.risk,
-      origin: approved.origin,
-      input: approved.canonical.slice(0, APPROVAL_DISPLAY_MAX_CHARS),
-      inputTruncated: approved.canonical.length > APPROVAL_DISPLAY_MAX_CHARS,
-      inputSha256: approved.sha256,
+      risk: decided.risk,
+      origin: decided.origin,
+      pageUrl: decided.pageUrl,
+      input: decided.canonical,
+      inputSha256: sha256(decided.canonical),
       code,
-      grantable: canGrant(call.toolName, approved.origin),
+      grantable: canGrant(call.toolName, decided.origin),
       createdAt,
       expiresAt: createdAt + APPROVAL_TIMEOUT_MS,
     };
@@ -385,7 +429,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
       const entry = takePending(id);
       if (entry !== undefined) fail(entry.call, 'expired');
     }, APPROVAL_TIMEOUT_MS);
-    pendings.set(id, { view, call, approved, timer });
+    pendings.set(id, { view, call, decided, timer });
     stats.asked += 1;
     call.approvalId = id;
     setStatus(call, 'awaiting-approval');
@@ -427,33 +471,51 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
     if (calls === undefined) activities.set(invoke.chatId, (calls = new Map()));
     calls.set(invoke.callId, call);
 
-    const risk = toolRisk(invoke.toolName);
-    if (risk === null || !chat.allowed.has(invoke.toolName) || !entitled(risk)) {
-      stats.refused += 1;
-      fail(call, 'not-allowed');
-      return;
+    try {
+      const risk = toolRisk(invoke.toolName);
+      if (risk === null || !chat.allowed.has(invoke.toolName) || !entitled(risk)) {
+        stats.refused += 1;
+        fail(call, 'not-allowed');
+        return;
+      }
+      const input = reparse(invoke.toolName, invoke.input);
+      if (input === null) {
+        stats.refused += 1;
+        fail(call, 'invalid-input');
+        return;
+      }
+      const tabUrl = deps.tabUrl(chat.tabId);
+      const pageUrl = isTabBound(invoke.toolName) ? pageUrlOf(tabUrl) : null;
+      if (isTabBound(invoke.toolName) && pageUrl === null) {
+        // A page tool with no web page in the tab: nothing to read or act on.
+        fail(call, 'unavailable');
+        return;
+      }
+      const grantOrigin = grantOriginFor(invoke.toolName, input.value, tabUrl);
+      const decided: Decided = {
+        risk,
+        canonical: input.canonical,
+        origin: approvalOriginFor(invoke.toolName, input.value, tabUrl),
+        pageUrl,
+        target: runTargetFor(invoke.toolName, input.value, tabUrl),
+      };
+      const decision = decide(risk, {
+        grantable: isGrantable(invoke.toolName),
+        hasGrant: grantOrigin !== null && deps.grants.has(invoke.toolName, grantOrigin),
+        readToolsAllowed: deps.grants.readToolsAllowed(),
+        privateOrigin: !isGrantOrigin(grantOrigin),
+        privatePage: pageUrl !== null && !isPublicPage(pageUrl),
+      });
+      if (decision === 'run') {
+        stats.autoRun += 1;
+        void run(call, decided, risk === 'read' ? 'read' : 'grant');
+        return;
+      }
+      ask(call, decided);
+    } catch {
+      // A dependency threw (the tab lookup, the grants): refused, never left running.
+      fail(call, 'failed');
     }
-    const input = reparse(invoke.toolName, invoke.input);
-    if (input === null) {
-      stats.refused += 1;
-      fail(call, 'invalid-input');
-      return;
-    }
-    const tabUrl = deps.tabUrl(chat.tabId);
-    const grantOrigin = grantOriginFor(invoke.toolName, input.value, tabUrl);
-    const approved: Approved = { risk, canonical: input.canonical, sha256: sha256(input.canonical), origin: approvalOriginFor(invoke.toolName, input.value, tabUrl) };
-    const decision = decide(risk, {
-      grantable: isGrantable(invoke.toolName),
-      hasGrant: grantOrigin !== null && deps.grants.has(invoke.toolName, grantOrigin),
-      readToolsAllowed: deps.grants.readToolsAllowed(),
-      privateOrigin: !isGrantOrigin(grantOrigin),
-    });
-    if (decision === 'run') {
-      stats.autoRun += 1;
-      void run(call, approved, false);
-      return;
-    }
-    ask(call, approved);
   };
 
   const unsubscribeTools = deps.host.onToolInvoke(onInvoke);
@@ -503,21 +565,31 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
       if (typeof approvalId !== 'string' || !isApprovalDecision(decision)) return { ok: false, reason: 'invalid' };
       const entry = pendings.get(approvalId);
       if (entry === undefined) return { ok: false, reason: 'unknown' };
+      if (now() >= entry.view.expiresAt) {
+        // Its timer hasn't fired (the machine slept, or timers lag): expired all the same.
+        takePending(approvalId);
+        fail(entry.call, 'expired');
+        return { ok: false, reason: 'unknown' };
+      }
       if (decision === 'allow-always' && !entry.view.grantable) return { ok: false, reason: 'not-grantable' };
       // Single use: taken before anything is awaited.
       takePending(approvalId);
-      const { call, approved } = entry;
+      const { call, decided } = entry;
       if (decision === 'deny') {
         fail(call, 'denied');
         return { ok: true, granted: false };
       }
       let granted = false;
-      if (decision === 'allow-always' && approved.origin !== null) {
-        granted = await deps.grants.add(call.toolName, approved.origin);
+      if (decision === 'allow-always' && decided.origin !== null) {
+        try {
+          granted = await deps.grants.add(call.toolName, decided.origin);
+        } catch {
+          granted = false;
+        }
         if (!granted) log('agent approvals: a standing grant could not be stored; the call runs once');
       }
       // The tool runs on; its outcome shows in `activity()` and goes to the runtime as `tool.result`.
-      void run(call, approved, true);
+      void run(call, decided, 'approval');
       return { ok: true, granted };
     },
     activity: (chatId) =>

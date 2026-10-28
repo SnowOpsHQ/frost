@@ -59,7 +59,13 @@ one named test.
 
 ## Catalogue (`packages/ai-skills/src/__tests__/agent-tools.test.ts`)
 - **Scenario: catalogue-risk-classes** — `read` tools grantable, `navigate` and `click` `act` and
-  grantable, `execute_javascript` `execute` and not grantable; every tool has a label.
+  grantable, `run_ai_search` `act` and not grantable (it sends model-chosen text to an AI answer
+  engine, which may fetch URLs), `execute_javascript` `execute` and not grantable; every tool has a
+  label.
+- **Scenario: tool-inputs-safe-text** — click's selector and text, navigate's and
+  `gsc_performance`'s URL, search queries and `execute_javascript`'s code refuse control characters,
+  Unicode format characters (bidi, zero-width, BOM), line and paragraph separators and lone
+  surrogates (`UNSAFE_INPUT_CHARS`; code allows line feeds and tabs).
 - **Scenario: mcp-tools-are-external** — an `mcp__<server>__<tool>` name is `external` and not
   grantable; other names (and a catalogue name) are not MCP tools; an unknown name has no risk.
 - **Scenario: caps-are-sane** — the caps are positive integers and the default model is allowed.

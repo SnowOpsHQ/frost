@@ -8,7 +8,7 @@
  * refuses it. Only main's code answers an approval (through the app window's sender-guarded IPC,
  * Task 6); no runtime message can approve a call or create a grant.
  */
-import { AGENT_TOOLS, isAgentToolName, isGrantable, MAX_TOOL_STEPS, toolRisk, type AgentToolRisk, type ToolErrorCode } from './agent-tools.spec';
+import { AGENT_TOOLS, EXECUTE_JS_MAX_SOURCE_CHARS, isAgentToolName, isGrantable, isSafeInputText, MAX_TOOL_STEPS, toolRisk, type AgentToolRisk, type ToolErrorCode } from './agent-tools.spec';
 import { isPublicHost } from './private-address.spec';
 import { parseWebUrl, webOrigin } from './web-url.spec';
 
@@ -43,7 +43,7 @@ export function isApprovalDecision(value: unknown): value is ApprovalDecision {
  * A tool call's state, for its card in the panel:
  * `awaiting-approval` (asking the user), `running`, `done` (output handed to the model), `denied`
  * (the user said no), `failed` (refused, invalid, or the tool failed), `expired` (unanswered in
- * time, the chat stopped, or the tab left the approved origin).
+ * time, the chat stopped, or the tab left the approved page).
  */
 export const TOOL_ACTIVITY_STATUSES = ['awaiting-approval', 'running', 'done', 'denied', 'failed', 'expired'] as const;
 export type ToolActivityStatus = (typeof TOOL_ACTIVITY_STATUSES)[number];
@@ -68,11 +68,14 @@ export const TOOL_ERROR_MESSAGES: Readonly<Record<ToolErrorCode, string>> = {
 };
 
 /**
- * Longest input an approval request shows (the canonical JSON text, characters); a longer one is
- * cut and flagged. `execute_javascript`'s code is shown in full besides (it is at most
- * `EXECUTE_JS_MAX_SOURCE_CHARS`).
+ * Longest canonical input (JSON text, characters) a call may have: an approval request always shows
+ * the whole input, never a cut one. Derived from the catalogue's caps: the longest input any
+ * catalogue schema admits is `execute_javascript`'s code, and JSON writes each character it allows
+ * in at most two (`\"`, `\\`, `\n`, `\t`; the escapes JSON writes longer, other controls and lone
+ * surrogates, are refused by `UNSAFE_CODE_CHARS`), plus the key. An MCP tool's input longer than it
+ * is refused (`invalid-input`).
  */
-export const APPROVAL_DISPLAY_MAX_CHARS = 4000;
+export const APPROVAL_DISPLAY_MAX_CHARS = 2 * EXECUTE_JS_MAX_SOURCE_CHARS + 64;
 
 /** Most standing grants kept; adding one past it is refused (the grants page can revoke some). */
 export const MAX_AGENT_GRANTS = 1000;
@@ -89,22 +92,66 @@ export const DEFAULT_READ_TOOLS_ALLOWED = true;
 /** Longest origin a grant is stored for (characters). */
 export const MAX_GRANT_ORIGIN_CHARS = 2048;
 
-// ---- Origins ---------------------------------------------------------------------------------
+/**
+ * Why a tool runs, handed to the tool runner (Task 5) with what it must find before it acts:
+ * - `read`: a read tool, on its own (read tools allowed);
+ * - `grant`: an `act` tool under a standing grant (the tab must still be on `expectedOrigin`);
+ * - `approval`: the user allowed this call (the tab must still show exactly `expectedUrl`).
+ */
+export const TOOL_RUN_VIAS = ['read', 'grant', 'approval'] as const;
+export type ToolRunVia = (typeof TOOL_RUN_VIAS)[number];
+
+// ---- Inputs ----------------------------------------------------------------------------------
 
 /**
- * Whether `origin` may carry a standing grant: an `http(s)` origin written exactly as the URL
- * parser serialises it (`https://example.com`, no path, no trailing slash) whose host is public
- * (`isPublicHost`: not `localhost`, a private or loopback IP literal, a single label or a reserved
- * name). A grant is never created for, or used on, any other origin.
+ * Whether an MCP tool's input (JSON data) is safe to show and approve: every key and string holds
+ * no `UNSAFE_CODE_CHARS` (line feeds and tabs allowed), so nothing in it is invisible or reorders
+ * what is shown. Its length is checked against `APPROVAL_DISPLAY_MAX_CHARS` separately.
+ */
+export function isSafeInputJson(value: unknown, depth = 0): boolean {
+  if (depth > 64) return false;
+  if (typeof value === 'string') return isSafeInputText(value, 'code');
+  if (value === null || typeof value !== 'object') return true;
+  if (Array.isArray(value)) return value.every((item) => isSafeInputJson(item, depth + 1));
+  return Object.entries(value).every(([key, item]) => isSafeInputText(key, 'code') && isSafeInputJson(item, depth + 1));
+}
+
+// ---- Origins and pages -----------------------------------------------------------------------
+
+/**
+ * Whether `origin` may carry a standing grant: an `https:` origin written exactly as the URL parser
+ * serialises it (`https://example.com`, no path, no trailing slash, no trailing dot on the host)
+ * whose host is public (`isPublicHost`: not `localhost`, a private or loopback IP literal, a single
+ * label or a reserved name). A grant is never created for, or used on, any other origin; plain
+ * `http:` always asks.
  */
 export function isGrantOrigin(origin: unknown): origin is string {
   if (typeof origin !== 'string' || origin.length > MAX_GRANT_ORIGIN_CHARS) return false;
   const parsed = parseWebUrl(origin);
-  return parsed !== null && parsed.origin === origin && isPublicHost(parsed.hostname);
+  return parsed !== null && parsed.protocol === 'https:' && parsed.origin === origin && !parsed.hostname.endsWith('.') && isPublicHost(parsed.hostname);
+}
+
+/** `url` as an approval binds a page: an `http(s)` URL without its `#fragment`; else `null`. */
+export function pageUrlOf(url: unknown): string | null {
+  const parsed = parseWebUrl(url);
+  if (parsed === null) return null;
+  parsed.hash = '';
+  return parsed.href;
+}
+
+/** Whether `url` is an `http(s)` page on a public host (`isPublicHost`): read tools run there without asking. */
+export function isPublicPage(url: unknown): boolean {
+  const parsed = parseWebUrl(url);
+  return parsed !== null && isPublicHost(parsed.hostname);
 }
 
 /** Tools that act on the chat tab's page: the origin they act on is the tab's. */
 export const PAGE_TOOLS: readonly string[] = ['page_audit', 'page_data', 'page_text', 'click', 'execute_javascript'];
+
+/** Whether `toolName` acts on the chat tab's page (`PAGE_TOOLS`): it needs a web page there, and an approval binds that page. */
+export function isTabBound(toolName: string): boolean {
+  return PAGE_TOOLS.includes(toolName);
+}
 
 /**
  * The origin a grant for a call to `toolName` is keyed to (`act` tools only):
@@ -123,23 +170,41 @@ export function grantOriginFor(toolName: string, input: unknown, tabUrl: string 
 }
 
 /**
- * The origin an approval request names: the grant origin for `act` tools, the tab page's origin
- * for the other page tools (`PAGE_TOOLS`), else `null` (the call doesn't act on a site).
+ * The origin an approval request names: the grant origin for `navigate` and `click`, the tab page's
+ * origin for the other page tools (`PAGE_TOOLS`), else `null` (the call doesn't act on a site).
  */
 export function approvalOriginFor(toolName: string, input: unknown, tabUrl: string | null): string | null {
   if (toolName === 'navigate' || toolName === 'click') return grantOriginFor(toolName, input, tabUrl);
   return PAGE_TOOLS.includes(toolName) ? webOrigin(tabUrl) : null;
 }
 
-/** Whether the run of an approved call to `toolName` must find the tab still on the approved origin. */
-export function isTabBound(toolName: string): boolean {
-  return PAGE_TOOLS.includes(toolName);
+/** What a run must find (`ToolRunContext`): the origin, and the exact URL. */
+export interface RunTarget {
+  readonly expectedOrigin: string | null;
+  readonly expectedUrl: string | null;
+}
+
+/**
+ * What a call to `toolName` must find when it runs, decided when main decides the call:
+ * - `navigate`: the destination's origin and `parseWebUrl(url).href` (the URL the tab loads);
+ * - a page tool: the tab page's origin and its URL without the fragment (`pageUrlOf`);
+ * - any other tool: nothing (`null`s).
+ */
+export function runTargetFor(toolName: string, input: unknown, tabUrl: string | null): RunTarget {
+  if (toolName === 'navigate') {
+    const url = typeof input === 'object' && input !== null ? (input as { url?: unknown }).url : undefined;
+    const parsed = parseWebUrl(url);
+    return { expectedOrigin: parsed?.origin ?? null, expectedUrl: parsed?.href ?? null };
+  }
+  if (isTabBound(toolName)) return { expectedOrigin: webOrigin(tabUrl), expectedUrl: pageUrlOf(tabUrl) };
+  return { expectedOrigin: null, expectedUrl: null };
 }
 
 /**
  * Whether a standing grant may be created for (`allow-always`) or used by `toolName` on `origin`:
- * an `act` catalogue tool the catalogue says is grantable, on a grantable origin (`isGrantOrigin`).
- * Never for `read` tools (covered by the read-tools setting), `execute`, `external` or an unknown name.
+ * an `act` catalogue tool the catalogue says is grantable (`navigate`, `click`), on a grantable
+ * origin (`isGrantOrigin`). Never for `read` tools (covered by the read-tools setting),
+ * `run_ai_search`, `execute`, `external` or an unknown name.
  */
 export function canGrant(toolName: unknown, origin: unknown): boolean {
   return isAgentToolName(toolName) && AGENT_TOOLS[toolName].risk === 'act' && isGrantable(toolName) && isGrantOrigin(origin);
@@ -154,20 +219,22 @@ export interface DecideContext {
   readonly hasGrant: boolean;
   /** The user lets read tools run without asking (`DEFAULT_READ_TOOLS_ALLOWED`). */
   readonly readToolsAllowed: boolean;
-  /** The grant origin is missing, not `http(s)`, or private (not `isGrantOrigin`). */
+  /** The grant origin is missing or can't carry a grant (not `isGrantOrigin`). */
   readonly privateOrigin: boolean;
+  /** A page tool on a page whose host isn't public (`isPublicPage`): a local service's page. */
+  readonly privatePage: boolean;
 }
 
 /**
  * What main does with a valid, allowed call of a tool of class `risk`:
- * - `read`: `run`, unless the user turned read tools off (`ask`);
- * - `act`: `run` only with a standing grant for the tool on a public origin, else `ask`;
+ * - `read`: `run`, unless the user turned read tools off or the page isn't public (`ask`);
+ * - `act`: `run` only with a standing grant for a grantable tool on a grantable origin, else `ask`;
  * - `execute`, `external`: `ask`, every call.
  */
 export function decide(risk: AgentToolRisk, context: DecideContext): 'run' | 'ask' {
   switch (risk) {
     case 'read':
-      return context.readToolsAllowed ? 'run' : 'ask';
+      return context.readToolsAllowed && !context.privatePage ? 'run' : 'ask';
     case 'act':
       return context.grantable && context.hasGrant && !context.privateOrigin ? 'run' : 'ask';
     case 'execute':

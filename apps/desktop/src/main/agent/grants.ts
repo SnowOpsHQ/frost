@@ -1,7 +1,7 @@
 import { canGrant, DEFAULT_READ_TOOLS_ALLOWED, MAX_AGENT_GRANTS } from '@app/specs/agent-approvals.spec';
 
 // The agent's standing grants (Phase 5 Task 4; spec `specs/agent-approvals.spec.ts`; acceptance
-// `specs/agent-approvals.feature.md`, Grants): an `act` tool (navigate, click) allowed on one public
+// `specs/agent-approvals.feature.md`, Grants): an `act` tool (navigate, click) allowed on one public `https:`
 // origin, and whether read tools run without asking. Kept in the database (`@app/db`'s
 // `agentGrants`), cached here so the broker decides synchronously. Only main's code changes them:
 // the broker on an `allow-always` answer, and the grants page (Task 9) through the sender-guarded
@@ -67,6 +67,13 @@ export function createAgentGrants(deps: AgentGrantsDeps): AgentGrants {
   const grants = new Map<string, AgentGrant>();
   let readTools = false;
   let isLoaded = false;
+  /**
+   * What was taken away before `load()` read the store (revokes, revoke all, read tools off): the
+   * load applies it, so a revoke queued at startup is never undone by the rows it reads.
+   */
+  const revokedBeforeLoad = new Set<string>();
+  let revokedAllBeforeLoad = false;
+  let readToolsOffBeforeLoad = false;
   let loading: Promise<void> | null = null;
   let queue: Promise<unknown> = Promise.resolve();
   const listeners = new Set<() => void>();
@@ -93,9 +100,10 @@ export function createAgentGrants(deps: AgentGrantsDeps): AgentGrants {
       try {
         const [stored, allowed] = await Promise.all([deps.store.grants(), deps.store.readToolsAllowed()]);
         for (const grant of stored.slice(0, MAX_AGENT_GRANTS)) {
+          if (revokedAllBeforeLoad || revokedBeforeLoad.has(key(grant.tool, grant.origin))) continue;
           if (canGrant(grant.tool, grant.origin)) grants.set(key(grant.tool, grant.origin), { tool: grant.tool, origin: grant.origin, createdAt: grant.createdAt });
         }
-        readTools = allowed === true;
+        readTools = allowed === true && !readToolsOffBeforeLoad;
         isLoaded = true;
       } catch {
         // Nothing is granted and read tools ask: the restrictive reading of an unreadable store.
@@ -134,6 +142,7 @@ export function createAgentGrants(deps: AgentGrantsDeps): AgentGrants {
       });
     },
     revoke(tool, origin) {
+      if (!isLoaded) revokedBeforeLoad.add(key(tool, origin));
       if (grants.delete(key(tool, origin))) changed();
       if (!canGrant(tool, origin)) return Promise.resolve(true);
       return serial(async () => {
@@ -150,6 +159,7 @@ export function createAgentGrants(deps: AgentGrantsDeps): AgentGrants {
       });
     },
     revokeAll() {
+      if (!isLoaded) revokedAllBeforeLoad = true;
       if (grants.size > 0) {
         grants.clear();
         changed();
@@ -173,6 +183,7 @@ export function createAgentGrants(deps: AgentGrantsDeps): AgentGrants {
     readToolsAllowed: () => readTools,
     setReadToolsAllowed(allowed) {
       if (typeof allowed !== 'boolean') return Promise.resolve(false);
+      if (!allowed && !isLoaded) readToolsOffBeforeLoad = true;
       if (!allowed && readTools) {
         readTools = false;
         changed();

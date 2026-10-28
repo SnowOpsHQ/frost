@@ -212,8 +212,20 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   controller), `click` (a CSS selector or visible text, in an isolated world; reports what was
   clicked), `execute_javascript` (dedicated isolated world, `EXECUTE_JS_TIMEOUT_MS`,
   `EXECUTE_JS_MAX_RESULT_BYTES`, result JSON-serialised and capped). Every result wrapped untrusted.
+- **Requirements from Task 4's review** (the broker's `ToolRunContext`: `via`, `expectedOrigin`,
+  `expectedUrl`):
+  - every page-acting tool (click, execute_javascript, and the page reads) checks `location.origin`
+    against `expectedOrigin` inside its isolated-world script before acting, and for a
+    `via: 'approval'` call also the exact URL (`location.href` without its fragment equals
+    `expectedUrl`); a mismatch, or a `null` expectation, acts on nothing and answers `expired`;
+  - `navigate` loads `parseWebUrl(url).href` (`expectedUrl`), never the raw input string;
+  - `navigate` run `via: 'grant'` cancels any redirect leaving the granted origin (`will-redirect`,
+    `event.preventDefault()`) and answers `expired`; an approved navigate may follow redirects (the
+    user approved the destination) but reports where it ended.
 - **Tests:** unit tests with fakes for each tool and cap; execute JS never uses the main world;
-  timeout ends a hung script; oversized results truncated.
+  timeout ends a hung script; oversized results truncated; each tool refuses a page whose origin
+  (or, approved, exact URL) differs from the context's; a granted navigate's off-origin redirect is
+  cancelled.
 - [ ] commit `feat(agent): core page tools`
 
 ### Task 6: Agent IPC router and sidebar panel
@@ -226,6 +238,10 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   `App.tsx`; a palette action to toggle the panel.
 - **e2e seam:** an unpackaged-only switch (`frost-e2e-agent-script`, refused in packaged builds like
   the other e2e switches) makes the runtime use a scripted model instead of a provider.
+- **Approval cards (Task 4's review):** show pending approvals one at a time, in a stable order
+  (oldest first, `pending()`'s order), never reordered under the pointer; enable the Allow buttons
+  only after a short delay (about 500 ms) once a card appears, so a click meant for something else
+  can't approve it; show `pageUrl` and the whole `input` (`execute_javascript`'s `code` as code).
 - **Tests:** router tests (sender rejection, key never in an answer), view-model tests, e2e:
   `agent-approval-flow` (scripted navigate → approval prompt → Allow → the tab navigates; Deny →
   no navigation), Stop.
@@ -250,7 +266,8 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 ### Task 9: Grants page, chat retention and export, skills editor
 - Migrations `0031_agent_chats`, `0032_agent_skills`. Chats stored locally with a retention setting
   (off / 7 / 30 days / forever); export a chat as Markdown or JSON through main's save dialog; the
-  grants page lists and revokes standing grants; the skills editor creates, edits and deletes user
+  grants page lists and revokes standing grants, and says plainly that a click grant lets text on
+  that site's pages steer the agent's clicks there (prompt injection) without asking; the skills editor creates, edits and deletes user
   skills validated by Task 7's schema.
 - [ ] commit `feat(agent): grants page, chat retention and export, skills editor`
 
@@ -329,7 +346,7 @@ _Filled in as tasks land._
   strike), since answering it would race the first call's answer; every approved page tool
   (click, execute_javascript, and the page reads when read tools are off) re-checks that the tab
   still shows the approved origin; the request view carries `execute_javascript`'s code in full
-  (the display input is cut at 4000 characters); runner errors carry only fixed messages, so a
+  (and, since the review, the whole input); runner errors carry only fixed messages, so a
   tool that wants to explain a miss returns it as data. Migration `0030_agent_grants` creates
   `agent_grants` and `agent_preferences` (the read-tools setting, key `read_tools_allowed`), appended
   to `MIGRATIONS` as `...AGENT_GRANTS_MIGRATIONS`; when Phase 6's `...CHANGE_INTEL_MIGRATIONS`
@@ -337,3 +354,18 @@ _Filled in as tasks land._
   `@app/ai-skills` (main re-parses each input with the tool's own schema); its lockfile entry was
   added by hand because `pnpm install` currently refuses the AI SDK entries under the
   minimum-release-age policy (fine once they age past it).
+- **Task 4 review.** `ToolRunContext` now carries `via` (`read` | `grant` | `approval`),
+  `expectedOrigin` and `expectedUrl` (`runTargetFor`); the requirements this puts on Task 5 are in
+  its section. Approvals bind the page: `ApprovalRequestView.pageUrl` (the tab's URL without its
+  fragment) and an approved page tool runs only on exactly that page (grants keep the origin check).
+  `answer()` checks `expiresAt` itself (sleep-safe). The tools' schemas refuse control, format
+  (bidi, zero-width, BOM), separator and lone-surrogate characters (`UNSAFE_INPUT_CHARS` in
+  `agent-tools.spec.ts`) in selectors, click text, URLs, queries and code (code keeps `\n`, `\t`).
+  An approval shows the whole input: `APPROVAL_DISPLAY_MAX_CHARS` (2 × `EXECUTE_JS_MAX_SOURCE_CHARS`
+  + 64) fits every catalogue input, and an MCP input longer than it, or with an unsafe character in
+  any key or string, is refused (`invalid-input`) rather than shown cut; `inputTruncated` is gone.
+  `run_ai_search` is now `act` and not grantable, so it asks every call. Grants only for public
+  `https:` origins without a trailing dot. Read tools ask on a page whose host isn't public; a page
+  tool with no web page answers `unavailable`. A throwing tab lookup or grants cache fails the call.
+  Revokes issued before the grants load are applied to what the load reads. The input hash is
+  display-only (the broker keeps the input itself).

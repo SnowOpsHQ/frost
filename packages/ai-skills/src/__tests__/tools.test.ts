@@ -1,9 +1,9 @@
-// Spec: specs/agent-tools.spec.ts (AGENT_TOOL_NAMES, AGENT_TOOL_INPUT_LIMITS, EXECUTE_JS_MAX_SOURCE_CHARS,
+// Spec: specs/agent-tools.spec.ts (AGENT_TOOL_NAMES, AGENT_TOOL_INPUT_LIMITS, EXECUTE_JS_MAX_SOURCE_CHARS, UNSAFE_INPUT_CHARS,
 // TOOL_RESULT_MAX_CHARS)
 // Acceptance: specs/agent-protocol.feature.md (Tool definitions and ports)
 import { describe, expect, test } from 'vitest';
 import { z } from 'zod';
-import { AGENT_TOOL_INPUT_LIMITS, AGENT_TOOL_NAMES, EXECUTE_JS_MAX_SOURCE_CHARS, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
+import { AGENT_TOOL_INPUT_LIMITS, AGENT_TOOL_NAMES, EXECUTE_JS_MAX_SOURCE_CHARS, isSafeInputText, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
 import { AGENT_TOOL_DEFINITIONS, getToolDefinition, UNTRUSTED_OUTPUT_NOTE } from '../index';
 
 const L = AGENT_TOOL_INPUT_LIMITS;
@@ -88,6 +88,36 @@ describe('tool definitions', () => {
     for (const name of ['page_audit', 'page_data', 'page_text', 'click', 'execute_javascript', 'serp_results', 'run_ai_search', 'gsc_performance'] as const) {
       expect(getToolDefinition(name).description, name).toContain(UNTRUSTED_OUTPUT_NOTE);
     }
+  });
+
+  test('tool-inputs-safe-text', () => {
+    // C0, DEL and C1 controls; bidi overrides and isolates; zero-width characters, the BOM and the
+    // soft hyphen (Unicode Cf); the line and paragraph separators; a lone surrogate.
+    const unsafe = ['\u0000', '\u0007', '\r', '\u001b', '\u007f', '\u0085', '\u009b', '\u202e', '\u202a', '\u2066', '\u2069', '\u200b', '\u200d', '\u2060', '\ufeff', '\u00ad', '\u061c', '\u2028', '\u2029', '\ud800', '\udfff'];
+    for (const ch of unsafe) {
+      const label = `U+${ch.charCodeAt(0).toString(16)}`;
+      expect(isSafeInputText(`a${ch}b`), label).toBe(false);
+      expect(accepts('click', { selector: `#buy${ch}` }), label).toBe(false);
+      expect(accepts('click', { text: `Buy${ch} now` }), label).toBe(false);
+      expect(accepts('navigate', { url: `https://example.com/${ch}` }), label).toBe(false);
+      expect(accepts('gsc_performance', { url: `https://example.com/${ch}` }), label).toBe(false);
+      expect(accepts('serp_results', { query: `tea${ch}` }), label).toBe(false);
+      expect(accepts('run_ai_search', { query: `tea${ch}` }), label).toBe(false);
+      expect(accepts('execute_javascript', { code: `1${ch}+1` }), label).toBe(false);
+    }
+    // Leading or trailing ones aren't trimmed away first.
+    expect(accepts('serp_results', { query: '\u202etea' })).toBe(false);
+    expect(accepts('navigate', { url: 'https://example.com/\n' })).toBe(false);
+    expect(accepts('navigate', { url: '\thttps://example.com/' })).toBe(false);
+    // Code may hold line feeds and tabs; other text may not.
+    expect(accepts('execute_javascript', { code: 'const a = 1;\n\ta + 1' })).toBe(true);
+    expect(isSafeInputText('a\n\tb', 'code')).toBe(true);
+    expect(isSafeInputText('a\nb')).toBe(false);
+    expect(accepts('click', { text: 'Next\npage' })).toBe(false);
+    // Visible non-ASCII text is fine: accents, CJK, a paired emoji.
+    expect(accepts('click', { text: 'Café 购物 \u{1F600}' })).toBe(true);
+    expect(accepts('serp_results', { query: 'té verde' })).toBe(true);
+    expect(accepts('execute_javascript', { code: 'document.title // ünïcödé' })).toBe(true);
   });
 
   test('tool-inputs-have-json-schemas', () => {
