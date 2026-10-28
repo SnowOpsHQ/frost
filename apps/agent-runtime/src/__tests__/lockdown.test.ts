@@ -1,7 +1,8 @@
 // Spec: docs/plans/phase-5-ai-agent.md decision 5 · Acceptance: specs/agent-runtime.feature.md (Lockdown)
+import vm from 'node:vm';
 import { describe, expect, test } from 'vitest';
 import { LOCKDOWN_TARGETS } from '@app/specs/agent-protocol.schema';
-import { lockdownNetworkGlobals, lockdownProcess, NETWORK_GLOBALS, PROCESS_BUILTINS, permissionModelActive } from '../lockdown';
+import { lockdownCodeGeneration, lockdownModuleLoader, lockdownNetworkGlobals, lockdownProcess, NETWORK_GLOBALS, PROCESS_BUILTINS, permissionModelActive } from '../lockdown';
 
 describe('lockdown', () => {
   test('lockdown-removes-network-globals', () => {
@@ -66,5 +67,60 @@ describe('lockdown', () => {
     } finally {
       for (const [name, descriptor] of saved) if (descriptor !== undefined) Object.defineProperty(globalThis, name, descriptor);
     }
+  });
+
+  test('lockdown-module-loader', () => {
+    class FakeModule {
+      static _load(id: string) {
+        return `loaded ${id}`;
+      }
+      require(id: string) {
+        return FakeModule._load(id);
+      }
+    }
+    const main = new FakeModule();
+    const fake: { mainModule?: FakeModule; exit: () => void } = { mainModule: main, exit: () => {} };
+    const report = lockdownModuleLoader(fake);
+    expect(report).toEqual({ removed: ['Module._load', 'Module.prototype.require', 'process.mainModule'], failed: [] });
+    expect('mainModule' in fake).toBe(false);
+    expect(() => FakeModule._load('node:net')).toThrow('loads no module after startup');
+    // A `require` a module already holds goes through the prototype: refused too.
+    expect(() => main.require('node:child_process')).toThrow('loads no module after startup');
+    expect(typeof fake.exit).toBe('function');
+    // Without a main module (an ES module entry), nothing to report.
+    expect(lockdownModuleLoader({})).toEqual({ removed: [], failed: [] });
+    for (const name of report.removed) expect(LOCKDOWN_TARGETS).toContain(name);
+  });
+
+  test('lockdown-code-generation', () => {
+    // A separate realm, so this test process keeps its own eval.
+    const context = vm.createContext({});
+    const realm = vm.runInContext('({ global: globalThis, constructors: [Function, async function () {}.constructor, function* () {}.constructor, async function* () {}.constructor] })', context) as { global: object; constructors: unknown[] };
+    expect(vm.runInContext('eval("1 + 1")', context)).toBe(2);
+    const report = lockdownCodeGeneration(realm);
+    expect(report).toEqual({ removed: ['eval', 'Function'], failed: [] });
+    for (const code of ['eval("1 + 1")', '(0, eval)("1")', 'Function("return 1")()', 'new Function("return 1")', '(function () {}).constructor("return 1")()', '(async function () {}).constructor("return 1")', '(function* () {}).constructor("yield 1")', '(async function* () {}).constructor("yield 1")']) {
+      expect(() => vm.runInContext(code, context), code).toThrow('does not generate code from strings');
+    }
+    // What libraries rely on still holds.
+    expect(vm.runInContext('(function () {}) instanceof Function', context)).toBe(true);
+    expect(vm.runInContext('(function () {}).constructor === Function', context)).toBe(true);
+    expect(vm.runInContext('typeof Function.prototype.call', context)).toBe('function');
+    expect(vm.runInContext('[1, 2].map((x) => x * 2).join()', context)).toBe('2,4');
+    // Zod's probe answers "no eval" instead of throwing.
+    expect(vm.runInContext('(() => { try { Function(""); return true; } catch { return false; } })()', context)).toBe(false);
+    for (const name of report.removed) expect(LOCKDOWN_TARGETS).toContain(name);
+  });
+
+  test('jitless-zod', async () => {
+    // The package entry (what the utility process loads) puts Zod in jitless mode before any schema is built.
+    await import('../index');
+    const { z } = await import('zod');
+    expect(z.config().jitless).toBe(true);
+    expect((globalThis as { __zod_globalConfig?: { jitless?: unknown } }).__zod_globalConfig?.jitless).toBe(true);
+    // And the entry imports it first.
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+    expect(source.match(/^import [^;]+;/m)?.[0]).toBe("import './jitless';");
   });
 });

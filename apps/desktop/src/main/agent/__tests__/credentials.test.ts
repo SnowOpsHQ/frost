@@ -28,7 +28,7 @@ describe('agent credentials', () => {
     expect(text).not.toContain('SECRET');
     expect(JSON.parse(text)).toEqual({ version: 1, keys: { anthropic: expect.stringMatching(/^[A-Za-z0-9+/]+=*$/) } });
     // Written to a new 0600 file, then renamed over the old one.
-    expect(memory.ops.filter((op) => !op.startsWith('read'))).toEqual([`write ${FILE}.t1.tmp 600 wx`, `rename ${FILE}.t1.tmp ${FILE}`]);
+    expect(memory.ops.filter((op) => !op.startsWith('read'))).toEqual([`write ${FILE}.t1.tmp 600 wx flush`, `rename ${FILE}.t1.tmp ${FILE}`]);
     expect(memory.files.get(FILE)!.mode).toBe(0o600);
     expect([...memory.files.keys()]).toEqual([FILE]);
   });
@@ -67,15 +67,13 @@ describe('agent credentials', () => {
   });
 
   test('credentials-protection', async () => {
-    const unavailable = setup({ available: false });
-    expect(await unavailable.store.protection()).toBe('unavailable');
-    expect(await unavailable.store.setKey('anthropic', KEY)).toBe('unavailable');
-    expect(unavailable.memory.files.size).toBe(0);
-
-    // Linux with no secret service: Chromium's fixed key (`v10` data). Stored, and said so.
-    const weak = setup({ weak: true });
-    expect(await weak.store.protection()).toBe('weak');
-    expect(await weak.store.setKey('anthropic', KEY)).toBe('stored');
+    // No encryption, or only Chromium's fixed key (Linux `v10`): nothing is stored, and the UI can say why.
+    for (const options of [{ available: false }, { weak: true }]) {
+      const refused = setup(options);
+      expect(await refused.store.protection()).toBe(options.available === false ? 'unavailable' : 'weak');
+      expect(await refused.store.setKey('anthropic', KEY)).toBe('no-keychain');
+      expect(refused.memory.files.size).toBe(0);
+    }
     expect(await setup({ weak: false }).store.protection()).toBe('os');
     // The key source is a Linux question only.
     expect(await setup({ weak: true, platform: 'darwin' }).store.protection()).toBe('os');
@@ -88,18 +86,55 @@ describe('agent credentials', () => {
     expect(await later.store.protection()).toBe('os');
   });
 
-  test('credentials-re-encrypted-when-asked', async () => {
-    const { store, safe, memory } = setup({ weak: true });
+  test('credentials-weak-blob-never-used', async () => {
+    // A `v10` blob (anyone can make one: the agent process could plant its own key) is never used on Linux.
+    const planted = setup();
+    planted.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: planted.safe.blob('sk-attacker-key-123456', 'v10') } })), mode: 0o600 });
+    expect(await planted.store.hasKey('anthropic')).toBe(false);
+    expect(await planted.store.withKey('anthropic', () => 'never')).toEqual({ ok: false, reason: 'failed' });
+    // With only the fixed key on this machine, even a good blob is not used.
+    const weak = setup({ weak: true });
+    weak.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: weak.safe.blob(KEY, 'v11') } })), mode: 0o600 });
+    expect(await weak.store.hasKey('anthropic')).toBe(false);
+    expect(await weak.store.withKey('anthropic', () => 'never')).toEqual({ ok: false, reason: 'unavailable' });
+    // On macOS and Windows the tag says nothing about the key source.
+    const mac = setup({ platform: 'darwin' });
+    mac.memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: mac.safe.blob(KEY, 'v10') } })), mode: 0o600 });
+    expect(await mac.store.withKey('anthropic', (key) => key === KEY)).toEqual({ ok: true, value: true });
+  });
+
+  test('credentials-read-error-not-cached', async () => {
+    const { store, memory } = setup();
     await store.setKey('anthropic', KEY);
     const before = memory.text(FILE);
-    // A secret service appears: the encryptor asks for the data to be encrypted again.
-    safe.state.weak = false;
+    const fresh = createCredentialStore({ safeStorage: createFakeSafeStorage().storage, file: FILE, fs: memory.fs, platform: 'linux' });
+    const readFile = memory.fs.readFile;
+    memory.fs.readFile = () => Promise.reject(Object.assign(new Error('EIO'), { code: 'EIO' }));
+    // A file that can't be read: nothing is overwritten, and the other slots survive.
+    expect(await fresh.setKey('openai', KEY)).toBe('failed');
+    expect(await fresh.clearKey('anthropic')).toBe(false);
+    expect(await fresh.hasKey('anthropic')).toBe(false);
+    expect(await fresh.withKey('anthropic', () => 'never')).toEqual({ ok: false, reason: 'failed' });
+    expect(memory.text(FILE)).toBe(before);
+    // Readable again: read afresh, not the failure remembered.
+    memory.fs.readFile = readFile;
+    expect(await fresh.hasKey('anthropic')).toBe(true);
+    expect(await fresh.setKey('openai', KEY)).toBe('stored');
+    expect(Object.keys((JSON.parse(memory.text(FILE)!) as { keys: object }).keys).sort()).toEqual(['anthropic', 'openai']);
+  });
+
+  test('credentials-re-encrypted-when-asked', async () => {
+    const { store, safe, memory } = setup();
+    await store.setKey('anthropic', KEY);
+    const before = memory.text(FILE);
+    // The encryptor's key rotated: it asks for the data to be encrypted again.
     safe.state.reEncrypt = true;
     expect(await store.withKey('anthropic', (key) => key === KEY)).toEqual({ ok: true, value: true });
     const after = memory.text(FILE)!;
     expect(after).not.toBe(before);
     expect(after).not.toContain(KEY);
-    expect(Buffer.from((JSON.parse(after) as { keys: { anthropic: string } }).keys.anthropic, 'base64').subarray(0, 3).toString()).toBe('v11');
+    safe.state.reEncrypt = false;
+    expect(await store.withKey('anthropic', (key) => key === KEY)).toEqual({ ok: true, value: true });
   });
 
   test('credentials-clear', async () => {
@@ -126,10 +161,11 @@ describe('agent credentials', () => {
     }
     // A blob safeStorage can't decrypt (another machine's, a changed keyring): no key comes out.
     const memory = createMemoryFs();
-    memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: Buffer.from('garbage').toString('base64') } })), mode: 0o600 });
+    memory.files.set(FILE, { data: new TextEncoder().encode(JSON.stringify({ version: 1, keys: { anthropic: Buffer.from('v11garbage').toString('base64') } })), mode: 0o600 });
     const log = vi.fn<(line: string) => void>();
     const store = createCredentialStore({ safeStorage: createFakeSafeStorage().storage, file: FILE, fs: memory.fs, platform: 'linux', log });
-    expect(await store.hasKey('anthropic')).toBe(true);
+    // Stored but unusable: not a key frost has.
+    expect(await store.hasKey('anthropic')).toBe(false);
     const fn = vi.fn();
     expect(await store.withKey('anthropic', fn)).toEqual({ ok: false, reason: 'failed' });
     expect(fn).not.toHaveBeenCalled();

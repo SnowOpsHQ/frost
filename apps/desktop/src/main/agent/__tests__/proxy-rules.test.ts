@@ -2,16 +2,13 @@
 // RESPONSE_HEADER_ALLOWLIST, filterResponseHeaders, sanitizeStatusText, BODY_FIELDS, checkModelRequestBody)
 // Acceptance: specs/agent-host.feature.md (Proxy rules)
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createMemoryPortPair, createModel, startRuntime } from '@app/agent-runtime';
-import type { MainToRuntimeMessage, RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
-import { checkModelRequestBody, filterRequestHeaders, filterResponseHeaders, mainRequestHeaders, sanitizeStatusText } from '@app/specs/agent-proxy.spec';
+import { checkModelRequestBody, filterRequestHeaders, filterResponseHeaders, mainRequestHeaders, MAX_OUTPUT_TOKENS, sanitizeStatusText } from '@app/specs/agent-proxy.spec';
 import { ALLOWED_MODEL_IDS, MODEL_ROUTES, routeModelId, type ModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
-
-type FetchRequest = Extract<RuntimeToMainMessage, { type: 'fetch.request' }>;
+import { captureProviderRequest } from './provider-capture';
 
 const ANTHROPIC = { model: 'claude-sonnet-5-5', max_tokens: 1024, messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }], stream: true };
-const OPENAI = { model: 'gpt-5', input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hi' }] }], store: false, stream: true };
-const GATEWAY = { prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }], providerOptions: { openai: { store: false } } };
+const OPENAI = { model: 'gpt-5', max_output_tokens: 1024, input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hi' }] }], store: false, stream: true };
+const GATEWAY = { maxOutputTokens: 1024, prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }], providerOptions: { openai: { store: false } } };
 const GATEWAY_HEADERS: [string, string][] = [['ai-language-model-id', 'anthropic/claude-sonnet-5-5']];
 
 const body = (value: object) => JSON.stringify(value);
@@ -112,6 +109,7 @@ describe('proxy rules', () => {
     expect(reason('gateway', 'anthropic/claude-sonnet-5-5', GATEWAY, [...GATEWAY_HEADERS, ...GATEWAY_HEADERS])).toBe('model');
     expect(reason('gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, model: 'x' })).toBe('body-field');
     expect(checkModelRequestBody('byok-anthropic', 'anthropic/claude-sonnet-5-5', 'not json')).toEqual({ ok: false, reason: 'body-json' });
+    expect(checkModelRequestBody('byok-anthropic', 'anthropic/claude-sonnet-5-5', body(ANTHROPIC))).toEqual({ ok: true, body: body(ANTHROPIC) });
     expect(checkModelRequestBody('byok-anthropic', 'anthropic/claude-sonnet-5-5', '[1]')).toEqual({ ok: false, reason: 'body-json' });
   });
 
@@ -177,10 +175,83 @@ describe('proxy rules', () => {
     expect(reason('byok-openai', 'openai/gpt-5', { ...OPENAI, store: true })).toBe('store');
     const openaiHeaders: [string, string][] = [['ai-language-model-id', 'openai/gpt-5']];
     expect(reason('gateway', 'openai/gpt-5', GATEWAY, openaiHeaders)).toBe('ok');
-    expect(reason('gateway', 'openai/gpt-5', { prompt: GATEWAY.prompt }, openaiHeaders)).toBe('store');
+    expect(reason('gateway', 'openai/gpt-5', { prompt: GATEWAY.prompt, maxOutputTokens: 1024 }, openaiHeaders)).toBe('store');
     expect(reason('gateway', 'openai/gpt-5', { ...GATEWAY, providerOptions: { openai: { store: true } } }, openaiHeaders)).toBe('store');
     expect(reason('gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, providerOptions: { openai: { store: true } } })).toBe('store');
-    expect(reason('gateway', 'anthropic/claude-sonnet-5-5', { prompt: GATEWAY.prompt })).toBe('ok');
+    expect(reason('gateway', 'anthropic/claude-sonnet-5-5', { prompt: GATEWAY.prompt, maxOutputTokens: 1024 })).toBe('ok');
+  });
+
+  test('proxy-duplicate-keys-canonical', () => {
+    const raw = (route: ModelRoute, modelId: string, text: string, headers: [string, string][] = route === 'gateway' ? GATEWAY_HEADERS : []) => checkModelRequestBody(route, modelId, text, headers);
+    const server = '{"name":"web_search","type":"web_search_20250305"}';
+    // The last of a repeated key is what JSON.parse (and so the check) reads, and all that is sent.
+    const anthropic = raw('byok-anthropic', 'anthropic/claude-sonnet-5-5', `{"model":"claude-sonnet-5-5","max_tokens":64,"messages":[],"tools":[${server}],"tools":[]}`);
+    expect(anthropic).toEqual({ ok: true, body: '{"model":"claude-sonnet-5-5","max_tokens":64,"messages":[],"tools":[]}' });
+    expect(raw('byok-anthropic', 'anthropic/claude-sonnet-5-5', `{"model":"claude-sonnet-5-5","max_tokens":64,"messages":[],"tools":[],"tools":[${server}]}`)).toEqual({ ok: false, reason: 'tool' });
+    expect(raw('byok-anthropic', 'anthropic/claude-sonnet-5-5', '{"model":"claude-opus-5-5","model":"claude-sonnet-5-5","max_tokens":64,"messages":[]}')).toMatchObject({ ok: true, body: expect.not.stringContaining('opus') });
+    const openai = raw('byok-openai', 'openai/gpt-5', '{"model":"gpt-5","max_output_tokens":64,"input":"Hi","store":true,"store":false}');
+    expect(openai).toEqual({ ok: true, body: '{"model":"gpt-5","max_output_tokens":64,"input":"Hi","store":false}' });
+    expect(raw('byok-openai', 'openai/gpt-5', '{"model":"gpt-5","max_output_tokens":64,"input":"Hi","store":false,"store":true}')).toEqual({ ok: false, reason: 'store' });
+    // A repeated `type` in a block: the last one decides, and the block's other keys must fit it.
+    const block = (inner: string) => raw('byok-anthropic', 'anthropic/claude-sonnet-5-5', `{"model":"claude-sonnet-5-5","max_tokens":64,"messages":[{"role":"user","content":[${inner}]}]}`);
+    expect(block('{"type":"text","type":"image","source":{"type":"url","url":"https://x.example"}}')).toEqual({ ok: false, reason: 'content' });
+    expect(block('{"type":"image","source":{"type":"url","url":"https://x.example"},"type":"text","text":"x"}')).toEqual({ ok: false, reason: 'content' });
+    const gateway = raw('gateway', 'anthropic/claude-sonnet-5-5', '{"maxOutputTokens":64,"prompt":[],"providerOptions":{"gateway":{"order":["x"]}},"providerOptions":{"openai":{"store":false}}}');
+    expect(gateway).toEqual({ ok: true, body: '{"maxOutputTokens":64,"prompt":[],"providerOptions":{"openai":{"store":false}}}' });
+    expect(raw('gateway', 'anthropic/claude-sonnet-5-5', '{"maxOutputTokens":64,"prompt":[],"providerOptions":{"openai":{"store":false}},"providerOptions":{"gateway":{"order":["x"]}}}')).toEqual({ ok: false, reason: 'provider-options' });
+  });
+
+  test('proxy-nested-allowlist', () => {
+    const anthropic = (role: 'user' | 'assistant', block: object) => reason('byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, messages: [{ role, content: [block] }] });
+    expect(anthropic('user', { type: 'text', text: 'x', cache_control: { type: 'ephemeral' } })).toBe('ok');
+    expect(anthropic('user', { type: 'text', text: 'x', citations: [{ type: 'web_search_result_location', url: 'https://x.example' }] })).toBe('content');
+    expect(anthropic('assistant', { type: 'tool_use', id: 't', name: 'x', input: {}, caller: { type: 'code_execution_20250825' } })).toBe('content');
+    expect(anthropic('user', { type: 'tool_use', id: 't', name: 'x', input: {} })).toBe('content');
+    expect(anthropic('assistant', { type: 'tool_result', tool_use_id: 't', content: 'x' })).toBe('content');
+    expect(anthropic('user', { type: 'thinking', thinking: 'x', signature: 's' })).toBe('content');
+    expect(anthropic('assistant', { type: 'thinking', thinking: 'x', signature: 's' })).toBe('ok');
+    expect(anthropic('assistant', { type: 'compaction', content: 'x' })).toBe('content');
+    expect(anthropic('user', { type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: 'x', citations: [] }] })).toBe('content');
+    const plain = { name: 'x', description: 'd', input_schema: { type: 'object' } };
+    for (const extra of [{ defer_loading: true }, { allowed_callers: ['code_execution_20250825'] }, { input_examples: [{}] }]) {
+      expect(reason('byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, tools: [{ ...plain, ...extra }] }), JSON.stringify(extra)).toBe('tool');
+    }
+    expect(reason('byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, messages: [{ role: 'user', content: 'x', extra: 1 }] })).toBe('content');
+    expect(reason('byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, thinking: { type: 'enabled', budget_tokens: 1024, display: 'x' } })).toBe('body-field');
+
+    const openai = (item: object) => reason('byok-openai', 'openai/gpt-5', { ...OPENAI, input: [item] });
+    expect(openai({ type: 'reasoning', id: 'rs', encrypted_content: 'e', summary: [{ type: 'summary_text', text: 'x' }] })).toBe('ok');
+    expect(openai({ type: 'reasoning', id: 'rs', encrypted_content: 'e', summary: [], status: 'x' })).toBe('content');
+    expect(openai({ role: 'assistant', content: 'x', id: 'msg_1' })).toBe('content');
+    expect(openai({ role: 'assistant', content: [{ type: 'output_text', text: 'x', annotations: [{ type: 'url_citation' }] }] })).toBe('content');
+    expect(openai({ type: 'function_call', call_id: 'c', name: 'x', arguments: '{}', namespace: 'n' })).toBe('content');
+    expect(reason('byok-openai', 'openai/gpt-5', { ...OPENAI, tools: [{ type: 'function', name: 'x', parameters: {}, defer_loading: true }] })).toBe('tool');
+    expect(reason('byok-openai', 'openai/gpt-5', { ...OPENAI, text: { format: { type: 'json_schema', schema: {} } } })).toBe('body-field');
+
+    const gateway = (role: string, part: object) => reason('gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, prompt: [{ role, content: [part] }] });
+    expect(gateway('assistant', { type: 'reasoning', text: 'x', providerOptions: { anthropic: { signature: 's' } } })).toBe('ok');
+    expect(gateway('assistant', { type: 'tool-result', toolCallId: 'c', toolName: 'x', output: { type: 'json', value: {} } })).toBe('content');
+    expect(gateway('tool', { type: 'tool-result', toolCallId: 'c', toolName: 'x', output: { type: 'json', value: {} } })).toBe('ok');
+    expect(gateway('user', { type: 'reasoning', text: 'x' })).toBe('content');
+    expect(gateway('user', { type: 'text', text: 'x', extra: 1 })).toBe('content');
+    expect(gateway('assistant', { type: 'text', text: 'x', providerOptions: { anthropic: { citations: { enabled: true } } } })).toBe('provider-options');
+    expect(gateway('assistant', { type: 'tool-call', toolCallId: 'c', toolName: 'x', input: {}, providerOptions: { openai: { itemId: 'fc', approvalRequestId: 'a' } } })).toBe('provider-options');
+    expect(reason('gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, prompt: [{ role: 'user', content: [{ type: 'text', text: 'x' }], providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }] })).toBe('ok');
+    expect(reason('gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, tools: [{ type: 'function', name: 'x', inputSchema: {}, inputExamples: [] }] })).toBe('tool');
+  });
+
+  test('proxy-output-cap', () => {
+    const cases: [ModelRoute, string, object, string][] = [
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', ANTHROPIC, 'max_tokens'],
+      ['byok-openai', 'openai/gpt-5', OPENAI, 'max_output_tokens'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', GATEWAY, 'maxOutputTokens'],
+    ];
+    for (const [route, modelId, value, field] of cases) {
+      expect(reason(route, modelId, { ...value, [field]: MAX_OUTPUT_TOKENS }), route).toBe('ok');
+      for (const bad of [undefined, 0, MAX_OUTPUT_TOKENS + 1, 1.5, '64', 128_000]) {
+        expect(reason(route, modelId, { ...value, [field]: bad }), `${route} ${String(bad)}`).toBe('output-cap');
+      }
+    }
   });
 
   describe('real provider requests', () => {
@@ -192,52 +263,27 @@ describe('proxy rules', () => {
     });
     afterEach(() => vi.unstubAllGlobals());
 
-    /** The first `fetch.request` the installed provider sends for a turn with tool history (answered `refused`). */
-    async function capture(route: ModelRoute, modelId: ModelId): Promise<FetchRequest> {
-      const [main, runtimeEnd] = createMemoryPortPair();
-      const requests: FetchRequest[] = [];
-      main.onMessage((data) => {
-        const message = data as RuntimeToMainMessage;
-        if (message.type !== 'fetch.request') return;
-        requests.push(message);
-        main.post({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' } satisfies MainToRuntimeMessage);
-      });
-      const runtime = startRuntime(runtimeEnd, { modelFactory: createModel });
-      main.post({
-        type: 'chat.start',
-        chatId: 'chat-1',
-        route,
-        modelId,
-        systemPrompt: 'You are an SEO assistant.',
-        allowedTools: ['page_audit', 'page_text', 'navigate'],
-        messages: [
-          { role: 'user', content: 'Audit this page.' },
-          { role: 'assistant', content: 'Reading it.', toolCalls: [{ callId: 'call-1', toolName: 'page_audit', input: {} }] },
-          { role: 'tool', callId: 'call-1', toolName: 'page_audit', result: { ok: true, output: { untrusted: true, source: 'page_audit https://example.com/', data: { score: 80, file: 'x', url: 'https://example.com/' } } } },
-          { role: 'assistant', content: '', toolCalls: [{ callId: 'call-2', toolName: 'navigate', input: { url: 'https://example.com/b' } }] },
-          { role: 'tool', callId: 'call-2', toolName: 'navigate', result: { ok: false, error: { code: 'denied', message: 'The user said no.' } } },
-          { role: 'user', content: 'Go on.' },
-        ],
-      } satisfies MainToRuntimeMessage);
-      await vi.waitFor(() => expect(requests.length).toBeGreaterThan(0));
-      await runtime.whenIdle('chat-1');
-      return requests[0]!;
-    }
-
     test('proxy-accepts-real-provider-requests', async () => {
       for (const route of MODEL_ROUTES) {
         for (const modelId of ALLOWED_MODEL_IDS) {
           if (routeModelId(route, modelId) === null) continue;
-          const request = await capture(route, modelId);
-          const headers = filterRequestHeaders(route, request.headers);
-          // Every header the provider sends that isn't main's own job is kept as it was sent.
-          const sentNames = request.headers.map(([name]) => name.toLowerCase()).filter((name) => name !== 'content-type' && name !== 'ai-gateway-auth-method');
-          expect(headers.map(([name]) => name).sort(), `${route} ${modelId}`).toEqual([...sentNames].sort());
-          expect(typeof request.body).toBe('string');
-          expect(checkModelRequestBody(route, modelId, request.body as string, headers), `${route} ${modelId}`).toEqual({ ok: true });
-          // The same request is refused under another configured model.
-          const other = ALLOWED_MODEL_IDS.find((id) => id !== modelId && routeModelId(route, id) !== null)!;
-          expect(checkModelRequestBody(route, other, request.body as string, headers)).toEqual({ ok: false, reason: 'model' });
+          for (const which of [1, 2] as const) {
+            // The second request carries the first step's reasoning (thinking and its signature,
+            // redacted thinking, encrypted reasoning, item ids) and its two tool calls with results.
+            const request = await captureProviderRequest(route, modelId, which);
+            const headers = filterRequestHeaders(route, request.headers);
+            // Every header the provider sends that isn't main's own job is kept as it was sent.
+            const sentNames = request.headers.map(([name]) => name.toLowerCase()).filter((name) => name !== 'content-type' && name !== 'ai-gateway-auth-method');
+            expect(headers.map(([name]) => name).sort(), `${route} ${modelId}`).toEqual([...sentNames].sort());
+            expect(typeof request.body).toBe('string');
+            const text = request.body as string;
+            if (which === 2) expect(text).toMatch(route === 'byok-openai' || modelId.startsWith('openai/') ? /ZW5jcnlwdGVk/ : /c2lnbmF0dXJl/);
+            // Accepted, and sent exactly as the provider wrote it (it writes no repeated key).
+            expect(checkModelRequestBody(route, modelId, text, headers), `${route} ${modelId} request ${which}`).toEqual({ ok: true, body: text });
+            // The same request is refused under another configured model.
+            const other = ALLOWED_MODEL_IDS.find((id) => id !== modelId && routeModelId(route, id) !== null)!;
+            expect(checkModelRequestBody(route, other, text, headers)).toEqual({ ok: false, reason: 'model' });
+          }
         }
       }
     });

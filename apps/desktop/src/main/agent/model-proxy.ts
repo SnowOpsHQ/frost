@@ -12,6 +12,7 @@ import {
 import { isAllowedModelRequest, MODEL_REQUESTS } from '@app/specs/agent-tools.spec';
 import type { CredentialStore } from './credentials';
 import type { AgentFetchEvent, AgentHost } from './host';
+import { coalescedLog } from './log';
 import type { AgentSettings } from './settings';
 
 // Main's model proxy (Phase 5 Task 3, plan decision 5; acceptance `specs/agent-host.feature.md`,
@@ -45,13 +46,14 @@ export interface ProxyRequestInit {
 export type ProxyFetchFunction = (url: string, init: ProxyRequestInit) => Promise<Response>;
 
 export interface ModelProxyDeps {
-  readonly host: Pick<AgentHost, 'send' | 'onFetch' | 'onStatus'>;
+  readonly host: Pick<AgentHost, 'send' | 'onFetch' | 'onStatus' | 'onChat' | 'activeChats' | 'strike'>;
   readonly credentials: Pick<CredentialStore, 'withKey'>;
   readonly settings: Pick<AgentSettings, 'current' | 'load'>;
   readonly fetch: ProxyFetchFunction;
   readonly setTimeout?: (callback: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
-  /** One line per refusal or failure: the reason code only. */
+  readonly now?: () => number;
+  /** One line per refusal or failure (the reason code only), at most one per reason per `logWindowMs`. */
   readonly log?: (line: string) => void;
   readonly limits?: Partial<typeof AGENT_PROXY_LIMITS>;
 }
@@ -100,8 +102,11 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
   const limits = { ...AGENT_PROXY_LIMITS, ...deps.limits };
   const setTimer = deps.setTimeout ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
   const clearTimer = deps.clearTimeout ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
-  const log = deps.log ?? (() => undefined);
+  const log = coalescedLog(deps.log ?? (() => undefined), limits.logWindowMs, deps.now);
   const live = new Map<string, Live>();
+  // Requests waiting for the settings to load, and the ones of those the runtime aborted meanwhile.
+  const starting = new Set<string>();
+  const abortedEarly = new Set<string>();
   let key: ModelProxyState['key'] = 'unknown';
   let lastRefusal: ProxyRefusal | null = null;
   let disposed = false;
@@ -112,7 +117,9 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
 
   const refuse = (requestId: string, reason: ProxyRefusal) => {
     lastRefusal = reason;
-    log(`agent proxy: refused a model request (${reason})`);
+    log(`refused:${reason}`, `agent proxy: refused a model request (${reason})`);
+    // Refusals count against the runtime: a flood of them restarts it (the host's strike window).
+    deps.host.strike();
     send({ type: 'fetch.error', requestId, code: 'refused', message: ERROR_TEXT.refused });
   };
 
@@ -129,7 +136,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
   };
 
   const fail = (requestId: string, entry: Live, code: FetchErrorCode) => {
-    if (!entry.settled && code !== 'aborted') log(`agent proxy: a model request ended (${code})`);
+    if (!entry.settled && code !== 'aborted') log(`ended:${code}`, `agent proxy: a model request ended (${code})`);
     finish(requestId, entry, { type: 'fetch.error', requestId, code, message: ERROR_TEXT[code] });
   };
 
@@ -167,7 +174,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     if (response.status >= 400) {
       // An error body may quote the credential (masked) or account details: the runtime gets the
       // status and the allowlisted headers only (the providers read retries from those).
-      log(`agent proxy: the model service answered ${response.status}`);
+      log(`status:${response.status}`, `agent proxy: the model service answered ${response.status}`);
       void response.body?.cancel().catch(() => undefined);
       finish(requestId, entry, { type: 'fetch.end', requestId });
       return;
@@ -201,8 +208,10 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     const { requestId } = request;
     // The route and model are main's (read once loaded); the runtime's say nothing here. Everything
     // from here to the fetch runs in one go, so the cap and the duplicate check can't race.
+    starting.add(requestId);
     await deps.settings.load();
-    if (disposed) return;
+    starting.delete(requestId);
+    if (abortedEarly.delete(requestId) || disposed) return;
     const prior = live.get(requestId);
     if (prior !== undefined) {
       // Two requests under one id: neither can be answered unambiguously.
@@ -232,6 +241,8 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       refuse(requestId, check.reason);
       return;
     }
+    // The bytes sent are the object checked (a repeated key in the runtime's text can't differ).
+    const checkedBody = check.body;
 
     const entry: Live = { controller: new AbortController(), settled: false, idle: null, total: null, reader: null };
     live.set(requestId, entry);
@@ -248,7 +259,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
         deps.fetch(target.url, {
           method: target.method,
           headers: [...headers, ...mainRequestHeaders(route, secret)],
-          body,
+          body: checkedBody,
           redirect: 'error',
           credentials: 'omit',
           cache: 'no-store',
@@ -274,6 +285,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     if (event.type === 'fetch.abort') {
       const entry = live.get(event.requestId);
       if (entry !== undefined) finish(event.requestId, entry, null);
+      else if (starting.has(event.requestId)) abortedEarly.add(event.requestId);
       return;
     }
     void handleRequest(event);
@@ -287,6 +299,10 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
   const unsubscribeStatus = deps.host.onStatus((status) => {
     if (status !== 'ready') abortAll();
   });
+  // No turn running, no request is wanted: whatever is still in flight is stopped.
+  const unsubscribeChat = deps.host.onChat((event) => {
+    if ((event.type === 'chat.finish' || event.type === 'chat.error') && deps.host.activeChats().length === 0) abortAll();
+  });
 
   return {
     state: () => ({ key, active: live.size, lastRefusal }),
@@ -295,6 +311,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       disposed = true;
       unsubscribeFetch();
       unsubscribeStatus();
+      unsubscribeChat();
       abortAll();
     },
   };

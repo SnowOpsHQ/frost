@@ -11,7 +11,7 @@
  * the installed providers actually send (captured offline through the runtime's proxied fetch; test
  * `proxy-accepts-real-provider-requests` keeps them honest).
  */
-import { DEFAULT_MODEL_ID, isAllowedModelId, modelProvider, routeModelId, type ModelId, type ModelRoute } from './agent-tools.spec';
+import { DEFAULT_MODEL_ID, isAllowedModelId, MAX_TOOL_STEPS, modelProvider, routeModelId, type ModelId, type ModelRoute } from './agent-tools.spec';
 
 // ---- Host ------------------------------------------------------------------------------------
 
@@ -29,6 +29,15 @@ export const AGENT_HOST_LIMITS = {
   stableAfterMs: 60_000,
   /** Failed starts in a row before main stops restarting (`crashed`) until the next use. */
   maxConsecutiveFailures: 6,
+  /** The window the flood limits below count in. */
+  floodWindowMs: 10_000,
+  /**
+   * Strikes (an invalid or unexpected message, a refused model request) in one window before main
+   * kills the runtime and starts another (a failure toward `maxConsecutiveFailures`).
+   */
+  maxStrikesPerWindow: 32,
+  /** Messages of any kind from the runtime in one window before main kills it (a stream's deltas are far fewer). */
+  maxInboundPerWindow: 20_000,
 } as const;
 
 /** The restart wait after `failures` failed starts in a row (1 → the first entry), capped at the last. */
@@ -120,6 +129,8 @@ export const AGENT_PROXY_LIMITS = {
   maxStatusTextChars: 64,
   /** A kept response header's value (characters); a longer one is dropped. */
   maxResponseHeaderValueChars: 256,
+  /** At most one log line per refusal reason (or failure) in this window; the rest are counted. */
+  logWindowMs: 60_000,
 } as const;
 
 /** Why the proxy refused a request: logged as one line with no URL query, header or body. */
@@ -139,7 +150,10 @@ export const PROXY_REFUSALS = [
   'content',
   'store',
   'provider-options',
+  'output-cap',
   'redirect',
+  'no-chat',
+  'turn-budget',
 ] as const;
 export type ProxyRefusal = (typeof PROXY_REFUSALS)[number];
 
@@ -290,39 +304,115 @@ export function sanitizeStatusText(text: unknown): string {
 
 // ---- Model proxy: bodies ---------------------------------------------------------------------
 
-export type BodyCheck = { readonly ok: true } | { readonly ok: false; readonly reason: ProxyRefusal };
+/**
+ * The most output a model request may ask for (tokens): the runtime sends it on every turn
+ * (`maxOutputTokens`), and the proxy refuses a body that asks for more or names none (a provider's
+ * default can be its model's maximum: the Anthropic provider sends 128000 when none is given).
+ */
+export const MAX_OUTPUT_TOKENS = 16_384;
 
-const OK: BodyCheck = { ok: true };
+/**
+ * Model requests one chat turn may make: a request per step, and one retry each (the runtime's
+ * `maxRetries` is 1). Main refuses a request past the budget of the turns running.
+ */
+export const MAX_MODEL_REQUESTS_PER_TURN = MAX_TOOL_STEPS * 2;
+
+export type BodyCheck = { readonly ok: true; readonly body: string } | { readonly ok: false; readonly reason: ProxyRefusal };
+
 const refuse = (reason: ProxyRefusal): BodyCheck => ({ ok: false, reason });
 
 type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
 const onlyKeys = (value: Json, allowed: readonly string[]): boolean => Object.keys(value).every((key) => allowed.includes(key));
+const isString = (value: unknown): value is string => typeof value === 'string';
+const optional = (value: unknown, check: (value: unknown) => boolean): boolean => value === undefined || check(value);
+/** An object with only `keys`, each passing its check (absent keys pass). */
+const shaped = (value: unknown, keys: Readonly<Record<string, (value: unknown) => boolean>>): boolean =>
+  isObject(value) && onlyKeys(value, Object.keys(keys)) && Object.entries(keys).every(([key, check]) => optional(value[key], check));
+const any = (): boolean => true;
+const oneOf =
+  (...values: unknown[]) =>
+  (value: unknown) =>
+    values.includes(value);
+const arrayOf =
+  (check: (value: unknown) => boolean) =>
+  (value: unknown): boolean =>
+    Array.isArray(value) && value.every(check);
+const outputCap = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 1 && (value as number) <= MAX_OUTPUT_TOKENS;
 
 /**
  * Top-level body fields each route may send (the providers' text generation requests with frost's
  * options). Absent from the lists, so refused: Anthropic `mcp_servers`, `container`,
  * `context_management`, `compaction`, `fallbacks`; OpenAI `previous_response_id`, `conversation`,
- * `prompt`, `background`; the gateway's `headers` and any provider routing.
+ * `prompt`, `background`; the gateway's `headers`, `responseFormat` and any provider routing.
  */
 export const BODY_FIELDS: Readonly<Record<ModelRoute, readonly string[]>> = {
   'byok-anthropic': ['model', 'max_tokens', 'system', 'messages', 'tools', 'tool_choice', 'stream', 'temperature', 'top_k', 'top_p', 'stop_sequences', 'thinking', 'output_config'],
   'byok-openai': ['model', 'input', 'instructions', 'store', 'include', 'tools', 'tool_choice', 'stream', 'temperature', 'top_p', 'max_output_tokens', 'reasoning', 'text', 'parallel_tool_calls'],
-  gateway: ['prompt', 'tools', 'toolChoice', 'providerOptions', 'includeRawChunks', 'maxOutputTokens', 'temperature', 'topP', 'topK', 'stopSequences', 'presencePenalty', 'frequencyPenalty', 'seed', 'responseFormat'],
+  gateway: ['prompt', 'tools', 'toolChoice', 'providerOptions', 'includeRawChunks', 'maxOutputTokens', 'temperature', 'topP', 'topK', 'stopSequences', 'presencePenalty', 'frequencyPenalty', 'seed'],
 };
 
-/** Anthropic content blocks allowed in `messages` (no image, document, file, search, server-tool, MCP or container block). */
+// Anthropic Messages: each block's keys, and which role may carry it (what the provider emits for
+// text, tool calls and results, thinking with its signature, and redacted thinking). No image,
+// document, file, citation, search result, server tool, MCP or container block; no `caller`.
+const cacheControl = (value: unknown) => shaped(value, { type: oneOf('ephemeral'), ttl: isString });
+const anthropicText = (value: unknown) => shaped(value, { type: oneOf('text'), text: isString, cache_control: cacheControl }) && isObject(value) && value.type === 'text';
+const ANTHROPIC_BLOCKS: Readonly<Record<'user' | 'assistant', Readonly<Record<string, Readonly<Record<string, (value: unknown) => boolean>>>>>> = {
+  user: {
+    text: { type: any, text: isString, cache_control: cacheControl },
+    tool_result: { type: any, tool_use_id: isString, content: (value) => isString(value) || arrayOf(anthropicText)(value), is_error: oneOf(true, false), cache_control: cacheControl },
+  },
+  assistant: {
+    text: { type: any, text: isString, cache_control: cacheControl },
+    tool_use: { type: any, id: isString, name: isString, input: isObject, cache_control: cacheControl },
+    thinking: { type: any, thinking: isString, signature: isString },
+    redacted_thinking: { type: any, data: isString },
+  },
+};
+/** Anthropic block types, any role (for the record; `ANTHROPIC_BLOCKS` is the rule). */
 export const ANTHROPIC_BLOCK_TYPES: readonly string[] = ['text', 'tool_use', 'tool_result', 'thinking', 'redacted_thinking'];
-/** OpenAI Responses input items allowed (no file search, web search, computer, shell, MCP, image or stored item reference). */
-export const OPENAI_INPUT_ITEM_TYPES: readonly string[] = ['message', 'function_call', 'function_call_output', 'reasoning'];
-/** OpenAI message content parts allowed (no `input_image`, `input_file` or `input_audio`). */
-export const OPENAI_CONTENT_TYPES: readonly string[] = ['input_text', 'output_text', 'refusal'];
+const anthropicTool = (value: unknown) =>
+  shaped(value, { type: oneOf('custom'), name: isString, description: isString, input_schema: isObject, eager_input_streaming: oneOf(true, false), strict: oneOf(true, false), cache_control: cacheControl }) && isObject(value) && isString(value.name);
+
+// OpenAI Responses: the input items the provider emits with `store: false` (messages, function
+// calls and their outputs, reasoning carried as encrypted content). No file search, web search,
+// computer, shell, MCP, image or stored item reference; no image, file or audio part.
+const openaiPart = (value: unknown) => isObject(value) && (shaped(value, { type: oneOf('input_text', 'output_text'), text: isString }) || shaped(value, { type: oneOf('refusal'), refusal: isString })) && isString(value.type);
+const OPENAI_ITEMS: Readonly<Record<string, Readonly<Record<string, (value: unknown) => boolean>>>> = {
+  message: { type: oneOf('message'), role: oneOf('user', 'assistant', 'system', 'developer'), content: (value) => isString(value) || arrayOf(openaiPart)(value) },
+  function_call: { type: any, call_id: isString, name: isString, arguments: isString },
+  function_call_output: { type: any, call_id: isString, output: isString },
+  reasoning: { type: any, id: isString, encrypted_content: (value) => value === null || isString(value), summary: arrayOf((part) => shaped(part, { type: oneOf('summary_text'), text: isString })) },
+};
+/** OpenAI Responses input item types allowed. */
+export const OPENAI_INPUT_ITEM_TYPES: readonly string[] = Object.keys(OPENAI_ITEMS);
 /** OpenAI `include` values allowed (reasoning carried in the request, since nothing is stored). */
 export const OPENAI_INCLUDE: readonly string[] = ['reasoning.encrypted_content'];
-/** Gateway prompt parts allowed (no file, no provider-executed tool, no approval part). */
+const openaiTool = (value: unknown) => shaped(value, { type: oneOf('function'), name: isString, description: isString, parameters: isObject, strict: oneOf(true, false) }) && isObject(value) && value.type === 'function' && isString(value.name);
+
+// The gateway: the language model call options. Parts per role, each with its keys; part and message
+// provider options only the ones the providers attach to their own output (Anthropic's thinking
+// signature and redacted data, OpenAI's item ids and encrypted reasoning) and cache control.
+const partOptions = (value: unknown) =>
+  shaped(value, {
+    anthropic: (options) => shaped(options, { signature: isString, redactedData: isString, cacheControl }),
+    openai: (options) => shaped(options, { itemId: isString, reasoningEncryptedContent: (content) => content === null || isString(content) }),
+  });
+const toolOutput = (value: unknown) =>
+  isObject(value) &&
+  (shaped(value, { type: oneOf('text', 'error-text'), value: isString }) || shaped(value, { type: oneOf('json', 'error-json'), value: any }) || shaped(value, { type: oneOf('execution-denied'), reason: isString })) &&
+  isString(value.type);
+const GATEWAY_PARTS: Readonly<Record<'user' | 'assistant' | 'tool', Readonly<Record<string, Readonly<Record<string, (value: unknown) => boolean>>>>>> = {
+  user: { text: { type: any, text: isString, providerOptions: partOptions } },
+  assistant: {
+    text: { type: any, text: isString, providerOptions: partOptions },
+    reasoning: { type: any, text: isString, providerOptions: partOptions },
+    'tool-call': { type: any, toolCallId: isString, toolName: isString, input: any, providerOptions: partOptions },
+  },
+  tool: { 'tool-result': { type: any, toolCallId: isString, toolName: isString, output: toolOutput, providerOptions: partOptions } },
+};
+/** Gateway prompt part types allowed, any role (for the record; `GATEWAY_PARTS` is the rule). */
 export const GATEWAY_PART_TYPES: readonly string[] = ['text', 'reasoning', 'tool-call', 'tool-result'];
-/** Gateway tool result outputs allowed (no `content`, which may carry files or URLs). */
-export const GATEWAY_TOOL_OUTPUT_TYPES: readonly string[] = ['text', 'json', 'error-text', 'error-json', 'execution-denied'];
 /**
  * Provider options the gateway route may carry, per provider: OpenAI's `store` (must be `false`) and
  * reasoning or verbosity knobs, Anthropic's thinking knobs. Anything else (MCP servers, containers,
@@ -332,17 +422,21 @@ export const GATEWAY_PROVIDER_OPTIONS: Readonly<Record<string, readonly string[]
   openai: ['store', 'reasoningEffort', 'reasoningSummary', 'textVerbosity', 'parallelToolCalls'],
   anthropic: ['thinking', 'sendReasoning', 'effort', 'disableParallelToolUse'],
 };
-/** Provider namespaces a gateway prompt message or part may carry options for (reasoning signatures, item ids). */
-const GATEWAY_PART_OPTION_PROVIDERS: readonly string[] = ['anthropic', 'openai'];
+const gatewayTool = (value: unknown) => shaped(value, { type: oneOf('function'), name: isString, description: isString, inputSchema: isObject, strict: oneOf(true, false) }) && isObject(value) && value.type === 'function' && isString(value.name);
 
 /** The model header the gateway reads (its body names no model). */
 export const GATEWAY_MODEL_HEADER = 'ai-language-model-id';
 
 /**
- * Whether the body may go out on `route` with `modelId` (main's settings): JSON text whose model is
- * `routeModelId(route, modelId)` (the gateway's: the `ai-language-model-id` header among `headers`,
- * already filtered), only `BODY_FIELDS`, only plain function tools, only text, tool and reasoning
- * content, and, for an OpenAI model, `store: false`. Never throws.
+ * Whether the body may go out on `route` with `modelId` (main's settings), and the exact text to
+ * send: the parsed body written back out (`JSON.stringify`), so the bytes sent are the object
+ * checked; a repeated key in the runtime's text (`{"store":true,"store":false}`) can't make the
+ * provider read something other than what was checked. The checks: JSON whose model is
+ * `routeModelId(route, modelId)` (the gateway's: the `ai-language-model-id` header among
+ * `headers`, already filtered), only `BODY_FIELDS`, an output cap of at most `MAX_OUTPUT_TOKENS`,
+ * and a nested allowlist below it: each message's, block's or part's keys and which role may carry
+ * it, plain function tools only, the provider options the providers attach to their own output,
+ * and, for an OpenAI model, `store: false`. Never throws.
  */
 export function checkModelRequestBody(route: ModelRoute, modelId: string, body: string, headers: HeaderPairs = []): BodyCheck {
   const expected = Object.hasOwn(BODY_FIELDS, route) ? routeModelId(route, modelId) : null;
@@ -355,105 +449,95 @@ export function checkModelRequestBody(route: ModelRoute, modelId: string, body: 
   }
   if (!isObject(parsed)) return refuse('body-json');
   if (!onlyKeys(parsed, BODY_FIELDS[route])) return refuse('body-field');
+  let check: BodyCheck;
   try {
     switch (route) {
       case 'byok-anthropic':
-        return parsed.model === expected ? checkAnthropic(parsed) : refuse('model');
+        check = parsed.model === expected ? checkAnthropic(parsed) : refuse('model');
+        break;
       case 'byok-openai':
-        return parsed.model === expected ? checkOpenAi(parsed) : refuse('model');
+        check = parsed.model === expected ? checkOpenAi(parsed) : refuse('model');
+        break;
       case 'gateway': {
         const models = headers.filter(([name]) => name.toLowerCase() === GATEWAY_MODEL_HEADER);
-        if (models.length !== 1 || models[0]![1] !== expected) return refuse('model');
-        return checkGateway(parsed, modelProvider(modelId) === 'openai');
+        check = models.length !== 1 || models[0]![1] !== expected ? refuse('model') : checkGateway(parsed, modelProvider(modelId) === 'openai');
+        break;
       }
+      default:
+        return refuse('model');
     }
+    return check.ok ? { ok: true, body: JSON.stringify(parsed) } : check;
   } catch {
-    // A getter cannot exist on parsed JSON; this only guards against a bug above.
+    // Parsed JSON has no getters; this only guards against a bug above.
     return refuse('body-json');
   }
-  return refuse('model');
 }
 
+const OK: BodyCheck = { ok: true, body: '' };
+
 function checkAnthropic(body: Json): BodyCheck {
-  const { system, messages, tools, tool_choice: toolChoice } = body;
-  if (system !== undefined && typeof system !== 'string') {
-    if (!Array.isArray(system) || !system.every((block) => isObject(block) && block.type === 'text')) return refuse('content');
-  }
+  const { system, messages, tools, tool_choice: toolChoice, thinking, output_config: outputConfig } = body;
+  if (!outputCap(body.max_tokens)) return refuse('output-cap');
+  if (system !== undefined && !isString(system) && !arrayOf(anthropicText)(system)) return refuse('content');
   if (!Array.isArray(messages)) return refuse('content');
   for (const message of messages) {
     if (!isObject(message) || !onlyKeys(message, ['role', 'content']) || (message.role !== 'user' && message.role !== 'assistant')) return refuse('content');
-    if (typeof message.content === 'string') continue;
+    if (isString(message.content)) continue;
     if (!Array.isArray(message.content)) return refuse('content');
+    const allowed = ANTHROPIC_BLOCKS[message.role];
     for (const block of message.content) {
-      if (!isObject(block) || typeof block.type !== 'string' || !ANTHROPIC_BLOCK_TYPES.includes(block.type)) return refuse('content');
-      if (block.type === 'tool_result' && block.content !== undefined && typeof block.content !== 'string') {
-        if (!Array.isArray(block.content) || !block.content.every((part) => isObject(part) && part.type === 'text')) return refuse('content');
-      }
+      if (!isObject(block) || !isString(block.type) || !Object.hasOwn(allowed, block.type) || !shaped(block, allowed[block.type]!)) return refuse('content');
     }
   }
-  if (tools !== undefined) {
-    if (!Array.isArray(tools)) return refuse('tool');
-    // A plain (custom) tool has no `type`, or `custom`; every server tool names its own type.
-    for (const tool of tools) if (!isObject(tool) || (tool.type !== undefined && tool.type !== 'custom') || typeof tool.name !== 'string') return refuse('tool');
-  }
-  if (toolChoice !== undefined && (!isObject(toolChoice) || !['auto', 'any', 'none', 'tool'].includes(String(toolChoice.type)))) return refuse('tool');
+  if (tools !== undefined && !arrayOf(anthropicTool)(tools)) return refuse('tool');
+  if (toolChoice !== undefined && !(shaped(toolChoice, { type: oneOf('auto', 'any', 'none', 'tool'), name: isString, disable_parallel_tool_use: oneOf(true, false) }) && isObject(toolChoice) && toolChoice.type !== undefined)) return refuse('tool');
+  if (thinking !== undefined && !shaped(thinking, { type: oneOf('enabled', 'disabled', 'adaptive', 'between_tools'), budget_tokens: Number.isInteger })) return refuse('body-field');
+  if (outputConfig !== undefined && !shaped(outputConfig, { effort: oneOf('low', 'medium', 'high') })) return refuse('body-field');
   return OK;
 }
 
 function checkOpenAi(body: Json): BodyCheck {
   if (body.store !== false) return refuse('store');
-  const { input, include, tools, tool_choice: toolChoice } = body;
-  if (include !== undefined && (!Array.isArray(include) || !include.every((value) => typeof value === 'string' && OPENAI_INCLUDE.includes(value)))) return refuse('body-field');
-  if (typeof input !== 'string') {
+  if (!outputCap(body.max_output_tokens)) return refuse('output-cap');
+  const { input, include, tools, tool_choice: toolChoice, reasoning, text, instructions } = body;
+  if (include !== undefined && !arrayOf((value) => isString(value) && OPENAI_INCLUDE.includes(value))(include)) return refuse('body-field');
+  if (instructions !== undefined && !isString(instructions)) return refuse('content');
+  if (!isString(input)) {
     if (!Array.isArray(input)) return refuse('content');
     for (const item of input) {
       if (!isObject(item)) return refuse('content');
-      const type = item.type ?? (typeof item.role === 'string' ? 'message' : undefined);
-      if (typeof type !== 'string' || !OPENAI_INPUT_ITEM_TYPES.includes(type)) return refuse('content');
-      if (type === 'message') {
-        if (!['user', 'assistant', 'system', 'developer'].includes(String(item.role))) return refuse('content');
-        if (typeof item.content !== 'string' && !(Array.isArray(item.content) && item.content.every((part) => isObject(part) && OPENAI_CONTENT_TYPES.includes(String(part.type))))) return refuse('content');
-      }
-      if (type === 'function_call_output' && typeof item.output !== 'string') {
-        if (!Array.isArray(item.output) || !item.output.every((part) => isObject(part) && part.type === 'input_text')) return refuse('content');
-      }
+      const type = item.type ?? (isString(item.role) ? 'message' : undefined);
+      if (!isString(type) || !Object.hasOwn(OPENAI_ITEMS, type) || !shaped(item, OPENAI_ITEMS[type]!)) return refuse('content');
     }
   }
-  if (tools !== undefined) {
-    if (!Array.isArray(tools)) return refuse('tool');
-    for (const tool of tools) if (!isObject(tool) || tool.type !== 'function' || typeof tool.name !== 'string') return refuse('tool');
-  }
-  if (toolChoice !== undefined && !['auto', 'none', 'required'].includes(String(toolChoice))) {
-    if (!isObject(toolChoice) || toolChoice.type !== 'function') return refuse('tool');
-  }
+  if (tools !== undefined && !arrayOf(openaiTool)(tools)) return refuse('tool');
+  if (toolChoice !== undefined && !oneOf('auto', 'none', 'required')(toolChoice) && !(shaped(toolChoice, { type: oneOf('function'), name: isString }) && isObject(toolChoice) && toolChoice.type === 'function')) return refuse('tool');
+  if (reasoning !== undefined && !shaped(reasoning, { effort: oneOf('minimal', 'low', 'medium', 'high'), summary: oneOf('auto', 'concise', 'detailed') })) return refuse('body-field');
+  if (text !== undefined && !shaped(text, { verbosity: oneOf('low', 'medium', 'high'), format: (format) => shaped(format, { type: oneOf('text') }) })) return refuse('body-field');
   return OK;
 }
 
 function checkGateway(body: Json, openAiModel: boolean): BodyCheck {
   const { prompt, tools, toolChoice, providerOptions } = body;
+  if (!outputCap(body.maxOutputTokens)) return refuse('output-cap');
   if (!Array.isArray(prompt)) return refuse('content');
   for (const message of prompt) {
     if (!isObject(message) || !onlyKeys(message, ['role', 'content', 'providerOptions'])) return refuse('content');
-    if (!partOptionsOk(message.providerOptions)) return refuse('provider-options');
+    if (!optional(message.providerOptions, partOptions)) return refuse('provider-options');
     if (message.role === 'system') {
-      if (typeof message.content !== 'string') return refuse('content');
+      if (!isString(message.content)) return refuse('content');
       continue;
     }
-    if (!['user', 'assistant', 'tool'].includes(String(message.role)) || !Array.isArray(message.content)) return refuse('content');
+    if ((message.role !== 'user' && message.role !== 'assistant' && message.role !== 'tool') || !Array.isArray(message.content)) return refuse('content');
+    const allowed = GATEWAY_PARTS[message.role];
     for (const part of message.content) {
-      if (!isObject(part) || !GATEWAY_PART_TYPES.includes(String(part.type))) return refuse('content');
-      if (!partOptionsOk(part.providerOptions)) return refuse('provider-options');
-      if (part.type === 'tool-call' && part.providerExecuted !== undefined && part.providerExecuted !== false) return refuse('tool');
-      if (part.type === 'tool-result' && (!isObject(part.output) || !GATEWAY_TOOL_OUTPUT_TYPES.includes(String(part.output.type)))) return refuse('content');
+      if (!isObject(part) || !isString(part.type) || !Object.hasOwn(allowed, part.type)) return refuse(isObject(part) && part.providerExecuted !== undefined ? 'tool' : 'content');
+      if (!optional(part.providerOptions, partOptions)) return refuse('provider-options');
+      if (!shaped(part, allowed[part.type]!)) return refuse(part.providerExecuted !== undefined ? 'tool' : 'content');
     }
   }
-  if (tools !== undefined) {
-    if (!Array.isArray(tools)) return refuse('tool');
-    for (const tool of tools) {
-      if (!isObject(tool) || tool.type !== 'function' || typeof tool.name !== 'string' || !onlyKeys(tool, ['type', 'name', 'description', 'inputSchema', 'strict', 'inputExamples'])) return refuse('tool');
-    }
-  }
-  if (toolChoice !== undefined && (!isObject(toolChoice) || !['auto', 'none', 'required', 'tool'].includes(String(toolChoice.type)))) return refuse('tool');
+  if (tools !== undefined && !arrayOf(gatewayTool)(tools)) return refuse('tool');
+  if (toolChoice !== undefined && !(isObject(toolChoice) && (shaped(toolChoice, { type: oneOf('auto', 'none', 'required') }) || shaped(toolChoice, { type: oneOf('tool'), toolName: isString })) && toolChoice.type !== undefined)) return refuse('tool');
   if (providerOptions !== undefined) {
     if (!isObject(providerOptions)) return refuse('provider-options');
     for (const [provider, options] of Object.entries(providerOptions)) {
@@ -464,10 +548,4 @@ function checkGateway(body: Json, openAiModel: boolean): BodyCheck {
   if (openai?.store !== undefined && openai.store !== false) return refuse('store');
   if (openAiModel && openai?.store !== false) return refuse('store');
   return OK;
-}
-
-/** A gateway message's or part's provider options: absent, or objects for `anthropic` / `openai` only. */
-function partOptionsOk(options: unknown): boolean {
-  if (options === undefined) return true;
-  return isObject(options) && Object.entries(options).every(([provider, value]) => GATEWAY_PART_OPTION_PROVIDERS.includes(provider) && isObject(value));
 }

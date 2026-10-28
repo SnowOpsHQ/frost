@@ -95,7 +95,8 @@ one named test.
   surrogate pair).
 
 ## Additions (Phase 5 Task 2 review; `packages/ai-skills/src/__tests__/agent-protocol.test.ts`)
-- **`ready` reports the lockdown** (`AGENT_PROTOCOL_VERSION` 2): `lockdown: { removed, failed,
+- **`ready` reports the lockdown** (`AGENT_PROTOCOL_VERSION` 3 since Task 3's review added the module
+  loader and code generation targets; 2 before): `lockdown: { removed, failed,
   permissionModel }`, the lists holding only `LOCKDOWN_TARGETS` (each at most once per target count)
   and `permissionModel` whether Node's permission model refuses file writes in the runtime.
 - **`chat.step`** (runtime → main): a step's `step` number (1 to `MAX_TOOL_STEPS`), its `text` (at

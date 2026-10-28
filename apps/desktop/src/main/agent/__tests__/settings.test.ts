@@ -30,7 +30,7 @@ describe('agent settings', () => {
     expect(settings.current()).toEqual({ route: 'byok-openai', modelId: 'openai/gpt-5-mini' });
     expect(changes).toHaveBeenCalledTimes(1);
     expect(memory.files.get(FILE)!.mode).toBe(0o600);
-    expect(memory.ops.filter((op) => !op.startsWith('read'))).toEqual([`write ${FILE}.tmp1.tmp 600 wx`, `rename ${FILE}.tmp1.tmp ${FILE}`]);
+    expect(memory.ops.filter((op) => !op.startsWith('read'))).toEqual([`write ${FILE}.tmp1.tmp 600 wx flush`, `rename ${FILE}.tmp1.tmp ${FILE}`]);
     const again = createAgentSettings({ file: FILE, fs: memory.fs });
     await again.load();
     expect(again.current()).toEqual({ route: 'byok-openai', modelId: 'openai/gpt-5-mini' });

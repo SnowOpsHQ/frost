@@ -15,18 +15,38 @@ one named test.
   the runtime's `chat.start` or `fetch.request`. A request goes out only for the configured route's
   one method and URL, with an allowlist of headers (credential, cookie, host, proxy, organisation
   and observability headers dropped by omission), a body naming the configured model and nothing
-  server-side, and main's own credential header. The URL sent is the allowlist's string.
+  server-side, and main's own credential header. The URL sent is the allowlist's string, and the
+  body sent is the parsed, checked object written back out (`JSON.stringify`): a repeated key in
+  the runtime's text can't make the provider read something other than what was checked. The body
+  check is a nested allowlist (top-level fields, then each message's, block's, part's, tool's and
+  provider options' keys, and which role may carry which block), built from what the installed
+  providers emit, reasoning included; every request must cap its output at `MAX_OUTPUT_TOKENS`
+  (the runtime sends it; the Anthropic provider's default is the model's maximum).
+- **Requests only for turns.** The host hands a `fetch.request` to the proxy only while a chat main
+  started is running, and at most `MAX_MODEL_REQUESTS_PER_TURN` per running turn; it refuses any
+  other itself. When the last turn ends, the proxy stops whatever is still in flight.
+- **Floods restart the runtime.** Each dropped message and each refusal is a strike; past
+  `maxStrikesPerWindow` strikes, or `maxInboundPerWindow` messages, in a `floodWindowMs` window the
+  host kills the runtime (`misbehaved`, a failure toward `maxConsecutiveFailures`, never reset by a
+  long run) and starts another after the backoff. Refusal log lines are coalesced: one per reason
+  per `logWindowMs`, the next one saying how many were left out.
 - **The key stays in main's proxy.** Keys are stored per slot (`anthropic`, `openai`, `gateway`),
   encrypted with `safeStorage`, in one 0600 file written atomically. Only `withKey` sees a key, for
   the duration of one call, and only the proxy is given it; the settings page gets a view with no
   `withKey`. Keys never appear in a message to the runtime, a log line, an error or an answer.
-  It uses `safeStorage`'s asynchronous API (Electron 45 deprecates the synchronous one, whose
+  A key is stored and used only with `os` protection: the agent process runs unsandboxed as the
+  user, so with Chromium's fixed key (`weak`) it could decrypt the file offline or plant a blob of
+  its own; `setKey` answers `no-keychain` (the settings page says "no OS keychain available") and a
+  stored key counts as absent. On Linux a blob must carry the secret service's `v11` tag. A read
+  error is not remembered and never leads to a write over the file; files are flushed before the
+  rename. It uses `safeStorage`'s asynchronous API (Electron 45 deprecates the synchronous one, whose
   `isEncryptionAvailable()` answers `false` on Linux where the asynchronous encryptor works). With
   no encryption the store refuses (`unavailable`); on Linux the encryptor's output says which key it
   used: `v11` (the desktop's secret service) is `os`, `v10` (Chromium's fixed key: no secret
   service, or `--password-store=basic`) is `weak`: stored, and said so. `getSelectedStorageBackend`
-  is not used: on Electron 45 it reports `basic_text` while the asynchronous encryptor still finds
-  a secret service.
+  is not used, not even as an extra "weak" signal: on Electron 45 it reports `basic_text` while the
+  asynchronous encryptor still finds a secret service (verified on this project's Linux desktop:
+  `v11` data under a `basic_text` backend), so it would refuse keys the keychain does protect.
 - **No redirect, no cookie, bounded.** Requests use `redirect: 'error'` (Electron 45 rejects a 3xx
   with "Attempted to redirect, but redirect policy was 'error'"; `manual` rejects too, "Redirect
   was cancelled"), `credentials: 'omit'` (verified: no cookie sent or stored) on the in-memory
@@ -50,6 +70,12 @@ one named test.
   field, a message before `ready` and a second `ready` are dropped and counted; no listener sees one.
 - **Scenario: host-chat-ids** — chat events and `tool.invoke` for a chat main never started are
   dropped; `chat.finish` / `chat.error` end a chat.
+- **Scenario: host-fetch-needs-a-turn** — a `fetch.request` with no turn running, or past the
+  running turns' `MAX_MODEL_REQUESTS_PER_TURN`, is answered `refused` by the host and never reaches
+  the proxy; `fetch.abort` still does; once the turn ends, requests are refused again.
+- **Scenario: host-flood-restarts** — `maxStrikesPerWindow` strikes in a window are tolerated, one
+  more kills the runtime (`misbehaved`) and another starts after the backoff; more than
+  `maxInboundPerWindow` messages in a window do too.
 - **Scenario: host-send-validated** — a message that fails `MainToRuntimeMessageSchema`, or any
   message before `ready`, is not posted and `send` answers `false`; a second `chat.start` for a
   running chat is refused.
@@ -65,19 +91,24 @@ one named test.
 
 ## Credentials (`credentials.test.ts`)
 - **Scenario: credentials-file-not-plaintext** — after `setKey` the file holds no key text (raw or
-  base64) and was written to a temporary 0600 file, then renamed over the old one.
+  base64) and was written to a temporary 0600 file, flushed, then renamed over the old one.
 - **Scenario: credentials-only-withkey-returns-key** — `hasKey`, `setKey`, `clearKey` and
   `protection` never answer the key; `withKey` runs its closure with it; the settings view has no
   `withKey`.
 - **Scenario: credentials-key-validated** — a key is trimmed; one too short, too long, or with a
   space or non-ASCII character is refused (`invalid`) and nothing is written.
-- **Scenario: credentials-protection** — `unavailable` (no encryption: `setKey` refuses, nothing
-  written), `weak` (Linux, `v10` data), `os` otherwise; encryption that goes away is reported again.
+- **Scenario: credentials-protection** — `unavailable` (no encryption) and `weak` (Linux, `v10`
+  data) both make `setKey` answer `no-keychain` with nothing written; `os` otherwise; encryption
+  that goes away is reported again.
+- **Scenario: credentials-weak-blob-never-used** — on Linux a `v10` blob (planted) is never used;
+  with `weak` protection even a good blob is not; on macOS the tag is not checked.
+- **Scenario: credentials-read-error-not-cached** — a file that can't be read makes `setKey` and
+  `clearKey` fail without writing (other slots survive); once readable it is read afresh.
 - **Scenario: credentials-re-encrypted-when-asked** — when decryption answers `shouldReEncrypt`, the
   key is stored again under the encryptor's current key before the closure runs.
 - **Scenario: credentials-clear** — `clearKey` removes one slot and leaves the others.
-- **Scenario: credentials-tampered-file** — an unreadable or tampered file stores nothing, never
-  throws, and a blob that fails to decrypt makes `withKey` answer `failed` (no key).
+- **Scenario: credentials-tampered-file** — a tampered file stores nothing, never throws, and a blob
+  that fails to decrypt makes `hasKey` false and `withKey` answer `failed` (no key).
 
 ## Settings (`settings.test.ts`)
 - **Scenario: settings-defaults** — no file: `gateway` and `DEFAULT_MODEL_ID`.
@@ -101,11 +132,23 @@ one named test.
 - **Scenario: proxy-files-and-state-refused** — image, document and file parts, `file_id`
   inputs, `item_reference`, `previous_response_id`, gateway `content` tool outputs and unknown
   provider options are refused.
+- **Scenario: proxy-duplicate-keys-canonical** — with a repeated key (`tools`, `store`, `model`, a
+  block's `type`, `providerOptions`) the last one is checked and the body answered is the parsed
+  object written back out, with no trace of the other.
+- **Scenario: proxy-nested-allowlist** — unknown keys in a message, block, part, tool or provider
+  options (citations, `caller`, `defer_loading`, `allowed_callers`, `input_examples`, an OpenAI
+  item `id` or annotation, compaction blocks) are refused, as are blocks in the wrong role (a
+  `tool_result` from the assistant, a `tool_use` or thinking from the user, a gateway `tool-result`
+  outside a `tool` message).
+- **Scenario: proxy-output-cap** — on every route the output cap must be an integer from 1 to
+  `MAX_OUTPUT_TOKENS`; absent, larger or not an integer is refused (`output-cap`).
 - **Scenario: proxy-openai-store-required** — an OpenAI body without `store: false` (and an
   OpenAI model on the gateway without `providerOptions.openai.store: false`) is refused.
 - **Scenario: proxy-accepts-real-provider-requests** — the requests the installed providers send
-  through the runtime (each route and allowed model, a history with tool calls and results) pass
-  the header filter and the body check unchanged in meaning.
+  through the runtime (each route and allowed model, a history with tool calls and results, and a
+  turn's second request carrying the first step's thinking and signature, redacted thinking,
+  encrypted reasoning, item ids and two tool calls) pass the header filter and the body check, and
+  the body answered is byte for byte the one the provider wrote.
 
 ## Model proxy (`model-proxy.test.ts`)
 - **Scenario: proxy-allowlist** — other hosts, schemes, ports, paths, queries, fragments and
@@ -124,6 +167,14 @@ one named test.
   live id is refused and the first request stopped.
 - **Scenario: proxy-abort** — `fetch.abort` aborts the fetch's signal and nothing more is sent for
   that id; the runtime going away aborts every request.
+- **Scenario: proxy-sends-the-checked-body** — a body with `"store":true,"store":false` goes out as
+  the checked object (`"store":false` once).
+- **Scenario: proxy-abort-before-settings-load** — a `fetch.abort` that arrives while the request
+  waits for the settings to load stops it: no fetch, no answer.
+- **Scenario: proxy-stops-when-no-turn-runs** — when the last running chat finishes or fails, the
+  requests still in flight are aborted.
+- **Scenario: proxy-refusals-strike-and-coalesce** — each refusal is a strike on the host; ten of
+  one reason log one line, and the next window's line counts the nine left out.
 - **Scenario: proxy-refusal-logged-without-detail** — a refusal logs one line with its reason code
   and no URL query, header or body.
 
@@ -131,7 +182,10 @@ one named test.
 - **Scenario: key-never-leaves-main** — the real runtime (in-process, on fake ports) runs a turn
   through the host and proxy to a scripted Anthropic stream: the reply streams back, and the key
   appears only in the header handed to the fake fetch: not in any message to or from the runtime,
-  any answer of the agent's public API, any log line or console output, or the credentials file.
+  any answer of the agent's public API, any log line, console or stdout/stderr output, or the
+  credentials file (searched for the key, its base64 and its last 8 characters), through a normal
+  turn, a 401 whose body quotes the key, a network error and a redirect whose texts quote it, a
+  refusal, and a re-encryption; and a stored key that fails to decrypt sends nothing.
 
 ## Entitlements (`entitlements.test.ts`)
 - **Scenario: entitlements-default-allowed** — the default port allows `agent`, `agent.skills` and

@@ -11,7 +11,8 @@ import { DEFAULT_AGENT_MODEL_SETTINGS, isValidModelSettings, type AgentModelSett
 /** The file operations the settings use (`node:fs/promises` in main; a memory fake in tests). */
 export interface SettingsFs {
   readFile(file: string): Promise<Uint8Array>;
-  writeFile(file: string, data: string, options: { readonly mode: number; readonly flag: 'wx' }): Promise<void>;
+  /** Writes a new file (`wx`) and flushes it to disk before resolving (`flush`). */
+  writeFile(file: string, data: string, options: { readonly mode: number; readonly flag: 'wx'; readonly flush: true }): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   rm(file: string, options: { readonly force: true }): Promise<void>;
 }
@@ -84,7 +85,7 @@ export function createAgentSettings(deps: AgentSettingsDeps): AgentSettings {
         if (!isValidModelSettings(merged)) return false;
         const temp = `${deps.file}.${tempSuffix()}.tmp`;
         try {
-          await deps.fs.writeFile(temp, `${JSON.stringify({ route: merged.route, modelId: merged.modelId })}\n`, { mode: 0o600, flag: 'wx' });
+          await deps.fs.writeFile(temp, `${JSON.stringify({ route: merged.route, modelId: merged.modelId })}\n`, { mode: 0o600, flag: 'wx', flush: true });
           await deps.fs.rename(temp, deps.file);
         } catch {
           log('agent settings: the settings file could not be written');

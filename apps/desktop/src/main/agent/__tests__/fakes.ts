@@ -113,7 +113,7 @@ export function createMemoryFs() {
       return entry.data.slice();
     },
     async writeFile(file, data, options) {
-      ops.push(`write ${file} ${options.mode.toString(8)} ${options.flag}`);
+      ops.push(`write ${file} ${options.mode.toString(8)} ${options.flag}${options.flush ? ' flush' : ''}`);
       if (options.flag === 'wx' && files.has(file)) throw error('EEXIST');
       files.set(file, { data: new TextEncoder().encode(data), mode: options.mode });
     },
@@ -137,28 +137,31 @@ export function createMemoryFs() {
 }
 
 /**
- * A reversible stand-in for `safeStorage`'s asynchronous API: XORs the text's bytes behind
- * Chromium's tag (`v11`: a secret service's key; `v10`: the fixed key, when `weak`), so the
- * encrypted bytes never contain the text.
+ * A reversible stand-in for `safeStorage`'s asynchronous API: Chromium's tag (`v11`: a secret
+ * service's key; `v10`: the fixed key, when `weak`), a marker byte, a nonce, then the text's bytes
+ * XORed, so the encrypted bytes never contain the text and each encryption differs.
  */
 export function createFakeSafeStorage(options: { available?: boolean; weak?: boolean } = {}) {
-  const state = { available: options.available ?? true, weak: options.weak ?? false, reEncrypt: false };
-  const tag = () => new TextEncoder().encode(state.weak ? 'v10' : 'v11');
+  const state = { available: options.available ?? true, weak: options.weak ?? false, reEncrypt: false, nonce: 0 };
+  const MARKER = 0xee;
   const storage: SafeStorageLike = {
     isAsyncEncryptionAvailable: async () => state.available,
     async encryptStringAsync(plainText) {
       if (!state.available) throw new Error('encryption is not available');
       const bytes = new TextEncoder().encode(plainText);
-      return Buffer.from([...tag(), ...bytes.map((byte) => byte ^ 0xa5)]);
+      state.nonce = (state.nonce + 1) % 256;
+      return Buffer.from([...new TextEncoder().encode(state.weak ? 'v10' : 'v11'), MARKER, state.nonce, ...bytes.map((byte) => byte ^ 0xa5)]);
     },
     async decryptStringAsync(encrypted) {
       if (!state.available) throw new Error('encryption is not available');
       const prefix = encrypted.subarray(0, 3).toString('latin1');
-      if (prefix !== 'v10' && prefix !== 'v11') throw new Error('not ours');
-      return { result: new TextDecoder().decode(encrypted.subarray(3).map((byte) => byte ^ 0xa5)), shouldReEncrypt: state.reEncrypt };
+      if ((prefix !== 'v10' && prefix !== 'v11') || encrypted[3] !== MARKER) throw new Error('not ours');
+      return { result: new TextDecoder().decode(encrypted.subarray(5).map((byte) => byte ^ 0xa5)), shouldReEncrypt: state.reEncrypt };
     },
   };
-  return { storage, state };
+  /** A blob as the fake would write it under `tag` (to plant one in a file). */
+  const blob = (plainText: string, tag: 'v10' | 'v11') => Buffer.from([...new TextEncoder().encode(tag), MARKER, 0, ...new TextEncoder().encode(plainText).map((byte) => byte ^ 0xa5)]).toString('base64');
+  return { storage, state, blob };
 }
 
 /** A stream answering `chunks` in order, then ending (or staying open when `keepOpen`). */

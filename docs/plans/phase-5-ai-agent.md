@@ -69,13 +69,23 @@
    `ready.lockdown` (`permissionModel: false` today); main's host exposes that report and the agent
    settings page says "File sandbox: not in effect", never claiming one.
 
-   The agent process's isolation rests on: holding no secret (keys stay in main's proxy, decision
-   5; an empty environment); the narrow, validated protocol (every message parsed both ways, no
-   message that approves, grants, changes a setting or carries a key); the removed network globals
-   and builtin lookups (`fetch`, `WebSocket`, `EventSource`, `process.getBuiltinModule`,
-   `binding`, `dlopen`, …) and a bundle whose own sources import no network or process module; and
-   main deciding every action (decision 7). A socket opened by a dependency bug carries nothing
-   secret, and no tool reaches the file system.
+   **Stated plainly:** on Electron 45 the agent process runs unsandboxed, as the user. A
+   code-execution bug in it or its dependencies could reach whatever the user can: their files,
+   other processes, the OS keychain by other means, the network through a native path we have not
+   closed. What we rely on instead:
+   - **it holds no secret**: keys stay in main's proxy (decision 5), its environment is empty, and
+     main stores a key only behind the OS keychain (`safeStorage` with a secret service; never
+     Chromium's fixed-key fallback, which the agent process could decrypt offline or forge);
+   - **no dynamic code**: after its modules load it stops module loading (`Module._load`,
+     `Module.prototype.require`, `process.mainModule`) and code generation from strings (`eval`
+     and the `Function` constructors; Electron 45 ignores `--disallow-code-generation-from-strings`
+     there too), so an injected string can't become code through the usual paths;
+   - **a narrow, validated protocol**: every message parsed both ways, none that approves, grants,
+     changes a setting or carries a key; a flood of invalid or refused messages restarts it;
+   - **no network of its own**: the network globals and builtin lookups are removed and its own
+     sources import no network or process module; model requests are main's, for running turns
+     only, within a per-turn budget, to one allowlisted URL per route, with checked bodies;
+   - **main decides every action** (decision 7), and no agent tool touches the file system.
 
 7. **Approvals live entirely in main.** Each tool's `execute` in the runtime is only a request
    (`tool.invoke`) to main. Main's broker decides: run on a standing grant, ask the user, or refuse;
@@ -110,7 +120,8 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 | The agent process approves its own call | No approve/grant message exists in the protocol; main drops unknown or malformed messages; approvals arrive only over the `enforceSender` IPC from the app window | Task 1 `agent-cannot-approve`, Task 4 |
 | A page or a tab's renderer answers an approval | `agent.answerApproval` is an IPC procedure behind `enforceSender` (app windows only); approval ids are random and single-use | Task 5 |
 | A stale approval is replayed | Each approval is bound to one call id, its tool name and a hash of its exact input; answered once; expires with the turn | Task 4 |
-| A key leaks to the renderer, a log or the model | Keys stored with `safeStorage`; only main's proxy reads them; the settings procedures answer `hasKey` only; the runtime never sees one | Task 3 `key-never-leaves-main` |
+| A key leaks to the renderer, a log or the model | Keys stored with `safeStorage`, only behind the OS keychain (refused with Chromium's fixed key, which the unsandboxed agent process could decrypt); only main's proxy reads them; error bodies are withheld from the runtime; the settings procedures answer `hasKey` only; the runtime never sees one | Task 3 `key-never-leaves-main`, `credentials-weak-blob-never-used` |
+| Code execution in the agent process (a dependency bug) | Not sandboxed on Electron 45: it runs as the user. It holds no secret, loads no module and generates no code from strings after startup, has no network globals, speaks only the validated protocol (floods restart it), and main decides every action and every model request | Task 2/3 lockdown tests, `host-flood-restarts` |
 | The agent reaches arbitrary hosts | Model requests go through main's proxy and its endpoint allowlist; the runtime has no network globals | Task 3 `proxy-allowlist` |
 | `execute_javascript` takes over the page or hangs | Runs in a dedicated isolated world (never the main world), per-call approval showing the exact code, a timeout and a result size cap | Task 4/5 |
 | A standing grant outlives the user's intent | Grants are per tool and per origin, listed on the grants page, revocable one by one or all at once | Task 9 |
@@ -282,3 +293,13 @@ _Filled in as tasks land._
   `session.fetch` to a local HTTPS stand-in for the endpoint (the key arrived only as `x-api-key`,
   no cookie was stored, a redirect was refused), and a killed runtime was restarted and served the
   next turn.
+- **Task 3 review.** The proxy sends the checked body re-serialized (a repeated key can't differ
+  from what was checked); the body check is a nested allowlist built from the providers' real
+  requests, reasoning and parallel tool calls included, and requires an output cap of at most
+  `MAX_OUTPUT_TOKENS` (16384; the runtime now passes `maxOutputTokens`). Keys are stored only with
+  `os` protection (`setKey` answers `no-keychain` otherwise; on Linux a blob must be `v11`). The
+  host accepts model requests only for running turns (`MAX_MODEL_REQUESTS_PER_TURN` = 24 each),
+  restarts a runtime that floods it (`misbehaved`), and refusal logs are coalesced. The runtime's
+  lockdown now also stops module loading and code generation from strings (protocol version 3);
+  Zod runs `jitless` in the runtime (set before any schema is built), since it would otherwise
+  compile parsers with `new Function` after the lockdown. Verified in a real utility process.

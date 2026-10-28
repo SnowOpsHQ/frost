@@ -6,7 +6,8 @@ import {
   type MainToRuntimeMessage,
   type RuntimeToMainMessage,
 } from '@app/specs/agent-protocol.schema';
-import { AGENT_HOST_LIMITS, AGENT_RUNTIME_FILE, AGENT_SERVICE_NAME, restartDelayMs } from '@app/specs/agent-proxy.spec';
+import { AGENT_HOST_LIMITS, AGENT_PROXY_LIMITS, AGENT_RUNTIME_FILE, AGENT_SERVICE_NAME, MAX_MODEL_REQUESTS_PER_TURN, restartDelayMs } from '@app/specs/agent-proxy.spec';
+import { coalescedLog } from './log';
 
 // The agent host (Phase 5 Task 3, plan decision 6; acceptance `specs/agent-host.feature.md`, Host):
 // forks the agent runtime as an Electron utility process on first use, hands it one MessagePort,
@@ -70,7 +71,7 @@ export interface AgentHostDeps {
 export type AgentHostStatus = 'stopped' | 'starting' | 'ready' | 'crashed';
 
 /** Why the runtime last failed, for the settings page (`null`: it hasn't). */
-export type AgentHostFailure = 'exited' | 'ready-timeout' | 'protocol-mismatch' | 'fork-failed';
+export type AgentHostFailure = 'exited' | 'ready-timeout' | 'protocol-mismatch' | 'fork-failed' | 'misbehaved';
 
 /** What the runtime's lockdown did (`ready.lockdown`), as last reported. */
 export type AgentLockdown = Extract<RuntimeToMainMessage, { type: 'ready' }>['lockdown'];
@@ -82,6 +83,10 @@ export type AgentFetchEvent = Extract<RuntimeToMainMessage, { type: 'fetch.reque
 export interface AgentHostStats {
   /** Inbound messages dropped: invalid, before `ready`, a second `ready`, or for a chat main didn't start. */
   inboundDropped: number;
+  /** Model requests refused here: no turn running, or past the running turns' budget. */
+  fetchesRefused: number;
+  /** Strikes counted (dropped messages, refusals here and the proxy's). */
+  strikes: number;
   /** Outbound messages refused: invalid, or sent while not `ready`. */
   outboundRefused: number;
   /** Forks after the first. */
@@ -102,8 +107,18 @@ export interface AgentHost {
   onChat(listener: (event: AgentChatEvent) => void): () => void;
   /** Tool calls the runtime asks main to run (for chats main started). */
   onToolInvoke(listener: (invoke: AgentToolInvoke) => void): () => void;
-  /** Proxied model requests and their aborts (the model proxy). */
+  /**
+   * Proxied model requests and their aborts (the model proxy). A request reaches it only while a
+   * chat main started is running and within the running turns' budget (`MAX_MODEL_REQUESTS_PER_TURN`
+   * each); the host refuses any other (`fetch.error` `refused`).
+   */
   onFetch(listener: (event: AgentFetchEvent) => void): () => void;
+  /**
+   * Counts one misbehaviour against the running runtime (the proxy calls it for each refusal; the
+   * host for each message it drops). Past `maxStrikesPerWindow` in a window, the runtime is killed
+   * and another started.
+   */
+  strike(): void;
   onStatus(listener: (status: AgentHostStatus) => void): () => void;
   status(): AgentHostStatus;
   /** Why the runtime last failed (cleared once it is ready again). */
@@ -116,6 +131,14 @@ export interface AgentHost {
   /** Stops the runtime for good (app quit): no restart; `start()` answers `false` from then on. */
   dispose(): void;
 }
+
+const FAILURE_TEXT: Readonly<Record<AgentHostFailure, string>> = {
+  exited: 'exited',
+  'ready-timeout': 'did not start in time',
+  'fork-failed': 'could not be started',
+  'protocol-mismatch': 'speaks another protocol version',
+  misbehaved: 'sent too many invalid or refused messages; restarting it',
+};
 
 type Listener<T> = (value: T) => void;
 
@@ -154,7 +177,8 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
   const clearTimer = deps.clearTimeout ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const now = deps.now ?? Date.now;
   const log = deps.log ?? (() => undefined);
-  const stats: AgentHostStats = { inboundDropped: 0, outboundRefused: 0, restarts: 0, listenerErrors: 0 };
+  const logOnce = coalescedLog(log, AGENT_PROXY_LIMITS.logWindowMs, now);
+  const stats: AgentHostStats = { inboundDropped: 0, fetchesRefused: 0, strikes: 0, outboundRefused: 0, restarts: 0, listenerErrors: 0 };
   const countListenerError = () => {
     stats.listenerErrors += 1;
   };
@@ -172,6 +196,10 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
   let consecutiveFailures = 0;
   let restartTimer: unknown = null;
   const pendingChats = new Set<string>();
+  /** Model requests the running turns may still make. */
+  let fetchBudget = 0;
+  /** The current flood window: when it started, and what it has counted. */
+  let flood = { start: 0, strikes: 0, inbound: 0 };
   let waiters: ((ready: boolean) => void)[] = [];
 
   const setStatus = (next: AgentHostStatus) => {
@@ -186,10 +214,17 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
     for (const resolve of settled) resolve(ready);
   };
 
+  /** A chat ended: with none left, no model request is wanted any more. */
+  const endChat = (chatId: string) => {
+    pendingChats.delete(chatId);
+    if (pendingChats.size === 0) fetchBudget = 0;
+  };
+
   /** Fails every running chat (the runtime that ran them is gone). */
   const failPendingChats = () => {
     const chatIds = [...pendingChats];
     pendingChats.clear();
+    fetchBudget = 0;
     for (const chatId of chatIds) chat.emit({ type: 'chat.error', chatId, message: AGENT_CRASHED_MESSAGE });
   };
 
@@ -214,11 +249,12 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
   /** The runtime failed (`reason`): fail its chats, then restart after the backoff, or give up. */
   const failed = (instance: Instance, reason: AgentHostFailure) => {
     if (instance.abandoned) return;
-    const wasStable = instance.ready && now() - instance.readyAt >= AGENT_HOST_LIMITS.stableAfterMs;
+    // A runtime that ran well for a while starts the count afresh, unless it was killed for flooding.
+    const wasStable = reason !== 'misbehaved' && instance.ready && now() - instance.readyAt >= AGENT_HOST_LIMITS.stableAfterMs;
     abandon(instance);
     failure = reason;
     consecutiveFailures = wasStable ? 1 : consecutiveFailures + 1;
-    log(`agent: runtime ${reason === 'exited' ? 'exited' : reason === 'ready-timeout' ? 'did not start in time' : reason === 'fork-failed' ? 'could not be started' : 'speaks another protocol version'}`);
+    log(`agent: runtime ${FAILURE_TEXT[reason]}`);
     failPendingChats();
     if (disposed) return;
     if (reason === 'protocol-mismatch') {
@@ -240,17 +276,49 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
     }, delay);
   };
 
+  /** Counts the window's events; `false` (and the runtime killed) once it is over a limit. */
+  const withinLimits = (instance: Instance, strikes: number, inbound: number): boolean => {
+    const at = now();
+    if (at - flood.start >= AGENT_HOST_LIMITS.floodWindowMs) flood = { start: at, strikes: 0, inbound: 0 };
+    flood.strikes += strikes;
+    flood.inbound += inbound;
+    stats.strikes += strikes;
+    if (flood.strikes <= AGENT_HOST_LIMITS.maxStrikesPerWindow && flood.inbound <= AGENT_HOST_LIMITS.maxInboundPerWindow) return true;
+    flood = { start: at, strikes: 0, inbound: 0 };
+    failed(instance, 'misbehaved');
+    return false;
+  };
+
+  /** Drops an inbound message (counted, and a strike). */
+  const drop = (instance: Instance) => {
+    stats.inboundDropped += 1;
+    withinLimits(instance, 1, 0);
+  };
+
+  /** Answers a model request the host refuses (no turn running, or the turns' budget spent). */
+  const refuseFetch = (instance: Instance, requestId: string, reason: 'no-chat' | 'turn-budget') => {
+    stats.fetchesRefused += 1;
+    logOnce(`refused:${reason}`, `agent proxy: refused a model request (${reason})`);
+    if (!withinLimits(instance, 1, 0)) return;
+    try {
+      instance.port.postMessage({ type: 'fetch.error', requestId, code: 'refused', message: 'frost refused this model request.' } satisfies MainToRuntimeMessage);
+    } catch {
+      // The port closed: the exit handler runs.
+    }
+  };
+
   const onMessage = (instance: Instance, data: unknown) => {
     if (instance.abandoned) return;
+    if (!withinLimits(instance, 0, 1)) return;
     const parsed = RuntimeToMainMessageSchema.safeParse(data);
     if (!parsed.success) {
-      stats.inboundDropped += 1;
+      drop(instance);
       return;
     }
     const message = parsed.data;
     if (message.type === 'ready') {
       if (instance.ready) {
-        stats.inboundDropped += 1;
+        drop(instance);
         return;
       }
       if (message.protocolVersion !== AGENT_PROTOCOL_VERSION) {
@@ -268,7 +336,7 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
       return;
     }
     if (!instance.ready) {
-      stats.inboundDropped += 1;
+      drop(instance);
       return;
     }
     switch (message.type) {
@@ -278,20 +346,31 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
       case 'chat.finish':
       case 'chat.error':
         if (!pendingChats.has(message.chatId)) {
-          stats.inboundDropped += 1;
+          drop(instance);
           return;
         }
-        if (message.type === 'chat.finish' || message.type === 'chat.error') pendingChats.delete(message.chatId);
+        if (message.type === 'chat.finish' || message.type === 'chat.error') endChat(message.chatId);
         chat.emit(message);
         return;
       case 'tool.invoke':
         if (!pendingChats.has(message.chatId)) {
-          stats.inboundDropped += 1;
+          drop(instance);
           return;
         }
         tools.emit(message);
         return;
       case 'fetch.request':
+        if (pendingChats.size === 0) {
+          refuseFetch(instance, message.requestId, 'no-chat');
+          return;
+        }
+        if (fetchBudget <= 0) {
+          refuseFetch(instance, message.requestId, 'turn-budget');
+          return;
+        }
+        fetchBudget -= 1;
+        fetches.emit(message);
+        return;
       case 'fetch.abort':
         fetches.emit(message);
         return;
@@ -363,11 +442,15 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
           return false;
         }
         pendingChats.add(parsed.data.chatId);
+        fetchBudget += MAX_MODEL_REQUESTS_PER_TURN;
       }
       try {
         current.port.postMessage(parsed.data);
       } catch {
-        if (parsed.data.type === 'chat.start') pendingChats.delete(parsed.data.chatId);
+        if (parsed.data.type === 'chat.start') {
+          fetchBudget = Math.max(0, fetchBudget - MAX_MODEL_REQUESTS_PER_TURN);
+          endChat(parsed.data.chatId);
+        }
         stats.outboundRefused += 1;
         return false;
       }
@@ -377,6 +460,9 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
     onToolInvoke: (listener) => tools.add(listener),
     onFetch: (listener) => fetches.add(listener),
     onStatus: (listener) => statuses.add(listener),
+    strike() {
+      if (current !== null && !current.abandoned) withinLimits(current, 1, 0);
+    },
     status: () => status,
     lastFailure: () => failure,
     lockdown: () => (lockdown === null ? null : { removed: [...lockdown.removed], failed: [...lockdown.failed], permissionModel: lockdown.permissionModel }),
@@ -389,6 +475,7 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
       restartTimer = null;
       if (current !== null) abandon(current);
       pendingChats.clear();
+      fetchBudget = 0;
       setStatus('stopped');
       settleWaiters(false);
     },

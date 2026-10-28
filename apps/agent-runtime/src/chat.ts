@@ -21,6 +21,7 @@ import {
   type ToolCall,
   type ToolResult,
 } from '@app/specs/agent-protocol.schema';
+import { MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
 import { isAgentToolName, MAX_TOOL_STEPS } from '@app/specs/agent-tools.spec';
 import { ProxyFetchError } from './proxy-fetch';
 import { ModelNotAllowedError } from './provider';
@@ -278,6 +279,8 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
         stopWhen: isStepCount(MAX_TOOL_STEPS),
         toolCallConcurrency: 1,
         maxRetries: CHAT_MAX_RETRIES,
+        // Main's proxy refuses a request without this cap (a provider's default can be its model's maximum).
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
         abortSignal: signal,
         providerOptions: CHAT_PROVIDER_OPTIONS,
         experimental_download: refuseDownload,

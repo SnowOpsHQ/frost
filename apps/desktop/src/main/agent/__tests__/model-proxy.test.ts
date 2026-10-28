@@ -6,7 +6,7 @@ import { AGENT_PROTOCOL_LIMITS, MainToRuntimeMessageSchema, type MainToRuntimeMe
 import { AGENT_PROXY_LIMITS, type AgentModelSettings } from '@app/specs/agent-proxy.spec';
 import { MODEL_REQUESTS } from '@app/specs/agent-tools.spec';
 import { createCredentialStore } from '../credentials';
-import type { AgentFetchEvent, AgentHostStatus } from '../host';
+import type { AgentChatEvent, AgentFetchEvent, AgentHostStatus } from '../host';
 import { createModelProxy, type ProxyFetchFunction, type ProxyRequestInit } from '../model-proxy';
 import { createFakeSafeStorage, createMemoryFs, streamOf } from './fakes';
 
@@ -33,11 +33,20 @@ const request = (overrides: Partial<FetchRequest> = {}): FetchRequest => ({
 
 const sse = (text: string) => new TextEncoder().encode(text);
 
-async function setup(options: { settings?: AgentModelSettings; fetch?: ProxyFetchFunction; key?: boolean; limits?: Partial<typeof AGENT_PROXY_LIMITS> } = {}) {
+async function setup(options: { settings?: AgentModelSettings; fetch?: ProxyFetchFunction; key?: boolean; limits?: Partial<typeof AGENT_PROXY_LIMITS>; loadSettings?: () => Promise<void>; now?: () => number } = {}) {
   const sent: MainToRuntimeMessage[] = [];
   const fetchListeners: ((event: AgentFetchEvent) => void)[] = [];
   const statusListeners: ((status: AgentHostStatus) => void)[] = [];
+  const chatListeners: ((event: AgentChatEvent) => void)[] = [];
+  const chats = { active: ['chat-1'] as string[] };
+  const strike = vi.fn();
   const host = {
+    strike,
+    activeChats: () => chats.active,
+    onChat: (listener: (event: AgentChatEvent) => void) => {
+      chatListeners.push(listener);
+      return () => undefined;
+    },
     send: (message: MainToRuntimeMessage) => {
       // Every answer is a valid protocol message.
       expect(MainToRuntimeMessageSchema.safeParse(message).success, JSON.stringify(message).slice(0, 200)).toBe(true);
@@ -60,7 +69,7 @@ async function setup(options: { settings?: AgentModelSettings; fetch?: ProxyFetc
     await credentials.setKey('openai', KEY);
     await credentials.setKey('gateway', KEY);
   }
-  const settings = { current: () => options.settings ?? { route: 'byok-anthropic' as const, modelId: 'anthropic/claude-sonnet-5-5' as const }, load: async () => undefined };
+  const settings = { current: () => options.settings ?? { route: 'byok-anthropic' as const, modelId: 'anthropic/claude-sonnet-5-5' as const }, load: options.loadSettings ?? (async () => undefined) };
   const fetch = vi.fn<ProxyFetchFunction>(
     options.fetch ??
       (async () =>
@@ -70,16 +79,19 @@ async function setup(options: { settings?: AgentModelSettings; fetch?: ProxyFetc
         })),
   );
   const log = vi.fn<(line: string) => void>();
-  const proxy = createModelProxy({ host, credentials, settings, fetch, log, ...(options.limits ? { limits: options.limits } : {}) });
+  const proxy = createModelProxy({ host, credentials, settings, fetch, log, ...(options.limits ? { limits: options.limits } : {}), ...(options.now ? { now: options.now } : {}) });
   const emit = (event: AgentFetchEvent) => {
     for (const listener of fetchListeners) listener(event);
   };
   const status = (value: AgentHostStatus) => {
     for (const listener of statusListeners) listener(value);
   };
+  const chatEvent = (event: AgentChatEvent) => {
+    for (const listener of chatListeners) listener(event);
+  };
   const of = <T extends MainToRuntimeMessage['type']>(type: T) => sent.filter((message): message is Extract<MainToRuntimeMessage, { type: T }> => message.type === type);
   const ended = (requestId = 'req-1') => vi.waitFor(() => expect(sent.some((message) => 'requestId' in message && message.requestId === requestId && (message.type === 'fetch.end' || message.type === 'fetch.error'))).toBe(true));
-  return { proxy, sent, fetch, log, emit, status, of, ended };
+  return { proxy, sent, fetch, log, emit, status, of, ended, strike, chats, chatEvent };
 }
 
 afterEach(() => {
@@ -184,7 +196,7 @@ describe('model proxy', () => {
 
   test('proxy-credential-injection per route', async () => {
     const openai = await setup({ settings: { route: 'byok-openai', modelId: 'openai/gpt-5' } });
-    openai.emit(request({ url: MODEL_REQUESTS['byok-openai'][0]!.url, headers: [['authorization', 'Bearer frost-placeholder-key'], ['openai-organization', 'org']], body: JSON.stringify({ model: 'gpt-5', input: 'Hi', store: false }) }));
+    openai.emit(request({ url: MODEL_REQUESTS['byok-openai'][0]!.url, headers: [['authorization', 'Bearer frost-placeholder-key'], ['openai-organization', 'org']], body: JSON.stringify({ model: 'gpt-5', max_output_tokens: 64, input: 'Hi', store: false }) }));
     await openai.ended();
     expect(openai.fetch.mock.calls[0]![1].headers).toEqual([['content-type', 'application/json'], ['authorization', `Bearer ${KEY}`]]);
     const gateway = await setup({ settings: { route: 'gateway', modelId: 'anthropic/claude-opus-5-5' } });
@@ -192,7 +204,7 @@ describe('model proxy', () => {
       request({
         url: MODEL_REQUESTS.gateway[0]!.url,
         headers: [['ai-language-model-id', 'anthropic/claude-opus-5-5'], ['ai-gateway-auth-method', 'oidc'], ['authorization', 'Bearer x']],
-        body: new TextEncoder().encode(JSON.stringify({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }] })),
+        body: new TextEncoder().encode(JSON.stringify({ maxOutputTokens: 64, prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }] })),
       }),
     );
     await gateway.ended();
@@ -207,13 +219,14 @@ describe('model proxy', () => {
   test('proxy-body-checks', async () => {
     const { emit, fetch, of, log } = await setup();
     emit(request({ requestId: 'a', body: JSON.stringify({ model: 'claude-opus-5-5', max_tokens: 1, messages: [] }) }));
+    emit(request({ requestId: 'a2', body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 128_000, messages: [] }) }));
     emit(request({ requestId: 'b', body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 1, messages: [], mcp_servers: [] }) }));
     emit(request({ requestId: 'c', body: null }));
     emit(request({ requestId: 'd', body: new Uint8Array([0xff, 0xfe]) }));
     emit(request({ requestId: 'e', body: 'x'.repeat(10) }));
-    await vi.waitFor(() => expect(of('fetch.error').length).toBe(5));
+    await vi.waitFor(() => expect(of('fetch.error').length).toBe(6));
     expect(fetch).not.toHaveBeenCalled();
-    expect(log.mock.calls.map(([line]) => line)).toEqual(['model', 'body-field', 'body-missing', 'body-encoding', 'body-json'].map((reason) => `agent proxy: refused a model request (${reason})`));
+    expect(log.mock.calls.map(([line]) => line)).toEqual(['model', 'output-cap', 'body-field', 'body-missing', 'body-encoding', 'body-json'].map((reason) => `agent proxy: refused a model request (${reason})`));
   });
 
   test('proxy-no-key', async () => {
@@ -241,7 +254,7 @@ describe('model proxy', () => {
     expect(of('fetch.error')).toEqual([{ type: 'fetch.error', requestId: 'req-1', code: 'too-large', message: "The model's answer was too large." }]);
     expect(of('fetch.chunk').reduce((total, chunk) => total + chunk.bytes.byteLength, 0)).toBe(AGENT_PROTOCOL_LIMITS.maxResponseBytes);
     expect(signal?.aborted).toBe(true);
-  });
+  }, 30_000);
 
   test('proxy-caps: idle timeout', async () => {
     vi.useFakeTimers();
@@ -313,6 +326,58 @@ describe('model proxy', () => {
     status('crashed');
     expect(signal?.aborted).toBe(true);
     expect(proxy.state().active).toBe(0);
+  });
+
+  test('proxy-sends-the-checked-body', async () => {
+    const { emit, fetch, ended } = await setup({ settings: { route: 'byok-openai', modelId: 'openai/gpt-5' } });
+    emit(request({ url: MODEL_REQUESTS['byok-openai'][0]!.url, body: '{"model":"gpt-5","max_output_tokens":64,"input":"Hi","store":true,"store":false}' }));
+    await ended();
+    expect(fetch.mock.calls[0]![1].body).toBe('{"model":"gpt-5","max_output_tokens":64,"input":"Hi","store":false}');
+  });
+
+  test('proxy-abort-before-settings-load', async () => {
+    let release!: () => void;
+    const loaded = new Promise<void>((resolve) => (release = resolve));
+    const { emit, fetch, sent } = await setup({ loadSettings: () => loaded });
+    emit(request());
+    emit({ type: 'fetch.abort', requestId: 'req-1' });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
+
+  test('proxy-stops-when-no-turn-runs', async () => {
+    let signal: AbortSignal | undefined;
+    const { emit, fetch, proxy, chats, chatEvent } = await setup({
+      fetch: (_url, init) => {
+        signal = init.signal;
+        return new Promise(() => undefined);
+      },
+    });
+    emit(request());
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    // Another chat still runs: nothing stops.
+    chats.active = ['chat-2'];
+    chatEvent({ type: 'chat.finish', chatId: 'chat-1', finishReason: 'stop', steps: 1, usage: { input: 1, output: 1 } });
+    expect(signal?.aborted).toBe(false);
+    chats.active = [];
+    chatEvent({ type: 'chat.error', chatId: 'chat-2', message: 'x' });
+    expect(signal?.aborted).toBe(true);
+    expect(proxy.state().active).toBe(0);
+  });
+
+  test('proxy-refusals-strike-and-coalesce', async () => {
+    let at = 0;
+    const { emit, of, log, strike } = await setup({ now: () => at });
+    for (let i = 0; i < 10; i += 1) emit(request({ requestId: `e${i}`, url: 'https://evil.example/' }));
+    await vi.waitFor(() => expect(of('fetch.error').length).toBe(10));
+    expect(strike).toHaveBeenCalledTimes(10);
+    expect(log.mock.calls).toEqual([['agent proxy: refused a model request (endpoint)']]);
+    at = AGENT_PROXY_LIMITS.logWindowMs;
+    emit(request({ requestId: 'late', url: 'https://evil.example/' }));
+    await vi.waitFor(() => expect(of('fetch.error').length).toBe(11));
+    expect(log.mock.calls.at(-1)).toEqual(['agent proxy: refused a model request (endpoint) (and 9 more like it before)']);
   });
 
   test('proxy-refusal-logged-without-detail', async () => {

@@ -19,6 +19,11 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
   modules have loaded, and before it binds its port, it also removes `process.getBuiltinModule`,
   `process.binding`, `process._linkedBinding` and `process.dlopen`: a dependency could otherwise
   load a builtin (`node:dns`, `node:module` → `createRequire`) around the bundle's imports. It
+  then stops module loading (`Module._load` and `Module.prototype.require` replaced with functions
+  that throw, `process.mainModule` removed) and code generation from strings (`eval`, `Function`
+  and the async, generator and async generator function constructors replaced with functions that
+  throw `EvalError`; Electron 45 ignores `--disallow-code-generation-from-strings` in a utility
+  process, verified). It
   reports all of it in `ready.lockdown` (`LOCKDOWN_TARGETS`), with whether Node's permission model
   is in effect. The chat loop also replaces the AI SDK's URL download with one that refuses.
   Its providers
@@ -68,6 +73,16 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
 - **Scenario: lockdown-process-builtins** — `getBuiltinModule`, `binding`, `_linkedBinding` and
   `dlopen` are gone from the target process object; a dependency's optional `getBuiltinModule?.()`
   finds nothing.
+- **Scenario: lockdown-module-loader** — `Module._load` and `Module.prototype.require` (found through
+  `process.mainModule`) throw, and `process.mainModule` is gone; without a main module nothing is
+  reported.
+- **Scenario: lockdown-code-generation** — in a separate realm, `eval`, `Function`, `new Function`
+  and every function prototype's `constructor` throw; `instanceof Function` and
+  `(function () {}).constructor === Function` still hold; a `Function` probe answers "no eval".
+- **Scenario: jitless-zod** — the package entry's first import puts Zod in `jitless` mode
+  (`globalThis.__zod_globalConfig`, the object Zod keeps) before any schema is built: Zod decides
+  per schema, at build time, whether to compile a parser with `new Function`, which the lockdown
+  then refuses (the real utility process failed every parse until this was in place).
 - **Scenario: lockdown-report** — the report lists what was removed and what failed, and
   `permissionModel` is true only when a permission model refuses file writes.
 
@@ -97,6 +112,9 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
 - **Scenario: provider-refuses-other-models** — a model not allowed on the route is refused.
 - **Scenario: provider-proxy-errors-not-retried** — a refused proxied request (on every route,
   the gateway included) is sent once.
+- **Scenario: provider-output-capped** — every route's request asks for at most `MAX_OUTPUT_TOKENS`
+  (`max_tokens`, `max_output_tokens`, `maxOutputTokens`): the turn passes `maxOutputTokens`, since
+  a provider's default can be its model's maximum and main's proxy refuses an uncapped request.
 - **Scenario: provider-openai-store-off** — the OpenAI request (bring-your-own-key, and an OpenAI
   model on the gateway) carries `store: false`.
 

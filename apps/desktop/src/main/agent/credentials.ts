@@ -13,6 +13,12 @@ import { CREDENTIAL_LIMITS, isCredentialSlot, normalizeKey, type CredentialSlot,
 // How well that encryptor protects a key shows in its output: on Linux, `v11` data is keyed by the
 // desktop's secret service, `v10` by a fixed key built into Chromium (no secret service, or
 // `--password-store=basic`; verified on Electron 45), which is `weak`.
+//
+// A key is stored and used only with `os` protection (Task 3 review). With `weak` protection the
+// agent process (which runs unsandboxed, as the user) could decrypt the file offline with
+// Chromium's fixed key, or write a blob of its own for main to send: `setKey` refuses
+// (`no-keychain`), `withKey` and `hasKey` treat any stored key as absent, and on Linux a stored blob
+// must carry the secret service's `v11` tag (a `v10` blob, which anyone can make, is never used).
 
 /** The part of Electron's `safeStorage` the store uses (the asynchronous API). */
 export interface SafeStorageLike {
@@ -24,7 +30,8 @@ export interface SafeStorageLike {
 /** The file operations the store uses (`node:fs/promises` in main; a memory fake in tests). */
 export interface CredentialFs {
   readFile(file: string): Promise<Uint8Array>;
-  writeFile(file: string, data: string, options: { readonly mode: number; readonly flag: 'wx' }): Promise<void>;
+  /** Writes a new file (`wx`) and flushes it to disk before resolving (`flush`). */
+  writeFile(file: string, data: string, options: { readonly mode: number; readonly flag: 'wx'; readonly flush: true }): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   rm(file: string, options: { readonly force: true }): Promise<void>;
 }
@@ -42,16 +49,21 @@ export interface CredentialStoreDeps {
   readonly tempSuffix?: () => string;
 }
 
-/** `setKey`'s answer: stored, refused as not a key, refused because nothing can encrypt it, or failed to write. */
-export type SetKeyResult = 'stored' | 'invalid' | 'unavailable' | 'failed';
+/**
+ * `setKey`'s answer: stored; refused as not a key; refused because no OS keychain protects keys
+ * here (`protection()` is `weak` or `unavailable`: the settings page says "no OS keychain
+ * available"); or failed (encryption, or reading or writing the file).
+ */
+export type SetKeyResult = 'stored' | 'invalid' | 'no-keychain' | 'failed';
 
 /** `withKey`'s answer: the closure's value, or why it did not run. */
 export type WithKeyResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reason: 'no-key' | 'unavailable' | 'failed' };
 
 /** What the settings page may use: no method here can return a key. */
 export interface CredentialSettings {
-  /** How well a stored key is protected here (`os`, `weak`, or `unavailable`: nothing is stored). */
+  /** How well a stored key would be protected here (only `os` stores one; `weak` and `unavailable` say why not). */
   protection(): Promise<KeyProtection>;
+  /** Whether the slot holds a key frost can use: stored, protected by the OS keychain, and decrypting. */
   hasKey(slot: CredentialSlot): Promise<boolean>;
   setKey(slot: CredentialSlot, key: string): Promise<SetKeyResult>;
   clearKey(slot: CredentialSlot): Promise<boolean>;
@@ -110,18 +122,25 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
   const log = deps.log ?? (() => undefined);
   const platform = deps.platform ?? process.platform;
   const tempSuffix = deps.tempSuffix ?? (() => `${process.pid}-${crypto.randomUUID()}`);
-  let loaded: Promise<StoredFile> | null = null;
+  /** The file as last read or written; `null` until read, or after a read failed (read again next time). */
+  let loaded: Promise<StoredFile | 'error'> | null = null;
   // Writes run one at a time, each on the latest content.
   let queue: Promise<unknown> = Promise.resolve();
   // Once the encryptor works, its key source doesn't change during a run.
   let known: Exclude<KeyProtection, 'unavailable'> | null = null;
 
-  const load = (): Promise<StoredFile> => {
-    loaded ??= deps.fs.readFile(deps.file).then(parseStored, (error: unknown) => {
-      if ((error as { code?: unknown }).code !== 'ENOENT') log('agent credentials: the key file could not be read');
-      return EMPTY;
+  /** The stored file; `'error'` when it exists but could not be read (nothing is overwritten then). */
+  const load = (): Promise<StoredFile | 'error'> => {
+    if (loaded !== null) return loaded;
+    const reading = deps.fs.readFile(deps.file).then(parseStored, (error: unknown) => {
+      if ((error as { code?: unknown }).code === 'ENOENT') return EMPTY;
+      log('agent credentials: the key file could not be read');
+      // Not remembered: the next call reads again.
+      if (loaded === reading) loaded = null;
+      return 'error' as const;
     });
-    return loaded;
+    loaded = reading;
+    return reading;
   };
 
   const protection = async (): Promise<KeyProtection> => {
@@ -140,7 +159,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
   const write = async (next: StoredFile): Promise<boolean> => {
     const temp = `${deps.file}.${tempSuffix()}.tmp`;
     try {
-      await deps.fs.writeFile(temp, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: 'wx' });
+      await deps.fs.writeFile(temp, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: 'wx', flush: true });
       await deps.fs.rename(temp, deps.file);
       loaded = Promise.resolve(next);
       return true;
@@ -167,7 +186,28 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
       return 'failed';
     }
     const current = await load();
+    if (current === 'error') return 'failed';
     return (await write({ version: 1, keys: { ...current.keys, [slot]: blob } })) ? 'stored' : 'failed';
+  };
+
+  /** The slot's key, decrypted, if frost may use it (`os` protection, the right tag, a valid key). */
+  const decrypt = async (slot: CredentialSlot): Promise<{ readonly key: string; readonly blob: string; readonly reEncrypt: boolean } | 'no-key' | 'unavailable' | 'failed'> => {
+    const current = await load();
+    if (current === 'error') return 'failed';
+    const blob = current.keys[slot];
+    if (blob === undefined) return 'no-key';
+    if ((await protection()) !== 'os') return 'unavailable';
+    const bytes = Buffer.from(blob, 'base64');
+    // On Linux only the secret service's data is trusted (a `v10` blob needs no secret to make).
+    if (platform === 'linux' && bytes.subarray(0, LINUX_SECRET_SERVICE_TAG.length).toString('latin1') !== LINUX_SECRET_SERVICE_TAG) return 'failed';
+    try {
+      const decrypted = await deps.safeStorage.decryptStringAsync(bytes);
+      if (normalizeKey(decrypted.result) !== decrypted.result) return 'failed';
+      return { key: decrypted.result, blob, reEncrypt: decrypted.shouldReEncrypt };
+    } catch {
+      log('agent credentials: a stored key could not be decrypted');
+      return 'failed';
+    }
   };
 
   return {
@@ -175,14 +215,15 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
 
     async hasKey(slot) {
       if (!isCredentialSlot(slot)) return false;
-      return (await load()).keys[slot] !== undefined;
+      // Decrypted to be sure it is usable (the key itself goes nowhere).
+      return typeof (await decrypt(slot)) === 'object';
     },
 
     setKey(slot, key) {
       return serial(async (): Promise<SetKeyResult> => {
         const normalized = normalizeKey(key);
         if (!isCredentialSlot(slot) || normalized === null) return 'invalid';
-        if ((await protection()) === 'unavailable') return 'unavailable';
+        if ((await protection()) !== 'os') return 'no-keychain';
         return store(slot, normalized);
       });
     },
@@ -191,6 +232,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
       return serial(async () => {
         if (!isCredentialSlot(slot)) return false;
         const current = await load();
+        if (current === 'error') return false;
         if (current.keys[slot] === undefined) return true;
         const keys = { ...current.keys };
         delete keys[slot];
@@ -200,24 +242,14 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
 
     async withKey(slot, fn) {
       if (!isCredentialSlot(slot)) return { ok: false, reason: 'no-key' };
-      const blob = (await load()).keys[slot];
-      if (blob === undefined) return { ok: false, reason: 'no-key' };
-      let key: string;
-      let reEncrypt: boolean;
-      try {
-        if (!(await deps.safeStorage.isAsyncEncryptionAvailable())) return { ok: false, reason: 'unavailable' };
-        const decrypted = await deps.safeStorage.decryptStringAsync(Buffer.from(blob, 'base64'));
-        key = decrypted.result;
-        reEncrypt = decrypted.shouldReEncrypt;
-      } catch {
-        log('agent credentials: a stored key could not be decrypted');
-        return { ok: false, reason: 'failed' };
-      }
-      if (normalizeKey(key) !== key) return { ok: false, reason: 'failed' };
+      const found = await decrypt(slot);
+      if (typeof found !== 'object') return { ok: false, reason: found };
+      const { key, blob, reEncrypt } = found;
       // The encryptor's key changed (rotated, or a secret service appeared): store it under the new one first.
       if (reEncrypt) {
         await serial(async () => {
-          if ((await load()).keys[slot] === blob) await store(slot, key);
+          const current = await load();
+          if (current !== 'error' && current.keys[slot] === blob) await store(slot, key);
         });
       }
       return { ok: true, value: await fn(key) };

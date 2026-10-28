@@ -64,6 +64,111 @@ export function lockdownProcess(target: object = process): LockdownReport {
   return lockdown(target, PROCESS_BUILTINS, (name) => `process.${name}`);
 }
 
+/** The part of Node's `Module` class the loader lockdown replaces. */
+interface ModuleClass {
+  _load?: unknown;
+  prototype?: { require?: unknown };
+}
+
+const refuseLoad = function require(): never {
+  throw new Error('frost: the agent runtime loads no module after startup');
+};
+
+/** Replaces `owner[name]` (own or inherited) with `value`: whether it now holds `value`. Never throws. */
+function replace(owner: object, name: string, value: unknown): boolean {
+  try {
+    Object.defineProperty(owner, name, { value, writable: false, configurable: false, enumerable: false });
+  } catch {
+    try {
+      (owner as Record<string, unknown>)[name] = value;
+    } catch {
+      // Read-only and non-configurable: reported by the caller.
+    }
+  }
+  try {
+    return (owner as Record<string, unknown>)[name] === value;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stops module loading once the bundle has loaded (Task 3 review): Node's `Module._load` and
+ * `Module.prototype.require` (which every `require`, a bundle's own included, and `createRequire`
+ * go through) are replaced with functions that throw, and `process.mainModule` (the way to
+ * `Module` from anywhere) is removed. `Module` is found through `target.mainModule` (`process` by
+ * default); without one (an ES module entry, a test) only what is there is reported. Never throws.
+ */
+export function lockdownModuleLoader(target: object = process): LockdownReport {
+  const removed: LockdownTarget[] = [];
+  const failed: LockdownTarget[] = [];
+  let mainModule: { constructor?: unknown } | undefined;
+  try {
+    mainModule = (target as { mainModule?: { constructor?: unknown } }).mainModule;
+  } catch {
+    mainModule = undefined;
+  }
+  const found: unknown = typeof mainModule === 'object' && mainModule !== null ? mainModule.constructor : undefined;
+  if (typeof found === 'function') {
+    const Module = found as unknown as ModuleClass;
+    if ('_load' in Module) (replace(Module, '_load', refuseLoad) ? removed : failed).push('Module._load');
+    const prototype = Module.prototype;
+    if (typeof prototype === 'object' && prototype !== null && 'require' in prototype) (replace(prototype, 'require', refuseLoad) ? removed : failed).push('Module.prototype.require');
+  }
+  if ('mainModule' in target) (remove(target, 'mainModule') ? removed : failed).push('process.mainModule');
+  return { removed, failed };
+}
+
+/** A realm's code-generation entry points: its global object and its four function constructors. */
+export interface CodeGenerationRealm {
+  readonly global: object;
+  readonly constructors: readonly unknown[];
+}
+
+/** The runtime's own realm. */
+export function currentRealm(): CodeGenerationRealm {
+  return {
+    global: globalThis,
+    constructors: [Function, async function () {}.constructor, function* () {}.constructor, async function* () {}.constructor],
+  };
+}
+
+/**
+ * Stops code generation from strings (Task 3 review; Electron 45 ignores
+ * `--disallow-code-generation-from-strings` in a utility process): the global `eval` and
+ * `Function` are replaced with functions that throw an `EvalError`, as are the `constructor` of
+ * every function prototype (`Function`, async, generator and async generator functions), so
+ * `(function () {}).constructor('…')` fails too. The replacements keep the old `prototype`, so
+ * `instanceof Function` still holds and `(function () {}).constructor === Function` too. A library
+ * that probes for `Function` (Zod does) falls back to its non-generated path. Never throws.
+ */
+export function lockdownCodeGeneration(realm: CodeGenerationRealm = currentRealm()): LockdownReport {
+  const removed: LockdownTarget[] = [];
+  const failed: LockdownTarget[] = [];
+  const refuse = () => {
+    throw new EvalError('frost: the agent runtime does not generate code from strings');
+  };
+  const global = realm.global as { eval?: unknown; Function?: unknown };
+  if ('eval' in global) (replace(global, 'eval', function evaluate() { return refuse(); }) ? removed : failed).push('eval');
+  let ok = true;
+  const [plain] = realm.constructors;
+  for (const constructor of realm.constructors) {
+    if (typeof constructor !== 'function') continue;
+    const blocked = function Function(): never {
+      return refuse();
+    };
+    try {
+      Object.defineProperty(blocked, 'prototype', { value: constructor.prototype, writable: false, configurable: false, enumerable: false });
+    } catch {
+      ok = false;
+    }
+    if (!replace(constructor.prototype as object, 'constructor', blocked)) ok = false;
+    if (constructor === plain && 'Function' in global && !replace(global, 'Function', blocked)) ok = false;
+  }
+  if (typeof plain === 'function') (ok ? removed : failed).push('Function');
+  return { removed, failed };
+}
+
 /** Whether Node's permission model is in effect for `target` (`process`): file writes refused. */
 export function permissionModelActive(target: object = process): boolean {
   try {

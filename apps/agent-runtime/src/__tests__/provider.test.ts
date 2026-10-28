@@ -3,6 +3,7 @@
 // ones main's proxy allows: each model's request is captured by the proxied fetch, never sent.
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
+import { MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
 import { ALLOWED_MODEL_IDS, isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES, routeModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
 import { createModel, ModelNotAllowedError, PLACEHOLDER_API_KEY } from '../provider';
 import { CREDENTIAL_HEADERS, createProxyFetch } from '../proxy-fetch';
@@ -102,6 +103,19 @@ describe('providers', () => {
       expect(route === 'byok-openai' ? body.store : body.providerOptions?.openai?.store, route).toBe(false);
       await h.next('chat.error');
     }
+  });
+
+  test.each(MODEL_ROUTES)('provider-output-capped (%s)', async (route) => {
+    const h = startHarness({ modelFactory: createModel });
+    h.onMessage((message) => {
+      if (message.type === 'fetch.request') h.send({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' });
+    });
+    h.send(chatStart({ route, modelId: MODEL_FOR_ROUTE[route] }));
+    const request = await h.next('fetch.request');
+    const body = JSON.parse(request.body as string) as Record<string, unknown>;
+    const field = route === 'byok-anthropic' ? 'max_tokens' : route === 'byok-openai' ? 'max_output_tokens' : 'maxOutputTokens';
+    expect(body[field]).toBe(MAX_OUTPUT_TOKENS);
+    await h.next('chat.error');
   });
 
   test('provider-refuses-other-models', () => {
