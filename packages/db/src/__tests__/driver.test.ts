@@ -62,8 +62,22 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const driver of opened.splice(0)) await driver.close();
-  rmSync(dir, { recursive: true, force: true });
+  removeTempDir(dir);
 });
+
+/**
+ * Removes a test's directory. On Windows a closed database's file can stay locked for a moment
+ * (libSQL's native handle is released after `close()` returns), so removal retries, and a file
+ * still locked there is left to the OS temp cleaner rather than failing the test.
+ */
+function removeTempDir(target: string): void {
+  try {
+    rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (process.platform !== 'win32' || (code !== 'EPERM' && code !== 'EBUSY')) throw error;
+  }
+}
 
 async function openIn(driverCase: DriverCase, name = 'test.db'): Promise<SqlDriver> {
   const driver = await driverCase.open(path.join(dir, name));

@@ -7,9 +7,15 @@ import { isScript, type SqlBatchItem, type SqlDriver, type SqlMethod, type SqlRe
 // (`setReturnArrays`). A batch runs in one transaction inside one call, so nothing else can
 // interleave with it (Drizzle's `transaction()` would `await` between statements; it is not used).
 
+/**
+ * A boolean is bound as 1 / 0, as libSQL binds it: `node:sqlite` in Node 24 (Electron 45's) refuses
+ * a boolean parameter, later Node versions accept one, so both drivers bind the same everywhere.
+ */
+const bindable = (value: unknown): unknown => (typeof value === 'boolean' ? Number(value) : value);
+
 function execute(db: DatabaseSync, sql: string, params: readonly unknown[], method: SqlMethod): SqlResult {
   const statement = db.prepare(sql);
-  const values = params as SQLInputValue[];
+  const values = params.map(bindable) as SQLInputValue[];
   if (method === 'run') {
     statement.run(...values);
     return { rows: [] };
