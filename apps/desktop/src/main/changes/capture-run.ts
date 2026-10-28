@@ -83,6 +83,8 @@ export interface CaptureRunDeps {
   /** One line per run event worth keeping (never page text). */
   readonly log?: (message: string) => void;
   readonly limits?: Partial<ProjectRunLimits>;
+  /** Called once a run has ended, with its project (retention enforces the project's policy; `retention.ts`). */
+  readonly afterRun?: (projectId: string) => void;
 }
 
 /** What one run visits: built by the projects service from the project's rows. */
@@ -387,6 +389,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       active = null;
       publish({ state: end });
       log(`run ${end}`);
+      deps.afterRun?.(run.projectId);
     }
   }
 

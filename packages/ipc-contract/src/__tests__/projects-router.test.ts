@@ -3,11 +3,12 @@
 import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import { MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
-import { PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { MAX_RETENTION_DAYS, MAX_RETENTION_VERSIONS, PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import type { ProjectsAnswer, RunState } from '@app/specs/projects.spec';
+import { PURGE_LOG_LIMIT, type PurgeLogEntry, type RetentionUsage } from '@app/specs/retention.spec';
 import { DEFAULT_RENDER_PROFILE } from '@app/specs/render-profile.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { appRouter, createSenderPolicy, type IpcContext, type ProjectsService } from '../index';
@@ -19,6 +20,10 @@ const ITEM = '01920000-0000-7000-8000-000000000001';
 const PARAMS: SearchParams = { engine: 'google', query: 'green tea', country: 'de', language: 'de', location: 'Berlin', device: null };
 const LIST: ProjectsAnswer = { projects: [{ id: UNFILED_PROJECT_ID, name: 'Unfiled', unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null } }] };
 const STATE: RunState = { version: 3, runId: ITEM, projectId: PROJECT, state: 'running', current: 1, total: 1, omitted: 0, screenshot: false, targets: [{ kind: 'page', label: PAGE, outcome: 'running', changeCount: null, screenshot: null }] };
+
+const COUNTS = { captures: 2, versions: 2, diffs: 1, screenshots: 1 };
+const USAGE: RetentionUsage = { projectId: PROJECT, captures: 1, versions: 1, sharedVersions: 0, snapshotBytes: 900, diffBytes: 0, screenshots: 1, files: { count: 1, bytes: 300, missing: 0 }, database: { bytes: 40_960, walBytes: 0 } };
+const ENTRY: PurgeLogEntry = { id: ITEM, reason: 'purge-now', projectId: PROJECT, policy: { mode: 'versions', value: 1 }, counts: COUNTS, bytes: 1_200, createdAt: 1_700_000_000_000 };
 
 function fakeProjects() {
   return {
@@ -37,6 +42,12 @@ function fakeProjects() {
     startRun: vi.fn(async () => ({ status: 'started' as const, runId: ITEM })),
     cancelRun: vi.fn(() => true),
     runState: vi.fn(async () => STATE),
+    setRetention: vi.fn(async () => ({ status: 'ok' as const })),
+    retentionPreview: vi.fn(async () => ({ status: 'ok' as const, policy: { mode: 'versions' as const, value: 1 }, counts: COUNTS, bytes: 1_200 })),
+    purgeNow: vi.fn(async () => ({ status: 'purged' as const, counts: COUNTS, bytes: 1_200, files: 1 })),
+    usage: vi.fn(async (_projectId: string | null) => ({ status: 'ok' as const, usage: USAGE })),
+    purgeLog: vi.fn(async (_projectId: string | null) => ({ entries: [ENTRY] })),
+    compact: vi.fn(async () => ({ status: 'compacted' as const, before: 81_920, after: 40_960 })),
   } satisfies ProjectsService;
 }
 
@@ -80,6 +91,12 @@ const VALID_INPUT: Record<string, unknown> = {
   startRun: { projectId: PROJECT, screenshot: true },
   cancelRun: undefined,
   runState: { sinceVersion: 2 },
+  setRetention: { projectId: PROJECT, policy: { mode: 'versions', value: 3 } },
+  retentionPreview: { projectId: PROJECT },
+  purgeNow: { projectId: PROJECT },
+  usage: { projectId: PROJECT },
+  purgeLog: { projectId: null },
+  compact: undefined,
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (projects: ReturnType<typeof fakeProjects>) => {
@@ -134,6 +151,26 @@ describe('projects router', () => {
       forPage: [{}, { url: PAGE, extra: 1 }, ...badUrls.map((url) => ({ url }))],
       startRun: [{ projectId: PROJECT }, { projectId: PROJECT, screenshot: 'yes' }, { projectId: PROJECT, screenshot: true, extra: 1 }, ...badIds.map((projectId) => ({ projectId, screenshot: false }))],
       runState: [{}, undefined, { sinceVersion: -1 }, { sinceVersion: 1.5 }, { sinceVersion: '1' }, { sinceVersion: 1, extra: 1 }],
+      setRetention: [
+        { projectId: PROJECT },
+        { projectId: PROJECT, policy: null },
+        { projectId: PROJECT, policy: { mode: 'forever', value: 1 } },
+        { projectId: PROJECT, policy: { mode: 'forever' } },
+        { projectId: PROJECT, policy: { mode: 'versions', value: 0 } },
+        { projectId: PROJECT, policy: { mode: 'versions', value: MAX_RETENTION_VERSIONS + 1 } },
+        { projectId: PROJECT, policy: { mode: 'days', value: MAX_RETENTION_DAYS + 1 } },
+        { projectId: PROJECT, policy: { mode: 'days', value: 1.5 } },
+        { projectId: PROJECT, policy: { mode: 'days', value: '3' } },
+        { projectId: PROJECT, policy: { mode: 'days', value: null } },
+        { projectId: PROJECT, policy: { mode: 'all', value: null } },
+        { projectId: PROJECT, policy: { mode: 'days', value: 3, extra: 1 } },
+        { projectId: PROJECT, policy: { mode: 'days', value: 3 }, extra: 1 },
+        ...badIds.map((projectId) => ({ projectId, policy: { mode: 'forever', value: null } })),
+      ],
+      retentionPreview: [{}, undefined, { projectId: PROJECT, extra: 1 }, ...badIds.map((projectId) => ({ projectId }))],
+      purgeNow: [{}, undefined, { projectId: PROJECT, extra: 1 }, ...badIds.map((projectId) => ({ projectId }))],
+      usage: [{}, undefined, { projectId: PROJECT, extra: 1 }, ...badIds.filter((id) => id !== null).map((projectId) => ({ projectId }))],
+      purgeLog: [{}, undefined, { projectId: null, extra: 1 }, ...badIds.filter((id) => id !== null).map((projectId) => ({ projectId }))],
     };
     for (const [name, inputs] of Object.entries(bad)) {
       for (const input of inputs) {
@@ -175,6 +212,22 @@ describe('projects router', () => {
     await expect(call('cancelRun')).resolves.toBe(true);
     await expect(call('runState')).resolves.toEqual(STATE);
     expect(projects.runState).toHaveBeenCalledWith(2);
+    await expect(call('setRetention')).resolves.toEqual({ status: 'ok' });
+    expect(projects.setRetention).toHaveBeenCalledWith(PROJECT, 'versions', 3);
+    await call('setRetention', { projectId: UNFILED_PROJECT_ID, policy: { mode: 'forever', value: null } });
+    expect(projects.setRetention).toHaveBeenLastCalledWith(UNFILED_PROJECT_ID, 'forever', null);
+    await expect(call('retentionPreview')).resolves.toMatchObject({ status: 'ok', counts: COUNTS });
+    expect(projects.retentionPreview).toHaveBeenCalledWith(PROJECT);
+    await expect(call('purgeNow')).resolves.toEqual({ status: 'purged', counts: COUNTS, bytes: 1_200, files: 1 });
+    expect(projects.purgeNow).toHaveBeenCalledWith(PROJECT);
+    await expect(call('usage')).resolves.toEqual({ status: 'ok', usage: USAGE });
+    expect(projects.usage).toHaveBeenCalledWith(PROJECT);
+    await call('usage', { projectId: null });
+    expect(projects.usage).toHaveBeenLastCalledWith(null);
+    await expect(call('purgeLog')).resolves.toEqual({ entries: [ENTRY] });
+    expect(projects.purgeLog).toHaveBeenCalledWith(null);
+    await expect(call('compact')).resolves.toEqual({ status: 'compacted', before: 81_920, after: 40_960 });
+    expect(projects.compact).toHaveBeenCalledOnce();
   });
 
   test('projects-answers-are-checked', async () => {
@@ -184,5 +237,13 @@ describe('projects router', () => {
     expect((await errorOf(procedure(ctxFor(projects), 'list')(undefined))).code).toBe('INTERNAL_SERVER_ERROR');
     projects.runState.mockResolvedValueOnce({ ...STATE, state: 'bogus' } as unknown as RunState);
     expect((await errorOf(procedure(ctxFor(projects), 'runState')({ sinceVersion: 0 }))).code).toBe('INTERNAL_SERVER_ERROR');
+    projects.purgeNow.mockResolvedValueOnce({ status: 'purged', counts: { ...COUNTS, captures: -1 }, bytes: 1, files: 0 });
+    expect((await errorOf(procedure(ctxFor(projects), 'purgeNow')({ projectId: PROJECT }))).code).toBe('INTERNAL_SERVER_ERROR');
+    projects.usage.mockResolvedValueOnce({ status: 'ok', usage: { ...USAGE, database: { bytes: 1.5, walBytes: 0 } } });
+    expect((await errorOf(procedure(ctxFor(projects), 'usage')({ projectId: null }))).code).toBe('INTERNAL_SERVER_ERROR');
+    projects.purgeLog.mockResolvedValueOnce({ entries: Array.from({ length: PURGE_LOG_LIMIT + 1 }, () => ENTRY) });
+    expect((await errorOf(procedure(ctxFor(projects), 'purgeLog')({ projectId: null }))).code).toBe('INTERNAL_SERVER_ERROR');
+    projects.compact.mockResolvedValueOnce({ status: 'refused', reason: 'bogus' } as never);
+    expect((await errorOf(procedure(ctxFor(projects), 'compact')(undefined))).code).toBe('INTERNAL_SERVER_ERROR');
   });
 });

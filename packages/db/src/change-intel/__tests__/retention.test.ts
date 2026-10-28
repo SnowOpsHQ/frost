@@ -327,4 +327,29 @@ describe('retention', () => {
     expect(await t.repo.usage()).toEqual({ captures: 4, versions: 3, sharedVersions: 1, snapshotBytes: utf8(s1) + utf8(s2) + utf8(s3), diffBytes: utf8(diff), screenshots: 4, screenshotBytes: 220 });
     expect(await t.repo.usage('nope')).toBeNull();
   });
+
+  test('screenshot-hashes-of-a-project', async () => {
+    for (const [hash, projectId] of [['a', p], ['a', q], ['b', p], ['c', q]] as const) {
+      await t.repo.appendScreenshot(screenshotInput({ pageUrl: PAGE, createdAt: 5_000, sha256: sha256(hash), bytes: 10, projectId }));
+    }
+    expect((await t.repo.screenshotHashes()).sort()).toEqual([sha256('a'), sha256('b'), sha256('c')].sort());
+    expect((await t.repo.screenshotHashes({ projectId: p })).sort()).toEqual([sha256('a'), sha256('b')].sort());
+    expect(await t.repo.screenshotHashes({ projectId: 'nope' })).toEqual([]);
+  });
+
+  test('compact-vacuums', async () => {
+    // Purged rows leave free pages in the file; `compact` (VACUUM) gives them back, keeping every row.
+    const big = (n: number) => `{"v":${n},"pad":"${'x'.repeat(100_000)}"}`;
+    for (let n = 0; n < 8; n++) appended(await capture(t.repo, { url: PAGE, snapshot: big(n), at: 1_000 + n, projectId: p }));
+    expect(await t.repo.executePurge(await plan(p, { mode: 'versions', value: 1 }), 'retention', 10)).toMatchObject({ status: 'purged' });
+    const pages = () => Number(t.raw.prepare('SELECT page_count * page_size AS n FROM pragma_page_count(), pragma_page_size()').get()!['n']);
+    const free = () => Number(t.raw.prepare('SELECT freelist_count AS n FROM pragma_freelist_count()').get()!['n']);
+    const before = { size: pages(), rows: counts(t.raw) };
+    expect(free()).toBeGreaterThan(0);
+    await t.repo.compact();
+    expect(free()).toBe(0);
+    expect(pages()).toBeLessThan(before.size / 2);
+    expect(counts(t.raw)).toEqual(before.rows);
+    expect(count(t.raw, 'ci_versions')).toBe(1);
+  });
 });

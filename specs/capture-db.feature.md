@@ -248,6 +248,10 @@ a project: the totals over every row (a shared version is one referenced by two 
 - **Scenario: usage-counts-stored-bytes** — the numbers match the UTF-8 sizes of the stored text, a
   shared version is counted in both projects and flagged shared, and a hash stored twice counts
   once.
+- **Scenario: screenshot-hashes-of-a-project** — `screenshotHashes({ projectId })` answers one
+  project's distinct hashes (the files its usage measures; Task 7); an invalid id answers none.
+- **Scenario: compact-vacuums** — `compact()` runs `VACUUM`: the free pages a purge left are given
+  back and every row stays (Task 7's "Compact database").
 
 ## Projects (`projects.test.ts`)
 Every write sets `updated_at`. A project's name is trimmed, non-blank, at most

@@ -42,6 +42,7 @@ import { captureProject, useCaptureProject } from './capture-project';
 import { CaptureGlyph, ChangesIcon } from './changes-icons';
 import { ScreenshotControls, ScreenshotGallery, startScreenshot } from './Screenshots';
 import { ProjectPicker } from './ProjectPicker';
+import { useProjectsGeneration } from './projects-sheet';
 
 // The Changes panel (acceptance `changes-panel.feature.md`): the current page's captured versions,
 // newest first and grouped into lanes, "Capture now", and the diff of two versions of a lane, by
@@ -116,6 +117,8 @@ async function readHistory(url: string, goal: HistoryGoal): Promise<{ versions: 
 function useHistory(url: string) {
   const [state, setState] = useState<HistoryState>({ status: 'loading' });
   const [generation, setGeneration] = useState(0);
+  // Read again when projects change: a delete or a purge (`Retention.tsx`) may have removed versions.
+  const projects = useProjectsGeneration();
   const goal = useRef<HistoryGoal>(FIRST_HISTORY_GOAL);
   useEffect(() => {
     let live = true;
@@ -129,7 +132,7 @@ function useHistory(url: string) {
     return () => {
       live = false;
     };
-  }, [url, generation]);
+  }, [url, generation, projects]);
   const reload = useCallback((next: HistoryGoal = FIRST_HISTORY_GOAL) => {
     goal.current = next;
     setGeneration((n) => n + 1);

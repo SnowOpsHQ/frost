@@ -116,7 +116,7 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   screen, and its pages and queries do not open (the run's tab is in front).
 - The History sheet and this one never show together: opening one closes the other.
 - The page column gives way by `.page-column:has(> .projects-sheet)` (no attribute on `App.tsx`'s column).
-- A region is kept for Task 7's retention and disk usage.
+- Its retention and disk usage section is `retention.feature.md`'s (The project view).
 
 ## Changes panel
 - A project picker next to Capture now: it lists the projects, starts on the first project listing the

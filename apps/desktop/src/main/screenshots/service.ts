@@ -78,6 +78,8 @@ export interface TakeOptions {
 /** Main's screenshots service: the procedures' (`ScreenshotsService`), with main-internal options on `take`. */
 export interface MainScreenshotsService extends ScreenshotsService {
   take(tabId: number, options: TakeOptions): Promise<TakeScreenshotAnswer>;
+  /** Tells `listener` of each screenshot saved, with its project (retention enforces the project's policy; `retention.ts`). */
+  onSaved(listener: (projectId: string) => void): void;
 }
 
 const ACTIVE_POLL_MS = 250;
@@ -151,6 +153,7 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
   const searchParamsOf = deps.searchParamsOf ?? noSearchParams;
   const limits = deps.limits ?? SCREENSHOT_LIMITS;
   const capturers: ScreenshotCapturers = { viewport: captureViewport, full: captureFullPage, area: captureArea, ...deps.capturers };
+  let saved: (projectId: string) => void = () => undefined;
   /** The screenshot each tab is taking (one at a time); its `controller` while the page is being captured (it can be cancelled then). */
   const runs = new Map<number, { readonly kind: ScreenshotKind; controller: AbortController | null }>();
   const failed = (reason: ScreenshotRefusal, why: string): TakeScreenshotAnswer => {
@@ -273,6 +276,7 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       );
       return gone ? refused('no-project') : failed('store-failed', 'the store refused the row');
     }
+    saved(projectId);
     return { status: 'saved', id, kind: options.kind, width, height, bytes: file.bytes, truncated: captured.truncated };
   }
 
@@ -304,6 +308,7 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
   };
 
   return {
+    onSaved: (listener) => void (saved = listener),
     async take(tabId, options) {
       if (runs.has(tabId)) return refused('busy');
       // Held from here until its row is written, so a second take of the tab meanwhile is busy.

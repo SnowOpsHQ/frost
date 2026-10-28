@@ -136,6 +136,21 @@ describe('capture run', () => {
     expect(browser.setRenderProfile).not.toHaveBeenCalled();
   });
 
+  test('capture-run-reports-its-end', async () => {
+    // Retention enforces the project's policy once its run ends (done, cancelled or its tab closed).
+    const afterRun = vi.fn((_projectId: string) => undefined);
+    const { runs } = setup({ afterRun });
+    await runs.start(plan(pages(A)));
+    expect(afterRun).not.toHaveBeenCalled();
+    await run();
+    expect(runs.state().state).toBe('done');
+    expect(afterRun).toHaveBeenCalledExactlyOnceWith(PROJECT);
+    await runs.start(plan(pages(A, B)));
+    runs.cancel();
+    await run();
+    expect(afterRun).toHaveBeenCalledTimes(2);
+  });
+
   test('capture-run-waits-for-active-tab', async () => {
     const { runs, browser, state, capture } = setup();
     capture.mockResolvedValueOnce({ status: 'refused', reason: 'no-audit' });

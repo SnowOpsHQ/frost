@@ -220,8 +220,8 @@ export interface ChangeIntelRepository extends PurgeOperations {
   /** Captured page URLs, most recently captured first. */
   pages(filter: { readonly projectId?: string; readonly limit?: number }): Promise<CapturedPage[]>;
   isHashReferenced(sha256: string): Promise<boolean>;
-  /** Every distinct screenshot hash (the orphan sweep keeps these files). */
-  screenshotHashes(): Promise<string[]>;
+  /** Every distinct screenshot hash (the orphan sweep keeps these files), or one project's (its usage measures them). */
+  screenshotHashes(filter?: { readonly projectId?: string }): Promise<string[]>;
 
   createProject(name: string, now: number): Promise<Project | null>;
   renameProject(id: string, name: string, now: number): Promise<boolean>;
@@ -247,6 +247,8 @@ export interface ChangeIntelRepository extends PurgeOperations {
 
   /** One project's usage, or the totals (no project); `null` for an invalid project id. */
   usage(projectId?: string): Promise<ChangeIntelUsage | null>;
+  /** `VACUUM`: rewrites the session database file, giving back the free pages purges left (Task 7's "Compact"). */
+  compact(): Promise<void>;
 }
 
 // ---- Helpers -----------------------------------------------------------------------------------
@@ -638,8 +640,13 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
       return (await db.select({ id: ciScreenshots.id }).from(ciScreenshots).where(eq(ciScreenshots.sha256, sha256)).limit(1)).length > 0;
     },
 
-    async screenshotHashes() {
-      const rows = await db.selectDistinct({ sha256: capped(ciScreenshots.sha256, 64) }).from(ciScreenshots);
+    async screenshotHashes(filter) {
+      const projectId = filter?.projectId;
+      if (projectId !== undefined && !isId(projectId)) return [];
+      const rows = await db
+        .selectDistinct({ sha256: capped(ciScreenshots.sha256, 64) })
+        .from(ciScreenshots)
+        .where(projectId === undefined ? undefined : eq(ciScreenshots.projectId, projectId));
       return rows.map((row) => row.sha256).filter(isHash);
     },
 
@@ -843,6 +850,11 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         screenshots: num(screenshots[0]?.n),
         screenshotBytes: num(files[0]?.bytes),
       };
+    },
+
+    async compact() {
+      // Plain SQLite, outside any transaction (the store's batches are synchronous, so none is open).
+      await db.run(sql`VACUUM`);
     },
   };
 

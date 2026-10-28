@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import type { RetentionMode } from '@app/specs/capture-db.spec';
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import {
@@ -34,19 +35,56 @@ import {
   type StartRunAnswer,
 } from '@app/specs/projects.schema';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
+import {
+  CompactAnswerSchema,
+  PurgeLogAnswerSchema,
+  PurgeNowAnswerSchema,
+  RetentionPreviewAnswerSchema,
+  RetentionScopeInputSchema,
+  SetRetentionAnswerSchema,
+  SetRetentionInputSchema,
+  UsageAnswerSchema,
+  type CompactAnswer,
+  type PurgeLogAnswer,
+  type PurgeNowAnswer,
+  type RetentionPreviewAnswer,
+  type SetRetentionAnswer,
+  type UsageAnswer,
+} from '@app/specs/retention.schema';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
 // Projects ↔ main (Phase 6 Task 6; spec `projects.schema.ts`; acceptance `projects.feature.md`,
-// Router). Every procedure starts `publicProcedure.use(enforceSender)`, then `requireProjects`
-// (which fails closed without the service), and takes a strict input. Answers are checked against
-// their schemas on the way out. Queries are added and removed by `addSearch` / `removeSearch`: no
+// Router), with retention and disk usage (Task 7; `retention.schema.ts`, `retention.feature.md`).
+// Every procedure starts `publicProcedure.use(enforceSender)`, then `requireProjects` (which fails
+// closed without the service), and takes a strict input. Answers are checked against their schemas
+// on the way out. Queries are added and removed by `addSearch` / `removeSearch`: no
 // procedure name says "query" (`db-only-in-main`: no IPC procedure reads as being about the database).
 
 /**
- * What the `projects.*` procedures call (main's `apps/desktop/src/main/changes/projects.ts`). Every
- * method answers; none rejects. A refusal names why (`PROJECT_REFUSALS`, `RUN_REFUSALS`).
+ * The retention procedures' half of the service (main's `apps/desktop/src/main/changes/retention.ts`;
+ * spec `retention.schema.ts`, acceptance `retention.feature.md`). Every method answers; none rejects.
  */
-export interface ProjectsService {
+export interface RetentionService {
+  /** The project's policy (Unfiled included): `forever` with `null`, else N within `RETENTION_VALUE_BOUNDS`. */
+  setRetention(projectId: string, mode: RetentionMode, value: number | null): Promise<SetRetentionAnswer>;
+  /** What "Purge now" would remove under the policy now: a dry run. */
+  retentionPreview(projectId: string): Promise<RetentionPreviewAnswer>;
+  /** Plans, asks in main's dialog, purges (`purge-now`) and removes the files no row names any more. */
+  purgeNow(projectId: string): Promise<PurgeNowAnswer>;
+  /** Stored and measured disk usage of one project, or of everything (`null`). */
+  usage(projectId: string | null): Promise<UsageAnswer>;
+  /** The newest `PURGE_LOG_LIMIT` purges of one project, or of all (`null`). */
+  purgeLog(projectId: string | null): Promise<PurgeLogAnswer>;
+  /** Asks in main's dialog, then `VACUUM`s the session database (refused during a capture run). */
+  compact(): Promise<CompactAnswer>;
+}
+
+/**
+ * What the `projects.*` procedures call (main's `apps/desktop/src/main/changes/projects.ts`, with
+ * `retention.ts` for `RetentionService`). Every method answers; none rejects. A refusal names why
+ * (`PROJECT_REFUSALS`, `RUN_REFUSALS`, `RETENTION_REFUSALS`).
+ */
+export interface ProjectsService extends RetentionService {
   /** Live projects, Unfiled first. */
   list(): Promise<ProjectsAnswer>;
   /** A project with its pages and queries, each with its last capture here and its latest version's change count. */
@@ -169,4 +207,40 @@ export const projectsRouter = router({
     .input(RunStateInputSchema)
     .output(RunStateSchema)
     .query(({ ctx, input }) => ctx.projects.runState(input.sinceVersion)),
+  // Retention and disk usage (Task 7; spec `retention.schema.ts`): no path, file name or hash comes in.
+  setRetention: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(SetRetentionInputSchema)
+    .output(SetRetentionAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.setRetention(input.projectId, input.policy.mode, input.policy.value)),
+  retentionPreview: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(ProjectIdInputSchema)
+    .output(RetentionPreviewAnswerSchema)
+    .query(({ ctx, input }) => ctx.projects.retentionPreview(input.projectId)),
+  purgeNow: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(ProjectIdInputSchema)
+    .output(PurgeNowAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.purgeNow(input.projectId)),
+  usage: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(RetentionScopeInputSchema)
+    .output(UsageAnswerSchema)
+    .query(({ ctx, input }) => ctx.projects.usage(input.projectId)),
+  purgeLog: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(RetentionScopeInputSchema)
+    .output(PurgeLogAnswerSchema)
+    .query(({ ctx, input }) => ctx.projects.purgeLog(input.projectId)),
+  compact: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .output(CompactAnswerSchema)
+    .mutation(({ ctx }) => ctx.projects.compact()),
 });

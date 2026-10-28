@@ -237,12 +237,8 @@ export function pixelSizeText(width: number, height: number): string {
   return `${count(width)} × ${count(height)} px`;
 }
 
-/** A file's size: "512 B", "1.5 kB", "2.4 MB" (decimal units). */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1_000) return `${count(bytes)} B`;
-  const [value, unit] = bytes < 1_000_000 ? [bytes / 1_000, 'kB'] : [bytes / 1_000_000, 'MB'];
-  return `${(Math.round(value * 10) / 10).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${unit}`;
-}
+/** A file's size: "512 B", "1.5 kB", "2.4 MB", "1.2 GB" (decimal units; shared with retention's wording). */
+export { formatBytes } from '@app/specs/retention.spec';
 
 /** A kind's name (`SCREENSHOT_KIND_LABELS`). */
 export function screenshotKindLabel(kind: ScreenshotKind): string {

@@ -321,7 +321,7 @@ function start(): void {
   // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
   const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession });
   // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
-  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, log: logSession });
+  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.

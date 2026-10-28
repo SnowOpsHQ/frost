@@ -1,12 +1,13 @@
 import { canonicalJson } from '@app/change-intel';
 import type { ChangeIntelRepository, HistoryEntry, Project } from '@app/db';
-import type { ProjectsService } from '@app/ipc-contract';
+import type { ProjectsService, RetentionService } from '@app/ipc-contract';
 import { PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { SearchParamsSchema, type SearchParams } from '@app/specs/capture-search-params.schema';
 import { queryLabel, searchUrlFor, type ProjectEntryCaptures, type ProjectRefusal, type ProjectSummary, type RunRefusal } from '@app/specs/projects.spec';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { CaptureRuns, RunPlanTarget } from './capture-run';
+import { createPurgeFiles, type PurgeFiles } from './purge-files';
 import { storedPageUrl } from './snapshot';
 
 // Projects (Phase 6 Task 6; spec `projects.spec.ts`, `projects.schema.ts`; acceptance
@@ -22,6 +23,8 @@ export interface ProjectsServiceDeps {
   readonly store: ChangeIntelRepository;
   /** The screenshot files (`screenshots/store.ts`): only `unlink`, by hash, after the purge. */
   readonly files: { unlink(sha256: string): Promise<boolean> };
+  /** The purge-then-unlink path (`purge-files.ts`), shared with retention; default: one over `store` and `files`. */
+  readonly purges?: PurgeFiles;
   /** Asks the user, in main's dialog, to delete the project `name` (`DELETE_PROJECT`); whether they confirmed. */
   readonly confirmDelete: (name: string) => Promise<boolean>;
   /** The active tab's URL (`''` or `null` when it shows none). */
@@ -71,8 +74,8 @@ const summaryOf = (project: Project): ProjectSummary => ({
   retention: { mode: project.retention.mode, value: project.retention.value },
 });
 
-/** Main's projects service: the procedures', and the retry of deleted projects' purges. */
-export interface MainProjectsService extends ProjectsService {
+/** Main's projects service: the procedures' (but retention's, `retention.ts`), and the retry of deleted projects' purges. */
+export interface MainProjectsService extends Omit<ProjectsService, keyof RetentionService> {
   /**
    * Purges every tombstoned project that still has captures or screenshots (a delete whose purge
    * failed): `mode: 'all'`, `project-deleted`, files unlinked as for a delete. Answers how many were
@@ -87,6 +90,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
   const { store, runs } = deps;
   const now = deps.now ?? Date.now;
   const log = (message: string): void => deps.log?.(`projects: ${message}`);
+  const purges = deps.purges ?? createPurgeFiles({ store, files: deps.files, log });
 
   /**
    * A tombstoned project's `project-deleted` purge (planned again if a row moved meanwhile), then each
@@ -94,30 +98,20 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
    */
   const purgeProject = async (projectId: string, at: number): Promise<PurgedCounts | null> => {
     let purged: PurgedCounts | null = null;
-    let hashes: readonly string[] = [];
     try {
       for (let attempt = 0; attempt < 3 && purged === null; attempt++) {
         const plan = await store.planPurge({ projectId, policy: { mode: 'all' }, now: at });
         if (plan === null) break;
-        const result = await store.executePurge(plan, 'project-deleted', at);
+        // Its files go with it, each checked again first (`purge-files.ts`).
+        const { result } = await purges.execute(plan, 'project-deleted', at);
         if (result === null) break;
         if (result.status === 'empty') purged = { captures: 0, versions: 0, diffs: 0, screenshots: 0 };
-        if (result.status === 'purged') {
-          purged = { ...result.plan.counts };
-          hashes = result.plan.unreferencedHashes;
-        }
+        if (result.status === 'purged') purged = { ...result.plan.counts };
       }
     } catch (error) {
       log(`the purge of a deleted project failed (${codeOf(error)})`);
     }
     if (purged === null) log('a deleted project’s captures were not purged (retried later)');
-    for (const hash of hashes) {
-      try {
-        if (!(await store.isHashReferenced(hash))) await deps.files.unlink(hash);
-      } catch (error) {
-        log(`a screenshot file could not be removed (${codeOf(error)})`);
-      }
-    }
     return purged;
   };
 

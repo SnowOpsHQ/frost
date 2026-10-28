@@ -59,6 +59,8 @@ export interface CaptureOptions {
 /** Main's changes service: the procedures' (`ChangesService`) and Phase 5's reads (`ChangesReadService`). */
 export interface MainChangesService extends ChangesService, ChangesReadService {
   capture(tabId: number, options?: CaptureOptions): Promise<CaptureAnswer>;
+  /** Tells `listener` of each capture saved, with its project (retention enforces the project's policy; `retention.ts`). */
+  onCaptured(listener: (projectId: string) => void): void;
 }
 
 // TODO(phase-3-merge): the tab's visible search parameters (serp-search-params.schema.ts)
@@ -113,6 +115,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
   const extractTimeoutMs = deps.extractTimeoutMs ?? CAPTURE_LIMITS.extractTimeoutMs;
   /** Tabs with a capture running. */
   const busy = new Set<number>();
+  let captured: (projectId: string) => void = () => undefined;
   /** The write queue: one capture's head read and append at a time. */
   let queue: Promise<unknown> = Promise.resolve();
   const serial = <T>(run: () => Promise<T>): Promise<T> => {
@@ -258,6 +261,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
           const result = await store.appendCapture({ ...capture, ...(reuse === null ? {} : { snapshotHash: reuse }), ...ids, createdAt: at, ...(diffInput ? { diff: diffInput } : {}) });
           if (result === null) return goneOr('the store refused the capture');
           if (result.status === 'appended') {
+            captured(projectId);
             return { status: 'captured', captureId: result.captureId, versionId: result.versionId, newVersion: result.newVersion, changeCount: result.newVersion ? (diff?.changeCount ?? null) : 0 };
           }
         }
@@ -279,6 +283,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
   };
 
   const service: MainChangesService = {
+    onCaptured: (listener) => void (captured = listener),
     async capture(tabId, options = {}) {
       if (busy.has(tabId)) return refused(CAPTURE_BUSY);
       busy.add(tabId);

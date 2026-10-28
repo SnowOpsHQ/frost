@@ -263,6 +263,20 @@ describe('changes service', () => {
     expect((await service.history({ url: PAGE })).versions).toMatchObject([{ versionId: one.versionId, captureCount: 2 }]);
   });
 
+  test('capture-reports-its-project', async () => {
+    // Retention hears of each capture saved into a project (Unfiled by default); a refused one says nothing.
+    const { service, state, repo } = setup();
+    const reported: string[] = [];
+    service.onCaptured((projectId) => reported.push(projectId));
+    captured(await service.capture(1));
+    const project = await repo.createProject('Tea', 1_000);
+    state.response = { status: 'ready', url: PAGE, audit: auditOf(PAGE, { extractedAt: 1_770_000_000_000 }) };
+    captured(await service.capture(1, { projectId: project!.id }));
+    state.active = 2;
+    expect(await service.capture(1)).toMatchObject({ status: 'refused' });
+    expect(reported).toEqual([UNFILED_PROJECT_ID, project!.id]);
+  });
+
   test('changed-page-stores-diff', async () => {
     const { service, rows, changePage } = setup();
     const one = captured(await service.capture(1));

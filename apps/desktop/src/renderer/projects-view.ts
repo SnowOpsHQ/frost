@@ -1,7 +1,7 @@
 // Type-only: the schema file holds Zod, which must stay out of the chrome's bundle (strict Trusted Types).
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import { SEARCH_ENGINES } from '@app/specs/browser-polish.spec';
-import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { UNFILED_PROJECT_ID, type RetentionMode } from '@app/specs/capture-db.spec';
 import {
   PROJECT_REFUSAL_MESSAGES,
   RUN_REFUSAL_MESSAGES,
@@ -14,11 +14,28 @@ import {
   type StartRunAnswer,
 } from '@app/specs/projects.spec';
 import { QUICK_RENDER_PROFILES, isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
+import {
+  PURGE_REASON_LABELS,
+  RETENTION_REFUSAL_MESSAGES,
+  RETENTION_RULE_NOTES,
+  RETENTION_VALUE_BOUNDS,
+  formatBytes,
+  plural,
+  purgeCountsText,
+  type CompactAnswer,
+  type PurgeLogEntry,
+  type PurgeNowAnswer,
+  type RetentionPolicyInput,
+  type RetentionPreviewAnswer,
+  type RetentionRefused,
+  type RetentionUsage,
+} from '@app/specs/retention.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 
 // The Projects sheet's pure helpers (acceptance `projects.feature.md`, The sheet): the render-profile
 // choice, the query form, a page address as typed, the wording of captures, runs and refusals, and the
-// Changes panel's default project. No React, no IPC.
+// Changes panel's default project; and the retention section's policy form and wording (acceptance
+// `retention.feature.md`, The project view). No React, no IPC.
 
 /** The render-profile choices of a project: frost's default, or one of the quick profiles. */
 export const PROJECT_PROFILE_CHOICES: readonly { readonly id: string; readonly label: string; readonly profile: RenderProfile | null }[] = [
@@ -163,4 +180,91 @@ export function pickedProject(list: readonly Pick<ProjectSummary, 'id'>[], curre
 export function pickerProjects(projects: readonly ProjectSummary[]): ProjectSummary[] {
   const seen = new Set<string>();
   return projects.filter((project) => !seen.has(project.id) && (seen.add(project.id), true));
+}
+
+// ---- Retention (Task 7) -------------------------------------------------------------------------
+
+/** The policy form as typed: the mode, and N as text. */
+export interface RetentionForm {
+  readonly mode: RetentionMode;
+  readonly value: string;
+}
+
+/** The form showing a project's policy. */
+export function retentionFormOf(retention: { readonly mode: RetentionMode; readonly value: number | null }): RetentionForm {
+  return { mode: retention.mode, value: retention.value === null ? '' : String(retention.value) };
+}
+
+const WHOLE = /^\d{1,9}$/;
+const NUMBER = new Intl.NumberFormat('en-US');
+
+/** The policy the form describes, or what to fix (main checks it again). */
+export function retentionFromForm(form: RetentionForm): { readonly policy: RetentionPolicyInput } | { readonly problem: string } {
+  if (form.mode === 'forever') return { policy: { mode: 'forever', value: null } };
+  if (form.mode !== 'versions' && form.mode !== 'days') return { problem: 'Choose what to keep.' };
+  const { min, max } = RETENTION_VALUE_BOUNDS[form.mode];
+  const text = form.value.trim();
+  const value = WHOLE.test(text) ? Number(text) : Number.NaN;
+  if (!(value >= min && value <= max)) return { problem: `Enter a whole number from ${NUMBER.format(min)} to ${NUMBER.format(max)}.` };
+  return { policy: { mode: form.mode, value } };
+}
+
+/** What a policy keeps, in a line. */
+export const retentionNote = (mode: RetentionMode): string => RETENTION_RULE_NOTES[mode];
+
+const retentionRefusal = (answer: RetentionRefused): string => RETENTION_REFUSAL_MESSAGES[answer.reason] ?? 'Something went wrong. Try again.';
+
+/** The preview line: what "Purge now" would remove. */
+export function previewText(answer: RetentionPreviewAnswer | null): string {
+  if (answer === null) return 'The preview could not be read.';
+  if (answer.status === 'refused') return retentionRefusal(answer);
+  if (answer.policy.mode === 'forever') return 'Keep everything: purging removes nothing.';
+  const { counts } = answer;
+  if (counts.captures + counts.versions + counts.diffs + counts.screenshots === 0) return 'Purging now would remove nothing.';
+  return `Purging now would remove ${purgeCountsText(counts)} (≈ ${formatBytes(answer.bytes)}).`;
+}
+
+/** What "Purge now" did. */
+export function purgeNowText(answer: PurgeNowAnswer | null): string {
+  if (answer === null) return 'The purge could not be run. Try again.';
+  switch (answer.status) {
+    case 'purged':
+      return `Purged ${purgeCountsText(answer.counts)} (≈ ${formatBytes(answer.bytes)}).`;
+    case 'empty':
+      return 'Nothing to purge.';
+    case 'changed':
+      return 'The captures changed while you were asked, so nothing was deleted. Try again.';
+    default:
+      return retentionRefusal(answer);
+  }
+}
+
+/** What "Compact database" did. */
+export function compactText(answer: CompactAnswer | null): string {
+  if (answer === null) return 'The database could not be compacted. Try again.';
+  if (answer.status === 'refused') return retentionRefusal(answer);
+  return `Compacted the change database: ${formatBytes(answer.before)} → ${formatBytes(answer.after)}.`;
+}
+
+/** The usage figures, as rows of the project view. */
+export function usageRows(usage: RetentionUsage): { readonly id: string; readonly label: string; readonly value: string }[] {
+  const shared = usage.sharedVersions > 0 ? ` (${NUMBER.format(usage.sharedVersions)} also in another project)` : '';
+  const missing = usage.files.missing > 0 ? ` · ${NUMBER.format(usage.files.missing)} missing` : '';
+  return [
+    { id: 'captures', label: 'Captures', value: NUMBER.format(usage.captures) },
+    { id: 'versions', label: 'Versions', value: `${NUMBER.format(usage.versions)}${shared}` },
+    { id: 'screenshots', label: 'Screenshots', value: NUMBER.format(usage.screenshots) },
+    { id: 'stored', label: 'Stored snapshots and diffs', value: `${formatBytes(usage.snapshotBytes)} + ${formatBytes(usage.diffBytes)}` },
+    { id: 'files', label: 'Screenshot files', value: `${plural(usage.files.count, 'file', 'files')}, ${formatBytes(usage.files.bytes)}${missing}` },
+    { id: 'database', label: 'Database file (all projects)', value: usage.database === null ? 'In memory this session' : formatBytes(usage.database.bytes + usage.database.walBytes) },
+  ];
+}
+
+/** A purge log row's parts: when, why, and what went. */
+export function purgeLogText(entry: PurgeLogEntry): { readonly when: string; readonly reason: string; readonly what: string } {
+  return {
+    when: new Date(entry.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
+    reason: PURGE_REASON_LABELS[entry.reason],
+    what: `${purgeCountsText(entry.counts)} · ${formatBytes(entry.bytes)}`,
+  };
 }

@@ -18,7 +18,7 @@ import { isWebUrl } from '@app/specs/web-url.spec';
 import { CloseIcon, PlusIcon } from '../../icons';
 import { actions, ipc } from '../../ipc';
 import { registerPaletteActions } from '../../palette/registry';
-import { projectsPaletteSources } from '../../projects-palette';
+import { projectsPaletteSources, retentionPaletteSources } from '../../projects-palette';
 import {
   EMPTY_QUERY_FORM,
   PROJECT_PROFILE_CHOICES,
@@ -38,21 +38,29 @@ import {
 } from '../../projects-view';
 import { isolatedTooltip } from '../../seo-view';
 import { lastOpenedProject, notifyProjectsChanged, openProjects, setLastOpenedProject, useProjectsRequest } from './projects-sheet';
+import { Retention } from './Retention';
 
 // The Projects sheet (acceptance `projects.feature.md`, The sheet): over the page column like
 // History, it lists the projects (Unfiled first) with create, inline rename and delete (main asks
 // first), and shows one project: its pages and queries with each one's last capture and change count
 // (a click opens it in the active tab), its render profile, and "Capture now" with its progress and
-// Cancel. While a run is under way the sheet shrinks to a band (`data-running`), so the run's tab is
-// shown (a viewport screenshot captures what is on screen). Everything from the user or a page is
-// React text in a `<bdi>`; no inline styles (strict CSP).
+// Cancel, and its retention and disk usage (`Retention.tsx`). While a run is under way the sheet
+// shrinks to a band (`data-running`), so the run's tab is shown (a viewport screenshot captures what
+// is on screen). Everything from the user or a page is React text in a `<bdi>`; no inline styles
+// (strict CSP).
 
-// The palette's Projects actions (`projects-palette.ts`), once per module instance.
+// The palette's Projects and retention actions (`projects-palette.ts`), once per module instance.
 const unregisterPaletteActions = registerPaletteActions(
   ...projectsPaletteSources({
     open: (request) => openProjects(request),
     lastProject: lastOpenedProject,
     startRun: (projectId) => ipc.projects.startRun.mutate({ projectId, screenshot: false }).catch(() => null),
+  }),
+  ...retentionPaletteSources({
+    open: (request) => openProjects(request),
+    lastProject: lastOpenedProject,
+    purgeNow: (projectId) => ipc.projects.purgeNow.mutate({ projectId }).catch(() => null),
+    compact: () => ipc.projects.compact.mutate().catch(() => null),
   }),
 );
 import.meta.hot?.dispose(unregisterPaletteActions);
@@ -426,11 +434,7 @@ function ProjectView({
         </form>
       </section>
 
-      {/* Task 7 (retention and disk usage): the policy controls (keep everything / the last N versions /
-          N days), "Purge now" with its preview, the purge log and this project's usage go in this region. */}
-      <section className="projects-section projects-retention" data-testid="projects-retention" aria-label="Retention and disk usage">
-        <p className="projects-note">Captures and screenshots are kept until you delete the project.</p>
-      </section>
+      <Retention projectId={projectId} retention={project.retention} refreshKey={detail} busy={busy} say={say} onChanged={onChanged} />
     </div>
   );
 }

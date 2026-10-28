@@ -1,8 +1,9 @@
 import type { StartRunAnswer } from '@app/specs/projects.spec';
+import type { CompactAnswer, PurgeNowAnswer } from '@app/specs/retention.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { pageUrlOf } from './changes-view';
 import type { PaletteSource } from './palette/registry';
-import { startRunText } from './projects-view';
+import { compactText, purgeNowText, startRunText } from './projects-view';
 
 // Projects in the command palette (spec `projects.feature.md`, Command palette): "Open projects",
 // "Add this page to a project" (the sheet, asking which project) and "Capture project now" (the
@@ -57,6 +58,49 @@ export function projectsPaletteSources(api: ProjectsPaletteApi): PaletteSource[]
         api.open({ projectId });
         return startRunText(await api.startRun(projectId)) ?? 'Capturing the project…';
       },
+    },
+  ];
+}
+
+export interface RetentionPaletteApi {
+  /** Opens the Projects sheet on a project. */
+  open(request: { readonly projectId: string }): void;
+  /** The project last opened in the sheet (`undefined`: none this session). */
+  lastProject(): string | undefined;
+  /** `projects.purgeNow` (main asks first); `null` on an IPC failure. */
+  purgeNow(projectId: string): Promise<PurgeNowAnswer | null>;
+  /** `projects.compact` (main asks first); `null` on an IPC failure. */
+  compact(): Promise<CompactAnswer | null>;
+}
+
+const RETENTION_KEYWORDS = ['retention', 'purge', 'delete', 'clean', 'disk', 'space', 'storage', 'database'];
+
+/** Retention in the palette (`retention.feature.md`, The project view): "Purge this project now" (the project last opened) and "Compact the change database". */
+export function retentionPaletteSources(api: RetentionPaletteApi): PaletteSource[] {
+  return [
+    {
+      id: 'projects.purge-now',
+      label: 'Purge this project now',
+      group: 'page',
+      keywords: [...RETENTION_KEYWORDS, ...KEYWORDS, 'now'],
+      icon: 'panel-changes',
+      focus: 'handler',
+      available: () => api.lastProject() !== undefined,
+      run: async () => {
+        const projectId = api.lastProject();
+        if (projectId === undefined) return null;
+        api.open({ projectId });
+        return purgeNowText(await api.purgeNow(projectId));
+      },
+    },
+    {
+      id: 'projects.compact',
+      label: 'Compact the change database',
+      group: 'browser',
+      keywords: [...RETENTION_KEYWORDS, 'compact', 'vacuum', 'shrink', 'changes'],
+      icon: 'panel-changes',
+      focus: 'handler',
+      run: async () => compactText(await api.compact()),
     },
   ];
 }

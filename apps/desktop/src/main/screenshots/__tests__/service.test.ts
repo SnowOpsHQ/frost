@@ -118,6 +118,18 @@ describe('screenshots service', () => {
     expect(readdirSync(files.dir).sort()).toEqual([...new Set(rows(raw).map((r) => `${r['sha256'] as string}.png`))].sort());
   });
 
+  test('screenshot-reports-its-project', async () => {
+    // Retention hears of each screenshot saved into a project (Unfiled by default); a refused one says nothing.
+    const { service } = start();
+    const reported: string[] = [];
+    service.onSaved((projectId) => reported.push(projectId));
+    const project = await setup!.opened.changeIntel.createProject('Tea shop', Date.now());
+    saved(await service.take(1, { kind: 'viewport', projectId: project!.id }));
+    saved(await service.take(1, { kind: 'viewport' }));
+    expect(await service.take(1, { kind: 'viewport', projectId: uuidv7() })).toMatchObject({ status: 'refused' });
+    expect(reported).toEqual([project!.id, UNFILED_PROJECT_ID]);
+  });
+
   test('take-refuses-what-it-cannot-take', async () => {
     const { service, tabs, logs } = start();
     const refusal = async (tabId: number, kind: 'viewport' | 'full' | 'area' = 'viewport', projectId?: string) => {

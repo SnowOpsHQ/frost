@@ -8546,6 +8546,108 @@ input {
   color: var(--danger);
 }
 
+/* A project's retention and disk usage (Retention.tsx). */
+.retention-policy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.retention-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.retention-legend {
+  margin-bottom: 2px;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.retention-value-row,
+.retention-purge-row,
+.retention-compact-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.retention-purge-row,
+.retention-compact-row {
+  align-items: center;
+}
+
+.retention-value .projects-input {
+  width: 8em;
+}
+
+.retention-preview {
+  flex: 1 1 16em;
+  margin: 0;
+  min-width: 0;
+}
+
+.retention-subtitle {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.retention-usage {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+}
+
+.retention-usage-row {
+  display: contents;
+}
+
+.retention-usage dt {
+  color: var(--text-muted);
+}
+
+.retention-usage dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.retention-log {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.retention-log-entry {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+  font-size: 12px;
+}
+
+.retention-log-when {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.retention-log-reason {
+  font-weight: 600;
+}
+
 /* The Changes panel's project picker, next to Capture now. */
 .changes-project-row {
   display: flex;

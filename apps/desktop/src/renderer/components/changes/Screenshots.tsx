@@ -5,6 +5,7 @@ import { AREA_SELECT_HINT, FULL_PAGE_SCROLL_NOTE, type ScreenshotEntry, type Scr
 import { SCREENSHOTS_PAGE_SIZE, canScreenshot, countBadge, formatBytes, laneLabel, pixelSizeText, screenshotAlt, screenshotInput, screenshotKindLabel } from '../../changes-view';
 import { ReloadIcon } from '../../icons';
 import { ipc } from '../../ipc';
+import { useProjectsGeneration } from './projects-sheet';
 import { onScreenshotFinished, runScreenshot, useScreenshotRun } from './screenshot-runs';
 
 // Screenshots in the Changes panel (acceptance `screenshot.feature.md`, The Changes panel): the
@@ -190,6 +191,8 @@ export function ScreenshotGallery({ url, generation }: { readonly url: string; r
   const [state, setState] = useState<GalleryState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
   const listed = useRef(0);
+  // Read again when projects change: a delete or a purge (`Retention.tsx`) may have removed screenshots.
+  const projects = useProjectsGeneration();
   listed.current = state.status === 'ready' ? state.screenshots.length : 0;
   useEffect(() => {
     let live = true;
@@ -201,7 +204,7 @@ export function ScreenshotGallery({ url, generation }: { readonly url: string; r
     return () => {
       live = false;
     };
-  }, [url, generation, attempt]);
+  }, [url, generation, attempt, projects]);
   const loadMore = () => {
     if (state.status !== 'ready' || state.next === null || state.loadingMore) return;
     const { next } = state;

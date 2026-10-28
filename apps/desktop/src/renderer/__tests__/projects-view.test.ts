@@ -6,13 +6,22 @@ import type { TabState } from '@app/specs/browser.spec';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { PROJECT_REFUSAL_MESSAGES, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS, type RunState } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
+import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, type RetentionUsage } from '@app/specs/retention.spec';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
-import { projectsPaletteSources } from '../projects-palette';
+import { projectsPaletteSources, retentionPaletteSources } from '../projects-palette';
 import {
   EMPTY_QUERY_FORM,
   PROJECT_PROFILE_CHOICES,
   addPageText,
   changeCountText,
+  compactText,
+  previewText,
+  purgeLogText,
+  purgeNowText,
+  retentionFormOf,
+  retentionFromForm,
+  retentionNote,
+  usageRows,
   defaultCaptureProject,
   lastCaptureText,
   pageUrlFromInput,
@@ -139,5 +148,78 @@ describe('projects view', () => {
     expect(api.startRun).toHaveBeenCalledWith(P1);
     api.startRun.mockResolvedValueOnce({ status: 'refused', reason: 'busy' } as never);
     expect(await action('projects.capture-now').run(ctx(tab()))).toBe(RUN_REFUSAL_MESSAGES.busy);
+  });
+
+  test('retention-view-policy-form', () => {
+    expect(retentionFormOf({ mode: 'forever', value: null })).toEqual({ mode: 'forever', value: '' });
+    expect(retentionFormOf({ mode: 'versions', value: 3 })).toEqual({ mode: 'versions', value: '3' });
+    expect(retentionFromForm({ mode: 'forever', value: '12' })).toEqual({ policy: { mode: 'forever', value: null } });
+    expect(retentionFromForm({ mode: 'versions', value: ' 1 ' })).toEqual({ policy: { mode: 'versions', value: 1 } });
+    expect(retentionFromForm({ mode: 'days', value: '3650' })).toEqual({ policy: { mode: 'days', value: 3_650 } });
+    for (const value of ['', '0', '1.5', '-2', 'ten', '1e2', '1001']) {
+      expect(retentionFromForm({ mode: 'versions', value }), value).toEqual({ problem: 'Enter a whole number from 1 to 1,000.' });
+    }
+    expect(retentionFromForm({ mode: 'days', value: '3651' })).toEqual({ problem: 'Enter a whole number from 1 to 3,650.' });
+    expect(retentionFromForm({ mode: 'bogus' as 'days', value: '3' })).toEqual({ problem: 'Choose what to keep.' });
+    expect(retentionNote('days')).toBe(RETENTION_RULE_NOTES.days);
+    expect(RETENTION_RULE_NOTES.days).toContain('Each page always keeps its newest version.'.slice(0, -1));
+  });
+
+  test('retention-view-wording', () => {
+    const counts = { captures: 2, versions: 2, diffs: 2, screenshots: 0 };
+    expect(previewText({ status: 'ok', policy: { mode: 'versions', value: 1 }, counts, bytes: 1_234 })).toBe('Purging now would remove 2 captures, 2 versions, 2 diffs and 0 screenshots (≈ 1.2 kB).');
+    expect(previewText({ status: 'ok', policy: { mode: 'versions', value: 1 }, counts: { captures: 0, versions: 0, diffs: 0, screenshots: 0 }, bytes: 0 })).toBe('Purging now would remove nothing.');
+    expect(previewText({ status: 'ok', policy: { mode: 'forever', value: null }, counts: { captures: 0, versions: 0, diffs: 0, screenshots: 0 }, bytes: 0 })).toBe('Keep everything: purging removes nothing.');
+    expect(previewText(null)).toBe('The preview could not be read.');
+    expect(purgeNowText({ status: 'purged', counts, bytes: 1_234, files: 0 })).toBe('Purged 2 captures, 2 versions, 2 diffs and 0 screenshots (≈ 1.2 kB).');
+    expect(purgeNowText({ status: 'empty' })).toBe('Nothing to purge.');
+    expect(purgeNowText({ status: 'changed' })).toBe('The captures changed while you were asked, so nothing was deleted. Try again.');
+    expect(purgeNowText({ status: 'refused', reason: 'declined' })).toBe(RETENTION_REFUSAL_MESSAGES.declined);
+    expect(purgeNowText(null)).toBe('The purge could not be run. Try again.');
+    expect(compactText({ status: 'compacted', before: 2_400_000, after: 300_000 })).toBe('Compacted the change database: 2.4 MB → 300.0 kB.');
+    expect(compactText({ status: 'refused', reason: 'running' })).toBe(RETENTION_REFUSAL_MESSAGES.running);
+    expect(compactText(null)).toBe('The database could not be compacted. Try again.');
+    const usage: RetentionUsage = { projectId: P1, captures: 3, versions: 3, sharedVersions: 1, snapshotBytes: 12_000, diffBytes: 800, screenshots: 2, files: { count: 1, bytes: 1_500, missing: 1 }, database: { bytes: 2_000_000, walBytes: 400_000 } };
+    expect(usageRows(usage)).toEqual([
+      { id: 'captures', label: 'Captures', value: '3' },
+      { id: 'versions', label: 'Versions', value: '3 (1 also in another project)' },
+      { id: 'screenshots', label: 'Screenshots', value: '2' },
+      { id: 'stored', label: 'Stored snapshots and diffs', value: '12.0 kB + 800 B' },
+      { id: 'files', label: 'Screenshot files', value: '1 file, 1.5 kB · 1 missing' },
+      { id: 'database', label: 'Database file (all projects)', value: '2.4 MB' },
+    ]);
+    const plain = usageRows({ ...usage, sharedVersions: 0, files: { count: 2, bytes: 3_000, missing: 0 }, database: null });
+    expect(plain.find((row) => row.id === 'versions')?.value).toBe('3');
+    expect(plain.find((row) => row.id === 'files')?.value).toBe('2 files, 3.0 kB');
+    expect(plain.find((row) => row.id === 'database')?.value).toBe('In memory this session');
+    expect(USAGE_NOTE).toBe('Deleting frees space inside the database file; the file itself shrinks only after Compact.');
+    const line = purgeLogText({ id: P2, reason: 'purge-now', projectId: P1, policy: { mode: 'versions', value: 1 }, counts, bytes: 1_234, createdAt: Date.UTC(2026, 9, 1, 12) });
+    expect(line.reason).toBe('Purge now');
+    expect(line.what).toBe('2 captures, 2 versions, 2 diffs and 0 screenshots · 1.2 kB');
+    expect(line.when).toBe(new Date(Date.UTC(2026, 9, 1, 12)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+  });
+
+  test('retention-palette-actions', async () => {
+    const api = {
+      open: vi.fn(),
+      lastProject: vi.fn((): string | undefined => undefined),
+      purgeNow: vi.fn(async () => ({ status: 'empty' as const })),
+      compact: vi.fn(async () => ({ status: 'compacted' as const, before: 2_000, after: 1_000 })),
+    };
+    const registry = createPaletteRegistry();
+    registry.register(...retentionPaletteSources(api));
+    const ctx: PaletteContext = { state: null, tab: tab(), audit: null, sidebarOpen: false, chrome: { openPanel: vi.fn(), setSidebarOpen: vi.fn() } };
+    const ids = () => registry.resolve(ctx).map((action) => action.id);
+    // Compact always; purge once a project was opened (the last one).
+    expect(ids()).toEqual(['projects.compact']);
+    api.lastProject.mockReturnValue(P1);
+    expect(ids().sort()).toEqual(['projects.compact', 'projects.purge-now']);
+    const action = (id: string) => registry.resolve(ctx).find((a) => a.id === id)!;
+    expect(action('projects.purge-now').label).toBe('Purge this project now');
+    expect(action('projects.compact').label).toBe('Compact the change database');
+    expect(await action('projects.purge-now').run(ctx)).toBe('Nothing to purge.');
+    expect(api.open).toHaveBeenLastCalledWith({ projectId: P1 });
+    expect(api.purgeNow).toHaveBeenCalledWith(P1);
+    expect(await action('projects.compact').run(ctx)).toBe('Compacted the change database: 2.0 kB → 1.0 kB.');
   });
 });

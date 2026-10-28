@@ -10,6 +10,7 @@ export type { ChecksService } from './checks-service';
 export type { ChangesReadApi, ChangesReadService, ChangesService } from './changes-service';
 export type { ScreenshotsService } from './changes-service';
 export type { ProjectsService } from './projects-router';
+export type { RetentionService } from './projects-router';
 export {
   createContext,
   createSenderPolicy,
