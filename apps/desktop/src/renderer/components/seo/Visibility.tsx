@@ -155,7 +155,7 @@ function Probes({ tab }: { readonly tab: TabState }) {
 }
 
 /** The query box: classifies any typed query on this device (`serp.classify`, local only). */
-function QueryIntent() {
+export function QueryIntent() {
   const [value, setValue] = useState('');
   const [answer, setAnswer] = useState<IntentAnswer | null>(null);
   const [asked, setAsked] = useState<string | null>(null);
@@ -168,6 +168,8 @@ function QueryIntent() {
     if (query === null) return;
     const mine = ++seq.current;
     setAsked(query);
+    // The shown answer always belongs to `asked`: the previous query's never shows beside this one.
+    setAnswer(null);
     void serpActions.classify(query).then((next) => {
       if (mine === seq.current) setAnswer(next ?? { state: 'unavailable' });
     });

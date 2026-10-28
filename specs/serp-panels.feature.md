@@ -82,6 +82,9 @@ named test.
   unseen never leaves only Stop offered.
 - **Scenario: classify-query-input** — a typed query is trimmed and cut to the classify input's cap,
   never splitting a surrogate pair; a blank one is not sent.
+- **Scenario: query-intent-answer-belongs-to-its-query** (`query-intent.test.ts`) — submitting
+  another query clears the shown answer at once; while it is classified no earlier answer shows
+  beside the new query, and an earlier request that answers late is dropped.
 
 ## Command palette (`apps/desktop/src/renderer/__tests__/serp-palette.test.ts`)
 Registered with one `registerPaletteActions` call from `components/seo/Serp.tsx`; both panels' jumps
