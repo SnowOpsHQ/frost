@@ -338,5 +338,5 @@ describe('sign:update-manifest', () => {
     expect(unset.status).toBe(1);
     expect(unset.stderr).toContain(UPDATE_SIGNING_KEY_ENV);
     expect(written(manifest, key)).toEqual([]);
-  });
+  }, 60_000); // Two real Node processes: slow on Windows runners under a parallel test load.
 });
