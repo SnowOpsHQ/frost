@@ -125,8 +125,13 @@ export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
  * The e2e suite, unpackaged, uses it to give a loopback server a public-looking name.
  * `frost-e2e-public-hosts` too (Phase 2.5 Task 2 review): the e2e seam that exempts those names
  * from the bounded fetcher's DNS check (`E2E_PUBLIC_HOSTS_SWITCH`, `fetcher.spec.ts`).
+ * `frost-e2e-serp-pack-key` and `frost-e2e-serp-pack-url` too (Phase 3 Task 1): the e2e seams that
+ * trust one more selector pack key and fetch the remote pack from another URL
+ * (`SERP_E2E_PACK_KEY_SWITCH`, `SERP_E2E_PACK_URL_SWITCH`, `serp-selector-pack.spec.ts`).
+ * `frost-e2e-intent-fake` too (Phase 3 Task 2): the e2e seam that runs the intent utility process's
+ * deterministic fake in place of the model (`INTENT_E2E_FAKE_SWITCH`, `intent-classifier.spec.ts`).
  */
-export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts'] as const;
+export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-e2e-serp-pack-key', 'frost-e2e-serp-pack-url', 'frost-e2e-intent-fake'] as const;
 export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;
 
 /**

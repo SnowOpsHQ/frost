@@ -121,9 +121,10 @@ export type PalettePanel = SeoPanelId;
  * Panels whose feature registers its own jump (same id, `panel.<id>`) next to its other actions, so
  * the built-ins leave theirs out: one row per panel. `content`: "Open Content panel", with "Set
  * target query…" and "Copy snippet as HTML" (`seo-content.feature.md`, Command palette); `javascript`:
- * "Open JavaScript panel", with "Fetch served HTML again" (`seo-javascript.feature.md`).
+ * "Open JavaScript panel", with "Fetch served HTML again" (`seo-javascript.feature.md`); `serp` and
+ * `visibility`: "Open SERP panel" and "Open Visibility panel", with the SERP actions (`serp-panels.feature.md`).
  */
-export const FEATURE_PANEL_JUMPS = ['content', 'javascript'] as const satisfies readonly PalettePanel[];
+export const FEATURE_PANEL_JUMPS = ['content', 'javascript', 'serp', 'visibility'] as const satisfies readonly PalettePanel[];
 
 /**
  * Copy actions (`seo.copyValue({ tabId, audit, key })`): main writes, with Electron's `clipboard`,

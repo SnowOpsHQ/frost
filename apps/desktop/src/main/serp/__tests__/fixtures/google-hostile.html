@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- frost's own synthetic hostile page: the pack's Google hooks with links the reader must not take
+     (javascript:, data:, an SVG link, an over-long URL, script and style text). The test adds the
+     rest (100,000 results, a huge title, throwing getters). Not a copy of any real page. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>frost synthetic: hostile</title></head>
+<body>
+<div id="search">
+  <div id="rso">
+    <div><a href="javascript:alert(1)"><h3>Script link</h3></a></div>
+    <div><a href="data:text/html,hi"><h3>Data link</h3></a></div>
+    <div><svg><a href="https://svg.example.net/"><text>SVG link</text></a></svg></div>
+    <div><a id="long" href="https://long.example.net/"><h3>Long link</h3></a></div>
+    <div><a href="https://www.example.com/ok"><h3>Fine <script>var hidden = 1;</script><style>h3{}</style>result</h3></a></div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,3 @@
+# Signed selector packs (specs/serp-selector-pack.spec.ts): the signature covers the file's exact
+# bytes, so git must never convert their line endings.
+apps/desktop/src/main/serp/packs/* -text

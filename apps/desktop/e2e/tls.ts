@@ -22,7 +22,16 @@ function derOid(dotted: string): Buffer {
   }
   return der(0x06, Buffer.from(bytes));
 }
-const derInteger = (value: Buffer) => der(0x02, (value[0] ?? 0) & 0x80 ? Buffer.concat([Buffer.from([0]), value]) : value);
+/**
+ * A DER INTEGER of an unsigned big-endian value: minimal (leading zero bytes stripped, so a random
+ * serial starting with 0x00 is not "illegal padding"), and a 0x00 prepended when the top bit is set.
+ */
+function derInteger(value: Buffer): Buffer {
+  let start = 0;
+  while (start < value.length - 1 && value[start] === 0) start++;
+  const minimal = value.subarray(start);
+  return der(0x02, (minimal[0] ?? 0) & 0x80 ? Buffer.concat([Buffer.from([0]), minimal]) : minimal);
+}
 const derTime = (date: Date) => der(0x17, Buffer.from(`${date.toISOString().replace(/[-:T]/g, '').slice(2, 14)}Z`));
 
 /** A fresh self-signed certificate for `CN=localhost` (P-256, ECDSA-SHA256), as PEM. */
