@@ -34,9 +34,15 @@ function dom(html: string, url: string = URLS.google, options: ConstructorParame
   return new JSDOM(html, { url, ...options });
 }
 
-/** Runs the reader on `document` with the spec's limits (overridden by `limits`). */
+/**
+ * A time budget for the tests that check what is read, not how fast: a cold jsdom read on a loaded
+ * CI runner can pass the spec's `budgetMs` and stop early. `serp-reader-time-budget` uses the real one.
+ */
+const READ_TEST_BUDGET_MS = 10_000;
+
+/** Runs the reader on `document` with the spec's limits and `READ_TEST_BUDGET_MS` (overridden by `limits`). */
 function read(document: Document, layout: EngineLayout, limits: Partial<SerpReadLimits> = {}): SerpRead {
-  return readSerp(document as unknown as SerpDocument, layout, { ...SERP_READ_LIMITS, ...limits }) as SerpRead;
+  return readSerp(document as unknown as SerpDocument, layout, { ...SERP_READ_LIMITS, budgetMs: READ_TEST_BUDGET_MS, ...limits }) as SerpRead;
 }
 
 /** The blocks as `[type, titles]`, and every link in order. */
@@ -295,7 +301,7 @@ describe('reading synthetic result pages', () => {
     expect(small.stats.nodes).toBeLessThanOrEqual(12);
     expect(SerpReadSchema.safeParse(small).success).toBe(true);
     // The real budget reads the whole page well within it.
-    const full = read(dom(fixture('google.html')).window.document, layout);
+    const full = read(dom(fixture('google.html')).window.document, layout, { budgetMs: SERP_READ_LIMITS.budgetMs });
     expect(full.ok).toBe(true);
     expect(full.stats.elapsedMs).toBeLessThan(SERP_READ_LIMITS.budgetMs);
   });
