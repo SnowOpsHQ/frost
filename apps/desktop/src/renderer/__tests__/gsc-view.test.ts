@@ -4,6 +4,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import type { AccountStatus } from '@app/specs/account-state.schema';
+import type { EntitlementStatus } from '@app/specs/entitlements-snapshot.spec';
 import type { GscPerformanceAnswer, GscQueriesAnswer } from '@app/specs/gsc.schema';
 import { GSC_PANEL_COPY, GSC_PANEL_DEFAULTS, GSC_READING_STATES, GSC_PANEL_STATES } from '@app/specs/gsc-panel.spec';
 import { GSC_UNAVAILABLE_REASONS, gscDateRange, type GscStatus } from '@app/specs/gsc.spec';
@@ -18,7 +19,9 @@ import {
   gscReadRequest,
   requestKey,
   shownAnswers,
+  type GscAccount,
   type GscAnswers,
+  type GscRequest,
   type GscViewInput,
 } from '../gsc-view';
 import { railStatuses } from '../seo-view';
@@ -43,8 +46,10 @@ const queries = (count = 2): GscQueriesAnswer => ({
 });
 const unavailable = (reason: (typeof GSC_UNAVAILABLE_REASONS)[number]) => ({ status: 'unavailable', reason }) as const;
 
+const account = (status: AccountStatus, entitlement: EntitlementStatus = status === 'signed-in' ? 'active' : 'none'): GscAccount => ({ status, entitlement });
+
 function input(changes: Partial<GscViewInput> = {}): GscViewInput {
-  return { gsc: status(), account: 'signed-in', url: URL_A, prefs: GSC_PANEL_DEFAULTS, answers: null, now: NOW, ...changes };
+  return { gsc: status(), account: account('signed-in'), url: URL_A, prefs: GSC_PANEL_DEFAULTS, answers: null, pending: false, now: NOW, ...changes };
 }
 
 describe('Search Console panel view model', () => {
@@ -58,7 +63,10 @@ describe('Search Console panel view model', () => {
     expect(formatMetric('impressions', 0)).toBe('0');
     expect(formatMetric('ctr', 0.1)).toBe('10.0%');
     expect(formatMetric('ctr', 0.0345)).toBe('3.5%');
-    expect(formatMetric('ctr', 0)).toBe('0.0%');
+    // Below 1%: two decimals.
+    expect(formatMetric('ctr', 0.0034)).toBe('0.34%');
+    expect(formatMetric('ctr', 0.0099)).toBe('0.99%');
+    expect(formatMetric('ctr', 0)).toBe('0%');
     expect(formatMetric('position', 3.256)).toBe('3.3');
     expect(formatMetric('position', 1)).toBe('1.0');
     expect(formatMetric('position', null)).toBe('—');
@@ -69,20 +77,37 @@ describe('Search Console panel view model', () => {
     expect(formatDay('2027-01-01')).toBe('Jan 1, 2027');
     const range = gscDateRange(28, NOW);
     expect(freshnessNote(range)).toBe('Search Console data lags about two days; range Sep 29, 2026 – Oct 26, 2026.');
+    expect(freshnessNote(range, range.end)).toBe('Search Console data lags about two days; range Sep 29, 2026 – Oct 26, 2026.');
+    expect(freshnessNote(range, '2026-10-24')).toBe('Search Console data lags about two days; range Sep 29, 2026 – Oct 26, 2026, data through Oct 24, 2026.');
   });
 
   test('gate-before-reading', () => {
     const cases: [Partial<GscViewInput>, string, string | null][] = [
+      // Until both watches answered.
       [{ gsc: null }, 'loading', null],
+      [{ account: null }, 'loading', null],
+      [{ gsc: status({ entitled: false, connected: false }), account: null }, 'loading', null],
       [{ gsc: status({ configured: false, entitled: false, connected: false }) }, 'unconfigured', null],
-      [{ gsc: status({ entitled: false, connected: false }), account: 'signed-out' }, 'signed-out', 'open-account'],
-      [{ gsc: status({ entitled: false, connected: false }), account: null }, 'signed-out', 'open-account'],
-      [{ gsc: status({ entitled: false, connected: false }), account: 'awaiting-browser' }, 'signed-out', 'open-account'],
-      [{ gsc: status({ entitled: false, connected: false }), account: 'signed-in' }, 'needs-pro', 'open-account'],
+      // No account configuration in this build: nobody can sign in, so no "Sign in".
+      [{ gsc: status({ entitled: false, connected: false }), account: account('unconfigured') }, 'unconfigured', null],
+      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-out') }, 'signed-out', 'open-account'],
+      [{ gsc: status({ entitled: false, connected: false }), account: account('awaiting-browser') }, 'signed-out', 'open-account'],
+      [{ gsc: status({ entitled: false, connected: false }), account: account('confirming') }, 'signed-out', 'open-account'],
+      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in') }, 'needs-pro', 'open-account'],
+      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in', 'grace') }, 'needs-pro', 'open-account'],
+      // Signed in, the plan still being checked.
+      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in', 'none') }, 'loading', null],
+      // A Pro snapshot that expired or failed verification (main fell back to free).
+      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in', 'expired') }, 'plan-expired', 'open-account'],
+      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in', 'invalid') }, 'plan-unconfirmed', 'open-account'],
       // A connection kept from before the plan changed is not read with.
-      [{ gsc: status({ entitled: false, connected: true }), account: 'signed-in' }, 'needs-pro', 'open-account'],
+      [{ gsc: status({ entitled: false, connected: true }), account: account('signed-in') }, 'needs-pro', 'open-account'],
       [{ gsc: status({ connected: false }) }, 'not-connected', 'open-gsc-settings'],
       [{ gsc: status({ connected: false, connecting: true }) }, 'connecting', 'open-gsc-settings'],
+      // Main ended the connection because Google refused it: Reconnect.
+      [{ gsc: status({ connected: false, error: 'auth-expired' }) }, 'auth-expired', 'open-gsc-settings'],
+      [{ gsc: status({ connected: false, connecting: true, error: 'auth-expired' }) }, 'connecting', 'open-gsc-settings'],
+      [{ gsc: status({ connected: false, error: 'cancelled' }) }, 'not-connected', 'open-gsc-settings'],
       [{ url: 'about:blank' }, 'not-a-web-page', null],
       [{ url: '' }, 'not-a-web-page', null],
       [{ url: 'app://app/' }, 'not-a-web-page', null],
@@ -98,9 +123,14 @@ describe('Search Console panel view model', () => {
       expect(gscReadRequest(input(changes)), JSON.stringify(changes)).toBeNull();
     }
     // Signed out and free both say Search Console is part of frost Pro.
-    expect(gscPanelView(input({ gsc: status({ entitled: false, connected: false }), account: 'signed-out' })).notice?.title).toBe('Search Console is part of frost Pro');
-    expect(gscPanelView(input({ gsc: status({ entitled: false, connected: false }), account: 'signed-in' })).notice?.title).toBe('Search Console is part of frost Pro');
-    expect(gscPanelView(input({ gsc: status({ entitled: false, connected: false }), account: 'signed-out' })).notice?.actionLabel).toBe('Sign in');
+    const notEntitled = status({ entitled: false, connected: false });
+    for (const who of [account('signed-out'), account('signed-in'), account('signed-in', 'expired'), account('signed-in', 'invalid')]) {
+      expect(gscPanelView(input({ gsc: notEntitled, account: who })).notice?.title).toBe('Search Console is part of frost Pro');
+    }
+    expect(gscPanelView(input({ gsc: notEntitled, account: account('signed-out') })).notice?.actionLabel).toBe('Sign in');
+    expect(gscPanelView(input({ gsc: notEntitled, account: account('signed-in', 'expired') })).notice?.message).toMatch(/expired/);
+    expect(gscPanelView(input({ gsc: notEntitled, account: account('signed-in', 'invalid') })).notice?.message).toMatch(/could not be confirmed/);
+    expect(gscPanelView(input({ gsc: status({ connected: false, error: 'auth-expired' }) })).notice?.actionLabel).toBe('Reconnect in Settings');
     // Configured, entitled, connected, a web page: a read (fragment dropped), loading until answered.
     expect(gscReadRequest(input({ url: `${URL_A}#top` }))).toEqual({ url: URL_A, scope: 'page', days: 28, connection: 3 });
     expect(gscReadRequest(input({ prefs: { ...GSC_PANEL_DEFAULTS, scope: 'property', days: 90 } }))).toEqual({ url: URL_A, scope: 'property', days: 90, connection: 3 });
@@ -111,7 +141,7 @@ describe('Search Console panel view model', () => {
   });
 
   test('answer-states', () => {
-    const view = (answers: GscAnswers, account: AccountStatus = 'signed-in') => gscPanelView(input({ answers, account }));
+    const view = (answers: GscAnswers, who: AccountStatus = 'signed-in') => gscPanelView(input({ answers, account: account(who) }));
     for (const reason of GSC_UNAVAILABLE_REASONS) {
       const result = view({ performance: unavailable(reason), queries: unavailable(reason) });
       expect(GSC_PANEL_STATES).toContain(result.state);
@@ -193,14 +223,42 @@ describe('Search Console panel view model', () => {
 
   test('stale-answer-ignored', () => {
     const answers: GscAnswers = { performance: performance(60, 600), queries: queries() };
-    const held = { key: 'a', attempt: 0, answers };
-    expect(shownAnswers(held, 'a', 0)).toBe(answers);
-    // The URL changed (a new key): the old answer is not shown.
-    expect(shownAnswers(held, 'b', 0)).toBeNull();
-    // A retry asks again: until it answers, the earlier answer is not shown.
-    expect(shownAnswers(held, 'a', 1)).toBeNull();
-    expect(shownAnswers(null, 'a', 0)).toBeNull();
-    expect(shownAnswers(held, null, 0)).toBeNull();
+    const request: GscRequest = { url: URL_A, scope: 'page', days: 28, connection: 3 };
+    const held = { request, attempt: 0, answers };
+    const none = { answers: null, pending: false };
+    expect(shownAnswers(held, request, 0)).toEqual({ answers, pending: false });
+    expect(shownAnswers(held, { ...request, url: `${URL_A}#top` }, 0)).toEqual({ answers, pending: false });
+    // The URL or the connection changed: the old answer is not shown.
+    expect(shownAnswers(held, { ...request, url: 'https://www.example.com/other' }, 0)).toEqual(none);
+    expect(shownAnswers(held, { ...request, connection: 4 }, 0)).toEqual(none);
+    // Another scope or range of the same page: the last data stays, as pending.
+    expect(shownAnswers(held, { ...request, scope: 'property' }, 0)).toEqual({ answers, pending: true });
+    expect(shownAnswers(held, { ...request, days: 7 }, 0)).toEqual({ answers, pending: true });
+    // … but never an earlier failure.
+    const failed = { request, attempt: 0, answers: { performance: unavailable('quota'), queries: unavailable('quota') } };
+    expect(shownAnswers(failed, { ...request, days: 7 }, 0)).toEqual(none);
+    expect(shownAnswers(failed, request, 1)).toEqual(none);
+    expect(shownAnswers(null, request, 0)).toEqual(none);
+    expect(shownAnswers(held, null, 0)).toEqual(none);
+  });
+
+  test('pending-keeps-data', () => {
+    // Rows that end before the range does (Google's data lags more than two days).
+    const range = gscDateRange(28, NOW);
+    const early: GscPerformanceAnswer = { ...(performance(60, 600) as Extract<GscPerformanceAnswer, { status: 'ok' }>), rows: [{ date: '2026-10-20', clicks: 60, impressions: 600, ctr: 0.1, position: 3.25 }] };
+    const prefs = { ...GSC_PANEL_DEFAULTS, days: 7 as const, metric: 'impressions' as const };
+    const view = gscPanelView(input({ prefs, answers: { performance: early, queries: queries() }, pending: true }));
+    expect(view).toMatchObject({ state: 'data', pending: true, controls: true, range });
+    expect(view.tiles!.find((t) => t.selected)!.metric).toBe('impressions');
+    expect(view.through).toBe('Through Oct 20, 2026');
+    expect(view.freshness).toBe(freshnessNote(range, '2026-10-20'));
+    // Rows to the range's end: no "through".
+    const full = gscPanelView(input({ answers: { performance: performance(60, 600), queries: queries() } }));
+    expect(full.pending).toBe(false);
+    const fullRange = gscDateRange(28, NOW);
+    const toEnd: GscPerformanceAnswer = { ...(performance(60, 600) as Extract<GscPerformanceAnswer, { status: 'ok' }>), rows: [{ date: fullRange.end, clicks: 60, impressions: 600, ctr: 0.1, position: 3.25 }] };
+    expect(gscPanelView(input({ answers: { performance: toEnd, queries: queries() } })).through).toBeNull();
+    expect(full.through).toBe('Through Sep 29, 2026');
   });
 
   test('prefs-store', () => {

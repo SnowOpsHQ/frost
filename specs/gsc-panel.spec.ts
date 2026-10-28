@@ -29,8 +29,15 @@ export const GSC_PANEL_DEFAULTS: Readonly<{ scope: GscQueryScope; days: GscRange
 
 /**
  * The chart, in SVG user units (scaled to the panel's width by styles; drawn with attributes only,
- * never `style=`). The y axis has at most `maxYTicks` "nice" ticks (1, 2 or 5 × 10ⁿ apart), the x
- * axis `xTicks` dates (first, middle, last).
+ * never `style=`). The y axis has at most `maxYTicks` evenly spaced "nice" ticks (1, 2 or 5 × 10ⁿ
+ * apart; positions from 1 up), labelled with as many decimals as their step needs (never two alike);
+ * the x axis `xTicks` dates (first, middle, last).
+ *
+ * Which days have a value: Google omits a day without impressions, so for clicks and impressions a
+ * day **up to the last answered day** without a row is 0. Days **after** the last answered day have
+ * no data yet (Google's final data can lag more than `GSC_DATA_LAG_DAYS`): no value, the line ends
+ * there, and the panel says "data through <last day>". CTR and position have no value on any day
+ * without a row (their line breaks).
  */
 export const GSC_CHART = Object.freeze({
   width: 320,
@@ -44,16 +51,32 @@ export const GSC_CHART = Object.freeze({
 });
 
 /**
+ * The chart's summary names a best day for CTR and position only among days with at least this many
+ * impressions (a day with 1 impression and 1 click is not a "100% CTR day"); without one it names none.
+ */
+export const GSC_RATE_HIGHLIGHT_MIN_IMPRESSIONS = 10;
+
+/**
+ * The read waits this long after the URL, scope or range last changed before it is sent (a page that
+ * changes its URL with `pushState` while it loads reads once). Retry is sent at once.
+ */
+export const GSC_READ_DEBOUNCE_MS = 300;
+
+/**
  * Why there is nothing to chart, as the panel says it:
- * - `loading`: main has not answered the connection yet, or a read is running;
- * - `unconfigured`: this build has no Search Console client;
+ * - `loading`: main has not answered the connection or the account yet, the plan is still being
+ *   checked, or a read is running (a scope or range change keeps the last data shown, dimmed);
+ * - `unconfigured`: this build has no Search Console client, or no account configuration;
  * - `signed-out`: nobody is signed in (Search Console is a Pro feature): Sign in opens Account;
  * - `needs-pro`: signed in on a plan without `search-console`: opens Account;
+ * - `plan-expired` / `plan-unconfirmed`: signed in, but the plan's snapshot has expired, or failed
+ *   verification (main fails closed to free): opens Account;
  * - `not-connected` / `connecting`: no Google account connected yet: Connect opens Settings' Search Console;
  * - `not-a-web-page`: the tab shows no `http(s)` page;
  * - `no-property`: none of the user's verified properties covers the page's host;
  * - `no-data`: the property answered no impressions in the range;
- * - `auth-expired`: Google refused the connection: Reconnect opens Settings' Search Console;
+ * - `auth-expired`: Google refused the connection (a read answered so, or main ended the connection with
+ *   the `auth-expired` error): Reconnect opens Settings' Search Console;
  * - `quota`, `network`, `invalid`: Google's quota, an unreachable Google, or an unreadable answer: Retry;
  * - `data`: totals, chart and top queries.
  */
@@ -62,6 +85,8 @@ export const GSC_PANEL_STATES = [
   'unconfigured',
   'signed-out',
   'needs-pro',
+  'plan-expired',
+  'plan-unconfirmed',
   'not-connected',
   'connecting',
   'not-a-web-page',
@@ -103,6 +128,18 @@ export const GSC_PANEL_COPY: Readonly<Record<Exclude<GscPanelState, 'loading' | 
     action: 'open-account',
     actionLabel: 'Account settings',
   },
+  'plan-expired': {
+    title: 'Search Console is part of frost Pro',
+    message: 'Your Pro plan has expired, so Search Console is off. Check your plan in Account settings.',
+    action: 'open-account',
+    actionLabel: 'Account settings',
+  },
+  'plan-unconfirmed': {
+    title: 'Search Console is part of frost Pro',
+    message: 'Your Pro plan could not be confirmed, so Search Console is off for now. Check your account in Settings.',
+    action: 'open-account',
+    actionLabel: 'Account settings',
+  },
   'not-connected': {
     title: 'Connect Search Console',
     message: 'Connect a Google account in Settings to see how this page performs in search. frost only asks for read-only access.',
@@ -124,10 +161,14 @@ export const GSC_PANEL_COPY: Readonly<Record<Exclude<GscPanelState, 'loading' | 
   invalid: { title: 'Unreadable answer', message: "Search Console answered something frost couldn't read.", action: 'retry', actionLabel: 'Try again' },
 });
 
-/** The panel's other fixed words (`{start}`, `{end}` filled in by the chrome). */
+/** The panel's other fixed words (`{start}`, `{end}`, `{last}` filled in by the chrome). */
 export const GSC_PANEL_TEXT = Object.freeze({
   loading: 'Reading Search Console…',
   freshness: 'Search Console data lags about two days; range {start} – {end}.',
+  /** When the last answered day is before the range's end. */
+  freshnessThrough: 'Search Console data lags about two days; range {start} – {end}, data through {last}.',
+  /** Above the totals, when the last answered day is before the range's end. */
+  through: 'Through {last}',
   queriesUnavailable: "Top queries couldn't be read.",
   noQueries: 'No queries in this range.',
   lowerIsBetter: 'lower is better',

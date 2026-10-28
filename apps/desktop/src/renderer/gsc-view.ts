@@ -1,5 +1,6 @@
 // Type-only from the Zod specs (their schemas must stay out of this bundle: strict Trusted Types).
 import type { AccountStatus } from '@app/specs/account-state.schema';
+import type { EntitlementStatus } from '@app/specs/entitlements-snapshot.spec';
 import type { GscPerformanceAnswer, GscPerformanceRow, GscProperty, GscQueriesAnswer, GscQueryRow } from '@app/specs/gsc.schema';
 import {
   GSC_LOWER_IS_BETTER,
@@ -50,7 +51,8 @@ export function formatMetric(metric: GscPanelMetric, value: number | null): stri
   if (value === null) return '—';
   switch (metric) {
     case 'ctr':
-      return `${(value * 100).toFixed(1)}%`;
+      // Below 1%, two decimals (0.34%), so a small CTR still reads as more than nothing.
+      return value === 0 ? '0%' : `${(value * 100).toFixed(value < 0.01 ? 2 : 1)}%`;
     case 'position':
       return value.toFixed(1);
     default:
@@ -75,9 +77,23 @@ export function shortDay(iso: string): string {
   return `${MONTHS[m - 1]} ${d}`;
 }
 
-/** "Search Console data lags about two days; range <start> – <end>." */
-export function freshnessNote(range: GscDateRange): string {
-  return GSC_PANEL_TEXT.freshness.replace('{start}', formatDay(range.start)).replace('{end}', formatDay(range.end));
+/**
+ * "Search Console data lags about two days; range <start> – <end>.", with ", data through <last>"
+ * when the last answered day `last` is before the range's end.
+ */
+export function freshnessNote(range: GscDateRange, last: string | null = null): string {
+  const early = last !== null && last < range.end;
+  return (early ? GSC_PANEL_TEXT.freshnessThrough : GSC_PANEL_TEXT.freshness)
+    .replace('{start}', formatDay(range.start))
+    .replace('{end}', formatDay(range.end))
+    .replace('{last}', early ? formatDay(last) : '');
+}
+
+/** The last answered day of `rows` within `range` (`null`: none). */
+export function lastAnsweredDay(rows: readonly GscPerformanceRow[], range: GscDateRange): string | null {
+  let last: string | null = null;
+  for (const row of rows) if (row.date >= range.start && row.date <= range.end && (last === null || row.date > last)) last = row.date;
+  return last;
 }
 
 // ---- The panel's choices ------------------------------------------------------------------------
@@ -142,23 +158,46 @@ export function requestKey(request: GscRequest): string {
   return JSON.stringify([withoutFragment(request.url), request.scope, request.days, request.connection]);
 }
 
-/** The answers held for `held.key` / `held.attempt`, if they answer the current read; anything older is dropped. */
-export function shownAnswers(held: { readonly key: string; readonly attempt: number; readonly answers: GscAnswers } | null, key: string | null, attempt: number): GscAnswers | null {
-  return held !== null && key !== null && held.key === key && held.attempt === attempt ? held.answers : null;
+/** Answers kept for the read (and attempt) they answered. */
+export interface GscHeld {
+  readonly request: GscRequest;
+  readonly attempt: number;
+  readonly answers: GscAnswers;
+}
+
+/**
+ * What to show for the current `request` (and `attempt`) from `held`: its answers if they answer it;
+ * else, while it reads, the last `ok` data of the same page and connection (another scope or range,
+ * or a retry), marked `pending`; anything else (another page, another connection, a failure) is not
+ * shown.
+ */
+export function shownAnswers(held: GscHeld | null, request: GscRequest | null, attempt: number): { readonly answers: GscAnswers | null; readonly pending: boolean } {
+  if (held === null || request === null) return { answers: null, pending: false };
+  if (requestKey(held.request) === requestKey(request) && held.attempt === attempt) return { answers: held.answers, pending: false };
+  const samePage = withoutFragment(held.request.url) === withoutFragment(request.url) && held.request.connection === request.connection;
+  return samePage && held.answers.performance.status === 'ok' ? { answers: held.answers, pending: true } : { answers: null, pending: false };
 }
 
 // ---- States -------------------------------------------------------------------------------------
 
+/** What the panel needs of `account.watch`: who is signed in, and how their plan's snapshot stands. */
+export interface GscAccount {
+  readonly status: AccountStatus;
+  readonly entitlement: EntitlementStatus;
+}
+
 export interface GscViewInput {
   /** `gsc.watch` (`null` until main answers). */
   readonly gsc: GscStatus | null;
-  /** `account.watch`'s status (`null` until main answers). */
-  readonly account: AccountStatus | null;
+  /** `account.watch` (`null` until main answers). */
+  readonly account: GscAccount | null;
   /** The active tab's URL (`''`: none). */
   readonly url: string;
   readonly prefs: GscPrefs;
-  /** The answers to the current read (`null`: none yet, or not reading). */
+  /** The answers to the current read (`null`: none yet, or not reading), or the last data while it reads (`pending`). */
   readonly answers: GscAnswers | null;
+  /** `answers` are an earlier scope's or range's, shown while the current read runs. */
+  readonly pending: boolean;
   readonly now: number;
 }
 
@@ -186,6 +225,10 @@ export interface GscPanelView {
   readonly range: GscDateRange;
   /** The freshness note (reading states only). */
   readonly freshness: string | null;
+  /** The data shown is an earlier scope's or range's while the current read runs (shown dimmed). */
+  readonly pending: boolean;
+  /** "Through <last>" above the totals when the answered days end before the range does (`data` only). */
+  readonly through: string | null;
   /** The totals (`data` only). */
   readonly tiles: readonly GscTile[] | null;
   /** The answered days, for the chart (`data` only). */
@@ -194,15 +237,35 @@ export interface GscPanelView {
   readonly queries: GscQueriesView | null;
 }
 
-type GateState = Exclude<GscPanelState, 'no-property' | 'no-data' | 'auth-expired' | 'quota' | 'network' | 'invalid' | 'data'>;
+type GateState = Exclude<GscPanelState, 'no-property' | 'no-data' | 'quota' | 'network' | 'invalid' | 'data'>;
+
+/** Why Search Console is off for `account` (main says it is not entitled). */
+function notEntitled(account: GscAccount): GateState {
+  if (account.status === 'unconfigured') return 'unconfigured';
+  if (account.status !== 'signed-in') return 'signed-out';
+  switch (account.entitlement) {
+    case 'none':
+      return 'loading'; // The plan is still being checked.
+    case 'expired':
+      return 'plan-expired';
+    case 'invalid':
+      return 'plan-unconfirmed';
+    default:
+      return 'needs-pro';
+  }
+}
 
 /** The state before anything is read, or `null` when a read can be sent. */
 function gate(input: GscViewInput): GateState | null {
-  const { gsc } = input;
-  if (gsc === null) return 'loading';
+  const { gsc, account } = input;
+  if (gsc === null || account === null) return 'loading';
   if (!gsc.configured) return 'unconfigured';
-  if (!gsc.entitled) return input.account === 'signed-in' ? 'needs-pro' : 'signed-out';
-  if (!gsc.connected) return gsc.connecting ? 'connecting' : 'not-connected';
+  if (!gsc.entitled) return notEntitled(account);
+  if (!gsc.connected) {
+    if (gsc.connecting) return 'connecting';
+    // Main ended the connection because Google refused it: say so, and offer Reconnect.
+    return gsc.error === 'auth-expired' ? 'auth-expired' : 'not-connected';
+  }
   if (!isWebUrl(input.url)) return 'not-a-web-page';
   return null;
 }
@@ -228,11 +291,13 @@ export function gscPanelView(input: GscViewInput): GscPanelView {
   if (blocked !== null) state = blocked;
   else if (performance === null) state = 'loading';
   else if (performance.status === 'unavailable') {
-    state = performance.reason === 'not-entitled' ? (input.account === 'signed-in' ? 'needs-pro' : 'signed-out') : GSC_REASON_STATES[performance.reason];
+    state = performance.reason === 'not-entitled' ? notEntitled(input.account!) : GSC_REASON_STATES[performance.reason];
   } else state = performance.totals.impressions === 0 ? 'no-data' : 'data';
 
   const ok = performance?.status === 'ok' ? performance : null;
   const range = ok?.range ?? gscDateRange(input.prefs.days, input.now);
+  const last = ok ? lastAnsweredDay(ok.rows, range) : null;
+  const data = state === 'data' && ok !== null;
   const controls = GSC_READING_STATES.includes(state);
   let tiles: GscTile[] | null = null;
   let queries: GscQueriesView | null = null;
@@ -253,9 +318,11 @@ export function gscPanelView(input: GscViewInput): GscPanelView {
     controls,
     property: ok?.property ?? null,
     range,
-    freshness: controls ? freshnessNote(range) : null,
+    freshness: controls ? freshnessNote(range, last) : null,
+    pending: data && input.pending,
+    through: data && last !== null && last < range.end ? GSC_PANEL_TEXT.through.replace('{last}', formatDay(last)) : null,
     tiles,
-    rows: state === 'data' && ok ? ok.rows : null,
+    rows: data ? ok.rows : null,
     queries,
   };
 }

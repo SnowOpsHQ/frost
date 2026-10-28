@@ -62,8 +62,11 @@ export function accountHelpers(getApp: () => ElectronApplication, getPage: () =>
   const signInInSettings = async (): Promise<void> => {
     await expect(page().getByTestId('account-section')).toHaveAttribute('data-status', 'signed-out');
     await throughBrowser(() => page().getByTestId('account-sign-in').click());
-    await expect(page().getByTestId('account-confirm')).toBeVisible();
-    await page().getByTestId('account-confirm').click();
+    const confirm = page().getByTestId('account-confirm');
+    await expect(confirm).toBeVisible();
+    // The confirmation is inert for a moment after it appears (`SETTINGS_CONFIRM_ARM_MS`): wait until it is armed.
+    await expect(confirm).not.toHaveAttribute('aria-disabled', 'true', { timeout: 5_000 });
+    await confirm.click();
     await expect.poll(async () => (await accountState()).status).toBe('signed-in');
   };
 

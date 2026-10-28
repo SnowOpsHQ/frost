@@ -102,9 +102,14 @@ function Loading() {
   );
 }
 
-function Tiles({ tiles }: { readonly tiles: readonly GscTile[] }) {
+function Tiles({ tiles, through }: { readonly tiles: readonly GscTile[]; readonly through: string | null }) {
   return (
-    <div className="gsc-tiles" role="group" aria-label="Totals (choose the chart's metric)" data-testid="gsc-tiles">
+    <div className="gsc-tiles" role="group" aria-label={through ? `Totals, ${through.toLowerCase()} (choose the chart's metric)` : "Totals (choose the chart's metric)"} data-testid="gsc-tiles">
+      {through ? (
+        <p className="gsc-through" data-testid="gsc-through">
+          {through}
+        </p>
+      ) : null}
       {tiles.map((tile) => (
         <button key={tile.metric} type="button" className="gsc-tile" data-testid="gsc-tile" data-metric={tile.metric} aria-pressed={tile.selected} onClick={() => gscPrefs.set({ metric: tile.metric })}>
           <span className="gsc-tile-label">{tile.label}</span>
@@ -125,7 +130,6 @@ function Chart({ rows, metric, range }: { readonly rows: readonly GscPerformance
   return (
     <figure className="gsc-chart" data-testid="gsc-chart" data-metric={metric} data-inverted={model.inverted}>
       <svg className="gsc-chart-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={model.summary} data-testid="gsc-chart-svg">
-        <title>{model.summary}</title>
         {model.yTicks.map((tick) => (
           <g key={tick.value} className="gsc-y-tick" data-testid="gsc-y-tick" data-value={tick.value}>
             <line className="gsc-grid" x1={padLeft} x2={width - padRight} y1={tick.pos} y2={tick.pos} />
@@ -149,7 +153,7 @@ function Chart({ rows, metric, range }: { readonly rows: readonly GscPerformance
       {/* A table never shrinks to the 1px box itself: its wrapper is the hidden one. */}
       <div className="visually-hidden">
         <table data-testid="gsc-chart-table">
-          <caption>{model.summary}</caption>
+          <caption>{GSC_METRIC_LABELS[metric]} per day</caption>
           <thead>
             <tr>
               <th scope="col">Date</th>
@@ -225,23 +229,26 @@ export function GscPanel({ tab }: { readonly tab: TabState | undefined }) {
   const gsc = useGscStatus();
   const account = useAccountState();
   const prefs = useSyncExternalStore(gscPrefs.subscribe, gscPrefs.get);
-  const base = { gsc, account: account?.status ?? null, url: tab?.url ?? '', prefs, answers: null, now: Date.now() };
-  const { answers, retry } = useGscData(gscReadRequest(base));
-  const view = gscPanelView({ ...base, answers });
+  const who = account === null ? null : { status: account.status, entitlement: account.entitlements.status };
+  const base = { gsc, account: who, url: tab?.url ?? '', prefs, answers: null, pending: false, now: Date.now() };
+  const { answers, pending, retry } = useGscData(gscReadRequest(base));
+  const view = gscPanelView({ ...base, answers, pending });
   const act = (action: GscPanelAction) => {
     if (action === 'retry') retry();
     else requestSettings(action === 'open-account' ? 'account' : 'search-console');
   };
   return (
-    <div className="gsc" data-testid="gsc-panel" data-state={view.state}>
+    <div className="gsc" data-testid="gsc-panel" data-state={view.state} data-pending={view.pending} aria-busy={view.pending || view.state === 'loading'}>
       {view.controls ? <Controls prefs={prefs} view={view} /> : null}
       {view.state === 'loading' ? <Loading /> : null}
       {view.notice ? <Notice view={view} onAction={act} /> : null}
       {view.state === 'data' && view.tiles && view.rows ? (
         <>
-          <Tiles tiles={view.tiles} />
-          <Chart rows={view.rows} metric={prefs.metric} range={view.range} />
-          <Queries view={view} />
+          <div className="gsc-data">
+            <Tiles tiles={view.tiles} through={view.through} />
+            <Chart rows={view.rows} metric={prefs.metric} range={view.range} />
+            <Queries view={view} />
+          </div>
         </>
       ) : null}
       {view.freshness ? (

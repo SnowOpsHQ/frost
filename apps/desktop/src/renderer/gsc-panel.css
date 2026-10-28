@@ -276,3 +276,31 @@
   height: 150px;
   border-radius: 12px;
 }
+
+.gsc-data {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: opacity 160ms ease;
+}
+
+/* Another scope or range is being read: the last data stays, dimmed. */
+.gsc[data-pending='true'] .gsc-data {
+  opacity: 0.55;
+}
+
+.gsc-through {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gsc,
+  .gsc-data {
+    animation: none;
+    transition: none;
+  }
+}

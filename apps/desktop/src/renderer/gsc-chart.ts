@@ -1,13 +1,15 @@
 import type { GscPerformanceRow } from '@app/specs/gsc.schema';
-import { GSC_CHART, GSC_LOWER_IS_BETTER, GSC_METRIC_LABELS, GSC_PANEL_TEXT, type GscPanelMetric } from '@app/specs/gsc-panel.spec';
+import { GSC_CHART, GSC_LOWER_IS_BETTER, GSC_METRIC_LABELS, GSC_PANEL_TEXT, GSC_RATE_HIGHLIGHT_MIN_IMPRESSIONS, type GscPanelMetric } from '@app/specs/gsc-panel.spec';
 import type { GscDateRange } from '@app/specs/gsc.spec';
-import { formatCompact, formatCount, formatDay, formatMetric, shortDay } from './gsc-view';
+import { formatCompact, formatCount, formatDay, formatMetric, lastAnsweredDay, shortDay } from './gsc-view';
 
 // The Search Console panel's line chart as numbers (Phase 4 Task 10; acceptance `gsc-panel.feature.md`,
 // Chart). Pure: a performance answer's rows become the points, line segments, dots, ticks and the
-// accessible summary the panel draws as SVG attributes (never `style=`: strict CSP). Clicks and
-// impressions count an unanswered day as 0; CTR and position have no value there, so their line
-// breaks. Position is "lower is better": its axis is inverted, the best position at the top.
+// accessible summary the panel draws as SVG attributes (never `style=`: strict CSP). Google omits a
+// day without impressions, so clicks and impressions count a missing day up to the last answered day
+// as 0; after it there is no data yet (the line ends there). CTR and position have no value on a
+// missing day, so their line breaks. Position is "lower is better": its axis is inverted, the best
+// position at the top.
 
 export interface ChartGeometry {
   readonly width: number;
@@ -41,6 +43,8 @@ export interface ChartModel {
   readonly inverted: boolean;
   /** No answered day: nothing to draw but the axes. */
   readonly empty: boolean;
+  /** The last answered day (`null`: none); the days after it have no value. */
+  readonly lastDate: string | null;
   /** One per day of the range, in order. */
   readonly points: readonly ChartPoint[];
   /** `d` of each run of two or more consecutive values. */
@@ -112,23 +116,38 @@ export function linearScale(d0: number, d1: number, r0: number, r1: number): (va
   return (value) => r0 + ((value - d0) / (d1 - d0)) * (r1 - r0);
 }
 
-/** A value tick's label: compact counts, percentages for CTR, positions with at most one decimal. */
-export function tickLabel(metric: GscPanelMetric, value: number): string {
-  if (metric === 'ctr') return `${Number((value * 100).toFixed(2))}%`;
-  if (metric === 'position') return String(Number(value.toFixed(1)));
+/** How many decimals tell ticks `step` apart (`0.05` → 2, `0.5` → 1, `5` → 0). */
+const decimalsFor = (step: number): number => (step > 0 ? Math.max(0, Math.ceil(-Math.log10(step) - 1e-9)) : 0);
+
+/**
+ * A value tick's label, with as many decimals as ticks `step` apart need (so no two read alike):
+ * compact counts, percentages for CTR (two decimals below 1%, as the tiles), positions.
+ */
+export function tickLabel(metric: GscPanelMetric, value: number, step: number): string {
+  if (metric === 'ctr') {
+    const pct = value * 100;
+    const decimals = decimalsFor(step * 100);
+    if (pct === 0) return '0%';
+    return pct < 1 ? `${pct.toFixed(Math.max(2, decimals))}%` : `${Number(pct.toFixed(decimals))}%`;
+  }
+  if (metric === 'position') return String(Number(value.toFixed(decimalsFor(step))));
   return formatCompact(value);
 }
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 
-/** Each day's value of `metric` (counts: 0 when unanswered; CTR and position: `null`). */
-function series(rows: readonly GscPerformanceRow[], metric: GscPanelMetric, days: readonly string[]): (number | null)[] {
+/**
+ * Each day's value of `metric`: a row's value; for clicks and impressions a missing day up to `last`
+ * (Google omits days without impressions) is 0; every other missing day is `null` (no data yet after
+ * `last`; CTR and position have no value without impressions).
+ */
+function series(rows: readonly GscPerformanceRow[], metric: GscPanelMetric, days: readonly string[], last: string | null): (number | null)[] {
   const byDate = new Map(rows.map((row) => [row.date, row]));
   const counts = metric === 'clicks' || metric === 'impressions';
   return days.map((date) => {
     const row = byDate.get(date);
-    if (!row) return counts ? 0 : null;
-    return row[metric];
+    if (row) return row[metric];
+    return counts && last !== null && date <= last ? 0 : null;
   });
 }
 
@@ -143,13 +162,17 @@ function overall(rows: readonly GscPerformanceRow[], metric: GscPanelMetric): nu
   return rows.reduce((sum, row) => sum + row.position * row.impressions, 0) / impressions;
 }
 
-function summaryOf(metric: GscPanelMetric, range: GscDateRange, rows: readonly GscPerformanceRow[]): string {
-  const head = `${GSC_METRIC_LABELS[metric]} per day, ${formatDay(range.start)} to ${formatDay(range.end)}`;
+function summaryOf(metric: GscPanelMetric, range: GscDateRange, rows: readonly GscPerformanceRow[], last: string | null): string {
+  const through = last !== null && last < range.end ? `, data through ${formatDay(last)}` : '';
+  const head = `${GSC_METRIC_LABELS[metric]} per day, ${formatDay(range.start)} to ${formatDay(range.end)}${through}`;
   const answered = rows.filter((row) => row.date >= range.start && row.date <= range.end);
   if (answered.length === 0) return `${head}: no data.`;
   const lower = GSC_LOWER_IS_BETTER.includes(metric);
-  let best = answered[0]!;
-  for (const row of answered) if (lower ? row[metric] < best[metric] : row[metric] > best[metric]) best = row;
+  const rate = metric === 'ctr' || metric === 'position';
+  // A rate's best day needs enough impressions to mean something.
+  const candidates = rate ? answered.filter((row) => row.impressions >= GSC_RATE_HIGHLIGHT_MIN_IMPRESSIONS) : answered;
+  let best = candidates[0] ?? null;
+  for (const row of candidates) if (lower ? row[metric] < best![metric] : row[metric] > best![metric]) best = row;
   const figure = overall(answered, metric);
   const total =
     metric === 'clicks' || metric === 'impressions'
@@ -157,6 +180,7 @@ function summaryOf(metric: GscPanelMetric, range: GscDateRange, rows: readonly G
       : metric === 'ctr'
         ? `${formatMetric('ctr', figure)} overall`
         : `${formatMetric('position', figure)} on average (${GSC_PANEL_TEXT.lowerIsBetter})`;
+  if (best === null) return `${head}: ${total}.`;
   const bestWord = metric === 'position' ? 'best' : metric === 'ctr' ? 'highest' : 'most';
   return `${head}: ${total}; ${bestWord} on ${shortDay(best.date)} (${formatMetric(metric, best[metric])}).`;
 }
@@ -164,8 +188,9 @@ function summaryOf(metric: GscPanelMetric, range: GscDateRange, rows: readonly G
 /** The chart of `metric` over `range` from `rows`. */
 export function chartModel(rows: readonly GscPerformanceRow[], metric: GscPanelMetric, range: GscDateRange, geometry: ChartGeometry = GSC_CHART): ChartModel {
   const days = rangeDays(range);
-  const values = series(rows, metric, days);
-  const empty = !rows.some((row) => row.date >= range.start && row.date <= range.end);
+  const lastDate = lastAnsweredDay(rows, range);
+  const values = series(rows, metric, days, lastDate);
+  const empty = lastDate === null;
   const inverted = GSC_LOWER_IS_BETTER.includes(metric);
   const top = geometry.padTop;
   const bottom = geometry.height - geometry.padBottom;
@@ -177,10 +202,9 @@ export function chartModel(rows: readonly GscPerformanceRow[], metric: GscPanelM
   if (metric === 'position') {
     const lo = present.length > 0 ? Math.max(1, Math.min(...present)) : 1;
     const hi = present.length > 0 ? Math.max(...present) : 10;
-    ticks = niceTicks(lo, hi, geometry.maxYTicks);
-    // Position 1 is the best there is: no tick above it.
-    ticks = [...new Set(ticks.map((t) => Math.max(1, t)))];
-    if (ticks.length < 2) ticks = [1, ticks[0]! + 1];
+    // Position 1 is the best there is: nice ticks of `position − 1` (from 0), shifted back, are evenly
+    // spaced and never above 1.
+    ticks = niceTicks(lo - 1, hi - 1, geometry.maxYTicks).map((t) => t + 1);
   } else {
     ticks = niceTicks(0, present.length > 0 ? Math.max(0, ...present) : 0, geometry.maxYTicks, metric === 'ctr' ? 0 : 1);
   }
@@ -209,10 +233,11 @@ export function chartModel(rows: readonly GscPerformanceRow[], metric: GscPanelM
   }
   flush();
 
-  const yTicks = ticks.map((value) => ({ value, label: tickLabel(metric, value), pos: y(value) }));
+  const step = ticks.length > 1 ? ticks[1]! - ticks[0]! : 1;
+  const yTicks = ticks.map((value) => ({ value, label: tickLabel(metric, value, step), pos: y(value) }));
   const tickCount = Math.min(geometry.xTicks, days.length);
   const xIndexes = tickCount <= 1 ? [0] : [...new Set(Array.from({ length: tickCount }, (_, i) => Math.floor((i * (days.length - 1)) / (tickCount - 1))))];
   const xTicks = days.length === 0 ? [] : xIndexes.map((i) => ({ value: i, label: shortDay(days[i]!), pos: x(i) }));
 
-  return { metric, inverted, empty, points, segments, dots, yTicks, xTicks, summary: summaryOf(metric, range, rows) };
+  return { metric, inverted, empty, lastDate, points, segments, dots, yTicks, xTicks, summary: summaryOf(metric, range, rows, lastDate) };
 }

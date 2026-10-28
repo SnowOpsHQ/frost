@@ -5,6 +5,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { GscPerformanceAnswer, GscPerformanceQuery, GscQueriesAnswer } from '@app/specs/gsc.schema';
+import { GSC_READ_DEBOUNCE_MS } from '@app/specs/gsc-panel.spec';
 import type { GscRequest } from '../gsc-view';
 
 /** The reads the test settles, in order. */
@@ -45,6 +46,13 @@ function Probe({ request }: { readonly request: GscRequest | null }) {
   return null;
 }
 const render = (value: GscRequest | null) => act(() => root.render(createElement(Probe, { request: value })));
+/** Renders `value` and lets the debounce pass. */
+const show = async (value: GscRequest | null) => {
+  render(value);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(GSC_READ_DEBOUNCE_MS);
+  });
+};
 const settle = async (index: number, clicks: number) => {
   await act(async () => {
     calls.performance[index]!.resolve(perf(clicks));
@@ -72,6 +80,12 @@ describe('useGscData', () => {
     expect(latest).toMatchObject({ answers: null, loading: false });
 
     render(request(`${A}#top`));
+    // Nothing until the debounce passed.
+    expect(calls.performance).toHaveLength(0);
+    expect(latest.loading).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(GSC_READ_DEBOUNCE_MS);
+    });
     expect(calls.performance.map((c) => c.query)).toEqual([{ url: A, scope: 'page', days: 28 }]);
     expect(calls.topQueries.map((c) => c.query)).toEqual([{ url: A, scope: 'page', days: 28 }]);
     expect(latest.loading).toBe(true);
@@ -80,7 +94,7 @@ describe('useGscData', () => {
     expect(latest.answers?.performance).toEqual(perf(5));
 
     // The same request again (a re-render, another fragment) reads nothing.
-    render(request(`${A}#other`));
+    await show(request(`${A}#other`));
     expect(calls.performance).toHaveLength(1);
     // No polling.
     await act(async () => {
@@ -88,20 +102,25 @@ describe('useGscData', () => {
     });
     expect(calls.performance).toHaveLength(1);
 
-    render(request(A, { scope: 'property' }));
-    render(request(A, { scope: 'property', days: 7 }));
-    render(request(B, { scope: 'property', days: 7 }));
+    await show(request(A, { scope: 'property' }));
+    await show(request(A, { scope: 'property', days: 7 }));
+    await show(request(B, { scope: 'property', days: 7 }));
     expect(calls.performance.map((c) => c.query)).toEqual([
       { url: A, scope: 'page', days: 28 },
       { url: A, scope: 'property', days: 28 },
       { url: A, scope: 'property', days: 7 },
       { url: B, scope: 'property', days: 7 },
     ]);
+    // Quick changes (a page rewriting its URL as it loads) read once, for the last.
+    render(request(`${B}?step=1`));
+    render(request(`${B}?step=2`));
+    await show(request(`${B}?step=3`));
+    expect(calls.performance.slice(4).map((c) => c.query.url)).toEqual([`${B}?step=3`]);
   });
 
   test('use-gsc-data-drops-stale-answers', async () => {
-    render(request(A));
-    render(request(B));
+    await show(request(A));
+    await show(request(B));
     expect(calls.performance).toHaveLength(2);
     // A's answer lands after the tab moved to B: not shown.
     await settle(0, 111);
@@ -115,9 +134,28 @@ describe('useGscData', () => {
     expect(latest.loading).toBe(true);
   });
 
+  test('use-gsc-data-keeps-data-for-scope-change', async () => {
+    await show(request(A));
+    await settle(0, 5);
+    // Another range of the same page: the last data stays, pending, until the new answer.
+    render(request(A, { days: 7 }));
+    expect(latest).toMatchObject({ pending: true, loading: true });
+    expect(latest.answers?.performance).toEqual(perf(5));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(GSC_READ_DEBOUNCE_MS);
+    });
+    await settle(1, 7);
+    expect(latest).toMatchObject({ pending: false, loading: false });
+    expect(latest.answers?.performance).toEqual(perf(7));
+    // Another page: nothing of the last one shows.
+    render(request(B, { days: 7 }));
+    expect(latest).toMatchObject({ answers: null, pending: false, loading: true });
+  });
+
   test('use-gsc-data-retry', async () => {
-    render(request(A));
+    await show(request(A));
     await settle(0, 1);
+    // Retry reads at once (no debounce).
     act(() => latest.retry());
     expect(calls.performance.map((c) => c.query)).toEqual([
       { url: A, scope: 'page', days: 28 },

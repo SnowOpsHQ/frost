@@ -225,6 +225,8 @@ export function SeoSidebar({
     if (tabId !== undefined && highlightToClear(highlight, panel, open)) void actions.setHighlight(tabId, 'off');
   }, [tabId, highlight, panel, open]);
   const current = SEO_PANELS.find((p) => p.id === panel)!;
+  // A panel without rules (Search Console) shows neither the audit's rerun button nor its footer.
+  const audited = current.categories.length > 0;
   const ready = response?.status === 'ready' ? response : null;
   const host = tab ? hostOf(tab.url) : '';
   const select = (id: SeoPanelId) => {
@@ -246,17 +248,19 @@ export function SeoSidebar({
                 {host || 'SEO audit'}
               </span>
             </div>
-            <button
-              type="button"
-              className="tool seo-head-tool"
-              data-testid="seo-rerun"
-              aria-label="Run the audit again"
-              title="Run the audit again"
-              disabled={!tab || !canRerun(response)}
-              onClick={() => tab && void actions.rerunAudit(tab.id)}
-            >
-              <ReloadIcon />
-            </button>
+            {audited ? (
+              <button
+                type="button"
+                className="tool seo-head-tool"
+                data-testid="seo-rerun"
+                aria-label="Run the audit again"
+                title="Run the audit again"
+                disabled={!tab || !canRerun(response)}
+                onClick={() => tab && void actions.rerunAudit(tab.id)}
+              >
+                <ReloadIcon />
+              </button>
+            ) : null}
             <button type="button" className="tool seo-head-tool" data-testid="seo-collapse" aria-label="Collapse the SEO sidebar" title="Collapse (Ctrl/⌘+Shift+S)" onClick={() => {
                 onOpenChange(false);
                 railItems.get(panel)?.focus();
@@ -267,7 +271,7 @@ export function SeoSidebar({
           <div className="seo-body">
             <PanelBody tab={tab} panel={panel} response={response} notesGeneration={notesGeneration} />
           </div>
-          {ready ? (
+          {ready && audited ? (
             <footer className="seo-foot" data-testid="seo-duration" data-ms={Math.round(ready.audit.durationMs)}>
               Audited {new Date(ready.audit.takenAt).toLocaleTimeString()} · read in {Math.max(1, Math.round(ready.audit.durationMs))} ms
             </footer>
