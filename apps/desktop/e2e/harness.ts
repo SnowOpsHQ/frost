@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
+import { UPDATE_FEED_ENV } from '@app/specs/update-client.spec';
 
 /** apps/desktop: Electron loads `package.json#main` (`.vite/build/main.cjs`) from here. */
 export const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,6 +36,8 @@ export async function launchApp(
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
   }
+  // A feed in the developer's environment must not reach the app under test (update-client.spec.ts, UPDATE_FEED_ENV).
+  delete env[UPDATE_FEED_ENV];
   const ownProfile = options.userDataDir === undefined ? await mkdtemp(path.join(tmpdir(), 'frost-e2e-profile-')) : null;
   const userDataDir = options.userDataDir ?? ownProfile!;
   let app: ElectronApplication;
@@ -62,6 +65,8 @@ export function launchUndrivenApp(userDataDir: string): { stop(): void } {
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
   }
+  // A feed in the developer's environment must not reach the app under test (update-client.spec.ts, UPDATE_FEED_ENV).
+  delete env[UPDATE_FEED_ENV];
   const electron = createRequire(import.meta.url)('electron') as unknown as string;
   // Its own process group (like Playwright's launches), so `killProcessTree` takes all of it.
   const child = spawn(electron, [APP_DIR, `--user-data-dir=${userDataDir}`], { env, cwd: APP_DIR, detached: true, stdio: 'ignore' });

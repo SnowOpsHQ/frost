@@ -41,6 +41,7 @@ export type UpdateBarView =
       /** "Show file" (`update.install`) is offered: `install: 'manual'`. */
       readonly canShowFile: boolean;
     }
+  /** `key`: the error and the state version it was seen at (Dismiss hides only that one). */
   | { readonly kind: 'error'; readonly key: string; readonly reason: UpdateErrorReason; readonly text: string };
 
 const HIDDEN: UpdateBarView = { kind: 'hidden' };
@@ -87,7 +88,9 @@ export function updateBarView(state: UpdateState | null): UpdateBarView {
         : // `restart` is unreachable today (CURRENT_INSTALL_MODE): it offers nothing to click rather than a button that can't act.
           { kind: 'ready', key: `ready:${status.version}`, text: updateReadyRestartText(status.version), canShowFile: false };
     case 'error':
-      return { kind: 'error', key: `error:${status.reason}:${status.version ?? ''}`, reason: status.reason, text: UPDATE_ERROR_MESSAGES[status.reason] };
+      // Keyed by the state's version: an error after a new check (or any change) is a new notice, even
+      // when the chrome never saw the states in between.
+      return { kind: 'error', key: `error:${status.reason}:${state.version}`, reason: status.reason, text: UPDATE_ERROR_MESSAGES[status.reason] };
     default:
       return HIDDEN;
   }

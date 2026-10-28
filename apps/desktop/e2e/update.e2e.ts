@@ -3,7 +3,7 @@
 // (E2E_PUBLIC_HOSTS_SWITCH)
 // Acceptance: specs/update-client.feature.md (Chrome, e2e)
 import { createHash, randomUUID, X509Certificate } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
@@ -189,7 +189,9 @@ test('update-available-download-verify-show', async () => {
   await expect.poll(async () => (await shellRecord()).shown.length).toBe(1);
   const { shown, opened } = await shellRecord();
   const expected = path.join(updatesDir(), VERSION, artifactFileName(VERSION, PLATFORM!));
-  expect(shown).toEqual([expected]);
+  // Compared as real paths: macOS's temporary directory is a symbolic link (/var → /private/var).
+  expect(shown).toHaveLength(1);
+  expect(await realpath(shown[0]!)).toBe(await realpath(expected));
   // Revealed, never opened or run.
   expect(opened).toEqual([]);
   expect(createHash('sha256').update(await readFile(expected)).digest('hex')).toBe(sha256Hex(BYTES));
@@ -295,4 +297,7 @@ test('no-feed-no-update-ui', async () => {
   await expect(slot()).toHaveAttribute('data-update-status', 'disabled');
   await expect(bar()).toHaveCount(0);
   expect(feed.requests).toEqual([]);
+  // Without a feed no prefs file (so no install ID) is created.
+  const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+  expect(await readdir(userData)).not.toContain(UPDATE_PREFS_FILE);
 });

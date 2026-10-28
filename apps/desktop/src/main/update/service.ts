@@ -9,6 +9,7 @@ import {
   UPDATE_TEST_CERT_PATTERN,
   UPDATE_TEST_CERT_SWITCH,
   updateUserAgent,
+  type UpdateState,
 } from '@app/specs/update-client.spec';
 import { updatePlatformKey } from '@app/specs/update-manifest.spec';
 import { withE2ePublicHosts } from '../seo/fetcher';
@@ -22,6 +23,11 @@ import { createPrefsStore } from './prefs';
 // the dedicated in-memory session (`UPDATE_PARTITION`, hardened by `hardenUpdateSession`), `net`
 // through it, its resolver, the feed and keys (`feed.ts`) and the prefs file. `index.ts` only starts
 // it, hands `service` to the IPC handler and calls `dispose()` on quit.
+//
+// Fail safe and off the startup path: `startUpdateService` never throws and returns at once. The
+// client (and the prefs file, only when a feed is configured) is built in the background; until then,
+// and for good if building it fails (one log line), the service answers a `disabled` state at
+// version 0, so the chrome shows nothing and startup never waits on, or breaks over, updates.
 //
 // `install()` never installs: on every build today (`install: 'manual'`) it reveals the verified file
 // in the system file manager (`shell.showItemInFolder`); the user opens it. It never calls
@@ -65,13 +71,14 @@ export function createUpdateService(client: UpdateClient, deps: { readonly shell
     install: async () => {
       const { status } = client.state();
       if (status.kind !== 'ready') return false;
-      if (status.install === 'restart') {
-        // TODO(update-restart): `autoUpdater.quitAndInstall()`, once a signed build's `autoUpdater` has
-        // itself downloaded this update (`update-downloaded`). Unreachable today: `CURRENT_INSTALL_MODE`
-        // is `manual` on every build (update-client.spec.ts, Install), so nothing is faked here.
-        const restart: 'restart' = status.install;
-        void restart;
-        return false;
+      switch (status.install) {
+        case 'manual':
+          break;
+        case 'restart':
+          // TODO(update-restart): `autoUpdater.quitAndInstall()`, once a signed build's `autoUpdater` has
+          // itself downloaded this update (`update-downloaded`). Unreachable today: `CURRENT_INSTALL_MODE`
+          // is `manual` on every build (update-client.spec.ts, Install), so nothing is faked here.
+          return false;
       }
       const file = client.readyFile();
       if (file === null || !(await isFile(file))) return false;
@@ -126,34 +133,113 @@ export interface StartUpdateDeps {
   readonly log?: (line: string) => void;
 }
 
-export async function startUpdateService(deps: StartUpdateDeps): Promise<{ readonly service: UpdateService; dispose(): void }> {
-  const { app } = deps;
-  const isPackaged = app.isPackaged;
+/** The state while the client is being built, or for good when that failed: nothing to show. */
+const disabledState = (currentVersion: string): UpdateState => ({ version: 0, currentVersion, checks: 'on', lastCheckedAt: null, status: { kind: 'disabled' } });
+
+/**
+ * `UpdateService` over a client still being built (`pending`): `disabled` at version 0 until it is
+ * ready, then the client's own (whose versions start at 1, so a waiting `watch` answers at once). If
+ * `pending` resolves `null` (it failed) the service stays `disabled`: steps answer that state, `install`
+ * `false`, and `watch` waits for its signal (the router's timeout), never answering in a loop.
+ */
+export function deferredUpdateService(pending: Promise<UpdateClient | null>, deps: { readonly shell: UpdateShell; readonly currentVersion: string }): { readonly service: UpdateService; dispose(): void } {
+  const placeholder = disabledState(deps.currentVersion);
+  let ready: UpdateService | null = null;
+  let client: UpdateClient | null = null;
+  let disposed = false;
+  const settled = pending.then(
+    (built) => {
+      if (built === null) return null;
+      if (disposed) {
+        built.dispose();
+        return null;
+      }
+      client = built;
+      ready = createUpdateService(built, { shell: deps.shell });
+      return ready;
+    },
+    () => null,
+  );
+  /** Waits for the client (or `signal`); `null`: none (failed, disposed, or the caller gave up). */
+  const service = (signal?: AbortSignal): Promise<UpdateService | null> =>
+    ready !== null
+      ? Promise.resolve(ready)
+      : Promise.race([settled, new Promise<null>((resolve) => (signal?.aborted ? resolve(null) : signal?.addEventListener('abort', () => resolve(null), { once: true })))]);
+  const step = async (run: (s: UpdateService) => Promise<UpdateState>): Promise<UpdateState> => {
+    const live = await service();
+    return live === null ? placeholder : run(live);
+  };
+  return {
+    service: {
+      state: () => ready?.state() ?? placeholder,
+      async watch(sinceVersion, signal) {
+        if (ready === null && sinceVersion < placeholder.version) return placeholder;
+        const live = await service(signal);
+        if (live !== null) return live.watch(sinceVersion, signal);
+        // Disabled for good: nothing will change; answer only when the caller stops waiting.
+        if (signal !== undefined && !signal.aborted && !disposed) await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        return placeholder;
+      },
+      check: () => step((live) => live.check()),
+      download: () => step((live) => live.download()),
+      skip: () => step((live) => live.skip()),
+      setChecks: (checks) => step((live) => live.setChecks(checks)),
+      install: async () => {
+        const live = await service();
+        return live === null ? false : live.install();
+      },
+    },
+    dispose: () => {
+      disposed = true;
+      (client as UpdateClient | null)?.dispose();
+    },
+  };
+}
+
+/**
+ * Starts the update client in the background and answers its service at once (see the top of this
+ * file). Never throws: a failure, now or while the client is built, is one log line and a service that
+ * stays `disabled`.
+ */
+export function startUpdateService(deps: StartUpdateDeps): { readonly service: UpdateService; dispose(): void } {
   const log = deps.log ?? ((line: string) => console.warn(`frost: ${line}`));
-  // A packaged build never reads an e2e switch (and refuses to start with one anyway).
-  const switchValue = (name: string): string => (isPackaged ? '' : app.commandLine.getSwitchValue(name));
-  const currentVersion = app.getVersion();
-  const userData = app.getPath('userData');
+  let currentVersion = '0.0.0';
+  const failed = (error: unknown): null => {
+    log(`updates are off for this run: the update client could not start (${error instanceof Error ? error.message : String(error)})`);
+    return null;
+  };
+  let pending: Promise<UpdateClient | null>;
+  try {
+    const { app } = deps;
+    const isPackaged = app.isPackaged;
+    // A packaged build never reads an e2e switch (and refuses to start with one anyway).
+    const switchValue = (name: string): string => (isPackaged ? '' : app.commandLine.getSwitchValue(name));
+    currentVersion = app.getVersion();
+    const userData = app.getPath('userData');
 
-  // Nothing shared with browsing: in memory, no cache, its own cookie jar (never used: no cookies are sent).
-  const updateSession = deps.session.fromPartition(UPDATE_PARTITION, { cache: false }) as UpdateSession;
-  hardenUpdateSession(updateSession, updateUserAgent(currentVersion), { isPackaged });
-  const pin = switchValue(UPDATE_TEST_CERT_SWITCH).toLowerCase();
-  if (UPDATE_TEST_CERT_PATTERN.test(pin)) updateSession.setCertificateVerifyProc(pinnedCertificateVerifier(pin));
-  const e2eHosts = switchValue(E2E_PUBLIC_HOSTS_SWITCH);
-  const resolve = e2eHosts === '' ? netResolve(updateSession) : withE2ePublicHosts(netResolve(updateSession), e2eHosts.split(','));
+    // Nothing shared with browsing: in memory, no cache, its own cookie jar (never used: no cookies are sent).
+    const updateSession = deps.session.fromPartition(UPDATE_PARTITION, { cache: false }) as UpdateSession;
+    hardenUpdateSession(updateSession, updateUserAgent(currentVersion), { isPackaged });
+    const pin = switchValue(UPDATE_TEST_CERT_SWITCH).toLowerCase();
+    if (UPDATE_TEST_CERT_PATTERN.test(pin)) updateSession.setCertificateVerifyProc(pinnedCertificateVerifier(pin));
+    const e2eHosts = switchValue(E2E_PUBLIC_HOSTS_SWITCH);
+    const resolve = e2eHosts === '' ? netResolve(updateSession) : withE2ePublicHosts(netResolve(updateSession), e2eHosts.split(','));
 
-  const client = await createUpdateClient({
-    feed: resolveFeed({ env: deps.env ?? process.env, switchValue: switchValue(UPDATE_FEED_SWITCH), isPackaged }),
-    keys: resolveTrustedKeys({ switchValue: switchValue(UPDATE_PUBLIC_KEY_SWITCH), isPackaged }),
-    currentVersion,
-    platformKey: updatePlatformKey(process.platform, process.arch),
-    userData,
-    prefs: createPrefsStore(userData, { log }),
-    hop: netTransport(deps.net, updateSession as unknown as Electron.Session),
-    resolve,
-    isPackaged,
-    log,
-  });
-  return { service: createUpdateService(client, { shell: deps.shell }), dispose: () => client.dispose() };
+    // The prefs store does no I/O until read, and the client reads it only when there is a feed.
+    pending = createUpdateClient({
+      feed: resolveFeed({ env: deps.env ?? process.env, switchValue: switchValue(UPDATE_FEED_SWITCH), isPackaged }),
+      keys: resolveTrustedKeys({ switchValue: switchValue(UPDATE_PUBLIC_KEY_SWITCH), isPackaged }),
+      currentVersion,
+      platformKey: updatePlatformKey(process.platform, process.arch),
+      userData,
+      prefs: createPrefsStore(userData, { log }),
+      hop: netTransport(deps.net, updateSession as unknown as Electron.Session),
+      resolve,
+      isPackaged,
+      log,
+    }).catch(failed);
+  } catch (error) {
+    pending = Promise.resolve(failed(error));
+  }
+  return deferredUpdateService(pending, { shell: deps.shell, currentVersion });
 }

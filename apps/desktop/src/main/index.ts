@@ -388,7 +388,8 @@ function start(): void {
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
     // Updates (specs/update-client.feature.md): off unless a feed is configured; every step past a check waits for the user.
-    const update = await startUpdateService({ app, net, session, shell, log: logSession });
+    // Never throws and returns at once (the client is built in the background; a failure leaves updates disabled).
+    const update = startUpdateService({ app, net, session, shell, log: logSession });
     app.once('will-quit', () => update.dispose());
     attachIpcHandler({
       router: appRouter,

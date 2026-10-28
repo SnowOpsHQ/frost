@@ -84,11 +84,15 @@ describe('update bar view', () => {
   test('update-bar-error', () => {
     for (const reason of UPDATE_ERROR_REASONS) {
       const view = updateBarView(state({ kind: 'error', reason }));
-      expect(view).toEqual({ kind: 'error', key: `error:${reason}:`, reason, text: UPDATE_ERROR_MESSAGES[reason] });
+      expect(view).toEqual({ kind: 'error', key: `error:${reason}:5`, reason, text: UPDATE_ERROR_MESSAGES[reason] });
       // frost's own short line: one sentence, no placeholder left.
       expect(UPDATE_ERROR_MESSAGES[reason]).toMatch(/^[A-Z][^{}<>]{8,100}\.$/);
     }
-    expect(updateBarView(state({ kind: 'error', reason: 'hash-mismatch', version: '1.3.0' }))).toMatchObject({ key: 'error:hash-mismatch:1.3.0', text: UPDATE_ERROR_MESSAGES['hash-mismatch'] });
+    // The same error after a new check is a new notice (a dismissed one shows again), seen states in between or not.
+    const first = updateBarView(state({ kind: 'error', reason: 'hash-mismatch', version: '1.3.0' }, 'on', 7));
+    const again = updateBarView(state({ kind: 'error', reason: 'hash-mismatch', version: '1.3.0' }, 'on', 9));
+    expect(first).toMatchObject({ key: 'error:hash-mismatch:7', text: UPDATE_ERROR_MESSAGES['hash-mismatch'] });
+    expect(again.kind === 'error' && first.kind === 'error' && again.key !== first.key).toBe(true);
   });
 
   test('format-bytes', () => {

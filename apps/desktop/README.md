@@ -386,7 +386,7 @@ manifest).
   `pnpm sign:update-manifest`; frost trusts only the public key compiled into it.
 - **What happens.** With a feed, frost checks 30 s after start and then every 6 h (automatic checks
   can be turned off in the command palette: Turn Automatic Update Checks Off / On; Check for Updates
-  checks once either way). A verified, newer offer shows a notice under the toolbar: Release notes
+  checks once either way). A verified, newer offer shows a notice under the find bar's row (under the toolbar when no find bar is open): Release notes
   (plain text), Download, Skip this version (not for a required update) and Later. Nothing
   downloads until you click Download; the file is checked against its signed size and SHA-256 and
   deleted if it differs. Requests go through a separate in-memory session with no cookies, no

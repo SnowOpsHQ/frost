@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { UPDATE_BAR_LABELS } from '@app/specs/update-client.spec';
 import { knownUpdate, updateActions, useUpdate } from '../hooks/useUpdate';
 import { AlertIcon, CloseIcon, FrostMark } from '../icons';
@@ -21,12 +21,9 @@ import.meta.hot?.dispose(unregisterPaletteActions);
 export function UpdateBar() {
   const state = useUpdate();
   const view = updateBarView(state);
-  // What Later and Dismiss hid, for this window's session (by `view.key`: an offer by version).
+  // What Later and Dismiss hid, for this window's session (by `view.key`: an offer or a ready file by
+  // its version, an error by the state version it came with, so a later failure shows again).
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
-  // A dismissed error shows again once the status has moved on and failed again.
-  useEffect(() => {
-    if (view.kind !== 'error') setDismissed((keys) => ([...keys].some((key) => key.startsWith('error:')) ? new Set([...keys].filter((key) => !key.startsWith('error:'))) : keys));
-  }, [view.kind]);
   const dismiss = (key: string) => setDismissed((keys) => new Set([...keys, key]));
   return (
     <div className="update-slot" data-testid="update-slot" data-update-status={state?.status.kind ?? 'none'} aria-live="polite">

@@ -631,13 +631,21 @@ sync.
   `updateRouter`). Main: `apps/desktop/src/main/update/service.ts` (`startUpdateService`,
   `createUpdateService`, `pinnedCertificateVerifier`). Chrome: `renderer/update-view.ts`,
   `renderer/update-palette.ts`, `hooks/useUpdate.ts`, `components/UpdateBar.tsx`.
+- **Startup and prefs.** `startUpdateService` is synchronous and never throws: the session is set
+  up at once, the client is built in the background (`deferredUpdateService`: `disabled` at version 0
+  until it is ready; a throw or rejection is one log line and updates stay off for the run), so
+  startup never waits on or breaks over updates (`start-fails-safe`). Without a feed the client never
+  reads or creates `frost-update.json`, so no install ID exists (`no-feed-no-prefs`); `setChecks`
+  without a feed is a no-op. The e2e harness strips `FROST_UPDATE_FEED_URL` from the app's
+  environment (`launchApp`, `launchUndrivenApp`). The packaged refusal of the update switches uses the
+  shared `PACKAGED_DEBUG_REFUSAL` line (generic wording, left as is: the verifiers match it).
 - **Hub lines.** `router.ts` (`update: updateRouter,` and its import), `services.ts`
   (`readonly update?: UpdateService;` and its import), `index.ts` of the IPC package (one type
-  export), `App.tsx` (`<UpdateBar />` and its import), `styles.css` (one more `auto` grid row; the
+  export), `App.tsx` (`<UpdateBar />` and its import), `e2e/harness.ts` (the env strip, twice, and its import), `styles.css` (one more `auto` grid row; the
   bar's styles appended), `PACKAGED_FORBIDDEN_SWITCHES` (+ `frost-update-feed`,
   `frost-update-public-key`, `frost-update-test-cert`), main `index.ts` (`shell` in the Electron
-  import, the service import, `startUpdateService` + `will-quit` dispose before `attachIpcHandler`,
-  `update: update.service`), `palette-all-features.test.ts` (the update sources), and one
+  import, the service import, `startUpdateService` (not awaited) + `will-quit` dispose before
+  `attachIpcHandler`, `update: update.service`), `palette-all-features.test.ts` (the update sources), and one
   Electronegativity baseline entry (`CERTIFICATE_VERIFY_PROC_JS_CHECK`, the test pin).
 - **Router.** Every procedure is `enforceSender` → `requireUpdate` → a strict input: `watch({
   sinceVersion })` (an integer from -1, long-polled with `WATCH_TIMEOUT_MS`), `setChecks({ checks })`,
@@ -655,8 +663,8 @@ sync.
   packaged refusal at startup, which `verify:mac`/`linux`/`win` now probe for the three new names.
 - **Chrome.** The `update-slot` row (under the find bar) is always mounted, so `useUpdate` long-polls
   from start and the palette knows the state; it is 0 high at rest. Later and Dismiss hide the
-  notice by key for this window (an offer per version; a dismissed error reappears only after the
-  status moves on). The notes are a text node in a `pre`. The palette's entries are **hidden** when
+  notice by key for this window (an offer or ready file per version; an error per state version, so
+  the same error after a new check shows again). The notes are a text node in a `pre`. The palette's entries are **hidden** when
   no feed is configured (my call: no update UI at all without a feed, rather than a disabled entry);
   the toggle is two static actions (`update.checks-off` / `update.checks-on`), one offered at a time.
 - **Task 4 re-review items.** `prefs.ts`: only `ENOENT` (first run) or invalid content resets and
@@ -675,7 +683,7 @@ sync.
   (`host`, `user-agent`, `connection`, `accept-encoding`) rather than that exact list, so another
   platform's Chromium adding `Accept-Encoding` still passes; the artifact request meets the same
   allowlist.
-- **Tests.** `update-router.test.ts` (4), `service.test.ts` (5), `update-view.test.ts` (7), new
+- **Tests.** `update-router.test.ts` (4), `service.test.ts` (6), `update-view.test.ts` (7), new
   `prefs`/`download` scenarios (3, each red against the Task 4 code first), and `update.e2e.ts` (5):
   `update-available-download-verify-show`, `no-silent-install` (also toggles the setting through the
   palette and checks the prefs file), `tampered-artifact-shows-error`, `feed-request-headers`,

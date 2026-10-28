@@ -205,7 +205,15 @@ is no separate notes procedure.
 - **Scenario: switches-unpackaged-only** — the feed, public-key, test-certificate and e2e public-host
   switches are read only when unpackaged; packaged, they are ignored (and the app refuses to start
   with any of them: `PACKAGED_FORBIDDEN_SWITCHES` holds `frost-update-feed`,
-  `frost-update-public-key` and `frost-update-test-cert`).
+  `frost-update-public-key` and `frost-update-test-cert`). The refusal is the shared one, so its
+  line reads `PACKAGED_DEBUG_REFUSAL` ("remote debugging is disabled in packaged builds") followed by
+  the offending switch, even for these non-debugging switches.
+- **Scenario: start-fails-safe** — `startUpdateService` returns at once and never throws: the client
+  is built in the background (`disabled` at version 0 until then), and a throw or rejection while
+  building it is one log line and a service that stays `disabled` (steps answer that state, `install`
+  `false`, `watch` waits for its signal). Startup goes on to the IPC handler and the window either way.
+- **Scenario: no-feed-no-prefs** — without a feed the prefs file is never read or created (no
+  install ID exists): `setChecks` is a no-op and `checkNow` makes no request.
 - **Scenario: test-cert-pins-one-certificate** — with `UPDATE_TEST_CERT_SWITCH` (unpackaged) the
   update session's certificate check accepts (`0`) only a certificate whose DER SHA-256 is the
   switch's value, and defers (`-3`, Chromium's own verdict) for every other one; a malformed value,
@@ -226,8 +234,9 @@ no request of its own: everything goes through `update.*`.
   element and a whole percentage, `0` for a zero total).
 - **Scenario: update-bar-ready** — `install: 'manual'`: `updateReadyManualText`, Show file
   (`update.install`) and Dismiss; `restart`: `updateReadyRestartText` and Dismiss only.
-- **Scenario: update-bar-error** — `UPDATE_ERROR_MESSAGES[reason]` and Dismiss; a dismissed error
-  shows again only after the status has moved on and failed again.
+- **Scenario: update-bar-error** — `UPDATE_ERROR_MESSAGES[reason]` and Dismiss; a dismissal is keyed
+  by the state version the error came with, so the same error after a new check shows again, even
+  when the chrome never saw the states in between.
 - **Scenario: update-palette** — with a feed: "Check for Updates" (answers what the check found:
   `updateAvailableText`, `UPDATE_PALETTE_MESSAGES.upToDate`, or the error's message) and "Turn
   Automatic Update Checks Off" while on, "…On" while off. Without a feed (`disabled`), or before the

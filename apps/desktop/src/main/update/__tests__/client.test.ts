@@ -2,7 +2,7 @@
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   MAX_PENDING_UPDATE_WATCHES,
   UPDATE_DOWNLOADS_DIR,
@@ -165,6 +165,13 @@ describe('update client', () => {
     expect(timers.pending()).toEqual([]);
     expect(hop.urls).toEqual([]);
     expect(feed.requests).toEqual([]);
+    // No prefs file, so no install ID, is ever made without a feed.
+    expect(await readdir(userData)).not.toContain(UPDATE_PREFS_FILE);
+    const untouched = { read: vi.fn(), update: vi.fn(), write: vi.fn() } as unknown as UpdatePrefsStore;
+    const { client: quiet } = await makeClient({ feed: null, prefs: untouched });
+    await quiet.setChecks('off');
+    await quiet.checkNow();
+    expect([untouched.read, untouched.update, untouched.write].map((fn) => (fn as ReturnType<typeof vi.fn>).mock.calls.length)).toEqual([0, 0, 0]);
   });
 
   test('checks-off-no-requests', async () => {

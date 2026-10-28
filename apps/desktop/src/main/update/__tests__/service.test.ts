@@ -1,7 +1,7 @@
 // Spec: specs/update-client.spec.ts (UPDATE_TEST_CERT_SWITCH, Install), specs/security-policy.spec.ts (PACKAGED_FORBIDDEN_SWITCHES)
 // Acceptance: specs/update-client.feature.md (Main)
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -10,6 +10,7 @@ import { PACKAGED_FORBIDDEN_SWITCHES } from '@app/specs/security-policy.spec';
 import {
   UPDATE_FEED_SWITCH,
   UPDATE_PARTITION,
+  UPDATE_PREFS_FILE,
   UPDATE_PUBLIC_KEY_SWITCH,
   UPDATE_TEST_CERT_SWITCH,
   updateUserAgent,
@@ -19,7 +20,8 @@ import {
 import { selfSignedCertificate } from '../../../../e2e/tls';
 import { createUpdateClient, type UpdateClient } from '../client';
 import { createPrefsStore } from '../prefs';
-import { certificateSha256, createUpdateService, pinnedCertificateVerifier, startUpdateService, type StartUpdateDeps } from '../service';
+import type { UpdateService } from '@app/ipc-contract';
+import { certificateSha256, createUpdateService, deferredUpdateService, pinnedCertificateVerifier, startUpdateService, type StartUpdateDeps } from '../service';
 import { artifactBytes, manifestFor, nodeTransport, sha256Hex, signEnvelope, startFakeFeed, tableResolver, testSigningKey, type FakeFeed } from './fake-feed';
 
 const POSIX = process.platform !== 'win32';
@@ -177,6 +179,9 @@ function fakeElectron(options: { isPackaged: boolean; switches?: Record<string, 
   return { deps, session, fromPartition, net };
 }
 
+/** The service's state once its client is built (its first state is version 1; the placeholder is 0). */
+const ready = (started: { readonly service: UpdateService }) => started.service.watch(0);
+
 describe('startUpdateService', () => {
   const KEY = testSigningKey('e2e-key');
   const PEM = selfSignedCertificate().cert;
@@ -194,9 +199,11 @@ describe('startUpdateService', () => {
 
     // Packaged: the switches are ignored: no feed (disabled), no pin; the session is still the hardened in-memory one.
     const packaged = fakeElectron({ isPackaged: true, switches: SWITCHES });
-    const quiet = await startUpdateService(packaged.deps);
+    const quiet = startUpdateService(packaged.deps);
     try {
-      expect(quiet.service.state().status.kind).toBe('disabled');
+      expect((await ready(quiet)).status.kind).toBe('disabled');
+      // No feed: no prefs file (and so no install ID) is ever created.
+      expect(await readdir(userData)).not.toContain(UPDATE_PREFS_FILE);
       expect(packaged.fromPartition).toHaveBeenCalledWith(UPDATE_PARTITION, { cache: false });
       expect(packaged.session.setUserAgent).toHaveBeenCalledWith(updateUserAgent('1.2.0'));
       expect(packaged.session.webRequest.onBeforeSendHeaders).toHaveBeenCalledTimes(1);
@@ -210,18 +217,19 @@ describe('startUpdateService', () => {
     }
     // Packaged with `FROST_UPDATE_FEED_URL`: that feed (any build may be pointed at one).
     const configured = fakeElectron({ isPackaged: true });
-    const fed = await startUpdateService({ ...configured.deps, env: { FROST_UPDATE_FEED_URL: 'https://updates.frost.example.com/feed.json' } });
+    const fed = startUpdateService({ ...configured.deps, env: { FROST_UPDATE_FEED_URL: 'https://updates.frost.example.com/feed.json' } });
     try {
-      expect(fed.service.state().status.kind).toBe('idle');
+      expect((await ready(fed)).status.kind).toBe('idle');
+      expect(await readdir(userData)).toContain(UPDATE_PREFS_FILE);
     } finally {
       fed.dispose();
     }
 
     // Unpackaged: the feed switch is the feed; the pin is installed. Nothing is requested at start.
     const dev = fakeElectron({ isPackaged: false, switches: SWITCHES });
-    const started = await startUpdateService(dev.deps);
+    const started = startUpdateService(dev.deps);
     try {
-      expect(started.service.state().status.kind).toBe('idle');
+      expect((await ready(started)).status.kind).toBe('idle');
       expect(dev.session.setCertificateVerifyProc).toHaveBeenCalledTimes(1);
       expect(dev.net.request).not.toHaveBeenCalled();
     } finally {
@@ -246,18 +254,70 @@ describe('startUpdateService', () => {
     // A malformed pin installs nothing extra.
     for (const bad of ['', 'zz', PIN.slice(1), `${PIN}00`, `sha256/${PIN}`]) {
       const dev = fakeElectron({ isPackaged: false, switches: { ...SWITCHES, [UPDATE_TEST_CERT_SWITCH]: bad } });
-      const started = await startUpdateService(dev.deps);
+      const started = startUpdateService(dev.deps);
+      await ready(started);
       started.dispose();
       expect([bad, dev.session.setCertificateVerifyProc.mock.calls.length]).toEqual([bad, 0]);
     }
     // The installed proc is the pin, on the update session only (the fake holds the one session asked for).
     const dev = fakeElectron({ isPackaged: false, switches: SWITCHES });
-    const started = await startUpdateService(dev.deps);
+    const started = startUpdateService(dev.deps);
+    await ready(started);
     started.dispose();
     expect(dev.fromPartition.mock.calls.map(([partition]) => partition)).toEqual([UPDATE_PARTITION]);
     const proc = dev.session.setCertificateVerifyProc.mock.calls[0]![0] as typeof verify;
     let accepted: number | undefined;
     proc({ certificate: { data: PEM } }, (code) => (accepted = code));
     expect(accepted).toBe(0);
+  });
+
+  test('start-fails-safe', async () => {
+    // A throw while setting up: one log line, and a service that stays disabled (startup carries on).
+    const logs: string[] = [];
+    const broken = fakeElectron({ isPackaged: false, switches: SWITCHES });
+    const started = startUpdateService({
+      ...broken.deps,
+      session: {
+        fromPartition: () => {
+          throw new Error('no session');
+        },
+      },
+      log: (line) => logs.push(line),
+    });
+    expect(started.service.state()).toMatchObject({ version: 0, status: { kind: 'disabled' } });
+    expect((await started.service.check()).status.kind).toBe('disabled');
+    expect((await started.service.setChecks('off')).status.kind).toBe('disabled');
+    expect(await started.service.install()).toBe(false);
+    expect(logs).toHaveLength(1);
+    // `watch` answers a first poll at once, then waits for its signal (no busy loop) and answers disabled.
+    expect((await started.service.watch(-1)).status.kind).toBe('disabled');
+    const stop = new AbortController();
+    let answered = false;
+    const waiting = started.service.watch(0, stop.signal).then((state) => {
+      answered = true;
+      return state;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    stop.abort();
+    expect((await waiting).status.kind).toBe('disabled');
+    started.dispose();
+    expect(await readdir(userData)).toEqual([]);
+
+    // The client's build rejecting: the same.
+    const shell = fakeShell();
+    const deferred = deferredUpdateService(Promise.reject(new Error('boom')), { shell, currentVersion: '1.2.0' });
+    expect((await deferred.service.download()).status.kind).toBe('disabled');
+    expect(await deferred.service.install()).toBe(false);
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
+    // Disposed before the client is built: the client is disposed as soon as it arrives.
+    let resolveClient: (client: UpdateClient) => void = () => undefined;
+    const late = deferredUpdateService(new Promise<UpdateClient>((resolve) => (resolveClient = resolve)), { shell, currentVersion: '1.2.0' });
+    late.dispose();
+    const client = fakeClient(READY, null);
+    const dispose = vi.spyOn(client, 'dispose');
+    resolveClient(client);
+    expect(await late.service.install()).toBe(false);
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });

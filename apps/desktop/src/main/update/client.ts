@@ -142,6 +142,9 @@ interface Offer {
 
 class DiskError extends Error {}
 
+/** The `disabled` client's prefs: in memory only, never saved (no install ID is made without a feed). */
+const NO_FEED_PREFS: UpdatePrefs = Object.freeze({ format: 1, installId: '', checks: 'on' });
+
 export async function createUpdateClient(deps: UpdateClientDeps): Promise<UpdateClient> {
   const now = deps.now ?? (() => Date.now());
   const random = deps.random ?? Math.random;
@@ -151,7 +154,9 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
   const log = deps.log ?? (() => undefined);
   const getDeps: UpdateGetDeps = { hop: deps.hop, resolve: deps.resolve, isPackaged: deps.isPackaged, userAgent: updateUserAgent(deps.currentVersion) };
 
-  let prefs: UpdatePrefs = await deps.prefs.read();
+  // Without a feed the prefs file is never read or created (no install ID exists until a feed does):
+  // the client is `disabled` and this placeholder is never written.
+  let prefs: UpdatePrefs = deps.feed === null ? NO_FEED_PREFS : await deps.prefs.read();
   let status: UpdateStatus = deps.feed === null ? { kind: 'disabled' } : prefs.checks === 'off' ? { kind: 'off' } : { kind: 'idle' };
   let version = 1;
   let lastCheckedAt: string | null = null;
@@ -391,15 +396,12 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
     },
 
     async setChecks(checks) {
-      if (disposed) return snapshot();
+      // No feed: nothing to turn on or off, and nothing is saved (the prefs file is never created).
+      if (disposed || deps.feed === null) return snapshot();
       try {
         await savePrefs((latest) => ({ ...latest, checks }));
       } catch {
-        if (deps.feed !== null) set({ kind: 'error', reason: 'disk' });
-        return snapshot();
-      }
-      if (deps.feed === null) {
-        changed();
+        set({ kind: 'error', reason: 'disk' });
         return snapshot();
       }
       if (checks === 'off') {

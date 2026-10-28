@@ -65,6 +65,9 @@ export const UPDATE_FEED_SWITCH = 'frost-update-feed';
  * trusts no key at all (fail closed: nothing verifies).
  */
 export const UPDATE_PUBLIC_KEY_SWITCH = 'frost-update-public-key';
+// A packaged build refuses all three update switches with the shared remote-debugging refusal line
+// (`PACKAGED_DEBUG_REFUSAL`, security-policy.spec.ts) plus the switch's name: generic wording, kept
+// as is because `verify:mac`, `verify:linux` and `verify:win` look for exactly that line.
 
 /** A feed URL is at most this long. */
 export const MAX_FEED_URL_CHARS = 2048;
