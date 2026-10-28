@@ -9,6 +9,7 @@ import {
   DESKTOP_CODE_TTL_SECONDS,
   DESKTOP_PAGE_PATHS,
   DESKTOP_RATE_LIMITS,
+  DESKTOP_RECENT_AUTH_SECONDS,
   DESKTOP_TOKEN_PATH,
   DESKTOP_TOKEN_PATTERN,
   DESKTOP_TOKEN_TTL_DAYS,
@@ -25,7 +26,7 @@ import type { AppEnv, ClientIpSource } from './app';
 import type { Auth } from './auth';
 import { clientIpResolver, stampClientIp } from './client-ip';
 import type { Database } from './db/client';
-import { desktopCodes, desktopTokens, users } from './db/schema';
+import { desktopCodes, desktopTokens, sessions, users } from './db/schema';
 import { authorizePath, authorizeQuery, checkEmailPage, continuePage, errorPage, pageCsp, signInPage, type Page, type SignInSection } from './desktop-pages';
 import { bearerToken, toAccountUser, type BearerVerifier } from './principal';
 import type { RateLimitStorage } from './rate-limit';
@@ -182,6 +183,10 @@ export function registerDesktopAuth(app: Hono<AppEnv>, deps: DesktopAuthDeps): v
     return found?.user.emailVerified ? found : null;
   };
 
+  /** Was this session created (signed in, or signed in again) within `DESKTOP_RECENT_AUTH_SECONDS`? */
+  const isRecent = (session: { readonly createdAt: Date }): boolean =>
+    now().getTime() - session.createdAt.getTime() <= DESKTOP_RECENT_AUTH_SECONDS * 1000;
+
   /**
    * One of better-auth's own endpoints, called through its handler as the browser would (so its
    * rate limits, origin and callback checks apply), with the browser's cookie, `Origin` and client IP.
@@ -223,10 +228,12 @@ export function registerDesktopAuth(app: Hono<AppEnv>, deps: DesktopAuthDeps): v
     const read = readAuthorize(query);
     if (!read.ok) return invalidRequest(read.reason);
     const session = await verifiedSession(c.req.raw.headers);
-    if (session) return pageResponse(200, continuePage(read.params, session.user.email));
+    if (session && isRecent(session.session)) return pageResponse(200, continuePage(read.params, session.user.email));
     // better-auth appends `error` (and its own `error_description`, never shown) when a link fails.
     const notice = query.has('error') ? 'link-failed' : query.get('notice') === 'verified' ? 'verified' : undefined;
-    return pageResponse(200, signInPage({ params: read.params, notice }));
+    // Signed in, but not recently: this request needs a fresh sign-in (another local program could
+    // otherwise get a token with one click on a browser that is merely still signed in).
+    return pageResponse(200, signInPage({ params: read.params, notice, signedInAs: session?.user.email }));
   });
 
   // ---- Continue: issue a code -----------------------------------------------------------------
@@ -238,7 +245,7 @@ export function registerDesktopAuth(app: Hono<AppEnv>, deps: DesktopAuthDeps): v
     const wait = await overLimit(c, 'authorize');
     if (wait !== null) return pageResponse(429, errorPage('Too many requests', TOO_MANY), new Headers({ 'Retry-After': String(wait) }));
     const session = await verifiedSession(c.req.raw.headers);
-    if (!session) return seeOther(authorizePath(params));
+    if (!session || !isRecent(session.session)) return seeOther(authorizePath(params));
 
     const code = randomBytes(32).toString('base64url');
     const t = now();
@@ -251,8 +258,13 @@ export function registerDesktopAuth(app: Hono<AppEnv>, deps: DesktopAuthDeps): v
       createdAt: t,
       expiresAt: new Date(t.getTime() + DESKTOP_CODE_TTL_SECONDS * 1000),
     });
+    // One session, one code: the web session ends here (better-auth revokes it and clears its cookie;
+    // the row is deleted as well in case that call did not), so the next desktop sign-in needs real
+    // credentials again.
+    const signedOut = await callAuth(c, 'signOut', {});
+    await db.delete(sessions).where(eq(sessions.id, session.session.id));
     // `redirect_uri` is exactly the loopback pattern (no query of its own).
-    return seeOther(`${params.redirect_uri}?${new URLSearchParams({ code, state: params.state }).toString()}`);
+    return seeOther(`${params.redirect_uri}?${new URLSearchParams({ code, state: params.state }).toString()}`, signedOut);
   });
 
   // ---- The sign-in forms ----------------------------------------------------------------------
@@ -350,12 +362,16 @@ export function registerDesktopAuth(app: Hono<AppEnv>, deps: DesktopAuthDeps): v
         .set({ consumedAt: t })
         .where(and(eq(desktopCodes.codeHash, codeHash), isNull(desktopCodes.consumedAt)))
         .returning();
-      if (!row) {
-        // Unknown, or presented again: whatever it issued is revoked (RFC 6749 §4.1.2).
-        await db
+      const revokeIssued = () =>
+        db
           .update(desktopTokens)
           .set({ revokedAt: t })
           .where(and(eq(desktopTokens.codeHash, codeHash), isNull(desktopTokens.revokedAt)));
+      if (!row) {
+        // Unknown, or presented again: whatever it issued is revoked (RFC 6749 §4.1.2). The mark
+        // covers an exchange of the same code still running: it re-reads it after storing its token.
+        await db.update(desktopCodes).set({ replayedAt: t }).where(and(eq(desktopCodes.codeHash, codeHash), isNull(desktopCodes.replayedAt)));
+        await revokeIssued();
         return json(400, 'invalid_grant');
       }
       if (row.expiresAt.getTime() <= t.getTime()) return json(400, 'invalid_grant');
@@ -371,6 +387,13 @@ export function registerDesktopAuth(app: Hono<AppEnv>, deps: DesktopAuthDeps): v
         .delete(desktopTokens)
         .where(and(eq(desktopTokens.userId, user.id), or(lt(desktopTokens.expiresAt, t), isNotNull(desktopTokens.revokedAt))));
       await db.insert(desktopTokens).values({ tokenHash: secretHash(token), userId: user.id, codeHash, createdAt: t, expiresAt });
+      // A replay that marked the code before this point may have revoked nothing yet; one after it
+      // finds the token. Either way the token does not survive a replay.
+      const [mark] = await db.select({ replayedAt: desktopCodes.replayedAt }).from(desktopCodes).where(eq(desktopCodes.codeHash, codeHash)).limit(1);
+      if (mark?.replayedAt) {
+        await revokeIssued();
+        return json(400, 'invalid_grant');
+      }
       return c.json(DesktopTokenResponseSchema.parse({ token, expiresAt: expiresAt.getTime(), user: toAccountUser(user) }));
     },
   );

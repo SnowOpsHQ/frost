@@ -95,6 +95,14 @@ describe('environment', () => {
     expect(env.TRUSTED_PROXIES).toEqual(['10.0.0.1', '192.0.2.0/24']);
     expect(() => parseEnv({ ...BASE_ENV, CLIENT_IP_HEADER: 'bad header' })).toThrow(/CLIENT_IP_HEADER/);
   });
+
+  it('env-trusted-proxies-validated', () => {
+    const good = '10.0.0.1, 192.0.2.0/24, 2001:db8::/32, ::1, 0.0.0.0/0';
+    expect(parseEnv({ ...BASE_ENV, TRUSTED_PROXIES: good }).TRUSTED_PROXIES).toHaveLength(5);
+    for (const bad of ['10.0.0.1/', '10.0.0.1/33', '2001:db8::/129', '10.0.0.1/x', '10.0.0.1/+8', '10.0.0.1/ 8', '10.0.0.1/8/8', 'proxy.internal', '10.0.0.256', '/8']) {
+      expect(() => parseEnv({ ...BASE_ENV, TRUSTED_PROXIES: `10.0.0.2, ${bad}` }), bad).toThrow(/TRUSTED_PROXIES/);
+    }
+  });
 });
 
 describe('sign-in', () => {

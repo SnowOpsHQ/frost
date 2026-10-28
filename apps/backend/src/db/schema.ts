@@ -103,6 +103,8 @@ export const desktopCodes = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
     consumedAt: timestamp('consumed_at', { withTimezone: true, mode: 'date' }),
+    /** Set when the code is presented again (`drizzle/0004_desktop_code_replay.sql`): its token is then revoked. */
+    replayedAt: timestamp('replayed_at', { withTimezone: true, mode: 'date' }),
   },
   (t) => [index('desktop_codes_user_id_idx').on(t.userId), index('desktop_codes_expires_at_idx').on(t.expiresAt)],
 );

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import type { Context } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { createLocalJWKSet, jwtVerify } from 'jose';
@@ -7,6 +8,7 @@ import {
   DESKTOP_CODE_TTL_SECONDS,
   DESKTOP_PAGE_PATHS,
   DESKTOP_RATE_LIMITS,
+  DESKTOP_RECENT_AUTH_SECONDS,
   DESKTOP_STATE_LIMITS,
   DESKTOP_TOKEN_PATH,
   DESKTOP_TOKEN_TTL_DAYS,
@@ -14,6 +16,8 @@ import {
   ErrorResponseSchema,
   LOOPBACK_PORT_RANGE,
   LOOPBACK_REDIRECT_PATTERN,
+  REQUEST_FINGERPRINT_PATTERN,
+  requestFingerprint,
   SESSION_PATH,
   SessionResponseSchema,
   SIGN_OUT_PATH,
@@ -29,10 +33,13 @@ import {
   EntitlementsResponseSchema,
   PLAN_FEATURES,
 } from '@app/specs/entitlements-snapshot.spec';
+import type { ClientIpSource } from '../app';
+import { clientIpResolver } from '../client-ip';
 import { queryRows } from '../db/client';
 import { escapeHtml } from '../desktop-pages';
 import { setPlan } from '../entitlements';
 import {
+  authPath,
   BASE_URL,
   cookieFrom,
   createTestBackend,
@@ -113,9 +120,22 @@ function tokenRequest(p: Pending, code: string, overrides: Record<string, unknow
   return { grant_type: 'authorization_code', code, code_verifier: p.verifier, redirect_uri: p.params.redirect_uri, ...overrides };
 }
 
-async function desktopToken(b: TestBackend, cookie: string): Promise<DesktopTokenResponse> {
+let peer = 0;
+/**
+ * A fresh web session for an existing, verified account (password sign-in from its own peer, so the
+ * sign-in rate limit never trips). Continue ends the session it used: one session, one code.
+ */
+async function freshCookie(b: TestBackend, email = 'alice@example.com'): Promise<string> {
+  peer += 1;
+  const res = await b.request(authPath('signInEmail'), jsonPost({ email, password: PASSWORD }, { [TEST_PEER_HEADER]: `198.18.${Math.floor(peer / 250)}.${(peer % 250) + 1}` }));
+  if (res.status !== 200) throw new Error(`sign-in failed: ${res.status}`);
+  return cookieFrom(res);
+}
+
+/** A desktop token through the whole flow, on a fresh session of `email`. */
+async function desktopToken(b: TestBackend, email = 'alice@example.com'): Promise<DesktopTokenResponse> {
   const p = pending();
-  const code = await continueWith(b, cookie, p);
+  const code = await continueWith(b, await freshCookie(b, email), p);
   const res = await exchange(b, tokenRequest(p, code));
   expect(res.status).toBe(200);
   return DesktopTokenResponseSchema.parse(await res.json());
@@ -309,6 +329,43 @@ describe('authorize request', () => {
     for (const [name, value] of Object.entries(p.params)) expect(signOut.fields[name]).toBe(value);
     // Showing the page issues nothing.
     expect(await count(b, 'desktop_codes')).toBe(0);
+  });
+
+  it('continue-shows-fingerprint', async () => {
+    const b = await open();
+    const cookie = await signedInWithPassword(b);
+    const p = pending();
+    const fingerprint = requestFingerprint(p.params.code_challenge);
+    expect(fingerprint).toMatch(REQUEST_FINGERPRINT_PATTERN);
+    const { html } = await page(b, authorizePath(p.params), cookie);
+    expect(html).toContain(`Check that frost shows the same code: <strong class="fingerprint">${fingerprint}</strong>.`);
+    expect(html).toContain("If you didn't just choose Sign in in frost, close this page.");
+    // Another request, another code.
+    const other = pending();
+    expect((await page(b, authorizePath(other.params), cookie)).html).toContain(requestFingerprint(other.params.code_challenge));
+  });
+
+  it('request-fingerprint', () => {
+    const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+    // An independent derivation: node's SHA-256, the first 40 bits, Crockford base32.
+    const reference = (challenge: string): string => {
+      const digest = createHash('sha256').update(challenge, 'ascii').digest();
+      let bits = 0n;
+      for (let i = 0; i < 5; i += 1) bits = (bits << 8n) | BigInt(digest[i] ?? 0);
+      let text = '';
+      for (let i = 7; i >= 0; i -= 1) text += alphabet[Number((bits >> BigInt(5 * i)) & 31n)];
+      return `${text.slice(0, 4)}-${text.slice(4)}`;
+    };
+    // RFC 7636 Appendix B's challenge, as a fixed vector.
+    expect(requestFingerprint('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM')).toBe('1MMS-P7NN');
+    for (let i = 0; i < 500; i += 1) {
+      const challenge = createHash('sha256').update(randomBytes(32)).digest('base64url');
+      const fingerprint = requestFingerprint(challenge);
+      expect(fingerprint).toBe(reference(challenge));
+      expect(fingerprint).toMatch(REQUEST_FINGERPRINT_PATTERN);
+      expect(requestFingerprint(challenge)).toBe(fingerprint);
+    }
+    for (const bad of ['', 'short', 'x'.repeat(44), `${'x'.repeat(42)}=`]) expect(() => requestFingerprint(bad)).toThrow(RangeError);
   });
 });
 
@@ -524,8 +581,8 @@ describe('continue', () => {
     const [user] = await queryRows<{ id: string }>(b.database.db, sql`SELECT id FROM users WHERE email = 'alice@example.com'`);
     expect(row?.user_id).toBe(user?.id);
 
-    // Two Continues are two codes.
-    expect(await continueWith(b, cookie, p)).not.toBe(code);
+    // Two Continues (each on a fresh sign-in) are two codes.
+    expect(await continueWith(b, await freshCookie(b), p)).not.toBe(code);
   });
 
   it('continue-refuses-cross-site', async () => {
@@ -564,6 +621,58 @@ describe('continue', () => {
     expect(bogus.status).toBe(303);
     expect(sameOriginPath(bogus.headers.get('location'))).toBe(authorizePath(p.params));
     expect(await count(b, 'desktop_codes')).toBe(0);
+  });
+
+  it('continue-needs-recent-sign-in', async () => {
+    const b = await open();
+    const cookie = await signedInWithPassword(b);
+    const p = pending();
+    // The session was created longer ago than the window allows.
+    await b.database.db.execute(
+      sql`UPDATE sessions SET created_at = now() - make_interval(secs => ${DESKTOP_RECENT_AUTH_SECONDS + 5})`,
+    );
+    expect((await b.request(SESSION_PATH, { headers: { cookie } })).status).toBe(200);
+    const stale = await page(b, authorizePath(p.params), cookie);
+    expect(stale.res.status).toBe(200);
+    expect(stale.html).toMatch(/sign in to frost/i);
+    expect(stale.html).toMatch(/sign in again/i);
+    expect(stale.html).not.toContain('Continue to frost as');
+    expect(formsIn(stale.html).some((f) => f.action === DESKTOP_AUTHORIZE_PATH)).toBe(false);
+    expect(formFor(stale.html, DESKTOP_PAGE_PATHS.signIn).fields.email).toBe('alice@example.com');
+    expect(formFor(stale.html, DESKTOP_PAGE_PATHS.magicLink).fields.email).toBe('alice@example.com');
+
+    const refused = await b.request(DESKTOP_AUTHORIZE_PATH, formPost({ ...p.params }, { cookie }));
+    expect(refused.status).toBe(303);
+    expect(sameOriginPath(refused.headers.get('location'))).toBe(authorizePath(p.params));
+    expect(await count(b, 'desktop_codes')).toBe(0);
+
+    // Signing in again on the page (the old cookie rides along) allows Continue.
+    const again = await submit(b, formFor(stale.html, DESKTOP_PAGE_PATHS.signIn), { password: PASSWORD }, { cookie });
+    expect(again.status).toBe(303);
+    const fresh = cookieFrom(again);
+    expect((await page(b, authorizePath(p.params), fresh)).html).toContain('Continue to frost as');
+    await continueWith(b, fresh, p);
+    expect(await count(b, 'desktop_codes')).toBe(1);
+  });
+
+  it('continue-ends-web-session', async () => {
+    const b = await open();
+    const cookie = await signedInWithPassword(b);
+    const other = await freshCookie(b);
+    const p = pending();
+    const res = await b.request(DESKTOP_AUTHORIZE_PATH, formPost({ ...p.params }, { cookie }));
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback\?code=/);
+    // The cookie is cleared, and the session behind it is gone.
+    expect(res.headers.getSetCookie().some((line) => /session_token=;|max-age=0/i.test(line))).toBe(true);
+    expect((await b.request(SESSION_PATH, { headers: { cookie } })).status).toBe(401);
+    const again = await b.request(DESKTOP_AUTHORIZE_PATH, formPost({ ...pending().params }, { cookie }));
+    expect(again.status).toBe(303);
+    expect(sameOriginPath(again.headers.get('location')).startsWith(`${DESKTOP_AUTHORIZE_PATH}?`)).toBe(true);
+    expect((await page(b, authorizePath(p.params), cookie)).html).toMatch(/sign in to frost/i);
+    expect(await count(b, 'desktop_codes')).toBe(1);
+    // Only that session: another browser's session of the same account is untouched.
+    expect((await b.request(SESSION_PATH, { headers: { cookie: other } })).status).toBe(200);
   });
 });
 
@@ -642,6 +751,24 @@ describe('token exchange', () => {
     await expectInvalidGrant(await exchange(b, tokenRequest(p, randomBytes(32).toString('base64url'))));
   });
 
+  it('token-concurrent-replay-revokes', async () => {
+    const b = await open();
+    await signedInWithPassword(b);
+    for (let round = 0; round < 6; round += 1) {
+      const p = pending();
+      const code = await continueWith(b, await freshCookie(b), p);
+      const from = { [TEST_PEER_HEADER]: `198.51.100.${round + 20}` };
+      const answers = await Promise.all([exchange(b, tokenRequest(p, code), from), exchange(b, tokenRequest(p, code), from)]);
+      const ok = answers.filter((res) => res.status === 200);
+      expect(ok.length).toBeLessThanOrEqual(1);
+      expect(answers.filter((res) => res.status === 400)).toHaveLength(2 - ok.length);
+      for (const res of ok) {
+        const { token } = DesktopTokenResponseSchema.parse(await res.json());
+        expect((await b.request(SESSION_PATH, { headers: bearer(token) })).status, `round ${round}`).toBe(401);
+      }
+    }
+  });
+
   it('token-expired-code-refused', async () => {
     const clock = fakeClock();
     const b = await open({ now: clock.now });
@@ -652,7 +779,7 @@ describe('token exchange', () => {
     await expectInvalidGrant(await exchange(b, tokenRequest(late, lateCode)));
 
     const inTime = pending();
-    const inTimeCode = await continueWith(b, cookie, inTime);
+    const inTimeCode = await continueWith(b, await freshCookie(b), inTime);
     clock.advance(DESKTOP_CODE_TTL_SECONDS * 1000 - 1000);
     expect((await exchange(b, tokenRequest(inTime, inTimeCode))).status).toBe(200);
   });
@@ -709,6 +836,36 @@ describe('token exchange', () => {
     expect((await exchange(b, junk, { [TEST_PEER_HEADER]: '198.51.100.7' })).status).toBe(400);
   });
 
+  it('client-ip-groups-ipv6', async () => {
+    const context = (headers: Record<string, string>) => ({ req: { header: (name: string) => headers[name.toLowerCase()] } }) as unknown as Context;
+    const peerSource: ClientIpSource = { kind: 'peer', address: (c) => c.req.header('x-peer') };
+    const peerKey = clientIpResolver(peerSource);
+    const key = (address: string) => peerKey(context({ 'x-peer': address }));
+    expect(key('2001:db8:1:2:aaaa::1')).toBe('2001:db8:1:2::/64');
+    expect(key('2001:DB8:1:2:BBBB:0:0:2')).toBe('2001:db8:1:2::/64');
+    expect(key('2001:0db8:0001:0002::')).toBe('2001:db8:1:2::/64');
+    expect(key('2001:db8:1:3::1')).toBe('2001:db8:1:3::/64');
+    expect(key('::ffff:192.0.2.1')).toBe('192.0.2.1');
+    expect(key('::FFFF:c000:201')).toBe('192.0.2.1');
+    expect(key('192.0.2.1')).toBe('192.0.2.1');
+    expect(key('not an address')).toBe('unknown');
+
+    const headerKey = clientIpResolver({ kind: 'header', header: 'x-forwarded-for', trustedProxies: ['10.0.0.0/8'] });
+    expect(headerKey(context({ 'x-forwarded-for': '203.0.113.9, ::ffff:198.51.100.4, ::ffff:10.1.2.3' }))).toBe('198.51.100.4');
+    expect(headerKey(context({ 'x-forwarded-for': '2001:db8:9:9::5, 10.0.0.1' }))).toBe('2001:db8:9:9::/64');
+    const singleKey = clientIpResolver({ kind: 'header', header: 'x-real-ip' });
+    expect(singleKey(context({ 'x-real-ip': '2001:db8:9:9::5' }))).toBe('2001:db8:9:9::/64');
+
+    // Two peers in one /64 share the exchange's bucket; the next /64 does not.
+    const b = await open();
+    const junk = { grant_type: 'authorization_code', code: 'c'.repeat(43), code_verifier: 'v'.repeat(43), redirect_uri: REDIRECT };
+    for (let i = 0; i < DESKTOP_RATE_LIMITS.token.max; i += 1) {
+      expect((await exchange(b, junk, { [TEST_PEER_HEADER]: `2001:db8:1:2::${(i + 1).toString(16)}` })).status).toBe(400);
+    }
+    expect((await exchange(b, junk, { [TEST_PEER_HEADER]: '2001:db8:1:2:ffff::1' })).status).toBe(429);
+    expect((await exchange(b, junk, { [TEST_PEER_HEADER]: '2001:db8:1:3::1' })).status).toBe(400);
+  });
+
   it('tokens-stored-hashed', async () => {
     const b = await open();
     const cookie = await signedInWithPassword(b);
@@ -739,9 +896,9 @@ describe('desktop tokens', () => {
     const clock = fakeClock();
     const b = await open({ now: clock.now });
     const cookie = await signedInWithPassword(b);
-    const expiring = await desktopToken(b, cookie);
-    const revoked = await desktopToken(b, cookie);
-    const kept = await desktopToken(b, cookie);
+    const expiring = await desktopToken(b);
+    const revoked = await desktopToken(b);
+    const kept = await desktopToken(b);
     for (const t of [expiring, revoked, kept]) expect((await b.request(SESSION_PATH, { headers: bearer(t.token) })).status).toBe(200);
 
     const hash = createHash('sha256').update(revoked.token).digest('hex');
@@ -766,8 +923,8 @@ describe('desktop tokens', () => {
   it('sign-out-revokes-idempotent', async () => {
     const b = await open();
     const cookie = await signedInWithPassword(b);
-    const mine = await desktopToken(b, cookie);
-    const other = await desktopToken(b, cookie);
+    const mine = await desktopToken(b);
+    const other = await desktopToken(b);
     const out = await b.request(SIGN_OUT_PATH, { method: 'POST', headers: bearer(mine.token) });
     expect(out.status).toBe(204);
     expect(await out.text()).toBe('');

@@ -5,6 +5,7 @@ import { AUTH_SECRET_MIN_LENGTH } from '@app/specs/account-api.schema';
 import { ENTITLEMENT_KEY_ID_PATTERN } from '@app/specs/entitlements-snapshot.spec';
 import { EMAIL_TRANSPORTS } from './email';
 import { publicKeysProblem, signingKeyProblem } from './entitlements';
+import { parseProxyEntry } from './ip';
 
 // The backend's environment (spec `account-backend.feature.md`, Environment; the table in
 // `apps/backend/README.md`). Parsed once at startup; anything invalid refuses to start. Error
@@ -87,6 +88,10 @@ const EnvSchema = z
     if (keyProblem) ctx.addIssue({ code: 'custom', path: ['ENTITLEMENT_SIGNING_KEY'], message: keyProblem });
     const rotationProblem = env.ENTITLEMENT_PUBLIC_KEYS === undefined ? null : publicKeysProblem(env.ENTITLEMENT_PUBLIC_KEYS, env.ENTITLEMENT_KEY_ID);
     if (rotationProblem) ctx.addIssue({ code: 'custom', path: ['ENTITLEMENT_PUBLIC_KEYS'], message: rotationProblem });
+    // A malformed entry (`10.0.0.1/` would read as /0) refuses startup rather than trusting more.
+    if (env.TRUSTED_PROXIES.some((entry) => parseProxyEntry(entry) === null)) {
+      ctx.addIssue({ code: 'custom', path: ['TRUSTED_PROXIES'], message: 'entries must each be an IP address or IP/<prefix length in digits> within its family (32 or 128 bits)' });
+    }
 
     if (env.NODE_ENV !== 'production') return;
     if (env.EMAIL_TRANSPORT === 'console') {

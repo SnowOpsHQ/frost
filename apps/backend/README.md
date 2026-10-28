@@ -39,7 +39,7 @@ value). An empty value counts as unset.
 | `HOST` | `127.0.0.1` | Bind address. |
 | `PORT` | `8787` | Listen port. |
 | `CLIENT_IP_HEADER` | unset | Only behind a reverse proxy: the header it sets with the client IP (e.g. `x-forwarded-for`). Unset → the TCP peer address, and any client-sent IP header is ignored. Never set it without a proxy in front: clients could then choose their rate-limit key. |
-| `TRUSTED_PROXIES` | unset | With `CLIENT_IP_HEADER`: comma-separated proxy IPs/CIDRs skipped when walking a forwarded chain. Without it, only a single-value header is trusted. |
+| `TRUSTED_PROXIES` | unset | With `CLIENT_IP_HEADER`: comma-separated proxy IPs/CIDRs skipped when walking a forwarded chain. Without it, only a single-value header is trusted. Each entry is an IP or `IP/<digits>` within its family (32 or 128 bits); anything else (`10.0.0.1/`, `10.0.0.1/33`, a host name) refuses startup. |
 | `ENTITLEMENT_SIGNING_KEY` | (required) | The private Ed25519 JWK (JSON: `kty` `OKP`, `crv` `Ed25519`, `x`, `d`) that signs snapshots. Secret. Startup refuses a key that is not JSON, not Ed25519, has no `d`, has another `kid`, or whose `d` does not match its `x`; the message never shows the key. |
 | `ENTITLEMENT_KEY_ID` | (required) | Its `kid` (`ENTITLEMENT_KEY_ID_PATTERN`), put in every snapshot's header. |
 | `ENTITLEMENT_PUBLIC_KEYS` | unset | During a rotation: a JWKS (`{"keys":[…]}`) of old **public** keys still published next to the signing key. A private member (`d`) or a repeated `kid` refuses startup. |
@@ -114,21 +114,35 @@ parameter names). Contract and limits: `specs/account-api.schema.ts`; scenarios:
    (its rate limits and origin checks apply). Magic links and verification links carry the authorize
    URL as their callback, so they land back on the same request; a failed link shows a fixed message.
    Sign-up says "check your email"; the password signs in once the address is verified.
-3. Signed in, the page says "Continue to frost as <email>" with Continue and "Not you? Sign out".
-   Continue (`POST /desktop/authorize`) needs the web session and `Origin` equal to this API's origin
-   (and `Sec-Fetch-Site: same-origin` when sent); it issues a one-time code (32 random bytes, stored as
-   its SHA-256, bound to the user, challenge and `redirect_uri`, 120 s) and answers 303 to
-   `redirect_uri?code=…&state=…`.
+3. Signed in **within the last 10 minutes** (`DESKTOP_RECENT_AUTH_SECONDS`: the better-auth session
+   was created, by a sign-in or a new sign-in, that recently), the page says "Continue to frost as
+   <email>" with Continue and "Not you? Sign out", and shows the request's fingerprint
+   (`requestFingerprint(code_challenge)`, e.g. `1MMS-P7NN`: "Check that frost shows the same code: …
+   If you didn't just choose Sign in in frost, close this page."); the app shows the same value while
+   it waits. A browser signed in longer ago gets the sign-in page again for this request (its address
+   filled in). Continue (`POST /desktop/authorize`) needs that recent web session and `Origin` equal to
+   this API's origin (and `Sec-Fetch-Site: same-origin` when sent); it issues a one-time code (32
+   random bytes, stored as its SHA-256, bound to the user, challenge and `redirect_uri`, 120 s), **ends
+   the web session** (revoked, cookie cleared), and answers 303 to `redirect_uri?code=…&state=…`.
 4. The desktop checks `state`, then `POST /desktop/token` (JSON, no cookies) with `grant_type:
    authorization_code`, `code`, `code_verifier`, `redirect_uri`. The code is consumed atomically first
    (so a wrong verifier or redirect burns it), then must be unexpired, for the same `redirect_uri`, and
    match `BASE64URL(SHA-256(code_verifier))` (constant-time). A code presented again revokes the token
-   it issued. Every failure is 400 `{ error: 'invalid_grant' }` (a malformed body `invalid_request`); 10
+   it issued, also when both exchanges run at once (the replay marks the code `replayed_at`; the first
+   exchange re-reads the mark after storing its token). Every failure is 400 `{ error: 'invalid_grant' }` (a malformed body `invalid_request`); 10
    exchanges per minute per client IP (`DESKTOP_RATE_LIMITS`), then 429 `rate_limited` with
    `Retry-After`. Success: `{ token, expiresAt, user }`; the token (`frost_dt_…`) is stored as its
    SHA-256 and lasts 30 days.
 5. The desktop sends `Authorization: Bearer <token>` to `/v1/session`, `/v1/entitlements` and
    `/v1/sign-out`. Expired, revoked or unknown is 401.
+
+**The desktop's loopback callback** (Task 5) must answer `Referrer-Policy: no-referrer`, load no
+subresources (no image, style or script from anywhere), and answer the code-bearing `GET /callback`
+with a redirect to a code-free URL on the listener (e.g. `303` to `/done`), so the code stays out of
+the address bar, the history and any `Referer`.
+
+Rate limits on the desktop endpoints key on the client IP as better-auth's do: an IPv6 client by its
+/64, an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) as its IPv4 (`src/ip.ts`).
 
 The pages are hand-written HTML with no script; every value is escaped. Headers:
 `Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`
@@ -140,8 +154,10 @@ origin, the loopback included. Only hashes of codes and tokens are stored (`driz
 a `CHECK` allows 64 hex characters only).
 
 A page cannot tell which app opened it: a local program could start a request to its own loopback
-port. The page therefore says to continue only after choosing Sign in in frost, and the desktop asks
-again ("Sign in as …?") before it keeps anything.
+port. Three things stand in its way: Continue needs a sign-in from the last 10 minutes and ends the
+web session it used (a browser that is merely still signed in is not enough, and one sign-in yields
+one code); the fingerprint lets the user match the page to the app; and the desktop asks again
+("Sign in as …?") before it keeps anything.
 
 ## Entitlements
 
@@ -169,6 +185,7 @@ pnpm --filter @app/backend admin migrate                  # apply pending migrat
 pnpm --filter @app/backend admin keygen [kid]             # new signing key (stdout only)
 pnpm --filter @app/backend admin grant alice@example.com pro
 pnpm --filter @app/backend admin show alice@example.com
+pnpm --filter @app/backend admin revoke alice@example.com # sign out everywhere
 ```
 
 `src/cli.ts` (run with `tsx`) reads only `DATABASE_URL` / `PGLITE_DIR` (and `NODE_ENV`: in
@@ -179,7 +196,9 @@ the server's `ENTITLEMENT_KEY_ID` and `ENTITLEMENT_SIGNING_KEY` (secret) and the
 `FROST_PUBLIC_ENTITLEMENT_JWKS` (public), single-quoted for a `.env`; it writes no file. The `kid`
 defaults to the key's RFC 7638 thumbprint. `grant` takes `free` or `pro`; the next snapshot carries
 it (snapshots already issued stay valid until they expire, plus offline grace; `grant … free` says
-so). Exit codes (`CLI_EXIT`): 0 done; 1 a failure (an unknown account, or keygen/database errors); 2
+so). `revoke` signs an account out everywhere: it revokes every desktop token, deletes unexchanged
+desktop codes and ends every web session, printing the counts (snapshots already issued stay valid
+until they expire). Exit codes (`CLI_EXIT`): 0 done; 1 a failure (an unknown account, or keygen/database errors); 2
 a usage error (an unknown command or plan, a malformed `kid`), each with a message. Tests call
 `runCli(argv, { db, out, err })` directly.
 

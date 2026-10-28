@@ -1,10 +1,10 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { DEFAULT_PLAN, ENTITLEMENT_TTL_SECONDS, OFFLINE_GRACE_SECONDS, PLAN_FEATURES, PLANS, type Plan } from '@app/specs/entitlements-snapshot.spec';
 import { openDatabase, type Database } from './db/client';
 import { migrate } from './db/migrate';
-import { users } from './db/schema';
+import { desktopCodes, desktopTokens, sessions, users } from './db/schema';
 import { EntitlementKeyError, entitlementRow, generateEntitlementKey, PlanSchema, setPlan } from './entitlements';
 import { EnvError, parseDatabaseEnv, type DatabaseEnv } from './env';
 
@@ -22,6 +22,8 @@ Commands:
                           kid defaults to the key's RFC 7638 thumbprint.
   grant <email> <plan>    Set an account's plan (${PLANS.join(' | ')}).
   show <email>            Print an account's plan and features.
+  revoke <email>          Sign an account out everywhere: revoke all its desktop tokens (and
+                          unexchanged desktop codes) and end all its web sessions.
   help                    Print this help.
 
 Database: DATABASE_URL (postgres://), else the PGlite directory PGLITE_DIR.
@@ -164,6 +166,29 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
           `updated:  ${row ? row.updatedAt.toISOString() : '-'}`,
           '',
         ].join('\n'),
+      );
+      return CLI_EXIT.ok;
+    }
+
+    case 'revoke': {
+      const [email] = args;
+      if (email === undefined || args.length !== 1) return usage('revoke needs an email.');
+      const db = await database();
+      const user = await findUser(db, email);
+      if (!user) {
+        io.err(`No account with the email ${email.trim().toLowerCase()}.\n`);
+        return CLI_EXIT.failed;
+      }
+      const revoked = await db
+        .update(desktopTokens)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(desktopTokens.userId, user.id), isNull(desktopTokens.revokedAt)))
+        .returning({ hash: desktopTokens.tokenHash });
+      await db.delete(desktopCodes).where(eq(desktopCodes.userId, user.id));
+      const ended = await db.delete(sessions).where(eq(sessions.userId, user.id)).returning({ id: sessions.id });
+      io.out(
+        `${user.email}: revoked ${revoked.length} desktop token(s) and ended ${ended.length} web session(s). ` +
+          'Snapshots already issued stay valid until they expire.\n',
       );
       return CLI_EXIT.ok;
     }

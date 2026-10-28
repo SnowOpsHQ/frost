@@ -13,6 +13,8 @@ import { openMemoryDatabase, queryRows, type Database, type DatabaseHandle } fro
 import { loadMigrations, migrate } from '../db/migrate';
 import { issueSnapshot, loadEntitlementSigner } from '../entitlements';
 import { EnvError, parseDatabaseEnv, parseEnv } from '../env';
+import { createHash, randomBytes } from 'node:crypto';
+import { SESSION_PATH } from '@app/specs/account-api.schema';
 import { createTestBackend, signedInWithPassword, type TestBackend } from './helpers';
 
 // Acceptance: specs/entitlements.feature.md (Admin CLI).
@@ -145,7 +147,9 @@ describe('admin CLI', () => {
     }
     const help = await cli(['help']);
     expect(help.code).toBe(CLI_EXIT.ok);
-    for (const command of ['migrate', 'keygen', 'grant', 'show']) expect(help.out).toContain(command);
+    for (const command of ['migrate', 'keygen', 'grant', 'show', 'revoke']) expect(help.out).toContain(command);
+    expect((await cli(['revoke'])).code).toBe(CLI_EXIT.usage);
+    expect((await cli(['revoke', 'a@example.com', 'extra'])).code).toBe(CLI_EXIT.usage);
   });
 
   it('cli-migrate', async () => {
@@ -202,5 +206,44 @@ describe('admin CLI', () => {
     for (const secret of ['admin', 'hunter2', 'sslmode', url]) expect(postgres).not.toContain(secret);
     const pglite = describeDatabaseTarget(parseDatabaseEnv({ PGLITE_DIR: '/tmp/frost-test-pglite' }));
     expect(pglite).toBe('PGlite /tmp/frost-test-pglite');
+  });
+
+  it('cli-revoke', async () => {
+    backend = await createTestBackend();
+    const b = backend;
+    const cookie = await signedInWithPassword(b, 'alice@example.com');
+    const bobCookie = await signedInWithPassword(b, 'bob@example.com');
+    const ids = await queryRows<{ id: string; email: string }>(b.database.db, sql`SELECT id, email FROM users`);
+    const idOf = (email: string) => ids.find((u) => u.email === email)?.id ?? '';
+    // Desktop tokens as the exchange stores them: only the hash.
+    const tokenFor = async (email: string): Promise<string> => {
+      const token = `frost_dt_${randomBytes(32).toString('base64url')}`;
+      const hash = createHash('sha256').update(token).digest('hex');
+      await b.database.db.execute(sql`INSERT INTO desktop_tokens (token_hash, user_id, expires_at) VALUES (${hash}, ${idOf(email)}, now() + interval '1 day')`);
+      return token;
+    };
+    const aliceTokens = [await tokenFor('alice@example.com'), await tokenFor('alice@example.com')];
+    const bobToken = await tokenFor('bob@example.com');
+    const status = async (headers: Record<string, string>) => (await b.request(SESSION_PATH, { headers })).status;
+    for (const token of [...aliceTokens, bobToken]) expect(await status({ authorization: `Bearer ${token}` })).toBe(200);
+
+    const run = await cli(['revoke', 'Alice@Example.com'], b.database.db);
+    expect(run.code).toBe(CLI_EXIT.ok);
+    expect(run.out).toContain('alice@example.com');
+    expect(run.out).toMatch(/2 desktop token/);
+    expect(run.out).toMatch(/1 web session/);
+    for (const token of aliceTokens) expect(await status({ authorization: `Bearer ${token}` })).toBe(401);
+    expect(await status({ cookie })).toBe(401);
+    // Nobody else's.
+    expect(await status({ authorization: `Bearer ${bobToken}` })).toBe(200);
+    expect(await status({ cookie: bobCookie })).toBe(200);
+    // Again: nothing left to revoke, still fine.
+    const again = await cli(['revoke', 'alice@example.com'], b.database.db);
+    expect(again.code).toBe(CLI_EXIT.ok);
+    expect(again.out).toMatch(/0 desktop token/);
+
+    const unknown = await cli(['revoke', 'nobody@example.com'], b.database.db);
+    expect(unknown.code).toBe(CLI_EXIT.failed);
+    expect(unknown.err).toMatch(/no account/i);
   });
 });

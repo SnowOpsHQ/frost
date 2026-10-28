@@ -4,6 +4,7 @@ import {
   DESKTOP_PAGE_PATHS,
   MAGIC_LINK_TTL_SECONDS,
   PASSWORD_LIMITS,
+  requestFingerprint,
   type DesktopAuthorizeQuery,
 } from '@app/specs/account-api.schema';
 
@@ -52,6 +53,7 @@ p { margin: .5rem 0; } .muted { color: var(--muted); font-size: .9rem; }
 .notice, .problem { padding: .6rem .75rem; border-radius: 8px; border: 1px solid var(--line); }
 .notice { color: var(--ok); } .problem { color: var(--warn); }
 .email { font-weight: 600; overflow-wrap: anywhere; }
+.fingerprint { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 1.05rem; letter-spacing: .08em; white-space: nowrap; }
 form { margin: 1rem 0 0; display: grid; gap: .6rem; }
 label { display: grid; gap: .2rem; font-size: .9rem; }
 input { font: inherit; padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; }
@@ -129,6 +131,11 @@ export interface SignInPageOptions {
   /** A fixed message from the handler (never text from a request or from better-auth). */
   readonly problem?: string | undefined;
   readonly notice?: 'verified' | 'link-failed' | undefined;
+  /**
+   * The browser is signed in as this address, but not recently enough to Continue
+   * (`DESKTOP_RECENT_AUTH_SECONDS`): ask for a fresh sign-in, the address filled in.
+   */
+  readonly signedInAs?: string | undefined;
   /** Which form the message belongs to (it is opened). */
   readonly section?: SignInSection | undefined;
   /** What the user typed, shown again (escaped). Never the password. */
@@ -142,7 +149,9 @@ const NOTICES = {
 } as const;
 
 export function signInPage(options: SignInPageOptions): Page {
-  const { params, problem, notice, section = 'password', email = '', name = '' } = options;
+  const { params, problem, notice, signedInAs, section = 'password', name = '' } = options;
+  const email = options.email ?? signedInAs ?? '';
+  const prefill = (s: SignInSection) => (section === s || (signedInAs !== undefined && s !== 'sign-up') ? email : '');
   const message = (s: SignInSection) => (problem && section === s ? html`<p class="problem" role="alert">${problem}</p>` : '');
   const open = (s: SignInSection) => (section === s ? html` open` : '');
   const passwordHint = `${PASSWORD_LIMITS.minLength} to ${PASSWORD_LIMITS.maxLength} characters`;
@@ -152,10 +161,11 @@ export function signInPage(options: SignInPageOptions): Page {
 <p>The frost app on this computer asked you to sign in.</p>
 ${caution}
 ${notice ? NOTICES[notice] : ''}
+${signedInAs === undefined ? '' : html`<p class="notice">You are signed in as <span class="email">${signedInAs}</span>, but connecting the frost app needs a fresh sign-in. Sign in again below.</p>`}
 ${message('password')}
 <form method="post" action="${DESKTOP_PAGE_PATHS.signIn}">
 ${hidden(params)}
-<label>Email <input type="email" name="email" value="${section === 'password' ? email : ''}" autocomplete="username" required></label>
+<label>Email <input type="email" name="email" value="${prefill('password')}" autocomplete="username" required></label>
 <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
 <button type="submit">Sign in</button>
 </form>
@@ -164,7 +174,7 @@ ${hidden(params)}
 ${message('magic-link')}
 <form method="post" action="${DESKTOP_PAGE_PATHS.magicLink}">
 ${hidden(params)}
-<label>Email <input type="email" name="email" value="${section === 'magic-link' ? email : ''}" autocomplete="email" required></label>
+<label>Email <input type="email" name="email" value="${prefill('magic-link')}" autocomplete="email" required></label>
 <button type="submit">Send link</button>
 </form>
 </details>
@@ -174,7 +184,7 @@ ${message('sign-up')}
 <form method="post" action="${DESKTOP_PAGE_PATHS.signUp}">
 ${hidden(params)}
 <label>Name (optional) <input type="text" name="name" value="${section === 'sign-up' ? name : ''}" autocomplete="name" maxlength="200"></label>
-<label>Email <input type="email" name="email" value="${section === 'sign-up' ? email : ''}" autocomplete="email" required></label>
+<label>Email <input type="email" name="email" value="${prefill('sign-up')}" autocomplete="email" required></label>
 <label>Password, ${passwordHint} <input type="password" name="password" autocomplete="new-password" minlength="${PASSWORD_LIMITS.minLength}" maxlength="${PASSWORD_LIMITS.maxLength}" required></label>
 <button type="submit">Create account</button>
 </form>
@@ -206,7 +216,8 @@ export function continuePage(params: DesktopAuthorizeQuery, email: string): Page
     'Continue to frost',
     html`<h1>Continue to frost as <span class="email">${email}</span></h1>
 <p>The frost app on this computer will be signed in to this account. It asks you to confirm once more.</p>
-${caution}
+<p>Check that frost shows the same code: <strong class="fingerprint">${requestFingerprint(params.code_challenge)}</strong>. If you didn't just choose Sign in in frost, close this page.</p>
+<p class="muted">Continuing signs this browser out, so the next sign-in needs your password or a new link.</p>
 <form method="post" action="${DESKTOP_AUTHORIZE_PATH}">
 ${hidden(params)}
 <button type="submit">Continue</button>

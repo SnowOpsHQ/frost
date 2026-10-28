@@ -6,7 +6,8 @@ Spec: `specs/account-api.schema.ts` (`AUTH_BASE_PATH`, `AUTH_ROUTES`, `AUTH_ENDP
 `ErrorResponseSchema`, `AccountUserSchema`, `SessionResponseSchema`, `HealthResponseSchema`; for
 desktop authorization `DESKTOP_AUTHORIZE_PATH`, `DESKTOP_TOKEN_PATH`, `DESKTOP_PAGE_PATHS`,
 `SIGN_OUT_PATH`, `LOOPBACK_REDIRECT_PATTERN`, `DESKTOP_STATE_LIMITS`, `CODE_VERIFIER_PATTERN`,
-`DESKTOP_CODE_TTL_SECONDS`, `DESKTOP_TOKEN_TTL_DAYS`, `DESKTOP_RATE_LIMITS`,
+`DESKTOP_CODE_TTL_SECONDS`, `DESKTOP_TOKEN_TTL_DAYS`, `DESKTOP_RECENT_AUTH_SECONDS`, `DESKTOP_RATE_LIMITS`,
+`requestFingerprint`, `REQUEST_FINGERPRINT_PATTERN`,
 `DesktopAuthorizeQuerySchema`, `DesktopTokenRequestSchema`, `DesktopTokenResponseSchema`). Phase 4
 Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to one named test.
 
@@ -64,6 +65,7 @@ Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to on
 - `env-auth-url-is-a-bare-origin` — a `BETTER_AUTH_URL` with a path, query, fragment or credentials refuses startup.
 - `env-refuses-telemetry-overrides` — `BETTER_AUTH_TELEMETRY`, `…_ENDPOINT` or `…_DEBUG` set refuses startup.
 - `env-client-ip` — `CLIENT_IP_HEADER` (a header name) and `TRUSTED_PROXIES` (comma-separated) parse; unset means the TCP peer.
+- `env-trusted-proxies-validated` — a `TRUSTED_PROXIES` entry that is not an IP or `IP/<digits>` within the family's bits (`10.0.0.1/`, `10.0.0.1/33`, `10.0.0.1/x`, a name) refuses startup, naming the variable.
 
 ## Sign-in (`apps/backend/src/__tests__/auth.test.ts`)
 - `sign-up-with-password` — creates the account, sends a verification link through the transport, and sets no session.
@@ -117,8 +119,15 @@ Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to on
   through its handler (so its rate limits and origin checks apply) and comes back to the authorize
   URL. Magic links and verification links carry the authorize URL as their callback, so following one
   lands on the same request. Sign-up says "check your email"; a password signs in only once the
-  address is verified. Signed in (web cookie, verified address), the page says "Continue to frost as
-  <email>", with Continue and "Not you? Sign out".
+  address is verified. Signed in (web cookie, verified address) **recently** (the session was created
+  within `DESKTOP_RECENT_AUTH_SECONDS`), the page says "Continue to frost as <email>", with Continue
+  and "Not you? Sign out"; an older session gets the sign-in page again for this request.
+- **Another local program cannot ride a signed-in browser.** Any program can listen on a loopback port
+  and open an authorize request of its own. So Continue needs a recent sign-in, issuing a code ends
+  the web session (better-auth's session is revoked and its cookie cleared, so the next desktop
+  request needs real credentials), and the Continue page shows `requestFingerprint(code_challenge)`
+  ("Check that frost shows the same code: XXXX-XXXX. If you didn't just choose Sign in in frost, close
+  this page."), which the app shows too while it waits.
 - **Pages are inert.** Hand-written HTML with no script; every interpolated value is escaped.
   `Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; form-action 'self' [the loopback
   origin, on the Continue page only]; frame-ancestors 'none'; base-uri 'none'`, `X-Frame-Options:
@@ -137,10 +146,17 @@ Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to on
   The code is consumed atomically (`UPDATE … WHERE consumed_at IS NULL RETURNING`) before anything else
   is checked, so a wrong verifier or redirect burns it too. Then: unexpired, `redirect_uri` equal,
   `BASE64URL(SHA-256(code_verifier))` equal to the challenge (constant-time). A code presented a second
-  time revokes the token issued from it (RFC 6749 §4.1.2). Every failure is 400 `invalid_grant` (a
+  time revokes the token issued from it (RFC 6749 §4.1.2), also when both arrive at once: the replay
+  marks the code `replayed_at`, and the winner re-reads that mark after storing its token and revokes
+  it if set. Every failure is 400 `invalid_grant` (a
   malformed body `invalid_request`); `DESKTOP_RATE_LIMITS.token` per client IP. Success mints a desktop
   token (`frost_dt_` + 32 random bytes), stored as its SHA-256, valid `DESKTOP_TOKEN_TTL_DAYS`,
   answered as `DesktopTokenResponse`, `no-store`.
+- **Rate-limit keys.** The desktop endpoints key on the client IP as better-auth does: IPv6 grouped by
+  /64, an IPv4-mapped IPv6 address as its IPv4. `TRUSTED_PROXIES` entries are an IP or `IP/<digits>`
+  within the family's bits; anything else refuses startup.
+- **The desktop's callback** answers `Referrer-Policy: no-referrer`, loads no subresources, and
+  redirects to a code-free URL on the listener (Task 5; documented in the spec).
 - **Desktop tokens are bearers.** `SESSION_PATH` and `/v1/entitlements` accept them through the bearer
   resolver; unknown, expired, revoked, or of an unverified account is 401. `SIGN_OUT_PATH` takes the
   bearer alone (a cookie is ignored), revokes it and answers 204 every time for a well-formed bearer.
@@ -152,7 +168,10 @@ Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to on
 - `authorize-refuses-bad-redirect` — a non-loopback, `localhost`, `https` or other-path `redirect_uri` answers a 400 page with no `Location`.
 - `authorize-refuses-bad-params` — a missing, short, oversized or non-unreserved `state`, a malformed challenge, `plain`, or a repeated parameter answers a 400 page with no `Location`.
 - `authorize-signed-out-shows-sign-in` — signed out, the page has the password, magic-link and sign-up forms, each posting to its `DESKTOP_PAGE_PATHS` route with the authorize parameters.
-- `authorize-signed-in-shows-continue` — with a web session the page says "Continue to frost as <email>" with Continue and "Not you? Sign out".
+- `authorize-signed-in-shows-continue` — with a recent web session the page says "Continue to frost as <email>" with Continue and "Not you? Sign out".
+- `continue-shows-fingerprint` — the Continue page shows `requestFingerprint(code_challenge)` with the "Check that frost shows the same code" copy; `request-fingerprint` — the spec function is `XXXX-XXXX` in Crockford base32 of SHA-256(challenge)'s first 40 bits, deterministic, and refuses a non-challenge.
+- `continue-needs-recent-sign-in` — a session older than `DESKTOP_RECENT_AUTH_SECONDS` gets the sign-in page (GET) or 303 back to it (Continue) and no code; signing in again on the page allows Continue.
+- `continue-ends-web-session` — once the code is issued the web session is revoked and its cookie cleared; the same cookie cannot Continue again.
 - `pages-carry-security-headers` — every page (sign-in, continue, error, check-email) has the CSP, `X-Frame-Options: DENY`, `no-store`, `Referrer-Policy: same-origin` and no script.
 - `pages-escape-hostile-values` — a hostile email on the continue page and in a re-shown form is escaped; a hostile `state` is refused and not reflected.
 - `sign-up-shows-check-email` — the sign-up form shows "check your email"; the password is refused with a message until the address is verified, then signs in and returns to the authorize URL.
@@ -165,10 +184,12 @@ Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to on
 - `desktop-full-flow` — sign up, verify, sign in on the page, Continue, exchange: the token answers `/v1/session` and `/v1/entitlements` as that user.
 - `token-wrong-verifier-refused` — a wrong verifier is `invalid_grant` and burns the code.
 - `token-reused-code-refused` — a code's second exchange is `invalid_grant` and revokes the token the first one issued.
+- `token-concurrent-replay-revokes` — two exchanges of one code at once: at most one succeeds, and any token issued for it ends up revoked.
 - `token-expired-code-refused` — a code older than `DESKTOP_CODE_TTL_SECONDS` is `invalid_grant`.
 - `token-other-redirect-refused` — a `redirect_uri` other than the authorize request's is `invalid_grant`.
 - `token-malformed-request` — not JSON, another grant type, or a short verifier is 400 `invalid_request`; answers are `no-store`.
 - `token-rate-limited` — the exchange after `DESKTOP_RATE_LIMITS.token.max` in a window is 429 `rate_limited` with `Retry-After`.
+- `client-ip-groups-ipv6` — rate-limit keys group IPv6 by /64 and map `::ffff:a.b.c.d` to IPv4 (peer and proxy header alike); two peers in one /64 share the exchange's bucket.
 - `tokens-stored-hashed` — neither the raw code nor the raw token is anywhere in the database.
 - `bearer-expired-or-revoked-401` — a desktop token past `DESKTOP_TOKEN_TTL_DAYS`, or revoked, is 401 on `/v1/session` and `/v1/entitlements`.
 - `sign-out-revokes-idempotent` — `SIGN_OUT_PATH` revokes the bearer (then 401) and answers 204 again for the same token; without a bearer, or with only a cookie, it is 401.
@@ -179,3 +200,4 @@ exact `CLI_EXIT` value.
 - `cli-database-env-production` — `parseDatabaseEnv` applies the production rule: `NODE_ENV=production` without `DATABASE_URL` refuses, naming the variable.
 - `cli-database-target` — the CLI prints its target to stderr: the PGlite directory, or `Postgres <host>` with no user, password or database URL.
 - `cli-keygen-exit-codes` — a malformed `kid` exits `CLI_EXIT.usage`; any other keygen failure exits `CLI_EXIT.failed`.
+- `cli-revoke` — `revoke <email>` revokes every desktop token of the account and deletes its web sessions (both then 401), reporting the counts; an unknown account exits `CLI_EXIT.failed`.
