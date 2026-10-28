@@ -27,13 +27,25 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
 - `purgeNow(projectId)`:
   1. a project whose capture run is under way is `running`;
   2. plan; an empty plan answers `empty` (no dialog);
-  3. main's message box (`PURGE_NOW`: the plan's counts and bytes, the project's name quoted and
-     bidi-isolated; Cancel is the default) — Cancel is `declined`, and nothing changes;
-  4. `executePurge(plan, 'purge-now')`;
+  3. main's message box (`PURGE_NOW`: the plan's counts and bytes, the saved policy in words
+     (`policyText`), the project's name quoted and bidi-isolated, each placeholder replaced by a
+     function so a `$` pattern in a name stays text; Cancel is the default) — Cancel is `declined`,
+     and nothing changes;
+  4. the project's policy is read again: if it is not the plan's any more, `changed` (nothing
+     deleted); else `executePurge(plan, 'purge-now')`;
   5. `stale` (a capture raced in) plans again and asks again, once; stale twice is `changed`;
-  6. each of the purge's `unreferencedHashes` is checked again with `isHashReferenced` and its file
-     unlinked only if no row names it (`purge-files.ts`, shared with a project's delete);
-  7. it answers the purge record's counts and bytes, and how many files went.
+  6. each of the purge's `unreferencedHashes`, with the hash's lock held (see Files below), is
+     checked again with `isHashReferenced` and its file unlinked only if no row names it
+     (`purge-files.ts`, shared with a project's delete);
+  7. it answers the purge record's counts, the bytes **really** freed (the rows' stored bytes plus the
+     files really unlinked, measured by `lstat`) and how many files went. `ci_purges.bytes` keeps the
+     planned figure (`capture-db.feature.md`).
+
+## Files and their lock
+- `ScreenshotFiles.lock(sha)` is a per-hash mutex shared by every store over the directory in the
+  process. A screenshot holds it from its file's `write` (which may reuse a file no row names yet)
+  until `appendScreenshot` settles; a purge (`purge-files.ts`) and the orphan sweep hold it from
+  `isHashReferenced` to `unlink`. So a file a new row is about to name is never removed.
 
 ## Automatic enforcement
 - The project's own policy, as a recorded `retention` purge with no dialog (the user set the policy):
@@ -43,7 +55,8 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
     run's end enforces);
   - at startup, for each project with a policy whose last enforcement is older than the interval.
 - The last-enforced times live in memory, seeded at startup from the purge log: each project's newest
-  `retention` purge. Enforcements run one at a time; a stale plan is planned again once.
+  `retention` purge. Enforcements run one at a time; a stale plan is planned again once; a policy
+  changed since the plan gives up (the next enforcement follows the new one).
 - The changes and screenshots services tell main of each capture or screenshot saved into a project
   (`onCaptured`, `onSaved`); the capture run of its end (`afterRun`).
 
@@ -51,7 +64,8 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
 - `usage(projectId | null)`: the repository's numbers (captures, versions and the shared ones, stored
   snapshot and diff bytes, screenshots) and **measured** ones: each screenshot file the rows name,
   once, by `lstat` (a missing file, or one that is not a regular file, is counted as missing and
-  shown as "N missing"), and the database file and its `-wal` by `stat` (the session store's `file`;
+  shown as "N missing"; the files another project's rows also name are labelled shared), and the
+  database file and its `-wal` by `stat` (the session store's `file`;
   in memory: unavailable). Without a project: the totals.
 - The note says honestly that deleting frees space inside the file, which shrinks only after Compact
   (`USAGE_NOTE`).
@@ -63,13 +77,14 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
 ## Compact
 - `compact()`: refused (`running`) while any capture run is under way, and (`unavailable`) for an
   in-memory database; else main's message box (`COMPACT_DATABASE`), then `VACUUM` on the session
-  database; it answers the file's size (with its `-wal`) before and after.
+  database; it answers the file's size (with its `-wal`) before and after. A failing `VACUUM` (all or
+  nothing: the file is as it was) is `compact-failed`, with its own message.
 
 ## The orphan sweep (startup)
 - It lists the screenshot directory (both directories `lstat`ed first: a symlink or a file there is
   refused, and nothing is touched), without following links, and removes only:
   - regular files named `<sha>.png` (`SCREENSHOT_FILE_NAME_PATTERN`) that no row names
-    (`screenshotHashes()`, and `isHashReferenced` again just before), older than
+    (`screenshotHashes()`, and `isHashReferenced` again just before, with the hash's lock held), older than
     `ORPHAN_TMP_MIN_AGE_MS` (a screenshot being written has its file before its row);
   - regular files named `<sha>.png.tmp-<16 hex>` older than `ORPHAN_TMP_MIN_AGE_MS`.
 - Nothing else: symlinks, directories, other names and fresh files stay. One log line with counts.
@@ -80,12 +95,14 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
   says "query", "sql" or "db".
 
 ## The project view
-- The retention section: the policy as a radio group with N's input (bounded) and Save, and the
-  policy's one-line rule (`RETENTION_RULE_NOTES`); the preview line ("Purging now would remove … (≈
-  X)"), refreshed after each change; Purge now (main confirms; the outcome in the polite live
-  region); usage (captures, versions and shared, screenshots, stored bytes, files with "N missing",
-  the database file) with `USAGE_NOTE`; the purge log; Compact database (main confirms; before →
-  after).
+- The retention section: the policy as a radio group with N's input (bounded, `noValidate`: the
+  app's own message says what to fix) and Save, and the policy's one-line rule
+  (`RETENTION_RULE_NOTES`); the preview line ("Purging now would remove … (≈ X)"), refreshed after
+  each change; Purge now (main confirms; the outcome, with the bytes really freed, in the polite live
+  region). Both follow the **saved** policy: while the form shows another one, the preview says
+  `UNSAVED_POLICY_PREVIEW` (`data-stale`) and Purge now is disabled until Save. Usage (captures,
+  versions and shared, screenshots, stored bytes, files with the shared ones and "N missing", the
+  database file) with `USAGE_NOTE`; the purge log; Compact database (main confirms; before → after).
 - After Purge now (and any change to the projects) the Changes panel reads its history and
   screenshots again.
 - The palette: "Purge this project now" and "Compact the change database".
@@ -101,6 +118,13 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
 - **Scenario: purge-now-declined-removes-nothing** — Test: `retention.test.ts`
   `purge-now-declined-removes-nothing`.
 - **Scenario: stale-plan-asks-again** — Test: `retention.test.ts` `stale-plan-asks-again`.
+- **Scenario: purge-now-gives-up-when-the-policy-changed** — Test: `retention.test.ts`
+  `purge-now-gives-up-when-the-policy-changed`.
+- **Scenario: the file lock** — a purge and the sweep wait for a screenshot reusing their file, then
+  keep it; the screenshots service holds the lock until its row is written; the lock is per hash and
+  shared across stores. Tests: `retention.test.ts` `purge-waits-for-a-screenshot-reusing-its-file`,
+  `sweep-waits-for-a-screenshot-reusing-its-file`; `screenshots/__tests__/service.test.ts`
+  `screenshot-holds-its-file-lock-until-its-row`; `store.test.ts` `screenshot-lock-is-per-hash`.
 - **Scenario: enforcement-after-a-run** — Test: `retention.test.ts` `enforcement-after-a-run`.
 - **Scenario: enforcement-is-rate-limited** — Test: `retention.test.ts` `enforcement-is-rate-limited`.
 - **Scenario: startup-enforcement-uses-the-purge-log** — Test: `retention.test.ts`
@@ -112,7 +136,7 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
   `retention.test.ts` `orphan-sweep-deletes-only-hash-named-files`.
 - **Scenario: usage-counts-measured-bytes** — Test: `retention.test.ts` `usage-counts-measured-bytes`.
 - **Scenario: compact-shrinks-and-refuses-during-a-run** — Test: `retention.test.ts`
-  `compact-shrinks-and-refuses-during-a-run`; the repository's `VACUUM`:
+  `compact-shrinks-and-refuses-during-a-run` (and `compact-failed`); the repository's `VACUUM`:
   `packages/db/src/change-intel/__tests__/retention.test.ts` `compact-vacuums`.
 - **Scenario: capture hooks** — the changes and screenshots services report captures and screenshots
   into a project, and a run its end. Tests: `service.test.ts` `capture-reports-its-project`,

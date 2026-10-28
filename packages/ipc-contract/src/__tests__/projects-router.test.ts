@@ -22,7 +22,7 @@ const LIST: ProjectsAnswer = { projects: [{ id: UNFILED_PROJECT_ID, name: 'Unfil
 const STATE: RunState = { version: 3, runId: ITEM, projectId: PROJECT, state: 'running', current: 1, total: 1, omitted: 0, screenshot: false, targets: [{ kind: 'page', label: PAGE, outcome: 'running', changeCount: null, screenshot: null }] };
 
 const COUNTS = { captures: 2, versions: 2, diffs: 1, screenshots: 1 };
-const USAGE: RetentionUsage = { projectId: PROJECT, captures: 1, versions: 1, sharedVersions: 0, snapshotBytes: 900, diffBytes: 0, screenshots: 1, files: { count: 1, bytes: 300, missing: 0 }, database: { bytes: 40_960, walBytes: 0 } };
+const USAGE: RetentionUsage = { projectId: PROJECT, captures: 1, versions: 1, sharedVersions: 0, snapshotBytes: 900, diffBytes: 0, screenshots: 1, files: { count: 1, bytes: 300, missing: 0, shared: 0 }, database: { bytes: 40_960, walBytes: 0 } };
 const ENTRY: PurgeLogEntry = { id: ITEM, reason: 'purge-now', projectId: PROJECT, policy: { mode: 'versions', value: 1 }, counts: COUNTS, bytes: 1_200, createdAt: 1_700_000_000_000 };
 
 function fakeProjects() {

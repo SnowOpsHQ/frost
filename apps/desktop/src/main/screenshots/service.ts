@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { canonicalJson } from '@app/change-intel';
 import { isUuidv7, uuidv7 as defaultUuidv7, type ChangeIntelRepository, type StoredScreenshot } from '@app/db';
 import type { ScreenshotsService } from '@app/ipc-contract';
@@ -232,10 +233,14 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       return failed('capture-failed', `the image could not be encoded (${codeOf(error)})`);
     }
     if (png.length > limits.maxPngBytes) return failed('too-large', `its PNG is ${png.length} bytes`);
+    // The hash's lock, held until its row is written: the write may reuse a file no row names yet, and
+    // a purge or the orphan sweep must not unlink it in between (`store.ts`, `lock`).
+    const release = await files.lock(createHash('sha256').update(png).digest('hex'));
     let file: { sha256: string; bytes: number };
     try {
       file = await files.write(png);
     } catch (error) {
+      release();
       return failed('store-failed', `the file could not be written (${codeOf(error)})`);
     }
     // Its thumbnail, made now from the bitmap in hand (no decode later) and kept in memory.
@@ -266,6 +271,8 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       });
     } catch (error) {
       log(`the row could not be written (${codeOf(error)})`);
+    } finally {
+      release();
     }
     // The file stays when its row is not written: the orphan sweep (Task 7) removes files no row names
     // (another row may already name this one, so it is never unlinked here).

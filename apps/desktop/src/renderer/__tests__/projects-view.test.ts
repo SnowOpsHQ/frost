@@ -18,6 +18,8 @@ import {
   previewText,
   purgeLogText,
   purgeNowText,
+  UNSAVED_POLICY_PREVIEW,
+  retentionFormChanged,
   retentionFormOf,
   retentionFromForm,
   retentionNote,
@@ -162,6 +164,14 @@ describe('projects view', () => {
     expect(retentionFromForm({ mode: 'days', value: '3651' })).toEqual({ problem: 'Enter a whole number from 1 to 3,650.' });
     expect(retentionFromForm({ mode: 'bogus' as 'days', value: '3' })).toEqual({ problem: 'Choose what to keep.' });
     expect(retentionNote('days')).toBe(RETENTION_RULE_NOTES.days);
+    // Purge now follows the saved policy: a form showing another one is unsaved.
+    expect(retentionFormChanged({ mode: 'versions', value: '3' }, { mode: 'versions', value: 3 })).toBe(false);
+    expect(retentionFormChanged({ mode: 'versions', value: ' 3 ' }, { mode: 'versions', value: 3 })).toBe(false);
+    expect(retentionFormChanged({ mode: 'forever', value: '9' }, { mode: 'forever', value: null })).toBe(false);
+    expect(retentionFormChanged({ mode: 'versions', value: '1' }, { mode: 'versions', value: 3 })).toBe(true);
+    expect(retentionFormChanged({ mode: 'days', value: '3' }, { mode: 'versions', value: 3 })).toBe(true);
+    expect(retentionFormChanged({ mode: 'versions', value: '10' }, { mode: 'forever', value: null })).toBe(true);
+    expect(UNSAVED_POLICY_PREVIEW).toContain('Save the policy first');
     expect(RETENTION_RULE_NOTES.days).toContain('Each page always keeps its newest version.'.slice(0, -1));
   });
 
@@ -171,24 +181,26 @@ describe('projects view', () => {
     expect(previewText({ status: 'ok', policy: { mode: 'versions', value: 1 }, counts: { captures: 0, versions: 0, diffs: 0, screenshots: 0 }, bytes: 0 })).toBe('Purging now would remove nothing.');
     expect(previewText({ status: 'ok', policy: { mode: 'forever', value: null }, counts: { captures: 0, versions: 0, diffs: 0, screenshots: 0 }, bytes: 0 })).toBe('Keep everything: purging removes nothing.');
     expect(previewText(null)).toBe('The preview could not be read.');
-    expect(purgeNowText({ status: 'purged', counts, bytes: 1_234, files: 0 })).toBe('Purged 2 captures, 2 versions, 2 diffs and 0 screenshots (≈ 1.2 kB).');
+    expect(purgeNowText({ status: 'purged', counts, bytes: 1_234, files: 0 })).toBe('Purged 2 captures, 2 versions, 2 diffs and 0 screenshots (≈ 1.2 kB freed).');
     expect(purgeNowText({ status: 'empty' })).toBe('Nothing to purge.');
     expect(purgeNowText({ status: 'changed' })).toBe('The captures changed while you were asked, so nothing was deleted. Try again.');
     expect(purgeNowText({ status: 'refused', reason: 'declined' })).toBe(RETENTION_REFUSAL_MESSAGES.declined);
     expect(purgeNowText(null)).toBe('The purge could not be run. Try again.');
     expect(compactText({ status: 'compacted', before: 2_400_000, after: 300_000 })).toBe('Compacted the change database: 2.4 MB → 300.0 kB.');
     expect(compactText({ status: 'refused', reason: 'running' })).toBe(RETENTION_REFUSAL_MESSAGES.running);
+    expect(compactText({ status: 'refused', reason: 'compact-failed' })).toBe(RETENTION_REFUSAL_MESSAGES['compact-failed']);
+    expect(RETENTION_REFUSAL_MESSAGES['compact-failed']).not.toBe(RETENTION_REFUSAL_MESSAGES['store-failed']);
     expect(compactText(null)).toBe('The database could not be compacted. Try again.');
-    const usage: RetentionUsage = { projectId: P1, captures: 3, versions: 3, sharedVersions: 1, snapshotBytes: 12_000, diffBytes: 800, screenshots: 2, files: { count: 1, bytes: 1_500, missing: 1 }, database: { bytes: 2_000_000, walBytes: 400_000 } };
+    const usage: RetentionUsage = { projectId: P1, captures: 3, versions: 3, sharedVersions: 1, snapshotBytes: 12_000, diffBytes: 800, screenshots: 2, files: { count: 1, bytes: 1_500, missing: 1, shared: 1 }, database: { bytes: 2_000_000, walBytes: 400_000 } };
     expect(usageRows(usage)).toEqual([
       { id: 'captures', label: 'Captures', value: '3' },
       { id: 'versions', label: 'Versions', value: '3 (1 also in another project)' },
       { id: 'screenshots', label: 'Screenshots', value: '2' },
       { id: 'stored', label: 'Stored snapshots and diffs', value: '12.0 kB + 800 B' },
-      { id: 'files', label: 'Screenshot files', value: '1 file, 1.5 kB · 1 missing' },
+      { id: 'files', label: 'Screenshot files', value: '1 file, 1.5 kB (1 also in another project) · 1 missing' },
       { id: 'database', label: 'Database file (all projects)', value: '2.4 MB' },
     ]);
-    const plain = usageRows({ ...usage, sharedVersions: 0, files: { count: 2, bytes: 3_000, missing: 0 }, database: null });
+    const plain = usageRows({ ...usage, sharedVersions: 0, files: { count: 2, bytes: 3_000, missing: 0, shared: 0 }, database: null });
     expect(plain.find((row) => row.id === 'versions')?.value).toBe('3');
     expect(plain.find((row) => row.id === 'files')?.value).toBe('2 files, 3.0 kB');
     expect(plain.find((row) => row.id === 'database')?.value).toBe('In memory this session');

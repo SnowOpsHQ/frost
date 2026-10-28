@@ -319,5 +319,6 @@ export const DELETE_PROJECT = {
 /** `DELETE_PROJECT.dialog` for the project `name`, quoted and bidi-isolated (FSI … PDI). */
 export function deleteProjectDialog(name: string): { type: 'warning'; message: string; detail: string; buttons: string[]; defaultId: number; cancelId: number; noLink: boolean } {
   const { dialog } = DELETE_PROJECT;
-  return { ...dialog, detail: dialog.detail.replace('{name}', `“⁨${name}⁩”`), buttons: [...dialog.buttons] };
+  // A function replacement: a `$&` or `$'` in the name stays text.
+  return { ...dialog, detail: dialog.detail.replace('{name}', () => `“⁨${name}⁩”`), buttons: [...dialog.buttons] };
 }

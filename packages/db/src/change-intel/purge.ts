@@ -40,8 +40,14 @@ export interface PurgePlan {
   /** Hashes of purged screenshots no remaining row has: the files main may unlink afterwards. */
   readonly unreferencedHashes: readonly string[];
   readonly counts: PurgeCounts;
-  /** Freed bytes: purged snapshots and diffs (stored UTF-8 bytes), plus each unreferenced file once. */
+  /**
+   * Freed bytes as planned: purged snapshots and diffs (stored UTF-8 bytes), plus each unreferenced
+   * file once by its row's `bytes`. This is the figure `ci_purges.bytes` records; main reports what
+   * it really freed (the files it did unlink, measured) separately.
+   */
   readonly bytes: number;
+  /** Of `bytes`, the unreferenced files' (their rows' `bytes`). */
+  readonly fileBytes: number;
 }
 
 export type ExecutePurgeResult = { readonly status: 'purged'; readonly purgeId: string; readonly plan: PurgePlan } | { readonly status: 'stale' } | { readonly status: 'empty' };
@@ -243,12 +249,13 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       screenshotIds: sorted(screenshots.map((row) => row.id)),
       unreferencedHashes: sorted(unreferenced.map(([hash]) => hash)),
     };
+    const fileBytes = unreferenced.reduce((sum, [, { bytes }]) => sum + bytes, 0);
     const bytes =
       (await sumOver(ciVersions, sql`length(CAST(${ciVersions.snapshot} AS BLOB))`, plan.versionIds)) +
       (await sumOver(ciDiffs, sql`length(CAST(${ciDiffs.diff} AS BLOB))`, plan.diffIds)) +
-      unreferenced.reduce((sum, [, { bytes }]) => sum + bytes, 0);
+      fileBytes;
     const counts = { captures: plan.captureIds.length, versions: plan.versionIds.length, diffs: plan.diffIds.length, screenshots: plan.screenshotIds.length };
-    return { ...plan, counts, bytes };
+    return { ...plan, counts, bytes, fileBytes };
   }
 
   return {

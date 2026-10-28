@@ -3,11 +3,24 @@ import { RETENTION_MODES, type RetentionMode } from '@app/specs/capture-db.spec'
 import { RETENTION_LABELS, RETENTION_REFUSAL_MESSAGES, RETENTION_VALUE_BOUNDS, USAGE_NOTE, type PurgeLogEntry, type RetentionPreviewAnswer, type UsageAnswer } from '@app/specs/retention.spec';
 import { ipc } from '../../ipc';
 import { notifyProjectsChanged } from './projects-sheet';
-import { compactText, previewText, purgeLogText, purgeNowText, retentionFormOf, retentionFromForm, retentionNote, usageRows, type RetentionForm } from '../../projects-view';
+import {
+  UNSAVED_POLICY_PREVIEW,
+  compactText,
+  previewText,
+  purgeLogText,
+  purgeNowText,
+  retentionFormChanged,
+  retentionFormOf,
+  retentionFromForm,
+  retentionNote,
+  usageRows,
+  type RetentionForm,
+} from '../../projects-view';
 
 // A project's retention and disk usage (acceptance `retention.feature.md`, The project view): the
 // policy (a radio group with N, bounded, and Save), the preview of what "Purge now" would remove,
-// Purge now (main asks first, with that plan), the project's usage with measured file sizes and the
+// Purge now (main asks first, with that plan; both follow the saved policy, so while the form shows
+// another one the preview says so and Purge now waits for Save), the project's usage with measured file sizes and the
 // honest note on the database file, the purge log, and Compact database (main asks first). Outcomes
 // go to the sheet's polite status line (`say`). Everything is React text; no inline styles.
 
@@ -99,6 +112,7 @@ export function Retention({
     });
 
   const bounded = form.mode === 'forever' ? null : RETENTION_VALUE_BOUNDS[form.mode];
+  const unsaved = retentionFormChanged(form, retention);
   const nothing = preview?.status === 'ok' && preview.counts.captures + preview.counts.versions + preview.counts.diffs + preview.counts.screenshots === 0;
   const rows = usage?.status === 'ok' ? usageRows(usage.usage) : null;
 
@@ -107,7 +121,8 @@ export function Retention({
       <h3 className="projects-section-title" id={`${id}-title`}>
         Retention and disk usage
       </h3>
-      <form className="retention-policy" data-testid="retention-policy" onSubmit={(event) => void save(event)}>
+      {/* noValidate: the app's own message says what to fix (`retentionFromForm`). */}
+      <form className="retention-policy" data-testid="retention-policy" noValidate onSubmit={(event) => void save(event)}>
         <fieldset className="retention-modes">
           <legend className="retention-legend">What to keep</legend>
           {RETENTION_MODES.map((mode) => (
@@ -145,10 +160,10 @@ export function Retention({
       </form>
 
       <div className="retention-purge-row">
-        <p className="retention-preview" data-testid="retention-preview">
-          {preview === undefined ? 'Reading…' : previewText(preview)}
+        <p className="retention-preview" data-testid="retention-preview" data-stale={unsaved ? 'true' : undefined}>
+          {unsaved ? UNSAVED_POLICY_PREVIEW : preview === undefined ? 'Reading…' : previewText(preview)}
         </p>
-        <button type="button" className="projects-small-button projects-danger" data-testid="retention-purge" disabled={busy || working || nothing || preview?.status !== 'ok'} onClick={() => void purge()}>
+        <button type="button" className="projects-small-button projects-danger" data-testid="retention-purge" disabled={busy || working || unsaved || nothing || preview?.status !== 'ok'} onClick={() => void purge()}>
           Purge now…
         </button>
       </div>

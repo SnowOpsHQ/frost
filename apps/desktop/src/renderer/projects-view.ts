@@ -212,6 +212,15 @@ export function retentionFromForm(form: RetentionForm): { readonly policy: Reten
 /** What a policy keeps, in a line. */
 export const retentionNote = (mode: RetentionMode): string => RETENTION_RULE_NOTES[mode];
 
+/** Whether the form shows another policy than the saved one (Purge now follows the saved one). */
+export function retentionFormChanged(form: RetentionForm, saved: { readonly mode: RetentionMode; readonly value: number | null }): boolean {
+  if (form.mode !== saved.mode) return true;
+  return form.mode !== 'forever' && form.value.trim() !== String(saved.value ?? '');
+}
+
+/** Said in place of the preview while the form is not saved. */
+export const UNSAVED_POLICY_PREVIEW = 'Save the policy first: Purge now follows the saved policy.' as const;
+
 const retentionRefusal = (answer: RetentionRefused): string => RETENTION_REFUSAL_MESSAGES[answer.reason] ?? 'Something went wrong. Try again.';
 
 /** The preview line: what "Purge now" would remove. */
@@ -229,7 +238,7 @@ export function purgeNowText(answer: PurgeNowAnswer | null): string {
   if (answer === null) return 'The purge could not be run. Try again.';
   switch (answer.status) {
     case 'purged':
-      return `Purged ${purgeCountsText(answer.counts)} (≈ ${formatBytes(answer.bytes)}).`;
+      return `Purged ${purgeCountsText(answer.counts)} (≈ ${formatBytes(answer.bytes)} freed).`;
     case 'empty':
       return 'Nothing to purge.';
     case 'changed':
@@ -250,12 +259,13 @@ export function compactText(answer: CompactAnswer | null): string {
 export function usageRows(usage: RetentionUsage): { readonly id: string; readonly label: string; readonly value: string }[] {
   const shared = usage.sharedVersions > 0 ? ` (${NUMBER.format(usage.sharedVersions)} also in another project)` : '';
   const missing = usage.files.missing > 0 ? ` · ${NUMBER.format(usage.files.missing)} missing` : '';
+  const sharedFiles = usage.files.shared > 0 ? ` (${NUMBER.format(usage.files.shared)} also in another project)` : '';
   return [
     { id: 'captures', label: 'Captures', value: NUMBER.format(usage.captures) },
     { id: 'versions', label: 'Versions', value: `${NUMBER.format(usage.versions)}${shared}` },
     { id: 'screenshots', label: 'Screenshots', value: NUMBER.format(usage.screenshots) },
     { id: 'stored', label: 'Stored snapshots and diffs', value: `${formatBytes(usage.snapshotBytes)} + ${formatBytes(usage.diffBytes)}` },
-    { id: 'files', label: 'Screenshot files', value: `${plural(usage.files.count, 'file', 'files')}, ${formatBytes(usage.files.bytes)}${missing}` },
+    { id: 'files', label: 'Screenshot files', value: `${plural(usage.files.count, 'file', 'files')}, ${formatBytes(usage.files.bytes)}${sharedFiles}${missing}` },
     { id: 'database', label: 'Database file (all projects)', value: usage.database === null ? 'In memory this session' : formatBytes(usage.database.bytes + usage.database.walBytes) },
   ];
 }

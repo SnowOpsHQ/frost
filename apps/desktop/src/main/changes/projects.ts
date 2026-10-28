@@ -6,6 +6,7 @@ import { SearchParamsSchema, type SearchParams } from '@app/specs/capture-search
 import { queryLabel, searchUrlFor, type ProjectEntryCaptures, type ProjectRefusal, type ProjectSummary, type RunRefusal } from '@app/specs/projects.spec';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
+import type { ScreenshotFiles } from '../screenshots/store';
 import type { CaptureRuns, RunPlanTarget } from './capture-run';
 import { createPurgeFiles, type PurgeFiles } from './purge-files';
 import { storedPageUrl } from './snapshot';
@@ -21,8 +22,8 @@ import { storedPageUrl } from './snapshot';
 export interface ProjectsServiceDeps {
   /** `SessionStore.changeIntel`. */
   readonly store: ChangeIntelRepository;
-  /** The screenshot files (`screenshots/store.ts`): only `unlink`, by hash, after the purge. */
-  readonly files: { unlink(sha256: string): Promise<boolean> };
+  /** The screenshot files (`screenshots/store.ts`): `unlink` by hash after the purge, with the hash's `lock` (and `fileFor` to measure it). */
+  readonly files: Pick<ScreenshotFiles, 'unlink' | 'lock' | 'fileFor'>;
   /** The purge-then-unlink path (`purge-files.ts`), shared with retention; default: one over `store` and `files`. */
   readonly purges?: PurgeFiles;
   /** Asks the user, in main's dialog, to delete the project `name` (`DELETE_PROJECT`); whether they confirmed. */

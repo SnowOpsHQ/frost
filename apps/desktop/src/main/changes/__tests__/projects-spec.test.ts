@@ -64,6 +64,8 @@ describe('projects spec', () => {
     expect(queryLabel({ ...BASE, country: 'de', language: 'de', device: 'mobile', location: 'Berlin' })).toBe('“green tea” on Google (DE, de, mobile, Berlin)');
     expect(queryLabel({ ...BASE, engine: 'duckduckgo' })).toBe('“green tea” on DuckDuckGo');
     // The delete confirmation: Cancel is the default; the name quoted and isolated.
+    // A replacement pattern in the name is text, not a pattern.
+    expect(deleteProjectDialog("Tea $' $& $` $$").detail).toContain("“⁨Tea $' $& $` $$⁩”");
     const dialog = deleteProjectDialog('Tea ‮gnp.exe');
     expect(dialog.defaultId).toBe(DELETE_PROJECT.dialog.cancelId);
     expect(dialog.buttons[DELETE_PROJECT.confirmIndex]).toBe('Delete Project');

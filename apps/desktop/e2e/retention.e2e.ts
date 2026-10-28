@@ -117,6 +117,9 @@ test('retention-keep-one-version', async () => {
   await page.locator('[data-testid="retention-mode"][data-mode="versions"]').check();
   await expect(page.locator('[data-testid="retention-mode"][data-mode="versions"]').locator('xpath=..')).toContainText(RETENTION_LABELS.versions);
   await page.getByTestId('retention-value').fill('1');
+  // Not saved yet: Purge now follows the saved policy, so it waits.
+  await expect(page.getByTestId('retention-preview')).toHaveAttribute('data-stale', 'true');
+  await expect(page.getByTestId('retention-purge')).toBeDisabled();
   await page.getByTestId('retention-save').click();
   await expect(status()).toHaveText('Retention saved.');
   await expect(page.getByTestId('retention-preview')).toContainText('Purging now would remove 2 captures, 2 versions, 2 diffs and 0 screenshots (≈ ');
@@ -127,6 +130,7 @@ test('retention-keep-one-version', async () => {
   await expect(status()).toContainText('Purged 2 captures, 2 versions, 2 diffs and 0 screenshots (≈ ');
   expect(await dialogsAsked()).toEqual([expect.stringContaining('2 captures, 2 versions, 2 diffs and 0 screenshots')]);
   expect((await dialogsAsked())[0]).toContain(PROJECT);
+  expect((await dialogsAsked())[0]).toContain('keep the last 1 version of each page');
   // The purge log lists it; usage is down to one capture and one version; nothing more to purge.
   await expect(page.getByTestId('retention-log-entry')).toHaveCount(1);
   await expect(page.getByTestId('retention-log-entry')).toHaveAttribute('data-reason', 'purge-now');

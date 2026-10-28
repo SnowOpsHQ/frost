@@ -10,7 +10,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, test } from 'vitest';
 import { canonicalJson } from '@app/change-intel';
-import { uuidv7 } from '@app/db';
+import { uuidv7, type AppendScreenshotInput, type ChangeIntelRepository } from '@app/db';
 import { CAPTURES_DIR_NAME, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import { CHANGES_READ_API } from '@app/specs/changes.schema';
@@ -128,6 +128,44 @@ describe('screenshots service', () => {
     saved(await service.take(1, { kind: 'viewport' }));
     expect(await service.take(1, { kind: 'viewport', projectId: uuidv7() })).toMatchObject({ status: 'refused' });
     expect(reported).toEqual([project!.id, UNFILED_PROJECT_ID]);
+  });
+
+  test('screenshot-holds-its-file-lock-until-its-row', async () => {
+    // A purge or the orphan sweep takes the hash's lock before it unlinks: a screenshot holds it from
+    // its write (which may reuse a file no row names) until its row is written.
+    const order: string[] = [];
+    let gate: () => void = () => undefined;
+    const ref: { setup?: ServiceSetup } = {};
+    const store = new Proxy({} as ChangeIntelRepository, {
+      get: (_target, key) => {
+        const real = ref.setup!.opened.changeIntel;
+        if (key === 'appendScreenshot') {
+          return async (input: AppendScreenshotInput) => {
+            order.push('append started');
+            await new Promise<void>((resolve) => (gate = resolve));
+            const stored = await real.appendScreenshot(input);
+            order.push('append settled');
+            return stored;
+          };
+        }
+        const value = (real as unknown as Record<PropertyKey, unknown>)[key];
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(real) : value;
+      },
+    });
+    ref.setup = start({ store });
+    const taking = ref.setup.service.take(1, { kind: 'viewport' });
+    await until(() => order.includes('append started'));
+    const [name] = readdirSync(ref.setup.files.dir).filter((file) => file.endsWith('.png'));
+    const locked = ref.setup.files.lock(name!.slice(0, 64)).then((release) => {
+      order.push('lock taken');
+      release();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(order).toEqual(['append started']);
+    gate();
+    saved(await taking);
+    await locked;
+    expect(order).toEqual(['append started', 'append settled', 'lock taken']);
   });
 
   test('take-refuses-what-it-cannot-take', async () => {

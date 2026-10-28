@@ -26,6 +26,7 @@ import {
   purgeCountsText,
   purgeNowDialog,
   type PurgeCountsView,
+  type RetentionPolicyInput,
 } from '@app/specs/retention.schema';
 import { createScreenshotFiles, type ScreenshotFiles } from '../../screenshots/store';
 import { createPurgeFiles } from '../purge-files';
@@ -57,7 +58,7 @@ function setup(deps: Partial<RetentionServiceDeps> = {}) {
   const unlinked: string[] = [];
   const files: ScreenshotFiles = { ...real, unlink: vi.fn(async (hash: string) => (unlinked.push(hash), real.unlink(hash))) };
   const state = { running: null as string | null };
-  const confirmPurge = vi.fn(async (_name: string, _counts: PurgeCountsView, _bytes: number) => true);
+  const confirmPurge = vi.fn(async (_name: string, _policy: RetentionPolicyInput, _counts: PurgeCountsView, _bytes: number) => true);
   const confirmCompact = vi.fn(async () => true);
   const log = vi.fn((_message: string) => undefined);
   const store = deps.store ?? opened.changeIntel;
@@ -140,11 +141,17 @@ describe('retention service', () => {
     }
     expect([formatBytes(0), formatBytes(999), formatBytes(1_500), formatBytes(2_400_000), formatBytes(1_250_000_000)]).toEqual(['0 B', '999 B', '1.5 kB', '2.4 MB', '1.3 GB']);
     expect(purgeCountsText({ captures: 1, versions: 2, diffs: 1, screenshots: 0 })).toBe('1 capture, 2 versions, 1 diff and 0 screenshots');
-    const box = purgeNowDialog('Tea ‮guides', { captures: 2, versions: 2, diffs: 1, screenshots: 1 }, 12_300);
+    const box = purgeNowDialog('Tea ‮guides', { mode: 'versions', value: 1 }, { captures: 2, versions: 2, diffs: 1, screenshots: 1 }, 12_300);
     expect(box).toMatchObject({ type: 'warning', message: PURGE_NOW.dialog.message, defaultId: 1, cancelId: 1, buttons: ['Purge Now', 'Cancel'] });
     expect(box.detail).toContain('2 captures, 2 versions, 1 diff and 1 screenshot');
     expect(box.detail).toContain('about 12.3 kB');
     expect(box.detail).toContain('“⁨Tea ‮guides⁩”');
+    // The saved policy is named; a replacement pattern in a name stays text.
+    expect(box.detail).toContain('as its saved retention policy says: keep the last 1 version of each page.');
+    expect(purgeNowDialog('7 days', { mode: 'days', value: 30 }, { captures: 1, versions: 0, diffs: 0, screenshots: 0 }, 1).detail).toContain('keep 30 days');
+    const odd = purgeNowDialog("Tea $' {bytes} $& $`", { mode: 'forever', value: null }, { captures: 1, versions: 0, diffs: 0, screenshots: 0 }, 1).detail;
+    expect(odd).toContain("“⁨Tea $' {bytes} $& $`⁩”");
+    expect(odd).toContain('keep everything');
     expect(PURGE_NOW.confirmIndex).not.toBe(PURGE_NOW.dialog.cancelId);
     expect(compactDialog()).toMatchObject({ message: COMPACT_DATABASE.dialog.message, defaultId: COMPACT_DATABASE.dialog.cancelId });
   });
@@ -204,8 +211,9 @@ describe('retention service', () => {
 
     const answer = PurgeNowAnswerSchema.parse(await service.purgeNow(id));
     // Main asked first, with the plan's counts and bytes; the answer is what the record says.
-    expect(confirmPurge).toHaveBeenCalledExactlyOnceWith('Guides', plan.counts, plan.bytes);
+    expect(confirmPurge).toHaveBeenCalledExactlyOnceWith('Guides', { mode: 'versions', value: 1 }, plan.counts, plan.bytes);
     expect(preview).toMatchObject({ counts: plan.counts, bytes: plan.bytes });
+    // Every planned file went (its size is its row's): what was freed is what was planned.
     expect(answer).toEqual({ status: 'purged', counts: plan.counts, bytes: plan.bytes, files: 1 });
     const record = raw.prepare("SELECT * FROM ci_purges WHERE reason = 'purge-now'").all() as Record<string, unknown>[];
     expect(record).toHaveLength(1);
@@ -261,8 +269,8 @@ describe('retention service', () => {
     confirmPurge.mockImplementationOnce(async () => (await capture(repo, id, A, 'three'), true));
     const answer = await service.purgeNow(id);
     expect(confirmPurge).toHaveBeenCalledTimes(2);
-    expect(confirmPurge.mock.calls[0]![1]).toEqual({ captures: 1, versions: 1, diffs: 1, screenshots: 0 });
-    expect(confirmPurge.mock.calls[1]![1]).toEqual({ captures: 2, versions: 2, diffs: 2, screenshots: 0 });
+    expect(confirmPurge.mock.calls[0]![2]).toEqual({ captures: 1, versions: 1, diffs: 1, screenshots: 0 });
+    expect(confirmPurge.mock.calls[1]![2]).toEqual({ captures: 2, versions: 2, diffs: 2, screenshots: 0 });
     expect(answer).toMatchObject({ status: 'purged', counts: { captures: 2, versions: 2, diffs: 2, screenshots: 0 } });
     // Stale twice: `changed`, nothing deleted.
     await capture(repo, id, A, 'four');
@@ -273,6 +281,18 @@ describe('retention service', () => {
     expect(confirmPurge).toHaveBeenCalledTimes(2);
     expect(tables()['ci_purges']).toBe(before['ci_purges']);
     expect(tables()['ci_tombstones']).toBe(before['ci_tombstones']);
+  });
+
+  test('purge-now-gives-up-when-the-policy-changed', async () => {
+    // The policy changes while the dialog is up: what the dialog named is not what would run.
+    const { service, repo, confirmPurge, tables } = setup();
+    const id = await project(repo, 'Guides');
+    for (const text of ['one', 'two', 'three']) await capture(repo, id, A, text);
+    await service.setRetention(id, 'versions', 2);
+    const before = tables();
+    confirmPurge.mockImplementationOnce(async () => (await repo.setRetention(id, 'versions', 1, tick()), true));
+    expect(await service.purgeNow(id)).toEqual({ status: 'changed' });
+    expect(tables()).toEqual(before);
   });
 
   test('enforcement-after-a-run', async () => {
@@ -396,6 +416,7 @@ describe('retention service', () => {
     const kept = await screenshot(second.repo, second.files, raced, A, 'png raced');
     await screenshot(second.repo, second.files, raced, A, 'png newer');
     const store = Object.assign(Object.create(second.repo) as ChangeIntelRepository, { isHashReferenced: vi.fn(async () => true) });
+    const planned = (await second.repo.planPurge({ projectId: raced, policy: { mode: 'versions', value: 1 }, now: clock }))!;
     const service = createRetentionService({
       store,
       files: second.files,
@@ -407,9 +428,55 @@ describe('retention service', () => {
       now: () => clock,
     });
     await service.setRetention(raced, 'versions', 1);
-    expect(await service.purgeNow(raced)).toMatchObject({ status: 'purged', counts: { screenshots: 1 }, files: 0 });
+    // The file stayed: the bytes freed are the rows' only (the record keeps the planned figure).
+    expect(planned.fileBytes).toBeGreaterThan(0);
+    expect(await service.purgeNow(raced)).toEqual({ status: 'purged', counts: { captures: 0, versions: 0, diffs: 0, screenshots: 1 }, bytes: planned.bytes - planned.fileBytes, files: 0 });
+    expect(Number((second.raw.prepare("SELECT bytes AS n FROM ci_purges WHERE reason = 'purge-now'").get() as { n: number }).n)).toBe(planned.bytes);
     expect(second.unlinked).toEqual([]);
     expect(exists(second.real.fileFor(kept))).toBe(true);
+  });
+
+  test('purge-waits-for-a-screenshot-reusing-its-file', async () => {
+    // A screenshot reuses a file the purge is about to free: it holds the hash's lock from its write to
+    // its row (screenshots/service.ts), so the purge's unlink waits, then finds the row and keeps it.
+    const { service, repo, files, real, unlinked } = setup();
+    const id = await project(repo, 'Guides');
+    const other = await project(repo, 'Other');
+    const reused = await screenshot(repo, files, id, A, 'png reused');
+    await screenshot(repo, files, id, A, 'png newer');
+    await service.setRetention(id, 'versions', 1);
+    const release = await real.lock(reused);
+    const purging = service.purgeNow(id);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // The rows went; the file waits for the lock.
+    expect(exists(real.fileFor(reused))).toBe(true);
+    expect(unlinked).toEqual([]);
+    const at = tick();
+    expect(await repo.appendScreenshot({ id: uuidv7(at), projectId: other, pageUrl: B, captureId: null, kind: 'viewport', rectJson: null, width: 10, height: 10, bytes: 10, sha256: reused, segments: 1, renderProfileJson: null, searchParamsJson: null, createdAt: at })).toBe(true);
+    release();
+    expect(await purging).toMatchObject({ status: 'purged', counts: { screenshots: 1 }, files: 0 });
+    expect(unlinked).toEqual([]);
+    expect(exists(real.fileFor(reused))).toBe(true);
+  });
+
+  test('sweep-waits-for-a-screenshot-reusing-its-file', async () => {
+    // An old orphan file a screenshot is reusing right now: the sweep waits for the hash's lock, then
+    // finds the new row and keeps the file.
+    clock = Date.now();
+    const { service, repo, real, unlinked } = setup();
+    const id = await project(repo, 'Guides');
+    const { sha256: hash } = await real.write(Buffer.from('png orphan'));
+    utimesSync(real.fileFor(hash), new Date(clock - 2 * HOUR), new Date(clock - 2 * HOUR));
+    const release = await real.lock(hash);
+    const sweeping = service.sweepOrphans();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(exists(real.fileFor(hash))).toBe(true);
+    const at = tick();
+    expect(await repo.appendScreenshot({ id: uuidv7(at), projectId: id, pageUrl: A, captureId: null, kind: 'viewport', rectJson: null, width: 10, height: 10, bytes: 10, sha256: hash, segments: 1, renderProfileJson: null, searchParamsJson: null, createdAt: at })).toBe(true);
+    release();
+    expect(await sweeping).toEqual({ removed: 0, temporary: 0 });
+    expect(unlinked).toEqual([]);
+    expect(exists(real.fileFor(hash))).toBe(true);
   });
 
   test('orphan-sweep-deletes-only-hash-named-files', async () => {
@@ -482,6 +549,8 @@ describe('retention service', () => {
     const missing = await screenshot(repo, files, id, A, 'b'.repeat(2_000));
     await screenshot(repo, files, id, B, 'a'.repeat(1_000));
     await screenshot(repo, files, other, B, 'c'.repeat(500));
+    // Another project names the first file too: it is labelled shared in both.
+    await screenshot(repo, files, other, A, 'a'.repeat(1_000));
     // Removed by hand: counted as missing, not as bytes.
     unlinkSync(real.fileFor(missing));
     const dbBytes = statSync(file).size;
@@ -498,14 +567,14 @@ describe('retention service', () => {
         snapshotBytes: stored.snapshotBytes,
         diffBytes: stored.diffBytes,
         screenshots: 3,
-        files: { count: 1, bytes: 1_000, missing: 1 },
+        files: { count: 1, bytes: 1_000, missing: 1, shared: 1 },
         database: { bytes: dbBytes, walBytes: 0 },
       },
     });
     expect(mine.status === 'ok' && mine.usage.captures).toBe(2);
     // Totals: every row's files, each once.
     const all = await service.usage(null);
-    expect(all).toMatchObject({ status: 'ok', usage: { projectId: null, captures: 3, screenshots: 4, files: { count: 2, bytes: 1_500, missing: 1 } } });
+    expect(all).toMatchObject({ status: 'ok', usage: { projectId: null, captures: 3, screenshots: 5, files: { count: 2, bytes: 1_500, missing: 1, shared: 1 } } });
     expect(await service.usage(uuidv7(tick()))).toEqual({ status: 'refused', reason: 'not-found' });
     // In memory: no file to measure.
     const memory = createRetentionService({ store: repo, files, purges: createPurgeFiles({ store: repo, files }), databaseFile: ':memory:', running: () => null, confirmPurge: async () => true, confirmCompact: async () => true });
@@ -533,6 +602,10 @@ describe('retention service', () => {
     expect(after).toBeLessThan(before / 2);
     // What is kept is still there.
     expect((await repo.usage(id))?.captures).toBe(1);
+    // VACUUM failing (a full disk, a busy database): its own refusal, the file as it was.
+    const failing = setup({ store: Object.assign(Object.create(repo) as ChangeIntelRepository, { compact: vi.fn(async () => Promise.reject(Object.assign(new Error('disk full'), { code: 'ERR_SQLITE_ERROR' }))) }), databaseFile: file });
+    expect(await failing.service.compact()).toEqual({ status: 'refused', reason: 'compact-failed' });
+    expect(failing.log.mock.calls.map(([line]) => line)).toContain('retention: compacting failed (ERR_SQLITE_ERROR)');
     const memory = createRetentionService({ store: repo, files: createScreenshotFiles(path.dirname(file)), databaseFile: ':memory:', running: () => null, confirmPurge: async () => true, confirmCompact });
     confirmCompact.mockClear();
     expect(await memory.compact()).toEqual({ status: 'refused', reason: 'unavailable' });

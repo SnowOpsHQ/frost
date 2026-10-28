@@ -203,6 +203,8 @@ export interface ChangeIntelUsage {
   readonly diffBytes: number;
   readonly screenshots: number;
   readonly screenshotBytes: number;
+  /** Distinct screenshot hashes (files) another project's rows also name (without a project: two or more projects'). */
+  readonly sharedScreenshotFiles: number;
 }
 
 export interface ChangeIntelRepository extends PurgeOperations {
@@ -818,7 +820,7 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         .where(projectId === undefined ? undefined : eq(ciScreenshots.projectId, projectId))
         .groupBy(ciScreenshots.sha256)
         .as('per_hash');
-      const [captures, versions, diffs, screenshots, files] = await db.batch([
+      const [captures, versions, diffs, screenshots, files, sharedFiles] = await db.batch([
         db
           .select({ n: count() })
           .from(ciCaptures)
@@ -840,6 +842,14 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
           .from(ciScreenshots)
           .where(projectId === undefined ? undefined : eq(ciScreenshots.projectId, projectId)),
         db.select({ bytes: sql<unknown>`coalesce(sum(${perHash.bytes}), 0)` }).from(perHash),
+        db
+          .select({ n: sql<unknown>`count(DISTINCT ${ciScreenshots.sha256})` })
+          .from(ciScreenshots)
+          .where(
+            projectId === undefined
+              ? sql`(SELECT count(DISTINCT o.project_id) FROM ci_screenshots o WHERE o.sha256 = ${ciScreenshots.sha256}) > 1`
+              : sql`${ciScreenshots.projectId} = ${projectId} AND EXISTS (SELECT 1 FROM ci_screenshots o WHERE o.sha256 = ${ciScreenshots.sha256} AND o.project_id <> ${projectId})`,
+          ),
       ]);
       return {
         captures: num(captures[0]?.n),
@@ -849,6 +859,7 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         diffBytes: num(diffs[0]?.bytes),
         screenshots: num(screenshots[0]?.n),
         screenshotBytes: num(files[0]?.bytes),
+        sharedScreenshotFiles: num(sharedFiles[0]?.n),
       };
     },
 

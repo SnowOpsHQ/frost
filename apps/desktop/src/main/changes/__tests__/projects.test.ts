@@ -42,7 +42,8 @@ function setup(deps: Partial<ProjectsServiceDeps> = {}) {
     rmSync(dir, { recursive: true, force: true });
   });
   const unlinked: string[] = [];
-  const files = { unlink: vi.fn(async (hash: string) => (unlinked.push(hash), true)) };
+  // No files on disk here: the lock is a no-op and nothing is measured.
+  const files = { unlink: vi.fn(async (hash: string) => (unlinked.push(hash), true)), lock: async (_hash: string) => () => undefined, fileFor: (hash: string) => path.join(dir, 'none', `${hash}.png`) };
   const confirmDelete = vi.fn(async (_name: string) => true);
   const state = { activeUrl: A as string | null, running: null as string | null };
   const runs = {

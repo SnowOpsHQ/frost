@@ -66,7 +66,7 @@ export const UsageAnswerSchema = z.discriminatedUnion('status', [
       snapshotBytes: count,
       diffBytes: count,
       screenshots: count,
-      files: z.strictObject({ count, bytes: count, missing: count }),
+      files: z.strictObject({ count, bytes: count, missing: count, shared: count }),
       database: z.strictObject({ bytes: count, walBytes: count }).nullable(),
     }),
   }),

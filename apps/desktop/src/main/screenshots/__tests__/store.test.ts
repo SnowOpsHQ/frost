@@ -53,9 +53,10 @@ describe('screenshot files', () => {
       await expect(files.read(name)).resolves.toBeNull();
       await expect(files.unlink(name)).resolves.toBe(false);
       await expect(files.has(name)).resolves.toBe(false);
+      await expect(files.lock(name)).rejects.toThrow();
     }
     // The API has no way in for a path: every entry point is the bytes or a hash.
-    expect(Object.keys(files).sort()).toEqual(['dir', 'fileFor', 'has', 'read', 'unlink', 'write']);
+    expect(Object.keys(files).sort()).toEqual(['dir', 'fileFor', 'has', 'lock', 'read', 'unlink', 'write']);
 
     if (!posix) return;
     // A symlinked `screenshots` directory is refused: nothing is written through it.
@@ -95,6 +96,31 @@ describe('screenshot files', () => {
     symlinkSync(target, real.fileFor(sha(PNG)));
     await expect(real.read(sha(PNG))).resolves.toBeNull();
     await expect(real.has(sha(PNG))).resolves.toBe(false);
+  });
+
+  test('screenshot-lock-is-per-hash', async () => {
+    // One queue per hash, shared by every store over the same directory; another hash never waits.
+    const userData = profile();
+    const [one, two] = [createScreenshotFiles(userData), createScreenshotFiles(userData)];
+    const [a, b] = [sha(Buffer.from('a')), sha(Buffer.from('b'))];
+    const order: string[] = [];
+    const first = await one.lock(a);
+    const second = two.lock(a).then((release) => (order.push('second a'), release));
+    const other = await two.lock(b);
+    order.push('b');
+    other();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(order).toEqual(['b']);
+    first();
+    first();
+    (await second)();
+    expect(order).toEqual(['b', 'second a']);
+    // Released: taken again at once; another profile's directory never shares it.
+    (await one.lock(a))();
+    const elsewhere = await createScreenshotFiles(profile()).lock(a);
+    const held = await one.lock(a);
+    held();
+    elsewhere();
   });
 
   test('store-writes-by-rename-and-reuses', async () => {

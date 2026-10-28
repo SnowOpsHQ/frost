@@ -48,7 +48,7 @@ export function isRetentionPolicy(mode: unknown, value: unknown): mode is Retent
 
 // ---- Answers -------------------------------------------------------------------------------------
 
-export const RETENTION_REFUSALS = ['not-found', 'invalid-retention', 'running', 'declined', 'unavailable', 'store-failed'] as const;
+export const RETENTION_REFUSALS = ['not-found', 'invalid-retention', 'running', 'declined', 'unavailable', 'compact-failed', 'store-failed'] as const;
 export type RetentionRefusal = (typeof RETENTION_REFUSALS)[number];
 
 export const RETENTION_REFUSAL_MESSAGES: Readonly<Record<RetentionRefusal, string>> = {
@@ -57,6 +57,7 @@ export const RETENTION_REFUSAL_MESSAGES: Readonly<Record<RetentionRefusal, strin
   running: 'A capture run is under way. Try again once it is done.',
   declined: 'Nothing was deleted.',
   unavailable: 'This session keeps its database in memory; there is no file to compact.',
+  'compact-failed': 'The database could not be compacted; nothing was changed. Try again later.',
   'store-failed': 'The change database could not be read.',
 };
 
@@ -76,9 +77,10 @@ export type SetRetentionAnswer = { status: 'ok' } | RetentionRefused;
 export type RetentionPreviewAnswer = { status: 'ok'; policy: RetentionPolicyInput; counts: PurgeCountsView; bytes: number } | RetentionRefused;
 
 /**
- * `purgeNow`: `purged` with what went (the purge record's counts and bytes, and how many files were
- * removed); `empty` when there was nothing to purge; `changed` when the rows moved twice between the
- * dialog and the purge (nothing was deleted).
+ * `purgeNow`: `purged` with what went (the purge record's counts; `bytes` the bytes really freed: the
+ * rows' stored bytes plus the files really unlinked, measured; the record's `bytes` is the planned
+ * figure) and how many files were removed; `empty` when there was nothing to purge; `changed` when
+ * the rows moved twice between the dialog and the purge, or the policy changed (nothing was deleted).
  */
 export type PurgeNowAnswer = { status: 'purged'; counts: PurgeCountsView; bytes: number; files: number } | { status: 'empty' } | { status: 'changed' } | RetentionRefused;
 
@@ -94,8 +96,12 @@ export interface RetentionUsage {
   snapshotBytes: number;
   diffBytes: number;
   screenshots: number;
-  /** The screenshot files the rows name, each once, measured with `lstat`; a missing or non-regular one is `missing`. */
-  files: { count: number; bytes: number; missing: number };
+  /**
+   * The screenshot files the rows name, each once, measured with `lstat`; a missing or non-regular one
+   * is `missing`. `shared`: of them, the ones another project's rows also name (without a project: two
+   * or more projects').
+   */
+  files: { count: number; bytes: number; missing: number; shared: number };
   /** The session database file and its `-wal`, by `stat`; `null` when it is in memory. Always the whole file. */
   database: { bytes: number; walBytes: number } | null;
 }
@@ -168,12 +174,19 @@ export function purgeCountsText(counts: PurgeCountsView): string {
   return `${plural(counts.captures, 'capture', 'captures')}, ${plural(counts.versions, 'version', 'versions')}, ${plural(counts.diffs, 'diff', 'diffs')} and ${plural(counts.screenshots, 'screenshot', 'screenshots')}`;
 }
 
+/** A policy in words, as the "Purge now" dialog names it: "keep the last 1 version of each page". */
+export function policyText(policy: RetentionPolicyInput): string {
+  if (policy.mode === 'forever') return 'keep everything';
+  return policy.mode === 'versions' ? `keep the last ${plural(policy.value, 'version', 'versions')} of each page` : `keep ${plural(policy.value, 'day', 'days')}`;
+}
+
 /** "Purge now": the confirmation main shows (Cancel is the default and the cancel answer). */
 export const PURGE_NOW = {
   dialog: {
     type: 'warning',
     message: 'Purge this project now?',
-    detail: 'This removes {counts} from the project {name} (about {bytes}), as its retention policy says. Each purge is recorded in the purge log. It cannot be undone.',
+    detail:
+      'This removes {counts} from the project {name} (about {bytes}), as its saved retention policy says: {policy}. Each purge is recorded in the purge log. It cannot be undone.',
     buttons: ['Purge Now', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
@@ -184,10 +197,14 @@ export const PURGE_NOW = {
 
 type MessageBox = { type: 'warning'; message: string; detail: string; buttons: string[]; defaultId: number; cancelId: number; noLink: boolean };
 
-/** `PURGE_NOW.dialog` for the project `name` (quoted, bidi-isolated) and the plan's counts and bytes. */
-export function purgeNowDialog(name: string, counts: PurgeCountsView, bytes: number): MessageBox {
+/**
+ * `PURGE_NOW.dialog` for the project `name` (quoted, bidi-isolated), its saved policy and the plan's
+ * counts and bytes. Each placeholder is replaced by a function, so a `$` pattern in a name stays text.
+ */
+export function purgeNowDialog(name: string, policy: RetentionPolicyInput, counts: PurgeCountsView, bytes: number): MessageBox {
   const { dialog } = PURGE_NOW;
-  const detail = dialog.detail.replace('{counts}', purgeCountsText(counts)).replace('{bytes}', formatBytes(bytes)).replace('{name}', `“⁨${name}⁩”`);
+  const values: Readonly<Record<string, string>> = { counts: purgeCountsText(counts), bytes: formatBytes(bytes), policy: policyText(policy), name: `“⁨${name}⁩”` };
+  const detail = dialog.detail.replace(/\{(counts|bytes|policy|name)\}/g, (_match, key: string) => values[key] ?? '');
   return { ...dialog, detail, buttons: [...dialog.buttons] };
 }
 

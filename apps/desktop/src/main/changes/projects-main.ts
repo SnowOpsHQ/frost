@@ -75,7 +75,7 @@ export function createMainProjects({ store, userData, browser, changes, screensh
     purges,
     databaseFile,
     running: () => runs.running(),
-    confirmPurge: (name, counts, bytes) => confirmPurgeNow(parent(), name, counts, bytes),
+    confirmPurge: (name, policy, counts, bytes) => confirmPurgeNow(parent(), name, policy, counts, bytes),
     confirmCompact: () => confirmCompact(parent()),
     log,
   });

@@ -191,10 +191,12 @@ never compete for one slot; its retention group is its lane and its `kind`.
   The retention policies plan for any project.
 - Then: a version whose every capture (in any project) is purged is purged; a diff whose `from` or
   `to` version is purged is purged. `unreferencedHashes` are the purged screenshots' hashes that no
-  remaining screenshot row has: only those files may be unlinked. `bytes` is what the purge frees:
-  the purged versions' snapshots and the purged diffs' JSON (`length(CAST(… AS BLOB))`), plus each
-  unreferenced hash's file size once (the row's `bytes`).
-- The plan carries its `now`, sorted id lists, the counts and the bytes.
+  remaining screenshot row has: only those files may be unlinked. `bytes` is what the purge plans to
+  free: the purged versions' snapshots and the purged diffs' JSON (`length(CAST(… AS BLOB))`), plus
+  each unreferenced hash's file size once (the row's `bytes`; that part is also `fileBytes`). It is
+  the **planned** figure, and the one `ci_purges.bytes` records; main reports what it really freed
+  (the files it did unlink, measured) to the user (`retention.feature.md`).
+- The plan carries its `now`, sorted id lists, the counts, the bytes and the file bytes.
 
 `executePurge(plan, reason, now)` plans again with the plan's inputs. Different id sets answer
 `{ status: 'stale' }` and delete nothing; an empty plan answers `{ status: 'empty' }` and records
@@ -243,7 +245,8 @@ answers the purge log newest first.
 `usage(projectId?)`: `captures`; `versions` the distinct versions the project's captures point at;
 `sharedVersions` of those, the ones another project's captures also point at; `snapshotBytes` their
 snapshots; `diffBytes` the diffs into them; `screenshots`; `screenshotBytes` the rows' `bytes`, each
-distinct hash once. Bytes are stored bytes, measured in SQL with `length(CAST(… AS BLOB))`. Without
+distinct hash once; `sharedScreenshotFiles` the distinct hashes another project's rows also name (without
+a project: two or more projects'). Bytes are stored bytes, measured in SQL with `length(CAST(… AS BLOB))`. Without
 a project: the totals over every row (a shared version is one referenced by two or more projects).
 - **Scenario: usage-counts-stored-bytes** — the numbers match the UTF-8 sizes of the stored text, a
   shared version is counted in both projects and flagged shared, and a hash stored twice counts

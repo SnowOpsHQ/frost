@@ -26,6 +26,11 @@ import { SCREENSHOT_LIMITS, SCREENSHOTS_DIR_NAME } from '@app/specs/screenshot.s
 // For Task 7 (retention): `unlink(sha)` removes a file no row references any more; the orphan sweep
 // lists the directory itself and must only touch names matching `<sha>.png` (and this store's
 // `<sha>.png.tmp-<hex>` leftovers from a crash).
+//
+// `lock(sha)` is a per-hash mutex, shared by every store over the same directory in this process. A
+// screenshot holds it from `write` (which may reuse a file no row names yet) until its row is
+// written; a purge and the orphan sweep hold it from `isHashReferenced` to `unlink`. So a file is
+// never removed in the gap between a write that reuses it and the row that names it.
 
 export interface ScreenshotFiles {
   /** `<userData>/frost-captures/screenshots` (absolute). */
@@ -40,6 +45,28 @@ export interface ScreenshotFiles {
   has(sha256: string): Promise<boolean>;
   /** Removes the file; whether one was removed. */
   unlink(sha256: string): Promise<boolean>;
+  /** Waits for the hash's lock (see above) and takes it; answers its release (call it once). */
+  lock(sha256: string): Promise<() => void>;
+}
+
+/** The held hashes, by directory and hash: each entry the tail of its queue. */
+const held = new Map<string, Promise<void>>();
+
+/** Takes `key`'s lock once the holders before have released it; answers the release. */
+async function acquire(key: string): Promise<() => void> {
+  const before = held.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => (release = resolve));
+  const tail = before.then(() => mine);
+  held.set(key, tail);
+  await before;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    release();
+    if (held.get(key) === tail) held.delete(key);
+  };
 }
 
 const sha256Of = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
@@ -226,6 +253,10 @@ export function createScreenshotFiles(userData: string, options: ScreenshotFiles
       } catch {
         return false;
       }
+    },
+    lock(sha256) {
+      if (fileOrNull(sha256) === null) return Promise.reject(new Error('not a screenshot hash'));
+      return acquire(`${dir}\n${sha256}`);
     },
     async unlink(sha256) {
       const file = fileOrNull(sha256);

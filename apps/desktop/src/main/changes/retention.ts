@@ -42,16 +42,16 @@ import { createPurgeFiles, type PurgeFiles } from './purge-files';
 export interface RetentionServiceDeps {
   /** `SessionStore.changeIntel`. */
   readonly store: ChangeIntelRepository;
-  /** The screenshot file store: its directory (the sweep lists it), `fileFor` (usage measures) and `unlink`. */
-  readonly files: Pick<ScreenshotFiles, 'dir' | 'fileFor' | 'unlink'>;
+  /** The screenshot file store: its directory (the sweep lists it), `fileFor` (usage measures), `unlink` and the hashes' `lock`. */
+  readonly files: Pick<ScreenshotFiles, 'dir' | 'fileFor' | 'unlink' | 'lock'>;
   /** The purge-then-unlink path, shared with a project's delete (default: one over `store` and `files`). */
   readonly purges?: PurgeFiles;
   /** `SessionStore.file`: the database file, or `':memory:'`. */
   readonly databaseFile: string;
   /** The project whose capture run is under way, else `null` (`CaptureRuns.running`). */
   readonly running: () => string | null;
-  /** Main's "Purge now" dialog (`PURGE_NOW`): whether the user confirmed. */
-  readonly confirmPurge: (name: string, counts: PurgeCountsView, bytes: number) => Promise<boolean>;
+  /** Main's "Purge now" dialog (`PURGE_NOW`, naming the saved policy): whether the user confirmed. */
+  readonly confirmPurge: (name: string, policy: RetentionPolicyInput, counts: PurgeCountsView, bytes: number) => Promise<boolean>;
   /** Main's "Compact" dialog (`COMPACT_DATABASE`): whether the user confirmed. */
   readonly confirmCompact: () => Promise<boolean>;
   readonly now?: () => number;
@@ -213,9 +213,15 @@ export function createRetentionService(deps: RetentionServiceDeps): MainRetentio
             continue;
           }
           const hash = entry.name.slice(0, 64);
-          // A row may have named it since the list was read: asked again just before.
-          if (kept.has(hash) || (await store.isHashReferenced(hash))) continue;
-          if (await files.unlink(hash)) removed += 1;
+          if (kept.has(hash)) continue;
+          // A row may have named it since the list was read, or a screenshot be reusing it now: asked
+          // again with the hash's lock held (a screenshot holds it until its row is written).
+          const release = await files.lock(hash);
+          try {
+            if (!(await store.isHashReferenced(hash)) && (await files.unlink(hash))) removed += 1;
+          } finally {
+            release();
+          }
         } catch {
           // Gone meanwhile, or not ours to remove: left alone.
         }
@@ -230,8 +236,8 @@ export function createRetentionService(deps: RetentionServiceDeps): MainRetentio
   // ---- Usage --------------------------------------------------------------------------------------
 
   /** The named screenshot files, each once, measured by `lstat` (a missing or non-regular one is `missing`). */
-  const measureFiles = async (hashes: readonly string[]): Promise<RetentionUsage['files']> => {
-    const measured = { count: 0, bytes: 0, missing: 0 };
+  const measureFiles = async (hashes: readonly string[], shared: number): Promise<RetentionUsage['files']> => {
+    const measured = { count: 0, bytes: 0, missing: 0, shared };
     const dirOk = (await realDirectory(path.dirname(files.dir))) && (await realDirectory(files.dir));
     for (const hash of hashes) {
       let size: number | null = null;
@@ -296,13 +302,15 @@ export function createRetentionService(deps: RetentionServiceDeps): MainRetentio
             if (plan === null) return refused('not-found');
             if (isEmpty(plan)) return { status: 'empty' as const };
             // 3. Main's dialog shows exactly this plan.
-            if (!(await deps.confirmPurge(project.name, { ...plan.counts }, plan.bytes))) return refused('declined');
+            if (!(await deps.confirmPurge(project.name, policyInput(policyOf(project)), { ...plan.counts }, plan.bytes))) return refused('declined');
             if (deps.running() === projectId) return refused('running');
-            // 4–6. That plan only (re-planned and compared inside), then the files no row names any more.
-            const { result, files: removed } = await purges.execute(plan, 'purge-now', now());
+            // 4–6. That plan only (its policy and rows checked again inside), then the files no row names any more.
+            const { result, files: removed, freedBytes } = await purges.execute(plan, 'purge-now', now());
             if (result === null) return storeFailed;
             if (result.status === 'empty') return { status: 'empty' as const };
-            if (result.status === 'purged') return { status: 'purged' as const, counts: { ...result.plan.counts }, bytes: result.plan.bytes, files: removed };
+            // The policy changed since the dialog: what was shown is not what would run.
+            if (result.status === 'changed') return { status: 'changed' as const };
+            if (result.status === 'purged') return { status: 'purged' as const, counts: { ...result.plan.counts }, bytes: freedBytes, files: removed };
             // 5. Stale: a capture raced in; plan again and ask again (once).
           }
           return { status: 'changed' as const };
@@ -326,7 +334,7 @@ export function createRetentionService(deps: RetentionServiceDeps): MainRetentio
             snapshotBytes: stored.snapshotBytes,
             diffBytes: stored.diffBytes,
             screenshots: stored.screenshots,
-            files: await measureFiles(hashes),
+            files: await measureFiles(hashes, stored.sharedScreenshotFiles),
             database: await databaseSize(),
           };
           return { status: 'ok' as const, usage };
@@ -349,7 +357,13 @@ export function createRetentionService(deps: RetentionServiceDeps): MainRetentio
           await enforcing;
           const size = async () => (await sizeOf(deps.databaseFile)) + (await sizeOf(`${deps.databaseFile}-wal`));
           const before = await size();
-          await store.compact();
+          try {
+            await store.compact();
+          } catch (error) {
+            // `VACUUM` is all or nothing: the file is as it was (a full disk, a busy database).
+            log(`compacting failed (${codeOf(error)})`);
+            return refused('compact-failed');
+          }
           return { status: 'compacted' as const, before, after: await size() };
         },
         storeFailed,

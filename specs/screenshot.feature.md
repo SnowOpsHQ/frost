@@ -88,6 +88,9 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
   profile-relative directory.
 
 ## Files (main only)
+- A screenshot holds its hash's lock (`ScreenshotFiles.lock`, per hash) from its file's write until
+  its row is written, so retention's purge and orphan sweep never unlink a file it is reusing
+  (`retention.feature.md`, Files and their lock).
 - The directory is `<userData>/frost-captures/screenshots/`, created `0700` (both directories;
   `mkdir`, then `chmod` through a handle opened without following a symlink).
 - Before every write and read, each of `frost-captures` and `screenshots` is `lstat`ed: anything but
