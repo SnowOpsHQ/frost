@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { UPDATE_ALLOWED_REQUEST_HEADERS, UPDATE_FETCH_LIMITS, updateUserAgent } from '@app/specs/update-client.spec';
 import { MAX_ENVELOPE_BYTES } from '@app/specs/update-manifest.spec';
-import { getBytes, hardenUpdateSession, netTransport, updateRequestHeaders, type UpdateGetDeps, type UpdateNet } from '../fetch';
+import { getBytes, updateGet, hardenUpdateSession, netTransport, updateRequestHeaders, type UpdateGetDeps, type UpdateGetLimits, type UpdateNet } from '../fetch';
 import { nodeTransport, startFakeFeed, tableResolver, type FakeFeed } from './fake-feed';
 
 const UA = updateUserAgent('1.2.0');
@@ -82,6 +82,10 @@ describe('update requests', () => {
     expect(UPDATE_ALLOWED_REQUEST_HEADERS).toEqual(['user-agent']);
     expect(updateRequestHeaders({ 'User-Agent': 'Mozilla/5.0 something', Cookie: 'a=b', 'Accept-Language': 'de-DE', Referer: 'https://x.example.com/', Authorization: 'Basic x', 'X-Install-Id': 'abc' }, UA)).toEqual({ 'User-Agent': UA });
     expect(updateRequestHeaders({}, UA)).toEqual({ 'User-Agent': UA });
+    // The filter is the allowlist: a header on it passes (its value kept), anything else goes.
+    expect(updateRequestHeaders({ 'user-agent': 'x', Accept: '*/*' }, UA, ['user-agent', 'accept'])).toEqual({ 'User-Agent': UA, Accept: '*/*' });
+    // Strictly the allowlist: without `user-agent` on it, no User-Agent either.
+    expect(updateRequestHeaders({ Accept: '*/*', 'Accept-Language': 'de', 'User-Agent': 'x' }, UA, ['accept'])).toEqual({ Accept: '*/*' });
     const listeners: { headers?: (details: { requestHeaders: Record<string, string> }, callback: (response: { requestHeaders: Record<string, string> }) => void) => void; request?: (details: { url: string; method: string }, callback: (response: { cancel: boolean }) => void) => void } = {};
     const agents: string[] = [];
     hardenUpdateSession(
@@ -140,6 +144,8 @@ describe('update requests', () => {
     // A name that does not resolve is unreachable; a resolver answering null (the e2e seam) is not checked.
     expect(await reason('https://nowhere.frost-feed.com/ok')).toBe('unreachable');
     expect(await reason('https://updates.frost-feed.com/ok', { resolve: async () => null })).toBe('ok');
+    // …only in an unpackaged build: a packaged one fails closed.
+    expect(await reason('https://updates.frost-feed.com/ok', { resolve: async () => null, isPackaged: true })).toBe('private-address');
     // A public literal is not resolved.
     const resolve = tableResolver({});
     expect(await reason('https://93.184.215.14/ok', { resolve })).toBe('unreachable');
@@ -154,6 +160,26 @@ describe('update requests', () => {
     feed.route('/bad-location', { redirect: 'https://[bad' });
     expect(await reason(`${feed.origin}/no-location`)).toBe('bad-redirect');
     expect(await reason(`${feed.origin}/bad-location`)).toBe('bad-redirect');
+    // Timeouts: no response at all (responseMs); a body that trickles forever (totalMs).
+    feed.route('/silent', () => undefined);
+    feed.route('/trickle', (_request, response) => {
+      response.writeHead(200);
+      const tick = setInterval(() => response.write('x'), 20);
+      response.on('close', () => clearInterval(tick));
+    });
+    const timed = async (path: string, limits: Partial<UpdateGetLimits>) => {
+      const started = Date.now();
+      const got = await getBytes(`${feed.origin}${path}`, deps(), { ...ENVELOPE, ...limits });
+      return { reason: got.ok ? 'ok' : got.reason, fast: Date.now() - started < 2_000 };
+    };
+    expect(await timed('/silent', { responseMs: 150 })).toEqual({ reason: 'timeout', fast: true });
+    expect(await timed('/trickle', { idleMs: 1_000, totalMs: 300 })).toEqual({ reason: 'timeout', fast: true });
+    // A sink (the disk) that never finishes a write: totalMs still ends the request.
+    feed.route('/body', { body: 'abc' });
+    const started = Date.now();
+    const hung = await updateGet(`${feed.origin}/body`, deps(), { ...ENVELOPE, totalMs: 300 }, () => new Promise<void>(() => undefined));
+    expect(hung).toEqual({ ok: false, reason: 'timeout' });
+    expect(Date.now() - started).toBeLessThan(2_000);
     // The caller's abort.
     const controller = new AbortController();
     controller.abort();

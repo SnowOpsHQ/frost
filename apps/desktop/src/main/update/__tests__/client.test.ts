@@ -15,7 +15,7 @@ import {
 } from '@app/specs/update-client.spec';
 import { MAX_ENVELOPE_BYTES, artifactFileName } from '@app/specs/update-manifest.spec';
 import { createUpdateClient, type UpdateClient, type UpdateClientDeps, type UpdateTimers } from '../client';
-import { createPrefsStore } from '../prefs';
+import { createPrefsStore, type UpdatePrefsStore } from '../prefs';
 import { artifactBytes, manifestFor, nodeTransport, sha256Hex, signEnvelope, startFakeFeed, tableResolver, testSigningKey, type FakeFeed } from './fake-feed';
 
 const HOST = 'downloads.frost-feed.com';
@@ -103,6 +103,33 @@ async function checkAgain(client: UpdateClient) {
   clock += UPDATE_SCHEDULE.manualMinIntervalMs + 1;
   return client.checkNow();
 }
+
+/**
+ * The real store, with every write's answer held until `release()` (in call order): the client sees
+ * two writes in flight at once, as when a slow disk overlaps a check and a setting change.
+ */
+function heldStore(): UpdatePrefsStore & { held(): number; release(): void } {
+  const real = createPrefsStore(userData);
+  const gates: (() => void)[] = [];
+  const hold = async <T>(write: Promise<T>): Promise<T> => {
+    const result = await write;
+    await new Promise<void>((resolve) => gates.push(resolve));
+    return result;
+  };
+  return {
+    read: () => real.read(),
+    write: (prefs) => hold(real.write(prefs)),
+    update: (change) => hold(real.update(change)),
+    held: () => gates.length,
+    release: () => {
+      for (const open of gates.splice(0)) open();
+    },
+  };
+}
+const until = async (condition: () => boolean) => {
+  for (let i = 0; i < 2000 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 1));
+  expect(condition()).toBe(true);
+};
 
 const prefsOnDisk = async () => JSON.parse(await readFile(path.join(userData, UPDATE_PREFS_FILE), 'utf8')) as UpdatePrefs;
 const feedRequests = () => feed.requests.filter((request) => request.path === '/feed.json');
@@ -450,6 +477,12 @@ describe('update client', () => {
     const future = client.watch(client.state().version + 100);
     await client.setChecks('on');
     expect((await future).status.kind).toBe('idle');
+    // A non-finite or negative version: at once (NaN, -1, -Infinity), or the next change (Infinity).
+    for (const odd of [Number.NaN, -1, Number.NEGATIVE_INFINITY]) expect((await client.watch(odd)).version).toBe(client.state().version);
+    const infinite = client.watch(Number.POSITIVE_INFINITY);
+    await client.setChecks('off');
+    expect((await infinite).status.kind).toBe('off');
+    await client.setChecks('on');
     // Aborting answers with the current state.
     const controller = new AbortController();
     const aborted = client.watch(client.state().version, controller.signal);
@@ -469,13 +502,75 @@ describe('update client', () => {
     expect((await last).version).toBe(client.state().version);
   });
 
+  test('prefs-writes-not-lost', async () => {
+    // A check that raises the mark, then the user turns checks off, both writes in flight together.
+    serve(manifest('1.3.0'));
+    let store = heldStore();
+    let { client } = await makeClient({ prefs: store });
+    const checked = client.checkNow();
+    await until(() => store.held() === 1);
+    const turnedOff = client.setChecks('off');
+    await until(() => store.held() === 2);
+    store.release();
+    await Promise.all([checked, turnedOff]);
+    expect(await prefsOnDisk()).toMatchObject({ checks: 'off', highWaterMark: { version: '1.3.0' } });
+    expect(client.state().checks).toBe('off');
+    client.dispose();
+    // The other order: checks turned on first, the check's mark write second.
+    await rm(path.join(userData, UPDATE_PREFS_FILE));
+    serve(manifest('1.3.1'));
+    store = heldStore();
+    ({ client } = await makeClient({ prefs: store }));
+    const first = client.setChecks('off');
+    await until(() => store.held() === 1);
+    const second = client.checkNow();
+    await until(() => store.held() === 2);
+    store.release();
+    await Promise.all([first, second]);
+    expect(await prefsOnDisk()).toMatchObject({ checks: 'off', highWaterMark: { version: '1.3.1' } });
+    expect(client.state().checks).toBe('off');
+  });
+
+  test('dispose-during-download', async () => {
+    const half = BYTES.subarray(0, BYTES.length / 2);
+    feed.route('/frost-1.3.0.AppImage', (_request, response) => {
+      response.writeHead(200, { 'Content-Length': String(BYTES.length) });
+      response.write(half);
+    });
+    serve(manifest('1.3.0'));
+    const { client } = await makeClient();
+    await client.checkNow();
+    const downloading = client.download();
+    const dir = path.join(userData, UPDATE_DOWNLOADS_DIR, '1.3.0');
+    await until(() => client.state().status.kind === 'downloading' && (client.state().status as { bytes: number }).bytes >= half.length);
+    expect(await readdir(dir)).toEqual([`${artifactFileName('1.3.0', 'linux-x64')}.partial`]);
+    client.dispose();
+    await downloading;
+    expect(await readdir(dir)).toEqual([]);
+    expect(client.readyFile()).toBeNull();
+  });
+
+  test('stale-before-ready', async () => {
+    // The manifest expires while the artifact is on its way: the verified file is not kept.
+    feed.route('/frost-1.3.0.AppImage', (_request, response) => {
+      clock += 31 * 24 * 60 * 60 * 1000;
+      response.writeHead(200).end(BYTES);
+    });
+    serve(manifest('1.3.0'));
+    const { client } = await makeClient();
+    await client.checkNow();
+    expect((await client.download()).status).toEqual({ kind: 'error', reason: 'stale', version: '1.3.0' });
+    expect(client.readyFile()).toBeNull();
+    expect(await readdir(path.join(userData, UPDATE_DOWNLOADS_DIR, '1.3.0'))).toEqual([]);
+  });
+
   test('errors-are-caught', async () => {
     serve(manifest('1.3.0'));
     const { client } = await makeClient({ currentVersion: 'not-a-version' });
     expect((await client.checkNow()).status).toEqual({ kind: 'error', reason: 'internal' });
     // A prefs write that fails: `disk`, never a rejection.
     const store = createPrefsStore(userData);
-    const failing = { read: () => store.read(), write: async () => Promise.reject(new Error('EROFS')) };
+    const failing = { read: () => store.read(), write: async () => Promise.reject(new Error('EROFS')), update: async () => Promise.reject(new Error('EROFS')) };
     const { client: readOnly } = await makeClient({ prefs: failing });
     expect((await readOnly.checkNow()).status).toEqual({ kind: 'error', reason: 'disk' });
     expect((await readOnly.setChecks('off')).status.kind).toBe('error');

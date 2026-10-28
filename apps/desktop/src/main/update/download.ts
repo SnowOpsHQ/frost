@@ -60,12 +60,16 @@ async function realDirectory(dir: string): Promise<boolean> {
 
 /**
  * Removes every entry in `userData/updates` but `keepVersion`'s directory (all of them for
- * `null`). Never rejects; a missing directory is fine.
+ * `null`). Never rejects; a missing directory is fine, and anything but a real directory there (a
+ * symbolic link) is left alone.
  */
 export async function pruneDownloads(userData: string, keepVersion: string | null): Promise<void> {
   const dir = downloadsDir(userData);
   let names: string[];
   try {
+    // Only a real directory: never what a symbolic link in its place points to.
+    const info = await lstat(dir);
+    if (!info.isDirectory() || info.isSymbolicLink()) return;
     names = await readdir(dir);
   } catch {
     return;

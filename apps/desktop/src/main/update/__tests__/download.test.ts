@@ -182,6 +182,22 @@ describe('downloadArtifact', () => {
     expect(await tree()).toEqual(['1.3.0', '1.3.0/x']);
     await pruneDownloads(userData, null);
     expect(await tree()).toEqual([]);
+    // A symbolically linked downloads directory is left alone, and so is what it points to.
+    if (POSIX) {
+      const elsewhere = await mkdtemp(path.join(os.tmpdir(), 'frost-update-elsewhere-'));
+      try {
+        await writeFile(path.join(elsewhere, 'precious'), 'x');
+        await mkdir(path.join(elsewhere, '1.0.0'));
+        await rm(updatesDir(), { recursive: true, force: true });
+        await symlink(elsewhere, updatesDir());
+        await pruneDownloads(userData, null);
+        await pruneDownloads(userData, '1.0.0');
+        expect((await readdir(elsewhere)).sort()).toEqual(['1.0.0', 'precious']);
+        await rm(updatesDir());
+      } finally {
+        await rm(elsewhere, { recursive: true, force: true });
+      }
+    }
     // No downloads directory: nothing to do, no rejection.
     await rm(updatesDir(), { recursive: true, force: true });
     await pruneDownloads(userData, null);

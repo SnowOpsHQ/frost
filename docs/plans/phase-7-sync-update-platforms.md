@@ -580,13 +580,29 @@ sync.
   `prefs-round-trip`, `hop-rules`, `download-verified`, `download-stays-in-updates`,
   `prune-downloads`, `check-schedule`, `check-errors`, `download-errors-shown`, `set-checks`,
   `watch-long-poll`, `errors-are-caught`, `prerelease-does-not-raise-mark`.
+- **Security review fixes** (`fix(update): address update-client security review findings`):
+  - prefs changes go through `UpdatePrefsStore.update(change)`, run against the latest prefs in
+    the store's serial queue (a check raising the mark and `setChecks('off')` overlapping lost one
+    of the two; `prefs-writes-not-lost`, `prefs-update-in-order`); `write` stays for setup;
+  - `pruneDownloads` `lstat`s `updates/` and leaves a symbolic link (and its target) alone;
+  - a resolver's `null` ("not checked") is honoured only unpackaged; packaged, the hop is
+    `private-address`;
+  - `watch` treats `NaN` and negative versions as 0 (answered at once);
+  - `updateRequestHeaders(headers, userAgent, allowed = UPDATE_ALLOWED_REQUEST_HEADERS)` filters by
+    the allowlist for real;
+  - the prefs file is `lstat`ed and opened `O_NONBLOCK | O_NOFOLLOW` (a FIFO or symbolic link is
+    reset, never read); the chmod after the rename is gone (the temporary file is created 0600);
+    a reset logs one line through `createPrefsStore(userData, { log })` (no install ID, no path);
+  - the disk write is raced against the stop signal (`totalMs` bounds a hung write);
+  - freshness is checked again just before `ready` (`stale-before-ready`; the file is deleted);
+  - new tests for `responseMs`/`totalMs` and for `dispose()` mid-download removing the `.partial`.
 - **For Task 5.** Wire in `index.ts`: `const updateSession = session.fromPartition(UPDATE_PARTITION,
   { cache: false })`; `hardenUpdateSession(updateSession, updateUserAgent(app.getVersion()), {
   isPackaged })`; `createUpdateClient({ feed: resolveFeed({ env: process.env, switchValue:
   getSwitchValue(UPDATE_FEED_SWITCH), isPackaged }), keys: resolveTrustedKeys({ switchValue:
   getSwitchValue(UPDATE_PUBLIC_KEY_SWITCH), isPackaged }), currentVersion: app.getVersion(),
   platformKey: updatePlatformKey(process.platform, process.arch), userData, prefs:
-  createPrefsStore(userData), hop: netTransport(net, updateSession), resolve:
+  createPrefsStore(userData, { log }), hop: netTransport(net, updateSession), resolve:
   netResolve(updateSession), isPackaged })` (async; `dispose()` on quit). The artifact URL must be
   `https:` (Task 3's schema), so the e2e needs a TLS fake server reachable under a public-looking
   name (`--host-resolver-rules`, a resolver wrapper answering `null` for it, and a test-only

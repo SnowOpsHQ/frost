@@ -95,7 +95,10 @@ export function updateUserAgent(currentVersion: string): string {
   return `frost/${currentVersion} (update check)`;
 }
 
-/** The only request header the update session lets through (lowercase); `User-Agent` is forced to `updateUserAgent`. */
+/**
+ * The request headers the update session lets through (lowercase; `updateRequestHeaders` drops
+ * every other one): `User-Agent` alone, forced to `updateUserAgent`.
+ */
 export const UPDATE_ALLOWED_REQUEST_HEADERS = ['user-agent'] as const;
 
 /**
@@ -107,7 +110,9 @@ export const UPDATE_ALLOWED_REQUEST_HEADERS = ['user-agent'] as const;
  * - time: `responseMs` from each hop's start to its response headers, `idleMs` without a body byte,
  *   and `totalMs` for the whole request.
  * A name is resolved before each `https:` hop and refused if any address is private
- * (`private-address.spec.ts`); IP literals are checked directly. As for the bounded fetcher, a name
+ * (`private-address.spec.ts`); IP literals are checked directly. A resolver may answer "not
+ * checked" only as the e2e seam of an unpackaged build; a packaged build refuses such a hop. A
+ * write to disk that does not finish is bounded by `totalMs` too. As for the bounded fetcher, a name
  * whose answer changes between the check and the connection (DNS rebinding) is a known gap of
  * `net.request`, which cannot be pinned to the checked address; the signature and hash checks still
  * hold whatever the address.
@@ -140,7 +145,12 @@ export function jittered(delay: number, random: number, jitter: number = UPDATE_
 
 // ---- Files -------------------------------------------------------------------------------------
 
-/** The prefs file in `userData` (mode 0600 on POSIX, written atomically). */
+/**
+ * The prefs file in `userData` (mode 0600 on POSIX, written atomically; changes are applied to the
+ * latest prefs in one serial queue, so none is lost). Only a regular file is read (never a FIFO or
+ * a symbolic link); an invalid one is reset to the defaults with one log line (no install ID, no
+ * path).
+ */
 export const UPDATE_PREFS_FILE = 'frost-update.json';
 /** A prefs file larger than this is invalid (reset to defaults). */
 export const MAX_PREFS_BYTES = 4096;
@@ -151,7 +161,8 @@ export const UPDATE_PREFS_FORMAT = 1;
  * Downloads go to `userData/<UPDATE_DOWNLOADS_DIR>/<version>/<artifactFileName(version, platformKey)>`,
  * first as that name plus `UPDATE_PARTIAL_SUFFIX`, renamed only once verified. Once one is ready,
  * every other entry in the downloads directory is removed; a check that finds nothing newer than the
- * running version removes them all.
+ * running version removes them all. A symbolic link in place of the downloads directory (or a
+ * version directory) is never written through or emptied.
  */
 export const UPDATE_DOWNLOADS_DIR = 'updates';
 export const UPDATE_PARTIAL_SUFFIX = '.partial';

@@ -37,10 +37,19 @@ the feed publishes the Windows `Setup.exe`, not a Squirrel `RELEASES` feed. So e
 - **Scenario: prefs-round-trip** — a written `checks: 'off'`, `skippedVersion` and `highWaterMark`
   read back equal; the write goes through a temporary file renamed over the old one (no temporary
   file is left; a lax mode is fixed to 0600 on POSIX).
+- **Scenario: prefs-update-in-order** — `update(change)` runs `change` against the latest prefs
+  inside the store's serial queue: two overlapping updates (a raised mark, `checks: 'off'`) both
+  land, on disk and in the answers; a failed write leaves the prefs as they were; an update before
+  any read starts from the file.
+- **Scenario: prefs-not-a-file** — (POSIX) a FIFO at the prefs path is refused at once (checked
+  with `lstat`, opened `O_NONBLOCK`, so startup can't hang) and replaced by a regular file with the
+  defaults; a symbolic link (even to a valid prefs file) is refused and replaced, its target left
+  alone.
 - **Scenario: prefs-tamper-resets** — a file that is not UTF-8 JSON, repeats a key, has an unknown
   key, another `format`, an install ID that is not a UUIDv4, `checks` other than `on`/`off`, a
   `skippedVersion` that is not a version, a malformed `highWaterMark`, or is over
-  `MAX_PREFS_BYTES`: read as the defaults with a **new** install ID, and rewritten so.
+  `MAX_PREFS_BYTES`: read as the defaults with a **new** install ID, and rewritten so, with one
+  log line that holds neither the install ID nor a path (a first run, with no file, logs nothing).
 
 ## Requests (`fetch.test.ts`)
 - **Scenario: feed-request-carries-nothing** — the request the fake feed receives has exactly the
@@ -53,8 +62,12 @@ the feed publishes the Windows `Setup.exe`, not a Squirrel `RELEASES` feed. So e
 - **Scenario: hop-rules** — before each hop: `https:` only (`http:` only to a loopback literal in
   an unpackaged build, never after an `https:` hop); no user name or password; an IP literal must be
   public; a name must not be local-only (`localhost`, `*.local`, single labels…) and must resolve to
-  public addresses only (a resolver answering `null` means not checked: the e2e seam); a name that
-  does not resolve is unreachable.
+  public addresses only (a resolver answering `null` means not checked, the e2e seam, and only in
+  an unpackaged build: a packaged one refuses the hop as `private-address`); a name that does not
+  resolve is unreachable. The header filter keeps exactly the `UPDATE_ALLOWED_REQUEST_HEADERS`
+  names (with another allowlist, exactly those). Timeouts: no response within `responseMs`, a body
+  still arriving at `totalMs`, and a sink (the disk) that never finishes a write by `totalMs` all
+  end the request as `timeout`.
 
 ## Download (`download.test.ts`)
 - **Scenario: download-verified** — an artifact whose bytes match its signed size and SHA-256 is
@@ -71,6 +84,9 @@ the feed publishes the Windows `Setup.exe`, not a Squirrel `RELEASES` feed. So e
   on a private IP literal, on a name resolving to a private address, or redirected to one
   (`private-address`, never requested), a status other than 200 (`download-failed`), no bytes for
   `idleMs` (`timeout` → `download-failed`).
+- **Scenario: prune-downloads** — `pruneDownloads(userData, keep)` removes every entry of
+  `updates/` but `keep`'s (all for `null`); a missing directory is fine; a symbolic link in place
+  of `updates/` is left alone, and so is everything it points to.
 - **Scenario: download-stays-in-updates** — a version that is not `VERSION_PATTERN` (`../x`) writes
   nothing (`disk`); an `updates` directory, or a version directory, that is a symbolic link is
   refused (`disk`).
@@ -117,11 +133,19 @@ the feed publishes the Windows `Setup.exe`, not a Squirrel `RELEASES` feed. So e
 - **Scenario: download-errors-shown** — a tampered artifact: `error` `hash-mismatch` with the
   offered version, no file left, `readyFile()` `null`; an offer whose manifest expired since the
   check is `stale` and requests nothing.
+- **Scenario: stale-before-ready** — a manifest that expires while its artifact downloads: the
+  verified file is deleted and the state is `error` `stale`, `readyFile()` `null`.
+- **Scenario: dispose-during-download** — `dispose()` while the artifact arrives ends the request;
+  the `.partial` is deleted and nothing is ready.
+- **Scenario: prefs-writes-not-lost** — a check raising the mark and `setChecks('off')`, their
+  writes in flight at once, in either order: the file and the state end with both (`checks: 'off'`
+  and the new mark).
 - **Scenario: set-checks** — `setChecks('off')` saves it, stops the schedule, and shows `off` (an
   offer, a download or a ready file stays); `setChecks('on')` shows `idle` and schedules a check
   `firstCheckMs` (jittered) later.
 - **Scenario: watch-long-poll** — `watch(v)` answers at once when the state is newer than `v`,
   otherwise on the next change, or when its signal aborts; a version from the future waits for the
-  next change only; with `MAX_PENDING_UPDATE_WATCHES` waiting one more answers the oldest at once.
+  next change only (`Infinity` too); `NaN` or a negative version answers at once; with
+  `MAX_PENDING_UPDATE_WATCHES` waiting one more answers the oldest at once.
 - **Scenario: errors-are-caught** — a running version that is not semver makes a check `error`
   `internal`, never a rejection; a prefs write that fails is `disk`.

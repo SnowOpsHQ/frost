@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import {
   CURRENT_INSTALL_MODE,
@@ -176,14 +177,14 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
     status = next;
     changed();
   };
-  const savePrefs = async (next: UpdatePrefs): Promise<void> => {
+  /** Applies `change` to the store's latest prefs (inside its write queue, so overlapping changes all land). */
+  const savePrefs = async (change: (latest: UpdatePrefs) => UpdatePrefs): Promise<void> => {
     try {
-      await deps.prefs.write(next);
+      prefs = await deps.prefs.update(change);
     } catch (error) {
       log(`update prefs could not be written (${error instanceof Error ? error.message : String(error)})`);
       throw new DiskError('prefs');
     }
-    prefs = next;
   };
   const failCheck = (reason: UpdateErrorReason, detail?: UpdateGetFailure | UpdateVerifyReason): UpdateState => {
     offer = null;
@@ -242,7 +243,8 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
           : decide(manifest, { currentVersion: deps.currentVersion, platformKey: deps.platformKey, installId: prefs.installId, skippedVersion: prefs.skippedVersion });
       // A pre-release this build is never offered does not raise the mark (a later release hotfix below it must not look like a replay).
       if (decision.kind !== 'prerelease-ignored' && aboveMark(manifest, prefs.highWaterMark)) {
-        await savePrefs({ ...prefs, highWaterMark: { version: manifest.version, releasedAt: manifest.releasedAt } });
+        // Re-checked against the latest mark inside the write queue: the mark only ever rises.
+        await savePrefs((latest) => (aboveMark(manifest, latest.highWaterMark) ? { ...latest, highWaterMark: { version: manifest.version, releasedAt: manifest.releasedAt } } : latest));
       }
       lastCheckedAt = new Date(now()).toISOString();
       outcome = { kind: 'decided', decision: decision.kind, version: decision.version };
@@ -306,6 +308,12 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
         set({ kind: 'error', reason: downloadReason(result.reason), version: target });
         return snapshot();
       }
+      // Still fresh now, after what may have been a long download: else the file is not kept.
+      if (checkFreshness(held.manifest, now()) !== null) {
+        await rm(result.file, { force: true }).catch(() => undefined);
+        set({ kind: 'error', reason: 'stale', version: target });
+        return snapshot();
+      }
       ready = result.file;
       set({ kind: 'ready', version: target, install: installMode, fileName: path.basename(result.file) });
       return snapshot();
@@ -325,8 +333,9 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
     state: snapshot,
 
     watch(sinceVersion, signal) {
-      // A version from the future is clamped: wait for the next change, not forever.
-      const since = Math.min(sinceVersion, version);
+      // A version from the future is clamped (wait for the next change, not forever); NaN or a
+      // negative one is 0 (answered at once).
+      const since = Math.min(Number.isNaN(sinceVersion) ? 0 : Math.max(0, sinceVersion), version);
       return new Promise((resolve) => {
         if (version > since || signal?.aborted || disposed) {
           resolve(snapshot());
@@ -374,7 +383,7 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
       const held = offer;
       if (disposed || status.kind !== 'available' || held === null || held.required) return snapshot();
       try {
-        await savePrefs({ ...prefs, skippedVersion: held.manifest.version });
+        await savePrefs((latest) => ({ ...latest, skippedVersion: held.manifest.version }));
       } catch {
         set({ kind: 'error', reason: 'disk' });
         return snapshot();
@@ -388,7 +397,7 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
     async setChecks(checks) {
       if (disposed) return snapshot();
       try {
-        await savePrefs({ ...prefs, checks });
+        await savePrefs((latest) => ({ ...latest, checks }));
       } catch {
         if (deps.feed !== null) set({ kind: 'error', reason: 'disk' });
         return snapshot();

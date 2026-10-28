@@ -1,5 +1,6 @@
 // Spec: specs/update-client.spec.ts, specs/update-client.schema.ts · Acceptance: specs/update-client.feature.md (Prefs)
-import { mkdtemp, readdir, readFile, rm, stat, writeFile, chmod } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile, chmod, lstat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -23,8 +24,11 @@ const modeOf = async () => (await stat(file())).mode & 0o777;
 
 describe('update prefs', () => {
   test('prefs-defaults', async () => {
-    const store = createPrefsStore(dir);
+    const logs: string[] = [];
+    const store = createPrefsStore(dir, { log: (line) => logs.push(line) });
     const first = await store.read();
+    // A first run is not a reset: nothing logged.
+    expect(logs).toEqual([]);
     expect(first).toEqual({ format: 1, installId: expect.stringMatching(UUID_V4), checks: 'on' });
     expect(await onDisk()).toEqual(first);
     if (POSIX) expect(await modeOf()).toBe(0o600);
@@ -67,6 +71,51 @@ describe('update prefs', () => {
     expect(await readdir(dir)).toEqual([UPDATE_PREFS_FILE]);
   });
 
+  test('prefs-update-in-order', async () => {
+    const store = createPrefsStore(dir);
+    const first = await store.read();
+    // Each change runs against the latest prefs, so overlapping changes all land.
+    const [a, b] = await Promise.all([
+      store.update((prefs) => ({ ...prefs, highWaterMark: { version: '1.3.0', releasedAt: '2026-10-28T12:00:00Z' } })),
+      store.update((prefs) => ({ ...prefs, checks: 'off' })),
+    ]);
+    expect(a).toEqual({ ...first, highWaterMark: { version: '1.3.0', releasedAt: '2026-10-28T12:00:00Z' } });
+    expect(b).toEqual({ ...first, checks: 'off', highWaterMark: { version: '1.3.0', releasedAt: '2026-10-28T12:00:00Z' } });
+    expect(await onDisk()).toEqual(b);
+    // A change that fails to write leaves the prefs as they were.
+    const broken = createPrefsStore(path.join(dir, 'missing-directory'));
+    const before = await broken.read();
+    await expect(broken.update((prefs) => ({ ...prefs, checks: 'off' }))).rejects.toThrow();
+    await mkdir(path.join(dir, 'missing-directory'));
+    expect(await broken.update((prefs) => prefs)).toEqual(before);
+    // An update before any read starts from the file.
+    expect(await createPrefsStore(dir).update((prefs) => prefs)).toEqual(b);
+  });
+
+  test('prefs-not-a-file', async () => {
+    if (!POSIX) return;
+    // A FIFO at the prefs path: refused at once (never opened for a blocking read), and replaced.
+    execFileSync('mkfifo', [file()]);
+    const logs: string[] = [];
+    const read = await createPrefsStore(dir, { log: (line) => logs.push(line) }).read();
+    expect(read).toEqual({ format: 1, installId: expect.stringMatching(UUID_V4), checks: 'on' });
+    expect((await lstat(file())).isFile()).toBe(true);
+    expect(logs).toHaveLength(1);
+    // A symbolic link to a valid prefs file elsewhere: refused too, and replaced by a regular file.
+    const elsewhere = path.join(os.tmpdir(), `frost-update-prefs-target-${process.pid}.json`);
+    await writeFile(elsewhere, JSON.stringify({ format: 1, installId: '2f1e6a8e-3c1b-4d5e-9f00-112233445566', checks: 'off' }));
+    try {
+      await rm(file());
+      await symlink(elsewhere, file());
+      const viaLink = await createPrefsStore(dir).read();
+      expect(viaLink.checks).toBe('on');
+      expect((await lstat(file())).isSymbolicLink()).toBe(false);
+      expect(JSON.parse(await readFile(elsewhere, 'utf8')).checks).toBe('off');
+    } finally {
+      await rm(elsewhere, { force: true });
+    }
+  });
+
   test('prefs-tamper-resets', async () => {
     const good = await createPrefsStore(dir).read();
     const base = { ...good, highWaterMark: { version: '1.2.0', releasedAt: '2026-10-28T12:00:00Z' } };
@@ -91,7 +140,13 @@ describe('update prefs', () => {
     const seen = new Set([good.installId]);
     for (const [name, content] of tampered) {
       await writeFile(file(), content);
-      const read = await createPrefsStore(dir).read();
+      const logs: string[] = [];
+      const read = await createPrefsStore(dir, { log: (line) => logs.push(line) }).read();
+      // One line, holding neither the install ID nor a path.
+      expect([name, logs.length]).toEqual([name, 1]);
+      expect(logs[0]).not.toContain(read.installId);
+      expect(logs[0]).not.toContain(good.installId);
+      expect(logs[0]).not.toContain(dir);
       expect([name, read]).toEqual([name, { format: 1, installId: expect.stringMatching(UUID_V4), checks: 'on' }]);
       // A new install ID each time, and the file rewritten with the defaults.
       expect([name, seen.has(read.installId)]).toEqual([name, false]);
@@ -101,7 +156,6 @@ describe('update prefs', () => {
     }
     // A directory where the file should be: defaults in memory, never a rejection.
     await rm(file());
-    const { mkdir } = await import('node:fs/promises');
     await mkdir(file());
     const read = await createPrefsStore(dir).read();
     expect(read).toEqual({ format: 1, installId: expect.stringMatching(UUID_V4), checks: 'on' });

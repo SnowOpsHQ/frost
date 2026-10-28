@@ -105,7 +105,8 @@ async function checkHop(url: URL, previous: string | null, deps: UpdateGetDeps, 
     return 'unreachable';
   }
   if (addresses === 'stopped') return 'stopped';
-  if (addresses === null) return 'ok';
+  // Unchecked (the e2e seam) only in an unpackaged build; a packaged one fails closed.
+  if (addresses === null) return deps.isPackaged ? 'private-address' : 'ok';
   if (addresses.length === 0) return 'unreachable';
   return addresses.some(isPrivateAddress) ? 'private-address' : 'ok';
 }
@@ -187,11 +188,16 @@ export async function updateGet(url: string, deps: UpdateGetDeps, limits: Update
           if (bytes + chunk.byteLength > limits.maxBytes) return fail('too-large', response.status);
           bytes += chunk.byteLength;
           clearTimeout(phase);
+          // Raced against the stop signal, so `totalMs` (or the caller's abort) also bounds a hung write.
+          let written: 'written' | 'stopped';
           try {
-            await sink(chunk);
+            const writing = Promise.resolve(sink(chunk));
+            writing.catch(() => undefined);
+            written = await Promise.race([writing.then(() => 'written' as const), stopped]);
           } catch {
             return fail('sink', response.status);
           }
+          if (written === 'stopped') return fail(why());
           if (controller.signal.aborted) return fail(why());
         }
       } catch {
@@ -299,11 +305,23 @@ export function netResolve(session: { resolveHost(host: string): Promise<{ reado
   return async (host) => (await session.resolveHost(host)).endpoints.map((endpoint) => endpoint.address);
 }
 
-/** The headers the update session sends: `User-Agent` only (`UPDATE_ALLOWED_REQUEST_HEADERS`), forced to `userAgent`. */
-export function updateRequestHeaders(_headers: Readonly<Record<string, string>>, userAgent: string): Record<string, string> {
-  // Whatever the session would send, only the one allowed header goes out.
-  void UPDATE_ALLOWED_REQUEST_HEADERS;
-  return { 'User-Agent': userAgent };
+/**
+ * The headers the update session sends: only those named in `allowed` (lowercase;
+ * `UPDATE_ALLOWED_REQUEST_HEADERS`, i.e. `User-Agent` alone), with `User-Agent` forced to `userAgent`.
+ */
+export function updateRequestHeaders(
+  headers: Readonly<Record<string, string>>,
+  userAgent: string,
+  allowed: readonly string[] = UPDATE_ALLOWED_REQUEST_HEADERS,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase();
+    if (lower !== 'user-agent' && allowed.includes(lower)) out[name] = value;
+  }
+  // `User-Agent` is always the update agent, whatever the session would have sent.
+  if (allowed.includes('user-agent')) out['User-Agent'] = userAgent;
+  return out;
 }
 
 /** Whether the update session lets a request out: `GET`, to `https:`, or (unpackaged) `http:` loopback. */
