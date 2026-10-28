@@ -129,11 +129,34 @@ describe('SelectorPackSchema', () => {
       withBlock({ title: 'h3\nh2' }),
       withBlock({ required: 'yes' }),
       withBlock({ script: 'alert(1)' }),
+      // Phase 3 Task 3: vertical parameters, click redirects, notInside and box.
+      withBlock({ notInside: '' }),
+      withBlock({ box: 'a'.repeat(SELECTOR_PACK_LIMITS.maxSelectorChars + 1) }),
+      withBlock({ box: 'div\ng' }),
+      withEngine({ params: { query: ['q'], reject: [] } }),
+      withEngine({ params: { query: ['q'], reject: Array.from({ length: SELECTOR_PACK_LIMITS.maxRejects + 1 }, (_, i) => ({ param: `p${i}` })) } }),
+      withEngine({ params: { query: ['q'], reject: [{ param: 'tbm', values: ['isch'], except: ['web'] }] } }),
+      withEngine({ params: { query: ['q'], reject: [{ param: 'tbm', values: ['ISCH'] }] } }),
+      withEngine({ params: { query: ['q'], reject: [{ param: 'tbm', values: [] }] } }),
+      withEngine({ params: { query: ['q'], reject: [{ param: 'tbm', except: ['x'.repeat(SELECTOR_PACK_LIMITS.maxRejectValueChars + 1)] }] } }),
+      withEngine({ params: { query: ['q'], reject: [{ param: 'tbm', extra: 1 }] } }),
+      withEngine({ redirects: [] }),
+      withEngine({ redirects: Array.from({ length: SELECTOR_PACK_LIMITS.maxRedirects + 1 }, () => ({ path: '/url', param: 'q', decode: 'plain' })) }),
+      withEngine({ redirects: [{ path: '/url', param: 'q', decode: 'eval' }] }),
+      withEngine({ redirects: [{ path: 'url', param: 'q', decode: 'plain' }] }),
+      withEngine({ redirects: [{ path: '/url', param: 'q', decode: 'plain', hosts: ['Click.example.com'] }] }),
+      withEngine({ redirects: [{ path: '/url', param: 'q', decode: 'plain', hosts: [] }] }),
+      withEngine({ redirects: [{ path: '/url', param: 'q', decode: 'plain', script: 'x' }] }),
     ];
     for (const pack of refused) expect(SelectorPackSchema.safeParse(pack).success, JSON.stringify(pack).slice(0, 200)).toBe(false);
     // Optional parts may be left out; a page-number parameter needs no perPage.
     expect(SelectorPackSchema.safeParse(withEngine({ params: { query: ['q', 'p'], page: { param: 'page', kind: 'page' } } })).success).toBe(true);
     expect(SelectorPackSchema.safeParse(withBlock({ item: undefined, link: undefined, title: undefined, required: undefined })).success).toBe(true);
     expect(SelectorPackSchema.safeParse(withBlock({ item: 'a'.repeat(SELECTOR_PACK_LIMITS.maxSelectorChars) })).success).toBe(true);
+    expect(SelectorPackSchema.safeParse(withBlock({ notInside: 'g-section-with-header', box: 'div.g' })).success).toBe(true);
+    expect(SelectorPackSchema.safeParse(withEngine({ params: { query: ['q'], reject: [{ param: 'tbm', except: [''] }, { param: 'ia', values: ['news', 'images'] }, { param: 'x' }] } })).success).toBe(true);
+    expect(
+      SelectorPackSchema.safeParse(withEngine({ redirects: [{ path: '/url', param: 'q', decode: 'plain' }, { path: '/ck/a', param: 'u', decode: 'bing-a1', hosts: ['click.example.com'] }] })).success,
+    ).toBe(true);
   });
 });

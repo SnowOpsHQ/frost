@@ -11,7 +11,7 @@ import { SERP_PACK_PUBLIC_KEYS } from '@app/specs/serp-selector-pack.spec';
 import { SelectorPackSchema, type EngineLayout, type SelectorPack } from '@app/specs/serp-selector-pack.schema';
 import { SerpReadSchema, SerpSnapshotSchema, type SerpRead } from '@app/specs/serp-snapshot.schema';
 import { BUNDLED_PACK } from '../bundled';
-import { matchSerp } from '../engines';
+import { matchSerp, redirectRules } from '../engines';
 import { verifyPack } from '../pack-verify';
 import { readSerp, runSerpRead, serpReadScript, type SerpDocument } from '../read-script';
 import { analyseSerp } from '../serp-analyse';
@@ -49,12 +49,15 @@ describe('reading synthetic result pages', () => {
     expect(google.ok).toBe(true);
     expect(titles(google)).toEqual([
       ['ad', ['Frost Gear, sponsored', 'Winter boots on sale']],
+      // One result per product, not per link.
+      ['shopping', ['Wool mittens', 'Frost scarf']],
       ['featured-snippet', ['What is frost? A short guide']],
       ['organic', ['Frost explained | Example', 'Ten tips for frosty mornings']],
       ['people-also-ask', ['What causes frost?', 'When does frost form?', 'Is frost frozen dew?']],
       ['organic', ['A history of frost']],
       ['video', ['Frost timelapse']],
-      ['organic', ['Frostline weather', 'Frost shop']],
+      // The top-stories wrapper the pack does not read is skipped (`notInside`), never organic.
+      ['organic', ['Frostline weather', 'Frost notes', 'Odd link', 'Frost shop']],
       ['ad', ['Ice scrapers, sponsored']],
       ['knowledge-panel', ['Frost']],
       ['related-searches', ['frost on windows', 'black frost']],
@@ -62,6 +65,8 @@ describe('reading synthetic result pages', () => {
     expect(links(google)).toEqual([
       'https://ads.example.net/frost-gear',
       'https://shop.example.org/boots',
+      'https://shop.example.org/mittens',
+      'https://gear.frostline.example/scarf',
       'https://www.icecrystal.example/what-is-frost',
       'https://www.example.com/frost',
       'https://blog.example.org/frost-tips',
@@ -71,6 +76,9 @@ describe('reading synthetic result pages', () => {
       'https://example.com/frost/history',
       'https://video.example.net/watch/frost-timelapse',
       'https://www.frostline.example/',
+      // The reader reads links as they are; the worker unwraps redirects.
+      'https://www.google.com/url?q=https://alice.github.io/frost-notes&sa=U&ved=x',
+      'https://www.google.com/url?sa=t&url=javascript:alert(1)',
       'https://shop.example.com/frost',
       'https://ads.example.net/scrapers',
       'https://encyclopedia.example.org/frost',
@@ -84,8 +92,10 @@ describe('reading synthetic result pages', () => {
     expect(titles(bing)).toEqual([
       ['ad', ['Frost Gear, sponsored', 'Winter boots']],
       ['featured-snippet', ['What is frost?']],
+      // The result inside an answer wrapper is not organic (`notInside`).
       ['organic', ['Frost explained | Example', 'Frost documentation', 'A history of frost', 'Frostline weather']],
       ['related-searches', ['frost depth', 'frost flowers']],
+      // The entity panel's own hook, not the whole sidebar (whose ad has no entity title).
       ['knowledge-panel', ['Frost']],
     ]);
     expect(SerpReadSchema.safeParse(bing).success).toBe(true);
@@ -127,12 +137,109 @@ describe('reading synthetic result pages', () => {
       ['featured-snippet', ['C in box']],
       ['ad', ['D']],
     ]);
-    // On Google's page, the featured snippet's link and the related question's answer link are not organic.
+    // On Google's page, the featured snippet's link, the related question's answer link and the top story are not organic.
     const google = read(dom(fixture('google.html')).window.document, layoutOf(PACK, 'google'));
     const organic = (google.blocks ?? []).filter((block) => block.type === 'organic').flatMap((block) => block.items.map((item) => item.url));
-    expect(organic).toHaveLength(5);
-    expect(organic).not.toContain('https://www.icecrystal.example/what-is-frost');
-    expect(organic).not.toContain('https://answers.frostline.example/dew');
+    expect(organic).toHaveLength(7);
+    for (const url of ['https://www.icecrystal.example/what-is-frost', 'https://answers.frostline.example/dew', 'https://news.example.net/frost-warning']) expect(organic).not.toContain(url);
+  });
+
+  test('serp-reader-precedence-by-closest', () => {
+    // More feature containers than a block reads (`maxContainersPerBlock`): their links are still
+    // the feature's, never organic, because nesting is decided per item with `closest`.
+    const features = Array.from({ length: SERP_READ_LIMITS.maxContainersPerBlock + 4 }, (_, i) => `<block-component><a href="https://f${i}.example/"><h3>Feature ${i}</h3></a></block-component>`).join('');
+    const page = dom(`<!doctype html><body><div id="search"><div id="rso">${features}<div><a href="https://www.example.com/"><h3>Organic</h3></a></div></div></div></body>`);
+    const answer = read(page.window.document, layoutOf(PACK, 'google'));
+    const organic = (answer.blocks ?? []).filter((block) => block.type === 'organic').flatMap((block) => block.items.map((item) => item.title));
+    expect(organic).toEqual(['Organic']);
+    expect((answer.blocks ?? []).filter((block) => block.type === 'featured-snippet')).toHaveLength(SERP_READ_LIMITS.maxContainersPerBlock);
+    expect(answer.stats.truncated).toBe(true);
+    // Two blocks sharing one container (DuckDuckGo's ads and results) do not swallow each other: only a container strictly inside counts.
+    const shared = dom(`<!doctype html><body><main id="m"><a class="ad" href="https://ad.example/">Ad</a><a href="https://one.example/">One</a></main></body>`);
+    const layout: EngineLayout = { results: '#m', blocks: [{ type: 'ad', container: 'main', item: 'a.ad' }, { type: 'organic', container: '#m', item: 'a', required: true }] };
+    expect(titles(read(shared.window.document, layout))).toEqual([
+      ['ad', ['Ad']],
+      ['organic', ['One']],
+    ]);
+  });
+
+  test('serp-reader-title-required', () => {
+    const layout = layoutOf(PACK, 'google');
+    // A sidebar with only ads and products is not a knowledge panel: the block names a title.
+    const page = dom(`<!doctype html><body><div id="search"><div id="rso"><div><a href="https://www.example.com/"><h3>Organic</h3></a></div></div></div>
+      <div id="rhs"><div class="commercial-unit-desktop-rhs"><div class="pla-unit"><a href="https://shop.example.org/p">Product</a></div></div><a href="https://ads.example.net/">Sponsored</a></div></body>`);
+    expect(titles(read(page.window.document, layout))).toEqual([
+      ['organic', ['Organic']],
+      ['shopping', ['Product']],
+    ]);
+  });
+
+  test('serp-reader-caps-in-document-order', () => {
+    const layout = layoutOf(PACK, 'google');
+    // 120 product links above the results: the shopping block takes `maxItemsPerBlock`, and the organic results are all read.
+    const products = Array.from({ length: 120 }, (_, i) => `<div class="pla-unit"><a href="https://shop${i}.example/">P${i}</a></div>`).join('');
+    const organic = Array.from({ length: 10 }, (_, i) => `<div><a href="https://o${i}.example/"><h3>O${i}</h3></a></div>`).join('');
+    const page = dom(`<!doctype html><body><div class="commercial-unit-desktop-top">${products}</div><div id="search"><div id="rso">${organic}</div></div></body>`);
+    const answer = read(page.window.document, layout);
+    expect(answer.ok).toBe(true);
+    expect(titles(answer).map(([type, items]) => [type, items.length])).toEqual([
+      ['shopping', SERP_READ_LIMITS.maxItemsPerBlock],
+      ['organic', 10],
+    ]);
+    expect(answer.stats).toMatchObject({ truncated: true, organicCut: false });
+    // Past `maxResults`, the bottom of the page is cut: here organic results, so `organicCut`.
+    const cut = read(page.window.document, layout, { maxResults: SERP_READ_LIMITS.maxItemsPerBlock + 4 });
+    expect(titles(cut).map(([type, items]) => [type, items.length])).toEqual([
+      ['shopping', SERP_READ_LIMITS.maxItemsPerBlock],
+      ['organic', 4],
+    ]);
+    expect(cut.stats).toMatchObject({ truncated: true, organicCut: true });
+    expect(SerpReadSchema.safeParse(cut).success).toBe(true);
+  });
+
+  test('serp-reader-boxes', () => {
+    // Each item's box is its block's `box` element (Google organic's result wrapper), else the item; document coordinates.
+    const page = dom(fixture('google.html'));
+    const { window } = page;
+    window.scrollTo = () => undefined;
+    Object.defineProperty(window, 'scrollY', { value: 1_000 });
+    let next = 0;
+    window.Element.prototype.getBoundingClientRect = function (this: Element) {
+      const top = (next += 50);
+      return { left: 8, top, width: this.classList.contains('g') ? 600 : 300, height: 40, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    };
+    const answer = read(window.document, layoutOf(PACK, 'google'));
+    const organic = (answer.blocks ?? []).filter((block) => block.type === 'organic').flatMap((block) => block.items);
+    // Wrapped in div.g: the wrapper's box; not wrapped: the link's.
+    expect(organic.map((item) => item.rect?.width)).toEqual([600, 300, 300, 600, 300, 300, 300]);
+    expect(organic[0]!.rect).toMatchObject({ x: 8, height: 40 });
+    expect(organic[0]!.rect!.y).toBeGreaterThan(1_000);
+    // A block's box is the union of its items' boxes.
+    const block = (answer.blocks ?? []).find((b) => b.type === 'organic')!;
+    expect(block.rect).toMatchObject({ x: 8, width: 600 });
+    expect(SerpReadSchema.safeParse(answer).success).toBe(true);
+  });
+
+  test('serp-reader-resists-clobbering', () => {
+    // Named elements shadow `document`'s and a form's methods in every world; the reader calls its own world's prototypes.
+    const html = fixture('google.html').replace(
+      '<body>',
+      // (Not `createTreeWalker`: jsdom's own selector engine calls `document.createTreeWalker` by name,
+      // so that one breaks jsdom itself; Chromium's selector engine is native.)
+      '<body><form name="querySelector"></form><form name="querySelectorAll"></form><img name="createElement"><img name="defaultView"><img name="createDocumentFragment"><img name="createTextNode">',
+    );
+    const page = dom(html);
+    const document = page.window.document as unknown as Record<string, unknown>;
+    expect(typeof document.querySelector).toBe('object');
+    // An element whose own methods are shadowed too.
+    const rso = page.window.document.getElementById('rso')!;
+    for (const anchor of [...rso.getElementsByTagName('a')]) Object.defineProperty(anchor, 'href', { value: 'https://evil.example/' });
+    // (Not `localName`: jsdom's selector engine reads it by name.)
+    for (const name of ['querySelectorAll', 'querySelector', 'closest', 'contains', 'compareDocumentPosition']) Object.defineProperty(rso, name, { value: () => null });
+    expect(titles(read(page.window.document, layoutOf(PACK, 'google')))).toEqual(titles(read(dom(fixture('google.html')).window.document, layoutOf(PACK, 'google'))));
+    expect(links(read(page.window.document, layoutOf(PACK, 'google')))).not.toContain('https://evil.example/');
+    // The reader never reads a property of the page's document or elements by name.
+    expect(readSerp.toString()).not.toMatch(/document\.[A-Za-z]|\bel\.[A-Za-z]|container\.[A-Za-z]/);
   });
 
   test('serp-unreadable-never-guesses', () => {
@@ -160,16 +267,20 @@ describe('reading synthetic result pages', () => {
       { results: '#search', blocks: [{ ...organic, item: 'a[[href]' }] },
       { results: '#search', blocks: [{ ...organic, link: ':nope(a)' }] },
       { results: '#search', blocks: [{ ...organic, title: 'h3,' }] },
+      { results: '#search', blocks: [{ ...organic, notInside: 'g-section[' }] },
+      { results: '#search', blocks: [{ ...organic, box: '>' }] },
     ];
     for (const layout of variants) {
       const page = dom(fixture('google.html'));
-      const document = page.window.document;
-      const queried = vi.spyOn(document, 'querySelector');
-      const queriedAll = vi.spyOn(document, 'querySelectorAll');
-      expect(read(document, layout), JSON.stringify(layout).slice(0, 80)).toMatchObject({ ok: false, reason: 'bad-selector' });
+      const { Document, Element } = page.window;
+      const queried = vi.spyOn(Document.prototype, 'querySelector');
+      const queriedAll = vi.spyOn(Document.prototype, 'querySelectorAll');
+      const elementAll = vi.spyOn(Element.prototype, 'querySelectorAll');
+      expect(read(page.window.document, layout), JSON.stringify(layout).slice(0, 80)).toMatchObject({ ok: false, reason: 'bad-selector' });
       // Checked before any page element is read.
       expect(queried).not.toHaveBeenCalled();
       expect(queriedAll).not.toHaveBeenCalled();
+      expect(elementAll).not.toHaveBeenCalled();
     }
   });
 
@@ -194,28 +305,37 @@ describe('reading synthetic result pages', () => {
     () => {
       const layout = layoutOf(PACK, 'google');
       const page = dom(fixture('google-hostile.html'));
-      const document = page.window.document;
+      const { window } = page;
+      const document = window.document;
       const rso = document.getElementById('rso')!;
-      // An over-long link, a megabyte title, and getters that throw.
+      // An over-long link, a megabyte title, and DOM calls that throw (patched on this world's
+      // prototypes, where a reader that calls them would meet them).
       document.getElementById('long')!.setAttribute('href', `https://long.example.net/${'x'.repeat(SERP_READ_LIMITS.maxUrlChars)}`);
       const huge = document.createElement('div');
       huge.innerHTML = '<a href="https://huge.example.net/"><h3></h3></a>';
       huge.querySelector('h3')!.textContent = `huge ${'x'.repeat(1_000_000)}`;
       rso.prepend(huge);
       const throwing = document.createElement('div');
-      throwing.innerHTML = '<a href="https://throws.example.net/"><h3>Throws</h3></a><a href="https://box.example.net/"><h3>No box</h3></a>';
-      const [throws, boxless] = [...throwing.querySelectorAll('a')];
-      Object.defineProperty(throws, 'href', {
-        get() {
-          throw new Error('hostile getter');
-        },
-      });
-      Object.defineProperty(boxless, 'getBoundingClientRect', {
-        value() {
-          throw new Error('hostile rect');
-        },
-      });
+      throwing.innerHTML = '<a href="https://throws.example.net/"><h3>Throws</h3></a><a href="https://text.example.net/"><h3>Text throws</h3></a><a id="boxless" href="https://box.example.net/"><h3>No box</h3></a>';
       rso.append(throwing);
+      const href = Object.getOwnPropertyDescriptor(window.HTMLAnchorElement.prototype, 'href')!;
+      Object.defineProperty(window.HTMLAnchorElement.prototype, 'href', {
+        get(this: HTMLAnchorElement) {
+          const value = href.get!.call(this) as string;
+          if (value.includes('throws.example')) throw new Error('hostile getter');
+          return value;
+        },
+      });
+      const substringData = window.CharacterData.prototype.substringData;
+      window.CharacterData.prototype.substringData = function (this: CharacterData, offset: number, count: number) {
+        if (this.data === 'Text throws') throw new Error('hostile text');
+        return substringData.call(this, offset, count);
+      };
+      const rect = window.Element.prototype.getBoundingClientRect;
+      window.Element.prototype.getBoundingClientRect = function (this: Element) {
+        if (this.id === 'boxless') throw new Error('hostile rect');
+        return rect.call(this);
+      };
 
       const answer = read(document, layout);
       expect(answer.ok).toBe(true);
@@ -280,8 +400,9 @@ describe('reading synthetic result pages', () => {
     expect(verified.ok).toBe(true);
     if (!verified.ok) return;
     const pack = verified.pack;
+    const wrapped: Record<string, unknown> = {};
     const cases = [
-      { file: 'google.html', url: URLS.google, counts: { organic: 5, ad: 3, 'featured-snippet': 1, 'people-also-ask': 3, video: 1, 'knowledge-panel': 1, 'related-searches': 2 } },
+      { file: 'google.html', url: URLS.google, counts: { organic: 7, ad: 3, shopping: 2, 'featured-snippet': 1, 'people-also-ask': 3, video: 1, 'knowledge-panel': 1, 'related-searches': 2 } },
       { file: 'bing.html', url: URLS.bing, counts: { organic: 4, ad: 2, 'featured-snippet': 1, 'related-searches': 2, 'knowledge-panel': 1 } },
       { file: 'duckduckgo.html', url: URLS.duckduckgo, counts: { organic: 3, ad: 1, 'related-searches': 2 } },
       { file: 'duckduckgo-html.html', url: URLS['duckduckgo-html'], counts: { organic: 2, ad: 1 } },
@@ -290,14 +411,27 @@ describe('reading synthetic result pages', () => {
       const match = matchSerp(url, pack, 'desktop');
       expect(match, file).not.toBeNull();
       const raw = read(dom(fixture(file), url).window.document, match!.engine.layout);
-      const snapshot = analyseSerp(raw, { params: match!.params, packVersion: pack.version });
+      const snapshot = analyseSerp(raw, { params: match!.params, packVersion: pack.version, redirects: redirectRules(match!.engine) });
       expect(SerpSnapshotSchema.safeParse(snapshot).success, file).toBe(true);
       expect(snapshot.status, file).toBe('ready');
       if (snapshot.status !== 'ready') continue;
       expect(Object.fromEntries(Object.entries(snapshot.composition.counts).filter(([, n]) => n > 0)), file).toEqual(counts);
+      // Click redirects are unwrapped by the engine's rules: the engine never owns its own results.
+      expect(snapshot.ownership.domains.map((share) => share.domain), file).not.toEqual(expect.arrayContaining(['google.com', 'bing.com', 'duckduckgo.com']));
+      wrapped[file] = snapshot.results.filter((result) => result.redirected || (result.url?.includes('/url?') ?? false)).map((result) => [result.url, result.redirected, result.domain]);
     }
+    expect(wrapped).toEqual({
+      'google.html': [
+        ['https://alice.github.io/frost-notes', true, 'alice.github.io'],
+        // A redirect to something that is not a web URL: kept as read, no domain, never an owner.
+        ['https://www.google.com/url?sa=t&url=javascript:alert(1)', false, null],
+      ],
+      'bing.html': [['https://docs.example.org/frost', true, 'example.org']],
+      'duckduckgo.html': [],
+      'duckduckgo-html.html': [['https://www.example.com/frost', true, 'example.com']],
+    });
     const match = matchSerp(URLS.google, pack, 'desktop')!;
-    const unreadable = analyseSerp(read(dom(fixture('google-unreadable.html')).window.document, match.engine.layout), { params: match.params, packVersion: pack.version });
+    const unreadable = analyseSerp(read(dom(fixture('google-unreadable.html')).window.document, match.engine.layout), { params: match.params, packVersion: pack.version, redirects: redirectRules(match.engine) });
     expect(unreadable).toEqual({ status: 'unreadable', reason: 'no-container', params: match.params, packVersion: pack.version });
   });
 });

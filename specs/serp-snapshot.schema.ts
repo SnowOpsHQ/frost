@@ -19,8 +19,13 @@
  *   - `featureSlot`: for a SERP feature (`SERP_FEATURE_TYPES`), the slot of its block among the
  *     page's feature blocks (1, 2, … in document order; every result of one block shares it);
  *     `null` for organic results and ads;
- *   - `type`, `title`, `url` (`null` when the result has no link, such as a related question) and
- *     `domain`: the URL host's registrable domain (`@app/seo-core` `registrableDomain`), or `null`.
+ *   - `type`, `title` and `url`: the link's destination (`null` when the result has no link, such
+ *     as a related question). A link through the engine's click redirect (the engine's
+ *     `redirects`) is unwrapped to its destination (`redirected: true`); a redirect whose
+ *     destination is not a valid `http:` / `https:` URL keeps the link as read, with no domain;
+ *   - `domain`: the destination host's owner: a subdomain of a shared-hosting domain
+ *     (`SERP_OWNER_SUFFIXES`, `alice.github.io`) is its own owner; otherwise its registrable domain
+ *     (`@app/seo-core` `registrableDomain`); `null` without a usable link.
  *   Positions are this page's: on page 2 the first organic result is position 1 (`params.page` says
  *   which page it is).
  * - `composition`: `counts`, the number of results per type (every type, zeros included), and
@@ -30,10 +35,18 @@
  *   position, sorted by count (most first), then best position. **Ads are not counted**: they are
  *   paid placements, not rankings, and their links usually go through the engine's click redirect,
  *   so their domain is the engine's. They stay in `results` and `composition` as `ad`.
- * - `truncated`: a reader cap cut the page (more than `maxResults` results or `maxBlocks` blocks).
+ *   `complete` is `false` when a reader cap cut organic results: the shares are of what was read
+ *   (`SERP_TRUNCATED_NOTE`).
+ * - `truncated`: a reader cap cut the page (more than `maxResults` results, `maxItemsPerBlock` in a
+ *   block, `maxContainersPerBlock` containers or `maxBlocks` blocks).
+ *
+ * The job the worker is given beside the answer: the parameters, the pack's version and the
+ * engine's click redirects with their hosts resolved (`SerpRedirectRulesSchema`), all validated
+ * there.
  */
 import { z } from 'zod';
-import { SERP_RESULT_TYPES, type SerpResultType } from './serp-selector-pack.spec';
+import { SELECTOR_PACK_LIMITS, SERP_RESULT_TYPES, type SerpResultType } from './serp-selector-pack.spec';
+import { SelectorRedirectSchema } from './serp-selector-pack.schema';
 import { SERP_FEATURE_TYPES, SERP_READ_FAILURES, SERP_READ_LIMITS, SERP_UNREADABLE_REASONS, isSerpFeature } from './serp.spec';
 import { SearchParamsSchema } from './serp-search-params.schema';
 
@@ -53,7 +66,7 @@ export const SerpRectSchema = z.strictObject({
   height: z.int().min(1).max(L.maxCoordinate),
 });
 
-/** One result as read: its title (collapsed text, possibly empty), its link and its box. */
+/** One result as read: its title (collapsed text, possibly empty), its link and its box (the block's `box` element, or the item). */
 export const SerpReadItemSchema = z.strictObject({
   title: z.string().max(L.maxTitleChars),
   url: UrlSchema.nullable(),
@@ -73,12 +86,15 @@ export const SerpReadBlockSchema = z
   .refine((block) => block.items.every((item) => item.url !== null || item.title.length > 0), { message: 'an item with neither a title nor a link' })
   .refine((block) => isSerpFeature(block.type) || block.items.every((item) => item.url !== null), { message: 'an organic result or ad without a link' });
 
-/** What the read cost: node visits (capped at `maxNodesVisited`), time, and whether a cap cut it. */
-export const SerpReadStatsSchema = z.strictObject({
-  nodes: z.int().min(0).max(L.maxNodesVisited),
-  elapsedMs: z.number().min(0).max(3_600_000),
-  truncated: z.boolean(),
-});
+/** What the read cost: node visits (capped at `maxNodesVisited`), time, whether a cap cut it, and whether organic results were among what it cut. */
+export const SerpReadStatsSchema = z
+  .strictObject({
+    nodes: z.int().min(0).max(L.maxNodesVisited),
+    elapsedMs: z.number().min(0).max(3_600_000),
+    truncated: z.boolean(),
+    organicCut: z.boolean(),
+  })
+  .refine((stats) => stats.truncated || !stats.organicCut, { message: 'organic results cut without a cap' });
 
 const blocksSchema = z
   .array(SerpReadBlockSchema)
@@ -115,6 +131,7 @@ export const SerpResultSchema = z
     featureSlot: slotSchema.nullable(),
     title: z.string().max(L.maxTitleChars),
     url: UrlSchema.nullable(),
+    redirected: z.boolean(),
     domain: DomainSchema.nullable(),
   })
   .refine((result) => (isSerpFeature(result.type) ? result.position === null && result.featureSlot !== null : result.position !== null && result.featureSlot === null), {
@@ -144,13 +161,18 @@ export const SerpDomainShareSchema = z.strictObject({
   best: rankSchema,
 });
 
-/** Ownership of the page's organic results (`organic`: how many have a domain; ads excluded). */
+/** Ownership of the page's organic results (`organic`: how many have a domain; ads excluded; `complete`: no organic result was cut by a cap). */
 export const SerpOwnershipSchema = z.strictObject({
   page: z.int().min(1),
   organic: countSchema,
+  complete: z.boolean(),
   domains: z.array(SerpDomainShareSchema).max(L.maxResults),
 });
 export type SerpOwnership = z.infer<typeof SerpOwnershipSchema>;
+
+/** The engine's click redirects for a job, hosts resolved (`redirectRules`); empty when it has none. */
+export const SerpRedirectRulesSchema = z.array(SelectorRedirectSchema.required({ hosts: true })).max(SELECTOR_PACK_LIMITS.maxRedirects);
+export type SerpRedirectRules = z.infer<typeof SerpRedirectRulesSchema>;
 
 /** Why a page could not be read (`SERP_UNREADABLE_REASONS`), with what is known of it. */
 export const SerpUnreadableSchema = z.strictObject({

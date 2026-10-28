@@ -92,7 +92,10 @@ export const SERP_E2E_PACK_URL_SWITCH = 'frost-e2e-serp-pack-url' as const;
  *   `maxBlocksPerEngine`: list lengths;
  * - `maxSelectorChars`: one CSS selector (a selector list counts as one);
  * - `maxIdChars`, `maxLabelChars`, `maxHostChars`, `maxPathChars`, `maxParamChars`: string lengths;
- * - `maxPerPage`: an offset parameter's results per page.
+ * - `maxPerPage`: an offset parameter's results per page;
+ * - `maxRedirects`: an engine's click-redirect rules (`redirects`); `maxRejects`: its vertical
+ *   parameters (`params.reject`); `maxRejectValues`, `maxRejectValueChars`: the values one of them
+ *   lists (`values`, `except`) and their length.
  *
  * These caps and the strict objects ship in every app, so a pack that needs more (a new field, a
  * longer list) is refused by every installed app: such a pack is a new `format`, never `format: 1`.
@@ -115,7 +118,20 @@ export const SELECTOR_PACK_LIMITS = {
   maxPathChars: 128,
   maxParamChars: 32,
   maxPerPage: 100,
+  maxRedirects: 4,
+  maxRejects: 8,
+  maxRejectValues: 16,
+  maxRejectValueChars: 32,
 } as const;
+
+/**
+ * How an engine's click-redirect parameter holds the destination (`redirects[].decode`; applied in
+ * the SERP worker, never in the page): `plain`, the parameter's value is the destination URL (its
+ * percent-encoding undone, as every query value's is); `bing-a1`, the value is `a1` followed by the
+ * destination URL's UTF-8 bytes in unpadded base64url.
+ */
+export const REDIRECT_DECODINGS = ['plain', 'bing-a1'] as const;
+export type RedirectDecoding = (typeof REDIRECT_DECODINGS)[number];
 
 /**
  * How "Check for selector updates" fetches (the bounded fetcher's `checks` lane; its rules hold:

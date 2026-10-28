@@ -5,7 +5,8 @@
  * parameter names, and the device from the tab's render profile (`SERP_DEVICE_OF_PRESET`).
  *
  * **This is the shape every capture records** (Phase 6, change intelligence, imports it: stable
- * after merge; a change is a new field, never a changed one):
+ * after merge). A change is a new field, never a changed one, and **every field added later must be
+ * optional or nullable**, so records written before it still parse:
  * - `engine`: the pack's engine id (`google`, `bing`, `duckduckgo`); `engineLabel`: its label;
  * - `query`: the query, whitespace collapsed and trimmed, at most `maxQueryChars`;
  * - `gl`: the country parameter's value, lowercase (`us`; DuckDuckGo's region `us-en`), or `null`
@@ -13,7 +14,13 @@
  * - `hl`: the language parameter's value, lowercase (`en`, `en-gb`), or `null`;
  * - `device`: `desktop`, `mobile` or `tablet` (`SERP_DEVICES`), from the tab's render profile;
  * - `page`: the result page number, from 1 (from an offset parameter: (offset − base) / per page + 1);
- * - `url`: the result page's URL as loaded.
+ * - `offset`: the offset parameter's value as the URL gave it (Google's `start=20`, Bing's
+ *   `first=11`; clamped to `maxOffset`), or `null` when the engine pages by number or the URL has
+ *   none;
+ * - `url`: the page's canonical URL: the engine's host and path with only the known parameters
+ *   (the query, `gl`, `hl` and the offset or page, by the pack's names, in that order). The
+ *   engine's session and tracking parameters are never recorded, so two captures of one search
+ *   have one URL.
  */
 import { z } from 'zod';
 import { SERP_DEVICES, SERP_PARAM_LIMITS } from './serp.spec';
@@ -40,6 +47,7 @@ export const SearchParamsSchema = z.strictObject({
     .nullable(),
   device: z.enum(SERP_DEVICES),
   page: z.int().min(1).max(L.maxPage),
+  offset: z.int().min(0).max(L.maxOffset).nullable(),
   url: z
     .string()
     .max(L.maxUrlChars)

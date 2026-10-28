@@ -24,18 +24,23 @@
         "query": ["q"],
         "gl": ["gl"],
         "hl": ["hl"],
-        "page": { "param": "start", "kind": "offset", "perPage": 10, "offsetBase": 0 }
+        "page": { "param": "start", "kind": "offset", "perPage": 10, "offsetBase": 0 },
+        "reject": [{ "param": "tbm", "except": [""] }, { "param": "udm", "except": ["14", ""] }]
       },
+      "redirects": [
+        { "path": "/url", "param": "url", "decode": "plain" },
+        { "path": "/url", "param": "q", "decode": "plain" }
+      ],
       "layout": {
         "results": "#search",
         "blocks": [
           { "type": "ad", "container": "#tads, #bottomads", "item": "[data-text-ad]", "link": "a[href]", "title": "[role=\"heading\"]" },
-          { "type": "shopping", "container": ".commercial-unit-desktop-top, .commercial-unit-desktop-rhs", "item": "a[href]" },
+          { "type": "shopping", "container": ".commercial-unit-desktop-top, .commercial-unit-desktop-rhs", "item": ".pla-unit", "link": "a[href]" },
           { "type": "featured-snippet", "container": "#rso block-component", "link": "a[href]", "title": "h3" },
           { "type": "people-also-ask", "container": "#rso [data-initq]", "item": "[data-q]" },
           { "type": "video", "container": "#rso video-voyager", "link": "a[href]", "title": "h3" },
-          { "type": "images", "container": "#iur", "item": "a[href]" },
-          { "type": "organic", "container": "#rso", "item": "a[href]:has(h3)", "title": "h3", "required": true },
+          { "type": "images", "container": "#iur", "item": "[data-lpage]" },
+          { "type": "organic", "container": "#rso", "item": "a[href]:has(h3)", "title": "h3", "notInside": "g-section-with-header, g-scrolling-carousel", "box": "div.g", "required": true },
           { "type": "knowledge-panel", "container": "#rhs", "title": "[data-attrid=\"title\"]" },
           { "type": "related-searches", "container": "#bres", "item": "a[href]" }
         ]
@@ -52,14 +57,15 @@
         "hl": ["setlang"],
         "page": { "param": "first", "kind": "offset", "perPage": 10, "offsetBase": 1 }
       },
+      "redirects": [{ "path": "/ck/a", "param": "u", "decode": "bing-a1" }],
       "layout": {
         "results": "#b_results",
         "blocks": [
           { "type": "ad", "container": "#b_results > li.b_ad", "item": "li", "link": "h2 a[href]", "title": "h2" },
           { "type": "featured-snippet", "container": "#b_results > li.b_ans.b_top", "link": "a[href]" },
-          { "type": "organic", "container": "#b_results", "item": "li.b_algo", "link": "h2 a[href]", "title": "h2", "required": true },
+          { "type": "organic", "container": "#b_results", "item": "li.b_algo", "link": "h2 a[href]", "title": "h2", "notInside": "li.b_ans, li.b_ad", "required": true },
           { "type": "related-searches", "container": "#b_results .b_rs", "item": "li a[href]" },
-          { "type": "knowledge-panel", "container": "#b_context", "title": "h2" }
+          { "type": "knowledge-panel", "container": "#b_context .b_entityTP", "title": ".b_entityTitle, h2" }
         ]
       }
     },
@@ -70,8 +76,10 @@
       "paths": ["/", "/html", "/html/"],
       "params": {
         "query": ["q"],
-        "gl": ["kl"]
+        "gl": ["kl"],
+        "reject": [{ "param": "ia", "values": ["news", "images", "videos", "shopping", "maps"] }]
       },
+      "redirects": [{ "path": "/l/", "param": "uddg", "decode": "plain" }],
       "layout": {
         "results": "[data-testid=\"mainline\"], #links",
         "blocks": [

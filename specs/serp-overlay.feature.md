@@ -3,7 +3,8 @@
 Spec: `specs/serp.spec.ts` (`SERP_WORLD_ID`, `SERP_READ_LIMITS`, `SERP_READ_TIMEOUT_MS`,
 `SERP_ANALYSIS_TIMEOUT_MS`, `SERP_UNREADABLE_REASONS`, `SERP_READ_FAILURES`,
 `SERP_UNREADABLE_MESSAGES`, `SERP_DEVICES`, `SERP_DEVICE_LABELS`, `SERP_DEVICE_OF_PRESET`,
-`SERP_PARAM_LIMITS`, `SERP_FEATURE_TYPES`), `specs/serp-search-params.schema.ts`
+`SERP_PARAM_LIMITS`, `SERP_FEATURE_TYPES`, `SERP_ANALYSIS_MAX_QUEUED`, `SERP_TRUNCATED_NOTE`,
+`SERP_OWNER_SUFFIXES`), `specs/serp-search-params.schema.ts`
 (`SearchParamsSchema`), `specs/serp-snapshot.schema.ts` (`SerpReadSchema`, `SerpSnapshotSchema`)
 and the selector pack (`specs/serp-selector-pack.spec.ts`, `serp-selector-pack.schema.ts`). Phase 3
 Task 3 (Reading and Analysis; Task 4 adds Router and Outlines); review focus
@@ -17,6 +18,13 @@ Task 3 (Reading and Analysis; Task 4 adds Router and Outlines); review focus
   query parameter present with a non-blank value. So `google.com/maps`, `bing.com/images/search`,
   `duckduckgo.com/?q=` and a subdomain of a listed host are not result pages. `html.duckduckgo.com`
   submits its form as a POST, so its result URL can carry no `q`: no query, no match.
+- **Web results only.** A pack's `params.reject` names the parameters that make a URL another
+  vertical (Google's `tbm` unless empty and `udm` unless 14; DuckDuckGo's `ia=news|images|videos|
+  shopping|maps`): such a URL is not matched. `SearchParams` stays web-only, with no vertical field.
+- **A canonical URL.** The recorded `url` is the engine host and path with the known parameters
+  only (query, `gl`, `hl`, offset or page; by the pack's names, in that order): no session or
+  tracking tokens, no port, no fragment. `offset` records the offset parameter as given (or
+  `null`). Fields added to `SearchParamsSchema` later must be optional or nullable.
 - **Search parameters by the pack's names.** The query is the first query name present with a
   non-blank value, whitespace collapsed, cut to `maxQueryChars`. `gl` and `hl` are the first of
   their names present with a well-formed value (letters, digits, `-`, `_`, at most
@@ -31,54 +39,85 @@ Task 3 (Reading and Analysis; Task 4 adds Router and Outlines); review focus
 - **Fail closed, never guess.** Every selector in the layout is checked first (an invalid one:
   `bad-selector`); the `results` anchor must match (`no-container`); a `required` block that takes
   no result, or a page where no block takes any, is `no-results`. There is no heuristic fallback.
-- **What is read.** Text only (text nodes, `script`/`style`/`template`/`noscript` skipped, whitespace
+- **Its own world's DOM methods.** Every DOM method and getter the reader calls is taken at its
+  start from its world's prototypes (walking from `document` and elements it creates) and called
+  with `.call`: a `<form name="querySelector">` (which shadows `document.querySelector` in every
+  world) or a form control named `closest` cannot stand in for one.
+- **What is read.** Text only (text nodes, `script`/`style`/`noscript` skipped, whitespace
   collapsed, at most `maxTextReadChars` read and `maxTitleChars` kept) and the resolved `href` of an
   HTML link (`http:` / `https:`, at most `maxUrlChars`; an SVG link's animated `href` object, a
   `javascript:` link or an over-long one is no link). Organic results and ads need a link; any item
-  needs a title or a link.
-- **Precedence.** Blocks are read in pack order. An item is skipped when it lies inside a container
-  of another block that is itself inside this block's container (the most specific block wins), or
-  when it is, or is inside, an item already taken (pack order, then document order: nested matches
-  count once).
+  needs a title or a link; a block that names a `title` takes no item without one (a sidebar holding
+  only ads is not a knowledge panel). An item's box is its block's `box` element (its closest match
+  inside the container, such as Google's result wrapper), else the item itself.
+- **Precedence.** Blocks are read in pack order. An item is skipped when its closest match of
+  another block's `container` lies inside this block's container (the most specific block wins,
+  however many containers that block has), when its closest match of the block's `notInside` lies
+  inside the container (a feature the pack does not read, such as a top-stories carousel, is never
+  organic), or when it is, or is inside, an item already taken (pack order, then document order:
+  nested matches count once).
 - **Document order.** The items taken are sorted by document order (`compareDocumentPosition`);
   consecutive items of one block and container form one answered block, with the union of their
   boxes (document coordinates) when they have them.
 - **Bounded** (review focus `serp-reader-is-bounded`). At most `maxContainersPerBlock` containers
-  per block, `maxResults` results and `maxBlocks` blocks (past them: `truncated`), `maxNodesVisited`
-  node visits and `budgetMs` of time (past them: `timeout`, with what was read). Every DOM read is
+  and `maxItemsPerBlock` items per block; everything taken is then sorted by document order and cut
+  to `maxResults` results and `maxBlocks` blocks, so the bottom of the page goes first and a broad
+  block above the results cannot starve them (past a cap: `truncated`; `organicCut` when organic
+  results were cut, and the snapshot's `ownership.complete` is `false`, `SERP_TRUNCATED_NOTE`).
+  At most `maxNodesVisited` node visits and `budgetMs` of time (past them: `timeout`, with what was
+  read). Every DOM read is
   inside `try`/`catch`: an item that throws is skipped. The answer is validated again in the worker.
 - **The analysis runs in a worker of its own.** `serp-analysis.cjs` (`worker_threads`, no Electron)
   validates the answer and the search parameters, assigns ranks, positions and feature slots,
   counts the composition and groups the organic results by registrable domain, then validates the
-  snapshot. One job at a time; past `SERP_ANALYSIS_TIMEOUT_MS` the worker is terminated
-  (`timeout`) and the next job spawns a new one; a crash is `invalid-answer`.
+  snapshot. One job at a time, at most `SERP_ANALYSIS_MAX_QUEUED` waiting (one more drops the oldest
+  waiting job, `timeout`); past `SERP_ANALYSIS_TIMEOUT_MS` the worker is terminated (`timeout`) and
+  the next job spawns a new one; a crash is `invalid-answer`; a terminated worker's late answer is
+  dropped; `dispose()` is final.
+- **Click redirects are unwrapped in the worker.** The engine's `redirects` (host, path, parameter,
+  `plain` or `bing-a1`) travel with the job and are validated there. A link through one is
+  replaced by its destination (`redirected: true`) once the destination validates again as an
+  `http:` / `https:` URL within `maxUrlChars`; one that does not keeps the link as read with no
+  domain, so it never counts towards ownership. The reader itself never decodes anything.
 - **Positions.** `rank` is a result's place among all results on the page; `position` counts organic
   results (1 … n) and, separately, ads; each feature block takes a `featureSlot` in document order.
   Positions are the page's own (page 2 starts at 1 again; `params.page` says which page).
-- **Ownership.** The page's organic results by registrable domain: count, share of the organic
-  results, positions, best position; sorted by count, then best position. Ads are not counted (paid
+- **Ownership.** The page's organic results by owner: a subdomain of a shared-hosting domain
+  (`SERP_OWNER_SUFFIXES`: `alice.github.io`) is its own owner, otherwise the registrable domain.
+  Count, share of the organic results, positions, best position; sorted by count, then best position. Ads are not counted (paid
   placements, and their links usually go through the engine's redirect).
 
 ## Detection (`apps/desktop/src/main/serp/__tests__/engines.test.ts`)
 - `serp-params-per-engine` — Google `q`/`gl`/`hl`/`start` (page 3 at `start=20`), Bing `q`/`cc`/`setlang`/`first` (page 2 at `first=11`), DuckDuckGo `q`/`kl` (no `hl`, page 1); values lowercased; an engine's label and id; the URL kept.
 - `serp-params-normalised` — the query collapsed, trimmed and capped; a blank `gl`/`hl` falls to the next name; a malformed or over-long one is `null`; a page that is not a whole number is 1; a huge one is clamped to `maxPage`; every result valid against `SearchParamsSchema`.
 - `serp-non-serp-never-matched` — `google.com/maps`, `bing.com/images/search`, an empty or blank `q`, no `q`, a subdomain or a suffix of a listed host, a path prefix, `ftp:` / `file:` / `javascript:` URLs, a malformed or over-long URL are `null`; case and a trailing dot on the host still match.
+- `serp-url-is-canonical` — the recorded URL keeps the engine host and path and the known parameters only, normalised, in order; session and tracking tokens, the port and the fragment are dropped, so two captures of one search share a URL.
+- `serp-verticals-rejected` — Google `tbm=isch|vid|nws|shop` and `udm` other than 14, DuckDuckGo `ia=news|images|videos` are not matched; `udm=14`, an empty `tbm`, `ia=web` still are; `values` and `except` compare trimmed and lowercase.
+- `serp-redirect-rules` — an engine's redirects for the worker, with hosts resolved to the engine's own when a rule names none.
 - `serp-device-from-render-profile` — no emulation and the desktop preset are `desktop`, the phone `mobile`, the tablet `tablet`; the device is recorded in the parameters.
 
 ## Reading (`read-script.test.ts`, under jsdom, on synthetic fixtures in `__tests__/fixtures/`)
 - `serp-reader-reads-fixtures` — on each engine's synthetic page the blocks come back in document order with their types, titles and links: Google's ads, featured snippet, organic results around related questions and videos, knowledge panel and related searches; Bing's ads, answer, organic and related searches; DuckDuckGo's ad and organic results.
 - `serp-reader-dedupes-nested` — a featured snippet's link is not also organic; nested organic matches count once; an element two blocks match goes to the earlier block.
+- `serp-reader-precedence-by-closest` — more feature containers than a block reads: their links are still never organic; two blocks sharing one container do not swallow each other.
+- `serp-reader-title-required` — a sidebar holding only ads and products is not a knowledge panel.
+- `serp-reader-caps-in-document-order` — 120 products above the results: the shopping block takes `maxItemsPerBlock`, every organic result is read; past `maxResults` the bottom is cut and `organicCut` set.
+- `serp-reader-boxes` — an item's box is its block's `box` wrapper (else the item), in document coordinates; a block's box is the union of its items'.
+- `serp-reader-resists-clobbering` — named forms and images shadowing `document`'s methods, and an element's own methods shadowed, change nothing; the reader's source reads no page object's property by name.
 - `serp-unreadable-never-guesses` — a page without the results anchor is `no-container`; a page whose required block takes nothing (results present but in an unknown layout) is `no-results`, as is one where no block takes anything; nothing is guessed.
-- `serp-reader-bad-selector` — an invalid `results`, `container`, `item`, `link` or `title` selector is `bad-selector`, before any page element is read.
+- `serp-reader-bad-selector` — an invalid `results`, `container`, `item`, `link`, `title`, `notInside` or `box` selector is `bad-selector`, before any page element is read.
 - `serp-reader-time-budget` — a budget of 0 ms, or a node budget the page exceeds, is `timeout` with what was read; nothing past it is read.
-- `serp-reader-is-bounded` — a hostile page (100,000 results, a megabyte title, throwing getters, SVG and `javascript:` links, over-long URLs) gives an answer within `SERP_READ_LIMITS` that `SerpReadSchema` accepts, or `timeout`; it never throws.
+- `serp-reader-is-bounded` — a hostile page (100,000 results, a megabyte title, DOM calls that throw, SVG and `javascript:` links, over-long URLs) gives an answer within `SERP_READ_LIMITS` that `SerpReadSchema` accepts, or `timeout`; it never throws.
 - `serp-read-script-is-data` — the script embeds the layout and limits as JSON (a hostile selector string stays a string), and `runSerpRead` runs it once in `SERP_WORLD_ID`.
-- `serp-bundled-pack-reads-fixtures` — the bundled, signed pack reads each engine's fixture into a ready snapshot, and the unreadable fixture as unreadable.
+- `serp-bundled-pack-reads-fixtures` — the bundled, signed pack reads each engine's fixture into a ready snapshot (its wrapped links unwrapped: Google `/url`, Bing `/ck/a`, DuckDuckGo `/l/`; the engine never an owner), and the unreadable fixture as unreadable.
 
 ## Analysis (`serp-analyse.test.ts`, `serp-analyzer.test.ts`)
 - `serp-analyse-positions` — ranks over all results; organic positions 1 … n and ad positions in their own count; feature slots in document order; composition counts every type and lists the features in order; the snapshot passes `SerpSnapshotSchema`.
-- `serp-ownership-share` — organic results grouped by registrable domain (`www.` and subdomains together), with count, share, positions and best position, sorted by count then best position; ads and results without a domain are not counted.
-- `serp-analyse-unreadable` — a reader failure is `unreadable` with its reason and the parameters; garbage, an over-cap answer, invalid parameters or pack version are `invalid-answer`.
-- `serp-analysis-in-worker` — jobs run one at a time in one worker; past `SERP_ANALYSIS_TIMEOUT_MS` the worker is terminated, the job is `timeout`, and the next job spawns a new worker; a crash is `invalid-answer`; the worker's code imports no Electron.
-- `serp-worker-answers-each-job` — the worker entry answers `{ id, raw, params, packVersion }` with `{ id, result }` (garbage is `invalid-answer`) and drops a message without a numeric id.
+- `serp-ownership-share` — organic results grouped by registrable domain (`www.` and subdomains together), with count, share, positions and best position, sorted by count then best position; ads and results without a domain are not counted; organic results cut by a cap make ownership incomplete.
+- `serp-owner-suffixes` — subdomains of shared-hosting domains are separate owners (`alice.github.io`, `bob.blogspot.com`); the hosting domain itself, and ordinary hosts, by registrable domain.
+- `serp-redirects-unwrapped` — Google `/url?q=` and `?url=`, Bing `/ck/a?u=a1…` (base64url UTF-8) and DuckDuckGo `/l/?uddg=` become their destination (`redirected`); a `javascript:` destination, bad base64, a missing `a1`, bytes that are not UTF-8 keep the link with no domain; another host or path is an ordinary link.
+- `serp-analyse-unreadable` — a reader failure is `unreadable` with its reason and the parameters; garbage, an over-cap answer, invalid parameters, pack version or redirect rules are `invalid-answer`.
+- `serp-analysis-in-worker` — jobs run one at a time in one worker, posted with their redirects; past `SERP_ANALYSIS_TIMEOUT_MS` the worker is terminated, the job is `timeout`, its late answer is dropped, and the next job spawns a new worker; a crash is `invalid-answer`; after `dispose()` jobs answer at once without a spawn; the worker's code imports no Electron.
+- `serp-analysis-queue-is-bounded` — at most `SERP_ANALYSIS_MAX_QUEUED` jobs wait; more drop the oldest waiting ones (`timeout`), the rest run in order.
+- `serp-worker-answers-each-job` — the worker entry answers `{ id, raw, params, packVersion, redirects }` with `{ id, result }` (garbage is `invalid-answer`) and drops a message without a numeric id.
 - `serp-analysis-build-entry` — the Forge Vite build has the `serp-analysis` entry (`src/main/serp/serp-worker.ts`, the main config and target), so `.vite/build/serp-analysis.cjs` sits beside `main.cjs`.

@@ -11,26 +11,42 @@
  * ## How a page is read
  * - **Detection.** A URL is a result page when its scheme is `http:` or `https:`, its host is one of
  *   an engine's `hosts` exactly (case-insensitive, a trailing dot ignored, the port ignored), its
- *   pathname one of its `paths` exactly, and one of its query parameter names is present with a
- *   non-blank value. Nothing else is matched: no prefix, no subdomain, no heuristic.
+ *   pathname one of its `paths` exactly, one of its query parameter names is present with a
+ *   non-blank value, and no `params.reject` rule names another vertical (images, news, videos):
+ *   a pack describes web results only. Nothing else is matched: no prefix, no subdomain, no
+ *   heuristic. The recorded URL is canonical: the engine's host and path with the known
+ *   parameters only (query, country, language, page), never the engine's session tokens.
  * - **The reader is data-driven and fixed.** One function frost ships, serialised with the engine's
  *   `layout` and `SERP_READ_LIMITS` as JSON arguments (never a selector concatenated into code), run
  *   in `SERP_WORLD_ID`. It checks every selector first (an invalid one is `bad-selector`), then the
  *   `results` anchor (`no-container` when it does not match), then each block's containers across
  *   the whole document and their items. It reads text (text nodes, collapsed and capped) and the
- *   resolved `href` of HTML links (`http:` / `https:` only) and nothing else.
+ *   resolved `href` of HTML links (`http:` / `https:` only) and nothing else. Every DOM method and
+ *   getter it uses is taken from the prototypes of its own world when it starts and called with
+ *   `.call`, so a page element named like a method (`<form name="querySelector">`, which shadows
+ *   `document.querySelector` in every world) cannot stand in for it.
  * - **Precedence: the most specific block wins, then pack order.** An item a block finds is skipped
- *   when it lies inside a container of another block that is itself inside this block's container (a
- *   featured snippet's link inside the organic area is the snippet's, not an organic result), and
- *   when it is, or is inside, an item already taken (by an earlier block in pack order, or earlier in
- *   the same block: nested matches count once).
+ *   when its closest match of another block's `container` lies inside this block's container (a
+ *   featured snippet's link inside the organic area is the snippet's, not an organic result), when
+ *   its closest match of the block's own `notInside` lies inside the container (a feature the pack
+ *   does not read, so it is never counted as organic), and when it is, or is inside, an item already
+ *   taken (by an earlier block in pack order, or earlier in the same block: nested matches count
+ *   once). A block that names a `title` takes no item without one.
+ * - **Links are read as they are.** An engine's click redirect (`/url?q=`, `/ck/a?u=`, `/l/?uddg=`)
+ *   is unwrapped by the SERP worker with the engine's `redirects` (data: path, parameter, encoding),
+ *   never by the reader; a destination that is not a valid `http:` / `https:` URL leaves the link as
+ *   read with no domain, so it never counts towards ownership.
  * - **Document order.** Every item taken is sorted by document order; consecutive items of the same
  *   block and container form one answered block. So the organic results around a block of related
  *   questions are answered as organic, related questions, organic, in the order the page shows them.
  * - **Never guess.** A required block (the pack's `required`) that takes no item, or a page where no
  *   block takes any, is unreadable (`no-results`). There is no fallback that classifies anyway.
  * - **Bounded.** Counts, strings, node visits and time are capped while reading
- *   (`SERP_READ_LIMITS`); past the node or time budget the read stops (`timeout`). The budget is
+ *   (`SERP_READ_LIMITS`): each block takes at most `maxItemsPerBlock` items, then everything taken
+ *   is sorted by document order and cut to `maxResults` (the bottom of the page goes first, so a
+ *   broad block can never starve the organic results above it; past a cap the read is `truncated`,
+ *   and `organicCut` when organic results were among those cut). Past the node or time budget the
+ *   read stops (`timeout`). The budget is
  *   checked between DOM calls: one native `querySelectorAll` cannot be interrupted, so a page of
  *   100,000 matches costs that one match, then stops at the next check. The answer is validated
  *   again in the worker (`SerpReadSchema`) before anything is derived from it.
@@ -54,7 +70,9 @@ export const SERP_WORLD_ID = 1_301;
  * How the reader is bounded (applied by `readSerp` while it reads, and again by `SerpReadSchema`):
  * - `maxBlocks`: blocks answered (runs of consecutive items of one block and container);
  * - `maxContainersPerBlock`: containers one pack block looks at;
- * - `maxResults`: items answered in all (a real result page holds a few dozen);
+ * - `maxItemsPerBlock`: items one pack block takes in all its containers;
+ * - `maxResults`: items answered in all, the first in document order (a real result page holds a
+ *   few dozen);
  * - `maxTitleChars`: a title, after whitespace is collapsed; `maxTextReadChars`: raw text read for
  *   one title before collapsing (a huge text node is read only this far);
  * - `maxUrlChars`: a link; a longer one is no link (a cut URL is a wrong one);
@@ -63,10 +81,12 @@ export const SERP_WORLD_ID = 1_301;
  * - `budgetMs`: the reader's time budget from its start (`performance.now()`); past it the read
  *   stops (`timeout`). Well below `SERP_READ_TIMEOUT_MS`;
  * - `maxCoordinate`: a box's coordinates and sizes (CSS px); a larger or non-finite one is no box.
+ *   An item's box is its block's `box` element (or the item itself), in document coordinates.
  */
 export const SERP_READ_LIMITS = {
   maxBlocks: 64,
   maxContainersPerBlock: 16,
+  maxItemsPerBlock: 50,
   maxResults: 100,
   maxTitleChars: 300,
   maxTextReadChars: 2_048,
@@ -85,6 +105,50 @@ export const SERP_READ_TIMEOUT_MS = 2_000;
  * terminated, that reading is unreadable (`timeout`), and the next analysis spawns a new worker.
  */
 export const SERP_ANALYSIS_TIMEOUT_MS = 2_000;
+
+/**
+ * Jobs waiting for the SERP worker at most (`serp-analyzer.ts`); one more drops the oldest waiting
+ * job, which ends `timeout` (a newer reading of the tab supersedes it anyway).
+ */
+export const SERP_ANALYSIS_MAX_QUEUED = 8;
+
+/**
+ * What the panel says when a reader cap cut organic results (`ownership.complete` is `false`):
+ * composition and ownership cover only what was read.
+ */
+export const SERP_TRUNCATED_NOTE = 'This page has more results than frost reads. Composition and ownership cover the first results only.';
+
+/**
+ * Shared-hosting domains whose subdomains are separate sites (frost's own short list, applied
+ * before `registrableDomain` when ownership is grouped): `alice.github.io` and `bob.github.io` are
+ * two owners, not one `github.io`. A host that is one of these itself stays as it is.
+ */
+export const SERP_OWNER_SUFFIXES = [
+  'github.io',
+  'gitlab.io',
+  'blogspot.com',
+  'wordpress.com',
+  'substack.com',
+  'medium.com',
+  'tumblr.com',
+  'wixsite.com',
+  'weebly.com',
+  'squarespace.com',
+  'myshopify.com',
+  'netlify.app',
+  'vercel.app',
+  'pages.dev',
+  'workers.dev',
+  'web.app',
+  'firebaseapp.com',
+  'herokuapp.com',
+  'azurewebsites.net',
+  'fly.dev',
+  'onrender.com',
+  'glitch.me',
+  'neocities.org',
+  'carrd.co',
+] as const;
 
 /**
  * Why a result page could not be read (the panel's "Couldn't read this layout", with the reason):
@@ -133,12 +197,14 @@ export const SERP_DEVICE_OF_PRESET: Readonly<Record<DevicePresetId, SerpDevice>>
  * - `maxLocaleChars`: a country or language value (`gl`, `hl`); one longer, or not letters, digits,
  *   `-` and `_`, is not recorded (`null`);
  * - `maxPage`: the page number (a larger one is clamped to it);
+ * - `maxOffset`: an offset parameter's value (`start=20`; a larger one is clamped to it);
  * - `maxUrlChars`: the result page's URL; a longer URL is not matched at all.
  */
 export const SERP_PARAM_LIMITS = {
   maxQueryChars: 512,
   maxLocaleChars: 16,
   maxPage: 100,
+  maxOffset: 10_000,
   maxUrlChars: 4_096,
 } as const;
 

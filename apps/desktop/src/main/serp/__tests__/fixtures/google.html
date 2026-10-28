@@ -1,7 +1,8 @@
 <!doctype html>
 <!-- frost's own synthetic result page (Phase 3 Task 3): only the structural hooks the bundled pack's
-     Google selectors target (#search, #rso, #tads, #bottomads, block-component, [data-initq] /
-     [data-q], video-voyager, #rhs, #bres), with made-up results. Not a copy of any real page. -->
+     Google selectors target (#search, #rso, #tads, #bottomads, .commercial-unit-desktop-top /
+     .pla-unit, block-component, [data-initq] / [data-q], video-voyager, g-section-with-header,
+     div.g, #rhs, #bres, the /url click redirect), with made-up results. Not a copy of any real page. -->
 <html lang="en">
 <head><meta charset="utf-8"><title>frost synthetic results: frost</title></head>
 <body>
@@ -9,13 +10,17 @@
   <div data-text-ad="1"><a href="https://ads.example.net/frost-gear"><div role="heading">Frost Gear, sponsored</div></a><p>Warm layers for cold mornings.</p></div>
   <div data-text-ad="1"><a href="https://shop.example.org/boots"><div role="heading">Winter boots on sale</div></a></div>
 </div>
+<div class="commercial-unit-desktop-top">
+  <div class="pla-unit"><a href="https://shop.example.org/mittens">Wool mittens</a><a href="https://shop.example.org/mittens"><span>&nbsp;</span></a></div>
+  <div class="pla-unit"><a href="https://gear.frostline.example/scarf">Frost scarf</a><a href="https://gear.frostline.example/scarf"></a></div>
+</div>
 <div id="search">
   <div id="rso">
     <block-component>
       <div><span>Frost is a thin layer of ice that forms on cold surfaces.</span>
         <div><a href="https://www.icecrystal.example/what-is-frost"><h3>What is frost? A short guide</h3></a></div></div>
     </block-component>
-    <div><div><a href="https://www.example.com/frost"><br><h3>Frost   explained
+    <div class="g"><div><a href="https://www.example.com/frost"><br><h3>Frost   explained
       | Example</h3><cite>www.example.com</cite></a></div><div>Everything about frost.</div></div>
     <div><div><a href="https://blog.example.org/frost-tips"><h3>Ten tips for frosty mornings</h3></a></div></div>
     <div data-initq="frost">
@@ -26,7 +31,10 @@
     </div>
     <div><div><a href="https://example.com/frost/history"><h3>A history of frost</h3></a></div></div>
     <video-voyager><div><a href="https://video.example.net/watch/frost-timelapse"><h3>Frost timelapse</h3></a></div></video-voyager>
-    <div><div><a href="https://www.frostline.example/"><h3>Frostline weather</h3></a></div></div>
+    <g-section-with-header><div><a href="https://news.example.net/frost-warning"><h3>Frost warning tonight</h3></a></div></g-section-with-header>
+    <div class="g"><div><a href="https://www.frostline.example/"><h3>Frostline weather</h3></a></div></div>
+    <div><div><a href="/url?q=https://alice.github.io/frost-notes&amp;sa=U&amp;ved=x"><h3>Frost notes</h3></a></div></div>
+    <div><div><a href="/url?sa=t&amp;url=javascript:alert(1)"><h3>Odd link</h3></a></div></div>
     <div><div><a href="https://shop.example.com/frost"><h3>Frost shop</h3></a></div></div>
   </div>
 </div>

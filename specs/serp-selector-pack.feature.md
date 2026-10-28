@@ -10,8 +10,9 @@ line maps to one named test.
 
 ## Decisions
 - **Selectors are signed data.** A pack is JSON (engines, hosts, pathnames, parameter names, CSS
-  selectors per result type), never code. Its `.sig` is the base64 Ed25519 signature of the file's
-  exact bytes; the app embeds the public key.
+  selectors per result type, the parameters that mean another vertical, the click redirects by
+  host, path, parameter and a named decoding), never code. Its `.sig` is the base64 Ed25519
+  signature of the file's exact bytes; the app embeds the public key.
 - **Size, signature, then parse.** `verifyPack` refuses a pack over 256 KiB unread (`too-large`),
   then verifies the signature against each trusted key (`crypto.verify(null, bytes, key, sig)`)
   before decoding a byte (`bad-signature`), then parses it (fatal UTF-8, `JSON.parse`,
@@ -50,7 +51,7 @@ line maps to one named test.
 - `pack-verifies-before-parsing` — a forged pack is never decoded or parsed (`JSON.parse` not called).
 - `pack-too-large-never-read` — a pack one byte over the cap is `too-large`, even validly signed; an over-long `.sig` is `bad-signature`.
 - `pack-ignores-unusable-keys` — a malformed or non-Ed25519 trusted key is skipped, never thrown.
-- `pack-schema-is-strict-and-capped` — unknown keys, format 2, version 0 or 1.5, a bad result type, a blank or over-long selector, too many engines or blocks, an uppercase or wildcard host, a pathname without `/`, an offset page parameter without `perPage`, duplicate engine ids and a host in two engines are refused.
+- `pack-schema-is-strict-and-capped` — unknown keys, format 2, version 0 or 1.5, a bad result type, a blank or over-long selector, too many engines or blocks, an uppercase or wildcard host, a pathname without `/`, an offset page parameter without `perPage`, duplicate engine ids and a host in two engines are refused; so are (Task 3) a `reject` list empty or over `maxRejects`, a rule with both `values` and `except`, an uppercase or over-long value, `redirects` empty or over `maxRedirects`, an unknown `decode`, a redirect path without `/` or an uppercase host, and a blank or over-long `notInside` or `box`.
 
 ## Store (`apps/desktop/src/main/serp/__tests__/pack-store.test.ts`)
 - `bundled-pack-is-signed` — the bundled pack, as main imports it (`?raw`), is byte-identical to the file, verifies with `SERP_PACK_PUBLIC_KEYS` and covers Google, Bing and DuckDuckGo.

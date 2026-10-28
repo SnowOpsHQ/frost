@@ -296,7 +296,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - ownership share;
   - the bundled pack against each fixture.
 - [x] commit `feat(serp): read result pages with the selector pack`
-- [ ] Review fixes: commit `fix(serp): address SERP reading review findings`
+- [x] Review fixes: commit `fix(serp): address SERP reading review findings`
 
 ### Task 4: SERP service, router and outlines
 - **Spec:**
