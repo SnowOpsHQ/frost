@@ -18,6 +18,7 @@
     "verify:linux": "pnpm --filter @app/desktop verify:linux",
     "make:win": "pnpm --filter @app/desktop make:win",
     "verify:win": "pnpm --filter @app/desktop verify:win",
+    "sign:update-manifest": "node scripts/sign-update-manifest.mjs",
     "security:electronegativity": "node scripts/electronegativity.mjs",
     "security:semgrep": "pnpm security:semgrep:test && pnpm security:semgrep:scan",
     "security:semgrep:test": "uvx semgrep@1.182.1 --test --metrics off --config semgrep/ipc-sender-guard.yml semgrep/__fixtures__/ipc-sender-guard.ts && uvx semgrep@1.182.1 --test --metrics off --config semgrep/webcontents-factory.yml semgrep/__fixtures__/webcontents-factory.ts && uvx semgrep@1.182.1 --test --metrics off --config semgrep/debugger-allowlist.yml semgrep/__fixtures__/debugger-allowlist.ts",

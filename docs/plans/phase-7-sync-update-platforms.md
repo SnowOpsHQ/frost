@@ -221,7 +221,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 
   Plus `scripts/__tests__/sign-update-manifest.test.ts`, which signs, verifies and refuses a
   world-readable key.
-- [ ] commit `feat(update): Ed25519-signed update manifest and sign:update-manifest`
+- [x] commit `feat(update): Ed25519-signed update manifest and sign:update-manifest`
 
 #### Task 4: The update client: check, download, verify (security review)
 - **Spec:** `specs/update-client.spec.ts` (states, settings, feed rules, caps) and
@@ -470,3 +470,40 @@ sync.
   spread line in `packagerConfig`; `appCopyright` is also the macOS bundle's copyright string).
 - **Known limits.** Installing and uninstalling (and so the shortcuts) are not exercised by any
   check (`windows-package.feature.md`).
+
+### Task 3 (signed update manifest)
+- **Trust root.** `UPDATE_PUBLIC_KEYS` holds one Ed25519 SPKI key, `frost-update-2026-10`; its
+  private half is in the maintainer's private key store (`frost-private/keys/`) only. No test or CI
+  job signs with it (tests generate Ed25519 keys per run and inject them as the trusted keys). It
+  was checked once by hand: a throwaway manifest outside the repo signed with
+  `pnpm sign:update-manifest` verified against the embedded key, and the same envelope with one
+  payload byte flipped was `bad-signature`; the files were deleted.
+- **Caps.** The 64 KiB cap (`MAX_MANIFEST_BYTES`) is on the manifest, the signed bytes. The
+  envelope cap `MAX_ENVELOPE_BYTES` (88,408 bytes) is its base64 length plus 1 KiB; it is what
+  `verifyEnvelope` checks before parsing, and what Task 4's feed read should cap at.
+- **API.** `verifyEnvelope(bytes, keys?)` answers `{ ok, manifest, keyId }` or one of
+  `UPDATE_VERIFY_REASONS`. `parseManifest(value)` (the schema plus `minimumVersion` not above
+  `version`) is shared with the signer. `decide(manifest, { currentVersion, platformKey,
+  installId, skippedVersion? })` replaces the plan's `{ current, platform, arch }`
+  (`updatePlatformKey(platform, arch)` in the spec maps to `platformKey`, `null` off
+  `UPDATE_PLATFORMS`); its kinds are `up-to-date`, `no-artifact` (the plan's `none`), `required`,
+  `skipped`, `staged-out`, `available`, in that order, so skip is decided here and Task 4 only
+  passes `skippedVersion`. `compareVersions` throws on a non-version (so does `decide`, for a bad
+  `currentVersion`).
+- **Stricter than the plan.** Base64 is canonical (the standard alphabet, padded, no whitespace,
+  zero unused bits) in the schema and again in `manifest.ts`; release notes refuse C0 control
+  characters other than tab, CR and LF; artifact URLs are printable ASCII; `releasedAt` is UTC
+  (`Z`); a Zod record's silent drop of a `__proto__` key is refused by checking the input's keys.
+- **Script.** At the root, as planned: `scripts/sign-update-manifest.mjs` loads the specs and
+  `manifest.ts` with Node's type stripping (`zod` resolves from the hoisted root `node_modules`) and
+  registers a resolve hook that adds `.ts` to their extensionless relative imports. It signs the
+  file's exact bytes and verifies the result with `verifyEnvelope` before writing (default
+  `x.json` → `x.signed.json`); relative paths are taken from `INIT_CWD`. Key files are checked on
+  the opened descriptor (regular file, no group/other bits on POSIX, at most 16 KiB); the key must
+  be Ed25519 and its public half one of `UPDATE_PUBLIC_KEYS`. Errors never quote the key or
+  Node's crypto messages. No example manifest was added.
+- **Tests.** The plan's `scripts/__tests__/sign-update-manifest.test.ts` is
+  `apps/desktop/src/main/update/__tests__/sign-update-manifest.test.ts` (no vitest runs at the
+  root). It calls the script's `main` in-process (trusted keys injected) and also spawns it under
+  plain Node (`runs-under-node`). Added scenarios: `decide-eligibility`, `compare-versions`,
+  `production-key-is-ed25519`, `refuses-unusable-key`, `runs-under-node`.
