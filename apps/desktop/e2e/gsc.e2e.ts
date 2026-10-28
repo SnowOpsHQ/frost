@@ -127,7 +127,8 @@ test('gsc-connect-needs-gesture', async () => {
   expect(await call('mutation', 'gsc.connect')).toBe('needs-gesture');
   expect(await openedUrls()).toHaveLength(opened);
   expect(google.authRequests).toEqual([]);
-  expect(google.requests).toEqual([]);
+  // Only the fake's own OAuth and API paths count: other local software may probe a new loopback port.
+  expect(google.requests.filter((request) => / \/(o\/oauth2\/|token|revoke|webmasters\/)/.test(request))).toEqual([]);
   expect(await gscStatus()).toMatchObject({ connected: false, connecting: false });
 });
 
