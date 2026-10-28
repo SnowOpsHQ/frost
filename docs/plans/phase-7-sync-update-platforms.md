@@ -316,37 +316,76 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   pass, since `codesign --deep` seals the unpacked prebuild.
 - [ ] commit `feat(packaging): ship libSQL's native module unpacked, allowlisted`
 
-#### Task 8: Opt-in sync config and the sync service
-- **Spec:** `sync.spec.ts`, `sync-config.feature.md`.
+#### Task 8: Opt-in sync config and the row-mirror sync engine
+- **Spec:**
+  - `sync.spec.ts`: `SYNC_TABLES`, each table's merge rule, and the config rules;
+  - `sync-config.feature.md`;
+  - `sync-engine.feature.md`.
 - **Code:** `apps/desktop/src/main/sync/`:
   - `config.ts`: `userData/frost-sync.json`, holding `enabled`, `url` (`libsql:`/`https:`) and the
-    token encrypted with `safeStorage`. Sync refuses to enable when `safeStorage` is unavailable.
-  - `service.ts`: opens the change-intelligence database through `driver-libsql` as an embedded
-    replica, calls `sync()` on demand and on an interval, and reports status.
+    token, encrypted with `safeStorage`. Sync refuses to enable when `safeStorage` is unavailable.
+  - `engine.ts`: mirrors only the `SYNC_TABLES` rows between the session database and a separate
+    libSQL embedded replica, `userData/frost-sync.db`. The merge rules (see the design note):
+    - append-only rows are inserted by `id` if missing;
+    - mutable rows are merged last-writer-wins on `updated_at`;
+    - tombstones are replayed as deletes.
 
-  `packages/ipc-contract/src/sync-router.ts` is registered if the service is exposed.
-- **Tests:** a mocked sync layer (a fake `@libsql/client`), plus an optional `sqld` integration
-  test that runs only when `SQLD_BIN` is set.
-- **Dependency:** the change-intelligence tables come from Phase 6. If Phase 6 hasn't merged when
-  Tasks 1–5 are done, only Tasks 6 and 7, plus whatever of Task 8 doesn't need its tables, ship in
-  this PR. Sync of the Phase 6 tables is then listed as not done, with the design note below.
-- [ ] commit `feat(sync): opt-in libSQL sync config with tokens in safeStorage`
+    A table that doesn't exist yet (Phase 6 not merged) is skipped and reported.
+  - `service.ts`: runs `replica.sync()` on demand and on an interval, and reports status.
+
+  `packages/ipc-contract/src/sync-router.ts` is registered only if the service is exposed in the
+  chrome.
+- **Tests:**
+  - a mocked sync layer: a fake replica client, plus libSQL `file:` databases standing in for the
+    replica;
+  - engine tests over fixture tables with Phase 6's conventions (UUIDv7 `id`, `created_at`,
+    `updated_at`/`deleted_at`, `ci_tombstones`);
+  - an optional `sqld` integration test that runs only when `SQLD_BIN` is set.
+- **Dependency:** the `ci_*` tables come from Phase 6. If Phase 6 hasn't merged when Tasks 1–5 are
+  done, this PR ships Tasks 6 and 7 and the parts of Task 8 that don't need those tables (config,
+  token storage, and the engine against fixtures). Turning on sync of the real Phase 6 tables, and
+  any UI for it, is then listed as not done.
+- [ ] commit `feat(sync): opt-in libSQL sync config and row-mirror engine`
 
 ---
 
 ## Sync design note
-- **One database per sync domain.** libSQL embedded replicas sync a whole database file, not chosen
-  tables, so change intelligence (captures, versions, diffs) needs its own file, apart from the
-  browser-session database. Browsing history, permission decisions and content notes never sync.
-- **Append-only fits replication.** Phase 6's tables are append-only, with immutability enforced by
-  triggers. Writes are inserts with globally unique IDs (UUID or ULID, not `INTEGER` autoincrement),
-  so two devices never collide.
-- **How writes flow.** An embedded replica reads locally and forwards writes to the primary.
-  - Offline, captures queue in a local outbox table (same schema), and are replayed when the primary
-    is reachable.
-  - libSQL's own offline-write mode is not yet relied on.
-- **Screenshots and other blobs.** They stay as local files. Only their hashes and metadata rows
-  sync, until an object-store design exists.
+Phase 6's schema (`docs/plans/phase-6-change-intelligence.md`, Schema) puts the change-intelligence
+tables in the browser-session database (`frost-browser.db`, migrations `0040`/`0041`). That shapes
+sync.
+- **No whole-file replica of the session database.** A libSQL embedded replica syncs a whole
+  database file. Replicating `frost-browser.db` would also upload browsing history, permission
+  decisions, render-profile pins and content notes, which must stay local. So sync mirrors rows.
+  - Only the tables in `SYNC_TABLES` are copied: the `ci_*` tables, which are `ci_projects`,
+    `ci_project_pages`, `ci_project_queries`, `ci_versions`, `ci_captures`, `ci_diffs`,
+    `ci_screenshots`, `ci_purges` and `ci_tombstones`.
+  - They are copied between the session database and a dedicated replica file, `frost-sync.db`. That
+    file is the libSQL embedded replica, opened through `driver-libsql`, and the only file that
+    talks to the sync endpoint.
+- **Merge rules, from Phase 6's conventions.**
+  - Every row has a UUIDv7 `id` and `created_at`, so rows from two devices never collide.
+  - **Captured tables** are append-only (`ci_versions`, `ci_captures`, `ci_diffs`, `ci_screenshots`):
+    rows are inserted if missing and never updated. A row that has a `ci_tombstones` entry is never
+    re-inserted, matching Phase 6's `no_resurrect` trigger.
+  - **Mutable tables** (`ci_projects`, `ci_project_pages`, `ci_project_queries`) merge
+    last-writer-wins on `updated_at`. A tie goes to the larger `id`. Deletion is a `deleted_at`
+    tombstone, never a `DELETE`.
+  - **Purges** (`ci_purges` with `ci_tombstones`) travel as rows. On arrival they are applied
+    through Phase 6's own purge path (tombstones first, then children-first deletes), so the
+    append-only triggers still hold.
+- **One direction at a time, in one transaction.**
+  - Push copies the new local rows into the replica, then `sync()`.
+  - Pull runs `sync()`, then copies the new replica rows into the session database in one
+    `BEGIN IMMEDIATE` batch.
+  - A high-water mark per table (`created_at`/`updated_at`, then `id`) keeps each pass incremental.
+- **Offline.** The replica's own writes go to the primary, so while offline the engine leaves rows
+  in the session database and pushes them on the next successful pass. libSQL's offline-write mode
+  isn't relied on.
+- **Screenshots.** Only the `ci_screenshots` rows sync. The PNG files
+  (`frost-captures/screenshots/<sha256>.png`) are content-addressed blobs that need an object store
+  of their own, which is not designed yet.
+- **Tokens.** The endpoint and token come from the user. The token is kept only as `safeStorage`
+  ciphertext and is never sent to the chrome.
 
 ## As built
 (filled in as tasks land)
