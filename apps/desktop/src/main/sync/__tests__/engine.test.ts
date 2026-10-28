@@ -34,7 +34,7 @@ import {
 } from './fixtures';
 
 // Real SQLite files on both drivers: Windows runners are slow at file I/O under a parallel load.
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const NOW = () => 10 ** 13;
 const P = uuid7(1);

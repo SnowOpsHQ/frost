@@ -152,16 +152,23 @@ describe('downloadArtifact', () => {
     feed.route('/frost.AppImage', { body: BYTES });
     // A disk whose first write never finishes, and whose close waits for that write (as `FileHandle.close()` does).
     let created: string | null = null;
+    // Released once the test has its answer, so the real handle is closed explicitly (Node 26 makes a
+    // handle closed by garbage collection an error).
+    let release: () => void = () => undefined;
+    const hung = new Promise<void>((resolve) => (release = resolve));
+    let realClosed: Promise<void> = Promise.resolve();
     const openFile: DownloadInput['openFile'] = async (file, flags, mode) => {
       const real = await open(file, flags, mode);
       created = file;
-      const hung = new Promise<never>(() => undefined);
+      let closed: () => void = () => undefined;
+      realClosed = new Promise<void>((resolve) => (closed = resolve));
       return {
-        write: () => hung,
+        write: (buffer: Uint8Array, offset = 0, length = buffer.byteLength - offset) => hung.then(() => ({ bytesWritten: length, buffer })),
         sync: () => real.sync(),
         close: async () => {
           await hung;
           await real.close();
+          closed();
         },
       } as unknown as Awaited<ReturnType<NonNullable<DownloadInput['openFile']>>>;
     };
@@ -172,6 +179,8 @@ describe('downloadArtifact', () => {
     expect(created).toBe(path.join(versionDir(), `${NAME}${UPDATE_PARTIAL_SUFFIX}`));
     // POSIX unlinks the open partial at once.
     if (POSIX) expect(await tree()).toEqual([VERSION]);
+    release();
+    await realClosed;
   });
 
   test('short-writes-are-completed', async () => {
