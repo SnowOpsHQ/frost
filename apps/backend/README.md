@@ -1,9 +1,10 @@
 # @app/backend
 
-frost's account API: web sign-in (email and password, magic links) and the session the desktop
-reads. Hono + [better-auth](https://www.better-auth.com) + Drizzle on Postgres. Phase 4
+frost's account API: web sign-in (email and password, magic links), the session the desktop
+reads, and signed entitlement snapshots (which plan, which features). Hono + [better-auth](https://www.better-auth.com) + Drizzle on Postgres. Phase 4
 (`docs/plans/phase-4-accounts-telemetry.md`); behaviour in `specs/account-backend.feature.md`, the
-answers the desktop parses in `specs/account-api.schema.ts`.
+answers the desktop parses in `specs/account-api.schema.ts`; entitlements in
+`specs/entitlements.feature.md` and `specs/entitlements-snapshot.spec.ts`.
 
 > **Never deploy from this repo.** The backend runs locally and in tests only. No hosting config,
 > credential or DSN lives here; a deployment is set up elsewhere, with its own secrets.
@@ -12,6 +13,7 @@ answers the desktop parses in `specs/account-api.schema.ts`.
 
 ```sh
 cp apps/backend/.env.example apps/backend/.env   # then set BETTER_AUTH_SECRET (openssl rand -base64 32)
+pnpm --filter @app/backend admin keygen          # copy ENTITLEMENT_KEY_ID and ENTITLEMENT_SIGNING_KEY into .env
 set -a; . apps/backend/.env; set +a
 pnpm --filter @app/backend dev
 ```
@@ -37,11 +39,13 @@ value). An empty value counts as unset.
 | `PORT` | `8787` | Listen port. |
 | `CLIENT_IP_HEADER` | unset | Only behind a reverse proxy: the header it sets with the client IP (e.g. `x-forwarded-for`). Unset → the TCP peer address, and any client-sent IP header is ignored. Never set it without a proxy in front: clients could then choose their rate-limit key. |
 | `TRUSTED_PROXIES` | unset | With `CLIENT_IP_HEADER`: comma-separated proxy IPs/CIDRs skipped when walking a forwarded chain. Without it, only a single-value header is trusted. |
+| `ENTITLEMENT_SIGNING_KEY` | (required) | The private Ed25519 JWK (JSON: `kty` `OKP`, `crv` `Ed25519`, `x`, `d`) that signs snapshots. Secret. Startup refuses a key that is not JSON, not Ed25519, has no `d`, has another `kid`, or whose `d` does not match its `x`; the message never shows the key. |
+| `ENTITLEMENT_KEY_ID` | (required) | Its `kid` (`ENTITLEMENT_KEY_ID_PATTERN`), put in every snapshot's header. |
+| `ENTITLEMENT_PUBLIC_KEYS` | unset | During a rotation: a JWKS (`{"keys":[…]}`) of old **public** keys still published next to the signing key. A private member (`d`) or a repeated `kid` refuses startup. |
 | `NODE_ENV` | `development` | `development`, `test` or `production`. |
 
 `BETTER_AUTH_TELEMETRY`, `BETTER_AUTH_TELEMETRY_ENDPOINT` and `BETTER_AUTH_TELEMETRY_DEBUG` must
-not be set (better-auth would turn its telemetry back on); startup refuses them. Later tasks add
-`ENTITLEMENT_SIGNING_KEY` and `ENTITLEMENT_KEY_ID` (Task 2).
+not be set (better-auth would turn its telemetry back on); startup refuses them.
 
 ## Routes
 
@@ -49,6 +53,8 @@ not be set (better-auth would turn its telemetry back on); startup refuses them.
 |---|---|
 | `GET /healthz` | `{ status: 'ok' }`; 503 `{ error: 'unavailable' }` when the database does not answer. |
 | `GET /v1/session` | `SessionResponse` for a signed-in web session cookie (or, from Task 3, a desktop bearer); 401 `{ error: 'unauthorized' }` otherwise. `no-store`. |
+| `GET /v1/entitlements` | `{ snapshot }` (`EntitlementsResponse`) for the signed-in principal (same resolver chain as `/v1/session`, so Task 3's desktop bearer works unchanged); 401 otherwise. `no-store`. |
+| `GET /.well-known/frost-entitlement-keys` | The public JWKS (`EntitlementJwks`): the signing key's public half and any `ENTITLEMENT_PUBLIC_KEYS`. Never a `d`. `public, max-age=300`. |
 | `/api/auth/*` | better-auth, only `AUTH_ENDPOINT_METHODS` (`specs/account-api.schema.ts`): `POST sign-up/email`, `POST sign-in/email`, `POST sign-in/magic-link`, `GET magic-link/verify`, `GET verify-email`, `GET get-session`, `POST sign-out`. Anything else is 404. JSON answers never carry the session token (the `HttpOnly` cookie does). |
 
 - Sign-up sends a verification link; a password signs in only once the address is verified.
@@ -83,10 +89,45 @@ better-auth instance and the resolver list. A new route uses the same chain:
 app.get('/v1/something', requirePrincipal(resolvers), (c) => c.json(answerFor(c.get('principal').user)));
 ```
 
+## Entitlements
+
+An account's plan is a row in `entitlements` (user, plan, updated); no row is `free`. Which features
+a plan has is `PLAN_FEATURES` in the spec, applied when signing (`free` → none; `pro` → `ai-agent`,
+`search-console`, `sync`); the desktop reads the flags, never the plan.
+
+A snapshot is a compact JWS, header exactly `{ alg: 'EdDSA', kid, typ: 'frost-entitlement+jwt' }`,
+claims `iss`, `aud` (`frost-desktop`), `sub` (user ID), `email`, `plan`, `features`, `iat`,
+`exp = iat + 3 days`, `ver: 1`, validated against `EntitlementClaimsSchema` before signing
+(`src/entitlements.ts`, `jose`). The desktop verifies it with the public keys baked into its build
+(`FROST_PUBLIC_ENTITLEMENT_JWKS`) and gives 7 days of offline grace after `exp` (Task 4).
+
+**Key rotation.** `admin keygen` a new key; publish its public JWKS together with the old one (the
+desktop's `FROST_PUBLIC_ENTITLEMENT_JWKS` lists both, and a release ships it); switch the server to
+the new `ENTITLEMENT_SIGNING_KEY`/`ENTITLEMENT_KEY_ID` with the old public key in
+`ENTITLEMENT_PUBLIC_KEYS`; drop the old key once its last snapshot is past its life and offline grace (3 + 7 days) and the
+builds that trust only it are gone.
+
+## Admin CLI
+
+```sh
+pnpm --filter @app/backend admin help
+pnpm --filter @app/backend admin migrate                  # apply pending migrations
+pnpm --filter @app/backend admin keygen [kid]             # new signing key (stdout only)
+pnpm --filter @app/backend admin grant alice@example.com pro
+pnpm --filter @app/backend admin show alice@example.com
+```
+
+`src/cli.ts` (run with `tsx`) reads only `DATABASE_URL` / `PGLITE_DIR`. `keygen` prints, labelled,
+the server's `ENTITLEMENT_KEY_ID` and `ENTITLEMENT_SIGNING_KEY` (secret) and the desktop's
+`FROST_PUBLIC_ENTITLEMENT_JWKS` (public), single-quoted for a `.env`; it writes no file. The `kid`
+defaults to the key's RFC 7638 thumbprint. `grant` takes `free` or `pro`; the next snapshot carries
+it. An unknown account exits 1, an unknown plan or command 2, each with a message. Tests call
+`runCli(argv, { db, out, err })` directly.
+
 ## Database and migrations
 
 The schema is written by hand in `src/db/schema.ts` (better-auth's `user`, `session`, `account` and
-`verification` models, as `users`, `sessions`, `accounts`, `verifications`). Migrations are plain SQL
+`verification` models, as `users`, `sessions`, `accounts`, `verifications`; and `entitlements`). Migrations are plain SQL
 files in `drizzle/`, named `NNNN_name.sql`, statements separated by `--> statement-breakpoint` lines.
 `src/db/migrate.ts` (our own small runner, used for PGlite and node-postgres alike) applies pending
 files in name order in one transaction under a Postgres advisory lock and records each in
@@ -110,7 +151,7 @@ memory transport (`createMemoryTransport()`).
 
 ## Logging
 
-Nothing logs a password, token, cookie or database URL. The one exception is the console email
+Nothing logs a password, token, cookie, signing key or database URL. The one exception is the console email
 transport, which prints sign-in and verification links: it exists for local development and is
 refused in production. Unhandled errors (better-auth rethrows them, `onAPIError.throw`) log their
 name and route only: a driver error's message carries the query's parameters. better-auth's own log

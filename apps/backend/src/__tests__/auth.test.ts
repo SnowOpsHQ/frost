@@ -11,12 +11,14 @@ import {
 } from '@app/specs/account-api.schema';
 import { EnvError, parseEnv, TELEMETRY_OVERRIDES } from '../env';
 import { createConsoleTransport } from '../email';
-import { authPath, cookieFrom, createTestBackend, jsonPost, linkIn, PASSWORD, signedInWithPassword, signUp, type TestBackend } from './helpers';
+import { authPath, cookieFrom, createTestBackend, jsonPost, linkIn, PASSWORD, signedInWithPassword, signUp, testSigningEnv, type TestBackend } from './helpers';
 
 // Acceptance: specs/account-backend.feature.md (Environment, Sign-in, Session).
 
 const auth = authPath;
 const VALID_SECRET = 's'.repeat(AUTH_SECRET_MIN_LENGTH);
+/** The required variables: a valid secret and an ephemeral entitlement signing key. */
+const BASE_ENV = { BETTER_AUTH_SECRET: VALID_SECRET, ...testSigningEnv() };
 
 let backend: TestBackend | undefined;
 afterEach(async () => {
@@ -49,22 +51,22 @@ describe('environment', () => {
   });
 
   it('env-defaults', () => {
-    const env = parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET });
+    const env = parseEnv({ ...BASE_ENV });
     expect(env.DATABASE_URL).toBeUndefined();
     expect(env.PGLITE_DIR).toMatch(/[/\\]\.data[/\\]pglite$/);
     expect(env.EMAIL_TRANSPORT).toBe('console');
     expect(env.HOST).toBe('127.0.0.1');
     expect(env.PORT).toBe(8787);
     expect(env.BETTER_AUTH_URL).toBe('http://127.0.0.1:8787');
-    expect(parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, PORT: '9000' }).BETTER_AUTH_URL).toBe('http://127.0.0.1:9000');
+    expect(parseEnv({ ...BASE_ENV, PORT: '9000' }).BETTER_AUTH_URL).toBe('http://127.0.0.1:9000');
   });
 
   it('env-refuses-console-email-in-production', () => {
-    expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, NODE_ENV: 'production', EMAIL_TRANSPORT: 'console' })).toThrow(/EMAIL_TRANSPORT/);
+    expect(() => parseEnv({ ...BASE_ENV, NODE_ENV: 'production', EMAIL_TRANSPORT: 'console' })).toThrow(/EMAIL_TRANSPORT/);
   });
 
   it('env-production-needs-https-and-postgres', () => {
-    const production = { BETTER_AUTH_SECRET: VALID_SECRET, NODE_ENV: 'production', BETTER_AUTH_URL: 'http://accounts.example.com' };
+    const production = { ...BASE_ENV, NODE_ENV: 'production', BETTER_AUTH_URL: 'http://accounts.example.com' };
     expect(() => parseEnv(production)).toThrow(/BETTER_AUTH_URL must be https/);
     expect(() => parseEnv(production)).toThrow(/DATABASE_URL is required in production/);
     expect(() => parseEnv({ ...production, BETTER_AUTH_URL: 'https://accounts.example.com', DATABASE_URL: 'postgres://db.example.com/frost' })).not.toThrow(
@@ -74,24 +76,24 @@ describe('environment', () => {
 
   it('env-auth-url-is-a-bare-origin', () => {
     for (const url of ['http://127.0.0.1:8787/app', 'http://127.0.0.1:8787/?x=1', 'http://user:pw@127.0.0.1:8787', 'http://127.0.0.1:8787/#a']) {
-      expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, BETTER_AUTH_URL: url })).toThrow(/BETTER_AUTH_URL must be a bare origin/);
+      expect(() => parseEnv({ ...BASE_ENV, BETTER_AUTH_URL: url })).toThrow(/BETTER_AUTH_URL must be a bare origin/);
     }
-    expect(parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, BETTER_AUTH_URL: 'http://127.0.0.1:9000/' }).BETTER_AUTH_URL).toBe('http://127.0.0.1:9000');
+    expect(parseEnv({ ...BASE_ENV, BETTER_AUTH_URL: 'http://127.0.0.1:9000/' }).BETTER_AUTH_URL).toBe('http://127.0.0.1:9000');
   });
 
   it('env-refuses-telemetry-overrides', () => {
     for (const name of TELEMETRY_OVERRIDES) {
-      expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, [name]: 'true' })).toThrow(new RegExp(`${name} must not be set`));
+      expect(() => parseEnv({ ...BASE_ENV, [name]: 'true' })).toThrow(new RegExp(`${name} must not be set`));
     }
-    expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, BETTER_AUTH_TELEMETRY: '' })).not.toThrow();
+    expect(() => parseEnv({ ...BASE_ENV, BETTER_AUTH_TELEMETRY: '' })).not.toThrow();
   });
 
   it('env-client-ip', () => {
-    expect(parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET }).CLIENT_IP_HEADER).toBeUndefined();
-    const env = parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, CLIENT_IP_HEADER: 'X-Forwarded-For', TRUSTED_PROXIES: '10.0.0.1, 192.0.2.0/24' });
+    expect(parseEnv({ ...BASE_ENV }).CLIENT_IP_HEADER).toBeUndefined();
+    const env = parseEnv({ ...BASE_ENV, CLIENT_IP_HEADER: 'X-Forwarded-For', TRUSTED_PROXIES: '10.0.0.1, 192.0.2.0/24' });
     expect(env.CLIENT_IP_HEADER).toBe('x-forwarded-for');
     expect(env.TRUSTED_PROXIES).toEqual(['10.0.0.1', '192.0.2.0/24']);
-    expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, CLIENT_IP_HEADER: 'bad header' })).toThrow(/CLIENT_IP_HEADER/);
+    expect(() => parseEnv({ ...BASE_ENV, CLIENT_IP_HEADER: 'bad header' })).toThrow(/CLIENT_IP_HEADER/);
   });
 });
 

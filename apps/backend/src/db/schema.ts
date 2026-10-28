@@ -1,4 +1,5 @@
 import { boolean, index, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { PLANS } from '@app/specs/entitlements-snapshot.spec';
 
 // better-auth's core tables (user, session, account, verification), written by hand to match the
 // fields its Drizzle adapter reads and writes. The SQL is `drizzle/0001_auth.sql`; a change here
@@ -71,9 +72,22 @@ export const verifications = pgTable(
   (t) => [index('verifications_identifier_idx').on(t.identifier)],
 );
 
+/**
+ * An account's plan (`drizzle/0002_entitlements.sql`; spec `entitlements.feature.md`). No row means
+ * `DEFAULT_PLAN` (`free`). Which features a plan includes is `PLAN_FEATURES`, not stored here. Set by
+ * the admin CLI (`grant`); the database refuses a plan outside `PLANS`.
+ */
+export const entitlements = pgTable('entitlements', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  plan: text('plan', { enum: PLANS }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+});
+
 /** better-auth model name → table, as its Drizzle adapter expects. */
 export const authSchema = { user: users, session: sessions, account: accounts, verification: verifications };
 
 /** Every table, for `drizzle(..., { schema })`. Later tasks add theirs here. */
-export const schema = { users, sessions, accounts, verifications };
+export const schema = { users, sessions, accounts, verifications, entitlements };
 export type Schema = typeof schema;

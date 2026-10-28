@@ -1,13 +1,25 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { AUTH_BASE_PATH, AUTH_ROUTES } from '@app/specs/account-api.schema';
 import { createAppParts, type AppDeps } from '../app';
 import { openMemoryDatabase, type DatabaseHandle } from '../db/client';
 import { migrate } from '../db/migrate';
 import { createMemoryTransport, type MemoryTransport } from '../email';
+import { generateEntitlementKey, loadEntitlementSigner, type GeneratedEntitlementKey } from '../entitlements';
 
 export const BASE_URL = 'http://127.0.0.1:8787';
 export const TEST_SECRET = 'test-secret-0123456789-abcdefghijklmnop';
 /** The TCP peer every test request comes from, unless it sets `TEST_PEER_HEADER`. */
 export const DEFAULT_PEER = '203.0.113.10';
+export const TEST_KEY_ID = 'test-key-1';
+
+/**
+ * A freshly generated Ed25519 private JWK (JSON) and its `kid`, as the environment carries them.
+ * Synchronous (node:crypto), for `parseEnv` tests; generated at run time, never committed.
+ */
+export function testSigningEnv(kid = TEST_KEY_ID): { ENTITLEMENT_SIGNING_KEY: string; ENTITLEMENT_KEY_ID: string } {
+  const jwk = generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' });
+  return { ENTITLEMENT_SIGNING_KEY: JSON.stringify({ ...jwk, kid }), ENTITLEMENT_KEY_ID: kid };
+}
 /** Test-only stand-in for the socket address (the real server reads the socket). */
 export const TEST_PEER_HEADER = 'x-test-peer';
 
@@ -19,6 +31,8 @@ export interface TestBackend {
   readonly resolvers: Parts['resolvers'];
   readonly email: MemoryTransport;
   readonly database: DatabaseHandle;
+  /** The ephemeral entitlement signing key this backend was built with (private JWK included). */
+  readonly signingKey: GeneratedEntitlementKey;
   /** better-auth's (redacted) log lines. */
   readonly logs: string[];
   /** `app.request` against the configured base URL, with a same-origin `Origin` on writes. */
@@ -27,10 +41,12 @@ export interface TestBackend {
 }
 
 /** A backend on a fresh in-memory PGlite with every migration applied and a memory email transport. */
-export async function createTestBackend(overrides: Partial<Pick<AppDeps, 'verifyBearer' | 'healthTimeoutMs'>> = {}): Promise<TestBackend> {
+export async function createTestBackend(overrides: Partial<Pick<AppDeps, 'verifyBearer' | 'healthTimeoutMs' | 'entitlementSigner'>> = {}): Promise<TestBackend> {
   const database = await openMemoryDatabase();
   await migrate(database.db);
   const email = createMemoryTransport();
+  const signingKey = await generateEntitlementKey(TEST_KEY_ID);
+  const entitlementSigner = await loadEntitlementSigner({ signingKey: signingKey.privateJwkJson, keyId: signingKey.kid });
   const logs: string[] = [];
   const { app, auth, resolvers } = createAppParts({
     db: database.db,
@@ -38,6 +54,7 @@ export async function createTestBackend(overrides: Partial<Pick<AppDeps, 'verify
     email,
     clientIp: { kind: 'peer', address: (c) => c.req.header(TEST_PEER_HEADER) ?? DEFAULT_PEER },
     logSink: (line) => logs.push(line),
+    entitlementSigner,
     ...overrides,
   });
   let closed = false;
@@ -47,6 +64,7 @@ export async function createTestBackend(overrides: Partial<Pick<AppDeps, 'verify
     resolvers,
     email,
     database,
+    signingKey,
     logs,
     request(path, init = {}) {
       const headers = new Headers(init.headers);

@@ -11,9 +11,11 @@ import {
   type ErrorResponse,
   type HealthResponse,
 } from '@app/specs/account-api.schema';
+import { ENTITLEMENT_KEYS_PATH, ENTITLEMENTS_PATH, EntitlementsResponseSchema } from '@app/specs/entitlements-snapshot.spec';
 import { CLIENT_IP_HEADER, createAuth, type AuthConfig } from './auth';
 import type { Database } from './db/client';
 import type { EmailTransport } from './email';
+import { issueSnapshot, planFor, type EntitlementSigner } from './entitlements';
 import type { LogSink } from './log';
 import { bearerResolver, requirePrincipal, webSessionResolver, type BearerVerifier, type PrincipalEnv, type PrincipalResolver } from './principal';
 import type { RateLimitStorage } from './rate-limit';
@@ -34,6 +36,8 @@ export interface AppDeps {
   readonly auth: AuthConfig;
   readonly email: EmailTransport;
   readonly clientIp: ClientIpSource;
+  /** Signs entitlement snapshots (`loadEntitlementSigner`); its public JWKS is published. */
+  readonly entitlementSigner: EntitlementSigner;
   /** Desktop bearer tokens (Task 3). Without one, a request with a bearer is refused. */
   readonly verifyBearer?: BearerVerifier | undefined;
   readonly rateLimitStorage?: RateLimitStorage | undefined;
@@ -128,6 +132,21 @@ export function createAppParts(deps: AppDeps) {
     const { user, expiresAt } = c.get('principal');
     // Parsed, not just typed: an answer the desktop would refuse is a server error here instead.
     return c.json(SessionResponseSchema.parse({ user, ...(expiresAt ? { expiresAt: expiresAt.toISOString() } : {}) }));
+  });
+
+  // Personal and short-lived: the account's plan and its features, signed (`no-store` via `/v1/*`).
+  app.get(ENTITLEMENTS_PATH, requirePrincipal(resolvers), async (c) => {
+    const { user } = c.get('principal');
+    const snapshot = await issueSnapshot(deps.entitlementSigner, user, await planFor(deps.db, user.id));
+    return c.json(EntitlementsResponseSchema.parse({ snapshot }));
+  });
+
+  // Public keys only (validated against the spec's strict JWKS schema when the signer was loaded).
+  const jwksBody = JSON.stringify(deps.entitlementSigner.jwks);
+  app.get(ENTITLEMENT_KEYS_PATH, (c) => {
+    c.header('Cache-Control', 'public, max-age=300');
+    c.header('Content-Type', 'application/json');
+    return c.body(jwksBody);
   });
 
   app.notFound((c) => c.json(errorBody('not_found'), 404));

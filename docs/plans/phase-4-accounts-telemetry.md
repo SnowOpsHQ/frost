@@ -146,7 +146,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Failing tests:** `entitlements.test.ts`: the snapshot verifies with the public key and carries
   the plan's flags; a granted `pro` shows up in the next snapshot; the private key never appears in
   any response; `kid` matches; CLI `grant` changes the plan; a malformed signing key refuses startup.
-- [ ] commit `feat(backend): signed entitlement snapshots and admin CLI`
+- [x] commit `feat(backend): signed entitlement snapshots and admin CLI`
 
 ### Task 3: Backend — desktop authorization (loopback + PKCE)
 - **Spec:** extend `specs/account-api.schema.ts` (`DESKTOP_AUTHORIZE_PATH`, `DESKTOP_TOKEN_PATH`,

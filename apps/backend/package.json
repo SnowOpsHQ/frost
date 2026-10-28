@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "tsx src/server.ts",
+    "admin": "tsx src/cli.ts",
     "build": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "lint": "tsc --noEmit -p tsconfig.json"
@@ -21,6 +22,7 @@
     "better-auth": "1.7.14",
     "drizzle-orm": "0.45.4",
     "hono": "^4.13.14",
+    "jose": "^6.2.13",
     "pg": "^8.23.1",
     "zod": "^4.6.7"
   },

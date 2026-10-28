@@ -4,6 +4,7 @@ import { createApp, type ClientIpSource } from './app';
 import { openDatabase } from './db/client';
 import { migrate } from './db/migrate';
 import { createEmailTransport } from './email';
+import { EntitlementKeyError, loadEntitlementSigner } from './entitlements';
 import { EnvError, parseEnv } from './env';
 
 // Local runner: `pnpm --filter @app/backend dev`. Binds 127.0.0.1 unless HOST says otherwise.
@@ -19,6 +20,19 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     throw error;
+  }
+
+  // The key is proven (its d matches its x) before anything opens; the error never carries it.
+  let entitlementSigner;
+  try {
+    entitlementSigner = await loadEntitlementSigner({
+      signingKey: env.ENTITLEMENT_SIGNING_KEY,
+      keyId: env.ENTITLEMENT_KEY_ID,
+      publicKeys: env.ENTITLEMENT_PUBLIC_KEYS,
+    });
+  } catch (error) {
+    console.error(error instanceof EntitlementKeyError ? error.message : 'ENTITLEMENT_SIGNING_KEY could not be loaded');
+    process.exit(1);
   }
 
   const database = await openDatabase(env);
@@ -41,6 +55,7 @@ async function main(): Promise<void> {
     auth: { secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL },
     email: createEmailTransport(env.EMAIL_TRANSPORT),
     clientIp,
+    entitlementSigner,
   });
   const server = serve({ fetch: app.fetch, hostname: env.HOST, port: env.PORT }, (info) => {
     console.log(`[backend] listening on http://${info.address}:${info.port} (public URL ${env.BETTER_AUTH_URL})`);
