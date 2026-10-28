@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SqlDriver } from '@app/db/driver-types';
 import {
   SYNC_LOG_TABLE,
+  SYNC_PENDING_TABLE,
   SYNC_MAX_CLOCK_SKEW_MS,
   SYNC_PURGE_DELETE_ORDER,
   SYNC_STATE_TABLE,
@@ -197,6 +198,29 @@ describe('sync engine', () => {
     for (const driver of [a, fx.replica]) expect(await rowsOf(driver, 'ci_project_pages')).toEqual([page(PAGE, P, 'https://example.com/', 3_000)]);
   });
 
+  test('engine-pull-back-survives-the-page-limit', async () => {
+    const a = await fx.device('a');
+    const b = await fx.device('b');
+    // One page per pass: the queued pull-back must outlive passes that end at their page limit.
+    const onePage = (driver: SqlDriver, deviceId: string) => runSyncPass({ source: driver, replica: fx.replica, deviceId, now: NOW, pageRows: 2, maxPages: 1 });
+    await insert(b, 'ci_projects', project(P, 'Site', 1_000));
+    const PAGE = uuid7(2);
+    await insert(b, 'ci_project_pages', page(PAGE, P, 'https://example.com/', 3_000));
+    await pass(b, 'device-b');
+    await pass(a, 'device-a');
+    // A (its clock behind) edits the page with an older time; B adds projects that fill A's pull pages.
+    await a.execute('UPDATE ci_project_pages SET url = ?, updated_at = ? WHERE id = ?', ['https://example.com/stale', 2_500, PAGE], 'run');
+    for (const n of [70, 71, 72, 73]) await insert(b, 'ci_projects', project(uuid7(n), `P${n}`, 4_000));
+    await pass(b, 'device-b');
+    // A's push loses in the first pass, whose pull stops at its page limit before the pages table.
+    const first = await onePage(a, 'device-a');
+    expect(first.pull.more).toBe(true);
+    expect((await fx.replica.execute(`SELECT count(*) FROM ${SYNC_PENDING_TABLE}`, [], 'get')).rows).toEqual([1]);
+    for (let i = 0; i < 3; i += 1) await onePage(a, 'device-a');
+    expect(await rowsOf(a, 'ci_project_pages')).toEqual([page(PAGE, P, 'https://example.com/', 3_000)]);
+    expect((await fx.replica.execute(`SELECT count(*) FROM ${SYNC_PENDING_TABLE}`, [], 'get')).rows).toEqual([0]);
+  });
+
   test('engine-push-pages-past-future-rows', async () => {
     const a = await fx.device('a');
     // More than a page of rows dated past `now − settle` (a clock ahead) never hides the rest.
@@ -354,7 +378,7 @@ describe('sync engine', () => {
         expect(direction.tables).toEqual(SYNC_TABLES.map((t) => ({ table: t.name, status: 'skipped', reason: 'missing-in-source', written: 0, deleted: 0, tooLarge: 0 })));
       }
       expect(await tableNames(today)).toEqual(before);
-      expect(await tableNames(bare.replica)).toEqual([SYNC_LOG_TABLE, SYNC_STATE_TABLE].sort());
+      expect(await tableNames(bare.replica)).toEqual([SYNC_LOG_TABLE, SYNC_PENDING_TABLE, SYNC_STATE_TABLE].sort());
       expect(await bare.replica.execute(`SELECT count(*) FROM ${SYNC_STATE_TABLE}`, [], 'get')).toEqual({ rows: [0] });
 
       // Only in the session database.
@@ -434,7 +458,7 @@ describe('sync engine', () => {
     await pass(a, 'device-a');
     expect(await tableNames(a)).toEqual(before.a);
     expect(await tableNames(b)).toEqual(before.b);
-    expect(await tableNames(fx.replica)).toEqual(expect.arrayContaining([SYNC_STATE_TABLE, SYNC_LOG_TABLE]));
+    expect(await tableNames(fx.replica)).toEqual(expect.arrayContaining([SYNC_STATE_TABLE, SYNC_LOG_TABLE, SYNC_PENDING_TABLE]));
     expect(before.a.some((name) => name.startsWith('frost_sync'))).toBe(false);
   });
 
@@ -466,6 +490,7 @@ describe('sync engine', () => {
       ...SYNC_TABLES.flatMap((t) => [t.name, ...t.columns]),
       SYNC_STATE_TABLE,
       SYNC_LOG_TABLE,
+      SYNC_PENDING_TABLE,
       'device_id',
       'direction',
       'mark_time',

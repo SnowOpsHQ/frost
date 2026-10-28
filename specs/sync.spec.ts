@@ -370,6 +370,15 @@ export const SYNC_PURGE_DELETE_ORDER = ['ci_diffs', 'ci_screenshots', 'ci_captur
 export const SYNC_LOG_TABLE = 'frost_sync_log' as const;
 
 /**
+ * The replica-only pull-back queue: one row (`device_id`, `table_name`, `row_id`) for each mutable
+ * row whose push lost to the replica's newer version. Written in the push's own transaction, and
+ * removed only in the transaction that moves the pull marks after the winner was applied to the
+ * session database, so a pass that stops at its page limit (or a crash between push and pull) never
+ * loses one: its winner's log entry may be behind the pull mark, so nothing else would fetch it.
+ */
+export const SYNC_PENDING_TABLE = 'frost_sync_pending' as const;
+
+/**
  * `SYNC_STATE_TABLE` (`frost_sync_state`): per `device_id` (`SyncConfig.deviceId`), direction and
  * table, a pass's high-water mark. Push: the last `(time, id)` of the session database's rows
  * copied (never later than `now − SYNC_PUSH_SETTLE_MS`, so a row committed late with an earlier

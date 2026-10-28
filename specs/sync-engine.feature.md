@@ -67,8 +67,11 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
   both devices end with the same version (the larger by value); an identical row writes nothing.
 - **Scenario: engine-lww-pull-back-survives-full-pages** — a push that lost to the replica's newer
   version (its log entry already behind this device's pull mark) is fetched back even when an
-  earlier table fills the pull page first: a table's pull-back ids are dropped only once a page has
-  read that table (`engine.test.ts`).
+  earlier table fills the pull page first (`engine.test.ts`).
+- **Scenario: engine-pull-back-survives-the-page-limit** — a lost push's id is queued in the replica
+  (`SYNC_PENDING_TABLE`, in the push's own transaction) and dequeued only in the transaction that
+  moves the pull marks after its winner was applied, so passes that stop at `maxPages` before its
+  table, or a crash between push and pull, never lose it (`engine.test.ts`).
 - **Scenario: engine-push-pages-past-future-rows** — more than a page of rows dated past
   `now − SYNC_PUSH_SETTLE_MS` (a clock ahead) still lets the push read the rest of the table: pages
   follow a per-pass scan cursor, while the stored mark stays capped at `now − settle`

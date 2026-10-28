@@ -5,6 +5,7 @@ import {
   SYNC_MAX_PAGES_PER_PASS,
   SYNC_MAX_ROW_BYTES,
   SYNC_PAGE_ROWS,
+  SYNC_PENDING_TABLE,
   SYNC_PURGE_DELETE_ORDER,
   SYNC_PUSH_SETTLE_MS,
   SYNC_STATE_TABLE,
@@ -41,14 +42,17 @@ const columnAt = (table: Table, column: string): number => (table.columns as rea
 
 const STATE_COLUMNS = ['device_id', 'direction', 'table_name', 'mark_time', 'mark_id', 'mark_seq', 'updated_at'] as const;
 const LOG_COLUMNS = ['seq', 'table_name', 'row_id'] as const;
+const PENDING_COLUMNS = ['device_id', 'table_name', 'row_id'] as const;
 
 /** Every identifier the engine may put into SQL. */
 const IDENTIFIERS: ReadonlySet<string> = new Set([
   ...SYNC_TABLES.flatMap((table) => [table.name, ...table.columns]),
   SYNC_STATE_TABLE,
   SYNC_LOG_TABLE,
+  SYNC_PENDING_TABLE,
   ...STATE_COLUMNS,
   ...LOG_COLUMNS,
+  ...PENDING_COLUMNS,
 ]);
 
 /** `name` double-quoted, if it is a spec identifier (`SYNC_TABLES`, their columns, the engine's own tables); else throws. */
@@ -74,7 +78,10 @@ export async function ensureSyncState(replica: SqlDriver): Promise<void> {
       `${q('updated_at')} INTEGER NOT NULL, PRIMARY KEY (${list(['device_id', 'direction', 'table_name'])}));\n` +
       `CREATE TABLE IF NOT EXISTS ${q(SYNC_LOG_TABLE)} (` +
       `${q('seq')} INTEGER PRIMARY KEY AUTOINCREMENT, ${q('table_name')} TEXT NOT NULL, ${q('row_id')} TEXT NOT NULL);\n` +
-      `CREATE INDEX IF NOT EXISTS frost_sync_log_table_name_seq ON ${q(SYNC_LOG_TABLE)} (${list(['table_name', 'seq'])});`,
+      `CREATE INDEX IF NOT EXISTS frost_sync_log_table_name_seq ON ${q(SYNC_LOG_TABLE)} (${list(['table_name', 'seq'])});\n` +
+      `CREATE TABLE IF NOT EXISTS ${q(SYNC_PENDING_TABLE)} (` +
+      `${q('device_id')} TEXT NOT NULL, ${q('table_name')} TEXT NOT NULL, ${q('row_id')} TEXT NOT NULL, ` +
+      `PRIMARY KEY (${list(PENDING_COLUMNS)}));`,
   );
 }
 
@@ -418,7 +425,11 @@ async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirect
     }
     if (tombstonesCaughtUp) await planDeletes(plan, replica, usable);
     const log = [...plan.written].flatMap(([table, ids]) => ids.map((id) => run(`INSERT INTO ${q(SYNC_LOG_TABLE)} (${list(['table_name', 'row_id'])}) VALUES (?, ?)`, [table, id])));
-    const batch = [...plan.statements, ...log, ...moved];
+    // Lost pushes queue their winners for the pull, in this transaction (`SYNC_PENDING_TABLE`).
+    const pending = [...plan.lost].flatMap(([table, ids]) =>
+      ids.map((id) => run(`INSERT OR IGNORE INTO ${q(SYNC_PENDING_TABLE)} (${list(PENDING_COLUMNS)}) VALUES (?, ?, ?)`, [deviceId, table, id])),
+    );
+    const batch = [...plan.statements, ...log, ...pending, ...moved];
     if (batch.length > 0) await replica.batch(batch);
     report.pages += 1;
     tally(report, plan);
@@ -435,7 +446,7 @@ export async function pushPass(options: SyncPassOptions): Promise<SyncDirectionR
 
 // ---- Pull ----------------------------------------------------------------------------------
 
-async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, string[]> = new Map()): Promise<SyncDirectionReport> {
+async function pullPages(options: SyncPassOptions): Promise<SyncDirectionReport> {
   const { source, replica, deviceId } = options;
   const now = options.now ?? Date.now;
   const pageRows = options.pageRows ?? SYNC_PAGE_ROWS;
@@ -443,7 +454,6 @@ async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, 
   const problems = await tableProblems(source, replica);
   const report = emptyReport('pull', problems);
   const usable = (name: SyncTableName) => problems.get(name) === null;
-  const extra = new Map(pullBack);
   for (;;) {
     if (report.pages >= maxPages) {
       report.more = true;
@@ -455,11 +465,8 @@ async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, 
     const at = now();
     let more = false;
     let tombstonesCaughtUp = false;
-    /** The tables this page read: only their pull-back ids are done (a later table's wait for its page). */
-    const visited = new Set<SyncTableName>();
     for (const table of SYNC_TABLES) {
       if (!usable(table.name)) continue;
-      visited.add(table.name);
       const mark = stored.get(table.name)?.seq ?? 0;
       const limit = pageRows;
       const { rows } = await replica.execute(
@@ -468,25 +475,35 @@ async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, 
         'all',
       );
       const entries = rows as [number, string][];
-      const ids = [...new Set([...entries.map(([, id]) => id), ...(extra.get(table.name) ?? [])])];
+      // This device's queued pull-backs (pushes that lost): applied with the page, then dequeued.
+      const queued = (
+        await replica.execute(
+          `SELECT ${q('row_id')} FROM ${q(SYNC_PENDING_TABLE)} WHERE ${q('device_id')} = ? AND ${q('table_name')} = ? ORDER BY ${q('row_id')} LIMIT ?`,
+          [deviceId, table.name, limit],
+          'all',
+        )
+      ).rows as [string][];
+      const pendingIds = queued.map(([id]) => id);
+      for (const id of pendingIds) {
+        moved.push(run(`DELETE FROM ${q(SYNC_PENDING_TABLE)} WHERE ${q('device_id')} = ? AND ${q('table_name')} = ? AND ${q('row_id')} = ?`, [deviceId, table.name, id]));
+      }
+      const ids = [...new Set([...entries.map(([, id]) => id), ...pendingIds])];
       // Measured before they are read: a row over `SYNC_MAX_ROW_BYTES` is skipped, and counted.
       const { fits, tooLarge } = await withinRowCap(replica, table, ids, options.maxRowBytes ?? SYNC_MAX_ROW_BYTES);
       if (tooLarge > 0) plan.tooLarge.set(table.name, tooLarge);
       const found = await rowsById(replica, table, fits);
       await planTable(plan, source, table, fits.flatMap((id) => (found.has(id) ? [found.get(id)!] : [])), at);
       if (table.name === SYNC_TOMBSTONE_TABLE) tombstonesCaughtUp = entries.length < limit;
-      if (entries.length === 0) continue;
-      moved.push(markStatement(deviceId, 'pull', table.name, { seq: entries[entries.length - 1]![0] }, at));
-      if (entries.length === limit) {
+      if (entries.length > 0) moved.push(markStatement(deviceId, 'pull', table.name, { seq: entries[entries.length - 1]![0] }, at));
+      // A full page (of log entries or of queued pull-backs) leaves the rest, and every later table,
+      // for the next page; what is still queued stays in `SYNC_PENDING_TABLE`, across passes too.
+      if (entries.length === limit || pendingIds.length === limit) {
         more = true;
         break;
       }
     }
-    // A full page stops before the later tables: their pull-back ids (pushes that lost) are kept for
-    // the next page, or the winner would never be fetched (its log entry may be behind the mark).
-    for (const name of visited) extra.delete(name);
     if (tombstonesCaughtUp) await planDeletes(plan, source, usable);
-    // The session side in one transaction; the marks move only once it has committed.
+    // The session side in one transaction; the marks move (and pull-backs dequeue) only once it has committed.
     if (plan.statements.length > 0) await source.batch(plan.statements);
     if (moved.length > 0) await replica.batch(moved);
     report.pages += 1;
@@ -507,7 +524,7 @@ export async function pullPass(options: SyncPassOptions): Promise<SyncDirectionR
  * version is fetched back by the pull, so this device ends with the winner.
  */
 export async function runSyncPass(options: SyncPassOptions & { readonly sync?: () => Promise<unknown> }): Promise<SyncPassReport> {
-  const { report: pushed, lost } = await pushPages(options);
+  const { report: pushed } = await pushPages(options);
   let synced = false;
   let syncError: unknown;
   if (options.sync !== undefined) {
@@ -518,6 +535,6 @@ export async function runSyncPass(options: SyncPassOptions & { readonly sync?: (
       syncError = error;
     }
   }
-  const pulled = await pullPages(options, lost);
+  const pulled = await pullPages(options);
   return syncError === undefined ? { push: pushed, pull: pulled, synced } : { push: pushed, pull: pulled, synced, syncError };
 }
