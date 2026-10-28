@@ -16,11 +16,15 @@ function sources(dir = SRC): string[] {
 }
 
 test('change-intel-is-pure', () => {
+  // The pattern itself catches every import form.
+  const probe = `import a from "x1"; export { b } from 'x2'; const c = import("x3"); import 'x4';`;
+  expect([...probe.matchAll(/\b(?:from|import)\s*\(?\s*(['"`])([^'"`]+)\1/g)].map((m) => m[2])).toEqual(['x1', 'x2', 'x3', 'x4']);
   const files = sources();
-  expect(files.length).toBeGreaterThan(2);
+  expect(files.length).toBeGreaterThan(3);
   for (const file of files) {
     const code = readFileSync(file, 'utf8');
-    const imports = [...code.matchAll(/(?:from|import)\s+'([^']+)'/g)].map((m) => m[1]!);
+    // `import … from`, `export … from`, side-effect `import '…'` and `import('…')`, either quote.
+    const imports = [...code.matchAll(/\b(?:from|import)\s*\(?\s*(['"`])([^'"`]+)\1/g)].map((m) => m[2]!);
     for (const specifier of imports) {
       // Relative modules and the Zod-free capture spec only.
       const allowed = specifier.startsWith('.') || specifier === '@app/specs/capture.spec';

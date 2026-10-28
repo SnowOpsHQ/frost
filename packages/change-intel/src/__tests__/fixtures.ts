@@ -93,3 +93,15 @@ export function diff(before: CaptureSnapshot | null, after: CaptureSnapshot, pro
 
 /** Parses with the snapshot schema (fixtures must be valid unless a test says otherwise). */
 export const valid = (s: CaptureSnapshot) => CaptureSnapshotSchema.parse(s);
+
+/** A seeded pseudo-random number generator (mulberry32): the same seed, the same sequence in [0, 1). */
+export function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}

@@ -100,9 +100,16 @@ export const InlineSegmentSchema = z.strictObject({
 
 const changeText = z.string().max(D.maxChangeTextChars).nullable();
 
+/** The text `segments` give back for one side: the common text plus that side's own. */
+function rebuilt(segments: readonly InlineSegment[], side: 'del' | 'ins'): string {
+  return segments.filter((segment) => segment.op === 'same' || segment.op === side).map((segment) => segment.text).join('');
+}
+
 /**
  * One change (`Change`): `added` has no `before`, `removed` no `after`, `changed` both. `context` is
  * at most a URL long (a link's `href` is its context; text context is cut to `contextChars`).
+ * `segments` are only on a `changed` text block, and give back exactly its before and after (they
+ * are only computed when neither was cut).
  */
 export const ChangeSchema = z
   .strictObject({
@@ -116,13 +123,17 @@ export const ChangeSchema = z
   })
   .refine((change) => (change.kind === 'added' ? change.before === null && change.after !== null : change.kind === 'removed' ? change.after === null && change.before !== null : change.before !== null && change.after !== null), {
     message: 'before/after do not match the kind',
+  })
+  .refine((change) => change.segments === undefined || (change.kind === 'changed' && change.field === 'text' && rebuilt(change.segments, 'del') === change.before && rebuilt(change.segments, 'ins') === change.after), {
+    message: 'segments belong only on a changed text block, and must rebuild its before and after',
   }) satisfies z.ZodType<Change>;
 
 const CountsSchema = z.strictObject({ added: count, removed: count, changed: count });
 
 /**
  * A diff (`SnapshotDiff`). Its numbers agree: the summary adds up to `changeCount`, `changes` holds
- * at most `maxChanges` of them, and `truncated` says exactly whether it holds fewer than all.
+ * at most `maxChanges` of them, `truncated` says exactly whether it holds fewer than all, and when it
+ * holds all of them the summary is exactly their counts per region.
  */
 export const SnapshotDiffSchema = z
   .strictObject({
@@ -131,6 +142,17 @@ export const SnapshotDiffSchema = z
     summary: z.strictObject(Object.fromEntries(DIFF_REGIONS.map((name) => [name, CountsSchema])) as Record<(typeof DIFF_REGIONS)[number], typeof CountsSchema>),
     changeCount: count,
     truncated: z.boolean(),
+    partial: z.boolean(),
   })
   .refine((diff) => Object.values(diff.summary).reduce((sum, c) => sum + c.added + c.removed + c.changed, 0) === diff.changeCount, { message: 'summary does not add up to changeCount' })
-  .refine((diff) => diff.changes.length <= diff.changeCount && diff.truncated === diff.changes.length < diff.changeCount, { message: 'truncated does not match the changes kept' }) satisfies z.ZodType<SnapshotDiff>;
+  .refine((diff) => diff.changes.length <= diff.changeCount && diff.truncated === diff.changes.length < diff.changeCount, { message: 'truncated does not match the changes kept' })
+  .refine(
+    (diff) =>
+      diff.truncated ||
+      DIFF_REGIONS.every((region) => {
+        const counts = diff.summary[region];
+        const mine = diff.changes.filter((change) => change.region === region);
+        return CHANGE_KINDS.every((kind) => counts[kind] === mine.filter((change) => change.kind === kind).length);
+      }),
+    { message: 'summary does not match the changes' },
+  ) satisfies z.ZodType<SnapshotDiff>;

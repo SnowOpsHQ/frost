@@ -43,20 +43,40 @@ groups by it under `DIFF_REGION_LABELS`.
 - `headings` (`level`, `text`, `region`) and `links` (`total`, `internal`, `external`,
   `nofollow`, and the `list` of `{href, text, rel, region}`), in document order.
 - `images`: `total` and `missingAlt`.
-- `regions`: for **every** page region, `words`, `textHash` (SHA-256 of its normalised text),
-  `blocks` (non-empty normalised text blocks, in document order) and `truncated`.
+- `regions`: for **every** page region, `words`, `textHash`, `blocks` (non-empty normalised text
+  blocks, in document order) and `truncated`.
 
 Every list and string is capped by `CAPTURE_LIMITS`; the schema is strict and refuses anything else.
 
-**Identity.** A version's identity is its snapshot without `takenAt`:
-`snapshotIdentityJson(snapshot)` is that canonical JSON, and main hashes it for `snapshot_hash`, so
-recapturing an unchanged page reuses the lane's version (Task 1).
+**Text is normalised by the extractor** (Task 3), before main or the diff sees it: Unicode NFC,
+whitespace runs collapsed to one space, trimmed, empty blocks dropped. The diff compares strings
+exactly and assumes this; it does not normalise again.
+
+**`textHash`** is the lowercase hex SHA-256 of the UTF-8 bytes of H: every normalised block the walk
+reached in the region, uncut and in document order (also past `maxBlocksPerRegion` and
+`maxRegionChars`), joined with `\n`, then cut to its first `maxHashedRegionChars` UTF-16 units (a
+final lone high surrogate dropped). When the region is not `truncated`, H is exactly
+`blocks.join('\n')`, and an empty region hashes the empty string. Main computes it (Task 3), from
+the text the extraction answers.
+
+**Identity.** `snapshotIdentityJson(snapshot)` is the canonical JSON main hashes for
+`snapshot_hash` (Task 1: an equal hash reuses the lane's version). It leaves out what is not the
+page's content or what the diff does not compare (`takenAt`, `partial`, `url`, which the lane fixes,
+and each region's `truncated`), and puts in a fixed order every list the diff compares regardless of
+order: links by `(href, text, rel, region)`, hreflang by `(hreflang, href)`, JSON-LD blocks by
+`(hash, types, text)`, and headings grouped by region (in `PAGE_REGIONS` order, document order kept
+within a region). Text blocks keep their order. So identity and diff agree:
+- equal identities always diff to no changes;
+- different identities always diff to at least one change, except when the new side is `partial` or
+  has a `truncated` region and the only differences are removals the diff declines to report (see
+  Partial snapshots); that diff is `partial`.
 
 **Canonical JSON** (`canonicalJson(value)`): object keys sorted (UTF-16 code-unit order) at every
 depth, no whitespace, `undefined` properties left out as JSON does. It throws a `CanonicalJsonError`
 naming the path for anything JSON cannot say exactly: a non-finite number, `undefined` (in an array or
-as the value), a function, a symbol, a bigint, an object that is not plain (a `Date`, a `Map`…), and
-a cycle. A value shared twice without a cycle is fine.
+as the value), a function, a symbol (as a value or a key), a bigint, an object that is not plain (a
+`Date`, a `Map`…), an array with own properties that are not indices, and a cycle. A value shared
+twice without a cycle is fine.
 
 ## How each part is compared (`diffSnapshots(before, after)`)
 `before === null` is a first version: the diff is against `EMPTY_CAPTURE_SNAPSHOT` (no tags, no
@@ -66,44 +86,63 @@ lists, empty regions), and every scalar of `after` counts as new, so everything 
   written as text (`"200"`, `"87"`, `"true"`). Fields: `title`, `meta-description`, `canonical`,
   `robots-meta`, `lang`, `viewport`, `og-title`, `og-description`, `og-image` (region `head`),
   `status`, `x-robots-tag`, `indexable` (`http`), `score` (`audit`).
-- **Hreflang** by code (`hreflang`, region `head`): the alternates of each code are matched in
-  order; a matched pair with another `href` is `changed`. `context` is the code, before/after the
-  `href`.
+- **Hreflang** (`hreflang`, region `head`): equal `(code, href)` alternates are matched first (as
+  many as both sides have); the rest are matched by code, in order, as `changed`; what is left is
+  added or removed. `context` is the code, before/after the `href`.
 - **Findings** by rule id (`finding`, region `audit`): a rule that newly fails is `added`, one that
   no longer fails `removed`.
 - **Headings**, per page region, by an LCS on `(level, text)`. Within one run of edits between
   unchanged headings, the k-th removed and the k-th added heading are one `changed` heading when
   they have the same level; the rest are removed and added. A heading that moves is removed where it
   was and added where it is. `context` is its tag (`h2`).
-- **Links**, per page region, as a multiset by `href`: the links with one `href` are matched in
-  order, so a reordered link is no change and a link that moves to another region is removed from
-  one and added to the other. A matched pair whose text or `rel` differs is `changed`. `context` is
-  the `href`; before/after is the anchor text, followed by ` (rel=<rel>)` when it has a `rel`.
-  Added and changed links come in the new page's order, then removed ones in the old page's.
+- **Links**, per page region, as a multiset: equal `(href, text, rel)` links are matched first, so
+  a reordered or swapped link is no change; the rest are matched by `href`, in order, as `changed`
+  (other text or `rel`); what is left is added or removed. A link that moves to another region is
+  removed from one and added to the other. `context` is the `href`; before/after is the anchor text,
+  followed by ` (rel=<rel>)` when it has a `rel`.
 - **Text blocks**, per page region, by an LCS on exact strings. Within one run of edits, removed
-  and added blocks are paired greedily in order (each removed block takes the first later unpaired
-  added block) when the Jaccard index of their word sets (lowercased runs of letters and digits) is at least
-  `similarity`. A pair is one `changed` block with `segments` (`inlineDiff`); unpaired blocks are
-  removed or added. Every text change's `context` is the nearest unchanged block before its run,
-  cut to `contextChars` (`null` at the start of the region). Then a `words` change when the region's
-  word count differs (before/after as text; `added` on a first version).
-- **Structured data**: `types` by set (`structured-data-type`); blocks by hash
-  (`structured-data-block`): a block whose hash both sides have is unchanged; the others are grouped
-  by their type set, matched in order within a group as `changed` (before/after the block text),
-  and the rest added or removed. `context` is the block's types, joined by `, `.
+  and added blocks are paired greedily in order: each removed block takes the first later unpaired
+  added block whose word set has a Jaccard index of at least `similarity` with its own. Candidates
+  are found through an index from words to the run's added blocks, so a removed block that shares
+  no word with any of them costs about its own word count. Words are `Intl.Segmenter` word segments
+  (locale `und`, so CJK, Thai and combining marks segment properly), lowercased. A pair is one
+  `changed` block with `segments` (`inlineDiff`); unpaired blocks are removed or added. Every text
+  change's `context` is the nearest unchanged block before its run, cut to `contextChars` (`null`
+  at the start of the region). Because pairing keeps document order, edits that cross (block A
+  edited and moved after an edited block B) pair only one of them; the other is removed and added.
+  Then a `words` change when the region's word count differs (before/after as text; `added` on a
+  first version), and a `hidden-text` change when the region's `textHash` differs but no text
+  change was reported for it (the difference is past the kept blocks): before/after are the first
+  12 hex digits of each hash.
+- **Structured data**: `types` by set (`structured-data-type`); blocks (`structured-data-block`):
+  equal blocks (hash, types and text) are matched first; the rest are grouped by their type set,
+  and within a group each new block is paired with the most similar old one (Jaccard of their word
+  sets; the earliest on a tie) as `changed` (before/after the block text); the rest are added or
+  removed. `context` is the block's types, joined by `, `.
 - **Totals** (region `audit`): `links-total` for each of `total`, `internal`, `external`,
   `nofollow`, and `images` for `total` and `missing-alt`, each a change only when it differs (any
   value on a first version). `context` names the counter (`TOTAL_COUNTERS`).
 
-`url`, `takenAt`, `partial`, `textHash` and `truncated` are not compared.
+`url`, `takenAt`, `partial` and `truncated` are not compared.
 
-**Inline diffs** (`inlineDiff(a, b)`): a word-level LCS over tokens that keep their whitespace (a
-token is a run of whitespace or a run of anything else), so the segments put together give back `a`
+**Partial snapshots.** The diff is `partial` when either side is `partial` or has a `truncated`
+region: it may miss changes. When the new side is cut short, what it lacks at its end may only
+have been cut, so the diff does not report it as removed:
+- text blocks of a region whose new side is `truncated` (or the snapshot `partial`);
+- headings, when the new snapshot is `partial` or holds `maxHeadings`;
+- links, when the new snapshot is `partial` or holds `maxLinks`.
+In those lists, per region, the old items left unmatched after the last old item that is matched
+(unchanged or paired) are not reported. A paragraph inserted at the top of a full region is one
+added block, not an added block plus the last block "removed".
+
+**Inline diffs** (`inlineDiff(a, b)`): an LCS over tokens: `Intl.Segmenter` word segments (words,
+punctuation, and whitespace runs merged into one token), so the segments put together give back `a`
 (`same` + `del`) and `b` (`same` + `ins`). The common start and end are taken off first. Within each
 run of edits, deletions come before insertions; a whitespace-only `same` between two edits is folded
-into both, and adjacent segments of one op are merged. Over `maxInlineWords` tokens on a side, or
-over `maxLcsCells`, the answer is `[del a, ins b]` (an empty side left out). Equal inputs are one
-`same` segment (none when both are empty).
+into both, and adjacent segments of one op are merged. Over `maxInlineWords` tokens on a side the
+answer is `[del a, ins b]` (an empty side left out); since `maxInlineWords²` is `maxLcsCells`, only
+the diff's work budget can refuse a side within it (same answer). Equal inputs are one `same`
+segment (none when both are empty).
 
 ## Change order
 Changes come in `DIFF_REGIONS` order, then `DIFF_FIELDS` order within a region, then document
@@ -120,26 +159,28 @@ the objects passed in.
   by count) is unchanged wherever it is, the rest are one run of edits (removed in the old order,
   added in the new), and runs have no context. Under v1's caps a page's lists fit (300 × 300 blocks
   is 90 000 cells); the fallback guards larger lists and the work budget.
-- **Pairing** one run of blocks compares at most `maxLcsCells` words (each comparison costs both
-  blocks' word counts, plus one); past that, the rest of the run stays removed and added.
-- **The whole diff** spends at most `maxWorkCells`: LCS cells, plus the words compared while pairing
-  blocks, plus inline-diff cells. Regions are worked in change order. Once spent, further lists are
-  compared as multisets, unpaired blocks stay removed and added, and inline diffs answer `[del, ins]`.
-  A diff of two snapshots at every cap takes a few tens of milliseconds.
+- **Pairing** one run of blocks spends at most `maxLcsCells`: each removed block costs its word
+  count plus the index postings it visits; past that, the rest of the run stays removed and added.
+- **The whole diff** spends at most `maxWorkCells`: LCS cells, pairing, structured-data
+  similarity (both blocks' word counts per comparison) and inline-diff cells. Regions are worked in
+  change order. Once spent, further lists are compared as multisets, unpaired blocks stay removed
+  and added, structured-data blocks pair in order, and inline diffs answer `[del, ins]`. A diff of
+  two snapshots at every cap takes a few tens of milliseconds.
 - **Changes**: every change found is counted in `summary` and `changeCount`; `changes` keeps the
   first `maxChanges` in change order, and `truncated` says some were left out. Inline segments are
   computed only for changes kept.
 - **Text**: `before` and `after` are cut to `maxChangeTextChars` (ending in `…`, never splitting a
   surrogate pair); text context to `contextChars`; segments are only computed when both blocks fit
-  in `maxChangeTextChars`.
+  in `maxChangeTextChars`, so they always rebuild the uncut before and after.
 
 ## Search parameters
 `SearchParamsSchema` is a strict object with every key present: `engine` (`SEARCH_ENGINE_IDS`),
-`query` (trimmed, 1–`PROJECT_QUERY_MAX_CHARS`, no control characters), `country` (two lowercase
-letters), `language` (a BCP 47-style tag, at most 35 characters), `location` (trimmed, 1–100, no
-control characters) and `device` (`desktop` / `mobile`), each of the last four `null` when unset.
-Nothing is normalised, so one search has one canonical JSON. `TODO(phase-3-merge)`: replaced by
-Phase 3's `serp-search-params.schema.ts`, keeping stored rows readable.
+`query` (trimmed, 1–`PROJECT_QUERY_MAX_CHARS`), `country` (two lowercase letters), `language` (a
+lowercase BCP 47-style tag, at most 35 characters), `location` (trimmed, 1–100) and `device`
+(`desktop` / `mobile`), each of the last four `null` when unset. `query` and `location` refuse
+control characters, bidirectional formatting characters and lone surrogates. Nothing is
+normalised, so one search has one canonical JSON. `TODO(phase-3-merge)`: replaced by Phase 3's
+`serp-search-params.schema.ts`, keeping stored rows readable.
 
 ## Scenarios
 ### Diff (`diff.test.ts`)
@@ -148,8 +189,11 @@ Phase 3's `serp-search-params.schema.ts`, keeping stored rows readable.
   score, findings and totals in `audit`, headings, links, text and words in their page region), and
   each page region's changes stay in it.
 - **Scenario: unchanged-snapshots-diff-empty** — a snapshot diffed with itself, or with a copy that
-  differs only in `takenAt`, `partial`, a `textHash` or `truncated`, has no changes, a zero summary,
-  `changeCount` 0 and is not truncated.
+  differs only in `takenAt`, `partial` or a region's `truncated`, has no changes, a zero summary,
+  `changeCount` 0 and is not truncated; it is `partial` exactly when a side is partial or truncated.
+- **Scenario: hidden-text-reports-changes-past-kept-blocks** — a region whose `textHash` changed
+  while its blocks did not gives one `changed` `hidden-text` change with the first 12 hex digits of
+  each hash; when a block changed too, there is no `hidden-text` change.
 - **Scenario: first-version-is-all-added** — every change of `diffSnapshots(null, s)` is `added`
   with `before` `null`: each heading, link, block, finding, type and JSON-LD block of `s`, and its
   scalars (`indexable: false`, the score, the totals) too. Diffed against `EMPTY_CAPTURE_SNAPSHOT`
@@ -157,10 +201,19 @@ Phase 3's `serp-search-params.schema.ts`, keeping stored rows readable.
 - **Scenario: diff-is-deterministic** — the same inputs twice give deep-equal diffs, and inputs
   with every object's keys shuffled give the same diff; changes are in region, field, then document
   order.
-- **Scenario: diff-work-is-bounded** — two snapshots at every cap with all text different diff in
-  under ~250 ms, keep at most `maxChanges` changes with `truncated` and a full summary; the same with
-  lists over the caps uses the multiset fallback (reported by the work probe) and stays fast; a
-  pair of near-identical regions at every cap spends at most `maxWorkCells`.
+- **Scenario: diff-work-is-bounded** — each in under ~250 ms, and each diff parses with
+  `SnapshotDiffSchema`: two snapshots at every cap with all text different keep `maxChanges`
+  changes with `truncated` and a full summary; regions at their caps where every block shares 20
+  words with every other (and none is similar enough) take the pairing fallback (reported by the
+  work probe); lists over the caps take the multiset fallback; regions at their caps where every
+  block is edited pair every block, with segments.
+- **Scenario: pairing-survives-unrelated-blocks** — 25 deleted paragraphs followed by 35
+  paragraphs of about 165 words, each with one word changed, give 25 removed blocks and 35
+  `changed` blocks with segments: the unrelated paragraphs do not use up the pairing budget.
+- **Scenario: truncated-side-reports-no-false-removals** — a paragraph inserted at the top of a
+  region at its block cap (the new side `truncated`, its last old block pushed out) is one added
+  block and no removed one, and the diff is `partial`; the same with a complete new side reports
+  the last block removed.
 - **Scenario: text-edit-is-a-change-with-segments** — one word edited in a block is one `changed`
   `text` change in its region, with before, after, the preceding unchanged block as context (cut to
   `contextChars`) and segments that rebuild both sides.
@@ -171,6 +224,10 @@ Phase 3's `serp-search-params.schema.ts`, keeping stored rows readable.
   `footer` is removed from `nav` and added to `footer`.
 - **Scenario: link-text-change-is-changed** — the same `href` with new text (or a new `rel`) is one
   `changed` `link` change whose context is the `href`.
+- **Scenario: duplicate-keys-match-exact-items-first** — links `[/ "Home", / "Logo"]` →
+  `[/ "Logo"]` is one removed "Home"; swapping two links with one `href` is no change; hreflang
+  alternates of one code match exactly first; JSON-LD `[Product "Alpha", Product "Beta"]` →
+  `[Product "Beta v2"]` is `changed` Beta → Beta v2 plus removed Alpha.
 - **Scenario: structured-data-type-changes** — a new type is an added `structured-data-type`, a
   dropped one removed; a block of the same types with another hash is a `changed` block; a block of
   new types is added.
@@ -181,27 +238,38 @@ Phase 3's `serp-search-params.schema.ts`, keeping stored rows readable.
 
 ### Inline diff (`inline.test.ts`)
 - **Scenario: inline-diff-merges-and-falls-back** — segments rebuild both sides; adjacent ops are
-  merged, deletions precede insertions and whitespace between edits is folded in; a side over
-  `maxInlineWords` tokens, or a middle over `maxLcsCells` cells, gives `[del a, ins b]`.
+  merged, deletions precede insertions and whitespace between edits is folded in; punctuation, CJK
+  and Thai are their own tokens; a side over `maxInlineWords` tokens gives `[del a, ins b]`.
 
 ### Canonical JSON (`canonical-json.test.ts`)
 - **Scenario: canonical-json-is-key-order-free** — objects with the same entries in any key order
   give one string, with no whitespace and sorted keys at every depth; `snapshotIdentityJson` ignores
-  `takenAt`.
+  `takenAt`, `partial`, `url` and `truncated`, and the order of links, hreflang, JSON-LD blocks and
+  of headings across regions, but not the order of headings within a region or of text blocks.
 - **Scenario: canonical-json-rejects-non-json** — `NaN`, `Infinity`, `undefined` in an array, a
-  function, a symbol, a bigint, a `Date` and a cycle each throw a `CanonicalJsonError` naming the
-  path; a shared, acyclic object does not.
+  function, a symbol, a symbol key, an array with a named property, a bigint, a `Date` and a cycle
+  each throw a `CanonicalJsonError` naming the path; a shared, acyclic object does not.
+
+### Identity (`identity.test.ts`)
+- **Scenario: identity-and-diff-agree** — for many seeded random mutations of a rich fixture (every
+  field, reorders the diff ignores, duplicates, moves between regions, `textHash`, `partial` and
+  `truncated` flips), in both directions: equal identities give no changes; different identities
+  give at least one change, except a diff whose new side is partial or truncated (then the diff
+  is `partial`), and never when both sides are complete.
 
 ### Schemas (`schemas.test.ts`)
 - **Scenario: search-params-schema-rejects-unknown-keys** — a valid value parses unchanged; an extra
-  key, a missing key, an unknown engine, a blank or untrimmed query, an uppercase country, a bad
-  language tag, a long location, a control character and an unknown device are each refused.
+  key, a missing key, an unknown engine, a blank or untrimmed query, an uppercase country, an
+  uppercase or malformed language tag, a long location, a control character, a bidirectional
+  formatting character, a lone surrogate and an unknown device are each refused.
 - **Scenario: capture-snapshot-schema-caps** — the valid fixture parses; a list one over its cap, a
   string one over its cap, unsorted findings, a missing region, a region over `maxRegionChars` and
   an unknown key are each refused; every diff the engine produces in these tests parses with
-  `SnapshotDiffSchema`, and a diff whose numbers disagree does not.
+  `SnapshotDiffSchema`, and a diff whose numbers disagree, whose summary does not match its
+  untruncated changes, or whose segments sit on another change or do not rebuild it, does not.
 
 ### Purity (`purity.test.ts`)
-- **Scenario: change-intel-is-pure** — no source file outside the tests imports anything but
-  relative modules and `@app/specs/capture.spec` (Zod-free), and none touches `document`, `window`,
-  `process`, `require` or `globalThis`.
+- **Scenario: change-intel-is-pure** — no source file outside the tests imports (`import … from`,
+  `export … from`, `import()`, either quote) anything but relative modules and
+  `@app/specs/capture.spec` (Zod-free), and none touches `document`, `window`, `process`, `require`
+  or `globalThis`. `tsconfig.src.json` type-checks the sources without Node's types (part of `lint`).

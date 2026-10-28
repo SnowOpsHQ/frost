@@ -73,6 +73,12 @@ export const CAPTURE_LIMITS = {
   maxBlockChars: 1_000,
   /** All of a region's kept blocks together; past it the region stops and is `truncated`. */
   maxRegionChars: 60_000,
+  /**
+   * The most of a region's text its `textHash` covers (UTF-16 units of the joined blocks; see
+   * `CaptureRegionText`): four times what is kept, so an edit somewhat past the kept blocks still
+   * changes the hash, while a huge page costs a bounded hash.
+   */
+  maxHashedRegionChars: 240_000,
   /** `hreflang` alternates kept. */
   maxHreflang: 50,
   /** JSON-LD blocks kept, in document order. */
@@ -127,8 +133,11 @@ export const DIFF_LIMITS = {
   maxWorkCells: 2_000_000,
   /** Changes kept in a diff, in change order; past it the diff is `truncated` (the summary still counts all). */
   maxChanges: 500,
-  /** Inline diffs run on at most this many tokens (words and the whitespace between them) per side. */
-  maxInlineWords: 2_000,
+  /**
+   * Inline diffs run on at most this many tokens (words, punctuation and the whitespace between them)
+   * per side. Its square is `maxLcsCells`, so a side within it never needs more than one LCS's cells.
+   */
+  maxInlineWords: 500,
   /** A removed and an added text block are one edited block when their word sets' Jaccard index is at least this. */
   similarity: 0.5,
   /** Longest `context` of a text change (the nearest unchanged block before it), cut with `…`. */
@@ -140,7 +149,8 @@ export const DIFF_LIMITS = {
 /**
  * What a change is about, in change order within a region. Head and HTTP fields are one value each;
  * `heading`, `link`, `text`, `hreflang`, `finding` and the structured-data ones are list items;
- * `words`, `links-total` and `images` are counts.
+ * `words`, `links-total` and `images` are counts; `hidden-text` says a region's text hash changed
+ * where no kept block did (before/after: the first 12 hex digits of each hash).
  */
 export const DIFF_FIELDS = [
   'title',
@@ -162,6 +172,7 @@ export const DIFF_FIELDS = [
   'link',
   'text',
   'words',
+  'hidden-text',
   'structured-data-type',
   'structured-data-block',
   'images',
@@ -190,6 +201,7 @@ export const DIFF_FIELD_LABELS: Readonly<Record<DiffField, string>> = {
   link: 'Link',
   text: 'Text',
   words: 'Word count',
+  'hidden-text': 'Text past the kept blocks',
   'structured-data-type': 'Structured data type',
   'structured-data-block': 'Structured data block',
   images: 'Images',
@@ -235,8 +247,18 @@ export interface CaptureJsonLdBlock {
 }
 
 /**
- * One region's text: its word count (every word, also past the caps), the SHA-256 of all its
- * normalised text, its blocks (normalised, capped), and whether the blocks stop short of the region.
+ * One region's text: its word count (every word the walk reached, also past the caps), its text hash,
+ * its blocks, and whether the blocks stop short of the text the walk reached (a cap, or the deadline).
+ *
+ * Text is normalised by the extractor before anything else sees it: Unicode NFC, whitespace runs
+ * collapsed to one space, trimmed; empty blocks are dropped. A block is cut to `maxBlockChars`, and
+ * blocks are kept until `maxBlocksPerRegion` or `maxRegionChars` (the block that would cross it is
+ * not kept).
+ *
+ * `textHash` is the lowercase hex SHA-256 of the UTF-8 bytes of H, where H is every normalised block
+ * the walk reached in the region, uncut and in document order, joined with `\n`, and then cut to its
+ * first `maxHashedRegionChars` UTF-16 units (a final lone high surrogate dropped). When `truncated`
+ * is false, H is exactly `blocks.join('\n')`; an empty region hashes the empty string.
  */
 export interface CaptureRegionText {
   words: number;
@@ -249,7 +271,7 @@ export interface CaptureRegionText {
 export interface CaptureSnapshot {
   version: typeof CAPTURE_SNAPSHOT_VERSION;
   url: string;
-  /** When the audit it was built from was taken (Unix ms). Not part of the version's identity. */
+  /** When the audit it was built from was taken (Unix ms). Not part of the version's identity (`changes-diff.feature.md`, Identity). */
   takenAt: number;
   partial: boolean;
   http: { status: number | null; xRobotsTag: string | null; indexable: boolean };
@@ -305,8 +327,9 @@ export interface ChangeCounts {
 
 /**
  * The diff of two snapshots: the changes (at most `maxChanges`, in change order), counts per region
- * of every change found (also those past the cap), how many there were, and whether `changes` stops
- * short of them.
+ * of every change found (also those past the cap), how many there were, whether `changes` stops
+ * short of them, and whether either side is `partial` or has a `truncated` region (so the diff may
+ * miss changes, and does not report removals it cannot be sure of).
  */
 export interface SnapshotDiff {
   engine: number;
@@ -314,4 +337,5 @@ export interface SnapshotDiff {
   summary: Record<DiffRegion, ChangeCounts>;
   changeCount: number;
   truncated: boolean;
+  partial: boolean;
 }

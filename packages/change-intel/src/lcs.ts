@@ -2,6 +2,7 @@
 // Inline diffs). Every LCS here is capped at `DIFF_LIMITS.maxLcsCells` and charged to the diff's
 // work budget; a caller that is refused falls back to something cheaper.
 import { DIFF_LIMITS, type InlineSegment } from '@app/specs/capture.spec';
+import { tokens } from './tokens';
 
 /**
  * What a test can learn about one diff's work: the cells spent (LCS cells, words compared while
@@ -100,6 +101,28 @@ export interface Run {
   added: number[];
 }
 
+/** Index lists per key, handed out in order (a cursor per key, no array shifting). */
+export class Queues {
+  private readonly lists = new Map<string | number, { items: number[]; next: number }>();
+
+  push(key: string | number, index: number): void {
+    const list = this.lists.get(key);
+    if (list) list.items.push(index);
+    else this.lists.set(key, { items: [index], next: 0 });
+  }
+
+  /** The next index queued under `key` that `free` accepts (all are, by default), or `-1`. */
+  take(key: string | number, free: (index: number) => boolean = () => true): number {
+    const list = this.lists.get(key);
+    if (!list) return -1;
+    while (list.next < list.items.length) {
+      const index = list.items[list.next++]!;
+      if (free(index)) return index;
+    }
+    return -1;
+  }
+}
+
 /**
  * How `before` and `after` (item keys) differ, as runs of edits: by an LCS when it fits, else (the
  * fallback, reported as `label`) as a multiset: an item the other side also has, matched by count,
@@ -113,6 +136,7 @@ export function alignRuns(before: readonly string[], after: readonly string[], w
   if (ops) {
     const runs: Run[] = [];
     let run: Run | null = null;
+
     let i = 0;
     let j = 0;
     for (const op of ops) {
@@ -129,25 +153,19 @@ export function alignRuns(before: readonly string[], after: readonly string[], w
     return runs;
   }
   work.fellBack(label);
-  const waiting = new Map<number, number[]>();
-  b.forEach((key, index) => {
-    const list = waiting.get(key);
-    if (list) list.push(index);
-    else waiting.set(key, [index]);
-  });
+  const waiting = new Queues();
+  b.forEach((key, index) => waiting.push(key, index));
   const matched = new Set<number>();
   const removed: number[] = [];
   a.forEach((key, index) => {
-    const partner = waiting.get(key)?.shift();
-    if (partner === undefined) removed.push(index);
+    const partner = waiting.take(key);
+    if (partner === -1) removed.push(index);
     else matched.add(partner);
   });
   const added = b.map((_, index) => index).filter((index) => !matched.has(index));
   return removed.length || added.length ? [{ anchor: null, removed, added }] : [];
 }
 
-/** A run of whitespace or a run of anything else: put back together, the tokens are the text. */
-const TOKEN = /\s+|\S+/g;
 const WHITESPACE = /^\s+$/;
 
 /** `[del a, ins b]`, leaving out an empty side. */
@@ -161,8 +179,8 @@ function wholesale(a: string, b: string): InlineSegment[] {
 /** `inlineDiff`, charging its cells to `work` (the diff's budget). */
 export function inlineSegments(a: string, b: string, work: Work): InlineSegment[] {
   if (a === b) return a ? [{ op: 'same', text: a }] : [];
-  const ta = a.match(TOKEN) ?? [];
-  const tb = b.match(TOKEN) ?? [];
+  const ta = tokens(a);
+  const tb = tokens(b);
   if (ta.length > DIFF_LIMITS.maxInlineWords || tb.length > DIFF_LIMITS.maxInlineWords) return wholesale(a, b);
   const id = interner();
   const ops = lcsOps(ta.map(id), tb.map(id), work);
@@ -213,8 +231,8 @@ export function inlineSegments(a: string, b: string, work: Work): InlineSegment[
 /**
  * A word-level diff of `a` and `b`: segments that give back `a` (`same` + `del`) and `b` (`same` +
  * `ins`), adjacent ops merged, deletions before insertions within a group of edits. Over
- * `maxInlineWords` tokens on a side, or `maxLcsCells` cells between the common start and end, it
- * answers `[del a, ins b]`.
+ * `maxInlineWords` tokens on a side it answers `[del a, ins b]` (within it, an LCS always fits
+ * `maxLcsCells`).
  */
 export function inlineDiff(a: string, b: string): InlineSegment[] {
   return inlineSegments(a, b, new Work(Number.POSITIVE_INFINITY));

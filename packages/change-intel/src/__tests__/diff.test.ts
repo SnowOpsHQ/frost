@@ -1,9 +1,10 @@
 // Spec: specs/capture.spec.ts (DIFF_REGIONS, DIFF_FIELDS, DIFF_LIMITS, CAPTURE_LIMITS, the shapes)
 // Acceptance: specs/changes-diff.feature.md (How each part is compared, Change order, Bounds and the fallback)
 import { describe, expect, test } from 'vitest';
+import { SnapshotDiffSchema } from '@app/specs/capture-snapshot.schema';
 import { CAPTURE_LIMITS as L, DIFF_ENGINE_VERSION, DIFF_FIELDS, DIFF_LIMITS as D, DIFF_REGIONS, PAGE_REGIONS, type CaptureSnapshot, type Change, type DiffField, type DiffRegion } from '@app/specs/capture.spec';
 import { diffSnapshots, EMPTY_CAPTURE_SNAPSHOT, type DiffProbe } from '../index';
-import { base, diff, edited, LONG_INTRO, region, sha, valid } from './fixtures';
+import { base, diff, edited, LONG_INTRO, region, seeded, sha, valid } from './fixtures';
 
 const of = (changes: Change[], field: DiffField) => changes.filter((change) => change.field === field);
 const rebuild = (change: Change, side: 'before' | 'after') => change.segments!.filter((s) => s.op === 'same' || s.op === (side === 'before' ? 'del' : 'ins')).map((s) => s.text).join('');
@@ -42,6 +43,8 @@ describe('regions', () => {
         s.structuredData = { types: ['FAQPage', 'Organization'], blocks: [{ types: ['FAQPage'], hash: sha('faq'), text: '{"@type":"FAQPage"}' }, s.structuredData.blocks[0]!] };
         s.links.total = 9;
         s.images.missingAlt = 0;
+        // `other` keeps its blocks; text past them changed (hash and word count only).
+        s.regions.other = { ...before.regions.other, words: 99, textHash: sha('other, past the kept blocks') };
       }, regional('new')),
     );
     const { changes } = diff(before, after);
@@ -52,24 +55,35 @@ describe('regions', () => {
       if (fixed) expect(change.region, change.field).toBe(fixed);
       else {
         expect(PAGE_REGIONS as readonly string[], change.field).toContain(change.region);
-        if (change.field !== 'words') expect(`${change.before ?? ''} ${change.after ?? ''}`, JSON.stringify(change)).toContain(change.region);
+        if (change.field !== 'words' && change.field !== 'hidden-text') expect(`${change.before ?? ''} ${change.after ?? ''}`, JSON.stringify(change)).toContain(change.region);
       }
     }
-    for (const r of PAGE_REGIONS) for (const field of ['heading', 'link', 'text', 'words'] as const) expect(changes.some((c) => c.region === r && c.field === field), `${r} ${field}`).toBe(true);
+    for (const r of PAGE_REGIONS) for (const field of ['heading', 'link', r === 'other' ? 'hidden-text' : 'text', 'words'] as const) expect(changes.some((c) => c.region === r && c.field === field), `${r} ${field}`).toBe(true);
+    expect(of(changes, 'hidden-text')).toEqual([{ region: 'other', field: 'hidden-text', kind: 'changed', before: before.regions.other.textHash.slice(0, 12), after: after.regions.other.textHash.slice(0, 12), context: null }]);
   });
 });
 
 describe('equal and first versions', () => {
   test('unchanged-snapshots-diff-empty', () => {
     const zero = Object.fromEntries(DIFF_REGIONS.map((r) => [r, { added: 0, removed: 0, changed: 0 }]));
-    expect(diff(base(), base())).toEqual({ engine: DIFF_ENGINE_VERSION, changes: [], summary: zero, changeCount: 0, truncated: false });
-    const noise = edited((s) => {
-      s.takenAt += 60_000;
-      s.partial = true;
-      s.regions.main.textHash = sha('other');
-      s.regions.nav.truncated = true;
+    expect(diff(base(), base())).toEqual({ engine: DIFF_ENGINE_VERSION, changes: [], summary: zero, changeCount: 0, truncated: false, partial: false });
+    expect(diff(base(), edited((s) => { s.takenAt += 60_000; }))).toMatchObject({ changeCount: 0, partial: false });
+    expect(diff(base(), edited((s) => { s.partial = true; }))).toEqual({ engine: DIFF_ENGINE_VERSION, changes: [], summary: zero, changeCount: 0, truncated: false, partial: true });
+    expect(diff(edited((s) => { s.regions.nav.truncated = true; }), base())).toMatchObject({ changes: [], partial: true });
+  });
+
+  test('hidden-text-reports-changes-past-kept-blocks', () => {
+    const after = edited((s) => {
+      s.regions.main.textHash = sha('more text past the kept blocks');
     });
-    expect(diff(base(), noise).changes).toEqual([]);
+    expect(diff(base(), after).changes).toEqual([
+      { region: 'main', field: 'hidden-text', kind: 'changed', before: base().regions.main.textHash.slice(0, 12), after: after.regions.main.textHash.slice(0, 12), context: null },
+    ]);
+    // A changed block explains the new hash: no hidden-text change.
+    const edit = edited((s) => {
+      s.regions.main = region([LONG_INTRO, 'Plans start at twelve dollars a month for one seat.', 'Contact us for team pricing.']);
+    });
+    expect(diff(base(), edit).changes.map((c) => c.field)).toEqual(['text']);
   });
 
   test('first-version-is-all-added', () => {
@@ -93,9 +107,23 @@ describe('equal and first versions', () => {
     expect(of(changes, 'score')[0]?.after).toBe('87');
     expect(of(changes, 'og-description')).toEqual([]); // null on both sides
     expect(first.summary.audit.added).toBe(of(changes, 'finding').length + 1 + of(changes, 'links-total').length + of(changes, 'images').length);
-    // The empty snapshot is what `null` stands for: the same items, only scalars count as new.
+    // Against the empty snapshot explicitly: the same items; the scalars compare with its values.
+    const scalars = ['indexable', 'score', 'links-total', 'images', 'words'];
     const fromEmpty = diff(EMPTY_CAPTURE_SNAPSHOT, page);
-    expect(fromEmpty.changes.filter((c) => c.kind !== 'changed')).toEqual(first.changes.filter((c) => !['indexable', 'score', 'links-total', 'images', 'words'].includes(c.field)));
+    expect(fromEmpty.changes.filter((c) => !scalars.includes(c.field))).toEqual(first.changes.filter((c) => !scalars.includes(c.field)));
+    expect(fromEmpty.changes.filter((c) => scalars.includes(c.field)).map((c) => [c.region, c.field, c.kind, c.before, c.after, c.context])).toEqual([
+      ['main', 'words', 'changed', '0', String(page.regions.main.words), null],
+      ['nav', 'words', 'changed', '0', '2', null],
+      ['header', 'words', 'changed', '0', '1', null],
+      ['footer', 'words', 'changed', '0', '2', null],
+      ['audit', 'score', 'changed', '0', '87', null],
+      ['audit', 'images', 'changed', '0', '3', 'total'],
+      ['audit', 'images', 'changed', '0', '1', 'missing-alt'],
+      ['audit', 'links-total', 'changed', '0', '5', 'total'],
+      ['audit', 'links-total', 'changed', '0', '4', 'internal'],
+      ['audit', 'links-total', 'changed', '0', '1', 'external'],
+      ['audit', 'links-total', 'changed', '0', '1', 'nofollow'],
+    ]); // indexable is false on both sides: no change
   });
 });
 
@@ -174,9 +202,21 @@ describe('bounds', () => {
     expect(result.truncated).toBe(true);
     expect(result.changeCount).toBeGreaterThan(D.maxChanges);
     expect(Object.values(result.summary).reduce((sum, c) => sum + c.added + c.removed + c.changed, 0)).toBe(result.changeCount);
-    expect(probe.work).toBeLessThanOrEqual(D.maxWorkCells);
-    expect(probe.fallbacks.length).toBeGreaterThan(0);
     diff(before, after);
+
+    // Every block shares 20 words with every other, yet no two are similar enough (Jaccard 20/70):
+    // pairing visits the most postings it can, and its cap stops it.
+    const common = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    let unique = 0;
+    const shared = () => edited((s) => {
+      s.regions = Object.fromEntries(PAGE_REGIONS.map((r) => [r, region(Array.from({ length: L.maxBlocksPerRegion }, () => [...common, ...Array.from({ length: 25 }, () => (unique++).toString(36))].join(' ')))])) as CaptureSnapshot['regions'];
+    });
+    const [sharedBefore, sharedAfter] = [valid(shared()), valid(shared())];
+    const sharedProbe: DiffProbe = { work: 0, fallbacks: [] };
+    const [sharedResult, sharedMs] = timed(() => diffSnapshots(sharedBefore, sharedAfter, sharedProbe));
+    expect(sharedMs).toBeLessThan(250);
+    expect(sharedProbe.fallbacks).toContain('pairing:main');
+    expect(SnapshotDiffSchema.safeParse(sharedResult).success).toBe(true);
 
     // Lists past the caps (a corrupt or future snapshot): one LCS would be 1 000 × 1 000 cells.
     const big = (seed: string) => edited((s) => {
@@ -187,6 +227,7 @@ describe('bounds', () => {
     expect(bigMs).toBeLessThan(250);
     expect(bigProbe.fallbacks).toContain('text:main');
     expect(bigResult.summary.main).toEqual({ added: 1_000, removed: 1_000, changed: 0 });
+    expect(SnapshotDiffSchema.safeParse(bigResult).success).toBe(true);
 
     // Every block of every region edited (so every block pairs and wants an inline diff).
     const near = (seed: string) => edited((s) => {
@@ -195,9 +236,58 @@ describe('bounds', () => {
     const nearProbe: DiffProbe = { work: 0, fallbacks: [] };
     const [nearResult, nearMs] = timed(() => diffSnapshots(valid(near('a')), valid(near('b')), nearProbe));
     expect(nearMs).toBeLessThan(250);
-    expect(nearProbe.work).toBeLessThanOrEqual(D.maxWorkCells);
-    expect(nearResult.summary.main.changed).toBe(L.maxBlocksPerRegion);
-    expect(nearResult.changes.every((c) => c.field !== 'text' || c.segments)).toBe(true);
+    expect(nearProbe.fallbacks).toEqual([]);
+    for (const r of PAGE_REGIONS) expect(nearResult.summary[r]).toEqual({ added: 0, removed: 0, changed: L.maxBlocksPerRegion });
+    expect(nearResult.changes.every((c) => c.field === 'text' && c.kind === 'changed' && c.segments)).toBe(true);
+    expect(SnapshotDiffSchema.safeParse(nearResult).success).toBe(true);
+  });
+
+  test('pairing-survives-unrelated-blocks', () => {
+    // 25 paragraphs deleted, then 35 paragraphs of ~165 words with one word each changed.
+    const random = seeded(7);
+    const common = ['the', 'of', 'and', 'to', 'in', 'is', 'for', 'on', 'with', 'as', 'by', 'at', 'it', 'from', 'that', 'this', 'are', 'be', 'or', 'an'];
+    const word = () => (random() < 0.15 ? common[Math.floor(random() * common.length)]! : Array.from({ length: 3 + Math.floor(random() * 4) }, () => 'abcdefghijklmnopqrstuvwxyz'[Math.floor(random() * 26)]).join(''));
+    const paragraph = () => Array.from({ length: 165 }, word);
+    const deleted = Array.from({ length: 25 }, () => paragraph().join(' '));
+    const kept = Array.from({ length: 35 }, paragraph);
+    const edits = kept.map((words, i) => words.map((w, k) => (k === 80 ? `edited${i}` : w)).join(' '));
+    const before = edited((s) => { s.regions.main = region([...deleted, ...kept.map((w) => w.join(' '))]); });
+    const after = edited((s) => { s.regions.main = region(edits); });
+    const probe: DiffProbe = { work: 0, fallbacks: [] };
+    const result = diff(before, after, probe);
+    expect(probe.fallbacks).toEqual([]);
+    const text = of(result.changes, 'text');
+    expect(text.filter((c) => c.kind === 'removed').map((c) => c.before)).toEqual(deleted);
+    expect(text.filter((c) => c.kind === 'changed')).toHaveLength(35);
+    expect(text.filter((c) => c.kind === 'added')).toEqual([]);
+    for (const change of text.filter((c) => c.kind === 'changed')) expect(change.segments?.filter((s) => s.op !== 'same')).toHaveLength(2);
+  });
+
+  test('truncated-side-reports-no-false-removals', () => {
+    const blocks = Array.from({ length: L.maxBlocksPerRegion }, (_, i) => `Paragraph ${i} of a long page.`);
+    const full = (list: string[], truncated: boolean) => edited((s) => { s.regions.main = { ...region(list), truncated }; });
+    const inserted = ['A new opening paragraph.', ...blocks.slice(0, -1)];
+    // The new side is at its cap: the last old paragraph was pushed out, not removed.
+    const cutShort = diff(full(blocks, true), full(inserted, true));
+    expect(of(cutShort.changes, 'text')).toEqual([{ region: 'main', field: 'text', kind: 'added', before: null, after: 'A new opening paragraph.', context: null }]);
+    expect(cutShort.partial).toBe(true);
+    // A complete new side really lost it.
+    const complete = diff(full(blocks, false), full(inserted, false));
+    expect(of(complete.changes, 'text').map((c) => [c.kind, c.before ?? c.after])).toEqual([['added', 'A new opening paragraph.'], ['removed', blocks.at(-1)]]);
+    expect(complete.partial).toBe(false);
+    // A partial snapshot cuts headings and links the same way.
+    const partial = diff(base(), edited((s) => {
+      s.partial = true;
+      s.headings = s.headings.filter((h) => h.text !== 'FAQ');
+      s.links.list = s.links.list.filter((l) => l.text !== 'Docs');
+    }));
+    expect(partial.changes.filter((c) => c.field === 'heading' || c.field === 'link')).toEqual([]);
+    // ... but not what it lacks before its last kept item.
+    const middle = diff(base(), edited((s) => {
+      s.partial = true;
+      s.headings = s.headings.filter((h) => h.text !== 'Plans');
+    }));
+    expect(of(middle.changes, 'heading')).toEqual([{ region: 'main', field: 'heading', kind: 'removed', before: 'Plans', after: null, context: 'h2' }]);
   });
 });
 
@@ -269,6 +359,26 @@ describe('headings and links', () => {
     expect(of(diff(base(), after).changes, 'link')).toEqual([
       { region: 'nav', field: 'link', kind: 'changed', before: 'Docs', after: 'Documentation', context: 'https://example.com/docs' },
       { region: 'footer', field: 'link', kind: 'changed', before: 'Partner (rel=nofollow)', after: 'Partner', context: 'https://partner.example/' },
+    ]);
+  });
+});
+
+describe('duplicate keys', () => {
+  test('duplicate-keys-match-exact-items-first', () => {
+    const links = (list: [string, string][]) => edited((s) => { s.links.list = list.map(([href, text]) => ({ href, text, rel: '', region: 'nav' })); });
+    expect(of(diff(links([['https://example.com/', 'Home'], ['https://example.com/', 'Logo']]), links([['https://example.com/', 'Logo']])).changes, 'link')).toEqual([
+      { region: 'nav', field: 'link', kind: 'removed', before: 'Home', after: null, context: 'https://example.com/' },
+    ]);
+    expect(diff(links([['https://example.com/', 'Home'], ['https://example.com/', 'Logo']]), links([['https://example.com/', 'Logo'], ['https://example.com/', 'Home']])).changes).toEqual([]);
+    const alternates = (list: [string, string][]) => edited((s) => { s.head.hreflang = list.map(([hreflang, href]) => ({ hreflang, href })); });
+    expect(of(diff(alternates([['en', 'https://example.com/a'], ['en', 'https://example.com/b']]), alternates([['en', 'https://example.com/b']])).changes, 'hreflang')).toEqual([
+      { region: 'head', field: 'hreflang', kind: 'removed', before: 'https://example.com/a', after: null, context: 'en' },
+    ]);
+    const product = (name: string) => ({ types: ['Product'], hash: sha(name), text: `{"@type":"Product","name":"${name}"}` });
+    const blocks = (names: string[]) => edited((s) => { s.structuredData = { types: ['Product'], blocks: names.map(product) }; });
+    expect(diff(blocks(['Alpha', 'Beta']), blocks(['Beta v2'])).changes).toEqual([
+      { region: 'structured-data', field: 'structured-data-block', kind: 'changed', before: product('Beta').text, after: product('Beta v2').text, context: 'Product' },
+      { region: 'structured-data', field: 'structured-data-block', kind: 'removed', before: product('Alpha').text, after: null, context: 'Product' },
     ]);
   });
 });

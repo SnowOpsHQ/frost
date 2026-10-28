@@ -9,9 +9,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.src.json",
     "test": "vitest run",
-    "lint": "tsc --noEmit -p tsconfig.json"
+    "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.src.json"
   },
   "dependencies": {
     "@app/specs": "workspace:*"

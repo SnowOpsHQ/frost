@@ -8,14 +8,15 @@ import { PROJECT_QUERY_MAX_CHARS } from '@app/specs/capture-db.spec';
 import { base, diff, diffsChecked, edited, region, sha } from './fixtures';
 
 describe('search parameters', () => {
-  const params: SearchParams = { engine: 'google', query: 'frost seo browser', country: 'de', language: 'de-DE', location: 'Berlin', device: 'mobile' };
+  const params: SearchParams = { engine: 'google', query: 'frost seo browser', country: 'de', language: 'de-de', location: 'Berlin', device: 'mobile' };
   const unset: SearchParams = { engine: 'bing', query: 'q', country: null, language: null, location: null, device: null };
 
   test('search-params-schema-rejects-unknown-keys', () => {
     expect(SearchParamsSchema.parse(params)).toEqual(params);
     expect(SearchParamsSchema.parse(unset)).toEqual(unset);
     expect(SearchParamsSchema.safeParse({ ...params, query: 'q'.repeat(PROJECT_QUERY_MAX_CHARS) }).success).toBe(true);
-    expect(SearchParamsSchema.safeParse({ ...params, language: 'zh-Hant-TW' }).success).toBe(true);
+    expect(SearchParamsSchema.safeParse({ ...params, language: 'zh-hant-tw' }).success).toBe(true);
+    expect(SearchParamsSchema.safeParse({ ...params, query: 'café 東京 😀' }).success).toBe(true);
     const { device: _device, ...missing } = params;
     const refused: unknown[] = [
       { ...params, page: 2 },
@@ -29,6 +30,13 @@ describe('search parameters', () => {
       { ...params, country: 'DE' },
       { ...params, country: 'deu' },
       { ...params, language: 'english' },
+      { ...params, language: 'de-DE' },
+      { ...params, language: 'EN' },
+      { ...params, query: 'abc\u202edef' },
+      { ...params, query: 'left\u200fmark' },
+      { ...params, location: 'Berlin\u2066' },
+      { ...params, query: 'lone \ud800 surrogate' },
+      { ...params, location: 'trail \udc00' },
       { ...params, language: `en-${'a'.repeat(8)}-${'b'.repeat(8)}-${'c'.repeat(8)}-${'d'.repeat(8)}` },
       { ...params, location: '' },
       { ...params, location: 'x'.repeat(101) },
@@ -88,6 +96,17 @@ describe('capture snapshot', () => {
     expect(SnapshotDiffSchema.safeParse({ ...good, truncated: true }).success).toBe(false);
     expect(SnapshotDiffSchema.safeParse({ ...good, changes: [{ ...good.changes[0]!, before: null }] }).success).toBe(false);
     expect(SnapshotDiffSchema.safeParse({ ...good, changes: [{ ...good.changes[0]!, field: 'colour' }] }).success).toBe(false);
+    expect(SnapshotDiffSchema.safeParse({ ...good, partial: undefined }).success).toBe(false);
+    // Untruncated: the summary is exactly the changes' counts.
+    const zero = { added: 0, removed: 0, changed: 0 };
+    expect(SnapshotDiffSchema.safeParse({ ...good, summary: { ...good.summary, head: zero, http: { ...zero, changed: 1 } } }).success).toBe(false);
+    // Segments only on a changed text block, and they must rebuild it.
+    expect(SnapshotDiffSchema.safeParse({ ...good, changes: [{ ...good.changes[0]!, segments: [{ op: 'del', text: 'Frost pricing' }, { op: 'ins', text: 'Other' }] }] }).success).toBe(false);
+    const text = diff(base(), edited((s) => { s.regions.main.blocks[1] = 'Plans start at twelve dollars a month for one seat.'; }));
+    expect(text.changes.find((c) => c.field === 'text')?.segments).toBeDefined();
+    const broken = (segments: { op: 'same' | 'del' | 'ins'; text: string }[]) => ({ ...text, changes: text.changes.map((c) => (c.field === 'text' ? { ...c, segments } : c)) });
+    expect(SnapshotDiffSchema.safeParse(broken(text.changes.find((c) => c.field === 'text')!.segments!)).success).toBe(true);
+    expect(SnapshotDiffSchema.safeParse(broken([{ op: 'del', text: 'something else' }, { op: 'ins', text: 'entirely' }])).success).toBe(false);
   });
 
   // Every diff any test in this file made went through `SnapshotDiffSchema` (fixtures' `diff`).
