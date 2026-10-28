@@ -31,7 +31,10 @@ export interface TestBackend {
   readonly resolvers: Parts['resolvers'];
   readonly email: MemoryTransport;
   readonly database: DatabaseHandle;
-  /** The ephemeral entitlement signing key this backend was built with (private JWK included). */
+  /**
+   * The entitlement signing key this backend signs with (private JWK included): the ephemeral one,
+   * or `overrides.signingKey`. Tests choose the key, never a prebuilt signer, so this is always it.
+   */
   readonly signingKey: GeneratedEntitlementKey;
   /** better-auth's (redacted) log lines. */
   readonly logs: string[];
@@ -40,13 +43,21 @@ export interface TestBackend {
   close(): Promise<void>;
 }
 
+export interface TestBackendOptions extends Partial<Pick<AppDeps, 'verifyBearer' | 'healthTimeoutMs' | 'now'>> {
+  /** Sign with this key instead of a fresh ephemeral one. */
+  readonly signingKey?: GeneratedEntitlementKey | undefined;
+  /** `ENTITLEMENT_PUBLIC_KEYS`: rotation public keys published next to the signing key. */
+  readonly publicKeys?: string | undefined;
+}
+
 /** A backend on a fresh in-memory PGlite with every migration applied and a memory email transport. */
-export async function createTestBackend(overrides: Partial<Pick<AppDeps, 'verifyBearer' | 'healthTimeoutMs' | 'entitlementSigner'>> = {}): Promise<TestBackend> {
+export async function createTestBackend(options: TestBackendOptions = {}): Promise<TestBackend> {
+  const { signingKey: chosenKey, publicKeys, ...overrides } = options;
   const database = await openMemoryDatabase();
   await migrate(database.db);
   const email = createMemoryTransport();
-  const signingKey = await generateEntitlementKey(TEST_KEY_ID);
-  const entitlementSigner = await loadEntitlementSigner({ signingKey: signingKey.privateJwkJson, keyId: signingKey.kid });
+  const signingKey = chosenKey ?? (await generateEntitlementKey(TEST_KEY_ID));
+  const entitlementSigner = await loadEntitlementSigner({ signingKey: signingKey.privateJwkJson, keyId: signingKey.kid, publicKeys });
   const logs: string[] = [];
   const { app, auth, resolvers } = createAppParts({
     db: database.db,
@@ -82,6 +93,11 @@ export async function createTestBackend(overrides: Partial<Pick<AppDeps, 'verify
 
 export function jsonPost(body: unknown, headers: Record<string, string> = {}): RequestInit {
   return { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) };
+}
+
+/** A browser form submission (`application/x-www-form-urlencoded`). */
+export function formPost(fields: Readonly<Record<string, string>>, headers: Record<string, string> = {}): RequestInit {
+  return { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams(fields).toString() };
 }
 
 /** The `Cookie` header a browser would send back after `res` (expired/cleared cookies dropped). */

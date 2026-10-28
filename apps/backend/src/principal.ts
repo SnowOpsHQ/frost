@@ -7,8 +7,8 @@ import type { Auth } from './auth';
 // A credential that is presented but invalid is a refusal, never a fall-through to the next one, so
 // a bad desktop token cannot be rescued by a browser cookie riding along.
 //
-// Task 3 plugs desktop bearer tokens in through `AppDeps.verifyBearer`; a route that needs a user
-// uses `requirePrincipal(resolvers)` and reads `c.get('principal')`.
+// Desktop bearer tokens (`desktop-auth.ts` `desktopTokenVerifier`) are the default `verifyBearer`;
+// a route that needs a user uses `requirePrincipal(resolvers)` and reads `c.get('principal')`.
 
 /** The authenticated user and when the credential that proved it expires. */
 export interface Principal {
@@ -35,15 +35,21 @@ const REJECTED: Resolution = { kind: 'rejected' };
 const BEARER = /^bearer +([A-Za-z0-9\-._~+/]{1,512}=*)$/i;
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/** The bearer token of `Authorization: Bearer …`: `undefined` without the header, `null` when it is malformed or another scheme. */
+export function bearerToken(request: Request): string | null | undefined {
+  const header = request.headers.get('authorization');
+  if (header === null) return undefined;
+  return BEARER.exec(header.trim())?.[1] ?? null;
+}
+
 /**
  * `Authorization: Bearer …` through `verify`. Without a verifier every presented bearer is refused;
  * a verifier that throws refuses too (logged by error name only).
  */
 export function bearerResolver(verify: BearerVerifier | undefined): PrincipalResolver {
   return async (request) => {
-    const header = request.headers.get('authorization');
-    if (header === null) return ABSENT;
-    const token = BEARER.exec(header.trim())?.[1];
+    const token = bearerToken(request);
+    if (token === undefined) return ABSENT;
     if (!token || !verify) return REJECTED;
     let principal: Principal | null;
     try {

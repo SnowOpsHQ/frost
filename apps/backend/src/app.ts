@@ -4,6 +4,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import {
   AUTH_BASE_PATH,
   AUTH_ENDPOINT_METHODS,
+  DESKTOP_TOKEN_PATH,
   HEALTH_PATH,
   SESSION_PATH,
   SessionResponseSchema,
@@ -12,13 +13,15 @@ import {
   type HealthResponse,
 } from '@app/specs/account-api.schema';
 import { ENTITLEMENT_KEYS_PATH, ENTITLEMENTS_PATH, EntitlementsResponseSchema } from '@app/specs/entitlements-snapshot.spec';
-import { CLIENT_IP_HEADER, createAuth, type AuthConfig } from './auth';
+import { createAuth, type AuthConfig } from './auth';
+import { stampClientIp } from './client-ip';
 import type { Database } from './db/client';
+import { desktopTokenVerifier, registerDesktopAuth } from './desktop-auth';
 import type { EmailTransport } from './email';
 import { issueSnapshot, planFor, type EntitlementSigner } from './entitlements';
 import type { LogSink } from './log';
 import { bearerResolver, requirePrincipal, webSessionResolver, type BearerVerifier, type PrincipalEnv, type PrincipalResolver } from './principal';
-import type { RateLimitStorage } from './rate-limit';
+import { createMemoryRateLimitStorage, type RateLimitStorage } from './rate-limit';
 
 // The backend's HTTP app (spec `account-backend.feature.md`). Everything it needs comes in `deps`,
 // so tests build one per case on an in-memory database and drive it with `app.request()`.
@@ -38,9 +41,12 @@ export interface AppDeps {
   readonly clientIp: ClientIpSource;
   /** Signs entitlement snapshots (`loadEntitlementSigner`); its public JWKS is published. */
   readonly entitlementSigner: EntitlementSigner;
-  /** Desktop bearer tokens (Task 3). Without one, a request with a bearer is refused. */
+  /** Bearer tokens. Default: the desktop tokens in `desktop_tokens` (`desktopTokenVerifier`). Tests may stand in their own. */
   readonly verifyBearer?: BearerVerifier | undefined;
+  /** Rate-limit counters for better-auth and the desktop endpoints; one in-memory store per app by default. */
   readonly rateLimitStorage?: RateLimitStorage | undefined;
+  /** The clock for desktop codes and tokens (tests move it); `new Date()` by default. */
+  readonly now?: (() => Date) | undefined;
   readonly logSink?: LogSink | undefined;
   /** How long `/healthz` waits for the database (default 3 s). */
   readonly healthTimeoutMs?: number | undefined;
@@ -76,19 +82,30 @@ function timeout(ms: number): Promise<never> {
 }
 
 /** The app with the pieces later routes and tests reuse: better-auth and the principal resolvers. */
+/** The browser pages of desktop sign-in: everything under `/desktop/` except the JSON exchange. */
+const isDesktopPage = (path: string): boolean => path.startsWith('/desktop/') && path !== DESKTOP_TOKEN_PATH;
+
 export function createAppParts(deps: AppDeps) {
   const { clientIp } = deps;
+  const now = deps.now ?? (() => new Date());
+  const rateLimitStorage = deps.rateLimitStorage ?? createMemoryRateLimitStorage();
   const auth = createAuth({
     ...deps,
+    rateLimitStorage,
     clientIp: clientIp.kind === 'peer' ? { kind: 'peer' } : { kind: 'header', header: clientIp.header, trustedProxies: clientIp.trustedProxies },
   });
   const origin = new URL(deps.auth.baseURL).origin;
   const trustedOrigins = new Set([origin, ...(deps.auth.trustedOrigins ?? [])]);
+  const verifyBearer = deps.verifyBearer ?? desktopTokenVerifier(deps.db, now);
   /** Asked in order by every authenticated route: a bearer first, then the web session cookie. */
-  const resolvers: readonly PrincipalResolver[] = [bearerResolver(deps.verifyBearer), webSessionResolver(auth, origin)];
+  const resolvers: readonly PrincipalResolver[] = [bearerResolver(verifyBearer), webSessionResolver(auth, origin)];
 
   const app = new Hono<AppEnv>();
-  app.use(secureHeaders({ crossOriginResourcePolicy: 'same-origin', referrerPolicy: 'no-referrer' }));
+  // Pages keep `Referrer-Policy: same-origin`: under `no-referrer` a browser sends `Origin: null` on
+  // a form POST, and the desktop pages' forms must prove their origin. Nothing goes to other origins.
+  const apiHeaders = secureHeaders({ crossOriginResourcePolicy: 'same-origin', referrerPolicy: 'no-referrer', xFrameOptions: 'DENY' });
+  const pageHeaders = secureHeaders({ crossOriginResourcePolicy: 'same-origin', referrerPolicy: 'same-origin', xFrameOptions: 'DENY' });
+  app.use((c, next) => (isDesktopPage(c.req.path) ? pageHeaders : apiHeaders)(c, next));
   app.use('/v1/*', async (c, next) => {
     await next();
     c.header('Cache-Control', 'no-store');
@@ -111,9 +128,7 @@ export function createAppParts(deps: AppDeps) {
     if (clientIp.kind === 'peer') {
       // The client never chooses its own rate-limit key: whatever it sent is replaced.
       const headers = new Headers(request.headers);
-      headers.delete(CLIENT_IP_HEADER);
-      const address = clientIp.address(c);
-      if (address) headers.set(CLIENT_IP_HEADER, address);
+      stampClientIp(headers, c, clientIp);
       request = new Request(request, { headers });
     }
     return withoutSessionToken(await auth.handler(request));
@@ -140,6 +155,9 @@ export function createAppParts(deps: AppDeps) {
     const snapshot = await issueSnapshot(deps.entitlementSigner, user, await planFor(deps.db, user.id));
     return c.json(EntitlementsResponseSchema.parse({ snapshot }));
   });
+
+  // Desktop sign-in: the authorize pages, the code exchange and bearer sign-out (`desktop-auth.ts`).
+  registerDesktopAuth(app, { db: deps.db, auth, origin, clientIp, rateLimitStorage, now });
 
   // Public keys only (validated against the spec's strict JWKS schema when the signer was loaded).
   const jwksBody = JSON.stringify(deps.entitlementSigner.jwks);

@@ -1,6 +1,7 @@
 # @app/backend
 
-frost's account API: web sign-in (email and password, magic links), the session the desktop
+frost's account API: web sign-in (email and password, magic links), desktop sign-in through the
+system browser (loopback redirect + PKCE, then a revocable desktop token), the session the desktop
 reads, and signed entitlement snapshots (which plan, which features). Hono + [better-auth](https://www.better-auth.com) + Drizzle on Postgres. Phase 4
 (`docs/plans/phase-4-accounts-telemetry.md`); behaviour in `specs/account-backend.feature.md`, the
 answers the desktop parses in `specs/account-api.schema.ts`; entitlements in
@@ -52,8 +53,13 @@ not be set (better-auth would turn its telemetry back on); startup refuses them.
 | Route | Answer |
 |---|---|
 | `GET /healthz` | `{ status: 'ok' }`; 503 `{ error: 'unavailable' }` when the database does not answer. |
-| `GET /v1/session` | `SessionResponse` for a signed-in web session cookie (or, from Task 3, a desktop bearer); 401 `{ error: 'unauthorized' }` otherwise. `no-store`. |
-| `GET /v1/entitlements` | `{ snapshot }` (`EntitlementsResponse`) for the signed-in principal (same resolver chain as `/v1/session`, so Task 3's desktop bearer works unchanged); 401 otherwise. `no-store`. |
+| `GET /v1/session` | `SessionResponse` for a desktop bearer token or a signed-in web session cookie (`expiresAt`: the credential's expiry); 401 `{ error: 'unauthorized' }` otherwise. `no-store`. |
+| `GET /v1/entitlements` | `{ snapshot }` (`EntitlementsResponse`) for the same principals as `/v1/session`; 401 otherwise. `no-store`. |
+| `POST /v1/sign-out` | Bearer only (a cookie is ignored): revokes that desktop token; 204 every time for a well-formed bearer (unknown, expired or already revoked included); 401 without one. |
+| `GET /desktop/authorize` | The desktop sign-in page (HTML): sign-in forms when signed out, "Continue to frost as …" when signed in; a plain 400 page for invalid parameters. See [Desktop sign-in](#desktop-sign-in). |
+| `POST /desktop/authorize` | Continue (same-origin form + web session): 303 to `redirect_uri?code=…&state=…`. |
+| `POST /desktop/sign-in`, `/desktop/sign-up`, `/desktop/magic-link`, `/desktop/sign-out` | The page's own forms (same-origin only); each calls the matching better-auth endpoint and answers a page or 303 back to `/desktop/authorize`. |
+| `POST /desktop/token` | JSON code + PKCE verifier → `DesktopTokenResponse` (`token`, `expiresAt` in ms, `user`); 400 `invalid_request` / `invalid_grant`, 429 `rate_limited`. `no-store`. |
 | `GET /.well-known/frost-entitlement-keys` | The public JWKS (`EntitlementJwks`): the signing key's public half and any `ENTITLEMENT_PUBLIC_KEYS`. Never a `d`. `public, max-age=300`. |
 | `/api/auth/*` | better-auth, only `AUTH_ENDPOINT_METHODS` (`specs/account-api.schema.ts`): `POST sign-up/email`, `POST sign-in/email`, `POST sign-in/magic-link`, `GET magic-link/verify`, `GET verify-email`, `GET get-session`, `POST sign-out`. Anything else is 404. JSON answers never carry the session token (the `HttpOnly` cookie does). |
 
@@ -78,8 +84,9 @@ not be set (better-auth would turn its telemetry back on); startup refuses them.
 ### Authenticated routes and bearer tokens
 
 `src/principal.ts` resolves "who is this request" through a chain: an `Authorization: Bearer`
-header goes to `AppDeps.verifyBearer` (desktop tokens, Task 3; without a verifier every bearer is
-refused, and so is one whose verifier throws), otherwise the better-auth session cookie. A presented
+header goes to `AppDeps.verifyBearer` (by default `desktopTokenVerifier`: the desktop tokens in
+`desktop_tokens`; tests may stand in their own; a verifier that throws refuses), otherwise the
+better-auth session cookie. A presented
 but invalid credential is 401 and never falls through to another. On an unsafe method (`POST` …)
 the cookie counts only for a same-origin request (`Origin`, else `Sec-Fetch-Site`); desktop write
 routes should take `[bearerResolver(verify)]` alone. `createAppParts(deps)` answers the app, the
@@ -88,6 +95,53 @@ better-auth instance and the resolver list. A new route uses the same chain:
 ```ts
 app.get('/v1/something', requirePrincipal(resolvers), (c) => c.json(answerFor(c.get('principal').user)));
 ```
+
+## Desktop sign-in
+
+The desktop signs in through the system browser (RFC 8252 loopback redirect, RFC 7636 PKCE, OAuth's
+parameter names). Contract and limits: `specs/account-api.schema.ts`; scenarios:
+`specs/account-backend.feature.md` (Desktop authorization); code: `src/desktop-auth.ts` and
+`src/desktop-pages.ts`.
+
+1. The desktop listens on `http://127.0.0.1:<port>/callback`, makes a `state` (16–128 unreserved
+   characters) and a PKCE verifier (43–128), and opens `GET /desktop/authorize?redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256`.
+   `redirect_uri` must be exactly `http://127.0.0.1:<1024-65535>/callback` (`LOOPBACK_REDIRECT_PATTERN`):
+   no `localhost`, no `[::1]` (the listener binds `127.0.0.1` only, so one spelling is accepted), no
+   `https`, path, query or fragment. Each parameter appears once. Anything invalid is a plain 400 page
+   that names no value and never redirects.
+2. Signed out, the page offers password sign-in, "email me a sign-in link" and "create an account".
+   Their forms post to `/desktop/sign-in` etc., which call better-auth's endpoints through its handler
+   (its rate limits and origin checks apply). Magic links and verification links carry the authorize
+   URL as their callback, so they land back on the same request; a failed link shows a fixed message.
+   Sign-up says "check your email"; the password signs in once the address is verified.
+3. Signed in, the page says "Continue to frost as <email>" with Continue and "Not you? Sign out".
+   Continue (`POST /desktop/authorize`) needs the web session and `Origin` equal to this API's origin
+   (and `Sec-Fetch-Site: same-origin` when sent); it issues a one-time code (32 random bytes, stored as
+   its SHA-256, bound to the user, challenge and `redirect_uri`, 120 s) and answers 303 to
+   `redirect_uri?code=…&state=…`.
+4. The desktop checks `state`, then `POST /desktop/token` (JSON, no cookies) with `grant_type:
+   authorization_code`, `code`, `code_verifier`, `redirect_uri`. The code is consumed atomically first
+   (so a wrong verifier or redirect burns it), then must be unexpired, for the same `redirect_uri`, and
+   match `BASE64URL(SHA-256(code_verifier))` (constant-time). A code presented again revokes the token
+   it issued. Every failure is 400 `{ error: 'invalid_grant' }` (a malformed body `invalid_request`); 10
+   exchanges per minute per client IP (`DESKTOP_RATE_LIMITS`), then 429 `rate_limited` with
+   `Retry-After`. Success: `{ token, expiresAt, user }`; the token (`frost_dt_…`) is stored as its
+   SHA-256 and lasts 30 days.
+5. The desktop sends `Authorization: Bearer <token>` to `/v1/session`, `/v1/entitlements` and
+   `/v1/sign-out`. Expired, revoked or unknown is 401.
+
+The pages are hand-written HTML with no script; every value is escaped. Headers:
+`Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`
+(the Continue page adds the loopback origin to `form-action`, because browsers check `form-action`
+on the redirect that follows the form), `X-Frame-Options: DENY`, `Cache-Control: no-store`, and
+`Referrer-Policy: same-origin`: under `no-referrer` a browser sends `Origin: null` on a form `POST`,
+which would make the same-origin check impossible; `same-origin` still sends nothing to any other
+origin, the loopback included. Only hashes of codes and tokens are stored (`drizzle/0003_desktop_auth.sql`,
+a `CHECK` allows 64 hex characters only).
+
+A page cannot tell which app opened it: a local program could start a request to its own loopback
+port. The page therefore says to continue only after choosing Sign in in frost, and the desktop asks
+again ("Sign in as …?") before it keeps anything.
 
 ## Entitlements
 
@@ -101,11 +155,11 @@ claims `iss`, `aud` (`frost-desktop`), `sub` (user ID), `email`, `plan`, `featur
 (`src/entitlements.ts`, `jose`). The desktop verifies it with the public keys baked into its build
 (`FROST_PUBLIC_ENTITLEMENT_JWKS`) and gives 7 days of offline grace after `exp` (Task 4).
 
-**Key rotation.** `admin keygen` a new key; publish its public JWKS together with the old one (the
-desktop's `FROST_PUBLIC_ENTITLEMENT_JWKS` lists both, and a release ships it); switch the server to
-the new `ENTITLEMENT_SIGNING_KEY`/`ENTITLEMENT_KEY_ID` with the old public key in
-`ENTITLEMENT_PUBLIC_KEYS`; drop the old key once its last snapshot is past its life and offline grace (3 + 7 days) and the
-builds that trust only it are gone.
+**Key rotation.** `admin keygen` a new key; first ship its public key in a desktop release, listed
+next to the old one in `FROST_PUBLIC_ENTITLEMENT_JWKS`; only then switch the server to the new
+`ENTITLEMENT_SIGNING_KEY`/`ENTITLEMENT_KEY_ID`, with the old public key in `ENTITLEMENT_PUBLIC_KEYS`.
+Keep the old public key in desktop builds and in `ENTITLEMENT_PUBLIC_KEYS` until its last snapshot is
+past its life and offline grace (3 + 7 days) and the builds that trust only it are gone.
 
 ## Admin CLI
 
@@ -117,17 +171,23 @@ pnpm --filter @app/backend admin grant alice@example.com pro
 pnpm --filter @app/backend admin show alice@example.com
 ```
 
-`src/cli.ts` (run with `tsx`) reads only `DATABASE_URL` / `PGLITE_DIR`. `keygen` prints, labelled,
+`src/cli.ts` (run with `tsx`) reads only `DATABASE_URL` / `PGLITE_DIR` (and `NODE_ENV`: in
+production `DATABASE_URL` is required, as for the server), and prints its target to stderr before a
+command that opens the database (`admin: database: PGlite <dir>` or `admin: database: Postgres
+<host:port>`, never the user, password or URL). `keygen` prints, labelled,
 the server's `ENTITLEMENT_KEY_ID` and `ENTITLEMENT_SIGNING_KEY` (secret) and the desktop's
 `FROST_PUBLIC_ENTITLEMENT_JWKS` (public), single-quoted for a `.env`; it writes no file. The `kid`
 defaults to the key's RFC 7638 thumbprint. `grant` takes `free` or `pro`; the next snapshot carries
-it. An unknown account exits 1, an unknown plan or command 2, each with a message. Tests call
+it (snapshots already issued stay valid until they expire, plus offline grace; `grant … free` says
+so). Exit codes (`CLI_EXIT`): 0 done; 1 a failure (an unknown account, or keygen/database errors); 2
+a usage error (an unknown command or plan, a malformed `kid`), each with a message. Tests call
 `runCli(argv, { db, out, err })` directly.
 
 ## Database and migrations
 
 The schema is written by hand in `src/db/schema.ts` (better-auth's `user`, `session`, `account` and
-`verification` models, as `users`, `sessions`, `accounts`, `verifications`; and `entitlements`). Migrations are plain SQL
+`verification` models, as `users`, `sessions`, `accounts`, `verifications`; `entitlements`; and
+`desktop_codes` and `desktop_tokens`). Migrations are plain SQL
 files in `drizzle/`, named `NNNN_name.sql`, statements separated by `--> statement-breakpoint` lines.
 `src/db/migrate.ts` (our own small runner, used for PGlite and node-postgres alike) applies pending
 files in name order in one transaction under a Postgres advisory lock and records each in
@@ -147,11 +207,12 @@ pnpm --filter @app/backend lint   # tsc --noEmit
 ```
 
 Tests build the app with `createApp(deps)` and drive it with `app.request()`; emails go to the
-memory transport (`createMemoryTransport()`).
+memory transport (`createMemoryTransport()`). `AppDeps.now` (a clock the test moves) ages desktop
+codes and tokens; desktop-sign-in tests drive the HTML pages by submitting their own forms.
 
 ## Logging
 
-Nothing logs a password, token, cookie, signing key or database URL. The one exception is the console email
+Nothing logs a password, token, desktop code, cookie, signing key or database URL. The one exception is the console email
 transport, which prints sign-in and verification links: it exists for local development and is
 refused in production. Unhandled errors (better-auth rethrows them, `onAPIError.throw`) log their
 name and route only: a driver error's message carries the query's parameters. better-auth's own log

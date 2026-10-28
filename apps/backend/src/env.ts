@@ -28,6 +28,8 @@ const required = <T extends z.ZodType>(schema: T) => z.preprocess((value) => (va
 
 const DATABASE_URL = optional(z.url({ protocol: /^postgres(ql)?$/, error: 'must be a postgres:// URL' }));
 const PGLITE_DIR = optional(z.string());
+const NODE_ENV = optional(z.enum(['development', 'test', 'production'], { error: 'must be development, test or production' }));
+const DATABASE_URL_IN_PRODUCTION = 'is required in production (PGlite is for development)';
 
 const telemetryOverrides = Object.fromEntries(
   TELEMETRY_OVERRIDES.map((name) => [name, optional(z.never({ error: 'must not be set (better-auth telemetry stays off)' }))]),
@@ -35,7 +37,7 @@ const telemetryOverrides = Object.fromEntries(
 
 const EnvSchema = z
   .object({
-    NODE_ENV: optional(z.enum(['development', 'test', 'production'], { error: 'must be development, test or production' })),
+    NODE_ENV,
     DATABASE_URL,
     PGLITE_DIR,
     BETTER_AUTH_SECRET: z
@@ -94,7 +96,7 @@ const EnvSchema = z
       ctx.addIssue({ code: 'custom', path: ['BETTER_AUTH_URL'], message: 'must be https:// in production' });
     }
     if (!env.DATABASE_URL) {
-      ctx.addIssue({ code: 'custom', path: ['DATABASE_URL'], message: 'is required in production (PGlite is for development)' });
+      ctx.addIssue({ code: 'custom', path: ['DATABASE_URL'], message: DATABASE_URL_IN_PRODUCTION });
     }
   });
 
@@ -112,13 +114,22 @@ export function parseEnv(source: Readonly<Record<string, string | undefined>>): 
   throw envError(result.error);
 }
 
-const DatabaseEnvSchema = z.object({ DATABASE_URL, PGLITE_DIR }).transform((raw) => ({
-  DATABASE_URL: raw.DATABASE_URL,
-  PGLITE_DIR: resolve(raw.PGLITE_DIR ?? DEFAULT_PGLITE_DIR),
-}));
+const DatabaseEnvSchema = z
+  .object({ NODE_ENV, DATABASE_URL, PGLITE_DIR })
+  .superRefine((raw, ctx) => {
+    // The server's rule, applied to the CLI too: in production it never falls back to PGlite.
+    if (raw.NODE_ENV === 'production' && !raw.DATABASE_URL) ctx.addIssue({ code: 'custom', path: ['DATABASE_URL'], message: DATABASE_URL_IN_PRODUCTION });
+  })
+  .transform((raw) => ({
+    DATABASE_URL: raw.DATABASE_URL,
+    PGLITE_DIR: resolve(raw.PGLITE_DIR ?? DEFAULT_PGLITE_DIR),
+  }));
 export type DatabaseEnv = z.output<typeof DatabaseEnvSchema>;
 
-/** Only the database variables (the admin CLI needs no auth secret or signing key). */
+/**
+ * Only the database variables (the admin CLI needs no auth secret or signing key), with the same
+ * rules as `parseEnv`: `NODE_ENV=production` requires `DATABASE_URL`.
+ */
 export function parseDatabaseEnv(source: Readonly<Record<string, string | undefined>>): DatabaseEnv {
   const result = DatabaseEnvSchema.safeParse(source);
   if (result.success) return result.data;

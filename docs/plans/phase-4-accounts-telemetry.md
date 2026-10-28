@@ -162,7 +162,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Failing tests:** `desktop-auth.test.ts`: full flow; wrong verifier, reused code, expired code,
   other redirect, non-loopback redirect, missing state all refused; cross-site POST refused; revoked
   token is 401; pages escape a hostile email/state.
-- [ ] commit `feat(backend): desktop authorization with loopback redirect and PKCE`
+- [x] commit `feat(backend): desktop authorization with loopback redirect and PKCE`
 - [ ] Security review of Tasks 1–3 before Task 4.
 
 ### Task 4: Desktop — entitlements core (verification, grace, `requireFeature`)

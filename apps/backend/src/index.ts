@@ -4,7 +4,7 @@ export { openDatabase, openMemoryDatabase, POSTGRES_POOL_LIMITS, openPgliteDatab
 export { loadMigrations, migrate, MigrationError, type Migration } from './db/migrate';
 export * from './db/schema';
 export { createConsoleTransport, createEmailTransport, createMemoryTransport, type EmailMessage, type EmailTransport, type MemoryTransport } from './email';
-export { CLI_EXIT, CLI_USAGE, runCli, type CliIo } from './cli';
+export { CLI_EXIT, CLI_USAGE, describeDatabaseTarget, runCli, type CliIo } from './cli';
 export {
   EntitlementKeyError,
   entitlementRow,
@@ -24,4 +24,7 @@ export {
 export { EnvError, parseDatabaseEnv, parseEnv, TELEMETRY_OVERRIDES, type DatabaseEnv, type Env } from './env';
 export { createRedactingLogger, redactLogMessage, type LogSink } from './log';
 export { createMemoryRateLimitStorage, type RateLimitStorage } from './rate-limit';
-export { bearerResolver, isSameOrigin, requirePrincipal, resolvePrincipal, toAccountUser, webSessionResolver, type BearerVerifier, type Principal, type PrincipalResolver } from './principal';
+export { bearerResolver, bearerToken, isSameOrigin, requirePrincipal, resolvePrincipal, toAccountUser, webSessionResolver, type BearerVerifier, type Principal, type PrincipalResolver } from './principal';
+export { clientIpResolver, stampClientIp, UNKNOWN_CLIENT } from './client-ip';
+export { desktopTokenVerifier, pkceChallenge, registerDesktopAuth, secretHash, type DesktopAuthDeps } from './desktop-auth';
+export { escapeHtml } from './desktop-pages';

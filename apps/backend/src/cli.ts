@@ -1,12 +1,12 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { DEFAULT_PLAN, PLAN_FEATURES, PLANS, type Plan } from '@app/specs/entitlements-snapshot.spec';
+import { DEFAULT_PLAN, ENTITLEMENT_TTL_SECONDS, OFFLINE_GRACE_SECONDS, PLAN_FEATURES, PLANS, type Plan } from '@app/specs/entitlements-snapshot.spec';
 import { openDatabase, type Database } from './db/client';
 import { migrate } from './db/migrate';
 import { users } from './db/schema';
-import { entitlementRow, generateEntitlementKey, PlanSchema, setPlan } from './entitlements';
-import { EnvError, parseDatabaseEnv } from './env';
+import { EntitlementKeyError, entitlementRow, generateEntitlementKey, PlanSchema, setPlan } from './entitlements';
+import { EnvError, parseDatabaseEnv, type DatabaseEnv } from './env';
 
 // The backend's admin CLI (spec `entitlements.feature.md`, Admin CLI):
 //   pnpm --filter @app/backend admin <command>
@@ -35,6 +35,23 @@ export interface CliIo {
   readonly db?: Database | (() => Promise<Database>) | undefined;
   readonly out: (text: string) => void;
   readonly err: (text: string) => void;
+}
+
+const DAY_SECONDS = 86_400;
+
+/**
+ * What the CLI is about to change, for stderr: the PGlite directory, or `Postgres <host[:port]>`
+ * (never the user, password, database name or query of `DATABASE_URL`).
+ */
+export function describeDatabaseTarget(env: DatabaseEnv): string {
+  if (!env.DATABASE_URL) return `PGlite ${env.PGLITE_DIR}`;
+  let host: string;
+  try {
+    host = new URL(env.DATABASE_URL).host;
+  } catch {
+    host = '(unparsable DATABASE_URL)';
+  }
+  return `Postgres ${host}`;
 }
 
 const featureList = (plan: Plan): string => (PLAN_FEATURES[plan].length === 0 ? '(none)' : PLAN_FEATURES[plan].join(', '));
@@ -75,8 +92,11 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
       let key;
       try {
         key = await generateEntitlementKey(args[0]);
-      } catch {
-        return usage('kid must be 1-64 letters, digits, ".", "_" or "-".');
+      } catch (error) {
+        // Only a malformed kid is the caller's mistake; anything else is a failure.
+        if (error instanceof EntitlementKeyError) return usage('kid must be 1-64 letters, digits, ".", "_" or "-".');
+        io.err(`keygen failed (${error instanceof Error ? error.name : 'unknown error'}).\n`);
+        return CLI_EXIT.failed;
       }
       // Single-quoted so a shell `.env` keeps the JSON's double quotes (base64url has no `'`).
       io.out(
@@ -90,8 +110,11 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
           `ENTITLEMENT_SIGNING_KEY='${key.privateJwkJson}'`,
           '',
           '# --- Desktop build environment: public ----------------------------------------------------',
-          '# The verification keys a desktop build trusts. During a rotation, list the old key here too',
-          "# and in the server's ENTITLEMENT_PUBLIC_KEYS until every snapshot it signed has expired.",
+          '# The verification keys a desktop build trusts. To rotate: first ship this key in a desktop',
+          '# release, listed next to the old one, and only then switch the server to the new signing key.',
+          "# After the switch, keep the old public key in the desktop builds and in the server's",
+          '# ENTITLEMENT_PUBLIC_KEYS for the life of its last snapshot plus offline grace',
+          `# (${ENTITLEMENT_TTL_SECONDS / DAY_SECONDS} + ${OFFLINE_GRACE_SECONDS / DAY_SECONDS} days).`,
           `FROST_PUBLIC_ENTITLEMENT_JWKS='${JSON.stringify(key.jwks)}'`,
           '',
         ].join('\n'),
@@ -112,6 +135,12 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
       }
       await setPlan(db, user.id, parsed.data);
       io.out(`${user.email}: plan ${parsed.data} (features: ${featureList(parsed.data)}). The next snapshot carries it.\n`);
+      if (parsed.data === DEFAULT_PLAN) {
+        io.out(
+          `Snapshots already issued stay valid until they expire (up to ${ENTITLEMENT_TTL_SECONDS / DAY_SECONDS} days), ` +
+            `plus ${OFFLINE_GRACE_SECONDS / DAY_SECONDS} days of grace on a desktop that stays offline.\n`,
+        );
+      }
       return CLI_EXIT.ok;
     }
 
@@ -170,6 +199,7 @@ async function main(): Promise<void> {
       }
       throw error;
     }
+    process.stderr.write(`admin: database: ${describeDatabaseTarget(env)}\n`);
     handle = await openDatabase(env);
     return handle.db;
   };

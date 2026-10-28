@@ -3,8 +3,12 @@
 Spec: `specs/account-api.schema.ts` (`AUTH_BASE_PATH`, `AUTH_ROUTES`, `AUTH_ENDPOINT_METHODS`,
 `SESSION_PATH`, `HEALTH_PATH`, `PASSWORD_LIMITS`, `ACCOUNT_USER_LIMITS`, `MAGIC_LINK_TTL_SECONDS`,
 `EMAIL_VERIFICATION_TTL_SECONDS`, `AUTH_RATE_LIMITS`, `AUTH_SECRET_MIN_LENGTH`, `ACCOUNT_API_ERRORS`,
-`ErrorResponseSchema`, `AccountUserSchema`, `SessionResponseSchema`, `HealthResponseSchema`). Phase 4 Task 1 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps
-to one named test.
+`ErrorResponseSchema`, `AccountUserSchema`, `SessionResponseSchema`, `HealthResponseSchema`; for
+desktop authorization `DESKTOP_AUTHORIZE_PATH`, `DESKTOP_TOKEN_PATH`, `DESKTOP_PAGE_PATHS`,
+`SIGN_OUT_PATH`, `LOOPBACK_REDIRECT_PATTERN`, `DESKTOP_STATE_LIMITS`, `CODE_VERIFIER_PATTERN`,
+`DESKTOP_CODE_TTL_SECONDS`, `DESKTOP_TOKEN_TTL_DAYS`, `DESKTOP_RATE_LIMITS`,
+`DesktopAuthorizeQuerySchema`, `DesktopTokenRequestSchema`, `DesktopTokenResponseSchema`). Phase 4
+Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to one named test.
 
 ## Decisions
 - **A lean API.** `apps/backend` is a Hono app built by `createApp(deps)`; tests drive it with
@@ -100,3 +104,78 @@ to one named test.
 - `migration-edit-refused` — an applied migration whose SQL changed refuses to migrate.
 - `migration-missing-refused` — an applied migration missing from the build refuses to migrate.
 - `migration-out-of-order-refused` — a new migration numbered before the latest applied one refuses, and applies nothing.
+
+## Desktop authorization — decisions
+- **Loopback redirect + PKCE, OAuth's names.** The desktop opens `GET DESKTOP_AUTHORIZE_PATH` with
+  `redirect_uri`, `state`, `code_challenge` and `code_challenge_method=S256` in the system browser.
+  `redirect_uri` must be exactly `http://127.0.0.1:<1024-65535>/callback` (`LOOPBACK_REDIRECT_PATTERN`,
+  an exact string match: no `localhost`, no `[::1]`, no `https`, no other path, query or fragment);
+  `state` is 16 to 128 unreserved characters; the challenge is S256 only. Each parameter appears once.
+  Anything invalid answers a plain 400 page that names no value and never redirects.
+- **frost's own pages.** Signed out, the page offers password sign-in, a magic link and sign-up; each
+  form posts same-origin to a `DESKTOP_PAGE_PATHS` route that calls the matching better-auth endpoint
+  through its handler (so its rate limits and origin checks apply) and comes back to the authorize
+  URL. Magic links and verification links carry the authorize URL as their callback, so following one
+  lands on the same request. Sign-up says "check your email"; a password signs in only once the
+  address is verified. Signed in (web cookie, verified address), the page says "Continue to frost as
+  <email>", with Continue and "Not you? Sign out".
+- **Pages are inert.** Hand-written HTML with no script; every interpolated value is escaped.
+  `Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; form-action 'self' [the loopback
+  origin, on the Continue page only]; frame-ancestors 'none'; base-uri 'none'`, `X-Frame-Options:
+  DENY`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`. `Referrer-Policy: same-origin`,
+  not `no-referrer`: under `no-referrer` a browser sends `Origin: null` on a form `POST`, which would
+  defeat the same-origin check below; `same-origin` still sends nothing to another origin (the loopback
+  redirect carries no `Referer`). The Continue page lists the loopback origin in `form-action` because
+  browsers apply `form-action` to the redirect that follows the form.
+- **Continue is a same-origin `POST` with the web session.** `POST DESKTOP_AUTHORIZE_PATH` needs
+  `Origin` equal to the API origin and, when present, `Sec-Fetch-Site: same-origin`; anything else is
+  403 and issues nothing. It re-validates the parameters, then issues a one-time code (32 random bytes,
+  base64url) stored as its SHA-256 with the user, the challenge and the `redirect_uri`, valid
+  `DESKTOP_CODE_TTL_SECONDS`, and answers 303 to `redirect_uri?code=…&state=…`. Without a session it
+  answers 303 back to the authorize page.
+- **The exchange.** `POST DESKTOP_TOKEN_PATH` takes JSON (`DesktopTokenRequestSchema`), no cookies.
+  The code is consumed atomically (`UPDATE … WHERE consumed_at IS NULL RETURNING`) before anything else
+  is checked, so a wrong verifier or redirect burns it too. Then: unexpired, `redirect_uri` equal,
+  `BASE64URL(SHA-256(code_verifier))` equal to the challenge (constant-time). A code presented a second
+  time revokes the token issued from it (RFC 6749 §4.1.2). Every failure is 400 `invalid_grant` (a
+  malformed body `invalid_request`); `DESKTOP_RATE_LIMITS.token` per client IP. Success mints a desktop
+  token (`frost_dt_` + 32 random bytes), stored as its SHA-256, valid `DESKTOP_TOKEN_TTL_DAYS`,
+  answered as `DesktopTokenResponse`, `no-store`.
+- **Desktop tokens are bearers.** `SESSION_PATH` and `/v1/entitlements` accept them through the bearer
+  resolver; unknown, expired, revoked, or of an unverified account is 401. `SIGN_OUT_PATH` takes the
+  bearer alone (a cookie is ignored), revokes it and answers 204 every time for a well-formed bearer.
+  Only hashes are stored: the database never holds a raw code or token (a `CHECK` allows only 64 hex
+  characters).
+
+## Desktop authorization (`apps/backend/src/__tests__/desktop-auth.test.ts`)
+- `loopback-redirect-pattern` — exactly `http://127.0.0.1:<1024-65535>/callback`; `localhost`, `[::1]`, `https`, another path, a query, a trailing slash, user info or a port with a leading zero do not match.
+- `authorize-refuses-bad-redirect` — a non-loopback, `localhost`, `https` or other-path `redirect_uri` answers a 400 page with no `Location`.
+- `authorize-refuses-bad-params` — a missing, short, oversized or non-unreserved `state`, a malformed challenge, `plain`, or a repeated parameter answers a 400 page with no `Location`.
+- `authorize-signed-out-shows-sign-in` — signed out, the page has the password, magic-link and sign-up forms, each posting to its `DESKTOP_PAGE_PATHS` route with the authorize parameters.
+- `authorize-signed-in-shows-continue` — with a web session the page says "Continue to frost as <email>" with Continue and "Not you? Sign out".
+- `pages-carry-security-headers` — every page (sign-in, continue, error, check-email) has the CSP, `X-Frame-Options: DENY`, `no-store`, `Referrer-Policy: same-origin` and no script.
+- `pages-escape-hostile-values` — a hostile email on the continue page and in a re-shown form is escaped; a hostile `state` is refused and not reflected.
+- `sign-up-shows-check-email` — the sign-up form shows "check your email"; the password is refused with a message until the address is verified, then signs in and returns to the authorize URL.
+- `magic-link-round-trip` — a magic link asked for on the page lands back on the authorize page, signed in, showing Continue.
+- `page-sign-out` — "Not you? Sign out" ends the web session and returns to the sign-in page.
+- `page-forms-need-same-origin` — the sign-in, sign-up, magic-link and sign-out forms from another origin are 403.
+- `continue-issues-code` — Continue answers 303 to `redirect_uri?code&state`; the stored code is its hash, bound to the user, challenge and redirect, expiring in `DESKTOP_CODE_TTL_SECONDS`.
+- `continue-refuses-cross-site` — Continue with another `Origin`, `Origin: null`, no `Origin`, or `Sec-Fetch-Site: cross-site` is 403 and issues no code.
+- `continue-needs-web-session` — Continue without a session answers 303 back to the authorize page and issues no code.
+- `desktop-full-flow` — sign up, verify, sign in on the page, Continue, exchange: the token answers `/v1/session` and `/v1/entitlements` as that user.
+- `token-wrong-verifier-refused` — a wrong verifier is `invalid_grant` and burns the code.
+- `token-reused-code-refused` — a code's second exchange is `invalid_grant` and revokes the token the first one issued.
+- `token-expired-code-refused` — a code older than `DESKTOP_CODE_TTL_SECONDS` is `invalid_grant`.
+- `token-other-redirect-refused` — a `redirect_uri` other than the authorize request's is `invalid_grant`.
+- `token-malformed-request` — not JSON, another grant type, or a short verifier is 400 `invalid_request`; answers are `no-store`.
+- `token-rate-limited` — the exchange after `DESKTOP_RATE_LIMITS.token.max` in a window is 429 `rate_limited` with `Retry-After`.
+- `tokens-stored-hashed` — neither the raw code nor the raw token is anywhere in the database.
+- `bearer-expired-or-revoked-401` — a desktop token past `DESKTOP_TOKEN_TTL_DAYS`, or revoked, is 401 on `/v1/session` and `/v1/entitlements`.
+- `sign-out-revokes-idempotent` — `SIGN_OUT_PATH` revokes the bearer (then 401) and answers 204 again for the same token; without a bearer, or with only a cookie, it is 401.
+
+## Admin CLI database (`apps/backend/src/__tests__/cli.test.ts`)
+The CLI's other scenarios are in `specs/entitlements.feature.md` (Admin CLI); every exit code is an
+exact `CLI_EXIT` value.
+- `cli-database-env-production` — `parseDatabaseEnv` applies the production rule: `NODE_ENV=production` without `DATABASE_URL` refuses, naming the variable.
+- `cli-database-target` — the CLI prints its target to stderr: the PGlite directory, or `Postgres <host>` with no user, password or database URL.
+- `cli-keygen-exit-codes` — a malformed `kid` exits `CLI_EXIT.usage`; any other keygen failure exits `CLI_EXIT.failed`.

@@ -85,9 +85,51 @@ export const entitlements = pgTable('entitlements', {
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 });
 
+/**
+ * One-time desktop authorization codes (`drizzle/0003_desktop_auth.sql`; spec
+ * `account-backend.feature.md`, Desktop authorization). Keyed by the code's SHA-256 (hex); bound to
+ * the user, the PKCE challenge and the loopback `redirect_uri`. `consumedAt` is set exactly once, by
+ * the exchange; a code is good until `expiresAt` and only while unconsumed.
+ */
+export const desktopCodes = pgTable(
+  'desktop_codes',
+  {
+    codeHash: text('code_hash').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeChallenge: text('code_challenge').notNull(),
+    redirectUri: text('redirect_uri').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true, mode: 'date' }),
+  },
+  (t) => [index('desktop_codes_user_id_idx').on(t.userId), index('desktop_codes_expires_at_idx').on(t.expiresAt)],
+);
+
+/**
+ * Desktop bearer tokens, keyed by the token's SHA-256 (hex). `codeHash` is the code it was issued
+ * for (a replayed code revokes it). Valid while unrevoked and before `expiresAt`.
+ */
+export const desktopTokens = pgTable(
+  'desktop_tokens',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true, mode: 'date' }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'date' }),
+  },
+  (t) => [index('desktop_tokens_user_id_idx').on(t.userId), index('desktop_tokens_code_hash_idx').on(t.codeHash)],
+);
+
 /** better-auth model name → table, as its Drizzle adapter expects. */
 export const authSchema = { user: users, session: sessions, account: accounts, verification: verifications };
 
 /** Every table, for `drizzle(..., { schema })`. Later tasks add theirs here. */
-export const schema = { users, sessions, accounts, verifications, entitlements };
+export const schema = { users, sessions, accounts, verifications, entitlements, desktopCodes, desktopTokens };
 export type Schema = typeof schema;

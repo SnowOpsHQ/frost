@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { compactVerify, createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import { AUTH_SECRET_MIN_LENGTH, ErrorResponseSchema, SESSION_PATH } from '@app/specs/account-api.schema';
@@ -174,8 +174,8 @@ describe('keys', () => {
   it('jwks-publishes-public-keys-only', async () => {
     const old = await generateEntitlementKey('old-key');
     const signingKey = await generateEntitlementKey(TEST_KEY_ID);
-    const signer = await loadEntitlementSigner({ signingKey: signingKey.privateJwkJson, keyId: signingKey.kid, publicKeys: JSON.stringify(old.jwks) });
-    const b = await open({ entitlementSigner: signer });
+    const b = await open({ signingKey, publicKeys: JSON.stringify(old.jwks) });
+    expect(b.signingKey).toBe(signingKey);
     const res = await b.request(ENTITLEMENT_KEYS_PATH);
     expect(res.status).toBe(200);
     const text = await res.text();
@@ -200,6 +200,16 @@ describe('keys', () => {
       await b.request(SESSION_PATH, { headers: { cookie } }),
       await b.request('/v1/nothing-here'),
     ];
+    // The 500 path: signing works, but the plan lookup fails; neither the answer nor any log line
+    // carries the key.
+    await b.database.db.execute(sql.raw('ALTER TABLE entitlements RENAME COLUMN plan TO plan_renamed'));
+    const printed: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void printed.push(args.map(String).join(' ')));
+    const failed = await b.request(ENTITLEMENTS_PATH, { headers: { cookie } });
+    spy.mockRestore();
+    expect(failed.status).toBe(500);
+    answers.push(failed);
+    expect(`${printed.join('\n')}\n${b.logs.join('\n')}`).not.toContain(d);
     for (const res of answers) {
       const text = await res.text();
       expect(text).not.toContain(d);
