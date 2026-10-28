@@ -339,7 +339,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
     resets, the watch wakes;
   - outlines plan: boxes and labels per type;
   - a pack update swaps the pack live.
-- [ ] commit `feat(serp): SERP service, router and outlines`
+- [x] commit `feat(serp): SERP service, router and outlines`
 - [ ] Review fixes: commit `fix(serp): address SERP service review findings`
 
 ### Task 5: Indexability and AI-readiness probes

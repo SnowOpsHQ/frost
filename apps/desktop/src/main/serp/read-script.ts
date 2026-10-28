@@ -382,8 +382,8 @@ export function readSerp(document: SerpDocument, layout: EngineLayout, L: SerpRe
   }
 }
 
-/** Only the fields the reader uses, so nothing else in a layout object reaches the page's world. */
-function layoutArgument(layout: EngineLayout): EngineLayout {
+/** Only the fields the reader uses, so nothing else in a layout object reaches the page's world (the reader's script and the outlines'). */
+export function layoutArgument(layout: EngineLayout): EngineLayout {
   return {
     results: layout.results,
     blocks: layout.blocks.map((block) => ({

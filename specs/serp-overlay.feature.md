@@ -7,7 +7,11 @@ Spec: `specs/serp.spec.ts` (`SERP_WORLD_ID`, `SERP_READ_LIMITS`, `SERP_READ_TIME
 `SERP_OWNER_SUFFIXES`), `specs/serp-search-params.schema.ts`
 (`SearchParamsSchema`), `specs/serp-snapshot.schema.ts` (`SerpReadSchema`, `SerpSnapshotSchema`)
 and the selector pack (`specs/serp-selector-pack.spec.ts`, `serp-selector-pack.schema.ts`). Phase 3
-Task 3 (Reading and Analysis; Task 4 adds Router and Outlines); review focus
+Task 3 (Reading and Analysis); Task 4 (Service, Outlines, Router and Setup) adds
+`specs/serp-service.spec.ts` (`SERP_INPAGE_DEBOUNCE_MS`, `MAX_PENDING_SERP_WATCHES`,
+`SERP_INTENT_CACHE_SIZE`, `SERP_OUTLINE_ACTIVE_POLL_MS`, `SERP_OUTLINE_LIMITS`, `SERP_OUTLINE_KEY`,
+`SERP_OUTLINE_STYLES`) and `specs/serp-service.schema.ts` (`SerpStateSchema`, `IntentAnswerSchema`,
+`PackStatusSchema`, `SerpTabStateSchema` and the router inputs); review focus
 `serp-reader-is-bounded`. Each line maps to one named test.
 
 ## Decisions
@@ -121,3 +125,57 @@ Task 3 (Reading and Analysis; Task 4 adds Router and Outlines); review focus
 - `serp-analysis-queue-is-bounded` — at most `SERP_ANALYSIS_MAX_QUEUED` jobs wait; more drop the oldest waiting ones (`timeout`), the rest run in order.
 - `serp-worker-answers-each-job` — the worker entry answers `{ id, raw, params, packVersion, redirects }` with `{ id, result }` (garbage is `invalid-answer`) and drops a message without a numeric id.
 - `serp-analysis-build-entry` — the Forge Vite build has the `serp-analysis` entry (`src/main/serp/serp-worker.ts`, the main config and target), so `.vite/build/serp-analysis.cjs` sits beside `main.cjs`.
+
+## Service (`apps/desktop/src/main/serp/__tests__/service.test.ts`, with fakes)
+Decisions: a tab's reading belongs to its WebContents, document (`documentSeq`), URL, device and the
+pack's version, and is never answered for anything else. Reads start only on `did-finish-load`, on
+an in-page move to another search once quiet for `SERP_INPAGE_DEBOUNCE_MS`, and when the state of a
+loaded result page with no current reading is asked for; never for another page, never a request to
+an engine. Intent is classified locally, only while the classifier is `ready`; only the user's
+"Enable on-device intent" downloads the model, and only "Check for selector updates" requests a pack.
+- `serp-service-reads-serp-loads` — a result page that finished loading is read once in its tab's page with the engine's layout and analysed with its parameters (`ready`, valid against `SerpTabStateSchema`); another page is `not-serp` and never read; an unknown tab is `not-serp` with no URL; a loading result page is `pending` with its parameters, read once it has loaded.
+- `serp-service-state-per-tab` — two tabs keep their own readings (engine, query, device); a new document drops the tab's at once; a read that answers after its document went is dropped; a closed tab's reading goes; a render profile change (another device) reads the page again when next asked for.
+- `serp-service-read-failures` — a reader that does not answer within `SERP_READ_TIMEOUT_MS` is `unreadable` (`timeout`, with the parameters) and never analysed; a reader that fails is `invalid-answer`; a layout it cannot read keeps its reason; an unreadable page is not read again on its own.
+- `serp-service-inpage-debounced` — in-page moves to another search are read once, `SERP_INPAGE_DEBOUNCE_MS` after the last (`pending` with the new parameters meanwhile; asking does not read early); the same search at another URL keeps the reading; a move to a page that is not a result page is `not-serp` at once.
+- `serp-service-watch-wakes-times-out-capped` — `watch` wakes on a change, answers at once when newer and on abort; one more than `MAX_PENDING_SERP_WATCHES` answers the oldest early; through `serp.watch`, nothing changing answers after `WATCH_TIMEOUT_MS` and releases the waiter.
+- `serp-service-pack-update-swaps-live` — nothing is fetched until the user checks; an installed pack is in use at once (`PackStatus`: version, `remote`, the outcome and when, `checking` while it runs); outlines go, the active tab is read again at once with the new layout and a background tab when next asked for; a second check is `not-newer` and changes nothing.
+- `serp-service-disabled-pack` — a bundled pack that fails verification disables reading (`disabled`, `pack-invalid`; nothing read, no outlines, updates `disabled`).
+- `serp-service-outlines-active-tab-only` — outlines are drawn only for the active tab's `ready` reading, with the engine's layout, once; removed by the toggle, a tab switch (polled every `SERP_OUTLINE_ACTIVE_POLL_MS`), an in-page navigation (removed from the page) and a new document (gone with it); off when the page ends them (`ended`) or the paint answer is not a drawing.
+- `serp-service-intent-only-when-ready` — with the model missing the answer says so and nothing is classified or downloaded; a page that is not a result page has no intent; "Enable" calls `ensureModel` once, then the current query is classified on this computer; the same query in another tab is answered from the session's answers; an `unavailable` classifier is not asked by the overlay.
+- `serp-service-clear-browsing-data` — the readings, outlines and the session's intent answers go; the page is read and classified afresh when next asked for.
+- `serp-read-api` — `SerpReadApi.snapshot` answers the tab's `SerpState` (valid against `SerpStateSchema`), `classifyIntent` classifies without a download; after `dispose()` waiters answer.
+
+## Outlines (`apps/desktop/src/main/serp/__tests__/outline.test.ts`; jsdom)
+Decisions: drawn as Phase 2's highlight draws (one host element of its own, a closed shadow root,
+CSSOM inline styles, no markup, no stylesheet, no change to a page element), in the SERP world with
+its own state key, so it never meets the highlight overlay. The overlay reads the page with the same
+fixed reader and the pack's layout (JSON, never code) on each pass, so its boxes follow scrolling,
+resizing and in-place updates; labels are frost's own (`SERP_OUTLINE_STYLES`) and positions, never
+page text.
+- `serp-outline-plan-per-type` — organic results and ads one box each, numbered in their own counts (a result without a box still counts); a feature block one box (its block's) with its type's label; every type its own colour and label; the scroll offset moves boxes (a non-finite one is 0).
+- `serp-outline-plan-is-defensive` — malformed blocks, unknown or prototype-named types, non-numeric, empty or out-of-range boxes are skipped; page text is never a label.
+- `serp-outlines-capped` — at most `SERP_OUTLINE_LIMITS.maxBoxes`; the overlay reads with `SERP_READ_LIMITS`.
+- `serp-outline-draws-in-closed-shadow-root` — one host element last in `<html>`, closed shadow root, `aria-hidden`, `pointer-events: none`, important inline styles; the page's DOM and stylesheets untouched; the page read with the layout and limits; labels are text nodes.
+- `serp-outline-follows-the-page` — the ResizeObserver's first observations are not changes; a burst of scrolling and resizing makes one more pass on the same box elements, which move; an inner scroller is heard in the capture phase.
+- `serp-outline-unreadable-draws-nothing` — a pass whose read fails clears the boxes; a reader that throws draws nothing.
+- `serp-outline-off-removes-everything` — drawing again replaces it (`replaced`); off removes the host and every listener (`off`), leaving the page as it was; off with nothing drawn is a no-op.
+- `serp-outline-ends-when-page-removes-host` — the page taking the host out stops it (`removed`); `pagehide` ends it (`gone`).
+- `serp-outline-with-the-real-reader` — the bundled pack's Google layout and the real reader on the synthetic Google fixture draw numbered organic results and ads.
+- `serp-outline-script-is-self-contained` — the script parses alone, embeds the layout and config as JSON (a hostile selector stays a string), uses no markup, stylesheet, eval, Node or Electron; its key and world are not the highlight's.
+- `serp-outline-runs-in-serp-world` — `runOutline` and `watchOutline` run once each in `SERP_WORLD_ID`.
+
+## Router (`packages/ipc-contract/src/__tests__/serp-router.test.ts`)
+Procedures (each `publicProcedure.use(enforceSender).use(requireSerp)` first): `serp.watch`
+(`{ tabId, sinceVersion }` → `SerpTabState`, a long-poll as `checks.watch`), `serp.state`
+(`{ tabId }` → `SerpTabState`), `serp.setOutlines` (`{ tabId, on }` → whether drawn),
+`serp.packStatus` (→ `PackStatus`), `serp.checkPackUpdate` (→ `PackUpdateOutcome`),
+`serp.intentState` (→ `IntentState`), `serp.enableIntent` (→ `IntentEnableOutcome`) and
+`serp.classify` (`{ query }` → `IntentAnswer`). Task 5 adds `runProbes`, `probes` and `stopProbes`.
+- `serp-procedures-enforce-sender` — every `serp.*` procedure (exactly these) refuses a foreign origin, an unknown window and a subframe, with any input, before the service is touched.
+- `serp-inputs-validated` — strict inputs: a missing, non-positive or non-integer tab id, a version below −1, a non-boolean `on`, an extra field (a URL, a layout, a model), an over-long query are `BAD_REQUEST`, the service untouched.
+- `serp-without-service-fail-closed` — without the service every procedure is a masked internal error; with it, each answers the service's value.
+- `serp-watch-long-polls` — answers at once when newer, at the next change, else the current state after `WATCH_TIMEOUT_MS`, releasing the service's waiter.
+
+## Setup (`apps/desktop/src/main/serp/__tests__/setup.test.ts`)
+- `serp-setup-e2e-seams-unpackaged-only` — `--frost-e2e-serp-pack-url` (http allowed) and `--frost-e2e-serp-pack-key` (one more trusted key) are read only by unpackaged builds (packaged ones refuse them at startup, `PACKAGED_FORBIDDEN_SWITCHES`): a pack signed by the extra key installs from the e2e URL through the `checks` lane; packaged, the same switches change nothing; nothing is fetched until the user checks.
+- `serp-setup-watches-browse-tabs-only` — each browse-session tab's page is subscribed once (`did-finish-load`, `did-navigate`, `did-navigate-in-page`, `destroyed`), the app's own window never; a bundled pack that does not verify disables reading; `will-quit` disposes the service, the worker and the intent process once.
