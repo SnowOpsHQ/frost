@@ -69,7 +69,13 @@ async function call(type: 'query' | 'mutation', name: string, input?: unknown): 
 }
 
 const telemetryState = async (): Promise<TelemetryState> => TelemetryStateSchema.parse(await call('query', 'state'));
-const setConsent = async (channel: 'usage' | 'errors', on: boolean): Promise<TelemetryState> => TelemetryStateSchema.parse(await call('mutation', 'setConsent', { channel, on }));
+/** A real click in the chrome (a trusted input: the user gesture turning a channel on needs). */
+const realClick = (): Promise<void> => page.getByTestId('address').click();
+/** `telemetry.setConsent`; turning a channel on follows a real click, as the Settings switch's does. */
+const setConsent = async (channel: 'usage' | 'errors', on: boolean): Promise<TelemetryState> => {
+  if (on) await realClick();
+  return TelemetryStateSchema.parse(await call('mutation', 'setConsent', { channel, on }));
+};
 
 /** An uncaught error and an unhandled rejection in the chrome page (its own `window` listeners report them). */
 async function rendererErrors(tag: string): Promise<void> {
@@ -124,6 +130,9 @@ test('telemetry-nothing-before-consent', async () => {
   // The startup span has ended by now; with the defaults neither it nor the errors leave.
   await wait(QUIET_MS);
   expect(fake.posts()).toEqual([]);
+  // A page cannot opt the user in: without a real click, turning a channel on changes nothing.
+  expect(TelemetryStateSchema.parse(await call('mutation', 'setConsent', { channel: 'errors', on: true })).consent).toEqual({ usage: false, errors: false });
+  expect((await telemetryState()).version).toBe(0);
 });
 
 test('telemetry-errors-on-sends-scrubbed', async () => {

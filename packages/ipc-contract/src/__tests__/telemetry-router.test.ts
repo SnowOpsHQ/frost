@@ -32,7 +32,7 @@ function fakeTelemetry() {
     dsn: FAKE_DSN,
     endpoint: FAKE_ENDPOINT,
     state: vi.fn(() => state),
-    setConsent: vi.fn((channel: TelemetryChannel, on: boolean) => {
+    setConsent: vi.fn((channel: TelemetryChannel, on: boolean, _windowId: number | null) => {
       state = { ...state, consent: { ...state.consent, [channel]: on }, version: state.version + 1 };
       return state;
     }),
@@ -92,13 +92,24 @@ describe('telemetry router', () => {
     }
   });
 
+  test('set-consent-passes-window-id', async () => {
+    const telemetry = fakeTelemetry();
+    await call(ctxFor(telemetry), 'setConsent', { channel: 'usage', on: true });
+    await call(ctxFor(telemetry), 'setConsent', { channel: 'usage', on: false });
+    // The service decides whether the sender's window has a live gesture (needed to turn on).
+    expect(telemetry.setConsent.mock.calls).toEqual([
+      ['usage', true, WINDOW_ID],
+      ['usage', false, WINDOW_ID],
+    ]);
+  });
+
   test('telemetry-answers-carry-no-secret', async () => {
     const telemetry = fakeTelemetry();
     const answers: unknown[] = [];
     answers.push(await call(ctxFor(telemetry), 'state'));
     const on = await call(ctxFor(telemetry), 'setConsent', { channel: 'errors', on: true });
     expect(on).toEqual({ consent: { usage: false, errors: true }, configured: { usage: true, errors: true }, persisted: true, version: 1 });
-    expect(telemetry.setConsent).toHaveBeenCalledExactlyOnceWith('errors', true);
+    expect(telemetry.setConsent).toHaveBeenCalledExactlyOnceWith('errors', true, WINDOW_ID);
     answers.push(on, await call(ctxFor(telemetry), 'reportError', ERROR));
     expect(answers.at(-1)).toBe('reported');
     const text = JSON.stringify(answers);
@@ -144,7 +155,7 @@ describe('telemetry router', () => {
   test('report-error-is-rate-limited', async () => {
     vi.useFakeTimers();
     const telemetry = fakeTelemetry();
-    telemetry.setConsent('errors', true);
+    telemetry.setConsent('errors', true, WINDOW_ID);
     for (let i = 0; i < RENDERER_ERROR_RATE_LIMIT.maxReports; i += 1) {
       expect(await call(ctxFor(telemetry), 'reportError', ERROR), `report ${i}`).toBe('reported');
     }

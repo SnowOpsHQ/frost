@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import {
+  ACCOUNT_REFRESH_MIN_INTERVAL_MS,
   AccountActionResultSchema,
   AccountRequestInputSchema,
   AccountStateSchema,
@@ -34,6 +35,18 @@ const requireAccount = middleware(({ ctx, next }) => {
 });
 
 const KNOWN_FLAGS: ReadonlySet<string> = new Set(FEATURE_FLAGS);
+
+/** When each service last ran a chrome-asked refresh (a new service, a new run, starts afresh). */
+const lastRefreshes = new WeakMap<AccountService, number>();
+
+/** Whether a chrome-asked refresh may run now (`ACCOUNT_REFRESH_MIN_INTERVAL_MS`); records it if so. */
+function admitRefresh(account: AccountService, now: number): boolean {
+  const last = lastRefreshes.get(account);
+  // The clock went back: a new interval starts.
+  if (last !== undefined && now >= last && now - last < ACCOUNT_REFRESH_MIN_INTERVAL_MS) return false;
+  lastRefreshes.set(account, now);
+  return true;
+}
 
 /**
  * Gates a procedure on feature `flag` (plan "Interfaces for other phases"); chain it after
@@ -155,7 +168,8 @@ export const accountRouter = router({
     .use(enforceSender)
     .use(requireAccount)
     .output(AccountActionResultSchema)
-    .mutation(({ ctx }) => ctx.account.refresh()),
+    // At most once per `ACCOUNT_REFRESH_MIN_INTERVAL_MS`: a page cannot make main hammer the backend.
+    .mutation(({ ctx }) => (admitRefresh(ctx.account, Date.now()) ? ctx.account.refresh() : false)),
   // The Settings view (Task 9, `account-settings.feature.md`): the menu's requests to open it in the
   // sender's window (a counter, long-polled).
   settingsWatch: publicProcedure

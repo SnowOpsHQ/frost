@@ -97,7 +97,7 @@ describe('startup never stops the window', () => {
     const { createTelemetryMain } = await import('../telemetry/main');
     const telemetry = createTelemetryMain(Promise.resolve());
     expect(telemetry.service.state()).toMatchObject({ consent: DEFAULT_CONSENT, configured: { usage: false, errors: false } });
-    expect(telemetry.service.setConsent('usage', true).consent).toEqual(DEFAULT_CONSENT);
+    expect(telemetry.service.setConsent('usage', true, 1).consent).toEqual(DEFAULT_CONSENT);
     expect(telemetry.telemetry.span('app.test', {}, () => 42)).toBe(42);
     expect(() => telemetry.telemetry.captureException(new Error('x'))).not.toThrow();
     expect(telemetry.service.reportError({ source: 'error', name: 'Error', message: 'x', stack: null })).toBe('dropped');

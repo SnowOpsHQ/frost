@@ -55,6 +55,10 @@ renderer never sees a token". Each line maps to one named test.
   snapshot or user ID (`AccountStateSchema` is strict; the router validates every output). The
   service's log goes through a redactor: fixed messages, and any token, code, verifier, `state`,
   snapshot or email that might still reach it is replaced.
+- **Refresh on demand is throttled.** The chrome's `account.refresh` runs at most once per
+  `ACCOUNT_REFRESH_MIN_INTERVAL_MS`; another call within it answers `false` and reaches neither the
+  service nor the backend (a page cannot make main hammer the backend). Main's own refreshes (start,
+  interval, after a confirmation) are not throttled.
 - **Fails closed.** `entitlements` is `none` unless `signed-in`, so `requireFeature` never passes on a
   request that was not confirmed, nor on a snapshot left behind without an account.
 - **Startup never stops the window.** Any exception while the account is set up in main
@@ -142,6 +146,7 @@ renderer never sees a token". Each line maps to one named test.
 ## Router (`packages/ipc-contract/src/__tests__/account-router.test.ts`)
 - `account-procedures-enforce-sender` — every `account.*` procedure refuses a foreign sender before the service is touched.
 - `sign-in-passes-window-id` — `signIn` and `confirmSignIn` hand the service the sender's `windowId`; `signIn` answers its `SignInResult`.
+- `refresh-is-throttled` — `refresh` reaches the service at most once per `ACCOUNT_REFRESH_MIN_INTERVAL_MS`; a call within it answers `false` without reaching it; after the interval (or with a new service) it runs again.
 - `account-watch-long-polls` — `watch` answers a newer state at once, else the next one, else the current after `WATCH_TIMEOUT_MS`.
 - `account-outputs-are-strict` — a service answer outside `AccountStateSchema` / `SignInResultSchema` / boolean is a masked internal error.
 - `answers-carry-no-secret` — the serialized answers of every account procedure contain none of the fake secrets.
@@ -150,5 +155,5 @@ renderer never sees a token". Each line maps to one named test.
 - `account-sign-in-needs-gesture` — without a real click `signIn` answers `needs-gesture` and nothing is opened.
 - `account-sign-in-confirm-is-pro` — a real click then `signIn` opens the authorize URL (observed, not opened); the test follows it as the browser (303 to the listener, 303 to `/done`, fixed headers); the app shows `confirming` with the email and the fingerprint of the URL's challenge; `confirmSignIn` without a click is refused, after a real click it gives `signed-in` with `pro` features.
 - `account-restart-keeps-account-only-with-keychain` — on the same profile the account is kept after a restart with a persistent keychain, and gone with a memory-only one. (Under Playwright, Linux is always memory-only: its Electron loader appends `--password-store=basic`; macOS uses a mock keychain, which persists. The persistent restart is also covered by `stored-account-restores-and-refreshes`.)
-- `account-tampered-snapshot-is-free` — a tampered snapshot from the server (and, with a persistent keychain, a tampered stored blob across a restart) reads `free`.
+- `account-tampered-snapshot-is-free` — a tampered snapshot from the server (and, with a persistent keychain, a tampered stored blob across a restart) reads `free`; a second `refresh` within `ACCOUNT_REFRESH_MIN_INTERVAL_MS` answers `false`, and signing in again brings the good snapshot back.
 - `account-sign-out-revokes` — `signOut` revokes the token at the backend and reads `signed-out`, `free`.

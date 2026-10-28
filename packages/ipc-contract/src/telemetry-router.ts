@@ -42,7 +42,8 @@ function admitReport(telemetry: TelemetryService, now: number): boolean {
 /**
  * - `state`: `TelemetryState` (consent, whether each channel is configured as booleans, version).
  * - `setConsent` (`{ channel, on }`): the new `TelemetryState`, after main's telemetry and the consent
- *   file changed.
+ *   file changed; the service is handed the sender's `windowId`, and turning on needs a live user
+ *   gesture there (else the state is answered unchanged).
  * - `reportError` (`RendererErrorInput`): `reported`, `dropped` (`errors` off or not configured) or
  *   `rate-limited` (more than `RENDERER_ERROR_RATE_LIMIT.maxReports` within `windowMs`; the service is
  *   not called).
@@ -58,7 +59,8 @@ export const telemetryRouter = router({
     .use(requireTelemetry)
     .input(SetConsentInputSchema)
     .output(TelemetryStateSchema)
-    .mutation(({ ctx, input }) => ctx.telemetry.setConsent(input.channel, input.on)),
+    // The sender's window: turning a channel on needs a live user gesture there (the service checks).
+    .mutation(({ ctx, input }) => ctx.telemetry.setConsent(input.channel, input.on, typeof ctx.sender?.windowId === 'number' ? ctx.sender.windowId : null)),
   reportError: publicProcedure
     .use(enforceSender)
     .use(requireTelemetry)

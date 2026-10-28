@@ -176,8 +176,13 @@ test('account-tampered-snapshot-is-free', async () => {
   backend.mode = 'tampered';
   expect(await call('mutation', 'refresh')).toBe(true);
   expect((await accountState()).entitlements).toMatchObject({ plan: 'free', features: [], status: 'invalid' });
+  // The chrome's refresh runs at most once per ACCOUNT_REFRESH_MIN_INTERVAL_MS: another one now is refused.
   backend.mode = 'ok';
-  expect(await call('mutation', 'refresh')).toBe(true);
+  expect(await call('mutation', 'refresh')).toBe(false);
+  expect((await accountState()).entitlements).toMatchObject({ status: 'invalid' });
+  // Signing in again (main's own refresh after the confirmation) brings the good snapshot back.
+  expect(await call('mutation', 'signOut')).toBe(true);
+  await signIn();
   expect((await accountState()).entitlements).toMatchObject({ plan: 'pro', status: 'active' });
 
   // A stored snapshot changed on disk (only with a keychain: memory-only writes nothing).

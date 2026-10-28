@@ -1,12 +1,12 @@
 // Spec: specs/entitlements-snapshot.spec.ts (EntitlementsSchema, FEATURE_NOT_ENTITLED_CODE, entitlementGrants),
-// specs/account-state.schema.ts (AccountStateSchema, AccountWatchInputSchema, AccountRequestInputSchema, SIGN_IN_RESULTS),
+// specs/account-state.schema.ts (AccountStateSchema, AccountWatchInputSchema, AccountRequestInputSchema, SIGN_IN_RESULTS, ACCOUNT_REFRESH_MIN_INTERVAL_MS),
 // specs/ipc-sender.spec.ts, specs/ipc-transport.spec.ts (IPC_INTERNAL_ERROR_CODE), specs/browser.spec.ts (WATCH_TIMEOUT_MS)
 // Acceptance: specs/entitlements-client.feature.md (Router), specs/account-signin.feature.md (Router),
 // specs/account-settings.feature.md (Router: account.settingsWatch, specs/account-settings.schema.ts)
 // · plan Global Constraint "Tokens stay in main"
 import { getTRPCErrorShape, TRPCError } from '@trpc/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { SIGN_IN_RESULTS, type AccountState, type SignInResult } from '@app/specs/account-state.schema';
+import { ACCOUNT_REFRESH_MIN_INTERVAL_MS, SIGN_IN_RESULTS, type AccountState, type SignInResult } from '@app/specs/account-state.schema';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import {
   FEATURE_FLAGS,
@@ -142,6 +142,28 @@ describe('account router', () => {
     // Each is the type it should be (a mutation is not reachable as a query, and the other way round).
     for (const [name, { type }] of Object.entries(ACCOUNT_PROCEDURES)) {
       expect((appRouter._def.procedures as unknown as Record<string, { _def: { type: string } }>)[`account.${name}`]?._def.type, name).toBe(type);
+    }
+  });
+
+  test('refresh-is-throttled', async () => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1), toFake: ['Date'] });
+    try {
+      const account = fakeAccount();
+      await expect(call(ctxFor(account), 'refresh')).resolves.toBe(true);
+      // Within the interval: answered false, the service (and so the backend) not reached.
+      vi.advanceTimersByTime(ACCOUNT_REFRESH_MIN_INTERVAL_MS - 1);
+      await expect(call(ctxFor(account), 'refresh')).resolves.toBe(false);
+      await expect(call(ctxFor(account), 'refresh')).resolves.toBe(false);
+      expect(account.refresh).toHaveBeenCalledOnce();
+      // Another service (a new run) has its own interval.
+      const other = fakeAccount();
+      await expect(call(ctxFor(other), 'refresh')).resolves.toBe(true);
+      // After the interval: runs again.
+      vi.advanceTimersByTime(1);
+      await expect(call(ctxFor(account), 'refresh')).resolves.toBe(true);
+      expect(account.refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

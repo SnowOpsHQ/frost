@@ -14,6 +14,9 @@ const OTEL_ENDPOINT = 'https://otel.example.test/v1/traces';
 const SENTRY_DSN = 'https://publickey@errors.example.test/42';
 const CONFIG: TelemetryConfig = { otelEndpoint: OTEL_ENDPOINT, sentryDsn: SENTRY_DSN };
 const APP_ROOT = '/opt/frost/resources/app';
+/** The sender's window (main hands telemetry the account's gesture tracker). */
+const WINDOW = 3;
+const OTHER_WINDOW = 4;
 
 // ---- Fakes ----------------------------------------------------------------------------------------
 
@@ -114,12 +117,12 @@ afterEach(async () => {
   vi.useRealTimers();
   // Off drops every queue and timer.
   for (const main of installed.splice(0)) {
-    main.service.setConsent('usage', false);
-    main.service.setConsent('errors', false);
+    main.service.setConsent('usage', false, WINDOW);
+    main.service.setConsent('errors', false, WINDOW);
   }
 });
 
-function setup(options: { consent?: TelemetryConsent; config?: TelemetryConfig; ready?: Promise<unknown>; now?: () => number } = {}): Setup {
+function setup(options: { consent?: TelemetryConsent; config?: TelemetryConfig; ready?: Promise<unknown>; now?: () => number; gestures?: boolean } = {}): Setup {
   const app = fakeApp({ ready: options.ready });
   const proc = fakeProcess();
   const net = fakeFetch();
@@ -137,6 +140,8 @@ function setup(options: { consent?: TelemetryConsent; config?: TelemetryConfig; 
     ...(options.now ? { now: options.now } : {}),
   });
   installed.push(main);
+  // Every window has a live gesture unless a test says otherwise.
+  if (options.gestures !== false) main.useGestures(() => true);
   return { main, app, proc, net, store, started };
 }
 
@@ -207,10 +212,35 @@ describe('telemetry main wiring', () => {
     expect(app.quit).not.toHaveBeenCalled();
   });
 
+  test('consent-on-needs-gesture', async () => {
+    const { main, store } = setup({ gestures: false });
+    const before = main.service.state();
+    // Before main handed telemetry the gesture tracker: turning on is refused, nothing written.
+    expect(main.service.setConsent('usage', true, WINDOW)).toEqual(before);
+    const live = new Set<number>();
+    main.useGestures((windowId) => live.delete(windowId));
+    // No gesture, no sender window, or a gesture in another window: refused.
+    expect(main.service.setConsent('usage', true, WINDOW)).toEqual(before);
+    expect(main.service.setConsent('errors', true, null)).toEqual(before);
+    live.add(OTHER_WINDOW);
+    expect(main.service.setConsent('usage', true, WINDOW)).toEqual(before);
+    expect(live.has(OTHER_WINDOW)).toBe(true);
+    expect(store.write).not.toHaveBeenCalled();
+    expect(main.telemetry.consent()).toEqual(DEFAULT_CONSENT);
+    // With one in the sender's window: on, and the gesture is spent.
+    live.add(WINDOW);
+    expect(main.service.setConsent('usage', true, WINDOW).consent).toEqual({ usage: true, errors: false });
+    expect(live.has(WINDOW)).toBe(false);
+    expect(store.write).toHaveBeenCalledOnce();
+    // Off never needs one (nor a window).
+    expect(main.service.setConsent('usage', false, null).consent).toEqual(DEFAULT_CONSENT);
+    expect(store.write).toHaveBeenCalledTimes(2);
+  });
+
   test('set-consent-is-synchronous', async () => {
     const { main, net, store, started } = setup();
     started.resolve();
-    const on = main.service.setConsent('errors', true);
+    const on = main.service.setConsent('errors', true, WINDOW);
     // Answered after the store and the telemetry changed, synchronously.
     expect(TelemetryStateSchema.parse(on)).toEqual({ consent: { usage: false, errors: true }, configured: { usage: true, errors: true }, persisted: true, version: 1 });
     expect(store.write).toHaveBeenCalledExactlyOnceWith({ usage: false, errors: true });
@@ -219,7 +249,7 @@ describe('telemetry main wiring', () => {
 
     // An event queued for the next macrotask is dropped when `errors` goes off before it leaves.
     main.telemetry.captureException(new Error('queued'));
-    const off = main.service.setConsent('errors', false);
+    const off = main.service.setConsent('errors', false, WINDOW);
     expect(off).toMatchObject({ consent: { usage: false, errors: false }, version: 2 });
     expect(store.write).toHaveBeenLastCalledWith({ usage: false, errors: false });
     expect(main.telemetry.consent().errors).toBe(false);
@@ -227,20 +257,20 @@ describe('telemetry main wiring', () => {
     expect(net.fetch).not.toHaveBeenCalled();
 
     // The same value again changes nothing (no write, same version).
-    expect(main.service.setConsent('errors', false).version).toBe(2);
+    expect(main.service.setConsent('errors', false, WINDOW).version).toBe(2);
     expect(store.write).toHaveBeenCalledTimes(2);
     // On again: the next error is sent.
-    main.service.setConsent('errors', true);
+    main.service.setConsent('errors', true, WINDOW);
     main.telemetry.captureException(new Error('after on'));
     await vi.waitFor(() => expect(sentryEvents(net.calls)).toHaveLength(1));
 
     // A failed write still applies the consent, for this run only (`persisted: false`); a later good write clears it.
     store.failWrites(true);
-    expect(main.service.setConsent('usage', true)).toMatchObject({ consent: { usage: true, errors: true }, persisted: false });
+    expect(main.service.setConsent('usage', true, WINDOW)).toMatchObject({ consent: { usage: true, errors: true }, persisted: false });
     expect(main.telemetry.consent().usage).toBe(true);
     expect(main.service.state().persisted).toBe(false);
     store.failWrites(false);
-    expect(main.service.setConsent('usage', false)).toMatchObject({ consent: { usage: false, errors: true }, persisted: true });
+    expect(main.service.setConsent('usage', false, WINDOW)).toMatchObject({ consent: { usage: false, errors: true }, persisted: true });
   });
 
   test('off-drops-queued-span', async () => {
@@ -250,13 +280,13 @@ describe('telemetry main wiring', () => {
     await vi.advanceTimersByTimeAsync(0);
     // The `app.start` span is queued (its batch leaves `exportDelayMs` after it ended) ...
     expect(net.fetch).not.toHaveBeenCalled();
-    main.service.setConsent('usage', false);
+    main.service.setConsent('usage', false, WINDOW);
     // ... and turning `usage` off drops it: nothing leaves, at the delay or on flush.
     await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.exportDelayMs * 2);
     await main.telemetry.flush({ timeoutMs: 10 });
     expect(net.fetch).not.toHaveBeenCalled();
     // Turned on again, the old span stays dropped; only new spans leave.
-    main.service.setConsent('usage', true);
+    main.service.setConsent('usage', true, WINDOW);
     main.telemetry.span('seo.audit', { outcome: 'ok' }, () => undefined);
     await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.exportDelayMs + 10);
     expect(otlp(net.calls).spans.map((span) => span.name)).toEqual(['seo.audit']);
@@ -306,7 +336,7 @@ describe('telemetry main wiring', () => {
     expect(net.fetch).not.toHaveBeenCalled();
 
     // With `errors` on, both are reported, unhandled, with their mechanism; an error seen twice once.
-    main.service.setConsent('errors', true);
+    main.service.setConsent('errors', true, WINDOW);
     const crash = new Error('main crash');
     const rejected = new Error('main rejection');
     proc.emit('uncaughtExceptionMonitor', crash, 'uncaughtException');
@@ -392,7 +422,7 @@ describe('telemetry main wiring', () => {
     // No main stack leaks into a renderer error without one.
     expect((rejection!['exception'] as { values: { stacktrace?: unknown }[] }).values.at(-1)!.stacktrace).toBeUndefined();
 
-    main.service.setConsent('errors', false);
+    main.service.setConsent('errors', false, WINDOW);
     expect(main.service.reportError(RENDERER_ERROR)).toBe('dropped');
     // Not configured: dropped whatever the consent.
     const unconfigured = setup({ consent: { usage: true, errors: true }, config: { otelEndpoint: null, sentryDsn: null } });

@@ -66,6 +66,11 @@ export interface TelemetryMain {
   readonly telemetry: TelemetryHandle;
   /** The IPC `telemetry.*` service (`services.telemetry`). */
   readonly service: TelemetryService;
+  /**
+   * Hands telemetry the app windows' gesture tracker (the account's `gestures.consume`; telemetry is
+   * created before it exists). Until then turning a channel on is refused (fails closed).
+   */
+  useGestures(consume: (windowId: number) => boolean): void;
 }
 
 /**
@@ -194,10 +199,25 @@ export function installTelemetry(deps: TelemetryMainDeps): TelemetryMain {
   // `false` once a write failed: what is shown holds for this run only (the next start is off).
   let persisted = true;
   const state = (): TelemetryState => ({ consent: telemetry.consent(), configured: telemetry.configured(), persisted, version });
+  /** Spends window `windowId`'s live user gesture (none until main hands telemetry the tracker). */
+  let consumeGesture: (windowId: number) => boolean = () => false;
   const service: TelemetryService = {
     state,
-    setConsent(channel: TelemetryChannel, on: boolean) {
+    setConsent(channel: TelemetryChannel, on: boolean, windowId: number | null) {
       if (telemetry.consent()[channel] === on) return state();
+      // On needs a live user gesture in the window that asked (a page cannot opt the user in); off never does.
+      if (on) {
+        let gesture = false;
+        try {
+          gesture = windowId !== null && consumeGesture(windowId) === true;
+        } catch {
+          gesture = false;
+        }
+        if (!gesture) {
+          log('telemetry: turning a channel on without a user gesture was refused');
+          return state();
+        }
+      }
       // The telemetry first (off stops export at once), then the file.
       telemetry.setConsent(channel, on);
       persisted = store.write(telemetry.consent());
@@ -219,7 +239,13 @@ export function installTelemetry(deps: TelemetryMainDeps): TelemetryMain {
     configured: () => telemetry.configured(),
     flush: (options) => telemetry.flush(options),
   };
-  return { telemetry: handle, service };
+  return {
+    telemetry: handle,
+    service,
+    useGestures(consume) {
+      consumeGesture = consume;
+    },
+  };
 }
 
 /**
@@ -241,5 +267,5 @@ export function unconfiguredTelemetryMain(): TelemetryMain {
     setConsent: () => state(),
     reportError: () => 'dropped',
   };
-  return { telemetry, service };
+  return { telemetry, service, useGestures: () => undefined };
 }

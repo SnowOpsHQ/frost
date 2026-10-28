@@ -394,6 +394,8 @@ function start(): void {
     // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
     // check), before the first window (its gestures are tracked from creation).
     const account = await createAccountMain();
+    // Turning telemetry on needs a live gesture in the sender's window (specs/telemetry.feature.md).
+    telemetryMain.useGestures((windowId) => account.gestures.consume(windowId));
     // Search Console (specs/gsc.feature.md): read-only, gated on `search-console`; reuses the account's store and gestures.
     const gsc = await createGscMain(account);
     attachIpcHandler({

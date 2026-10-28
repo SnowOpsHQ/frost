@@ -47,6 +47,12 @@ export const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
 export const CONFIRM_TIMEOUT_MS = 10 * 60_000;
 /** The account and its entitlements are refreshed at start, on `refresh`, and this often. */
 export const ACCOUNT_REFRESH_INTERVAL_MS = 6 * 60 * 60_000;
+/**
+ * `account.refresh` (the chrome's "Refresh") runs at most once per this long per run: a call within it
+ * answers `false` without reaching the backend. Main's own refreshes (start, interval, confirmation)
+ * are not counted.
+ */
+export const ACCOUNT_REFRESH_MIN_INTERVAL_MS = 30_000;
 /** Each backend call (exchange, session, entitlements, sign-out) gives up after this long (a `network` failure). */
 export const ACCOUNT_API_TIMEOUT_MS = 15_000;
 /** On quit, an exchanged-but-unconfirmed (or signed-out) token's revocation may hold the quit at most this long. */

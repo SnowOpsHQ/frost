@@ -132,6 +132,11 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   nothing, `setConsent` changes nothing), logged with a fixed message, so the first window always opens.
 - **Toggling is synchronous.** `telemetry.setConsent` changes main's telemetry and writes the file
   before it answers; off drops what is queued at once (no flush).
+- **On needs a user gesture; off never does.** Turning a channel on needs a live user gesture in the
+  sender's window (the account's tracker, `account-signin.feature.md`, Gestures: trusted input only,
+  spent once), so a page cannot opt the user in by itself; without one the state is answered unchanged
+  and nothing is written. Turning one off is always honoured at once. The Settings switch sends on its
+  click, so it has the gesture.
 - **Configured, not revealed.** The build's DSN and OTLP endpoint (`FROST_PUBLIC_SENTRY_DSN`,
   `FROST_PUBLIC_OTEL_ENDPOINT`) are read like the account's configuration (build time; one rule for
   every public value, `build-config.spec.ts`: only an unpackaged build with no `FROST_PUBLIC_*` value
@@ -210,6 +215,9 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 ### Main wiring (`apps/desktop/src/main/telemetry/__tests__/install.test.ts`, fake app, process and fetch)
 - `consent-off-sends-nothing` — with the defaults, the `app.start` span, a main uncaught exception, an
   unhandled rejection and a renderer error make no fetch, also after flush and quit; quitting is not held.
+- `consent-on-needs-gesture` — turning a channel on without a live gesture in the sender's window (or
+  before main handed telemetry the gesture tracker, or with no sender window) changes nothing and
+  writes nothing; with one it turns on and spends it; turning off never needs one.
 - `set-consent-is-synchronous` — `setConsent` has changed the telemetry and written the store when it
   returns; turning `errors` off drops a queued event (no fetch afterwards); the state's version goes up;
   a failed write still applies the consent and answers `persisted: false` until a write succeeds.
@@ -235,6 +243,7 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   the service is called; each is the right type.
 - `telemetry-answers-carry-no-secret` — answers never carry the DSN or endpoint; a service answer with
   any other member is a masked internal error.
+- `set-consent-passes-window-id` — `setConsent` hands the service the sender's `windowId`.
 - `telemetry-inputs-are-validated` — malformed `setConsent` and `reportError` inputs are `BAD_REQUEST`
   before the service is called.
 - `report-error-is-rate-limited` — after `RENDERER_ERROR_RATE_LIMIT.maxReports` within `windowMs` the
@@ -248,7 +257,9 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 
 ### End to end (`apps/desktop/e2e/telemetry.e2e.ts`, a fake OTLP collector and Sentry endpoint)
 - `telemetry-nothing-before-consent` — with the defaults, the startup span, a renderer error and a
-  main unhandled rejection send nothing; the state says both off and both configured.
+  main unhandled rejection send nothing; the state says both off and both configured; a `setConsent`
+  on from the page without a real click changes nothing. (Every consent-on in the suite follows a real
+  click in the chrome.)
 - `telemetry-errors-on-sends-scrubbed` — after `setConsent` on, a renderer error and a main rejection
   arrive at the Sentry endpoint without the URL, host, email, paths (the checkout's too), the
   machine's host name, its first label or the login name they carried; no request carries the cookie

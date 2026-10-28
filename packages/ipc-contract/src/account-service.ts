@@ -36,7 +36,10 @@ export interface AccountService {
   cancelSignIn(requestId: string): Promise<boolean>;
   /** Revokes the token (best effort), forgets the account and its entitlements: `true` if signed in. */
   signOut(): Promise<boolean>;
-  /** Refreshes the session and entitlements now: `true` if signed in (a refresh ran). */
+  /**
+   * Refreshes the session and entitlements now: `true` if signed in (a refresh ran). The router's
+   * `account.refresh` calls it at most once per `ACCOUNT_REFRESH_MIN_INTERVAL_MS` (else answers `false`).
+   */
   refresh(): Promise<boolean>;
   /**
    * The menu's requests to open the account's Settings view (Phase 4 Task 9, `account-settings.feature.md`):
