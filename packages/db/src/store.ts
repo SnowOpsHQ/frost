@@ -1,4 +1,5 @@
 import { createDrizzle } from './client';
+import { createAgentGrantsRepository, type AgentGrantsRepository } from './agent-grants';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
 import { createSettingsRepository, type SettingsRepository } from './settings';
@@ -20,6 +21,8 @@ export interface SessionStore {
   /** Browser polish (Phase 2.5 Task 6): the History view's reads and deletes, and local preferences. */
   readonly history: HistoryRepository;
   readonly settings: SettingsRepository;
+  /** The agent's standing grants and read-tools setting (Phase 5 Task 4), written at once. */
+  readonly agentGrants: AgentGrantsRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /** Flushes pending writes, then closes the database (idempotent; never rejects). */
@@ -41,6 +44,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     contentNotes: createContentNotesRepository(drizzle),
     history: createHistoryRepository(drizzle),
     settings: createSettingsRepository(drizzle),
+    agentGrants: createAgentGrantsRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },

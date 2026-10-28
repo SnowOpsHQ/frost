@@ -221,6 +221,9 @@ importers:
       '@app/agent-runtime':
         specifier: workspace:*
         version: link:../agent-runtime
+      '@app/ai-skills':
+        specifier: workspace:*
+        version: link:../../packages/ai-skills
       '@app/db':
         specifier: workspace:*
         version: link:../../packages/db

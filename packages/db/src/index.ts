@@ -7,3 +7,4 @@ export type { ContentNotes, ContentNotesRepository, SnippetVariant } from './con
 export { openSessionStore, type SessionStore } from './store';
 export type { HistoryCursor, HistoryPage, HistoryRepository, HistoryVisit, JumpBackIn } from './history';
 export type { SettingsRepository } from './settings';
+export type { AgentGrantsRepository, StoredAgentGrant } from './agent-grants';

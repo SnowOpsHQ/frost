@@ -198,7 +198,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Tests:** each risk class's path; `agent-cannot-approve`; replay refused; a grant for one origin
   doesn't cover another; Stop rejects pending approvals; `injection-cannot-escalate` (a page text
   saying "click …" leads to an approval request, not a click).
-- [ ] commit `feat(agent): approval broker and standing grants`
+- [x] commit `feat(agent): approval broker and standing grants`
 
 ### Task 5: Core page tools
 - **Files:** `apps/desktop/src/main/agent/tools/`: `page-audit` (the tab's ready audit, summarised
@@ -303,3 +303,25 @@ _Filled in as tasks land._
   lockdown now also stops module loading and code generation from strings (protocol version 3);
   Zod runs `jitless` in the runtime (set before any schema is built), since it would otherwise
   compile parsers with `new Function` after the lockdown. Verified in a real utility process.
+- **Task 4.** Policy and constants are plain functions in `specs/agent-approvals.spec.ts` (`decide`,
+  `grantOriginFor`, `approvalOriginFor`, `isGrantOrigin`, `canGrant`, `APPROVAL_TIMEOUT_MS` 5 min,
+  `TOOL_ERROR_MESSAGES`); acceptance `specs/agent-approvals.feature.md`. `createAgent` now also takes
+  `grantsStore` (`SessionStore.agentGrants`), `toolRunner` (Task 5; default answers `unavailable`)
+  and `tabUrl(tabId)`, and returns `grants` and `approvals`; `start()` loads the grants first. The
+  session manager (Task 6) calls `approvals.register(chatId, { tabId, allowedTools })` before each
+  `chat.start` and `unregister(chatId)` on Stop; the broker also ends a turn itself on its
+  `chat.finish` / `chat.error` (the host sends one when the runtime dies), so nothing waits on a
+  finished turn. `answer(approvalId, 'allow-once' | 'allow-always' | 'deny')` is for Task 6's
+  sender-guarded IPC only; it resolves once the decision is applied (an allowed call then runs on its
+  own; its outcome shows in `activity()`). Choices: a repeated call id is dropped unanswered (a host
+  strike), since answering it would race the first call's answer; every approved page tool
+  (click, execute_javascript, and the page reads when read tools are off) re-checks that the tab
+  still shows the approved origin; the request view carries `execute_javascript`'s code in full
+  (the display input is cut at 4000 characters); runner errors carry only fixed messages, so a
+  tool that wants to explain a miss returns it as data. Migration `0030_agent_grants` creates
+  `agent_grants` and `agent_preferences` (the read-tools setting, key `read_tools_allowed`), appended
+  to `MIGRATIONS` as `...AGENT_GRANTS_MIGRATIONS`; when Phase 6's `...CHANGE_INTEL_MIGRATIONS`
+  (`0040`+) merges, ours must stay before it (ids strictly increase). `@app/desktop` now depends on
+  `@app/ai-skills` (main re-parses each input with the tool's own schema); its lockfile entry was
+  added by hand because `pnpm install` currently refuses the AI SDK entries under the
+  minimum-release-age policy (fine once they age past it).

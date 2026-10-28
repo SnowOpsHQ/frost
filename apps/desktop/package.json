@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@app/agent-runtime": "workspace:*",
+    "@app/ai-skills": "workspace:*",
     "@app/db": "workspace:*",
     "@app/ipc-contract": "workspace:*",
     "@app/seo-core": "workspace:*",
