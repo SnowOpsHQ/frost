@@ -3,7 +3,7 @@
 // Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { AgentDeleteAllChatsResult, AgentGrantView, AgentSaveSkillResult, AgentSkillDetail, ChatExportResult } from '@app/specs/agent-data.spec';
+import type { AgentDeleteAllChatsResult, AgentGrantView, AgentSaveSkillResult, AgentSetRetentionResult, AgentSkillDetail, ChatExportResult } from '@app/specs/agent-data.spec';
 import { CREDENTIAL_LIMITS } from '@app/specs/agent-proxy.spec';
 import { AGENT_WATCH_TIMEOUT_MS, CHAT_TEXT_MAX_CHARS, type AgentSetKeyResult, type AgentState } from '@app/specs/agent-session.spec';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
@@ -68,7 +68,7 @@ function fakeAgent(version = 3) {
     revokeGrant: vi.fn(async (_tool: string, _origin: string) => true),
     revokeAllGrants: vi.fn(async () => true),
     setReadToolsAllowed: vi.fn(async (_allowed: boolean) => true),
-    setChatRetention: vi.fn(async (_retention: string) => true),
+    setChatRetention: vi.fn(async (_retention: string): Promise<AgentSetRetentionResult> => 'saved'),
     deleteAllChats: vi.fn(async (): Promise<AgentDeleteAllChatsResult> => 'deleted'),
     exportChat: vi.fn(async (_chatId: string, _format: string): Promise<ChatExportResult> => 'saved'),
     skillDetail: vi.fn((_id: string): AgentSkillDetail | null => null),
@@ -312,8 +312,12 @@ describe('agent router', () => {
     await expect(procedure(ctx, 'revokeAllGrants')()).resolves.toBe(true);
     await expect(procedure(ctx, 'setReadToolsAllowed')({ allowed: false })).resolves.toBe(true);
     expect(service.setReadToolsAllowed).toHaveBeenLastCalledWith(false);
-    await expect(procedure(ctx, 'setChatRetention')({ retention: 'off' })).resolves.toBe(true);
-    expect(service.setChatRetention).toHaveBeenLastCalledWith('off');
+    await expect(procedure(ctx, 'setChatRetention')({ retention: 'off' })).resolves.toBe('saved');
+    service.setChatRetention.mockResolvedValueOnce('cancelled');
+    await expect(procedure(ctx, 'setChatRetention')({ retention: 'off' })).resolves.toBe('cancelled');
+    service.setChatRetention.mockResolvedValueOnce(true as never);
+    await expect(procedure(ctx, 'setChatRetention')({ retention: '7d' })).resolves.toBe('failed');
+    expect(service.setChatRetention).toHaveBeenLastCalledWith('7d');
     await expect(procedure(ctx, 'deleteAllChats')()).resolves.toBe('deleted');
     await expect(procedure(ctx, 'exportChat')({ chatId: CHAT, format: 'json' })).resolves.toBe('saved');
     expect(service.exportChat).toHaveBeenLastCalledWith(CHAT, 'json');

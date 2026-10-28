@@ -33,7 +33,8 @@ export const AGENT_GRANTS_EMPTY = 'No site grants. When you choose "Always allow
 export const AGENT_GRANTS_REVOKE_ALL_CONFIRM = 'Revoke every site grant? The agent will ask again before it opens pages or clicks on any site.';
 /** The read tools' switch on the grants page (`agent.setReadToolsAllowed`). */
 export const AGENT_READ_TOOLS_LABEL = 'Let reading tools run without asking on public pages';
-export const AGENT_READ_TOOLS_HINT = 'Reading the page, its audit and search data never changes anything. Turn this off to approve every read too.';
+export const AGENT_READ_TOOLS_HINT =
+  "Reading the page, its audit and search data never changes anything, but what they read (the page's text included) is sent to the model provider you chose. Turn this off to approve every read too.";
 
 // ---- Chat retention --------------------------------------------------------------------------
 
@@ -127,6 +128,31 @@ export const DELETE_ALL_CHATS = {
   },
   confirmIndex: 0,
 } as const;
+
+/**
+ * Changing the retention so that stored chats would be deleted (`off`, or a shorter window with
+ * older chats) asks first, in a native message box main shows; only `confirmIndex` confirms. A
+ * change that deletes nothing (a longer window, or no chat that old) applies at once.
+ */
+export function changeRetentionDialog(retention: ChatRetention, chats: number) {
+  const which = retention === 'off' ? 'every saved chat' : chats === 1 ? 'the saved chat older than that' : `the ${chats} saved chats older than that`;
+  return {
+    dialog: {
+      type: 'warning' as const,
+      message: retention === 'off' ? 'Stop saving agent chats?' : `${CHAT_RETENTION_LABELS[retention]}?`,
+      detail: `This deletes ${which} now. It cannot be undone.`,
+      buttons: ['Delete and Change', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    },
+    confirmIndex: 0,
+  };
+}
+
+/** `agent.setChatRetention`'s answer: `saved`, `cancelled` (the user kept the old setting in main's dialog), `failed`. */
+export const AGENT_SET_RETENTION_RESULTS = ['saved', 'cancelled', 'failed'] as const;
+export type AgentSetRetentionResult = (typeof AGENT_SET_RETENTION_RESULTS)[number];
 
 /** `agent.deleteAllChats`'s answer. */
 export const AGENT_DELETE_ALL_CHATS_RESULTS = ['deleted', 'cancelled', 'failed'] as const;
@@ -299,6 +325,9 @@ export const SKILL_FIELD_MESSAGES: Readonly<Record<SkillEditorField, string>> = 
   instructions: `Write the instructions, up to ${SKILL_LIMITS.maxInstructionChars} characters, using only the listed {{slot}} placeholders.`,
   inputs: 'Each input needs a label on one line, and its slot must appear in the instructions.',
 };
+
+/** What a user skill whose name is a built-in's (ignoring case and spacing) is refused with. */
+export const SKILL_NAME_TAKEN_MESSAGE = "A built-in skill already has this name. Choose another, so the two can't be confused.";
 
 /** How the skills list marks each kind. */
 export const SKILL_BUILTIN_LABEL = 'Built-in (read-only)';

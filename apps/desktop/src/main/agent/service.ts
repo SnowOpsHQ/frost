@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { createBuiltinSkillRegistry, type SkillRegistry } from '@app/ai-skills/skills';
-import { CHAT_PRUNE_INTERVAL_MS, chatExportFileName, type ChatExportFormat, type ChatExportResult } from '@app/specs/agent-data.spec';
+import { CHAT_PRUNE_INTERVAL_MS, chatExportFileName, type ChatExportFormat, type ChatExportResult, type ChatRetention } from '@app/specs/agent-data.spec';
 import type { AgentGrantsStore } from './grants';
 import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
 import { chatExportText } from './chat-export';
@@ -32,6 +32,8 @@ import { createMemorySkillsStore, createUserSkills, type AgentSkillsStore } from
 export interface AgentDialogs {
   /** Asks before every chat is deleted: `true` only when the user confirmed. */
   confirmDeleteAllChats(): Promise<boolean>;
+  /** Asks before a retention change deletes `chats` saved chats: `true` only when the user confirmed. */
+  confirmRetentionChange(retention: ChatRetention, chats: number): Promise<boolean>;
   /** Asks where to save an export (`defaultName` offered): the chosen file, or `null` if cancelled. */
   chooseExportPath(defaultName: string, format: ChatExportFormat): Promise<string | null>;
 }
@@ -63,7 +65,7 @@ export interface AgentServiceDeps {
   readonly buildDir: string;
   /** frost's own skills (default: the built-ins); the user's are composed after them (Task 9). */
   readonly skills?: SkillRegistry;
-  /** main's dialogs (Task 9); default: "Delete all chats" never confirmed, every export cancelled. */
+  /** main's dialogs (Task 9); default: "Delete all chats" and deleting retention changes never confirmed, every export cancelled. */
   readonly dialogs?: AgentDialogs;
   /** Writes an export's text to the file the user chose (default: `fs.writeFile`, owner-only). */
   readonly writeExport?: (file: string, text: string) => Promise<void>;
@@ -78,7 +80,7 @@ export interface AgentServiceDeps {
   readonly log?: (line: string) => void;
 }
 
-const NO_DIALOGS: AgentDialogs = { confirmDeleteAllChats: async () => false, chooseExportPath: async () => null };
+const NO_DIALOGS: AgentDialogs = { confirmDeleteAllChats: async () => false, confirmRetentionChange: async () => false, chooseExportPath: async () => null };
 
 export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
   const log = deps.log ?? (() => undefined);
@@ -144,6 +146,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     userSkills,
     history,
     confirmDeleteAllChats: () => dialogs.confirmDeleteAllChats(),
+    confirmRetentionChange: (retention, chats) => dialogs.confirmRetentionChange(retention, chats),
     exportChat,
     scripted: e2eAgentScript !== null,
     now,

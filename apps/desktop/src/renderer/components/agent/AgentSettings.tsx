@@ -119,7 +119,9 @@ function ChatHistorySection({ chatRetention }: { readonly chatRetention: ChatRet
         data-testid="agent-retention"
         value={chatRetention}
         onChange={(event) => {
-          void agentActions.setChatRetention(event.target.value as ChatRetention).then((ok) => setMessage(ok ? null : 'That choice could not be saved.'));
+          // Main asks first, in its own dialog, when the change would delete saved chats; the select
+          // shows main's setting whatever the answer.
+          void agentActions.setChatRetention(event.target.value as ChatRetention).then((result) => setMessage(result === 'failed' ? 'That choice could not be saved.' : null));
         }}
       >
         {retentionOptions().map((option) => (

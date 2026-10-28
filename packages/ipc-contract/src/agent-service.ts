@@ -3,6 +3,7 @@ import type {
   AgentDeleteAllChatsResult,
   AgentGrantView,
   AgentSaveSkillResult,
+  AgentSetRetentionResult,
   AgentSkillDetail,
   AgentSkillDraft,
   AgentSkillSaveMode,
@@ -63,8 +64,11 @@ export interface AgentService {
   revokeAllGrants(): Promise<boolean>;
   /** Turns the read tools' implied grant on or off; `false` if it couldn't be stored. */
   setReadToolsAllowed(allowed: boolean): Promise<boolean>;
-  /** Sets how long chats are kept on disk and prunes under it at once; `false` if it couldn't be stored. */
-  setChatRetention(retention: ChatRetention): Promise<boolean>;
+  /**
+   * Sets how long chats are kept on disk and prunes under it at once. A change that would delete
+   * chats asks first in main's own dialog (`cancelled` if the user keeps the old setting).
+   */
+  setChatRetention(retention: ChatRetention): Promise<AgentSetRetentionResult>;
   /** Deletes every chat, in memory and on disk, once main's own dialog confirmed it. */
   deleteAllChats(): Promise<AgentDeleteAllChatsResult>;
   /** Exports a chat, written only where the user chooses in main's save dialog. */

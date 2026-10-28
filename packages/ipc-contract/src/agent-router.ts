@@ -17,12 +17,14 @@ import {
 import {
   AGENT_DELETE_ALL_CHATS_RESULTS,
   AGENT_SAVE_SKILL_RESULTS,
+  AGENT_SET_RETENTION_RESULTS,
   CHAT_EXPORT_RESULTS,
   MAX_SKILL_ERRORS,
   SKILL_EDITOR_FIELDS,
   type AgentDeleteAllChatsResult,
   type AgentGrantView,
   type AgentSaveSkillResult,
+  type AgentSetRetentionResult,
   type AgentSkillDetail,
   type ChatExportResult,
 } from '@app/specs/agent-data.spec';
@@ -186,7 +188,7 @@ export const agentRouter = router({
     .use(enforceSender)
     .use(requireAgent)
     .input(AgentSetChatRetentionInputSchema)
-    .mutation(async ({ ctx, input }) => (await ctx.agent.setChatRetention(input.retention)) === true),
+    .mutation(async ({ ctx, input }): Promise<AgentSetRetentionResult> => oneOf(AGENT_SET_RETENTION_RESULTS, await ctx.agent.setChatRetention(input.retention), 'failed')),
   deleteAllChats: publicProcedure
     .use(enforceSender)
     .use(requireAgent)

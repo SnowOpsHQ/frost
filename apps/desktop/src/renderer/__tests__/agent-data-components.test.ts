@@ -34,7 +34,7 @@ const calls = vi.hoisted(() => ({
   revokeGrant: vi.fn(async (..._args: unknown[]) => true),
   revokeAllGrants: vi.fn(async () => true),
   setReadToolsAllowed: vi.fn(async (..._args: unknown[]) => true),
-  setChatRetention: vi.fn(async (..._args: unknown[]) => true),
+  setChatRetention: vi.fn(async (..._args: unknown[]) => 'saved' as 'saved' | 'cancelled' | 'failed'),
   deleteAllChats: vi.fn(async () => 'deleted' as const),
   exportChat: vi.fn(async (..._args: unknown[]) => 'saved' as 'saved' | 'cancelled' | 'failed'),
   skillDetail: vi.fn(async (..._args: unknown[]) => null as unknown),
@@ -136,6 +136,22 @@ describe('agent data components', () => {
     });
     await flush();
     expect(calls.setChatRetention).toHaveBeenCalledWith('off');
+    // Kept in main's dialog: the select shows main's setting, with nothing to say; a failure says so.
+    calls.setChatRetention.mockResolvedValueOnce('cancelled');
+    act(() => {
+      select.value = '7d';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    expect(select.value).toBe('7d');
+    expect(byTestId('agent-chat-history-message')).toBeNull();
+    calls.setChatRetention.mockResolvedValueOnce('failed');
+    act(() => {
+      select.value = 'forever';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    expect(byTestId('agent-chat-history-message')!.textContent).toBe('That choice could not be saved.');
     click(byTestId('agent-delete-all-chats'));
     await flush();
     expect(calls.deleteAllChats).toHaveBeenCalledOnce();

@@ -63,7 +63,8 @@ describe('agent grants (db)', () => {
     const old = new DatabaseSync(':memory:');
     runMigrations(old, MIGRATIONS.filter((m) => m.id < '0030'));
     old.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('search_engine', 'x', 1)").run();
-    expect(runMigrations(old)).toEqual(['0030_agent_grants', '0031_agent_chats', '0032_agent_skills']);
+    // Phase 5's block only: other phases' migrations may be appended around it.
+    expect(runMigrations(old).filter((id) => id >= '0030' && id < '0040')).toEqual(['0030_agent_grants', '0031_agent_chats', '0032_agent_skills']);
     expect(old.prepare('SELECT count(*) AS n FROM app_settings').get()!['n']).toBe(1);
   });
 

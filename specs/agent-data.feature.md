@@ -25,11 +25,18 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
   in memory until quit), `7d`, `30d`, `forever`; the default is **`30d`**: chats survive a restart
   (the point of storing them) and expire on their own, the file is the owner-only profile database,
   and it never holds a key. Main saves a chat when one of its turns ends (its history in the protocol
-  shape, its display entries with the bounded tool previews) and deletes it when the user does. It
-  prunes at startup, daily, and at once when the retention changes (`off` deletes every stored chat;
-  a finite window also drops idle chats past it from memory). At most `MAX_STORED_CHATS` (50, as many
+  shape, its display entries with the bounded tool previews) and deletes it when the user does. A
+  turn's save writes only the rows after the ones stored (the whole chat after a trim, rows that
+  didn't read back intact, or a gap); startup reads only the chats' own rows and a chat's messages
+  are read when it is opened, sent to or exported. It prunes at startup, daily, and at once when the
+  retention changes (`off` deletes every stored chat; a finite window also drops idle chats past it
+  from memory). A change that would delete saved chats asks first in main's own dialog
+  (`changeRetentionDialog`; `agent.setChatRetention` answers `saved | cancelled | failed`). The
+  agent tables' deletes and rewrites run with `secure_delete` on for that batch only, so deleted text
+  doesn't stay in the file's free pages. At most `MAX_STORED_CHATS` (50, as many
   as memory keeps): saving one more drops the least recently updated. A restored chat has no tab
-  until its next message binds the active one. Rows read back are validated with the protocol's own
+  until its next message binds the active one; a time in the future reads as now; a deletion or
+  "Delete all" made before the startup restore ran is not undone by it. Rows read back are validated with the protocol's own
   schemas and re-paired, so a tampered file can't put anything else in a chat.
 - **"Delete all chats" asks in main's own dialog** (`DELETE_ALL_CHATS`), then deletes every chat in
   memory (stopping a running one) and on disk.
@@ -40,11 +47,14 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
   names a path. Markdown: a heading, the untrusted-output note, each turn, and each tool card as a
   fenced block (tool name and status in the info string; its fence longer than any backtick run
   inside). JSON: `ChatExportV1` (`kind: 'frost.agent-chat'`, `version: 1`). Neither carries a chat,
-  call or approval id, an input hash or a key; tool output stays marked untrusted.
+  call or approval id, an input hash or a key; tool output stays marked untrusted. Message text,
+  the title and skill names are escaped (`inertMarkdown`), so an image, link or HTML a reply holds
+  fetches nothing when the file is opened.
 - **The user's skills are data validated by `SkillSchema` in main.** Stored as the validated JSON
   (`agent_skills`), validated again when read; composed **after** the built-ins, so a user skill can
   never take a built-in's id, and saving one with such an id is refused (`builtin-id`). `create`
-  refuses an id already stored (`exists`), `update` one that isn't (`unknown-skill`); main sets the
+  refuses an id already stored (`exists`), `update` one that isn't (`unknown-skill`), and a name
+  that is a built-in's (ignoring case and spacing) is refused inline; main sets the
   version (1, then one more per edit). A refused draft answers inline errors per field in frost's own
   words (never Zod's text). Built-ins are read-only: "Duplicate to edit" stores a copy under a free
   id (`<id>-copy`, `-copy-2` …) named "<name> (copy)". The editor offers the catalogue's tools with
@@ -53,13 +63,17 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 ## Stored chats (`packages/db/src/__tests__/agent-chats.test.ts`)
 - **Scenario: agent-chats-migrate** — `0031_agent_chats` creates the schema's tables; Phase 5's
   migrations `0030`–`0032` are contiguous and in order; a database with only the grants gains them.
-- **Scenario: agent-chats-round-trip** — stored, read most recent first, replaced in place (keeping
-  its creation time), deleted one and all.
+- **Scenario: agent-chats-round-trip** — heads read most recent first, rows only when asked for,
+  replaced in place (keeping its creation time), deleted one and all.
+- **Scenario: agent-chats-append-only** — a later save writes only its own rows (earlier ones
+  untouched); a position past what is stored is refused; replacing from a position drops what follows.
+- **Scenario: agent-chats-deleted-text-leaves-the-file** — after deletes, a rewrite and an `off` prune,
+  none of the text is in the file's bytes; the connection's `secure_delete` is as it was.
 - **Scenario: agent-chats-capped** — only the `MAX_STORED_CHATS` most recent are kept, their rows too.
 - **Scenario: agent-chats-refuse-out-of-bounds** — bad ids, titles, times, counts and rows are
   refused; tampered rows are skipped on the way out.
 - **Scenario: agent-chats-prune-by-retention** — `forever` keeps all, `30d` / `7d` drop older ones,
-  `off` drops every one; a tampered time is pruned.
+  `off` drops every one (each counted first); a tampered time is pruned.
 - **Scenario: chat-retention-preference-round-trip** — the default, each value, a tampered one.
 - **Scenario: agent-chats-in-store** — persisted across opens of the session store.
 
@@ -78,12 +92,21 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
   no key, approval id or input hash.
 - **Scenario: retention-off-stores-nothing** — even a chat ended before the setting loaded; the chat
   stays in memory.
-- **Scenario: retention-change-prunes-at-once** — `7d` drops the older chat on disk and in memory,
-  `off` drops every stored chat, the daily prune follows the window.
+- **Scenario: chat-saves-append-only** — the second turn writes only its rows; a gap makes the
+  session write the whole chat.
+- **Scenario: chat-loads-lazily** — startup reads only the list; sending to an unopened chat reads it
+  first; rows that don't read back intact make the next save a full rewrite.
+- **Scenario: retention-change-asks-before-deleting** — a longer window asks nothing; `7d` and `off`
+  ask in main's dialog (kept: nothing changes) and, confirmed, delete on disk and idle in memory;
+  the daily prune follows the window.
+- **Scenario: restore-keeps-deletions-made-during-load** — "Delete all" before the restore ran stays.
+- **Scenario: clear-browsing-data-hooks** — `forgetAgentGrants` and `deleteAllChatsUnconfirmed`, no dialog.
 - **Scenario: delete-chat-and-delete-all** — one chat deleted on disk too; "Delete all" cancelled in
-  main's dialog deletes nothing, confirmed deletes everything; with no dialog, never confirmed.
+  main's dialog deletes nothing (a second click shares the open dialog), confirmed deletes
+  everything; with no dialog, never confirmed.
 - **Scenario: stored-chat-tampered-rows-dropped** — rows validated with the protocol's schemas;
-  an in-progress card reads back expired; results stay paired with their own call.
+  an in-progress card reads back expired; a future time reads as now; results stay paired with
+  their own call.
 
 ## Grants page (`apps/desktop/src/main/agent/__tests__/session-data.test.ts`)
 - **Scenario: grants-page-lists-and-revokes** — an "Always allow" is listed (label, origin, time),
@@ -92,6 +115,8 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 
 ## Export (`apps/desktop/src/main/agent/__tests__/chat-export.test.ts`)
 - **Scenario: export-markdown-golden** — the Markdown text, fences that can't be closed from inside.
+- **Scenario: export-markdown-hostile-text-is-inert** — images, links, HTML, a forged heading and a
+  fence in a reply or the title come out escaped.
 - **Scenario: export-json-golden** — the `ChatExportV1` object.
 - **Scenario: export-has-no-ids-hashes-or-keys** — neither format carries a chat, call or approval
   id, an input hash or the key; tool output says untrusted.
@@ -104,7 +129,7 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
   built-ins, detail for the editor, an edit raises the version, read back after a reload.
 - **Scenario: skill-save-inline-errors** — per-field errors in frost's words; nothing stored.
 - **Scenario: skill-save-refuses-builtin-ids-and-collisions** — `builtin-id`, `exists`,
-  `unknown-skill`; a tampered row can't take a built-in's id.
+  `unknown-skill`, a built-in's name; a tampered row can't take a built-in's id.
 - **Scenario: skill-delete-and-duplicate** — copies under free ids, delete, the cap.
 - **Scenario: skill-duplicate-ids-and-names** — `duplicateSkillId`, `duplicateSkillName` bounds.
 - **Scenario: skill-editor-through-the-session** — the state's skills (built-in flag) change at
@@ -127,8 +152,8 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 - **Scenario: grants-page-lists-revokes-and-confirms** — revoke one; revoke all asks in the panel; the
   read tools' switch; a new grants version reads the list again.
 - **Scenario: grants-page-origin-is-text** — origins and labels are React text only.
-- **Scenario: settings-retention-and-delete-all** — the retention select, "Delete all chats", the
-  ways to the grants page and the skills editor.
+- **Scenario: settings-retention-and-delete-all** — the retention select (main's answer: kept or
+  failed), "Delete all chats", the ways to the grants page and the skills editor.
 - **Scenario: chat-list-exports** — Markdown / JSON export per chat and main's answer; the retention hint.
 - **Scenario: skills-list-marks-builtins** — built-ins read-only with "Duplicate to edit", "Your skill".
 - **Scenario: skill-editor-duplicates-edits-and-shows-errors** — duplicate, edit, inline errors, save.

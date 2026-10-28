@@ -28,7 +28,7 @@ export async function setupSession(
     tabTitle?: string | null;
     skills?: SkillRegistry;
     /** Task 9's stored chats, skills editor and dialogs. */
-    data?: Pick<AgentSessionDeps, 'history' | 'userSkills' | 'confirmDeleteAllChats' | 'exportChat'>;
+    data?: Pick<AgentSessionDeps, 'history' | 'userSkills' | 'confirmDeleteAllChats' | 'confirmRetentionChange' | 'exportChat'>;
     now?: () => number;
   } = {},
 ) {

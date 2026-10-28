@@ -3,7 +3,7 @@
 // Acceptance: specs/agent-data.feature.md (Skills editor)
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { auditThisPageSkill, createBuiltinSkillRegistry } from '@app/ai-skills/skills';
-import { duplicateSkillId, duplicateSkillName, MAX_USER_SKILLS, SKILL_FIELD_MESSAGES, type AgentSkillDraft } from '@app/specs/agent-data.spec';
+import { duplicateSkillId, duplicateSkillName, MAX_USER_SKILLS, SKILL_FIELD_MESSAGES, SKILL_NAME_TAKEN_MESSAGE, type AgentSkillDraft } from '@app/specs/agent-data.spec';
 import { BUILTIN_SKILL_IDS, SKILL_LIMITS } from '@app/specs/skills.spec';
 import { createMemorySkillsStore, createUserSkills } from '../user-skills';
 import { setupSession } from './session-fakes';
@@ -70,6 +70,8 @@ describe('user skills', () => {
       expect(await skills.remove(id)).toBe(false);
     }
     expect(store.rows.size).toBe(0);
+    // A built-in's name (ignoring case and spacing) is refused too.
+    for (const name of ['Audit this page', 'audit   THIS page']) expect(await skills.save({ ...DRAFT, name }, 'create')).toEqual({ result: 'invalid', errors: [{ field: 'name', message: SKILL_NAME_TAKEN_MESSAGE }] });
     expect(await skills.save(DRAFT, 'update')).toEqual({ result: 'unknown-skill' });
     expect(await skills.save(DRAFT, 'create')).toEqual({ result: 'saved', id: DRAFT.id });
     expect(await skills.save(DRAFT, 'create')).toEqual({ result: 'exists' });

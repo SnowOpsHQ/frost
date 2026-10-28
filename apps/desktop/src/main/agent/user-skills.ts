@@ -6,6 +6,7 @@ import {
   MAX_USER_SKILLS,
   SKILL_EDITOR_FIELDS,
   SKILL_FIELD_MESSAGES,
+  SKILL_NAME_TAKEN_MESSAGE,
   STORED_SKILL_MAX_CHARS,
   type AgentSaveSkillResult,
   type AgentSkillDetail,
@@ -122,6 +123,14 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
       return false;
     }
   };
+  const nameKey = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+  const builtinNames = (): Set<string> => {
+    try {
+      return new Set(deps.builtins.list().map((skill) => nameKey(skill.name)));
+    } catch {
+      return new Set();
+    }
+  };
   const rebuild = () => {
     own = createStaticSkillRegistry([...mine.values()]);
     for (const listener of [...listeners]) {
@@ -184,6 +193,8 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
       const version = existing === undefined ? 1 : Math.min(existing.version + 1, SKILL_LIMITS.maxVersion);
       const parsed = SkillSchema.safeParse(candidateOf(draft, version));
       if (!parsed.success) return { result: 'invalid', errors: skillErrors(parsed.error.issues) };
+      // A built-in's name (ignoring case and spacing) would make the two indistinguishable in the picker.
+      if (builtinNames().has(nameKey(parsed.data.name))) return { result: 'invalid', errors: [{ field: 'name', message: SKILL_NAME_TAKEN_MESSAGE }] };
       if (existing === undefined && mine.size >= MAX_USER_SKILLS) return { result: 'limit' };
       if (!(await store(parsed.data))) {
         log('agent skills: a skill could not be stored');

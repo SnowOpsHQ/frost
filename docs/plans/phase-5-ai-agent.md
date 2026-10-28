@@ -612,11 +612,41 @@ _Filled in as tasks land._
   each card with a fence longer than any backtick run inside it. Renderer: two views reached from the
   settings (`AgentGrants.tsx`, `AgentSkills.tsx`), a Chat history section in the settings (retention,
   "Delete all chats…"), per-chat export in the chat list, `agent-view.ts` / `agent-actions.ts`
-  helpers. E2e (3 new): `agent-grants-revoke` (an https loopback site under the public-looking name,
-  its self-signed certificate trusted for that name only, in that app), `agent-skill-editor-saves`,
+  helpers. E2e (3 new): `agent-grants-revoke` (an https loopback site under the public-looking name;
+  the test, and only the test, makes that app's browse session accept **any** certificate for that
+  host name, `setCertificateVerifyProc`, so its self-signed one passes), `agent-skill-editor-saves`,
   and `agent-chat-export-and-restore` — export is covered end to end without an app seam: the test
   replaces `dialog.showSaveDialog` in main through Playwright's `app.evaluate`, so main's own code
   path runs; it also restarts on the same profile and finds the chat listed.
+- **Task 9 review.** **Retention changes ask first:** a change that would delete saved chats (`off`
+  with any stored, or a shorter window with older ones, counted by `countChatsUpdatedBefore`; idle
+  chats in memory count too) shows main's native `changeRetentionDialog` before anything is
+  written, so a stray arrow key on the select can't delete history; `agent.setChatRetention` answers
+  `saved | cancelled | failed` (`AGENT_SET_RETENTION_RESULTS`) and the select shows main's setting
+  whatever the answer. A change that deletes nothing applies at once. **Markdown export is inert:**
+  the title, skill names and every message's text are escaped (`inertMarkdown`: `\`, `` ` ``,
+  `<`, `>`, `[`, `]`, `!`, and a `#` opening a line), so an image, link, raw HTML or fence a reply
+  holds shows as text and fetches nothing in a viewer; tool cards stay fenced. **Deleted chat text
+  leaves the file:** the agent tables' deletes and rewrites run in one batch with
+  `PRAGMA secure_delete = 1` set at its start and the connection's previous value restored at its
+  end (the batch is one synchronous callback on the one connection, so no other table's deletes
+  change and the shared open code is untouched); `VACUUM` was the alternative, but it rewrites the
+  whole profile database and can't run in a transaction. A test reads the file's bytes after deletes,
+  rewrites and an `off` prune and finds none of the text (and fails without the pragma). Not covered:
+  the rollback journal's copy of the old pages is unlinked, not overwritten, at commit (as for every
+  table), and the OS may keep freed blocks. **Saves append:** the repository's
+  `saveChat(head, { messagesFrom, messages, entriesFrom, entries })` replaces rows from those positions
+  on, so a turn's save writes only that turn's rows; the session rewrites from `0` after a trim
+  (history or entries cut, which also sets `truncated`), after rows that didn't read back intact, or
+  when the store refuses an append past what it holds (a gap). **Loaded lazily:** startup reads only
+  the chats' own rows (`chatHeads`); a chat's messages are read when it is selected, sent to or
+  exported (`chatRows`). Also: future times read as now; deletions (one chat or "Delete all") made
+  before the startup restore ran are not undone by it, nor is a retention change; a user skill whose
+  name is a built-in's, ignoring case and spacing, is refused (`SKILL_NAME_TAKEN_MESSAGE`; the
+  editor's warning stays as the early hint); "Delete all chats" is single-flight (a second click shares
+  the open dialog) and an export while one's save dialog is open answers `cancelled`; the read-tools
+  hint says what they read goes to the model provider; the save dialog opens in Downloads. The
+  migration tests compare only Phase 5's `0030`–`0039` block, so other phases' migrations can land.
 - **Tasks 7–8 review.** **Adapters match Phases 3 and 4** as read from `phase-3/serp-intent` at
   45e8cf7 (`SerpReadApi`: `snapshot(tabId)`, `classifyIntent(query)`, `probes`, `runProbes`; no
   query-based results or AI answer read) and `phase-4/accounts-telemetry` at bc692be (`GscService`:
@@ -693,3 +723,15 @@ _Filled in as tasks land._
   (`skillRunChatId`). User skills are marked "(Your skill)" in the picker and the palette, and the
   skills editor warns (still saving) when a user skill takes a built-in's name or lists `navigate`,
   `click`, `execute_javascript` or `run_ai_search` (`SKILL_WARNINGS`, `skills.spec.ts`).
+
+## Lead follow-ups (Task 9)
+- **Clear Browsing Data and the agent.** Today it clears neither standing grants nor chats. In
+  `apps/desktop/src/main/clear-browsing-data.ts` / main's `index.ts` (shared files Task 9 left
+  alone): revoke the agent's grants together with site permissions, and add an "Also delete agent
+  chats" checkbox beside the content-notes one. The agent service (`createAgentService`'s answer,
+  `services.agent`) exposes both, with no dialog of its own (Clear Browsing Data has asked already):
+  `forgetAgentGrants(): Promise<boolean>` (every grant revoked at once; the read-tools setting is
+  left as is) and `deleteAllChatsUnconfirmed(): Promise<boolean>` (every chat in memory, a running
+  turn stopped first, and on disk with `secure_delete`). Each is one line in the clear's parts, e.g.
+  `await attempt('agent grants', () => agent.forgetAgentGrants())` and, when the new checkbox is
+  ticked, `await attempt('agent chats', () => agent.deleteAllChatsUnconfirmed())`.

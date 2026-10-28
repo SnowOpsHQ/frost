@@ -39,6 +39,8 @@ import { BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, 
 import {
   DEFAULT_CHAT_RETENTION,
   isChatRetention,
+  retentionCutoff,
+  type AgentSetRetentionResult,
   type AgentDeleteAllChatsResult,
   type AgentGrantView,
   type AgentSaveSkillResult,
@@ -49,7 +51,7 @@ import {
 } from '@app/specs/agent-data.spec';
 import { toolLabel, type ApprovalBroker, type ApprovalRequestView } from './approvals';
 import type { ChatHistory } from './chat-history';
-import type { ChatSnapshot, EntrySnapshot } from './chat-record';
+import type { ChatHead, ChatSnapshot, EntrySnapshot } from './chat-record';
 import type { CredentialSettings } from './credentials';
 import type { AgentEntitlements } from './entitlements';
 import type { AgentGrants } from './grants';
@@ -105,6 +107,8 @@ export interface AgentSessionDeps {
   readonly userSkills?: Pick<UserSkills, 'detail' | 'save' | 'remove' | 'duplicate' | 'onChange' | 'isBuiltin'>;
   /** Asks the user, in main's own dialog, before every chat is deleted; default: never confirmed. */
   readonly confirmDeleteAllChats?: () => Promise<boolean>;
+  /** Asks, in main's own dialog, before a retention change deletes `chats` stored chats; default: never confirmed. */
+  readonly confirmRetentionChange?: (retention: ChatRetention, chats: number) => Promise<boolean>;
   /** Writes a chat's export where the user chooses, in main's own save dialog; default: `failed`. */
   readonly exportChat?: (chat: ChatSnapshot, format: ChatExportFormat) => Promise<ChatExportResult>;
   readonly now?: () => number;
@@ -119,8 +123,21 @@ export interface AgentSessionDeps {
 export interface AgentSession extends AgentService {
   /** Reads which keys are set and how they'd be protected (after start-up; `send` and `setKey` do it too). */
   refreshSetup(): Promise<void>;
-  /** Adds stored chats (most recent first) to the ones in memory, within `MAX_CHATS_KEPT_IN_MEMORY`; an id already open is skipped. */
-  restore(chats: readonly ChatSnapshot[]): void;
+  /**
+   * Adds stored chats (their own rows, most recent first) to the ones in memory, within
+   * `MAX_CHATS_KEPT_IN_MEMORY`; their messages are read when one is opened. An id already open, or
+   * one deleted (or "Delete all") before this ran, is skipped. Once.
+   */
+  restore(chats: readonly ChatHead[]): void;
+  /** Reads a restored chat's messages if they aren't yet (selecting, sending to or exporting it does too). */
+  loadChat(chatId: string): Promise<void>;
+  /**
+   * For Clear Browsing Data (the lead's wiring, the plan's lead follow-ups): revokes every standing
+   * grant, with no dialog of the agent's own. `false` if it couldn't be written.
+   */
+  forgetAgentGrants(): Promise<boolean>;
+  /** For Clear Browsing Data's "Also delete agent chats": deletes every chat with no dialog of the agent's own. */
+  deleteAllChatsUnconfirmed(): Promise<boolean>;
   /** A chat as it would be stored or exported now, or `null`. */
   snapshot(chatId: string): ChatSnapshot | null;
   /** Deletes what the retention no longer keeps, stored and idle in memory (startup, daily). */
@@ -164,12 +181,17 @@ interface Chat {
   /** What the model is sent (protocol shape). */
   history: ChatMessage[];
   entries: Entry[];
-  /** Whether earlier entries were dropped from memory. */
+  /** Whether earlier entries (or history messages) were dropped from memory. */
   truncated: boolean;
   error: string | null;
   usage: AgentUsageView | null;
   contextTokens: number | null;
   modelId: ModelId | null;
+  /** Whether its messages are in memory (`false` for a restored chat until it is opened). */
+  loaded: boolean;
+  loading: Promise<void> | null;
+  /** The rows stored on disk (where the next save appends), `null` when the next save must write the whole chat. */
+  stored: { messages: number; entries: number } | null;
 }
 
 /** The one turn running, app-wide. */
@@ -524,10 +546,15 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
 
   /** Keeps a chat's memory bounded: its history to twice what a turn sends, its entries likewise. */
   const trim = (chat: Chat) => {
-    if (chat.history.length > CHAT_MAX_MESSAGES * 2) chat.history = historyWindow(chat.history);
+    if (chat.history.length > CHAT_MAX_MESSAGES * 2) {
+      chat.history = historyWindow(chat.history);
+      chat.truncated = true;
+      chat.stored = null;
+    }
     if (chat.entries.length > MAX_DISPLAY_ENTRIES * 2) {
       chat.entries = chat.entries.slice(-MAX_DISPLAY_ENTRIES);
       chat.truncated = true;
+      chat.stored = null;
     }
   };
 
@@ -554,11 +581,76 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     history: structuredClone(chat.history),
     entries: chat.entries.map(entrySnapshot),
   });
-  /** Saves a chat still open (one deleted meanwhile is not written back). */
+  const headOf = (chat: Chat): ChatHead => ({
+    id: chat.id,
+    title: chat.title,
+    createdAt: chat.createdAt,
+    updatedAt: chat.updatedAt,
+    modelId: chat.modelId,
+    usage: chat.usage === null ? null : { ...chat.usage },
+    contextTokens: chat.contextTokens,
+    truncated: chat.truncated,
+  });
+  /**
+   * Saves a chat still open (one deleted meanwhile is not written back): its row, and only the
+   * messages and entries after the ones already stored; the whole chat after a trim, or when the
+   * stored rows don't line up (the store refuses an append past what it holds).
+   */
   const persist = (chat: Chat) => {
-    if (history === null || chats.get(chat.id) !== chat) return;
-    void history.save(snapshotOf(chat)).catch(() => log('agent session: a chat could not be saved'));
+    if (history === null || chats.get(chat.id) !== chat || !chat.loaded) return;
+    const counts = { messages: chat.history.length, entries: chat.entries.length };
+    const save = (from: { messages: number; entries: number }) =>
+      history.save({
+        head: headOf(chat),
+        messagesFrom: from.messages,
+        messages: structuredClone(chat.history.slice(from.messages, counts.messages)),
+        entriesFrom: from.entries,
+        entries: chat.entries.slice(from.entries, counts.entries).map(entrySnapshot),
+      });
+    const stored = chat.stored;
+    const from = stored !== null && stored.messages <= counts.messages && stored.entries <= counts.entries ? stored : { messages: 0, entries: 0 };
+    void (async () => {
+      let ok = await save(from);
+      if (!ok && (from.messages > 0 || from.entries > 0) && chats.get(chat.id) === chat) ok = await save({ messages: 0, entries: 0 });
+      if (chats.get(chat.id) === chat) chat.stored = ok ? counts : null;
+    })().catch(() => log('agent session: a chat could not be saved'));
   };
+
+  /** Reads a restored chat's messages once (an unreadable one opens empty). */
+  const ensureLoaded = (chat: Chat): Promise<void> => {
+    if (chat.loaded) return Promise.resolve();
+    chat.loading ??= (async () => {
+      const rows = history === null ? null : await history.loadChat(chat.id);
+      if (chat.loaded) return;
+      if (rows !== null) {
+        chat.history = pairedHistory(rows.history);
+        chat.entries = rows.entries.map((entry) => ({
+          ...newEntry(entry.kind, entry.text),
+          streaming: false,
+          tools: entry.tools.map((card) => ({ ...card, label: toolLabel(card.toolName) })),
+          ...(entry.kind === 'user' && entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}),
+        }));
+        // Rows that didn't read back as they were stored: the next save writes the chat anew.
+        chat.stored = rows.exact && chat.history.length === rows.storedMessages ? { messages: rows.storedMessages, entries: rows.storedEntries } : null;
+      } else {
+        chat.stored = null;
+      }
+      chat.loaded = true;
+      chat.loading = null;
+      bump();
+    })().catch(() => {
+      chat.loaded = true;
+      chat.loading = null;
+      chat.stored = null;
+      log('agent session: a stored chat could not be read');
+    });
+    return chat.loading;
+  };
+
+  // Deletions made before the stored chats were restored, so the restore can't bring them back.
+  let restored = false;
+  const deletedBeforeRestore = new Set<string>();
+  let clearedBeforeRestore = false;
 
   // ---- Setup ----
   const refreshSetup = async () => {
@@ -897,6 +989,9 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       raise(kind);
       return kind;
     };
+    // A restored chat's messages are read before the turn uses them.
+    const target = chatId === null ? undefined : chats.get(chatId);
+    if (target !== undefined && !target.loaded) await ensureLoaded(target);
 
     const settings = deps.settings.current();
     if (!scripted) {
@@ -964,6 +1059,9 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         usage: null,
         contextTokens: null,
         modelId: null,
+        loaded: true,
+        loading: null,
+        stored: null,
       };
       chats.set(chat.id, chat);
     }
@@ -1022,6 +1120,29 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     return true;
   };
 
+  let deletingAll: Promise<AgentDeleteAllChatsResult> | null = null;
+  let exporting = false;
+  let changingRetention = false;
+
+  /** Deletes every chat, in memory (a running one stopped first) and on disk; `false` if the disk's couldn't be. */
+  const clearChats = async (): Promise<boolean> => {
+    if (disposed) return false;
+    for (const chatId of [...chats.keys()]) {
+      stop(chatId);
+      chats.delete(chatId);
+      deps.approvals.forget(chatId);
+    }
+    if (!restored) clearedBeforeRestore = true;
+    selected = null;
+    bump();
+    if (history === null) return true;
+    try {
+      return (await history.removeAll()) === true;
+    } catch {
+      return false;
+    }
+  };
+
   /** Deletes what the retention no longer keeps: on disk, and the idle chats in memory past a finite window. */
   const prune = async (): Promise<void> => {
     if (history === null) return;
@@ -1071,7 +1192,9 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       bump();
     },
     selectChat(chatId) {
-      if (!chats.has(chatId)) return false;
+      const chat = chats.get(chatId);
+      if (chat === undefined) return false;
+      if (!chat.loaded) void ensureLoaded(chat);
       if (selected !== chatId) {
         selected = chatId;
         bump();
@@ -1085,6 +1208,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       chats.delete(chatId);
       deps.approvals.forget(chatId);
       if (selected === chatId) selected = null;
+      if (!restored) deletedBeforeRestore.add(chatId);
       if (history !== null) void history.remove(chatId).catch(() => log('agent session: a chat could not be deleted from disk'));
       bump();
       return true;
@@ -1136,83 +1260,121 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
 
     // ---- Task 9: stored chats ----
     restore(stored) {
-      if (disposed || !Array.isArray(stored)) return;
+      if (disposed || restored || !Array.isArray(stored)) return;
+      restored = true;
+      if (clearedBeforeRestore) return;
+      // A retention changed while the chats were read applies to them too.
+      const cutoff = retentionCutoff(retention(), now());
       let added = false;
-      for (const snapshot of stored as readonly ChatSnapshot[]) {
+      for (const head of stored as readonly ChatHead[]) {
         if (chats.size >= MAX_CHATS_KEPT_IN_MEMORY) break;
-        if (chats.has(snapshot.id)) continue;
-        chats.set(snapshot.id, {
-          id: snapshot.id,
-          title: snapshot.title,
+        if (chats.has(head.id) || deletedBeforeRestore.has(head.id)) continue;
+        const updatedAt = Math.min(head.updatedAt, now());
+        if (cutoff !== null && updatedAt < cutoff) continue;
+        chats.set(head.id, {
+          id: head.id,
+          title: head.title,
           tabId: null,
-          createdAt: snapshot.createdAt,
-          updatedAt: snapshot.updatedAt,
-          history: pairedHistory(snapshot.history),
-          entries: snapshot.entries.map((entry) => ({
-            ...newEntry(entry.kind, entry.text),
-            streaming: false,
-            tools: entry.tools.map((card) => ({ ...card, label: toolLabel(card.toolName) })),
-            ...(entry.kind === 'user' && entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}),
-          })),
-          truncated: snapshot.truncated,
+          createdAt: Math.min(head.createdAt, updatedAt),
+          updatedAt,
+          history: [],
+          entries: [],
+          truncated: head.truncated,
           error: null,
-          usage: snapshot.usage === null ? null : { ...snapshot.usage },
-          contextTokens: snapshot.contextTokens,
-          modelId: snapshot.modelId,
+          usage: head.usage === null ? null : { ...head.usage },
+          contextTokens: head.contextTokens,
+          modelId: head.modelId,
+          loaded: false,
+          loading: null,
+          stored: null,
         });
         added = true;
       }
+      deletedBeforeRestore.clear();
       if (added) bump();
+    },
+    async loadChat(chatId) {
+      const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
+      if (chat !== undefined) await ensureLoaded(chat);
     },
     snapshot(chatId) {
       const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
       return chat === undefined ? null : snapshotOf(chat);
     },
     prune,
-    async setChatRetention(next) {
-      if (history === null || !isChatRetention(next)) return false;
-      let stored = false;
+    async setChatRetention(next): Promise<AgentSetRetentionResult> {
+      if (history === null || !isChatRetention(next)) return 'failed';
+      if (changingRetention) return 'cancelled';
+      changingRetention = true;
       try {
-        stored = (await history.setRetention(next)) === true;
-      } catch {
-        stored = false;
+        // A change that would delete chats asks first, in main's own dialog.
+        const cutoff = retentionCutoff(next, now());
+        const inMemory = cutoff === null || !Number.isFinite(cutoff) ? 0 : [...chats.values()].filter((chat) => chat.updatedAt < cutoff && turn?.chat !== chat && chat.id !== selected).length;
+        const onDisk = next === retention() ? 0 : await history.wouldDelete(next);
+        const affected = Math.max(inMemory, onDisk);
+        if (affected > 0) {
+          let confirmed = false;
+          try {
+            confirmed = deps.confirmRetentionChange !== undefined && (await deps.confirmRetentionChange(next, affected)) === true;
+          } catch {
+            confirmed = false;
+          }
+          if (!confirmed || disposed) {
+            bump();
+            return 'cancelled';
+          }
+        }
+        let stored = false;
+        try {
+          stored = (await history.setRetention(next)) === true;
+        } catch {
+          stored = false;
+        }
+        bump();
+        if (!stored) return 'failed';
+        await prune();
+        return 'saved';
+      } finally {
+        changingRetention = false;
       }
-      bump();
-      if (stored) await prune();
-      return stored;
     },
-    async deleteAllChats(): Promise<AgentDeleteAllChatsResult> {
-      let confirmed = false;
+    deleteAllChats(): Promise<AgentDeleteAllChatsResult> {
+      deletingAll ??= (async (): Promise<AgentDeleteAllChatsResult> => {
+        let confirmed = false;
+        try {
+          confirmed = deps.confirmDeleteAllChats !== undefined && (await deps.confirmDeleteAllChats()) === true;
+        } catch {
+          confirmed = false;
+        }
+        if (!confirmed || disposed) return 'cancelled';
+        return (await clearChats()) ? 'deleted' : 'failed';
+      })().finally(() => {
+        deletingAll = null;
+      });
+      return deletingAll;
+    },
+    deleteAllChatsUnconfirmed: () => clearChats(),
+    async forgetAgentGrants() {
       try {
-        confirmed = deps.confirmDeleteAllChats !== undefined && (await deps.confirmDeleteAllChats()) === true;
+        return (await deps.grants.revokeAll()) === true;
       } catch {
-        confirmed = false;
+        return false;
       }
-      if (!confirmed || disposed) return 'cancelled';
-      for (const chatId of [...chats.keys()]) {
-        stop(chatId);
-        chats.delete(chatId);
-        deps.approvals.forget(chatId);
-      }
-      selected = null;
-      bump();
-      if (history === null) return 'deleted';
-      let removed = false;
-      try {
-        removed = (await history.removeAll()) === true;
-      } catch {
-        removed = false;
-      }
-      return removed ? 'deleted' : 'failed';
     },
     async exportChat(chatId, format): Promise<ChatExportResult> {
       const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
       if (chat === undefined || deps.exportChat === undefined || (format !== 'markdown' && format !== 'json')) return 'failed';
+      // One save dialog at a time: a second export while one is open writes nothing.
+      if (exporting) return 'cancelled';
+      exporting = true;
       try {
+        await ensureLoaded(chat);
         const result = await deps.exportChat(snapshotOf(chat), format);
         return result === 'saved' || result === 'cancelled' ? result : 'failed';
       } catch {
         return 'failed';
+      } finally {
+        exporting = false;
       }
     },
 

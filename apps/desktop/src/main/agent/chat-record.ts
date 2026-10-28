@@ -12,8 +12,9 @@ import { SKILL_LIMITS } from '@app/specs/skills.spec';
 // turn's chat: its history in the protocol shape (what the model is sent: the user's messages, the
 // steps, and main's untrusted-wrapped tool results, each already bounded) and its display entries
 // (the tool cards with their bounded previews). Nothing else: no key, no approval id, no input
-// hash. `encodeChat` turns one into `@app/db` rows; `decodeChat` validates rows read back, every
-// message with the protocol's own schema, so a tampered file can't put anything else in a chat.
+// hash. `encodeHead` / `encodeMessages` / `encodeEntries` turn one into `@app/db` rows (a turn's save
+// writes only the rows after the stored ones); `decodeHead` / `decodeRows` validate rows read back,
+// every message with the protocol's own schema, so a tampered file can't put anything else in a chat.
 
 export interface ToolCardSnapshot {
   readonly callId: string;
@@ -44,8 +45,8 @@ export interface ChatSnapshot {
   readonly entries: readonly EntrySnapshot[];
 }
 
-/** The `@app/db` row shape (`StoredAgentChat`), restated so main needn't import the database's types here. */
-export interface ChatRow {
+/** A chat's own row as `@app/db` stores it (`StoredAgentChatHead`), restated so main needn't import the database's types here. */
+export interface ChatHeadRow {
   readonly id: string;
   readonly title: string;
   readonly createdAt: number;
@@ -55,9 +56,24 @@ export interface ChatRow {
   readonly outputTokens: number | null;
   readonly contextTokens: number | null;
   readonly truncated: boolean;
+}
+
+/** A chat's rows (`StoredAgentChatRows`). */
+export interface ChatRowsRow {
   readonly messages: readonly string[];
   readonly entries: readonly string[];
 }
+
+/** The rows a save replaces from the given positions on (`AgentChatRowsUpdate`). */
+export interface ChatRowsUpdate {
+  readonly messagesFrom: number;
+  readonly messages: readonly string[];
+  readonly entriesFrom: number;
+  readonly entries: readonly string[];
+}
+
+/** A chat without its rows: what the list shows before the chat is opened. */
+export type ChatHead = Omit<ChatSnapshot, 'history' | 'entries'>;
 
 const TOOL_CARD_STATUSES = ['requested', 'awaiting-approval', 'running', 'done', 'denied', 'failed', 'expired'] as const satisfies readonly AgentToolCardView['status'][];
 /** A stored card still in progress was cut off: it reads back expired. */
@@ -97,12 +113,8 @@ const parseJson = (text: string): unknown => {
   }
 };
 
-/** A chat as `@app/db` rows: the latest rows only (`MAX_STORED_ROWS_PER_CHAT` of each). */
-export function encodeChat(chat: ChatSnapshot): ChatRow {
-  const history = chat.history.slice(-MAX_STORED_ROWS_PER_CHAT);
-  // Never start at an orphaned result: the window begins at a user message.
-  const start = history.findIndex((message) => message.role === 'user');
-  const entries = chat.entries.slice(-MAX_STORED_ROWS_PER_CHAT);
+/** A chat's own row. */
+export function encodeHead(chat: ChatHead): ChatHeadRow {
   return {
     id: chat.id,
     title: chat.title.slice(0, STORED_CHAT_TITLE_MAX_CHARS),
@@ -112,35 +124,70 @@ export function encodeChat(chat: ChatSnapshot): ChatRow {
     inputTokens: count(chat.usage?.input),
     outputTokens: count(chat.usage?.output),
     contextTokens: count(chat.contextTokens),
-    truncated: chat.truncated || entries.length < chat.entries.length,
-    messages: (start === -1 ? [] : history.slice(start)).map((message) => JSON.stringify(message)),
-    // Field by field: what a card is stored with is exactly what it is shown with (its label is the catalogue's).
-    entries: entries.map((entry) =>
-      JSON.stringify({
-        kind: entry.kind,
-        text: entry.text,
-        tools: entry.tools.map((card) => ({ callId: card.callId, toolName: card.toolName, status: card.status, code: card.code, inputPreview: card.inputPreview, outputPreview: card.outputPreview })),
-        ...(entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}),
-      }),
-    ),
+    truncated: chat.truncated,
+  };
+}
+
+/** History messages as rows, one JSON text each. */
+export function encodeMessages(history: readonly ChatMessage[]): string[] {
+  return history.map((message) => JSON.stringify(message));
+}
+
+/** Display entries as rows. Field by field: what a card is stored with is exactly what it is shown with (its label is the catalogue's). */
+export function encodeEntries(entries: readonly EntrySnapshot[]): string[] {
+  return entries.map((entry) =>
+    JSON.stringify({
+      kind: entry.kind,
+      text: entry.text,
+      tools: entry.tools.map((card) => ({ callId: card.callId, toolName: card.toolName, status: card.status, code: card.code, inputPreview: card.inputPreview, outputPreview: card.outputPreview })),
+      ...(entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}),
+    }),
+  );
+}
+
+/** A whole chat's rows (a full rewrite), within `MAX_STORED_ROWS_PER_CHAT` each. */
+export function encodeChat(chat: ChatSnapshot): { head: ChatHeadRow; rows: ChatRowsUpdate } {
+  return {
+    head: encodeHead(chat),
+    rows: { messagesFrom: 0, messages: encodeMessages(chat.history.slice(-MAX_STORED_ROWS_PER_CHAT)), entriesFrom: 0, entries: encodeEntries(chat.entries.slice(-MAX_STORED_ROWS_PER_CHAT)) },
   };
 }
 
 /**
- * A stored chat, validated: `null` for a row that can't be one (an id that isn't a chat id, a bad
- * time). Each message and entry is parsed and checked on its own; one that fails is left out.
- * The history is checked again for pairing by the session when it restores the chat.
+ * A stored chat's own row, validated: `null` for a row that can't be one (an id that isn't a chat
+ * id, a bad time). Times in the future (a clock moved back, a tampered file) read as `now`.
  */
-export function decodeChat(row: ChatRow): ChatSnapshot | null {
+export function decodeHead(row: ChatHeadRow, now: number): ChatHead | null {
   if (!AgentChatIdSchema.safeParse(row.id).success || typeof row.title !== 'string') return null;
   if (!Number.isSafeInteger(row.createdAt) || !Number.isSafeInteger(row.updatedAt) || row.updatedAt < 0) return null;
+  const input = count(row.inputTokens);
+  const output = count(row.outputTokens);
+  const updatedAt = Math.min(row.updatedAt, now);
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: Math.min(Math.max(0, row.createdAt), updatedAt),
+    updatedAt,
+    modelId: isAllowedModelId(row.modelId) ? row.modelId : null,
+    usage: input === null && output === null ? null : { input, output },
+    contextTokens: count(row.contextTokens),
+    truncated: row.truncated === true,
+  };
+}
+
+/**
+ * A stored chat's rows, validated: each message with the protocol's schema and each entry with its
+ * own, one that fails left out (`exact` is then `false`: the rows no longer line up with what is
+ * stored, so the next save rewrites them). The session re-pairs the history's results with their calls.
+ */
+export function decodeRows(rows: ChatRowsRow): { history: ChatMessage[]; entries: EntrySnapshot[]; exact: boolean } {
   const history: ChatMessage[] = [];
-  for (const text of row.messages.slice(0, MAX_STORED_ROWS_PER_CHAT)) {
+  for (const text of rows.messages.slice(0, MAX_STORED_ROWS_PER_CHAT)) {
     const parsed = ChatMessageSchema.safeParse(parseJson(text));
     if (parsed.success) history.push(parsed.data);
   }
   const entries: EntrySnapshot[] = [];
-  for (const text of row.entries.slice(0, MAX_STORED_ROWS_PER_CHAT)) {
+  for (const text of rows.entries.slice(0, MAX_STORED_ROWS_PER_CHAT)) {
     const parsed = EntryRowSchema.safeParse(parseJson(text));
     if (!parsed.success) continue;
     const entry = parsed.data;
@@ -151,18 +198,5 @@ export function decodeChat(row: ChatRow): ChatSnapshot | null {
       ...(entry.kind === 'user' && entry.skill !== undefined ? { skill: entry.skill } : {}),
     });
   }
-  const input = count(row.inputTokens);
-  const output = count(row.outputTokens);
-  return {
-    id: row.id,
-    title: row.title,
-    createdAt: Math.max(0, row.createdAt),
-    updatedAt: row.updatedAt,
-    modelId: isAllowedModelId(row.modelId) ? row.modelId : null,
-    usage: input === null && output === null ? null : { input, output },
-    contextTokens: count(row.contextTokens),
-    truncated: row.truncated === true || entries.length < row.entries.length,
-    history,
-    entries,
-  };
+  return { history, entries, exact: history.length === rows.messages.length && entries.length === rows.entries.length };
 }
