@@ -250,7 +250,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   service, the e2e seam and the wiring into main; **6b** is the renderer panel and the e2e
   (`agent-approval-flow`, Stop) on 6a's `AgentState` and procedures.
 - [x] 6a commit `feat(agent): chat session manager, agent IPC and e2e seam`
-- [ ] 6b commit `feat(agent): agent sidebar panel and IPC`
+- [x] 6b commit `feat(agent): agent sidebar panel and e2e`
 
 ### Task 7: Declarative SEO skills
 - **Spec:** `specs/skills-schema.ts` (a skill: id, name, description, allowed tools, instruction
@@ -467,3 +467,23 @@ _Filled in as tasks land._
   cards show `state.approval.request` (one at a time, oldest first, `queued` behind it), enable Allow
   after `APPROVAL_ENABLE_DELAY_MS`, and show `note` beside `execute_javascript`'s code; tool output
   previews are inert text.
+- **Task 6b.** Spec `specs/agent-panel.spec.ts` (Zod-free: layout widths, storage key, palette ids,
+  the panel's words), acceptance `specs/agent-panel.feature.md`. Renderer: `agent-view.ts` (pure
+  view model), `agent-actions.ts` (the `agent.*` calls with fallbacks), `agent-palette.ts`,
+  `hooks/useAgentState.ts` (long-poll with doubling backoff, 1 s to 15 s, stopped on unmount),
+  `components/agent/*` with its own `agent.css` (imported by `AgentPanel.tsx` and bundled with the
+  chrome's styles, so `styles.css` is untouched; a test keeps every `.agent` rule there). **Layout:**
+  page | agent | SEO sidebar, both may be open; each panel gives way before the page goes under its
+  minimum, and the page area shrinks (its reported box keeps the tab's view off both panels).
+  Collapsed, the agent is a 40 px rail with its toggle (a badge while a turn runs or an approval
+  waits); open, a 380 px panel (chat, chats, settings) with a collapse button. It starts closed,
+  remembers open / closed, and opens itself for a new approval request. **Toggle:** the rail button
+  and the palette's "Toggle AI agent" (plus "AI agent settings", "New AI agent chat"), registered
+  from `AgentPanel.tsx`; no keyboard shortcut (the shortcut table is main's menu). Hub lines:
+  `App.tsx` one import and `<AgentPanel tab={tab} />` between the page column and the SEO sidebar.
+  Approval cards reuse the permission bar's arming (`createPromptArming` / `usePromptArmed` gained
+  an optional delay, default unchanged) with `APPROVAL_ENABLE_DELAY_MS`: Allow disabled after the
+  card appears, after the window regains focus and while a fullscreen page covers the chrome; Deny
+  and Escape always work. Key fields are password inputs emptied before `setKey` is called; the
+  e2e launches with `--password-store=basic` so Linux answers `no-keychain` and no real keychain is
+  touched. E2e `agent.e2e.ts` (6 tests, one launch each with its own script).
