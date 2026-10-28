@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { MAX_SYNC_CONFIG_BYTES, MAX_SYNC_TOKEN_CHARS, SYNC_CONFIG_FILE_NAME, syncEndpointProblem, syncTokenProblem } from '@app/specs/sync.spec';
 import { createSyncConfigStore, SyncConfigError, SyncToken, type SafeStorageLike } from '../config';
+import { removeTempDir } from './fixtures';
 
 const POSIX = process.platform !== 'win32';
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -35,8 +36,8 @@ beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), 'frost-sync-config-'));
   logs = [];
 });
-afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+afterEach(() => {
+  removeTempDir(dir);
 });
 
 const file = () => path.join(dir, SYNC_CONFIG_FILE_NAME);
@@ -129,10 +130,28 @@ describe('sync config', () => {
   test('config-token-needs-endpoint', async () => {
     await expect(store().write({ enabled: true, token: TOKEN })).rejects.toMatchObject({ problem: 'token-needs-endpoint' });
     await store().write({ enabled: true, url: URL_OK, token: TOKEN });
-    await expect(store().write({ enabled: true, url: null })).rejects.toMatchObject({ problem: 'token-needs-endpoint' });
+    // Removing the endpoint removes its token.
+    expect(await store().write({ enabled: true, url: null })).toEqual({ enabled: true, hasToken: false });
+    await store().write({ enabled: true, url: URL_OK, token: TOKEN });
     const ciphertext = (JSON.parse(await readFile(file(), 'utf8')) as { encryptedToken: string }).encryptedToken;
     await writeFile(file(), JSON.stringify({ enabled: true, encryptedToken: ciphertext }));
     expect(await store().read()).toEqual({ enabled: false, hasToken: false, problem: 'tampered' });
+  });
+
+  test('config-new-endpoint-drops-token', async () => {
+    await store().write({ enabled: true, url: URL_OK, token: TOKEN });
+    // The same scheme, host and port keeps it (a path is not the endpoint's identity).
+    expect(await store().write({ enabled: true, url: `${URL_OK}/db` })).toMatchObject({ hasToken: true });
+    expect((await store().load()).token?.reveal()).toBe(TOKEN);
+    for (const url of ['https://frost-db.example.turso.io', 'libsql://other.example.turso.io', 'libsql://frost-db.example.turso.io:8443']) {
+      await store().write({ enabled: true, url: URL_OK, token: TOKEN });
+      expect(await store().write({ enabled: true, url }), url).toEqual({ enabled: true, url, hasToken: false });
+      expect(Object.keys(JSON.parse(await readFile(file(), 'utf8')) as object), url).not.toContain('encryptedToken');
+      expect((await store().load()).token, url).toBeNull();
+    }
+    // A new token for the new endpoint is stored as usual.
+    expect(await store().write({ enabled: true, url: 'https://sqld.example.com', token: TOKEN })).toMatchObject({ hasToken: true });
+    await expectNoToken();
   });
 
   test('config-endpoint-rules', async () => {

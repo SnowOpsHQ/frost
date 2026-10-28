@@ -24,10 +24,15 @@ import { ensureSyncState, runSyncPass, type SyncPassReport } from './engine';
 // The session database: a second `node:sqlite` handle on the store's own file (`SessionStore.file`),
 // with the store's busy timeout (`DB_BUSY_TIMEOUT_MS`; the file uses SQLite's default rollback
 // journal, as `open.ts` leaves it). The store's handle stays private to `@app/db` (its index exports
-// no handle, and Phase 7 does not own it); two handles on one file is ordinary SQLite, and a pull's
-// one `BEGIN IMMEDIATE` batch is short, so the store's writer waits at most that long. When the
-// store fell back to memory (`':memory:'`) there is nothing to mirror: an empty in-memory database
+// no handle, and Phase 7 does not own it); two handles on one file is ordinary SQLite. While a pull
+// page's `BEGIN IMMEDIATE` batch runs, the store's own writes wait for the lock (up to their busy
+// timeout, then fail as under any other lock). When the store fell back to memory (`':memory:'`) there is nothing to mirror: an empty in-memory database
 // stands in, and every table is skipped.
+//
+// Everything here runs on Electron's main thread. With an endpoint, libSQL's `sync()` is synchronous
+// native code (`databaseSyncSync`) and blocks the main thread on network I/O with no timeout: the
+// engine or `sync()` must move to a worker or utility process before remote sync is turned on
+// (`sync.spec.ts`, Where sync runs). Local staging does local I/O only.
 //
 // No IPC and no chrome UI in this phase: only a hand-written `frost-sync.json` turns sync on.
 
@@ -128,6 +133,8 @@ export function startSyncService(deps: StartSyncDeps): SyncServiceHandle {
         const report = await runSyncPass({ source, replica: target, deviceId, ...(target.sync === undefined ? {} : { sync: target.sync }), ...(deps.now === undefined ? {} : { now: deps.now }) });
         await narrow(replicaFile, platform);
         if (report.syncError !== undefined) say(`sync: the replica could not sync with the endpoint (${describe(report.syncError)}); will retry`);
+        const tooLarge = report.pull.tables.filter((t) => t.tooLarge > 0).map((t) => `${t.table}: ${t.tooLarge}`);
+        if (tooLarge.length > 0) say(`sync: rows over the size cap were skipped (${tooLarge.join(', ')})`);
         const skips = skipped(report);
         if (skips !== lastSkips) {
           if (skips !== '') say(`sync: tables skipped (${skips})`);

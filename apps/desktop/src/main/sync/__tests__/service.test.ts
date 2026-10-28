@@ -1,5 +1,5 @@
 // Spec: specs/sync.spec.ts (SYNC_INTERVAL_MS, SYNC_REPLICA_FILE_NAME, SYNC_STATE_TABLE) · Acceptance: specs/sync-engine.feature.md (Service)
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -10,6 +10,7 @@ import type { LibsqlConfig } from '@app/specs/sync.spec';
 import { SYNC_CONFIG_FILE_NAME, SYNC_INTERVAL_MS, SYNC_LOG_TABLE, SYNC_REPLICA_FILE_NAME, SYNC_STATE_TABLE } from '@app/specs/sync.spec';
 import { createSyncConfigStore, type SafeStorageLike } from '../config';
 import { startSyncService, type StartSyncDeps } from '../service';
+import { removeTempDir } from './fixtures';
 
 const POSIX = process.platform !== 'win32';
 const TOKEN = 'sqld-token-NOT-REAL-0123456789';
@@ -32,7 +33,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.useRealTimers();
   for (const driver of opened.splice(0)) await driver.close();
-  await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  removeTempDir(dir);
 });
 
 const config = (content: string) => writeFile(path.join(dir, SYNC_CONFIG_FILE_NAME), content);

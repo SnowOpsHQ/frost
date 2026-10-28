@@ -914,7 +914,9 @@ against fixtures, plus the packaged-app proof that Task 7 left open.
     `basic_text`. Reading one under either condition, or failing to decrypt it, turns sync off.
   - The store answers `hasToken`, never the token. The service gets a `SyncToken`, whose
     `String`, `JSON` and `inspect` forms are `[redacted]`.
-  - `write()` exists for tests and the future UI; nothing in the app calls it.
+  - `write()` exists for tests and the future UI; nothing in the app calls it. A `url` with another
+    scheme, host or port and no new token drops the stored token, so the old token is never sent to
+    a new host (`config-new-endpoint-drops-token`). `url: null` drops it too.
   - `deviceId` (a UUID v4) is made the first time sync runs and written back. See Marks below for
     why.
 - **Engine** (`src/main/sync/engine.ts`). It is pure over two `SqlDriver`s. Only `SYNC_TABLES`
@@ -936,17 +938,24 @@ against fixtures, plus the packaged-app proof that Task 7 left open.
   - **LWW ties.** "A tie goes to the larger `id`" can't separate two versions of the same row,
     since they share their `id`. On an equal `updated_at` with different values, the version whose
     spec'd values sort larger as JSON wins, so both sides converge. When a push loses to the
-    replica's newer version, the pull in the same pass fetches the winner back.
+    replica's newer version, the pull in the same pass fetches the winner back. An `updated_at` more
+    than `SYNC_MAX_CLOCK_SKEW_MS` (1 day) ahead of this device's `now` is compared as `now` plus
+    that, so a row dated far ahead can't win against every later edit. The stored value is
+    unchanged, and two devices whose clocks differ can judge such a row differently.
   - **Paging.** A table's page holds `SYNC_PAGE_ROWS` rows, and a full page stops that direction
-    there, so later tables wait and a child never arrives before its parent. `ci_purges` and
-    `ci_tombstones` are read whole, so a purge's tombstones and their children-first deletes land in
-    one page. Up to 20 pages run per direction per pass.
+    there, so later tables wait and a child never arrives before its parent. Every table is paged
+    alike, `ci_purges` and `ci_tombstones` included. Up to 20 pages run per direction per pass.
+    Pulled rows are measured in SQL first: one over `SYNC_MAX_ROW_BYTES` (16 MiB) is skipped unread
+    and counted as `tooLarge`, and the service logs it.
   - **Transactions.** Each pull page is one `BEGIN IMMEDIATE` batch on the session database. The
     pull marks move in a separate replica batch only after that commits, so a crash re-applies
     idempotently. Each push page (rows, log and marks) is one replica batch.
-  - **Tombstones.** Arriving tombstones delete the rows they name, children first, in the same
-    batch: in the replica on push, in the session database on pull. So purged content also leaves
-    the replica.
+  - **Tombstones.** On a page where `ci_tombstones` is caught up (its page was not full), every row
+    still present that a tombstone names is deleted, children first, in the same batch. That
+    includes rows named by earlier pages' tombstones, so a purge split across pages is deleted only
+    once all its tombstones have arrived (`engine-split-purge`). This runs in the replica on push
+    and in the session database on pull. The rows leave those tables, not necessarily the disk
+    (see Not done).
   - **Missing tables.** A table missing on either side is skipped and reported, as is one lacking a
     spec'd column, or a captured table without `ci_tombstones` on both sides. Today every table is
     `missing-in-source`; the service logs that once.
@@ -963,9 +972,15 @@ against fixtures, plus the packaged-app proof that Task 7 left open.
     timer, waits for a running pass and closes both databases.
   - **Session handle: a second `DatabaseSync`** on `SessionStore.file`, with `DB_BUSY_TIMEOUT_MS`,
     rather than the store's handle. The store's index exports no handle and isn't Phase 7's to
-    change. Two handles on one file is ordinary SQLite (rollback journal, as `open.ts` leaves it),
-    and a pull page is one short write transaction. When the store fell back to `:memory:`, an empty
-    in-memory database stands in and every table is skipped.
+    change. Two handles on one file is ordinary SQLite (rollback journal, as `open.ts` leaves it).
+    While a pull page's `BEGIN IMMEDIATE` batch runs, the store's own writes wait for the lock, up
+    to their busy timeout, and then fail as they would under any other lock. When the store fell
+    back to `:memory:`, an empty in-memory database stands in and every table is skipped.
+  - **Main thread.** The engine and `sync()` run on Electron's main thread. With an endpoint,
+    libSQL's `sync()` is synchronous native code (`databaseSyncSync`) that blocks the main thread
+    on network I/O with no timeout. **Moving the engine, or at least `sync()`, to a worker or
+    utility process is required before remote sync is turned on.** Local staging only does local
+    I/O, in pages of at most 500 rows per table.
   - `index.ts` gained `safeStorage` in its Electron import, one import line, and two lines after
     the update service: start, and `dispose` on `will-quit`.
 - **`@app/db` subpath exports.** `package.json` gained `./driver-libsql`, `./driver-node-sqlite`
@@ -985,7 +1000,21 @@ against fixtures, plus the packaged-app proof that Task 7 left open.
     failed ("no frost_sync_state … after 20 s"), and the app stayed up and logged "sync is off for
     this run: … index.node: cannot open shared object file". So main is fail-safe when the
     prebuild is missing.
-- **Tests.** 29 in `src/main/sync/__tests__/`:
+- **Review fixes** (security review, groundwork approved):
+  - an endpoint change drops the stored token;
+  - LWW clamps future `updated_at` (`SYNC_MAX_CLOCK_SKEW_MS`);
+  - purges and tombstones are paged like the other tables, with deferred tombstone deletes;
+  - pulled rows over `SYNC_MAX_ROW_BYTES` are skipped;
+  - the main-thread, stall, device-ID and purge-residue limits are documented (above, and in the
+    spec and `sync-engine.feature.md`);
+  - `sync-replica-opens` also checks the header's last-writer version (offset 96 =
+    `sqliteVersionNumber(LIBSQL_SQLITE_VERSION)`, 3045001) and every sidecar's mode, and tolerates
+    ESRCH when killing;
+  - the sync tests remove their temporary directories with one helper (`removeTempDir` in
+    `fixtures.ts`): 5 × 100 ms retries, and on Windows a locked EPERM/EBUSY directory is left to
+    the OS. This fixes Windows CI's EPERM failures. The 20–33 s per test there was the earlier 10 ×
+    200 ms linearly backed-off retries, about 11 s per removal.
+- **Tests.** 29 in `src/main/sync/__tests__/` as first committed, 33 after the review fixes:
   - `engine.test.ts` (13): push, pull, late rows, LWW including both tie orders, tombstones across
     three devices, never-resurrect, missing tables, idempotence with 2-row pages, pull rollback,
     state in the replica only, identifiers. It uses fixture `ci_*` tables and Phase 6's guard
@@ -1016,6 +1045,18 @@ against fixtures, plus the packaged-app proof that Task 7 left open.
   - A remote `sync()` against a real server: no `sqld` was available, and the optional `SQLD_BIN`
     test was not written. Remote mode is tested only with a fake `sync()`.
   - Screenshot blobs: only `ci_screenshots` rows would sync.
+  - **One refused row stalls pull.** A pull page is one transaction. A single row the session
+    database refuses rolls the page back, and every later pass fails on the same page: pull stalls
+    for every table until that is handled. The refusal could come from a trigger or a foreign key,
+    for example a tombstone for a version that a capture from a device still offline references.
+    `engine-pull-rolls-back` shows this. Per-row quarantine is required before real tables are
+    synced.
+  - **A copied profile shares its `deviceId`**, and so its marks, with the original. The two would
+    skip rows each other pushed. Making a new ID for a copy is not done.
+  - **Purged content isn't scrubbed.** Deleted rows' bytes can remain in SQLite's free pages (no
+    `VACUUM` or `secure_delete`) and in the remote primary's history (WAL frames, backups). Their
+    IDs remain in `frost_sync_log`.
+  - **Remote sync off the main thread** (see Main thread above).
   - Live-key collisions: two devices adding the same live `(project_id, url)` page or query under
     different ids would violate Phase 6's unique live indexes and abort the pull page.
   - Compacting `frost_sync_log`.

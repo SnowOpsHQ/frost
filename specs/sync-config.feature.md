@@ -14,7 +14,8 @@ Spec: `specs/sync.spec.ts` (Sync config: `SYNC_CONFIG_FILE_NAME`, `SyncConfigFil
 - **Local staging.** `{"enabled": true}` with no `url` is local staging only: rows are mirrored into
   the local replica file (`frost-sync.db`) and nothing leaves the device.
 - **Endpoint.** A `url` is `libsql:` or `https:` with a host, lowercase scheme, no user name or
-  password, query or fragment, at most `MAX_SYNC_ENDPOINT_CHARS` (`syncEndpointProblem`).
+  password, query or fragment, at most `MAX_SYNC_ENDPOINT_CHARS` (`syncEndpointProblem`). A stored
+  token belongs to its endpoint's scheme, host and port: changing those without a new token drops it.
 - **Token.** The token is stored only as `safeStorage.encryptString` ciphertext in base64
   (`encryptedToken`), and only with a `url`. It is refused (`encryption-unavailable`) when
   `safeStorage.isEncryptionAvailable()` is false, and on Linux (`encryption-weak`) when
@@ -39,13 +40,18 @@ Spec: `specs/sync.spec.ts` (Sync config: `SYNC_CONFIG_FILE_NAME`, `SyncConfigFil
 - **Scenario: config-round-trip** — `write({ enabled, url, token })` then `read()`: the same
   `enabled` and `url`, `hasToken: true`, and `token()` decrypts the token. The file holds the
   ciphertext's base64 and never the token's text; its mode is 0600; nothing else is left in the
-  directory. Writing again without `token` keeps the stored one; `token: null` removes it.
+  directory. Writing again without `token` keeps the stored one for the same endpoint; `token:
+  null` removes it, and so does `url: null`.
 - **Scenario: config-token-needs-encryption** — with `isEncryptionAvailable()` false, writing a
   token is refused (`encryption-unavailable`) and the file is unchanged; reading a stored token
   turns sync off (`encryption-unavailable`). Local staging still works.
 - **Scenario: config-refuses-basic-text** — on Linux with the `basic_text` backend, writing a token
   is refused (`encryption-weak`) and reading one turns sync off; off Linux the backend is not
   consulted.
+- **Scenario: config-new-endpoint-drops-token** — with a stored token, writing a `url` with
+  another scheme, host or port and no `token` drops the stored token (the file has no
+  `encryptedToken`, and `load()` answers no token): the old token is never sent to a new host. A
+  new path on the same scheme, host and port keeps it; a new token for the new endpoint is stored.
 - **Scenario: config-token-needs-endpoint** — a token without `url` is refused when written
   (`token-needs-endpoint`); a file with `encryptedToken` and no `url` is tampered.
 - **Scenario: config-endpoint-rules** — accepted: `libsql://db.example.turso.io`,

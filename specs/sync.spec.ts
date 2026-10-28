@@ -209,11 +209,12 @@ export function libsqlConfigProblem(config: LibsqlConfig, options: LibsqlUrlOpti
  *   inserted when a `ci_tombstones` row names them (Phase 6's `no_resurrect`). Deleted only by an
  *   arriving tombstone, children first (`SYNC_PURGE_DELETE_ORDER`).
  * - `mutable-lww`: inserted by `id` when missing; otherwise the version with the later `updated_at`
- *   wins. Deletion is a `deleted_at` value carried like any other column, never a `DELETE`.
+ *   wins (one more than `SYNC_MAX_CLOCK_SKEW_MS` ahead counts as `now` plus that). Deletion is a `deleted_at` value carried like any other column, never a `DELETE`.
  * - `purge-log`: `ci_purges`, the audit log of deletions. Inserted by `id` when missing.
  * - `tombstone`: `ci_tombstones`. Inserted by `id` when missing and when no tombstone for the same
- *   `(table_name, row_id)` exists yet (its `UNIQUE` key: two devices may purge the same row); each
- *   one that arrives deletes the row it names, if that table is an `append-only` one.
+ *   `(table_name, row_id)` exists yet (its `UNIQUE` key: two devices may purge the same row). Once
+ *   they have all arrived (`SYNC_PAGE_ROWS`), every row of an `append-only` table that a tombstone
+ *   names is deleted, children first.
  *
  * Every insert is `INSERT … SELECT … WHERE NOT EXISTS (…)`: Phase 6's `_no_replace` triggers abort
  * even `ON CONFLICT DO NOTHING`.
@@ -382,7 +383,12 @@ export { SYNC_STATE_TABLE };
 export const SYNC_DIRECTIONS = ['push', 'pull'] as const;
 export type SyncDirection = (typeof SYNC_DIRECTIONS)[number];
 
-/** Rows per table read in one page of a pass (`ci_purges` and `ci_tombstones` are never split). */
+/**
+ * Rows per table read in one page of a pass, every table alike (`ci_purges` and `ci_tombstones`
+ * too). Tombstones' deletes run only on a page where `ci_tombstones` is caught up (its page was not
+ * full), as a sweep of every tombstoned row still present, so a purge split across pages is
+ * applied once all of it has arrived.
+ */
 export const SYNC_PAGE_ROWS = 500;
 
 /** Pages a pass runs in each direction before it stops until the next one. */
@@ -391,8 +397,49 @@ export const SYNC_MAX_PAGES_PER_PASS = 20;
 /** How far behind `now` a push mark stays, so rows committed late are not skipped (ms). */
 export const SYNC_PUSH_SETTLE_MS = 60_000;
 
+/**
+ * How far ahead of this device's `now` an `updated_at` counts in a last-writer-wins comparison
+ * (ms). A later one (a device whose clock is wrong, or a forged row) is compared as
+ * `now + SYNC_MAX_CLOCK_SKEW_MS`; the row's stored value is kept as it is. So a row dated far in
+ * the future can't win against every later edit: once this device's clock passes the cap, an edit
+ * made then is newer. Two devices whose clocks differ can compare such a row differently until
+ * their clocks pass it (a known limit).
+ */
+export const SYNC_MAX_CLOCK_SKEW_MS = 24 * 60 * 60_000;
+
+/**
+ * The largest pulled row (bytes: the sum over its spec'd columns of SQLite's `length()` of each value
+ * cast to a blob). Larger rows are measured in SQL, never read, and skipped (`SyncTableReport.tooLarge`);
+ * the pull mark still moves past them. Phase 6's largest values are snapshot and diff JSON.
+ */
+export const SYNC_MAX_ROW_BYTES = 16 * 1024 * 1024;
+
 /** How often the service runs a pass (push, `sync()` with an endpoint, pull) after the first (ms). */
 export const SYNC_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * **Where sync runs.** The engine and the replica's `sync()` run on Electron's main thread. libSQL's
+ * `sync()` is synchronous native code (`databaseSyncSync`): with an endpoint it blocks the main
+ * thread on network I/O, with no timeout. Moving the engine, or at least `sync()`, to a worker or
+ * utility process is required before remote sync is turned on; local staging only does local I/O.
+ * Each pull page is one `BEGIN IMMEDIATE` transaction on the session database, through a second
+ * handle on its file; while it runs, the store's own writes wait (up to its busy timeout, then
+ * fail as they would under any other lock).
+ *
+ * **What a pull page does when the session database refuses a row.** A page is one transaction,
+ * so one row the session database refuses (a trigger, a foreign key; for example a tombstone for a
+ * version that a capture from a device still offline references) rolls the whole page back, and
+ * every later pass retries the same page: pull stalls for every table until the cause is handled.
+ * Per-row quarantine is required before real tables are synced.
+ *
+ * **What a purge does not remove.** Arriving tombstones delete the rows they name in the replica
+ * and in the session database, but the bytes can remain in SQLite's free pages (no `VACUUM` or
+ * `secure_delete`), in the remote primary's history (its WAL frames and backups), and the row IDs
+ * remain in `SYNC_LOG_TABLE`.
+ *
+ * **Device ID.** A copied profile (its `frost-sync.json`) shares its `deviceId` with the original,
+ * and so its marks: the two would skip rows each other pushed. Making a new ID on a copy is not done.
+ */
 
 /**
  * Why a table is left out of a pass: it is not in the session database or not in the replica

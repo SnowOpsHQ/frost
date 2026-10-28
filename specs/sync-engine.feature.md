@@ -2,7 +2,9 @@
 
 Spec: `specs/sync.spec.ts` (Sync tables: `SYNC_MERGE_RULES`, `SYNC_TABLES`, `SYNC_TOMBSTONE_TABLE`,
 `SYNC_PURGE_DELETE_ORDER`, `SYNC_STATE_TABLE`, `SYNC_LOG_TABLE`, `SYNC_PAGE_ROWS`,
-`SYNC_MAX_PAGES_PER_PASS`, `SYNC_PUSH_SETTLE_MS`, `SYNC_INTERVAL_MS`, `SYNC_SKIP_REASONS`) and the
+`SYNC_MAX_PAGES_PER_PASS`, `SYNC_PUSH_SETTLE_MS`, `SYNC_MAX_CLOCK_SKEW_MS`, `SYNC_MAX_ROW_BYTES`,
+`SYNC_INTERVAL_MS`, `SYNC_SKIP_REASONS`, and its notes Where sync runs, What a pull page does when
+the session database refuses a row, What a purge does not remove, Device ID) and the
 plan's Sync design note. Phase 6's schema (`docs/plans/phase-6-change-intelligence.md`, Schema) for
 the tables' columns and triggers. Phase 7 Task 8. Code: `apps/desktop/src/main/sync/engine.ts`,
 `service.ts`. Tests: `apps/desktop/src/main/sync/__tests__/engine.test.ts` (fixture `ci_*` tables
@@ -18,27 +20,36 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
   only when it is one of `SYNC_PURGE_DELETE_ORDER`'s names (anything else is a row, never SQL).
 - **A pass** is a push, then (with an endpoint) the replica's `sync()`, then a pull.
   - **Push** reads the session database's rows after the table's push mark, ordered by
-    `(time, id)`, in pages of `SYNC_PAGE_ROWS` (`ci_purges` and `ci_tombstones` whole), merges them
+    `(time, id)`, in pages of `SYNC_PAGE_ROWS` (every table alike), merges them
     into the replica, appends a `SYNC_LOG_TABLE` row for each row inserted or changed, and moves the
     mark, all in one replica batch. The mark never passes `now − SYNC_PUSH_SETTLE_MS`.
-  - **Pull** reads the replica's log after the table's pull mark, fetches those rows, and merges
-    them into the session database in **one batch transaction** (`BEGIN IMMEDIATE`) per page; the
-    pull marks move only after it commits.
+  - **Pull** reads the replica's log after the table's pull mark, measures those rows in SQL and
+    skips (unread, counted as `tooLarge`) any over `SYNC_MAX_ROW_BYTES`, fetches the rest, and
+    merges them into the session database in **one batch transaction** (`BEGIN IMMEDIATE`) per
+    page; the pull marks move only after it commits.
   - Tables run in `SYNC_TABLES` order; a page that fills stops the direction there (later tables
     wait), so a child never arrives before its parent. Up to `SYNC_MAX_PAGES_PER_PASS` pages.
 - **Merge rules** (`SYNC_MERGE_RULES`): `append-only` rows are inserted if missing and never when a
   tombstone names them; `mutable-lww` rows are inserted if missing, else replaced by a version with
-  a later `updated_at`. On an equal `updated_at` with different values, the version whose values
+  a later `updated_at`, where an `updated_at` more than `SYNC_MAX_CLOCK_SKEW_MS` ahead of this
+  device's `now` counts as `now + SYNC_MAX_CLOCK_SKEW_MS` (the stored value is unchanged). On an equal `updated_at` with different values, the version whose values
   (the spec's columns, as JSON) sort larger wins, so both sides converge (the plan's "larger id"
   cannot tell two versions of one row apart: they share their `id`). Purges and tombstones are
   inserted if missing (a tombstone also not when its `(table_name, row_id)` already has one).
-  Every insert is `INSERT … SELECT … WHERE NOT EXISTS`. Tombstones arriving in a page then delete
-  the rows they name, in `SYNC_PURGE_DELETE_ORDER` (children first), in the same batch.
+  Every insert is `INSERT … SELECT … WHERE NOT EXISTS`. On a page where `ci_tombstones` is caught
+  up (its page was not full), every row still present that a tombstone names (this page's or an
+  earlier one's) is deleted, in `SYNC_PURGE_DELETE_ORDER` (children first), in the same batch; so
+  a purge whose tombstones span pages is deleted once all have arrived. The rows go from the
+  replica's and the session database's tables, though not necessarily from disk (see Known limits).
 - **Marks** live in `SYNC_STATE_TABLE` in the replica, keyed by device ID, direction and table;
   the session database gets no table, row or column from sync.
 - **Missing tables.** A table missing on either side (or missing a listed column, or an
   `append-only` one without `ci_tombstones` on both sides) is skipped and reported
   (`SYNC_SKIP_REASONS`). Before Phase 6 merges, every table is skipped as `missing-in-source`.
+
+- **Main thread.** The engine and `sync()` run on Electron's main thread; with an endpoint,
+  libSQL's synchronous `sync()` blocks it on network I/O with no timeout. Moving them to a worker
+  or utility process is required before remote sync is turned on.
 
 ## Engine (`engine.test.ts`)
 - **Scenario: engine-pushes-new-rows** — rows of every fixture table in the session database
@@ -46,11 +57,20 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
   the push marks are in the replica.
 - **Scenario: engine-pulls-new-rows** — rows written to the replica by another device's push
   arrive in the session database with the same values, and its guard triggers stay quiet.
+- **Scenario: engine-pull-skips-oversize-rows** — a replica row over the size cap (`maxRowBytes`)
+  is not pulled, is counted as `tooLarge`, and is not measured again on the next pass; the rows
+  around it arrive.
 - **Scenario: engine-late-rows-still-pulled** — a row another device pushes after this device has
   pulled, with a `created_at` older than every row already pulled, still arrives.
 - **Scenario: engine-lww** — a newer `updated_at` wins in both directions (rename, and a
   `deleted_at` tombstone, carried as values); an older one loses; on a tie with different values,
   both devices end with the same version (the larger by value); an identical row writes nothing.
+- **Scenario: engine-lww-clock-skew** — a row dated ten days ahead still replaces an older one,
+  but compares as `now + SYNC_MAX_CLOCK_SKEW_MS`: an edit dated exactly there ties with it and wins
+  on values, on every device and in the replica.
+- **Scenario: engine-split-purge** — with pages of 2 rows, a purge of six captured rows whose
+  tombstones are ordered parents first spans three pages each way; nothing is deleted until all
+  its tombstones have arrived, then all six go, children first, past Phase 6's triggers.
 - **Scenario: engine-applies-tombstones** — a purge on one device (its `ci_purges` row, tombstones,
   and the children-first deletes) reaches the other: the tombstoned diff, capture and version are
   deleted there, children first, past Phase 6's `_purge_only` and `ci_versions_unreferenced_only`
@@ -64,9 +84,11 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
   `columns-missing`; with no `ci_tombstones`, the captured tables are `needs-tombstones`.
 - **Scenario: engine-is-idempotent** — running the pass again changes nothing (no rows written,
   no log entries); pages of `SYNC_PAGE_ROWS` add up to every row.
-- **Scenario: engine-pull-rolls-back** — a pull whose batch fails part-way (a trigger in the
-  session database refuses one row) writes nothing there and leaves the pull marks where they were;
-  once the cause is gone the next pass applies every row.
+- **Scenario: engine-pull-rolls-back** — the session database refusing one row (a trigger)
+  rolls back that row's whole page: nothing of it is written there, the pull marks stay where they
+  were, and every later pass fails on the same page (pull is stalled for every table). Only once
+  the cause is removed does the next pass apply every row. This is a known limit, not a feature:
+  see Known limits.
 - **Scenario: engine-state-in-replica-only** — after passes in both directions the session database
   has exactly the tables it started with; the replica has `SYNC_STATE_TABLE` and `SYNC_LOG_TABLE`.
 - **Scenario: engine-quotes-spec-identifiers** — the SQL the engine runs (a recording driver)
@@ -88,6 +110,17 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
 - **Scenario: service-fail-safe** — the opener rejecting, the session database missing, or a pass
   throwing is one log line each and never a throw; `startSyncService` never throws, even when
   `app.getPath` does.
+
+## Known limits
+- **One refused row stalls pull.** A page is one transaction, so a row the session database
+  refuses (a trigger or a foreign key; e.g. a tombstone for a version that a capture from a device
+  still offline references) rolls back its page, and pull stalls for every table until that is
+  handled. Per-row quarantine is required before real tables are synced.
+- **A copied profile shares its `deviceId`** (and so its marks) with the original: the two would
+  skip rows each other pushed.
+- **Purged bytes can remain** in SQLite's free pages, in the remote primary's history (WAL frames,
+  backups), and as row IDs in `SYNC_LOG_TABLE`.
+- **Main thread.** See Behaviour: remote `sync()` blocks it with no timeout.
 
 ## Not here
 Syncing the real Phase 6 tables (needs Phase 6 merged), any UI or IPC to turn sync on, a remote

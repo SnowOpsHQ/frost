@@ -1,7 +1,9 @@
 import type { SqlDriver, SqlQuery } from '@app/db/driver-types';
 import {
   SYNC_LOG_TABLE,
+  SYNC_MAX_CLOCK_SKEW_MS,
   SYNC_MAX_PAGES_PER_PASS,
+  SYNC_MAX_ROW_BYTES,
   SYNC_PAGE_ROWS,
   SYNC_PURGE_DELETE_ORDER,
   SYNC_PUSH_SETTLE_MS,
@@ -27,6 +29,9 @@ import {
 // primary's copy, shared by every device. Push marks are the session rows' `(time, id)` (time read
 // from this device's own rows); pull reads the replica's change log (`SYNC_LOG_TABLE`) by `seq`, the
 // primary's commit order, so a row whose time is older than anything pulled before still arrives.
+//
+// Runs on whatever thread calls it: today Electron's main thread (see `sync.spec.ts`, Where sync
+// runs). Nothing here bounds how long a page takes beyond `SYNC_PAGE_ROWS` and `SYNC_MAX_ROW_BYTES`.
 
 type Row = readonly unknown[];
 type Table = (typeof SYNC_TABLES)[number];
@@ -81,6 +86,8 @@ export interface SyncTableReport {
   written: number;
   /** Rows deleted there by arriving tombstones. */
   deleted: number;
+  /** Pulled rows skipped for being larger than `SYNC_MAX_ROW_BYTES` (never read). */
+  tooLarge: number;
 }
 
 export interface SyncDirectionReport {
@@ -114,6 +121,8 @@ export interface SyncPassOptions {
   readonly pageRows?: number;
   /** Default `SYNC_MAX_PAGES_PER_PASS`. */
   readonly maxPages?: number;
+  /** Default `SYNC_MAX_ROW_BYTES` (tests). */
+  readonly maxRowBytes?: number;
 }
 
 // ---- Tables on each side -------------------------------------------------------------------
@@ -144,7 +153,9 @@ function emptyReport(direction: SyncDirection, problems: Map<SyncTableName, Sync
     direction,
     tables: SYNC_TABLES.map((table) => {
       const reason = problems.get(table.name) ?? null;
-      return reason === null ? { table: table.name, status: 'synced', written: 0, deleted: 0 } : { table: table.name, status: 'skipped', reason, written: 0, deleted: 0 };
+      return reason === null
+        ? { table: table.name, status: 'synced', written: 0, deleted: 0, tooLarge: 0 }
+        : { table: table.name, status: 'skipped', reason, written: 0, deleted: 0, tooLarge: 0 };
     }),
     pages: 0,
     more: false,
@@ -220,13 +231,14 @@ interface PagePlan {
   /** Mutable rows whose incoming version lost to the target's (pull fetches the winner back). */
   readonly lost: Map<SyncTableName, string[]>;
   readonly deleted: Map<SyncTableName, number>;
+  readonly tooLarge: Map<SyncTableName, number>;
   /** Tombstoned `(table_name, row_id)` pairs seen in this page (they veto inserts after them). */
   readonly vetoes: Set<string>;
   /** Rows to delete, per `SYNC_PURGE_DELETE_ORDER` table. */
   readonly deletes: Map<string, Set<string>>;
 }
 
-const newPlan = (): PagePlan => ({ statements: [], written: new Map(), lost: new Map(), deleted: new Map(), vetoes: new Set(), deletes: new Map() });
+const newPlan = (): PagePlan => ({ statements: [], written: new Map(), lost: new Map(), deleted: new Map(), tooLarge: new Map(), vetoes: new Set(), deletes: new Map() });
 const push = <K, V>(map: Map<K, V[]>, key: K, value: V) => map.set(key, [...(map.get(key) ?? []), value]);
 
 function insertStatement(table: Table, row: Row): SqlQuery {
@@ -243,17 +255,21 @@ function insertStatement(table: Table, row: Row): SqlQuery {
   }
 }
 
-/** Whether the incoming version of a mutable row replaces the target's: later `updated_at`, or on a tie the larger values. */
-function incomingWins(table: Table, incoming: Row, current: Row): boolean | 'same' {
+/**
+ * Whether the incoming version of a mutable row replaces the target's: later `updated_at` (each
+ * counted as at most `now + SYNC_MAX_CLOCK_SKEW_MS`), or on a tie the larger values.
+ */
+function incomingWins(table: Table, incoming: Row, current: Row, now: number): boolean | 'same' {
   const at = columnAt(table, 'updated_at');
-  const [mine, theirs] = [incoming[at] as number, current[at] as number];
+  const cap = now + SYNC_MAX_CLOCK_SKEW_MS;
+  const [mine, theirs] = [Math.min(incoming[at] as number, cap), Math.min(current[at] as number, cap)];
   if (mine !== theirs) return mine > theirs;
   const [a, b] = [JSON.stringify(incoming), JSON.stringify(current)];
   return a === b ? 'same' : a > b;
 }
 
 /** Adds the statements that merge `incoming` rows of `table` into `target` to `plan`. */
-async function planTable(plan: PagePlan, target: SqlDriver, table: Table, incoming: readonly Row[]): Promise<void> {
+async function planTable(plan: PagePlan, target: SqlDriver, table: Table, incoming: readonly Row[], now: number): Promise<void> {
   if (incoming.length === 0) return;
   const ids = incoming.map((row) => row[0] as string);
   const current = await rowsById(target, table, ids);
@@ -267,7 +283,7 @@ async function planTable(plan: PagePlan, target: SqlDriver, table: Table, incomi
         push(plan.written, table.name, id);
         continue;
       }
-      const wins = incomingWins(table, row, existing);
+      const wins = incomingWins(table, row, existing, now);
       if (wins === 'same') continue;
       if (!wins) {
         push(plan.lost, table.name, id);
@@ -298,13 +314,23 @@ async function planTable(plan: PagePlan, target: SqlDriver, table: Table, incomi
   }
 }
 
-/** Adds the children-first deletes of this page's tombstones (only of rows `target` has). */
+/**
+ * Adds the children-first deletes of every tombstoned row `target` still has: those this page's
+ * tombstones name, and those named by tombstones already in `target` (from earlier pages, when a
+ * purge spanned more than one). Called only when `ci_tombstones` is caught up, so a purge's
+ * tombstones are all there before any of its rows is deleted.
+ */
 async function planDeletes(plan: PagePlan, target: SqlDriver, usable: (table: SyncTableName) => boolean): Promise<void> {
   for (const name of SYNC_PURGE_DELETE_ORDER) {
-    const ids = [...(plan.deletes.get(name) ?? [])];
-    if (ids.length === 0 || !usable(name)) continue;
+    if (!usable(name)) continue;
     const table = SYNC_TABLES.find((t) => t.name === name)!;
-    const present = [...(await rowsById(target, table, ids)).keys()];
+    const { rows } = await target.execute(
+      `SELECT ${q('id')} FROM ${q(name)} WHERE ${q('id')} IN (SELECT ${q('row_id')} FROM ${q(SYNC_TOMBSTONE_TABLE)} WHERE ${q('table_name')} = ?)`,
+      [name],
+      'all',
+    );
+    const named = [...(plan.deletes.get(name) ?? [])];
+    const present = [...new Set([...(rows as [string][]).map(([id]) => id), ...(await rowsById(target, table, named)).keys()])];
     for (const chunk of chunks(present)) plan.statements.push(run(`DELETE FROM ${q(name)} WHERE ${q('id')} IN (${marks(chunk.length)})`, chunk));
     if (present.length > 0) plan.deleted.set(name, present.length);
   }
@@ -314,11 +340,24 @@ function tally(report: SyncDirectionReport, plan: PagePlan): void {
   for (const entry of report.tables) {
     entry.written += plan.written.get(entry.table)?.length ?? 0;
     entry.deleted += plan.deleted.get(entry.table) ?? 0;
+    entry.tooLarge += plan.tooLarge.get(entry.table) ?? 0;
   }
 }
 
-/** Rows per read for `table`: purges and tombstones are never split across pages (a purge's tombstones apply together). */
-const limitFor = (table: Table, pageRows: number): number => (table.rule === 'purge-log' || table.rule === 'tombstone' ? -1 : pageRows);
+/** Of `ids`, those whose row in `driver` is at most `SYNC_MAX_ROW_BYTES` (measured in SQL; the rows themselves are not read). */
+async function withinRowCap(driver: SqlDriver, table: Table, ids: readonly string[], cap: number): Promise<{ readonly fits: string[]; readonly tooLarge: number }> {
+  const size = table.columns.map((column) => `coalesce(length(CAST(${q(column)} AS BLOB)), 0)`).join(' + ');
+  const fits: string[] = [];
+  let tooLarge = 0;
+  for (const chunk of chunks(ids)) {
+    const { rows } = await driver.execute(`SELECT ${q('id')}, ${size} FROM ${q(table.name)} WHERE ${q('id')} IN (${marks(chunk.length)})`, chunk, 'all');
+    for (const [id, bytes] of rows as [string, number][]) {
+      if (bytes <= cap) fits.push(id);
+      else tooLarge += 1;
+    }
+  }
+  return { fits, tooLarge };
+}
 
 // ---- Push ----------------------------------------------------------------------------------
 
@@ -342,18 +381,20 @@ async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirect
     const at = now();
     const cap: PushMark = { time: at - SYNC_PUSH_SETTLE_MS, id: '' };
     let more = false;
+    let tombstonesCaughtUp = false;
     for (const table of SYNC_TABLES) {
       if (!usable(table.name)) continue;
       const saved = stored.get(table.name);
       const mark: PushMark = saved?.time != null && saved.id != null ? { time: saved.time, id: saved.id } : START;
-      const limit = limitFor(table, pageRows);
+      const limit = pageRows;
       const { rows } = await source.execute(
         `SELECT ${list(table.columns)} FROM ${q(table.name)} WHERE (${q(table.time)} > ? OR (${q(table.time)} = ? AND ${q('id')} > ?)) ORDER BY ${q(table.time)}, ${q('id')} LIMIT ?`,
         [mark.time, mark.time, mark.id, limit],
         'all',
       );
       const page = rows as Row[];
-      await planTable(plan, replica, table, page);
+      await planTable(plan, replica, table, page, at);
+      if (table.name === SYNC_TOMBSTONE_TABLE) tombstonesCaughtUp = page.length < limit;
       if (page.length === 0) continue;
       const timeAt = columnAt(table, table.time);
       const last = page[page.length - 1]!;
@@ -363,12 +404,12 @@ async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirect
       const next = after(capped, mark) ? capped : mark;
       if (next !== mark) moved.push(markStatement(deviceId, 'push', table.name, next, at));
       // A full page that moved the mark leaves the rest, and every later table, for the next page.
-      if (limit > 0 && page.length === limit && next !== mark) {
+      if (page.length === limit && next !== mark) {
         more = true;
         break;
       }
     }
-    await planDeletes(plan, replica, usable);
+    if (tombstonesCaughtUp) await planDeletes(plan, replica, usable);
     const log = [...plan.written].flatMap(([table, ids]) => ids.map((id) => run(`INSERT INTO ${q(SYNC_LOG_TABLE)} (${list(['table_name', 'row_id'])}) VALUES (?, ?)`, [table, id])));
     const batch = [...plan.statements, ...log, ...moved];
     if (batch.length > 0) await replica.batch(batch);
@@ -406,10 +447,11 @@ async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, 
     const moved: SqlQuery[] = [];
     const at = now();
     let more = false;
+    let tombstonesCaughtUp = false;
     for (const table of SYNC_TABLES) {
       if (!usable(table.name)) continue;
       const mark = stored.get(table.name)?.seq ?? 0;
-      const limit = limitFor(table, pageRows);
+      const limit = pageRows;
       const { rows } = await replica.execute(
         `SELECT ${list(['seq', 'row_id'])} FROM ${q(SYNC_LOG_TABLE)} WHERE ${q('table_name')} = ? AND ${q('seq')} > ? ORDER BY ${q('seq')} LIMIT ?`,
         [table.name, mark, limit],
@@ -417,17 +459,21 @@ async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, 
       );
       const entries = rows as [number, string][];
       const ids = [...new Set([...entries.map(([, id]) => id), ...(extra.get(table.name) ?? [])])];
-      const found = await rowsById(replica, table, ids);
-      await planTable(plan, source, table, ids.flatMap((id) => (found.has(id) ? [found.get(id)!] : [])));
+      // Measured before they are read: a row over `SYNC_MAX_ROW_BYTES` is skipped, and counted.
+      const { fits, tooLarge } = await withinRowCap(replica, table, ids, options.maxRowBytes ?? SYNC_MAX_ROW_BYTES);
+      if (tooLarge > 0) plan.tooLarge.set(table.name, tooLarge);
+      const found = await rowsById(replica, table, fits);
+      await planTable(plan, source, table, fits.flatMap((id) => (found.has(id) ? [found.get(id)!] : [])), at);
+      if (table.name === SYNC_TOMBSTONE_TABLE) tombstonesCaughtUp = entries.length < limit;
       if (entries.length === 0) continue;
       moved.push(markStatement(deviceId, 'pull', table.name, { seq: entries[entries.length - 1]![0] }, at));
-      if (limit > 0 && entries.length === limit) {
+      if (entries.length === limit) {
         more = true;
         break;
       }
     }
     extra = new Map();
-    await planDeletes(plan, source, usable);
+    if (tombstonesCaughtUp) await planDeletes(plan, source, usable);
     // The session side in one transaction; the marks move only once it has committed.
     if (plan.statements.length > 0) await source.batch(plan.statements);
     if (moved.length > 0) await replica.batch(moved);

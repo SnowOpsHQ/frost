@@ -50,6 +50,19 @@
 export const LIBSQL_SQLITE_VERSION = '3.45.1' as const;
 
 /**
+ * `LIBSQL_SQLITE_VERSION` as `SQLITE_VERSION_NUMBER` (3045001): what SQLite writes at offset 96 of
+ * a database file's header, big-endian, when it modifies the file (`sync-replica-opens` reads it
+ * there, so a replica written by anything but libSQL's own SQLite is noticed).
+ */
+export function sqliteVersionNumber(version: string): number {
+  const [major = 0, minor = 0, patch = 0] = version.split('.').map(Number);
+  return major * 1_000_000 + minor * 1_000 + patch;
+}
+
+/** Where the SQLite header records the version number of the library that last wrote the file. */
+export const SQLITE_HEADER_VERSION_OFFSET = 96;
+
+/**
  * The local file of the libSQL embedded replica (Task 8), directly in `app.getPath('userData')`.
  * The only file opened with a `syncUrl`, so the only one that talks to the sync endpoint.
  * Re-exported by `sync.spec.ts`; here so the package verifiers (`sync-replica-opens`) can read it.

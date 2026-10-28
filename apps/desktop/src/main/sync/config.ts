@@ -77,7 +77,11 @@ export interface SyncConfigView {
   readonly problem?: SyncConfigProblem;
 }
 
-/** A change to write: an omitted field keeps the stored value, `null` removes it. */
+/**
+ * A change to write: an omitted field keeps the stored value, `null` removes it. An omitted `token`
+ * is kept only while the endpoint's scheme, host and port stay the same; a `url` for another
+ * endpoint drops it (it is never sent to a new host).
+ */
 export interface SyncConfigChange {
   readonly enabled: boolean;
   readonly url?: string | null;
@@ -162,6 +166,12 @@ async function writeAtomically(file: string, config: SyncConfigFile): Promise<vo
   }
 }
 
+/** `url`'s scheme, host and port: a stored token belongs to exactly that endpoint (`libsql:` URLs have no `URL#origin`). */
+const endpointOrigin = (url: string): string => {
+  const parsed = new URL(url);
+  return `${parsed.protocol}//${parsed.host}`;
+};
+
 const viewOf = (file: SyncConfigFile, problem?: SyncConfigProblem): SyncConfigView => ({
   enabled: problem === undefined && file.enabled,
   ...(file.url === undefined ? {} : { url: file.url }),
@@ -228,7 +238,9 @@ export function createSyncConfigStore(userData: string, options: SyncConfigOptio
         const current: SyncConfigFile = read.file ?? { enabled: false };
         const url = change.url === undefined ? current.url : (change.url ?? undefined);
         if (url !== undefined && syncEndpointProblem(url) !== null) throw new SyncConfigError('endpoint-invalid');
-        let encryptedToken = change.token === undefined ? current.encryptedToken : undefined;
+        // The stored token is kept only for the same endpoint: a new scheme, host or port never gets the old token.
+        const sameEndpoint = url !== undefined && current.url !== undefined && endpointOrigin(url) === endpointOrigin(current.url);
+        let encryptedToken = change.token === undefined && sameEndpoint ? current.encryptedToken : undefined;
         if (typeof change.token === 'string') {
           if (syncTokenProblem(change.token) !== null) throw new SyncConfigError('token-invalid');
           if (url === undefined) throw new SyncConfigError('token-needs-endpoint');

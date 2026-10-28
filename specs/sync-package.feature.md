@@ -117,10 +117,14 @@ These checks run on the packaged tree. On Linux and Windows they also run on eve
   - `SYNC_REPLICA_FILE_NAME` appears in the profile, and Node's `node:sqlite`, opening it
     read-only, finds `SYNC_STATE_TABLE` in it (so the packaged main loaded libSQL's unpacked
     prebuild, opened the replica and ran SQL in it);
-  - on POSIX the file's mode is 0600;
+  - its header's last-writer version number (offset `SQLITE_HEADER_VERSION_OFFSET`, 96,
+    big-endian) is `sqliteVersionNumber(LIBSQL_SQLITE_VERSION)` (3045001), so libSQL's own SQLite
+    wrote it;
+  - on POSIX the file's mode is 0600, and so is each `frost-sync.db*` sidecar there;
   - the app is still running.
 
-  It is then terminated by its PID, and the profile removed. A failure prints the app's stderr
+  It is then terminated by its PID (an app that already exited, ESRCH, is fine), and the profile
+  removed. A failure prints the app's stderr
   tail. Under `verify-windows-package.mjs --static` it is skipped with an `INFO` line, like the
   other launch checks.
 

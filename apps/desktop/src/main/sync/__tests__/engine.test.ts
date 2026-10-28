@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SqlDriver } from '@app/db/driver-types';
 import {
   SYNC_LOG_TABLE,
+  SYNC_MAX_CLOCK_SKEW_MS,
   SYNC_PURGE_DELETE_ORDER,
   SYNC_STATE_TABLE,
   SYNC_TABLES,
@@ -67,13 +68,15 @@ async function seedEverything(driver: SqlDriver): Promise<void> {
 }
 
 /** Phase 6's purge path on `driver`: the purge, its tombstones, then children-first deletes, in one batch. */
-async function purgeOn(driver: SqlDriver, purgeId: string, rows: readonly [SyncTableName, string][], at: number): Promise<void> {
+async function purgeOn(driver: SqlDriver, purgeId: string, rows: readonly [SyncTableName, string][], at: number, { parentsFirst = false } = {}): Promise<void> {
   const ordered = [...rows].sort(([a], [b]) => SYNC_PURGE_DELETE_ORDER.indexOf(a as never) - SYNC_PURGE_DELETE_ORDER.indexOf(b as never));
+  // Tombstone ids (so their sync order) children first, or parents first; the deletes are always children first.
+  const named = parentsFirst ? [...ordered].reverse() : ordered;
   const spec = (name: SyncTableName) => SYNC_TABLES.find((t) => t.name === name)!.columns;
   const ins = (name: SyncTableName, values: unknown[]) => ({ sql: `INSERT INTO ${name} (${spec(name).join(', ')}) VALUES (${values.map(() => '?').join(', ')})`, params: values, method: 'run' as const });
   await driver.batch([
     ins('ci_purges', purge(purgeId, at)),
-    ...ordered.map(([table, id], i) => ins('ci_tombstones', tombstone(uuid7(at, i + 1), purgeId, table, id, at))),
+    ...named.map(([table, id], i) => ins('ci_tombstones', tombstone(uuid7(at, i + 1), purgeId, table, id, at))),
     ...ordered.map(([table, id]) => ({ sql: `DELETE FROM ${table} WHERE id = ?`, params: [id], method: 'run' as const })),
   ]);
 }
@@ -176,6 +179,73 @@ describe('sync engine', () => {
     for (const driver of [a, b, fx.replica]) expect((await rowsOf(driver, 'ci_projects'))[0]).toEqual(project(id, 'Zulu', 4_000));
   });
 
+  test('engine-lww-clock-skew', async () => {
+    const a = await fx.device('a');
+    const b = await fx.device('b');
+    const now = NOW();
+    // A row dated ten days ahead (a wrong clock, or forged) still arrives over an older one...
+    const id = uuid7(8);
+    await insert(a, 'ci_projects', project(id, 'Future', now + 10 * 24 * 3_600_000));
+    await insert(b, 'ci_projects', project(id, 'Before', now - 1_000));
+    await pass(a, 'device-a');
+    await pass(b, 'device-b');
+    expect((await rowsOf(b, 'ci_projects'))[0]).toEqual(project(id, 'Future', now + 10 * 24 * 3_600_000));
+    // ...but counts only as `now + SYNC_MAX_CLOCK_SKEW_MS`: an edit dated there ties with it (and
+    // wins on values, 'Local' > 'Future'), where the raw times would have kept 'Future'.
+    const other = uuid7(9);
+    await insert(a, 'ci_projects', project(other, 'Future', now + 10 * 24 * 3_600_000));
+    await insert(b, 'ci_projects', project(other, 'Local', now + SYNC_MAX_CLOCK_SKEW_MS));
+    await pass(b, 'device-b');
+    await pass(a, 'device-a');
+    for (const driver of [a, b, fx.replica]) expect((await rowsOf(driver, 'ci_projects'))[1], driver.kind).toEqual(project(other, 'Local', now + SYNC_MAX_CLOCK_SKEW_MS));
+  });
+
+  test('engine-pull-skips-oversize-rows', async () => {
+    const a = await fx.device('a');
+    const b = await fx.device('b');
+    await insert(a, 'ci_versions', version(uuid7(10), 1_000));
+    const big = version(uuid7(11), 1_001);
+    big[5] = JSON.stringify({ title: 'x'.repeat(4_000) });
+    await insert(a, 'ci_versions', big);
+    await pass(a, 'device-a');
+    const report = await runSyncPass({ source: b, replica: fx.replica, deviceId: 'device-b', now: NOW, maxRowBytes: 2_000 });
+    expect(tableReport(report.pull, 'ci_versions')).toMatchObject({ written: 1, tooLarge: 1 });
+    expect((await rowsOf(b, 'ci_versions')).map((row) => row[0])).toEqual([uuid7(10)]);
+    // The mark moved past it: it is not measured again on every pass.
+    expect(tableReport((await runSyncPass({ source: b, replica: fx.replica, deviceId: 'device-b', now: NOW, maxRowBytes: 2_000 })).pull, 'ci_versions').tooLarge).toBe(0);
+  });
+
+  test('engine-split-purge', async () => {
+    // Pages of 2 rows: a purge's 6 tombstones span three pages; its deletes wait until all have arrived.
+    const a = await fx.device('a');
+    const b = await fx.device('b');
+    await seedEverything(a);
+    const small = (driver: SqlDriver, deviceId: string) => runSyncPass({ source: driver, replica: fx.replica, deviceId, now: NOW, pageRows: 2 });
+    await small(a, 'device-a');
+    await small(b, 'device-b');
+    await purgeOn(
+      a,
+      uuid7(60),
+      [
+        ['ci_versions', uuid7(10)],
+        ['ci_versions', uuid7(11)],
+        ['ci_captures', uuid7(20)],
+        ['ci_captures', uuid7(21)],
+        ['ci_diffs', uuid7(30)],
+        ['ci_screenshots', uuid7(40)],
+      ],
+      2_000,
+      { parentsFirst: true },
+    );
+    const pushed = await small(a, 'device-a');
+    expect(pushed.push.tables.reduce((sum, t) => sum + t.deleted, 0)).toBe(6);
+    const pulled = await small(b, 'device-b');
+    expect(pulled.pull.tables.reduce((sum, t) => sum + t.deleted, 0)).toBe(6);
+    await expectSameRows(a, b);
+    await expectSameRows(a, fx.replica);
+    for (const name of SYNC_PURGE_DELETE_ORDER) expect(await rowsOf(b, name), name).toEqual([]);
+  });
+
   test('engine-applies-tombstones', async () => {
     const a = await fx.device('a');
     const b = await fx.device('b');
@@ -253,7 +323,7 @@ describe('sync engine', () => {
       const before = await tableNames(today);
       const report = await runSyncPass({ source: today, replica: bare.replica, deviceId: 'device-t', now: NOW });
       for (const direction of [report.push, report.pull]) {
-        expect(direction.tables).toEqual(SYNC_TABLES.map((t) => ({ table: t.name, status: 'skipped', reason: 'missing-in-source', written: 0, deleted: 0 })));
+        expect(direction.tables).toEqual(SYNC_TABLES.map((t) => ({ table: t.name, status: 'skipped', reason: 'missing-in-source', written: 0, deleted: 0, tooLarge: 0 })));
       }
       expect(await tableNames(today)).toEqual(before);
       expect(await tableNames(bare.replica)).toEqual([SYNC_LOG_TABLE, SYNC_STATE_TABLE].sort());

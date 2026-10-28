@@ -13,6 +13,21 @@ import { SYNC_PURGE_DELETE_ORDER, SYNC_REPLICA_FILE_NAME, SYNC_TABLES, type Sync
 
 const MUTABLE = ['ci_projects', 'ci_project_pages', 'ci_project_queries'] as const;
 
+/**
+ * Removes a test's temporary directory (as `packages/db`'s `driver.test.ts` does). On Windows a
+ * closed libSQL database can stay locked for a moment (its native handle is released after
+ * `close()` returns), so removal retries briefly (5 × 100 ms, linear back-off: 1.5 s at most), and a
+ * file still locked there (EPERM / EBUSY) is left to the OS temp cleaner rather than failing the test.
+ */
+export function removeTempDir(target: string): void {
+  try {
+    rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (process.platform !== 'win32' || (code !== 'EPERM' && code !== 'EBUSY')) throw error;
+  }
+}
+
 /** `CREATE TABLE` for `table`, every spec'd column (`id` the key), optionally leaving one out. */
 export function tableSql(table: SyncTableName, { without }: { without?: string } = {}): string {
   const spec = SYNC_TABLES.find((t) => t.name === table)!;
@@ -95,7 +110,7 @@ export async function openFixture({ replicaTables = true }: { replicaTables?: bo
     raw: (name) => handles.get(name)!,
     async close() {
       for (const driver of drivers) await driver.close();
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      removeTempDir(dir);
     },
   };
 }

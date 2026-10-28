@@ -24,12 +24,14 @@ import {
   PACKAGED_ASAR_NODE_MODULES,
   PACKAGED_UNPACKED_ALLOWLIST,
   PACKAGED_UNPACKED_DIR,
+  SQLITE_HEADER_VERSION_OFFSET,
   SYNC_CONFIG_FILE_NAME,
   SYNC_PACKAGED_PROBE_CONFIG,
   SYNC_REPLICA_FILE_NAME,
   SYNC_REPLICA_OPENS_MS,
   SYNC_STATE_TABLE,
   libsqlPrebuildPackage,
+  sqliteVersionNumber,
 } from '../../../specs/sync-package.spec.ts';
 import { PACKAGED_DEBUG_REFUSAL, PACKAGED_FORBIDDEN_SWITCHES } from '../../../specs/security-policy.spec.ts';
 
@@ -345,8 +347,10 @@ function hasSyncStateTable(file) {
  * gets `SYNC_PACKAGED_PROBE_CONFIG` (local staging: no endpoint, no token, so neither the network nor
  * `safeStorage` is involved) as `SYNC_CONFIG_FILE_NAME`; the app is started on it, and within
  * `SYNC_REPLICA_OPENS_MS` `SYNC_REPLICA_FILE_NAME` must appear there holding `SYNC_STATE_TABLE`
- * (read with Node's `node:sqlite`), with mode 0600 on POSIX, while the app keeps running. The app is
- * then terminated by its PID and the profile removed. Answers how long the replica took (ms).
+ * (read with Node's `node:sqlite`), last written by libSQL's own SQLite (the header's version number
+ * at offset 96 is `LIBSQL_SQLITE_VERSION`'s), with mode 0600 for it and every sidecar there on
+ * POSIX, while the app keeps running. The app is then terminated by its PID and the profile
+ * removed. Answers how long the replica took (ms).
  */
 export async function assertSyncReplicaOpens(executable, { where }) {
   const profile = mkdtempSync(path.join(tmpdir(), 'frost-verify-sync-'));
@@ -386,9 +390,24 @@ export async function assertSyncReplicaOpens(executable, { where }) {
         `${where}: no ${SYNC_STATE_TABLE} in ${SYNC_REPLICA_FILE_NAME} after ${SYNC_REPLICA_OPENS_MS / 1000} s ` +
           `(${existsSync(replica) ? 'the file exists' : 'no file'}; the packaged main may not have loaded libSQL): ${tail()}`,
       );
+      // Written by libSQL's SQLite (3.45.1), not Node's or Electron's node:sqlite (a newer one).
+      const header = readFileSync(replica).subarray(0, 100);
+      const writer = header.length === 100 ? header.readUInt32BE(SQLITE_HEADER_VERSION_OFFSET) : null;
+      const expected = sqliteVersionNumber(LIBSQL_SQLITE_VERSION);
+      assert(writer === expected, `${where}: ${SYNC_REPLICA_FILE_NAME} was last written by SQLite ${writer}, expected libSQL's ${expected}`);
       if (process.platform !== 'win32') {
-        const mode = statSync(replica).mode & 0o777;
-        assert(mode === 0o600, `${where}: ${SYNC_REPLICA_FILE_NAME} has mode ${mode.toString(8)}, expected 600`);
+        const files = readdirSync(profile).filter((name) => name.startsWith(SYNC_REPLICA_FILE_NAME));
+        for (const name of files) {
+          let mode;
+          try {
+            mode = lstatSync(path.join(profile, name)).mode & 0o777;
+          } catch (error) {
+            // A rollback journal can be gone again by now.
+            if (error?.code === 'ENOENT') continue;
+            throw error;
+          }
+          assert(mode === 0o600, `${where}: ${name} has mode ${mode.toString(8)}, expected 600`);
+        }
       }
       // Still running a moment later: opening the replica did not crash main.
       await sleep(1_000);
@@ -396,9 +415,16 @@ export async function assertSyncReplicaOpens(executable, { where }) {
       return openedAfter;
     } finally {
       if (exited === null && spawnError === null) {
-        // By its PID only: nothing else named frost is touched.
-        process.kill(child.pid, 'SIGTERM');
-        const killer = setTimeout(() => exited === null && process.kill(child.pid, 'SIGKILL'), 5_000);
+        // By its PID only: nothing else named frost is touched. It may exit on its own meanwhile (ESRCH).
+        const kill = (signal) => {
+          try {
+            process.kill(child.pid, signal);
+          } catch (error) {
+            if (error?.code !== 'ESRCH') throw error;
+          }
+        };
+        kill('SIGTERM');
+        const killer = setTimeout(() => exited === null && kill('SIGKILL'), 5_000);
         await gone;
         clearTimeout(killer);
       }
