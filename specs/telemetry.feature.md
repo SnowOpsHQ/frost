@@ -98,7 +98,7 @@ Review focus "Telemetry UI matches behaviour". Each line maps to one named test.
   `console.log`, `Server.emit`), file names (`index.ts`, `seo-analysis.cjs`), relative paths, media
   types and dates are left alone.
 - `scrubbing-is-linear` — each rule on 1 MB of hostile text of each shape (`aaa…`, `???…`,
-  `eyJ-eyJ-…`, `a.a.…`, `/a/a…` …) stays well under a quarter second; the scrubber, which cuts first, faster still.
+  `eyJ-eyJ-…`, `a.a.…`, `/a/a…` …) stays under 2 s even on a busy CI runner (a quadratic rule takes minutes); the scrubber, which cuts first, faster still.
 - `scrubbing-cuts-before-and-after` — a secret split by the input cut leaves no half behind; a cut
   never splits a code point.
 - `host-rule-lists` — `HOST_FILE_EXTENSIONS` and `ONE_DOT_HOST_TLDS` do not overlap; a file with each
