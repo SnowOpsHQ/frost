@@ -27,6 +27,7 @@ import {
   ENTITLEMENTS_PATH,
   PLAN_FEATURES,
   type EntitlementJwks,
+  type Plan,
 } from '@app/specs/entitlements-snapshot.spec';
 
 /**
@@ -42,6 +43,8 @@ export interface FakeBackend {
   readonly jwks: EntitlementJwks;
   readonly user: AccountUser;
   mode: FakeBackendMode;
+  /** The plan the snapshots carry (with `PLAN_FEATURES[plan]`); default `pro`. */
+  plan: Plan;
   /** Every code and token handed out, and every token revoked, in order. */
   readonly codes: string[];
   readonly tokens: string[];
@@ -72,8 +75,8 @@ export async function startFakeBackend(user: AccountUser = { id: 'user-e2e-1', e
       aud: ENTITLEMENT_AUDIENCE,
       sub: user.id,
       email: user.email,
-      plan: 'pro',
-      features: [...PLAN_FEATURES.pro],
+      plan: backend.plan,
+      features: [...PLAN_FEATURES[backend.plan]],
       iat,
       exp: iat + ENTITLEMENT_TTL_SECONDS,
       ver: ENTITLEMENT_CLAIMS_VERSION,
@@ -162,6 +165,7 @@ export async function startFakeBackend(user: AccountUser = { id: 'user-e2e-1', e
     jwks,
     user,
     mode: 'ok',
+    plan: 'pro',
     codes: [],
     tokens: [],
     revoked: [],

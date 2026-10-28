@@ -8,6 +8,7 @@ import { browserPolishPaletteSources } from '../browser-polish-palette';
 import { checksPaletteSources } from '../checks-palette';
 import { contentPaletteSources } from '../content-palette';
 import { devtoolsPaletteSources } from '../devtools-palette';
+import { gscPaletteSources } from '../gsc-palette';
 import { javascriptPaletteSources } from '../javascript-palette';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext, type PaletteSource } from '../palette/registry';
@@ -31,6 +32,7 @@ function everySource(): PaletteSource[] {
     ...devtoolsPaletteSources(() => undefined),
     ...browserPolishPaletteSources({ openFind: yes, reopenClosedTab: vi.fn(async () => 1), showHistory: yes, setSearchEngine: yes }),
     ...checksPaletteSources({ checkLinks: yes, checkSitemaps: yes, checkHreflang: yes, stop: yes, known: () => undefined }),
+    ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn() }),
   ];
 }
 

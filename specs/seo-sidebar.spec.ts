@@ -81,6 +81,8 @@ export const SEO_PANELS = [
   { id: 'compliance', label: 'Compliance', available: true, categories: ['security', 'accessibility'] },
   // Phase 2.5 Task 2 (`seo-javascript.feature.md`): served HTML vs the rendered DOM.
   { id: 'javascript', label: 'JavaScript', available: true, categories: ['javascript'] },
+  // Phase 4 Task 10 (`gsc-panel.feature.md`): Search Console performance. No rules, so no rail dot.
+  { id: 'search-console', label: 'Search Console', available: true, categories: [] },
 ] as const satisfies readonly { id: string; label: string; available: boolean; categories: readonly SeoCategory[] }[];
 export type SeoPanelId = (typeof SEO_PANELS)[number]['id'];
 export const DEFAULT_SEO_PANEL: SeoPanelId = 'overview';

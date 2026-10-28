@@ -287,7 +287,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   Palette jump.
 - **Failing tests:** unit tests for the chart's scales and the view model; e2e `gsc-panel.e2e.ts`
   with the fakes: totals and chart for the page and the property, gating messages.
-- [ ] commit `feat(gsc): page and site performance panel`
+- [x] commit `feat(gsc): page and site performance panel`
 
 ### Task 11: Docs and release check
 - README status, `apps/desktop/README.md` (configuration, known limits), this plan's As built.

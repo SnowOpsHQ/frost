@@ -10,6 +10,8 @@ import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
 import { Compliance } from './seo/Compliance';
 import { Content } from './seo/Content';
+import { GscPanel } from './seo/GscPanel';
+import { GscIcon } from './seo/gsc-icons';
 import { ContentIcon } from './seo/content-icons';
 import { Images } from './seo/Images';
 import { Indexability } from './seo/Indexability';
@@ -48,6 +50,7 @@ const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   speed: SpeedIcon,
   compliance: ComplianceIcon,
   javascript: JavascriptIcon,
+  'search-console': GscIcon,
 };
 
 function Rail({
@@ -140,6 +143,8 @@ function Hint({ title, message, testId, reason, retry }: { readonly title: strin
 }
 
 function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: TabState | undefined; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null; readonly notesGeneration?: number }) {
+  // Search Console has no rules: it does not wait for the audit (`gsc-panel.feature.md`).
+  if (panel === 'search-console') return <GscPanel tab={tab} />;
   if (!tab || response === null) return <Hint testId="seo-empty" title="No page yet" message="Open a web page and frost audits it here: a health score, ranked issues and what search engines read." />;
   if (response.status === 'pending') return <Skeleton />;
   if (response.status === 'unavailable') {
