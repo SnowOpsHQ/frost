@@ -23,6 +23,9 @@ allowBuilds:
   # bundled 7-Zip for the host arch (vendor/7z-<arch>.exe) to vendor/7z.exe, which Squirrel.exe
   # uses to pack the .nupkg. No download, no native build.
   electron-winstaller: true
+  # The intent classifier's runtime (Phase 3 Task 2): its postinstall only downloads optional GPU
+  # (CUDA/TensorRT) binaries; the CPU binaries frost uses ship in the tarball.
+  onnxruntime-node: false
 
 overrides:
   # @doyensec/electronegativity → @mapbox/node-pre-gyp@1 pins tar@^6 (12 advisories, fixed only in

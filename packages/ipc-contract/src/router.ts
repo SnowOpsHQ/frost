@@ -20,6 +20,7 @@ import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
 import { updateRouter } from './update-router';
+import { serpRouter } from './serp-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -282,6 +283,8 @@ export const appRouter = router({
   checks: checksRouter,
   // Phase 7 Task 5 (`update-client.feature.md`, Router): the update notice, its setting and Show file.
   update: updateRouter,
+  // Phase 3 Task 4 (`serp-overlay.feature.md`): the SERP overlay's reading, outlines, pack updates and intent.
+  serp: serpRouter,
 });
 
 export type AppRouter = typeof appRouter;

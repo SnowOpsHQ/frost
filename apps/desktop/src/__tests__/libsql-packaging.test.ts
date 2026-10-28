@@ -13,7 +13,12 @@ import {
   LIBSQL_PREBUILD_TARGETS,
   LIBSQL_RUNTIME_PACKAGES,
   LIBSQL_SQLITE_VERSION,
+  INTENT_ASAR_UNPACK,
+  INTENT_NATIVE_FILES,
+  INTENT_RUNTIME_PACKAGES,
+  LIBSQL_ASAR_NODE_MODULES,
   PACKAGED_ASAR_NODE_MODULES,
+  PACKAGED_ASAR_UNPACK,
   PACKAGED_UNPACKED_ALLOWLIST,
   libsqlPrebuildPackage,
   packagedTarget,
@@ -21,7 +26,7 @@ import {
 } from '@app/specs/sync-package.spec';
 import { WIN_ARCHS } from '@app/specs/windows-package.spec';
 import { makeForgeConfig } from '../../forge.config';
-import { copyLibsqlRuntime, findPackageDir, libsqlPackageAfterCopy } from '../../libsql-packaging';
+import { copyLibsqlRuntime, findPackageDir } from '../../libsql-packaging';
 import viteMainConfig from '../../vite.main.config';
 
 const temps: string[] = [];
@@ -132,7 +137,7 @@ describe('libSQL in the packaged app', () => {
     const modules = path.join(buildPath, 'node_modules');
     // Exactly the runtime set and the target's prebuild, flat, prebuild last.
     expect(copied).toEqual([...LIBSQL_RUNTIME_PACKAGES.map((pkg) => pkg.name), '@libsql/linux-x64-gnu']);
-    expect(packagesIn(modules)).toEqual(PACKAGED_ASAR_NODE_MODULES['linux-x64']);
+    expect(packagesIn(modules)).toEqual(LIBSQL_ASAR_NODE_MODULES['linux-x64']);
     // detect-libc is the one libsql resolves (nested 2.0.2), not the hoisted 2.1.2.
     expect(JSON.parse(readFileSync(path.join(modules, 'detect-libc/package.json'), 'utf8')).version).toBe('2.0.2');
     // Docs, types and source maps are skipped; licenses are kept; no nested node_modules.
@@ -141,8 +146,8 @@ describe('libSQL in the packaged app', () => {
     expect(filesUnder(path.join(modules, '@libsql/core'))).toContain('LICENSE.md');
     expect(filesUnder(path.join(modules, '@libsql/linux-x64-gnu'))).toEqual(['index.node', 'package.json']);
     expect(filesUnder(modules).filter((file) => file.includes('node_modules'))).toEqual([]);
-    // The hook Forge runs is registered, and copies for the platform / arch it is given.
-    expect(makeForgeConfig({}).hooks?.packageAfterCopy).toBe(libsqlPackageAfterCopy);
+    // The hook Forge runs copies libSQL (beside the intent runtime): forge-config.test.ts,
+    // intent-runtime-copied-by-the-package-hook, checks both packages land for the host's target.
   });
 
   test('libsql-runtime-copied (the real install)', () => {
@@ -150,7 +155,7 @@ describe('libSQL in the packaged app', () => {
     if (target === null) return; // a host frost does not package (its prebuild is not the one shipped)
     const buildPath = tempDir('frost-libsql-build-');
     copyLibsqlRuntime(buildPath, process.platform, process.arch);
-    expect(packagesIn(path.join(buildPath, 'node_modules'))).toEqual(PACKAGED_ASAR_NODE_MODULES[target]);
+    expect(packagesIn(path.join(buildPath, 'node_modules'))).toEqual(LIBSQL_ASAR_NODE_MODULES[target]);
     // The copy alone is enough to load libSQL, as main does (from .vite/build/), nothing from outside it.
     const requireFromMain = createRequire(path.join(buildPath, '.vite', 'build', 'main.cjs'));
     const client = (requireFromMain('@libsql/client/sqlite3') as typeof import('@libsql/client/sqlite3')).createClient({ url: ':memory:' });
@@ -215,7 +220,8 @@ describe('libSQL in the packaged app', () => {
   }
 
   test('libsql-unpack-pattern', async () => {
-    expect(makeForgeConfig({}).packagerConfig?.asar).toEqual({ unpack: LIBSQL_ASAR_UNPACK });
+    expect(makeForgeConfig({}).packagerConfig?.asar).toEqual({ unpack: PACKAGED_ASAR_UNPACK });
+    expect(PACKAGED_ASAR_UNPACK).toBe(`{${LIBSQL_ASAR_UNPACK},${INTENT_ASAR_UNPACK}}`);
     // @electron/asar matches the absolute path, without minimatch's `dot`: only a prebuild's
     // index.node is unpacked, here under two dot directories in the build path.
     const files = [
@@ -236,9 +242,13 @@ describe('libSQL in the packaged app', () => {
     const dots = (n: number) => Array.from({ length: n }, (_, i) => `.d${i}`);
     for (const n of [0, LIBSQL_ASAR_UNPACK_DOT_DIRS]) expect((await unpackedWith(dots(n), prebuild)).unpacked, `${n} dot dirs`).toEqual(prebuild);
     expect((await unpackedWith(dots(LIBSQL_ASAR_UNPACK_DOT_DIRS + 1), prebuild)).unpacked).toEqual([]);
-    // The allowlist is that one file per target.
+    // The allowlist is that one file per target, and the intent runtime's native files (INTENT_NATIVE_FILES).
     for (const target of Object.keys(LIBSQL_PREBUILD_TARGETS) as PackagedTarget[]) {
-      expect(PACKAGED_UNPACKED_ALLOWLIST[target]).toEqual([`app.asar.unpacked/node_modules/${libsqlPrebuildPackage(target)}/index.node`]);
+      const [platform, arch] = target.split('-');
+      const intent = (INTENT_NATIVE_FILES[target] ?? []).map((file) => `app.asar.unpacked/node_modules/onnxruntime-node/bin/napi-v6/${platform}/${arch}/${file}`);
+      expect(intent.length, target).toBeGreaterThan(0);
+      expect(PACKAGED_UNPACKED_ALLOWLIST[target]).toEqual([`app.asar.unpacked/node_modules/${libsqlPrebuildPackage(target)}/index.node`, ...intent].sort());
+      expect(PACKAGED_ASAR_NODE_MODULES[target]).toEqual([...LIBSQL_ASAR_NODE_MODULES[target], ...INTENT_RUNTIME_PACKAGES].sort());
     }
   });
 

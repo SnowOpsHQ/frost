@@ -171,17 +171,58 @@ function perTarget(value: (target: PackagedTarget) => readonly string[]): Readon
 export const PACKAGED_UNPACKED_DIR = 'app.asar.unpacked' as const;
 
 /**
- * Everything allowed in `resources/app.asar.unpacked/` (paths relative to `resources/`), and the
- * only entries `app.asar`'s header may mark `unpacked`: the target's prebuild, nothing else.
+ * The intent classifier's runtime (Phase 3; `intent-classifier.feature.md`, Packaging), kept here
+ * beside libSQL's as Node loads this spec in the verifiers: the runtime's packages, copied into the app's
+ * `node_modules/` (`app.asar`), and the N-API binaries each packaged target needs under
+ * `onnxruntime-node/bin/napi-v6/<platform>/<arch>/`: the binding and the one ONNX Runtime library it
+ * links against. On Windows `onnxruntime.dll` only delay-loads `DirectML.dll` (the GPU provider,
+ * never used: frost runs on the CPU), so neither it nor `dxcompiler.dll` ships.
  */
-export const PACKAGED_UNPACKED_ALLOWLIST = perTarget((target) => [
-  `${PACKAGED_UNPACKED_DIR}/node_modules/${libsqlPrebuildPackage(target)}/${LIBSQL_PREBUILD_FILE}`,
-]);
+export const INTENT_RUNTIME_PACKAGES = ['onnxruntime-common', 'onnxruntime-node'] as const;
+export const INTENT_NATIVE_FILES: Readonly<Record<string, readonly string[]>> = {
+  'darwin-arm64': ['onnxruntime_binding.node', 'libonnxruntime.1.dylib'],
+  'linux-x64': ['onnxruntime_binding.node', 'libonnxruntime.so.1'],
+  'linux-arm64': ['onnxruntime_binding.node', 'libonnxruntime.so.1'],
+  'win32-x64': ['onnxruntime_binding.node', 'onnxruntime.dll'],
+};
 
 /**
- * The packages allowed in `app.asar/node_modules/` (sorted): exactly `LIBSQL_RUNTIME_PACKAGES`
- * and the target's prebuild, flat (no nested `node_modules/`).
+ * `packagerConfig.asar.unpack` for the runtime: the binaries under `onnxruntime-node/bin/`, never
+ * JavaScript and never a native file elsewhere. Like `LIBSQL_ASAR_UNPACK`
+ * it is matched against each file's absolute path without minimatch's `dot`, so it allows up to four
+ * dot directories in the build path.
  */
-export const PACKAGED_ASAR_NODE_MODULES = perTarget((target) =>
+export const INTENT_ASAR_UNPACK = '**/{.*/**/,}{.*/**/,}{.*/**/,}{.*/**/,}node_modules/onnxruntime-node/bin/napi-v6/*/*/*.{node,dylib,so,so.*,dll}';
+
+/** The intent runtime's native files for `target` (`INTENT_NATIVE_FILES`), under `node_modules/`. */
+function intentNatives(target: PackagedTarget): string[] {
+  const [platform, arch] = target.split('-');
+  return (INTENT_NATIVE_FILES[target] ?? []).map((file) => `node_modules/onnxruntime-node/bin/napi-v6/${platform}/${arch}/${file}`);
+}
+
+/**
+ * Everything allowed in `resources/app.asar.unpacked/` (paths relative to `resources/`), and the
+ * only entries `app.asar`'s header may mark `unpacked`: the target's libSQL prebuild and the intent
+ * runtime's native files (`INTENT_NATIVE_FILES`), nothing else.
+ */
+export const PACKAGED_UNPACKED_ALLOWLIST = perTarget((target) =>
+  [`${PACKAGED_UNPACKED_DIR}/node_modules/${libsqlPrebuildPackage(target)}/${LIBSQL_PREBUILD_FILE}`, ...intentNatives(target).map((file) => `${PACKAGED_UNPACKED_DIR}/${file}`)].sort(),
+);
+
+/** libSQL's packages in `app.asar/node_modules/` (sorted): `LIBSQL_RUNTIME_PACKAGES` and the target's prebuild. */
+export const LIBSQL_ASAR_NODE_MODULES = perTarget((target) =>
   [...LIBSQL_RUNTIME_PACKAGES.map((pkg) => pkg.name), libsqlPrebuildPackage(target)].sort(),
 );
+
+/**
+ * The packages allowed in `app.asar/node_modules/` (sorted): exactly `LIBSQL_ASAR_NODE_MODULES`
+ * and the intent runtime's `INTENT_RUNTIME_PACKAGES`, flat (no nested `node_modules/`).
+ */
+export const PACKAGED_ASAR_NODE_MODULES = perTarget((target) => [...LIBSQL_ASAR_NODE_MODULES[target], ...INTENT_RUNTIME_PACKAGES].sort());
+
+/**
+ * `packagerConfig.asar.unpack`: libSQL's prebuild (`LIBSQL_ASAR_UNPACK`) or the intent runtime's
+ * native files (`INTENT_ASAR_UNPACK`). One brace group: minimatch expands it before matching, and
+ * `matchBase` still applies to the slash-free intent pattern alone.
+ */
+export const PACKAGED_ASAR_UNPACK = `{${LIBSQL_ASAR_UNPACK},${INTENT_ASAR_UNPACK}}` as const;

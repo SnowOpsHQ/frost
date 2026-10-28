@@ -29,6 +29,7 @@
     "@app/seo-core": "workspace:*",
     "@app/specs": "workspace:*",
     "axe-core": "4.14.0",
+    "onnxruntime-node": "1.31.1",
     "parse5": "^8.0.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

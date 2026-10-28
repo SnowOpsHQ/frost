@@ -8,6 +8,7 @@ export type { DevtoolsService } from './devtools-service';
 export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
 export type { ChecksService } from './checks-service';
 export type { UpdateService } from './update-router';
+export type { SerpProbesService, SerpReadApi, SerpService } from './serp-service';
 export {
   createContext,
   createSenderPolicy,

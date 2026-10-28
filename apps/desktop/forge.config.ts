@@ -10,7 +10,8 @@ import { linuxMakers } from './linux-makers.ts';
 import { windowsMakers, windowsPackagerConfig } from './windows-makers.ts';
 import { NOTICES_FILE } from './third-party-notices.ts';
 import { libsqlPackageAfterCopy } from './libsql-packaging.ts';
-import { LIBSQL_ASAR_UNPACK } from '@app/specs/sync-package.spec';
+import { PACKAGED_ASAR_UNPACK } from '@app/specs/sync-package.spec';
+import { copyIntentRuntime } from './intent-runtime.ts';
 import {
   MAC_APP_CATEGORY,
   MAC_BUNDLE_ID,
@@ -77,8 +78,10 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
       appBundleId: MAC_BUNDLE_ID,
       appCategoryType: MAC_APP_CATEGORY,
       darwinDarkModeSupport: true,
-      // Only libSQL's native prebuild is unpacked (specs/sync-package.spec.ts); all JS stays in app.asar.
-      asar: { unpack: LIBSQL_ASAR_UNPACK },
+      // Only native files are unpacked, as they cannot be loaded from inside the archive: libSQL's
+      // prebuild (specs/sync-package.spec.ts) and the intent runtime's binding and library
+      // (intent-runtime.ts; specs/intent-classifier.feature.md, Packaging). All JS stays in app.asar.
+      asar: { unpack: PACKAGED_ASAR_UNPACK },
       // The licenses of the bundled third-party packages (third-party-notices.ts), beside app.asar in
       // resources/ (specs/seo-speed.feature.md, Licenses). Relative to the app directory Forge runs in.
       extraResource: [NOTICES_FILE],
@@ -87,8 +90,14 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
     },
     rebuildConfig: {},
     hooks: {
-      // Copies libSQL's runtime packages and the target's prebuild into the app (libsql-packaging.ts).
-      packageAfterCopy: libsqlPackageAfterCopy,
+      // Forge's Vite plugin packages only .vite/: copy the native runtimes into the app before the
+      // ASAR is made, each with the target's binaries only. libSQL's runtime packages and prebuild
+      // (libsql-packaging.ts), and the intent utility process's onnxruntime-node and
+      // onnxruntime-common (intent-runtime.ts; specs/intent-classifier.feature.md, Packaging).
+      packageAfterCopy: async (config, buildPath, electronVersion, platform, arch) => {
+        await libsqlPackageAfterCopy(config, buildPath, electronVersion, platform, arch);
+        copyIntentRuntime(buildPath, platform, arch);
+      },
       // Packager rewrites Info.plist and renames the bundle after the fuse flip re-signed it, so
       // the bundle seal no longer matches (`codesign --verify --strict` fails). Without a real
       // identity, re-seal the finished .app ad-hoc (osxSign does this when signing for real).
@@ -117,6 +126,11 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
           { entry: { main: 'src/main/index.ts' }, config: 'vite.main.config.ts', target: 'main' },
           { entry: { 'seo-analysis': 'src/main/seo/analysis-worker.ts' }, config: 'vite.main.config.ts', target: 'main' },
           { entry: { preload: 'src/preload/index.ts' }, config: 'vite.preload.config.ts', target: 'preload' },
+          // The intent utility process (.vite/build/intent-worker.cjs), forked by main with
+          // utilityProcess.fork; onnxruntime-node stays external (specs/intent-classifier.feature.md).
+          { entry: { 'intent-worker': 'src/workers/intent/index.ts' }, config: 'vite.intent.config.ts', target: 'main' },
+          // The SERP analysis worker (.vite/build/serp-analysis.cjs; specs/serp-overlay.feature.md, Analysis).
+          { entry: { 'serp-analysis': 'src/main/serp/serp-worker.ts' }, config: 'vite.main.config.ts', target: 'main' },
         ],
         renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],
       }),
