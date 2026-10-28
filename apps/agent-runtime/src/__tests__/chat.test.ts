@@ -2,12 +2,12 @@
 // specs/agent-runtime.feature.md (Chat loop). Driven by MockLanguageModelV4 with scripted streams.
 import type { LanguageModelV4CallOptions, LanguageModelV4StreamResult } from '@ai-sdk/provider';
 import { MockLanguageModelV4 } from 'ai/test';
-import { describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { AGENT_PROTOCOL_LIMITS, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { MAX_TOOL_STEPS } from '@app/specs/agent-tools.spec';
-import { CHAT_MAX_RETRIES } from '../chat';
+import { refuseDownload } from '../chat';
 import { createModel } from '../provider';
-import { chatStart, settle, startHarness, streamOf, textStep, toolStep, usage } from './harness';
+import { chatStart, settle, startHarness, streamOf, stubNetworkGlobals, textStep, toolStep, usage } from './harness';
 
 const pageTextResult: ToolResult = { ok: true, output: { untrusted: true, source: 'page_text https://example.com/', data: { text: 'Welcome to Example.' } } };
 
@@ -17,6 +17,9 @@ function toolOutputs(call: LanguageModelV4CallOptions | undefined) {
 }
 
 describe('chat loop', () => {
+  beforeEach(stubNetworkGlobals);
+  afterEach(() => vi.unstubAllGlobals());
+
   test('chat-streams-text', async () => {
     const model = new MockLanguageModelV4({ doStream: [textStep(['The page ', 'looks ', 'healthy.'], 'stop', usage(42, 7))] });
     const h = startHarness({ modelFactory: () => model });
@@ -73,7 +76,7 @@ describe('chat loop', () => {
     const finish = await h.next('chat.finish');
     expect(finish.finishReason).toBe('stop');
     expect(toolOutputs(model.doStreamCalls[1])).toEqual([
-      expect.objectContaining({ toolCallId: 'call-9', output: { type: 'json', value: { error: 'denied', message: 'The user did not allow this.' } } }),
+      expect.objectContaining({ toolCallId: 'call-9', output: { type: 'error-json', value: { error: 'denied', message: 'The user did not allow this.' } } }),
     ]);
     expect(h.of('chat.error')).toEqual([]);
   });
@@ -174,6 +177,121 @@ describe('chat loop', () => {
     expect(toolOutputs(model.doStreamCalls[0])).toEqual([expect.objectContaining({ toolCallId: 'c1', output: { type: 'json', value: pageTextResult.output } })]);
   });
 
+  test('chat-unanswered-call-synthesized', async () => {
+    const model = new MockLanguageModelV4({ doStream: [textStep(['ok'])] });
+    const h = startHarness({ modelFactory: () => model });
+    h.send(
+      chatStart({
+        messages: [
+          { role: 'user', content: 'Click the first link.' },
+          // Stopped during the approval of c1; c2 answered.
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+              { callId: 'c1', toolName: 'click', input: { text: 'Pricing' } },
+              { callId: 'c2', toolName: 'page_text', input: {} },
+            ],
+          },
+          { role: 'tool', callId: 'c2', toolName: 'page_text', result: pageTextResult },
+          { role: 'user', content: 'Never mind. Read the title.' },
+        ],
+      }),
+    );
+    await h.next('chat.finish');
+    expect(model.doStreamCalls[0]?.prompt.map((message) => message.role)).toEqual(['system', 'user', 'assistant', 'tool', 'user']);
+    expect(toolOutputs(model.doStreamCalls[0])).toEqual([
+      expect.objectContaining({ toolCallId: 'c1', toolName: 'click', output: { type: 'error-json', value: expect.objectContaining({ error: 'aborted' }) } }),
+      expect.objectContaining({ toolCallId: 'c2', output: { type: 'json', value: pageTextResult.output } }),
+    ]);
+  });
+
+  test('chat-orphan-result-dropped', async () => {
+    const model = new MockLanguageModelV4({ doStream: [textStep(['ok'])] });
+    const h = startHarness({ modelFactory: () => model });
+    h.send(
+      chatStart({
+        messages: [
+          { role: 'user', content: 'Read the page.' },
+          { role: 'tool', callId: 'ghost', toolName: 'page_text', result: pageTextResult },
+          { role: 'assistant', content: 'Reading.', toolCalls: [{ callId: 'c1', toolName: 'page_text', input: {} }] },
+          { role: 'tool', callId: 'c1', toolName: 'page_text', result: pageTextResult },
+          { role: 'tool', callId: 'c7', toolName: 'page_audit', result: pageTextResult },
+          { role: 'user', content: 'And now?' },
+        ],
+      }),
+    );
+    await h.next('chat.finish');
+    expect(model.doStreamCalls[0]?.prompt.map((message) => message.role)).toEqual(['system', 'user', 'assistant', 'tool', 'user']);
+    expect(toolOutputs(model.doStreamCalls[0]).map((part) => part.toolCallId)).toEqual(['c1']);
+  });
+
+  test('chat-step-posted', async () => {
+    const model = new MockLanguageModelV4({ doStream: [toolStep('call-1', 'page_text', { maxChars: 500 }), textStep(['It welcomes ', 'visitors.'])] });
+    const h = startHarness({ modelFactory: () => model });
+    h.send(chatStart());
+    await h.next('tool.invoke');
+    h.send({ type: 'tool.result', chatId: 'chat-1', callId: 'call-1', result: pageTextResult });
+    await h.next('chat.finish');
+    expect(h.of('chat.step')).toEqual([
+      { type: 'chat.step', chatId: 'chat-1', step: 1, text: '', toolCalls: [{ callId: 'call-1', toolName: 'page_text', input: { maxChars: 500 } }] },
+      { type: 'chat.step', chatId: 'chat-1', step: 2, text: 'It welcomes visitors.', toolCalls: [] },
+    ]);
+    // Each step is posted before the turn's end.
+    expect(h.received.at(-1)?.type).toBe('chat.finish');
+  });
+
+  test('chat-step-posted (a call to a tool not offered is left out)', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: [
+        streamOf([
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta: 'Opening it.' },
+          { type: 'text-end', id: 't1' },
+          { type: 'tool-call', toolCallId: 'bad-1', toolName: 'navigate', input: '{"url":"https://example.com/"}' },
+          { type: 'tool-call', toolCallId: 'bad-2', toolName: 'page_text', input: '{"maxChars":"lots"}' },
+          { type: 'tool-call', toolCallId: 'good-1', toolName: 'page_audit', input: '{}' },
+          { type: 'finish', finishReason: { unified: 'tool-calls', raw: undefined }, usage: usage(1, 1) },
+        ]),
+        textStep(['ok']),
+      ],
+    });
+    const h = startHarness({ modelFactory: () => model });
+    h.onMessage((message) => {
+      if (message.type === 'tool.invoke') h.send({ type: 'tool.result', chatId: message.chatId, callId: message.callId, result: pageTextResult });
+    });
+    h.send(chatStart());
+    await h.next('chat.finish');
+    expect(h.of('tool.invoke').map((message) => message.callId)).toEqual(['good-1']);
+    expect(h.of('chat.step')[0]).toEqual({ type: 'chat.step', chatId: 'chat-1', step: 1, text: 'Opening it.', toolCalls: [{ callId: 'good-1', toolName: 'page_audit', input: {} }] });
+  });
+
+  test('chat-step-posted (a step cut by Stop)', async () => {
+    const model = new MockLanguageModelV4({ doStream: [toolStep('call-2', 'page_audit', {}), textStep(['never'])] });
+    const h = startHarness({ modelFactory: () => model });
+    h.send(chatStart());
+    await h.next('tool.invoke');
+    h.send({ type: 'chat.stop', chatId: 'chat-1' });
+    await h.next('chat.finish');
+    expect(h.of('chat.step')).toEqual([{ type: 'chat.step', chatId: 'chat-1', step: 1, text: '', toolCalls: [{ callId: 'call-2', toolName: 'page_audit', input: {} }] }]);
+    expect(h.received.findIndex((message) => message.type === 'chat.step')).toBeLessThan(h.received.findIndex((message) => message.type === 'chat.finish'));
+  });
+
+  test('chat-step-posted (text cut at maxMessageChars)', async () => {
+    const model = new MockLanguageModelV4({ doStream: [textStep(['x'.repeat(AGENT_PROTOCOL_LIMITS.maxMessageChars), 'yz'])] });
+    const h = startHarness({ modelFactory: () => model });
+    h.send(chatStart());
+    await h.next('chat.finish');
+    expect(h.of('chat.step')[0]?.text.length).toBe(AGENT_PROTOCOL_LIMITS.maxMessageChars);
+  });
+
+  test('chat-no-download', async () => {
+    await expect(refuseDownload([{ url: new URL('https://example.com/a.png'), isUrlSupportedByModel: false }])).rejects.toThrow(/download/);
+    await expect(refuseDownload([{ url: new URL('https://example.com/a.png'), isUrlSupportedByModel: true }])).rejects.toThrow(/download/);
+    expect(await refuseDownload([])).toEqual([]);
+  });
+
   test('chat-error-bounded', async () => {
     const secret = 'request-body-echo: Read the page. x-api-key=sk-should-not-appear';
     const h = startHarness({ modelFactory: createModel });
@@ -204,19 +322,6 @@ describe('chat loop', () => {
     expect(error.message).toBe('frost refused to send this model request.');
     expect(h.of('fetch.request').length).toBe(1);
   });
-
-  test('chat-error-bounded (a refused gateway request, retried once)', async () => {
-    // The gateway provider reads any failure as a retryable server error: it tries once more
-    // (`CHAT_MAX_RETRIES`, after the SDK's backoff) and the cause is still found.
-    const h = startHarness({ modelFactory: createModel });
-    h.onMessage((message) => {
-      if (message.type === 'fetch.request') h.send({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'not on the allowlist' });
-    });
-    h.send(chatStart({ route: 'gateway' }));
-    const error = await h.next('chat.error', () => true, 6000);
-    expect(error.message).toBe('frost refused to send this model request.');
-    expect(h.of('fetch.request').length).toBe(1 + CHAT_MAX_RETRIES);
-  }, 8000);
 
   test('chat-streams-text (a model stream error part)', async () => {
     const model = new MockLanguageModelV4({

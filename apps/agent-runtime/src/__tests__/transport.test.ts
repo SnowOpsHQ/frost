@@ -5,6 +5,20 @@ import { bindParentPort, createChannel, createMemoryPortPair, type MessagePortMa
 import { chatStart, settle, startHarness } from './harness';
 
 describe('transport', () => {
+  test('listener-errors-contained', async () => {
+    const [main, runtime] = createMemoryPortPair();
+    const channel = createChannel(runtime);
+    const seen: string[] = [];
+    channel.onMessage(() => {
+      throw new Error('a listener bug');
+    });
+    channel.onMessage((message) => seen.push(message.type));
+    main.post({ type: 'chat.stop', chatId: 'chat-1' });
+    main.post({ type: 'chat.stop', chatId: 'chat-2' });
+    await settle();
+    expect(seen).toEqual(['chat.stop', 'chat.stop']);
+  });
+
   test('invalid-inbound-dropped', async () => {
     const h = startHarness({ modelFactory: () => { throw new Error('no chat should start'); } });
     await h.next('ready');

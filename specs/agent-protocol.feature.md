@@ -93,3 +93,14 @@ one named test.
 - **Scenario: unavailable-port** — `unavailablePort(reason)` answers `unavailable` with that reason
   from every method of every port; a reason over `maxErrorChars` is cut there (never splitting a
   surrogate pair).
+
+## Additions (Phase 5 Task 2 review; `packages/ai-skills/src/__tests__/agent-protocol.test.ts`)
+- **`ready` reports the lockdown** (`AGENT_PROTOCOL_VERSION` 2): `lockdown: { removed, failed,
+  permissionModel }`, the lists holding only `LOCKDOWN_TARGETS` (each at most once per target count)
+  and `permissionModel` whether Node's permission model refuses file writes in the runtime.
+- **`chat.step`** (runtime → main): a step's `step` number (1 to `MAX_TOOL_STEPS`), its `text` (at
+  most `maxMessageChars`) and the `toolCalls` main was asked to run (`ToolCallSchema`, at most
+  `maxToolCallsPerMessage`): an assistant history message in the protocol's own shape.
+- **`maxResponseBytes`**: the most body bytes the runtime reads from one proxied response.
+- Covered by **protocol-round-trip**, **protocol-types-listed**, **malformed-messages-rejected** and
+  **agent-cannot-approve** (the new fields match none of its words).

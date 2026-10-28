@@ -39,9 +39,14 @@ export interface ProxyFetch {
 interface PendingRequest {
   head: { resolve(response: Response): void; reject(error: unknown): void } | null;
   body: ReadableStreamDefaultController<Uint8Array> | null;
+  /** Body bytes received so far (capped at `maxResponseBytes`). */
+  received: number;
   /** Detaches the abort listener. */
   cleanup(): void;
 }
+
+/** A reason phrase a `Response` accepts (tab, space, visible ASCII, obs-text); anything else is dropped. */
+const REASON_PHRASE = /^[\t\x20-\x7e\x80-\xff]*$/;
 
 /** Statuses whose `Response` must have no body. */
 const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
@@ -83,6 +88,11 @@ export function createProxyFetch(post: (message: RuntimeToMainMessage) => boolea
 
     const requestId = newRequestId();
     return new Promise<Response>((resolve, reject) => {
+      // Aborted while the body was being read: nothing has been posted, and nothing will be.
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
       const onAbort = () => {
         if (!requests.has(requestId)) return;
         post({ type: 'fetch.abort', requestId });
@@ -92,6 +102,7 @@ export function createProxyFetch(post: (message: RuntimeToMainMessage) => boolea
       requests.set(requestId, {
         head: { resolve, reject },
         body: null,
+        received: 0,
         cleanup: () => signal?.removeEventListener('abort', onAbort),
       });
       if (!post({ type: 'fetch.request', requestId, url, method, headers, body })) {
@@ -111,7 +122,6 @@ export function createProxyFetch(post: (message: RuntimeToMainMessage) => boolea
           return;
         }
         const head = request.head;
-        request.head = null;
         const requestId = answer.requestId;
         const stream = NULL_BODY_STATUSES.has(answer.status)
           ? null
@@ -125,12 +135,29 @@ export function createProxyFetch(post: (message: RuntimeToMainMessage) => boolea
                 post({ type: 'fetch.abort', requestId });
               },
             });
+        let response: Response;
+        try {
+          const statusText = REASON_PHRASE.test(answer.statusText) ? answer.statusText : '';
+          response = new Response(stream, { status: answer.status, statusText, headers: answer.headers });
+        } catch {
+          // A head no `Response` can carry: the request fails, it never hangs.
+          post({ type: 'fetch.abort', requestId });
+          fail(requestId, new ProxyFetchError('network', 'the response head could not be read'));
+          return;
+        }
+        request.head = null;
         if (stream === null) finish(requestId);
-        head.resolve(new Response(stream, { status: answer.status, statusText: answer.statusText, headers: answer.headers }));
+        head.resolve(response);
         return;
       }
       case 'fetch.chunk':
         if (request.body === null) return;
+        request.received += answer.bytes.byteLength;
+        if (request.received > L.maxResponseBytes) {
+          post({ type: 'fetch.abort', requestId: answer.requestId });
+          fail(answer.requestId, new ProxyFetchError('too-large', 'the response is too large'));
+          return;
+        }
         request.body.enqueue(answer.bytes);
         return;
       case 'fetch.end':

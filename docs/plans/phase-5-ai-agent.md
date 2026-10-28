@@ -237,11 +237,20 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 
 ## As built
 _Filled in as tasks land._
-- **Task 2.** `@app/agent-runtime` exports `startRuntime(port, { modelFactory?, newRequestId? })`
-  and `runAgentRuntimeProcess(options)` (lockdown, then the first `parentPort` message carrying a
-  port, i.e. `child.postMessage(null, [port])`). The Forge build emits `agent-runtime.cjs` plus two
-  chunks beside it (`runtime-entry-<hash>.cjs`, `token-<hash>.cjs`), so `--allow-fs-read` must
-  cover `.vite/build`, not one file. The bundle requires `fs`, `os` and `path` (from the gateway
-  provider's OIDC helper, reached only without an API key) and no network or process module.
-  `maxRetries` is 1: the gateway provider reads a refused request as a retryable server error and
-  asks once more.
+- **Task 2.** `@app/agent-runtime` exports `startRuntime(port, { modelFactory?, newRequestId?,
+  lockdown? })` and `runAgentRuntimeProcess(options)`: it removes the network globals and
+  `process.getBuiltinModule` / `binding` / `_linkedBinding` / `dlopen` once its modules have loaded,
+  then binds the first `parentPort` message carrying a port (`child.postMessage(null, [port])`) and
+  reports the lockdown in `ready` (protocol version 2). The Forge build emits `agent-runtime.cjs`
+  plus two chunks beside it (`runtime-entry-<hash>.cjs`, `token-<hash>.cjs`), so `--allow-fs-read`
+  must cover `.vite/build`, not one file. What is checked: a test reads the runtime's own sources
+  (no network, process or file module; no `getBuiltinModule`, `createRequire`, `dlopen`); the bundle
+  was grepped by hand: its `require()` calls are `fs`, `os` and `path` (the gateway provider's OIDC
+  helper, reached only without an API key), and the AI SDK's default URL download reaches
+  `node:dns` and `node:module` → `createRequire(…)('undici')` through `process.getBuiltinModule`
+  (removed at startup; the chat loop also passes a download that refuses). A failed proxied request
+  is final (never retried by the SDK); HTTP 429 and 5xx are retried once (`maxRetries` 1).
+  **For Task 3:** in Electron 45 a utility process forked with `execArgv: ['--permission',
+  '--allow-fs-read=…']` lists the flags in `process.execArgv` but does not enforce them (file
+  writes and reads elsewhere succeed; `process.permission` is undefined), so `ready.lockdown.permissionModel`
+  is `false` there and the settings page must say so.

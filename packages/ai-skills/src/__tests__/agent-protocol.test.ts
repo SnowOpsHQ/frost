@@ -8,13 +8,14 @@ import {
   AGENT_PROTOCOL_LIMITS,
   AGENT_PROTOCOL_VERSION,
   isBoundedJson,
+  LOCKDOWN_TARGETS,
   MAIN_TO_RUNTIME_MESSAGE_TYPES,
   MainToRuntimeMessageSchema,
   RUNTIME_TO_MAIN_MESSAGE_TYPES,
   RuntimeToMainMessageSchema,
   ToolResultSchema,
 } from '@app/specs/agent-protocol.schema';
-import { CHAT_MAX_MESSAGES, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
+import { CHAT_MAX_MESSAGES, MAX_TOOL_STEPS, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
 
 const L = AGENT_PROTOCOL_LIMITS;
 const CHAT = 'chat-1';
@@ -46,7 +47,7 @@ const mainToRuntime = [
 ] as const;
 
 const runtimeToMain = [
-  { type: 'ready', protocolVersion: AGENT_PROTOCOL_VERSION },
+  { type: 'ready', protocolVersion: AGENT_PROTOCOL_VERSION, lockdown: { removed: ['fetch', 'process.getBuiltinModule'], failed: ['WebSocket'], permissionModel: true } },
   { type: 'chat.delta', chatId: CHAT, text: 'The title is ' },
   { type: 'chat.tool-call', chatId: CHAT, callId: 'call_1', toolName: 'navigate', input: { url: 'https://example.com/' } },
   { type: 'chat.finish', chatId: CHAT, finishReason: 'stop', steps: 2, usage: { input: 1200, output: null } },
@@ -63,6 +64,7 @@ const runtimeToMain = [
   { type: 'fetch.request', requestId: 'r2', url: 'https://api.anthropic.com/v1/messages', method: 'POST', headers: [], body: new Uint8Array([123, 125]) },
   { type: 'fetch.request', requestId: 'r3', url: 'https://ai-gateway.vercel.sh/v4/ai/config', method: 'GET', headers: [], body: null },
   { type: 'fetch.abort', requestId: 'r1' },
+  { type: 'chat.step', chatId: CHAT, step: 1, text: 'Let me read it.', toolCalls: [{ callId: 'call_1', toolName: 'page_text', input: { maxChars: 500 } }] },
 ] as const;
 
 const mainOk = (message: unknown) => MainToRuntimeMessageSchema.safeParse(message).success;
@@ -143,6 +145,22 @@ describe('agent protocol', () => {
     expect(runtimeOk({ ...runtimeToMain[6], body: new Uint8Array(L.maxRequestBodyBytes + 1) })).toBe(false);
     expect(runtimeOk({ ...runtimeToMain[6], body: { stream: true } })).toBe(false);
     expect(runtimeOk({ ...runtimeToMain[0], protocolVersion: 0 })).toBe(false);
+    // `ready` reports its lockdown: only known targets, each list bounded, the flag a boolean.
+    const ready = runtimeToMain[0];
+    expect(runtimeOk({ type: 'ready', protocolVersion: AGENT_PROTOCOL_VERSION })).toBe(false);
+    expect(runtimeOk({ ...ready, lockdown: { ...ready.lockdown, removed: ['process.exit'] } })).toBe(false);
+    expect(runtimeOk({ ...ready, lockdown: { ...ready.lockdown, failed: Array.from({ length: LOCKDOWN_TARGETS.length + 1 }, () => 'fetch') } })).toBe(false);
+    expect(runtimeOk({ ...ready, lockdown: { ...ready.lockdown, permissionModel: 'yes' } })).toBe(false);
+    expect(runtimeOk({ ...ready, lockdown: { removed: [...LOCKDOWN_TARGETS], failed: [], permissionModel: false } })).toBe(true);
+    // `chat.step`: a step within `MAX_TOOL_STEPS`, text within `maxMessageChars`, calls bounded and known.
+    const step = runtimeToMain[10];
+    expect(runtimeOk({ ...step, step: 0 })).toBe(false);
+    expect(runtimeOk({ ...step, step: MAX_TOOL_STEPS + 1 })).toBe(false);
+    expect(runtimeOk({ ...step, text: 'x'.repeat(L.maxMessageChars + 1) })).toBe(false);
+    expect(runtimeOk({ ...step, text: '', toolCalls: [] })).toBe(true);
+    expect(runtimeOk({ ...step, toolCalls: [{ callId: 'c', toolName: 'read_file', input: {} }] })).toBe(false);
+    expect(runtimeOk({ ...step, toolCalls: Array.from({ length: L.maxToolCallsPerMessage + 1 }, (_, i) => ({ callId: `c${i}`, toolName: 'page_audit', input: {} })) })).toBe(false);
+    expect(L.maxResponseBytes).toBeGreaterThan(L.maxChunkBytes);
   });
 
   test('tool-input-is-bounded-json', () => {

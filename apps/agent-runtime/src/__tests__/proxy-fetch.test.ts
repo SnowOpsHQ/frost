@@ -1,5 +1,5 @@
 // Spec: specs/agent-protocol.schema.ts (fetch.*) · Acceptance: specs/agent-runtime.feature.md (Proxied fetch)
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { AGENT_PROTOCOL_LIMITS, type RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
 import { createProxyFetch, ProxyFetchError } from '../proxy-fetch';
 
@@ -132,6 +132,70 @@ describe('proxied fetch', () => {
     const response = await cut;
     proxy.handle({ type: 'fetch.error', requestId: 'req-2', code: 'timeout', message: 'too slow' });
     await expect(response.text()).rejects.toMatchObject({ code: 'timeout' });
+  });
+
+  test('proxy-fetch-bad-head', async () => {
+    const { proxy } = setup();
+    const url = 'https://api.anthropic.com/v1/messages';
+    const first = proxy.fetch(url, { method: 'POST', body: '{}' });
+    const second = proxy.fetch(url, { method: 'POST', body: '{}' });
+    const third = proxy.fetch(url, { method: 'POST', body: '{}' });
+    await Promise.resolve();
+    expect(() => proxy.handle({ type: 'fetch.response-start', requestId: 'req-1', status: 200, statusText: 'OK\r\nx-injected: 1', headers: [] })).not.toThrow();
+    expect((await first).statusText).toBe('');
+    proxy.handle({ type: 'fetch.response-start', requestId: 'req-2', status: 200, statusText: 'Fine \u2192 done', headers: [] });
+    expect((await second).statusText).toBe('');
+    // A head no `Response` can be built from (bypassing the schema) fails the fetch, never throws.
+    expect(() => proxy.handle({ type: 'fetch.response-start', requestId: 'req-3', status: 200, statusText: 'OK', headers: [['bad name', 'x']] })).not.toThrow();
+    await expect(third).rejects.toMatchObject({ code: 'network' });
+    proxy.handle({ type: 'fetch.end', requestId: 'req-1' });
+    proxy.handle({ type: 'fetch.end', requestId: 'req-2' });
+    expect(proxy.pending).toBe(0);
+  });
+
+  test('proxy-fetch-response-cap', async () => {
+    const { proxy, posted } = setup();
+    const pending = proxy.fetch('https://api.anthropic.com/v1/messages', { method: 'POST', body: '{}' });
+    await Promise.resolve();
+    proxy.handle({ type: 'fetch.response-start', requestId: 'req-1', status: 200, statusText: 'OK', headers: [] });
+    const response = await pending;
+    const chunk = new Uint8Array(AGENT_PROTOCOL_LIMITS.maxChunkBytes);
+    const chunks = Math.floor(AGENT_PROTOCOL_LIMITS.maxResponseBytes / chunk.byteLength);
+    for (let i = 0; i < chunks; i += 1) proxy.handle({ type: 'fetch.chunk', requestId: 'req-1', bytes: chunk });
+    expect(proxy.pending).toBe(1);
+    expect(posted.filter((message) => message.type === 'fetch.abort')).toEqual([]);
+    proxy.handle({ type: 'fetch.chunk', requestId: 'req-1', bytes: new Uint8Array(1) });
+    expect(posted.at(-1)).toEqual({ type: 'fetch.abort', requestId: 'req-1' });
+    expect(proxy.pending).toBe(0);
+    await expect(response.arrayBuffer()).rejects.toMatchObject({ code: 'too-large' });
+  });
+
+  test('proxy-fetch-response-cap (the abort listener is detached)', async () => {
+    const { proxy } = setup();
+    for (const ending of ['end', 'error'] as const) {
+      const controller = new AbortController();
+      const removed = vi.spyOn(controller.signal, 'removeEventListener');
+      const pending = proxy.fetch('https://api.anthropic.com/v1/messages', { method: 'POST', body: '{}', signal: controller.signal });
+      await Promise.resolve();
+      const request = ending === 'end' ? 'req-1' : 'req-2';
+      proxy.handle({ type: 'fetch.response-start', requestId: request, status: 200, statusText: 'OK', headers: [] });
+      const response = await pending;
+      if (ending === 'end') proxy.handle({ type: 'fetch.end', requestId: request });
+      else proxy.handle({ type: 'fetch.error', requestId: request, code: 'network', message: 'gone' });
+      expect(removed).toHaveBeenCalledWith('abort', expect.any(Function));
+      await response.arrayBuffer().catch(() => {});
+    }
+  });
+
+  test('proxy-fetch-abort-before-post', async () => {
+    const { proxy, posted } = setup();
+    const controller = new AbortController();
+    // A `Request` body is read asynchronously: the signal aborts before the request could be posted.
+    const pending = proxy.fetch(new Request('https://api.anthropic.com/v1/messages', { method: 'POST', body: '{}' }), { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(posted).toEqual([]);
+    expect(proxy.pending).toBe(0);
   });
 
   test('proxy-fetch-refuses-locally', async () => {

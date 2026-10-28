@@ -1,7 +1,9 @@
 // Spec: docs/plans/phase-5-ai-agent.md decisions 5 and 6 · Acceptance: specs/agent-runtime.feature.md
 // (No network). The runtime's own sources import nothing that opens a socket, a process, a worker
 // or a file: only the AI SDK, its providers, Zod, frost's specs and tool definitions, and its own
-// files. (Third-party internals are checked in the bundle by the desktop build's report.)
+// files; and none reaches a builtin around its imports. This reads the runtime's own sources only:
+// third-party code in the bundle is not scanned here (the startup lockdown removes the globals and
+// the `process` functions it could use to reach one).
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,8 +72,10 @@ describe('runtime-has-no-network', () => {
         expect(FORBIDDEN.includes(bare), where).toBe(false);
         expect(ALLOWED_PACKAGES.includes(specifier) || ALLOWED_PREFIXES.some((prefix) => specifier.startsWith(prefix)), where).toBe(true);
       }
-      // No reach for a builtin around the import scan.
-      expect(source, path.relative(SRC, file)).not.toMatch(/process\.binding|process\._linkedBinding|globalThis\.require|createRequire/);
+      // No reach for a builtin around the import scan (lockdown.ts names them to remove them).
+      if (path.basename(file) !== 'lockdown.ts') {
+        expect(source, path.relative(SRC, file)).not.toMatch(/getBuiltinModule|createRequire|process\.binding|_linkedBinding|dlopen|globalThis\.require/);
+      }
     }
   });
 });

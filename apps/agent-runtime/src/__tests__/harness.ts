@@ -41,6 +41,19 @@ export function startHarness(options: RuntimeOptions = {}) {
   };
 }
 
+/**
+ * Replaces the network globals with ones that throw, so a fallback to a real request fails the
+ * test (restore with `vi.unstubAllGlobals()`).
+ */
+export function stubNetworkGlobals(): void {
+  const refuse = () => {
+    throw new Error('the runtime used a network global');
+  };
+  vi.stubGlobal('fetch', refuse);
+  vi.stubGlobal('WebSocket', refuse);
+  vi.stubGlobal('EventSource', refuse);
+}
+
 /** Lets queued microtasks and timers run. */
 export const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
 

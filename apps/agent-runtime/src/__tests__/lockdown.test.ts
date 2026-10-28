@@ -1,6 +1,7 @@
 // Spec: docs/plans/phase-5-ai-agent.md decision 5 · Acceptance: specs/agent-runtime.feature.md (Lockdown)
 import { describe, expect, test } from 'vitest';
-import { lockdownNetworkGlobals, NETWORK_GLOBALS } from '../lockdown';
+import { LOCKDOWN_TARGETS } from '@app/specs/agent-protocol.schema';
+import { lockdownNetworkGlobals, lockdownProcess, NETWORK_GLOBALS, PROCESS_BUILTINS, permissionModelActive } from '../lockdown';
 
 describe('lockdown', () => {
   test('lockdown-removes-network-globals', () => {
@@ -25,6 +26,29 @@ describe('lockdown', () => {
     const fromPrototype = lockdownNetworkGlobals(inherited);
     expect(fromPrototype.removed).toEqual(['EventSource']);
     expect((inherited as { EventSource?: unknown }).EventSource).toBeUndefined();
+  });
+
+  test('lockdown-process-builtins', () => {
+    const fake = { getBuiltinModule: () => ({}), binding: () => ({}), _linkedBinding: () => ({}), dlopen: () => {}, exit: () => {}, version: 'v24' };
+    const report = lockdownProcess(fake);
+    expect(report.removed).toEqual(['process.getBuiltinModule', 'process.binding', 'process._linkedBinding', 'process.dlopen']);
+    expect(report.failed).toEqual([]);
+    for (const name of PROCESS_BUILTINS) expect((fake as Record<string, unknown>)[name]).toBeUndefined();
+    // What a dependency does: an optional call finds nothing.
+    expect((fake as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule?.('node:dns')).toBeUndefined();
+    expect(typeof fake.exit).toBe('function');
+    expect(fake.version).toBe('v24');
+    // Every name it reports is a protocol lockdown target.
+    for (const name of [...lockdownNetworkGlobals({ fetch: 1 }).removed, ...report.removed]) expect(LOCKDOWN_TARGETS).toContain(name);
+  });
+
+  test('lockdown-report', () => {
+    expect(permissionModelActive({ permission: { has: (scope: string) => scope !== 'fs.write' } })).toBe(true);
+    expect(permissionModelActive({ permission: { has: () => true } })).toBe(false);
+    expect(permissionModelActive({ permission: { has: () => { throw new Error('x'); } } })).toBe(false);
+    expect(permissionModelActive({})).toBe(false);
+    // This test process runs without one.
+    expect(permissionModelActive()).toBe(false);
   });
 
   test('lockdown-real-globals', () => {

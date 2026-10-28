@@ -24,7 +24,7 @@ import {
 } from './agent-tools.spec';
 
 /** Bumped when a message changes shape; the runtime reports it in `ready` and main refuses another. */
-export const AGENT_PROTOCOL_VERSION = 1;
+export const AGENT_PROTOCOL_VERSION = 2;
 
 /** Every bound the schemas enforce. */
 export const AGENT_PROTOCOL_LIMITS = {
@@ -62,7 +62,26 @@ export const AGENT_PROTOCOL_LIMITS = {
   maxChunkBytes: 256 * 1024,
   /** A response's status text (characters). */
   maxStatusTextChars: 256,
+  /** A proxied response's whole body (bytes); the runtime gives up on a longer one (`too-large`). */
+  maxResponseBytes: 32 * 1024 * 1024,
 } as const;
+
+/**
+ * What the runtime removes at startup (Phase 5 Task 2): the network globals, and the `process`
+ * functions that reach a builtin or native module around the bundle's imports.
+ */
+export const LOCKDOWN_TARGETS = [
+  'fetch',
+  'WebSocket',
+  'WebSocketStream',
+  'EventSource',
+  'XMLHttpRequest',
+  'process.getBuiltinModule',
+  'process.binding',
+  'process._linkedBinding',
+  'process.dlopen',
+] as const;
+export type LockdownTarget = (typeof LOCKDOWN_TARGETS)[number];
 
 const L = AGENT_PROTOCOL_LIMITS;
 
@@ -251,8 +270,20 @@ export type ChatFinishReason = (typeof CHAT_FINISH_REASONS)[number];
 const count = z.int().nonnegative().nullable();
 
 export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
-  /** The runtime is listening (after its lockdown), speaking `protocolVersion`. */
-  z.strictObject({ type: z.literal('ready'), protocolVersion: z.int().positive() }),
+  /**
+   * The runtime is listening (after its lockdown), speaking `protocolVersion`. `lockdown` says what
+   * it removed (`LOCKDOWN_TARGETS`), what it could not, and whether Node's permission model is in
+   * effect (file writes refused), so the agent settings never claim a lockdown that isn't there.
+   */
+  z.strictObject({
+    type: z.literal('ready'),
+    protocolVersion: z.int().positive(),
+    lockdown: z.strictObject({
+      removed: z.array(z.enum(LOCKDOWN_TARGETS)).max(LOCKDOWN_TARGETS.length),
+      failed: z.array(z.enum(LOCKDOWN_TARGETS)).max(LOCKDOWN_TARGETS.length),
+      permissionModel: z.boolean(),
+    }),
+  }),
   /** More of the model's reply text. */
   z.strictObject({ type: z.literal('chat.delta'), chatId: AgentIdSchema, text: z.string().min(1).max(L.maxDeltaChars) }),
   /** The model called a tool: a card for the panel (main still decides whether it runs). */
@@ -283,6 +314,21 @@ export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
   }),
   /** The runtime no longer wants a response (Stop, or the provider gave up). */
   z.strictObject({ type: z.literal('fetch.abort'), requestId: AgentIdSchema }),
+  /**
+   * A model step ended: what the model produced in it, in history shape (an assistant
+   * `ChatMessage`'s `content` and `toolCalls`), so main stores exactly that. `text` is cut at
+   * `maxMessageChars`. `toolCalls` holds the calls main was asked to run (`tool.invoke`), in order;
+   * a call the runtime rejected (invalid input, a tool not offered, out of bounds) is left out with
+   * its error result, so the history pairs up. Posted after the step's calls were answered; a step
+   * cut short by Stop or a failure is posted before `chat.finish` / `chat.error`.
+   */
+  z.strictObject({
+    type: z.literal('chat.step'),
+    chatId: AgentIdSchema,
+    step: z.int().min(1).max(MAX_TOOL_STEPS),
+    text: z.string().max(L.maxMessageChars),
+    toolCalls: z.array(ToolCallSchema).max(L.maxToolCallsPerMessage),
+  }),
 ]);
 export type RuntimeToMainMessage = z.infer<typeof RuntimeToMainMessageSchema>;
 
@@ -290,4 +336,4 @@ export type RuntimeToMainMessage = z.infer<typeof RuntimeToMainMessageSchema>;
  * Every message type the runtime may send. None approves, grants, changes a setting or carries a
  * key; main drops any other type.
  */
-export const RUNTIME_TO_MAIN_MESSAGE_TYPES = ['ready', 'chat.delta', 'chat.tool-call', 'chat.finish', 'chat.error', 'tool.invoke', 'fetch.request', 'fetch.abort'] as const satisfies readonly RuntimeToMainMessage['type'][];
+export const RUNTIME_TO_MAIN_MESSAGE_TYPES = ['ready', 'chat.delta', 'chat.tool-call', 'chat.finish', 'chat.error', 'tool.invoke', 'fetch.request', 'fetch.abort', 'chat.step'] as const satisfies readonly RuntimeToMainMessage['type'][];

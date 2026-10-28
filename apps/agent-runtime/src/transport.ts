@@ -23,6 +23,8 @@ export interface ChannelStats {
   inboundDropped: number;
   /** Outbound messages that failed `RuntimeToMainMessageSchema` (a runtime bug). */
   outboundDropped: number;
+  /** Inbound messages a listener threw on (a runtime bug; the message is not logged). */
+  listenerErrors: number;
 }
 
 /** A validated channel over a `RuntimePort`. */
@@ -34,7 +36,7 @@ export interface Channel {
 }
 
 export function createChannel(port: RuntimePort): Channel {
-  const stats: ChannelStats = { inboundDropped: 0, outboundDropped: 0 };
+  const stats: ChannelStats = { inboundDropped: 0, outboundDropped: 0, listenerErrors: 0 };
   const listeners: ((message: MainToRuntimeMessage) => void)[] = [];
   port.onMessage((data) => {
     const parsed = MainToRuntimeMessageSchema.safeParse(data);
@@ -42,7 +44,14 @@ export function createChannel(port: RuntimePort): Channel {
       stats.inboundDropped += 1;
       return;
     }
-    for (const listener of listeners) listener(parsed.data);
+    for (const listener of listeners) {
+      // A listener's bug must neither skip the others nor escape into the port's handler.
+      try {
+        listener(parsed.data);
+      } catch {
+        stats.listenerErrors += 1;
+      }
+    }
   });
   return {
     send(message) {

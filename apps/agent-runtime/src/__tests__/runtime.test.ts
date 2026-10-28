@@ -8,9 +8,12 @@ import { chatStart, startHarness, textStep, toolStep } from './harness';
 
 describe('runtime', () => {
   test('runtime-ready', async () => {
-    const h = startHarness();
-    expect(await h.next('ready')).toEqual({ type: 'ready', protocolVersion: AGENT_PROTOCOL_VERSION });
+    const lockdown = { removed: ['fetch', 'process.getBuiltinModule'] as const, failed: ['WebSocket'] as const, permissionModel: true };
+    const h = startHarness({ lockdown: { removed: [...lockdown.removed], failed: [...lockdown.failed], permissionModel: true } });
+    expect(await h.next('ready')).toEqual({ type: 'ready', protocolVersion: AGENT_PROTOCOL_VERSION, lockdown: { removed: ['fetch', 'process.getBuiltinModule'], failed: ['WebSocket'], permissionModel: true } });
     expect(h.received.length).toBe(1);
+    // Without a report, it says nothing was removed and no permission model is in effect.
+    expect(await startHarness().next('ready')).toMatchObject({ lockdown: { removed: [], failed: [], permissionModel: false } });
   });
 
   test('runtime-one-turn-per-chat', async () => {
@@ -28,6 +31,7 @@ describe('runtime', () => {
     h.send(chatStart({ chatId: 'chat-2' }));
     await h.next('tool.invoke', (message) => message.chatId === 'chat-2');
     expect(h.runtime.stats.startsDropped).toBe(1);
+    expect(h.of('chat.error')).toEqual([{ type: 'chat.error', chatId: 'chat-1', message: 'This chat is already answering. Stop it or wait for it to finish.' }]);
     expect(models.length).toBe(2);
     expect([...h.runtime.activeChats].sort()).toEqual(['chat-1', 'chat-2']);
 
