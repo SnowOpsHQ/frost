@@ -29,8 +29,8 @@ then `node apps/desktop/scripts/verify-mac-package.mjs`.
 - **Scenario: signs-and-notarizes-when-configured** — with every `MAC_SIGNING_ENV` variable set,
   `osxSign.identity` is `APPLE_SIGNING_IDENTITY` and `osxNotarize` carries `APPLE_ID`,
   `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`; the fuse flip does not ad-hoc sign.
-- **Scenario: makes-zip-and-dmg** — makers are `zip` (darwin + linux) and `dmg` (darwin only,
-  format `MAC_DMG_FORMAT`).
+- **Scenario: makes-zip-and-dmg** — the darwin makers are exactly `zip` (darwin + linux) and `dmg`
+  (darwin only, format `MAC_DMG_FORMAT`); the Linux makers are in `linux-package.feature.md`.
 - **Scenario: linux-build-unaffected** — `@app/desktop`'s `build` script is still
   `electron-forge package` (the Linux CI gate), the DMG maker never targets linux, and
   `make:mac` targets darwin for exactly `MAC_ARCHS`.

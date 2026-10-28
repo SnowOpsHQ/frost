@@ -164,7 +164,8 @@ describe('forge config (macOS package)', () => {
 
   test('makes-zip-and-dmg', async () => {
     const byName = await makers();
-    expect([...byName.keys()].sort()).toEqual(['dmg', 'zip']);
+    // The darwin makers only; the Linux ones are specs/linux-package.feature.md's.
+    expect([...byName].filter(([, maker]) => maker.platforms.includes('darwin')).map(([name]) => name).sort()).toEqual(['dmg', 'zip']);
     expect(byName.get('zip')?.platforms.sort()).toEqual(['darwin', 'linux']);
     expect(byName.get('dmg')?.platforms).toEqual(['darwin']);
     expect(byName.get('dmg')?.config).toMatchObject({ format: MAC_DMG_FORMAT });

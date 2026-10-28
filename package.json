@@ -14,6 +14,8 @@
     "test:e2e": "turbo run test:e2e",
     "make:mac": "pnpm --filter @app/desktop make:mac",
     "verify:mac": "pnpm --filter @app/desktop verify:mac",
+    "make:linux": "pnpm --filter @app/desktop make:linux",
+    "verify:linux": "pnpm --filter @app/desktop verify:linux",
     "security:electronegativity": "node scripts/electronegativity.mjs",
     "security:semgrep": "pnpm security:semgrep:test && pnpm security:semgrep:scan",
     "security:semgrep:test": "uvx semgrep@1.182.1 --test --metrics off --config semgrep/ipc-sender-guard.yml semgrep/__fixtures__/ipc-sender-guard.ts && uvx semgrep@1.182.1 --test --metrics off --config semgrep/webcontents-factory.yml semgrep/__fixtures__/webcontents-factory.ts && uvx semgrep@1.182.1 --test --metrics off --config semgrep/debugger-allowlist.yml semgrep/__fixtures__/debugger-allowlist.ts",

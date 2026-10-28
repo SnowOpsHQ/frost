@@ -147,7 +147,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   - root `package.json` (two scripts);
   - `pnpm-workspace.yaml`, if a maker needs a build;
   - the new spec, script, test and workflow files.
-- [ ] commit `feat(packaging): Linux AppImage and deb packages, verify:linux and its CI job`
+- [x] commit `feat(packaging): Linux AppImage and deb packages, verify:linux and its CI job`
 
 #### Task 2: Windows packages (Squirrel, zip) and their CI job
 - **Spec:** `specs/windows-package.spec.ts` (Squirrel options, artifact paths, the `resources/`
@@ -350,3 +350,28 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 
 ## As built
 (filled in as tasks land)
+
+### Task 1 (Linux packages)
+- **Makers.** `@electron-forge/maker-deb` 8.0.1 and `@reforged/maker-appimage` 6.0.0 (it builds
+  the image with the system `mksquashfs`, so CI installs `squashfs-tools`; no native build, so
+  `pnpm-workspace.yaml` is unchanged). The AppImage maker downloads its runtime from a moving
+  `continuous` tag and does not check it; `linux-package.spec.ts` pins it to the `20251108`
+  release (SHA-256 recorded; the release's own signature was checked when pinning), and
+  `appimage-contents` checks the AppImage starts with exactly those bytes before running it.
+  `@electron/asar` 4.x became a direct devDependency (the verifier lists `app.asar` with it).
+- **Check names.** The plan's `appimage-runs` is `appimage-contents`: the AppImage is extracted
+  and checked, not launched (FUSE is not needed). Only the packaged tree `out/frost-linux-x64` is
+  launched; the deb and AppImage trees are extracted unprivileged (the deb's setuid
+  `chrome-sandbox` is not root-owned there) and get the static fuse and resource checks.
+- **ASAR integrity gap.** Electron enforces ASAR integrity only on macOS and Windows; Packager
+  embeds no integrity data for Linux. `asar-integrity` asserts the fuse is on, prints an `INFO`
+  line stating the gap and asserts `OnlyLoadAppFromAsar`.
+- **Verified locally** (Arch Linux, Wayland, no Xvfb; `dpkg-deb` 1.23 and `mksquashfs` 4.7 used
+  from their distro packages, unpacked into a temporary directory): `make:linux` produced all
+  three artifacts, and `verify:linux` passed every check: `fuses-read-back`, `asar-integrity`,
+  `no-stray-files`, `launches-and-stays-alive`, `refuses-remote-debugging`, `deb-metadata`,
+  `appimage-contents`. **Left to CI:** the same run on Ubuntu 24.04 (its `dpkg-deb`, Xvfb, the
+  AppArmor user-namespace sysctl). Installing the deb with `apt`/`dpkg -i` is not exercised.
+- **Known limit.** The deb's `/usr/share/doc/frost/copyright` is Electron's `LICENSE` from the
+  packaged tree (electron-installer-debian copies it; it has no license option); frost's own
+  license is `package.json#license`.

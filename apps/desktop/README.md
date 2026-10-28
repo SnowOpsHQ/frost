@@ -452,6 +452,8 @@ From the repo root (`pnpm install` first):
 - `pnpm verify:mac` (on macOS, after `make:mac`) — checks the bundle id, arch, signature and
   entitlements, fuses, launch and debugging lockdown, and that the `.app` inside the published zip
   and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
+- `pnpm make:linux`, `pnpm verify:linux` (on Linux) — the AppImage, deb and zip for x64, and their
+  checks (see [Building on Linux](#building-on-linux)). CI: `.github/workflows/linux-package.yml`.
 
 If your shell exports `ELECTRON_RUN_AS_NODE` (some terminals and agent harnesses do), unset it for
 manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it itself.
@@ -475,7 +477,9 @@ manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it i
 - `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers).
 - `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string),
   `third-party-notices.ts` and `THIRD_PARTY_NOTICES`; `scripts/measure-snippet-font.mjs` (builds the
-  snippet width table, run in Electron) and `scripts/verify-mac-package.mjs`.
+  snippet width table, run in Electron), `scripts/verify-mac-package.mjs`, and
+  `scripts/verify-linux-package.mjs` with the checks it shares with Windows in
+  `scripts/verify-package-common.mjs`.
 - The audit engine itself is `packages/seo-core` (`@app/seo-core`): pure TypeScript, no Electron,
   DOM or Zod.
 
@@ -528,6 +532,35 @@ Developer ID signing and notarization turn on only when **all four** variables a
 Real signing uses the hardened runtime with only `com.apple.security.cs.allow-jit`
 (`MAC_ENTITLEMENTS` in `specs/macos-package.spec.ts`). It has not been exercised yet (no Developer
 ID); CI never receives these secrets.
+
+## Building on Linux
+Prerequisites: Node ≥ 22.18 and pnpm 12.15.0 (as above), `dpkg-deb` (the deb maker and the deb
+checks; part of Debian and Ubuntu), `mksquashfs` (`squashfs-tools`, for the AppImage) and, for
+`verify:linux`, a display (`xvfb-run -a` on a headless machine). `make:linux` downloads the
+AppImage runtime pinned in `specs/linux-package.spec.ts`.
+
+```sh
+pnpm install
+pnpm make:linux
+pnpm verify:linux    # or: xvfb-run -a pnpm verify:linux
+```
+
+Artifacts, under `apps/desktop/out/`:
+- `frost-linux-x64/` (the packaged tree; `frost` is the executable)
+- `make/AppImage/x64/frost-<version>-x64.AppImage`
+- `make/deb/x64/frost_<version>_amd64.deb` (installs to `/usr/lib/frost`, with `/usr/bin/frost`)
+- `make/zip/linux/x64/frost-linux-x64-<version>.zip`
+
+**The packages are unsigned.** frost has no Linux repository key: the deb is not served from an
+apt repository and carries no signature, and the AppImage embeds none. The `frost-linux-x64`
+artifact of the Linux package workflow is built and checked in CI; trust it as far as you trust that
+run. The deb runs no maintainer scripts; its only setuid file is Chromium's `chrome-sandbox`, used
+only where unprivileged user namespaces are unavailable.
+
+`verify:linux` checks the fuses, the files in `resources/` and `app.asar`, launch and debugging
+lockdown on the packaged tree, the deb's metadata and files, and the AppImage's runtime and
+contents (`specs/linux-package.feature.md`). Electron does not enforce ASAR integrity on Linux:
+the fuse is on, but `app.asar` is not hash-checked at startup there (the check says so).
 
 ## Follow-ups
 App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update.
