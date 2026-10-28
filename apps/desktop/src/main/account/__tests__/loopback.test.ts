@@ -6,7 +6,7 @@ import { request } from 'node:http';
 import { createConnection } from 'node:net';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { LOOPBACK_PORT_RANGE, LOOPBACK_REDIRECT_PATTERN } from '@app/specs/account-api.schema';
-import { LOOPBACK_DONE_PATH, LOOPBACK_RESPONSE_HEADERS } from '@app/specs/account-state.schema';
+import { LOOPBACK_DONE_PATH, LOOPBACK_MAX_CONNECTIONS, LOOPBACK_RESPONSE_HEADERS } from '@app/specs/account-state.schema';
 import { startLoopback, type Loopback, type LoopbackCallback } from '../loopback';
 
 const STATE = 'state-0123456789abcdef-ABCDEF';
@@ -167,6 +167,38 @@ describe('loopback listener', () => {
     expect((await get(loopback.port, LOOPBACK_DONE_PATH)).status).toBe(200);
     await loopback.closed;
     expect(await listening(loopback.port)).toBe(false);
+    expect(callbacks).toHaveLength(1);
+  });
+
+  test('loopback-limits-connections', async () => {
+    const { loopback, callbacks } = await start({ requestTimeoutMs: 300 });
+    const closedAt: number[] = [];
+    const t0 = Date.now();
+    const sockets = [];
+    for (let i = 0; i <= LOOPBACK_MAX_CONNECTIONS; i++) {
+      const socket = createConnection({ host: '127.0.0.1', port: loopback.port });
+      socket.on('error', () => undefined);
+      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      void closed.then(() => (closedAt[i] = Date.now() - t0));
+      await new Promise<void>((resolve) => socket.once('connect', () => resolve()));
+      sockets.push({ socket, closed });
+    }
+    // The one over the limit is dropped at once; the others only by the request timeout.
+    await sockets[LOOPBACK_MAX_CONNECTIONS]!.closed;
+    expect(closedAt.slice(0, LOOPBACK_MAX_CONNECTIONS).filter((at) => at !== undefined)).toEqual([]);
+    // A connection that drips its headers is closed too (408), like the idle ones.
+    await Promise.all(sockets.slice(0, LOOPBACK_MAX_CONNECTIONS).map((s) => s.closed));
+    const drip = createConnection({ host: '127.0.0.1', port: loopback.port });
+    drip.on('error', () => undefined);
+    await new Promise<void>((resolve) => drip.once('connect', () => resolve()));
+    const dripClosed = new Promise<void>((resolve) => drip.once('close', () => resolve()));
+    drip.write(`GET /callback HTTP/1.1\r\nHost: 127.0.0.1:${loopback.port}\r\nX-Slow: `);
+    const timer = setInterval(() => drip.writable && drip.write('x'), 50);
+    await dripClosed;
+    clearInterval(timer);
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    // Still listening and still waiting for the right callback.
+    expect((await get(loopback.port, callbackPath({ code: CODE, state: STATE }))).status).toBe(303);
     expect(callbacks).toHaveLength(1);
   });
 

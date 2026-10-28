@@ -8,9 +8,11 @@ import {
 // The build's telemetry configuration (spec `telemetry-consent.schema.ts`, `TELEMETRY_CONFIG_ENV`;
 // acceptance `telemetry.feature.md`, Desktop, Configuration; plan "Configuration"). Read the way the
 // account's is (`../account/config.ts`): baked in at build time (Vite replaces
-// `import.meta.env.FROST_PUBLIC_*`, `envPrefix` in `vite.main.config.ts`); an unpackaged build (dev,
-// e2e) also reads the run-time environment, which wins. A packaged build never reads the run-time
-// environment for them and requires `https:`. A missing or refused value leaves its channel not
+// `import.meta.env.FROST_PUBLIC_*`, `envPrefix` in `vite.main.config.ts`). A build that has a value
+// baked in never reads it from the run-time environment: if either value is baked in, the environment
+// is ignored for both (`app.isPackaged` only looks at the executable's name, so it is not the guard).
+// Only an unpackaged build with neither baked in (dev, e2e) reads the environment. Packaged requires
+// `https:`. A missing or refused value leaves its channel not
 // configured: it sends nothing, whatever the consent.
 
 type EnvName = (typeof TELEMETRY_CONFIG_ENV)[keyof typeof TELEMETRY_CONFIG_ENV];
@@ -27,7 +29,7 @@ export interface TelemetryConfigSources {
   readonly isPackaged: boolean;
   /** The values baked into the build (`buildTimeTelemetryEnv()`). */
   readonly buildTime: TelemetryEnv;
-  /** The run-time environment (`process.env`); read only when unpackaged. */
+  /** The run-time environment (`process.env`); read only unpackaged, and only with nothing baked in. */
   readonly runtime: Readonly<Record<string, string | undefined>>;
 }
 
@@ -69,10 +71,9 @@ function dsnOf(value: string | undefined, isPackaged: boolean): string | null {
 
 /** The telemetry configuration for this build (each channel `null` when not configured). */
 export function resolveTelemetryConfig(sources: TelemetryConfigSources): TelemetryConfig {
-  const pick = (name: EnvName): string | undefined => {
-    const runtime = sources.isPackaged ? undefined : sources.runtime[name];
-    return runtime !== undefined && runtime !== '' ? runtime : sources.buildTime[name];
-  };
+  const baked = Object.values(TELEMETRY_CONFIG_ENV).some((name) => (sources.buildTime[name] ?? '') !== '');
+  const source = sources.isPackaged || baked ? sources.buildTime : sources.runtime;
+  const pick = (name: EnvName): string | undefined => source[name];
   return {
     otelEndpoint: endpointOf(pick(TELEMETRY_CONFIG_ENV.otelEndpoint), sources.isPackaged),
     sentryDsn: dsnOf(pick(TELEMETRY_CONFIG_ENV.sentryDsn), sources.isPackaged),

@@ -81,7 +81,8 @@ async function watchAccount(account: AccountService, sinceVersion: number): Prom
  * - `signIn`: starts a sign-in for the sender's window (`SignInResult`; `needs-gesture` without a live
  *   user gesture there).
  * - `confirmSignIn` / `cancelSignIn` (`{ requestId }`), `signOut`, `refresh`: a boolean (see
- *   `AccountService`).
+ *   `AccountService`; `confirmSignIn` also hands over the sender's window, which must have started the
+ *   request and have a live gesture).
  */
 export const accountRouter = router({
   entitlements: publicProcedure
@@ -115,7 +116,12 @@ export const accountRouter = router({
     .use(requireAccount)
     .input(AccountRequestInputSchema)
     .output(AccountActionResultSchema)
-    .mutation(({ ctx, input }) => ctx.account.confirmSignIn(input.requestId)),
+    .mutation(({ ctx, input }) => {
+      // The confirmation is bound to the window that started the request (checked by the service).
+      const windowId = ctx.sender?.windowId;
+      if (typeof windowId !== 'number') throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'no sender window' });
+      return ctx.account.confirmSignIn(windowId, input.requestId);
+    }),
   cancelSignIn: publicProcedure
     .use(enforceSender)
     .use(requireAccount)

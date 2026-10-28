@@ -14,7 +14,7 @@ const log = (message: string): void => console.warn(`frost: ${message}`);
 /** Main's telemetry: `telemetry` (`span`, `captureException`) for other phases, `service` for IPC. */
 export function createTelemetryMain(started: Promise<unknown>): TelemetryMain {
   const store = createConsentStore({ dir: app.getPath('userData'), fs, now: Date.now, log });
-  // Build-time values; an unpackaged build (dev, e2e) may also take them from its environment.
+  // Build-time values; only an unpackaged build with none baked in reads them from its environment.
   const config = resolveTelemetryConfig({ isPackaged: app.isPackaged, buildTime: buildTimeTelemetryEnv(), runtime: process.env });
   return installTelemetry({ app, process, fetch: (url, init) => net.fetch(url, init), store, config, started, log });
 }

@@ -34,8 +34,10 @@ export { RENDERER_ERROR_LIMITS, RENDERER_ERROR_RATE_LIMIT, RENDERER_ERROR_SOURCE
 /**
  * The build's public telemetry values (plan "Configuration"), read like the account's
  * (`account-state.schema.ts`, `ACCOUNT_CONFIG_ENV`): baked in at build time (`import.meta.env`,
- * `envPrefix` `FROST_PUBLIC_`); an **unpackaged** build also reads them from the run-time
- * environment, which then wins. A missing or refused value leaves its channel not configured.
+ * `envPrefix` `FROST_PUBLIC_`). **A build that has a value baked in never reads it from the run-time
+ * environment**: if either value is baked in, the run-time environment is ignored for both; only an
+ * **unpackaged** build with neither baked in (dev, e2e) reads them from it. A missing or refused value
+ * leaves its channel not configured.
  */
 export const TELEMETRY_CONFIG_ENV = {
   sentryDsn: 'FROST_PUBLIC_SENTRY_DSN',

@@ -72,6 +72,7 @@ async function signIn(): Promise<AccountState> {
   expect(callback.status).toBe(303);
   await expect.poll(async () => (await accountState()).status).toBe('confirming');
   const confirming = await accountState();
+  await realClick();
   expect(await call('mutation', 'confirmSignIn', { requestId: confirming.requestId })).toBe(true);
   await expect.poll(async () => (await accountState()).entitlements.status).toBe('active');
   return accountState();
@@ -137,6 +138,10 @@ test('account-sign-in-confirm-is-pro', async () => {
   expect(confirming.fingerprint).toBe(awaiting.fingerprint);
   expect(await call('query', 'entitlements')).toMatchObject({ plan: 'free', features: [] });
   expect(await call('mutation', 'confirmSignIn', { requestId: 'AAAAAAAAAAAAAAAAAAAAAA' })).toBe(false);
+  // The confirmation needs its own user gesture in the window: without a click it is refused.
+  expect(await call('mutation', 'confirmSignIn', { requestId: confirming.requestId })).toBe(false);
+  expect((await accountState()).status).toBe('confirming');
+  await realClick();
   expect(await call('mutation', 'confirmSignIn', { requestId: confirming.requestId })).toBe(true);
 
   await expect.poll(async () => (await accountState()).entitlements.status).toBe('active');

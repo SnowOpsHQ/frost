@@ -7,6 +7,7 @@ import { buildTimeAccountEnv, resolveAccountConfig } from './config';
 import { createEntitlements, type EntitlementsReader } from './entitlements';
 import { createWindowGestures } from './gestures';
 import { startLoopback } from './loopback';
+import { holdQuitFor } from './quit';
 import { createSecretStore, type SecretStore } from './secret-store';
 import { createAccountService, redact, type AccountMainService } from './service';
 
@@ -53,7 +54,7 @@ export async function createAccountMain(): Promise<AccountMain> {
     log('account: the secret store could not be created; memory only');
     secretStore = memoryStore();
   }
-  // Build-time values; an unpackaged build (dev, e2e) may also take them from its environment.
+  // Build-time values; only an unpackaged build with none baked in reads them from its environment.
   let config = resolveAccountConfig({ isPackaged: app.isPackaged, buildTime: buildTimeAccountEnv(), runtime: process.env });
   let entitlements: Awaited<ReturnType<typeof createEntitlements>> | null = null;
   if (config !== null) {
@@ -81,10 +82,12 @@ export async function createAccountMain(): Promise<AccountMain> {
     focusWindow,
     log,
   });
-  app.once('will-quit', () => {
-    service.dispose();
+  // On quit: a token exchanged but not confirmed (or a sign-out still revoking) is revoked first,
+  // holding the quit at most QUIT_REVOKE_TIMEOUT_MS (only when there is one).
+  holdQuitFor(app, () => {
     gestures.dispose();
     entitlements?.dispose();
+    return service.dispose();
   });
   return { service, secretStore, entitlements };
 }

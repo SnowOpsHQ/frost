@@ -45,14 +45,20 @@ describe('telemetry configuration', () => {
   });
 
   test('telemetry-config-runtime-env-only-unpackaged', () => {
-    const built = env(ENDPOINT, DSN);
     const runtime = env('http://127.0.0.1:4318/v1/traces', 'http://key@127.0.0.1:9000/7');
-    expect(resolve(false, built, runtime)).toEqual({ otelEndpoint: 'http://127.0.0.1:4318/v1/traces', sentryDsn: 'http://key@127.0.0.1:9000/7' });
     expect(resolve(false, {}, runtime)).toEqual({ otelEndpoint: 'http://127.0.0.1:4318/v1/traces', sentryDsn: 'http://key@127.0.0.1:9000/7' });
-    expect(resolve(true, built, runtime)).toEqual({ otelEndpoint: ENDPOINT, sentryDsn: DSN });
+    expect(resolve(false, env('', ''), runtime)).toEqual({ otelEndpoint: 'http://127.0.0.1:4318/v1/traces', sentryDsn: 'http://key@127.0.0.1:9000/7' });
     expect(resolve(true, {}, runtime)).toEqual({ otelEndpoint: null, sentryDsn: null });
-    // Per variable: an empty run-time value leaves the build's.
-    expect(resolve(false, built, env('', 'http://key@127.0.0.1:9000/7'))).toEqual({ otelEndpoint: ENDPOINT, sentryDsn: 'http://key@127.0.0.1:9000/7' });
+  });
+
+  test('telemetry-config-baked-build-ignores-runtime', () => {
+    const runtime = env('http://127.0.0.1:4318/v1/traces', 'http://key@127.0.0.1:9000/7');
+    for (const isPackaged of [true, false]) {
+      expect(resolve(isPackaged, env(ENDPOINT, DSN), runtime), String(isPackaged)).toEqual({ otelEndpoint: ENDPOINT, sentryDsn: DSN });
+      // Either one baked in: the run-time environment is ignored for both.
+      expect(resolve(isPackaged, env(ENDPOINT, undefined), runtime)).toEqual({ otelEndpoint: ENDPOINT, sentryDsn: null });
+      expect(resolve(isPackaged, env(undefined, DSN), runtime)).toEqual({ otelEndpoint: null, sentryDsn: DSN });
+    }
   });
 
   test('telemetry-config-shapes', () => {

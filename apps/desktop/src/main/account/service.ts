@@ -29,7 +29,8 @@ import type { SecretStore } from './secret-store';
 //    fingerprint the page shows). One request at a time: a new one replaces (and revokes) the old.
 // 2. The callback's code is exchanged with the verifier (the token kept in memory only), and the
 //    session names the account: `confirming`, and the window that asked is focused.
-// 3. `confirmSignIn(requestId)` stores the token (`account` blob) and fetches entitlements:
+// 3. `confirmSignIn(windowId, requestId)` (from the window that started it, with a live gesture
+//    there) stores the token (`account` blob) and fetches entitlements:
 //    `signed-in`. `cancelSignIn` drops the request and revokes its token. Nothing is stored or used
 //    before the confirmation: `entitlements()` is `none` unless signed in.
 // 4. Refresh at start, every `ACCOUNT_REFRESH_INTERVAL_MS` and on `refresh()`: 401 signs out
@@ -75,8 +76,11 @@ export interface AccountServiceDeps {
 export interface AccountMainService extends AccountService {
   /** Resolves once no exchange, refresh or revocation started so far is still running. */
   whenIdle(): Promise<void>;
-  /** Stops the refresh timer, closes a pending listener and releases watchers. */
-  dispose(): void;
+  /**
+   * Stops the refresh timer, drops a pending sign-in (revoking a token it exchanged) and releases
+   * watchers. Answers the revocations still running (to hold the quit for, bounded), or `null`.
+   */
+  dispose(): Promise<void> | null;
 }
 
 // ---- Redaction ----------------------------------------------------------------------------------
@@ -142,7 +146,10 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
   let disposed = false;
   const waiters: Waiter[] = [];
   const inflight = new Set<Promise<unknown>>();
-  let refreshing: Promise<boolean> | null = null;
+  /** Revocations still running (a quit waits for them, bounded). */
+  const revoking = new Set<Promise<void>>();
+  /** The refresh running, for the account (token) it runs for: never handed to another account. */
+  let refreshing: { readonly token: string; readonly run: Promise<boolean> } | null = null;
 
   const track = <T>(work: Promise<T>): Promise<T> => {
     inflight.add(work);
@@ -194,11 +201,15 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
 
   const revoke = (token: string): Promise<void> => {
     if (!api) return Promise.resolve();
-    return track(
-      api.signOut(token).then((result) => {
+    const run = api.signOut(token).then(
+      (result) => {
         if (!result.ok) log(`account: revoking a token failed (${result.failure})`);
-      }),
+      },
+      () => log('account: revoking a token failed'),
     );
+    revoking.add(run);
+    void run.finally(() => revoking.delete(run));
+    return track(run);
   };
 
   /** Ends `p` if it is still the pending request. A token it exchanged is revoked. */
@@ -221,6 +232,7 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
   const endSession = (acc: StoredAccount): void => {
     if (account?.token !== acc.token) return;
     account = null;
+    refreshing = null;
     store.delete(ACCOUNT_SECRET);
     entitlements?.markRefreshFailed('auth');
     error = 'session-ended';
@@ -334,16 +346,16 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
   const refresh = (): Promise<boolean> => {
     const acc = account;
     if (!acc || config === null) return Promise.resolve(false);
-    if (refreshing) return refreshing;
+    if (refreshing?.token === acc.token) return refreshing.run;
     const run = doRefresh(acc)
       .catch(() => {
         log('account: refresh failed unexpectedly');
         return true;
       })
       .finally(() => {
-        if (refreshing === run) refreshing = null;
+        if (refreshing?.run === run) refreshing = null;
       });
-    refreshing = run;
+    refreshing = { token: acc.token, run };
     return track(run);
   };
 
@@ -449,9 +461,18 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
       return 'started';
     },
 
-    async confirmSignIn(requestId) {
+    async confirmSignIn(windowId, requestId) {
       const p = pending;
       if (!p || p.request.requestId !== requestId || p.phase !== 'confirming' || !p.exchanged) return false;
+      // Only the window that started the request, on a live user gesture there.
+      if (windowId !== p.windowId) {
+        log('account: a confirmation from another window was refused');
+        return false;
+      }
+      if (!deps.consumeGesture(windowId)) {
+        log('account: a confirmation without a user gesture was refused');
+        return false;
+      }
       clearTimeout(p.confirmTimer);
       pending = null;
       const { token, expiresAt, user } = p.exchanged;
@@ -479,6 +500,7 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
       const acc = account;
       if (!acc) return false;
       account = null;
+      refreshing = null;
       store.delete(ACCOUNT_SECRET);
       entitlements?.clear();
       error = null;
@@ -500,6 +522,7 @@ export function createAccountService(deps: AccountServiceDeps): AccountMainServi
       unsubscribe?.();
       if (pending) dropPending(pending, null, { closeListener: true });
       for (const waiter of waiters.splice(0)) waiter.resolve(state());
+      return revoking.size === 0 ? null : Promise.allSettled([...revoking]).then(() => undefined);
     },
   };
 }

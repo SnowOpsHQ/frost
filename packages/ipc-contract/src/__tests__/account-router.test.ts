@@ -69,7 +69,7 @@ function fakeAccount(entitlements: Entitlements = entitled('active')) {
           }),
     ),
     signIn: vi.fn(async (_windowId: number): Promise<SignInResult> => 'started'),
-    confirmSignIn: vi.fn(async (requestId: string) => requestId === REQUEST_ID),
+    confirmSignIn: vi.fn(async (_windowId: number, requestId: string) => requestId === REQUEST_ID),
     cancelSignIn: vi.fn(async (requestId: string) => requestId === REQUEST_ID),
     signOut: vi.fn(async () => true),
     refresh: vi.fn(async () => true),
@@ -150,7 +150,8 @@ describe('account router', () => {
     }
     const account = fakeAccount();
     await expect(call(ctxFor(account), 'confirmSignIn', { requestId: REQUEST_ID })).resolves.toBe(true);
-    expect(account.confirmSignIn).toHaveBeenCalledWith(REQUEST_ID);
+    // The confirmation is bound to the sender's window too (the service checks it started the request).
+    expect(account.confirmSignIn).toHaveBeenCalledExactlyOnceWith(WINDOW_ID, REQUEST_ID);
     await expect(call(ctxFor(account), 'cancelSignIn', { requestId: 'BBBBBBBBBBBBBBBBBBBBBB' })).resolves.toBe(false);
     await expect(call(ctxFor(account), 'signOut')).resolves.toBe(true);
     await expect(call(ctxFor(account), 'refresh')).resolves.toBe(true);

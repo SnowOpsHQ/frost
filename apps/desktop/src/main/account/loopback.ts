@@ -7,6 +7,8 @@ import {
   LOOPBACK_DONE_LINGER_MS,
   LOOPBACK_DONE_PATH,
   LOOPBACK_HOST,
+  LOOPBACK_MAX_CONNECTIONS,
+  LOOPBACK_REQUEST_TIMEOUT_MS,
   LOOPBACK_RESPONSE_HEADERS,
   SIGN_IN_TIMEOUT_MS,
 } from '@app/specs/account-state.schema';
@@ -26,6 +28,8 @@ import {
 //   `LOOPBACK_DONE_LINGER_MS`). It also closes on `close()` and after `timeoutMs` without a callback.
 // - Every answer carries `LOOPBACK_RESPONSE_HEADERS`, loads no subresource, and never reflects a
 //   request value. Nothing is logged here.
+// - At most `LOOPBACK_MAX_CONNECTIONS` at once; a connection idle, or whose request does not arrive,
+//   within `LOOPBACK_REQUEST_TIMEOUT_MS` is closed. A server error after it is listening closes it.
 
 /** What the browser's redirect carried (its `state` already checked and removed). */
 export interface LoopbackCallback {
@@ -48,6 +52,8 @@ export interface StartLoopbackOptions {
   readonly timeoutMs?: number;
   /** Defaults to `LOOPBACK_DONE_LINGER_MS`. */
   readonly doneLingerMs?: number;
+  /** Defaults to `LOOPBACK_REQUEST_TIMEOUT_MS` (tests shorten it). */
+  readonly requestTimeoutMs?: number;
 }
 
 export interface Loopback {
@@ -143,16 +149,22 @@ export async function startLoopback(options: StartLoopbackOptions): Promise<Loop
     }
   };
 
-  const server = createServer((req, res) => {
-    try {
-      handle(req, res);
-    } catch {
-      res.destroy();
-    }
-  });
-  server.requestTimeout = 10_000;
-  server.headersTimeout = 10_000;
+  const requestTimeoutMs = options.requestTimeoutMs ?? LOOPBACK_REQUEST_TIMEOUT_MS;
+  const server = createServer(
+    // Slow or stalled requests are found at least this often (the timeouts below are checked then).
+    { connectionsCheckingInterval: Math.max(50, Math.floor(requestTimeoutMs / 4)), headersTimeout: requestTimeoutMs, requestTimeout: requestTimeoutMs },
+    (req, res) => {
+      try {
+        handle(req, res);
+      } catch {
+        res.destroy();
+      }
+    },
+  );
+  server.maxConnections = LOOPBACK_MAX_CONNECTIONS;
   server.maxHeadersCount = 64;
+  // An idle connection (nothing sent) is closed after the same time.
+  server.setTimeout(requestTimeoutMs);
   server.on('clientError', (_error, socket) => socket.destroy());
 
   function finish(): void {
@@ -170,6 +182,8 @@ export async function startLoopback(options: StartLoopbackOptions): Promise<Loop
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (attempt + 1 >= PORT_ATTEMPTS) throw new Error('loopback: no unprivileged port');
   }
+  // Once listening, a server error ends the request quietly (no crash, nothing reported, port closed).
+  server.on('error', () => finish());
 
   timer = setTimeout(() => {
     if (phase !== 'waiting') return;

@@ -41,14 +41,25 @@ describe('account configuration', () => {
   });
 
   test('config-runtime-env-only-unpackaged', () => {
-    const built = env('https://built.example.com');
     const runtime = env('http://127.0.0.1:9999');
-    expect(resolve(false, built, runtime)?.apiBase).toBe('http://127.0.0.1:9999');
-    expect(resolve(false, {}, runtime)?.apiBase).toBe('http://127.0.0.1:9999');
-    expect(resolve(true, built, runtime)?.apiBase).toBe('https://built.example.com');
+    expect(resolve(false, {}, runtime)).toEqual({ apiBase: 'http://127.0.0.1:9999', jwks: JWKS });
+    expect(resolve(false, { [ACCOUNT_CONFIG_ENV.apiBaseUrl]: '', [ACCOUNT_CONFIG_ENV.entitlementJwks]: '' }, runtime)?.apiBase).toBe('http://127.0.0.1:9999');
     expect(resolve(true, {}, runtime)).toBeNull();
-    // A run-time value that is set wins only per variable; the other still comes from the build.
-    expect(resolve(false, built, { [ACCOUNT_CONFIG_ENV.apiBaseUrl]: 'http://localhost:1234' })).toEqual({ apiBase: 'http://localhost:1234', jwks: JWKS });
+    expect(resolve(true, {}, env('https://api.example.com'))).toBeNull();
+  });
+
+  test('config-baked-build-ignores-runtime', () => {
+    const otherKeys = JSON.stringify({ keys: [{ kty: 'OKP', crv: 'Ed25519', x: 'B'.repeat(43), kid: 'attacker' }] });
+    const runtime = env('http://127.0.0.1:9999', otherKeys);
+    for (const isPackaged of [true, false]) {
+      // Both baked in: the run-time environment changes nothing.
+      expect(resolve(isPackaged, env('https://built.example.com'), runtime), String(isPackaged)).toEqual({ apiBase: 'https://built.example.com', jwks: JWKS });
+      // Either one baked in: the run-time environment is ignored for both (the other stays missing).
+      expect(resolve(isPackaged, { [ACCOUNT_CONFIG_ENV.apiBaseUrl]: 'https://built.example.com' }, runtime)).toBeNull();
+      expect(resolve(isPackaged, { [ACCOUNT_CONFIG_ENV.entitlementJwks]: JWKS_TEXT }, runtime)).toBeNull();
+      // Even an invalid baked-in value pins the build: no fallback to the environment.
+      expect(resolve(isPackaged, env('not a url', 'not json'), runtime)).toBeNull();
+    }
   });
 
   test('config-api-base-is-origin-only', () => {

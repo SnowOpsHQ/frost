@@ -19,8 +19,14 @@ import { EntitlementsSchema } from './entitlements-snapshot.spec';
 
 /**
  * The build's public account values (plan "Configuration"). Read from the build environment (Vite
- * `import.meta.env`, `envPrefix` `FROST_PUBLIC_`); an **unpackaged** build (dev, e2e) also reads them
- * from the run-time environment, which then wins. A packaged build ignores the run-time environment.
+ * `import.meta.env`, `envPrefix` `FROST_PUBLIC_`).
+ *
+ * **A build that has a value baked in never reads it from the run-time environment.** If either
+ * value is baked in, the run-time environment is ignored for both (a swapped JWKS would self-sign
+ * `pro`; a swapped API base would open a look-alike authorize page). Only an **unpackaged** build with
+ * neither baked in (a dev or source build, which has no real keys to protect: anyone can rebuild the
+ * source with their own) reads them from the run-time environment (dev, e2e). `app.isPackaged` alone
+ * is not enough: it only looks at the executable's name.
  */
 export const ACCOUNT_CONFIG_ENV = {
   apiBaseUrl: 'FROST_PUBLIC_API_BASE_URL',
@@ -43,6 +49,8 @@ export const CONFIRM_TIMEOUT_MS = 10 * 60_000;
 export const ACCOUNT_REFRESH_INTERVAL_MS = 6 * 60 * 60_000;
 /** Each backend call (exchange, session, entitlements, sign-out) gives up after this long (a `network` failure). */
 export const ACCOUNT_API_TIMEOUT_MS = 15_000;
+/** On quit, an exchanged-but-unconfirmed (or signed-out) token's revocation may hold the quit at most this long. */
+export const QUIT_REVOKE_TIMEOUT_MS = 2_000;
 /** Longest backend answer body main reads, in bytes; a longer one is `invalid`. */
 export const ACCOUNT_API_MAX_BODY_BYTES = 64 * 1024;
 /** At most this many `account.watch` calls wait at once; one more answers the oldest early. */
@@ -61,6 +69,13 @@ export const LOOPBACK_HOST = '127.0.0.1';
  * when it has, or after this long.
  */
 export const LOOPBACK_DONE_LINGER_MS = 10_000;
+/** At most this many connections to the listener at once (a browser needs one or two). */
+export const LOOPBACK_MAX_CONNECTIONS = 16;
+/**
+ * A request's headers and body must arrive within this long, or its connection is closed (checked
+ * at least every `LOOPBACK_REQUEST_TIMEOUT_MS / 4`).
+ */
+export const LOOPBACK_REQUEST_TIMEOUT_MS = 5_000;
 /** Every answer of the listener carries these headers. */
 export const LOOPBACK_RESPONSE_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   'Content-Security-Policy': "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
@@ -174,7 +189,8 @@ export const SignInResultSchema = z.enum(SIGN_IN_RESULTS);
 
 /**
  * `account.confirmSignIn`, `cancelSignIn`, `signOut` and `refresh` answer a boolean: whether the
- * request was the pending one (and was confirming, for confirm), whether there was an account to
- * sign out, whether a refresh ran (signed in).
+ * request was the pending one (for confirm: `confirming`, asked from the app window that started it,
+ * with a live user gesture there), whether there was an account to sign out, whether a refresh ran
+ * (signed in).
  */
 export const AccountActionResultSchema = z.boolean();

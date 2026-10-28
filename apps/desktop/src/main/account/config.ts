@@ -4,9 +4,14 @@ import { EntitlementJwksSchema, type EntitlementJwks } from '@app/specs/entitlem
 // The build's account configuration (spec `account-state.schema.ts`, `ACCOUNT_CONFIG_ENV`; acceptance
 // `account-signin.feature.md`, Configuration; plan "Configuration"). Public values only: an API base
 // and the JWKS of the keys that sign entitlement snapshots. Baked in at build time (Vite replaces
-// `import.meta.env.FROST_PUBLIC_*`, `envPrefix` in `vite.main.config.ts`); an unpackaged build (dev,
-// e2e) also reads them from the run-time environment, which wins. A packaged build never reads the
-// run-time environment for them and requires `https:`.
+// `import.meta.env.FROST_PUBLIC_*`, `envPrefix` in `vite.main.config.ts`).
+//
+// A build that has a value baked in never reads it from the run-time environment: if either value is
+// baked in, the environment is ignored for both (a swapped JWKS would self-sign `pro`, a swapped base
+// would open a look-alike authorize page). `app.isPackaged` is not the guard: it only looks at the
+// executable's name, so a renamed installed app reads as unpackaged. Only an unpackaged build with
+// neither value baked in (dev, e2e: a source build has no real keys to protect) reads the
+// environment. Packaged requires `https:`.
 
 type EnvName = (typeof ACCOUNT_CONFIG_ENV)[keyof typeof ACCOUNT_CONFIG_ENV];
 export type AccountEnv = Partial<Record<EnvName, string | undefined>>;
@@ -22,7 +27,7 @@ export interface AccountConfigSources {
   readonly isPackaged: boolean;
   /** The values baked into the build (`buildTimeAccountEnv()`). */
   readonly buildTime: AccountEnv;
-  /** The run-time environment (`process.env`); read only when unpackaged. */
+  /** The run-time environment (`process.env`); read only unpackaged, and only with nothing baked in. */
   readonly runtime: Readonly<Record<string, string | undefined>>;
 }
 
@@ -64,10 +69,9 @@ function jwksOf(value: string | undefined): EntitlementJwks | null {
 
 /** The account configuration for this build, or `null` (unconfigured: nothing is sent anywhere). */
 export function resolveAccountConfig(sources: AccountConfigSources): AccountConfig | null {
-  const pick = (name: EnvName): string | undefined => {
-    const runtime = sources.isPackaged ? undefined : sources.runtime[name];
-    return runtime !== undefined && runtime !== '' ? runtime : sources.buildTime[name];
-  };
+  const baked = Object.values(ACCOUNT_CONFIG_ENV).some((name) => (sources.buildTime[name] ?? '') !== '');
+  const source = sources.isPackaged || baked ? sources.buildTime : sources.runtime;
+  const pick = (name: EnvName): string | undefined => source[name];
   const apiBase = apiBaseOf(pick(ACCOUNT_CONFIG_ENV.apiBaseUrl), sources.isPackaged);
   const jwks = jwksOf(pick(ACCOUNT_CONFIG_ENV.entitlementJwks));
   return apiBase !== null && jwks !== null ? { apiBase, jwks } : null;

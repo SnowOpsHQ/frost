@@ -164,9 +164,15 @@ async function toConfirming(h: Harness): Promise<FakeLoop> {
   return loop;
 }
 
+/** Confirms the pending request from the window that started it, after a gesture there. */
+function confirm(h: Harness, requestId: string, windowId = WINDOW): Promise<boolean> {
+  h.gestures.add(windowId);
+  return h.service.confirmSignIn(windowId, requestId);
+}
+
 async function toSignedIn(h: Harness): Promise<void> {
   await toConfirming(h);
-  expect(await h.service.confirmSignIn(stateOf(h).requestId!)).toBe(true);
+  expect(await confirm(h, stateOf(h).requestId!)).toBe(true);
   await h.service.whenIdle();
 }
 
@@ -378,23 +384,40 @@ describe('account sign-in flow', () => {
     await h.service.signIn(WINDOW);
     const awaitingId = stateOf(h).requestId!;
     // Not exchanged yet: nothing to confirm.
-    expect(await h.service.confirmSignIn(awaitingId)).toBe(false);
+    expect(await confirm(h, awaitingId)).toBe(false);
     h.gestures.add(WINDOW);
     await h.service.signIn(WINDOW);
     h.loops.started[1]!.callback();
     await h.service.whenIdle();
     // The replaced request's ID, and an unknown one.
-    expect(await h.service.confirmSignIn(awaitingId)).toBe(false);
-    expect(await h.service.confirmSignIn('CCCCCCCCCCCCCCCCCCCCCC')).toBe(false);
+    expect(await confirm(h, awaitingId)).toBe(false);
+    expect(await confirm(h, 'CCCCCCCCCCCCCCCCCCCCCC')).toBe(false);
     expect(h.store.write).not.toHaveBeenCalled();
     expect(stateOf(h).status).toBe('confirming');
+  });
+
+  test('confirm-needs-gesture-in-starting-window', async () => {
+    const h = harness();
+    await toConfirming(h);
+    const { requestId } = stateOf(h);
+    // No live gesture left in the window that started it (signIn spent it).
+    expect(await h.service.confirmSignIn(WINDOW, requestId!)).toBe(false);
+    // Another app window, even with a gesture of its own.
+    h.gestures.add(OTHER_WINDOW);
+    expect(await h.service.confirmSignIn(OTHER_WINDOW, requestId!)).toBe(false);
+    expect(h.gestures.has(OTHER_WINDOW)).toBe(true);
+    expect(h.store.write).not.toHaveBeenCalled();
+    expect(h.api.entitlements).not.toHaveBeenCalled();
+    expect(stateOf(h)).toMatchObject({ status: 'confirming', requestId });
+    expect(await confirm(h, requestId!)).toBe(true);
+    expect(stateOf(h).status).toBe('signed-in');
   });
 
   test('confirm-stores-and-fetches-entitlements', async () => {
     const h = harness();
     await toConfirming(h);
     const before = stateOf(h).version;
-    expect(await h.service.confirmSignIn(stateOf(h).requestId!)).toBe(true);
+    expect(await confirm(h, stateOf(h).requestId!)).toBe(true);
     await h.service.whenIdle();
     expect(h.store.write).toHaveBeenCalledWith(ACCOUNT_SECRET, expect.any(String));
     expect(JSON.parse(h.store.values.get(ACCOUNT_SECRET)!)).toEqual({ v: 1, token: TOKEN, expiresAt: FAR_FUTURE, user: USER });
@@ -405,7 +428,7 @@ describe('account sign-in flow', () => {
     expect(state.version).toBeGreaterThan(before);
     expect(h.service.entitlements()).toEqual(PRO);
     // Confirming twice does nothing more.
-    expect(await h.service.confirmSignIn(state.requestId ?? 'AAAAAAAAAAAAAAAAAAAAAA')).toBe(false);
+    expect(await confirm(h, state.requestId ?? 'AAAAAAAAAAAAAAAAAAAAAA')).toBe(false);
     expect(await h.service.signIn(WINDOW)).toBe('already-signed-in');
     expectLogClean(h);
   });
@@ -533,6 +556,57 @@ describe('account sign-in flow', () => {
       expect(await h.service.refresh()).toBe(false);
       expectLogClean(h);
     }
+  });
+
+  test('refresh-not-reused-across-accounts', async () => {
+    const h = harness();
+    await toSignedIn(h);
+    let release!: (r: ApiResult<{ user: typeof USER }>) => void;
+    h.api.session.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
+    const stale = h.service.refresh();
+    await h.service.signOut();
+    // The next sign-in gets another token; its confirmation runs its own refresh.
+    h.api.exchange.mockResolvedValueOnce(ok({ token: TOKEN_2, expiresAt: FAR_FUTURE, user: USER }));
+    h.gestures.add(WINDOW);
+    await h.service.signIn(WINDOW);
+    h.loops.started.at(-1)!.callback();
+    await vi.waitFor(() => expect(stateOf(h).status).toBe('confirming'));
+    const confirmed = confirm(h, stateOf(h).requestId!);
+    await vi.waitFor(() => expect(h.api.entitlements).toHaveBeenCalledWith(TOKEN_2));
+    expect(await confirmed).toBe(true);
+    // The old refresh's late answer changes nothing.
+    const entitlementCalls = h.api.entitlements.mock.calls.length;
+    release(ok({ user: USER }));
+    await stale;
+    await h.service.whenIdle();
+    expect(h.api.entitlements.mock.calls.length).toBe(entitlementCalls);
+    expect(stateOf(h)).toMatchObject({ status: 'signed-in', entitlements: PRO });
+    expect(JSON.parse(h.store.values.get(ACCOUNT_SECRET)!).token).toBe(TOKEN_2);
+  });
+
+  test('revocations-awaited-on-dispose', async () => {
+    const idle = harness();
+    expect(idle.service.dispose()).toBeNull();
+    const h = harness();
+    await toConfirming(h);
+    let release!: () => void;
+    h.api.signOut.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(ok(null)))));
+    const wait = h.service.dispose();
+    expect(wait).not.toBeNull();
+    expect(h.api.signOut).toHaveBeenCalledWith(TOKEN);
+    let settled = false;
+    void wait!.then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    release();
+    await wait;
+    expect(settled).toBe(true);
+    // A sign-out whose revocation is still running is waited for too.
+    const out = harness();
+    await toSignedIn(out);
+    out.api.signOut.mockImplementationOnce(() => new Promise(() => undefined));
+    void out.service.signOut();
+    expect(out.service.dispose()).not.toBeNull();
   });
 
   test('refresh-network-keeps-grace', async () => {

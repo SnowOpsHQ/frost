@@ -25,8 +25,12 @@ export interface AccountService {
    * (else `needs-gesture`, nothing opened); opens the authorize page in the system browser.
    */
   signIn(windowId: number): Promise<SignInResult>;
-  /** Keeps the exchanged sign-in `requestId` (it must be the pending, `confirming` one): `true` if it was. */
-  confirmSignIn(requestId: string): Promise<boolean>;
+  /**
+   * Keeps the exchanged sign-in `requestId`: `true` only if it is the pending, `confirming` one,
+   * asked from app window `windowId` (the IPC sender's) that started it, with a live user gesture
+   * there (spent). Otherwise `false`, nothing stored.
+   */
+  confirmSignIn(windowId: number, requestId: string): Promise<boolean>;
   /** Drops the pending sign-in `requestId` (revoking a token already exchanged): `true` if it was pending. */
   cancelSignIn(requestId: string): Promise<boolean>;
   /** Revokes the token (best effort), forgets the account and its entitlements: `true` if signed in. */

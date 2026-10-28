@@ -41,8 +41,9 @@ renderer never sees a token". Each line maps to one named test.
   `refresh`: `/v1/session` then `/v1/entitlements`. A 401 drops the token and signs out
   (`markRefreshFailed('auth')`, error `session-ended`); a network failure keeps the account and allows
   offline grace (`markRefreshFailed('network')`); an answer that does not verify is `invalid` (free).
-- **Configuration.** `ACCOUNT_CONFIG_ENV` from the build; an unpackaged build also reads the run-time
-  environment (which wins). Packaged requires an `https:` API base; unpackaged also allows `http:` on
+- **Configuration.** `ACCOUNT_CONFIG_ENV` from the build. A build with either value baked in never
+  reads the run-time environment (for either); only an unpackaged build with neither baked in does
+  (dev, e2e). `app.isPackaged` only looks at the executable's name, so it is not the guard. Packaged requires an `https:` API base; unpackaged also allows `http:` on
   `UNPACKAGED_HTTP_API_HOSTS`. The base is an origin only. A missing or invalid base or JWKS is
   `unconfigured`: nothing is sent, `signIn` answers `unconfigured`.
 - **Keychain.** The token lives in the secret store's `account` blob; memory-only (no real keychain)
@@ -64,7 +65,8 @@ renderer never sees a token". Each line maps to one named test.
 - `config-missing-is-unconfigured` — no API base, or no JWKS, is `null` (unconfigured).
 - `config-packaged-requires-https` — packaged: `http:` (even loopback) is refused; `https:` is accepted.
 - `config-unpackaged-allows-loopback-http` — unpackaged: `http://127.0.0.1:<port>` and `http://localhost` are accepted, `http:` elsewhere refused.
-- `config-runtime-env-only-unpackaged` — the run-time environment wins when unpackaged and is ignored when packaged.
+- `config-runtime-env-only-unpackaged` — an unpackaged build with nothing baked in reads the run-time environment; a packaged one never does.
+- `config-baked-build-ignores-runtime` — a build with either value baked in ignores the run-time environment for both, packaged or not (a renamed executable reads as unpackaged).
 - `config-api-base-is-origin-only` — a path, query, fragment or credentials is refused; a trailing slash is dropped.
 - `config-malformed-jwks-is-unconfigured` — a JWKS that is not JSON or not `EntitlementJwksSchema` is unconfigured.
 
@@ -79,6 +81,7 @@ renderer never sees a token". Each line maps to one named test.
 - `loopback-303-to-done-without-code` — the valid callback is 303 to `/done` (no query), with the fixed headers, and hands over the code.
 - `loopback-done-page-is-fixed` — `/done` is the fixed HTML with the fixed headers, no subresources, and none of the query's values.
 - `loopback-closes-after-success` — after `/done` is served the port is closed; a second callback before that is 404 and is not handed over.
+- `loopback-limits-connections` — more than `LOOPBACK_MAX_CONNECTIONS` connections at once are refused, and a connection that does not send its request within the request timeout is closed; the listener still answers afterwards.
 - `loopback-closes-without-done` — a browser that never asks for `/done` does not keep it open: it closes after the linger time.
 - `loopback-oauth-error-is-a-callback` — a valid-state callback with `error` (and no code) is handed over as such and ends the request.
 - `loopback-times-out` — with no valid callback, it closes after `timeoutMs` and reports the timeout once.
@@ -104,11 +107,14 @@ renderer never sees a token". Each line maps to one named test.
 - `new-sign-in-replaces-pending` — a second `signIn` closes the first listener; an exchange of the first that finishes late is revoked and does not change the state.
 - `cancel-revokes-exchanged-token` — `cancelSignIn` while `confirming` revokes the exchanged token (`/v1/sign-out`), stores nothing, `signed-out`; a wrong request ID answers `false` and changes nothing.
 - `confirm-stale-request-refused` — `confirmSignIn` with another, an old or a not-yet-exchanged request ID answers `false`, stores nothing.
+- `confirm-needs-gesture-in-starting-window` — `confirmSignIn` from another window than the one that started the request, or without a live gesture in it, answers `false` and stores nothing; the request stays `confirming`.
 - `confirm-stores-and-fetches-entitlements` — `confirmSignIn` stores the token in the `account` blob, fetches entitlements and calls `update(snapshot, user.id)`: `signed-in` with `pro`.
 - `exchange-failures` — a refused code is `exchange-failed`, an unreachable backend `network`; a session for another user than the token's is refused and the token revoked.
 - `sign-out-revokes-and-drops-to-free` — `signOut` revokes the token, deletes the `account` blob, clears entitlements: `signed-out`, `free`.
 - `stored-account-restores-and-refreshes` — a stored account starts `signed-in` and refreshes at once, then every `ACCOUNT_REFRESH_INTERVAL_MS`, and on `refresh`; an expired or malformed stored account is dropped.
 - `refresh-401-signs-out` — a 401 on refresh drops the token, `markRefreshFailed('auth')`, `signed-out` with `session-ended`.
+- `refresh-not-reused-across-accounts` — a refresh still running for an account that signed out is not handed to the next account: its own refresh runs with its own token, and the late answer changes nothing.
+- `revocations-awaited-on-dispose` — `dispose` drops a pending sign-in and answers its revocation (and a sign-out's) to wait for; nothing to wait for answers `null`.
 - `refresh-network-keeps-grace` — a network failure keeps the account and calls `markRefreshFailed('network')`.
 - `refresh-invalid-snapshot-is-free` — an entitlements answer that does not parse is `markRefreshFailed('invalid')`.
 - `entitlements-none-unless-signed-in` — a snapshot held without a stored account is cleared at start; `entitlements()` is `none` while `confirming`.
@@ -116,19 +122,22 @@ renderer never sees a token". Each line maps to one named test.
 - `watch-long-polls` — `watch` answers at once for an older version, else at the next change; aborting releases it; more than `MAX_PENDING_ACCOUNT_WATCHES` answer the oldest early.
 - `logs-carry-no-secret` — across every path above, the log never contains the fake token, code, verifier, `state`, snapshot or email.
 
+## Quitting (`apps/desktop/src/main/account/__tests__/quit.test.ts`, fake app)
+- `quit-held-only-for-revocations` — with nothing to revoke, `will-quit` passes; otherwise it is held until the revocations settle or `QUIT_REVOKE_TIMEOUT_MS` passes, then quits again once; another holder (telemetry) holding the same quit does not make it hang or quit twice.
+
 ## Gestures (`apps/desktop/src/main/account/__tests__/gestures.test.ts`)
 - `gesture-per-app-window` — a window created after the tracker (and one that existed before) is tracked; a gesture is consumed once, only for its own window; a closed window has none.
 
 ## Router (`packages/ipc-contract/src/__tests__/account-router.test.ts`)
 - `account-procedures-enforce-sender` — every `account.*` procedure refuses a foreign sender before the service is touched.
-- `sign-in-passes-window-id` — `signIn` hands the service the sender's `windowId` and answers its `SignInResult`.
+- `sign-in-passes-window-id` — `signIn` and `confirmSignIn` hand the service the sender's `windowId`; `signIn` answers its `SignInResult`.
 - `account-watch-long-polls` — `watch` answers a newer state at once, else the next one, else the current after `WATCH_TIMEOUT_MS`.
 - `account-outputs-are-strict` — a service answer outside `AccountStateSchema` / `SignInResultSchema` / boolean is a masked internal error.
 - `answers-carry-no-secret` — the serialized answers of every account procedure contain none of the fake secrets.
 
 ## End to end (`apps/desktop/e2e/account.e2e.ts`, fake backend `apps/desktop/e2e/fake-backend.ts`)
 - `account-sign-in-needs-gesture` — without a real click `signIn` answers `needs-gesture` and nothing is opened.
-- `account-sign-in-confirm-is-pro` — a real click then `signIn` opens the authorize URL (observed, not opened); the test follows it as the browser (303 to the listener, 303 to `/done`, fixed headers); the app shows `confirming` with the email and the fingerprint of the URL's challenge; `confirmSignIn` gives `signed-in` with `pro` features.
+- `account-sign-in-confirm-is-pro` — a real click then `signIn` opens the authorize URL (observed, not opened); the test follows it as the browser (303 to the listener, 303 to `/done`, fixed headers); the app shows `confirming` with the email and the fingerprint of the URL's challenge; `confirmSignIn` without a click is refused, after a real click it gives `signed-in` with `pro` features.
 - `account-restart-keeps-account-only-with-keychain` — on the same profile the account is kept after a restart with a persistent keychain, and gone with a memory-only one. (Under Playwright, Linux is always memory-only: its Electron loader appends `--password-store=basic`; macOS uses a mock keychain, which persists. The persistent restart is also covered by `stored-account-restores-and-refreshes`.)
 - `account-tampered-snapshot-is-free` — a tampered snapshot from the server (and, with a persistent keychain, a tampered stored blob across a restart) reads `free`.
 - `account-sign-out-revokes` — `signOut` revokes the token at the backend and reads `signed-out`, `free`.
