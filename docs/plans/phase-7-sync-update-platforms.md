@@ -262,7 +262,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   - `feed-request-carries-nothing`;
   - `staged-out-stays-quiet`;
   - `skip-version`.
-- [ ] commit `feat(update): update client with verified download and staged rollout`
+- [x] commit `feat(update): update client with verified download and staged rollout`
 
 #### Task 5: Update setting, notification and IPC
 - **Spec:** `update-client.feature.md`, sections Router and Chrome.
@@ -539,3 +539,57 @@ sync.
   `domain-separated-signature`, `rejects-duplicate-keys`, `notes-are-plain-text`,
   `rejects-stale`, `prerelease-only-for-prerelease`, `artifact-file-name`, `output-is-safe` (and
   `warns-acls-unchecked-on-windows`, Windows only).
+
+### Task 4 (update client)
+- **Files.** Spec `specs/update-client.spec.ts` (Zod-free), `specs/update-client.schema.ts` (the
+  prefs file) and `specs/update-client.feature.md`. Code in `apps/desktop/src/main/update/`:
+  `feed.ts` (`resolveFeed`, `resolveTrustedKeys`), `prefs.ts` (`createPrefsStore`), `fetch.ts`
+  (`updateGet`/`getBytes`, `netTransport`, `netResolve`, `hardenUpdateSession`), `download.ts`
+  (`downloadArtifact`, `pruneDownloads`), `client.ts` (`createUpdateClient`). No Electron import:
+  `fetch.ts` references the global `Electron` types only. Not wired into `index.ts` (Task 5).
+- **State names differ from the plan.** `ready` carries `install: 'manual' | 'restart'` (the plan's
+  `manual-install` / `restart-to-install`) and `fileName` (no path; `readyFile()` gives the path,
+  main-only). Added states: `off` (checks turned off). Added error reason `internal` (any
+  unexpected throw, e.g. a non-semver running version), beside the planned closed list.
+  `CURRENT_INSTALL_MODE` is `manual`: no Developer ID, and the feed publishes `Setup.exe`, not a
+  Squirrel `RELEASES` feed, so `restart` is unreachable today.
+- **Consent.** `checks: 'off'` stops automatic checks only; "Check now" still checks once (a user
+  action). `download()` acts only from `available`; after a failed download the user re-checks.
+- **High-water mark.** Raised after every verified manifest except one `decide` calls
+  `prerelease-ignored` (security re-review: a verified `2.0.0-beta.1` must not make a release build
+  refuse a later `1.5.0` hotfix; `prerelease-does-not-raise-mark`). Consequence, documented in the
+  spec: a pulled release can't be rolled back to an older version; the fix is a higher version.
+- **Requests.** Every hop of the feed and the artifact (redirects included) is checked before it
+  is requested: `https:` only (unpackaged: `http:` to `127.0.0.1`/`[::1]`, never after `https:`), no
+  credentials, `private-address.spec.ts` on the literal or on every resolved address (a resolver
+  answering `null` is unchecked: the e2e seam). Redirects at most 5; envelope at most
+  `MAX_ENVELOPE_BYTES`; the artifact exactly its signed `size` (`Content-Length` above it is refused
+  before the body). Timeouts per `UPDATE_FETCH_LIMITS`. A request sends `Host` and
+  `User-Agent: frost/<version> (update check)` only, plus the transport's own `Connection` (Node:
+  `close`; Chromium may add `Accept-Encoding`); `netTransport` uses `credentials: 'omit'`,
+  `useSessionCookies: false`, `redirect: 'manual'`, `cache: 'no-store'`, `referrerPolicy:
+  'no-referrer'`, and `hardenUpdateSession` makes the session send only `User-Agent` and cancel
+  anything but `GET` to `https:` (or unpackaged loopback `http:`). The bounded fetcher's `netHop` was not
+  reused, so a change for the SEO fetcher can't change what update requests carry.
+- **Tests.** `feed`, `prefs`, `fetch`, `download` and `client` tests (red first: the modules did not
+  exist; then green, 27 new tests) against `__tests__/fake-feed.ts`: Node `http` on `127.0.0.1`,
+  Ed25519 keys per run; its `nodeTransport` sends an `https:` URL whose host it maps to the local
+  port as plain HTTP, so the `https:`-only rules are exercised without TLS. Mutating the mark
+  guards, the downgrade rule, the resolved-address check, the hash compare or the redirect cap
+  each fails a test. Added scenarios: `trusted-keys-switch`, `prefs-defaults`,
+  `prefs-round-trip`, `hop-rules`, `download-verified`, `download-stays-in-updates`,
+  `prune-downloads`, `check-schedule`, `check-errors`, `download-errors-shown`, `set-checks`,
+  `watch-long-poll`, `errors-are-caught`, `prerelease-does-not-raise-mark`.
+- **For Task 5.** Wire in `index.ts`: `const updateSession = session.fromPartition(UPDATE_PARTITION,
+  { cache: false })`; `hardenUpdateSession(updateSession, updateUserAgent(app.getVersion()), {
+  isPackaged })`; `createUpdateClient({ feed: resolveFeed({ env: process.env, switchValue:
+  getSwitchValue(UPDATE_FEED_SWITCH), isPackaged }), keys: resolveTrustedKeys({ switchValue:
+  getSwitchValue(UPDATE_PUBLIC_KEY_SWITCH), isPackaged }), currentVersion: app.getVersion(),
+  platformKey: updatePlatformKey(process.platform, process.arch), userData, prefs:
+  createPrefsStore(userData), hop: netTransport(net, updateSession), resolve:
+  netResolve(updateSession), isPackaged })` (async; `dispose()` on quit). The artifact URL must be
+  `https:` (Task 3's schema), so the e2e needs a TLS fake server reachable under a public-looking
+  name (`--host-resolver-rules`, a resolver wrapper answering `null` for it, and a test-only
+  certificate trust in unpackaged builds). `UPDATE_PUBLIC_KEY_SWITCH` (and probably
+  `UPDATE_FEED_SWITCH`) go in `PACKAGED_FORBIDDEN_SWITCHES`. The e2e should assert the exact headers
+  the fake feed sees from Chromium (unverified here, since nothing in Task 4 launches Electron).
