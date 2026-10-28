@@ -1,0 +1,164 @@
+/**
+ * The agent's core page tools (Phase 5 Task 5; acceptance `agent-page-tools.feature.md`): the
+ * isolated worlds they run in, their time limits, and how much each one hands the model. Plain
+ * values and pure functions (no Zod), used by main's page tool runner
+ * (`apps/desktop/src/main/agent/tools/`).
+ *
+ * The page is untrusted: every script answer is parsed and checked in main, every list and string is
+ * capped while the page is read, and every tool checks, inside its own isolated world, that the page
+ * is still the one the broker decided on (`ToolRunContext.expectedOrigin` / `expectedUrl`) before
+ * it reads or acts.
+ */
+import { AGENT_TOOL_INPUT_LIMITS, EXECUTE_JS_MAX_RESULT_BYTES, TOOL_RESULT_MAX_CHARS } from './agent-tools.spec';
+import { parseWebUrl } from './web-url.spec';
+
+// ---- Isolated worlds -------------------------------------------------------------------------
+
+/**
+ * The isolated world `click` and `page_text` run in (`executeJavaScriptInIsolatedWorld`). frost's
+ * own fixed scripts only: no model- or user-written code ever runs here. Its own world, apart from
+ * the page's main world (`0`), Electron's (`999`) and every SEO world (`SEO_WORLD_ID` 1207,
+ * `A11Y_WORLD_ID` 1216, `SPEED_WORLD_ID` 1250), the full-screen exit's (1001) and the other phases'
+ * (SERP 1301, capture 1600). The id must be in `1…536870911`.
+ */
+export const AGENT_PAGE_WORLD_ID = 1_500;
+
+/**
+ * The isolated world `execute_javascript` runs approved code in: dedicated to it, never the main
+ * world, never an SEO world, never `AGENT_PAGE_WORLD_ID`. Code shares the page's DOM but not its
+ * JavaScript globals; what one approved run leaves in this world's globals (a variable, a timer)
+ * stays there for the document's lifetime, as in a console, and is never seen by frost's other
+ * scripts.
+ */
+export const AGENT_JS_WORLD_ID = 1_501;
+
+/** World ids the agent's tools must never use: the main world, Electron's own, and every other frost world. */
+export const NON_AGENT_WORLD_IDS: readonly number[] = [0, 999, 1_001, 1_207, 1_216, 1_250, 1_301, 1_600];
+
+// ---- Time --------------------------------------------------------------------------------------
+
+/** How long main waits for `click`'s or `page_text`'s script (milliseconds): `timeout` after it. */
+export const PAGE_SCRIPT_TIMEOUT_MS = 3_000;
+
+/**
+ * How long `navigate` waits for the load to settle (`did-stop-loading` after the navigation started)
+ * before it answers with what the tab shows by then (`settled: false`).
+ */
+export const NAVIGATE_SETTLE_TIMEOUT_MS = 15_000;
+
+// ---- Sizes -------------------------------------------------------------------------------------
+
+/** `click`'s bounds: elements scanned for visible text, and what it reports of the element. */
+export const CLICK_LIMITS = {
+  /** Clickable elements (`CLICKABLE_SELECTOR`) a text search reads, in document order. */
+  maxScanElements: 2_000,
+  /** Text nodes read for one element's name. */
+  maxNameNodeVisits: 200,
+  /** Characters of one element's name read (and reported). */
+  maxNameChars: 160,
+  /** Characters of a link's `href` reported. */
+  maxHrefChars: 512,
+} as const;
+
+/**
+ * What a text search for `click` considers clickable: links, buttons and button-like inputs,
+ * disclosure summaries, labels, elements with a clickable ARIA role, and elements with a click
+ * handler attribute or a non-negative `tabindex`.
+ */
+export const CLICKABLE_SELECTOR = [
+  'a[href]',
+  'area[href]',
+  'button',
+  'input[type="button"]',
+  'input[type="submit"]',
+  'input[type="reset"]',
+  'input[type="image"]',
+  'input[type="checkbox"]',
+  'input[type="radio"]',
+  'summary',
+  'label',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="menuitem"]',
+  '[role="tab"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="option"]',
+  '[onclick]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
+/** `page_text`: its default length (the input's `maxChars` caps it, at most `TOOL_RESULT_MAX_CHARS`). */
+export const PAGE_TEXT_DEFAULT_CHARS = AGENT_TOOL_INPUT_LIMITS.defaultPageTextChars;
+
+/** `execute_javascript`'s result bounds (the result's UTF-8 JSON is cut at `EXECUTE_JS_MAX_RESULT_BYTES`). */
+export const EXECUTE_JS_LIMITS = {
+  maxResultBytes: EXECUTE_JS_MAX_RESULT_BYTES,
+  /** Nesting serialised before a value is written `"[Too deep]"`. */
+  maxDepth: 24,
+  /** Characters of a thrown error reported (`name: message`). */
+  maxErrorChars: 500,
+  /** Characters of a DOM node's description (`<a id="…" class="…">`). */
+  maxNodeChars: 200,
+} as const;
+
+/**
+ * The global (in `AGENT_JS_WORLD_ID` only) `execute_javascript`'s wrapper sets for the duration of
+ * one script evaluation, to tell a script that failed to parse from one that threw while running
+ * (a parse failure falls back to running the code as an async function body; a run never repeats).
+ */
+export const EXECUTE_JS_MARK_KEY = '__frostAgentRunMark';
+
+/**
+ * What `page_audit` and `page_data` hand the model. They summarise main's audit (never the page
+ * itself) and trim themselves to `budgetChars` of JSON text (least severe findings dropped first),
+ * so the broker's hard cap (`TOOL_RESULT_MAX_CHARS`) rarely cuts them.
+ */
+export const PAGE_AUDIT_LIMITS = {
+  /** JSON text a summary trims itself to (characters). */
+  budgetChars: TOOL_RESULT_MAX_CHARS - 2_000,
+  /** Findings listed, most severe first (the audit's order). */
+  maxFindings: 60,
+  /** Characters of a finding's title, why and fix each. */
+  maxFindingTextChars: 320,
+  /** Facts (label: value) per finding. */
+  maxFindingFacts: 4,
+  /** Sample values per finding, and characters of each. */
+  maxFindingSamples: 3,
+  maxSampleChars: 200,
+  /** Headings in `page_data`'s outline, and characters of each. */
+  maxHeadings: 60,
+  maxHeadingChars: 160,
+  /** Characters of the title, the description, the robots line and other page strings. */
+  maxFactChars: 400,
+  /** URLs (canonical, hreflang targets) reported, characters each. */
+  maxUrlChars: 512,
+  /** Distinct structured-data types listed. */
+  maxSchemaTypes: 30,
+  /** Hreflang annotations listed. */
+  maxHreflang: 20,
+  /** Indexability reasons listed. */
+  maxReasons: 6,
+} as const;
+
+/** Characters of a page title any tool reports. */
+export const PAGE_TITLE_MAX_CHARS = 300;
+
+// ---- Pages -------------------------------------------------------------------------------------
+
+/**
+ * The page a script checks for, written as the page itself can read it with nothing but
+ * unforgeable `Location` attributes and string concatenation (`location.origin +
+ * location.pathname + location.search`): `url` without its fragment and without user info.
+ * `null` for anything but an `http(s)` URL.
+ */
+export function pageKeyOf(url: unknown): string | null {
+  const parsed = parseWebUrl(url);
+  return parsed === null ? null : parsed.origin + parsed.pathname + parsed.search;
+}
+
+/** A tool result's `source` for a page on `origin`. */
+export function pageSource(origin: string): string {
+  return `page:${origin}`;
+}

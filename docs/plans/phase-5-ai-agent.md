@@ -226,7 +226,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   timeout ends a hung script; oversized results truncated; each tool refuses a page whose origin
   (or, approved, exact URL) differs from the context's; a granted navigate's off-origin redirect is
   cancelled.
-- [ ] commit `feat(agent): core page tools`
+- [x] commit `feat(agent): core page tools`
 
 ### Task 6: Agent IPC router and sidebar panel
 - **Files:** `packages/ipc-contract/src/agent-router.ts`, `agent-service.ts` (one line each in
@@ -369,3 +369,36 @@ _Filled in as tasks land._
   tool with no web page answers `unavailable`. A throwing tab lookup or grants cache fails the call.
   Revokes issued before the grants load are applied to what the load reads. The input hash is
   display-only (the broker keeps the input itself).
+- **Task 5.** `apps/desktop/src/main/agent/tools/`: `createPageToolRunner({ contentsOf, audit,
+  navigate, now?, ports? })` is the broker's `ToolRunner`; `createBrowserPageToolRunner({ browser,
+  webContents })` wires it to the real controller (Task 6 passes `toolRunner:
+  createBrowserPageToolRunner({ browser, webContents })` to `createAgent`). Constants in
+  `specs/agent-page-tools.spec.ts`, acceptance `specs/agent-page-tools.feature.md`. Worlds:
+  `AGENT_PAGE_WORLD_ID` 1500 (`click`, `page_text`: frost's fixed scripts only) and
+  `AGENT_JS_WORLD_ID` 1501 (`execute_javascript` only); ids already taken across the branches: 1001,
+  1207, 1216, 1250, 1301 (Phase 3 SERP), 1600 (Phase 6 capture). Every script's arguments are one
+  JSON literal after a fixed function, and its first act is the page check, written with only
+  `Location`'s unforgeable attributes and `+`/`===` (`location.origin`; approved, `origin +
+  pathname + search === pageKeyOf(expectedUrl)`, so user info in a URL makes it not match).
+  `page_audit` / `page_data` read main's audit, not the page, so they check the audit's URL and the
+  tab's live URL instead of a script. The audit keeps no visible text, so `page_text` reads
+  `document.body.innerText` in the agent page world, cut in-page. `execute_javascript` compiles the
+  code from its string inside the world after the check: as an expression if it is one, else as a
+  script (its completion value, which the tool description promises; a marker call tells a parse
+  failure from a runtime throw, so code never runs twice), else as an async function body (top-level
+  `await`/`return`); the result is written as JSON in-page with a UTF-8 byte cap. Checked on
+  Electron 45 in a real isolated world: string compilation works there even under a page CSP of
+  `script-src 'none'`; a function, a cycle or a bigint result rejects ("could not be cloned"), a
+  sync throw rejects with a generic message, so every script answers a JSON string it built; the page
+  checks, the hidden-element skip and the page-global isolation hold. `navigate` goes through
+  `browser.navigate` (the address-bar path: render profile and browse guards apply) only when the
+  address bar would load exactly `parseWebUrl(url).href`; the controller navigates the shown tab
+  only, so a chat whose tab isn't shown gets `{ navigated: false }` (Task 6 may add a per-tab
+  navigation to the controller). Electron 45, checked: a cancelled `will-redirect` fires no
+  `did-fail-load`, only `did-stop-loading`, and the tab keeps its previous URL. **Deviation:** a
+  granted navigate whose off-origin redirect was cancelled answers data `{ blocked: 'redirect',
+  to: <origin>, url }` (the lead's brief) rather than `expired`, so the model learns why. The
+  redirect watch lasts exactly as long as that navigation (until it commits, fails, stops or is
+  replaced), even past the settle timeout or an abort. A script still running at its timeout answers
+  `timeout`; it can't be stopped and the page may go on running it (a busy loop freezes the tab until
+  the user reloads it); frost does not reload on its own. `click` clicks without a user gesture.
