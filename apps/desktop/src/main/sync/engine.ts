@@ -370,6 +370,10 @@ async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirect
   const report = emptyReport('push', problems);
   const lost = new Map<SyncTableName, string[]>();
   const usable = (name: SyncTableName) => problems.get(name) === null;
+  // Where this pass has read each table up to: pages go on from here, apart from the stored mark,
+  // which `now − settle` caps. More than a page of rows dated past that cap would otherwise hold the
+  // mark, and so every page, at the same rows, and the rest of the table would never be read.
+  const scanned = new Map<SyncTableName, PushMark>();
   for (;;) {
     if (report.pages >= maxPages) {
       report.more = true;
@@ -386,10 +390,12 @@ async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirect
       if (!usable(table.name)) continue;
       const saved = stored.get(table.name);
       const mark: PushMark = saved?.time != null && saved.id != null ? { time: saved.time, id: saved.id } : START;
+      const seen = scanned.get(table.name);
+      const from = seen !== undefined && after(seen, mark) ? seen : mark;
       const limit = pageRows;
       const { rows } = await source.execute(
         `SELECT ${list(table.columns)} FROM ${q(table.name)} WHERE (${q(table.time)} > ? OR (${q(table.time)} = ? AND ${q('id')} > ?)) ORDER BY ${q(table.time)}, ${q('id')} LIMIT ?`,
-        [mark.time, mark.time, mark.id, limit],
+        [from.time, from.time, from.id, limit],
         'all',
       );
       const page = rows as Row[];
@@ -399,12 +405,13 @@ async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirect
       const timeAt = columnAt(table, table.time);
       const last = page[page.length - 1]!;
       const reached: PushMark = { time: last[timeAt] as number, id: last[0] as string };
+      scanned.set(table.name, reached);
       // Never past `now − settle`: a row committed late with an earlier time is read again next pass.
       const capped = after(reached, cap) ? cap : reached;
       const next = after(capped, mark) ? capped : mark;
       if (next !== mark) moved.push(markStatement(deviceId, 'push', table.name, next, at));
-      // A full page that moved the mark leaves the rest, and every later table, for the next page.
-      if (page.length === limit && next !== mark) {
+      // A full page leaves the rest (from where it was read to), and every later table, for the next page.
+      if (page.length === limit) {
         more = true;
         break;
       }

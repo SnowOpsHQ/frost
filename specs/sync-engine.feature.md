@@ -69,6 +69,10 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
   version (its log entry already behind this device's pull mark) is fetched back even when an
   earlier table fills the pull page first: a table's pull-back ids are dropped only once a page has
   read that table (`engine.test.ts`).
+- **Scenario: engine-push-pages-past-future-rows** — more than a page of rows dated past
+  `now − SYNC_PUSH_SETTLE_MS` (a clock ahead) still lets the push read the rest of the table: pages
+  follow a per-pass scan cursor, while the stored mark stays capped at `now − settle`
+  (`engine.test.ts`).
 - **Scenario: engine-lww-clock-skew** — a row dated ten days ahead still replaces an older one,
   but compares as `now + SYNC_MAX_CLOCK_SKEW_MS`: an edit dated exactly there ties with it and wins
   on values, on every device and in the replica.

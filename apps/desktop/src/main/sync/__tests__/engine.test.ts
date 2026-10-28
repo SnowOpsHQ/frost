@@ -197,6 +197,16 @@ describe('sync engine', () => {
     for (const driver of [a, fx.replica]) expect(await rowsOf(driver, 'ci_project_pages')).toEqual([page(PAGE, P, 'https://example.com/', 3_000)]);
   });
 
+  test('engine-push-pages-past-future-rows', async () => {
+    const a = await fx.device('a');
+    // More than a page of rows dated past `now − settle` (a clock ahead) never hides the rest.
+    const ahead = NOW() + 10 * 86_400_000;
+    for (const n of [60, 61, 62]) await insert(a, 'ci_projects', project(uuid7(n), `Ahead ${n}`, ahead));
+    const report = await runSyncPass({ source: a, replica: fx.replica, deviceId: 'device-a', now: NOW, pageRows: 2 });
+    expect((await rowsOf(fx.replica, 'ci_projects')).length).toBe((await rowsOf(a, 'ci_projects')).length);
+    expect(report.push.more).toBe(false);
+  });
+
   test('engine-lww-clock-skew', async () => {
     const a = await fx.device('a');
     const b = await fx.device('b');
