@@ -168,8 +168,8 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 ### Task 4: Desktop — entitlements core (verification, grace, `requireFeature`)
 - **Spec:** `specs/entitlements-snapshot.spec.ts` (from Task 2) plus `specs/entitlements-client.feature.md`
   and `EntitlementsSchema` (what main and the chrome see: `plan`, `features`, `status`
-  `none | active | grace | expired | invalid`, `expiresAt`, `graceEndsAt`) and
-  `FEATURE_NOT_ENTITLED_CODE`.
+  `none | active | grace | expired | invalid`, `expiresAtMs`, `graceEndsAtMs`) and
+  `FEATURE_NOT_ENTITLED_CODE`; `specs/secret-store.spec.ts`.
 - **Build (main, `apps/desktop/src/main/account/`):** `secret-store.ts` (named blobs in
   `userData/secrets/`, `safeStorage`-encrypted, atomic, `0600`; memory-only when encryption is
   unavailable or `basic_text`); `entitlements-verify.ts` (pure: JWS EdDSA only, `kid` from the
@@ -183,7 +183,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   `iat`, expired within/after grace, grace only when offline, clock rollback), `secret-store.test.ts`
   (fake `safeStorage`; `basic_text` → memory only; corrupt file → empty), a router test for
   `requireFeature`.
-- [ ] commit `feat(account): verified entitlements with offline grace and requireFeature`
+- [x] commit `feat(account): verified entitlements with offline grace and requireFeature`
 
 ### Task 5: Desktop — sign-in flow and the account router
 - **Spec:** `specs/account-state.schema.ts` (`AccountStateSchema`: `unconfigured | signed-out |

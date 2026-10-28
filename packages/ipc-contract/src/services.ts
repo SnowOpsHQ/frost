@@ -5,6 +5,7 @@ import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { AccountService } from './account-service';
 import type { ChecksService } from './checks-service';
 import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
@@ -170,4 +171,6 @@ export interface IpcServices {
   readonly settings?: SettingsService;
   /** The link, sitemap and hreflang checks (Phase 2.5 Task 7, `checks-service.ts`). */
   readonly checks?: ChecksService;
+  /** The account and its verified entitlements (Phase 4, `account-service.ts`). */
+  readonly account?: AccountService;
 }

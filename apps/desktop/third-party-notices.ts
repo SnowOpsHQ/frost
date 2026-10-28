@@ -55,6 +55,7 @@ export const NOTICE_PACKAGES: readonly NoticePackage[] = [
     license: { source: 'https://github.com/lddubeau/saxes/blob/v6.0.0/LICENSE', text: SAXES_LICENSE },
   },
   { name: 'xmlchars', from: 'node_modules/saxes', use: 'Used by saxes.' },
+  { name: 'jose', from: 'apps/desktop', use: 'Verifying the signed entitlement snapshots in the main process (EdDSA only).' },
 ];
 
 /** The directory of package `name` as Node would find it from `from` (walking up `node_modules`). */
@@ -66,10 +67,15 @@ export function packageDir(name: string, from: string, root: string = ROOT): str
   }
 }
 
-/** A repository URL as a plain https address (`git+https://…/x.git` → `https://…/x`). */
+/**
+ * A repository URL as a plain https address (`git+https://…/x.git` → `https://…/x`; npm's GitHub
+ * shorthand `owner/repo` or `github:owner/repo` → `https://github.com/owner/repo`).
+ */
 function plainRepository(repository: unknown): string | null {
   const url = typeof repository === 'string' ? repository : typeof repository === 'object' && repository !== null ? (repository as { url?: unknown }).url : null;
   if (typeof url !== 'string') return null;
+  const shorthand = /^(?:github:)?([\w.-]+\/[\w.-]+)$/.exec(url);
+  if (shorthand) return `https://github.com/${shorthand[1]}`;
   return url.replace(/^git\+/, '').replace(/^git:\/\//, 'https://').replace(/\.git$/, '');
 }
 

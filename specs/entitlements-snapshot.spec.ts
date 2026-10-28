@@ -21,8 +21,17 @@
  * Clean-room: from RFC 7515 (JWS), RFC 7517 (JWK), RFC 7519 (JWT claim names), RFC 8037 (OKP keys,
  * EdDSA), RFC 8725 (explicit `typ`) and RFC 7638 (key thumbprints, the CLI's default `kid`).
  *
- * Depends only on Zod. Times in claims are seconds since the epoch (JWT `NumericDate`); times in
- * `EntitlementsSchema` are milliseconds since the epoch (JavaScript `Date`).
+ * - **Times.** Claims (`iat`, `exp`) are seconds since the epoch (JWT `NumericDate`); `Entitlements`
+ *   times are milliseconds since the epoch (JavaScript `Date`), named `…Ms` to say so.
+ * - **A new restrictive claim needs a `ver` bump.** Unknown claims are stripped, not refused, so an
+ *   older client silently ignores a claim it does not know. A claim that only adds (a new flag, a
+ *   display value) may ship under the same `ver`; one that restricts (a device binding, a
+ *   `not-before` …) must raise `ENTITLEMENT_CLAIMS_VERSION`, which older clients refuse (fail closed).
+ * - **What a schema cannot check.** `EntitlementClaimsSchema` has no clock: the client checks
+ *   `iat <= now + MAX_CLOCK_SKEW_SECONDS` itself (against its time high-water mark, never a clock that
+ *   moved back), and `sub` against the signed-in user. Desktop rules: `entitlements-client.feature.md`.
+ *
+ * Depends only on Zod.
  */
 import { z } from 'zod';
 
@@ -114,10 +123,12 @@ export type EntitlementHeader = z.infer<typeof EntitlementHeaderSchema>;
 const NumericDateSchema = z.int().nonnegative();
 
 /**
- * The signed claims. Non-strict (an unknown claim is stripped, not refused) so the server can add
- * one. `sub` is the account's user ID, which the client compares with the signed-in user; `plan`
- * and `features` may hold values this build does not know (unknown flags are ignored, never an
- * error). `exp` is after `iat` by at most `ENTITLEMENT_TTL_SECONDS`.
+ * The signed claims (times in seconds). Non-strict (an unknown claim is stripped, not refused) so
+ * the server can add one; a claim that restricts needs a `ver` bump (see the file comment). `sub` is
+ * the account's user ID, which the client compares with the signed-in user; `plan` and `features`
+ * may hold values this build does not know (unknown flags are ignored, never an error). `exp` is
+ * after `iat` by at most `ENTITLEMENT_TTL_SECONDS`. The client checks `iat` against its own clock
+ * (`MAX_CLOCK_SKEW_SECONDS`): this schema cannot.
  */
 export const EntitlementClaimsSchema = z
   .object({
@@ -188,37 +199,90 @@ export type EntitlementStatus = (typeof ENTITLEMENT_STATUSES)[number];
 /** The statuses whose features count. Every other status is `DEFAULT_PLAN` with no features. */
 export const ENTITLED_STATUSES: readonly EntitlementStatus[] = Object.freeze(['active', 'grace']);
 
+/** The statuses of a verified snapshot: they carry its times. `none` and `invalid` carry none. */
+export const TIMED_STATUSES: readonly EntitlementStatus[] = Object.freeze(['active', 'grace', 'expired']);
+
+/** `graceEndsAtMs - expiresAtMs` of every timed status. */
+export const OFFLINE_GRACE_MS = OFFLINE_GRACE_SECONDS * 1000;
+
 /**
  * `EntitlementsReader.current()` and `account.entitlements`: the verified result, never the snapshot.
- * `features` holds only flags this build knows. `expiresAt` (the snapshot's `exp`) and `graceEndsAt`
- * (`exp + OFFLINE_GRACE_SECONDS`) are epoch milliseconds, `null` without a verified snapshot.
- * Fails closed by construction: unless `status` is `active` or `grace`, `plan` is `free` and
- * `features` is empty.
+ *
+ * - `plan` is a display label: a known `Plan` (a plan this build does not know is shown as
+ *   `DEFAULT_PLAN`). Gating reads `features` only, which holds only flags this build knows.
+ * - `expiresAtMs` (the snapshot's `exp`) and `graceEndsAtMs` (`exp + OFFLINE_GRACE_SECONDS`) are epoch
+ *   milliseconds. `active`, `grace` and `expired` carry both (`graceEndsAtMs = expiresAtMs +
+ *   OFFLINE_GRACE_MS`); `none` and `invalid` carry `null` for both.
+ * - Fails closed by construction: unless `status` is `active` or `grace`, `plan` is `free` and
+ *   `features` is empty.
  */
 export const EntitlementsSchema = z
   .strictObject({
-    plan: z.string().regex(PLAN_ID_PATTERN),
+    plan: z.enum(PLANS),
     features: z
       .array(z.enum(FEATURE_FLAGS))
       .refine((flags) => new Set(flags).size === flags.length, { error: 'features must not repeat' }),
     status: z.enum(ENTITLEMENT_STATUSES),
-    expiresAt: z.int().nonnegative().nullable(),
-    graceEndsAt: z.int().nonnegative().nullable(),
+    expiresAtMs: z.int().nonnegative().nullable(),
+    graceEndsAtMs: z.int().nonnegative().nullable(),
   })
   .refine((e) => ENTITLED_STATUSES.includes(e.status) || (e.plan === DEFAULT_PLAN && e.features.length === 0), {
     error: `without an active or grace snapshot, plan is ${DEFAULT_PLAN} with no features`,
     path: ['features'],
-  });
+  })
+  .refine(
+    (e) =>
+      TIMED_STATUSES.includes(e.status)
+        ? e.expiresAtMs !== null && e.graceEndsAtMs !== null && e.graceEndsAtMs === e.expiresAtMs + OFFLINE_GRACE_MS
+        : e.expiresAtMs === null && e.graceEndsAtMs === null,
+    {
+      error: 'active, grace and expired carry expiresAtMs and graceEndsAtMs = expiresAtMs + OFFLINE_GRACE_MS; none and invalid carry neither',
+      path: ['graceEndsAtMs'],
+    },
+  );
 export type Entitlements = z.infer<typeof EntitlementsSchema>;
 
-/** No snapshot: the signed-out (and fail-closed) state. */
+/** No snapshot: the signed-out state. */
 export const NO_ENTITLEMENTS: Readonly<Entitlements> = Object.freeze({
   plan: DEFAULT_PLAN,
   features: [],
   status: 'none',
-  expiresAt: null,
-  graceEndsAt: null,
+  expiresAtMs: null,
+  graceEndsAtMs: null,
 });
+
+/** A snapshot that failed verification: the fail-closed state. */
+export const INVALID_ENTITLEMENTS: Readonly<Entitlements> = Object.freeze({
+  plan: DEFAULT_PLAN,
+  features: [],
+  status: 'invalid',
+  expiresAtMs: null,
+  graceEndsAtMs: null,
+});
+
+/**
+ * Whether `entitlements` grant `flag`: an entitled status (`active`, `grace`) and the flag among its
+ * features. The one rule behind `EntitlementsReader.has` and the IPC `requireFeature` middleware.
+ */
+export function entitlementGrants(entitlements: Entitlements, flag: FeatureFlag): boolean {
+  return ENTITLED_STATUSES.includes(entitlements.status) && entitlements.features.includes(flag);
+}
 
 /** The `cause.code` (and message) of the `FORBIDDEN` error `requireFeature(flag)` rejects with. */
 export const FEATURE_NOT_ENTITLED_CODE = 'FEATURE_NOT_ENTITLED';
+
+// ---- Desktop client (Task 4, `entitlements-client.feature.md`) ---------------------------------
+
+/**
+ * Why a refresh of the snapshot failed, as main reports it to the entitlements store:
+ * - `network`: no answer (offline, DNS, timeout, TLS, a 5xx): the only kind that allows offline grace.
+ * - `auth`: the server refused the credential (401): the snapshot is dropped (`none`).
+ * - `invalid`: the server answered, but not with a snapshot that verifies: `invalid` (free).
+ */
+export const ENTITLEMENT_REFRESH_FAILURES = ['network', 'auth', 'invalid'] as const;
+export type EntitlementRefreshFailure = (typeof ENTITLEMENT_REFRESH_FAILURES)[number];
+
+/** Main writes its time high-water mark at most this often while the clock only moves forward. */
+export const HIGH_WATER_PERSIST_INTERVAL_MS = 60_000;
+/** Main re-reads the clock (raising the high-water mark) at least this often while it holds a snapshot. */
+export const ENTITLEMENT_HEARTBEAT_MS = 10 * 60_000;

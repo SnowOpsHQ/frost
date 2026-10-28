@@ -59,4 +59,5 @@ life". Each line maps to one named test.
 - `cli-migrate` — `migrate` applies pending migrations and reports them; a second run reports none.
 
 ## Desktop
-(Task 4: `specs/entitlements-client.feature.md` and the verification scenarios.)
+Task 4: `specs/entitlements-client.feature.md` (verification, offline grace, the time high-water
+mark, the secret store and `requireFeature`).
