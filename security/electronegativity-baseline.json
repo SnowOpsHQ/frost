@@ -30,6 +30,12 @@
       "file": "apps/desktop/src/main/security/policy.ts",
       "source": "result['Content-Security-Policy'] = [appCspHeader()];",
       "rationale": "False positive: the scanner cannot evaluate the non-literal value; it is APP_CSP from security-policy.spec.ts, strict per test app-csp-is-strict and enforced end to end by e2e boots-under-strict-csp-without-violations."
+    },
+    {
+      "id": "CERTIFICATE_VERIFY_PROC_JS_CHECK",
+      "file": "apps/desktop/src/main/update/service.ts",
+      "source": "if (UPDATE_TEST_CERT_PATTERN.test(pin)) updateSession.setCertificateVerifyProc(pinnedCertificateVerifier(pin));",
+      "rationale": "Reviewed (Phase 7 Task 5): the update e2e's pin, unpackaged only (the switch is in PACKAGED_FORBIDDEN_SWITCHES and never read packaged), on the update session only; it accepts exactly one certificate by DER SHA-256 and defers every other to Chromium (-3). Tests switches-unpackaged-only, test-cert-pins-one-certificate."
     }
   ]
 }

@@ -19,6 +19,7 @@ import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
+import { updateRouter } from './update-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -279,6 +280,8 @@ export const appRouter = router({
   settings: settingsRouter,
   // Phase 2.5 Task 7 (`seo-checks.feature.md`): link status, sitemap and hreflang reciprocity checks.
   checks: checksRouter,
+  // Phase 7 Task 5 (`update-client.feature.md`, Router): the update notice, its setting and Show file.
+  update: updateRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -9,7 +9,8 @@ Code: `apps/desktop/src/main/update/` (`feed.ts`, `prefs.ts`, `fetch.ts`, `downl
 Tests: `apps/desktop/src/main/update/__tests__/{feed,prefs,fetch,download,client}.test.ts`, every
 CI run, against a local fake feed (`__tests__/fake-feed.ts`: Node `http` on `127.0.0.1`, a random
 port, envelopes signed with an Ed25519 key generated per run and injected as the trusted key).
-Each scenario maps to one named test. Nothing here launches Electron or contacts a real host.
+Each scenario maps to one named test. Nothing here contacts a real host; only the e2e scenarios
+(Chrome, below) launch Electron.
 
 **Honest install.** No build today can be updated in place: frost has no Apple Developer ID, and
 the feed publishes the Windows `Setup.exe`, not a Squirrel `RELEASES` feed. So every build is
@@ -149,3 +150,105 @@ the feed publishes the Windows `Setup.exe`, not a Squirrel `RELEASES` feed. So e
   `MAX_PENDING_UPDATE_WATCHES` waiting one more answers the oldest at once.
 - **Scenario: errors-are-caught** — a running version that is not semver makes a check `error`
   `internal`, never a rejection; a prefs write that fails is `disk`.
+
+## Prefs read errors (`prefs.test.ts`, Phase 7 Task 5)
+- **Scenario: prefs-unreadable-kept** — (POSIX, not root) a prefs file that exists but cannot be
+  read (`EACCES`; likewise `EMFILE`, `EIO`): the store answers in-memory defaults (a new install ID,
+  checks on, no mark) for this run, logs one line, and **never writes**: neither the read nor a later
+  `update()` replaces the file, so its install ID and high-water mark survive for the next run. Only
+  a missing file (`ENOENT`) or one whose content is invalid is reset and rewritten. A lax mode is
+  fixed through the open handle (`handle.chmod`), never by path.
+
+## Download stops (`download.test.ts`, Phase 7 Task 5)
+- **Scenario: hung-write-does-not-hold** — a disk write that never finishes: at `totalMs` the
+  download answers `timeout` at once, without waiting for the file to close (a pending write would
+  hold `close()`); the `.partial` is removed once it can be.
+- **Scenario: fresh-before-prune** — `downloadArtifact` asks `isFresh()` after the hash verifies and
+  before it renames the file or prunes other versions: a stale manifest is `stale`, the partial is
+  deleted, and an older ready version is kept.
+
+## Router (`packages/ipc-contract/src/__tests__/update-router.test.ts`)
+`update-router.ts` exports `UpdateService` (main implements it, `apps/desktop/src/main/update/service.ts`)
+and `updateRouter` (`update.*`). Every procedure is `publicProcedure.use(enforceSender).use(requireUpdate)`
+with a strict Zod input (`specs/update-router.schema.ts`): `watch({ sinceVersion })` (an integer,
+`-1` up to `MAX_SAFE_INTEGER`), `setChecks({ checks: 'on' | 'off' })`, and no input at all for
+`check`, `download`, `skip`, `install`. `watch` answers `UpdateState`; `check`, `download`, `skip` and
+`setChecks` answer the `UpdateState` after the step (`download` once it has started, not finished);
+`install` answers whether it showed the file. Release notes travel in the state as plain text: there
+is no separate notes procedure.
+- **Scenario: every-update-procedure-enforces-sender** — every `update.*` procedure, called from a
+  foreign origin, with a valid, a malformed or no input: `FORBIDDEN`, and the service is never
+  touched (not even `state()`).
+- **Scenario: update-without-service-fails-closed** — no `update` service in the context: every
+  procedure is the masked internal error.
+- **Scenario: update-inputs-validated** — a missing, fractional, below `-1`, string or extra-key
+  `sinceVersion`; `checks` other than `on`/`off` or an extra key; any input to `check`, `download`,
+  `skip` or `install`: `BAD_REQUEST`, the service untouched.
+- **Scenario: update-watch-long-polls** — `watch` answers at once for an older version, else on the
+  service's next change, else the current state after `WATCH_TIMEOUT_MS`, the service's waiter
+  released either way.
+
+## Main (`apps/desktop/src/main/update/__tests__/service.test.ts`)
+`startUpdateService({ app, net, session, shell, env, log })` builds the client from Electron's objects
+(the in-memory `UPDATE_PARTITION` session, hardened with `hardenUpdateSession`; `netTransport`;
+`netResolve`, wrapped by the `E2E_PUBLIC_HOSTS_SWITCH` seam when unpackaged; `resolveFeed`,
+`resolveTrustedKeys`, `createPrefsStore(userData, { log })`) and answers `{ service, dispose }`.
+`index.ts` only starts it in `whenReady`, passes `update: service` and calls `dispose()` on quit.
+- **Scenario: install-shows-file** — `install()` on `ready` with `install: 'manual'` calls
+  `shell.showItemInFolder` with exactly `readyFile()` (a regular file, checked first) and answers
+  `true`. It never calls `openExternal` or `openPath` and never runs the file.
+- **Scenario: install-refused-unless-ready** — in every other state, or when the ready file is gone
+  or is not a regular file: `false`, and the shell is not touched. `restart` mode (unreachable today)
+  is refused too until Electron's `autoUpdater` holds the update.
+- **Scenario: download-starts-not-awaits** — `download()` answers the `downloading` state at once;
+  `check()`, `skip()` and `setChecks()` answer the client's state after the step.
+- **Scenario: switches-unpackaged-only** — the feed, public-key, test-certificate and e2e public-host
+  switches are read only when unpackaged; packaged, they are ignored (and the app refuses to start
+  with any of them: `PACKAGED_FORBIDDEN_SWITCHES` holds `frost-update-feed`,
+  `frost-update-public-key` and `frost-update-test-cert`).
+- **Scenario: test-cert-pins-one-certificate** — with `UPDATE_TEST_CERT_SWITCH` (unpackaged) the
+  update session's certificate check accepts (`0`) only a certificate whose DER SHA-256 is the
+  switch's value, and defers (`-3`, Chromium's own verdict) for every other one; a malformed value,
+  or a packaged build, installs no check at all. No other session is touched.
+
+## Chrome (`apps/desktop/src/renderer/__tests__/update-view.test.ts`, `e2e/update.e2e.ts`)
+`renderer/update-view.ts` (pure view model), `hooks/useUpdate.ts` (long-polls `update.watch` from the
+chrome's start), `components/UpdateBar.tsx` (the notice row, always-present `update-slot` under the
+find bar) and `renderer/update-palette.ts` (registered by `UpdateBar.tsx` at load). The chrome makes
+no request of its own: everything goes through `update.*`.
+- **Scenario: update-bar-hidden-at-rest** — `disabled`, `off`, `idle`, `checking`, `up-to-date`, or
+  no state yet: no row (`UPDATE_BAR_KINDS`).
+- **Scenario: update-bar-available** — "frost X.Y.Z is available" (`updateAvailableText`), with
+  Release notes (expands the notes as plain text, never HTML), Download, Skip this version and Later.
+  A required update says `UPDATE_REQUIRED_TEXT` and offers no Skip. Later hides the offer of that
+  version for this window's session.
+- **Scenario: update-bar-downloading** — `updateDownloadingText` and the progress (a `progress`
+  element and a whole percentage, `0` for a zero total).
+- **Scenario: update-bar-ready** — `install: 'manual'`: `updateReadyManualText`, Show file
+  (`update.install`) and Dismiss; `restart`: `updateReadyRestartText` and Dismiss only.
+- **Scenario: update-bar-error** — `UPDATE_ERROR_MESSAGES[reason]` and Dismiss; a dismissed error
+  shows again only after the status has moved on and failed again.
+- **Scenario: update-palette** — with a feed: "Check for Updates" (answers what the check found:
+  `updateAvailableText`, `UPDATE_PALETTE_MESSAGES.upToDate`, or the error's message) and "Turn
+  Automatic Update Checks Off" while on, "…On" while off. Without a feed (`disabled`), or before the
+  first state: none of them is offered (nothing update-related shows).
+
+### e2e (`apps/desktop/e2e/update.e2e.ts`)
+Against a TLS fake feed (`__tests__/fake-feed.ts` over Node `https` with a per-run self-signed
+certificate, `e2e/tls.ts`) on 127.0.0.1 under a public-looking name (`--host-resolver-rules`,
+`--frost-e2e-public-hosts`), its manifest signed with a key generated per run and trusted through
+`--frost-update-public-key`; the feed through `--frost-update-feed`, the certificate through
+`--frost-update-test-cert`. Each test launches on a fresh profile whose prefs file has checks off (so
+no automatic check runs mid-test); the check is the palette's "Check for Updates".
+- **Scenario: update-available-download-verify-show** — the bar shows the offer; Download; Ready
+  with the "install it by hand" text; Show file calls `shell.showItemInFolder` (stubbed in main) with
+  the verified path, whose SHA-256 is the signed one.
+- **Scenario: no-silent-install** — with an offer on screen and time passing, the fake feed never
+  sees an artifact request until Download is clicked.
+- **Scenario: tampered-artifact-shows-error** — an artifact one byte off: the bar shows
+  `UPDATE_ERROR_MESSAGES['hash-mismatch']`, and no file is left in `updates/`.
+- **Scenario: feed-request-headers** — the manifest request Chromium sends carries only the
+  allowlisted headers (`host`, `user-agent` = `updateUserAgent`, and Chromium's own `connection`,
+  `accept-encoding`), no cookie, no referrer, nothing holding the install ID.
+- **Scenario: no-feed-no-update-ui** — a launch with no feed configured: no update request, no bar,
+  and the palette offers no update action.

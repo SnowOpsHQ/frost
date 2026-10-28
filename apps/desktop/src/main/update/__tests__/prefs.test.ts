@@ -116,6 +116,39 @@ describe('update prefs', () => {
     }
   });
 
+  test('prefs-unreadable-kept', async () => {
+    // Spec: update-client.feature.md, `prefs-unreadable-kept` (EACCES stands for EMFILE, EIO…).
+    if (!POSIX || process.getuid?.() === 0) return;
+    const saved: UpdatePrefs = {
+      ...(await createPrefsStore(dir).read()),
+      highWaterMark: { version: '1.4.0', releasedAt: '2026-10-28T12:00:00Z' },
+    };
+    await createPrefsStore(dir).write(saved);
+    const before = await readFile(file());
+    await chmod(file(), 0o000);
+    try {
+      const logs: string[] = [];
+      const store = createPrefsStore(dir, { log: (line) => logs.push(line) });
+      const read = await store.read();
+      // In-memory defaults for this run (a fresh install ID, no mark), and one log line without the ID or a path.
+      expect(read).toEqual({ format: 1, installId: expect.stringMatching(UUID_V4), checks: 'on' });
+      expect(read.installId).not.toBe(saved.installId);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).not.toContain(read.installId);
+      expect(logs[0]).not.toContain(dir);
+      // A later change lands in memory only: the unreadable file is never replaced.
+      const next = await store.update((prefs) => ({ ...prefs, checks: 'off', highWaterMark: { version: '1.0.0', releasedAt: '2026-10-28T12:00:00Z' } }));
+      expect(next.checks).toBe('off');
+      expect((await stat(file())).mode & 0o777).toBe(0o000);
+      expect(await readdir(dir)).toEqual([UPDATE_PREFS_FILE]);
+    } finally {
+      await chmod(file(), 0o600);
+    }
+    // Next run, readable again: the install ID and the high-water mark are still there.
+    expect(await readFile(file())).toEqual(before);
+    expect(await createPrefsStore(dir).read()).toEqual(saved);
+  });
+
   test('prefs-tamper-resets', async () => {
     const good = await createPrefsStore(dir).read();
     const base = { ...good, highWaterMark: { version: '1.2.0', releasedAt: '2026-10-28T12:00:00Z' } };

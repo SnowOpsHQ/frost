@@ -12,6 +12,7 @@ import { javascriptPaletteSources } from '../javascript-palette';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext, type PaletteSource } from '../palette/registry';
 import { renderProfilePaletteSources } from '../render-profile-palette';
+import { updatePaletteSources } from '../update-palette';
 
 const URL_A = 'https://www.example.com/a';
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, schema: { blocks: [] } } as unknown as SeoAudit };
@@ -31,6 +32,7 @@ function everySource(): PaletteSource[] {
     ...devtoolsPaletteSources(() => undefined),
     ...browserPolishPaletteSources({ openFind: yes, reopenClosedTab: vi.fn(async () => 1), showHistory: yes, setSearchEngine: yes }),
     ...checksPaletteSources({ checkLinks: yes, checkSitemaps: yes, checkHreflang: yes, stop: yes, known: () => undefined }),
+    ...updatePaletteSources({ check: vi.fn(async () => null), setChecks: vi.fn(async () => null), known: () => undefined }),
   ];
 }
 

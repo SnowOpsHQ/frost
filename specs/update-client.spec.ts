@@ -4,7 +4,8 @@
  * side (the prefs file) is `update-client.schema.ts`; acceptance `update-client.feature.md`; the
  * signed manifest itself is `update-manifest.spec.ts` (Task 3). Implemented by
  * `apps/desktop/src/main/update/` (`feed.ts`, `prefs.ts`, `fetch.ts`, `download.ts`, `client.ts`),
- * pure Node: the Electron objects (`net`, the update session) are injected by main (Task 5).
+ * pure Node: the Electron objects (`net`, the update session, `shell`) are injected by `service.ts`
+ * (Task 5), which the `update.*` procedures (`update-router.ts`) and the chrome's update bar reach.
  *
  * Plain values and types with no imports, so the chrome can use them too.
  *
@@ -290,3 +291,87 @@ export const MAX_PENDING_UPDATE_WATCHES = 4;
 
 /** `downloading` advances the state version at most this many times per download (plus the start). */
 export const UPDATE_PROGRESS_STEPS = 100;
+
+// ---- e2e seams (unpackaged builds only; Phase 7 Task 5) ---------------------------------------
+
+/**
+ * `--frost-update-test-cert=<sha256-hex>`: unpackaged builds only (a packaged build refuses to start
+ * with it, `PACKAGED_FORBIDDEN_SWITCHES`). The update session (`UPDATE_PARTITION`, and no other)
+ * accepts a server certificate whose DER SHA-256 is exactly this value (`UPDATE_TEST_CERT_PATTERN`):
+ * the e2e fake feed's per-run self-signed certificate. Every other certificate gets Chromium's own
+ * verdict. A malformed value trusts nothing extra. Names: the update resolver honours the shared e2e
+ * seam `E2E_PUBLIC_HOSTS_SWITCH` (`fetcher.spec.ts`), so the fake feed's public-looking name
+ * (`--host-resolver-rules`) is not refused as the loopback address it maps to.
+ */
+export const UPDATE_TEST_CERT_SWITCH = 'frost-update-test-cert';
+/** A SHA-256 in lowercase hex. */
+export const UPDATE_TEST_CERT_PATTERN = /^[0-9a-f]{64}$/;
+
+// ---- Chrome (Phase 7 Task 5; `update-client.feature.md`, Chrome) ------------------------------
+
+/**
+ * The statuses the update bar shows a row for. Never `disabled`, `off`, `idle`, `checking` or
+ * `up-to-date`: with nothing to act on, nothing about updates is on screen.
+ */
+export const UPDATE_BAR_KINDS = ['available', 'downloading', 'ready', 'error'] as const satisfies readonly UpdateStatusKind[];
+
+/** The update bar's button labels. */
+export const UPDATE_BAR_LABELS = {
+  releaseNotes: 'Release notes',
+  hideReleaseNotes: 'Hide release notes',
+  download: 'Download',
+  skip: 'Skip this version',
+  later: 'Later',
+  showFile: 'Show file',
+  dismiss: 'Dismiss',
+} as const;
+
+/** "frost X.Y.Z is available". */
+export const updateAvailableText = (version: string): string => `frost ${version} is available`;
+/** Said beside a required update's offer (`required: true`: no "Skip this version"). */
+export const UPDATE_REQUIRED_TEXT = 'This update is required: this version is no longer supported.';
+/** "Downloading frost X.Y.Z…" (the bar adds the percentage). */
+export const updateDownloadingText = (version: string): string => `Downloading frost ${version}…`;
+/** `ready` with `install: 'manual'` (every build today). */
+export const updateReadyManualText = (version: string): string => `frost ${version} is downloaded and verified. This build can't update itself: install it by hand.`;
+/** `ready` with `install: 'restart'` (unreachable today, `CURRENT_INSTALL_MODE`): no install button is offered. */
+export const updateReadyRestartText = (version: string): string => `frost ${version} is downloaded and verified.`;
+
+/** The update bar's line for each error (frost's own words; never a server's text). */
+export const UPDATE_ERROR_MESSAGES: Readonly<Record<UpdateErrorReason, string>> = {
+  'feed-unreachable': 'Couldn’t reach the update feed.',
+  'feed-too-large': 'The update feed sent more than an update manifest can hold.',
+  'bad-envelope': 'The update feed’s signature didn’t verify, so it was ignored.',
+  stale: 'The update offer has expired or isn’t valid yet.',
+  'older-than-seen': 'The update feed offered an older release than one already seen, so it was ignored.',
+  'download-failed': 'The update couldn’t be downloaded.',
+  'too-large': 'The download was larger than signed, so it was discarded.',
+  'hash-mismatch': 'The download didn’t match its signed checksum, so it was deleted.',
+  'size-mismatch': 'The download ended short of its signed size, so it was discarded.',
+  'insecure-redirect': 'The update server redirected away from https, so the request was stopped.',
+  'private-address': 'The update server is on a private address, so the request was stopped.',
+  disk: 'The update couldn’t be saved to disk.',
+  internal: 'Something went wrong with the update.',
+};
+
+/**
+ * The command palette's update actions (group `browser`): "Check for Updates", and one of "Turn
+ * Automatic Update Checks Off" / "…On" for the current setting. With no feed configured (`disabled`)
+ * none of them is offered: nothing about updates shows at all.
+ */
+export const UPDATE_PALETTE_LABELS = {
+  check: 'Check for Updates',
+  checksOff: 'Turn Automatic Update Checks Off',
+  checksOn: 'Turn Automatic Update Checks On',
+} as const;
+
+/** What "Check for Updates" reports once the check answers. */
+export const UPDATE_PALETTE_MESSAGES = {
+  upToDate: 'frost is up to date',
+  checking: 'Checking for updates…',
+  busy: 'An update is already downloading or downloaded',
+  failed: 'The update check could not run',
+  checksOff: 'Automatic update checks are off',
+  checksOn: 'Automatic update checks are on',
+  settingFailed: 'The update setting could not be saved',
+} as const;

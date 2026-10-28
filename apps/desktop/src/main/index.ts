@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, ipcMain, net, session, webContents, type WebContents } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, session, shell, webContents, type WebContents } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -46,6 +46,7 @@ import { registerAppWideGuards, registerSecurity, type SecurityOptions } from '.
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
 import { handleSquirrelEvent } from './update/squirrel-events';
+import { startUpdateService } from './update/service';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
@@ -386,6 +387,9 @@ function start(): void {
     });
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
+    // Updates (specs/update-client.feature.md): off unless a feed is configured; every step past a check waits for the user.
+    const update = await startUpdateService({ app, net, session, shell, log: logSession });
+    app.once('will-quit', () => update.dispose());
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,
@@ -422,6 +426,7 @@ function start(): void {
           log: logSession,
         }),
         settings: searchEngine,
+        update: update.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

@@ -10,6 +10,7 @@ import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
+import type { UpdateService } from './update-router';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -170,4 +171,6 @@ export interface IpcServices {
   readonly settings?: SettingsService;
   /** The link, sitemap and hreflang checks (Phase 2.5 Task 7, `checks-service.ts`). */
   readonly checks?: ChecksService;
+  /** The update notice, setting and Show file (Phase 7 Task 5, `update-router.ts`). */
+  readonly update?: UpdateService;
 }

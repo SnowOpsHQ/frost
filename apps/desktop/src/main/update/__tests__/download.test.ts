@@ -1,5 +1,5 @@
 // Spec: specs/update-client.spec.ts (Files, UPDATE_FETCH_LIMITS) · Acceptance: specs/update-client.feature.md (Download)
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -146,6 +146,54 @@ describe('downloadArtifact', () => {
     expect(await reasonOf({ artifact: { ...input().artifact, url: `https://${HOST}/stall` }, limits: { idleMs: 200 } })).toBe('timeout');
     // The signed size is the cap even if larger caps are asked for elsewhere.
     expect(await reasonOf({ artifact: { ...input().artifact, url: `https://${HOST}/long` } })).toBe('too-large');
+  });
+
+  test('hung-write-does-not-hold', async () => {
+    feed.route('/frost.AppImage', { body: BYTES });
+    // A disk whose first write never finishes, and whose close waits for that write (as `FileHandle.close()` does).
+    let created: string | null = null;
+    const openFile: DownloadInput['openFile'] = async (file, flags, mode) => {
+      const real = await open(file, flags, mode);
+      created = file;
+      const hung = new Promise<never>(() => undefined);
+      return {
+        write: () => hung,
+        sync: () => real.sync(),
+        close: async () => {
+          await hung;
+          await real.close();
+        },
+      } as unknown as Awaited<ReturnType<NonNullable<DownloadInput['openFile']>>>;
+    };
+    const started = Date.now();
+    const result = await downloadArtifact(input({ openFile, limits: { totalMs: 300 } }));
+    expect(result).toEqual({ ok: false, reason: 'timeout' });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(created).toBe(path.join(versionDir(), `${NAME}${UPDATE_PARTIAL_SUFFIX}`));
+    // POSIX unlinks the open partial at once.
+    if (POSIX) expect(await tree()).toEqual([VERSION]);
+  });
+
+  test('fresh-before-prune', async () => {
+    feed.route('/frost.AppImage', { body: BYTES });
+    await mkdir(versionDir('1.2.5'), { recursive: true });
+    await writeFile(path.join(versionDir('1.2.5'), artifactFileName('1.2.5', 'linux-x64')), 'old');
+    let asked = 0;
+    const result = await downloadArtifact(
+      input({
+        isFresh: () => {
+          asked += 1;
+          return false;
+        },
+      }),
+    );
+    expect(result).toEqual({ ok: false, reason: 'stale' });
+    expect(asked).toBe(1);
+    // The verified-but-stale file is gone, and the older ready version was not pruned for it.
+    expect(await tree()).toEqual(['1.2.5', `1.2.5/${artifactFileName('1.2.5', 'linux-x64')}`, VERSION]);
+    // Fresh: kept, and the older version pruned.
+    expect(await downloadArtifact(input({ isFresh: () => true }))).toEqual({ ok: true, file: path.join(versionDir(), NAME) });
+    expect(await tree()).toEqual([VERSION, `${VERSION}/${NAME}`]);
   });
 
   test('download-stays-in-updates', async () => {

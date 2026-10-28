@@ -288,7 +288,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   - `renderer/__tests__/update-view.test.ts`;
   - `e2e/update.e2e.ts`: a fake signed feed, then available, download, verified, show file;
     `no-silent-install`; a tampered artifact shows the error.
-- [ ] commit `feat(update): update notice, setting and IPC with a fake-feed e2e`
+- [x] commit `feat(update): update notice, setting and IPC with a fake-feed e2e`
 
 ### Batch C — libSQL sync groundwork (depends on Phase 6's schema)
 
@@ -621,3 +621,68 @@ sync.
   certificate trust in unpackaged builds). `UPDATE_PUBLIC_KEY_SWITCH` (and probably
   `UPDATE_FEED_SWITCH`) go in `PACKAGED_FORBIDDEN_SWITCHES`. The e2e should assert the exact headers
   the fake feed sees from Chromium (unverified here, since nothing in Task 4 launches Electron).
+
+### Task 5 (update notice, setting and IPC)
+- **Files.** Spec: `update-client.feature.md` gains Prefs read errors, Download stops, Router, Main and
+  Chrome (with e2e) sections; `update-client.spec.ts` gains `UPDATE_TEST_CERT_SWITCH` and the
+  chrome's words (`UPDATE_BAR_KINDS`, `UPDATE_BAR_LABELS`, `UPDATE_ERROR_MESSAGES`,
+  `UPDATE_PALETTE_LABELS`/`_MESSAGES`, the text builders); `specs/update-router.schema.ts` (Zod,
+  main-only) holds the inputs. IPC: `packages/ipc-contract/src/update-router.ts` (`UpdateService`,
+  `updateRouter`). Main: `apps/desktop/src/main/update/service.ts` (`startUpdateService`,
+  `createUpdateService`, `pinnedCertificateVerifier`). Chrome: `renderer/update-view.ts`,
+  `renderer/update-palette.ts`, `hooks/useUpdate.ts`, `components/UpdateBar.tsx`.
+- **Hub lines.** `router.ts` (`update: updateRouter,` and its import), `services.ts`
+  (`readonly update?: UpdateService;` and its import), `index.ts` of the IPC package (one type
+  export), `App.tsx` (`<UpdateBar />` and its import), `styles.css` (one more `auto` grid row; the
+  bar's styles appended), `PACKAGED_FORBIDDEN_SWITCHES` (+ `frost-update-feed`,
+  `frost-update-public-key`, `frost-update-test-cert`), main `index.ts` (`shell` in the Electron
+  import, the service import, `startUpdateService` + `will-quit` dispose before `attachIpcHandler`,
+  `update: update.service`), `palette-all-features.test.ts` (the update sources), and one
+  Electronegativity baseline entry (`CERTIFICATE_VERIFY_PROC_JS_CHECK`, the test pin).
+- **Router.** Every procedure is `enforceSender` → `requireUpdate` → a strict input: `watch({
+  sinceVersion })` (an integer from -1, long-polled with `WATCH_TIMEOUT_MS`), `setChecks({ checks })`,
+  and `z.undefined()` for `check`, `download`, `skip`, `install` (any input is `BAD_REQUEST`). No notes
+  procedure: the notes travel in the state. `download` answers once started (the client's promise is
+  not awaited; the chrome follows `watch`).
+- **Install.** `install()` reveals `readyFile()` with `shell.showItemInFolder` only on `ready` +
+  `manual`, after `lstat` says it is a regular file and the state is still that file; answers whether
+  it did. `restart` returns `false` with a `TODO(update-restart)`: nothing fakes `quitAndInstall`.
+- **e2e seams.** The address check reuses `E2E_PUBLIC_HOSTS_SWITCH` (`withE2ePublicHosts` over
+  `netResolve(updateSession)`; the client honours `null` only unpackaged). TLS: `UPDATE_TEST_CERT_SWITCH`
+  pins one certificate by DER SHA-256 (`X509Certificate.fingerprint256`) through
+  `setCertificateVerifyProc` on the update session only; every other certificate gets `-3`. All e2e
+  switches are read only when unpackaged (`switchValue` answers `''` packaged), on top of the
+  packaged refusal at startup, which `verify:mac`/`linux`/`win` now probe for the three new names.
+- **Chrome.** The `update-slot` row (under the find bar) is always mounted, so `useUpdate` long-polls
+  from start and the palette knows the state; it is 0 high at rest. Later and Dismiss hide the
+  notice by key for this window (an offer per version; a dismissed error reappears only after the
+  status moves on). The notes are a text node in a `pre`. The palette's entries are **hidden** when
+  no feed is configured (my call: no update UI at all without a feed, rather than a disabled entry);
+  the toggle is two static actions (`update.checks-off` / `update.checks-on`), one offered at a time.
+- **Task 4 re-review items.** `prefs.ts`: only `ENOENT` (first run) or invalid content resets and
+  rewrites; any other read error (`EACCES`, `EMFILE`, `EIO`) answers in-memory defaults and puts the
+  store in memory-only mode for the run, so neither the read nor a later `update()` writes over the
+  file (`prefs-unreadable-kept`); a lax mode is fixed with `handle.chmod`. `download.ts`: a stopped
+  (timeout/abort) download returns without awaiting `handle.close()` (which waits for a pending
+  write), unlinking the partial at once or, if that fails (Windows), after the close
+  (`hung-write-does-not-hold`; an `openFile` seam lets the test hang a write); `isFresh()` is asked
+  after the hash verifies and before the rename and the prune (`stale`, `fresh-before-prune`); the
+  client's own post-download freshness check moved into it.
+- **Headers Chromium sends** (Electron 45, Linux; `feed-request-headers`, recorded each run): the
+  manifest request is exactly `Host`, `Connection: keep-alive`, `User-Agent: frost/0.0.0 (update
+  check)`, in that order: no `Accept-Encoding`, no `Accept-Language`, no cookie (cookies set for the
+  feed URL in the update, browse and default sessions are not sent). The test asserts an allowlist
+  (`host`, `user-agent`, `connection`, `accept-encoding`) rather than that exact list, so another
+  platform's Chromium adding `Accept-Encoding` still passes; the artifact request meets the same
+  allowlist.
+- **Tests.** `update-router.test.ts` (4), `service.test.ts` (5), `update-view.test.ts` (7), new
+  `prefs`/`download` scenarios (3, each red against the Task 4 code first), and `update.e2e.ts` (5):
+  `update-available-download-verify-show`, `no-silent-install` (also toggles the setting through the
+  palette and checks the prefs file), `tampered-artifact-shows-error`, `feed-request-headers`,
+  `no-feed-no-update-ui` (every seam but the feed, then a plain default launch). Each e2e test
+  launches on a fresh profile with checks off in its prefs, so no automatic check runs mid-test;
+  checks are the palette's Check for Updates.
+- **Known limits.** Not exercised: a packaged build with `FROST_UPDATE_FEED_URL` against a real
+  `https:` host (none is hosted), and the real `shell.showItemInFolder` (stubbed in the e2e). The
+  e2e ran locally on Linux only; macOS (and, non-gating, Windows) are left to CI.
+

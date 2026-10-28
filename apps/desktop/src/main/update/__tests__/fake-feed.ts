@@ -4,8 +4,11 @@
 // `pnpm sign:update-manifest` signs), and a Node transport for the client's getter. Never contacts
 // another host: an `https:` URL is only reachable through `nodeTransport`'s `https` map, which sends
 // it as plain HTTP to a local port (so tests can exercise the `https:`-only rules without TLS).
+// The e2e suite starts it over TLS instead (`startFakeFeed({ tls })`, a per-run self-signed
+// certificate), so Electron's own `net` reaches it as a real `https:` server.
 import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import http from 'node:http';
+import https from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { UPDATE_SIGNATURE_CONTEXT } from '@app/specs/update-manifest.spec';
 import type { UpdateHop } from '../fetch';
@@ -29,7 +32,7 @@ export type FakeRoute =
   | ((request: http.IncomingMessage, response: http.ServerResponse) => void);
 
 export interface FakeFeed {
-  /** `http://127.0.0.1:<port>`. */
+  /** `http://127.0.0.1:<port>` (`https:` when started with `tls`). */
   readonly origin: string;
   readonly port: number;
   readonly requests: SeenRequest[];
@@ -37,11 +40,11 @@ export interface FakeFeed {
   close(): Promise<void>;
 }
 
-export async function startFakeFeed(): Promise<FakeFeed> {
+export async function startFakeFeed(options: { readonly tls?: { readonly cert: string; readonly key: string } } = {}): Promise<FakeFeed> {
   const routes = new Map<string, FakeRoute>();
   const requests: SeenRequest[] = [];
   const open = new Set<http.ServerResponse>();
-  const server = http.createServer((request, response) => {
+  const handler = (request: http.IncomingMessage, response: http.ServerResponse) => {
     const path = request.url ?? '/';
     requests.push({ method: request.method ?? '', path, headers: { ...request.headers }, rawHeaders: [...request.rawHeaders] });
     open.add(response);
@@ -59,11 +62,12 @@ export async function startFakeFeed(): Promise<FakeFeed> {
     } else {
       response.writeHead(route.status ?? 200, { ...route.headers }).end(route.body ?? '');
     }
-  });
+  };
+  const server = options.tls === undefined ? http.createServer(handler) : https.createServer({ cert: options.tls.cert, key: options.tls.key }, handler);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   return {
-    origin: `http://127.0.0.1:${port}`,
+    origin: `${options.tls === undefined ? 'http' : 'https'}://127.0.0.1:${port}`,
     port,
     requests,
     route: (path, route) => void routes.set(path, route),

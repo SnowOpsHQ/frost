@@ -125,8 +125,11 @@ export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
  * The e2e suite, unpackaged, uses it to give a loopback server a public-looking name.
  * `frost-e2e-public-hosts` too (Phase 2.5 Task 2 review): the e2e seam that exempts those names
  * from the bounded fetcher's DNS check (`E2E_PUBLIC_HOSTS_SWITCH`, `fetcher.spec.ts`).
+ * `frost-update-feed`, `frost-update-public-key`, `frost-update-test-cert` too (Phase 7 Task 5): the
+ * update client's e2e seams (`update-client.spec.ts`), which point it at another feed, trust another
+ * signing key, and accept one pinned certificate on the update session.
  */
-export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts'] as const;
+export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-update-feed', 'frost-update-public-key', 'frost-update-test-cert'] as const;
 export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;
 
 /**

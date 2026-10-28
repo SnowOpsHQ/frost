@@ -1,4 +1,3 @@
-import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import {
   CURRENT_INSTALL_MODE,
@@ -124,6 +123,7 @@ const downloadReason = (reason: DownloadFailure): UpdateErrorReason => {
     case 'hash-mismatch':
     case 'private-address':
     case 'disk':
+    case 'stale':
       return reason;
     case 'insecure-url':
     case 'insecure-redirect':
@@ -296,6 +296,8 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
         artifact: held.artifact,
         get: getDeps,
         signal: lifetime.signal,
+        // Still fresh now, after what may have been a long download: else the file is not kept (nor anything pruned for it).
+        isFresh: () => checkFreshness(held.manifest, now()) === null,
         onProgress: (bytes) => {
           if (bytes - reported < step || bytes >= total) return;
           reported = bytes;
@@ -306,12 +308,6 @@ export async function createUpdateClient(deps: UpdateClientDeps): Promise<Update
       if (disposed) return snapshot();
       if (!result.ok) {
         set({ kind: 'error', reason: downloadReason(result.reason), version: target });
-        return snapshot();
-      }
-      // Still fresh now, after what may have been a long download: else the file is not kept.
-      if (checkFreshness(held.manifest, now()) !== null) {
-        await rm(result.file, { force: true }).catch(() => undefined);
-        set({ kind: 'error', reason: 'stale', version: target });
         return snapshot();
       }
       ready = result.file;

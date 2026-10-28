@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { lstat, mkdir, open, readdir, rename, rm, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rename, rm, unlink, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { UPDATE_DOWNLOADS_DIR, UPDATE_FETCH_LIMITS, UPDATE_PARTIAL_SUFFIX } from '@app/specs/update-client.spec';
 import { MAX_ARTIFACT_BYTES, SHA256_HEX_PATTERN, artifactFileName, type UpdateArtifact, type UpdatePlatform } from '@app/specs/update-manifest.spec';
@@ -13,10 +13,16 @@ import { isVersion } from './manifest';
 // when the byte count equals `size` and the SHA-256 equals the signed one (compared in constant
 // time) is it renamed to its final name; on any failure the partial is deleted. Once one is ready,
 // every other entry in `updates/` goes. Nothing is ever written outside `userData/updates`, and a
-// symbolic link in place of either directory is refused.
+// symbolic link in place of either directory is refused. The manifest's freshness is asked once
+// more after the hash verifies, before the file is kept or anything pruned (`fresh-before-prune`).
+// A download stopped by a timeout or an abort answers at once: it does not wait for the file to
+// close, which a hung write would hold (`hung-write-does-not-hold`).
 
-/** Why a download failed: the getter's reasons, or `size-mismatch`, `hash-mismatch`, `disk`. */
-export type DownloadFailure = UpdateGetFailure | 'size-mismatch' | 'hash-mismatch' | 'disk';
+/** Why a download failed: the getter's reasons, or `size-mismatch`, `hash-mismatch`, `disk`, `stale` (`isFresh()` said no). */
+export type DownloadFailure = UpdateGetFailure | 'size-mismatch' | 'hash-mismatch' | 'disk' | 'stale';
+
+/** The part of a `FileHandle` the download writes through. */
+export type DownloadFileHandle = Pick<FileHandle, 'write' | 'sync' | 'close'>;
 
 export type DownloadResult = { readonly ok: true; readonly file: string } | { readonly ok: false; readonly reason: DownloadFailure };
 
@@ -32,6 +38,10 @@ export interface DownloadInput {
   readonly signal?: AbortSignal;
   /** Timeouts other than `UPDATE_FETCH_LIMITS.artifact` (tests). The size cap is always the signed `size`. */
   readonly limits?: Partial<Pick<UpdateGetLimits, 'responseMs' | 'idleMs' | 'totalMs'>>;
+  /** Whether the signed manifest is still fresh (`checkFreshness`), asked once the hash verifies; `false`: `stale`, nothing kept. */
+  readonly isFresh?: () => boolean;
+  /** Creates the partial file (default `fs.promises.open`; tests: a handle whose writes hang). */
+  readonly openFile?: (file: string, flags: 'wx', mode: number) => Promise<DownloadFileHandle>;
 }
 
 /** `userData/updates`. */
@@ -102,10 +112,10 @@ export async function downloadArtifact(input: DownloadInput): Promise<DownloadRe
   } catch {
     return { ok: false, reason: 'disk' };
   }
-  let handle;
+  let handle: DownloadFileHandle;
   try {
     // `wx`: created here, never through something already at that path (a planted link included).
-    handle = await open(partial, 'wx', 0o600);
+    handle = await (input.openFile ?? open)(partial, 'wx', 0o600);
   } catch {
     return { ok: false, reason: 'disk' };
   }
@@ -139,11 +149,24 @@ export async function downloadArtifact(input: DownloadInput): Promise<DownloadRe
   } catch {
     result = { ok: false, reason: 'disk' };
   }
+  if (!result.ok && (result.reason === 'timeout' || result.reason === 'aborted')) {
+    // Stopped: a write may still be pending (a hung disk), and `close()` waits for it, so it is not
+    // awaited. The partial goes now (POSIX unlinks an open file), else once the handle has closed.
+    const closing = handle.close().catch(() => undefined);
+    const removed = await unlink(partial).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+    );
+    if (!removed) void closing.then(() => unlink(partial).catch(() => undefined));
+    return result;
+  }
   try {
     await handle.close();
   } catch {
     result = { ok: false, reason: 'disk' };
   }
+  // Verified, but is the offer still fresh? Asked before the file is kept or other versions pruned.
+  if (result.ok && input.isFresh !== undefined && input.isFresh() !== true) result = { ok: false, reason: 'stale' };
 
   if (result.ok) {
     try {

@@ -255,8 +255,8 @@ The details, each with its named tests, are in `specs/*.feature.md`.
   while the find bar is open, Mod+G / Mod+Shift+G are taken in `before-input-event` of every tab
   and of the chrome, so a page can neither see nor block them; on every platform each is taken by
   exactly one handler.
-- **Packaged builds** refuse remote debugging, `--host-resolver-rules` and the e2e suite's
-  public-hosts switch (`PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
+- **Packaged builds** refuse remote debugging, `--host-resolver-rules`, the e2e suite's
+  public-hosts switch and the update e2e switches (`PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
   `specs/macos-package.spec.ts`) disable run-as-Node, `NODE_OPTIONS` and the Node inspector flags,
   and turn on cookie encryption, ASAR integrity validation and loading the app only from its ASAR.
 - CI gates: Electronegativity, Semgrep (`ipc-sender-guard`, `webcontents-factory`,
@@ -373,6 +373,28 @@ from a non-public IP address. Two gaps are documented (`fetcher.spec.ts`): `net.
 pinned to the address checked, so a name whose answer changes between the check and the connection
 (DNS rebinding, a TTL of zero) can still reach a private address in that window; and behind a
 proxy, the proxy resolves the name itself.
+
+## Updates
+Acceptance: `specs/update-client.feature.md` (and `update-manifest.feature.md` for the signed
+manifest).
+- **Off unless a feed is configured.** No build ships a feed, and **no feed is hosted yet**, so every
+  build today (dev, tests, packaged) makes no update request and shows nothing about updates (the
+  command palette offers no update action either).
+- **Pointing a build at a feed.** Set `FROST_UPDATE_FEED_URL` to an `https:` URL before starting
+  frost (any build); unpackaged builds also take `--frost-update-feed=<url>` (which wins), and
+  `http:` only to `127.0.0.1` / `[::1]`. The feed serves an envelope signed with
+  `pnpm sign:update-manifest`; frost trusts only the public key compiled into it.
+- **What happens.** With a feed, frost checks 30 s after start and then every 6 h (automatic checks
+  can be turned off in the command palette: Turn Automatic Update Checks Off / On; Check for Updates
+  checks once either way). A verified, newer offer shows a notice under the toolbar: Release notes
+  (plain text), Download, Skip this version (not for a required update) and Later. Nothing
+  downloads until you click Download; the file is checked against its signed size and SHA-256 and
+  deleted if it differs. Requests go through a separate in-memory session with no cookies, no
+  referrer and only a `User-Agent: frost/<version> (update check)` header; the install ID that
+  decides staged rollout stays on the device.
+- **Unsigned builds install by hand.** frost has no code-signing certificates, so no build can
+  update itself: once verified, the notice says "This build can't update itself: install it by
+  hand" and **Show file** reveals the file in your file manager (frost never opens or runs it).
 
 ## Known limits
 - **Lab data only.** Speed values are one visit in this tab on this machine, not field data; the
@@ -600,8 +622,8 @@ you trust that run. `verify:win` fails if a signature ever appears, until the do
 `Setup.exe` installs per user into `%LocalAppData%\frost` (no administrator rights; there is no MSI)
 and starts frost. Installing creates Start-menu and desktop shortcuts and uninstalling removes them:
 frost handles Squirrel's install events by running Squirrel's `Update.exe` for the shortcuts only,
-then exits (`src/main/update/squirrel-events.ts`). frost never asks `Update.exe` to update: there
-is no auto-update yet. The zip
+then exits (`src/main/update/squirrel-events.ts`). frost never asks `Update.exe` to update: an
+update is installed by hand (see Updates). The zip
 needs no installer: unzip it anywhere and run `frost.exe`.
 
 `verify:win` checks the fuses, the files in `resources/` and `app.asar`, the ASAR integrity
@@ -614,4 +636,5 @@ file checks against `pnpm --filter @app/desktop exec electron-forge package --pl
 output (no Wine needed); making the installer needs Windows.
 
 ## Follow-ups
-App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update.
+App icon (Electron's default for now), x64/universal builds, signing in CI, a hosted update feed and
+in-place updates (they need signed builds).
