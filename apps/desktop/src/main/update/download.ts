@@ -44,6 +44,20 @@ export interface DownloadInput {
   readonly openFile?: (file: string, flags: 'wx', mode: number) => Promise<DownloadFileHandle>;
 }
 
+/**
+ * Writes all of `chunk`. A file handle may write fewer bytes than asked (`bytesWritten`); the rest is
+ * written in further calls, and a write that makes no progress fails the download, so the bytes
+ * hashed and counted are exactly the bytes on disk.
+ */
+async function writeAll(handle: DownloadFileHandle, chunk: Uint8Array): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset);
+    if (!Number.isInteger(bytesWritten) || bytesWritten <= 0) throw new Error('write made no progress');
+    offset += bytesWritten;
+  }
+}
+
 /** `userData/updates`. */
 export const downloadsDir = (userData: string): string => path.join(userData, UPDATE_DOWNLOADS_DIR);
 
@@ -130,7 +144,7 @@ export async function downloadArtifact(input: DownloadInput): Promise<DownloadRe
       { ...UPDATE_FETCH_LIMITS.artifact, ...input.limits, maxBytes: Math.min(artifact.size, MAX_ARTIFACT_BYTES), maxRedirects: UPDATE_FETCH_LIMITS.maxRedirects },
       async (chunk) => {
         hash.update(chunk);
-        await handle.write(chunk);
+        await writeAll(handle, chunk);
         written += chunk.byteLength;
         input.onProgress?.(written);
       },

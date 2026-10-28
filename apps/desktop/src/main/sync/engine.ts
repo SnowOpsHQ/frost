@@ -436,7 +436,7 @@ async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, 
   const problems = await tableProblems(source, replica);
   const report = emptyReport('pull', problems);
   const usable = (name: SyncTableName) => problems.get(name) === null;
-  let extra = pullBack;
+  const extra = new Map(pullBack);
   for (;;) {
     if (report.pages >= maxPages) {
       report.more = true;
@@ -448,8 +448,11 @@ async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, 
     const at = now();
     let more = false;
     let tombstonesCaughtUp = false;
+    /** The tables this page read: only their pull-back ids are done (a later table's wait for its page). */
+    const visited = new Set<SyncTableName>();
     for (const table of SYNC_TABLES) {
       if (!usable(table.name)) continue;
+      visited.add(table.name);
       const mark = stored.get(table.name)?.seq ?? 0;
       const limit = pageRows;
       const { rows } = await replica.execute(
@@ -472,7 +475,9 @@ async function pullPages(options: SyncPassOptions, pullBack: Map<SyncTableName, 
         break;
       }
     }
-    extra = new Map();
+    // A full page stops before the later tables: their pull-back ids (pushes that lost) are kept for
+    // the next page, or the winner would never be fetched (its log entry may be behind the mark).
+    for (const name of visited) extra.delete(name);
     if (tombstonesCaughtUp) await planDeletes(plan, source, usable);
     // The session side in one transaction; the marks move only once it has committed.
     if (plan.statements.length > 0) await source.batch(plan.statements);

@@ -174,6 +174,32 @@ describe('downloadArtifact', () => {
     if (POSIX) expect(await tree()).toEqual([VERSION]);
   });
 
+  test('short-writes-are-completed', async () => {
+    feed.route('/frost.AppImage', { body: BYTES });
+    // A disk that writes at most 1000 bytes per call: every byte still lands, so the file verifies.
+    const shortWrites: DownloadInput['openFile'] = async (file, flags, mode) => {
+      const real = await open(file, flags, mode);
+      return {
+        write: (buffer: Uint8Array, offset = 0, length = buffer.byteLength - offset) => real.write(buffer, offset, Math.min(length, 1000)),
+        sync: () => real.sync(),
+        close: () => real.close(),
+      } as unknown as Awaited<ReturnType<NonNullable<DownloadInput['openFile']>>>;
+    };
+    const result = await downloadArtifact(input({ openFile: shortWrites }));
+    expect(result).toEqual({ ok: true, file: path.join(versionDir(), NAME) });
+    expect(await readFile(path.join(versionDir(), NAME))).toEqual(BYTES);
+    // A disk whose write reports no progress fails the download (never a short file marked ready).
+    const stuck: DownloadInput['openFile'] = async (file, flags, mode) => {
+      const real = await open(file, flags, mode);
+      return {
+        write: async () => ({ bytesWritten: 0, buffer: new Uint8Array() }),
+        sync: () => real.sync(),
+        close: () => real.close(),
+      } as unknown as Awaited<ReturnType<NonNullable<DownloadInput['openFile']>>>;
+    };
+    expect(await downloadArtifact(input({ openFile: stuck }))).toEqual({ ok: false, reason: 'disk' });
+  });
+
   test('fresh-before-prune', async () => {
     feed.route('/frost.AppImage', { body: BYTES });
     await mkdir(versionDir('1.2.5'), { recursive: true });

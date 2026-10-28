@@ -179,6 +179,24 @@ describe('sync engine', () => {
     for (const driver of [a, b, fx.replica]) expect((await rowsOf(driver, 'ci_projects'))[0]).toEqual(project(id, 'Zulu', 4_000));
   });
 
+  test('engine-lww-pull-back-survives-full-pages', async () => {
+    const a = await fx.device('a');
+    const b = await fx.device('b');
+    const pagesOf = (driver: SqlDriver, deviceId: string) => runSyncPass({ source: driver, replica: fx.replica, deviceId, now: NOW, pageRows: 2 });
+    await insert(b, 'ci_projects', project(P, 'Site', 1_000));
+    const PAGE = uuid7(2);
+    await insert(b, 'ci_project_pages', page(PAGE, P, 'https://example.com/', 3_000));
+    await pagesOf(b, 'device-b');
+    await pagesOf(a, 'device-a');
+    // A (its clock behind) edits the page with an older time; B meanwhile adds projects that fill a pull page.
+    await a.execute('UPDATE ci_project_pages SET url = ?, updated_at = ? WHERE id = ?', ['https://example.com/stale', 2_500, PAGE], 'run');
+    for (const n of [50, 51, 52]) await insert(b, 'ci_projects', project(uuid7(n), `P${n}`, 4_000));
+    await pagesOf(b, 'device-b');
+    // A's push loses; the winning page row comes back although ci_projects filled the first pull page.
+    await pagesOf(a, 'device-a');
+    for (const driver of [a, fx.replica]) expect(await rowsOf(driver, 'ci_project_pages')).toEqual([page(PAGE, P, 'https://example.com/', 3_000)]);
+  });
+
   test('engine-lww-clock-skew', async () => {
     const a = await fx.device('a');
     const b = await fx.device('b');

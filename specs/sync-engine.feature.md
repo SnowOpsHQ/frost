@@ -65,6 +65,10 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
 - **Scenario: engine-lww** — a newer `updated_at` wins in both directions (rename, and a
   `deleted_at` tombstone, carried as values); an older one loses; on a tie with different values,
   both devices end with the same version (the larger by value); an identical row writes nothing.
+- **Scenario: engine-lww-pull-back-survives-full-pages** — a push that lost to the replica's newer
+  version (its log entry already behind this device's pull mark) is fetched back even when an
+  earlier table fills the pull page first: a table's pull-back ids are dropped only once a page has
+  read that table (`engine.test.ts`).
 - **Scenario: engine-lww-clock-skew** — a row dated ten days ahead still replaces an older one,
   but compares as `now + SYNC_MAX_CLOCK_SKEW_MS`: an edit dated exactly there ties with it and wins
   on values, on every device and in the replica.

@@ -77,6 +77,10 @@ the feed publishes the Windows `Setup.exe`, not a Squirrel `RELEASES` feed. So e
   other entry in `updates/` (older versions) is removed.
 - **Scenario: rejects-hash-mismatch** — one byte different (same size): `hash-mismatch`, and
   neither the `.partial` nor a final file exists; an older ready version is kept.
+- **Scenario: short-writes-are-completed** — a disk that writes fewer bytes than asked per call still
+  gets every byte (the rest is written in further calls), so the file on disk is exactly what was
+  hashed and counted; a write that reports no progress fails the download (`disk`), never a short
+  file marked ready (`download.test.ts`).
 - **Scenario: download-is-bounded** — each of these fails, the reason in parentheses, and leaves
   no file: a body one byte longer than `size` (`too-large`, reading stops), a `Content-Length`
   above `size` (`too-large`, before the body), a body shorter than `size` (`size-mismatch`), more
