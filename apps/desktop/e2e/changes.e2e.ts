@@ -99,12 +99,13 @@ async function openChanges(): Promise<void> {
   await expect(panel()).toBeVisible();
 }
 
-/** Loads `url` and waits, in the Changes panel, for its ready audit. */
+/** Loads `url` and waits, in the Changes panel, for its settled ready audit (Capture now enabled). */
 async function load(url: string): Promise<void> {
   await go(url);
   await openChanges();
   await expect(page.getByTestId('seo-audit-url')).toHaveAttribute('title', `⁨${url}⁩`, { timeout: AUDIT_WAIT });
   await expect(panel()).toHaveAttribute('data-audit', 'ready', { timeout: AUDIT_WAIT });
+  await expect(captureButton()).toBeEnabled({ timeout: AUDIT_WAIT });
 }
 
 /** Reloads the tab and waits for an audit taken after the reload. */
@@ -113,6 +114,7 @@ async function reloadAndWait(): Promise<void> {
   await page.getByTestId('reload').click();
   await expect(panel()).not.toHaveAttribute('data-audit-at', before ?? '', { timeout: AUDIT_WAIT });
   await expect(panel()).toHaveAttribute('data-audit', 'ready', { timeout: AUDIT_WAIT });
+  await expect(captureButton()).toBeEnabled({ timeout: AUDIT_WAIT });
 }
 
 /** Presses Capture now and waits for its outcome. */
@@ -146,6 +148,11 @@ test('changes-capture-first-version', async () => {
 
   await load(`${site.origin}/guide`);
   await expect(page.getByTestId('changes-empty')).toHaveText(/No captures of this page yet/);
+  // It scores nothing: no status dot, while the audited panels have theirs.
+  await expect(railItem('overview').locator('.seo-rail-dot')).toHaveCount(1);
+  await expect(railItem('changes').locator('.seo-rail-dot')).toHaveCount(0);
+  // The live region is there before it speaks.
+  await expect(captureStatus()).toHaveAttribute('role', 'status');
   await capture('first');
   await expect(captureStatus()).toHaveText('Captured the first version of this page.');
   await expect(captureStatus()).toHaveAttribute('aria-live', 'polite');
@@ -208,6 +215,9 @@ test('changes-diff-by-region', async () => {
   // Selecting the first version: nothing older in its lane.
   await versions().nth(1).click();
   await expect(diff()).toHaveAttribute('data-state', 'first');
+  // Roving tabindex: only the selected version is in the Tab order.
+  await expect(versions().nth(1)).toHaveAttribute('tabindex', '0');
+  await expect(versions().first()).toHaveAttribute('tabindex', '-1');
   // The list is keyboard-navigable: ArrowUp moves to the newer version, Enter selects it.
   await versions().nth(1).focus();
   await page.keyboard.press('ArrowUp');
@@ -230,11 +240,20 @@ test('changes-history-shows-while-pending', async () => {
   site.state.stall = true;
   try {
     await go(url);
+    // The tab is still loading it (the toolbar offers Stop, the tab its spinner) and its audit is pending.
+    await expect(page.getByTestId('reload')).toHaveAttribute('aria-label', 'Stop', { timeout: AUDIT_WAIT });
+    await expect(page.getByTestId('tab-loading')).toBeVisible();
     await expect(panel()).toHaveAttribute('data-audit', 'pending', { timeout: AUDIT_WAIT });
+    // The history of this page shows anyway, not the audit's skeleton.
     await expect(page.getByTestId('seo-pending')).toHaveCount(0);
+    await expect(page.getByTestId('changes-history')).toBeVisible();
     await expect(versions()).toHaveCount(1);
     await expect(versions().first().getByTestId('changes-version-summary')).toHaveText('First capture');
     await expect(captureButton()).toBeDisabled();
+    await expect(page.getByTestId('changes-capture-hint')).toHaveText('Wait for the page to finish loading, then capture it.');
+    // Still loading, still pending: it was the stalled load all along.
+    await expect(page.getByTestId('reload')).toHaveAttribute('aria-label', 'Stop');
+    await expect(panel()).toHaveAttribute('data-audit', 'pending');
   } finally {
     site.release();
   }

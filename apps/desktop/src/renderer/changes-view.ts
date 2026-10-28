@@ -1,8 +1,13 @@
+import type { SeoAuditResponse } from '@app/seo-core';
+// Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types).
+import type { TabState } from '@app/specs/browser.spec';
 import { searchEngine } from '@app/specs/browser-polish.spec';
 import { DIFF_REGIONS, DIFF_REGION_LABELS, type Change, type ChangeCounts, type ChangeKind, type DiffField, type DiffRegion, type SnapshotDiff } from '@app/specs/capture.spec';
 // Type-only: the schema file holds Zod, which must stay out of the chrome's bundle (strict Trusted Types).
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import { MAX_HISTORY_PAGE } from '@app/specs/capture-db.spec';
 import { CAPTURE_REFUSAL_MESSAGES, type CaptureAnswer, type CaptureInput, type DiffSummary, type HistoryVersion } from '@app/specs/changes.spec';
+import { isWebUrl } from '@app/specs/web-url.spec';
 import { QUICK_RENDER_PROFILES, isDefaultRenderProfile, renderProfileSummary, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 
 // The Changes panel's pure helpers (acceptance `changes-panel.feature.md`): lanes and their labels,
@@ -19,6 +24,28 @@ const count = (n: number) => n.toLocaleString('en-US');
 /** "1 capture", "3 captures". */
 export function captureCountText(n: number): string {
   return `${count(n)} ${n === 1 ? 'capture' : 'captures'}`;
+}
+
+/**
+ * Whether Capture now is offered: the tab shows a web page that has finished loading, and its audit
+ * is ready and settled (robots.txt no longer `pending`: that audit is provisional). Main's refusal
+ * stays the authority (`changes-capture.feature.md`); this only keeps the button from promising a
+ * capture main would refuse.
+ */
+export function canCapture(tab: Pick<TabState, 'url' | 'loading' | 'error' | 'crashed'> | undefined, response: SeoAuditResponse | null): boolean {
+  if (!tab || !isWebUrl(tab.url) || tab.error !== null || tab.crashed || tab.loading) return false;
+  return response?.status === 'ready' && response.audit.indexability.robots?.outcome !== 'pending';
+}
+
+/** The page a URL is the history of: the URL without its `#fragment` (main stores pages without one). */
+export function pageUrlOf(url: string): string {
+  const at = url.indexOf('#');
+  return at < 0 ? url : url.slice(0, at);
+}
+
+/** A count badge: `n`, or `n+` while more versions are still to be read. */
+export function countBadge(n: number, more: boolean): string {
+  return `${count(n)}${more ? '+' : ''}`;
 }
 
 /** The capture procedure's input: the tab, and the project when one is chosen (Task 6's picker; Unfiled otherwise). */
@@ -101,6 +128,33 @@ export function compareFrom(lane: Lane, versionId: string, chosen: string | null
   return older.find((version) => version.versionId === chosen) ?? older[0] ?? null;
 }
 
+/**
+ * What a history read must cover: at least `want` versions (as many as were listed before a capture,
+ * so "Load more" is not undone) and the version `include` (the one just captured, so its lane stays
+ * shown even when its head is past the first page), or the end of the history.
+ */
+export interface HistoryGoal {
+  readonly want: number;
+  readonly include: string | null;
+}
+
+/** The first read of a page's history. */
+export const FIRST_HISTORY_GOAL: HistoryGoal = { want: HISTORY_PAGE_SIZE, include: null };
+
+/** Pages one history read follows at most, whatever its goal. */
+export const MAX_HISTORY_READS = 10;
+
+/** The `limit` of the next page of a read that has `have` versions so far. */
+export function historyReadLimit(have: number, goal: HistoryGoal): number {
+  return Math.min(MAX_HISTORY_PAGE, Math.max(HISTORY_PAGE_SIZE, goal.want - have));
+}
+
+/** Whether a read that has `versions` (and `more` to follow) has met its goal. */
+export function historyGoalMet(versions: readonly HistoryVersion[], more: boolean, goal: HistoryGoal): boolean {
+  if (!more) return true;
+  return versions.length >= goal.want && (goal.include === null || versions.some((version) => version.versionId === goal.include));
+}
+
 /** `existing` followed by the versions of `more` it does not list yet. */
 export function mergeHistory(existing: readonly HistoryVersion[], more: readonly HistoryVersion[]): HistoryVersion[] {
   const seen = new Set(existing.map((version) => version.versionId));
@@ -144,7 +198,7 @@ export function unchangedRegions(diff: Pick<SnapshotDiff, 'summary'>): DiffRegio
 
 /** What a change's `context` names (`changes-diff.feature.md`, How each part is compared). */
 const CONTEXT_LABELS: Partial<Readonly<Record<DiffField, string>>> = {
-  text: 'After',
+  text: 'Follows',
   heading: 'Tag',
   link: 'URL',
   hreflang: 'Code',

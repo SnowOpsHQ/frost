@@ -3,20 +3,30 @@
 // (QUICK_RENDER_PROFILES, renderProfileSummary)
 // Acceptance: specs/changes-panel.feature.md (Unit)
 import { describe, expect, test } from 'vitest';
+import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
+import { MAX_HISTORY_PAGE } from '@app/specs/capture-db.spec';
 import { CHANGE_KINDS, DIFF_REGIONS, DIFF_REGION_LABELS, type Change, type ChangeCounts, type DiffRegion } from '@app/specs/capture.spec';
 import { CAPTURE_REFUSALS, CAPTURE_REFUSAL_MESSAGES, type DiffSummary, type HistoryVersion } from '@app/specs/changes.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES, renderProfileSummary } from '@app/specs/render-profile.spec';
 import {
   CHANGE_KIND_LABELS,
+  FIRST_HISTORY_GOAL,
+  HISTORY_PAGE_SIZE,
+  canCapture,
   captureCountText,
   captureInput,
   captureOutcomeText,
   compareFrom,
+  contextLabel,
+  countBadge,
   groupByLane,
   groupChangesByRegion,
+  historyGoalMet,
+  historyReadLimit,
   laneLabel,
   mergeHistory,
   olderInLane,
+  pageUrlOf,
   shownLane,
   unchangedRegions,
   versionSummaryText,
@@ -133,5 +143,51 @@ describe('changes-view', () => {
     // A further page appends, and a version already listed is not repeated.
     const v4 = version();
     expect(mergeHistory([v1!, v2!], [v2!, v3!, v4])).toEqual([v1, v2, v3, v4]);
+    // Counts while more versions are still to be read.
+    expect(countBadge(20, true)).toBe('20+');
+    expect(countBadge(3, false)).toBe('3');
+  });
+
+  test('capture-needs-a-settled-audit', () => {
+    const url = 'https://www.example.com/a';
+    const tab = { url, loading: false, error: null, crashed: false };
+    const ready = (outcome: string | null): SeoAuditResponse =>
+      ({ status: 'ready', url, audit: { url, takenAt: 1, indexability: { robots: outcome === null ? null : { outcome } } } as unknown as SeoAudit }) as SeoAuditResponse;
+    expect(canCapture(tab, ready('ok'))).toBe(true);
+    expect(canCapture(tab, ready(null))).toBe(true);
+    expect(canCapture(tab, ready('unreachable'))).toBe(true);
+    // A provisional audit (robots.txt still on its way) is not offered: main refuses it.
+    expect(canCapture(tab, ready('pending'))).toBe(false);
+    // Nor a page still loading (the audit on screen is the last load's), nor no ready audit.
+    expect(canCapture({ ...tab, loading: true }, ready('ok'))).toBe(false);
+    expect(canCapture(tab, { status: 'pending', url })).toBe(false);
+    expect(canCapture(tab, { status: 'unavailable', url, reason: 'timeout' })).toBe(false);
+    expect(canCapture(tab, null)).toBe(false);
+    expect(canCapture(undefined, ready('ok'))).toBe(false);
+    expect(canCapture({ ...tab, url: 'about:blank' }, ready('ok'))).toBe(false);
+    expect(canCapture({ ...tab, crashed: true }, ready('ok'))).toBe(false);
+  });
+
+  test('history-reads-cover-their-goal', () => {
+    // A page's URL without its fragment (in-page anchors are the same page).
+    expect(pageUrlOf('https://a.example/p?q=1#top')).toBe('https://a.example/p?q=1');
+    expect(pageUrlOf('https://a.example/p')).toBe('https://a.example/p');
+    // The first read is one page.
+    expect(historyReadLimit(0, FIRST_HISTORY_GOAL)).toBe(HISTORY_PAGE_SIZE);
+    // After a capture: as many as were listed, a page at most MAX_HISTORY_PAGE long.
+    expect(historyReadLimit(0, { want: 45, include: null })).toBe(45);
+    expect(historyReadLimit(0, { want: 250, include: null })).toBe(MAX_HISTORY_PAGE);
+    expect(historyReadLimit(100, { want: 250, include: null })).toBe(MAX_HISTORY_PAGE);
+    expect(historyReadLimit(240, { want: 250, include: null })).toBe(HISTORY_PAGE_SIZE);
+    const [a, b] = [version(), version()];
+    expect(historyGoalMet([a!], true, { want: 1, include: null })).toBe(true);
+    expect(historyGoalMet([a!], true, { want: 2, include: null })).toBe(false);
+    // The captured version must be listed (its lane stays shown), unless the history ends first.
+    expect(historyGoalMet([a!], true, { want: 1, include: b!.versionId })).toBe(false);
+    expect(historyGoalMet([a!, b!], true, { want: 1, include: b!.versionId })).toBe(true);
+    expect(historyGoalMet([a!], false, { want: 5, include: b!.versionId })).toBe(true);
+    // A text change's context is the block it follows.
+    expect(contextLabel('text')).toBe('Follows');
+    expect(contextLabel('link')).toBe('URL');
   });
 });

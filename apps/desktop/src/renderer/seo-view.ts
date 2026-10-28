@@ -27,7 +27,7 @@ export function lengthIndicator(length: number | null | undefined, min: number, 
 export function railStatuses(response: SeoAuditResponse | null): Partial<Record<SeoPanelId, PanelStatus>> {
   if (response?.status !== 'ready') return {};
   const statuses: Partial<Record<SeoPanelId, PanelStatus>> = {};
-  for (const panel of SEO_PANELS) if (panel.available) statuses[panel.id] = panelStatus(response.audit.findings, panel.categories);
+  for (const panel of SEO_PANELS) if (panel.available && panel.categories.length > 0) statuses[panel.id] = panelStatus(response.audit.findings, panel.categories);
   return statuses;
 }
 

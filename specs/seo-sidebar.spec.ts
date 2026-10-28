@@ -56,6 +56,7 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  * with `categories` covers the rules of those categories (`seo-rules.spec.ts`), and its rail dot is
  * `error` if any of them fails with severity `error`, `warn` if any fails with `warning`, else
  * `pass` (info findings never colour a dot).
+ * A panel without categories (Changes) scores nothing, so it has no status dot.
  */
 /**
  * On-Page covers every category except the ones with a panel of their own beyond it (Social, Schema,

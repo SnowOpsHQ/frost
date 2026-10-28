@@ -36,7 +36,7 @@ describe('seo view helpers', () => {
     expect(railStatuses({ status: 'pending', url: 'https://a.example/' })).toEqual({});
     expect(railStatuses({ status: 'unavailable', url: 'https://a.example/', reason: 'timeout' })).toEqual({});
     const statuses = railStatuses(ready('https://a.example/', [finding('warning', 'links'), finding('error', 'title'), finding('warning', 'social')]));
-    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', content: 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass', indexability: 'pass', speed: 'pass', compliance: 'pass', javascript: 'pass', changes: 'pass' };
+    const expected: Record<string, string | undefined> = { overview: 'error', 'on-page': 'error', content: 'error', links: 'warn', images: 'pass', social: 'warn', schema: 'pass', indexability: 'pass', speed: 'pass', compliance: 'pass', javascript: 'pass' };
     for (const panel of SEO_PANELS) {
       if (panel.available) expect(statuses[panel.id], panel.id).toBe(expected[panel.id]);
       else expect(statuses[panel.id], panel.id).toBeUndefined();

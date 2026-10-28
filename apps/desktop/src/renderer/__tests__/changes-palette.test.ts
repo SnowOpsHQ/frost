@@ -16,7 +16,8 @@ function tab(changes: Partial<TabState> = {}): TabState {
   return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
 }
 
-const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1 } as unknown as SeoAudit };
+const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, indexability: { robots: { outcome: 'ok' } } } as unknown as SeoAudit };
+const PROVISIONAL: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, indexability: { robots: { outcome: 'pending' } } } as unknown as SeoAudit };
 
 function setup(context: Partial<PaletteContext> = {}, answer: CaptureAnswer | null = { status: 'captured', captureId: ID, versionId: ID, newVersion: true, changeCount: 2 }) {
   const api = { capture: vi.fn(async () => answer) };
@@ -43,8 +44,11 @@ describe('changes palette actions', () => {
     await expect(Promise.resolve(registry.resolve(ctx)[1]!.run(ctx))).resolves.toBe('Captured a new version: 2 changes.');
     expect(api.capture).toHaveBeenCalledWith(3);
     expect(captured).toHaveBeenCalledTimes(1);
+    expect(captured).toHaveBeenCalledWith({ status: 'captured', captureId: ID, versionId: ID, newVersion: true, changeCount: 2 });
     stop();
-    // Only on a web page with a ready audit.
+    // Only on a loaded web page with a settled, ready audit (`canCapture`).
+    expect(setup({ audit: PROVISIONAL }).ids()).toEqual(['panel.changes']);
+    expect(setup({ tab: tab({ loading: true }) }).ids()).toEqual(['panel.changes']);
     expect(setup({ audit: { status: 'pending', url: URL_A } }).ids()).toEqual(['panel.changes']);
     expect(setup({ audit: null }).ids()).toEqual(['panel.changes']);
     expect(setup({ tab: tab({ url: 'about:blank' }) }).ids()).toEqual(['panel.changes']);

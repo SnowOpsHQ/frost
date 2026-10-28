@@ -7623,8 +7623,9 @@ input {
   font-weight: 500;
 }
 
+/* Empty, it stays in the accessibility tree (a polite live region must exist before it speaks). */
 .changes-status:empty {
-  display: none;
+  margin: 0;
 }
 
 .changes-status[data-outcome='refused'],
@@ -7820,16 +7821,16 @@ input {
 }
 
 .changes-kind::before {
-  content: '~';
+  content: '~' / '';
   font-weight: 700;
 }
 
 .changes-kind[data-kind='added']::before {
-  content: '+';
+  content: '+' / '';
 }
 
 .changes-kind[data-kind='removed']::before {
-  content: '−';
+  content: '−' / '';
 }
 
 .changes-sides {
@@ -7928,6 +7929,18 @@ input {
   padding-left: 18px;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* The rail scrolls in a window too short for every item (twelve since this panel), rather than
+   squeezing or clipping them. Scoped to a rail that lists this panel. */
+.seo-rail:has(> .seo-rail-item[data-panel='changes']) {
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.seo-rail:has(> .seo-rail-item[data-panel='changes']) > .seo-rail-item {
+  flex: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
