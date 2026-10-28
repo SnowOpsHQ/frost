@@ -61,7 +61,7 @@ export type ModelLoadResult = { readonly ok: true; readonly model: Uint8Array; r
 
 export interface ModelStoreOptions {
   readonly storage: ModelStorage;
-  /** The network (`boundedModelFetch` over the `checks` lane); `null`: downloads are `disabled`. */
+  /** The network (`boundedModelFetch` over the SERP lane, `SERP_FETCHER_LIMITS`); `null`: downloads are `disabled`. */
   readonly fetchFile: ModelFetch | null;
   /** The pins (the spec's; tests pin small files of their own). */
   readonly files?: PinnedFiles;
@@ -285,7 +285,7 @@ function isAllowedModelUrl(url: string): boolean {
 }
 
 /**
- * The store's fetch over a bounded fetcher (main: the `checks` lane, `fetcher.spec.ts`): a GET with
+ * The store's fetch over a bounded fetcher (main: the SERP lane, `SERP_FETCHER_LIMITS`, `fetcher.spec.ts`): a GET with
  * frost's own user agent, no cookies, the file's URL as the request's page (so a private host is
  * never requested: the URLs are public), `maxBytes` the cap the store asks for, and
  * `INTENT_DOWNLOAD_LIMITS`' deadline and redirect cap. `https:` only, the URL, every redirect (the

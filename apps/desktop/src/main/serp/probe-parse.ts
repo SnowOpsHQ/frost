@@ -4,26 +4,27 @@ import { parseLinkHeader } from '@app/seo-core';
 import { SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { RobotsFetchSchema } from '@app/specs/seo-snapshot.spec';
-import { PROBE_AGENTS, probeAgent } from '@app/specs/visibility-probes.spec';
+import { PROBE_AGENTS, PROBE_TEXT_SIMILARITY, probeAgent } from '@app/specs/visibility-probes.spec';
 import { ProbeJobSchema, ProbePageAnswerSchema, ProbeRobotsAnswerSchema, type ProbeJobResult, type ProbePageAnswer, type ProbePageJob } from '@app/specs/visibility-probes.schema';
 import { decodeServed, parseServedHtml } from '../seo/served-parse';
-import { agentDirectives, robotsVerdicts, xRobotsTags, type ProbeMeta } from './probe-compare';
+import { agentDirectives, canonicalsOf, robotsVerdict, xRobotsTags, type ProbeMeta } from './probe-compare';
 
 // The SERP worker's probe jobs (spec `visibility-probes.spec.ts`, How a run goes and Reading an
 // agent's answer; acceptance `visibility-probes.feature.md`, `probes-page-facts`). Runs only in the
 // SERP worker (`serp-worker.ts`, `kind: 'probe'`), never on main's thread: every job is validated with
 // `ProbeJobSchema` first and every answer with its schema before it leaves.
-// - `robots`: the page origin's robots.txt as main's cached fetcher answered it (checked as
-//   `RobotsFetchSchema`), decided for every agent's token (`robotsVerdicts`).
-// - `page`: one agent's answer. Its headers are read for every answer (`X-Robots-Tag`, a `Link`
-//   canonical); a 2xx HTML body (`html`) is also parsed twice, each bounded by `SERVED_PARSE_LIMITS`:
+// - `robots`: an origin's robots.txt as main's cached fetcher answered it (checked as
+//   `RobotsFetchSchema`), decided for one agent's token on the URL it ended on (`robotsVerdict`).
+// - `page`: one agent's answer. Its headers are read for every answer (each `X-Robots-Tag` value on
+//   its own, a `Link` canonical); a 2xx HTML body (`html`) is also parsed twice, each bounded by `SERVED_PARSE_LIMITS`:
 //   by the served-HTML parse (`parseServedHtml`, so the title, canonical and word count are the
 //   JavaScript panel's), and by a walk of this file's own over a `parse5` tree for the visible text
 //   (hashed) and the `<meta name>` values of every probed agent (the served snapshot keeps only the
 //   search engines'). The walk reads the text exactly as the served word count does: the body, the
 //   same subtrees left out (`script`, `style`, `noscript`, `template`, `svg`, `math`, `iframe`,
 //   `object`, `[hidden]`), the same node and character budgets; the text nodes are joined with
-//   spaces, whitespace collapsed and trimmed, and hashed with sha256.
+//   spaces, whitespace collapsed and trimmed, hashed with sha256 (identity) and signed with a MinHash
+//   of its word shingles (`PROBE_TEXT_SIMILARITY`, similarity).
 
 type Node = DefaultTreeAdapterMap['node'];
 type Element = DefaultTreeAdapterMap['element'];
@@ -193,6 +194,54 @@ export function readVisible(html: string): { text: string; truncated: boolean; p
 /** sha256 (hex) of `text` as UTF-8. */
 export const textHash = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 
+// ---- MinHash ------------------------------------------------------------------------------------
+
+/** murmur3's 32-bit finaliser. */
+const fmix = (value: number): number => {
+  let h = value >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85eb_ca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2_ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+};
+/** The signature's fixed seeds (a fixed sequence, so signatures compare across runs and versions). */
+const SEEDS: readonly number[] = Array.from({ length: PROBE_TEXT_SIMILARITY.signatureSize }, (_, i) => fmix(Math.imul(i + 1, 0x9e37_79b9)));
+/** Two FNV-1a hashes of `text` (different offsets), for `h1 + i·h2` per seed. */
+const hashPair = (text: string): [number, number] => {
+  let a = 0x811c_9dc5;
+  let b = 0x01c9_3b5f;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x0100_0193);
+    b = Math.imul(b ^ c, 0x0100_0193);
+  }
+  return [a >>> 0, fmix(b) | 1];
+};
+const SEGMENTER = typeof Intl === 'object' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'word' }) : null;
+/** `text`'s words, lowercased, as the word count segments them. */
+function wordsOf(text: string): string[] {
+  if (!SEGMENTER) return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) as string[];
+  const words: string[] = [];
+  for (const segment of SEGMENTER.segment(text.toLowerCase())) if (segment.isWordLike) words.push(segment.segment);
+  return words;
+}
+
+/** The MinHash signature of `text`'s word shingles (`PROBE_TEXT_SIMILARITY`); `null` for a text without words. */
+export function textSignature(text: string): number[] | null {
+  const words = wordsOf(text);
+  if (words.length === 0) return null;
+  const size = PROBE_TEXT_SIMILARITY.shingleWords;
+  const signature = new Array<number>(SEEDS.length).fill(0xffff_ffff);
+  const count = Math.max(1, words.length - size + 1);
+  for (let start = 0; start < count; start++) {
+    const [h1, h2] = hashPair(words.slice(start, start + size).join(' '));
+    for (let i = 0; i < SEEDS.length; i++) {
+      const value = fmix((h1 + Math.imul(i, h2)) ^ SEEDS[i]!);
+      if (value < signature[i]!) signature[i] = value;
+    }
+  }
+  return signature;
+}
+
 /** The canonical a `Link` header names (resolved against `url`), if any. */
 function headerCanonical(link: string | null, url: string): string | null {
   if (link === null) return null;
@@ -212,8 +261,9 @@ function readPage(job: ProbePageJob): ProbePageAnswer | null {
   const tags = xRobotsTags(job.xRobotsTag);
   const fromHeader = headerCanonical(job.link, job.url);
   if (!job.html) {
+    // Not a page to parse: its headers still count (a PDF's `Link: rel=canonical`, its `X-Robots-Tag`).
     const verdicts = agentDirectives(agent, null, tags);
-    return { kind: 'page', ...verdicts, canonical: null, title: null, wordCount: null, textHash: null, textTruncated: false, partial: false };
+    return { kind: 'page', ...verdicts, ...canonicalsOf([], fromHeader), title: null, wordCount: null, textHash: null, textSignature: null, textTruncated: false, partial: false };
   }
   const served = parseServedHtml({ url: job.url, contentType: job.contentType, body: job.body, scriptingEnabled: true });
   if (!served.ok) return null;
@@ -222,16 +272,16 @@ function readPage(job: ProbePageJob): ProbePageAnswer | null {
   // The served snapshot's robots metas for the names it keeps, this walk's for the rest.
   const metas: ProbeMeta[] = [...snapshot.metaRobots.map((meta) => ({ name: meta.name, content: meta.content })), ...visible.metas];
   const verdicts = agentDirectives(agent, metas, tags);
-  const first = snapshot.canonicals[0];
-  const canonical = first ? (first.resolved ?? (first.href === '' ? null : first.href)) : fromHeader;
-  // The hash covers the text the word count read (`countWords` over the same walk and budgets).
+  const html = snapshot.canonicals.map((link) => link.resolved ?? link.href).filter((href) => href !== '');
+  // The hash and signature cover the text the word count read (`countWords` over the same walk and budgets).
   return {
     kind: 'page',
     ...verdicts,
-    canonical,
+    ...canonicalsOf(html, fromHeader),
     title: snapshot.titles[0]?.text ?? null,
     wordCount: snapshot.wordCount,
     textHash: textHash(visible.text),
+    textSignature: textSignature(visible.text),
     textTruncated: snapshot.textTruncated || visible.truncated,
     partial: snapshot.partial || visible.partial,
   };
@@ -250,7 +300,7 @@ export function runProbeJob(raw: unknown): ProbeJobResult {
   try {
     if (job.kind === 'robots') {
       const fetched = RobotsFetchSchema.safeParse(job.robots);
-      const answer = ProbeRobotsAnswerSchema.safeParse(robotsVerdicts(fetched.success ? fetched.data : null, job.url));
+      const answer = ProbeRobotsAnswerSchema.safeParse(robotsVerdict(fetched.success ? fetched.data : null, job.agent, job.url));
       return answer.success ? { ok: true, answer: answer.data } : { ok: false, reason: 'parse-failed' };
     }
     const read = readPage(job);

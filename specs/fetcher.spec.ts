@@ -149,6 +149,15 @@ export interface BoundedFetchRequest {
   readonly keepHeaders?: readonly string[];
   /** Characters kept of each kept header's value (default `FETCHER_LIMITS.maxHeaderValueChars`; a `Link` header listing alternates needs more). */
   readonly maxHeaderChars?: number;
+  /**
+   * Kept headers (lowercase names, also in `keepHeaders`) whose repeated values are kept apart,
+   * joined with `\n` (which no header value can hold), instead of `, `: a header whose values carry
+   * their own commas and scopes (`X-Robots-Tag: googlebot: nofollow` and `X-Robots-Tag: noindex`)
+   * cannot be split again once joined with `, `. Read from the hop's raw header list when it reports
+   * one (Electron's `headers` already joins duplicates with `, ` and drops some), else from an array
+   * value. Default: none (every value joined with `, `, as before).
+   */
+  readonly separateHeaders?: readonly string[];
   /** Aborts the call (queued or running): `aborted`. */
   readonly signal?: AbortSignal;
 }
@@ -174,7 +183,7 @@ export interface BoundedFetchResult {
   /** Redirects followed (the hops in `chain`). */
   readonly redirects: number;
   readonly chain: readonly FetchRedirect[];
-  /** The final response's kept headers (`keepHeaders`), lowercase names, values joined with `, ` and cut. */
+  /** The final response's kept headers (`keepHeaders`), lowercase names, values joined with `, ` (`\n` for `separateHeaders`) and cut. */
   readonly headers: Readonly<Record<string, string>>;
   /** The body exactly as read (at most `maxBytes`; empty unless read). Never decoded by the fetcher. */
   readonly body: Uint8Array<ArrayBuffer>;

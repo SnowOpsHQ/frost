@@ -14,7 +14,7 @@ import type { ProbesState } from '@app/specs/visibility-probes.schema';
 export interface SerpProbesService {
   /**
    * The user's "Run visibility probes" on the tab: fetches its current URL once per agent
-   * (`PROBE_AGENTS`) through the `checks` lane, robots.txt once from main's cache. Only for the
+   * (`PROBE_AGENTS`) through the SERP lane (`SERP_FETCHER_LIMITS`), robots.txt from main's cache once per origin judged. Only for the
    * active tab showing an `http(s)` page; `true` if a run is under way (started now, or already:
    * one run per tab). **Fetches.** Never throws.
    */
@@ -95,7 +95,7 @@ export interface SerpReadApi {
   probes(tabId: number): ProbesState;
   /**
    * **Fetches on the user's behalf**: starts the visibility probes on the tab, as the user's "Run
-   * visibility probes" does (one GET per agent through the bounded fetcher's `checks` lane, robots.txt
+   * visibility probes" does (one GET per agent through the bounded fetcher's SERP lane, robots.txt
    * once from main's cache; only the active tab showing an `http(s)` page; one run per tab). Phase 5
    * must gate it behind its approval model; `true` if a run is under way. Never throws.
    */

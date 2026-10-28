@@ -386,8 +386,9 @@ function start(): void {
       }),
     });
     // The SERP overlay (specs/serp-overlay.feature.md): selector packs, the SERP worker, on-device
-    // intent and each tab's page events, all wired in serp/setup.ts (disposed on will-quit there).
-    const serp = setupSerp({ app, browser, isBrowseContents, fetchers, robots: (pageUrl) => robotsFetcher.get(pageUrl), userData: app.getPath('userData'), switches: app.commandLine, log: logSession });
+    // intent, the visibility probes (their own fetcher lane over this hop and resolver) and each tab's
+    // page events, all wired in serp/setup.ts (disposed on will-quit there).
+    const serp = setupSerp({ app, browser, isBrowseContents, hop, resolve, robots: (pageUrl) => robotsFetcher.get(pageUrl), userData: app.getPath('userData'), switches: app.commandLine, log: logSession });
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
     attachIpcHandler({

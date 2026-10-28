@@ -6,10 +6,12 @@ import type { BrowserState } from '@app/specs/browser.spec';
 import type { BoundedFetcher } from '@app/specs/fetcher.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import { SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH, SERP_PACK_DIR, SERP_PACK_PUBLIC_KEYS, SERP_PACK_REMOTE_URL } from '@app/specs/serp-selector-pack.spec';
+import { SERP_FETCHER_LIMITS } from '@app/specs/serp-service.spec';
 import { SERP_DEVICE_OF_PRESET } from '@app/specs/serp.spec';
 import type { IntentClassifier } from '../intent/classifier';
 import { createIntent } from '../intent/setup';
 import type { AnalysisWorker } from '../seo/analysis';
+import { createBoundedFetcher, type Hop, type Resolve } from '../seo/fetcher';
 import { BUNDLED_PACK } from './bundled';
 import { runOutline, watchOutline } from './outline';
 import { boundedPackFetch, createPackStore, fileStorage, type PackFiles } from './pack-store';
@@ -20,19 +22,23 @@ import { createSerpAnalyzer } from './serp-analyzer';
 import { createSerpService, type Serp, type SerpTabs } from './service';
 
 // Wires the SERP overlay for main (spec `serp-service.spec.ts`; acceptance `serp-overlay.feature.md`,
-// Setup), called once from `main/index.ts` when the browse session and the fetcher lanes exist:
+// Setup), called once from `main/index.ts` when the browse session and its hop and resolver exist:
+// - the SERP lane (`SERP_FETCHER_LIMITS`; `fetcher.spec.ts`, Lanes): a bounded fetcher of the SERP's
+//   own over main's hop and resolver, with the `checks` lane's per-origin limits and its own queues,
+//   for everything below that fetches on the user's request (pack updates, the model download, the
+//   probes), so none of it waits, and times out, behind a link check on the same site;
 // - the selector pack store: the bundled pack (verified now), a stored remote pack in
-//   `userData/SERP_PACK_DIR` (verified again by `load()`, at once), and updates through the bounded
-//   fetcher's `checks` lane, only on the user's "Check for selector updates". In unpackaged builds
+//   `userData/SERP_PACK_DIR` (verified again by `load()`, at once), and updates through the SERP
+//   lane, only on the user's "Check for selector updates". In unpackaged builds
 //   only, `--frost-e2e-serp-pack-url` replaces the remote URL (`http:` allowed, for the store and its
 //   fetch) and `--frost-e2e-serp-pack-key` adds a trusted key (packaged builds refuse both switches
 //   at startup and never read them here);
 // - the SERP analysis worker (`serp-analysis.cjs`, `worker_threads`, a capped heap, as the SEO
 //   workers);
-// - on-device intent (`createIntent`, the `checks` lane for the user's download; its e2e fake switch
+// - on-device intent (`createIntent`, the SERP lane for the user's download; its e2e fake switch
 //   is honoured there);
 // - the reader and the outlines, in each tab's isolated SERP world;
-// - the visibility probes (Task 5, `visibility-probes.spec.ts`): the `checks` lane, main's robots.txt
+// - the visibility probes (Task 5, `visibility-probes.spec.ts`): the SERP lane, main's robots.txt
 //   fetcher (`robots`, the `audit` lane's cache) and a SERP worker of their own for the parse
 //   (`probe-parser.ts`), joined into the service and the read API; a run is cancelled by its tab's
 //   new document, in-page move or close, and by Clear Browsing Data;
@@ -59,15 +65,17 @@ export interface SerpSetupOptions {
   readonly browser: SerpSetupBrowser;
   /** Whether a WebContents is a tab's (the browse session's); fails closed. */
   readonly isBrowseContents: (contents: WebContents) => boolean;
-  /** The bounded fetcher's lanes (`createFetcherLanes`): pack updates, the model download and the probes use `checks`. */
-  readonly fetchers: { readonly checks: BoundedFetcher };
-  /** Main's robots.txt fetcher (`RobotsFetcher.get`, cached per origin): the probes ask it once per run. */
+  /** Main's hop (`netHop` on the browse session) and resolver (`netResolver`, the e2e seam applied), for the SERP lane. */
+  readonly hop: Hop;
+  readonly resolve: Resolve;
+  /** Main's robots.txt fetcher (`RobotsFetcher.get`, cached per origin): the probes ask it once per origin judged. */
   readonly robots: (pageUrl: string) => Promise<RobotsFetch | null>;
   readonly userData: string;
   /** `app.commandLine`. */
   readonly switches: { hasSwitch(name: string): boolean; getSwitchValue(name: string): string };
   readonly log: (message: string) => void;
-  /** Test seams: the analysis and probe workers, the classifier, the bundled pack and the WebContents already open. */
+  /** Test seams: the SERP lane itself, the analysis and probe workers, the classifier, the bundled pack and the WebContents already open. */
+  readonly fetcher?: BoundedFetcher;
   readonly spawnAnalysis?: () => AnalysisWorker;
   readonly spawnProbes?: () => AnalysisWorker;
   readonly classifier?: IntentClassifier;
@@ -99,11 +107,12 @@ export function serpPackSeams(options: Pick<SerpSetupOptions, 'app' | 'switches'
 export function setupSerp(options: SerpSetupOptions): SerpSetup {
   const { app, browser, log } = options;
   const seams = serpPackSeams(options);
+  const fetcher = options.fetcher ?? createBoundedFetcher({ hop: options.hop, resolve: options.resolve, limits: SERP_FETCHER_LIMITS });
   const packs = createPackStore({
     bundled: options.bundled ?? BUNDLED_PACK,
     publicKeys: seams.publicKeys,
     storage: fileStorage(path.join(options.userData, SERP_PACK_DIR)),
-    fetchPack: boundedPackFetch(options.fetchers.checks, { allowHttp: seams.allowHttp }),
+    fetchPack: boundedPackFetch(fetcher, { allowHttp: seams.allowHttp }),
     url: seams.url,
     allowHttp: seams.allowHttp,
     log,
@@ -117,7 +126,7 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
   const probeParser = createProbeParser({
     spawn: options.spawnProbes ?? (() => new Worker(path.join(__dirname, 'serp-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } })),
   });
-  const classifier = options.classifier ?? createIntent({ userData: options.userData, fetcher: options.fetchers.checks, isPackaged: app.isPackaged, switches: { has: (name) => options.switches.hasSwitch(name) }, log });
+  const classifier = options.classifier ?? createIntent({ userData: options.userData, fetcher, isPackaged: app.isPackaged, switches: { has: (name) => options.switches.hasSwitch(name) }, log });
 
   // The tabs' pages, by WebContents id (browse-session tabs only).
   const pages = new Map<number, WebContents>();
@@ -155,9 +164,9 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
   });
   // The visibility probes: only on the user's "Run visibility probes", for the active tab.
   const probes = createProbes({
-    fetcher: options.fetchers.checks,
+    fetcher,
     robots: options.robots,
-    parse: (job) => probeParser.run(job),
+    parse: (job, signal) => probeParser.run(job, signal),
     tab: (tabId) => {
       const tab = tabs.tab(tabId);
       return tab ? { contentsId: tab.contentsId, url: tab.url, active: tabs.activeTabId() === tabId } : null;

@@ -16,7 +16,7 @@ import { boundedModelFetch, createModelStore, fileModelStorage, intentModelDir }
 
 export interface IntentSetupOptions {
   readonly userData: string;
-  /** The `checks` lane (`null`: downloads are disabled). */
+  /** The SERP lane (`SERP_FETCHER_LIMITS`; `null`: downloads are disabled). */
   readonly fetcher: BoundedFetcher | null;
   readonly isPackaged: boolean;
   readonly switches: { has(name: string): boolean };

@@ -9,7 +9,9 @@ import type { AnalysisWorker } from '../seo/analysis';
 // bundled as `serp-analysis.cjs`, so a page that is slow to parse never holds a SERP reading back),
 // one at a time. Each job has a hard deadline, after which the worker is terminated and the next job
 // spawns a new one; a worker that errors or exits fails its job. At most `maxQueued` jobs wait; one
-// more fails at once. After `dispose()` nothing is spawned again. A late answer from a terminated
+// more fails at once. A job's `signal` (its run's: Stop, a new document, Clear Browsing Data) drops
+// it from the queue, or, while it runs, ends it and terminates the worker, so a stopped run's jobs
+// never fill the queue or hold the worker for the next run. After `dispose()` nothing is spawned again. A late answer from a terminated
 // worker, or for another job, is dropped; an answer is checked for a job result's shape only (the
 // worker validated it with the answer schemas; Zod stays off main's thread). Never rejects.
 
@@ -21,8 +23,8 @@ export interface ProbeParserOptions {
 }
 
 export interface ProbeParser {
-  /** Runs `job` in the worker (`runProbeJob` there). Never rejects. */
-  run(job: ProbeJob): Promise<ProbeJobResult>;
+  /** Runs `job` in the worker (`runProbeJob` there); `parse-failed` at once when `signal` aborts. Never rejects. */
+  run(job: ProbeJob, signal?: AbortSignal): Promise<ProbeJobResult>;
   /** Ends every job and terminates the worker (the app is quitting). */
   dispose(): void;
 }
@@ -100,14 +102,33 @@ export function createProbeParser(options: ProbeParserOptions): ProbeParser {
     current = { pending, worker: running, timer: setTimeout(() => finish(FAILED, true), timeoutMs) };
   }
 
+  /** The job's run was stopped: out of the queue, or ended (its worker terminated) while it runs. */
+  const aborted = (pending: Pending): void => {
+    const index = queue.indexOf(pending);
+    if (index >= 0) {
+      queue.splice(index, 1);
+      pending.settle(FAILED);
+    } else if (current?.pending === pending) finish(FAILED, true);
+  };
+
   return {
-    run: (job) =>
-      new Promise<ProbeJobResult>((settle) => {
-        if (disposed || queue.length >= maxQueued) {
-          settle(FAILED);
+    run: (job, signal) =>
+      new Promise<ProbeJobResult>((resolve) => {
+        if (disposed || signal?.aborted || queue.length >= maxQueued) {
+          resolve(FAILED);
           return;
         }
-        queue.push({ id: nextId++, job, settle });
+        const onAbort = (): void => aborted(pending);
+        const pending: Pending = {
+          id: nextId++,
+          job,
+          settle: (result) => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve(result);
+          },
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+        queue.push(pending);
         pump();
       }),
     dispose() {

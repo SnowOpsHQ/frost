@@ -19,7 +19,7 @@ afterEach(() => vi.useRealTimers());
 const WINDOW_ID = 7;
 const PACK: PackStatus = { state: 'ready', version: 3, source: 'bundled', published: '2026-10-28', lastUpdate: null, checking: false };
 const state = (version: number): SerpTabState => ({ version, tabId: 1, serp: { status: 'not-serp', tabId: 1, url: 'https://example.com/' }, outlines: false, intent: null, pack: PACK });
-const probesState = (version: number): ProbesState => ({ version, tabId: 1, url: 'https://example.com/', status: 'idle', rows: [], diffs: [], robotsTxt: null, startedAt: null, finishedAt: null });
+const probesState = (version: number): ProbesState => ({ version, tabId: 1, url: 'https://example.com/', status: 'idle', rows: [], diffs: [], robotsTxt: [], startedAt: null, finishedAt: null });
 
 function fakeSerp() {
   let release: ((s: SerpTabState) => void) | null = null;

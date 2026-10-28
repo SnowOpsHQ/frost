@@ -10,7 +10,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { BoundedFetchRequest, BoundedFetchResult, BoundedFetcher } from '@app/specs/fetcher.spec';
 import { SERVED_ACCEPT } from '@app/specs/seo-javascript.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
-import { MAX_PENDING_PROBE_WATCHES, PROBE_AGENTS, PROBE_KEEP_HEADERS, PROBE_LIMITS, probeUserAgent } from '@app/specs/visibility-probes.spec';
+import { MAX_PENDING_PROBE_WATCHES, PROBE_AGENTS, PROBE_KEEP_HEADERS, PROBE_LIMITS, PROBE_SEPARATE_HEADERS, probeUserAgent } from '@app/specs/visibility-probes.spec';
 import { ProbesStateSchema, type ProbeJob, type ProbeJobResult, type ProbesState } from '@app/specs/visibility-probes.schema';
 import type { AnalysisWorker } from '../../seo/analysis';
 import { createBoundedFetcher, type Hop } from '../../seo/fetcher';
@@ -69,12 +69,17 @@ function controlledFetcher() {
 }
 
 const ROBOTS: RobotsFetch = { url: 'https://www.example.com/robots.txt', outcome: 'ok', status: 200, finalUrl: 'https://www.example.com/robots.txt', redirects: 0, body: enc('User-agent: GPTBot\nDisallow: /\n'), truncated: false };
+/** Main's robots.txt fetcher: the example site's file for its origin, none to obey elsewhere. */
+const robotsFor = async (url: string): Promise<RobotsFetch> => {
+  const origin = new URL(url).origin;
+  return origin === 'https://www.example.com' ? ROBOTS : { ...ROBOTS, url: `${origin}/robots.txt`, finalUrl: null, outcome: 'unavailable', status: 404, body: new Uint8Array() };
+};
 
-function harness(options: { fetcher?: BoundedFetcher; tabs?: Record<number, ProbeTab | null>; parse?: (job: ProbeJob) => Promise<ProbeJobResult> } = {}) {
+function harness(options: { fetcher?: BoundedFetcher; tabs?: Record<number, ProbeTab | null>; parse?: (job: ProbeJob, signal?: AbortSignal) => Promise<ProbeJobResult> } = {}) {
   const controlled = controlledFetcher();
   const fetcher = options.fetcher ?? controlled.fetcher;
   const tabs: Record<number, ProbeTab | null> = options.tabs ?? { 1: { contentsId: 11, url: `${PAGE}#top`, active: true }, 2: { contentsId: 22, url: PAGE, active: false } };
-  const robots = vi.fn(async (_url: string) => ROBOTS);
+  const robots = vi.fn(robotsFor);
   const parse = vi.fn(options.parse ?? (async (job: ProbeJob) => runProbeJob(job)));
   let clock = 1_000;
   const probes = createProbes({ fetcher, robots, parse, tab: (tabId) => tabs[tabId] ?? null, now: () => clock++, chromeVersion: CHROME });
@@ -105,14 +110,14 @@ describe('visibility probes', () => {
     // One GET per agent, its user agent, the tab URL (fragment aside) as the page, the caps, the headers.
     expect(h.calls.map((call) => call.request.userAgent ?? null)).toEqual(PROBE_AGENTS.map((agent) => probeUserAgent(agent, CHROME)));
     for (const { request } of h.calls) {
-      expect(request).toMatchObject({ url: PAGE, page: PAGE, method: 'GET', accept: SERVED_ACCEPT, maxBytes: PROBE_LIMITS.maxBytes, timeoutMs: PROBE_LIMITS.timeoutMs, maxRedirects: PROBE_LIMITS.maxRedirects, keepHeaders: [...PROBE_KEEP_HEADERS], maxHeaderChars: PROBE_LIMITS.maxHeaderChars });
+      expect(request).toMatchObject({ url: PAGE, page: PAGE, method: 'GET', accept: SERVED_ACCEPT, maxBytes: PROBE_LIMITS.maxBytes, timeoutMs: PROBE_LIMITS.timeoutMs, maxRedirects: 3, keepHeaders: [...PROBE_KEEP_HEADERS], separateHeaders: [...PROBE_SEPARATE_HEADERS], maxHeaderChars: PROBE_LIMITS.maxHeaderChars });
       expect(request.signal).toBeInstanceOf(AbortSignal);
       expect(request.readBody?.(200)).toBe(true);
       expect(request.readBody?.(404)).toBe(false);
     }
-    // robots.txt once, from main's fetcher; GPTBot disallowed, the rest allowed.
+    // robots.txt once (every agent ended on the tab's origin), from main's fetcher; GPTBot disallowed, the rest allowed.
     expect(h.robots).toHaveBeenCalledTimes(1);
-    expect(h.robots).toHaveBeenCalledWith(PAGE);
+    expect(h.robots).toHaveBeenCalledWith('https://www.example.com/');
     const done = valid(h.probes.state(1));
     expect(rowOf(done, 'gptbot').robots?.verdict).toBe('disallowed');
     expect(done.diffs.find((diff) => diff.agent === 'gptbot')?.facts).toEqual(['robots']);
@@ -162,7 +167,7 @@ describe('visibility probes', () => {
     const h = harness({ tabs: { 1: { contentsId: 11, url: PAGE, active: true }, 2: { contentsId: 22, url: PAGE, active: false }, 3: { contentsId: 33, url: 'about:blank', active: true }, 4: { contentsId: 44, url: 'app://frost/', active: true } } });
     h.probes.dropped(11);
     h.probes.navigatedInPage(11, `${PAGE}?x=1`);
-    expect(valid(h.probes.state(1))).toMatchObject({ status: 'idle', url: PAGE, rows: [], diffs: [], robotsTxt: null, startedAt: null, finishedAt: null });
+    expect(valid(h.probes.state(1))).toMatchObject({ status: 'idle', url: PAGE, rows: [], diffs: [], robotsTxt: [], startedAt: null, finishedAt: null });
     const aborted = new AbortController();
     const watching = h.probes.watch(1, 10, aborted.signal);
     aborted.abort();
@@ -219,15 +224,17 @@ describe('visibility probes', () => {
     await vi.waitFor(() => expect(rowOf(h.probes.state(1), 'browser').outcome).toBe('ok'));
     const one = valid(h.probes.state(1));
     expect(one.version).toBeGreaterThan(before);
-    expect(rowOf(one, 'browser')).toMatchObject({ status: 200, finalUrl: PAGE, title: 'Shoes', canonical: PAGE, wordCount: 5, noindex: false, contentType: 'text/html; charset=utf-8', truncated: false, hops: [] });
+    expect(rowOf(one, 'browser')).toMatchObject({ status: 200, finalUrl: PAGE, title: 'Shoes', canonical: PAGE, wordCount: 5, noindex: false, contentType: 'text/html; charset=utf-8', truncated: false, textTruncated: false, partial: false, hops: [], robots: { url: 'https://www.example.com/robots.txt', verdict: 'allowed' } });
     expect(rowOf(one, 'browser').textHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(one.robotsTxt).toEqual({ url: 'https://www.example.com/robots.txt', outcome: 'ok' });
+    expect(rowOf(one, 'browser').textSignature).toHaveLength(64);
+    // The robots.txt read, as served to frost, with when the run got it.
+    expect(one.robotsTxt).toEqual([{ url: 'https://www.example.com/robots.txt', outcome: 'ok', readAt: expect.any(Number) }]);
     // Googlebot is redirected, and told noindex in its own header.
     h.calls[1]!.answer({ redirects: 1, chain: [{ url: PAGE, status: 301, location: `${PAGE}/` }], finalUrl: `${PAGE}/`, headers: { 'content-type': 'text/html', 'x-robots-tag': 'googlebot: noindex' } });
     await vi.waitFor(() => expect(rowOf(h.probes.state(1), 'googlebot').outcome).toBe('ok'));
     const two = valid(h.probes.state(1));
     expect(rowOf(two, 'googlebot')).toMatchObject({ hops: [{ url: PAGE, status: 301 }], finalUrl: `${PAGE}/`, xRobotsTag: { general: [], agent: ['noindex'] }, noindex: true });
-    expect(two.diffs).toEqual([{ agent: 'googlebot', facts: ['finalUrl', 'redirects', 'noindex'] }]);
+    expect(two.diffs).toEqual([{ agent: 'googlebot', facts: ['finalUrl', 'redirects', 'noindex'], textSimilarity: 1, contentTruncated: false }]);
     // A 403 for one agent, a PDF for another.
     await vi.waitFor(() => expect(h.calls).toHaveLength(4));
     h.calls[2]!.answer({ status: 403, body: new Uint8Array() as Uint8Array<ArrayBuffer>, headers: {} });
@@ -243,6 +250,7 @@ describe('visibility probes', () => {
     const done = valid(h.probes.state(1));
     expect(done.finishedAt).toEqual(expect.any(Number));
     expect(rowOf(done, 'perplexitybot')).toMatchObject({ outcome: 'timeout', status: null, noindex: null, robots: { verdict: 'allowed' } });
+    expect(rowOf(done, 'gptbot').robots?.verdict).toBe('disallowed');
     expect(done.diffs.map((diff) => diff.agent)).toEqual(['googlebot', 'bingbot', 'gptbot', 'claudebot', 'perplexitybot']);
   });
 
@@ -357,7 +365,7 @@ describe('visibility probes', () => {
       workers.push(worker);
       return worker;
     });
-    const job: ProbeJob = { kind: 'robots', url: PAGE, robots: ROBOTS };
+    const job: ProbeJob = { kind: 'robots', agent: 'gptbot', url: PAGE, robots: ROBOTS };
     vi.useFakeTimers();
     const parser = createProbeParser({ spawn, maxQueued: 1 });
     const first = parser.run(job);
@@ -401,5 +409,90 @@ describe('visibility probes', () => {
     ]);
     vi.doUnmock('node:worker_threads');
     for (const file of ['../probe-parse.ts', '../probe-compare.ts', '../probe-parser.ts', '../serp-worker.ts']) expect(readFileSync(path.join(HERE, file), 'utf8'), file).not.toMatch(/from 'electron'|require\('electron'\)/);
+  });
+
+  test('probes-robots-per-final-url', async () => {
+    const h = harness();
+    h.probes.run(1);
+    await vi.waitFor(() => expect(h.calls).toHaveLength(2));
+    // The browser stays; Googlebot is sent to another origin, whose robots.txt is asked once.
+    h.calls[0]!.answer();
+    h.calls[1]!.answer({ redirects: 1, chain: [{ url: PAGE, status: 302, location: 'https://m.example.com/shoes' }], finalUrl: 'https://m.example.com/shoes' });
+    await vi.waitFor(() => expect(h.calls).toHaveLength(4));
+    // Bingbot is sent to a disallowed path on the same origin (judged there), GPTBot to the other origin too.
+    h.calls[2]!.answer({ redirects: 1, chain: [{ url: PAGE, status: 301, location: 'https://www.example.com/private' }], finalUrl: 'https://www.example.com/private' });
+    h.calls[3]!.answer({ redirects: 1, chain: [{ url: PAGE, status: 302, location: 'https://m.example.com/shoes' }], finalUrl: 'https://m.example.com/shoes' });
+    await vi.waitFor(() => expect(h.calls).toHaveLength(6));
+    // A final URL on a private host (the page is public): its robots.txt is never asked.
+    h.calls[4]!.answer({ finalUrl: 'http://10.0.0.1/shoes' });
+    h.calls[5]!.answer();
+    await vi.waitFor(() => expect(h.probes.state(1).status).toBe('done'));
+    const done = valid(h.probes.state(1));
+    expect(h.robots.mock.calls.map(([url]) => url).sort()).toEqual(['https://m.example.com/', 'https://www.example.com/']);
+    expect(done.robotsTxt.map((file) => [file.url, file.outcome])).toEqual([
+      ['https://www.example.com/robots.txt', 'ok'],
+      ['https://m.example.com/robots.txt', 'unavailable'],
+    ]);
+    expect(rowOf(done, 'googlebot').robots).toMatchObject({ url: 'https://m.example.com/robots.txt', verdict: 'allowed' });
+    // GPTBot's own origin file disallows it, but it ended on the other origin, which has none.
+    expect(rowOf(done, 'gptbot').robots).toMatchObject({ url: 'https://m.example.com/robots.txt', verdict: 'allowed' });
+    expect(rowOf(done, 'claudebot').robots).toMatchObject({ url: null, verdict: 'unknown' });
+    expect(rowOf(done, 'perplexitybot').robots).toMatchObject({ url: 'https://www.example.com/robots.txt', verdict: 'allowed' });
+    expect(rowOf(done, 'bingbot').robots).toMatchObject({ verdict: 'allowed' });
+  });
+
+  test('probes-stop-frees-the-worker', async () => {
+    // The real job queue over a worker that answers only when told: Stop then Run, three times.
+    class SlowWorker extends EventEmitter implements AnalysisWorker {
+      readonly posted: { id: number; job: ProbeJob }[] = [];
+      terminated = false;
+      postMessage(message: unknown): void {
+        this.posted.push(message as never);
+      }
+      terminate(): Promise<number> {
+        this.terminated = true;
+        return Promise.resolve(1);
+      }
+      unref(): void {}
+      answer(): void {
+        const message = this.posted.at(-1);
+        if (message) this.emit('message', { id: message.id, result: runProbeJob(message.job) });
+      }
+    }
+    const workers: SlowWorker[] = [];
+    const parser = createProbeParser({
+      spawn: () => {
+        const worker = new SlowWorker();
+        workers.push(worker);
+        return worker;
+      },
+      maxQueued: 4,
+    });
+    const answering = (request: BoundedFetchRequest) => Promise.resolve(result(request));
+    const fetcher: BoundedFetcher = { fetch: vi.fn(answering), load: () => ({ running: 0, queued: 0 }) };
+    const h = harness({ fetcher, parse: (job, signal) => parser.run(job, signal) });
+    for (let round = 0; round < 3; round++) {
+      expect(h.probes.run(1)).toBe(true);
+      // Its jobs fill the queue while the worker holds the first.
+      await vi.waitFor(() => expect(workers.at(-1)?.posted.length ?? 0).toBeGreaterThan(0));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(h.probes.stop(1)).toBe(true);
+      // The running job's worker is ended; nothing of the stopped run is left waiting.
+      expect(workers.at(-1)!.terminated).toBe(true);
+    }
+    // A fourth run gets the worker and the whole queue: every row is read.
+    expect(h.probes.run(1)).toBe(true);
+    for (let i = 0; i < 100 && h.probes.state(1).status === 'running'; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      workers.at(-1)?.answer();
+    }
+    const done = valid(h.probes.state(1));
+    expect(done.status).toBe('done');
+    expect(done.rows.map((row) => row.outcome)).toEqual(PROBE_AGENTS.map(() => 'ok'));
+    // A job whose signal has already aborted never runs; one aborted while queued is dropped.
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(parser.run({ kind: 'robots', agent: 'browser', url: PAGE, robots: null }, aborted.signal)).resolves.toEqual({ ok: false, reason: 'parse-failed' });
+    parser.dispose();
   });
 });

@@ -55,7 +55,20 @@
  *
  * Plain values and types, Zod-free, so the chrome renderer can import them.
  */
+import { CHECKS_FETCHER_LIMITS } from './fetcher.spec';
 import { SERP_RESULT_TYPE_LABELS, type SerpResultType } from './serp-selector-pack.spec';
+
+/**
+ * The SERP lane (Phase 3 Task 5 review; `fetcher.spec.ts`, Lanes): what the SERP features fetch on
+ * the user's request (the visibility probes, "Check for selector updates", the intent model's
+ * download) goes through a bounded fetcher of their own, created by `setup.ts` over main's hop and
+ * resolver, so every rule of `fetcher.spec.ts` holds (browse session, cookies omitted, private-address
+ * refusal and DNS check, caps, per-origin rate limit). It has the `checks` lane's per-origin limits
+ * and its own per-origin queues: a link, sitemap or hreflang check filling the `checks` lane's slots
+ * on a site never makes a probe wait (and time out, as its deadline counts the queue) behind it. The
+ * cost, as for the lanes: a site may see this lane's requests beside the others'.
+ */
+export const SERP_FETCHER_LIMITS = CHECKS_FETCHER_LIMITS;
 
 /** An in-page navigation to another search is read once the page has been quiet this long (a new one restarts it). */
 export const SERP_INPAGE_DEBOUNCE_MS = 400;

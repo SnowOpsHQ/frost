@@ -2,11 +2,13 @@ import type { BoundedFetcher, BoundedFetchResult } from '@app/specs/fetcher.spec
 import { SERVED_ACCEPT, SERVED_HTML_TYPES } from '@app/specs/seo-javascript.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
-import { MAX_PENDING_PROBE_WATCHES, PROBE_AGENTS, PROBE_KEEP_HEADERS, PROBE_LIMITS, probeUserAgent, type ProbeAgent, type ProbeOutcome, type ProbeStatus } from '@app/specs/visibility-probes.spec';
+import { isPrivateHost } from '@app/specs/private-address.spec';
+import { MAX_PENDING_PROBE_WATCHES, PROBE_AGENTS, PROBE_KEEP_HEADERS, PROBE_LIMITS, PROBE_SEPARATE_HEADERS, probeUserAgent, type ProbeAgent, type ProbeOutcome, type ProbeStatus } from '@app/specs/visibility-probes.spec';
 import type { ProbeJob, ProbeJobResult, ProbePageAnswer, ProbeRobotsAnswer, ProbeRow, ProbesState } from '@app/specs/visibility-probes.schema';
 import { parseWebUrl } from '@app/specs/web-url.spec';
+import { isPrivatePage } from '../seo/fetcher';
 import { mediaType } from '../seo/served';
-import { diffsOf, pendingRow } from './probe-compare';
+import { diffsOf, pendingRow, robotsVerdictOf } from './probe-compare';
 
 // The visibility probes of each tab (spec `visibility-probes.spec.ts`, How a run goes; answers
 // `visibility-probes.schema.ts`; acceptance `visibility-probes.feature.md`, Runs; review focus
@@ -15,11 +17,13 @@ import { diffsOf, pendingRow } from './probe-compare';
 // and URL (fragment aside), as Phase 2.5's checks do (`seo/checks.ts`): a new document (`dropped`),
 // an in-page move to another URL (`navigatedInPage`), a closed tab (`dropped`), Clear Browsing Data
 // (`cancelAll`) or `dispose()` cancels it, aborting its requests, and its state goes. `stop` ends it
-// and keeps what it found. One GET per agent (`PROBE_AGENTS`, never retried) through `fetcher` (the
-// bounded fetcher's `checks` lane: private hosts only for a private page, caps per call), at most
-// `PROBE_LIMITS.maxConcurrent` at once; robots.txt once from main's cached fetcher (`robots`); every
-// answer parsed by `parse` (the SERP worker's probe jobs). Rows stream: each one read bumps
-// `version` and wakes `watch`.
+// and keeps what it found. One GET per agent (`PROBE_AGENTS`, never retried, at most
+// `PROBE_LIMITS.maxRedirects` hops) through `fetcher` (the SERP lane, `SERP_FETCHER_LIMITS`: private
+// hosts only for a private page, caps per call, `X-Robots-Tag` values kept apart), at most
+// `PROBE_LIMITS.maxConcurrent` at once; robots.txt from main's cached fetcher (`robots`), once per
+// origin an agent ended on (never a private host's for a public page), each agent judged on its own
+// final URL; every answer parsed by `parse` (the probes' SERP worker), whose jobs the run's signal
+// ends on Stop or cancel. Rows stream: each one read bumps `version` and wakes `watch`.
 
 /** What the probes need to know about a tab, now. */
 export interface ProbeTab {
@@ -31,12 +35,12 @@ export interface ProbeTab {
 }
 
 export interface ProbesOptions {
-  /** The bounded fetcher's `checks` lane. */
+  /** The SERP lane (`SERP_FETCHER_LIMITS`): a bounded fetcher of the SERP's own over main's hop. */
   readonly fetcher: BoundedFetcher;
-  /** The page origin's robots.txt (main's cached fetcher), `null` for none. */
+  /** A page origin's robots.txt (main's cached fetcher), `null` for none. */
   readonly robots: (pageUrl: string) => Promise<RobotsFetch | null>;
-  /** Runs a probe job in the SERP worker (`ProbeParser.run`). Never rejects. */
-  readonly parse: (job: ProbeJob) => Promise<ProbeJobResult>;
+  /** Runs a probe job in the probes' SERP worker (`ProbeParser.run`), ended by the run's `signal`. Never rejects. */
+  readonly parse: (job: ProbeJob, signal?: AbortSignal) => Promise<ProbeJobResult>;
   /** The tab, or `null` when it names no open tab with a live page. */
   readonly tab: (tabId: number) => ProbeTab | null;
   readonly now?: () => number;
@@ -74,7 +78,10 @@ interface Entry {
   readonly controller: AbortController;
   status: ProbeStatus;
   rows: readonly ProbeRow[];
+  /** The robots.txt files read, one per origin judged. */
   robotsTxt: ProbesState['robotsTxt'];
+  /** Each origin's robots.txt, asked once per run. */
+  readonly robots: Map<string, Promise<RobotsFetch | null>>;
   readonly startedAt: number;
   finishedAt: number | null;
 }
@@ -110,8 +117,8 @@ function fetchOutcome(fetched: BoundedFetchResult): ProbeOutcome {
   }
 }
 
-/** A row from what the fetcher answered (the parse's facts come later). */
-function fetchedRow(agent: ProbeAgent, fetched: BoundedFetchResult, robots: ProbeRow['robots']): ProbeRow {
+/** A row from what the fetcher answered (the parse's facts and robots.txt's verdict come later). */
+function fetchedRow(agent: ProbeAgent, fetched: BoundedFetchResult): ProbeRow {
   const contentType = fetched.headers['content-type'] ?? null;
   return {
     ...pendingRow(agent.id),
@@ -119,7 +126,6 @@ function fetchedRow(agent: ProbeAgent, fetched: BoundedFetchResult, robots: Prob
     status: fetched.status,
     hops: fetched.chain.slice(0, PROBE_LIMITS.maxRedirects).map((hop) => ({ url: cut(hop.url), status: hop.status })),
     finalUrl: fetched.finalUrl === null ? null : cut(fetched.finalUrl),
-    robots,
     contentType: contentType === null ? null : contentType.slice(0, 256),
     bytes: Math.min(fetched.body.byteLength, PROBE_LIMITS.maxBytes),
     truncated: fetched.truncated,
@@ -142,9 +148,9 @@ export function createProbes(options: ProbesOptions): Probes {
     for (const waiter of waiters.splice(0)) waiter.wake();
   };
 
-  const parse = (job: ProbeJob): Promise<ProbeJobResult> => {
+  const parse = (job: ProbeJob, signal: AbortSignal): Promise<ProbeJobResult> => {
     try {
-      return options.parse(job).catch((): ProbeJobResult => ({ ok: false, reason: 'parse-failed' }));
+      return options.parse(job, signal).catch((): ProbeJobResult => ({ ok: false, reason: 'parse-failed' }));
     } catch {
       return Promise.resolve({ ok: false, reason: 'parse-failed' });
     }
@@ -174,20 +180,41 @@ export function createProbes(options: ProbesOptions): Probes {
 
   // ---- A run ------------------------------------------------------------------------------------
 
-  /** robots.txt for the run, once, decided for every agent in the worker. */
-  async function readRobots(entry: Entry, live: () => boolean): Promise<void> {
-    const fetched = await robotsOf(entry.key);
-    if (!live()) return;
-    const answer = await parse({ kind: 'robots', url: entry.key, robots: fetched });
-    if (!live()) return;
-    const verdicts = answer.ok && answer.answer.kind === 'robots' ? (answer.answer as ProbeRobotsAnswer).verdicts : null;
-    const unknown: ProbeRow['robots'] = { verdict: 'unknown', rule: null, groupAgents: [], groupLine: null, fallback: false };
-    entry.robotsTxt = fetched ? { url: fetched.url, outcome: fetched.outcome } : null;
-    entry.rows = entry.rows.map((row) => ({ ...row, robots: verdicts ? verdicts[row.agent] : unknown }));
-    bump();
+  /**
+   * `origin`'s robots.txt for the run: asked once (main's cached fetcher), listed in `robotsTxt` with
+   * when the run got it. `null`: none (an origin on a private host while the page is not is never asked).
+   */
+  function robotsFor(entry: Entry, origin: string, live: () => boolean): Promise<RobotsFetch | null> {
+    const known = entry.robots.get(origin);
+    if (known) return known;
+    const url = cut(`${origin}/robots.txt`);
+    let asked: Promise<RobotsFetch | null>;
+    if (!isPrivatePage(entry.key) && isPrivateHost(new URL(origin).hostname)) asked = Promise.resolve(null);
+    else {
+      entry.robotsTxt = [...entry.robotsTxt, { url, outcome: 'pending', readAt: null }];
+      bump();
+      asked = robotsOf(`${origin}/`).then((fetched) => {
+        if (live()) {
+          entry.robotsTxt = entry.robotsTxt.map((file) => (file.url === url ? { url, outcome: fetched?.outcome ?? 'unreachable', readAt: now() } : file));
+          bump();
+        }
+        return fetched;
+      });
+    }
+    entry.robots.set(origin, asked);
+    return asked;
   }
 
-  /** One agent's GET and the reading of its answer. */
+  /** `agent`'s robots.txt verdict for the URL it ended on (its origin's file, judged in the worker). */
+  async function judgeRobots(entry: Entry, agent: ProbeAgent, url: string, live: () => boolean): Promise<ProbeRow['robots']> {
+    const target = parseWebUrl(url) ?? parseWebUrl(entry.key)!;
+    const fetched = await robotsFor(entry, target.origin, live);
+    if (!live()) return null;
+    const answer = await parse({ kind: 'robots', agent: agent.id, url: target.href, robots: fetched }, entry.controller.signal);
+    return answer.ok && answer.answer.kind === 'robots' ? (answer.answer as ProbeRobotsAnswer).robots : robotsVerdictOf('unknown');
+  }
+
+  /** One agent's GET and the reading of its answer (robots.txt for the URL it ended on, and its headers and body). */
   async function probe(entry: Entry, agent: ProbeAgent, live: () => boolean): Promise<void> {
     let fetched: BoundedFetchResult;
     try {
@@ -202,6 +229,7 @@ export function createProbes(options: ProbesOptions): Probes {
         maxRedirects: PROBE_LIMITS.maxRedirects,
         readBody: is2xx,
         keepHeaders: [...PROBE_KEEP_HEADERS],
+        separateHeaders: [...PROBE_SEPARATE_HEADERS],
         maxHeaderChars: PROBE_LIMITS.maxHeaderChars,
         signal: entry.controller.signal,
       });
@@ -210,35 +238,56 @@ export function createProbes(options: ProbesOptions): Probes {
       fetched = { url: entry.key, outcome: 'unreachable', status: null, finalUrl: null, redirects: 0, chain: [], headers: {}, body: EMPTY as Uint8Array<ArrayBuffer>, truncated: false, durationMs: 0 };
     }
     if (!live() || fetched.outcome === 'aborted') return;
-    const robots = entry.rows.find((row) => row.agent === agent.id)?.robots ?? null;
-    let row = fetchedRow(agent, fetched, robots);
+    let row = fetchedRow(agent, fetched);
+    const judged = judgeRobots(entry, agent, row.finalUrl ?? entry.key, live);
     if (fetched.outcome === 'response') {
       const type = mediaType(fetched.headers['content-type']);
       const html = is2xx(fetched.status) && (type === null || HTML_TYPES.includes(type));
       const outcome: ProbeOutcome = !is2xx(fetched.status) ? 'http-status' : html ? 'ok' : 'not-html';
-      const answer = await parse({
-        kind: 'page',
-        agent: agent.id,
-        url: row.finalUrl ?? entry.key,
-        contentType: row.contentType,
-        xRobotsTag: fetched.headers['x-robots-tag'] ?? null,
-        link: fetched.headers.link ?? null,
-        html,
-        body: html ? fetched.body : EMPTY,
-      });
+      const answer = await parse(
+        {
+          kind: 'page',
+          agent: agent.id,
+          url: row.finalUrl ?? entry.key,
+          contentType: row.contentType,
+          xRobotsTag: fetched.headers['x-robots-tag'] ?? null,
+          link: fetched.headers.link ?? null,
+          html,
+          body: html ? fetched.body : EMPTY,
+        },
+        entry.controller.signal,
+      );
       if (!live()) return;
-      const current = entry.rows.find((candidate) => candidate.agent === agent.id)?.robots ?? robots;
       if (answer.ok && answer.answer.kind === 'page') {
         const read = answer.answer as ProbePageAnswer;
-        row = { ...row, outcome, robots: current, metaRobots: read.metaRobots, xRobotsTag: read.xRobotsTag, noindex: read.noindex, nofollow: read.nofollow, canonical: read.canonical, wordCount: read.wordCount, textHash: read.textHash, title: read.title };
-      } else row = { ...row, outcome: html ? 'parse-failed' : outcome, robots: current };
+        row = {
+          ...row,
+          outcome,
+          metaRobots: read.metaRobots,
+          xRobotsTag: read.xRobotsTag,
+          noindex: read.noindex,
+          nofollow: read.nofollow,
+          canonical: read.canonical,
+          canonicals: read.canonicals,
+          wordCount: read.wordCount,
+          textHash: read.textHash,
+          textSignature: read.textSignature,
+          textTruncated: read.textTruncated,
+          partial: read.partial,
+          title: read.title,
+        };
+      } else row = { ...row, outcome: html ? 'parse-failed' : outcome };
     }
-    setRow(entry, row);
+    const robots = await judged;
+    if (!live()) return;
+    setRow(entry, { ...row, robots });
   }
 
-  /** Runs every agent, at most `maxConcurrent` at once, then robots.txt's answer; `done` when all are in. */
+  /** Runs every agent, at most `maxConcurrent` at once; `done` when all are in. */
   async function go(entry: Entry): Promise<void> {
     const live = (): boolean => entries.get(entry.tabId) === entry && !entry.controller.signal.aborted;
+    // The tab's own robots.txt is asked at once (most agents end on its origin).
+    void robotsFor(entry, parseWebUrl(entry.key)!.origin, live);
     let next = 0;
     const lane = async (): Promise<void> => {
       while (next < agents.length && live()) {
@@ -246,7 +295,7 @@ export function createProbes(options: ProbesOptions): Probes {
         await probe(entry, agent, live);
       }
     };
-    await Promise.all([readRobots(entry, live), ...Array.from({ length: Math.min(PROBE_LIMITS.maxConcurrent, agents.length) }, lane)]);
+    await Promise.all(Array.from({ length: Math.min(PROBE_LIMITS.maxConcurrent, agents.length) }, lane));
     if (!live()) return;
     entry.status = 'done';
     entry.finishedAt = now();
@@ -264,8 +313,8 @@ export function createProbes(options: ProbesOptions): Probes {
   const state = (tabId: number): ProbesState => {
     const { tab, entry } = currentEntry(tabId);
     const url = tab && parseWebUrl(tab.url) ? cut(withoutFragment(tab.url)) : '';
-    if (!entry) return { version, tabId, url, status: 'idle', rows: [], diffs: [], robotsTxt: null, startedAt: null, finishedAt: null };
-    return { version, tabId, url: cut(entry.key), status: entry.status, rows: [...entry.rows], diffs: diffsOf(entry.rows), robotsTxt: entry.robotsTxt, startedAt: entry.startedAt, finishedAt: entry.finishedAt };
+    if (!entry) return { version, tabId, url, status: 'idle', rows: [], diffs: [], robotsTxt: [], startedAt: null, finishedAt: null };
+    return { version, tabId, url: cut(entry.key), status: entry.status, rows: [...entry.rows], diffs: diffsOf(entry.rows), robotsTxt: [...entry.robotsTxt], startedAt: entry.startedAt, finishedAt: entry.finishedAt };
   };
 
   const entryOfContents = (contentsId: number): Entry | undefined => [...entries.values()].find((entry) => entry.contentsId === contentsId);
@@ -280,7 +329,6 @@ export function createProbes(options: ProbesOptions): Probes {
       // One run per tab: asking again while it runs changes nothing.
       if (existing && existing.status === 'running' && existing.contentsId === tab.contentsId && existing.key === key) return true;
       existing?.controller.abort();
-      const robotsUrl = `${parseWebUrl(key)!.origin}/robots.txt`;
       const entry: Entry = {
         tabId,
         contentsId: tab.contentsId,
@@ -288,7 +336,8 @@ export function createProbes(options: ProbesOptions): Probes {
         controller: new AbortController(),
         status: 'running',
         rows: agents.map((agent) => pendingRow(agent.id)),
-        robotsTxt: { url: cut(robotsUrl), outcome: 'pending' },
+        robotsTxt: [],
+        robots: new Map(),
         startedAt: now(),
         finishedAt: null,
       };

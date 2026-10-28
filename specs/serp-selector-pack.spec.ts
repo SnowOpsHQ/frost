@@ -34,8 +34,8 @@
  *   that is missing, unreadable, corrupt or not newer is ignored: the bundled pack is used.
  * - **User action only.** A remote pack is requested only when the user asks ("Check for selector
  *   updates" in the SERP panel or the command palette), never at start or on a schedule. The
- *   request goes through the bounded fetcher's `checks` lane (`fetcher.spec.ts`), `https:` only
- *   (`SERP_PACK_FETCH_LIMITS`), from `SERP_PACK_REMOTE_URL` and its `.sig`.
+ *   request goes through the bounded fetcher's SERP lane (`SERP_FETCHER_LIMITS`,
+ *   `fetcher.spec.ts`), `https:` only (`SERP_PACK_FETCH_LIMITS`), from `SERP_PACK_REMOTE_URL` and its `.sig`.
  * - **The private key is never in the repo.** It lives in the maintainers' private key store;
  *   `pnpm sign:selectors <pack.json>` reads its path from `SIGNING_KEY_ENV` and refuses to run
  *   without it. Tests sign with ephemeral keypairs.
@@ -134,8 +134,8 @@ export const REDIRECT_DECODINGS = ['plain', 'bing-a1'] as const;
 export type RedirectDecoding = (typeof REDIRECT_DECODINGS)[number];
 
 /**
- * How "Check for selector updates" fetches (the bounded fetcher's `checks` lane; its rules hold:
- * browse session, no cookies, each redirect checked, private hosts refused):
+ * How "Check for selector updates" fetches (the bounded fetcher's SERP lane, `SERP_FETCHER_LIMITS`;
+ * its rules hold: browse session, no cookies, each redirect checked, private hosts refused):
  * - `schemes`: the pack URL, every redirect hop and the final URL must be `https:` (else
  *   `unreachable`; only the e2e URL seam may be `http:`);
  * - `maxBytes`: the pack's body cap (`SELECTOR_PACK_LIMITS.maxPackBytes`; more is `too-large`);

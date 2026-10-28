@@ -98,6 +98,10 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
 - **Scenario: net-hop-sends-user-agent-and-no-cookies** — `netHop` asks `net.request` with the browse
   session, `credentials: 'omit'`, no session cookies, manual redirects, no cache and no referrer, and
   sets `User-Agent` / `Accept` only when given; it reports the response headers.
+- **Scenario: fetcher-separates-repeated-headers** (Phase 3 Task 5 review) — by default repeated
+  values are joined with `, ` as before; a `separateHeaders` name keeps them apart with `\n`, from
+  the hop's raw header list (`netHop` passes Electron's `rawHeaders`) or an array value, a CR or LF
+  inside a value never splitting it; only kept headers, cut to `maxHeaderChars`.
 - **Scenario: robots-shares-the-fetcher** — robots.txt through a shared fetcher uses its queue (the
   Phase 2 robots tests in `indexability.test.ts` pass unchanged).
 - **Scenario: checks-lane-limits** — the `checks` lane keeps the link check's per-origin concurrency

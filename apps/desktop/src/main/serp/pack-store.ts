@@ -57,7 +57,7 @@ export interface PackStoreOptions {
   /** Trusted keys (`SERP_PACK_PUBLIC_KEYS`, plus the e2e seam's in unpackaged builds). */
   readonly publicKeys: readonly string[];
   readonly storage: PackStorage;
-  /** The network (`boundedPackFetch` over the `checks` lane); `null`: updates are `disabled`. */
+  /** The network (`boundedPackFetch` over the SERP lane, `SERP_FETCHER_LIMITS`); `null`: updates are `disabled`. */
   readonly fetchPack: PackFetch | null;
   /** The remote pack's URL (`SERP_PACK_REMOTE_URL`, or the e2e seam's); its signature is beside it. */
   readonly url: string;
@@ -270,7 +270,7 @@ export function fileStorage(dir: string): PackStorage {
 }
 
 /**
- * The store's fetch over a bounded fetcher (main: the `checks` lane, `fetcher.spec.ts`): a GET with
+ * The store's fetch over a bounded fetcher (main: the SERP lane, `SERP_FETCHER_LIMITS`, `fetcher.spec.ts`): a GET with
  * frost's own user agent, the file's URL as the request's page (so a private host is requested only
  * when the pack URL itself is on one), `maxBytes` the cap the store asks for, and
  * `SERP_PACK_FETCH_LIMITS`' deadline and redirect cap. `https:` only, the URL, every redirect and

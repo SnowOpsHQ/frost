@@ -37,7 +37,8 @@ New in this phase:
   labelled prototype queries. Main talks to it over a typed, Zod-validated message protocol. Behind
   an `IntentClassifier` interface, so tests use a deterministic fake.
 - **Probes** fetch the current URL as several crawlers and a normal browser, through the bounded
-  fetcher's `checks` lane, only when the user asks.
+  fetcher's SERP lane (the `checks` lane's limits, its own queues; Task 5 review), only when the
+  user asks.
 
 **Spec:**
 - `docs/design/IMPLEMENTATION-PLAN.md` §2 (On-device ML), §3 (security model), §4 Phase 3.
@@ -115,7 +116,8 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   - Task 2 (`intent-host-protocol-is-closed`).
 - **Probes cannot become a flood or a LAN probe.**
   - They run only on a user action, one run per tab, at most 6 fetches.
-  - They use the `checks` lane, with private-address refusal and caps.
+  - They use the SERP lane (the `checks` lane's limits, its own queues), with private-address
+    refusal and caps.
   - Task 5 (`probes-are-bounded`).
 
 ---
@@ -145,7 +147,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   build time and verified at startup like any other pack. A bundled pack that fails verification
   disables SERP reading (`pack-invalid`); it never reads unsigned.
 - **Remote pack.** `checkForUpdate()` fetches the pack and its signature through the bounded
-  fetcher's `checks` lane:
+  fetcher's SERP lane (`SERP_FETCHER_LIMITS`, since the Task 5 review; formerly the `checks` lane):
   - https only, about 256 KB, 10 s;
   - verify, parse, compare versions;
   - on success, write it atomically to `userData/serp-selectors/` and use it at once.
@@ -219,7 +221,8 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
 - **Model download.**
   - `main/intent/model-store.ts` downloads the model and vocabulary on the user's "Enable on-device
     intent" (the SERP panel or the palette). The prompt states the size and host.
-  - The download uses the bounded fetcher's `checks` lane, with a per-call cap of the pinned size
+  - The download uses the bounded fetcher's SERP lane (`SERP_FETCHER_LIMITS`; formerly the `checks`
+    lane), with a per-call cap of the pinned size
     plus slack and a long deadline.
   - The sha256 is checked before writing, atomically, to `userData/models/`. A mismatch is never
     kept.
@@ -382,7 +385,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
   - bounded: 6 fetches, at most 2 at once, a private host refused, no run without the action, cancel
     on a new document (`probes-are-bounded`).
 - [x] commit `feat(serp): indexability and AI-readiness probes`
-- [ ] Review fixes: commit `fix(serp): address probes review findings`
+- [x] Review fixes: commit `fix(serp): address probes review findings`
 
 ### Task 6: SERP and Visibility panels, palette, e2e
 - **Spec:** `specs/serp-panels.feature.md`, plus two `SEO_PANELS` entries (`serp`, `visibility`).
@@ -453,7 +456,7 @@ Stable after merge. Import the schemas from `@app/specs/...` and the types from 
 
   Starting probes stays a user action: an agent tool must go through Phase 5's approval model and
   call `runProbes(tabId) → boolean`, which the interface marks as **fetching** (one GET per agent
-  through the `checks` lane, robots.txt from main's cache; only the active tab showing an `http(s)`
+  through the SERP lane, robots.txt from main's cache; only the active tab showing an `http(s)`
   page; one run per tab; `true` if a run is under way).
 - **The chrome (Task 6):** the `serp.*` procedures add `serp.runProbes` / `serp.stopProbes`
   (`{ tabId }` → boolean), `serp.probes` (`{ tabId }` → `ProbesState`) and `serp.watchProbes`

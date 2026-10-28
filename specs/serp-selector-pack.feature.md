@@ -32,8 +32,8 @@ line maps to one named test.
   oversize, tampered, invalid, not newer) leaves the bundled pack in use.
 - **Updates are the user's.** Only `checkForUpdate()` (the SERP panel's "Check for selector
   updates", the palette) fetches; creating the store and `load()` never do. Concurrent checks share
-  one run. The pack, then its `.sig`, through the bounded fetcher's `checks` lane: `https:` only
-  (the URL, every hop and the final URL), the pack capped at 256 KiB (`too-large` past it), the
+  one run. The pack, then its `.sig`, through the bounded fetcher's SERP lane
+  (`SERP_FETCHER_LIMITS`): `https:` only (the URL, every hop and the final URL), the pack capped at 256 KiB (`too-large` past it), the
   signature at 256 bytes, 10 s each, the pack URL as the request's page. An installed pack is
   written, used at once and announced to `changed` listeners.
 - **Signing.** `pnpm sign:selectors <pack.json>` writes `<pack.json>.sig` with the PKCS8 PEM key at

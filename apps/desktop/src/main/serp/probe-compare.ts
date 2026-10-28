@@ -2,8 +2,9 @@ import { decodeRobotsBytes, matchRobots, parseRobotsTxt, parseXRobotsTag, robots
 import { ROBOTS_ALLOW_ALL_OUTCOMES, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
-import { PROBE_AGENTS, PROBE_BASELINE, PROBE_DIFF_FACTS, PROBE_DIFF_TOLERANCE, PROBE_SETTLED_OUTCOMES, type ProbeAgent, type ProbeAgentId, type ProbeDiffFact } from '@app/specs/visibility-probes.spec';
-import { PROBE_DIRECTIVE_LIMITS, type ProbeDiff, type ProbeDirectives, type ProbeRobots, type ProbeRobotsAnswer, type ProbeRow } from '@app/specs/visibility-probes.schema';
+import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
+import { PROBE_BASELINE, PROBE_DIFF_FACTS, PROBE_DIFF_TOLERANCE, PROBE_SETTLED_OUTCOMES, PROBE_TEXT_SIMILARITY, probeAgent, type ProbeAgent, type ProbeAgentId, type ProbeCanonicalConflict, type ProbeDiffFact } from '@app/specs/visibility-probes.spec';
+import { PROBE_DIRECTIVE_LIMITS, type ProbeCanonicals, type ProbeDiff, type ProbeDirectives, type ProbeRobots, type ProbeRobotsAnswer, type ProbeRow } from '@app/specs/visibility-probes.schema';
 
 // What each probed agent is told, and how its answer differs from the browser's (spec
 // `visibility-probes.spec.ts`, Reading an agent's answer and Against the baseline; acceptance
@@ -19,7 +20,30 @@ const { maxDirectives, maxDirectiveChars, maxGroupAgents, maxAgentChars, maxRule
 
 /** A blank row for `agent`: nothing known yet (`pending`). */
 export function pendingRow(agent: ProbeAgentId): ProbeRow {
-  return { agent, outcome: 'pending', status: null, hops: [], finalUrl: null, robots: null, metaRobots: null, xRobotsTag: null, noindex: null, nofollow: null, canonical: null, contentType: null, bytes: 0, truncated: false, wordCount: null, textHash: null, title: null, durationMs: null };
+  return {
+    agent,
+    outcome: 'pending',
+    status: null,
+    hops: [],
+    finalUrl: null,
+    robots: null,
+    metaRobots: null,
+    xRobotsTag: null,
+    noindex: null,
+    nofollow: null,
+    canonical: null,
+    canonicals: null,
+    contentType: null,
+    bytes: 0,
+    truncated: false,
+    textTruncated: false,
+    partial: false,
+    wordCount: null,
+    textHash: null,
+    textSignature: null,
+    title: null,
+    durationMs: null,
+  };
 }
 
 // ---- Directives ---------------------------------------------------------------------------------
@@ -48,20 +72,38 @@ export function directivesOf(content: string): string[] {
 }
 
 /**
- * An `X-Robots-Tag` value as the fetcher kept it (repeated headers joined with `, `) as tags: a
- * `name:` prefix that is not a valued directive scopes the directives after it, until the next one;
- * directives before any prefix are general (`parseXRobotsTag` reads each run).
+ * The `X-Robots-Tag` header as the fetcher kept it (repeated values apart, joined with `\n`:
+ * `PROBE_SEPARATE_HEADERS`) as tags. Each value is read on its own: a `name:` prefix that is not a
+ * valued directive scopes the directives after it, until the next one; directives before any prefix
+ * are general (`parseXRobotsTag` reads each run). So `googlebot: nofollow` and a separate `noindex`
+ * are Googlebot's `nofollow` and everyone's `noindex`.
  */
-export function xRobotsTags(joined: string | null): XRobotsTag[] {
-  if (joined === null) return [];
+export function xRobotsTags(kept: string | null): XRobotsTag[] {
+  if (kept === null) return [];
   const runs: string[][] = [];
-  for (const piece of joined.split(',')) {
-    const scope = SCOPE.exec(piece);
-    const starts = scope !== null && !VALUED.has(scope[1]!.toLowerCase());
-    if (starts || runs.length === 0) runs.push([piece]);
-    else runs[runs.length - 1]!.push(piece);
+  for (const value of kept.split('\n')) {
+    let first = true;
+    for (const piece of value.split(',')) {
+      const scope = SCOPE.exec(piece);
+      const starts = scope !== null && !VALUED.has(scope[1]!.toLowerCase());
+      if (starts || first) runs.push([piece]);
+      else runs[runs.length - 1]!.push(piece);
+      first = false;
+    }
   }
   return runs.map((run) => parseXRobotsTag(run.join(','))).filter((tag) => tag.agent !== null || tag.directives.length > 0);
+}
+
+/**
+ * The canonicals an answer names: the HTML's (in order, distinct), the `Link` header's, the
+ * conflicts between them, and the effective one (the HTML's first, else the header's).
+ */
+export function canonicalsOf(html: readonly string[], header: string | null): { canonical: string | null; canonicals: ProbeCanonicals } {
+  const distinct = [...new Set(html.filter((url) => url !== ''))].slice(0, SNAPSHOT_LIMITS.maxRepeated);
+  const conflicts: ProbeCanonicalConflict[] = [];
+  if (distinct.length > 1) conflicts.push('several-html');
+  if (distinct.length > 0 && header !== null && !distinct.includes(header)) conflicts.push('html-vs-header');
+  return { canonical: distinct[0] ?? header, canonicals: { html: distinct, header, conflicts } };
 }
 
 /** One `<meta name content>` of the page (`name` compared lowercased). */
@@ -90,13 +132,15 @@ export function agentDirectives(agent: ProbeAgent, metas: readonly ProbeMeta[] |
 
 // ---- robots.txt ---------------------------------------------------------------------------------
 
-const verdictOf = (verdict: ProbeRobots['verdict']): ProbeRobots => ({ verdict, rule: null, groupAgents: [], groupLine: null, fallback: false });
+/** A verdict with no rule behind it (`url`: the robots.txt judged by, if any). */
+export const robotsVerdictOf = (verdict: ProbeRobots['verdict'], url: string | null = null): ProbeRobots => ({ url, verdict, rule: null, groupAgents: [], groupLine: null, fallback: false });
 
-/** robots.txt's verdict for `token` on `path` (`robotsPathOf`), from a parsed file, or a fetch that gave none. */
-export function robotsVerdictFor(file: RobotsFile | null, outcome: RobotsFetchOutcome | null, token: string, path: string): ProbeRobots {
-  if (!file) return verdictOf(outcome !== null && ALLOW_ALL.has(outcome) ? 'allowed' : 'unknown');
+/** robots.txt's (at `url`) verdict for `token` on `path` (`robotsPathOf`), from a parsed file, or a fetch that gave none. */
+export function robotsVerdictFor(file: RobotsFile | null, outcome: RobotsFetchOutcome | null, token: string, path: string, url: string | null = null): ProbeRobots {
+  if (!file) return robotsVerdictOf(outcome !== null && ALLOW_ALL.has(outcome) ? 'allowed' : 'unknown', url);
   const match = matchRobots(file, token, path);
   return {
+    url,
     verdict: match.allowed ? 'allowed' : 'disallowed',
     rule: match.rule && { allow: match.rule.allow, raw: match.rule.raw.slice(0, maxRuleChars), line: match.rule.line },
     groupAgents: match.groups
@@ -109,45 +153,62 @@ export function robotsVerdictFor(file: RobotsFile | null, outcome: RobotsFetchOu
 }
 
 /**
- * Every agent's verdict for `pageUrl` under robots.txt as main's fetcher answered it (`null`: none
- * asked). Only a fetched file (`ok`) is parsed; no file to obey is `allowed`; one that could not be
- * read (or is still pending) `unknown`.
+ * `agent`'s verdict for `url` under robots.txt as main's fetcher answered it (`null`: none asked).
+ * Only a fetched file (`ok`) of `url`'s own origin is parsed; no file to obey is `allowed`; one that
+ * could not be read (or is still pending, or is another origin's) `unknown`.
  */
-export function robotsVerdicts(fetched: RobotsFetch | null, pageUrl: string): ProbeRobotsAnswer {
-  const page = parseWebUrl(pageUrl);
-  const outcome = fetched?.outcome ?? null;
-  const file = fetched && fetched.outcome === 'ok' && page ? parseRobotsTxt(decodeRobotsBytes(fetched.body)) : null;
-  const path = page ? robotsPathOf(page) : '/';
-  const verdicts = Object.fromEntries(PROBE_AGENTS.map((agent) => [agent.id, robotsVerdictFor(file, page ? outcome : null, agent.robotsToken, path)])) as Record<ProbeAgentId, ProbeRobots>;
-  return { kind: 'robots', outcome, verdicts };
+export function robotsVerdict(fetched: RobotsFetch | null, agent: ProbeAgentId, url: string): ProbeRobotsAnswer {
+  const target = parseWebUrl(url);
+  const own = fetched !== null && target !== null && parseWebUrl(fetched.url)?.origin === target.origin;
+  const outcome = own ? fetched.outcome : null;
+  const file = own && fetched.outcome === 'ok' ? parseRobotsTxt(decodeRobotsBytes(fetched.body)) : null;
+  const robots = robotsVerdictFor(file, outcome, probeAgent(agent).robotsToken, target ? robotsPathOf(target) : '/', own ? fetched.url.slice(0, SNAPSHOT_LIMITS.maxUrlChars) : null);
+  return { kind: 'robots', outcome, robots };
 }
 
 // ---- Against the baseline ---------------------------------------------------------------------------
 
 const SETTLED: ReadonlySet<string> = new Set(PROBE_SETTLED_OUTCOMES);
+
+/** The estimated Jaccard similarity of two text signatures (`PROBE_TEXT_SIMILARITY`): the share of equal positions; two empty texts (no signature) are alike, one empty one not. */
+export function textSimilarity(a: readonly number[] | null, b: readonly number[] | null): number {
+  if (a === null || b === null) return a === b ? 1 : 0;
+  const size = Math.min(a.length, b.length);
+  if (size === 0) return 0;
+  let same = 0;
+  for (let i = 0; i < size; i++) if (a[i] === b[i]) same += 1;
+  return same / size;
+}
+
+/** Whether two rows' hops differ (each hop's URL and status, in order). */
+const hopsDiffer = (a: ProbeRow['hops'], b: ProbeRow['hops']): boolean => a.length !== b.length || a.some((hop, i) => hop.url !== b[i]!.url || hop.status !== b[i]!.status);
 /** `|value − base| / max(base, 1)` above `share`. */
 const beyond = (value: number, base: number, share: number): boolean => Math.abs(value - base) / Math.max(base, 1) > share;
 
 /**
  * `row`'s differences from `base` (the baseline's row), in `PROBE_DIFF_FACTS` order; `null` until
- * both have settled. Status, final URL, redirects and the robots.txt verdict always; `noindex` when
- * both had a response; the canonical, word count, size and text when both bodies were read.
+ * both have settled. Status and the robots.txt verdict always; the final URL when both have one; the
+ * redirects when the hops differ; `noindex` when both had a response; the canonical when both bodies
+ * were read or both name one; the word count, size and text (`textSimilarity` below
+ * `minSimilarity`) when both bodies were read, with `contentTruncated` when either was cut.
  */
-export function diffRow(base: ProbeRow, row: ProbeRow, tolerance: typeof PROBE_DIFF_TOLERANCE = PROBE_DIFF_TOLERANCE): ProbeDiff | null {
+export function diffRow(base: ProbeRow, row: ProbeRow, tolerance: typeof PROBE_DIFF_TOLERANCE = PROBE_DIFF_TOLERANCE, similarity: typeof PROBE_TEXT_SIMILARITY = PROBE_TEXT_SIMILARITY): ProbeDiff | null {
   if (!SETTLED.has(base.outcome) || !SETTLED.has(row.outcome)) return null;
   const read = base.outcome === 'ok' && row.outcome === 'ok';
+  const textSimilarityOf = read ? (base.textHash !== null && base.textHash === row.textHash ? 1 : textSimilarity(base.textSignature, row.textSignature)) : null;
   const differs: Record<ProbeDiffFact, boolean> = {
     status: base.status !== row.status,
-    finalUrl: base.finalUrl !== row.finalUrl,
-    redirects: base.hops.length !== row.hops.length,
+    finalUrl: base.finalUrl !== null && row.finalUrl !== null && base.finalUrl !== row.finalUrl,
+    redirects: hopsDiffer(base.hops, row.hops),
     robots: (base.robots?.verdict ?? null) !== (row.robots?.verdict ?? null),
     noindex: base.noindex !== null && row.noindex !== null && base.noindex !== row.noindex,
-    canonical: read && base.canonical !== row.canonical,
+    canonical: (read || (base.canonical !== null && row.canonical !== null)) && base.canonical !== row.canonical,
     wordCount: read && base.wordCount !== null && row.wordCount !== null && beyond(row.wordCount, base.wordCount, tolerance.wordShare),
     bytes: read && beyond(row.bytes, base.bytes, tolerance.byteShare),
-    text: read && base.textHash !== null && row.textHash !== null && base.textHash !== row.textHash,
+    text: textSimilarityOf !== null && textSimilarityOf < similarity.minSimilarity,
   };
-  return { agent: row.agent, facts: PROBE_DIFF_FACTS.filter((fact) => differs[fact]) };
+  const cut = (r: ProbeRow): boolean => r.truncated || r.textTruncated || r.partial;
+  return { agent: row.agent, facts: PROBE_DIFF_FACTS.filter((fact) => differs[fact]), textSimilarity: textSimilarityOf, contentTruncated: read && (cut(base) || cut(row)) };
 }
 
 /** Each settled agent's diff against the baseline row (none while the baseline is unsettled). */

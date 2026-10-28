@@ -143,8 +143,8 @@ export const INTENT_CHILD_ENV: Readonly<Record<string, string>> = { FROST_INTENT
 export const INTENT_ENV_CANARY = 'FROST_INTENT_ENV_CANARY' as const;
 
 /**
- * How the model is downloaded (the bounded fetcher's `checks` lane, `fetcher.spec.ts`: browse
- * session, frost's own user agent, no cookies, each redirect checked, private hosts refused; the
+ * How the model is downloaded (the bounded fetcher's SERP lane, `SERP_FETCHER_LIMITS` in
+ * `serp-service.spec.ts`; `fetcher.spec.ts`: browse session, frost's own user agent, no cookies, each redirect checked, private hosts refused; the
  * file's URL is the request's page):
  * - `schemes`: the URL, every redirect hop (Hugging Face sends a file to its CDN host) and the final
  *   URL must be `https:` (hops are checked once the answer is in; the sha256 pin is the guarantee,
