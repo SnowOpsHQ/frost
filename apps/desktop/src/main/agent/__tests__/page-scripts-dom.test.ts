@@ -1,9 +1,9 @@
-// Spec: specs/agent-page-tools.spec.ts (CLICK_LIMITS, CLICKABLE_SELECTOR, EXECUTE_JS_LIMITS, EXECUTE_JS_MARK_KEY, pageKeyOf)
+// Spec: specs/agent-page-tools.spec.ts (CLICK_LIMITS, CLICKABLE_SELECTOR, EXECUTE_JS_LIMITS, EXECUTE_JS_VAULT_KEY, executeMarkKey, pageKeyOf)
 // · specs/agent-tools.spec.ts (EXECUTE_JS_MAX_RESULT_BYTES)
 // Acceptance: specs/agent-page-tools.feature.md (Scenarios: in the page)
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, test } from 'vitest';
-import { EXECUTE_JS_MARK_KEY, pageKeyOf } from '@app/specs/agent-page-tools.spec';
+import { EXECUTE_JS_LIMITS, EXECUTE_JS_VAULT_KEY, pageKeyOf } from '@app/specs/agent-page-tools.spec';
 import { EXECUTE_JS_MAX_RESULT_BYTES } from '@app/specs/agent-tools.spec';
 import { clickScript, executeScript, pageTextScript } from '../tools/page-scripts';
 
@@ -11,14 +11,31 @@ const PAGE = 'https://example.com/guides/page?x=1#top';
 const ORIGIN = 'https://example.com';
 const KEY = pageKeyOf(PAGE)!;
 
-/** A jsdom page at `url` whose window runs the scripts as the isolated world would (`window.eval`). */
+/**
+ * How each page's scripts are run, as Electron runs them: with the window's original `eval` and
+ * `Promise.prototype.then`, taken when the page is made (Electron runs a script and follows its
+ * promise natively, so nothing code changes in the world can step in there).
+ */
+const runners = new WeakMap<JSDOM, { readonly evaluate: (script: string) => unknown; readonly then: (promise: unknown, ok: (value: unknown) => void, fail: (error: unknown) => void) => void }>();
+
+/** A jsdom page at `url` whose window runs the scripts as the isolated world would. */
 function page(body: string, url = PAGE) {
-  return new JSDOM(`<!doctype html><html lang="en"><head><title>Guide</title></head><body>${body}</body></html>`, { url, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
+  const dom = new JSDOM(`<!doctype html><html lang="en"><head><title>Guide</title></head><body>${body}</body></html>`, { url, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
+  const evalOf = dom.window.eval;
+  const thenOf = dom.window.Promise.prototype.then;
+  runners.set(dom, { evaluate: (script) => Reflect.apply(evalOf, dom.window, [script]), then: (promise, ok, fail) => Reflect.apply(thenOf, promise, [ok, fail]) });
+  return dom;
 }
 
-const evaluate = (dom: JSDOM, script: string): unknown => dom.window.eval(script);
+const evaluate = (dom: JSDOM, script: string): unknown => runners.get(dom)!.evaluate(script);
+/** A script's answer, its promise followed as Electron follows it. */
+const settled = (dom: JSDOM, script: string): Promise<unknown> => {
+  const value = evaluate(dom, script);
+  if (typeof value === 'string') return Promise.resolve(value);
+  return new Promise((resolve, reject) => runners.get(dom)!.then(value, resolve, reject));
+};
 const answerOf = (dom: JSDOM, script: string) => JSON.parse(evaluate(dom, script) as string) as Record<string, any>;
-const executeAnswer = async (dom: JSDOM, code: string, pageKey: string | null = KEY) => JSON.parse((await (evaluate(dom, executeScript({ origin: ORIGIN, pageKey, code })) as Promise<string>)) as string) as Record<string, any>;
+const executeAnswer = async (dom: JSDOM, code: string, pageKey: string | null = KEY) => JSON.parse((await settled(dom, executeScript({ origin: ORIGIN, pageKey, code }))) as string) as Record<string, any>;
 
 describe('click in the page', () => {
   test('dom-click-finder', () => {
@@ -147,7 +164,7 @@ describe('execute_javascript in the page', () => {
     win.count = 0;
     expect(await executeAnswer(dom, 'window.count += 1; throw new TypeError("boom")')).toEqual({ status: 'error', error: 'TypeError: boom' });
     expect(win.count).toBe(1);
-    expect(EXECUTE_JS_MARK_KEY in win).toBe(false);
+    expect(Object.keys(win).some((key) => key.startsWith('__frostRunMark_'))).toBe(false);
     expect(await executeAnswer(dom, 'Promise.reject(new RangeError("nope"))')).toEqual({ status: 'error', error: 'RangeError: nope' });
     expect(await executeAnswer(dom, 'throw "plain"')).toEqual({ status: 'error', error: 'Thrown: plain' });
     expect(await executeAnswer(dom, 'function (')).toMatchObject({ status: 'error', error: expect.stringMatching(/^SyntaxError/) });
@@ -184,5 +201,105 @@ describe('execute_javascript in the page', () => {
     expect(array.bytes).toBeLessThanOrEqual(EXECUTE_JS_MAX_RESULT_BYTES);
     const fits = await executeAnswer(dom, `"a".repeat(${EXECUTE_JS_MAX_RESULT_BYTES - 2})`);
     expect(fits).toMatchObject({ truncated: false, bytes: EXECUTE_JS_MAX_RESULT_BYTES });
+  });
+});
+
+describe('the page scripts against a hostile page or earlier code', () => {
+  test('dom-click-unclobbered', () => {
+    // Named elements and forms shadow DOM members on `document` ("clobbering"); the scripts use the prototypes'.
+    const dom = page('<img name="querySelectorAll"><img name="querySelector"><img name="title"><form name="body"><p>only this</p></form><p>secret other text</p><button>Go</button>');
+    const doc = dom.window.document as unknown as Record<string, unknown>;
+    expect(typeof doc.querySelectorAll).not.toBe('function');
+    expect(answerOf(dom, clickScript({ origin: ORIGIN, pageKey: null, selector: null, text: 'Go' }))).toMatchObject({ status: 'clicked', element: { tag: 'button', name: 'Go' } });
+    expect(answerOf(dom, clickScript({ origin: ORIGIN, pageKey: null, selector: 'button', text: null })).status).toBe('clicked');
+    const text = answerOf(dom, pageTextScript({ origin: ORIGIN, pageKey: null, maxChars: 1_000 }));
+    expect(text).toMatchObject({ status: 'ok', title: 'Guide' });
+    expect(text.text).toContain('secret other text');
+    // A form control named like an element member.
+    const form = page('<form id="f" aria-label="Real" onclick=""><input name="getAttribute"><input name="localName"></form>');
+    expect(answerOf(form, clickScript({ origin: ORIGIN, pageKey: null, selector: '#f', text: null })).element).toMatchObject({ tag: 'form', name: 'Real' });
+  });
+
+  test('dom-click-exact-only', () => {
+    const dom = page('<button>Send form</button>');
+    expect(answerOf(dom, clickScript({ origin: ORIGIN, pageKey: null, selector: null, text: 'send', exactOnly: true }))).toEqual({ status: 'not-found' });
+    expect(answerOf(dom, clickScript({ origin: ORIGIN, pageKey: null, selector: null, text: 'Send  form', exactOnly: true })).matchedBy).toBe('text-exact');
+  });
+
+  test('dom-execute-cap-unhookable', async () => {
+    // Approved code patching the built-ins the result is written with can't push the answer past its cap.
+    for (const code of [
+      'Array.prototype.join = function () { return "x".repeat(5e6) }; 1',
+      'const big = "y".repeat(3e6); String.prototype.slice = function () { return String(this) }; big',
+      'String.prototype.charCodeAt = () => 0; "z".repeat(3e6)',
+      'JSON.stringify = () => "q".repeat(5e6); [1, 2]',
+      'Reflect.apply = () => "q".repeat(5e6); "short"',
+    ]) {
+      const fresh = page('');
+      const raw = (await settled(fresh, executeScript({ origin: ORIGIN, pageKey: KEY, code }))) as string;
+      expect(typeof raw).toBe('string');
+      expect(raw.length).toBeLessThanOrEqual(EXECUTE_JS_LIMITS.maxAnswerChars);
+      const answer = JSON.parse(raw);
+      expect(['ok', 'error']).toContain(answer.status);
+      if (answer.status === 'ok') expect(Buffer.byteLength(answer.json, 'utf8')).toBeLessThanOrEqual(EXECUTE_JS_MAX_RESULT_BYTES);
+    }
+  });
+
+  test('dom-execute-earlier-code-cannot-forge', async () => {
+    const dom = page('');
+    const forged = JSON.stringify({ status: 'ok', type: 'string', json: '"FORGED"', truncated: false, bytes: 1 });
+    // Call 1 hooks what a naive wrapper would use to write, compile, follow promises and call.
+    const first = await executeAnswer(
+      dom,
+      [
+        `const S = JSON.stringify; JSON.stringify = function (v) { return v && v.status === 'ok' ? ${JSON.stringify(forged)} : S.apply(this, arguments) };`,
+        `Object.prototype.toJSON = function () { return 'FORGED' };`,
+        `Array.prototype.join = () => '"FORGED"'; String.prototype.slice = () => 'FORGED'; String.prototype.indexOf = () => 0;`,
+        `globalThis.Function = function () { return () => 'FORGED' }; globalThis.eval = () => 'FORGED';`,
+        `Object.getPrototypeOf(async function () {}).constructor = function () { return async () => 'FORGED' };`,
+        `Promise.prototype.then = function (ok) { ok('FORGED') };`,
+        `Reflect.apply = () => 'FORGED'; Object.defineProperty = () => ({}); Object.freeze = (o) => o;`,
+        `try { Object.defineProperty(window, ${JSON.stringify(EXECUTE_JS_VAULT_KEY)}, { value: {} }) } catch {}`,
+        `try { delete window[${JSON.stringify(EXECUTE_JS_VAULT_KEY)}] } catch {}`,
+        `0`,
+      ].join('\n'),
+    );
+    expect(first).toMatchObject({ status: 'ok', json: '0' });
+    // The vault stays as frost made it.
+    const vault = Object.getOwnPropertyDescriptor(dom.window, EXECUTE_JS_VAULT_KEY)!;
+    expect(vault).toMatchObject({ writable: false, configurable: false, enumerable: false });
+    // Call 2 runs exactly its own code and reports its own value.
+    const second = await executeAnswer(dom, 'document.title');
+    expect(second).toEqual({ status: 'ok', type: 'string', json: '"Guide"', truncated: false, bytes: 7 });
+    const third = await executeAnswer(dom, 'const n = 40;\nn + 2;');
+    expect(third).toMatchObject({ status: 'ok', json: '42' });
+    // A promise result is followed with the original `then`, not the one call 1 left.
+    expect(await executeAnswer(dom, 'await Promise.resolve(7)')).toMatchObject({ status: 'ok', json: '7' });
+    expect(await executeAnswer(dom, 'Promise.resolve([8])')).toMatchObject({ status: 'ok', json: '[8]' });
+  });
+
+  test('dom-execute-runs-once', async () => {
+    const dom = page('');
+    const win = dom.window as unknown as Record<string, number>;
+    // A hoisted function declaration with the old fixed marker name, or any name, can't make it run twice.
+    win.n = 0;
+    expect(await executeAnswer(dom, 'function __frostAgentRunMark() {}\nwindow.n++; throw new Error("x")')).toEqual({ status: 'error', error: 'Error: x' });
+    expect(win.n).toBe(1);
+    win.n = 0;
+    expect(await executeAnswer(dom, 'function f() {}\nwindow.n++;\nreturn window.n')).toMatchObject({ status: 'ok', json: '1' });
+    expect(win.n).toBe(1);
+    // Each call's marker name is its own.
+    const a = executeScript({ origin: ORIGIN, pageKey: KEY, code: '1' });
+    const b = executeScript({ origin: ORIGIN, pageKey: KEY, code: '1' });
+    const marker = (script: string) => /"markKey":"(__frostRunMark_[A-Za-z0-9_]+)"/.exec(script)?.[1];
+    expect(marker(a)).toBeDefined();
+    expect(marker(a)).not.toBe(marker(b));
+  });
+
+  test('dom-execute-odd-values', async () => {
+    const dom = page('');
+    expect(await executeAnswer(dom, 'const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); proxy')).toMatchObject({ status: 'ok', type: 'object', json: '{}' });
+    expect(await executeAnswer(dom, '({ then() {} })')).toMatchObject({ status: 'ok', json: '{}' });
+    expect(await executeAnswer(dom, 'await 5')).toMatchObject({ status: 'ok', json: '5' });
   });
 });

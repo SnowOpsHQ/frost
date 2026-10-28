@@ -16,7 +16,9 @@ class FakeContents extends EventEmitter implements NavigableContents {
   url = 'https://example.com/start';
   title = 'Start';
   destroyed = false;
+  loading = false;
   getURL = () => this.url;
+  isLoading = () => this.loading;
   getTitle = () => this.title;
   isDestroyed = () => this.destroyed;
 
@@ -36,7 +38,14 @@ class FakeContents extends EventEmitter implements NavigableContents {
     this.emit('did-navigate', {}, url, status, 'OK');
   }
   stop(): void {
+    this.loading = false;
     this.emit('did-stop-loading', {});
+  }
+  /** The page's own same-document move (`history.pushState`, a fragment link). */
+  inPage(url: string): void {
+    this.emit('did-start-navigation', { url, isMainFrame: true, isSameDocument: true });
+    this.url = url;
+    this.emit('did-navigate-in-page', {}, url, true);
   }
   listening(): number {
     return this.eventNames().reduce((sum, name) => sum + this.listenerCount(name), 0);
@@ -145,22 +154,64 @@ describe('the tab navigator', () => {
     expect(early.browser.navigate).not.toHaveBeenCalled();
   });
 
-  test('navigator-uses-controller from an empty tab', async () => {
-    // The tab has no page yet: the navigation creates it, and the watch attaches to it then.
-    const created = new FakeContents();
-    let current: FakeContents | null = null;
-    const browser = {
-      getState: () => ({ activeTabId: TAB }),
-      navigate: vi.fn(() => {
-        current = created;
-        return true;
-      }),
-    };
-    const navigator = createTabNavigator({ browser, contentsOf: () => current });
-    const pending = navigator(TAB, 'https://example.com/a', { signal: signal(), allowedOrigin: 'https://example.com' });
-    created.start('https://example.com/a');
-    expect(created.redirect('https://evil.example/')).toBe(true);
-    created.stop();
+  test('navigator-empty-tab', async () => {
+    // The tab has no page yet: the navigation creates its WebContents. Electron 45 fires the start
+    // inside `loadURL` (before the watch can attach); a later start for `href` is ours too. Either
+    // way the watch is armed.
+    for (const order of ['start-inside-navigate', 'start-after'] as const) {
+      const created = new FakeContents();
+      let current: FakeContents | null = null;
+      const browser = {
+        getState: () => ({ activeTabId: TAB }),
+        navigate: vi.fn((url: string) => {
+          current = created;
+          created.loading = true;
+          if (order === 'start-inside-navigate') created.start(url);
+          return true;
+        }),
+      };
+      const navigator = createTabNavigator({ browser, contentsOf: () => current });
+      const pending = navigator(TAB, 'https://example.com/a', { signal: signal(), allowedOrigin: 'https://example.com' });
+      if (order === 'start-after') created.start('https://example.com/a');
+      expect(created.redirect('https://evil.example/'), order).toBe(true);
+      created.stop();
+      expect(await pending, order).toMatchObject({ status: 'done', blockedRedirectTo: 'https://evil.example' });
+      expect(created.listening(), order).toBe(0);
+    }
+  });
+
+  test('navigator-old-page-in-page-moves', async () => {
+    // While ours (cross-document) is pending, the old page's pushState is not ours: the watch stays.
+    const { contents, navigator, browser } = setup();
+    browser.navigate.mockImplementation(((url: string) => {
+      contents.loading = true;
+      contents.start(url);
+      return true;
+    }) as never);
+    const pending = navigator(TAB, 'https://example.com/go', { signal: signal(), allowedOrigin: 'https://example.com' });
+    contents.inPage('https://example.com/start#moved');
+    contents.inPage('https://example.com/pushed');
+    // The old page's own load activity stops while ours is still loading: not ours either.
+    contents.emit('did-stop-loading', {});
+    expect(contents.redirect('https://evil.example/')).toBe(true);
+    contents.stop();
     expect(await pending).toMatchObject({ status: 'done', blockedRedirectTo: 'https://evil.example' });
+  });
+
+  test('navigator-fragment-only', async () => {
+    // Only the fragment changes: a same-document navigation, settled at its in-page move (no timeout).
+    vi.useFakeTimers();
+    const { contents, navigator, browser } = setup();
+    browser.navigate.mockImplementation(((url: string) => {
+      contents.emit('did-start-navigation', { url, isMainFrame: true, isSameDocument: true });
+      return true;
+    }) as never);
+    let answer: TabNavigation | null = null;
+    void navigator(TAB, 'https://example.com/start#section', { signal: signal(), allowedOrigin: 'https://example.com' }).then((value) => (answer = value));
+    contents.url = 'https://example.com/start#section';
+    contents.emit('did-navigate-in-page', {}, contents.url, true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(answer).toMatchObject({ status: 'done', settled: true, url: 'https://example.com/start#section' });
+    expect(contents.listening()).toBe(0);
   });
 });

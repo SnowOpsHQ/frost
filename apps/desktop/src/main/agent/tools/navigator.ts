@@ -16,12 +16,18 @@ import { clip } from './audit-summary';
 // this navigation (its commit, failure, stop, or the next main-frame navigation), never later, so it
 // never touches a navigation the user starts afterwards. Electron 45, checked: a cancelled redirect
 // fires no `did-fail-load`, only `did-stop-loading`, and the tab keeps its previous URL.
+//
+// The cancel is a partial exfiltration guard, not a boundary: a granted site can't bounce the tab
+// (and what its URL carries) to another site through a server redirect of the agent's navigation,
+// but its own scripts can still send data anywhere.
 
 /** What `navigate` hears from the tab's WebContents (Electron's `WebContents`; tests use an emitter). */
 export interface NavigableContents {
   getURL(): string;
   getTitle(): string;
   isDestroyed(): boolean;
+  /** Whether the tab is still loading (Electron's `isLoading()`). */
+  isLoading?(): boolean;
   on(event: string, listener: (...args: any[]) => void): unknown;
   removeListener(event: string, listener: (...args: any[]) => void): unknown;
 }
@@ -86,9 +92,17 @@ export function createTabNavigator(deps: TabNavigatorDeps): TabNavigator {
     // `phase`: ours hasn't started (`waiting`), is in flight (`running`: redirects are watched), or
     // has committed, failed, stopped or been replaced (`over`). The listeners go once both it is
     // over and the wait has ended, so a timeout or an abort never lifts the redirect watch early.
+    // Electron 45, checked: `did-start-navigation` fires synchronously inside `loadURL`, before it
+    // returns, so the listeners must be on before `browser.navigate`; a fragment-only load starts a
+    // same-document navigation (`isSameDocument`) and ends with `did-navigate-in-page`.
     let watched: NavigableContents | null = null;
     let phase: 'waiting' | 'running' | 'over' = 'waiting';
+    /** Ours is a same-document navigation (only the fragment changes): it ends at `did-navigate-in-page`. */
+    let sameDocument = false;
+    /** A fresh WebContents was watched only after the load began: ours may not have announced its start yet. */
+    let startUnseen = false;
     let waitOver = false;
+    let settledEarly = false;
     let httpStatus: number | null = null;
     let blockedRedirectTo: string | null = null;
     let settle: (() => void) | null = null;
@@ -101,22 +115,35 @@ export function createTabNavigator(deps: TabNavigatorDeps): TabNavigator {
     /** Ours is over (`phase`); `settled` also ends the wait. */
     const ended = (settled: boolean) => {
       phase = 'over';
-      if (settled) settle?.();
+      if (settled) {
+        if (settle !== null) settle();
+        else settledEarly = true;
+      }
       detachIfDone();
     };
     const listeners: [string, (...args: any[]) => void][] = [
       [
         'did-start-navigation',
         (details: NavigationDetails) => {
-          if (details?.isMainFrame !== true || details.isSameDocument === true) return;
+          if (details?.isMainFrame !== true) return;
+          if (details.isSameDocument === true) {
+            // Ours, if it only moves to `href`'s fragment; the old page's own `pushState` or fragment
+            // change while ours is pending is not ours and changes nothing here.
+            if (phase === 'waiting' && details.url === href) {
+              phase = 'running';
+              sameDocument = true;
+            }
+            return;
+          }
           if (phase === 'waiting') phase = 'running';
+          else if (phase === 'running' && startUnseen && details.url === href) startUnseen = false;
           else if (phase === 'running') ended(true); // Another main-frame navigation replaced ours.
         },
       ],
       [
         'will-redirect',
         (details: NavigationDetails) => {
-          if (allowed === null || phase !== 'running' || details?.isMainFrame !== true) return;
+          if (allowed === null || phase !== 'running' || sameDocument || details?.isMainFrame !== true) return;
           const target = webOrigin(details.url);
           if (target === allowed) return;
           details.preventDefault?.();
@@ -126,7 +153,7 @@ export function createTabNavigator(deps: TabNavigatorDeps): TabNavigator {
       [
         'did-navigate',
         (_event: unknown, _url: unknown, code: unknown) => {
-          if (phase !== 'running') return;
+          if (phase !== 'running' || sameDocument) return;
           httpStatus = typeof code === 'number' && Number.isInteger(code) && code > 0 ? code : null;
           ended(false); // Committed: no redirect can follow; the wait goes on to the load's end.
         },
@@ -134,20 +161,24 @@ export function createTabNavigator(deps: TabNavigatorDeps): TabNavigator {
       [
         'did-fail-load',
         (_event: unknown, _code: unknown, _description: unknown, _url: unknown, isMainFrame: unknown) => {
-          if (phase === 'running' && isMainFrame === true) ended(false);
+          if (phase === 'running' && !sameDocument && isMainFrame === true) ended(false);
         },
       ],
       [
         'did-navigate-in-page',
         (_event: unknown, _url: unknown, isMainFrame: unknown) => {
-          if (phase === 'running' && isMainFrame === true) ended(true);
+          // Only ours: an in-page move of the old page while ours is pending ends nothing.
+          if (phase === 'running' && sameDocument && isMainFrame === true) ended(true);
         },
       ],
       [
         'did-stop-loading',
         () => {
-          // A load that stopped before ours started is the previous one's.
-          if (phase !== 'waiting') ended(true);
+          // A load that stopped before ours started is the previous one's; while ours is still
+          // pending (the tab still loading) a stop is some other load's.
+          if (phase === 'waiting') return;
+          if (phase === 'running' && !sameDocument && watched?.isLoading?.() === true) return;
+          ended(true);
         },
       ],
       ['destroyed', () => ended(true)],
@@ -170,10 +201,14 @@ export function createTabNavigator(deps: TabNavigatorDeps): TabNavigator {
       detachIfDone();
       return { status: 'refused' };
     }
-    // A tab without a page yet gets its WebContents from the navigation; its events come later.
+    // A tab without a page yet gets its WebContents from the navigation, whose start has already
+    // fired inside `loadURL` (or, should an Electron emit it later, is still to come): ours is
+    // running from here, and a start for `href` still to come is taken as ours, not as a replacement.
     if (contents === null) {
       contents = deps.contentsOf(tabId);
       if (contents === null || contents.isDestroyed()) return { status: 'no-tab' };
+      phase = 'running';
+      startUnseen = true;
       attach(contents);
     }
     const live = contents;
@@ -192,6 +227,7 @@ export function createTabNavigator(deps: TabNavigatorDeps): TabNavigator {
       const timer = setTimeout(() => finish('timeout'), settleMs);
       settle = () => finish('settled');
       options.signal.addEventListener('abort', onAbort, { once: true });
+      if (settledEarly) finish('settled');
     });
     if (outcome === 'aborted') return { status: 'aborted' };
     if (live.isDestroyed()) return { status: 'no-tab' };

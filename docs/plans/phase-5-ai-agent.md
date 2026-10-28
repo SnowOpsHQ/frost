@@ -220,8 +220,9 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
     `expectedUrl`); a mismatch, or a `null` expectation, acts on nothing and answers `expired`;
   - `navigate` loads `parseWebUrl(url).href` (`expectedUrl`), never the raw input string;
   - `navigate` run `via: 'grant'` cancels any redirect leaving the granted origin (`will-redirect`,
-    `event.preventDefault()`) and answers `expired`; an approved navigate may follow redirects (the
-    user approved the destination) but reports where it ended.
+    `event.preventDefault()`) and answers data `{ blocked: 'redirect', to: <origin>, url }` (the tab
+    stays where it was); an approved navigate may follow redirects (the user approved the
+    destination) but reports where it ended.
 - **Tests:** unit tests with fakes for each tool and cap; execute JS never uses the main world;
   timeout ends a hung script; oversized results truncated; each tool refuses a page whose origin
   (or, approved, exact URL) differs from the context's; a granted navigate's off-origin redirect is
@@ -395,10 +396,35 @@ _Filled in as tasks land._
   address bar would load exactly `parseWebUrl(url).href`; the controller navigates the shown tab
   only, so a chat whose tab isn't shown gets `{ navigated: false }` (Task 6 may add a per-tab
   navigation to the controller). Electron 45, checked: a cancelled `will-redirect` fires no
-  `did-fail-load`, only `did-stop-loading`, and the tab keeps its previous URL. **Deviation:** a
-  granted navigate whose off-origin redirect was cancelled answers data `{ blocked: 'redirect',
-  to: <origin>, url }` (the lead's brief) rather than `expired`, so the model learns why. The
+  `did-fail-load`, only `did-stop-loading`, and the tab keeps its previous URL. A granted navigate
+  whose off-origin redirect was cancelled answers data `{ blocked: 'redirect', to: <origin>, url }`
+  (the requirement above now says so), so the model learns why. The
   redirect watch lasts exactly as long as that navigation (until it commits, fails, stops or is
   replaced), even past the settle timeout or an abort. A script still running at its timeout answers
   `timeout`; it can't be stopped and the page may go on running it (a busy loop freezes the tab until
   the user reloads it); frost does not reload on its own. `click` clicks without a user gesture.
+- **Task 5 review.** `AGENT_JS_WORLD_ID` keeps approved code's changes for the document's lifetime,
+  so the wrapper keeps the world's original built-ins from its first run there in a non-writable,
+  non-configurable global (`EXECUTE_JS_VAULT_KEY`), reaches the global through the script's
+  top-level `this`, calls only those built-ins (uncurried, through the kept `Reflect.apply`), follows
+  a promise result with the kept `then`, ignores a `toJSON` inherited only from the world's
+  `Object.prototype` / `Array.prototype`, writes its answer from primitives and checks its `length`
+  last against `EXECUTE_JS_LIMITS.maxAnswerChars` (else a fixed error): an earlier run can't forge a
+  later one's result or code, or push an answer past the cap. It can still change the built-ins
+  later code computes with: **Task 6's approval card for `execute_javascript` says "Runs alongside
+  any code you allowed earlier on this page."** The marker telling a parse failure from a runtime
+  throw is named at random per call (`executeMarkKey(randomUUID())`), so code can't shadow it and run
+  twice. Code without `await` compiles as a sync expression, script or function body (its result
+  isn't resolved through the world's `then`); code with it as an async expression or body. The
+  `AGENT_PAGE_WORLD_ID` scripts call DOM members only through the interface prototypes' getters and
+  methods (named elements and forms clobber `document.querySelectorAll`, `document.body`,
+  `document.title`, a form's members). Scripts pass `userGesture: false`. Under a grant, click by
+  text needs an exact match. Navigate: the redirect watch is attached before `browser.navigate`
+  (Electron 45, checked: `did-start-navigation` fires inside `loadURL`; a fragment-only load fires a
+  same-document start there, then `did-navigate-in-page`), is armed at once on a tab's fresh
+  WebContents, ignores the old page's in-page moves and load stops while ours is pending (the tab
+  still loading), and a fragment-only navigation settles at its in-page move. Checked on Electron 45:
+  the vault can't be redefined on the window, hooks left by one run don't reach the next one's
+  answer, and clobbered `document` members don't affect the page scripts. The exact-URL check is a
+  staleness guard, not a boundary against the page; the redirect cancel is a partial exfiltration
+  guard (`specs/agent-page-tools.spec.ts`).

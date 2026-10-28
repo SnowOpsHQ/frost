@@ -27,6 +27,8 @@ afterEach(() => {
 interface Call {
   readonly worldId: number;
   readonly code: string;
+  /** `executeJavaScriptInIsolatedWorld`'s third argument, as passed (never a gesture). */
+  readonly userGesture: unknown;
 }
 
 /** A WebContents whose isolated-world scripts run in a jsdom page at `url` (as Chromium would run them). */
@@ -34,8 +36,8 @@ function domContents(body: string, { url = PAGE, shownUrl = url }: { url?: strin
   const dom = new JSDOM(`<!doctype html><html lang="en"><head><title>Guide</title></head><body>${body}</body></html>`, { url, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
   const calls: Call[] = [];
   const contents: PageContents = {
-    executeJavaScriptInIsolatedWorld: async (worldId, scripts) => {
-      calls.push({ worldId, code: scripts[0]!.code });
+    executeJavaScriptInIsolatedWorld: async (worldId, scripts, ...rest) => {
+      calls.push({ worldId, code: scripts[0]!.code, userGesture: rest.length > 0 ? rest[0] : 'omitted' });
       return dom.window.eval(scripts[0]!.code) as unknown;
     },
     getURL: () => shownUrl,
@@ -48,8 +50,8 @@ function domContents(body: string, { url = PAGE, shownUrl = url }: { url?: strin
 function scriptedContents(answer: () => Promise<unknown>, url = PAGE) {
   const calls: Call[] = [];
   const contents: PageContents = {
-    executeJavaScriptInIsolatedWorld: (worldId, scripts) => {
-      calls.push({ worldId, code: scripts[0]!.code });
+    executeJavaScriptInIsolatedWorld: (worldId, scripts, ...rest) => {
+      calls.push({ worldId, code: scripts[0]!.code, userGesture: rest.length > 0 ? rest[0] : 'omitted' });
       return answer();
     },
     getURL: () => url,
@@ -221,14 +223,20 @@ describe('click', () => {
       clicks += 1;
     });
     const { tools } = runner({ contentsOf: () => page.contents });
-    const outcome = await run(tools, 'click', { text: 'see pricing' }, 'grant');
+    const outcome = await run(tools, 'click', { text: 'see pricing' }, 'approval');
     expect(outcome).toMatchObject({ ok: true, source: pageSource(ORIGIN) });
     expect(dataOf(outcome)).toEqual({ clicked: true, matchedBy: 'text-contains', element: { tag: 'a', role: 'link', name: 'See pricing', href: 'https://example.com/pricing', visible: true } });
     expect(clicks).toBe(1);
+    // Under a standing grant only an exact text match is clicked.
+    expect(dataOf(await run(tools, 'click', { text: 'see pricing' }, 'grant'))).toMatchObject({ clicked: false, reason: expect.stringContaining('exact') });
+    expect(clicks).toBe(1);
+    expect(dataOf(await run(tools, 'click', { text: 'See pricing' }, 'grant'))).toMatchObject({ clicked: true, matchedBy: 'text-exact' });
+    expect(clicks).toBe(2);
     expect(page.calls.every((call) => call.worldId === AGENT_PAGE_WORLD_ID)).toBe(true);
+    expect(page.calls.every((call) => call.userGesture === false)).toBe(true);
     expect(dataOf(await run(tools, 'click', { selector: '#none' }, 'approval'))).toEqual({ clicked: false, reason: 'No element matches the selector.' });
     expect(dataOf(await run(tools, 'click', { selector: '[' }, 'approval'))).toEqual({ clicked: false, reason: 'The selector is not valid CSS.' });
-    expect(clicks).toBe(1);
+    expect(clicks).toBe(2);
   });
 
   test('click-selector-is-data', async () => {
@@ -268,6 +276,7 @@ describe('execute_javascript', () => {
     expect(page.calls).toHaveLength(1);
     const call = page.calls[0]!;
     expect(call.worldId).toBe(AGENT_JS_WORLD_ID);
+    expect(call.userGesture).toBe(false);
     expect(call.worldId).not.toBe(0);
     expect(call.worldId).not.toBe(AGENT_PAGE_WORLD_ID);
     expect(NON_AGENT_WORLD_IDS).not.toContain(call.worldId);

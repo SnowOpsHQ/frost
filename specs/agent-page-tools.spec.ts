@@ -26,9 +26,17 @@ export const AGENT_PAGE_WORLD_ID = 1_500;
 /**
  * The isolated world `execute_javascript` runs approved code in: dedicated to it, never the main
  * world, never an SEO world, never `AGENT_PAGE_WORLD_ID`. Code shares the page's DOM but not its
- * JavaScript globals; what one approved run leaves in this world's globals (a variable, a timer)
- * stays there for the document's lifetime, as in a console, and is never seen by frost's other
- * scripts.
+ * JavaScript globals.
+ *
+ * **Code approved on a page runs alongside the code approved earlier on that page** (the same
+ * document): what one run leaves in this world (a variable, a timer, a changed built-in) stays for
+ * the document's lifetime, as in a console, and the next run sees it. frost's own wrapper is kept
+ * out of reach of it: on its first run in a document it stores the world's original built-ins in a
+ * non-writable, non-configurable global (`EXECUTE_JS_VAULT_KEY`) and every later run uses only
+ * those, so earlier code can't change which code runs, the page check, or how the result is written
+ * and capped. It can still change the built-ins the approved code itself computes with (a run's
+ * own `await` or returned promise included). Task 6's approval card says so: "Runs alongside any
+ * code you allowed earlier on this page."
  */
 export const AGENT_JS_WORLD_ID = 1_501;
 
@@ -101,14 +109,29 @@ export const EXECUTE_JS_LIMITS = {
   maxErrorChars: 500,
   /** Characters of a DOM node's description (`<a id="…" class="…">`). */
   maxNodeChars: 200,
+  /**
+   * Longest answer the wrapper hands back (characters; its last step checks the answer's `length`,
+   * else answers a fixed error): the result's JSON at the byte cap with every character escaped
+   * (`\u00XX`, six characters each), plus the envelope.
+   */
+  maxAnswerChars: 6 * EXECUTE_JS_MAX_RESULT_BYTES + 1_024,
 } as const;
 
 /**
- * The global (in `AGENT_JS_WORLD_ID` only) `execute_javascript`'s wrapper sets for the duration of
- * one script evaluation, to tell a script that failed to parse from one that threw while running
- * (a parse failure falls back to running the code as an async function body; a run never repeats).
+ * The global (in `AGENT_JS_WORLD_ID` only, non-writable and non-configurable) that holds the world's
+ * original built-ins from frost's first run there in a document; every later run reads them from it.
  */
-export const EXECUTE_JS_MARK_KEY = '__frostAgentRunMark';
+export const EXECUTE_JS_VAULT_KEY = '__frostAgentIntrinsics';
+
+/**
+ * The global name `execute_javascript`'s wrapper defines for one script evaluation, to tell a script
+ * that failed to parse from one that threw while running (a parse failure falls back to running the
+ * code as a function body; a run never repeats). Random per call (`id`: main's `randomUUID()`), so
+ * the code can't declare it and shadow it.
+ */
+export function executeMarkKey(id: string): string {
+  return `__frostRunMark_${id.replace(/[^A-Za-z0-9]/g, '_')}`;
+}
 
 /**
  * What `page_audit` and `page_data` hand the model. They summarise main's audit (never the page
@@ -146,6 +169,15 @@ export const PAGE_AUDIT_LIMITS = {
 export const PAGE_TITLE_MAX_CHARS = 300;
 
 // ---- Pages -------------------------------------------------------------------------------------
+
+// What the page checks and the redirect cancel are, and are not:
+// - the exact-URL check (approved calls) is a **staleness guard**: it stops an approved call from
+//   acting on a page the tab moved to after the user saw the request. It is not a boundary against
+//   the page itself, which controls its own URL (`history.pushState`) and DOM;
+// - cancelling a granted navigate's off-origin redirect is a **partial exfiltration guard**: a
+//   granted site can't bounce the tab (and what the URL carries) to another site through a server
+//   redirect of the agent's own navigation. The page can still send data elsewhere by its own
+//   means (its scripts, links the agent clicks).
 
 /**
  * The page a script checks for, written as the page itself can read it with nothing but

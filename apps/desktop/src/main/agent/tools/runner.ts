@@ -52,7 +52,7 @@ export interface PageToolDeps {
   readonly ports?: { readonly serp?: SerpPort | null; readonly intent?: IntentPort | null; readonly gsc?: GscPort | null };
 }
 
-/** Script answers main will parse (characters): far above what any capped script writes. */
+/** Script answers main will parse (characters): far above what any capped script writes (`execute_javascript`'s own cap is `EXECUTE_JS_LIMITS.maxAnswerChars`). */
 const MAX_SCRIPT_ANSWER_CHARS = 512 * 1024;
 
 const fail = (code: ToolErrorCode): ToolRunOutcome => ({ ok: false, code });
@@ -94,7 +94,8 @@ function runScript(contents: PageContents, worldId: number, code: string, timeou
     signal.addEventListener('abort', onAbort, { once: true });
     let pending: Promise<unknown>;
     try {
-      pending = contents.executeJavaScriptInIsolatedWorld(worldId, [{ code }]);
+      // Never as a user gesture: a script's click opens no popup and starts nothing a gesture would allow.
+      pending = contents.executeJavaScriptInIsolatedWorld(worldId, [{ code }], false);
     } catch {
       finish({ ok: false, code: 'failed' });
       return;
@@ -180,7 +181,8 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
     if (expected === null) return fail('expired');
     const contents = livePage(context, expected);
     if (typeof contents === 'string') return fail(contents);
-    const script = clickScript({ ...expected, selector: input.selector ?? null, text: input.selector === undefined ? (input.text ?? null) : null });
+    // Under a standing grant only an exact text match is clicked: no guessing without the user.
+    const script = clickScript({ ...expected, selector: input.selector ?? null, text: input.selector === undefined ? (input.text ?? null) : null, exactOnly: context.via === 'grant' });
     const run = await runScript(contents, SCRIPT_WORLDS.click, script, PAGE_SCRIPT_TIMEOUT_MS, context.signal);
     if (!run.ok) return fail(run.code);
     const answer = parsePageAnswer(run.value, MAX_SCRIPT_ANSWER_CHARS);
@@ -189,7 +191,18 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
       case 'mismatch':
         return fail('expired');
       case 'not-found':
-        return ok({ clicked: false, reason: input.selector !== undefined ? 'No element matches the selector.' : 'No visible clickable element has that text.' }, expected.origin);
+        return ok(
+          {
+            clicked: false,
+            reason:
+              input.selector !== undefined
+                ? 'No element matches the selector.'
+                : context.via === 'grant'
+                  ? 'No visible clickable element has exactly that text (under a standing grant only an exact match is clicked).'
+                  : 'No visible clickable element has that text.',
+          },
+          expected.origin,
+        );
       case 'bad-selector':
         return ok({ clicked: false, reason: 'The selector is not valid CSS.' }, expected.origin);
       case 'clicked': {
@@ -220,7 +233,7 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
     const started = now();
     const run = await runScript(contents, SCRIPT_WORLDS.execute_javascript, executeScript({ ...expected, code: input.code }), EXECUTE_JS_TIMEOUT_MS, context.signal);
     if (!run.ok) return fail(run.code);
-    const answer = parsePageAnswer(run.value, MAX_SCRIPT_ANSWER_CHARS);
+    const answer = parsePageAnswer(run.value, EXECUTE_JS_LIMITS.maxAnswerChars);
     if (answer === null) return fail('failed');
     const elapsedMs = Math.max(0, now() - started);
     if (answer.status === 'mismatch') return fail('expired');

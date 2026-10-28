@@ -2,7 +2,7 @@
 
 Spec: `specs/agent-page-tools.spec.ts` (`AGENT_PAGE_WORLD_ID`, `AGENT_JS_WORLD_ID`,
 `NON_AGENT_WORLD_IDS`, `PAGE_SCRIPT_TIMEOUT_MS`, `NAVIGATE_SETTLE_TIMEOUT_MS`, `CLICK_LIMITS`,
-`CLICKABLE_SELECTOR`, `PAGE_TEXT_DEFAULT_CHARS`, `EXECUTE_JS_LIMITS`, `EXECUTE_JS_MARK_KEY`,
+`CLICKABLE_SELECTOR`, `PAGE_TEXT_DEFAULT_CHARS`, `EXECUTE_JS_LIMITS`, `EXECUTE_JS_VAULT_KEY`, `executeMarkKey`,
 `PAGE_AUDIT_LIMITS`, `PAGE_TITLE_MAX_CHARS`, `pageKeyOf`, `pageSource`), `specs/agent-tools.spec.ts`
 (`EXECUTE_JS_TIMEOUT_MS`, `EXECUTE_JS_MAX_RESULT_BYTES`, `TOOL_RESULT_MAX_CHARS`,
 `AGENT_TOOL_INPUT_LIMITS`), `specs/agent-approvals.spec.ts` (`runTargetFor`, `pageUrlOf`,
@@ -28,9 +28,30 @@ named test.
   string concatenation (`location.origin`, and approved `location.origin + location.pathname +
   location.search === pageKeyOf(expectedUrl)`). `page_audit` and `page_data` read main's audit, not
   the page: they check the audit's URL and the tab's live URL the same way.
+- **What the checks are.** The exact-URL check is a staleness guard (an approved call doesn't act on
+  a page the tab moved to after the user saw the request), not a boundary against the page, which
+  controls its own URL and DOM. Cancelling a granted navigate's off-origin redirect is a partial
+  exfiltration guard: the page's own scripts can still send data elsewhere.
 - **Worlds.** `click` and `page_text` run frost's fixed scripts in `AGENT_PAGE_WORLD_ID`;
   `execute_javascript` runs approved code in `AGENT_JS_WORLD_ID`, its own world. Neither is the
   main world (`0`), Electron's (`999`) or any SEO or other frost world (`NON_AGENT_WORLD_IDS`).
+  Every script runs with `userGesture: false`.
+- **The page's DOM can't stand in for the DOM.** Named elements and forms shadow DOM members
+  (`<img name="querySelectorAll">`, `<form name="body">`); the `AGENT_PAGE_WORLD_ID` scripts call DOM
+  members only through the getters and methods of the interface prototypes, taken at their start.
+- **Code approved on a page runs alongside the code approved earlier on that page.** What one run
+  leaves in `AGENT_JS_WORLD_ID` stays for the document's lifetime, and can change the built-ins later
+  code computes with. frost's wrapper is out of its reach: its first run in a document keeps the
+  world's original built-ins in a non-writable, non-configurable global (`EXECUTE_JS_VAULT_KEY`), and
+  every run uses only those (uncurried, through the kept `Reflect.apply`), follows a promise with the
+  kept `then`, ignores a `toJSON` that only comes from the world's `Object.prototype` or
+  `Array.prototype`, writes its answer from primitives and checks its `length` last (else a fixed
+  error), so earlier code can't change which code runs, the page check, or how the result is written
+  and capped. Each call's marker name is random (`executeMarkKey(randomUUID())`), so code can't
+  shadow it and run twice. Task 6's approval card says: "Runs alongside any code you allowed earlier
+  on this page." (Checked on Electron 45.)
+- **Click under a grant.** A standing grant clicks only an exact text match (or a selector); a
+  contains-match needs an approval.
 - **Input is data.** A script's arguments are one JSON object literal after a fixed function; the
   selector, text and code are string values in it, never source. `execute_javascript` compiles the
   code from its string inside the world, after the page check, so nothing in it runs on another
@@ -51,7 +72,10 @@ named test.
   `expectedUrl`, through the controller's address-bar path (`browser.navigate`), so the browse guards
   and the render profile apply; the controller navigates the shown tab only, so a chat whose tab
   isn't shown gets `navigated: false`. Under a standing grant a main-frame redirect of this
-  navigation that leaves the granted origin is cancelled and reported (`blocked: 'redirect'`, `to`);
+  navigation that leaves the granted origin is cancelled and reported as data (`blocked: 'redirect'`,
+  `to`); the watch is on before the load starts (Electron 45 fires `did-start-navigation` inside
+  `loadURL`), is armed at once on a tab's fresh WebContents, and ignores the old page's in-page moves
+  while ours is pending; a fragment-only navigation settles at its in-page move;
   an approved navigate follows redirects and reports where it ended. It waits for the load to settle
   or `NAVIGATE_SETTLE_TIMEOUT_MS`.
 - **No cookies, storage or main world.** No tool reads them; `click` clicks without a user gesture.
@@ -73,6 +97,7 @@ named test.
   data answers → `click-reports-element`
 - A selector with quotes, backslashes and `</script>` reaches the page as a JSON string value → `click-selector-is-data`
 - `click` runs only under a grant or an approval → `click-needs-grant-or-approval`
+- Under a grant only an exact text match is clicked; scripts run with `userGesture: false` → `click-reports-element`
 
 ## Scenarios: execute_javascript
 - It runs only in `AGENT_JS_WORLD_ID`, never the main world or an SEO world, and its code is a JSON
@@ -107,6 +132,16 @@ named test.
   a code that runs once even when it throws, thrown errors → `dom-execute-runs-code`
 - `execute_javascript`'s JSON: `undefined`, functions, bigints, nodes, cycles, depth and getters that
   throw, and the UTF-8 byte cap with a flag → `dom-execute-bounded-json`
+- Named elements and forms that clobber DOM members change nothing for `click` and `page_text` → `dom-click-unclobbered`
+- `exactOnly` clicks only an exact text match → `dom-click-exact-only`
+- Code patching `Array.prototype.join`, `String.prototype.slice`, `charCodeAt`, `JSON.stringify` or
+  `Reflect.apply` can't push the answer past `maxAnswerChars` → `dom-execute-cap-unhookable`
+- Built-ins one run changes (`JSON.stringify`, `Function`, `eval`, `Promise.prototype.then`,
+  `Object.prototype.toJSON`, `Reflect.apply`, the vault itself) can't forge a later run's result or
+  change its code → `dom-execute-earlier-code-cannot-forge`
+- Code runs once, even when it declares a function named like a marker and throws; each call's
+  marker is its own → `dom-execute-runs-once`
+- A revoked proxy, a non-native thenable and `await` of a value are written plainly → `dom-execute-odd-values`
 
 ## Scenarios: the navigator
 - It navigates through the controller only when the URL loads as itself and the tab is shown → `navigator-uses-controller`
@@ -114,3 +149,6 @@ named test.
 - With an allowed origin it cancels a main-frame redirect off it, and only for this navigation → `navigator-blocks-off-origin-redirect`
 - Without one it follows the redirect and reports where it ended → `navigator-follows-redirect-approved`
 - An abort ends the wait; the redirect watch stays until the navigation ends → `navigator-abort`
+- From an empty tab the watch is armed whether the start fired inside `loadURL` or after → `navigator-empty-tab`
+- The old page's `pushState` or fragment move, and its load stopping, while ours is pending end nothing → `navigator-old-page-in-page-moves`
+- A fragment-only navigation settles at its in-page move → `navigator-fragment-only`
