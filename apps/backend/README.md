@@ -35,7 +35,7 @@ value). An empty value counts as unset.
 | `BETTER_AUTH_URL` | `http://127.0.0.1:$PORT` | The public base URL, a bare origin (no path or query); links in emails point here and its origin is trusted. Must be `https://` when `NODE_ENV=production`. |
 | `DATABASE_URL` | unset | `postgres://` URL (node-postgres). Unset → PGlite in `PGLITE_DIR`. Required when `NODE_ENV=production`. |
 | `PGLITE_DIR` | `apps/backend/.data/pglite` | The dev PGlite directory. |
-| `EMAIL_TRANSPORT` | `console` | `console` prints emails; development only, refused when `NODE_ENV=production`. |
+| `EMAIL_TRANSPORT` | `console` | `console` prints emails; development only, refused when `NODE_ENV=production`. It is the only transport so far: a real one is still to be written before any deployment. |
 | `HOST` | `127.0.0.1` | Bind address. |
 | `PORT` | `8787` | Listen port. |
 | `CLIENT_IP_HEADER` | unset | Only behind a reverse proxy: the header it sets with the client IP (e.g. `x-forwarded-for`). Unset → the TCP peer address, and any client-sent IP header is ignored. Never set it without a proxy in front: clients could then choose their rate-limit key. |
@@ -187,6 +187,9 @@ pnpm --filter @app/backend admin grant alice@example.com pro
 pnpm --filter @app/backend admin show alice@example.com
 pnpm --filter @app/backend admin revoke alice@example.com # sign out everywhere
 ```
+
+With PGlite (no `DATABASE_URL`), stop `dev` before a command that opens the database and start it
+again after: a PGlite directory belongs to one process at a time.
 
 `src/cli.ts` (run with `tsx`) reads only `DATABASE_URL` / `PGLITE_DIR` (and `NODE_ENV`: in
 production `DATABASE_URL` is required, as for the server), and prints its target to stderr before a
