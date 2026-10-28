@@ -456,6 +456,17 @@ From the repo root (`pnpm install` first):
 If your shell exports `ELECTRON_RUN_AS_NODE` (some terminals and agent harnesses do), unset it for
 manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it itself.
 
+E2E configuration notes:
+- The harness also strips every inherited `FROST_PUBLIC_*`, `FROST_GSC_*` and `FROST_TELEMETRY_*`
+  variable from the app's environment before a suite applies its own, so a value your shell exports
+  never points a suite at another backend, collector or Google endpoint.
+- That covers the **run-time** environment only. Values set in the environment of `build`, or in
+  `apps/desktop/.env`, `.env.local`, `.env.production` …, are read by Vite (`envPrefix` `FROST_PUBLIC_`)
+  and **baked into the bundle**. A build with any `FROST_PUBLIC_*` value baked in is pinned to its
+  baked configuration as a whole (`specs/build-config.spec.ts`): it ignores the run-time environment,
+  including the suites' fakes, so the account, telemetry and Search Console suites fail against it.
+  Build for the e2e with no `FROST_PUBLIC_*` variable set and no such `.env*` file.
+
 ## Source layout
 - `src/main/` — the main process: `index.ts` (wiring), `browser/` (the browser controller and its
   parts, the navigation guard, permissions, address resolution, shortcuts, the context menu, the
