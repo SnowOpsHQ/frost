@@ -20,6 +20,7 @@ import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
 import type { BrowserService } from './services';
+import { changesRouter } from './changes-router';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
@@ -279,6 +280,8 @@ export const appRouter = router({
   settings: settingsRouter,
   // Phase 2.5 Task 7 (`seo-checks.feature.md`): link status, sitemap and hreflang reciprocity checks.
   checks: checksRouter,
+  // Phase 6 Task 3 (`changes-capture.feature.md`): capture a page into its versioned history, and read it.
+  changes: changesRouter,
 });
 
 export type AppRouter = typeof appRouter;

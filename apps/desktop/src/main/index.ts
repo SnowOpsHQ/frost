@@ -24,6 +24,8 @@ import { createCheckFetch } from './seo/checks-fetch';
 import { CHECKS_ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-checks.spec';
 import { profileUserAgent } from '@app/specs/render-profile.spec';
 import { createContentService } from './seo/content-notes';
+import { runRegions } from './changes/regions';
+import { changesTabs, createChangesService } from './changes/service';
 import { confirmClearContentNotes } from './seo/content-notes-dialog';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
@@ -308,6 +310,9 @@ function start(): void {
     contentNotesGeneration: () => content.generation(),
   });
 
+  // Change intelligence (specs/changes-capture.feature.md): the active tab's ready audit and its regions, captured into the session database.
+  const changes = createChangesService({ store: sessionStore.changeIntel, tabs: changesTabs(browser, (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null), extract: runRegions, log: logSession });
+
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
   const securityOptions: SecurityOptions = {
@@ -420,6 +425,7 @@ function start(): void {
           log: logSession,
         }),
         settings: searchEngine,
+        changes,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

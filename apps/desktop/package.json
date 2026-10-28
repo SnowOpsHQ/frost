@@ -20,6 +20,7 @@
     "notices": "node third-party-notices.ts"
   },
   "dependencies": {
+    "@app/change-intel": "workspace:*",
     "@app/db": "workspace:*",
     "@app/ipc-contract": "workspace:*",
     "@app/seo-core": "workspace:*",

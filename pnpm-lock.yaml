@@ -181,6 +181,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@app/change-intel':
+        specifier: workspace:*
+        version: link:../../packages/change-intel
       '@app/db':
         specifier: workspace:*
         version: link:../../packages/db
