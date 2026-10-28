@@ -44,6 +44,7 @@ export const PALETTE_ICON_NAMES = [
   'tab-close',
   'tab-switch',
   'clear',
+  'panel-changes',
 ] as const;
 export type PaletteIconName = (typeof PALETTE_ICON_NAMES)[number];
 

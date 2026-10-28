@@ -7565,3 +7565,375 @@ input {
 }
 
 /* End of link and sitemap checks */
+
+/* Changes panel (Phase 6) ------------------------------------------------------------------------
+   Phase 6 Task 4, specs/changes-panel.feature.md: Capture now, the page's versions (by lane) and the
+   diff of two versions, by region. Kinds are text and colour; page text wraps anywhere. */
+.changes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.changes-hint {
+  margin-top: 12px;
+}
+
+.changes-capture-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.changes-capture:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.changes-capture[data-busy='true'] .icon {
+  animation: changes-pulse 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes changes-pulse {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.35;
+  }
+}
+
+.changes-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.changes-note[data-tone='warn'] {
+  color: var(--caution);
+}
+
+.changes-status {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.changes-status:empty {
+  display: none;
+}
+
+.changes-status[data-outcome='refused'],
+.changes-status[data-outcome='failed'] {
+  color: var(--caution);
+}
+
+.changes-status[data-outcome='first'],
+.changes-status[data-outcome='new'] {
+  color: var(--ok);
+}
+
+.changes-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.changes-lane-label {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- History ---- */
+.changes-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.changes-version {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.changes-version:hover {
+  background: var(--bg-hover);
+}
+
+.changes-version:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.changes-version[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.changes-version-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.changes-version-time {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-version-count {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-version-summary {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.changes-version-summary[data-first='true'] {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.changes-load-more {
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
+/* ---- Diff ---- */
+.changes-pair {
+  margin: 0;
+  font-size: 12px;
+}
+
+.changes-pair-label {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.changes-pair-time {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.changes-compare {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.changes-compare .seo-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.changes-region {
+  margin-top: 12px;
+}
+
+.changes-region-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.changes-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.changes-change {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 0;
+  border-top: 1px solid var(--seo-card-edge);
+  font-size: 12px;
+}
+
+.changes-change-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.changes-change-field {
+  font-weight: 600;
+}
+
+/* The kind: its word and a tone, plus a mark before the word (never colour alone). */
+.changes-kind {
+  --tone: var(--caution);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  color: var(--tone);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.changes-kind[data-kind='added'] {
+  --tone: var(--ok);
+}
+
+.changes-kind[data-kind='removed'] {
+  --tone: var(--danger);
+}
+
+.changes-kind::before {
+  content: '~';
+  font-weight: 700;
+}
+
+.changes-kind[data-kind='added']::before {
+  content: '+';
+}
+
+.changes-kind[data-kind='removed']::before {
+  content: '−';
+}
+
+.changes-sides {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 8px;
+  margin: 0;
+}
+
+.changes-sides dt {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.changes-sides dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.changes-text {
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.changes-segments {
+  margin: 0;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.changes-segment[data-op='del'] {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+.changes-segment[data-op='ins'] {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+  text-decoration: underline;
+}
+
+/* Said to screen readers around each edit (CSS text, so it is not part of the page text). */
+.changes-segment[data-op='del']::before,
+.changes-segment[data-op='ins']::before,
+.changes-segment[data-op='del']::after,
+.changes-segment[data-op='ins']::after {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.changes-segment[data-op='del']::before {
+  content: ' [removed: ';
+}
+
+.changes-segment[data-op='ins']::before {
+  content: ' [added: ';
+}
+
+.changes-segment[data-op='del']::after,
+.changes-segment[data-op='ins']::after {
+  content: '] ';
+}
+
+.changes-context {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.changes-context-label {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.changes-unchanged-block {
+  margin-top: 12px;
+}
+
+.changes-unchanged {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .changes-capture[data-busy='true'] .icon {
+    animation: none;
+  }
+}
+
+/* End of Changes panel (Phase 6) */

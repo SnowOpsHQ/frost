@@ -123,7 +123,7 @@ export type PalettePanel = SeoPanelId;
  * target query…" and "Copy snippet as HTML" (`seo-content.feature.md`, Command palette); `javascript`:
  * "Open JavaScript panel", with "Fetch served HTML again" (`seo-javascript.feature.md`).
  */
-export const FEATURE_PANEL_JUMPS = ['content', 'javascript'] as const satisfies readonly PalettePanel[];
+export const FEATURE_PANEL_JUMPS = ['content', 'javascript', 'changes'] as const satisfies readonly PalettePanel[];
 
 /**
  * Copy actions (`seo.copyValue({ tabId, audit, key })`): main writes, with Electron's `clipboard`,

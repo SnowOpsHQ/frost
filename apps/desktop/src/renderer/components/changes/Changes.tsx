@@ -1,0 +1,470 @@
+import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
+import type { SeoAuditResponse } from '@app/seo-core';
+import type { TabState } from '@app/specs/browser.spec';
+import { DIFF_FIELD_LABELS, DIFF_REGION_LABELS, type Change, type SnapshotDiff } from '@app/specs/capture.spec';
+import { CAPTURE_REFUSAL_MESSAGES, type CaptureAnswer, type HistoryCursor, type HistoryVersion } from '@app/specs/changes.spec';
+import { isWebUrl } from '@app/specs/web-url.spec';
+import { changesPaletteSources, onPageCaptured } from '../../changes-palette';
+import {
+  CHANGE_KIND_LABELS,
+  HISTORY_PAGE_SIZE,
+  captureCountText,
+  captureInput,
+  captureOutcomeKind,
+  captureOutcomeText,
+  compareFrom,
+  contextLabel,
+  groupByLane,
+  groupChangesByRegion,
+  mergeHistory,
+  olderInLane,
+  regionCount,
+  shownLane,
+  unchangedRegions,
+  versionSummaryText,
+  type Lane,
+} from '../../changes-view';
+import { ReloadIcon } from '../../icons';
+import { ipc } from '../../ipc';
+import { registerPaletteActions } from '../../palette/registry';
+import { formatCount } from '../../seo-view';
+import { CaptureGlyph, ChangesIcon } from './changes-icons';
+
+// The Changes panel (acceptance `changes-panel.feature.md`): the current page's captured versions,
+// newest first and grouped into lanes, "Capture now", and the diff of two versions of a lane, by
+// region. Its history is independent of the audit: the sidebar shows this panel before its audit
+// states, and only capturing needs a ready audit. Everything from the page is React text in a
+// `<bdi>` (never markup, never a link); no inline styles (strict CSP).
+
+/** `changes.capture` of `tabId` (into `projectId`, Unfiled when `undefined`); `null` on an IPC failure. */
+const capturePage = (tabId: number, projectId?: string): Promise<CaptureAnswer | null> => ipc.changes.capture.mutate(captureInput(tabId, projectId)).catch(() => null);
+
+// The command palette's Changes actions (`changes-palette.ts`), once per module instance.
+const unregisterPaletteActions = registerPaletteActions(...changesPaletteSources({ capture: (tabId) => capturePage(tabId) }));
+import.meta.hot?.dispose(unregisterPaletteActions);
+
+type AuditState = 'none' | SeoAuditResponse['status'];
+
+/** Page text: inert, bidi-isolated, shown whole (wrapping anywhere). */
+function Text({ value, testId }: { readonly value: string; readonly testId?: string }) {
+  return (
+    <bdi className="changes-text" dir="auto" data-testid={testId}>
+      {value}
+    </bdi>
+  );
+}
+
+function Hint({ testId, title, message }: { readonly testId: string; readonly title: string; readonly message: string }) {
+  return (
+    <div className="seo-hint changes-hint" data-testid={testId}>
+      <span className="seo-hint-art" aria-hidden="true">
+        <ChangesIcon className="panel-art" />
+      </span>
+      <p className="seo-hint-title">{title}</p>
+      <p className="seo-hint-message">{message}</p>
+    </div>
+  );
+}
+
+// ---- History -------------------------------------------------------------------------------------
+
+type HistoryState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'error' }
+  | { readonly status: 'ready'; readonly versions: readonly HistoryVersion[]; readonly next: HistoryCursor | null; readonly loadingMore: boolean; readonly moreFailed: boolean };
+
+/** The page's history, a page at a time: read on mount and on `reload()`; `loadMore()` follows the cursor. */
+function useHistory(url: string) {
+  const [state, setState] = useState<HistoryState>({ status: 'loading' });
+  const [generation, setGeneration] = useState(0);
+  useEffect(() => {
+    let live = true;
+    ipc.changes.history
+      .query({ url, limit: HISTORY_PAGE_SIZE })
+      .then((answer) => {
+        if (live) setState({ status: 'ready', versions: answer.versions, next: answer.next, loadingMore: false, moreFailed: false });
+      })
+      .catch(() => {
+        if (live) setState({ status: 'error' });
+      });
+    return () => {
+      live = false;
+    };
+  }, [url, generation]);
+  const reload = useCallback(() => setGeneration((n) => n + 1), []);
+  const loadMore = () => {
+    if (state.status !== 'ready' || state.next === null || state.loadingMore) return;
+    const { next } = state;
+    setState({ ...state, loadingMore: true, moreFailed: false });
+    ipc.changes.history
+      .query({ url, cursor: next, limit: HISTORY_PAGE_SIZE })
+      .then((answer) =>
+        setState((current) => (current.status === 'ready' && current.next === next ? { ...current, versions: mergeHistory(current.versions, answer.versions), next: answer.next, loadingMore: false } : current)),
+      )
+      .catch(() => setState((current) => (current.status === 'ready' ? { ...current, loadingMore: false, moreFailed: true } : current)));
+  };
+  return { state, reload, loadMore };
+}
+
+/** Moves focus between the versions with the arrow keys, Home and End (Enter and Space select: they are buttons). */
+function onVersionKey(event: KeyboardEvent<HTMLOListElement>): void {
+  const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.changes-version')];
+  const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  if (at < 0) return;
+  const last = buttons.length - 1;
+  const to = { ArrowDown: Math.min(at + 1, last), ArrowUp: Math.max(at - 1, 0), Home: 0, End: last }[event.key];
+  if (to === undefined) return;
+  event.preventDefault();
+  buttons[to]!.focus();
+}
+
+function VersionList({ lane, selected, onSelect }: { readonly lane: Lane; readonly selected: string; readonly onSelect: (versionId: string) => void }) {
+  return (
+    <ol className="changes-versions" aria-label="Versions, newest first" onKeyDown={onVersionKey}>
+      {lane.versions.map((version) => {
+        const isSelected = version.versionId === selected;
+        return (
+          <li key={version.versionId}>
+            <button
+              type="button"
+              className="changes-version"
+              data-testid="changes-version"
+              data-version-id={version.versionId}
+              data-selected={isSelected}
+              aria-pressed={isSelected}
+              onClick={() => onSelect(version.versionId)}
+            >
+              <span className="changes-version-head">
+                <span className="changes-version-time" data-testid="changes-version-time">
+                  {new Date(version.createdAt).toLocaleString()}
+                </span>
+                <span className="changes-version-count" data-testid="changes-version-count">
+                  {captureCountText(version.captureCount)}
+                </span>
+              </span>
+              <span className="changes-version-summary" data-testid="changes-version-summary" data-first={version.parentVersionId === null}>
+                {versionSummaryText(version)}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function LaneChips({ lanes, shown, onChoose }: { readonly lanes: readonly Lane[]; readonly shown: string; readonly onChoose: (key: string) => void }) {
+  return (
+    <div className="seo-chips changes-lanes" role="group" aria-label="Capture lanes: render profile and search" data-testid="changes-lanes">
+      {lanes.map((lane) => (
+        <button key={lane.key} type="button" className="seo-chip-button" data-testid="changes-lane" data-lane={lane.key} aria-pressed={lane.key === shown} onClick={() => onChoose(lane.key)}>
+          <span className="changes-lane-label">{lane.label}</span>
+          <span className="seo-segment-count">{formatCount(lane.versions.length)}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---- Diff ----------------------------------------------------------------------------------------
+
+type DiffState = { readonly key: string } & ({ readonly status: 'loading' } | { readonly status: 'error' } | { readonly status: 'ready'; readonly diff: SnapshotDiff | null });
+
+/** The diff of two versions of a lane (`null` pair: nothing to read). */
+function useDiff(fromId: string | null, toId: string | null): DiffState | null {
+  const key = fromId === null || toId === null ? null : `${fromId}:${toId}`;
+  const [state, setState] = useState<DiffState | null>(null);
+  useEffect(() => {
+    if (fromId === null || toId === null) return;
+    let live = true;
+    const key = `${fromId}:${toId}`;
+    setState({ key, status: 'loading' });
+    ipc.changes.diff
+      .query({ fromVersionId: fromId, toVersionId: toId })
+      .then((diff) => live && setState({ key, status: 'ready', diff }))
+      .catch(() => live && setState({ key, status: 'error' }));
+    return () => {
+      live = false;
+    };
+  }, [fromId, toId]);
+  if (key === null) return null;
+  return state?.key === key ? state : { key, status: 'loading' };
+}
+
+function ChangeItem({ change }: { readonly change: Change }) {
+  const segments = change.segments && change.segments.length > 0 ? change.segments : null;
+  return (
+    <li className="changes-change" data-testid="changes-change" data-field={change.field} data-kind={change.kind}>
+      <div className="changes-change-head">
+        <span className="changes-change-field" data-testid="changes-change-field">
+          {DIFF_FIELD_LABELS[change.field]}
+        </span>
+        <span className="changes-kind" data-kind={change.kind} data-testid="changes-change-kind">
+          {CHANGE_KIND_LABELS[change.kind]}
+        </span>
+      </div>
+      {segments ? (
+        <p className="changes-segments" data-testid="changes-change-segments">
+          <bdi dir="auto">
+            {segments.map((segment, i) => (
+              <span key={i} className="changes-segment" data-op={segment.op} data-testid="changes-segment">
+                {segment.text}
+              </span>
+            ))}
+          </bdi>
+        </p>
+      ) : (
+        <dl className="changes-sides">
+          {change.before !== null ? (
+            <>
+              <dt>Before</dt>
+              <dd>
+                <Text value={change.before} testId="changes-change-before" />
+              </dd>
+            </>
+          ) : null}
+          {change.after !== null ? (
+            <>
+              <dt>After</dt>
+              <dd>
+                <Text value={change.after} testId="changes-change-after" />
+              </dd>
+            </>
+          ) : null}
+        </dl>
+      )}
+      {change.context !== null && change.context !== '' ? (
+        <p className="changes-context" data-testid="changes-change-context">
+          <span className="changes-context-label">{contextLabel(change.field)}</span> <Text value={change.context} />
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+function DiffBody({ diff }: { readonly diff: SnapshotDiff }) {
+  const [showUnchanged, setShowUnchanged] = useState(false);
+  const groups = groupChangesByRegion(diff.changes);
+  const unchanged = unchangedRegions(diff);
+  return (
+    <>
+      {diff.truncated ? (
+        <p className="changes-note" data-tone="warn" data-testid="changes-truncated">
+          Showing the first {formatCount(diff.changes.length)} of {formatCount(diff.changeCount)} changes.
+        </p>
+      ) : null}
+      {diff.partial ? (
+        <p className="changes-note" data-tone="warn" data-testid="changes-partial">
+          One of these captures was cut short (a cap or the deadline), so some changes may be missing and removals are not reported.
+        </p>
+      ) : null}
+      {groups.length === 0 ? <p className="seo-empty-line" data-testid="changes-diff-same">These versions read the same.</p> : null}
+      {groups.map((group) => (
+        <section key={group.region} className="changes-region" data-testid="changes-diff-region" data-region={group.region}>
+          <h4 className="changes-region-title">
+            <span>{group.label}</span> <span className="seo-badge">{formatCount(regionCount(diff.summary[group.region]))}</span>
+          </h4>
+          <ul className="changes-list">
+            {group.changes.map((change, i) => (
+              <ChangeItem key={i} change={change} />
+            ))}
+          </ul>
+        </section>
+      ))}
+      {unchanged.length > 0 ? (
+        <div className="changes-unchanged-block">
+          <button type="button" className="seo-action changes-unchanged-toggle" data-testid="changes-unchanged-toggle" aria-expanded={showUnchanged} onClick={() => setShowUnchanged(!showUnchanged)}>
+            {showUnchanged ? 'Hide unchanged regions' : 'Show unchanged regions'}
+          </button>
+          {showUnchanged ? (
+            <ul className="changes-unchanged" data-testid="changes-unchanged" aria-label="Regions with no change">
+              {unchanged.map((region) => (
+                <li key={region}>{DIFF_REGION_LABELS[region]}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function DiffView({ lane, to, compareWith, onCompare, hasMore, onLoadMore }: {
+  readonly lane: Lane;
+  readonly to: HistoryVersion;
+  readonly compareWith: string | null;
+  readonly onCompare: (versionId: string) => void;
+  readonly hasMore: boolean;
+  readonly onLoadMore: () => void;
+}) {
+  const from = compareFrom(lane, to.versionId, compareWith);
+  const older = olderInLane(lane, to.versionId);
+  const state = useDiff(from?.versionId ?? null, to.versionId);
+  const shown = from === null ? (to.parentVersionId === null ? 'first' : hasMore ? 'more' : 'removed') : state === null || state.status === 'loading' ? 'loading' : state.status === 'error' ? 'error' : state.diff === null ? 'none' : 'ready';
+  const diff = state?.status === 'ready' ? state.diff : null;
+  return (
+    <section className="seo-section changes-diff" data-testid="changes-diff" data-state={shown} aria-busy={shown === 'loading'}>
+      <header className="seo-section-head">
+        <h3 className="seo-section-title">What changed</h3>
+        {shown === 'ready' && diff ? <span className="seo-badge">{formatCount(diff.changeCount)}</span> : null}
+      </header>
+      <p className="changes-pair">
+        <span className="changes-pair-label">Version of</span> <span className="changes-pair-time">{new Date(to.createdAt).toLocaleString()}</span>
+      </p>
+      {older.length > 0 ? (
+        <label className="changes-compare">
+          <span className="changes-pair-label">Compare with…</span>
+          <select className="seo-select" data-testid="changes-compare" value={from?.versionId ?? ''} onChange={(event) => onCompare(event.target.value)}>
+            {older.map((version) => (
+              <option key={version.versionId} value={version.versionId}>
+                {new Date(version.createdAt).toLocaleString()}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {shown === 'first' ? <p className="seo-empty-line">First capture: there is nothing to compare it with yet.</p> : null}
+      {shown === 'removed' ? <p className="seo-empty-line">Earlier versions removed: the version before this one is no longer kept.</p> : null}
+      {shown === 'more' ? (
+        <p className="seo-empty-line">
+          The version before this one is further back.{' '}
+          <button type="button" className="seo-action" onClick={onLoadMore}>
+            Load more
+          </button>
+        </p>
+      ) : null}
+      {shown === 'loading' ? <p className="seo-empty-line">Comparing…</p> : null}
+      {shown === 'error' ? <p className="seo-empty-line">The diff could not be read.</p> : null}
+      {shown === 'none' ? <p className="seo-empty-line">These versions cannot be compared.</p> : null}
+      {shown === 'ready' && diff ? <DiffBody key={`${from?.versionId}:${to.versionId}`} diff={diff} /> : null}
+    </section>
+  );
+}
+
+// ---- The panel -----------------------------------------------------------------------------------
+
+/** Why Capture now is off while the audit is not ready. */
+function captureHint(audit: AuditState): string {
+  return audit === 'unavailable' ? 'This page has no audit, so it cannot be captured now.' : CAPTURE_REFUSAL_MESSAGES['no-audit'];
+}
+
+function PageChanges({ tab, response }: { readonly tab: TabState; readonly response: SeoAuditResponse | null }) {
+  const history = useHistory(tab.url);
+  const { reload } = history;
+  useEffect(() => onPageCaptured(reload), [reload]);
+  // Task 6's project picker sets this; until then every capture is filed in Unfiled.
+  const [projectId] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<{ readonly text: string; readonly kind: string } | null>(null);
+  const [chosenLane, setChosenLane] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [compareWith, setCompareWith] = useState<string | null>(null);
+  const [captured, setCaptured] = useState<string | null>(null);
+  const audit: AuditState = response?.status ?? 'none';
+  const ready = response?.status === 'ready';
+
+  const capture = async () => {
+    setBusy(true);
+    setOutcome(null);
+    const answer = await capturePage(tab.id, projectId);
+    setBusy(false);
+    setOutcome({ text: captureOutcomeText(answer), kind: captureOutcomeKind(answer) });
+    if (answer?.status === 'captured') {
+      // Show the captured version's lane, newest first, compared with its previous version.
+      setCaptured(answer.versionId);
+      setChosenLane(null);
+      setSelected(null);
+      setCompareWith(null);
+      reload();
+    }
+  };
+
+  const { state } = history;
+  const versions = state.status === 'ready' ? state.versions : [];
+  const lanes = groupByLane(versions);
+  const lane = shownLane(lanes, chosenLane ?? versions.find((version) => version.versionId === captured)?.laneKey ?? null);
+  const to = lane ? (lane.versions.find((version) => version.versionId === selected) ?? lane.versions[0]!) : null;
+  const select = (versionId: string) => {
+    setSelected(versionId);
+    setCompareWith(null);
+  };
+
+  return (
+    <div className="changes" data-testid="changes" data-audit={audit} data-audit-at={ready ? response.audit.takenAt : undefined}>
+      <section className="seo-section changes-capture-card">
+        <div className="changes-capture-row">
+          <button type="button" className="panel-button panel-button-primary changes-capture" data-testid="changes-capture" data-busy={busy} disabled={!ready || busy} onClick={() => void capture()}>
+            <CaptureGlyph />
+            <span>{busy ? 'Capturing…' : 'Capture now'}</span>
+          </button>
+          {/* Task 6: the project picker goes here (it sets `projectId`; Unfiled until then). */}
+        </div>
+        {!ready ? (
+          <p className="changes-note" data-testid="changes-capture-hint">
+            {captureHint(audit)}
+          </p>
+        ) : null}
+        <p className="changes-status" role="status" aria-live="polite" data-testid="changes-capture-status" data-outcome={outcome?.kind ?? ''}>
+          {outcome?.text ?? ''}
+        </p>
+      </section>
+      {state.status === 'loading' ? (
+        <p className="seo-empty-line changes-loading" data-testid="changes-loading" aria-busy="true">
+          Reading this page’s history…
+        </p>
+      ) : null}
+      {state.status === 'error' ? (
+        <div className="changes-error" data-testid="changes-error" role="alert">
+          <p className="seo-empty-line">The history of this page could not be read.</p>
+          <button type="button" className="panel-button" onClick={reload}>
+            <ReloadIcon />
+            <span>Retry</span>
+          </button>
+        </div>
+      ) : null}
+      {state.status === 'ready' && lane === null ? <Hint testId="changes-empty" title="No captures of this page yet" message="Capture now keeps what this page tells search engines, so later captures can show what changed, region by region." /> : null}
+      {state.status === 'ready' && lane !== null && to !== null ? (
+        <>
+          {lanes.length > 1 ? (
+            <LaneChips
+              lanes={lanes}
+              shown={lane.key}
+              onChoose={(key) => {
+                setChosenLane(key);
+                setSelected(null);
+                setCompareWith(null);
+              }}
+            />
+          ) : null}
+          <section className="seo-section changes-history" data-testid="changes-history" data-lane={lane.key}>
+            <header className="seo-section-head">
+              <h3 className="seo-section-title">History</h3>
+              <span className="seo-badge">{formatCount(lane.versions.length)}</span>
+            </header>
+            <VersionList lane={lane} selected={to.versionId} onSelect={select} />
+            {state.next !== null ? (
+              <button type="button" className="seo-action changes-load-more" data-testid="changes-load-more" data-busy={state.loadingMore} disabled={state.loadingMore} onClick={history.loadMore}>
+                {state.loadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            ) : null}
+            {state.moreFailed ? <p className="seo-empty-line">More versions could not be read.</p> : null}
+          </section>
+          <DiffView lane={lane} to={to} compareWith={compareWith} onCompare={setCompareWith} hasMore={state.next !== null} onLoadMore={history.loadMore} />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** The Changes panel for the active tab (`response`: its audit as the sidebar shows it; history does not wait for it). */
+export function Changes({ tab, response }: { readonly tab: TabState | undefined; readonly response: SeoAuditResponse | null }) {
+  if (!tab || !isWebUrl(tab.url) || tab.error !== null || tab.crashed) {
+    return (
+      <div className="changes" data-testid="changes" data-audit={response?.status ?? 'none'}>
+        <Hint testId="changes-no-page" title="No page to track" message="Open a web page (http or https) to capture it and see how it changes over time." />
+      </div>
+    );
+  }
+  // A new tab or URL starts afresh: its own history, lanes, selection and capture outcome.
+  return <PageChanges key={`${tab.id} ${tab.url}`} tab={tab} response={response} />;
+}
