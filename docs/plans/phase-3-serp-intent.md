@@ -437,7 +437,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
 ### Task 7: Release check and docs
 - [x] Whole-branch review; its cross-task fixes: commit
   `fix(serp): name the SERP fetcher lane and isolate the intent self-test profile`.
-- [ ] `make:mac` / `verify:mac` green on the macOS runner.
+- [x] `make:mac` / `verify:mac` green on the macOS runner (all 12 checks, `intent-runtime-loads` included).
 - [x] README status, `apps/desktop/README.md` and this plan's As built: commit `docs: phase 3 serp, intent and indexability`.
 
 ## Interfaces for other phases
@@ -734,7 +734,8 @@ Listed in `apps/desktop/README.md`:
   - CPU only (not Core ML);
   - MinHash similarity beside the text hash;
   - robots.txt judged on each agent's final URL.
-- **Owed:** `make:mac` / `verify:mac` on this branch's head (Task 7's open box).
+- **Release check:** `make:mac` / `verify:mac` passed on the macOS runner at `73fb26d`, `intent-runtime-loads`
+  included.
 - **Deferred:**
   - publishing the first remote pack as a GitHub release asset (a maintainer action with the
     private key);
