@@ -155,8 +155,9 @@ describe('CI workflows (platform packages)', () => {
     expect(stepNamed(steps, 'Install').run).toBe('pnpm install --frozen-lockfile');
     expect(stepNamed(steps, 'Lint and test').run).toBe('pnpm turbo run lint test');
     expect(stepNamed(steps, 'Build')).toMatchObject({ id: 'build', run: 'pnpm --filter @app/desktop build' });
-    // The e2e runs as its own step; while it is being evaluated on Windows it does not fail the job.
+    // The e2e runs as its own step; not reliable on Windows yet, it never fails the job and skips pull requests.
     expect(stepNamed(steps, 'e2e')).toMatchObject({ id: 'e2e', run: 'pnpm --filter @app/desktop test:e2e', 'continue-on-error': 'true' });
+    expect(stepNamed(steps, 'e2e').if).toContain("github.event_name != 'pull_request'");
     expect(stepNamed(steps, 'Make (Squirrel + zip, x64)')).toMatchObject({ id: 'make', run: 'pnpm make:win' });
     expect(stepNamed(steps, 'Verify package')).toMatchObject({ id: 'verify', run: 'pnpm verify:win' });
     // Never run with fewer checks in CI.

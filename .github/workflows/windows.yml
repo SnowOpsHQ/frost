@@ -71,12 +71,13 @@ jobs:
         id: build
         run: pnpm --filter @app/desktop build
 
-      # A real Windows desktop session, against the unpackaged build. Being evaluated on Windows: a
-      # failure is reported (and its Playwright report uploaded) but does not fail the job yet
-      # (docs/plans/phase-7-sync-update-platforms.md, As built, Task 2).
+      # A real Windows desktop session, against the unpackaged build. Not reliable on Windows yet (4 of
+      # 187 fail on Windows-only harness issues: docs/plans/phase-7-sync-update-platforms.md, As built,
+      # Task 2), so it runs on main pushes and manual runs only, never gating the job; pull requests
+      # rely on the Linux and macOS e2e.
       - name: e2e
         id: e2e
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.event_name != 'pull_request' }}
         continue-on-error: true
         # Its own limit, so a hung suite cannot use up the job's and skip make and verify.
         timeout-minutes: 20

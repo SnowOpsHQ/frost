@@ -122,8 +122,8 @@ Checked by `platform-workflows.test.ts` (the named test below), by actionlint
   `turbo.json`, `tsconfig.base.json`, the workflow itself), pushes to `main` and manual dispatch.
   Before checkout, `git config --global core.autocrlf false` (the tests read repo files and match on
   `\n`). Then: install (frozen lockfile), `turbo run lint test`, `build`, the e2e as a step of its
-  own (`continue-on-error` while it is evaluated on Windows; a failure still uploads its Playwright
-  report), `make:win`, `verify:win` (never `--static`), then uploads `Setup.exe` and the zip
+  own (not reliable on Windows yet: it runs only on pushes to `main` and manual dispatch, never on
+  pull requests, with `continue-on-error`; a failure still uploads its Playwright report), `make:win`, `verify:win` (never `--static`), then uploads `Setup.exe` and the zip
   (7 days) only if `verify:win` succeeded. Every action is pinned to a commit SHA.
 
 ## Known limits

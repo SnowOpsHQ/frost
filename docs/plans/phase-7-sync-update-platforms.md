@@ -460,9 +460,21 @@ sync.
   `refuses-remote-debugging` (stderr from a GUI-subsystem exe), `squirrel-artifacts` (the
   `RELEASES` format), `zip-contents`, `unsigned-as-documented` on `Setup.exe`, and the whole
   `turbo run lint test` suite on Windows.
-- **e2e on Windows.** The e2e is its own step with `continue-on-error: true` while it is being
-  evaluated (a failure still uploads its Playwright report); the lead decides after the first CI
-  run whether it gates the job or moves to `workflow_dispatch` only, and records the reason here.
+- **e2e on Windows: not reliable yet, so it doesn't gate.** The first full run (`windows-2025`,
+  commit `a8cfcab`) passed 183 of 187 in 8.3 min. The 4 failures are Windows-specific harness or
+  test issues, not app behaviour:
+  - `page-dialogs-are-disabled-e2e` and `emulation-is-invisible-to-page`: `EBUSY` removing the temp
+    profile, because Chromium still holds `declarative_performance_observer.db` when the test deletes
+    it;
+  - `close-app-kills-wedged-app`: the harness's process-tree kill doesn't take a wedged app down on
+    Windows;
+  - `delete-all-notes-and-clear-browsing-data`: the stubbed message box is never reached through the
+    menu on Windows.
+
+  These belong to the shared e2e harness (`e2e/harness.ts`) and other phases' tests. So the step
+  stays non-gating (`continue-on-error`) and runs only on pushes to `main` and manual dispatch. That
+  saves about 8 minutes per pull-request run; pull requests rely on the Linux (`ci`) and macOS e2e.
+  It can gate once those four are made Windows-portable.
 - **Line endings.** The job runs `git config --global core.autocrlf false` before checkout:
   `ci-workflows.test.ts`, `platform-workflows.test.ts` and other tests read repo files and match
   on `\n`. No `.gitattributes` was added.
