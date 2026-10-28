@@ -1,5 +1,5 @@
 // Spec: specs/sync-package.spec.ts · Acceptance: specs/sync-package.feature.md (Forge configuration)
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -25,13 +25,23 @@ import { copyLibsqlRuntime, findPackageDir, libsqlPackageAfterCopy } from '../..
 import viteMainConfig from '../../vite.main.config';
 
 const temps: string[] = [];
+/** A fresh directory, by its real path (macOS: `/var/…` is `/private/var/…`, as module paths are). */
 function tempDir(prefix: string, parent = tmpdir()): string {
-  const dir = mkdtempSync(path.join(parent, prefix));
+  const dir = realpathSync(mkdtempSync(path.join(parent, prefix)));
   temps.push(dir);
   return dir;
 }
 afterEach(() => {
-  for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of temps.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (error) {
+      // Windows keeps a loaded `.node` locked until the process exits (the real-install test loads
+      // the copied prebuild): left to the OS temp cleaner there.
+      const code = (error as { code?: unknown }).code;
+      if (process.platform !== 'win32' || (code !== 'EPERM' && code !== 'EBUSY')) throw error;
+    }
+  }
 });
 
 function writeFile(file: string, content: string | Buffer = ''): void {
