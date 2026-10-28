@@ -1,6 +1,8 @@
 // Fakes of the read-only ports (`ports.ts`) for tests (Phase 5 Task 1; acceptance
-// `specs/agent-protocol.feature.md`, ports-fakes-satisfy-interfaces). Each answers canned data (or
-// the answer it is given) and records the queries it received. Exported as `@app/ai-skills/fakes`.
+// `specs/agent-protocol.feature.md`, ports-fakes-satisfy-interfaces and ports-honour-abort). Each
+// answers canned data (or the answer it is given) on a later task, records the queries it received,
+// and rejects with the signal's reason if its signal is aborted first. Exported as
+// `@app/ai-skills/fakes`.
 import type {
   AiSearchAnswer,
   AiSearchQuery,
@@ -11,6 +13,7 @@ import type {
   IntentPort,
   IntentQuery,
   PortAnswer,
+  PortQueryOptions,
   SerpPort,
   SerpQuery,
   SerpResults,
@@ -59,6 +62,26 @@ export const FAKE_GSC_PERFORMANCE: GscPerformance = {
 
 const ok = <T>(data: T): PortAnswer<T> => ({ status: 'ok', data });
 
+/** `answer` on a later task, unless `signal` aborts first (then its reason). */
+function answerUnlessAborted<T>(answer: T, options: PortQueryOptions | undefined): Promise<T> {
+  const signal = options?.signal;
+  return new Promise<T>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal!.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(answer);
+    }, 0);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 export type FakeSerpPort = SerpPort & { readonly calls: ({ method: 'results'; query: SerpQuery } | { method: 'aiSearch'; query: AiSearchQuery })[] };
 
 /** A `SerpPort` answering `results` / `aiSearch` (canned data by default). */
@@ -66,13 +89,13 @@ export function createFakeSerpPort(options: { results?: PortAnswer<SerpResults>;
   const calls: FakeSerpPort['calls'] = [];
   return {
     calls,
-    async results(query) {
+    results(query, queryOptions) {
       calls.push({ method: 'results', query });
-      return options.results ?? ok({ ...FAKE_SERP_RESULTS, query: query.query, locale: query.locale ?? null, device: query.device ?? 'desktop' });
+      return answerUnlessAborted(options.results ?? ok({ ...FAKE_SERP_RESULTS, query: query.query, locale: query.locale ?? null, device: query.device ?? 'desktop' }), queryOptions);
     },
-    async aiSearch(query) {
+    aiSearch(query, queryOptions) {
       calls.push({ method: 'aiSearch', query });
-      return options.aiSearch ?? ok({ ...FAKE_AI_SEARCH_ANSWER, query: query.query });
+      return answerUnlessAborted(options.aiSearch ?? ok({ ...FAKE_AI_SEARCH_ANSWER, query: query.query }), queryOptions);
     },
   };
 }
@@ -84,9 +107,9 @@ export function createFakeIntentPort(options: { answer?: PortAnswer<IntentClassi
   const calls: IntentQuery[] = [];
   return {
     calls,
-    async classify(query) {
+    classify(query, queryOptions) {
       calls.push(query);
-      return options.answer ?? ok({ ...FAKE_INTENT, query: query.query });
+      return answerUnlessAborted(options.answer ?? ok({ ...FAKE_INTENT, query: query.query }), queryOptions);
     },
   };
 }
@@ -98,9 +121,9 @@ export function createFakeGscPort(options: { answer?: PortAnswer<GscPerformance>
   const calls: GscPerformanceQuery[] = [];
   return {
     calls,
-    async performance(query) {
+    performance(query, queryOptions) {
       calls.push(query);
-      return options.answer ?? ok({ ...FAKE_GSC_PERFORMANCE, url: query.url, days: query.days });
+      return answerUnlessAborted(options.answer ?? ok({ ...FAKE_GSC_PERFORMANCE, url: query.url, days: query.days }), queryOptions);
     },
   };
 }

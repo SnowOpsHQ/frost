@@ -41,9 +41,10 @@
 5. **Model requests are made by main, not by the agent process** (a proxied `fetch`).
    - The agent runtime builds its AI SDK provider with a placeholder key and a custom `fetch` that
      sends the request (method, URL, non-credential headers, body) to main over the MessagePort.
-   - Main checks the URL against the configured route's endpoint allowlist (exact origin and path
-     prefix: `https://api.anthropic.com/v1/`, `https://api.openai.com/v1/`,
-     `https://ai-gateway.vercel.sh/v4/ai/`), drops every credential-like header the runtime sent, adds the
+   - Main checks the request against the configured route's allowlist (a canonical URL and an exact
+     method and path: `POST https://api.anthropic.com/v1/messages`,
+     `POST https://api.openai.com/v1/responses`,
+     `POST https://ai-gateway.vercel.sh/v4/ai/language-model`), drops every credential-like header the runtime sent, adds the
      real credential, performs the request with Electron `net.fetch` on an in-memory session with no
      cookies, and streams the response body back in chunks. Anything else is refused.
    - **Why:** the key never enters the agent process, so no bug, dependency or log line there can

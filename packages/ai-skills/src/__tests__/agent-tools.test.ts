@@ -1,5 +1,5 @@
 // Spec: specs/agent-tools.spec.ts (AGENT_TOOLS, isMcpToolName, toolRisk, isGrantable, the caps,
-// ALLOWED_MODEL_IDS, DEFAULT_MODEL_ID, routeModelId, MODEL_ENDPOINTS, isAllowedModelUrl)
+// ALLOWED_MODEL_IDS, DEFAULT_MODEL_ID, routeModelId, MODEL_REQUESTS, isAllowedModelRequest, isCanonicalUrl)
 // Acceptance: specs/agent-protocol.feature.md (Catalogue)
 import { describe, expect, test } from 'vitest';
 import {
@@ -14,11 +14,12 @@ import {
   EXECUTE_JS_TIMEOUT_MS,
   isAgentToolName,
   isAllowedModelId,
-  isAllowedModelUrl,
+  isAllowedModelRequest,
+  isCanonicalUrl,
   isGrantable,
   isMcpToolName,
   MAX_TOOL_STEPS,
-  MODEL_ENDPOINTS,
+  MODEL_REQUESTS,
   MODEL_ROUTES,
   routeModelId,
   TOOL_NAME_PATTERN,
@@ -94,47 +95,82 @@ describe('agent tool catalogue', () => {
     expect(routeModelId('other' as never, 'anthropic/claude-sonnet-5-5')).toBeNull();
   });
 
-  test('model-url-allowlist', () => {
-    expect(Object.keys(MODEL_ENDPOINTS).sort()).toStrictEqual([...MODEL_ROUTES].sort());
-    expect(isAllowedModelUrl('byok-anthropic', 'https://api.anthropic.com/v1/messages')).toBe(true);
-    expect(isAllowedModelUrl('byok-anthropic', 'https://API.Anthropic.com:443/v1/messages?beta=true')).toBe(true);
-    expect(isAllowedModelUrl('byok-openai', 'https://api.openai.com/v1/responses')).toBe(true);
-    expect(isAllowedModelUrl('gateway', 'https://ai-gateway.vercel.sh/v4/ai/language-model')).toBe(true);
-    expect(isAllowedModelUrl('gateway', 'https://ai-gateway.vercel.sh/v4/ai/./config')).toBe(true);
+  test('model-request-allowlist', () => {
+    expect(Object.keys(MODEL_REQUESTS).sort()).toStrictEqual([...MODEL_ROUTES].sort());
+    const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
+    const OPENAI = 'https://api.openai.com/v1/responses';
+    const GATEWAY = 'https://ai-gateway.vercel.sh/v4/ai/language-model';
+    expect(isAllowedModelRequest('byok-anthropic', 'POST', ANTHROPIC)).toBe(true);
+    expect(isAllowedModelRequest('byok-openai', 'POST', OPENAI)).toBe(true);
+    expect(isAllowedModelRequest('gateway', 'POST', GATEWAY)).toBe(true);
+    for (const route of MODEL_ROUTES) for (const target of MODEL_REQUESTS[route]) expect(isCanonicalUrl(target.url)).toBe(true);
 
-    const refused: [string, unknown][] = [
-      ['byok-anthropic', 'https://api.openai.com/v1/responses'],
-      ['byok-openai', 'https://api.anthropic.com/v1/messages'],
-      ['gateway', 'https://api.anthropic.com/v1/messages'],
-      ['byok-anthropic', 'http://api.anthropic.com/v1/messages'],
-      ['byok-anthropic', 'wss://api.anthropic.com/v1/messages'],
-      ['byok-anthropic', 'https://api.anthropic.com:8443/v1/messages'],
-      ['byok-anthropic', 'https://user:pass@api.anthropic.com/v1/messages'],
-      ['byok-anthropic', 'https://user@api.anthropic.com/v1/messages'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1/messages#frag'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1/messages#'],
-      ['byok-anthropic', 'https://api.anthropic.com/v2/messages'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1'],
-      ['byok-anthropic', 'https://api.anthropic.com/'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1/../admin'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1/%2e%2e/admin'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1/%2E%2E/admin'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1/..%2fadmin'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1/..%5Cadmin'],
-      ['byok-anthropic', 'https://api.anthropic.com/v1\\..\\admin'],
-      ['byok-anthropic', 'https://api.anthropic.com.evil.test/v1/messages'],
-      ['byok-anthropic', 'https://api.anthropic.com./v1/messages'],
-      ['byok-anthropic', 'https://evil.test/https://api.anthropic.com/v1/'],
-      ['byok-anthropic', 'https://evil.test\\@api.anthropic.com/v1/'],
-      ['gateway', 'https://ai-gateway.vercel.sh/v4/other'],
-      ['gateway', 'https://ai-gateway.vercel.sh/v4/ai'],
-      ['byok-anthropic', 'not a url'],
-      ['byok-anthropic', ''],
-      ['byok-anthropic', 42],
-      ['byok-anthropic', null],
-      ['other', 'https://api.anthropic.com/v1/messages'],
-      ['__proto__', 'https://api.anthropic.com/v1/messages'],
+    const refused: [string, unknown, unknown][] = [
+      ['byok-anthropic', 'GET', ANTHROPIC],
+      ['byok-anthropic', 'post', ANTHROPIC],
+      ['byok-anthropic', 'DELETE', ANTHROPIC],
+      ['byok-anthropic', undefined, ANTHROPIC],
+      ['byok-anthropic', 'POST', OPENAI],
+      ['byok-anthropic', 'POST', GATEWAY],
+      ['byok-openai', 'POST', ANTHROPIC],
+      ['gateway', 'POST', ANTHROPIC],
+      ['byok-anthropic', 'POST', 'https://api.anthropic.com/v1/models'],
+      ['byok-anthropic', 'POST', 'https://api.anthropic.com/v1/messages/batches'],
+      ['byok-anthropic', 'POST', 'https://api.anthropic.com/v1/files'],
+      ['byok-anthropic', 'POST', 'https://api.anthropic.com/v1/messages/'],
+      ['byok-openai', 'POST', 'https://api.openai.com/v1/files'],
+      ['byok-openai', 'POST', 'https://api.openai.com/v1/chat/completions'],
+      ['gateway', 'POST', 'https://ai-gateway.vercel.sh/v4/ai/config'],
+      ['byok-anthropic', 'POST', `${ANTHROPIC}?beta=true`],
+      ['byok-anthropic', 'POST', `${ANTHROPIC}#frag`],
+      ['byok-anthropic', 'POST', 'http://api.anthropic.com/v1/messages'],
+      ['byok-anthropic', 'POST', 'https://api.anthropic.com:8443/v1/messages'],
+      ['byok-anthropic', 'POST', 'https://user:pass@api.anthropic.com/v1/messages'],
+      ['byok-anthropic', 'POST', 'https://api.anthropic.com.evil.test/v1/messages'],
+      ['byok-anthropic', 'POST', 'https://api.anthropic.com./v1/messages'],
+      ['byok-anthropic', 'POST', 'https://evil.test/https://api.anthropic.com/v1/messages'],
+      ['byok-anthropic', 'POST', 'not a url'],
+      ['byok-anthropic', 'POST', ''],
+      ['byok-anthropic', 'POST', 42],
+      ['other', 'POST', ANTHROPIC],
+      ['__proto__', 'POST', ANTHROPIC],
     ];
-    for (const [route, url] of refused) expect(isAllowedModelUrl(route as never, url), `${route} ${String(url)}`).toBe(false);
+    for (const [route, method, url] of refused) expect(isAllowedModelRequest(route as never, method, url), `${route} ${String(method)} ${String(url)}`).toBe(false);
+  });
+
+  test('model-url-canonical', () => {
+    expect(isCanonicalUrl('https://api.anthropic.com/v1/messages')).toBe(true);
+    const rewritten = [
+      'https://api.anthropic.com\\v1\\messages',
+      'https://api.anthropic.com/v1\\messages',
+      'https://api.anthropic.com/v1/mes\tsages',
+      'https://api.anthropic.com/v1/mes\nsages',
+      'https://api.anthropic.com/v1/messages\n',
+      ' https://api.anthropic.com/v1/messages',
+      'https:api.anthropic.com/v1/messages',
+      'https:/api.anthropic.com/v1/messages',
+      'https://api．anthropic．com/v1/messages',
+      'https://api.anthropic.com/v1/mes sages',
+      'https://api.anthropic.com/v1/messages\u0000',
+      'https://API.anthropic.com/v1/messages',
+      'HTTPS://api.anthropic.com/v1/messages',
+      'https://api.anthropic.com:443/v1/messages',
+      'https://api.anthropic.com/v1/../v1/messages',
+      'https://api.anthropic.com/v1/%2e%2e/v1/messages',
+      'https://api.anthropic.com/v1/./messages',
+      'https://api.anthropic.com',
+    ];
+    for (const url of rewritten) {
+      expect(isCanonicalUrl(url), JSON.stringify(url)).toBe(false);
+      expect(isAllowedModelRequest('byok-anthropic', 'POST', url), JSON.stringify(url)).toBe(false);
+    }
+    // An internationalised look-alike (Cyrillic `а`) is another host: refused as written and as its
+    // canonical punycode form.
+    const lookalike = 'https://аpi.anthropic.com/v1/messages';
+    expect(isCanonicalUrl(lookalike)).toBe(false);
+    const punycode = new URL(lookalike).href;
+    expect(punycode).toMatch(/^https:\/\/xn--/);
+    expect(isAllowedModelRequest('byok-anthropic', 'POST', punycode)).toBe(false);
+    for (const value of [undefined, null, 42, {}, 'not a url', '']) expect(isCanonicalUrl(value)).toBe(false);
   });
 });

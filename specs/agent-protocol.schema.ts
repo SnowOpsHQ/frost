@@ -15,6 +15,7 @@ import { z } from 'zod';
 import {
   CHAT_MAX_MESSAGES,
   isAgentToolName,
+  isAllowedModelId,
   isMcpToolName,
   MAX_TOOL_STEPS,
   MODEL_ROUTES,
@@ -49,7 +50,7 @@ export const AGENT_PROTOCOL_LIMITS = {
   maxDeltaChars: 16_000,
   /** A model id (characters); main checks it against `ALLOWED_MODEL_IDS`. */
   maxModelIdChars: 128,
-  /** A proxied request's URL (characters); main checks it against `MODEL_ENDPOINTS`. */
+  /** A proxied request's URL (characters); main checks it with `isAllowedModelRequest`. */
   maxUrlChars: 4096,
   /** Headers on a proxied request or response, a name's and a value's length (characters). */
   maxHeaders: 128,
@@ -75,43 +76,74 @@ export const ToolNameSchema = z.string().refine((name) => isAgentToolName(name) 
 
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
+/** Object keys refused in tool inputs and outputs: they name prototype machinery, never data. */
+const FORBIDDEN_JSON_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+
 /**
- * Whether `value` is plain JSON data (null, booleans, finite numbers, strings, arrays, plain
- * objects) no deeper than `maxDepth`, with at most `maxNodes` values and a JSON text of at most
- * `maxChars`. Walks iteratively, so a deeply nested value can't exhaust the stack. Never throws.
+ * Whether `value` is plain JSON data: null, booleans, finite numbers, strings, dense arrays with no
+ * other own keys, and plain objects with no `__proto__`, `constructor` or `prototype` key; no deeper
+ * than `maxDepth`, with at most `maxNodes` values and a JSON text of at most `maxChars`. Walks
+ * iteratively and checks the value budget before queueing an array's or object's members, so a
+ * deeply nested or huge value fails fast without exhausting the stack. Never throws (a getter or
+ * proxy that throws makes it `false`).
  */
 export function isBoundedJson(value: unknown, maxChars: number, maxDepth: number = L.maxJsonDepth, maxNodes: number = L.maxJsonNodes): value is JsonValue {
-  const stack: { value: unknown; depth: number }[] = [{ value, depth: 0 }];
-  let nodes = 0;
-  while (stack.length > 0) {
-    const { value: current, depth } = stack.pop()!;
-    if (++nodes > maxNodes || depth > maxDepth) return false;
-    if (current === null || typeof current === 'boolean' || typeof current === 'string') continue;
-    if (typeof current === 'number') {
-      if (!Number.isFinite(current)) return false;
-      continue;
-    }
-    if (Array.isArray(current)) {
-      for (const item of current) stack.push({ value: item, depth: depth + 1 });
-      continue;
-    }
-    if (typeof current !== 'object') return false;
-    const proto: unknown = Object.getPrototypeOf(current);
-    if (proto !== Object.prototype && proto !== null) return false;
-    for (const key of Object.keys(current)) {
-      if (key === '__proto__') return false;
-      stack.push({ value: (current as Record<string, unknown>)[key], depth: depth + 1 });
-    }
-  }
   try {
-    return JSON.stringify(value).length <= maxChars;
+    return walkBoundedJson(value, maxChars, maxDepth, maxNodes);
   } catch {
     return false;
   }
 }
 
+function walkBoundedJson(value: unknown, maxChars: number, maxDepth: number, maxNodes: number): boolean {
+  const stack: { value: unknown; depth: number }[] = [{ value, depth: 0 }];
+  let nodes = 1;
+  let chars = 0;
+  while (stack.length > 0) {
+    const { value: current, depth } = stack.pop()!;
+    if (depth > maxDepth) return false;
+    if (current === null || typeof current === 'boolean') continue;
+    if (typeof current === 'string') {
+      if ((chars += current.length) > maxChars) return false;
+      continue;
+    }
+    if (typeof current === 'number') {
+      if (!Number.isFinite(current)) return false;
+      continue;
+    }
+    if (typeof current !== 'object') return false;
+    if (Array.isArray(current)) {
+      if (Object.getPrototypeOf(current) !== Array.prototype) return false;
+      if ((nodes += current.length) > maxNodes) return false;
+      // A sparse array, or one with a named own key, is not JSON data.
+      if (Object.keys(current).length !== current.length) return false;
+      for (const item of current) stack.push({ value: item, depth: depth + 1 });
+      continue;
+    }
+    const proto: unknown = Object.getPrototypeOf(current);
+    if (proto !== Object.prototype && proto !== null) return false;
+    const keys = Object.keys(current);
+    if ((nodes += keys.length) > maxNodes) return false;
+    for (const key of keys) {
+      if (FORBIDDEN_JSON_KEYS.has(key) || (chars += key.length) > maxChars) return false;
+      stack.push({ value: (current as Record<string, unknown>)[key], depth: depth + 1 });
+    }
+  }
+  return JSON.stringify(value).length <= maxChars;
+}
+
+/**
+ * Bounded JSON (`isBoundedJson` with `maxChars`), handed on as a fresh copy parsed from its JSON
+ * text: a consumer only ever holds canonical JSON data (plain objects and arrays, no `-0`).
+ */
+export function boundedJsonSchema(maxChars: number, message: string) {
+  return z
+    .custom<JsonValue>((value) => isBoundedJson(value, maxChars), { message })
+    .transform((value): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue);
+}
+
 /** A tool call's input: bounded JSON (`maxToolInputChars`). */
-export const ToolInputSchema = z.custom<JsonValue>((value) => isBoundedJson(value, L.maxToolInputChars), { message: 'tool input is not bounded JSON' });
+export const ToolInputSchema = boundedJsonSchema(L.maxToolInputChars, 'tool input is not bounded JSON');
 
 /**
  * Tool output as the model sees it: main wraps every result as untrusted data, never instructions
@@ -121,9 +153,9 @@ export const ToolInputSchema = z.custom<JsonValue>((value) => isBoundedJson(valu
 export const UntrustedOutputSchema = z.strictObject({
   untrusted: z.literal(true),
   source: z.string().min(1).max(L.maxSourceChars),
-  data: z.custom<JsonValue>((value) => isBoundedJson(value, TOOL_RESULT_MAX_CHARS), { message: 'tool output is not bounded JSON' }),
+  data: boundedJsonSchema(TOOL_RESULT_MAX_CHARS, 'tool output is not bounded JSON'),
 });
-export type UntrustedOutput = z.infer<typeof UntrustedOutputSchema>;
+export type UntrustedOutput = z.output<typeof UntrustedOutputSchema>;
 
 /** A tool call's outcome: the wrapped output, or why there is none (`TOOL_ERROR_CODES`). */
 export const ToolResultSchema = z.discriminatedUnion('ok', [
@@ -171,7 +203,7 @@ export const ChatStartMessageSchema = z.strictObject({
     .max(CHAT_MAX_MESSAGES)
     .refine((messages) => messages.at(-1)?.role === 'user', { message: "a turn starts from the user's message" }),
   systemPrompt: z.string().max(L.maxSystemPromptChars),
-  modelId: z.string().min(1).max(L.maxModelIdChars),
+  modelId: z.string().max(L.maxModelIdChars).refine(isAllowedModelId, { message: 'not an allowed model' }),
   route: z.enum(MODEL_ROUTES),
   allowedTools: z
     .array(ToolNameSchema)
@@ -215,7 +247,8 @@ export const MAIN_TO_RUNTIME_MESSAGE_TYPES = ['chat.start', 'chat.stop', 'tool.r
 export const CHAT_FINISH_REASONS = ['stop', 'length', 'content-filter', 'tool-calls', 'error', 'other', 'aborted', 'step-limit'] as const;
 export type ChatFinishReason = (typeof CHAT_FINISH_REASONS)[number];
 
-const tokenCount = z.int().nonnegative().nullable();
+/** A count the provider reported, or `null` when it reported none. */
+const count = z.int().nonnegative().nullable();
 
 export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
   /** The runtime is listening (after its lockdown), speaking `protocolVersion`. */
@@ -224,13 +257,16 @@ export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('chat.delta'), chatId: AgentIdSchema, text: z.string().min(1).max(L.maxDeltaChars) }),
   /** The model called a tool: a card for the panel (main still decides whether it runs). */
   z.strictObject({ type: z.literal('chat.tool-call'), chatId: AgentIdSchema, callId: AgentIdSchema, toolName: ToolNameSchema, input: ToolInputSchema }),
-  /** The turn ended. `steps` is at most `MAX_TOOL_STEPS`. */
+  /**
+   * The turn ended. `steps` is at most `MAX_TOOL_STEPS`; `usage` is the model's input and output
+   * size in its own units (tokens), summed over the steps.
+   */
   z.strictObject({
     type: z.literal('chat.finish'),
     chatId: AgentIdSchema,
     finishReason: z.enum(CHAT_FINISH_REASONS),
     steps: z.int().min(0).max(MAX_TOOL_STEPS),
-    usage: z.strictObject({ inputTokens: tokenCount, outputTokens: tokenCount }),
+    usage: z.strictObject({ input: count, output: count }),
   }),
   /** The turn failed; `message` is shown to the user (no key or request detail in it). */
   z.strictObject({ type: z.literal('chat.error'), chatId: AgentIdSchema, message: z.string().min(1).max(L.maxErrorChars) }),

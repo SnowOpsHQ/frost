@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'vitest';
 import { z } from 'zod';
 import { AGENT_TOOL_INPUT_LIMITS, AGENT_TOOL_NAMES, EXECUTE_JS_MAX_SOURCE_CHARS, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
-import { AGENT_TOOL_DEFINITIONS, getToolDefinition } from '../index';
+import { AGENT_TOOL_DEFINITIONS, getToolDefinition, UNTRUSTED_OUTPUT_NOTE } from '../index';
 
 const L = AGENT_TOOL_INPUT_LIMITS;
 const accepts = (name: string, input: unknown) => getToolDefinition(name)!.inputSchema.safeParse(input).success;
@@ -37,7 +37,7 @@ describe('tool definitions', () => {
 
     expect(accepts('navigate', { url: 'https://example.com/a?b=c' })).toBe(true);
     expect(accepts('navigate', { url: 'http://example.com/' })).toBe(true);
-    for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'app://app/', 'data:text/html,hi', 'example.com', '', `https://example.com/${'a'.repeat(L.maxUrlChars)}`]) {
+    for (const url of ['https://user:pass@example.com/', 'https://user@example.com/', 'https://:pass@example.com/', 'javascript:alert(1)', 'file:///etc/passwd', 'app://app/', 'data:text/html,hi', 'example.com', '', `https://example.com/${'a'.repeat(L.maxUrlChars)}`]) {
       expect(accepts('navigate', { url })).toBe(false);
     }
     expect(accepts('navigate', {})).toBe(false);
@@ -65,6 +65,12 @@ describe('tool definitions', () => {
     }
     expect(accepts('serp_results', { query: 'q', locale: 'en-US', device: 'mobile' })).toBe(true);
     expect(accepts('serp_results', { query: 'q', locale: 'english' })).toBe(false);
+    for (const locale of ['en', 'en-US', 'es-419', 'EN-us', 'fil-PH']) expect(accepts('serp_results', { query: 'q', locale }), locale).toBe(true);
+    for (const locale of ['e', 'en-', 'en-U', 'en-1234', 'en_US', 'en-US-x', 'english']) expect(accepts('serp_results', { query: 'q', locale }), locale).toBe(false);
+    const serp = getToolDefinition('serp_results').inputSchema;
+    expect(serp.parse({ query: 'q', locale: 'EN-us' }).locale).toBe('en-US');
+    expect(serp.parse({ query: 'q', locale: 'ES-419' }).locale).toBe('es-419');
+    expect(getToolDefinition('run_ai_search').inputSchema.parse({ query: 'q', locale: 'De' }).locale).toBe('de');
     expect(accepts('serp_results', { query: 'q', device: 'watch' })).toBe(false);
     expect(accepts('run_ai_search', { query: 'q', locale: 'de' })).toBe(true);
 
@@ -73,6 +79,15 @@ describe('tool definitions', () => {
     expect(accepts('gsc_performance', { days: L.maxGscDays + 1 })).toBe(false);
     expect(accepts('gsc_performance', { days: 0 })).toBe(false);
     expect(accepts('gsc_performance', { url: 'ftp://example.com/' })).toBe(false);
+    expect(accepts('gsc_performance', { url: 'https://user@example.com/' })).toBe(false);
+  });
+
+  test('tool-descriptions-mark-untrusted-output', () => {
+    expect(UNTRUSTED_OUTPUT_NOTE).toMatch(/untrusted/i);
+    expect(UNTRUSTED_OUTPUT_NOTE).toMatch(/never/i);
+    for (const name of ['page_audit', 'page_data', 'page_text', 'click', 'execute_javascript', 'serp_results', 'run_ai_search', 'gsc_performance'] as const) {
+      expect(getToolDefinition(name).description, name).toContain(UNTRUSTED_OUTPUT_NOTE);
+    }
   });
 
   test('tool-inputs-have-json-schemas', () => {

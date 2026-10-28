@@ -198,37 +198,46 @@ export function routeModelId(route: ModelRoute, modelId: string): string | null 
   return modelId.slice(provider.length + 1);
 }
 
-// ---- Model endpoints -------------------------------------------------------------------------
+// ---- Model requests --------------------------------------------------------------------------
+
+export interface ModelRequestTarget {
+  readonly method: 'POST';
+  /** The exact, canonical URL (`new URL(url).href === url`). */
+  readonly url: string;
+}
 
 /**
- * The one URL prefix main's model proxy lets each route reach (the providers' default base URLs).
- * A request goes out only if `isAllowedModelUrl` holds for the configured route.
+ * The only requests main's model proxy sends for each route: one method and one exact URL each
+ * (the providers' text generation endpoints at their default base URLs), not the provider's whole
+ * API. A request goes out only if `isAllowedModelRequest` holds for the configured route.
  */
-export const MODEL_ENDPOINTS: Readonly<Record<ModelRoute, string>> = {
-  'byok-anthropic': 'https://api.anthropic.com/v1/',
-  'byok-openai': 'https://api.openai.com/v1/',
-  gateway: 'https://ai-gateway.vercel.sh/v4/ai/',
+export const MODEL_REQUESTS: Readonly<Record<ModelRoute, readonly ModelRequestTarget[]>> = {
+  'byok-anthropic': [{ method: 'POST', url: 'https://api.anthropic.com/v1/messages' }],
+  'byok-openai': [{ method: 'POST', url: 'https://api.openai.com/v1/responses' }],
+  gateway: [{ method: 'POST', url: 'https://ai-gateway.vercel.sh/v4/ai/language-model' }],
 };
 
 /**
- * Whether main's proxy may send a model request for `route` to `url`. The URL is parsed (which
- * normalises it: host case, default port, `.` and `..` segments, `\`) and must then have exactly the
- * endpoint's origin (`https:`, the host, the default port), no user name or password, no fragment,
- * and a path that starts with the endpoint's path. A path holding an encoded `/`, `\` or `.`
- * (`%2f`, `%5c`, `%2e`) is refused, as a server could decode it into another path. Never throws.
+ * Whether `url` is a string written exactly as the URL parser writes it back
+ * (`new URL(url).href === url`). A string the parser would rewrite (a backslash, a tab or line
+ * break, a missing `//`, a full-width dot, a space or NUL, an upper-case host, a default port) is
+ * refused, so the URL checked is the URL sent. Never throws.
  */
-export function isAllowedModelUrl(route: ModelRoute, url: unknown): boolean {
-  if (typeof url !== 'string' || !Object.hasOwn(MODEL_ENDPOINTS, route)) return false;
-  let parsed: URL;
+export function isCanonicalUrl(url: unknown): url is string {
+  if (typeof url !== 'string') return false;
   try {
-    parsed = new URL(url);
+    return new URL(url).href === url;
   } catch {
     return false;
   }
-  const endpoint = new URL(MODEL_ENDPOINTS[route]);
-  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') return false;
-  if (parsed.port !== '' || parsed.hash !== '' || url.includes('#')) return false;
-  if (parsed.origin !== endpoint.origin) return false;
-  if (/%(?:2f|5c|2e)/i.test(parsed.pathname)) return false;
-  return parsed.pathname.startsWith(endpoint.pathname);
+}
+
+/**
+ * Whether main's proxy may send a model request for `route`: `url` is canonical (`isCanonicalUrl`)
+ * and `method` and `url` are exactly one of the route's `MODEL_REQUESTS`. Exact equality leaves no
+ * room for another host, scheme, port, user name, path, query or fragment. Never throws.
+ */
+export function isAllowedModelRequest(route: ModelRoute, method: unknown, url: unknown): boolean {
+  if (!Object.hasOwn(MODEL_REQUESTS, route) || typeof method !== 'string' || !isCanonicalUrl(url)) return false;
+  return MODEL_REQUESTS[route].some((target) => target.method === method && target.url === url);
 }
