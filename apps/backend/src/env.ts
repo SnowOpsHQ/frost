@@ -13,12 +13,19 @@ export const DEFAULT_PGLITE_DIR = fileURLToPath(new URL('../.data/pglite', impor
 export const DEFAULT_HOST = '127.0.0.1';
 export const DEFAULT_PORT = 8787;
 
+/** better-auth environment switches that would re-enable its telemetry; refused when set. */
+export const TELEMETRY_OVERRIDES = ['BETTER_AUTH_TELEMETRY', 'BETTER_AUTH_TELEMETRY_ENDPOINT', 'BETTER_AUTH_TELEMETRY_DEBUG'] as const;
+
 export class EnvError extends Error {
   override readonly name = 'EnvError';
 }
 
 /** An empty value (`FOO=` in a `.env`) counts as unset. */
 const optional = <T extends z.ZodType>(schema: T) => z.preprocess((value) => (value === '' ? undefined : value), schema.optional());
+
+const telemetryOverrides = Object.fromEntries(
+  TELEMETRY_OVERRIDES.map((name) => [name, optional(z.never({ error: 'must not be set (better-auth telemetry stays off)' }))]),
+);
 
 const EnvSchema = z
   .object({
@@ -28,10 +35,18 @@ const EnvSchema = z
     BETTER_AUTH_SECRET: z
       .string({ error: 'is required' })
       .min(AUTH_SECRET_MIN_LENGTH, { error: `must be at least ${AUTH_SECRET_MIN_LENGTH} characters` }),
-    BETTER_AUTH_URL: optional(z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' })),
+    BETTER_AUTH_URL: optional(
+      z
+        .url({ protocol: /^https?$/, error: 'must be an http(s) URL' })
+        .refine((value) => new URL(value).origin === value.replace(/\/+$/, ''), { error: 'must be a bare origin (scheme, host, port; no path, query or credentials)' }),
+    ),
     EMAIL_TRANSPORT: optional(z.enum(EMAIL_TRANSPORTS, { error: `must be one of: ${EMAIL_TRANSPORTS.join(', ')}` })),
     HOST: optional(z.string().min(1)),
     PORT: optional(z.coerce.number({ error: 'must be a port number' }).int().min(1).max(65_535)),
+    CLIENT_IP_HEADER: optional(z.string().regex(/^[a-z0-9-]{1,64}$/i, { error: 'must be a header name' })),
+    TRUSTED_PROXIES: optional(z.string().max(2000)),
+    // better-auth ORs these with its `telemetry` option, so any of them could turn its telemetry on.
+    ...telemetryOverrides,
   })
   .transform((raw) => {
     const PORT = raw.PORT ?? DEFAULT_PORT;
@@ -44,6 +59,11 @@ const EnvSchema = z
       EMAIL_TRANSPORT: raw.EMAIL_TRANSPORT ?? 'console',
       HOST: raw.HOST ?? DEFAULT_HOST,
       PORT,
+      CLIENT_IP_HEADER: raw.CLIENT_IP_HEADER?.toLowerCase(),
+      TRUSTED_PROXIES: (raw.TRUSTED_PROXIES ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry !== ''),
     } as const;
   })
   .superRefine((env, ctx) => {
@@ -53,6 +73,9 @@ const EnvSchema = z
     }
     if (!env.BETTER_AUTH_URL.startsWith('https://')) {
       ctx.addIssue({ code: 'custom', path: ['BETTER_AUTH_URL'], message: 'must be https:// in production' });
+    }
+    if (!env.DATABASE_URL) {
+      ctx.addIssue({ code: 'custom', path: ['DATABASE_URL'], message: 'is required in production (PGlite is for development)' });
     }
   });
 

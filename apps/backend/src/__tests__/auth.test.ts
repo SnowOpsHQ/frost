@@ -9,14 +9,13 @@ import {
   SESSION_PATH,
   SessionResponseSchema,
 } from '@app/specs/account-api.schema';
-import { EnvError, parseEnv } from '../env';
+import { EnvError, parseEnv, TELEMETRY_OVERRIDES } from '../env';
 import { createConsoleTransport } from '../email';
-import { cookieFrom, createTestBackend, jsonPost, linkIn, type TestBackend } from './helpers';
+import { authPath, cookieFrom, createTestBackend, jsonPost, linkIn, PASSWORD, signedInWithPassword, signUp, type TestBackend } from './helpers';
 
 // Acceptance: specs/account-backend.feature.md (Environment, Sign-in, Session).
 
-const auth = (route: keyof typeof AUTH_ROUTES): string => `${AUTH_BASE_PATH}${AUTH_ROUTES[route]}`;
-const PASSWORD = 'correct horse battery staple';
+const auth = authPath;
 const VALID_SECRET = 's'.repeat(AUTH_SECRET_MIN_LENGTH);
 
 let backend: TestBackend | undefined;
@@ -28,24 +27,6 @@ afterEach(async () => {
 async function open(overrides?: Parameters<typeof createTestBackend>[0]): Promise<TestBackend> {
   backend = await createTestBackend(overrides);
   return backend;
-}
-
-async function signUp(b: TestBackend, email = 'alice@example.com', name = 'Alice'): Promise<Response> {
-  return b.request(auth('signUpEmail'), jsonPost({ email, password: PASSWORD, name }));
-}
-
-/** Sign up, follow the verification link, sign in with the password; answers the session cookie. */
-async function signedInWithPassword(b: TestBackend, email = 'alice@example.com'): Promise<string> {
-  expect((await signUp(b, email)).status).toBe(200);
-  const verification = b.email.messages.find((m) => m.to === email);
-  if (!verification) throw new Error('no verification email');
-  const verified = await b.request(linkIn(verification.text));
-  expect(verified.status).toBeLessThan(400);
-  const res = await b.request(auth('signInEmail'), jsonPost({ email, password: PASSWORD }));
-  expect(res.status).toBe(200);
-  const cookie = cookieFrom(res);
-  expect(cookie).not.toBe('');
-  return cookie;
 }
 
 describe('environment', () => {
@@ -80,6 +61,37 @@ describe('environment', () => {
 
   it('env-refuses-console-email-in-production', () => {
     expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, NODE_ENV: 'production', EMAIL_TRANSPORT: 'console' })).toThrow(/EMAIL_TRANSPORT/);
+  });
+
+  it('env-production-needs-https-and-postgres', () => {
+    const production = { BETTER_AUTH_SECRET: VALID_SECRET, NODE_ENV: 'production', BETTER_AUTH_URL: 'http://accounts.example.com' };
+    expect(() => parseEnv(production)).toThrow(/BETTER_AUTH_URL must be https/);
+    expect(() => parseEnv(production)).toThrow(/DATABASE_URL is required in production/);
+    expect(() => parseEnv({ ...production, BETTER_AUTH_URL: 'https://accounts.example.com', DATABASE_URL: 'postgres://db.example.com/frost' })).not.toThrow(
+      /BETTER_AUTH_URL|DATABASE_URL/,
+    );
+  });
+
+  it('env-auth-url-is-a-bare-origin', () => {
+    for (const url of ['http://127.0.0.1:8787/app', 'http://127.0.0.1:8787/?x=1', 'http://user:pw@127.0.0.1:8787', 'http://127.0.0.1:8787/#a']) {
+      expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, BETTER_AUTH_URL: url })).toThrow(/BETTER_AUTH_URL must be a bare origin/);
+    }
+    expect(parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, BETTER_AUTH_URL: 'http://127.0.0.1:9000/' }).BETTER_AUTH_URL).toBe('http://127.0.0.1:9000');
+  });
+
+  it('env-refuses-telemetry-overrides', () => {
+    for (const name of TELEMETRY_OVERRIDES) {
+      expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, [name]: 'true' })).toThrow(new RegExp(`${name} must not be set`));
+    }
+    expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, BETTER_AUTH_TELEMETRY: '' })).not.toThrow();
+  });
+
+  it('env-client-ip', () => {
+    expect(parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET }).CLIENT_IP_HEADER).toBeUndefined();
+    const env = parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, CLIENT_IP_HEADER: 'X-Forwarded-For', TRUSTED_PROXIES: '10.0.0.1, 192.0.2.0/24' });
+    expect(env.CLIENT_IP_HEADER).toBe('x-forwarded-for');
+    expect(env.TRUSTED_PROXIES).toEqual(['10.0.0.1', '192.0.2.0/24']);
+    expect(() => parseEnv({ BETTER_AUTH_SECRET: VALID_SECRET, CLIENT_IP_HEADER: 'bad header' })).toThrow(/CLIENT_IP_HEADER/);
   });
 });
 

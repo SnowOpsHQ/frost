@@ -30,26 +30,49 @@ export type PrincipalResolver = (request: Request) => Promise<Resolution>;
 
 const ABSENT: Resolution = { kind: 'absent' };
 const REJECTED: Resolution = { kind: 'rejected' };
-/** RFC 6750 `b64token`, bounded. */
-const BEARER = /^Bearer ([A-Za-z0-9\-._~+/]{1,512}=*)$/;
 
-/** `Authorization: Bearer …` through `verify`. Without a verifier every presented bearer is refused. */
+/** RFC 6750 `b64token`, bounded; the scheme is case-insensitive. */
+const BEARER = /^bearer +([A-Za-z0-9\-._~+/]{1,512}=*)$/i;
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * `Authorization: Bearer …` through `verify`. Without a verifier every presented bearer is refused;
+ * a verifier that throws refuses too (logged by error name only).
+ */
 export function bearerResolver(verify: BearerVerifier | undefined): PrincipalResolver {
   return async (request) => {
     const header = request.headers.get('authorization');
     if (header === null) return ABSENT;
-    const token = BEARER.exec(header)?.[1];
+    const token = BEARER.exec(header.trim())?.[1];
     if (!token || !verify) return REJECTED;
-    const principal = await verify(token);
+    let principal: Principal | null;
+    try {
+      principal = await verify(token);
+    } catch (error) {
+      console.error(`[backend] bearer verification failed: ${error instanceof Error ? error.name : 'unknown'}`);
+      return REJECTED;
+    }
     return principal ? { kind: 'principal', principal } : REJECTED;
   };
 }
 
-/** better-auth's web session cookie. */
-export function webSessionResolver(auth: Auth): PrincipalResolver {
+/** A browser request from `origin` itself: its `Origin`, else `Sec-Fetch-Site`; neither → not. */
+export function isSameOrigin(request: Request, origin: string): boolean {
+  const sent = request.headers.get('origin');
+  if (sent !== null) return sent === origin;
+  return request.headers.get('sec-fetch-site') === 'same-origin';
+}
+
+/**
+ * better-auth's web session cookie. For an unsafe method (anything but GET/HEAD/OPTIONS) the cookie
+ * counts only on a same-origin request (`isSameOrigin` with the base URL's origin), so a cross-site
+ * form cannot ride it. Desktop write routes take the bearer resolver alone.
+ */
+export function webSessionResolver(auth: Auth, origin: string): PrincipalResolver {
   return async (request) => {
     const found = await auth.api.getSession({ headers: request.headers });
     if (!found) return ABSENT;
+    if (!SAFE_METHODS.has(request.method.toUpperCase()) && !isSameOrigin(request, origin)) return REJECTED;
     return { kind: 'principal', principal: { user: toAccountUser(found.user), expiresAt: found.session.expiresAt } };
   };
 }

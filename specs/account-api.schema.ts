@@ -27,19 +27,51 @@ export const AUTH_ROUTES = {
   signInMagicLink: '/sign-in/magic-link',
   verifyMagicLink: '/magic-link/verify',
   verifyEmail: '/verify-email',
+  getSession: '/get-session',
   signOut: '/sign-out',
 } as const;
+
+/**
+ * The only better-auth endpoints the backend serves, and their methods; every other path under
+ * `AUTH_BASE_PATH` answers 404. Adding one is a reviewed change here.
+ */
+export const AUTH_ENDPOINT_METHODS: Readonly<Record<(typeof AUTH_ROUTES)[keyof typeof AUTH_ROUTES], 'GET' | 'POST'>> = {
+  '/sign-up/email': 'POST',
+  '/sign-in/email': 'POST',
+  '/sign-in/magic-link': 'POST',
+  '/magic-link/verify': 'GET',
+  '/verify-email': 'GET',
+  '/get-session': 'GET',
+  '/sign-out': 'POST',
+};
 
 // ---- Limits -------------------------------------------------------------------------------------
 
 /** Password length bounds for email-and-password accounts (better-auth enforces them on sign-up). */
 export const PASSWORD_LIMITS = { minLength: 10, maxLength: 128 } as const;
 
-/** Lifetime of a magic link, in seconds. Each link is single-use. */
+/** Bounds on an account's fields, enforced when a user is created or updated. */
+export const ACCOUNT_USER_LIMITS = { maxNameChars: 200, maxEmailChars: 320 } as const;
+
+/** Lifetime of a magic link, in seconds. Each link is single-use and stored hashed. */
 export const MAGIC_LINK_TTL_SECONDS = 10 * 60;
 
-/** Lifetime of an email-verification link, in seconds. */
+/**
+ * Lifetime of an email-verification link, in seconds. The link is a stateless signed token (not
+ * stored, not single-use): it verifies the address until it expires, and signs nobody in.
+ */
 export const EMAIL_VERIFICATION_TTL_SECONDS = 60 * 60;
+
+/**
+ * Per-client-IP request limits on the auth endpoints (fixed windows, seconds). Over the limit
+ * answers 429 with `X-Retry-After`. `default` covers every endpoint without its own rule.
+ */
+export const AUTH_RATE_LIMITS = {
+  default: { window: 60, max: 100 },
+  signIn: { window: 10, max: 3 },
+  signUp: { window: 60, max: 5 },
+  magicLink: { window: 60, max: 5 },
+} as const;
 
 /** Minimum length of `BETTER_AUTH_SECRET`; a shorter or missing secret refuses startup. */
 export const AUTH_SECRET_MIN_LENGTH = 32;
@@ -47,7 +79,7 @@ export const AUTH_SECRET_MIN_LENGTH = 32;
 // ---- Errors -------------------------------------------------------------------------------------
 
 /** The `error` codes the backend's own routes answer (better-auth's endpoints keep their own shape). */
-export const ACCOUNT_API_ERRORS = ['unauthorized', 'not_found', 'unavailable', 'internal'] as const;
+export const ACCOUNT_API_ERRORS = ['unauthorized', 'forbidden', 'not_found', 'unavailable', 'internal'] as const;
 export type AccountApiError = (typeof ACCOUNT_API_ERRORS)[number];
 
 /**
@@ -62,8 +94,8 @@ export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 /** The signed-in user as the desktop shows it. `name` is `null` when the account has none (magic-link sign-up). */
 export const AccountUserSchema = z.object({
   id: z.string().min(1).max(128),
-  email: z.email().max(320),
-  name: z.string().min(1).max(200).nullable(),
+  email: z.email().max(ACCOUNT_USER_LIMITS.maxEmailChars),
+  name: z.string().min(1).max(ACCOUNT_USER_LIMITS.maxNameChars).nullable(),
 });
 export type AccountUser = z.infer<typeof AccountUserSchema>;
 

@@ -1,31 +1,87 @@
 import { sql } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
-import { AUTH_BASE_PATH, HEALTH_PATH, SESSION_PATH, type ErrorResponse, type HealthResponse, type SessionResponse } from '@app/specs/account-api.schema';
-import { createAuth, type AuthConfig } from './auth';
+import {
+  AUTH_BASE_PATH,
+  AUTH_ENDPOINT_METHODS,
+  HEALTH_PATH,
+  SESSION_PATH,
+  SessionResponseSchema,
+  type AccountApiError,
+  type ErrorResponse,
+  type HealthResponse,
+} from '@app/specs/account-api.schema';
+import { CLIENT_IP_HEADER, createAuth, type AuthConfig } from './auth';
 import type { Database } from './db/client';
 import type { EmailTransport } from './email';
+import type { LogSink } from './log';
 import { bearerResolver, requirePrincipal, webSessionResolver, type BearerVerifier, type PrincipalEnv, type PrincipalResolver } from './principal';
+import type { RateLimitStorage } from './rate-limit';
 
 // The backend's HTTP app (spec `account-backend.feature.md`). Everything it needs comes in `deps`,
 // so tests build one per case on an in-memory database and drive it with `app.request()`.
+
+/**
+ * Where a request's client IP comes from (rate limiting). `peer`: the TCP peer address, as the
+ * server reads it from the socket (`server.ts`); `header`: a header set by a trusted reverse proxy.
+ */
+export type ClientIpSource =
+  | { readonly kind: 'peer'; readonly address: (c: Context) => string | undefined }
+  | { readonly kind: 'header'; readonly header: string; readonly trustedProxies?: readonly string[] | undefined };
 
 export interface AppDeps {
   readonly db: Database;
   readonly auth: AuthConfig;
   readonly email: EmailTransport;
+  readonly clientIp: ClientIpSource;
   /** Desktop bearer tokens (Task 3). Without one, a request with a bearer is refused. */
   readonly verifyBearer?: BearerVerifier | undefined;
+  readonly rateLimitStorage?: RateLimitStorage | undefined;
+  readonly logSink?: LogSink | undefined;
+  /** How long `/healthz` waits for the database (default 3 s). */
+  readonly healthTimeoutMs?: number | undefined;
 }
 
 export type AppEnv = PrincipalEnv;
 
-const errorBody = (error: ErrorResponse['error']): ErrorResponse => ({ error });
+const errorBody = (error: AccountApiError): ErrorResponse => ({ error });
 
-export function createApp(deps: AppDeps) {
-  const auth = createAuth(deps);
+/** better-auth JSON answers that carry the session token (the cookie already has it): `token` removed. */
+async function withoutSessionToken(res: Response): Promise<Response> {
+  if (!(res.headers.get('content-type') ?? '').includes('application/json')) return res;
+  const text = await res.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return new Response(text, res);
+  }
+  if (body !== null && typeof body === 'object') {
+    const record = body as Record<string, unknown>;
+    delete record.token;
+    const session = record.session;
+    if (session !== null && typeof session === 'object') delete (session as Record<string, unknown>).token;
+  }
+  const headers = new Headers(res.headers);
+  headers.delete('content-length');
+  return new Response(JSON.stringify(body), { status: res.status, statusText: res.statusText, headers });
+}
+
+function timeout(ms: number): Promise<never> {
+  return new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms).unref());
+}
+
+/** The app with the pieces later routes and tests reuse: better-auth and the principal resolvers. */
+export function createAppParts(deps: AppDeps) {
+  const { clientIp } = deps;
+  const auth = createAuth({
+    ...deps,
+    clientIp: clientIp.kind === 'peer' ? { kind: 'peer' } : { kind: 'header', header: clientIp.header, trustedProxies: clientIp.trustedProxies },
+  });
+  const origin = new URL(deps.auth.baseURL).origin;
+  const trustedOrigins = new Set([origin, ...(deps.auth.trustedOrigins ?? [])]);
   /** Asked in order by every authenticated route: a bearer first, then the web session cookie. */
-  const resolvers: readonly PrincipalResolver[] = [bearerResolver(deps.verifyBearer), webSessionResolver(auth)];
+  const resolvers: readonly PrincipalResolver[] = [bearerResolver(deps.verifyBearer), webSessionResolver(auth, origin)];
 
   const app = new Hono<AppEnv>();
   app.use(secureHeaders({ crossOriginResourcePolicy: 'same-origin', referrerPolicy: 'no-referrer' }));
@@ -34,11 +90,34 @@ export function createApp(deps: AppDeps) {
     c.header('Cache-Control', 'no-store');
   });
 
-  app.on(['GET', 'POST'], `${AUTH_BASE_PATH}/*`, (c) => auth.handler(c.req.raw));
+  // better-auth, limited to `AUTH_ENDPOINT_METHODS`; every other path under the base is 404.
+  const endpoints: Readonly<Record<string, string>> = AUTH_ENDPOINT_METHODS;
+  app.all(`${AUTH_BASE_PATH}/*`, async (c) => {
+    const path = c.req.path.slice(AUTH_BASE_PATH.length);
+    if (!Object.hasOwn(endpoints, path) || endpoints[path] !== c.req.method) return c.json(errorBody('not_found'), 404);
+    // A browser write from another site is refused outright (login CSRF, sign-up spam), on top of
+    // better-auth's own checks. Clients that send neither header (curl, tests) are not browsers.
+    if (c.req.method === 'POST') {
+      const sentOrigin = c.req.header('origin');
+      if ((sentOrigin !== undefined && !trustedOrigins.has(sentOrigin)) || c.req.header('sec-fetch-site') === 'cross-site') {
+        return c.json(errorBody('forbidden'), 403);
+      }
+    }
+    let request = c.req.raw;
+    if (clientIp.kind === 'peer') {
+      // The client never chooses its own rate-limit key: whatever it sent is replaced.
+      const headers = new Headers(request.headers);
+      headers.delete(CLIENT_IP_HEADER);
+      const address = clientIp.address(c);
+      if (address) headers.set(CLIENT_IP_HEADER, address);
+      request = new Request(request, { headers });
+    }
+    return withoutSessionToken(await auth.handler(request));
+  });
 
   app.get(HEALTH_PATH, async (c) => {
     try {
-      await deps.db.execute(sql`SELECT 1`);
+      await Promise.race([deps.db.execute(sql`SELECT 1`), timeout(deps.healthTimeoutMs ?? 3000)]);
     } catch {
       return c.json(errorBody('unavailable'), 503);
     }
@@ -47,8 +126,8 @@ export function createApp(deps: AppDeps) {
 
   app.get(SESSION_PATH, requirePrincipal(resolvers), (c) => {
     const { user, expiresAt } = c.get('principal');
-    const body: SessionResponse = { user, ...(expiresAt ? { expiresAt: expiresAt.toISOString() } : {}) };
-    return c.json(body);
+    // Parsed, not just typed: an answer the desktop would refuse is a server error here instead.
+    return c.json(SessionResponseSchema.parse({ user, ...(expiresAt ? { expiresAt: expiresAt.toISOString() } : {}) }));
   });
 
   app.notFound((c) => c.json(errorBody('not_found'), 404));
@@ -58,7 +137,11 @@ export function createApp(deps: AppDeps) {
     return c.json(errorBody('internal'), 500);
   });
 
-  return app;
+  return { app, auth, resolvers };
+}
+
+export function createApp(deps: AppDeps) {
+  return createAppParts(deps).app;
 }
 
 export type App = ReturnType<typeof createApp>;

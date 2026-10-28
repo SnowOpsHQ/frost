@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server';
-import { createApp } from './app';
+import { getConnInfo } from '@hono/node-server/conninfo';
+import { createApp, type ClientIpSource } from './app';
 import { openDatabase } from './db/client';
 import { migrate } from './db/migrate';
 import { createEmailTransport } from './email';
@@ -21,13 +22,25 @@ async function main(): Promise<void> {
   }
 
   const database = await openDatabase(env);
-  const applied = await migrate(database.db);
+  let applied: string[];
+  try {
+    applied = await migrate(database.db);
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
   console.log(`[backend] database: ${database.kind === 'pglite' ? `PGlite at ${env.PGLITE_DIR}` : 'Postgres (DATABASE_URL)'}; migrations applied: ${applied.length}`);
+
+  // No CLIENT_IP_HEADER: the TCP peer is the client. With one, a trusted reverse proxy sets it.
+  const clientIp: ClientIpSource = env.CLIENT_IP_HEADER
+    ? { kind: 'header', header: env.CLIENT_IP_HEADER, trustedProxies: env.TRUSTED_PROXIES }
+    : { kind: 'peer', address: (c) => getConnInfo(c).remote.address };
 
   const app = createApp({
     db: database.db,
     auth: { secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL },
     email: createEmailTransport(env.EMAIL_TRANSPORT),
+    clientIp,
   });
   const server = serve({ fetch: app.fetch, hostname: env.HOST, port: env.PORT }, (info) => {
     console.log(`[backend] listening on http://${info.address}:${info.port} (public URL ${env.BETTER_AUTH_URL})`);

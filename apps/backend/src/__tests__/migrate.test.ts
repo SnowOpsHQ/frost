@@ -48,4 +48,24 @@ describe('migrations', () => {
     await expect(migrate(handle.db, edited)).rejects.toThrow(MigrationError);
     await expect(migrate(handle.db, edited)).rejects.toThrow(first.id);
   });
+
+  it('migration-missing-refused', async () => {
+    handle = await openMemoryDatabase();
+    const migrations = await loadMigrations();
+    const extra = { id: '9001_extra', sql: 'CREATE TABLE extra_one (id int);' };
+    await migrate(handle.db, [...migrations, extra]);
+    await expect(migrate(handle.db, migrations)).rejects.toThrow(/9001_extra is missing/);
+  });
+
+  it('migration-out-of-order-refused', async () => {
+    handle = await openMemoryDatabase();
+    const migrations = await loadMigrations();
+    const later = { id: '9002_later', sql: 'CREATE TABLE later_one (id int);' };
+    await migrate(handle.db, [...migrations, later]);
+    const earlier = { id: '9001_earlier', sql: 'CREATE TABLE earlier_one (id int);' };
+    await expect(migrate(handle.db, [...migrations, earlier, later])).rejects.toThrow(/9001_earlier is numbered before the applied 9002_later/);
+    // Nothing of the refused run was applied.
+    const rows = await queryRows<{ n: number }>(handle.db, sql`SELECT count(*)::int AS n FROM information_schema.tables WHERE table_name = 'earlier_one'`);
+    expect(rows[0]?.n).toBe(0);
+  });
 });

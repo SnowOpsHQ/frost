@@ -29,9 +29,23 @@ export async function openPgliteDatabase(dataDir: string): Promise<DatabaseHandl
   return { db: drizzlePglite({ client, schema }), kind: 'pglite', close: () => client.close() };
 }
 
+/** Pool bounds: a stuck database answers errors (and `/healthz` 503) instead of hanging requests. */
+export const POSTGRES_POOL_LIMITS = { max: 10, connectionTimeoutMillis: 5_000, idleTimeoutMillis: 30_000, statementTimeoutMillis: 15_000 } as const;
+
 /** A real Postgres through a node-postgres pool. The URL is never logged. */
 export function openPostgresDatabase(connectionString: string): DatabaseHandle {
-  const pool = new pg.Pool({ connectionString, max: 10 });
+  const pool = new pg.Pool({
+    connectionString,
+    max: POSTGRES_POOL_LIMITS.max,
+    connectionTimeoutMillis: POSTGRES_POOL_LIMITS.connectionTimeoutMillis,
+    idleTimeoutMillis: POSTGRES_POOL_LIMITS.idleTimeoutMillis,
+    // Server-side cap, and the client-side one for when the server itself stops answering.
+    statement_timeout: POSTGRES_POOL_LIMITS.statementTimeoutMillis,
+    query_timeout: POSTGRES_POOL_LIMITS.statementTimeoutMillis + 1_000,
+  });
+  // An idle client's error (the server restarted, the network dropped) would otherwise crash the
+  // process. The name only: a driver error can carry connection details.
+  pool.on('error', (error) => console.error(`[backend] postgres pool error: ${error.name}`));
   return { db: drizzleNodePg({ client: pool, schema }), kind: 'postgres', close: () => pool.end() };
 }
 

@@ -18,7 +18,7 @@
     "@app/specs": "workspace:*",
     "@electric-sql/pglite": "0.5.12",
     "@hono/node-server": "^2.1.5",
-    "better-auth": "^1.7.14",
+    "better-auth": "1.7.14",
     "drizzle-orm": "0.45.4",
     "hono": "^4.13.14",
     "pg": "^8.23.1",
