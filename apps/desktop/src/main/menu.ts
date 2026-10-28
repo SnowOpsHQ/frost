@@ -6,6 +6,7 @@ import { SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
 import { COMMAND_PALETTE_MENU_ID, COMMAND_PALETTE_MENU_LABEL } from '@app/specs/command-palette.spec';
 import { DEVTOOLS_MENU_ACCELERATOR, DEVTOOLS_MENU_ID, DEVTOOLS_MENU_LABEL } from '@app/specs/devtools.spec';
 import { HISTORY_MENU_LABEL, POLISH_MENU_IDS } from '@app/specs/browser-polish.spec';
+import { SETTINGS_MENU } from '@app/specs/account-settings.spec';
 import type { BrowserController } from './browser/controller';
 
 // The application menu (spec `tabs.feature.md`, Menu). Tab shortcuts are menu accelerators handled
@@ -30,6 +31,8 @@ export interface AppMenuCommands extends TabCommands {
   stepFind?(forward: boolean): unknown;
   reopenClosedTab?(): unknown;
   showHistory?(): void;
+  // The Settings view (`account-settings.feature.md`); optional so other fakes need not grow.
+  showSettings?(): void;
 }
 
 /** The menu items browser polish adds (`browser-polish.spec.ts`, `POLISH_MENU_IDS`): File, Edit and History. */
@@ -52,6 +55,8 @@ function polishItems(commands: AppMenuCommands) {
 export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Platform = process.platform): MenuItemConstructorOptions[] {
   const mac = platform === 'darwin';
   const polish = polishItems(commands);
+  // Settings… (`account-settings.feature.md`): the macOS app menu, elsewhere the end of Edit.
+  const settings: MenuItemConstructorOptions = { id: SETTINGS_MENU.id, label: SETTINGS_MENU.label, accelerator: SETTINGS_MENU.accelerator, click: () => commands.showSettings?.() };
   const selectTab: MenuItemConstructorOptions[] = [];
   for (let n = 1; n < TAB_SHORTCUT_COUNT; n++) {
     selectTab.push({ id: `select-tab-${n}`, label: `Tab ${n}`, accelerator: `CmdOrCtrl+${n}`, click: () => void commands.activateTabAt(n - 1) });
@@ -102,6 +107,7 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
       { type: 'separator' },
       { role: 'selectAll' },
       ...polish.edit,
+      ...(mac ? [] : [{ type: 'separator' } satisfies MenuItemConstructorOptions, settings]),
     ],
   };
 
@@ -186,6 +192,8 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
     role: 'appMenu',
     submenu: [
       { role: 'about' },
+      { type: 'separator' },
+      settings,
       { type: 'separator' },
       clearBrowsingData,
       { type: 'separator' },

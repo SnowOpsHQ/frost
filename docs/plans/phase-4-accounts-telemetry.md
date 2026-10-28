@@ -276,7 +276,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Failing tests:** unit tests for the view models; e2e `settings.e2e.ts`: sign in through the
   view against the fake backend (confirmation shown and required), toggles persist across restart and
   reflect main's state, Search Console connect and disconnect against the fakes.
-- [ ] commit `feat(settings): account, plan, telemetry and Search Console settings`
+- [x] commit `feat(settings): account, plan, telemetry and Search Console settings`
 
 ### Task 10: Search Console performance panel
 - **Spec:** `specs/gsc-panel.feature.md`.

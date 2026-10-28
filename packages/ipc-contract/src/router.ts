@@ -22,6 +22,7 @@ import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
 import { telemetryRouter } from './telemetry-router';
 import { gscRouter } from './gsc-router';
+import { settingsViewRouter } from './settings-view-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -288,6 +289,8 @@ export const appRouter = router({
   telemetry: telemetryRouter,
   // Phase 4 Task 8 (`gsc.feature.md`): the read-only Search Console connection and performance API.
   gsc: gscRouter,
+  // Phase 4 Task 9 (`account-settings.feature.md`): the menu's requests to open the Settings view.
+  settingsView: settingsViewRouter,
 });
 
 export type AppRouter = typeof appRouter;
