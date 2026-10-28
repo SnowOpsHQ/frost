@@ -250,8 +250,8 @@ export interface CaptureJsonLdBlock {
  * One region's text: its word count (every word the walk reached, also past the caps), its text hash,
  * its blocks, and whether the blocks stop short of the text the walk reached (a cap, or the deadline).
  *
- * Text is normalised by the extractor before anything else sees it: Unicode NFC, whitespace runs
- * collapsed to one space, trimmed; empty blocks are dropped. A block is cut to `maxBlockChars`, and
+ * Text is normalised by the extractor before anything else sees it: lone surrogates replaced with
+ * U+FFFD, Unicode NFC, whitespace runs collapsed to one space, trimmed; empty blocks are dropped. A block is cut to `maxBlockChars`, and
  * blocks are kept until `maxBlocksPerRegion` or `maxRegionChars` (the block that would cross it is
  * not kept).
  *
@@ -287,7 +287,7 @@ export interface CaptureSnapshot {
     ogImage: string | null;
     hreflang: HreflangEntry[];
   };
-  /** The health score and the failing rules' ids (sorted, unique). */
+  /** The failing rules' ids (sorted, unique) and their health score, of the rules that read the page itself (`changes.spec.ts`, `CAPTURE_EXCLUDED_RULES`). */
   audit: { score: number; findings: string[] };
   /** The page's structured-data types (sorted, unique) and its JSON-LD blocks. */
   structuredData: { types: string[]; blocks: CaptureJsonLdBlock[] };

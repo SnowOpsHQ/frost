@@ -3,11 +3,12 @@ import { uuidv7 as defaultUuidv7, type ChangeIntelRepository } from '@app/db';
 import type { ChangesReadService, ChangesService } from '@app/ipc-contract';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { MAX_DIFF_JSON_BYTES, MAX_SNAPSHOT_JSON_BYTES, UNFILED_PROJECT_ID, type CaptureSource } from '@app/specs/capture-db.spec';
-import { CAPTURE_LIMITS, CAPTURE_SNAPSHOT_VERSION, CaptureSnapshotSchema, DIFF_ENGINE_VERSION, SnapshotDiffSchema, type CaptureSnapshot, type SnapshotDiff } from '@app/specs/capture-snapshot.schema';
+import { CAPTURE_LIMITS, CAPTURE_SNAPSHOT_VERSION, PAGE_REGIONS, CaptureSnapshotSchema, DIFF_ENGINE_VERSION, SnapshotDiffSchema, type CaptureSnapshot, type SnapshotDiff } from '@app/specs/capture-snapshot.schema';
 import { SearchParamsSchema, type SearchParams } from '@app/specs/capture-search-params.schema';
 import { CAPTURE_BUSY, CAPTURE_STALE_RETRIES, DiffSummarySchema, type CaptureAnswer, type CaptureRefusal, type HistoryVersion } from '@app/specs/changes.schema';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import type { z } from 'zod';
+import type { LoadTimes } from './loads';
 import { parseRegionAnswer, type RegionTarget } from './regions';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex, storedPageUrl } from './snapshot';
 
@@ -25,6 +26,8 @@ export interface ChangesTabs {
   /** The tab's live page WebContents, `null` for an id that names no open tab. */
   contentsOf(tabId: number): RegionTarget | null;
   getAudit(tabId: number): SeoAuditResponse;
+  /** When the tab last loaded (`LoadTimes`, `loads.ts`); `null`: not since it was watched. */
+  loadedAt(tabId: number): number | null;
 }
 
 export interface ChangesServiceDeps {
@@ -59,7 +62,13 @@ export interface MainChangesService extends ChangesService, ChangesReadService {
 const noSearchParams = (_tabId: number): SearchParams | null => null;
 
 const refused = (reason: CaptureRefusal): CaptureAnswer => ({ status: 'refused', reason });
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : 'unknown error');
+/** An error's code or name: never its message (a database error's message holds its parameters, URLs among them). */
+const codeOf = (error: unknown): string => {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : error instanceof Error ? error.name : 'unknown error';
+};
+/** Whether `snapshot` was cut short (`changes-diff.feature.md`, Partial snapshots). */
+const cutShort = (snapshot: CaptureSnapshot): boolean => snapshot.partial || PAGE_REGIONS.some((region) => snapshot.regions[region].truncated);
 
 /** `promise`, or a rejection once `ms` pass. */
 function within<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -122,16 +131,26 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     return { laneKey: stored.laneKey, snapshot: snapshot ?? null };
   };
 
-  /** The tab, if it is the active one, shows a page and has a ready audit of that page (fragment aside). */
+  /**
+   * The tab, if it is the active one, shows a page a snapshot can hold, and has a **settled** ready
+   * audit of that page (fragment aside) taken after its latest load: not the last load's audit kept
+   * on screen through a reload, and not a provisional one (robots.txt still `pending`).
+   */
   const readyTab = (tabId: number): { contents: RegionTarget; response: Extract<SeoAuditResponse, { status: 'ready' }>; page: string } | CaptureRefusal => {
     const response = tabs.getAudit(tabId);
     const contents = tabs.contentsOf(tabId);
     if (!contents || (response.status === 'unavailable' && response.reason === 'no-tab')) return 'no-tab';
     if (tabs.activeTabId() !== tabId) return 'not-active';
-    if (response.status !== 'ready') return 'no-audit';
     const page = storedPageUrl(contents.getURL());
-    return page !== null && storedPageUrl(response.audit.url) === page ? { contents, response, page } : 'no-audit';
+    // A URL longer than a snapshot keeps can never be captured (its audit holds it cut): say so.
+    if (page !== null && page.length > CAPTURE_LIMITS.maxUrlChars) return 'invalid-page';
+    if (response.status !== 'ready' || page === null || storedPageUrl(response.audit.url) !== page) return 'no-audit';
+    const loadedAt = tabs.loadedAt(tabId);
+    if (response.audit.indexability.robots?.outcome === 'pending' || (loadedAt !== null && response.audit.takenAt <= loadedAt)) return 'no-audit';
+    return { contents, response, page };
   };
+  /** A `readyTab` refusal: `invalid-page` is a failure (logged), the others are states. */
+  const notReady = (reason: CaptureRefusal): CaptureAnswer => (reason === 'invalid-page' ? failed(reason, 'its URL is longer than a snapshot keeps') : refused(reason));
 
   async function captureTab(tabId: number, options: CaptureOptions): Promise<CaptureAnswer> {
     let tab: ReturnType<typeof readyTab>;
@@ -140,21 +159,23 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     } catch {
       return failed('no-audit', 'the tab or its audit could not be read');
     }
-    if (typeof tab === 'string') return refused(tab);
+    if (typeof tab === 'string') return notReady(tab);
     const { contents, response, page } = tab;
 
     const projectId = options.projectId ?? UNFILED_PROJECT_ID;
     try {
       if ((await store.project(projectId)) === null) return refused('no-project');
     } catch (error) {
-      return failed('store-failed', `the project could not be read (${messageOf(error)})`);
+      return failed('store-failed', `the project could not be read (${codeOf(error)})`);
     }
     const given = options.searchParams !== undefined ? options.searchParams : searchParamsOf(tabId);
     const params = given === null ? null : SearchParamsSchema.safeParse(given);
     if (params !== null && !params.success) return failed('invalid-page', 'its search parameters do not fit their schema');
     const searchParams = params?.data ?? null;
-    const profile = response.renderProfile ?? null;
-    if (profile !== null && !RenderProfileSchema.safeParse(profile.profile).success) return failed('invalid-page', 'its render profile does not fit its schema');
+    const rendered = response.renderProfile ?? null;
+    const parsedProfile = rendered === null ? null : RenderProfileSchema.safeParse(rendered.profile);
+    if (parsedProfile !== null && !parsedProfile.success) return failed('invalid-page', 'its render profile does not fit its schema');
+    const profile = rendered === null || parsedProfile === null ? null : { profile: parsedProfile.data, partial: rendered.partial };
 
     // The regions, read in the capture world (untrusted: validated, then checked against the tab again).
     let raw: unknown;
@@ -174,7 +195,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     } catch {
       return failed('no-audit', 'the tab or its audit could not be read');
     }
-    if (typeof again === 'string') return refused(again);
+    if (typeof again === 'string') return notReady(again);
     if (again.page !== page || again.response.audit !== response.audit || storedPageUrl(regions.url) !== page) return refused('no-audit');
 
     // The snapshot, its lane and its identity.
@@ -209,27 +230,36 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     };
 
     // Written one capture at a time: read the head, diff against it, append (again once if the lane moved).
+    /** Whether the project went (tombstoned) while the capture ran; else the write failed for another reason. */
+    const goneOr = async (why: string): Promise<CaptureAnswer> => ((await store.project(projectId)) === null ? refused('no-project') : failed('store-failed', why));
     return serial(async () => {
       try {
         for (let attempt = 0; attempt <= CAPTURE_STALE_RETRIES; attempt++) {
           const head = await store.latestVersion(lane);
           let diff: SnapshotDiff | null = null;
-          if (head !== null && head.snapshotHash !== hash) diff = fitDiff(diffSnapshots((await readVersion(head.id))?.snapshot ?? null, snapshot));
+          // A capture cut short that the diff finds no change in is one more capture of the head.
+          let reuse: string | null = null;
+          if (head !== null && head.snapshotHash !== hash) {
+            const before = (await readVersion(head.id))?.snapshot ?? null;
+            const found = diffSnapshots(before, snapshot);
+            if (before !== null && cutShort(snapshot) && found.changeCount === 0) reuse = head.snapshotHash;
+            else diff = fitDiff(found);
+          }
           const at = now();
           const ids = { captureId: uuid(at), versionId: uuid(at) };
           const diffInput =
             head !== null && diff !== null
               ? { id: uuid(at), fromVersionId: head.id, engineVersion: DIFF_ENGINE_VERSION, diffJson: canonicalJson(diff), summaryJson: canonicalJson(diff.summary), changeCount: diff.changeCount }
               : undefined;
-          const result = await store.appendCapture({ ...capture, ...ids, createdAt: at, ...(diffInput ? { diff: diffInput } : {}) });
-          if (result === null) return failed('store-failed', 'the store refused the capture');
+          const result = await store.appendCapture({ ...capture, ...(reuse === null ? {} : { snapshotHash: reuse }), ...ids, createdAt: at, ...(diffInput ? { diff: diffInput } : {}) });
+          if (result === null) return goneOr('the store refused the capture');
           if (result.status === 'appended') {
             return { status: 'captured', captureId: result.captureId, versionId: result.versionId, newVersion: result.newVersion, changeCount: result.newVersion ? (diff?.changeCount ?? null) : 0 };
           }
         }
-        return failed('store-failed', 'its lane kept changing while it was written');
+        return goneOr('its lane kept changing while it was written');
       } catch (error) {
-        return failed('store-failed', `the store failed (${messageOf(error)})`);
+        return failed('store-failed', `the store failed (${codeOf(error)})`);
       }
     });
   }
@@ -239,7 +269,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     try {
       return await run();
     } catch (error) {
-      log(`${what} failed (${messageOf(error)})`);
+      log(`${what} failed (${codeOf(error)})`);
       return fallback;
     }
   };
@@ -324,7 +354,19 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
   return service;
 }
 
-/** `ChangesTabs` over the browser controller and main's map of tab WebContents (`contentsOf`). */
-export function changesTabs(browser: { getState(): { readonly activeTabId: number | null }; readonly seo: { getAudit(tabId: number): SeoAuditResponse } }, contentsOf: (tabId: number) => RegionTarget | null): ChangesTabs {
-  return { activeTabId: () => browser.getState().activeTabId, contentsOf, getAudit: (tabId) => browser.seo.getAudit(tabId) };
+/** `ChangesTabs` over the browser controller, main's map of tab WebContents (`contentsOf`) and the tabs' load times. */
+export function changesTabs(
+  browser: { getState(): { readonly activeTabId: number | null }; readonly seo: { getAudit(tabId: number): SeoAuditResponse } },
+  contentsOf: (tabId: number) => RegionTarget | null,
+  loads: LoadTimes,
+): ChangesTabs {
+  return {
+    activeTabId: () => browser.getState().activeTabId,
+    contentsOf,
+    getAudit: (tabId) => browser.seo.getAudit(tabId),
+    loadedAt: (tabId) => {
+      const contents = contentsOf(tabId);
+      return contents ? loads.loadedAt(contents) : null;
+    },
+  };
 }

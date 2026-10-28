@@ -24,8 +24,6 @@ import { createCheckFetch } from './seo/checks-fetch';
 import { CHECKS_ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-checks.spec';
 import { profileUserAgent } from '@app/specs/render-profile.spec';
 import { createContentService } from './seo/content-notes';
-import { runRegions } from './changes/regions';
-import { changesTabs, createChangesService } from './changes/service';
 import { confirmClearContentNotes } from './seo/content-notes-dialog';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
@@ -48,6 +46,9 @@ import { registerAppWideGuards, registerSecurity, type SecurityOptions } from '.
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
 import { createMainWindow, createTabView, loadRenderer } from './window';
+import { createLoadTimes } from './changes/loads';
+import { runRegions } from './changes/regions';
+import { changesTabs, createChangesService } from './changes/service';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -311,7 +312,10 @@ function start(): void {
   });
 
   // Change intelligence (specs/changes-capture.feature.md): the active tab's ready audit and its regions, captured into the session database.
-  const changes = createChangesService({ store: sessionStore.changeIntel, tabs: changesTabs(browser, (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null), extract: runRegions, log: logSession });
+  // A capture needs an audit taken after the tab's latest load, so each tab's load times are kept.
+  const changeLoads = createLoadTimes();
+  app.on('web-contents-created', (_event, contents) => changeLoads.watch(contents));
+  const changes = createChangesService({ store: sessionStore.changeIntel, tabs: changesTabs(browser, (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null, changeLoads), extract: runRegions, log: logSession });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.

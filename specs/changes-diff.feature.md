@@ -37,7 +37,9 @@ groups by it under `DIFF_REGION_LABELS`.
 - `http`: `status` (`null` when unknown), `xRobotsTag`, `indexable`.
 - `head`: `title`, `metaDescription`, `canonical`, `robotsMeta`, `lang`, `viewport`, `ogTitle`,
   `ogDescription`, `ogImage` (each `null` when absent), and `hreflang` (`{hreflang, href}`).
-- `audit`: `score` (0–100) and `findings`, the failing rules' ids, sorted and unique.
+- `audit`: `score` (0–100) and `findings`, the failing rules' ids, sorted and unique. A capture
+  keeps only the rules that read the page itself, and scores those (`changes-capture.feature.md`,
+  Page rules): timing, accessibility, served-HTML and checks results are not part of a version.
 - `structuredData`: `types` (sorted, unique) and the JSON-LD `blocks`, each with its types, the
   SHA-256 of its whole canonical JSON, and that JSON cut to `maxJsonLdBlockChars`.
 - `headings` (`level`, `text`, `region`) and `links` (`total`, `internal`, `external`,
@@ -48,8 +50,9 @@ groups by it under `DIFF_REGION_LABELS`.
 
 Every list and string is capped by `CAPTURE_LIMITS`; the schema is strict and refuses anything else.
 
-**Text is normalised by the extractor** (Task 3), before main or the diff sees it: Unicode NFC,
-whitespace runs collapsed to one space, trimmed, empty blocks dropped. The diff compares strings
+**Text is normalised by the extractor** (Task 3), before main or the diff sees it: lone surrogates
+replaced with U+FFFD, Unicode NFC, whitespace runs collapsed to one space, trimmed, empty blocks
+dropped. The diff compares strings
 exactly and assumes this; it does not normalise again.
 
 **`textHash`** is the lowercase hex SHA-256 of the UTF-8 bytes of H: every normalised block the walk

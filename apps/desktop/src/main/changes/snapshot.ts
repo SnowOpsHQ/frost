@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson, snapshotIdentityJson } from '@app/change-intel';
-import type { SchemaEntity, SeoAudit } from '@app/seo-core';
+import { scoreAudit, type SchemaEntity, type SeoAudit } from '@app/seo-core';
 import { MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import { MAX_SNAPSHOT_JSON_BYTES } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS as L, CAPTURE_SNAPSHOT_VERSION, PAGE_REGIONS, type CaptureJsonLdBlock, type CaptureSnapshot, type PageRegion } from '@app/specs/capture.spec';
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
-import type { RegionAnswer } from '@app/specs/changes.spec';
+import { isCapturedRule, type RegionAnswer } from '@app/specs/changes.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 
@@ -102,6 +102,9 @@ function structuredData(audit: SeoAudit): CaptureSnapshot['structuredData'] {
  */
 export function buildCaptureSnapshot(audit: SeoAudit, regions: RegionAnswer, hash: (text: string) => string): CaptureSnapshot {
   const { page, indexability } = audit;
+  // Only rules that read the page itself (`CAPTURE_EXCLUDED_RULES`): timing, the accessibility run and
+  // the checks vary between loads of an unchanged page. The score is seo-core's, over those alone.
+  const findings = audit.findings.filter((finding) => isCapturedRule(finding.ruleId));
   const status = indexability.http?.status;
   const xRobotsTag = indexability.xRobotsTag.map((tag) => tag.value).join(', ');
   const snapshot: CaptureSnapshot = {
@@ -123,9 +126,9 @@ export function buildCaptureSnapshot(audit: SeoAudit, regions: RegionAnswer, has
       hreflang: indexability.hreflang.entries.slice(0, L.maxHreflang).map((entry) => ({ hreflang: text(entry.value, L.maxHeadChars), href: cut((entry.resolved ?? entry.href).trim(), L.maxUrlChars) })),
     },
     audit: {
-      score: Math.min(100, Math.max(0, Math.round(Number.isFinite(audit.score) ? audit.score : 0))),
+      score: scoreAudit(findings),
       findings: sortedSet(
-        audit.findings.map((finding) => finding.ruleId),
+        findings.map((finding) => finding.ruleId),
         L.maxTypeChars,
         L.maxFindings,
       ),
@@ -144,30 +147,49 @@ export function buildCaptureSnapshot(audit: SeoAudit, regions: RegionAnswer, has
   return fitToStore(snapshot);
 }
 
-/** Shrinking rounds `fitToStore` tries (each keeps three quarters of the lists it cuts). */
-const FIT_ROUNDS = 16;
+/** Shrinking rounds `fitToStore` tries at most (each cuts one part to three quarters). */
+const FIT_ROUNDS = 200;
+
+type Part = 'links' | 'headings' | 'json-ld' | 'hreflang' | PageRegion;
+const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), 'utf8');
+const keep = (n: number) => Math.floor((n * 3) / 4);
+
+/** `snapshot` with part `part` cut to three quarters (a region's blocks, or a list, or every JSON-LD block's text). */
+function shrink(snapshot: CaptureSnapshot, part: Part): CaptureSnapshot {
+  switch (part) {
+    case 'links':
+      return { ...snapshot, links: { ...snapshot.links, list: snapshot.links.list.slice(0, keep(snapshot.links.list.length)) } };
+    case 'headings':
+      return { ...snapshot, headings: snapshot.headings.slice(0, keep(snapshot.headings.length)) };
+    case 'hreflang':
+      return { ...snapshot, head: { ...snapshot.head, hreflang: snapshot.head.hreflang.slice(0, keep(snapshot.head.hreflang.length)) } };
+    case 'json-ld':
+      return { ...snapshot, structuredData: { ...snapshot.structuredData, blocks: snapshot.structuredData.blocks.map((block) => ({ ...block, text: cut(block.text, keep(block.text.length)) })) } };
+    default: {
+      const text = snapshot.regions[part];
+      return { ...snapshot, regions: { ...snapshot.regions, [part]: { ...text, blocks: text.blocks.slice(0, keep(text.blocks.length)), truncated: true } } };
+    }
+  }
+}
 
 /**
- * `snapshot`, or a smaller one whose canonical JSON fits `MAX_SNAPSHOT_JSON_BYTES`: each round keeps
- * the first three quarters of the link list and of every region's blocks. A region that loses
- * blocks is `truncated` (its hash still covers all its text) and the snapshot `partial`.
+ * `snapshot`, or a smaller one whose canonical JSON fits `MAX_SNAPSHOT_JSON_BYTES`: each round cuts
+ * the largest part (a region's blocks, the link list, the headings, the JSON-LD texts or the
+ * hreflang list) to three quarters. A region that loses blocks is `truncated` (its hash still covers
+ * all its text), and the snapshot is `partial`.
  */
 function fitToStore(snapshot: CaptureSnapshot): CaptureSnapshot {
   let current = snapshot;
   for (let round = 0; round < FIT_ROUNDS && Buffer.byteLength(canonicalJson(current), 'utf8') > MAX_SNAPSHOT_JSON_BYTES; round++) {
-    const keep = (n: number) => Math.floor((n * 3) / 4);
-    current = {
-      ...current,
-      partial: true,
-      links: { ...current.links, list: current.links.list.slice(0, keep(current.links.list.length)) },
-      regions: Object.fromEntries(
-        PAGE_REGIONS.map((region): [PageRegion, CaptureSnapshot['regions'][PageRegion]] => {
-          const text = current.regions[region];
-          const blocks = text.blocks.slice(0, keep(text.blocks.length));
-          return [region, blocks.length < text.blocks.length ? { ...text, blocks, truncated: true } : text];
-        }),
-      ) as CaptureSnapshot['regions'],
-    };
+    const sizes: [Part, number][] = [
+      ['links', bytes(current.links.list)],
+      ['headings', bytes(current.headings)],
+      ['json-ld', bytes(current.structuredData.blocks.map((block) => block.text))],
+      ['hreflang', bytes(current.head.hreflang)],
+      ...PAGE_REGIONS.map((region): [Part, number] => [region, bytes(current.regions[region].blocks)]),
+    ];
+    const [largest] = sizes.reduce((a, b) => (b[1] > a[1] ? b : a));
+    current = { ...shrink(current, largest), partial: true };
   }
   return current;
 }

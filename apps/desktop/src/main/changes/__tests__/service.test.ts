@@ -14,7 +14,7 @@ import { CAPTURE_LIMITS, DIFF_ENGINE_VERSION, type CaptureSnapshot } from '@app/
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import { CAPTURE_BUSY, CHANGES_READ_API, type CaptureAnswer, type RegionAnswer } from '@app/specs/changes.schema';
 import { DEFAULT_RENDER_PROFILE, type AuditRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
-import { auditOf, regionAnswer, regionText } from '../../../test/changes-fakes';
+import { auditOf, regionAnswer, regionText } from './fakes';
 import { createChangesService, type ChangesServiceDeps } from '../service';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex } from '../snapshot';
 
@@ -61,6 +61,7 @@ function setup(deps: Partial<ChangesServiceDeps> = {}) {
     response: { status: 'ready', url: PAGE, audit: auditOf(PAGE), renderProfile: null } as SeoAuditResponse,
     answer: regionAnswer(PAGE) as unknown,
     params: null as SearchParams | null,
+    loadedAt: null as number | null,
   };
   const contents = new Map([1, 2].map((id) => [id, { executeJavaScriptInIsolatedWorld: vi.fn(async () => null), getURL: () => state.url }]));
   const extract = vi.fn(async (_contents: unknown): Promise<unknown> => state.answer);
@@ -71,6 +72,7 @@ function setup(deps: Partial<ChangesServiceDeps> = {}) {
       activeTabId: () => state.active,
       contentsOf: (tabId) => contents.get(tabId) ?? null,
       getAudit: (tabId) => (contents.has(tabId) ? state.response : { status: 'unavailable', url: '', reason: 'no-tab' }),
+      loadedAt: () => state.loadedAt,
     },
     extract,
     now: tick,
@@ -155,6 +157,63 @@ describe('changes service', () => {
     const first = captured(await service.capture(1));
     expect(first).toMatchObject({ newVersion: true, changeCount: null });
     expect(rows('ci_captures')).toMatchObject([{ id: first.captureId, version_id: first.versionId, project_id: UNFILED_PROJECT_ID, page_url: PAGE, source: 'manual' }]);
+  });
+
+  test('capture-waits-for-a-settled-audit-of-this-load', async () => {
+    const { service, state, extract, rows } = setup();
+    const takenAt = (state.response as Extract<SeoAuditResponse, { status: 'ready' }>).audit.takenAt;
+    // The tab loaded (or reloaded, same URL) after the audit was taken: that audit is the last load's.
+    state.loadedAt = takenAt + 1;
+    expect(refused(await service.capture(1))).toBe('no-audit');
+    state.loadedAt = takenAt;
+    expect(refused(await service.capture(1))).toBe('no-audit');
+    // A provisional audit (robots.txt still on its way) is not settled.
+    state.loadedAt = takenAt - 1;
+    const robots = { url: 'https://example.com/robots.txt', status: null, finalUrl: null, redirects: 0, body: new Uint8Array(), truncated: false };
+    state.response = { status: 'ready', url: PAGE, audit: auditOf(PAGE, {}, { response: null, robots: { ...robots, outcome: 'pending' } }) };
+    expect(refused(await service.capture(1))).toBe('no-audit');
+    expect(extract).not.toHaveBeenCalled();
+    expect(rows('ci_captures')).toEqual([]);
+    // Settled, and taken after the load: captured.
+    state.response = { status: 'ready', url: PAGE, audit: auditOf(PAGE, {}, { response: null, robots: { ...robots, outcome: 'unavailable' } }) };
+    expect((await service.capture(1)).status).toBe('captured');
+  });
+
+  test('long-urls-are-invalid-pages', async () => {
+    const { service, state, extract, log } = setup();
+    const long = `${PAGE}?q=${'x'.repeat(CAPTURE_LIMITS.maxUrlChars)}`;
+    state.url = long;
+    state.response = { status: 'ready', url: long, audit: { ...auditOf(PAGE), url: long } };
+    expect(refused(await service.capture(1))).toBe('invalid-page');
+    expect(extract).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledTimes(1);
+  });
+
+  test('partial-capture-without-changes-reuses-version', async () => {
+    const { service, state, rows } = setup();
+    const full = regionAnswer(PAGE);
+    full.links = { total: 2, internal: 2, external: 0, nofollow: 0, list: [...full.links.list, { href: 'https://example.com/last', text: 'Last', rel: '', region: 'nav' }] };
+    state.answer = full;
+    const one = captured(await service.capture(1));
+    // The same page, read in part: the last link was not reached. Nothing changed, so no new version.
+    state.answer = { ...full, partial: true, links: { ...full.links, list: full.links.list.slice(0, 1) } };
+    const two = captured(await service.capture(1));
+    expect(two).toMatchObject({ versionId: one.versionId, newVersion: false, changeCount: 0 });
+    expect(rows('ci_versions')).toHaveLength(1);
+    // A partial capture that did change still makes a version.
+    state.answer = { ...full, partial: true, regions: { ...full.regions, main: regionText(['Main heading', 'A new first paragraph.']) } };
+    expect(captured(await service.capture(1)).newVersion).toBe(true);
+  });
+
+  test('project-tombstoned-mid-capture', async () => {
+    const { service, extract, repo, rows } = setup();
+    const project = (await repo.createProject('Short-lived', 1))!;
+    extract.mockImplementationOnce(async () => {
+      await repo.tombstoneProject(project.id, 2);
+      return regionAnswer(PAGE);
+    });
+    expect(refused(await service.capture(1, { projectId: project.id }))).toBe('no-project');
+    expect(rows('ci_captures')).toEqual([]);
   });
 
   test('capture-records-profile-and-params', async () => {
@@ -303,7 +362,7 @@ describe('changes service', () => {
     expect(await failing({ extractTimeoutMs: 20 }, (t) => t.extract.mockImplementationOnce(() => new Promise(() => undefined)))).toBe('extract-failed');
     expect(await failing({}, (t) => (t.state.answer = { ...regionAnswer(PAGE), headings: [{ level: 1, text: SECRET.repeat(100), region: 'main' }] }))).toBe('extract-failed');
     const throwing = (name: 'appendCapture' | 'latestVersion' | 'project') => (t: ReturnType<typeof setup>) => {
-      vi.spyOn(t.repo, name).mockRejectedValue(new Error('disk I/O error'));
+      vi.spyOn(t.repo, name).mockRejectedValue(Object.assign(new Error(`Failed query: insert … params: ${SECRET}`), { code: 'ERR_SQLITE_ERROR' }));
     };
     expect(await failing({}, throwing('appendCapture'))).toBe('store-failed');
     expect(await failing({}, throwing('latestVersion'))).toBe('store-failed');
@@ -316,6 +375,7 @@ describe('changes service', () => {
         getAudit: () => {
           throw new Error('controller gone');
         },
+        loadedAt: () => null,
       },
     });
     await expect(broken.service.capture(1)).resolves.toEqual({ status: 'refused', reason: 'no-audit' });

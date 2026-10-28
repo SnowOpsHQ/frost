@@ -68,8 +68,9 @@ export function extractRegions(document: RegionDocument, L: CaptureLimits, X: Re
   /** Thrown from a walker's filter to stop it (a cap or the deadline). */
   const STOP = {};
   const SKIP = ['script', 'style', 'noscript', 'template', 'svg', 'math', 'iframe', 'object'];
-  /** Elements whose `header` / `footer` heads them, not the page. */
+  /** Elements, and roles, whose `header` / `footer` heads them, not the page (HTML-AAM). */
   const SECTIONING = ['article', 'aside', 'main', 'nav', 'section'];
+  const SECTIONING_ROLES = ['article', 'complementary', 'main', 'navigation', 'region'];
   let partial = false;
   const late = (): boolean => {
     if (performance.now() <= deadline) return false;
@@ -84,8 +85,10 @@ export function extractRegions(document: RegionDocument, L: CaptureLimits, X: Re
     if (code >= 0xd800 && code <= 0xdbff) end -= 1;
     return s.slice(0, end);
   };
-  /** NFC, whitespace runs collapsed to one space, trimmed (`changes-diff.feature.md`). */
-  const normal = (s: string): string => s.normalize('NFC').replace(/\s+/g, ' ').trim();
+  /** A lone surrogate (not Unicode, so no UTF-8 spelling): replaced with U+FFFD. */
+  const LONE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+  /** Lone surrogates replaced, NFC, whitespace runs collapsed to one space, trimmed (`changes-diff.feature.md`). */
+  const normal = (s: string): string => s.replace(LONE, '\ufffd').normalize('NFC').replace(/\s+/g, ' ').trim();
   const segmenter = typeof Intl === 'object' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'word' }) : null;
   /** Words (`isWordLike` segments, Phase 2's count); without a segmenter, runs of letters or digits. */
   const countWords = (text: string): number => {
@@ -109,8 +112,9 @@ export function extractRegions(document: RegionDocument, L: CaptureLimits, X: Re
   const ROOT: Info = { region: null, sectioned: false, hidden: false, block: null };
   const infos = new Map<RegionElement, Info>();
   /** The landmark `el` itself is: an explicit, non-empty `role` decides by its first token; else its element (a header or footer only outside sectioning content). */
+  const roleOf = (el: RegionElement): string => (el.getAttribute('role') ?? '').trim().toLowerCase().split(/\s+/)[0] ?? '';
   const landmarkOf = (el: RegionElement, sectioned: boolean): Region | null => {
-    const role = (el.getAttribute('role') ?? '').trim().toLowerCase().split(/\s+/)[0] ?? '';
+    const role = roleOf(el);
     if (role !== '') return role === 'main' ? 'main' : role === 'navigation' ? 'nav' : role === 'complementary' ? 'aside' : role === 'banner' ? 'header' : role === 'contentinfo' ? 'footer' : null;
     const tag = el.localName;
     if (tag === 'main' || tag === 'nav' || tag === 'aside') return tag;
@@ -137,7 +141,7 @@ export function extractRegions(document: RegionDocument, L: CaptureLimits, X: Re
       const e = chain[i]!;
       const info: Info = {
         region: landmarkOf(e, base.sectioned) ?? base.region,
-        sectioned: base.sectioned || SECTIONING.includes(e.localName),
+        sectioned: base.sectioned || SECTIONING.includes(e.localName) || SECTIONING_ROLES.includes(roleOf(e)),
         hidden: base.hidden || e.hasAttribute('hidden'),
         block: blockNames.includes(e.localName) ? e : base.block,
       };
@@ -147,16 +151,19 @@ export function extractRegions(document: RegionDocument, L: CaptureLimits, X: Re
     return base;
   };
   // A page with a main landmark files unlandmarked content as `other`; without one, as `main`.
+  // `main` elements first, then elements whose role names `main`, each scan capped.
   let hasMain = false;
-  const mains = document.querySelectorAll('main, [role]');
-  for (let i = 0, n = Math.min(mains.length, X.maxMainScan); i < n && !hasMain; i++) {
-    const el = mains[i];
-    if (el && landmarkOf(el, false) === 'main') hasMain = true;
+  for (const selector of ['main', '[role~="main" i]']) {
+    const mains = document.querySelectorAll(selector);
+    for (let i = 0, n = Math.min(mains.length, X.maxMainScan); i < n && !hasMain; i++) {
+      const el = mains[i];
+      if (el && landmarkOf(el, false) === 'main') hasMain = true;
+    }
   }
   const regionOf = (el: RegionElement | null): Region => (el ? infoOf(el).region : null) ?? (hasMain ? 'other' : 'main');
   const isHidden = (el: RegionElement): boolean => infoOf(el).hidden || unshown(el);
 
-  /** Up to `limit` code units of `root`'s text, read node by node (at most `visits` nodes), stopping at the deadline. */
+  /** Up to `limit` code units of `root`'s shown text, read node by node (at most `visits` nodes; hidden and non-text subtrees skipped), stopping at the deadline. */
   const textOf = (root: RegionNode, limit: number, visits: number): string => {
     let text = '';
     let seen = 0;
@@ -165,7 +172,8 @@ export function extractRegions(document: RegionDocument, L: CaptureLimits, X: Re
         seen += 1;
         if (seen > visits || text.length >= limit || ((seen & 63) === 0 && late())) throw STOP;
         if (node.nodeType !== ELEMENT_NODE) return FILTER_ACCEPT;
-        return SKIP.includes((node as RegionElement).localName) ? FILTER_REJECT : FILTER_SKIP;
+        const el = node as RegionElement;
+        return SKIP.includes(el.localName) || el.hasAttribute('hidden') || unshown(el) ? FILTER_REJECT : FILTER_SKIP;
       },
     });
     try {
@@ -242,19 +250,23 @@ export function extractRegions(document: RegionDocument, L: CaptureLimits, X: Re
    * One region's text: the words of every block reached, the blocks kept, H (every block reached,
    * joined with `\n`, up to `maxHashedRegionChars`), and whether the kept blocks stop short of it.
    */
-  type RegionText = { words: number; blocks: string[]; chars: number; full: boolean; truncated: boolean; text: string; started: boolean };
+  type RegionText = { words: number; blocks: string[]; chars: number; full: boolean; truncated: boolean; text: string; started: boolean; closed: boolean };
   const texts = {} as Record<Region, RegionText>;
-  for (const region of REGIONS) texts[region] = { words: 0, blocks: [], chars: 0, full: false, truncated: false, text: '', started: false };
+  for (const region of REGIONS) texts[region] = { words: 0, blocks: [], chars: 0, full: false, truncated: false, text: '', started: false, closed: false };
   const addBlock = (raw: string, region: Region): void => {
     const block = normal(raw);
     if (block === '') return;
     const t = texts[region];
     t.words += countWords(block);
     // H: every block reached, uncut, joined with `\n`, up to its cap.
-    if (t.text.length >= L.maxHashedRegionChars) t.truncated = true;
+    // Once cut, H is closed: a cut inside a surrogate pair drops its high half, and nothing follows.
+    if (t.closed) t.truncated = true;
     else {
       const joined = t.text + (t.started ? '\n' : '') + block;
-      if (joined.length > L.maxHashedRegionChars) t.truncated = true;
+      if (joined.length > L.maxHashedRegionChars) {
+        t.truncated = true;
+        t.closed = true;
+      }
       t.text = cut(joined, L.maxHashedRegionChars);
     }
     t.started = true;
@@ -320,10 +332,8 @@ export function extractRegions(document: RegionDocument, L: CaptureLimits, X: Re
   const regions = {} as Record<Region, { words: number; blocks: string[]; truncated: boolean; text: string }>;
   for (const region of REGIONS) {
     const t = texts[region];
-    // A final lone high surrogate is dropped (the `textHash` rule).
-    const last = t.text.charCodeAt(t.text.length - 1);
-    const text = last >= 0xd800 && last <= 0xdbff ? t.text.slice(0, -1) : t.text;
-    regions[region] = { words: t.words, blocks: t.blocks, truncated: t.truncated || partial, text };
+    // Blocks hold no lone surrogate, and `cut` never splits a pair, so H ends in none either.
+    regions[region] = { words: t.words, blocks: t.blocks, truncated: t.truncated || partial, text: t.text };
   }
   return {
     url: cut(document.URL, L.maxUrlChars),

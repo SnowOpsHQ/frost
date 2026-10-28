@@ -99,6 +99,35 @@ describe('region extraction', () => {
     expect(links.links.list.map((link) => link.text)).toEqual(['Logo', 'Labelled', 'Area']);
   });
 
+  test('header-and-footer-are-scoped-by-roles-too', () => {
+    // HTML-AAM: a header or footer inside role=main / article (as inside the elements) heads that, not the page.
+    const scoped = extract('<div role="main"><header>In main</header></div><div role="article"><footer>Article foot</footer></div><p>Loose</p>');
+    expect(blocksOf(scoped, 'main')).toEqual(['In main']);
+    expect(blocksOf(scoped, 'header')).toEqual([]);
+    expect(blocksOf(scoped, 'footer')).toEqual([]);
+    expect(blocksOf(scoped, 'other')).toEqual(['Article foot', 'Loose']);
+    // The main landmark is found even behind many other roles.
+    const late = extract(`${'<div role="note"></div>'.repeat(REGION_EXTRACT_LIMITS.maxMainScan + 50)}<main><p>m</p></main><p>loose</p>`);
+    expect(blocksOf(late, 'other')).toEqual(['loose']);
+  });
+
+  test('lone-surrogates-and-hidden-heading-text', () => {
+    // Lone surrogates are replaced with U+FFFD (blocks, headings, anchors); hidden descendants are not read.
+    const answer = extract('<main><p>abc\uD800</p><h2>Visible <span hidden>secret</span><span style="display: none">gone</span>\uDC00</h2><a href="/a">x\uD800y<span hidden>z</span></a></main>');
+    expect(blocksOf(answer, 'main')).toEqual(['abc\uFFFD', 'Visible \uFFFD', 'x\uFFFDy']);
+    expect(answer.regions.main.text).toBe('abc\uFFFD\nVisible \uFFFD\nx\uFFFDy');
+    expect(answer.headings).toEqual([{ level: 2, text: 'Visible \uFFFD', region: 'main' }]);
+    expect(answer.links.list[0]!.text).toBe('x\uFFFDy');
+  });
+
+  test('hashed-text-stops-at-its-cut', () => {
+    // H is cut inside a surrogate pair: the high half is dropped, and nothing is appended after the cut.
+    const answer = extract('<main><p>abcd\u{1F375}</p><p>x</p></main>', { limits: { maxHashedRegionChars: 5 } });
+    expect(answer.regions.main.text).toBe('abcd');
+    expect(answer.regions.main.truncated).toBe(true);
+    expect(blocksOf(answer, 'main')).toEqual(['abcd\u{1F375}', 'x']);
+  });
+
   test('regions-are-bounded', () => {
     const limits = { maxBlocksPerRegion: 50, maxRegionChars: 5_000, maxHashedRegionChars: 20_000, maxLinks: 40, maxHeadings: 30 };
     // Over every cap but the walk's: kept lists stop at their caps, H at its cap, region truncated.

@@ -2,7 +2,7 @@ import { runAudit, type SeoAudit } from '@app/seo-core';
 import { PAGE_REGIONS, type PageRegion } from '@app/specs/capture.spec';
 import type { RegionAnswer, RegionTextAnswer } from '@app/specs/changes.spec';
 import { NO_PAGE_CONTEXT, PageSnapshotSchema, type ExtractedSnapshot, type PageContext } from '@app/specs/seo-snapshot.spec';
-import { rawSnapshot } from './seo-fakes';
+import { rawSnapshot } from '../../../test/seo-fakes';
 
 // Change-intelligence fixtures: a real audit of a page, and a region answer as the extraction gives it.
 

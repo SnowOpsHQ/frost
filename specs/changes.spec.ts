@@ -1,8 +1,9 @@
 /**
  * Capturing a page into its versioned history, and reading that history back (Phase 6 Task 3;
- * acceptance `changes-capture.feature.md`). Plain values and types only (the one import is a type),
- * so the chrome renderer can use them without bundling Zod. The Zod schemas that check the inputs
- * and answers are `changes.schema.ts` (main and the IPC contract); each `satisfies` the type here.
+ * acceptance `changes-capture.feature.md`). Plain values and types only: it imports other plain
+ * specs (the rule catalog) and three types, so the chrome renderer can use it without bundling Zod.
+ * The Zod schemas that check the inputs and answers are `changes.schema.ts` (main and the IPC
+ * contract); each `satisfies` the type here.
  *
  * A capture joins the tab's ready audit (Phase 2) with a region extraction run in
  * `CAPTURE_WORLD_ID` (`capture.spec.ts`), builds a `CaptureSnapshot`, and appends it to the page's
@@ -12,6 +13,8 @@
 import type { CaptureSnapshot, ChangeCounts, DiffRegion, PageRegion, SnapshotDiff } from './capture.spec';
 import type { SearchParams } from './capture-search-params.schema';
 import type { RenderProfile } from './render-profile.spec';
+import { CHECKS_RULE_SPECS } from './seo-checks.spec';
+import { SEO_RULE_SPECS, type SeoCategory, type SeoRuleId } from './seo-rules.spec';
 
 /**
  * Why a capture was refused (`CaptureAnswer`):
@@ -71,6 +74,42 @@ export const CAPTURE_BLOCK_ELEMENTS = [
   'address', 'article', 'aside', 'blockquote', 'body', 'caption', 'dd', 'details', 'dialog', 'div', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form',
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'summary', 'table', 'td', 'th', 'tr', 'ul',
 ] as const;
+
+// ---- Which audit findings a capture keeps -----------------------------------------------------
+
+/**
+ * Rule categories whose checks read only the page itself: the extracted snapshot, the recorded
+ * response and robots.txt. A capture keeps their failing rules.
+ */
+export const CAPTURE_PAGE_CATEGORIES = [
+  'title', 'meta-description', 'headings', 'canonical', 'indexing', 'indexability', 'hreflang', 'language', 'mobile', 'content', 'images', 'links', 'url', 'social', 'schema', 'security',
+] as const satisfies readonly SeoCategory[];
+
+/**
+ * Rule categories whose checks read what varies between two loads of an unchanged page: the speed
+ * measurement (`performance`), the accessibility check's run, and the served HTML fetched beside the
+ * page (`javascript`). Together with `CAPTURE_PAGE_CATEGORIES` they are every `SEO_CATEGORIES` entry,
+ * each once (`changes-capture.feature.md`, `every-rule-is-classified`).
+ */
+export const CAPTURE_CONTEXT_CATEGORIES = ['performance', 'accessibility', 'javascript'] as const satisfies readonly SeoCategory[];
+
+/** Rules of a context category that still read only the page (the snapshot's render-blocking `<head>` scripts). */
+export const CAPTURE_PAGE_RULES_IN_CONTEXT_CATEGORIES = ['render-blocking-scripts'] as const satisfies readonly SeoRuleId[];
+
+/**
+ * The rules a capture leaves out of `audit.findings` (and out of its score): every rule of a context
+ * category but the page ones, and every rule of the link, sitemap and hreflang checks
+ * (`CHECKS_RULE_SPECS`: they read what those checks fetched, whenever they last ran). Derived from
+ * the catalog, so a new rule is classified by its category.
+ */
+export const CAPTURE_EXCLUDED_RULES: readonly SeoRuleId[] = SEO_RULE_SPECS.filter(
+  (rule) =>
+    ((CAPTURE_CONTEXT_CATEGORIES as readonly SeoCategory[]).includes(rule.category) && !(CAPTURE_PAGE_RULES_IN_CONTEXT_CATEGORIES as readonly string[]).includes(rule.id)) ||
+    CHECKS_RULE_SPECS.some((check) => check.id === rule.id),
+).map((rule) => rule.id);
+
+/** Whether a capture keeps rule `id`'s finding (`CAPTURE_EXCLUDED_RULES`). */
+export const isCapturedRule = (id: string): boolean => !(CAPTURE_EXCLUDED_RULES as readonly string[]).includes(id);
 
 // ---- Inputs ------------------------------------------------------------------------------------
 

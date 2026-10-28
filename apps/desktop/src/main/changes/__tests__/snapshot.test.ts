@@ -8,7 +8,12 @@ import { MAX_SNAPSHOT_JSON_BYTES } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS as L, CaptureSnapshotSchema, PAGE_REGIONS } from '@app/specs/capture-snapshot.schema';
 import { DEFAULT_RENDER_PROFILE } from '@app/specs/render-profile.spec';
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
-import { auditOf, regionAnswer, regionText } from '../../../test/changes-fakes';
+import { auditOf, regionAnswer, regionText } from './fakes';
+import { scoreAudit, type Finding, type SeoAudit } from '@app/seo-core';
+import { CAPTURE_CONTEXT_CATEGORIES, CAPTURE_EXCLUDED_RULES, CAPTURE_PAGE_CATEGORIES, isCapturedRule } from '@app/specs/changes.spec';
+import { CHECKS_RULE_SPECS } from '@app/specs/seo-checks.spec';
+import { SEO_CATEGORIES, SEO_RULE_SPECS } from '@app/specs/seo-rules.spec';
+import { PERFORMANCE_RULE_SPECS } from '@app/specs/seo-speed.spec';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex } from '../snapshot';
 
 const PAGE = 'https://example.com/guides/tea';
@@ -77,10 +82,10 @@ describe('capture snapshot', () => {
           { hreflang: 'de', href: 'https://example.com/de/tee' },
         ],
       },
-      audit: { score: audit.score },
+      audit: { score: scoreAudit(audit.findings.filter((f) => isCapturedRule(f.ruleId))) },
       images: { total: 4, missingAlt: 0 },
     });
-    expect(snapshot.audit.findings).toEqual([...new Set(audit.findings.map((f) => f.ruleId))].sort());
+    expect(snapshot.audit.findings).toEqual([...new Set(audit.findings.filter((f) => isCapturedRule(f.ruleId)).map((f) => f.ruleId))].sort());
     // Structured data: every entity's types; a parsed block hashes its canonical JSON, a broken one its text.
     expect(snapshot.structuredData.types).toEqual(['BreadcrumbList', 'Offer', 'Product']);
     const product = JSON.parse(audit.schema.blocks[0]!.text) as unknown;
@@ -123,16 +128,57 @@ describe('capture snapshot', () => {
     const big = '\u{1F375}'.repeat(L.maxBlockChars / 2 - 1);
     const fullRegion = { ...regionText(Array.from({ length: 60 }, () => big)) };
     const links = Array.from({ length: L.maxLinks }, (_, i) => ({ href: `https://example.com/${'p'.repeat(2_000)}${i}`, text: 'é'.repeat(L.maxAnchorChars), rel: 'nofollow', region: 'main' as const }));
-    const huge = regionAnswer(PAGE, Object.fromEntries(PAGE_REGIONS.map((region) => [region, fullRegion])), { links: { total: L.maxLinks, internal: L.maxLinks, external: 0, nofollow: L.maxLinks, list: links } });
+    const smallRegion = regionText(['A short footer line.']);
+    const huge = regionAnswer(PAGE, { ...Object.fromEntries(PAGE_REGIONS.map((region) => [region, fullRegion])), footer: smallRegion }, { links: { total: L.maxLinks, internal: L.maxLinks, external: 0, nofollow: L.maxLinks, list: links } });
     const fitted = buildCaptureSnapshot(audit, huge, sha256Hex);
     expect(Buffer.byteLength(canonicalJson(fitted), 'utf8')).toBeLessThanOrEqual(MAX_SNAPSHOT_JSON_BYTES);
     expect(CaptureSnapshotSchema.safeParse(fitted).success).toBe(true);
     expect(fitted.partial).toBe(true);
     expect(fitted.links.total).toBe(L.maxLinks);
     expect(fitted.links.list.length).toBeLessThan(L.maxLinks);
-    expect(PAGE_REGIONS.some((region) => fitted.regions[region].truncated && fitted.regions[region].blocks.length < 60)).toBe(true);
+    // The link list is the largest part, so it is cut and the regions (each smaller) keep their blocks.
+    expect(fitted.regions.main.blocks).toHaveLength(60);
+    // The largest parts are cut first: the small footer keeps its block.
+    expect(fitted.regions.footer).toMatchObject({ blocks: smallRegion.blocks, truncated: false });
     // The hash still covers the region's whole text.
     expect(fitted.regions.main.textHash).toBe(sha(fullRegion.text));
+  });
+
+  test('every-rule-is-classified', () => {
+    // The two category lists are every category, each once.
+    const all = [...CAPTURE_PAGE_CATEGORIES, ...CAPTURE_CONTEXT_CATEGORIES];
+    expect(new Set(all).size).toBe(all.length);
+    expect([...all].sort()).toEqual([...SEO_CATEGORIES].sort());
+    // Measured speed rules, the accessibility check's and the link/sitemap/hreflang checks' are left out.
+    for (const rule of PERFORMANCE_RULE_SPECS) expect(isCapturedRule(rule.id), rule.id).toBe(rule.id === 'render-blocking-scripts');
+    for (const rule of CHECKS_RULE_SPECS) expect(isCapturedRule(rule.id), rule.id).toBe(false);
+    for (const rule of SEO_RULE_SPECS) {
+      if (rule.category === 'accessibility' || rule.category === 'javascript') expect(isCapturedRule(rule.id), rule.id).toBe(false);
+      if ((CAPTURE_PAGE_CATEGORIES as readonly string[]).includes(rule.category) && !CHECKS_RULE_SPECS.some((c) => c.id === rule.id)) expect(isCapturedRule(rule.id), rule.id).toBe(true);
+    }
+    expect(CAPTURE_EXCLUDED_RULES.length).toBeGreaterThan(20);
+  });
+
+  test('timing-findings-do-not-make-versions', () => {
+    const audit = richAudit();
+    const finding = (ruleId: string): Finding => {
+      const spec = SEO_RULE_SPECS.find((rule) => rule.id === ruleId)!;
+      return { ruleId: spec.id, category: spec.category, severity: spec.severity, title: spec.title, why: spec.why, fix: spec.fix, details: { facts: [], samples: [] } };
+    };
+    // The same page, with the measurement, the accessibility run and the checks failing rules this time.
+    const noisy: SeoAudit = { ...audit, findings: [...audit.findings, ...['lcp-poor', 'ttfb-needs-improvement', 'page-weight-heavy', 'a11y-critical', 'links-broken', 'sitemap-unreachable', 'js-title-changed'].map(finding)], score: 12 };
+    const regions = regionAnswer(PAGE);
+    const quiet = buildCaptureSnapshot(audit, regions, sha256Hex);
+    const loud = buildCaptureSnapshot(noisy, regions, sha256Hex);
+    expect(loud).toEqual(quiet);
+    expect(identityHash(loud)).toBe(identityHash(quiet));
+    // The score is seo-core's own, over the kept findings only.
+    const kept = audit.findings.filter((f) => isCapturedRule(f.ruleId));
+    expect(quiet.audit.score).toBe(scoreAudit(kept));
+    expect(quiet.audit.findings).toEqual([...new Set(kept.map((f) => f.ruleId))].sort());
+    // A page rule (render-blocking scripts) still counts.
+    const blocking = buildCaptureSnapshot({ ...audit, findings: [...audit.findings, finding('render-blocking-scripts')] }, regions, sha256Hex);
+    expect(blocking.audit.findings).toContain('render-blocking-scripts');
   });
 
   test('lane-key-is-canonical', () => {
