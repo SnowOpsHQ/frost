@@ -46,7 +46,11 @@ fails its check.
   ASAR integrity only on macOS and Windows (Packager embeds no integrity data for Linux), so the
   check prints an `INFO` line stating this platform gap and asserts `OnlyLoadAppFromAsar` is on.
 - **Scenario: no-stray-files** — `resources/` holds exactly `PACKAGED_RESOURCES_ALLOWLIST`, and
-  `app.asar` holds exactly `PACKAGED_ASAR_TOP_LEVEL` at its root, with no entry marked unpacked.
+  `app.asar` holds exactly `PACKAGED_ASAR_TOP_LEVEL` at its root. What may be unpacked and what
+  may be in `app.asar/node_modules/` (libSQL, Phase 7 Task 7) are the `unpacked-allowlist`,
+  `asar-node-modules-allowlist` and `libsql-loads` checks of `sync-package.feature.md`, which run
+  here too (on the packaged tree as checks of their own, and on every extracted tree with its
+  other checks).
 - **Scenario: launches-and-stays-alive** — the packaged executable, started with no arguments other
   than a fresh throwaway `--user-data-dir`, is still running after `LINUX_LAUNCH_ALIVE_MS` (then it
   is terminated by its PID). The Chromium sandbox stays on: on Ubuntu 24.04 CI allows unprivileged

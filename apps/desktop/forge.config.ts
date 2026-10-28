@@ -9,6 +9,8 @@ import { FuseV1Options, FuseVersion, type FuseV1Config } from '@electron/fuses';
 import { linuxMakers } from './linux-makers.ts';
 import { windowsMakers, windowsPackagerConfig } from './windows-makers.ts';
 import { NOTICES_FILE } from './third-party-notices.ts';
+import { libsqlPackageAfterCopy } from './libsql-packaging.ts';
+import { LIBSQL_ASAR_UNPACK } from '@app/specs/sync-package.spec';
 import {
   MAC_APP_CATEGORY,
   MAC_BUNDLE_ID,
@@ -75,7 +77,8 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
       appBundleId: MAC_BUNDLE_ID,
       appCategoryType: MAC_APP_CATEGORY,
       darwinDarkModeSupport: true,
-      asar: true,
+      // Only libSQL's native prebuild is unpacked (specs/sync-package.spec.ts); all JS stays in app.asar.
+      asar: { unpack: LIBSQL_ASAR_UNPACK },
       // The licenses of the bundled third-party packages (third-party-notices.ts), beside app.asar in
       // resources/ (specs/seo-speed.feature.md, Licenses). Relative to the app directory Forge runs in.
       extraResource: [NOTICES_FILE],
@@ -84,6 +87,8 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
     },
     rebuildConfig: {},
     hooks: {
+      // Copies libSQL's runtime packages and the target's prebuild into the app (libsql-packaging.ts).
+      packageAfterCopy: libsqlPackageAfterCopy,
       // Packager rewrites Info.plist and renames the bundle after the fuse flip re-signed it, so
       // the bundle seal no longer matches (`codesign --verify --strict` fails). Without a real
       // identity, re-seal the finished .app ad-hoc (osxSign does this when signing for real).

@@ -61,13 +61,11 @@ export const LIBSQL_LOOPBACK_HOSTS = ['127.0.0.1', '[::1]'] as const;
 export const LIBSQL_INT_MODE = 'number' as const;
 
 /**
- * The SQLite each driver runs, which differ: `libsql` 0.5.29 bundles SQLite 3.45.1 (compiled with
- * `SQLITE_DEFAULT_RECURSIVE_TRIGGERS`; the driver's connections still read `PRAGMA
- * recursive_triggers` as 0, as `node:sqlite`'s do), while Node 26 and Electron 45's `node:sqlite`
- * bundle 3.53.4. A migration or query meant to run over both drivers (`MIGRATIONS`, and Phase 6's
- * `ci_*` tables when Task 8 mirrors them) uses only what SQLite 3.45 supports.
+ * The SQLite libSQL bundles (3.45.1; `node:sqlite` runs 3.53.4): a migration or query meant to run
+ * over both drivers uses only what SQLite 3.45 supports. Defined in `sync-package.spec.ts`, which
+ * the package verifiers load (`libsql-loads`).
  */
-export const LIBSQL_SQLITE_VERSION = '3.45.1' as const;
+export { LIBSQL_SQLITE_VERSION } from './sync-package.spec';
 
 /** What the libSQL driver is asked to open. */
 export interface LibsqlConfig {

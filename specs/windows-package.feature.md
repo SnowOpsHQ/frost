@@ -68,9 +68,13 @@ exiting, the clock and the file check are injected.
 ## Built packages (`verify-windows-package.mjs`, on Windows)
 Every check prints `PASS <name>` or `FAIL <name>: <reason>` (and `INFO <name>: …` for stated facts);
 any failure exits non-zero. Off Windows the script refuses to run (exit 2) unless given `--static`,
-which runs `fuses-read-back`, `asar-integrity`, `no-stray-files` and `unsigned-as-documented`
-(`frost.exe` only) on the packaged tree and prints `INFO … skipped` for the rest; it works on
-`electron-forge package --platform win32 --arch x64` output made on Linux. CI never passes
+which runs `fuses-read-back`, `asar-integrity`, `no-stray-files`, `unpacked-allowlist`,
+`asar-node-modules-allowlist` and `unsigned-as-documented` (`frost.exe` only) on the packaged tree
+(and `libsql-loads` when on Windows) and prints `INFO … skipped` for the rest; it works on
+`electron-forge package --platform win32 --arch x64` output made on Linux. Making that output off
+Windows needs libSQL's win32 prebuild, which pnpm installs only on Windows: without it packaging
+fails (`libsql-prebuild-missing-fails`), so it is placed in `node_modules/@libsql/win32-x64-msvc` by
+hand first (README, Building on Windows). CI never passes
 `--static`. Every external command (`tar`) is killed after 5 minutes and fails its check; zips and
 nupkgs are extracted with Windows' own `%SystemRoot%\System32\tar.exe` into temporary directories
 (always removed).
@@ -87,7 +91,11 @@ nupkgs are extracted with Windows' own `%SystemRoot%\System32\tar.exe` into temp
   not stop the app from starting). The copy, launched on a throwaway profile, has exited with a
   non-zero code within `WIN_TAMPER_EXIT_MS` (still running fails the check).
 - **Scenario: no-stray-files** — `resources/` holds exactly `PACKAGED_RESOURCES_ALLOWLIST`, and
-  `app.asar` holds exactly `PACKAGED_ASAR_TOP_LEVEL` at its root, with no entry marked unpacked.
+  `app.asar` holds exactly `PACKAGED_ASAR_TOP_LEVEL` at its root. What may be unpacked and what
+  may be in `app.asar/node_modules/` (libSQL, Phase 7 Task 7) are the `unpacked-allowlist`,
+  `asar-node-modules-allowlist` and `libsql-loads` checks of `sync-package.feature.md`, which run
+  here too (on the packaged tree as checks of their own, and on every extracted tree with its
+  other checks).
 - **Scenario: launches-and-stays-alive** — `frost.exe`, started with no arguments other than a fresh
   throwaway `--user-data-dir`, is still running after `WIN_LAUNCH_ALIVE_MS` (then it is terminated
   by its PID). `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `ELECTRON_ENABLE_LOGGING` are removed from

@@ -9,9 +9,13 @@
 // facts); any failure exits 1.
 //
 // `--static` runs only the checks that read files (fuses-read-back, asar-integrity,
-// no-stray-files, unsigned-as-documented) on the packaged tree, so they also run off Windows
-// against `electron-forge package --platform win32 --arch x64` output (Packager writes the PE
-// resources itself; no Wine needed). Without `--static` the verifier runs on Windows only.
+// no-stray-files, unpacked-allowlist, asar-node-modules-allowlist, unsigned-as-documented) on the
+// packaged tree, plus libsql-loads when run on Windows, so they also run off Windows against
+// `electron-forge package --platform win32 --arch x64` output (Packager writes the PE resources
+// itself; no Wine needed). That package needs libSQL's win32 prebuild, which pnpm installs only on
+// Windows: off Windows, packaging fails (libsql-packaging.ts) unless `@libsql/win32-x64-msvc` is
+// placed in node_modules by hand (README, Building on Windows). Without `--static` the verifier
+// runs on Windows only.
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -33,10 +37,13 @@ import {
 } from '../../../specs/windows-package.spec.ts';
 import {
   assert,
+  assertAsarNodeModules,
   assertLaunchesAndStaysAlive,
+  assertLibsqlLoads,
   assertPackagedFuses,
   assertPackagedResources,
   assertRefusesRemoteDebugging,
+  assertUnpackedAllowlist,
   createChecks,
   fuseState,
   launch,
@@ -71,6 +78,8 @@ const nupkg = path.resolve(args.out, artifacts.nupkg);
 const releases = path.resolve(args.out, artifacts.releases);
 const zip = path.resolve(args.out, artifacts.zip);
 const resourceRules = { allowlist: PACKAGED_RESOURCES_ALLOWLIST, asarTopLevel: PACKAGED_ASAR_TOP_LEVEL };
+const target = `win32-${args.arch}`;
+const resources = path.join(packaged, 'resources');
 
 /** The PE resources of `exe` (resedit; a signed file is read too, so a signature is reported, not thrown). */
 function peResources(exe) {
@@ -132,11 +141,15 @@ async function assertAsarIntegrity(appDir, where) {
   );
 }
 
-/** The fuse, resource, integrity and signature checks of one app tree (the packaged dir, the zip's, the nupkg's). */
+/** The fuse, resource, libSQL, integrity and signature checks of one app tree (the packaged dir, the zip's, the nupkg's). */
 async function assertAppTree(appDir, where) {
   const exe = path.join(appDir, WIN_EXECUTABLE);
   assert(existsSync(exe), `${where}: missing ${exe}`);
-  assertPackagedResources(path.join(appDir, 'resources'), { ...resourceRules, where });
+  const treeResources = path.join(appDir, 'resources');
+  assertPackagedResources(treeResources, { ...resourceRules, where });
+  assertUnpackedAllowlist(treeResources, { target, where });
+  assertAsarNodeModules(treeResources, { target, where });
+  await assertLibsqlLoads(treeResources, { target, where });
   await assertPackagedFuses(exe).catch((error) => {
     throw new Error(`${where}: ${error.message}`);
   });
@@ -191,9 +204,21 @@ await checks.check('fuses-read-back', async () => {
 
 await checks.check('asar-integrity', () => assertAsarIntegrity(packaged, artifacts.packaged));
 
-await checks.check('no-stray-files', () =>
-  assertPackagedResources(path.join(packaged, 'resources'), { ...resourceRules, where: artifacts.packaged }),
-);
+await checks.check('no-stray-files', () => assertPackagedResources(resources, { ...resourceRules, where: artifacts.packaged }));
+
+await checks.check('unpacked-allowlist', () => assertUnpackedAllowlist(resources, { target, where: artifacts.packaged }));
+
+await checks.check('asar-node-modules-allowlist', () => assertAsarNodeModules(resources, { target, where: artifacts.packaged }));
+
+// The win32 prebuild loads only on Windows, so off Windows (`--static`) this is skipped.
+if (process.platform === 'win32') {
+  await checks.check('libsql-loads', async () => {
+    const electron = await assertLibsqlLoads(resources, { target, where: artifacts.packaged });
+    checks.info('libsql-loads', `loaded from app.asar under Electron ${electron} as Node (the packaged binary's RunAsNode fuse is off)`);
+  });
+} else {
+  checks.info('libsql-loads', 'skipped (off Windows: the win32 prebuild loads only on Windows)');
+}
 
 await checks.check('unsigned-as-documented', () => {
   assertUnsigned(executable);

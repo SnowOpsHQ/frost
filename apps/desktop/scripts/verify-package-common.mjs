@@ -1,17 +1,28 @@
 // Checks shared by the Linux and Windows package verifiers (verify-linux-package.mjs,
 // verify-windows-package.mjs): the check runner, process helpers, and the checks every packaged
 // build must pass whatever the platform: the fuse wire (PACKAGED_FUSES, specs/macos-package.spec.ts),
-// the `resources/` and `app.asar` allowlists, launching on a throwaway profile, and refusing remote
-// debugging (specs/security-policy.spec.ts).
+// the `resources/` and `app.asar` allowlists, libSQL's unpacked prebuild and runtime packages and
+// that they load (specs/sync-package.spec.ts), launching on a throwaway profile, and refusing remote
+// debugging (specs/security-policy.spec.ts). The macOS verifier uses the libSQL checks too.
 //
 // The specs are plain erasable TypeScript, loaded with Node's built-in type stripping (Node >= 22.18).
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { getRawHeader, listPackage } from '@electron/asar';
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses';
 import { PACKAGED_FUSES } from '../../../specs/macos-package.spec.ts';
+import {
+  LIBSQL_PREBUILD_FILE,
+  LIBSQL_SQLITE_VERSION,
+  PACKAGED_ASAR_NODE_MODULES,
+  PACKAGED_UNPACKED_ALLOWLIST,
+  PACKAGED_UNPACKED_DIR,
+  libsqlPrebuildPackage,
+} from '../../../specs/sync-package.spec.ts';
 import { PACKAGED_DEBUG_REFUSAL, PACKAGED_FORBIDDEN_SWITCHES } from '../../../specs/security-policy.spec.ts';
 
 /**
@@ -133,13 +144,13 @@ export async function assertPackagedFuses(binary) {
   }
 }
 
-/** The paths of `app.asar` entries marked unpacked (they would live in `app.asar.unpacked/`). */
-function unpackedEntries(asar) {
+/** Every entry of `app.asar`'s header, as `{ path, entry }` (`path` relative to the archive, `/`-separated). */
+function asarEntries(asar) {
   const found = [];
   const walk = (node, prefix) => {
     for (const [name, entry] of Object.entries(node.files ?? {})) {
-      const entryPath = `${prefix}/${name}`;
-      if (entry.unpacked) found.push(entryPath);
+      const entryPath = prefix === '' ? name : `${prefix}/${name}`;
+      found.push({ path: entryPath, entry });
       if (entry.files) walk(entry, entryPath);
     }
   };
@@ -149,8 +160,8 @@ function unpackedEntries(asar) {
 
 /**
  * `no-stray-files`: `resources/` holds exactly `allowlist`, and `app.asar` holds exactly the
- * `asarTopLevel` entries at its root with nothing marked unpacked. `where` names the tree in
- * failure messages.
+ * `asarTopLevel` entries at its root. `where` names the tree in failure messages. What is unpacked
+ * and what is in `node_modules/` are `unpacked-allowlist` and `asar-node-modules-allowlist`.
  */
 export function assertPackagedResources(resourcesDir, { allowlist, asarTopLevel, where }) {
   const entries = readdirSync(resourcesDir).sort();
@@ -164,8 +175,130 @@ export function assertPackagedResources(resourcesDir, { allowlist, asarTopLevel,
   const topLevel = [...new Set(listPackage(asar, { isPack: false }).map((entry) => entry.split(/[\\/]/)[1]))].sort();
   const expectedTop = [...asarTopLevel].sort();
   assert(topLevel.join() === expectedTop.join(), `${where} app.asar holds ${topLevel.join(', ')}, expected ${expectedTop.join(', ')}`);
-  const unpacked = unpackedEntries(asar);
-  assert(unpacked.length === 0, `${where} app.asar marks entries unpacked: ${unpacked.join(', ')}`);
+}
+
+/** Every file under `dir`, relative to `base`, `/`-separated; a symlink or other non-file fails. */
+function filesUnder(dir, base) {
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    const relative = path.relative(base, full).split(path.sep).join('/');
+    if (lstatSync(full).isSymbolicLink()) throw new Error(`${relative} is a symlink`);
+    if (entry.isDirectory()) found.push(...filesUnder(full, base));
+    else if (entry.isFile()) found.push(relative);
+    else throw new Error(`${relative} is not a regular file`);
+  }
+  return found;
+}
+
+/**
+ * `unpacked-allowlist`: the entries `app.asar`'s header marks unpacked, and the files in
+ * `resources/app.asar.unpacked/`, are each exactly `PACKAGED_UNPACKED_ALLOWLIST[target]`, and each
+ * unpacked file has the size and SHA-256 the header records. (Electron itself never checks an
+ * unpacked file's bytes; this build-time comparison is the only one, specs/sync-package.spec.ts.)
+ */
+export function assertUnpackedAllowlist(resourcesDir, { target, where }) {
+  const expected = [...PACKAGED_UNPACKED_ALLOWLIST[target]].sort();
+  const marked = asarEntries(path.join(resourcesDir, 'app.asar'))
+    .filter(({ entry }) => entry.unpacked)
+    .map(({ path: entryPath, entry }) => ({ file: `${PACKAGED_UNPACKED_DIR}/${entryPath}${entry.files ? '/' : ''}`, entry }));
+  const markedFiles = marked.map(({ file }) => file).sort();
+  assert(
+    markedFiles.join() === expected.join(),
+    `${where} app.asar marks unpacked: ${markedFiles.join(', ') || '(nothing)'}, expected ${expected.join(', ')}`,
+  );
+  let onDisk;
+  try {
+    onDisk = filesUnder(path.join(resourcesDir, PACKAGED_UNPACKED_DIR), resourcesDir).sort();
+  } catch (error) {
+    throw new Error(`${where} ${PACKAGED_UNPACKED_DIR}/: ${error.message}`);
+  }
+  assert(onDisk.join() === expected.join(), `${where} ${PACKAGED_UNPACKED_DIR}/ holds ${onDisk.join(', ') || '(nothing)'}, expected ${expected.join(', ')}`);
+  for (const { file, entry } of marked) {
+    const bytes = readFileSync(path.join(resourcesDir, ...file.split('/')));
+    assert(bytes.length === entry.size, `${where} ${file} is ${bytes.length} bytes, the asar header says ${entry.size}`);
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    assert(entry.integrity?.algorithm === 'SHA256' && entry.integrity.hash === hash, `${where} ${file} has SHA-256 ${hash}, the asar header says ${JSON.stringify(entry.integrity)}`);
+  }
+}
+
+/**
+ * `asar-node-modules-allowlist`: `app.asar/node_modules/` holds exactly the packages
+ * `PACKAGED_ASAR_NODE_MODULES[target]`, flat (no nested `node_modules/`), and no `.node` file is
+ * packed inside the archive (a native module is only ever the unpacked prebuild).
+ */
+export function assertAsarNodeModules(resourcesDir, { target, where }) {
+  const entries = asarEntries(path.join(resourcesDir, 'app.asar'));
+  const packages = entries
+    .map(({ path: entryPath }) => /^node_modules\/((?:@[^/]+\/)?[^/@][^/]*)$/.exec(entryPath)?.[1])
+    .filter((name) => name !== undefined)
+    .sort();
+  const expected = [...PACKAGED_ASAR_NODE_MODULES[target]].sort();
+  assert(packages.join() === expected.join(), `${where} app.asar/node_modules holds ${packages.join(', ') || '(nothing)'}, expected ${expected.join(', ')}`);
+  const scopes = entries.filter(({ path: entryPath }) => /^node_modules\/[^/]+$/.test(entryPath) && !packages.some((name) => name === entryPath.slice(13) || name.startsWith(`${entryPath.slice(13)}/`)));
+  assert(scopes.length === 0, `${where} app.asar/node_modules holds ${scopes.map((e) => e.path).join(', ')}, which is no allowed package`);
+  const nested = entries.filter(({ path: entryPath }) => /.\/node_modules(\/|$)/.test(entryPath));
+  assert(nested.length === 0, `${where} app.asar has nested node_modules: ${nested.map((e) => e.path).slice(0, 5).join(', ')}`);
+  const packedNative = entries.filter(({ path: entryPath, entry }) => entryPath.endsWith('.node') && !entry.unpacked && !entry.files);
+  assert(packedNative.length === 0, `${where} app.asar packs native modules: ${packedNative.map((e) => e.path).join(', ')}`);
+}
+
+/**
+ * The libsql-loads probe, run as `<electron> <probe> <resources> <db file>` with
+ * ELECTRON_RUN_AS_NODE=1: it requires `@libsql/client/sqlite3` exactly as the packaged main does
+ * (resolved from `app.asar/.vite/build/main.cjs`, Electron reading the archive and loading the
+ * unpacked prebuild), opens a `file:` database, and prints the SQLite version and every module it
+ * loaded.
+ */
+const LIBSQL_PROBE = `'use strict';
+const { createRequire } = require('node:module');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const [resources, dbFile] = process.argv.slice(2);
+const requireFromMain = createRequire(path.join(resources, 'app.asar', '.vite', 'build', 'main.cjs'));
+const { createClient } = requireFromMain('@libsql/client/sqlite3');
+const client = createClient({ url: pathToFileURL(dbFile).href.replace(/^file:\\/\\/\\/([A-Za-z]:)/, 'file:$1') });
+client.execute('SELECT sqlite_version() AS version').then(
+  (result) => {
+    client.close();
+    const modules = Object.keys(requireFromMain.cache).filter((file) => file !== __filename);
+    process.stdout.write(JSON.stringify({ version: result.rows[0].version, electron: process.versions.electron, modules }));
+  },
+  (error) => {
+    process.stderr.write(String(error && error.stack || error));
+    process.exit(1);
+  },
+);
+`;
+
+/**
+ * `libsql-loads`: the repository's Electron (the version Forge packaged; the packaged binary's
+ * RunAsNode fuse is off, so it cannot run this) as Node loads `@libsql/client/sqlite3` from the
+ * packaged `resources/app.asar`, opens a temporary `file:` database and reads
+ * `SELECT sqlite_version()` = `LIBSQL_SQLITE_VERSION`. Every module it loaded lies inside that
+ * `app.asar` (nothing resolved from the repository's `node_modules`), and the native module is the
+ * target's prebuild. Returns the Electron version, for an `INFO` line.
+ */
+export function assertLibsqlLoads(resourcesDir, { target, where }) {
+  const electron = createRequire(import.meta.url)('electron');
+  return withTempDir('frost-libsql-', (dir) => {
+    const probe = path.join(dir, 'probe.cjs');
+    writeFileSync(probe, LIBSQL_PROBE);
+    const env = appEnv();
+    for (const key of ['NODE_PATH', 'LIBSQL_JS_DEV']) delete env[key];
+    env.ELECTRON_RUN_AS_NODE = '1';
+    const result = run(electron, [probe, path.resolve(resourcesDir), path.join(dir, 'probe.db')], { env, cwd: dir });
+    assert(result.status === 0, `${where}: the libSQL probe exited ${result.status}: ${result.out.slice(-800)}`);
+    const { version, electron: electronVersion, modules } = JSON.parse(result.stdout);
+    assert(version === LIBSQL_SQLITE_VERSION, `${where}: sqlite_version() is ${version}, expected ${LIBSQL_SQLITE_VERSION}`);
+    const asar = `${path.resolve(resourcesDir, 'app.asar')}${path.sep}`;
+    const outside = modules.filter((file) => !file.startsWith(asar));
+    assert(outside.length === 0, `${where}: the probe loaded modules from outside app.asar: ${outside.slice(0, 5).join(', ')}`);
+    const native = modules.filter((file) => file.endsWith('.node'));
+    const prebuild = path.join(asar, 'node_modules', ...libsqlPrebuildPackage(target).split('/'), LIBSQL_PREBUILD_FILE);
+    assert(native.join() === prebuild, `${where}: native modules loaded: ${native.join(', ') || '(none)'}, expected ${prebuild}`);
+    return electronVersion;
+  });
 }
 
 /** `launches-and-stays-alive`: no arguments but a throwaway profile; still running after `ms`. */

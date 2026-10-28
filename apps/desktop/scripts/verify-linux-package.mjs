@@ -6,7 +6,8 @@
 //   node apps/desktop/scripts/verify-linux-package.mjs [--out <apps/desktop/out>] [--arch x64]
 //
 // Each scenario prints `PASS <name>` or `FAIL <name>: <reason>` (and `INFO <name>: …` for stated
-// facts); any failure exits 1. Needs `dpkg-deb` for the deb checks and `unzip` for the zip.
+// facts); any failure exits 1. Needs `dpkg-deb` for the deb checks and `unzip` for the zip, and the
+// repository's `electron` dev dependency (libsql-loads runs it as Node).
 //
 // Only the packaged tree (`out/frost-linux-x64`) is launched. The deb, AppImage and zip trees are
 // extracted as an unprivileged user (so the deb's setuid `chrome-sandbox` is not root-owned there)
@@ -48,10 +49,13 @@ import {
 import {
   appEnv,
   assert,
+  assertAsarNodeModules,
   assertLaunchesAndStaysAlive,
+  assertLibsqlLoads,
   assertPackagedFuses,
   assertPackagedResources,
   assertRefusesRemoteDebugging,
+  assertUnpackedAllowlist,
   createChecks,
   fuseState,
   run,
@@ -83,12 +87,21 @@ const deb = path.resolve(args.out, artifacts.deb);
 const appImage = path.resolve(args.out, artifacts.appImage);
 const zip = path.resolve(args.out, artifacts.zip);
 const resourceRules = { allowlist: PACKAGED_RESOURCES_ALLOWLIST, asarTopLevel: PACKAGED_ASAR_TOP_LEVEL };
+const target = `linux-${args.arch}`;
+const resources = path.join(packaged, 'resources');
 
-/** The resource and fuse checks of one app tree (the packaged dir, or the deb / AppImage extracted). */
+/**
+ * The resource, libSQL and fuse checks of one app tree (the packaged dir, or the deb / AppImage /
+ * zip extracted).
+ */
 async function assertAppTree(appDir, where) {
   const binary = path.join(appDir, LINUX_EXECUTABLE_NAME);
   assert(existsSync(binary), `${where}: missing ${binary}`);
-  assertPackagedResources(path.join(appDir, 'resources'), { ...resourceRules, where });
+  const treeResources = path.join(appDir, 'resources');
+  assertPackagedResources(treeResources, { ...resourceRules, where });
+  assertUnpackedAllowlist(treeResources, { target, where });
+  assertAsarNodeModules(treeResources, { target, where });
+  await assertLibsqlLoads(treeResources, { target, where });
   await assertPackagedFuses(binary).catch((error) => {
     throw new Error(`${where}: ${error.message}`);
   });
@@ -129,9 +142,16 @@ await checks.check('asar-integrity', async () => {
   assert(onlyAsar === 'ENABLE', `OnlyLoadAppFromAsar is ${onlyAsar}, expected ENABLE`);
 });
 
-await checks.check('no-stray-files', () =>
-  assertPackagedResources(path.join(packaged, 'resources'), { ...resourceRules, where: artifacts.packaged }),
-);
+await checks.check('no-stray-files', () => assertPackagedResources(resources, { ...resourceRules, where: artifacts.packaged }));
+
+await checks.check('unpacked-allowlist', () => assertUnpackedAllowlist(resources, { target, where: artifacts.packaged }));
+
+await checks.check('asar-node-modules-allowlist', () => assertAsarNodeModules(resources, { target, where: artifacts.packaged }));
+
+await checks.check('libsql-loads', async () => {
+  const electron = await assertLibsqlLoads(resources, { target, where: artifacts.packaged });
+  checks.info('libsql-loads', `loaded from app.asar under Electron ${electron} as Node (the packaged binary's RunAsNode fuse is off)`);
+});
 
 await checks.check('launches-and-stays-alive', () => assertLaunchesAndStaysAlive(executable, LINUX_LAUNCH_ALIVE_MS));
 

@@ -13,7 +13,8 @@ then `node apps/desktop/scripts/verify-mac-package.mjs`.
 ## Forge configuration (`forge-config.test.ts`)
 - **Scenario: identifies-the-mac-bundle** — `packagerConfig` sets `name` = `MAC_PRODUCT_NAME`,
   `executableName` = `MAC_EXECUTABLE_NAME`, `appBundleId` = `MAC_BUNDLE_ID`, `appCategoryType` =
-  `MAC_APP_CATEGORY`, `darwinDarkModeSupport: true` and `asar: true`; `package.json#productName`
+  `MAC_APP_CATEGORY`, `darwinDarkModeSupport: true` and `asar: { unpack: LIBSQL_ASAR_UNPACK }`
+  (an archive, unpacking only libSQL's prebuild: `sync-package.feature.md`); `package.json#productName`
   is `MAC_PRODUCT_NAME`.
 - **Scenario: flips-the-spec-fuses** — the FusesPlugin config holds exactly `PACKAGED_FUSES`.
 - **Scenario: ad-hoc-signs-when-unsigned** — without the full `MAC_SIGNING_ENV` set (each variable
@@ -51,6 +52,10 @@ Every check prints `PASS <name>` or `FAIL <name>: <reason>`; any failure exits n
   ad-hoc → no entitlements at all (empty, no keys); Developer ID → exactly `MAC_ENTITLEMENTS`.
 - **Scenario: fuses-read-back** — `@electron/fuses` reads the packaged app's fuse wire and every
   `PACKAGED_FUSES` entry has its configured state.
+- **libSQL** (`sync-package.feature.md`): `unpacked-allowlist`, `asar-node-modules-allowlist` and
+  `libsql-loads` run on `Contents/Resources` with target `darwin-<arch>`. The unpacked prebuild is
+  inside the bundle seal, so `signature-verifies` (`codesign --verify --deep --strict`) also covers
+  its bytes.
 - **Scenario: launches-and-stays-alive** — the packaged executable, started with no arguments
   other than a fresh throwaway `--user-data-dir` (so a running installed frost, which holds the
   single-instance lock on the default profile, cannot make it hand over and exit), is still running

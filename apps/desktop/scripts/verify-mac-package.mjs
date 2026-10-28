@@ -28,6 +28,8 @@ import {
   macArtifacts,
 } from '../../../specs/macos-package.spec.ts';
 import { PACKAGED_DEBUG_REFUSAL, PACKAGED_FORBIDDEN_SWITCHES } from '../../../specs/security-policy.spec.ts';
+// libSQL's unpacked prebuild and runtime packages (specs/sync-package.spec.ts), checked as on Linux and Windows.
+import { assertAsarNodeModules, assertLibsqlLoads, assertUnpackedAllowlist } from './verify-package-common.mjs';
 
 const DESKTOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -178,6 +180,13 @@ await check('fuses-read-back', async () => {
     assert(actual === expected, `${name} is ${FuseState[actual] ?? actual}, expected ${FuseState[expected]}`);
   }
 });
+
+// The unpacked prebuild is sealed by the bundle signature (signature-verifies); these check what it is.
+const resources = path.join(appPath, 'Contents/Resources');
+const target = `darwin-${args.arch}`;
+await check('unpacked-allowlist', () => assertUnpackedAllowlist(resources, { target, where: artifacts.app }));
+await check('asar-node-modules-allowlist', () => assertAsarNodeModules(resources, { target, where: artifacts.app }));
+await check('libsql-loads', () => assertLibsqlLoads(resources, { target, where: artifacts.app }));
 
 await check('launches-and-stays-alive', async () => {
   const result = await launch([], MAC_LAUNCH_ALIVE_MS);

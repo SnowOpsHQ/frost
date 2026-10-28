@@ -60,15 +60,19 @@ export function winSetupExe(version: string, arch: WinArch): string {
 export const WIN_NUPKG_APP_DIR = 'lib/net45';
 
 /**
- * Everything allowed directly in a packaged app's `resources/`: the app archive and the
- * third-party notices (`third-party-notices.ts` `NOTICES_FILE`, an extra resource). The same as
- * Linux (`linux-package.spec.ts`; `windows-package-config.test.ts` checks they agree): no
- * `app.asar.unpacked/`, no loose `app/` directory.
+ * Everything allowed directly in a packaged app's `resources/`: the app archive, its unpacked side
+ * (`app.asar.unpacked/`, holding exactly `PACKAGED_UNPACKED_ALLOWLIST` of `sync-package.spec.ts`:
+ * libSQL's native prebuild, Phase 7 Task 7) and the third-party notices (`third-party-notices.ts`
+ * `NOTICES_FILE`, an extra resource). The same as Linux (`linux-package.spec.ts`;
+ * `windows-package-config.test.ts` checks they agree): no loose `app/` directory.
  */
-export const PACKAGED_RESOURCES_ALLOWLIST = ['app.asar', 'THIRD_PARTY_NOTICES'] as const;
+export const PACKAGED_RESOURCES_ALLOWLIST = ['app.asar', 'app.asar.unpacked', 'THIRD_PARTY_NOTICES'] as const;
 
-/** The top-level entries of `app.asar`: the Vite build output and the app's `package.json`. */
-export const PACKAGED_ASAR_TOP_LEVEL = ['.vite', 'package.json'] as const;
+/**
+ * The top-level entries of `app.asar`: the Vite build output, the app's `package.json`, and
+ * `node_modules/` (exactly `PACKAGED_ASAR_NODE_MODULES` of `sync-package.spec.ts`).
+ */
+export const PACKAGED_ASAR_TOP_LEVEL = ['.vite', 'node_modules', 'package.json'] as const;
 
 /**
  * The ASAR integrity data Electron checks on Windows: a PE resource of `frost.exe` holding the JSON

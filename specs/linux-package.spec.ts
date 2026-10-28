@@ -95,15 +95,19 @@ export const LINUX_APPIMAGE_RUNTIME = {
 } as const satisfies Record<LinuxArch, { url: string; sha256: string; bytes: number }>;
 
 /**
- * Everything allowed directly in a packaged app's `resources/`: the app archive and the
- * third-party notices (`third-party-notices.ts` `NOTICES_FILE`, an extra resource). Nothing else:
- * in particular no `app.asar.unpacked/` and no loose `app/` directory. A native module that must
- * be unpacked (Phase 7 Task 7) adds its own allowlist of unpacked files; there is none today.
+ * Everything allowed directly in a packaged app's `resources/`: the app archive, its unpacked side
+ * (`app.asar.unpacked/`, holding exactly `PACKAGED_UNPACKED_ALLOWLIST` of `sync-package.spec.ts`:
+ * libSQL's native prebuild, Phase 7 Task 7) and the third-party notices (`third-party-notices.ts`
+ * `NOTICES_FILE`, an extra resource). Nothing else: in particular no loose `app/` directory.
  */
-export const PACKAGED_RESOURCES_ALLOWLIST = ['app.asar', 'THIRD_PARTY_NOTICES'] as const;
+export const PACKAGED_RESOURCES_ALLOWLIST = ['app.asar', 'app.asar.unpacked', 'THIRD_PARTY_NOTICES'] as const;
 
-/** The top-level entries of `app.asar`: the Vite build output and the app's `package.json`. */
-export const PACKAGED_ASAR_TOP_LEVEL = ['.vite', 'package.json'] as const;
+/**
+ * The top-level entries of `app.asar`: the Vite build output, the app's `package.json`, and
+ * `node_modules/` (exactly `PACKAGED_ASAR_NODE_MODULES` of `sync-package.spec.ts`: libSQL's runtime
+ * packages, Phase 7 Task 7).
+ */
+export const PACKAGED_ASAR_TOP_LEVEL = ['.vite', 'node_modules', 'package.json'] as const;
 
 /** A packaged app must still be running this long after launch (no crash, no sandbox abort). */
 export const LINUX_LAUNCH_ALIVE_MS = 10_000;

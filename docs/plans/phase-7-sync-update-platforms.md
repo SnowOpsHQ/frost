@@ -322,7 +322,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   recorded in the spec. `OnlyLoadAppFromAsar` stays on.
 - **Verify:** `verify:linux` and `verify:win` gain `unpacked-allowlist`. `verify:mac` must still
   pass, since `codesign --deep` seals the unpacked prebuild.
-- [ ] commit `feat(packaging): ship libSQL's native module unpacked, allowlisted`
+- [x] commit `feat(packaging): ship libSQL's native module unpacked, allowlisted`
 
 #### Task 8: Opt-in sync config and the row-mirror sync engine
 - **Spec:**
@@ -764,3 +764,92 @@ sync.
   version note; `libsql-reads-numbers` binds a real `true`, reads a join's duplicate column names
   and expects a `RangeError` past 2^53 − 1; the feature file gained `drivers-are-named`; the
   handle-ownership comments in `client.ts` and `driver-node-sqlite.ts` now agree.
+
+### Task 7 (libSQL in the packaged app)
+- **Spec.** The new `specs/sync-package.spec.ts` (self-contained, so the verifiers can load it)
+  holds the following:
+  - `LIBSQL_RUNTIME_PACKAGES`: `@libsql/client`, `@libsql/core`, `js-base64`, `libsql`,
+    `@neon-rs/load` and `detect-libc`, each resolved from the package that requires it;
+  - `LIBSQL_UNLOADED_DEPENDENCIES`: `@libsql/hrana-client` and `promise-limit`, declared by
+    `@libsql/client` but never loaded by its `sqlite3` entry;
+  - `LIBSQL_PREBUILD_TARGETS`: `darwin-arm64`, `linux-x64-gnu` and `win32-x64-msvc`;
+  - `LIBSQL_ASAR_UNPACK`, `PACKAGED_UNPACKED_ALLOWLIST` and `PACKAGED_ASAR_NODE_MODULES`.
+
+  `LIBSQL_SQLITE_VERSION` moved there, and `sync.spec.ts` re-exports it, because `sync.spec.ts`
+  imports another spec without an extension, which Node's type stripping can't load. The scenarios
+  are in `sync-package.feature.md`. The platform specs' `PACKAGED_RESOURCES_ALLOWLIST` gained
+  `app.asar.unpacked` and their `PACKAGED_ASAR_TOP_LEVEL` gained `node_modules`.
+- **Vite.** Vite 8 (rolldown) keeps `await import()` of an external as a real `import()` in CJS
+  output, which Electron would resolve through its ESM loader and the `import` condition
+  (`lib-esm`). So `vite.main.config.ts` adds two things: `@libsql/client` and `libsql` (with their
+  subpaths) as external regexes, and `output.dynamicImportInCjs: false`. The import then becomes
+  `require`. Today's bundles contain no `import()` at all, so this changes nothing else. The
+  driver is not reached from main yet (Task 8), so `main.cjs` still has no libSQL string.
+- **Forge.** `apps/desktop/libsql-packaging.ts` provides the `packageAfterCopy` hook. Packager
+  prunes through its copy filter, which runs before `afterCopy`, so the copied packages are not
+  pruned. Forge's "Preparing native dependencies" (`@electron/rebuild`) leaves the prebuild alone.
+  The hook:
+  - resolves each package by walking `node_modules` up from its dependent (`@libsql/client` and
+    `@libsql/core` don't export `./package.json`, so `require.resolve(<pkg>/package.json)` can't
+    be used);
+  - copies them flat into `<buildPath>/node_modules`, using `libsql`'s nested `detect-libc` 2.0.2,
+    not the hoisted 2.1.2;
+  - skips `*.md`, `*.d.ts` and `*.map`, but keeps license files;
+  - fails the build when a package is missing, the prebuild is missing or isn't the version
+    `libsql` pins, a dependency is undeclared or resolves elsewhere, a symlink or a stray `.node` is
+    found, or the target isn't packaged.
+
+  `forge.config.ts` gained one hook line and `asar: { unpack: LIBSQL_ASAR_UNPACK }`. The plan said
+  `**/*.node`; the pattern is now `**/{.**,**}/**/node_modules/@libsql/*/index.node`. Its
+  `{.**,**}/**` lets `**` cross a dot directory in the build path, as Packager's own default does,
+  and the test packs under `.cache/` to prove it. `forge-config.test.ts`'s `identifies-the-mac-bundle`
+  and its feature line now expect that object instead of `asar: true`.
+- **Integrity.** `@electron/asar` records the unpacked file in the header with `unpacked`, `size`
+  and a SHA-256 `integrity`, and the header hash is what Electron checks on macOS and Windows. A
+  win32 package made on Linux passed `asar-integrity` with the unpacked entry in it. Electron never
+  hashes an unpacked file when it loads it. On macOS, `codesign --deep` seals the file into the
+  bundle; on Windows and Linux, `unpacked-allowlist` compares it with the header at build time only.
+- **Smoke test.** This is a variant of option (a). `libsql-loads` runs the repository's `electron`
+  (the version Forge packaged) with `ELECTRON_RUN_AS_NODE=1`, rather than plain `node` on an
+  extracted tree:
+  - it loads `@libsql/client/sqlite3` directly from the packaged `resources/app.asar`, resolved from
+    `.vite/build/main.cjs`, with Electron's own asar support and the unpacked prebuild;
+  - it opens a temporary `file:` database and reads `sqlite_version()` = `LIBSQL_SQLITE_VERSION`;
+  - it asserts that every loaded module lies inside that `app.asar`.
+
+  That last assertion matters: plain `node` from an extracted tree falls back to the repository's
+  `node_modules` when a package is missing, as an experiment showed. The packaged binary keeps
+  `RunAsNode` off, and no CLI switch or production code path was added. Main opening libSQL itself
+  is first exercised by Task 8's e2e. The checks run on the packaged tree and on every extracted
+  tree (deb, AppImage, zip, nupkg). `verify-mac-package.mjs` gained the same three checks, from the
+  common module, on `Contents/Resources`.
+- **Cross-target builds.** pnpm installs only the host's prebuild. On Linux,
+  `electron-forge package --platform win32 --arch x64` now fails in the hook with
+  `@libsql/win32-x64-msvc is not installed … package win32-x64 on a win32 x64 machine`.
+  `--platform`-wide `supportedArchitectures` installs were judged not worth it. For the local
+  `--static` cross-check, the win32 prebuild was downloaded from the registry, checked against the
+  lockfile's SHA-512, placed in `node_modules/@libsql/win32-x64-msvc` by hand and removed afterwards
+  (README, Building on Windows). Off Windows, `--static` runs `unpacked-allowlist` and
+  `asar-node-modules-allowlist` and skips `libsql-loads` with an `INFO` line.
+- **Notices.** `THIRD_PARTY_NOTICES` lists the six JavaScript packages. `libsql`'s entry covers the
+  prebuild, which comes from the same project under the same license and ships no license file.
+  The Rust crates and SQLite statically linked into the prebuild are not listed separately (a known
+  limit).
+- **Size.** Linux x64 grows by 0.25 MB of JavaScript in `app.asar` plus 9.72 MB for the unpacked
+  `index.node`, about 4.1 MB gzip-compressed. The zip is 128.8 MB, the deb 97.1 MB and the AppImage
+  131.0 MB.
+- **Verified locally** (Arch Linux; `dpkg-deb` 1.23.11 and `mksquashfs` 4.7.5 came from their Arch
+  packages, with signatures checked by `gpgv` and unpacked into a temporary directory, as in Task 1):
+  - `make:linux` succeeded, and `verify:linux` passed all 13 checks;
+  - the win32 package (as above) passed `verify-windows-package.mjs --static`, all 6 file checks;
+  - negative trials failed as expected: an extra unpacked file, a flipped prebuild byte, a missing
+    prebuild, an extra package or scope, a nested `node_modules`, a packed `.node`, and a lock file
+    in `node_modules`;
+  - `pnpm lint`, `pnpm test`, `security:electronegativity` and `security:semgrep:scan` passed.
+
+  **Left to CI:** the following were not run locally:
+  - `libsql-loads` on Windows and macOS, under the dev Electron;
+  - `codesign --verify --deep --strict` with the unpacked `.node` in `Contents/Resources`
+    (`signature-verifies`, `zip-app-verifies`, `dmg-app-verifies`);
+  - the nupkg and Windows-zip trees;
+  - the Ubuntu run.

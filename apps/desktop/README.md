@@ -461,6 +461,8 @@ From the repo root (`pnpm install` first):
 - `pnpm --filter @app/desktop start` — dev run (Vite dev server; it overwrites `.vite/build` with a
   dev bundle, so run `build` again before the e2e).
 - `pnpm --filter @app/desktop build` — `electron-forge package` for the host platform.
+  The app ships libSQL's native module for that platform; see
+  [libSQL in the packaged app](#libsql-in-the-packaged-app).
 - `pnpm lint` / `pnpm test` — strict TypeScript and the Vitest suites of every package
   (`@app/seo-core`'s rules each have a passing and a failing fixture).
 - `pnpm --filter @app/desktop test:e2e` — Playwright e2e against the unpackaged build, on loopback
@@ -472,7 +474,7 @@ From the repo root (`pnpm install` first):
 - `pnpm make:mac` (on macOS) — `electron-forge make --platform darwin --arch arm64`
   (see [Building on a Mac](#building-on-a-mac)).
 - `pnpm verify:mac` (on macOS, after `make:mac`) — checks the bundle id, arch, signature and
-  entitlements, fuses, launch and debugging lockdown, and that the `.app` inside the published zip
+  entitlements, fuses, libSQL's unpacked module, launch and debugging lockdown, and that the `.app` inside the published zip
   and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
 - `pnpm make:linux`, `pnpm verify:linux` (on Linux) — the AppImage, deb and zip for x64, and their
   checks (see [Building on Linux](#building-on-linux)). CI: `.github/workflows/linux-package.yml`.
@@ -499,13 +501,40 @@ manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it i
   and "Open in" consent), each feature's `*-palette.ts` actions, `hooks/`, and pure helpers with
   unit tests.
 - `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers).
-- `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string),
+- `libsql-packaging.ts` (the Forge hook that ships libSQL in the app),
+  `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string),
   `third-party-notices.ts` and `THIRD_PARTY_NOTICES`; `scripts/measure-snippet-font.mjs` (builds the
   snippet width table, run in Electron), `scripts/verify-mac-package.mjs`, and
   `scripts/verify-linux-package.mjs` and `scripts/verify-windows-package.mjs` with the checks they
   share in `scripts/verify-package-common.mjs`.
 - The audit engine itself is `packages/seo-core` (`@app/seo-core`): pure TypeScript, no Electron,
   DOM or Zod.
+
+## libSQL in the packaged app
+Main bundles all of its dependencies except libSQL, the driver for opt-in sync. libSQL's native
+module (`@libsql/<target>/index.node`, N-API) is found at runtime, so:
+- main `require`s `@libsql/client/sqlite3` from `app.asar/node_modules`;
+- a Forge `packageAfterCopy` hook (`libsql-packaging.ts`) copies the packages that entry loads, and
+  the prebuild for the target, into the app;
+- only that `index.node` is unpacked to `resources/app.asar.unpacked/`. All JavaScript stays in
+  `app.asar`, and the fuses are unchanged.
+
+The full list is in `specs/sync-package.spec.ts` and `specs/sync-package.feature.md`. The libSQL
+code is about 0.25 MB of JavaScript in `app.asar` plus the prebuild: 9.7 MB uncompressed on Linux
+x64, about 4.1 MB compressed in the zip and deb.
+
+The prebuild packaged is the build machine's own, since pnpm installs only that one. **So each
+platform is packaged on that platform.** `electron-forge package --platform win32` on Linux fails,
+naming the missing `@libsql/win32-x64-msvc`. CI builds each platform on its own runner.
+
+**Integrity.** Electron's ASAR integrity check (macOS, Windows) covers `app.asar`'s header, which
+records the unpacked file's size and SHA-256. It does not check the unpacked file's bytes when the
+file is loaded. On macOS the bundle's code signature seals the file. On Windows and Linux nothing
+checks it at runtime; the package verifiers compare it with the header at build time
+(`unpacked-allowlist`). Every verifier also checks the following:
+- `app.asar/node_modules` holds exactly the allowed packages (`asar-node-modules-allowlist`);
+- libSQL loads from the packaged `app.asar` (`libsql-loads`). This check runs the repository's
+  Electron as Node, because the packaged binary's `RunAsNode` fuse is off.
 
 ## Building on a Mac
 Prerequisites:
@@ -581,7 +610,7 @@ artifact of the Linux package workflow is built and checked in CI; trust it as f
 run. The deb runs no maintainer scripts; its only setuid file is Chromium's `chrome-sandbox`, used
 only where unprivileged user namespaces are unavailable.
 
-`verify:linux` checks the fuses, the files in `resources/` and `app.asar`, launch and debugging
+`verify:linux` checks the fuses, the files in `resources/` and `app.asar`, libSQL (unpacked prebuild, `node_modules`, that it loads), launch and debugging
 lockdown on the packaged tree, the deb's metadata and files, the AppImage's runtime and contents,
 and the zip's contents (`specs/linux-package.feature.md`; CI uploads the AppImage and deb, not the
 zip). Electron does not enforce ASAR integrity on Linux:
@@ -626,14 +655,22 @@ then exits (`src/main/update/squirrel-events.ts`). frost never asks `Update.exe`
 update is installed by hand (see Updates). The zip
 needs no installer: unzip it anywhere and run `frost.exe`.
 
-`verify:win` checks the fuses, the files in `resources/` and `app.asar`, the ASAR integrity
+`verify:win` checks the fuses, the files in `resources/` and `app.asar`, libSQL (as on Linux), the ASAR integrity
 resource in `frost.exe` (Electron checks `app.asar`'s header hash at startup on Windows) and that a
 copy with a tampered header refuses to start, launch and debugging lockdown, that a Squirrel event
 launch exits at once, the Squirrel artifacts
 (the `RELEASES` hash and size, the app tree inside the `.nupkg`), the zip's contents and the absence
 of signatures. Off Windows, `node apps/desktop/scripts/verify-windows-package.mjs --static` runs the
 file checks against `pnpm --filter @app/desktop exec electron-forge package --platform win32 --arch x64`
-output (no Wine needed); making the installer needs Windows.
+output (no Wine needed); making the installer needs Windows. That package needs libSQL's win32
+prebuild, which pnpm installs only on Windows (see
+[libSQL in the packaged app](#libsql-in-the-packaged-app)). For a local cross-check, first:
+1. download `@libsql/win32-x64-msvc` at the version `libsql` pins
+   (`https://registry.npmjs.org/@libsql/win32-x64-msvc/-/win32-x64-msvc-<version>.tgz`);
+2. check its SHA-512 against `pnpm-lock.yaml`;
+3. extract its `package/` directory to `node_modules/@libsql/win32-x64-msvc`.
+
+Remove that directory afterwards. `--static` skips `libsql-loads` off Windows.
 
 ## Follow-ups
 App icon (Electron's default for now), x64/universal builds, signing in CI, a hosted update feed and

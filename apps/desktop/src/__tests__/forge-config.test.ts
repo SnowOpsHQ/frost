@@ -16,6 +16,7 @@ import {
   MAC_SIGNING_ENV,
   PACKAGED_FUSES,
 } from '@app/specs/macos-package.spec';
+import { LIBSQL_ASAR_UNPACK } from '@app/specs/sync-package.spec';
 import { makeForgeConfig } from '../../forge.config';
 import { NOTICES_FILE } from '../../third-party-notices';
 
@@ -82,7 +83,7 @@ describe('forge config (macOS package)', () => {
       appBundleId: MAC_BUNDLE_ID,
       appCategoryType: MAC_APP_CATEGORY,
       darwinDarkModeSupport: true,
-      asar: true,
+      asar: { unpack: LIBSQL_ASAR_UNPACK },
     });
     expect(packageJson.productName).toBe(MAC_PRODUCT_NAME);
   });
