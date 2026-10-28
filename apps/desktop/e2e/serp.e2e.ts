@@ -3,7 +3,6 @@
 // (SERP_WORLD_ID, SERP_UNREADABLE_MESSAGES), specs/intent-classifier.spec.ts (INTENT_E2E_FAKE_SWITCH,
 // INTENT_LABEL_NAMES), specs/fetcher.spec.ts (E2E_PUBLIC_HOSTS_SWITCH)
 // Acceptance: specs/serp-panels.feature.md (End to end)
-import { generateKeyPairSync, sign } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
@@ -14,66 +13,9 @@ import { SERP_NOT_SERP_MESSAGE, SERP_OUTLINE_KEY } from '@app/specs/serp-service
 import { SERP_UNREADABLE_MESSAGES, SERP_WORLD_ID } from '@app/specs/serp.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
+import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
 
-/** The synthetic search engine's public-looking name (`--host-resolver-rules`, `--frost-e2e-public-hosts`). */
-const SEARCH_HOST = 'search.frost-e2e.net';
-const PACK_PATH = '/serp-selectors.json';
-/** Above the bundled pack's version, so the test pack installs. */
-const PACK_VERSION = 1000;
 const READ_WAIT = 20_000;
-
-/** frost's own minimal result page markup (no real engine's): ads, a snippet, organic results and related questions. */
-function resultPage(query: string): string {
-  const q = query.replace(/[<>&"]/g, '');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${q} · frost test search</title></head><body>
-<form action="/search"><input name="q" value="${q}"></form>
-<div id="ads"><div class="ad"><a href="https://teashop.example/buy"><h3>Buy tea online</h3></a></div></div>
-<main id="results">
-  <div class="snippet"><a href="https://brewguide.example/what"><h3>What green tea is</h3></a><p>Green tea is tea made from leaves that are not oxidised.</p></div>
-  <div class="result"><a href="https://brewguide.example/guide"><h3>A guide to green tea</h3></a></div>
-  <div class="result"><a href="https://leafhouse.example/"><h3>Leaf house</h3></a></div>
-  <div class="questions"><div class="q">Is green tea good for you?</div><div class="q">How long should green tea brew?</div></div>
-  <div class="result"><a href="https://brewguide.example/more"><h3>More about brewing</h3></a></div>
-</main></body></html>`;
-}
-
-/** A result page whose results area is not there (the pack cannot read it). */
-const UNREADABLE_PAGE = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>A new layout</title></head><body><section id="something-else"><p>Results moved somewhere the selectors do not look.</p></section></body></html>';
-
-/** The test pack: one engine on the synthetic host (frost's own selectors for the markup above). */
-function testPack(): string {
-  const pack = {
-    format: 1,
-    version: PACK_VERSION,
-    published: '2026-10-28',
-    engines: [
-      {
-        id: 'frost-e2e',
-        label: 'Frost test search',
-        hosts: [SEARCH_HOST],
-        paths: ['/search'],
-        params: { query: ['q'], gl: ['gl'], hl: ['hl'], page: { param: 'start', kind: 'offset', perPage: 10, offsetBase: 0 } },
-        layout: {
-          results: '#results',
-          blocks: [
-            { type: 'ad', container: '#ads', item: '.ad', link: 'a[href]', title: 'h3' },
-            { type: 'featured-snippet', container: '#results .snippet', link: 'a[href]', title: 'h3' },
-            { type: 'people-also-ask', container: '#results .questions', item: '.q' },
-            { type: 'organic', container: '#results', item: '.result', link: 'a[href]', title: 'h3', required: true },
-          ],
-        },
-      },
-    ],
-  };
-  return `${JSON.stringify(pack, null, 2)}\n`;
-}
-
-/** An ephemeral Ed25519 key (SPKI base64, as `--frost-e2e-serp-pack-key` takes it), and the pack signed with it. */
-function signedTestPack(): { spki: string; bytes: Buffer; signature: string } {
-  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-  const bytes = Buffer.from(testPack(), 'utf8');
-  return { spki: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'), bytes, signature: sign(null, bytes, privateKey).toString('base64') };
-}
 
 type Seen = { host: string; path: string; userAgent: string };
 
@@ -83,13 +25,9 @@ async function startEngine(pack: { bytes: Buffer; signature: string }) {
     const host = (request.headers.host ?? '').split(':')[0]!;
     const url = new URL(request.url ?? '/', 'http://x');
     seen.push({ host, path: url.pathname, userAgent: request.headers['user-agent'] ?? '' });
-    const send = (status: number, type: string, body: string | Buffer) => response.writeHead(status, { 'Content-Type': type }).end(body);
-    if (url.pathname === PACK_PATH) return send(200, 'application/json', pack.bytes);
-    if (url.pathname === packSignatureUrl(PACK_PATH)) return send(200, 'text/plain', pack.signature);
-    if (url.pathname === '/robots.txt') return send(200, 'text/plain', 'User-agent: *\nAllow: /\n');
-    if (url.pathname === '/search') return send(200, 'text/html; charset=utf-8', url.searchParams.get('layout') === 'new' ? UNREADABLE_PAGE : resultPage(url.searchParams.get('q') ?? ''));
-    if (url.pathname === '/about') return send(200, 'text/html; charset=utf-8', '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About this test search</title></head><body><h1>About</h1><p>Not a result page.</p></body></html>');
-    return send(404, 'text/plain', 'not here');
+    const answer = engineAnswer(url, pack);
+    if (answer) return response.writeHead(answer.status, { 'Content-Type': answer.type }).end(answer.body);
+    response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
@@ -107,6 +45,8 @@ async function startEngine(pack: { bytes: Buffer; signature: string }) {
 let app: ElectronApplication;
 let page: Page;
 let engine: Awaited<ReturnType<typeof startEngine>>;
+/** The pack requests once the two checks of `serp-pack-update-installs` ran (`null` before). */
+let packRequestsAfterChecks: number | null = null;
 const h = chromeHelpers(
   () => app,
   () => page,
@@ -196,6 +136,9 @@ test('serp-pack-update-installs', async () => {
   // A second check finds nothing newer.
   await page.getByTestId('serp-pack-update').click();
   await expect(page.getByTestId('serp-pack-outcome')).toHaveText(PACK_UPDATE_MESSAGES['not-newer'], { timeout: READ_WAIT });
+  // Two checks: the pack and its signature twice, nothing more.
+  expect(packRequests()).toHaveLength(4);
+  packRequestsAfterChecks = packRequests().length;
   expect(crawlerRequests()).toEqual([]);
 });
 
@@ -337,4 +280,10 @@ test('serp-intent-fake', async () => {
   await expect(page.getByTestId('visibility-intent-label')).toHaveText(INTENT_LABEL_NAMES.informational);
   await expect(page.getByTestId('visibility-intent-confidence')).toHaveText(/^\d{1,3}%$/);
   expect(crawlerRequests()).toEqual([]);
+});
+
+test('serp-pack-requested-only-on-check', async () => {
+  // Reading, outlining, switching tabs and classifying never asked for the pack again.
+  expect(packRequestsAfterChecks).not.toBeNull();
+  expect(packRequests()).toHaveLength(packRequestsAfterChecks!);
 });

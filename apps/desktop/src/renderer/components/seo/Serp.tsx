@@ -40,7 +40,7 @@ import { OutlineIcon, SerpIcon } from './serp-icons';
 // waiting for the audit. Page-derived text (queries, titles, domains) is React text (`PageText`).
 
 // The command palette's SERP and Visibility actions (`serp-palette.ts`), once per module instance.
-const unregisterPaletteActions = registerPaletteActions(...serpPaletteSources({ ...serpActions, knownSerp, knownProbes, knownIntent }));
+const unregisterPaletteActions = registerPaletteActions(...serpPaletteSources({ ...serpActions, refreshIntent: serpActions.intentState, knownSerp, knownProbes, knownIntent }));
 import.meta.hot?.dispose(unregisterPaletteActions);
 
 /** The search parameters bar: always shown when the tab's page is a result page. */
@@ -105,8 +105,9 @@ function IntentLine({ state, intentState, onEnabled }: { readonly state: SerpTab
         <span className="serp-intent-chip" data-testid="serp-intent-label" title={chip.definition}>
           {chip.label}
         </span>
-        <span className="serp-intent-confidence" data-testid="serp-intent-confidence" aria-label={`Confidence ${chip.confidence}`}>
-          {chip.confidence}
+        <span className="serp-intent-confidence">
+          <span className="visually-hidden">Confidence </span>
+          <span data-testid="serp-intent-confidence">{chip.confidence}</span>
         </span>
       </div>
     );
@@ -222,7 +223,8 @@ function Results({ snapshot }: { readonly snapshot: SerpReady }) {
       <ol className="serp-results" aria-label="Results in page order">
         {rows.map((row) => (
           <li key={row.rank} className="serp-result" data-testid="serp-result" data-type={row.type} data-rank={row.rank}>
-            <span className="serp-result-rank" aria-label={`Rank ${row.rank}`}>
+            <span className="serp-result-rank">
+              <span className="visually-hidden">Rank </span>
               {row.rank}
             </span>
             <span className="serp-result-main">
@@ -240,10 +242,19 @@ function Results({ snapshot }: { readonly snapshot: SerpReady }) {
 }
 
 /** "Outline features on the page": draws each result's box in the tab (main's SERP world). */
-function OutlineToggle({ tab, on }: { readonly tab: TabState; readonly on: boolean }) {
+function OutlineToggle({ tab, on, onToggle }: { readonly tab: TabState; readonly on: boolean; readonly onToggle: (on: boolean) => void }) {
   return (
     <div className="seo-panel-tools serp-tools">
-      <button type="button" className="seo-toggle" data-testid="serp-outlines" aria-pressed={on} onClick={() => void serpActions.setOutlines(tab.id, !on)}>
+      <button
+        type="button"
+        className="seo-toggle"
+        data-testid="serp-outlines"
+        aria-pressed={on}
+        onClick={() => {
+          onToggle(!on);
+          void serpActions.setOutlines(tab.id, !on);
+        }}
+      >
         <OutlineIcon />
         <span>Outline features on the page</span>
       </button>
@@ -308,11 +319,14 @@ export function Serp({ tab }: { readonly tab: TabState }) {
   const [intentState, refreshIntent] = useIntentState(state?.version ?? null);
   // Leaving the panel (another panel, a collapsed sidebar) turns the tab's outlines off, and the
   // palette stops trusting a state no panel watches any more.
+  // `requested` covers a toggle whose answer the watch has not brought back yet (an extra off is a no-op).
   const outlinesOn = useRef(false);
+  const requested = useRef(false);
   outlinesOn.current = state?.outlines === true;
   useEffect(
     () => () => {
-      if (outlinesOn.current) void serpActions.setOutlines(tab.id, false);
+      if (outlinesOn.current || requested.current) void serpActions.setOutlines(tab.id, false);
+      requested.current = false;
       forgetSerp(tab.id);
     },
     [tab.id],
@@ -333,7 +347,13 @@ export function Serp({ tab }: { readonly tab: TabState }) {
       {params ? <IntentLine state={state} intentState={intentState} onEnabled={refreshIntent} /> : null}
       {ready ? (
         <>
-          <OutlineToggle tab={tab} on={state.outlines} />
+          <OutlineToggle
+            tab={tab}
+            on={state.outlines}
+            onToggle={(on) => {
+              requested.current = on;
+            }}
+          />
           <Composition snapshot={ready} />
           <Ownership snapshot={ready} />
           <Results snapshot={ready} />

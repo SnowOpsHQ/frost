@@ -1,15 +1,18 @@
 // Specs: specs/visibility-probes.spec.ts (PROBE_AGENTS, PROBE_DISCLOSURE, PROBE_MODELLED_DIRECTIVES_NOTE,
 // PROBE_ROBOTS_SERVED_NOTE, PROBE_LIMITS), specs/intent-classifier.spec.ts (INTENT_ENABLE_PROMPT, INTENT_MODEL,
-// INTENT_DOWNLOAD_MB), specs/fetcher.spec.ts (E2E_PUBLIC_HOSTS_SWITCH)
+// INTENT_DOWNLOAD_MB, INTENT_MODEL_DIR), specs/serp-selector-pack.spec.ts (the e2e pack seams), specs/fetcher.spec.ts (E2E_PUBLIC_HOSTS_SWITCH)
 // Acceptance: specs/serp-panels.feature.md (End to end); review focus probes-are-bounded
+import { readdir } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
-import { INTENT_DOWNLOAD_MB, INTENT_ENABLE_PROMPT, INTENT_MODEL } from '@app/specs/intent-classifier.spec';
+import { INTENT_DOWNLOAD_MB, INTENT_ENABLE_PROMPT, INTENT_MODEL, INTENT_MODEL_DIR, INTENT_STATE_MESSAGES } from '@app/specs/intent-classifier.spec';
+import { SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH } from '@app/specs/serp-selector-pack.spec';
 import { PROBE_AGENTS, PROBE_DISCLOSURE, PROBE_LIMITS, PROBE_MODELLED_DIRECTIVES_NOTE, PROBE_ROBOTS_SERVED_NOTE } from '@app/specs/visibility-probes.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
+import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
 
 /** The probed site's public-looking name (`--host-resolver-rules`, `--frost-e2e-public-hosts`). */
 const SITE_HOST = 'probes.frost-e2e.net';
@@ -24,11 +27,20 @@ const page = (title: string, body: string) =>
 
 type Seen = { path: string; userAgent: string };
 
-async function startSite() {
+async function startSite(pack: { readonly bytes: Buffer; readonly signature: string }) {
   const seen: Seen[] = [];
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
-    const path = new URL(request.url ?? '/', 'http://x').pathname;
+    const host = (request.headers.host ?? '').split(':')[0]!;
+    const url = new URL(request.url ?? '/', 'http://x');
+    const path = url.pathname;
     const userAgent = request.headers['user-agent'] ?? '';
+    // The synthetic engine (serp-fixtures.ts), for the SERP panel's intent state.
+    if (host === SEARCH_HOST) {
+      const answer = engineAnswer(url, pack);
+      if (answer) response.writeHead(answer.status, { 'Content-Type': answer.type }).end(answer.body);
+      else response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
+      return;
+    }
     seen.push({ path, userAgent });
     if (path === '/robots.txt') {
       response.writeHead(200, { 'Content-Type': 'text/plain' }).end('User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n');
@@ -55,6 +67,7 @@ async function startSite() {
   const { port } = server.address() as AddressInfo;
   return {
     origin: `http://${SITE_HOST}:${port}`,
+    searchOrigin: `http://${SEARCH_HOST}:${port}`,
     seen,
     close: () =>
       new Promise<void>((resolve) => {
@@ -90,8 +103,15 @@ async function load(url: string): Promise<number> {
 }
 
 test.beforeAll(async () => {
-  site = await startSite();
-  ({ app, page: chrome } = await launchApp([`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1`, `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST}`]));
+  const pack = signedTestPack();
+  site = await startSite(pack);
+  // No intent fake here: on-device intent is off (the model is never downloaded by these tests).
+  ({ app, page: chrome } = await launchApp([
+    `--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1, MAP ${SEARCH_HOST} 127.0.0.1`,
+    `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST},${SEARCH_HOST}`,
+    `--${SERP_E2E_PACK_URL_SWITCH}=${site.searchOrigin}${PACK_PATH}`,
+    `--${SERP_E2E_PACK_KEY_SWITCH}=${pack.spki}`,
+  ]));
   await chrome.waitForLoadState('domcontentloaded');
 });
 
@@ -136,6 +156,7 @@ test('visibility-probes-per-agent', async () => {
   // Bounded: one request per crawler (the browser's is frost's own user agent), robots.txt from main's cache.
   expect(crawlerRequests('/page')).toHaveLength(PROBE_AGENTS.length - 1);
   expect(crawlerRequests('/robots.txt')).toEqual([]);
+  expect(site.seen.filter((entry) => entry.path === '/robots.txt').length).toBeLessThanOrEqual(1);
 });
 
 test('visibility-probes-stop', async () => {
@@ -154,10 +175,12 @@ test('visibility-probes-stop', async () => {
   await expect(cell('status', 'browser')).toHaveText('200');
   await expect(chrome.locator('[data-testid="visibility-fact"][data-fact="status"] [data-testid="visibility-cell"]').filter({ hasText: 'Stopped' })).not.toHaveCount(0);
   await expect(chrome.getByTestId('visibility-run')).toBeVisible();
-  // Nothing more is asked after Stop.
+  // Nothing more is asked after Stop: by the time another page has loaded and the chrome caught up,
+  // no crawler asked for `/slow` again.
   const after = crawlerRequests('/slow').length;
-  await chrome.waitForTimeout(1_000);
-  expect(crawlerRequests('/slow').length).toBe(after);
+  await load(`${site.origin}/page`);
+  await h.chromeCaughtUp();
+  expect(crawlerRequests('/slow')).toHaveLength(after);
 });
 
 test('serp-intent-model-missing', async () => {
@@ -173,4 +196,31 @@ test('serp-intent-model-missing', async () => {
   await expect(prompt).toContainText(INTENT_MODEL.host);
   await expect(prompt).toContainText(INTENT_MODEL.licence);
   await expect(chrome.getByTestId('visibility-enable-intent-button')).toHaveText('Enable on-device intent');
+});
+
+test('serp-panel-intent-model-missing', async () => {
+  // Install the test pack, as the user does, and load a synthetic result page.
+  const url = `${site.searchOrigin}/search?q=green+tea+price`;
+  await load(url);
+  if ((await sidebar().getAttribute('data-open')) !== 'true' || (await chrome.getByTestId('seo-panel').getAttribute('data-panel')) !== 'serp') await railItem('serp').click();
+  await expect(chrome.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'serp');
+  await chrome.getByTestId('serp-pack-update').click();
+  await expect(chrome.getByTestId('serp-pack-status')).toHaveAttribute('data-version', String(PACK_VERSION), { timeout: RUN_WAIT });
+  await expect(chrome.getByTestId('serp-panel')).toHaveAttribute('data-state', 'ready', { timeout: RUN_WAIT });
+  // The chip says intent is off and offers Enable, stating size, host and licence before any click.
+  await expect(chrome.getByTestId('serp-intent')).toHaveAttribute('data-state', 'model-missing', { timeout: RUN_WAIT });
+  await expect(chrome.getByTestId('serp-intent-message')).toHaveText(INTENT_STATE_MESSAGES['model-missing']);
+  const prompt = chrome.getByTestId('serp-enable-intent-prompt');
+  await expect(prompt).toHaveText(INTENT_ENABLE_PROMPT);
+  await expect(prompt).toContainText(`${INTENT_DOWNLOAD_MB} MB`);
+  await expect(prompt).toContainText(INTENT_MODEL.host);
+  await expect(prompt).toContainText(INTENT_MODEL.licence);
+  await expect(chrome.getByTestId('serp-enable-intent-button')).toHaveText('Enable on-device intent');
+  // Showing it downloads nothing: the state stays model-missing (after a round trip through main),
+  // and no model file is in the profile.
+  await h.chromeCaughtUp();
+  await expect(chrome.getByTestId('serp-intent')).toHaveAttribute('data-state', 'model-missing');
+  const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+  const modelFiles = await readdir(`${userData}/${INTENT_MODEL_DIR}/${INTENT_MODEL.id}`).catch(() => [] as string[]);
+  expect(modelFiles).toEqual([]);
 });

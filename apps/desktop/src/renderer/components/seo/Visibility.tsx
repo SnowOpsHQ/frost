@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TabState } from '@app/specs/browser.spec';
 import type { IntentAnswer } from '@app/specs/intent-classifier.spec';
 import { PROBE_DISCLOSURE } from '@app/specs/visibility-probes.spec';
@@ -7,7 +7,8 @@ import { isWebUrl } from '@app/specs/web-url.spec';
 import { serpActions, useIntentState, useProbes } from '../../hooks/useSerp';
 import { RobotIcon, SearchIcon, StopIcon } from '../../icons';
 import { intentChip } from '../../serp-view';
-import { CLASSIFY_QUERY_MAX, classifyQueryInput, probeNotes, probeSummary, probeTable, type ProbeTable } from '../../visibility-view';
+import { isolatedTooltip } from '../../seo-view';
+import { CLASSIFY_QUERY_MAX, classifyQueryInput, forgetProbes, probeNotes, probeSummary, probeTable, type ProbeTable } from '../../visibility-view';
 import { PageText, Section } from './parts';
 import { EnableIntent } from './Serp';
 
@@ -47,7 +48,13 @@ function ProbeResults({ table }: { readonly table: ProbeTable }) {
             <tr key={row.fact} data-testid="visibility-fact" data-fact={row.fact}>
               <th scope="row">{row.label}</th>
               {row.cells.map((cell, index) => (
-                <td key={table.columns[index]!.agent} data-testid="visibility-cell" data-agent={table.columns[index]!.agent} data-diff={cell.diff} title={cell.title}>
+                <td
+                  key={table.columns[index]!.agent}
+                  data-testid="visibility-cell"
+                  data-agent={table.columns[index]!.agent}
+                  data-diff={cell.diff}
+                  title={cell.title === undefined ? undefined : isolatedTooltip(cell.title)}
+                >
                   {cell.mono ? <PageText value={cell.text} className="seo-mono" /> : cell.text}
                   {cell.diff ? <span className="visually-hidden"> (differs from the browser)</span> : null}
                 </td>
@@ -96,7 +103,11 @@ function Notes({ probes }: { readonly probes: ProbesState }) {
 
 function Probes({ tab }: { readonly tab: TabState }) {
   const probes = useProbes(tab.id);
-  const [refused, setRefused] = useState(false);
+  // The tab whose run could not start (so the line resets with the tab).
+  const [refusedTab, setRefusedTab] = useState<number | null>(null);
+  const refused = refusedTab === tab.id;
+  // Once no panel watches the tab's probes, the palette stops trusting what it last saw.
+  useEffect(() => () => forgetProbes(tab.id), [tab.id]);
   const onWebPage = isWebUrl(tab.url) && tab.error === null && !tab.crashed;
   const running = probes?.status === 'running';
   const table = probes ? probeTable(probes) : null;
@@ -118,8 +129,11 @@ function Probes({ tab }: { readonly tab: TabState }) {
             data-testid="visibility-run"
             disabled={!onWebPage}
             onClick={() => {
-              setRefused(false);
-              void serpActions.runProbes(tab.id).then((started) => setRefused(!started));
+              const tabId = tab.id;
+              setRefusedTab(null);
+              void serpActions.runProbes(tabId).then((started) => {
+                if (!started) setRefusedTab(tabId);
+              });
             }}
           >
             <RobotIcon />
@@ -146,12 +160,17 @@ function QueryIntent() {
   const [answer, setAnswer] = useState<IntentAnswer | null>(null);
   const [asked, setAsked] = useState<string | null>(null);
   const [intentState, refreshIntent] = useIntentState(asked);
+  // Only the latest query's answer is shown: an earlier one that answers late is dropped.
+  const seq = useRef(0);
   const chip = intentChip(answer);
   const classify = () => {
     const query = classifyQueryInput(value);
     if (query === null) return;
+    const mine = ++seq.current;
     setAsked(query);
-    void serpActions.classify(query).then((next) => setAnswer(next ?? { state: 'unavailable' }));
+    void serpActions.classify(query).then((next) => {
+      if (mine === seq.current) setAnswer(next ?? { state: 'unavailable' });
+    });
   };
   return (
     <Section title="Query intent" testId="visibility-intent">
@@ -185,8 +204,9 @@ function QueryIntent() {
           <span className="serp-intent-chip" data-testid="visibility-intent-label" title={chip.definition}>
             {chip.label}
           </span>
-          <span className="serp-intent-confidence" data-testid="visibility-intent-confidence" aria-label={`Confidence ${chip.confidence}`}>
-            {chip.confidence}
+          <span className="serp-intent-confidence">
+            <span className="visually-hidden">Confidence </span>
+            <span data-testid="visibility-intent-confidence">{chip.confidence}</span>
           </span>
           {asked ? <PageText value={asked} className="serp-intent-query" /> : null}
         </p>

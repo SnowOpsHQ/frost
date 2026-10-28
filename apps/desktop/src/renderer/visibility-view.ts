@@ -244,6 +244,11 @@ export function rememberProbes(state: ProbesState): void {
   while (latest.size > 32) latest.delete(latest.keys().next().value!);
 }
 
+/** Forgets a tab's probes once no panel watches them (stale is worse than unknown: main decides). */
+export function forgetProbes(tabId: number): void {
+  latest.delete(tabId);
+}
+
 export function knownProbes(tabId: number): ProbesState | undefined {
   return latest.get(tabId);
 }

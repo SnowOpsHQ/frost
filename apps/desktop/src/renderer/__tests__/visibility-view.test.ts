@@ -7,7 +7,7 @@ import { INTENT_LIMITS } from '@app/specs/intent-classifier.spec';
 import { SERP_PARAM_LIMITS } from '@app/specs/serp.spec';
 import { PROBE_AGENT_IDS, PROBE_AGENTS, PROBE_MODELLED_DIRECTIVES_NOTE, PROBE_OUTCOME_MESSAGES, PROBE_ROBOTS_SERVED_NOTE, PROBE_ROBOTS_VERDICT_LABELS, PROBE_STATUS_LABELS, PROBE_TRUNCATED_NOTE, type ProbeAgentId } from '@app/specs/visibility-probes.spec';
 import type { ProbeDiff, ProbeRow, ProbesState } from '@app/specs/visibility-probes.schema';
-import { CLASSIFY_QUERY_MAX, PROBE_TABLE_FACTS, classifyQueryInput, formatBytes, probeNotes, probeSummary, probeTable } from '../visibility-view';
+import { CLASSIFY_QUERY_MAX, PROBE_TABLE_FACTS, classifyQueryInput, forgetProbes, formatBytes, knownProbes, probeNotes, probeSummary, probeTable, rememberProbes } from '../visibility-view';
 
 const URL_A = 'https://tea.example/guide';
 
@@ -162,5 +162,16 @@ describe('Visibility panel view model', () => {
     // A surrogate pair at the cut is dropped whole.
     const cut = classifyQueryInput(`${'a'.repeat(CLASSIFY_QUERY_MAX - 1)}😀b`)!;
     expect(cut).toBe('a'.repeat(CLASSIFY_QUERY_MAX - 1));
+  });
+
+  test('probes-known-state', () => {
+    // What the palette reads: the last probes a panel saw for the tab, forgotten once no panel watches them.
+    const running = state({ tabId: 8, status: 'running' });
+    expect(knownProbes(8)).toBeUndefined();
+    rememberProbes(running);
+    expect(knownProbes(8)).toBe(running);
+    expect(knownProbes(3)).toBeUndefined();
+    forgetProbes(8);
+    expect(knownProbes(8)).toBeUndefined();
   });
 });

@@ -428,7 +428,7 @@ Done second: its native packaging is the riskiest part, so the macOS packaging g
     - probes against a site with per-agent robots.txt and headers;
     - nothing is requested before the user acts.
 - [x] commit `feat(chrome): SERP and Visibility panels`
-- [ ] Review fixes: commit `fix(chrome): address SERP panels review findings`
+- [x] Review fixes: commit `fix(chrome): address SERP panels review findings`
 
 ### Task 7: Release check and docs
 - [ ] Whole-branch review; `make:mac` / `verify:mac` green on the macOS runner.

@@ -77,6 +77,9 @@ named test.
 - **Scenario: probe-notes** — `PROBE_TRUNCATED_NOTE` when a diff compared cut content,
   `PROBE_MODELLED_DIRECTIVES_NOTE` whenever there are rows, and the robots.txt files read with
   `PROBE_ROBOTS_SERVED_NOTE`.
+- **Scenario: probes-known-state** — the palette reads the last probes a panel saw for the tab; they
+  are forgotten when the Visibility panel unmounts or moves to another tab, so a run that ended
+  unseen never leaves only Stop offered.
 - **Scenario: classify-query-input** — a typed query is trimmed and cut to the classify input's cap,
   never splitting a surrogate pair; a blank one is not sent.
 
@@ -92,7 +95,7 @@ are this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second 
   a check runs; it reports `PACK_UPDATE_MESSAGES[outcome]`.
 - **Scenario: serp-palette-intent** — "Enable on-device intent" only while the model is missing (or the
   state is not known yet), asking first with `INTENT_ENABLE_PROMPT`; it reports
-  `INTENT_ENABLE_MESSAGES[outcome]`.
+  `INTENT_ENABLE_MESSAGES[outcome]` and refreshes what the palette knows of the intent state.
 - **Scenario: serp-palette-probes** — "Run visibility probes" on a web page with no run under way,
   asking first with `PROBE_DISCLOSURE` and opening the Visibility panel; "Stop visibility probes"
   while one runs.
@@ -120,11 +123,18 @@ keypair, signs a pack for that host (version above the bundled one) and serves i
 - **Scenario: serp-intent-fake** — with `--frost-e2e-intent-fake`, the real utility process answers the
   query's intent: a label and a confidence percent in the chip, and the Visibility panel's query box
   classifies a typed query.
-- **Scenario: serp-intent-model-missing** — without the fake, the chip offers "Enable on-device
-  intent" with the download size, host and licence shown before any click (nothing is downloaded).
+- **Scenario: serp-intent-model-missing** — without the fake, the Visibility panel's query box offers
+  "Enable on-device intent" with the download size, host and licence shown before any click.
+- **Scenario: serp-panel-intent-model-missing** — without the fake, with the test pack installed, the
+  SERP panel's chip on a synthetic result page says intent is off and offers "Enable on-device
+  intent" with the size, host and licence shown before any click; the state stays `model-missing`
+  and no model file appears in the profile (Enable is never clicked).
+- **Scenario: serp-pack-requested-only-on-check** — after every other scenario, the pack was requested
+  only by the two checks of `serp-pack-update-installs`.
 - **Scenario: visibility-probes-per-agent** — on a loopback site whose robots.txt disallows GPTBot and
   which sends `X-Robots-Tag: googlebot: noindex` and a smaller page to one crawler, the disclosure is
   shown before the run; "Run visibility probes" fills one column per agent, with GPTBot's robots.txt
-  and Googlebot's noindex marked as differences, and the notes shown.
+  and Googlebot's noindex marked as differences, and the notes shown; one request per crawler, and
+  robots.txt asked at most once (main's cache).
 - **Scenario: visibility-probes-stop** — a run against slow answers shows Stop; Stop ends it
   (`stopped`), keeping what was found.

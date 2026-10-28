@@ -21,6 +21,8 @@ export interface SerpPaletteApi {
   checkPackUpdate(): Promise<PackUpdateOutcome | null>;
   /** `serp.enableIntent`; `null` on an IPC failure. */
   enableIntent(): Promise<IntentEnableOutcome | null>;
+  /** Asks main where intent stands now and remembers it (`knownIntent`). */
+  refreshIntent(): Promise<unknown>;
   runProbes(tabId: number): Promise<boolean>;
   stopProbes(tabId: number): Promise<boolean>;
   /** The last SERP state the chrome saw for a tab (`undefined`: none yet). */
@@ -117,7 +119,12 @@ export function serpPaletteSources(api: SerpPaletteApi): PaletteSource[] {
         return state === undefined || state === 'model-missing';
       },
       confirm: () => ({ message: INTENT_ENABLE_PROMPT, confirmLabel: 'Download and enable', accept: () => undefined }),
-      run: async () => INTENT_ENABLE_MESSAGES[(await api.enableIntent()) ?? 'unreachable'],
+      run: async () => {
+        const outcome = (await api.enableIntent()) ?? 'unreachable';
+        // So the palette stops offering it once the model is there.
+        await api.refreshIntent();
+        return INTENT_ENABLE_MESSAGES[outcome];
+      },
     },
     {
       id: 'probes.run',

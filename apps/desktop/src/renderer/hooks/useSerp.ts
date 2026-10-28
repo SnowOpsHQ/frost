@@ -8,11 +8,21 @@ import { rememberProbes } from '../visibility-view';
 
 // The SERP and Visibility panels' state (acceptance `serp-panels.feature.md`): `useSerp` long-polls
 // `serp.watch` and `useProbes` `serp.watchProbes` for the active tab while a panel is mounted, as
-// `useChecks` does; a failed poll waits a moment and asks again. Nothing here fetches: the only
+// `useChecks` does; a failed poll backs off (doubling, capped) and asks again, and an answer that did
+// not advance is never re-asked at once. Nothing here fetches: the only
 // procedures that do (`checkPackUpdate`, `enableIntent`, `runProbes`) run from the user's click.
 
-/** How long to wait after a failed poll. */
+/** How long to wait after a failed poll, doubling with each failure in a row up to `RETRY_MAX_MS`. */
 const RETRY_MS = 1_000;
+const RETRY_MAX_MS = 30_000;
+/**
+ * The least time between two polls whose answer did not advance: a long-poll that timed out has
+ * waited already, but one answered at once with the same version (main disposed, say) would
+ * otherwise spin.
+ */
+const MIN_IDLE_POLL_MS = 1_000;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The SERP procedures the panels and the palette call (each resolves `false` / `null` on an IPC failure). */
 export const serpActions = {
@@ -39,16 +49,23 @@ function useWatch<T extends { readonly tabId: number; readonly version: number }
     if (tabId === undefined) return;
     let live = true;
     let since = -1;
+    let failures = 0;
     const loop = async (): Promise<void> => {
       while (live) {
+        const started = Date.now();
         try {
           const next = await watch(tabId, since);
           if (!live) return;
+          failures = 0;
+          const advanced = next.version > since;
           since = next.version;
           remember(next);
           setState(next);
+          const elapsed = Date.now() - started;
+          if (!advanced && elapsed < MIN_IDLE_POLL_MS) await wait(MIN_IDLE_POLL_MS - elapsed);
         } catch {
-          await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+          failures += 1;
+          await wait(Math.min(RETRY_MS * 2 ** (failures - 1), RETRY_MAX_MS));
         }
       }
     };

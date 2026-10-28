@@ -44,6 +44,7 @@ function setup(context: Partial<PaletteContext> = {}, known: Known = {}) {
     setOutlines: vi.fn(async (_tabId: number, on: boolean) => on),
     checkPackUpdate: vi.fn(async () => 'installed' as const),
     enableIntent: vi.fn(async () => 'ready' as const),
+    refreshIntent: vi.fn(async () => 'ready' as const),
     runProbes: vi.fn(async () => true),
     stopProbes: vi.fn(async () => true),
     knownSerp: () => known.serp,
@@ -136,6 +137,9 @@ describe('SERP palette actions', () => {
     expect(api.enableIntent).not.toHaveBeenCalled();
     await expect(Promise.resolve(action('serp.enable-intent').run(ctx))).resolves.toBe(INTENT_ENABLE_MESSAGES.ready);
     expect(api.enableIntent).toHaveBeenCalledTimes(1);
+    // What the palette knows is refreshed after the answer.
+    expect(api.refreshIntent).toHaveBeenCalledTimes(1);
+    expect((api.refreshIntent as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeGreaterThan((api.enableIntent as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!);
     const failed = setup();
     (failed.api.enableIntent as ReturnType<typeof vi.fn>).mockResolvedValue('integrity');
     await expect(Promise.resolve(failed.action('serp.enable-intent').run(failed.ctx))).resolves.toBe(INTENT_ENABLE_MESSAGES.integrity);
