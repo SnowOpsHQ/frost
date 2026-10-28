@@ -8683,3 +8683,173 @@ input {
 }
 
 /* End of Projects (Phase 6) */
+
+/* Inspector (Phase 6) ------------------------------------------------------------------------------
+   Phase 6 Task 8, specs/inspector.feature.md: the page's DOM as a tree-view, Pick element and the
+   selected node's details. Page text is inert and wraps anywhere; the tree is monospaced. */
+.inspector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.inspector-pick:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.inspector-tree,
+.inspector-group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inspector-tree {
+  max-height: 46vh;
+  overflow: auto;
+  padding: 4px 0;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 8px;
+  background: var(--seo-card);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.inspector-group {
+  padding-left: 14px;
+}
+
+.inspector-item {
+  outline: none;
+}
+
+.inspector-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 1px 8px 1px 4px;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.inspector-row:hover {
+  background: var(--bg-hover);
+}
+
+.inspector-item:focus-visible > .inspector-row {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.inspector-row[data-selected='true'] {
+  background: var(--accent-soft);
+}
+
+.inspector-twisty {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  color: var(--text-muted);
+}
+
+.inspector-twisty::before {
+  content: '▸';
+  display: inline-block;
+  font-size: 10px;
+  line-height: 10px;
+  transition: transform 0.12s ease;
+}
+
+.inspector-twisty[data-open='true']::before {
+  transform: rotate(90deg);
+}
+
+.inspector-twisty[data-leaf='true']::before {
+  content: '';
+}
+
+.inspector-tag {
+  flex: none;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.inspector-shadow {
+  flex: none;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.inspector-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-more {
+  padding: 2px 0 2px 18px;
+}
+
+.inspector-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inspector-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.inspector-fact {
+  display: contents;
+}
+
+.inspector-fact dt {
+  color: var(--text-muted);
+}
+
+.inspector-fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.inspector-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.inspector-table th,
+.inspector-table td {
+  padding: 2px 6px 2px 0;
+  border-bottom: 1px solid var(--seo-card-edge);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.inspector-table thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.inspector-table tbody th {
+  width: 38%;
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-weight: 400;
+}
+
+.inspector-cut {
+  margin-left: 4px;
+  color: var(--text-faint);
+}
+
+/* End of Inspector (Phase 6) */

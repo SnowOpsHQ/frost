@@ -24,6 +24,8 @@ import { Social } from './seo/Social';
 import { Speed } from './seo/Speed';
 import { Changes } from './changes/Changes';
 import { ChangesIcon } from './changes/changes-icons';
+import { Inspector } from './changes/Inspector';
+import { InspectorIcon } from './changes/changes-icons';
 
 // The SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance `seo-sidebar.feature.md`, Sidebar): docked
 // right of the page area, the open panel and then the persistent rail at the window's edge. The
@@ -51,6 +53,7 @@ const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   compliance: ComplianceIcon,
   javascript: JavascriptIcon,
   changes: ChangesIcon,
+  inspector: InspectorIcon,
 };
 
 function Rail({
@@ -144,6 +147,7 @@ function Hint({ title, message, testId, reason, retry }: { readonly title: strin
 
 function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: TabState | undefined; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null; readonly notesGeneration?: number }) {
   if (panel === 'changes') return <Changes tab={tab} response={response} />; // Phase 6: history shows whatever the audit's state.
+  if (panel === 'inspector') return <Inspector tab={tab} />; // Phase 6 Task 8: the page's DOM, whatever the audit's state.
   if (!tab || response === null) return <Hint testId="seo-empty" title="No page yet" message="Open a web page and frost audits it here: a health score, ranked issues and what search engines read." />;
   if (response.status === 'pending') return <Skeleton />;
   if (response.status === 'unavailable') {

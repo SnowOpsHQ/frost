@@ -23,6 +23,7 @@ import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 import { changesRouter, screenshotsRouter } from './changes-router';
 import { projectsRouter } from './projects-router';
+import { inspectorRouter } from './inspector-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).
@@ -285,6 +286,7 @@ export const appRouter = router({
   changes: changesRouter,
   screenshots: screenshotsRouter,
   projects: projectsRouter,
+  inspector: inspectorRouter,
 });
 
 export type AppRouter = typeof appRouter;

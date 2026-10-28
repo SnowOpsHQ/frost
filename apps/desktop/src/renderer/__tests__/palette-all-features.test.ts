@@ -14,6 +14,7 @@ import { changesPaletteSources } from '../changes-palette';
 import { createPaletteRegistry, type PaletteContext, type PaletteSource } from '../palette/registry';
 import { renderProfilePaletteSources } from '../render-profile-palette';
 import { projectsPaletteSources, retentionPaletteSources } from '../projects-palette';
+import { inspectorPaletteSources } from '../inspector-palette';
 
 const URL_A = 'https://www.example.com/a';
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, schema: { blocks: [] } } as unknown as SeoAudit };
@@ -36,6 +37,7 @@ function everySource(): PaletteSource[] {
     ...changesPaletteSources({ capture: vi.fn(async () => null), screenshot: vi.fn(async () => null) }),
     ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }),
     ...retentionPaletteSources({ open: vi.fn(), lastProject: () => 'x', purgeNow: vi.fn(async () => null), compact: vi.fn(async () => null) }),
+    ...inspectorPaletteSources({ pick: vi.fn(async () => null) }),
   ];
 }
 

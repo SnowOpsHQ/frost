@@ -137,9 +137,10 @@ test.afterAll(async () => {
 });
 
 test('changes-capture-first-version', async () => {
-  // The rail has the Changes item, last (after JavaScript).
+  // The rail has the Changes item, after JavaScript (the Inspector follows it).
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(SEO_PANELS.length);
-  await expect(page.getByTestId('seo-rail-item').last()).toHaveAttribute('data-panel', 'changes');
+  await expect(page.getByTestId('seo-rail-item').nth(SEO_PANELS.length - 2)).toHaveAttribute('data-panel', 'changes');
+  await expect(page.getByTestId('seo-rail-item').last()).toHaveAttribute('data-panel', 'inspector');
   await expect(railItem('changes')).toHaveAttribute('aria-label', 'Changes');
   // Without a web page: a hint, and nothing to capture.
   await openChanges();

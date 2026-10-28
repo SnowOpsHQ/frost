@@ -11,6 +11,7 @@ export type { ChangesReadApi, ChangesReadService, ChangesService } from './chang
 export type { ScreenshotsService } from './changes-service';
 export type { ProjectsService } from './projects-router';
 export type { RetentionService } from './projects-router';
+export type { InspectorService } from './inspector-router';
 export {
   createContext,
   createSenderPolicy,

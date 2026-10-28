@@ -42,3 +42,24 @@ export function CaptureGlyph({ className }: { readonly className?: string }) {
     </Glyph>
   );
 }
+
+/** The Inspector's rail item: an element's corner marks with a pointer picking it. */
+export function InspectorIcon({ className }: { readonly className?: string }) {
+  return (
+    <Glyph className={className}>
+      <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M4 16v3a1 1 0 0 0 1 1h3" />
+      <path d="M11 10.5 19.5 14l-3.7 1.3-1.3 3.7z" />
+    </Glyph>
+  );
+}
+
+/** Pick element: a pointer over a target ring. */
+export function PickGlyph({ className }: { readonly className?: string }) {
+  return (
+    <Glyph className={className}>
+      <circle cx="10" cy="10" r="6" />
+      <path d="M10 2.5V5M10 15v2.5M2.5 10H5M15 10h2.5" />
+      <path d="m13 13 7 3-3 1-1 3z" />
+    </Glyph>
+  );
+}
