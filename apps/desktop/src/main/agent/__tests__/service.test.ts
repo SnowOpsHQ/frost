@@ -57,7 +57,7 @@ function setup(options: { packaged?: boolean; script?: unknown } = {}) {
   };
   const browser = {
     tabIdOf: () => null,
-    getState: () => ({ activeTabId: 2, tabs: [{ id: 2, url: 'https://example.com/' }] }),
+    getState: () => ({ activeTabId: 2, tabs: [{ id: 2, url: 'https://example.com/', title: 'Example' }] }),
     navigate: () => false,
     seo: { getAudit: () => ({ status: 'unavailable' as const, url: '', reason: 'no-tab' as const }) },
   };

@@ -29,6 +29,6 @@ test('agent-styles-are-delimited', () => {
     const source = read(name);
     expect(source, name).not.toMatch(/\bstyle=[{"']|\.style\b|setAttribute\(\s*['"]style|dangerouslySetInnerHTML|innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
     // The renderer bundle stays Zod-free: only the plain `*.spec.ts` specs.
-    expect(source, name).not.toMatch(/from '@app\/specs\/[^']*\.schema'|from 'zod'/);
+    expect(source, name).not.toMatch(/from '@app\/specs\/[^']*[.-]schema'|from 'zod'|from '@app\/ai-skills/);
   }
 });

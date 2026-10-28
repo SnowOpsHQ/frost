@@ -19,10 +19,14 @@ import type {
   AgentChatSummary,
   AgentNoticeView,
   AgentSetKeyResult,
+  AgentMessageView,
   AgentSetupView,
+  AgentSkillRequest,
+  AgentSkillView,
   AgentState,
   AgentToolCardView,
 } from '@app/specs/agent-session.spec';
+import { SKILL_SLOT_MAX_CHARS, type SkillInputSlot } from '@app/specs/skills.spec';
 import { ALLOWED_MODEL_IDS, MODEL_ROUTES, isMcpToolName, routeModelId, type ModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
 
 // The agent panel's view model (spec `agent-panel.spec.ts`; acceptance `agent-panel.feature.md`):
@@ -354,4 +358,37 @@ export function railBadge(state: Pick<AgentState, 'approval' | 'running'> | null
   if (state === null) return null;
   if (state.approval !== null) return 'approval';
   return state.running ? 'running' : null;
+}
+
+// ---- Skills (Task 7) -------------------------------------------------------------------------
+
+/** What a skill input field holds, by slot (the composer's fields). */
+export type SkillFieldValues = { readonly [S in SkillInputSlot]?: string };
+
+/** The picker's choices: "no skill" (a typed message), then main's skills in order. */
+export function skillOptions(skills: readonly AgentSkillView[]): readonly { readonly value: string; readonly label: string }[] {
+  return [{ value: '', label: 'Write a message' }, ...skills.map((skill) => ({ value: skill.id, label: skill.name }))];
+}
+
+/** The skill picked (`''`: none), or `null` when main no longer lists it. */
+export function pickedSkill(skills: readonly AgentSkillView[], id: string): AgentSkillView | null {
+  return id === '' ? null : (skills.find((skill) => skill.id === id) ?? null);
+}
+
+/**
+ * The `agent.send` request for running `skill` with the composer's fields: only the slots the skill
+ * declares, each trimmed and cut to its cap (`SKILL_SLOT_MAX_CHARS`); a blank field is left out.
+ */
+export function skillRequest(skill: AgentSkillView, values: SkillFieldValues): AgentSkillRequest {
+  const request: { skillId: string; userNote?: string; targetQuery?: string } = { skillId: skill.id };
+  for (const input of skill.inputs) {
+    const value = values[input.slot]?.trim() ?? '';
+    if (value !== '') request[input.slot] = value.slice(0, SKILL_SLOT_MAX_CHARS[input.slot]);
+  }
+  return request;
+}
+
+/** The label a user message carries in the chat: the skill it ran, or `null` for a typed message. */
+export function userMessageSkillLabel(message: AgentMessageView): string | null {
+  return message.kind === 'user' && message.skill !== undefined ? `Skill: ${message.skill.name}` : null;
 }

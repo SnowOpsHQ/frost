@@ -11,6 +11,7 @@
 import { MAX_TOOL_CALLS_PER_TURN, type ApprovalDecision, type ToolActivityStatus } from './agent-approvals.spec';
 import type { KeyProtection } from './agent-proxy.spec';
 import type { AgentToolRisk, ModelId, ModelRoute, ToolErrorCode } from './agent-tools.spec';
+import type { SkillInputSlot } from './skills.spec';
 
 // ---- Bounds ----------------------------------------------------------------------------------
 
@@ -96,10 +97,11 @@ export const AGENT_E2E_SCRIPT_MAX_CHARS = 64_000;
  * - `not-entitled`: the agent isn't available on this plan;
  * - `no-tab`: no tab to work on;
  * - `unknown-chat`: no such chat;
- * - `invalid`: empty text;
- * - `unavailable`: the agent process couldn't be started, or refused the turn.
+ * - `invalid`: empty text, or a skill input the skill doesn't declare;
+ * - `unavailable`: the agent process couldn't be started, or refused the turn;
+ * - `unknown-skill`: no such skill (Task 7).
  */
-export const AGENT_SEND_RESULTS = ['started', 'busy', 'setup-needed', 'not-entitled', 'no-tab', 'unknown-chat', 'invalid', 'unavailable'] as const;
+export const AGENT_SEND_RESULTS = ['started', 'busy', 'setup-needed', 'not-entitled', 'no-tab', 'unknown-chat', 'invalid', 'unavailable', 'unknown-skill'] as const;
 export type AgentSendResult = (typeof AGENT_SEND_RESULTS)[number];
 
 /** `agent.setKey`'s answer (main's key store's; never the key). */
@@ -170,7 +172,14 @@ export interface AgentToolCardView {
 }
 
 export type AgentMessageView =
-  | { readonly kind: 'user'; readonly id: string; readonly text: string }
+  | {
+      readonly kind: 'user';
+      readonly id: string;
+      /** What the user typed: the message, or a skill run's note (`''` without one). */
+      readonly text: string;
+      /** The skill this message ran (Task 7): the chat shows its name, never its template. Absent for a typed message. */
+      readonly skill?: { readonly id: string; readonly name: string };
+    }
   | {
       readonly kind: 'assistant';
       readonly id: string;
@@ -235,10 +244,32 @@ export interface AgentNoticeView {
   readonly seq: number;
 }
 
+/** A skill the panel can run (Task 7; main's `SkillRegistry`): what the picker shows, never its template. */
+export interface AgentSkillView {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  /** The fields the user may fill (each optional), in the skill's order. */
+  readonly inputs: readonly { readonly slot: SkillInputSlot; readonly label: string; readonly placeholder: string | null }[];
+}
+
+/**
+ * A skill run, as `agent.send` takes it instead of text (Task 7): the skill's id and the inputs it
+ * declares (`agent-ipc.schema.ts` bounds them). Main resolves the id, renders the skill with these
+ * and the tab's page, and narrows the turn's tools to the skill's.
+ */
+export interface AgentSkillRequest {
+  readonly skillId: string;
+  readonly userNote?: string | undefined;
+  readonly targetQuery?: string | undefined;
+}
+
 export interface AgentState {
   /** Raised on every change. */
   readonly version: number;
   readonly setup: AgentSetupView;
+  /** The skills that can run (Task 7), in the picker's order. */
+  readonly skills: readonly AgentSkillView[];
   /** Every chat, most recently updated first. */
   readonly chats: readonly AgentChatSummary[];
   /** The selected chat; `null` for a new, empty one. */
@@ -263,6 +294,7 @@ export const AGENT_NOTICE_MESSAGES: Readonly<Record<AgentNoticeView['kind'], str
   'unknown-chat': 'That chat is no longer available.',
   invalid: 'Type a message first.',
   unavailable: 'The agent could not be started. Try again.',
+  'unknown-skill': 'That skill is no longer available.',
 };
 
 /** Re-exported for the panel's approval buttons. */

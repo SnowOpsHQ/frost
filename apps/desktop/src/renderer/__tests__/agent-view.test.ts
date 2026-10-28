@@ -1,6 +1,6 @@
 // Spec: specs/agent-panel.spec.ts (AGENT_* words and layout), specs/agent-session.spec.ts (AgentState views,
 // MODEL_CONTEXT_WINDOWS, EXECUTE_JS_APPROVAL_NOTE)
-// Acceptance: specs/agent-panel.feature.md (View model)
+// Acceptance: specs/agent-panel.feature.md (View model), specs/skills.feature.md (skill-view-helpers)
 import { describe, expect, test } from 'vitest';
 import {
   AGENT_ANSWER_MESSAGES,
@@ -11,7 +11,13 @@ import {
 } from '@app/specs/agent-panel.spec';
 import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS } from '@app/specs/agent-session.spec';
 import { ALLOWED_MODEL_IDS } from '@app/specs/agent-tools.spec';
+import { SKILL_SLOT_MAX_CHARS } from '@app/specs/skills.spec';
+import { SKILLS } from './agent-fixtures';
 import {
+  pickedSkill,
+  skillOptions,
+  skillRequest,
+  userMessageSkillLabel,
   agentPanelOpenFromStorage,
   answerMessage,
   approvalCardModel,
@@ -195,5 +201,22 @@ describe('agent panel view model', () => {
     expect(railBadge(null)).toBeNull();
     expect(railBadge(state({ running: true }))).toBe('running');
     expect(railBadge(state({ running: true, approval: { request: approval(), queued: 0 } }))).toBe('approval');
+  });
+
+  test('skill-view-helpers', () => {
+    expect(skillOptions([])).toEqual([{ value: '', label: 'Write a message' }]);
+    expect(skillOptions(SKILLS).map((option) => option.value)).toEqual(['', 'audit-this-page', 'rewrite-title-meta', 'plain-skill']);
+    expect(pickedSkill(SKILLS, '')).toBeNull();
+    expect(pickedSkill(SKILLS, 'gone')).toBeNull();
+    expect(pickedSkill(SKILLS, 'plain-skill')?.name).toBe('Plain skill');
+    const rewrite = SKILLS[1]!;
+    expect(skillRequest(rewrite, {})).toEqual({ skillId: 'rewrite-title-meta' });
+    expect(skillRequest(rewrite, { targetQuery: ' tea ', userNote: '' })).toEqual({ skillId: 'rewrite-title-meta', targetQuery: 'tea' });
+    expect(skillRequest(rewrite, { userNote: 'n'.repeat(SKILL_SLOT_MAX_CHARS.userNote + 9) }).userNote).toHaveLength(SKILL_SLOT_MAX_CHARS.userNote);
+    // A field for a slot the skill doesn't declare is never sent.
+    expect(skillRequest(SKILLS[0]!, { targetQuery: 'tea', userNote: 'mobile' })).toEqual({ skillId: 'audit-this-page', userNote: 'mobile' });
+    expect(userMessageSkillLabel({ kind: 'user', id: 'e1', text: 'note', skill: { id: 'audit-this-page', name: 'Audit this page' } })).toBe('Skill: Audit this page');
+    expect(userMessageSkillLabel({ kind: 'user', id: 'e1', text: 'hi' })).toBeNull();
+    expect(userMessageSkillLabel({ kind: 'assistant', id: 'e2', text: 'x', tools: [], streaming: false })).toBeNull();
   });
 });

@@ -36,6 +36,8 @@ export const AGENT_PANEL_STORAGE_KEY = 'frost.agent-panel.open' as const;
 export const AGENT_PALETTE_TOGGLE_ID = 'agent.toggle' as const;
 export const AGENT_PALETTE_SETTINGS_ID = 'agent.settings' as const;
 export const AGENT_PALETTE_NEW_CHAT_ID = 'agent.new-chat' as const;
+/** "Run skill: {name}" (Task 7): this prefix and the skill's id (`SKILL_ID_PATTERN`, so a valid palette id). */
+export const AGENT_PALETTE_SKILL_ID_PREFIX = 'agent.skill.' as const;
 
 // ---- Words -----------------------------------------------------------------------------------
 

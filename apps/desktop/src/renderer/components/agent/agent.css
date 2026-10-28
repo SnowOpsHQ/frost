@@ -623,6 +623,67 @@
   height: 36px;
 }
 
+/* Skills (Task 7): the picker above the composer, and a skill's fields in place of the message. */
+.agent-composer-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-skill-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-skill-bar-label {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.agent-skill-select {
+  flex: 1;
+  height: 26px;
+  font-size: 12px;
+}
+
+.agent-skill-select:disabled {
+  opacity: 0.6;
+}
+
+.agent-skill {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.agent-skill-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.agent-skill-input {
+  width: 100%;
+}
+
+.agent-skill-input:disabled {
+  opacity: 0.6;
+}
+
+.agent-msg-skill {
+  margin: 0 0 2px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 /* Chats. */
 .agent-chats {
   display: flex;

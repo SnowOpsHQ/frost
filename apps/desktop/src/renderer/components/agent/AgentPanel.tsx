@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TabState } from '@app/specs/browser.spec';
 import { AGENT_PANEL_TITLE } from '@app/specs/agent-panel.spec';
 import { agentActions } from '../../agent-actions';
-import { agentPaletteSources, onAgentPanelRequest } from '../../agent-palette';
+import { agentPaletteSources, onAgentPanelRequest, setPaletteSkills } from '../../agent-palette';
 import { chatHeading, railBadge, runningChatId } from '../../agent-view';
 import { useAgentState } from '../../hooks/useAgentState';
 import { ChevronIcon, PlusIcon } from '../../icons';
@@ -55,6 +55,17 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   const toggle = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement | null>(null);
   const focusAfter = useRef<'input' | 'toggle' | null>(null);
+  // The latest state, for the palette's requests (a skill runs in the chat on screen).
+  const latest = useRef(state);
+  latest.current = state;
+
+  // The palette's "Run skill" actions offer what main lists now, and nothing while a turn runs.
+  const skills = state?.skills;
+  const running = state?.running === true;
+  useEffect(() => {
+    setPaletteSkills({ skills: skills ?? [], running });
+  }, [skills, running]);
+  useEffect(() => () => setPaletteSkills({ skills: [], running: false }), []);
 
   const show = (next: boolean, focus: 'input' | 'toggle' | null = next ? 'input' : 'toggle') => {
     focusAfter.current = focus;
@@ -75,6 +86,12 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
           focusAfter.current = null;
           setOpen(true);
           setView('settings');
+        } else if (request.kind === 'run-skill') {
+          // Runs at once with no inputs (the composer's picker is where a note is added).
+          focusAfter.current = null;
+          setOpen(true);
+          setView('chat');
+          void agentActions.send(latest.current?.active?.id ?? null, { skillId: request.skillId });
         } else {
           focusAfter.current = 'input';
           setOpen(true);
@@ -182,7 +199,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
             {state.approval !== null ? <AgentApprovalCard key={state.approval.request.id} approval={state.approval} covered={covered} context={{ activeChatId: active?.id ?? null, chats: state.chats }} /> : null}
             <footer className="agent-foot">
               <AgentContextMeter active={active} />
-              <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} />
+              <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} skills={state.skills} />
             </footer>
           </>
         )}

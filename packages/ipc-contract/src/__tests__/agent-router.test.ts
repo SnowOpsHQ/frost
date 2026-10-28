@@ -1,6 +1,6 @@
 // Spec: specs/agent-ipc.schema.ts (the agent.* inputs), specs/agent-session.spec.ts (answers,
-// AGENT_WATCH_TIMEOUT_MS), specs/ipc-sender.spec.ts
-// Acceptance: specs/agent-session.feature.md (Router)
+// AGENT_WATCH_TIMEOUT_MS), specs/ipc-sender.spec.ts, specs/skills.spec.ts (SKILL_LIMITS, SKILL_SLOT_MAX_CHARS)
+// Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { CREDENTIAL_LIMITS } from '@app/specs/agent-proxy.spec';
@@ -9,6 +9,7 @@ import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
+import { SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from '@app/specs/skills.spec';
 import { appRouter, createSenderPolicy, type AgentService, type IpcContext } from '../index';
 import { createIpcRequestHandler } from '../transport/main';
 
@@ -29,6 +30,7 @@ function stateAt(version: number): AgentState {
       runtime: { status: 'ready', lastFailure: null },
       isolation: { networkGlobalsRemoved: true, fileSandbox: false, note: 'n' },
     },
+    skills: [],
     chats: [],
     active: null,
     running: false,
@@ -50,7 +52,7 @@ function fakeAgent(version = 3) {
           release = resolve;
         }),
     ),
-    send: vi.fn(async (_chatId: string | null, _text: string) => 'started' as const),
+    send: vi.fn(async (_chatId: string | null, _message: unknown) => 'started' as const),
     stop: vi.fn((chatId: string) => chatId === CHAT),
     newChat: vi.fn(() => undefined),
     selectChat: vi.fn((chatId: string) => chatId === CHAT),
@@ -219,6 +221,40 @@ describe('agent router', () => {
     await expect(procedure(ctx, 'send')({ chatId: null, text: 'x' })).resolves.toBe('unavailable');
     service.answerApproval.mockResolvedValueOnce({ approvalId: 'leak' } as never);
     await expect(procedure(ctx, 'answerApproval')({ approvalId: 'a', decision: 'deny' })).resolves.toBe('invalid');
+  });
+
+  test('agent-send-skill-input-bounds', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'send')({ chatId: null, skillId: 'audit-this-page' })).resolves.toBe('started');
+    expect(service.send).toHaveBeenLastCalledWith(null, { skillId: 'audit-this-page' });
+    const note = 'n'.repeat(SKILL_SLOT_MAX_CHARS.userNote);
+    const query = 'q'.repeat(SKILL_SLOT_MAX_CHARS.targetQuery);
+    await expect(procedure(ctx, 'send')({ chatId: CHAT, skillId: 'rewrite-title-meta', userNote: `${note.slice(1)}\n`, targetQuery: query })).resolves.toBe('started');
+    expect(service.send).toHaveBeenLastCalledWith(CHAT, { skillId: 'rewrite-title-meta', userNote: `${note.slice(1)}\n`, targetQuery: query });
+    service.send.mockResolvedValueOnce('unknown-skill' as never);
+    await expect(procedure(ctx, 'send')({ chatId: null, skillId: 'gone-skill' })).resolves.toBe('unknown-skill');
+
+    const bad = [
+      { chatId: null, skillId: '' },
+      { chatId: null, skillId: 'ab' },
+      { chatId: null, skillId: 'Audit_This' },
+      { chatId: null, skillId: 'a'.repeat(SKILL_LIMITS.maxIdChars + 1) },
+      { chatId: null, skillId: 'audit-this-page', userNote: `${note}x` },
+      { chatId: null, skillId: 'audit-this-page', targetQuery: `${query}x` },
+      { chatId: null, skillId: 'audit-this-page', userNote: 'bidi \u202e note' },
+      { chatId: null, skillId: 'audit-this-page', userNote: 5 },
+      { chatId: null, skillId: 'audit-this-page', text: 'beside it' },
+      { chatId: null, skillId: 'audit-this-page', pageTitle: 'forged' },
+      { chatId: null, skillId: 'audit-this-page', allowedTools: ['navigate'] },
+      { skillId: 'audit-this-page' },
+    ];
+    for (const input of bad) {
+      const fresh = fakeAgent();
+      const error = await errorOf(procedure(ctxFor(fresh.service), 'send')(input));
+      expect(error.code, JSON.stringify(input).slice(0, 80)).toBe('BAD_REQUEST');
+      untouched(fresh.service);
+    }
   });
 
   test('agent-set-key-answer-has-no-key', async () => {

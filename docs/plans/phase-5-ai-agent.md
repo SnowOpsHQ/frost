@@ -260,7 +260,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   tools to its allowed list. Running a skill from the panel and the palette.
 - **Tests:** schema; templates render; a skill can't name a tool outside the catalogue; the chat
   gets only the skill's tools.
-- [ ] commit `feat(agent): declarative SEO skills`
+- [x] commit `feat(agent): declarative SEO skills`
 
 ### Task 8: SERP, intent, run-ai-search and GSC tools over ports
 - **Files:** tool handlers in `apps/desktop/src/main/agent/tools/` over `@app/ai-skills` ports; main
@@ -497,3 +497,44 @@ _Filled in as tasks land._
   system prompt says "the tab this chat works on" and no longer claims the agent can't fetch (the
   search tools exist). The IPC's error formatter now masks every `BAD_REQUEST` message (Zod's
   `unrecognized_keys` issue quotes the key's name, so `setKey` could have echoed a key).
+- **Task 7.** Spec `specs/skills-schema.ts` (Zod: `SkillSchema`, `SkillInputSchema`, `parseSkill`;
+  main and `@app/ai-skills` only), `specs/skills.spec.ts` (Zod-free: `BUILTIN_SKILL_IDS`,
+  `SKILL_ID_PATTERN`, `SKILL_SLOT_NAMES` `pageUrl` / `pageTitle` / `targetQuery` / `userNote`,
+  `SKILL_INPUT_SLOTS` `targetQuery` / `userNote`, `templateSlots`, `SKILL_LIMITS`,
+  `SKILL_SLOT_MAX_CHARS`), acceptance `specs/skills.feature.md`. A skill is `{ id (kebab-case, 3–48),
+  name, description, allowedTools (non-empty catalogue names, no repeats, no MCP name), instructions
+  (≤ 6000, `{{slot}}` from the allowlist only, a stray `{{`/`}}` refused), inputs? ({ slot, label,
+  placeholder? }, each a slot the template uses), version }`. Code in `packages/ai-skills/src/skills/`,
+  exported as `@app/ai-skills/skills` (a subpath, so the runtime's bundle doesn't carry it):
+  `BUILTIN_SKILLS` (all three read-only), `renderSkill(skill, values)` and the registry. Rendering
+  replaces each placeholder with `[slot]` and lists the used slots' values in one
+  `<skill-inputs>` … `</skill-inputs>` block after the instructions, one line per slot, each a JSON
+  string literal with `<` `>` escaped, after removing control / format / separator characters,
+  collapsing whitespace and cutting to the slot's cap; a missing value says `(not given)`; an
+  invalid skill renders `null`. **For Task 9:** the session resolves skills only through
+  `SkillRegistry { list(): readonly Skill[]; get(id): Skill | null }` (sync;
+  `createBuiltinSkillRegistry()`, `createStaticSkillRegistry(skills)` validates each and drops
+  invalid or repeated ids, `composeSkillRegistries(...registries)` resolves the first match, so
+  pass `composeSkillRegistries(createBuiltinSkillRegistry(), userSkills)` and a user skill can't
+  take a built-in's id). `createAgentServiceFrom` takes `skills?: SkillRegistry`; the state's skill
+  list is rebuilt per version, so a registry whose list changes needs a `bump` (add an `onChange` to
+  the deps then). `agent.send` takes `{ chatId, text }` or `{ chatId, skillId, userNote?,
+  targetQuery? }` (`AgentSendSkillInputSchema`, strict: no text beside a skill);
+  `AgentService.send(chatId, message: string | AgentSkillRequest)`. Main refuses an unknown id
+  (`unknown-skill`, new in `AGENT_SEND_RESULTS` with its notice), an input the skill doesn't declare
+  (`invalid`), and a skill run without the `agent.skills` entitlement; it fills `pageUrl` (fragment
+  dropped) and `pageTitle` from the chat tab (`tabPage`, from the tab strip), sends the rendered text
+  as the user turn and narrows both `chat.start.allowedTools` and the broker's registration to the
+  skill's tools in catalogue order (the next typed turn gets the whole catalogue again). The user
+  entry carries `skill: { id, name }` and the note (plus "Target query: …"), never the template; a
+  new chat is titled with the skill's name. `AgentState.skills` lists `{ id, name, description,
+  inputs }`. Deviation from the brief: inputs may declare `targetQuery` too (the rewrite skill asks
+  for one), so `agent.send` takes it beside `userNote`. A call to a tool outside the skill is
+  rejected by the runtime's SDK before any `tool.invoke` (no card shows), and a forged one is
+  refused `not-allowed` by the broker (tested). Renderer: a compact picker above the composer
+  (disabled while a turn runs) swaps the message field for the skill's description and its inputs
+  (Enter runs), and the palette lists "Run skill: {name}" (`agent.skill.<id>`, a dynamic source
+  over what the panel last rendered; not offered while a turn runs) which runs the skill at once in
+  the chat on screen with no inputs. The styles test now also refuses `-schema` specs and
+  `@app/ai-skills` in the panel's files (the renderer stays Zod-free). E2e
+  `agent-skill-narrows-tools`.

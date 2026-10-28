@@ -10,7 +10,8 @@ import { z } from 'zod';
 import { APPROVAL_DECISIONS } from './agent-approvals.spec';
 import { CREDENTIAL_LIMITS, CREDENTIAL_SLOTS, isValidModelSettings } from './agent-proxy.spec';
 import { CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
-import { ALLOWED_MODEL_IDS, MODEL_ROUTES } from './agent-tools.spec';
+import { ALLOWED_MODEL_IDS, isSafeInputText, MODEL_ROUTES } from './agent-tools.spec';
+import { SKILL_ID_PATTERN, SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from './skills.spec';
 
 /** A chat id: main makes them with `crypto.randomUUID`. */
 export const AgentChatIdSchema = z.uuid();
@@ -21,7 +22,7 @@ export const AgentApprovalIdSchema = z.string().min(1).max(128).regex(/^[\x21-\x
 export const AgentWatchInputSchema = z.strictObject({ sinceVersion: z.int().nonnegative() });
 
 /** A message: `chatId` `null` starts a new chat. Not only whitespace. */
-export const AgentSendInputSchema = z.strictObject({
+export const AgentSendTextInputSchema = z.strictObject({
   chatId: AgentChatIdSchema.nullable(),
   text: z
     .string()
@@ -29,6 +30,28 @@ export const AgentSendInputSchema = z.strictObject({
     .max(CHAT_TEXT_MAX_CHARS)
     .refine((text) => text.trim() !== '', { message: 'empty message' }),
 });
+
+/** A skill input the user typed: bounded, no control or invisible character but line feeds and tabs (main cleans it again when it renders). */
+const skillValue = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .refine((text) => isSafeInputText(text, 'code'), { message: 'holds a control or invisible character' });
+
+/**
+ * A skill run (Task 7; `AgentSkillRequest`): the skill's id and the inputs the user filled, never
+ * text beside them. Main resolves the id (`unknown-skill` if it has none) and refuses an input the
+ * skill doesn't declare (`invalid`).
+ */
+export const AgentSendSkillInputSchema = z.strictObject({
+  chatId: AgentChatIdSchema.nullable(),
+  skillId: z.string().min(SKILL_LIMITS.minIdChars).max(SKILL_LIMITS.maxIdChars).regex(SKILL_ID_PATTERN),
+  userNote: skillValue(SKILL_SLOT_MAX_CHARS.userNote).optional(),
+  targetQuery: skillValue(SKILL_SLOT_MAX_CHARS.targetQuery).optional(),
+});
+
+/** `agent.send`: a typed message or a skill run. */
+export const AgentSendInputSchema = z.union([AgentSendTextInputSchema, AgentSendSkillInputSchema]);
 
 export const AgentChatInputSchema = z.strictObject({ chatId: AgentChatIdSchema });
 

@@ -2,6 +2,7 @@
 // settings, grants and approval broker from `createAgent`, over a fake utility process that runs
 // the real runtime in this process with the e2e seam's scripted model, and a scripted tool runner.
 import { vi } from 'vitest';
+import type { SkillRegistry } from '@app/ai-skills/skills';
 import { createScriptedModelFactory, startRuntime, type RuntimePort } from '@app/agent-runtime';
 import { AgentE2eScriptSchema } from '@app/specs/agent-e2e-script.schema';
 import type { MainToRuntimeMessage } from '@app/specs/agent-protocol.schema';
@@ -24,17 +25,22 @@ export async function setupSession(
     entitlements?: AgentEntitlements;
     outcomes?: Parameters<typeof createFakeRunner>[0];
     tabUrl?: string | null;
+    tabTitle?: string | null;
+    skills?: SkillRegistry;
   } = {},
 ) {
   const memory = createMemoryFs();
   const safe = createFakeSafeStorage();
   const runner = createFakeRunner(options.outcomes);
-  const tab = { url: options.tabUrl === undefined ? 'https://shop.example.com/tea' : options.tabUrl };
+  const tab = { url: options.tabUrl === undefined ? 'https://shop.example.com/tea' : options.tabUrl, title: options.tabTitle === undefined ? 'Green tea' : options.tabTitle };
   const script = AgentE2eScriptSchema.parse({ steps: options.steps ?? [{ text: ['Hello.'] }] });
   const logs: string[] = [];
+  /** The latest runtime's side of its port (a test can post as the runtime would). */
+  let runtimeSide: RuntimePort | null = null;
   const forks = createFakeFork((child) => {
     child.onPort = (port: FakePort) => {
       const runtimePort: RuntimePort = { post: (message) => port.postMessage(message), onMessage: (listener) => port.on('message', (event: { data: unknown }) => listener(event.data)) };
+      runtimeSide = runtimePort;
       startRuntime(runtimePort, { modelFactory: createScriptedModelFactory(script), lockdown: { removed: ['fetch', 'WebSocket', 'EventSource'], failed: [], permissionModel: false } });
     };
   });
@@ -87,6 +93,8 @@ export async function setupSession(
     grants: agent.grants,
     start: () => agent.start(),
     activeTabId: () => TAB,
+    tabPage: (tabId) => (tabId === TAB ? { url: tab.url, title: tab.title } : null),
+    ...(options.skills ? { skills: options.skills } : {}),
     scripted: options.scripted === true,
     randomId: () => `00000000-0000-4000-8000-${String((ids += 1)).padStart(12, '0')}`,
     log: (line) => logs.push(line),
@@ -124,6 +132,11 @@ export async function setupSession(
     seen,
     starts,
     until,
+    /** Posts `message` to main as the runtime (a forged or misbehaving runtime). */
+    asRuntime(message: unknown) {
+      if (runtimeSide === null) throw new Error('no runtime yet');
+      runtimeSide.post(message as Parameters<RuntimePort['post']>[0]);
+    },
     stop() {
       watching = false;
       session.dispose();

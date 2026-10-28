@@ -1,8 +1,9 @@
 // Spec: specs/agent-panel.spec.ts (AGENT_PALETTE_*_ID), specs/command-palette.spec.ts (Registration API)
-// Acceptance: specs/agent-panel.feature.md (agent-palette-actions)
+// Acceptance: specs/agent-panel.feature.md (agent-palette-actions), specs/skills.feature.md (skill-palette-actions)
 import { describe, expect, test, vi } from 'vitest';
-import { AGENT_PALETTE_NEW_CHAT_ID, AGENT_PALETTE_SETTINGS_ID, AGENT_PALETTE_TOGGLE_ID } from '@app/specs/agent-panel.spec';
-import { agentPaletteSources, onAgentPanelRequest, requestAgentPanel, type AgentPanelRequest } from '../agent-palette';
+import { AGENT_PALETTE_NEW_CHAT_ID, AGENT_PALETTE_SETTINGS_ID, AGENT_PALETTE_SKILL_ID_PREFIX, AGENT_PALETTE_TOGGLE_ID } from '@app/specs/agent-panel.spec';
+import { agentPaletteSources, onAgentPanelRequest, requestAgentPanel, setPaletteSkills, type AgentPanelRequest, type PaletteSkills } from '../agent-palette';
+import { SKILLS } from './agent-fixtures';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
 
@@ -32,5 +33,31 @@ describe('agent palette actions', () => {
     stop();
     requestAgentPanel({ kind: 'toggle' });
     expect(heard).toHaveBeenCalledOnce();
+  });
+
+  test('skill-palette-actions', async () => {
+    const request = vi.fn((_r: AgentPanelRequest) => undefined);
+    let current: PaletteSkills = { skills: SKILLS, running: false };
+    const registry = createPaletteRegistry();
+    registry.register(...builtinPaletteSources(new Proxy({}, { get: () => vi.fn(async () => true) }) as PaletteApi));
+    const unregister = registry.register(...agentPaletteSources(request, () => current));
+    const skillActions = () => registry.resolve(ctx).filter((a) => a.id.startsWith(AGENT_PALETTE_SKILL_ID_PREFIX));
+    expect(skillActions().map((a) => [a.id, a.label])).toEqual(SKILLS.map((skill) => [`agent.skill.${skill.id}`, `Run skill: ${skill.name}`]));
+    expect(skillActions()[0]!.detail?.(ctx)).toBe(SKILLS[0]!.description);
+    await skillActions()[1]!.run(ctx);
+    expect(request).toHaveBeenLastCalledWith({ kind: 'run-skill', skillId: 'rewrite-title-meta' });
+    // Not offered while a turn runs; gone when main lists none.
+    current = { skills: SKILLS, running: true };
+    expect(skillActions()).toEqual([]);
+    current = { skills: [], running: false };
+    expect(skillActions()).toEqual([]);
+    unregister();
+    // The default source reads what the panel last told it.
+    const panelRegistry = createPaletteRegistry();
+    panelRegistry.register(...agentPaletteSources(request));
+    setPaletteSkills({ skills: SKILLS.slice(0, 1), running: false });
+    expect(panelRegistry.resolve(ctx).map((a) => a.id)).toContain('agent.skill.audit-this-page');
+    setPaletteSkills({ skills: [], running: false });
+    expect(panelRegistry.resolve(ctx).map((a) => a.id)).not.toContain('agent.skill.audit-this-page');
   });
 });

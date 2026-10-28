@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { AgentActiveChatView, AgentMessageView, AgentNoticeView, AgentSetupView } from '@app/specs/agent-session.spec';
-import { isAtBottom, setupChecklist, visibleNotice } from '../../agent-view';
+import { isAtBottom, setupChecklist, userMessageSkillLabel, visibleNotice } from '../../agent-view';
 import { CloseIcon } from '../../icons';
 import { AgentToolCard } from './AgentToolCard';
 
@@ -11,9 +11,16 @@ import { AgentToolCard } from './AgentToolCard';
 
 function Message({ message }: { readonly message: AgentMessageView }) {
   if (message.kind === 'user') {
+    // A skill run shows the skill's name and the user's note, never the skill's template.
+    const skill = userMessageSkillLabel(message);
     return (
-      <div className="agent-msg agent-msg-user" data-testid="agent-message" data-kind="user">
-        <p className="agent-msg-text">{message.text}</p>
+      <div className="agent-msg agent-msg-user" data-testid="agent-message" data-kind="user" data-skill={message.skill?.id}>
+        {skill !== null ? (
+          <p className="agent-msg-skill" data-testid="agent-message-skill">
+            {skill}
+          </p>
+        ) : null}
+        {message.text !== '' ? <p className="agent-msg-text">{message.text}</p> : null}
       </div>
     );
   }

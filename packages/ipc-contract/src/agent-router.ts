@@ -8,7 +8,7 @@ import {
   AgentSetModelInputSchema,
   AgentWatchInputSchema,
 } from '@app/specs/agent-ipc.schema';
-import { AGENT_ANSWER_RESULTS, AGENT_SEND_RESULTS, AGENT_SET_KEY_RESULTS, AGENT_WATCH_TIMEOUT_MS, type AgentAnswerResult, type AgentSendResult, type AgentSetKeyResult, type AgentState } from '@app/specs/agent-session.spec';
+import { AGENT_ANSWER_RESULTS, AGENT_SEND_RESULTS, AGENT_SET_KEY_RESULTS, AGENT_WATCH_TIMEOUT_MS, type AgentAnswerResult, type AgentSendResult, type AgentSetKeyResult, type AgentSkillRequest, type AgentState } from '@app/specs/agent-session.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import type { AgentService } from './agent-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
@@ -55,7 +55,7 @@ async function watchAgentState(agent: AgentService, sinceVersion: number): Promi
 }
 
 /**
- * `watch` answers the panel's `AgentState`; `send` how the message went (`AGENT_SEND_RESULTS`);
+ * `watch` answers the panel's `AgentState`; `send` how the message (or skill run) went (`AGENT_SEND_RESULTS`);
  * `stop`, `selectChat`, `deleteChat`, `setModel`, `clearKey` whether they did it; `newChat` `null`;
  * `answerApproval` `AGENT_ANSWER_RESULTS`; `setKey` `AGENT_SET_KEY_RESULTS` (never the key).
  */
@@ -69,7 +69,14 @@ export const agentRouter = router({
     .use(enforceSender)
     .use(requireAgent)
     .input(AgentSendInputSchema)
-    .mutation(async ({ ctx, input }): Promise<AgentSendResult> => oneOf(AGENT_SEND_RESULTS, await ctx.agent.send(input.chatId, input.text), 'unavailable')),
+    .mutation(async ({ ctx, input }): Promise<AgentSendResult> => {
+      // A skill run carries only the fields its schema allows, copied one by one.
+      const message: string | AgentSkillRequest =
+        'skillId' in input
+          ? { skillId: input.skillId, ...(input.userNote !== undefined ? { userNote: input.userNote } : {}), ...(input.targetQuery !== undefined ? { targetQuery: input.targetQuery } : {}) }
+          : input.text;
+      return oneOf(AGENT_SEND_RESULTS, await ctx.agent.send(input.chatId, message), 'unavailable');
+    }),
   stop: publicProcedure
     .use(enforceSender)
     .use(requireAgent)

@@ -1,16 +1,18 @@
 import type { ApprovalDecision } from '@app/specs/agent-approvals.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
-import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult } from '@app/specs/agent-session.spec';
+import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest } from '@app/specs/agent-session.spec';
 import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import { ipc } from './ipc';
 
 // The agent panel's intents (spec `agent-panel.spec.ts`; procedures
 // `packages/ipc-contract/src/agent-router.ts`, all sender-guarded in main). Each resolves main's
 // answer, or a safe fallback on an IPC failure. `setKey` is the only call that carries a key, and
-// only renderer → main: its answer is one of `AGENT_SET_KEY_RESULTS`, never the key.
+// only renderer → main: its answer is one of `AGENT_SET_KEY_RESULTS`, never the key. `send` takes the
+// typed text or a skill run (Task 7: the skill's id and its inputs; main resolves and renders it).
 
 export const agentActions = {
-  send: (chatId: string | null, text: string): Promise<AgentSendResult> => ipc.agent.send.mutate({ chatId, text }).catch((): AgentSendResult => 'unavailable'),
+  send: (chatId: string | null, message: string | AgentSkillRequest): Promise<AgentSendResult> =>
+    ipc.agent.send.mutate(typeof message === 'string' ? { chatId, text: message } : { chatId, ...message }).catch((): AgentSendResult => 'unavailable'),
   stop: (chatId: string): Promise<boolean> => ipc.agent.stop.mutate({ chatId }).catch(() => false),
   newChat: (): Promise<null> => ipc.agent.newChat.mutate().catch(() => null),
   selectChat: (chatId: string): Promise<boolean> => ipc.agent.selectChat.mutate({ chatId }).catch(() => false),

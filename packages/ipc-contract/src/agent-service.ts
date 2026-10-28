@@ -1,6 +1,6 @@
 import type { ApprovalDecision } from '@app/specs/agent-approvals.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
-import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentState } from '@app/specs/agent-session.spec';
+import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
 import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 
 // The agent panel's main-side service as the `agent.*` procedures see it (Phase 5 Task 6a;
@@ -22,8 +22,10 @@ export interface AgentService {
    * Sends the user's message in chat `chatId` (`null`: a new chat, bound to the active tab) and
    * starts a turn, unless one is running (`busy`, nothing queued) or the agent isn't set up. Resolves
    * once the turn started or was refused (a refusal also shows as `AgentState.notice`). Never rejects.
+   * `message` is the typed text, or a skill run (Task 7): main renders the skill as the user turn and
+   * offers the model only the skill's tools for that turn.
    */
-  send(chatId: string | null, text: string): Promise<AgentSendResult>;
+  send(chatId: string | null, message: string | AgentSkillRequest): Promise<AgentSendResult>;
   /** Stops the chat's running turn (its pending approvals expire); `false` if none was running. */
   stop(chatId: string): boolean;
   /** Selects a new, empty chat (the next `send` with `null` creates it). */

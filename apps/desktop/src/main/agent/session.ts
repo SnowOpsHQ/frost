@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { createBuiltinSkillRegistry, renderSkill, type Skill, type SkillRegistry } from '@app/ai-skills/skills';
 import type { AgentService } from '@app/ipc-contract';
-import { isApprovalDecision, type ApprovalDecision, type ToolActivityStatus } from '@app/specs/agent-approvals.spec';
+import { isApprovalDecision, pageUrlOf, type ApprovalDecision, type ToolActivityStatus } from '@app/specs/agent-approvals.spec';
 import { AGENT_PROTOCOL_LIMITS, CHAT_BUSY_MESSAGE, type ChatMessage, type LockdownTarget, type ToolCall, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { ROUTE_CREDENTIAL_SLOT, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
 import {
@@ -27,11 +28,14 @@ import {
   type AgentNoticeView,
   type AgentSendResult,
   type AgentSetKeyResult,
+  type AgentSkillRequest,
+  type AgentSkillView,
   type AgentState,
   type AgentToolCardView,
   type AgentUsageView,
 } from '@app/specs/agent-session.spec';
-import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, MAX_TOOL_STEPS, routeModelId, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, isSafeInputText, MAX_TOOL_STEPS, routeModelId, type AgentToolName, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, type SkillInputSlot } from '@app/specs/skills.spec';
 import { toolLabel, type ApprovalBroker, type ApprovalRequestView } from './approvals';
 import type { CredentialSettings } from './credentials';
 import type { AgentEntitlements } from './entitlements';
@@ -50,6 +54,12 @@ import { AGENT_SYSTEM_PROMPT } from './system-prompt';
 // was asked to run) and the tool results main's broker produced, paired the way the runtime
 // expects (a call left unanswered gets the runtime's own "aborted" result). The state never holds a
 // key: the key store answers `hasKey` only, and tool output appears only as bounded preview text.
+//
+// A skill run (Task 7; acceptance `specs/skills.feature.md`, Running) is a send whose message is a
+// skill id and the inputs it declares: main resolves the id through its `SkillRegistry`, renders the
+// skill with the tab's page and the user's inputs as quoted data (`renderSkill`), sends that as the
+// user turn, and offers the model only the skill's tools for the turn (`chat.start.allowedTools` and
+// the broker's registration alike). The chat shows the skill's name and the note, not the template.
 
 export interface AgentSessionDeps {
   readonly host: Pick<AgentHost, 'send' | 'onChat' | 'onStatus' | 'status' | 'lastFailure' | 'lockdown' | 'activeChats' | 'strike' | 'restart'>;
@@ -62,6 +72,10 @@ export interface AgentSessionDeps {
   readonly start: () => Promise<boolean>;
   /** The tab a new chat works on: the active tab. */
   readonly activeTabId: () => number | null;
+  /** The skills that can run (default: the built-ins; Task 9 composes the user's with them). */
+  readonly skills?: SkillRegistry;
+  /** A tab's page as a skill sees it: its URL and title (`null`s for none). Default: nothing known. */
+  readonly tabPage?: (tabId: number) => { readonly url: string | null; readonly title: string | null } | null;
   /** The e2e seam is on: the runtime plays a script, so a turn needs no key. */
   readonly scripted?: boolean;
   readonly now?: () => number;
@@ -95,6 +109,14 @@ interface Entry {
   text: string;
   readonly tools: ToolCard[];
   streaming: boolean;
+  /** The skill a user entry ran. */
+  readonly skill?: { readonly id: string; readonly name: string };
+}
+
+/** A skill run, resolved and checked (before the turn is held). */
+interface SkillRun {
+  readonly skill: Skill;
+  readonly inputs: { readonly [S in SkillInputSlot]?: string };
 }
 
 interface Chat {
@@ -143,6 +165,8 @@ interface Turn {
 }
 
 const NETWORK_TARGETS: readonly LockdownTarget[] = ['fetch', 'WebSocket', 'WebSocketStream', 'EventSource', 'XMLHttpRequest'];
+/** The tools a turn offers when it runs no skill: the whole catalogue. */
+const ALL_TOOLS: readonly AgentToolName[] = AGENT_TOOL_NAMES;
 const L = AGENT_PROTOCOL_LIMITS;
 
 function isHighSurrogate(code: number): boolean {
@@ -232,6 +256,24 @@ function approvalView(request: ApprovalRequestView): AgentApprovalView {
   };
 }
 
+/** A skill as the panel's picker shows it (field by field: never its template). */
+export function skillView(skill: Skill): AgentSkillView {
+  return {
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    inputs: (skill.inputs ?? []).map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? null })),
+  };
+}
+
+/** What a skill run's user entry says: the target query and the note the user gave (`''` for neither). */
+export function skillEntryText(inputs: SkillRun['inputs']): string {
+  const lines: string[] = [];
+  if (inputs.targetQuery !== undefined) lines.push(`Target query: ${inputs.targetQuery}`);
+  if (inputs.userNote !== undefined) lines.push(inputs.userNote);
+  return lines.join('\n');
+}
+
 export function isolationView(lockdown: ReturnType<AgentHost['lockdown']>): AgentIsolationView {
   if (lockdown === null) return { networkGlobalsRemoved: false, fileSandbox: false, note: 'The agent process has not started yet.' };
   const networkGlobalsRemoved = lockdown.removed.includes('fetch') && !lockdown.failed.some((target) => NETWORK_TARGETS.includes(target));
@@ -250,6 +292,25 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   const randomId = deps.randomId ?? randomUUID;
   const log = deps.log ?? (() => undefined);
   const scripted = deps.scripted === true;
+  const skills = deps.skills ?? createBuiltinSkillRegistry();
+  const tabPage = deps.tabPage ?? (() => null);
+
+  /** The registry's skills (a registry that throws lists none). */
+  const listSkills = (): readonly Skill[] => {
+    try {
+      const listed = skills.list();
+      return Array.isArray(listed) ? listed : [];
+    } catch {
+      return [];
+    }
+  };
+  const findSkill = (id: string): Skill | null => {
+    try {
+      return skills.get(id) ?? null;
+    } catch {
+      return null;
+    }
+  };
 
   const chats = new Map<string, Chat>();
   let selected: string | null = null;
@@ -310,7 +371,9 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     outputPreview: card.outputPreview,
   });
   const entryView = (entry: Entry): AgentMessageView =>
-    entry.kind === 'user' ? { kind: 'user', id: entry.id, text: entry.text } : { kind: 'assistant', id: entry.id, text: entry.text, tools: entry.tools.map(cardView), streaming: entry.streaming };
+    entry.kind === 'user'
+      ? { kind: 'user', id: entry.id, text: entry.text, ...(entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}) }
+      : { kind: 'assistant', id: entry.id, text: entry.text, tools: entry.tools.map(cardView), streaming: entry.streaming };
 
   const state = (): AgentState => {
     if (cached !== null) return cached;
@@ -333,6 +396,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         runtime: { status: deps.host.status(), lastFailure: deps.host.lastFailure() },
         isolation: isolationView(deps.host.lockdown()),
       },
+      skills: listSkills().map(skillView),
       chats: summaries,
       active:
         active === undefined
@@ -628,17 +692,56 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   ];
 
   // ---- Sending ----
-  const send = async (chatId: string | null, text: string): Promise<AgentSendResult> => {
-    if (disposed) return 'unavailable';
-    if (typeof text !== 'string' || text.trim() === '' || text.length > CHAT_TEXT_MAX_CHARS) {
-      raise('invalid');
-      return 'invalid';
+
+  /**
+   * A skill request's inputs, checked: only the slots the skill declares, each a bounded string
+   * without control or invisible characters (line feeds and tabs aside); a blank one counts as not
+   * given. `null` when an input is out of bounds or the skill doesn't declare it.
+   */
+  const skillInputs = (skill: Skill, request: AgentSkillRequest): SkillRun['inputs'] | null => {
+    const declared = new Set<string>((skill.inputs ?? []).map((input) => input.slot));
+    const inputs: { [S in SkillInputSlot]?: string } = {};
+    for (const slot of SKILL_INPUT_SLOTS) {
+      const value: unknown = Object.hasOwn(request, slot) ? request[slot] : undefined;
+      if (value === undefined) continue;
+      if (typeof value !== 'string' || value.length > SKILL_SLOT_MAX_CHARS[slot] || !isSafeInputText(value, 'code') || !declared.has(slot)) return null;
+      if (value.trim() !== '') inputs[slot] = value.trim();
     }
+    return inputs;
+  };
+
+  /** Resolves a skill request: the skill and its checked inputs, or why not. */
+  const resolveSkill = (request: AgentSkillRequest): SkillRun | 'invalid' | 'unknown-skill' => {
+    if (typeof request !== 'object' || request === null || !isSkillId(request.skillId)) return 'invalid';
+    if (Object.keys(request).some((key) => key !== 'skillId' && !(SKILL_INPUT_SLOTS as readonly string[]).includes(key))) return 'invalid';
+    const skill = findSkill(request.skillId);
+    if (skill === null) return 'unknown-skill';
+    const inputs = skillInputs(skill, request);
+    return inputs === null ? 'invalid' : { skill, inputs };
+  };
+
+  const send = async (chatId: string | null, message: string | AgentSkillRequest): Promise<AgentSendResult> => {
+    if (disposed) return 'unavailable';
+    let run: SkillRun | null = null;
+    if (typeof message === 'string') {
+      if (message.trim() === '' || message.length > CHAT_TEXT_MAX_CHARS) {
+        raise('invalid');
+        return 'invalid';
+      }
+    } else {
+      const resolved = resolveSkill(message);
+      if (resolved === 'invalid' || resolved === 'unknown-skill') {
+        raise(resolved);
+        return resolved;
+      }
+      run = resolved;
+    }
+    const text = typeof message === 'string' ? message : '';
     if (turn !== null) {
       raise('busy');
       return 'busy';
     }
-    if (!deps.entitlements.allowed('agent')) {
+    if (!deps.entitlements.allowed('agent') || (run !== null && !deps.entitlements.allowed('agent.skills'))) {
       raise('not-entitled');
       return 'not-entitled';
     }
@@ -701,25 +804,55 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     let chat = chatId === null ? undefined : chats.get(chatId);
     if (chatId !== null && chat === undefined) return refuse('unknown-chat');
     const created = chat === undefined;
+    // What the model reads and the tools it is offered: the typed text and the whole catalogue, or
+    // the rendered skill and the skill's tools (in catalogue order).
+    const tabId = chat?.tabId ?? deps.activeTabId();
+    if (tabId === null) return refuse('no-tab');
+    let content = text;
+    let allowedTools: readonly AgentToolName[] = ALL_TOOLS;
+    if (run !== null) {
+      let page: { readonly url: string | null; readonly title: string | null } | null = null;
+      try {
+        page = tabPage(tabId);
+      } catch {
+        page = null;
+      }
+      const rendered = renderSkill(run.skill, { pageUrl: pageUrlOf(page?.url ?? null), pageTitle: page?.title ?? null, ...run.inputs });
+      const skillTools = new Set<string>(run.skill.allowedTools);
+      allowedTools = ALL_TOOLS.filter((name) => skillTools.has(name));
+      if (rendered === null || rendered.length > L.maxMessageChars || allowedTools.length === 0) return refuse('unknown-skill');
+      content = rendered;
+    }
     if (chat === undefined) {
-      const tabId = deps.activeTabId();
-      if (tabId === null) return refuse('no-tab');
-      chat = { id: randomId(), title: chatTitle(text), tabId, updatedAt: now(), history: [], entries: [], truncated: false, error: null, usage: null, contextTokens: null, modelId: null };
+      chat = {
+        id: randomId(),
+        title: chatTitle(run !== null ? run.skill.name : text),
+        tabId,
+        updatedAt: now(),
+        history: [],
+        entries: [],
+        truncated: false,
+        error: null,
+        usage: null,
+        contextTokens: null,
+        modelId: null,
+      };
       chats.set(chat.id, chat);
     }
     current.chat = chat;
     current.before = { error: chat.error, modelId: chat.modelId, updatedAt: chat.updatedAt, selected, created };
     current.historyBefore = chat.history.length;
     current.entriesBefore = chat.entries.length;
-    chat.history.push({ role: 'user', content: text });
-    chat.entries.push(newEntry('user', text));
+    chat.history.push({ role: 'user', content });
+    chat.entries.push(run !== null ? { ...newEntry('user', skillEntryText(run.inputs)), skill: { id: run.skill.id, name: run.skill.name } } : newEntry('user', text));
     chat.error = null;
     chat.modelId = modelId;
     selected = chat.id;
     touch(chat);
     evict();
 
-    deps.approvals.register(chat.id, { tabId: chat.tabId, allowedTools: [...AGENT_TOOL_NAMES] });
+    // The broker refuses any tool outside the list, whatever the runtime asks for.
+    deps.approvals.register(chat.id, { tabId: chat.tabId, allowedTools: [...allowedTools] });
     const posted = deps.host.send({
       type: 'chat.start',
       chatId: chat.id,
@@ -727,7 +860,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       systemPrompt: AGENT_SYSTEM_PROMPT,
       modelId,
       route,
-      allowedTools: [...AGENT_TOOL_NAMES],
+      allowedTools: [...allowedTools],
     });
     if (!posted) {
       deps.approvals.unregister(chat.id);

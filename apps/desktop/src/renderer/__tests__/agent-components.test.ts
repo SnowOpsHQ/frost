@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 // Spec: specs/agent-panel.spec.ts (AGENT_APPROVAL_BUTTONS, AGENT_SET_KEY_MESSAGES), specs/agent-session.spec.ts
 // (APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE)
-// Acceptance: specs/agent-panel.feature.md (Components)
+// Acceptance: specs/agent-panel.feature.md (Components), specs/skills.feature.md (composer-skill-picker)
 import { act, createElement, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { AGENT_APPROVAL_BUTTONS, AGENT_SET_KEY_MESSAGES } from '@app/specs/agent-panel.spec';
 import { APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
-import { approval, card, jsApproval, setup } from './agent-fixtures';
+import { approval, card, jsApproval, setup, SKILLS } from './agent-fixtures';
 
 const calls = vi.hoisted(() => ({
   answerApproval: vi.fn(async (..._args: unknown[]) => 'answered' as const),
@@ -169,5 +169,54 @@ describe('agent panel components', () => {
     click(byTestId('agent-stop'));
     await flush();
     expect(calls.stop).toHaveBeenCalledExactlyOnceWith('c');
+  });
+
+  test('composer-skill-picker', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    const typeInto = (el: HTMLInputElement | HTMLSelectElement, value: string) =>
+      act(() => {
+        const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value);
+        el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+      });
+    // No skills listed: no picker.
+    render(createElement(AgentComposer, { chatId: null, running: false, stopChatId: null, inputRef }));
+    expect(byTestId('agent-skill-picker')).toBeNull();
+
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills: SKILLS }));
+    const picker = byTestId('agent-skill-picker') as HTMLSelectElement;
+    expect([...picker.options].map((option) => option.textContent)).toEqual(['Write a message', ...SKILLS.map((skill) => skill.name)]);
+    expect(byTestId('agent-input')).not.toBeNull();
+    typeInto(picker, 'rewrite-title-meta');
+    // The message field gives way to the skill's description and its inputs; Send to Run.
+    expect(byTestId('agent-input')).toBeNull();
+    expect(byTestId('agent-send')).toBeNull();
+    expect(byTestId('agent-skill-description')!.textContent).toBe('Three of each.');
+    const query = byTestId('agent-skill-input-targetQuery') as HTMLInputElement;
+    const note = byTestId('agent-skill-input-userNote') as HTMLInputElement;
+    expect(query.getAttribute('aria-label')).toBe('Target query (optional)');
+    typeInto(query, '  green tea ');
+    typeInto(note, '   ');
+    click(byTestId('agent-skill-run'));
+    await flush();
+    expect(calls.send).toHaveBeenCalledExactlyOnceWith('c', { skillId: 'rewrite-title-meta', targetQuery: 'green tea' });
+    // Started: back to the message field.
+    expect(byTestId('agent-input')).not.toBeNull();
+    expect((byTestId('agent-skill-picker') as HTMLSelectElement).value).toBe('');
+
+    // A refused run keeps the skill and its fields.
+    calls.send.mockResolvedValueOnce('busy' as never);
+    typeInto(byTestId('agent-skill-picker') as HTMLSelectElement, 'plain-skill');
+    expect(host.querySelectorAll('.agent-skill-input')).toHaveLength(0);
+    act(() => byTestId('agent-composer')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await flush();
+    expect(calls.send).toHaveBeenLastCalledWith('c', { skillId: 'plain-skill' });
+    expect(byTestId('agent-skill')).not.toBeNull();
+
+    // While a turn runs the picker is disabled and Stop replaces Run.
+    render(createElement(AgentComposer, { chatId: 'c', running: true, stopChatId: 'c', inputRef, skills: SKILLS }));
+    expect((byTestId('agent-skill-picker') as HTMLSelectElement).disabled).toBe(true);
+    expect(byTestId('agent-skill-run')).toBeNull();
+    expect(byTestId('agent-stop')).not.toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 // Specs: specs/agent-panel.spec.ts (AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS, AGENT_APPROVAL_BUTTONS),
 // specs/agent-session.spec.ts (AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE),
 // specs/agent-e2e-script.schema.ts (the script format)
-// Acceptance: specs/agent-panel.feature.md (End to end)
+// Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools)
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -327,4 +327,34 @@ test('agent-renders-tool-output-as-text', async () => {
   expect(await output.evaluate((el) => el.children.length)).toBe(0);
   expect(await panel().locator('img, b, script').count()).toBe(0);
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+});
+
+test('agent-skill-narrows-tools', async () => {
+  // The model reaches for `navigate`, which the skill doesn't offer, then reads the page.
+  const id = await launchWith([
+    { text: ['Opening another page first.'], toolCalls: [{ toolName: 'navigate', input: { url: `${site.origin}/next` } }] },
+    { toolCalls: [{ toolName: 'page_text', input: {} }] },
+    { text: ['The page reads well.'] },
+  ]);
+  await page.getByTestId('agent-skill-picker').selectOption('audit-this-page');
+  await expect(page.getByTestId('agent-input')).toHaveCount(0);
+  const note = page.getByTestId('agent-skill-input-userNote');
+  await note.fill('headings first');
+  await note.press('Enter');
+
+  // The chat shows the skill's name and the note, not its template.
+  const user = page.locator('[data-testid="agent-message"][data-kind="user"]').last();
+  await expect(user.getByTestId('agent-message-skill')).toHaveText('Skill: Audit this page');
+  await expect(user).toContainText('headings first');
+  await expect(user).not.toContainText('skill-inputs');
+  await expect(page.getByTestId('agent-chat-heading')).toHaveText('Audit this page');
+  await expect(assistantTexts().last()).toHaveText('The page reads well.');
+  // The off-list call never reached main: no approval card, no tool card for it, the tab stayed.
+  await expect(approvalCard()).toHaveCount(0);
+  await expect(toolCards()).toHaveCount(1);
+  await expect(toolCards().first()).toHaveAttribute('data-tool', 'page_text');
+  await expect(toolCards().first()).toHaveAttribute('data-status', 'done');
+  expect(await urlOf(id!)).toBe(`${site.origin}/start`);
+  // Back to a message field once the run started.
+  await expect(page.getByTestId('agent-input')).toBeVisible();
 });

@@ -1,3 +1,4 @@
+import type { SkillRegistry } from '@app/ai-skills/skills';
 import type { AgentGrantsStore } from './grants';
 import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
 import { e2eAgentScriptFrom } from './e2e-seam';
@@ -22,7 +23,7 @@ export interface AgentServiceApp {
 
 /** The tab controller as the agent sees it: the page tools' calls, and each tab's URL. */
 export interface AgentServiceBrowser extends PageToolsBrowser {
-  getState(): { readonly activeTabId: number | null; readonly tabs: readonly { readonly id: number; readonly url: string }[] };
+  getState(): { readonly activeTabId: number | null; readonly tabs: readonly { readonly id: number; readonly url: string; readonly title: string }[] };
 }
 
 export interface AgentServiceDeps {
@@ -34,14 +35,17 @@ export interface AgentServiceDeps {
   readonly sessionStore: { readonly agentGrants: AgentGrantsStore };
   /** Main's build directory (`__dirname`): the runtime's bundle is beside main's. */
   readonly buildDir: string;
+  /** The skills the panel can run (default: the built-ins; Task 9 passes the built-ins composed with the user's). */
+  readonly skills?: SkillRegistry;
   readonly log?: (line: string) => void;
 }
 
 export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
   const log = deps.log ?? (() => undefined);
   const e2eAgentScript = e2eAgentScriptFrom({ packaged: deps.app.isPackaged, switchValue: deps.app.commandLine.getSwitchValue(AGENT_E2E_SCRIPT_SWITCH), log });
+  const tabOf = (tabId: number) => deps.browser.getState().tabs.find((item) => item.id === tabId);
   const tabUrl = (tabId: number): string | null => {
-    const tab = deps.browser.getState().tabs.find((item) => item.id === tabId);
+    const tab = tabOf(tabId);
     return tab === undefined || tab.url === '' ? null : tab.url;
   };
   const agent = createAgent({
@@ -64,6 +68,12 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     grants: agent.grants,
     start: () => agent.start(),
     activeTabId: () => deps.browser.getState().activeTabId,
+    // A skill's `pageUrl` and `pageTitle`: the chat tab's, as the tab strip shows them.
+    tabPage: (tabId) => {
+      const tab = tabOf(tabId);
+      return tab === undefined ? null : { url: tab.url === '' ? null : tab.url, title: tab.title === '' ? null : tab.title };
+    },
+    ...(deps.skills ? { skills: deps.skills } : {}),
     scripted: e2eAgentScript !== null,
     log,
   });

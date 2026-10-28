@@ -4,9 +4,10 @@
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
-  "description": "The agent's tool definitions (descriptions and Zod input schemas) and the read-only SERP, intent and GSC ports. No Electron or network code.",
+  "description": "The agent's tool definitions (descriptions and Zod input schemas), the read-only SERP, intent and GSC ports, and the declarative SEO skills. No Electron or network code.",
   "exports": {
     ".": "./src/index.ts",
+    "./skills": "./src/skills/index.ts",
     "./fakes": "./src/fakes.ts"
   },
   "scripts": {

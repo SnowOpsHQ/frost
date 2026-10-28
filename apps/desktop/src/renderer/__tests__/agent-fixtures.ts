@@ -1,5 +1,5 @@
 // Shared `AgentState` builders for the agent panel's tests (not a test file itself).
-import { EXECUTE_JS_APPROVAL_NOTE, type AgentApprovalView, type AgentSetupView, type AgentState, type AgentToolCardView } from '@app/specs/agent-session.spec';
+import { EXECUTE_JS_APPROVAL_NOTE, type AgentApprovalView, type AgentSetupView, type AgentSkillView, type AgentState, type AgentToolCardView } from '@app/specs/agent-session.spec';
 
 export function setup(changes: Partial<AgentSetupView> = {}): AgentSetupView {
   return {
@@ -44,5 +44,20 @@ export function card(changes: Partial<AgentToolCardView> = {}): AgentToolCardVie
 }
 
 export function state(changes: Partial<AgentState> = {}): AgentState {
-  return { version: 2, setup: setup(), chats: [], active: null, running: false, approval: null, notice: null, readToolsAllowed: true, grantsCount: 0, ...changes };
+  return { version: 2, setup: setup(), skills: [], chats: [], active: null, running: false, approval: null, notice: null, readToolsAllowed: true, grantsCount: 0, ...changes };
 }
+
+/** Skills as main lists them (`AgentState.skills`). */
+export const SKILLS: readonly AgentSkillView[] = [
+  { id: 'audit-this-page', name: 'Audit this page', description: 'Summarise the audit.', inputs: [{ slot: 'userNote', label: 'Focus on (optional)', placeholder: 'For example: mobile' }] },
+  {
+    id: 'rewrite-title-meta',
+    name: 'Rewrite title and meta description',
+    description: 'Three of each.',
+    inputs: [
+      { slot: 'targetQuery', label: 'Target query (optional)', placeholder: null },
+      { slot: 'userNote', label: 'Note (optional)', placeholder: null },
+    ],
+  },
+  { id: 'plain-skill', name: 'Plain skill', description: 'No inputs.', inputs: [] },
+];
