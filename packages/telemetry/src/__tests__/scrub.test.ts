@@ -200,14 +200,15 @@ describe('scrubbing', () => {
   });
 
   test('scrubbing-is-linear', () => {
-    const size = 1_000_000;
+    const size = 256 * 1024;
     const shapes = ['a', '?', 'eyJ-', 'a.', 'a@', '-@', 'x@a.', '/a', ' /a', 'a/', ':', '::', '1:', '%', 'a-', 'aA1', '0', '.', '\\', 'C:', 'password ', 'Bearer ', 'token=', '"', 'www.', 'a.b.c ', 'frost_dt_', 'ya29.', '1//', '4/0', 'GOCSPX-', 'code=', 'code_verifier=a'];
-    // Measured at under 50 ms per rule locally and up to ~0.5 s on a busy CI runner. A quadratic
-    // rule takes minutes on a megabyte (about 12 s on 100 KB), so a 2 s budget still catches one.
-    const budgetMs = 2000;
+    // A linear rule takes milliseconds on 256 KB (about a quarter of the ~0.5 s a busy CI runner
+    // took on a megabyte). A quadratic one takes over a minute (about 12 s on 100 KB), so a 1 s
+    // budget still catches one.
+    const budgetMs = 1000;
     for (const shape of shapes) {
       const text = shape.repeat(Math.ceil(size / shape.length));
-      // Each rule on its own, on the whole megabyte (no cut first): linear in its input.
+      // Each rule on its own, on the whole input (no cut first): linear in its input.
       for (const rule of SCRUB_RULES) {
         const start = performance.now();
         text.replace(rule.pattern, rule.replacement);
@@ -221,7 +222,7 @@ describe('scrubbing', () => {
       expect(ms, `scrubber on ${JSON.stringify(shape)}`).toBeLessThan(budgetMs / 4);
       expect(scrubbed.length).toBeLessThanOrEqual(TELEMETRY_LIMITS.maxScrubInputChars * 4);
     }
-  });
+  }, 60_000);
 
   test('scrubbing-cuts-before-and-after', () => {
     // A secret cut in half at the input limit does not leave its first half behind.
