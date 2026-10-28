@@ -12,6 +12,7 @@ import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
 import type { TelemetryService } from './telemetry-service';
+import type { GscIpcService } from './gsc-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -176,4 +177,6 @@ export interface IpcServices {
   readonly account?: AccountService;
   /** Telemetry consent and renderer errors (Phase 4 Task 7, `telemetry-service.ts`). */
   readonly telemetry?: TelemetryService;
+  /** The read-only Search Console connection and read API (Phase 4 Task 8, `gsc-service.ts`). */
+  readonly gsc?: GscIpcService;
 }

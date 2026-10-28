@@ -262,7 +262,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Failing tests:** unit tests with a fake OAuth server and a fake GSC API (`e2e/fake-google.ts`
   shared with e2e): `gsc-scope-is-read-only`, PKCE and state checked, refresh on 401, disconnect
   revokes and deletes, property matching, not-entitled refused, `answers-carry-no-secret`.
-- [ ] commit `feat(gsc): read-only Search Console connection and performance API`
+- [x] commit `feat(gsc): read-only Search Console connection and performance API`
 - [ ] Security review of Task 8 before Task 9.
 
 ### Task 9: Settings view

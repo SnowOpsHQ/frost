@@ -5,7 +5,7 @@ import { openExternalIfAllowed, trackUserGesture } from '../security/gesture';
 import { createAccountApi } from './api-client';
 import { buildTimeAccountEnv, resolveAccountConfig } from './config';
 import { createEntitlements, type EntitlementsReader } from './entitlements';
-import { createWindowGestures } from './gestures';
+import { createWindowGestures, type WindowGestures } from './gestures';
 import { startLoopback } from './loopback';
 import { holdQuitFor } from './quit';
 import { createSecretStore, type SecretStore } from './secret-store';
@@ -23,6 +23,8 @@ export interface AccountMain {
   readonly secretStore: SecretStore;
   /** Main's entitlements (`null` when unconfigured: nothing is entitled). Gate in main on `service.entitlements()`. */
   readonly entitlements: EntitlementsReader | null;
+  /** Live user gestures per app window (Search Console's connect spends them too, Task 8). */
+  readonly gestures: WindowGestures;
 }
 
 const log = (message: string): void => console.warn(`frost: ${redact(message)}`);
@@ -89,5 +91,5 @@ export async function createAccountMain(): Promise<AccountMain> {
     entitlements?.dispose();
     return service.dispose();
   });
-  return { service, secretStore, entitlements };
+  return { service, secretStore, entitlements, gestures };
 }

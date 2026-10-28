@@ -21,6 +21,7 @@ import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
 import { telemetryRouter } from './telemetry-router';
+import { gscRouter } from './gsc-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -285,6 +286,8 @@ export const appRouter = router({
   account: accountRouter,
   // Phase 4 Task 7 (`telemetry.feature.md`, Desktop): telemetry consent and renderer errors.
   telemetry: telemetryRouter,
+  // Phase 4 Task 8 (`gsc.feature.md`): the read-only Search Console connection and performance API.
+  gsc: gscRouter,
 });
 
 export type AppRouter = typeof appRouter;

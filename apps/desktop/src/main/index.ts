@@ -6,6 +6,7 @@ import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { createAccountMain } from './account/main';
 import { createWindowRegistry } from './app-windows';
+import { createGscMain } from './gsc/main';
 import { contextMenuTemplate } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
@@ -393,6 +394,8 @@ function start(): void {
     // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
     // check), before the first window (its gestures are tracked from creation).
     const account = await createAccountMain();
+    // Search Console (specs/gsc.feature.md): read-only, gated on `search-console`; reuses the account's store and gestures.
+    const gsc = createGscMain(account);
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,
@@ -431,6 +434,7 @@ function start(): void {
         settings: searchEngine,
         account: account.service,
         telemetry: telemetry.service,
+        gsc: gsc.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
