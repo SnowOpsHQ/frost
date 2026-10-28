@@ -12,6 +12,7 @@ import { SearchParamsSchema } from './capture-search-params.schema';
 import { RenderProfileSchema } from './render-profile.schema.spec';
 import {
   SCREENSHOT_IMAGE_SIZES,
+  SCREENSHOT_LIMITS,
   SCREENSHOT_REFUSALS,
   type CancelAreaInput,
   type ScreenshotEntry,
@@ -94,8 +95,9 @@ export const ScreenshotsAnswerSchema = z.strictObject({
   next: ScreenshotsCursorSchema.nullable(),
 }) satisfies z.ZodType<ScreenshotsAnswer>;
 
-/** A thumbnail (PNG) or preview (JPEG) as a base64 `data:` URL (the chrome's CSP allows `img-src data:`), or `null`. */
+/** A thumbnail (PNG) or preview (JPEG) as a base64 `data:` URL of at most `maxImageDataUrlChars` (the chrome's CSP allows `img-src data:`), or `null`. */
 export const ScreenshotImageAnswerSchema = z
   .string()
+  .max(SCREENSHOT_LIMITS.maxImageDataUrlChars)
   .regex(/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/)
   .nullable() satisfies z.ZodType<ScreenshotImageAnswer>;

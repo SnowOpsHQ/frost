@@ -10,8 +10,7 @@ import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
-import type { ChangesService } from './changes-service';
-import type { ScreenshotsService } from './changes-service';
+import type { ChangesService, ScreenshotsService } from './changes-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -174,5 +173,6 @@ export interface IpcServices {
   readonly checks?: ChecksService;
   /** Change intelligence: captures and their history (Phase 6 Task 3, `changes-service.ts`). */
   readonly changes?: ChangesService;
+  /** Change intelligence: screenshots of the active tab and their gallery (Phase 6 Task 5, `changes-service.ts`). */
   readonly screenshots?: ScreenshotsService;
 }

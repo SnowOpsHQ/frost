@@ -1,6 +1,6 @@
 import { SCREENSHOT_LIMITS, SCREENSHOT_REFUSALS, type ScreenshotLimits, type ScreenshotRect, type ScreenshotRefusal } from '@app/specs/screenshot.spec';
 import { runCancelArea, runMeasure, runRestore, runScroll, runSelectArea, type ScriptTarget, type ScrollPosition } from './page-script';
-import { cropBitmap, pixelRect, placeRows, planStitch, stitchWidth, type Bitmap } from './stitch';
+import { composeStitch, cropBitmap, pixelRect, planStitch, stitchWidth, type Bitmap } from './stitch';
 
 // Driving a tab's WebContents for a screenshot (Phase 6 Task 5; spec `screenshot.spec.ts`;
 // acceptance `screenshot.feature.md`, Kinds). Each kind answers a BGRA bitmap in the view's pixels,
@@ -52,7 +52,45 @@ export interface Captured {
 
 const isRefusal = (value: unknown): value is ScreenshotRefusal => (SCREENSHOT_REFUSALS as readonly unknown[]).includes(value);
 const stopped = (signal: AbortSignal): ScreenshotFailure =>
-  new ScreenshotFailure(isRefusal(signal.reason) ? signal.reason : 'cancelled', signal.reason === 'capture-failed' ? 'the full page ran past its deadline' : 'the screenshot was cancelled');
+  new ScreenshotFailure(isRefusal(signal.reason) ? signal.reason : 'cancelled', signal.reason === 'capture-failed' ? 'the capture ran past its deadline' : 'the screenshot was cancelled');
+
+/** A signal that aborts with `signal`, or with `reason` once `ms` pass; `release()` drops the timer and the link. */
+function bounded(signal: AbortSignal, ms: number, reason: ScreenshotRefusal): { readonly signal: AbortSignal; release(): void } {
+  const run = new AbortController();
+  const forward = (): void => run.abort(signal.reason);
+  if (signal.aborted) forward();
+  else signal.addEventListener('abort', forward, { once: true });
+  const timer = setTimeout(() => run.abort(reason), ms);
+  return {
+    signal: run.signal,
+    release: () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', forward);
+    },
+  };
+}
+
+/** `run`'s answer, or `fallback` if it rejects or `ms` pass first (a page that never answers a clean-up script). */
+function settleWithin<T>(run: () => Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    Promise.resolve()
+      .then(run)
+      .catch(() => fallback),
+    new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * The view's device pixels per CSS px: the page's `devicePixelRatio` when the capture's size agrees
+ * with it (`round(cssSize × ratio)` within 1 px), else the ratio measured from the capture (device
+ * emulation scales the view; a fractionally scaled display rounds sizes).
+ */
+export function deviceScale(cssSize: number, capturedSize: number, devicePixelRatio: number): number {
+  return Math.abs(Math.round(cssSize * devicePixelRatio) - capturedSize) <= 1 ? devicePixelRatio : capturedSize / cssSize;
+}
 
 /** `promise`'s answer, or the signal's failure as soon as it aborts (the promise is left to settle on its own). */
 function unless<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -110,23 +148,25 @@ async function captureView(target: ScreenshotTarget, signal: AbortSignal): Promi
   return step(async () => bitmapOf(await target.capturePage()), signal, 'the view could not be captured');
 }
 
-/** The visible viewport (`capturePage()`), scrollbar and all. */
-export async function captureViewport(target: ScreenshotTarget, { signal }: CaptureOptions): Promise<Captured> {
-  return { bitmap: await captureView(target, signal), segments: 1, truncated: false, rect: null };
+/** The visible viewport (`capturePage()`), scrollbar and all; within `segmentTimeoutMs`. */
+export async function captureViewport(target: ScreenshotTarget, { signal, limits = SCREENSHOT_LIMITS }: CaptureOptions): Promise<Captured> {
+  const run = bounded(signal, limits.segmentTimeoutMs, 'capture-failed');
+  try {
+    return { bitmap: await captureView(target, run.signal), segments: 1, truncated: false, rect: null };
+  } finally {
+    run.release();
+  }
 }
 
 /**
  * The whole page, stitched (`planStitch`): measured, captured at the top (whose bitmap gives the
- * view's pixels per CSS px), then scrolled segment by segment, each one's rows placed as captured
- * (cropped by where the page really scrolled to: a page that stops short is cut there, `truncated`).
- * Bounded by `fullPageDeadlineMs`; the scroll position is restored whatever happens.
+ * view's pixels per CSS px, `deviceScale`), then scrolled segment by segment, each one's rows placed
+ * as captured (cropped by where the page really scrolled to: a page that stops short is cut there,
+ * `truncated`). Bounded by `fullPageDeadlineMs`; the scroll position is restored whatever happens
+ * (within `segmentTimeoutMs`: a page that never answers does not hold the screenshot).
  */
 export async function captureFullPage(target: ScreenshotTarget, { signal, limits = SCREENSHOT_LIMITS }: CaptureOptions): Promise<Captured> {
-  const run = new AbortController();
-  const forward = (): void => run.abort(signal.reason);
-  if (signal.aborted) forward();
-  else signal.addEventListener('abort', forward, { once: true });
-  const deadline = setTimeout(() => run.abort('capture-failed'), limits.fullPageDeadlineMs);
+  const run = bounded(signal, limits.fullPageDeadlineMs, 'capture-failed');
   let origin: ScrollPosition | null = null;
   try {
     const measure = await step(() => runMeasure(target), run.signal, 'its size could not be read');
@@ -134,33 +174,35 @@ export async function captureFullPage(target: ScreenshotTarget, { signal, limits
     const at = origin;
     const top = await step(() => runScroll(target, at.x, 0), run.signal, 'it could not be scrolled');
     const first = await captureView(target, run.signal);
-    // The view's device rows per CSS px, from a real capture (device emulation, fractional scaling).
-    const scale = first.height / measure.innerHeight;
+    const scale = deviceScale(measure.innerHeight, first.height, measure.devicePixelRatio);
     const plan = planStitch({ docHeightCss: measure.scrollHeight, viewportHeightCss: measure.clientHeight, viewportWidthCss: measure.clientWidth, scale, limits });
     if (plan.segments.length === 0) throw new ScreenshotFailure('capture-failed', 'its size cannot be stitched');
     const width = stitchWidth([first], plan.width);
     const out = Buffer.alloc(width * plan.height * 4);
-    // Rows are placed where the last segment really ended, so a row of rounding never leaves a gap.
+    // Each segment is scrolled to where the rows placed so far end (never past them, so no row is
+    // missed however the page snaps its scroll position), and its rows are placed from there on.
+    // `planStitch` sets the size and the caps; at most `maxSegments` captures are taken.
+    const maxScroll = Math.max(0, measure.scrollHeight - measure.clientHeight);
     let height = 0;
     let segments = 0;
-    for (const [index, segment] of plan.segments.entries()) {
-      const position = index === 0 ? top : await step(() => runScroll(target, at.x, segment.scrollY), run.signal, 'it could not be scrolled');
-      const shot = index === 0 ? first : await captureView(target, run.signal);
+    while (height < plan.height && segments < limits.maxSegments) {
+      const want = Math.min(maxScroll, Math.floor(height / scale));
+      const position = segments === 0 ? top : await step(() => runScroll(target, at.x, want), run.signal, 'it could not be scrolled');
+      const shot = segments === 0 ? first : await captureView(target, run.signal);
       const cropTop = height - Math.round(position.y * scale);
-      const end = Math.min(segment.destY + segment.cropHeight, plan.height);
-      const rows = Math.min(end - height, shot.height - cropTop);
-      // The page did not scroll as far as planned (or scrolled past what is placed): its rows stop here.
+      const rows = Math.min(plan.height - height, shot.height - cropTop);
+      // The page did not scroll as far as asked (or scrolled past what is placed): its rows stop here.
       if (cropTop < 0 || rows <= 0) break;
-      placeRows(out, width, plan.height, { ...shot, cropTop, cropHeight: rows, destY: height });
+      composeStitch(out, width, plan.height, { ...shot, cropTop, cropHeight: rows, destY: height });
       height += rows;
       segments += 1;
     }
     const truncated = plan.truncated || height < plan.height;
     return { bitmap: { bitmap: height === plan.height ? out : out.subarray(0, width * height * 4), width, height }, segments, truncated, rect: null };
   } finally {
-    clearTimeout(deadline);
-    signal.removeEventListener('abort', forward);
-    if (origin) await runRestore(target, origin.x, origin.y).catch(() => null);
+    run.release();
+    const at = origin;
+    if (at) await settleWithin(() => runRestore(target, at.x, at.y), limits.segmentTimeoutMs, null);
   }
 }
 
@@ -171,11 +213,7 @@ export async function captureFullPage(target: ScreenshotTarget, { signal, limits
  * and cropped to the rectangle at the view's pixels per CSS px (captured width over `innerWidth`).
  */
 export async function captureArea(target: ScreenshotTarget, { signal, limits = SCREENSHOT_LIMITS }: CaptureOptions): Promise<Captured> {
-  const run = new AbortController();
-  const forward = (): void => run.abort(signal.reason);
-  if (signal.aborted) forward();
-  else signal.addEventListener('abort', forward, { once: true });
-  const timeout = setTimeout(() => run.abort('cancelled'), limits.areaTimeoutMs);
+  const run = bounded(signal, limits.areaTimeoutMs, 'cancelled');
   let selection: Awaited<ReturnType<typeof runSelectArea>>;
   try {
     try {
@@ -185,21 +223,27 @@ export async function captureArea(target: ScreenshotTarget, { signal, limits = S
     }
     selection = await unless(runSelectArea(target), run.signal);
   } catch (error) {
-    // Cancelled, timed out, or the script failed: make sure no overlay is left in the page.
-    await runCancelArea(target).catch(() => false);
+    // Cancelled, timed out, or the script failed: make sure no overlay is left in the page (a page
+    // that never answers gets `segmentTimeoutMs`).
+    await settleWithin(() => runCancelArea(target), limits.segmentTimeoutMs, false);
     if (error instanceof ScreenshotFailure) throw error;
     throw new ScreenshotFailure('capture-failed', 'the area selector failed');
   } finally {
-    clearTimeout(timeout);
-    signal.removeEventListener('abort', forward);
+    run.release();
   }
   if (selection === null) throw new ScreenshotFailure('cancelled', 'no area was selected');
   if (selection === 'invalid') throw new ScreenshotFailure('capture-failed', 'the area selector answered something else than an area');
   const rect = selection;
-  const measure = await step(() => runMeasure(target), signal, 'the viewport could not be read');
-  const view = await captureView(target, signal);
-  const pixels = pixelRect(rect, view.width / measure.innerWidth, view.width, view.height);
-  const bitmap = pixels === null ? null : cropBitmap(view, pixels);
-  if (bitmap === null) throw new ScreenshotFailure('capture-failed', 'the area is outside the view');
-  return { bitmap, segments: 1, truncated: false, rect };
+  // The capture itself, within `segmentTimeoutMs`.
+  const capture = bounded(signal, limits.segmentTimeoutMs, 'capture-failed');
+  try {
+    const measure = await step(() => runMeasure(target), capture.signal, 'the viewport could not be read');
+    const view = await captureView(target, capture.signal);
+    const pixels = pixelRect(rect, deviceScale(measure.innerWidth, view.width, measure.devicePixelRatio), view.width, view.height);
+    const bitmap = pixels === null ? null : cropBitmap(view, pixels);
+    if (bitmap === null) throw new ScreenshotFailure('capture-failed', 'the area is outside the view');
+    return { bitmap, segments: 1, truncated: false, rect };
+  } finally {
+    capture.release();
+  }
 }

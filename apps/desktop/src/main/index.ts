@@ -49,10 +49,7 @@ import { createMainWindow, createTabView, loadRenderer } from './window';
 import { createLoadTimes } from './changes/loads';
 import { runRegions } from './changes/regions';
 import { changesTabs, createChangesService } from './changes/service';
-import { ClipboardItem, nativeImage, shell } from 'electron';
-import { electronImaging } from './screenshots/imaging';
-import { createScreenshotsService, screenshotTabs } from './screenshots/service';
-import { createScreenshotFiles } from './screenshots/store';
+import { createMainScreenshots } from './screenshots/electron';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -321,7 +318,7 @@ function start(): void {
   app.on('web-contents-created', (_event, contents) => changeLoads.watch(contents));
   const changes = createChangesService({ store: sessionStore.changeIntel, tabs: changesTabs(browser, (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null, changeLoads), extract: runRegions, log: logSession });
   // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
-  const screenshots = createScreenshotsService({ store: sessionStore.changeIntel, files: createScreenshotFiles(app.getPath('userData')), tabs: screenshotTabs(browser, (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null), imaging: electronImaging({ nativeImage, clipboard, ClipboardItem }), reveal: (file) => shell.showItemInFolder(file), log: logSession });
+  const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.

@@ -3,7 +3,14 @@
 // plan-stitch-respects-caps, compose-stitch-places-rows, crop-area-maps-css-to-pixels)
 import { describe, expect, test } from 'vitest';
 import { SCREENSHOT_LIMITS } from '@app/specs/screenshot.spec';
-import { composeStitch, cropBitmap, pixelRect, planStitch, stitchWidth, type StitchPlan } from '../stitch';
+import { composeStitch, cropBitmap, pixelRect, planStitch, stitchWidth, type ComposeSegment, type StitchPlan } from '../stitch';
+
+/** The segments composed into one `width` × `height` bitmap, as a full page does one by one. */
+function composeAll(segments: readonly ComposeSegment[], width: number, height: number): Buffer {
+  const out = Buffer.alloc(width * height * 4);
+  for (const segment of segments) composeStitch(out, width, height, segment);
+  return out;
+}
 
 const LIMITS = { maxStitchedHeightPx: SCREENSHOT_LIMITS.maxStitchedHeightPx, maxPixels: SCREENSHOT_LIMITS.maxPixels, maxSegments: SCREENSHOT_LIMITS.maxSegments };
 
@@ -119,14 +126,14 @@ describe('composeStitch', () => {
     // Two viewports of 4 rows over a 6-row document: the second scrolled to row 2, its top 2 rows cropped.
     const first = { bitmap: rowsBitmap(3, 4, 1, 0), width: 3, height: 4, cropTop: 0, cropHeight: 4, destY: 0 };
     const second = { bitmap: rowsBitmap(3, 4, 2, 2), width: 3, height: 4, cropTop: 2, cropHeight: 2, destY: 4 };
-    const out = composeStitch([first, second], 3, 6);
+    const out = composeAll([first, second], 3, 6);
     expect(out).toHaveLength(3 * 6 * 4);
     for (let y = 0; y < 6; y++) for (let x = 0; x < 3; x++) expect(pixel(out, 3, x, y), `${x},${y}`).toEqual([y, 0, y < 4 ? 1 : 2, 255]);
     // The right edge is cropped to the narrowest segment (a scrollbar, a resize mid-run).
     const narrow = { ...second, bitmap: rowsBitmap(2, 4, 2, 2), width: 2 };
     expect(stitchWidth([first, narrow], 3)).toBe(2);
     expect(stitchWidth([first, second], 3)).toBe(3);
-    const cropped = composeStitch([first, narrow], 2, 6);
+    const cropped = composeAll([first, narrow], 2, 6);
     expect(pixel(cropped, 2, 1, 5)).toEqual([5, 0, 2, 255]);
     expect(pixel(cropped, 2, 1, 0)).toEqual([0, 0, 1, 255]);
     // Out-of-range crops and destinations are clipped, never read or written past a buffer.
@@ -136,7 +143,9 @@ describe('composeStitch', () => {
       { bitmap: rowsBitmap(3, 4, 5), width: 3, height: 4, cropTop: -2, cropHeight: 2, destY: 0 }, // before its bitmap
       { bitmap: Buffer.alloc(8), width: 3, height: 4, cropTop: 0, cropHeight: 4, destY: 0 }, // a bitmap shorter than it claims
     ];
-    const clipped = composeStitch(wild, 3, 6);
+    const clipped = composeAll(wild, 3, 6);
+    // Each call answers how many rows it copied.
+    expect(composeStitch(Buffer.alloc(3 * 6 * 4), 3, 6, wild[0]!)).toBe(1);
     expect(clipped).toHaveLength(3 * 6 * 4);
     expect(pixel(clipped, 3, 0, 4)).toEqual([3, 0, 3, 255]);
     expect(pixel(clipped, 3, 0, 5)).toEqual([0, 0, 4, 255]);

@@ -21,8 +21,7 @@ import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
-import { changesRouter } from './changes-router';
-import { screenshotsRouter } from './changes-router';
+import { changesRouter, screenshotsRouter } from './changes-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).

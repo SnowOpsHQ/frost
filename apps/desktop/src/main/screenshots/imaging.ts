@@ -13,8 +13,13 @@ export type { Bitmap } from './stitch';
 export interface ScreenshotImaging {
   /** A PNG of a BGRA bitmap (its pixel size, scale factor 1). */
   encodePng(bitmap: Bitmap): Buffer;
-  /** A stored PNG as a thumbnail (PNG) or preview (JPEG); `null` if it does not decode. */
-  render(png: Buffer, size: ScreenshotImageSize): { readonly type: 'image/png' | 'image/jpeg'; readonly data: Buffer } | null;
+  /** A thumbnail (PNG, `thumbnailPlan`) of a screenshot's bitmap: made once, when it is taken. */
+  thumbnail(bitmap: Bitmap): Buffer;
+  /**
+   * A stored PNG as a thumbnail (PNG) or preview (JPEG) of at most `maxBytes` (a preview over it is
+   * encoded again at a lower quality, then smaller); `null` if it does not decode or cannot fit.
+   */
+  render(png: Buffer, size: ScreenshotImageSize, maxBytes: number): { readonly type: 'image/png' | 'image/jpeg'; readonly data: Buffer } | null;
   /** Writes a stored PNG to the system clipboard as an image; `false` if it does not decode. */
   copy(png: Buffer): Promise<boolean>;
 }
@@ -46,19 +51,33 @@ export function electronImaging(
     const image = electron.nativeImage.createFromBuffer(png);
     return image.isEmpty() ? null : image;
   };
+  const thumbOf = (image: NativeImage): Buffer => {
+    const { width, height } = image.getSize();
+    const plan = thumbnailPlan(width, height, limits);
+    const source = plan.crop ? image.crop(plan.crop) : image;
+    return source.resize({ width: plan.width, height: plan.height, quality: 'good' }).toPNG();
+  };
   return {
     encodePng: ({ bitmap, width, height }) => electron.nativeImage.createFromBitmap(bitmap, { width, height, scaleFactor: 1 }).toPNG(),
-    render(png, size) {
+    thumbnail: ({ bitmap, width, height }) => thumbOf(electron.nativeImage.createFromBitmap(bitmap, { width, height, scaleFactor: 1 })),
+    render(png, size, maxBytes) {
       const image = decode(png);
       if (!image) return null;
-      const { width, height } = image.getSize();
       if (size === 'thumb') {
-        const plan = thumbnailPlan(width, height, limits);
-        const source = plan.crop ? image.crop(plan.crop) : image;
-        return { type: 'image/png', data: source.resize({ width: plan.width, height: plan.height, quality: 'good' }).toPNG() };
+        const data = thumbOf(image);
+        return data.length <= maxBytes ? { type: 'image/png', data } : null;
       }
-      const fit = previewSize(width, height, limits);
-      return { type: 'image/jpeg', data: image.resize({ ...fit, quality: 'good' }).toJPEG(limits.previewJpegQuality) };
+      const { width, height } = image.getSize();
+      let fit = previewSize(width, height, limits);
+      let quality = limits.previewJpegQuality;
+      // A preview over the cap: a lower quality first, then smaller, a few times at most.
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const data = image.resize({ ...fit, quality: 'good' }).toJPEG(quality);
+        if (data.length <= maxBytes) return { type: 'image/jpeg', data };
+        if (quality > 50) quality = 50;
+        else fit = { width: Math.max(1, Math.round(fit.width * 0.7)), height: Math.max(1, Math.round(fit.height * 0.7)) };
+      }
+      return null;
     },
     async copy(png) {
       // Only an image that decodes is offered, as the PNG it is.

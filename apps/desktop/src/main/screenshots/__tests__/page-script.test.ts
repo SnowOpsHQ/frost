@@ -75,8 +75,10 @@ describe('measure, scroll and restore', () => {
     const measure = measurePage(document as unknown as ScriptDocument);
     expect(measure).toEqual({ url: 'https://example.com/page', scrollHeight: 3_000, innerWidth: window.innerWidth, innerHeight: window.innerHeight, clientWidth: 1_009, clientHeight: 760, scrollX: 0, scrollY: 0, devicePixelRatio: 1 });
     expect(parseMeasure(measure)).toEqual(measure);
+    // A page taller than anything sane is taken as MAX tall (the stitch is cut and marked truncated), not refused.
+    expect(parseMeasure({ ...measure, scrollHeight: 1e12 })).toMatchObject({ scrollHeight: 10_000_000 });
     // Untrusted answers: anything not a finite, sane number is refused.
-    for (const bad of [null, 'x', { ...measure, scrollHeight: -1 }, { ...measure, innerWidth: Number.NaN }, { ...measure, innerWidth: 0 }, { ...measure, url: 5 }, { ...measure, devicePixelRatio: 0 }]) expect(parseMeasure(bad), JSON.stringify(bad)).toBeNull();
+    for (const bad of [null, 'x', { ...measure, scrollHeight: -1 }, { ...measure, scrollHeight: Number.POSITIVE_INFINITY }, { ...measure, innerWidth: Number.NaN }, { ...measure, innerWidth: 0 }, { ...measure, url: 5 }, { ...measure, devicePixelRatio: 0 }]) expect(parseMeasure(bad), JSON.stringify(bad)).toBeNull();
 
     const scrolls: unknown[] = [];
     window.scrollTo = ((options: ScrollToOptions) => {
@@ -204,12 +206,22 @@ describe('area selector (jsdom)', () => {
     expect(added.length).toBeGreaterThan(0);
     expect(removed).toEqual(added);
 
-    // The page removing the host ends it too.
+    // The page taking the host out ends it too (no Esc, no cancel), and every listener goes.
     const removedHost = page();
     const viaRemoval = removedHost.start();
-    removedHost.host()!.remove();
-    removedHost.esc();
+    const host = removedHost.host()!;
+    const { surface } = removedHost.store[AREA_STATE_KEY] as { surface: Element };
+    host.remove();
     await expect(viaRemoval).resolves.toBeNull();
+    expect(removedHost.store[AREA_STATE_KEY]).toBeUndefined();
     expect(removedHost.document.documentElement.outerHTML).toBe(removedHost.before);
+    // Appended again by the page, the old host is inert: hidden, its shadow root empty, deaf to input.
+    removedHost.document.documentElement.append(host);
+    expect(host.style.getPropertyValue('display')).toBe('none');
+    expect(host.style.getPropertyValue('pointer-events')).toBe('none');
+    expect(surface.isConnected).toBe(false);
+    removedHost.drag([10, 10], [200, 200], surface);
+    removedHost.esc();
+    expect(removedHost.store[AREA_STATE_KEY]).toBeUndefined();
   });
 });

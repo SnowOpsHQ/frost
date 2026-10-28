@@ -40,7 +40,7 @@ import { registerPaletteActions } from '../../palette/registry';
 import { formatCount } from '../../seo-view';
 import { captureProject, useCaptureProject } from './capture-project';
 import { CaptureGlyph, ChangesIcon } from './changes-icons';
-import { ScreenshotControls, ScreenshotGallery, takeScreenshot } from './Screenshots';
+import { ScreenshotControls, ScreenshotGallery, startScreenshot } from './Screenshots';
 
 // The Changes panel (acceptance `changes-panel.feature.md`): the current page's captured versions,
 // newest first and grouped into lanes, "Capture now", and the diff of two versions of a lane, by
@@ -56,7 +56,7 @@ const capturePage = (tabId: number, projectId?: string): Promise<CaptureAnswer |
 // and take screenshots into the same project as the panel (`capture-project.ts`, the one seam Task 6's
 // picker sets).
 const unregisterPaletteActions = registerPaletteActions(
-  ...changesPaletteSources({ capture: (tabId) => capturePage(tabId, captureProject()), screenshot: (tabId, kind) => takeScreenshot(tabId, kind, captureProject()) }),
+  ...changesPaletteSources({ capture: (tabId) => capturePage(tabId, captureProject()), screenshot: (tabId, kind) => startScreenshot(tabId, kind, captureProject()) }),
 );
 import.meta.hot?.dispose(unregisterPaletteActions);
 

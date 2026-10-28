@@ -9,6 +9,12 @@
  * drags out on the page. The scripts that read the page's size, scroll it and draw the area selector
  * run only in `SCREENSHOT_WORLD_ID`. The PNG is written under the profile directory and named by its
  * own SHA-256; no procedure ever takes a path, a file name or a hash.
+ *
+ * Honesty notes (what the page can observe): a full page scrolls it, and the page can see the
+ * scrolling (`FULL_PAGE_SCROLL_NOTE`). While an area is selected the page can see the overlay's host
+ * element (not inside its closed shadow root), and the drag's pointer events in their capture phase,
+ * retargeted to that host, before the overlay stops them; it cannot select, move or end a selection
+ * (only trusted input does), and it cannot keep Esc from cancelling (main hears it first).
  */
 import type { ScreenshotKind } from './capture-db.spec';
 import type { SearchParams } from './capture-search-params.schema';
@@ -22,7 +28,8 @@ export const SCREENSHOT_WORLD_ID = 1_601;
 
 /**
  * The directory in `<userData>/<CAPTURES_DIR_NAME>` (`capture-db.spec.ts`) holding screenshot files,
- * each named `<sha256>.png`. Created `0700`; files `0600`.
+ * each named `<sha256>.png` (and, after a crash mid-write, `<sha256>.png.tmp-<16 hex>` leftovers).
+ * Created `0700`; files `0600`.
  */
 export const SCREENSHOTS_DIR_NAME = 'screenshots' as const;
 
@@ -56,6 +63,13 @@ export const SCREENSHOT_LIMITS = {
   previewMaxHeight: 4_000,
   /** The preview's JPEG quality (0–100). */
   previewJpegQuality: 82,
+  /**
+   * Longest `data:` URL `screenshots.image` answers (characters): a preview that would be longer is
+   * encoded again at a lower quality, then smaller, until it fits.
+   */
+  maxImageDataUrlChars: 8_000_000,
+  /** Thumbnails kept in main's memory, most recently used first (made when a screenshot is taken). */
+  thumbnailCacheEntries: 64,
 } as const;
 /** `SCREENSHOT_LIMITS`' shape, any values (tests use tighter ones). */
 export type ScreenshotLimits = { readonly [K in keyof typeof SCREENSHOT_LIMITS]: number };

@@ -6,7 +6,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { MAX_HISTORY_PAGE } from '@app/specs/capture-db.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import type { ScreenshotsAnswer, TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
+import { SCREENSHOT_LIMITS, type ScreenshotsAnswer, type TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { CHANGES_READ_API } from '../changes-service';
 import { appRouter, createSenderPolicy, type IpcContext, type ScreenshotsService } from '../index';
@@ -157,6 +157,13 @@ describe('screenshots router', () => {
     expect(screenshots.copy).toHaveBeenLastCalledWith(ID);
     await expect(call('cancelArea', { tabId: 3 })).resolves.toBe(true);
     expect(screenshots.cancelArea).toHaveBeenLastCalledWith(3);
+    // Answers are checked on the way out: a malformed answer, or a data URL over the cap, never reaches the chrome.
+    screenshots.take.mockResolvedValueOnce({ status: 'saved', id: 'not-an-id' } as unknown as TakeScreenshotAnswer);
+    expect((await errorOf(call('take', { tabId: 1, kind: 'viewport' }))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    screenshots.image.mockResolvedValueOnce(`data:image/jpeg;base64,${'A'.repeat(SCREENSHOT_LIMITS.maxImageDataUrlChars)}`);
+    expect((await errorOf(call('image', { id: ID, size: 'preview' }))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    screenshots.image.mockResolvedValueOnce('file:///home/someone/shot.png');
+    expect((await errorOf(call('image', { id: ID, size: 'thumb' }))).code).toBe(IPC_INTERNAL_ERROR_CODE);
     // Phase 5 lists screenshots through CHANGES_READ_API too.
     expect(Object.keys(CHANGES_READ_API).sort()).toEqual(['diff', 'getVersion', 'history', 'listPages', 'listScreenshots']);
     expect(CHANGES_READ_API.listScreenshots.input.safeParse({ url: PAGE, path: '/etc' }).success).toBe(false);

@@ -1,7 +1,15 @@
 import { TRPCError } from '@trpc/server';
 import { CaptureInputSchema, DiffInputSchema, HistoryInputSchema, PagesInputSchema, VersionInputSchema } from '@app/specs/changes.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import { CancelAreaInputSchema, ScreenshotIdInputSchema, ScreenshotImageInputSchema, ScreenshotsInputSchema, TakeScreenshotInputSchema } from '@app/specs/screenshot.schema';
+import {
+  CancelAreaInputSchema,
+  ScreenshotIdInputSchema,
+  ScreenshotImageAnswerSchema,
+  ScreenshotImageInputSchema,
+  ScreenshotsInputSchema,
+  TakeScreenshotAnswerSchema,
+  TakeScreenshotInputSchema,
+} from '@app/specs/screenshot.schema';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
 // The Changes panel ↔ main (Phase 6 Task 3; spec `changes.schema.ts`; acceptance
@@ -58,13 +66,15 @@ const requireScreenshots = middleware(({ ctx, next }) => {
  * Screenshots (Phase 6 Task 5; spec `screenshot.schema.ts`; acceptance `screenshot.feature.md`).
  * Inputs carry ids, `tabId`, `kind`, `projectId`, `size` and the cursor only, never a path, a file
  * name or a hash. `take` answers `TakeScreenshotAnswer`; `list` a page of `ScreenshotEntry`; `image`
- * a `data:` URL or `null`; `reveal`, `copy` and `cancelArea` whether they did anything.
+ * a `data:` URL (at most `maxImageDataUrlChars`) or `null`; `take` and `image` are checked against
+ * their output schemas on the way out; `reveal`, `copy` and `cancelArea` whether they did anything.
  */
 export const screenshotsRouter = router({
   take: publicProcedure
     .use(enforceSender)
     .use(requireScreenshots)
     .input(TakeScreenshotInputSchema)
+    .output(TakeScreenshotAnswerSchema)
     .mutation(({ ctx, input }) => ctx.screenshots.take(input.tabId, input.projectId === undefined ? { kind: input.kind } : { kind: input.kind, projectId: input.projectId })),
   list: publicProcedure
     .use(enforceSender)
@@ -75,6 +85,7 @@ export const screenshotsRouter = router({
     .use(enforceSender)
     .use(requireScreenshots)
     .input(ScreenshotImageInputSchema)
+    .output(ScreenshotImageAnswerSchema)
     .query(({ ctx, input }) => ctx.screenshots.image(input.id, input.size)),
   reveal: publicProcedure
     .use(enforceSender)

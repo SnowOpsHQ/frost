@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { constants } from 'node:fs';
-import { lstat, mkdir, open, rename, unlink, writeFile } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { lstat, mkdir, open, rename, unlink, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { CAPTURES_DIR_NAME, SHA256_HEX_PATTERN } from '@app/specs/capture-db.spec';
 import { SCREENSHOT_LIMITS, SCREENSHOTS_DIR_NAME } from '@app/specs/screenshot.spec';
@@ -14,6 +14,14 @@ import { SCREENSHOT_LIMITS, SCREENSHOTS_DIR_NAME } from '@app/specs/screenshot.s
 // symlink is never followed, and never `chmod`ed through); files are written `0600` under a
 // temporary name in the same directory and renamed into place; reads never follow a symlink and
 // check the hash.
+//
+// What is guaranteed: the directories are private to the user (`0700`), but another process of the
+// same user could still swap one for a symlink between two checks. A write therefore works through
+// the screenshot directory's own no-follow handle (on Linux, by its `/proc/self/fd/<fd>` name, so
+// the temporary file and the rename land in that directory whatever its path now names), and after
+// the rename it checks again: both directories are still real directories, the screenshot
+// directory's device and inode are the handle's, and the file's are the ones written. On a mismatch
+// it removes what it wrote (where it can) and fails: frost detects the race and refuses.
 //
 // For Task 7 (retention): `unlink(sha)` removes a file no row references any more; the orphan sweep
 // lists the directory itself and must only touch names matching `<sha>.png` (and this store's
@@ -39,10 +47,22 @@ const posix = process.platform !== 'win32';
 /** Open flags that refuse a symlink at the last component (where the platform has them). */
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
 
-export function createScreenshotFiles(userData: string, options: { readonly maxBytes?: number } = {}): ScreenshotFiles {
+export interface ScreenshotFilesOptions {
+  readonly maxBytes?: number;
+  /** Write through `/proc/self/fd/<fd>` (default: where the platform has it, i.e. Linux). */
+  readonly procFd?: boolean;
+  /** Called between the rename and the checks after it (tests use it to swap a directory). */
+  readonly afterRename?: () => Promise<void>;
+}
+
+/** Whether two stats name the same file. */
+const sameFile = (a: { dev: number | bigint; ino: number | bigint }, b: { dev: number | bigint; ino: number | bigint }): boolean => a.dev === b.dev && a.ino === b.ino;
+
+export function createScreenshotFiles(userData: string, options: ScreenshotFilesOptions = {}): ScreenshotFiles {
   const captures = path.join(path.resolve(userData), CAPTURES_DIR_NAME);
   const dir = path.join(captures, SCREENSHOTS_DIR_NAME);
   const maxBytes = options.maxBytes ?? SCREENSHOT_LIMITS.maxPngBytes;
+  const procFd = options.procFd ?? (process.platform === 'linux' && existsSync('/proc/self/fd'));
 
   /** Throws unless `at` is a real directory: a symlink (to anything) or a file is refused. */
   const realDirectory = async (at: string): Promise<void> => {
@@ -54,22 +74,30 @@ export function createScreenshotFiles(userData: string, options: { readonly maxB
     await realDirectory(captures);
     await realDirectory(dir);
   };
-  /** Both directories, created `0700` if missing, then checked, then set `0700` (through a handle that refuses a symlink). */
-  const ensureDirs = async (): Promise<void> => {
+  /**
+   * Both directories, created `0700` if missing, checked, then set `0700` through a handle that
+   * refuses a symlink. Answers the screenshot directory's handle, open (POSIX; `null` elsewhere).
+   */
+  const ensureDirs = async (): Promise<FileHandle | null> => {
+    let handle: FileHandle | null = null;
     for (const at of [captures, dir]) {
+      await handle?.close();
+      handle = null;
       await mkdir(at, { mode: 0o700 }).catch((error: unknown) => {
         if ((error as { code?: unknown }).code !== 'EEXIST') throw error;
       });
       await realDirectory(at);
       if (!posix) continue;
-      const handle = await open(at, constants.O_RDONLY | constants.O_DIRECTORY | NO_FOLLOW);
+      handle = await open(at, constants.O_RDONLY | constants.O_DIRECTORY | NO_FOLLOW);
       try {
         if (!(await handle.stat()).isDirectory()) throw new Error(`${path.basename(at)} is not a directory`);
         await handle.chmod(0o700);
-      } finally {
+      } catch (error) {
         await handle.close();
+        throw error;
       }
     }
+    return handle;
   };
 
   const fileFor = (sha256: string): string => {
@@ -86,8 +114,12 @@ export function createScreenshotFiles(userData: string, options: { readonly maxB
     }
   };
 
-  /** The file's bytes if it is a regular file within the cap whose bytes hash to `sha256`. */
-  const readChecked = async (file: string, sha256: string): Promise<Buffer | null> => {
+  /**
+   * The file's bytes if it is a regular file within the cap whose bytes hash to `sha256`; with
+   * `private`, it is also set `0600` through the same no-follow handle (a reused file keeps no wider
+   * mode), and answers its device and inode.
+   */
+  const readChecked = async (file: string, sha256: string, own = false): Promise<{ bytes: Buffer; dev: number; ino: number } | null> => {
     try {
       const link = await lstat(file);
       if (link.isSymbolicLink() || !link.isFile() || link.size > maxBytes) return null;
@@ -96,7 +128,9 @@ export function createScreenshotFiles(userData: string, options: { readonly maxB
         const stat = await handle.stat();
         if (!stat.isFile() || stat.size > maxBytes) return null;
         const bytes = await handle.readFile();
-        return bytes.length <= maxBytes && sha256Of(bytes) === sha256 ? bytes : null;
+        if (bytes.length > maxBytes || sha256Of(bytes) !== sha256) return null;
+        if (own && posix) await handle.chmod(0o600);
+        return { bytes, dev: stat.dev, ino: stat.ino };
       } finally {
         await handle.close();
       }
@@ -105,26 +139,72 @@ export function createScreenshotFiles(userData: string, options: { readonly maxB
     }
   };
 
+  /**
+   * After a write: both directories are still real directories, the screenshot directory is the one
+   * `handle` holds, and `file` is the file written (`written`). Else what was written is removed
+   * (through the handle's name, where there is one) and it throws.
+   */
+  const verify = async (handle: FileHandle | null, base: string, name: string, written: { dev: number; ino: number }): Promise<void> => {
+    const file = path.join(dir, name);
+    let intact = false;
+    try {
+      await realDirectory(captures);
+      await realDirectory(dir);
+      const [held, now, landed] = await Promise.all([handle?.stat() ?? null, lstat(dir), lstat(file)]);
+      intact = (held === null || sameFile(held, now)) && landed.isFile() && !landed.isSymbolicLink() && sameFile(landed, written);
+    } catch {
+      intact = false;
+    }
+    if (intact) return;
+    // Only ever the file this write made: by the handle's own directory, else by path if it is that file.
+    if (base !== dir) await unlink(path.join(base, name)).catch(() => undefined);
+    else {
+      const there = await lstat(file).catch(() => null);
+      if (there && sameFile(there, written)) await unlink(file).catch(() => undefined);
+    }
+    throw new Error('the screenshot directory changed while it was written');
+  };
+
   return {
     dir,
     fileFor,
     async write(png) {
       if (!Buffer.isBuffer(png) || png.length === 0 || png.length > maxBytes) throw new Error('not a screenshot within the cap');
       const sha256 = sha256Of(png);
-      const file = fileFor(sha256);
-      await ensureDirs();
-      if ((await readChecked(file, sha256)) !== null) return { sha256, bytes: png.length };
-      // A new name in the same directory, written once (`wx`), then renamed over whatever is there
-      // (a changed file, or a symlink: the link itself is replaced, never its target).
-      const temporary = path.join(dir, `${sha256}.png.tmp-${randomBytes(8).toString('hex')}`);
+      const name = path.basename(fileFor(sha256));
+      const handle = await ensureDirs();
       try {
-        await writeFile(temporary, png, { mode: 0o600, flag: 'wx' });
-        await rename(temporary, file);
-      } catch (error) {
-        await unlink(temporary).catch(() => undefined);
-        throw error;
+        // The directory as its handle names it (Linux), else by its path.
+        const base = handle && procFd ? `/proc/self/fd/${handle.fd}` : dir;
+        const reused = await readChecked(path.join(base, name), sha256, true);
+        if (reused !== null) {
+          await verify(handle, base, name, reused);
+          return { sha256, bytes: png.length };
+        }
+        // A new name in the same directory, written once (`wx`, `0600`), then renamed over whatever is
+        // there (a changed file, or a symlink: the link itself is replaced, never its target).
+        const temporary = path.join(base, `${name}.tmp-${randomBytes(8).toString('hex')}`);
+        let written: { dev: number; ino: number };
+        try {
+          const out = await open(temporary, 'wx', 0o600);
+          try {
+            await out.writeFile(png);
+            const stat = await out.stat();
+            written = { dev: stat.dev, ino: stat.ino };
+          } finally {
+            await out.close();
+          }
+          await rename(temporary, path.join(base, name));
+        } catch (error) {
+          await unlink(temporary).catch(() => undefined);
+          throw error;
+        }
+        await options.afterRename?.();
+        await verify(handle, base, name, written);
+        return { sha256, bytes: png.length };
+      } finally {
+        await handle?.close();
       }
-      return { sha256, bytes: png.length };
     },
     async read(sha256) {
       const file = fileOrNull(sha256);
@@ -134,7 +214,7 @@ export function createScreenshotFiles(userData: string, options: { readonly maxB
       } catch {
         return null;
       }
-      return readChecked(file, sha256);
+      return (await readChecked(file, sha256))?.bytes ?? null;
     },
     async has(sha256) {
       const file = fileOrNull(sha256);

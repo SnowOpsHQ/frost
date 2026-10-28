@@ -2,7 +2,8 @@
 // (ScreenshotsAnswerSchema), specs/changes.schema.ts (CHANGES_READ_API.listScreenshots),
 // specs/capture-db.spec.ts (UNFILED_PROJECT_ID, CAPTURES_DIR_NAME)
 // Acceptance: specs/screenshot.feature.md (Taking one, Images, Listing; Scenarios take-records-profile-and-params,
-// take-refuses-what-it-cannot-take, one-screenshot-per-tab, image-checks-hash, read-api-lists-screenshots)
+// take-refuses-what-it-cannot-take, one-screenshot-per-tab, image-checks-hash, read-api-lists-screenshots,
+// area-selection-cancels)
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -15,6 +16,7 @@ import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import { CHANGES_READ_API } from '@app/specs/changes.schema';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
 import { SCREENSHOT_LIMITS, SCREENSHOTS_DIR_NAME, ScreenshotsAnswerSchema, type TakeScreenshotAnswer } from '@app/specs/screenshot.schema';
+import { fakeEvent } from '../../../test/electron-fake';
 import { createChangesService } from '../../changes/service';
 import { previewSize, thumbnailPlan } from '../imaging';
 import { screenshotTabs } from '../service';
@@ -250,6 +252,39 @@ describe('screenshots service', () => {
     expect(await changes.listScreenshots(input)).toEqual(all);
   });
 
+  test('thumbnails-are-made-once', async () => {
+    const { service, imaging, tabs, raw } = start({ limits: { ...SCREENSHOT_LIMITS, thumbnailCacheEntries: 2 } });
+    const shots: string[] = [];
+    // Three different images (the page scrolled differently each time).
+    for (const y of [0, 40, 80]) {
+      tabs.get(1)!.scroll = { x: 0, y };
+      shots.push(saved(await service.take(1, { kind: 'viewport' })).id);
+    }
+    expect(new Set(rows(raw).map((row) => row['sha256'])).size).toBe(3);
+    // Made when taken: the two newest are served from memory, no decoding.
+    await expect(service.image(shots[2]!, 'thumb')).resolves.toMatch(/^data:image\/png;base64,/);
+    await expect(service.image(shots[1]!, 'thumb')).resolves.toMatch(/^data:image\/png;base64,/);
+    expect(imaging.renders).toEqual([]);
+    // The oldest fell out of the bounded cache: rendered once from its file, then remembered.
+    await service.image(shots[0]!, 'thumb');
+    await service.image(shots[0]!, 'thumb');
+    expect(imaging.renders).toEqual(['thumb']);
+    // A preview is rendered each time (never cached), within the data URL cap.
+    await expect(service.image(shots[0]!, 'preview')).resolves.toMatch(/^data:image\/jpeg;base64,/);
+    expect(imaging.renders).toEqual(['thumb', 'preview']);
+    const capped = also({ limits: { ...SCREENSHOT_LIMITS, maxImageDataUrlChars: 64 } });
+    const id = saved(await capped.service.take(1, { kind: 'viewport' })).id;
+    await expect(capped.service.image(id, 'preview')).resolves.toBeNull();
+  });
+
+  test('bad-profile-records-none', async () => {
+    const { service, raw, state, logs } = start();
+    state.profiles.set(1, { device: 'toaster' } as unknown as RenderProfile);
+    saved(await service.take(1, { kind: 'viewport' }));
+    expect(rows(raw)[0]).toMatchObject({ render_profile: null });
+    expect(logs).toEqual(["screenshots: the tab's render profile does not fit its schema: recorded as none"]);
+  });
+
   test('image-sizes-fit-their-limits', () => {
     // Thumbnails: thumbWidth wide (never upscaled); a tall shot shows its top thumbMaxHeight.
     expect(thumbnailPlan(1_280, 800)).toEqual({ crop: null, width: 320, height: 200 });
@@ -272,5 +307,87 @@ describe('screenshots service', () => {
     expect(tabs.renderProfileOf(2)).toBeNull();
     expect(tabs.renderProfileOf(3)).toBeNull();
     expect(tabs.renderProfileOf(4)).toBeNull();
+  });
+  test('area-selection-cancels', async () => {
+    const { service, tabs, state, raw, files } = start();
+    const tab = tabs.get(1)!;
+    const cancels = () => tab.scripts.filter((s) => s.kind === 'cancel').length;
+    /** Starts an area screenshot and waits for its selector to be up; answers the screenshot's (pending) answer. */
+    const begin = async (on = service, page = tab) => {
+      page.selection = null;
+      const answer = on.take(1, { kind: 'area' });
+      await until(() => page.selection !== null);
+      return { answer };
+    };
+
+    // A subframe's navigation does not cancel; any main-frame one does, an in-page one too (the page
+    // would be recorded under a URL it no longer shows).
+    let pending = (await begin()).answer;
+    tab.emit('did-start-navigation', fakeEvent({ url: 'https://ads.example/frame', isMainFrame: false, isSameDocument: false }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(tab.selection).not.toBeNull();
+    tab.emit('did-start-navigation', fakeEvent({ url: 'https://example.com/page#top', isMainFrame: true, isSameDocument: true }));
+    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+    expect(cancels()).toBe(1);
+    pending = (await begin()).answer;
+    tab.emit('did-start-navigation', fakeEvent({ url: 'https://example.com/next', isMainFrame: true, isSameDocument: false }));
+    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+    expect(cancels()).toBe(2);
+
+    // Esc, heard by main before the page (a page cannot swallow it); other keys and key-ups are not.
+    pending = (await begin()).answer;
+    const other = fakeEvent({});
+    tab.emit('before-input-event', other, { type: 'keyDown', key: 'a' });
+    tab.emit('before-input-event', other, { type: 'keyUp', key: 'Escape' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(tab.selection).not.toBeNull();
+    expect(other.defaultPrevented).toBe(false);
+    const esc = fakeEvent({});
+    tab.emit('before-input-event', esc, { type: 'keyDown', key: 'Escape' });
+    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+    expect(esc.defaultPrevented).toBe(true);
+
+    // cancelArea (the chrome's Cancel); another tab's, or a tab without one, cancels nothing.
+    pending = (await begin()).answer;
+    await expect(service.cancelArea(2)).resolves.toBe(false);
+    await expect(service.cancelArea(1)).resolves.toBe(true);
+    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+    await expect(service.cancelArea(1)).resolves.toBe(false);
+    expect(cancels()).toBe(4);
+
+    // Another tab brought to the front.
+    pending = (await begin()).answer;
+    state.active = 2;
+    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+    state.active = 1;
+
+    // The timeout (a service of its own, with a short one).
+    const short = also({ limits: { ...SCREENSHOT_LIMITS, areaTimeoutMs: 50 } });
+    const shortTab = short.tabs.get(1)!;
+    await expect((await begin(short.service, shortTab)).answer).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+    expect(shortTab.scripts.filter((s) => s.kind === 'cancel')).toHaveLength(1);
+
+    // The tab closing (its WebContents destroyed).
+    pending = (await begin()).answer;
+    tab.destroyed = true;
+    tab.emit('destroyed');
+    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+
+    // Nothing was written, and no listener was left on the tab.
+    expect(raw.prepare('SELECT count(*) AS n FROM ci_screenshots').get()).toEqual({ n: 0 });
+    expect(() => readdirSync(files.dir)).toThrow();
+    expect(tab.listenerCount('did-start-navigation')).toBe(0);
+    expect(tab.listenerCount('destroyed')).toBe(0);
+    expect(tab.listenerCount('before-input-event')).toBe(0);
+
+    // A full page is cancelled by an in-page navigation too, and its scroll is restored.
+    const full = also();
+    const fullTab = full.tabs.get(1)!;
+    fullTab.scroll = { x: 0, y: 30 };
+    fullTab.beforeCapture = () => {
+      if (fullTab.captures === 2) fullTab.emit('did-start-navigation', fakeEvent({ url: 'https://example.com/page#b', isMainFrame: true, isSameDocument: true }));
+    };
+    await expect(full.service.take(1, { kind: 'full' })).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+    expect(fullTab.scroll).toEqual({ x: 0, y: 30 });
   });
 });

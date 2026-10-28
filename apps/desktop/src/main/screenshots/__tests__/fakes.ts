@@ -110,7 +110,9 @@ export class FakeTab extends EventEmitter implements ScreenshotTarget {
       case 'scroll':
       case 'restore': {
         const max = this.stuckAt ?? Math.max(0, page.scrollHeight - page.clientHeight);
-        this.scroll = { x: args['x'] ?? 0, y: Math.max(0, Math.min(max, args['y'] ?? 0)) };
+        // As a browser does, the position snaps to whole device pixels.
+        const y = Math.max(0, Math.min(max, args['y'] ?? 0));
+        this.scroll = { x: args['x'] ?? 0, y: Math.round(y * page.scale) / page.scale };
         return { ...this.scroll };
       }
       case 'select':
@@ -140,17 +142,24 @@ export class FakeTab extends EventEmitter implements ScreenshotTarget {
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 /** Imaging without Electron: a "PNG" that names its size and the bitmap's hash; renders and copies recorded. */
-export function fakeImaging(): ScreenshotImaging & { copied: Buffer[]; encoded: Bitmap[] } {
+export function fakeImaging(): ScreenshotImaging & { copied: Buffer[]; encoded: Bitmap[]; renders: string[] } {
   const copied: Buffer[] = [];
   const encoded: Bitmap[] = [];
+  const renders: string[] = [];
   return {
     copied,
     encoded,
+    renders,
+    thumbnail: (bitmap) => Buffer.from(`thumb:PNG ${bitmap.width}x${bitmap.height}`),
     encodePng: (bitmap) => {
       encoded.push(bitmap);
       return Buffer.from(`PNG ${bitmap.width}x${bitmap.height} ${sha(bitmap.bitmap)}`);
     },
-    render: (png, size) => (png.subarray(0, 4).toString() === 'PNG ' ? { type: size === 'thumb' ? 'image/png' : 'image/jpeg', data: Buffer.from(`${size}:${png.toString()}`) } : null),
+    render: (png, size, maxBytes) => {
+      renders.push(size);
+      const data = Buffer.from(`${size}:${png.toString()}`);
+      return png.subarray(0, 4).toString() === 'PNG ' && data.length <= maxBytes ? { type: size === 'thumb' ? 'image/png' : 'image/jpeg', data } : null;
+    },
     copy: async (png) => {
       if (png.subarray(0, 4).toString() !== 'PNG ') return false;
       copied.push(png);

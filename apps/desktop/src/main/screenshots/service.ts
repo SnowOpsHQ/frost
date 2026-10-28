@@ -165,8 +165,9 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
     if (params !== null && !params.success) return 'its search parameters do not fit their schema';
     const profile = tabs.renderProfileOf(tabId);
     const parsedProfile = profile === null ? null : RenderProfileSchema.safeParse(profile);
-    if (parsedProfile !== null && !parsedProfile.success) return 'its render profile does not fit its schema';
-    return { renderProfileJson: parsedProfile === null ? null : canonicalJson(parsedProfile.data), searchParamsJson: params === null ? null : canonicalJson(params.data) };
+    // A profile that does not read back is recorded as none (said in the log); the screenshot is still taken.
+    if (parsedProfile !== null && !parsedProfile.success) log('the tab\'s render profile does not fit its schema: recorded as none');
+    return { renderProfileJson: parsedProfile?.success ? canonicalJson(parsedProfile.data) : null, searchParamsJson: params === null ? null : canonicalJson(params.data) };
   };
 
   async function takeTab(tabId: number, options: TakeOptions, run: { controller: AbortController | null }): Promise<TakeScreenshotAnswer> {
@@ -185,15 +186,24 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
     const recorded = lane(tabId, options);
     if (typeof recorded === 'string') return failed('store-failed', recorded);
 
-    // Taken while the tab stays on this document and in front; anything else cancels it.
+    // Taken while the tab stays on this page (any main-frame navigation, an in-page one too, would
+    // record it under a URL it no longer shows) and in front; anything else cancels it.
     const controller = new AbortController();
     const cancel = (): void => controller.abort('cancelled');
-    const onNavigate = (details?: { isMainFrame?: unknown; isSameDocument?: unknown }): void => {
-      if (details?.isMainFrame === true && details.isSameDocument !== true) cancel();
+    const onNavigate = (details?: { isMainFrame?: unknown }): void => {
+      if (details?.isMainFrame === true) cancel();
     };
     const onDestroyed = (): void => cancel();
+    // While an area is selected, Esc is heard by main before the page gets it, so a page cannot keep
+    // its own Esc from cancelling.
+    const onKey = (event: { preventDefault(): void } | undefined, input?: { type?: unknown; key?: unknown }): void => {
+      if (options.kind !== 'area' || input?.type !== 'keyDown' || input.key !== 'Escape') return;
+      event?.preventDefault();
+      cancel();
+    };
     contents.on('did-start-navigation', onNavigate);
     contents.on('destroyed', onDestroyed);
+    contents.on('before-input-event', onKey);
     const poll = setInterval(() => {
       if (contents.isDestroyed() || tabs.activeTabId() !== tabId) cancel();
     }, deps.activePollMs ?? ACTIVE_POLL_MS);
@@ -208,6 +218,7 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       clearInterval(poll);
       contents.removeListener('did-start-navigation', onNavigate);
       contents.removeListener('destroyed', onDestroyed);
+      contents.removeListener('before-input-event', onKey);
       run.controller = null;
     }
 
@@ -223,6 +234,12 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       file = await files.write(png);
     } catch (error) {
       return failed('store-failed', `the file could not be written (${codeOf(error)})`);
+    }
+    // Its thumbnail, made now from the bitmap in hand (no decode later) and kept in memory.
+    try {
+      remember(file.sha256, dataUrl('image/png', imaging.thumbnail(captured.bitmap)));
+    } catch (error) {
+      log(`the thumbnail could not be made (${codeOf(error)})`);
     }
     const at = now();
     const id = uuid(at);
@@ -268,10 +285,22 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       return fallback;
     }
   };
-  /** A stored screenshot's PNG, if its row reads back and its file matches its hash. */
-  const pngOf = async (id: string): Promise<Buffer | null> => {
+  /** A stored screenshot's PNG and hash, if its row reads back and its file matches its hash. */
+  const pngOf = async (id: string): Promise<{ png: Buffer; sha256: string } | null> => {
     const row = await store.screenshot(id);
-    return row ? files.read(row.sha256) : null;
+    const png = row ? await files.read(row.sha256) : null;
+    return row && png ? { png, sha256: row.sha256 } : null;
+  };
+  /** The largest image `data:` URLs carry (`maxImageDataUrlChars`, less the prefix, as base64). */
+  const maxImageBytes = Math.floor(((limits.maxImageDataUrlChars - 32) * 3) / 4);
+  const dataUrl = (type: string, data: Buffer): string => `data:${type};base64,${data.toString('base64')}`;
+  /** Thumbnails by file hash, most recently used last (at most `thumbnailCacheEntries`). */
+  const thumbnails = new Map<string, string>();
+  const remember = (sha256: string, url: string): void => {
+    if (url.length > limits.maxImageDataUrlChars) return;
+    thumbnails.delete(sha256);
+    thumbnails.set(sha256, url);
+    while (thumbnails.size > limits.thumbnailCacheEntries) thumbnails.delete(thumbnails.keys().next().value!);
   };
 
   return {
@@ -296,9 +325,20 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       guarded(
         'image',
         async () => {
-          const png = await pngOf(id);
-          const rendered = png === null ? null : imaging.render(png, size);
-          return rendered === null ? null : `data:${rendered.type};base64,${rendered.data.toString('base64')}`;
+          // The file is checked against its hash every time; only a thumbnail's decoding is saved.
+          const stored = await pngOf(id);
+          if (stored === null) return null;
+          const known = size === 'thumb' ? thumbnails.get(stored.sha256) : undefined;
+          if (known !== undefined) {
+            remember(stored.sha256, known);
+            return known;
+          }
+          const rendered = imaging.render(stored.png, size, maxImageBytes);
+          if (rendered === null) return null;
+          const url = dataUrl(rendered.type, rendered.data);
+          if (url.length > limits.maxImageDataUrlChars) return null;
+          if (size === 'thumb') remember(stored.sha256, url);
+          return url;
         },
         null,
       ),
@@ -319,8 +359,8 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       guarded(
         'copy',
         async () => {
-          const png = await pngOf(id);
-          return png !== null && (await imaging.copy(png));
+          const stored = await pngOf(id);
+          return stored !== null && (await imaging.copy(stored.png));
         },
         false,
       ),

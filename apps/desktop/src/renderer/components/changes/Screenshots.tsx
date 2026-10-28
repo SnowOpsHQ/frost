@@ -2,14 +2,14 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { TabState } from '@app/specs/browser.spec';
 import { MAX_HISTORY_PAGE, type ScreenshotKind } from '@app/specs/capture-db.spec';
 import { AREA_SELECT_HINT, FULL_PAGE_SCROLL_NOTE, type ScreenshotEntry, type ScreenshotsCursor, type TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
-import { onScreenshot } from '../../changes-palette';
 import { SCREENSHOTS_PAGE_SIZE, canScreenshot, countBadge, formatBytes, laneLabel, pixelSizeText, screenshotAlt, screenshotInput, screenshotKindLabel } from '../../changes-view';
 import { ReloadIcon } from '../../icons';
 import { ipc } from '../../ipc';
+import { onScreenshotFinished, runScreenshot, useScreenshotRun } from './screenshot-runs';
 
 // Screenshots in the Changes panel (acceptance `screenshot.feature.md`, The Changes panel): the
 // Screenshot group (Viewport, Full page, Select area, with the full page's scrolling note and the
-// area selection's Cancel), and the page's gallery. Images are `data:` URLs main makes from the
+// area selection's Cancel; what runs is per tab, `screenshot-runs.ts`), and the page's gallery. Images are `data:` URLs main makes from the
 // stored file (`screenshots.image`); a screenshot is only ever named by its row id. No inline styles
 // (strict CSP).
 
@@ -23,10 +23,15 @@ const KINDS: readonly { readonly kind: ScreenshotKind; readonly label: string }[
   { kind: 'area', label: 'Select area' },
 ];
 
+/** Takes a screenshot through the tab's run (`screenshot-runs.ts`): the panel and the palette both start them here. */
+export const startScreenshot = (tabId: number, kind: ScreenshotKind, projectId?: string): Promise<TakeScreenshotAnswer | null> =>
+  runScreenshot((id, which) => takeScreenshot(id, which, projectId), tabId, kind);
+
 /**
- * The Screenshot group. `announce` gets each outcome (`undefined` as one starts) for the panel's live
- * region; `saved` is called after a screenshot was saved (the gallery reads again). A screenshot
- * started from the palette shows here too (its Cancel, its outcome).
+ * The Screenshot group. `announce` gets each outcome (`undefined` as one starts here) for the panel's
+ * live region; `saved` is called after a screenshot was saved (the gallery reads again). What runs
+ * is the tab's (`useScreenshotRun`), wherever it was started, so a remounted panel still shows the
+ * area's Cancel and announces the outcome.
  */
 export function ScreenshotControls({ tab, projectId, announce, saved }: {
   readonly tab: TabState;
@@ -34,36 +39,26 @@ export function ScreenshotControls({ tab, projectId, announce, saved }: {
   readonly announce: (answer: TakeScreenshotAnswer | null | undefined) => void;
   readonly saved: () => void;
 }) {
-  const [running, setRunning] = useState<ScreenshotKind | null>(null);
+  const tabId = tab.id;
+  const running = useScreenshotRun(tabId);
   const labelId = useId();
   const noteId = useId();
-  const tabId = tab.id;
-  // The latest callbacks, so the palette listener is set up once per tab.
+  // The latest callbacks, so the listener is set up once per tab.
   const latest = useRef({ announce, saved });
   latest.current = { announce, saved };
-  const finished = (answer: TakeScreenshotAnswer | null) => {
-    setRunning(null);
-    latest.current.announce(answer);
-    if (answer?.status === 'saved') latest.current.saved();
-  };
-  const finishedRef = useRef(finished);
-  finishedRef.current = finished;
   useEffect(
     () =>
-      onScreenshot((event) => {
-        if (event.tabId !== tabId) return;
-        if (event.phase === 'start') {
-          setRunning(event.kind);
-          latest.current.announce(undefined);
-        } else finishedRef.current(event.answer);
+      onScreenshotFinished((finishedTab, answer) => {
+        if (finishedTab !== tabId) return;
+        latest.current.announce(answer);
+        if (answer?.status === 'saved') latest.current.saved();
       }),
     [tabId],
   );
 
-  const take = async (kind: ScreenshotKind) => {
-    setRunning(kind);
+  const take = (kind: ScreenshotKind) => {
     announce(undefined);
-    finished(await takeScreenshot(tabId, kind, projectId));
+    void startScreenshot(tabId, kind, projectId);
   };
   const enabled = canScreenshot(tab) && running === null;
 
@@ -81,12 +76,11 @@ export function ScreenshotControls({ tab, projectId, announce, saved }: {
               className="seo-segment changes-shot-kind-button"
               data-testid={`screenshot-${kind}`}
               data-busy={running === kind}
-              aria-pressed={running === kind}
               disabled={!enabled}
               // The full page's note is said with it, and shown below.
               title={kind === 'full' ? FULL_PAGE_SCROLL_NOTE : undefined}
               aria-describedby={kind === 'full' ? noteId : undefined}
-              onClick={() => void take(kind)}
+              onClick={() => take(kind)}
             >
               {running === kind && kind !== 'area' ? 'Saving…' : label}
             </button>
@@ -97,7 +91,7 @@ export function ScreenshotControls({ tab, projectId, announce, saved }: {
         {FULL_PAGE_SCROLL_NOTE}
       </p>
       {running === 'area' ? (
-        <div className="changes-shot-selecting" data-testid="screenshot-area-hint">
+        <div className="changes-shot-selecting" role="status" aria-live="polite" data-testid="screenshot-area-hint">
           <span>{AREA_SELECT_HINT}</span>
           <button type="button" className="seo-action" data-testid="screenshot-area-cancel" onClick={() => void ipc.screenshots.cancelArea.mutate({ tabId }).catch(() => false)}>
             Cancel

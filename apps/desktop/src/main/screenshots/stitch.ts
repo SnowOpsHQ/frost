@@ -68,7 +68,11 @@ export function planStitch({ docHeightCss, viewportHeightCss, viewportWidthCss, 
     const scrollY = Math.min(i * viewport, maxScroll);
     const top = Math.round(scrollY * scale);
     const end = Math.min(Math.round((scrollY + viewport) * scale), target);
-    if (end <= covered) break;
+    // Nothing new in this one (rounding): the next one goes on, unless this was the bottom.
+    if (end <= covered) {
+      if (scrollY >= maxScroll) break;
+      continue;
+    }
     segments.push({ scrollY, cropTop: covered - top, cropHeight: end - covered, destY: covered });
     covered = end;
   }
@@ -95,12 +99,14 @@ export function stitchWidth(segments: readonly Pick<Bitmap, 'width'>[], width: n
 }
 
 /**
- * Copies `segment`'s rows `cropTop … cropTop + cropHeight - 1` into `out` (a `width` × `height` BGRA
- * bitmap) at rows `destY …`. Rows outside the segment's bitmap (or past the bytes it really has) or
- * outside `out` are skipped; a segment narrower than `width` fills only its own columns. Answers how
- * many rows it copied.
+ * Composes one segment into the stitched image: copies `segment`'s rows `cropTop … cropTop +
+ * cropHeight - 1` into `out` (a `width` × `height` BGRA bitmap) at rows `destY …`. Rows outside the
+ * segment's bitmap (or past the bytes it really has) or outside `out` are skipped; a segment narrower
+ * than `width` fills only its own columns (`stitchWidth` gives the width that leaves none missing).
+ * Answers how many rows it copied. A full page calls it once per segment as each is captured, so only
+ * one segment's bitmap is held at a time.
  */
-export function placeRows(out: Buffer, width: number, height: number, segment: ComposeSegment): number {
+export function composeStitch(out: Buffer, width: number, height: number, segment: ComposeSegment): number {
   const columns = Math.min(width, segment.width);
   if (![segment.width, segment.height, segment.cropTop, segment.cropHeight, segment.destY, width, height].every(Number.isInteger) || columns < 1) return 0;
   const rowBytes = columns * 4;
@@ -116,16 +122,6 @@ export function placeRows(out: Buffer, width: number, height: number, segment: C
     copied += 1;
   }
   return copied;
-}
-
-/**
- * One `width` × `height` BGRA bitmap with each segment's rows placed (`placeRows`). Rows nothing
- * covers stay transparent; `stitchWidth` gives the width that leaves no column missing.
- */
-export function composeStitch(segments: readonly ComposeSegment[], width: number, height: number): Buffer {
-  const out = Buffer.alloc(Math.max(0, width) * Math.max(0, height) * 4);
-  for (const segment of segments) placeRows(out, width, height, segment);
-  return out;
 }
 
 /**

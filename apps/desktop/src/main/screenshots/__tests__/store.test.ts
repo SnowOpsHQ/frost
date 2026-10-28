@@ -1,9 +1,9 @@
 // Spec: specs/capture-db.spec.ts (CAPTURES_DIR_NAME, SHA256_HEX_PATTERN), specs/screenshot.spec.ts
 // (SCREENSHOTS_DIR_NAME, SCREENSHOT_LIMITS.maxPngBytes)
 // Acceptance: specs/screenshot.feature.md (Files; Scenarios screenshot-paths-are-main-only,
-// store-writes-by-rename-and-reuses)
+// store-writes-by-rename-and-reuses, store-refuses-a-swapped-directory)
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -134,5 +134,35 @@ describe('screenshot files', () => {
     const small = createScreenshotFiles(shared, { maxBytes: 8 });
     await expect(small.read(big.sha256)).resolves.toBeNull();
     await expect(small.write(PNG)).rejects.toThrow();
+  });
+
+  test('store-refuses-a-swapped-directory', async () => {
+    if (!posix) return;
+    // A reused file keeps no wider mode than 0600.
+    const userData = profile();
+    const files = createScreenshotFiles(userData);
+    const { sha256 } = await files.write(PNG);
+    chmodSync(files.fileFor(sha256), 0o644);
+    await files.write(PNG);
+    expect(statSync(files.fileFor(sha256)).mode & 0o777).toBe(0o600);
+
+    // The screenshot directory swapped for a symlink between the rename and the checks after it: the
+    // write fails, nothing lands in the link's target, and the file written is removed (through the
+    // directory's own handle on Linux; by path elsewhere, only when it is the file written).
+    for (const procFd of process.platform === 'linux' ? [true, false] : [false]) {
+      const root = profile();
+      const elsewhere = profile();
+      const moved = path.join(root, 'moved');
+      const swapped = createScreenshotFiles(root, {
+        procFd,
+        afterRename: async () => {
+          renameSync(swapped.dir, moved);
+          symlinkSync(elsewhere, swapped.dir);
+        },
+      });
+      await expect(swapped.write(PNG), `procFd ${procFd}`).rejects.toThrow(/changed/);
+      expect(readdirSync(elsewhere)).toEqual([]);
+      if (procFd) expect(readdirSync(moved)).toEqual([]);
+    }
   });
 });

@@ -15,26 +15,9 @@ import type { PaletteSource } from './palette/registry';
 export interface ChangesPaletteApi {
   /** `changes.capture` of the tab, into the panel's chosen project (one seam: `components/changes/capture-project.ts`); resolves its answer, `null` on an IPC failure. */
   capture(tabId: number): Promise<CaptureAnswer | null>;
-  /** `screenshots.take` of the tab, into the same project; resolves its answer, `null` on an IPC failure. */
+  /** `screenshots.take` of the tab, into the same project, as the tab's run (the panel shows it); resolves its answer, `null` on an IPC failure. */
   screenshot(tabId: number, kind: ScreenshotKind): Promise<TakeScreenshotAnswer | null>;
 }
-
-/** A palette screenshot starting (an area waits for the user's drag on the page) and ending. */
-export type ScreenshotEvent = { readonly phase: 'start'; readonly tabId: number; readonly kind: ScreenshotKind } | { readonly phase: 'end'; readonly tabId: number; readonly answer: TakeScreenshotAnswer | null };
-
-// Who wants to know about a palette screenshot (the panel: its Cancel hint, its gallery).
-const screenshotListeners = new Set<(event: ScreenshotEvent) => void>();
-
-/** Calls `listener` as each palette screenshot starts and ends; answers a function that stops. */
-export function onScreenshot(listener: (event: ScreenshotEvent) => void): () => void {
-  screenshotListeners.add(listener);
-  return () => {
-    screenshotListeners.delete(listener);
-  };
-}
-const tell = (event: ScreenshotEvent): void => {
-  for (const listener of [...screenshotListeners]) listener(event);
-};
 
 // Who wants to know that a page was captured from the palette (the panel, to read its history again).
 const capturedListeners = new Set<(answer: CaptureAnswer | null) => void>();
@@ -91,13 +74,8 @@ export function changesPaletteSources(api: ChangesPaletteApi): PaletteSource[] {
         icon: 'panel-changes',
         // A web page in the tab (main still decides: only the active tab).
         available: (ctx) => canScreenshot(ctx.tab),
-        run: async (ctx) => {
-          const tabId = ctx.tab!.id;
-          tell({ phase: 'start', tabId, kind });
-          const answer = await api.screenshot(tabId, kind);
-          tell({ phase: 'end', tabId, answer });
-          return screenshotOutcomeText(answer);
-        },
+        // Through the tab's run (`components/changes/screenshot-runs.ts`), so an open panel shows it.
+        run: async (ctx) => screenshotOutcomeText(await api.screenshot(ctx.tab!.id, kind)),
       }),
     ),
   ];

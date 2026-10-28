@@ -42,6 +42,7 @@ interface ScriptEvent {
 }
 interface ScriptElement {
   readonly style: ScriptStyle;
+  readonly isConnected?: boolean;
   textContent: string | null;
   setAttribute(name: string, value: string): void;
   attachShadow(init: { mode: 'closed' }): { append(...nodes: ScriptElement[]): void };
@@ -64,6 +65,7 @@ interface ScriptView {
   readonly devicePixelRatio: number;
   scrollTo(options: { left: number; top: number; behavior: 'instant' }): void;
   requestAnimationFrame?(callback: () => void): number;
+  readonly MutationObserver?: new (callback: () => void) => { observe(target: unknown, options: { childList: boolean }): void; disconnect(): void };
   addEventListener(type: string, listener: Listener, options?: boolean): void;
   removeEventListener(type: string, listener: Listener, options?: boolean): void;
 }
@@ -234,7 +236,10 @@ export function selectArea(document: ScriptDocument, config: AreaConfig, store: 
       css(size, { bottom: rect.y + rect.height + 26 > view.innerHeight ? '2px' : '-22px' });
       size.textContent = `${rect.width} × ${rect.height}`;
     };
-    // The page sees none of the drag: each event stops at the overlay.
+    // The drag stops at the overlay: the page's bubbling listeners never get it, and nothing under
+    // the overlay is clicked. The page still sees the pointer events in their capture phase
+    // (retargeted to the host), before the overlay; it cannot see inside the closed root, and its own
+    // events select nothing (`isTrusted`).
     const swallow = (event: ScriptEvent): void => {
       event.preventDefault();
       event.stopPropagation();
@@ -284,15 +289,28 @@ export function selectArea(document: ScriptDocument, config: AreaConfig, store: 
       ['contextmenu', swallow],
     ];
     const timer = setTimeout(() => finish(null), config.timeoutMs);
+    // The page taking the host out of the document ends the selection (with no area).
+    const Observer = view.MutationObserver;
+    const observer =
+      typeof Observer === 'function'
+        ? new Observer(() => {
+            if (host.isConnected === false) finish(null);
+          })
+        : null;
 
     function finish(result: ScreenshotRect | null): void {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      observer?.disconnect();
       for (const [type, listener] of pointerListeners) surface.removeEventListener(type, listener);
       view!.removeEventListener('keydown', onKey, true);
       view!.removeEventListener('pagehide', onLeave);
       host.remove();
+      // Inert from now on: a page that appends the host again gets an empty, hidden element (its
+      // shadow root holds nothing, and no listener is left).
+      surface.remove();
+      css(host, { display: 'none', 'pointer-events': 'none' });
       if (store[config.key] === state) store[config.key] = undefined;
       // The page paints without the overlay before main captures it.
       let frames = config.settleFrames;
@@ -318,6 +336,7 @@ export function selectArea(document: ScriptDocument, config: AreaConfig, store: 
     view.addEventListener('keydown', onKey, true);
     view.addEventListener('pagehide', onLeave);
     root.appendChild(host);
+    observer?.observe(root, { childList: true });
   });
 }
 
@@ -347,11 +366,15 @@ const MAX_CSS_PX = 10_000_000;
 const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isNumberIn = (value: unknown, min: number, max: number): value is number => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
 
-/** A measure answer, if every value is a sane number (and the URL a string); else `null`. */
+/**
+ * A measure answer, if every value is a sane number (and the URL a string); else `null`. A page
+ * taller than `MAX_CSS_PX` is taken as that tall (the stitch is cut at its caps anyway: `truncated`).
+ */
 export function parseMeasure(raw: unknown): PageMeasure | null {
   if (!isPlainObject(raw) || typeof raw['url'] !== 'string') return null;
-  const { url, scrollHeight, innerWidth, innerHeight, clientWidth, clientHeight, scrollX, scrollY, devicePixelRatio } = raw;
-  if (!isNumberIn(scrollHeight, 0, MAX_CSS_PX) || !isNumberIn(innerWidth, 1, MAX_CSS_PX) || !isNumberIn(innerHeight, 1, MAX_CSS_PX)) return null;
+  const { url, innerWidth, innerHeight, clientWidth, clientHeight, scrollX, scrollY, devicePixelRatio } = raw;
+  const scrollHeight = isNumberIn(raw['scrollHeight'], 0, Number.MAX_VALUE) ? Math.min(raw['scrollHeight'], MAX_CSS_PX) : null;
+  if (scrollHeight === null || !isNumberIn(innerWidth, 1, MAX_CSS_PX) || !isNumberIn(innerHeight, 1, MAX_CSS_PX)) return null;
   if (!isNumberIn(clientWidth, 0, MAX_CSS_PX) || !isNumberIn(clientHeight, 0, MAX_CSS_PX) || !isNumberIn(scrollX, -MAX_CSS_PX, MAX_CSS_PX) || !isNumberIn(scrollY, -MAX_CSS_PX, MAX_CSS_PX)) return null;
   if (!isNumberIn(devicePixelRatio, 0.01, 100)) return null;
   return { url: url as string, scrollHeight, innerWidth, innerHeight, clientWidth, clientHeight, scrollX, scrollY, devicePixelRatio };

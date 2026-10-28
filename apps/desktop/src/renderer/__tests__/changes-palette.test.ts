@@ -6,7 +6,7 @@ import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import { CAPTURE_REFUSAL_MESSAGES, type CaptureAnswer } from '@app/specs/changes.spec';
 import { FEATURE_PANEL_JUMPS } from '@app/specs/command-palette.spec';
-import { changesPaletteSources, onPageCaptured, onScreenshot } from '../changes-palette';
+import { changesPaletteSources, onPageCaptured } from '../changes-palette';
 import { SCREENSHOT_REFUSAL_MESSAGES, type TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
@@ -73,19 +73,14 @@ describe('changes palette actions', () => {
     expect(action('changes.screenshot-viewport').label).toBe('Screenshot viewport');
     expect(action('changes.screenshot-full').label).toBe('Screenshot full page');
     expect(action('changes.screenshot-area').label).toBe('Screenshot an area');
-    // Each takes its kind of the active tab, and says how it went; the panel hears it start and end.
-    const heard = vi.fn();
-    const stop = onScreenshot(heard);
+    // Each takes its kind of the active tab, and says how it went.
     await expect(Promise.resolve(action('changes.screenshot-viewport').run(ctx))).resolves.toBe('Saved a screenshot of the viewport (800 × 600 px).');
     expect(api.screenshot).toHaveBeenLastCalledWith(3, 'viewport');
-    expect(heard.mock.calls.map(([event]) => event.phase)).toEqual(['start', 'end']);
-    expect(heard.mock.calls[0]![0]).toEqual({ phase: 'start', tabId: 3, kind: 'viewport' });
     api.screenshot.mockResolvedValueOnce({ status: 'refused', reason: 'cancelled' });
     await expect(Promise.resolve(action('changes.screenshot-area').run(ctx))).resolves.toBe(SCREENSHOT_REFUSAL_MESSAGES.cancelled);
     expect(api.screenshot).toHaveBeenLastCalledWith(3, 'area');
     api.screenshot.mockResolvedValueOnce(null);
     await expect(Promise.resolve(action('changes.screenshot-full').run(ctx))).resolves.toBe(SCREENSHOT_REFUSAL_MESSAGES['store-failed']);
-    expect(heard).toHaveBeenCalledTimes(6);
-    stop();
+    expect(api.screenshot).toHaveBeenCalledTimes(3);
   });
 });

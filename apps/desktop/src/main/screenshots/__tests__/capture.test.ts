@@ -1,11 +1,10 @@
 // Spec: specs/screenshot.spec.ts (SCREENSHOT_WORLD_ID, SCREENSHOT_LIMITS, SCREENSHOT_REFUSALS)
-// Acceptance: specs/screenshot.feature.md (Kinds; Scenarios full-page-restores-scroll, area-selection-cancels)
-import { readdirSync } from 'node:fs';
-import { afterEach, describe, expect, test } from 'vitest';
+// Acceptance: specs/screenshot.feature.md (Kinds; Scenarios bitmap-of-a-captured-image, viewport-and-area-capture-the-view,
+// full-page-restores-scroll, full-page-rows-at-any-ratio, deadlines-bound-every-step)
+import { describe, expect, test } from 'vitest';
 import { SCREENSHOT_LIMITS, SCREENSHOT_WORLD_ID } from '@app/specs/screenshot.spec';
-import { fakeEvent } from '../../../test/electron-fake';
-import { bitmapOf, captureArea, captureFullPage, captureViewport, ScreenshotFailure } from '../capture';
-import { FakeTab, rowAt, serviceSetup, until, type ServiceSetup } from './fakes';
+import { bitmapOf, captureArea, captureFullPage, captureViewport, deviceScale, ScreenshotFailure } from '../capture';
+import { FakeTab, rowAt, until } from './fakes';
 
 const live = () => new AbortController().signal;
 const failure = async (run: Promise<unknown>): Promise<string> => {
@@ -73,12 +72,12 @@ describe('capture', () => {
     expect(tab.scroll).toEqual({ x: 0, y: 37 });
     expect(tab.scripts.every((script) => script.world === SCREENSHOT_WORLD_ID)).toBe(true);
 
-    // A fractional device ratio (a 366 × 1263 CSS viewport captured at 332 × 1145 px): rows follow
-    // the capture's height, so a row of rounding never cuts the page short.
+    // A fractional device ratio (a 366 × 1263 CSS viewport captured at 332 × 1145 px, 0.906 25):
+    // rows follow the page's devicePixelRatio, every document row exactly once.
     const fractional = new FakeTab({ innerWidth: 366, innerHeight: 1_263, clientWidth: 350, clientHeight: 1_263, scrollHeight: 3_790, scale: 0.906_25, devicePixelRatio: 0.906_25 });
     const whole = await captureFullPage(fractional, { signal: live() });
-    expect(whole).toMatchObject({ truncated: false, segments: 4, bitmap: { width: 317, height: Math.round((3_790 * 1_145) / 1_263) } });
-    for (let y = 0; y < whole.bitmap.height; y++) expect(Math.abs(rowAt(whole.bitmap.bitmap, 317, 0, y) - y), `row ${y}`).toBeLessThanOrEqual(1);
+    expect(whole).toMatchObject({ truncated: false, segments: 4, bitmap: { width: 317, height: Math.round(3_790 * 0.906_25) } });
+    for (let y = 0; y < whole.bitmap.height; y++) if (rowAt(whole.bitmap.bitmap, 317, 0, y) !== y) throw new Error(`row ${y} is ${rowAt(whole.bitmap.bitmap, 317, 0, y)}`);
 
     // A page that stops scrolling early: cut where its rows run out (truncated), never a gap.
     const stuck = new FakeTab();
@@ -119,69 +118,65 @@ describe('capture', () => {
     expect(await failure(captureFullPage(hostile, { signal: live() }))).toBe('capture-failed');
     expect(hostile.scripts.filter((s) => s.kind === 'scroll')).toEqual([]);
   });
-});
 
-describe('area selection through the service', () => {
-  const setups: ServiceSetup[] = [];
-  afterEach(() => {
-    for (const setup of setups.splice(0)) setup.cleanup();
+  test('full-page-rows-at-any-ratio', async () => {
+    // A tall page (10,000 CSS px) in a 653 px viewport, at whole and fractional ratios: the stitched
+    // image is exactly round(10,000 × ratio) rows (or the cap), each document row once, in order.
+    for (const ratio of [1, 1.25, 1.5, 0.906_25, 1.75, 2, 2.25, 0.8, 1.333_333]) {
+      const tab = new FakeTab({ innerWidth: 400, innerHeight: 653, clientWidth: 385, clientHeight: 653, scrollHeight: 10_000, scale: ratio, devicePixelRatio: ratio });
+      const shot = await captureFullPage(tab, { signal: live() });
+      const width = Math.round(385 * ratio);
+      const expected = Math.min(Math.round(10_000 * ratio), SCREENSHOT_LIMITS.maxStitchedHeightPx, Math.floor(SCREENSHOT_LIMITS.maxPixels / width));
+      expect(shot.bitmap, `ratio ${ratio}`).toMatchObject({ width, height: expected });
+      expect(shot.truncated, `ratio ${ratio}`).toBe(expected < Math.round(10_000 * ratio));
+      for (let y = 0; y < expected; y++) if (rowAt(shot.bitmap.bitmap, width, 0, y) !== y) throw new Error(`ratio ${ratio}: row ${y} is ${rowAt(shot.bitmap.bitmap, width, 0, y)}`);
+    }
+    // A capture that disagrees with devicePixelRatio (device emulation): the measured ratio is used.
+    expect(deviceScale(653, 980, 2)).toBeCloseTo(980 / 653);
+    expect(deviceScale(653, 1_306, 2)).toBe(2);
+    expect(deviceScale(1_263, 1_145, 0.906_25)).toBe(0.906_25);
   });
 
-  test('area-selection-cancels', async () => {
-    const setup = serviceSetup();
-    setups.push(setup);
-    const { service, tabs, state, raw, files } = setup;
-    const tab = tabs.get(1)!;
-    const cancels = () => tab.scripts.filter((s) => s.kind === 'cancel').length;
-    /** Starts an area screenshot and waits for its selector to be up; answers the screenshot's (pending) answer. */
-    const start = async (on = service, page = tab) => {
-      page.selection = null;
-      const answer = on.take(1, { kind: 'area' });
-      await until(() => page.selection !== null);
-      return { answer };
+  test('deadlines-bound-every-step', async () => {
+    const tight = { ...SCREENSHOT_LIMITS, fullPageDeadlineMs: 100, areaTimeoutMs: 100, segmentTimeoutMs: 100 };
+    const never = () => new Promise<never>(() => undefined);
+    const timed = async (run: Promise<unknown>) => {
+      const started = Date.now();
+      const reason = await failure(run);
+      return { reason, ms: Date.now() - started };
     };
-
-    // A main-frame navigation (not an in-page one).
-    let pending = (await start()).answer;
-    tab.emit('did-start-navigation', fakeEvent({ url: 'https://example.com/page#top', isMainFrame: true, isSameDocument: true }));
-    tab.emit('did-start-navigation', fakeEvent({ url: 'https://ads.example/frame', isMainFrame: false, isSameDocument: false }));
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(tab.selection).not.toBeNull();
-    tab.emit('did-start-navigation', fakeEvent({ url: 'https://example.com/next', isMainFrame: true, isSameDocument: false }));
-    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
-    expect(cancels()).toBe(1);
-
-    // cancelArea (the chrome's Cancel); another tab's, or a tab without one, cancels nothing.
-    pending = (await start()).answer;
-    await expect(service.cancelArea(2)).resolves.toBe(false);
-    await expect(service.cancelArea(1)).resolves.toBe(true);
-    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
-    await expect(service.cancelArea(1)).resolves.toBe(false);
-    expect(cancels()).toBe(2);
-
-    // Another tab brought to the front.
-    pending = (await start()).answer;
-    state.active = 2;
-    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
-    state.active = 1;
-
-    // The timeout (a service of its own, with a short one).
-    const short = serviceSetup({ limits: { ...SCREENSHOT_LIMITS, areaTimeoutMs: 50 } });
-    setups.push(short);
-    const shortTab = short.tabs.get(1)!;
-    await expect((await start(short.service, shortTab)).answer).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
-    expect(shortTab.scripts.filter((s) => s.kind === 'cancel')).toHaveLength(1);
-
-    // The tab closing (its WebContents destroyed).
-    pending = (await start()).answer;
-    tab.destroyed = true;
-    tab.emit('destroyed');
-    await expect(pending).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
-
-    // Nothing was written, and no listener was left on the tab.
-    expect(raw.prepare('SELECT count(*) AS n FROM ci_screenshots').get()).toEqual({ n: 0 });
-    expect(() => readdirSync(files.dir)).toThrow();
-    expect(tab.listenerCount('did-start-navigation')).toBe(0);
-    expect(tab.listenerCount('destroyed')).toBe(0);
+    // A full page whose capture and restore never answer: failed by the deadline, restore given up on.
+    const stalled = new FakeTab();
+    stalled.beforeCapture = () => (stalled.captures === 2 ? never() : undefined);
+    stalled.override = (kind) => (kind === 'restore' ? never() : undefined);
+    let outcome = await timed(captureFullPage(stalled, { signal: live(), limits: tight }));
+    expect(outcome.reason).toBe('capture-failed');
+    expect(outcome.ms).toBeLessThan(1_000);
+    // A page that answers nothing at all.
+    const silent = new FakeTab();
+    silent.override = () => never();
+    outcome = await timed(captureFullPage(silent, { signal: live(), limits: tight }));
+    expect(outcome).toMatchObject({ reason: 'capture-failed' });
+    expect(outcome.ms).toBeLessThan(1_000);
+    // An area whose selector and cancel script never answer: cancelled at the timeout, the cancel given up on.
+    outcome = await timed(captureArea(silent, { signal: live(), limits: tight }));
+    expect(outcome.reason).toBe('cancelled');
+    expect(outcome.ms).toBeLessThan(1_000);
+    expect(silent.scripts.filter((script) => script.kind === 'cancel')).toHaveLength(1);
+    // An area selected, then a page that never answers the measure: failed within the step's deadline.
+    const mute = new FakeTab();
+    mute.override = (kind) => (kind === 'measure' ? never() : undefined);
+    const area = timed(captureArea(mute, { signal: live(), limits: tight }));
+    await until(() => mute.selection !== null);
+    mute.selection!.resolve({ x: 1, y: 1, width: 10, height: 10 });
+    outcome = await area;
+    expect(outcome.reason).toBe('capture-failed');
+    expect(outcome.ms).toBeLessThan(1_000);
+    // A view that never captures: the viewport fails within its deadline.
+    const frozen = new FakeTab();
+    frozen.beforeCapture = never;
+    outcome = await timed(captureViewport(frozen, { signal: live(), limits: tight }));
+    expect(outcome).toMatchObject({ reason: 'capture-failed' });
+    expect(outcome.ms).toBeLessThan(1_000);
   });
 });
