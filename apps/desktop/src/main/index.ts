@@ -50,6 +50,7 @@ import { createLoadTimes } from './changes/loads';
 import { runRegions } from './changes/regions';
 import { changesTabs, createChangesService } from './changes/service';
 import { createMainScreenshots } from './screenshots/electron';
+import { createMainProjects } from './changes/projects-main';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -319,6 +320,8 @@ function start(): void {
   const changes = createChangesService({ store: sessionStore.changeIntel, tabs: changesTabs(browser, (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null, changeLoads), extract: runRegions, log: logSession });
   // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
   const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession });
+  // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
+  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, log: logSession });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
@@ -434,6 +437,7 @@ function start(): void {
         settings: searchEngine,
         changes,
         screenshots,
+        projects,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

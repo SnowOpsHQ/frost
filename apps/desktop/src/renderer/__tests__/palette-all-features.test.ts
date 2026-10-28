@@ -13,6 +13,7 @@ import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { changesPaletteSources } from '../changes-palette';
 import { createPaletteRegistry, type PaletteContext, type PaletteSource } from '../palette/registry';
 import { renderProfilePaletteSources } from '../render-profile-palette';
+import { projectsPaletteSources } from '../projects-palette';
 
 const URL_A = 'https://www.example.com/a';
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, schema: { blocks: [] } } as unknown as SeoAudit };
@@ -33,6 +34,7 @@ function everySource(): PaletteSource[] {
     ...browserPolishPaletteSources({ openFind: yes, reopenClosedTab: vi.fn(async () => 1), showHistory: yes, setSearchEngine: yes }),
     ...checksPaletteSources({ checkLinks: yes, checkSitemaps: yes, checkHreflang: yes, stop: yes, known: () => undefined }),
     ...changesPaletteSources({ capture: vi.fn(async () => null), screenshot: vi.fn(async () => null) }),
+    ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }),
   ];
 }
 

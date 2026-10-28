@@ -18,6 +18,8 @@ import { usePing } from './hooks/usePing';
 import { useSeoAudit } from './hooks/useSeoAudit';
 import { useSidebarOpen } from './hooks/useSidebarOpen';
 import type { PanelJump } from './palette/registry';
+import { Projects } from './components/changes/Projects';
+import { useProjectsSheet } from './components/changes/projects-sheet';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`). Its rows: the
 // tab strip, the toolbar, the permission prompt bar, the render-profile editor bar while open
@@ -47,6 +49,8 @@ export function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   // Browser polish (`browser-polish.feature.md`): the History sheet (per window) and the active tab's find bar.
   const [historyOpen, closeHistory] = useHistoryView(state?.historyViewSeq, tab);
+  // Projects (`projects.feature.md`): the Projects sheet over the page column, like History.
+  const [projectsOpen, closeProjects] = useProjectsSheet();
   return (
     <div className="chrome">
       <TabStrip state={state} />
@@ -62,9 +66,10 @@ export function App() {
       <div className="workspace-stack">
         <div className="workspace">
           {/* The palette's sheet and the History sheet sit above the page area, never under the tab's view (`command-palette.spec.ts`). */}
-          <div className="page-column" data-history={historyOpen ? 'open' : undefined}>
+          <div className="page-column" data-history={historyOpen ? 'open' : undefined} data-projects={projectsOpen ? 'open' : undefined}>
             <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
             {historyOpen ? <HistoryView onClose={closeHistory} /> : null}
+            {projectsOpen ? <Projects tab={tab} onClose={closeProjects} /> : null}
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>
           <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} notesGeneration={state?.contentNotesGeneration} />

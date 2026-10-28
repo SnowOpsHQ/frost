@@ -41,6 +41,7 @@ import { formatCount } from '../../seo-view';
 import { captureProject, useCaptureProject } from './capture-project';
 import { CaptureGlyph, ChangesIcon } from './changes-icons';
 import { ScreenshotControls, ScreenshotGallery, startScreenshot } from './Screenshots';
+import { ProjectPicker } from './ProjectPicker';
 
 // The Changes panel (acceptance `changes-panel.feature.md`): the current page's captured versions,
 // newest first and grouped into lanes, "Capture now", and the diff of two versions of a lane, by
@@ -405,7 +406,7 @@ function captureHint(audit: AuditState, loading: boolean): string {
 function PageChanges({ tab, response }: { readonly tab: TabState; readonly response: SeoAuditResponse | null }) {
   const history = useHistory(pageUrlOf(tab.url));
   const { reload } = history;
-  // The project captures go to (`capture-project.ts`: Task 6's picker sets it; Unfiled until then).
+  // The project captures go to (`capture-project.ts`: the project picker sets it).
   const projectId = useCaptureProject();
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<{ readonly text: string; readonly kind: string } | null>(null);
@@ -464,7 +465,7 @@ function PageChanges({ tab, response }: { readonly tab: TabState; readonly respo
             <CaptureGlyph />
             <span>{busy ? 'Capturing…' : 'Capture now'}</span>
           </button>
-          {/* Task 6: the project picker goes here (`setCaptureProject`; Unfiled until then). */}
+          <ProjectPicker url={pageUrlOf(tab.url)} />
         </div>
         {!capturable ? (
           <p className="changes-note" data-testid="changes-capture-hint">

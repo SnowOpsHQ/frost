@@ -11,6 +11,7 @@ import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
 import type { ChangesService, ScreenshotsService } from './changes-service';
+import type { ProjectsService } from './projects-router';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -175,4 +176,5 @@ export interface IpcServices {
   readonly changes?: ChangesService;
   /** Change intelligence: screenshots of the active tab and their gallery (Phase 6 Task 5, `changes-service.ts`). */
   readonly screenshots?: ScreenshotsService;
+  readonly projects?: ProjectsService;
 }

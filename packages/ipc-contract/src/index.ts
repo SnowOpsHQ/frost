@@ -9,6 +9,7 @@ export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryServic
 export type { ChecksService } from './checks-service';
 export type { ChangesReadApi, ChangesReadService, ChangesService } from './changes-service';
 export type { ScreenshotsService } from './changes-service';
+export type { ProjectsService } from './projects-router';
 export {
   createContext,
   createSenderPolicy,

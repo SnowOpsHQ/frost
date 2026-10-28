@@ -8131,3 +8131,452 @@ input {
 }
 
 /* End of Changes panel (Phase 6) */
+
+/* Projects (Phase 6) ------------------------------------------------------------------------------
+   Phase 6 Task 6, specs/projects.feature.md: the Projects sheet over the page column (like History:
+   while open it fills the column and the page area shrinks to nothing; while a capture run is under
+   way it shrinks to a band and the page area takes the rest, so the run's tab is on screen), and the
+   Changes panel's project picker. */
+
+:root {
+  --projects-width: 980px;
+  --projects-run-band: min(46%, 340px);
+}
+
+.page-column[data-projects='open'] > .page-area {
+  flex: 0 0 0;
+  height: 0;
+}
+
+/* A run under way: the run's tab shows below the band. */
+.page-column[data-projects='open']:has(> .projects-sheet[data-running='true']) > .page-area {
+  flex: 1 1 auto;
+  height: auto;
+}
+
+.projects-sheet {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  contain: inline-size;
+  background: var(--bg-page);
+  outline: none;
+}
+
+.projects-sheet[data-running='true'] {
+  flex: 0 0 auto;
+  height: var(--projects-run-band);
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.projects {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--projects-width), 100%);
+  min-height: 0;
+}
+
+.projects-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 18px 20px 10px;
+}
+
+.projects-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.projects-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.projects-close,
+.projects-icon-button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--icon);
+}
+
+.projects-close:hover,
+.projects-icon-button:hover {
+  background: var(--bg-hover);
+}
+
+.projects-icon-button .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.projects-adding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 20px 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-field);
+  background: var(--accent-soft);
+  overflow-wrap: anywhere;
+}
+
+.projects-body {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 18px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 20px 20px;
+}
+
+.projects-list,
+.projects-main {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.projects-items,
+.projects-entries,
+.projects-run-targets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projects-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+}
+
+.projects-item[data-selected='true'] {
+  background: var(--accent-soft);
+}
+
+.projects-item-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+}
+
+.projects-item-open:hover {
+  background: var(--bg-hover);
+}
+
+.projects-item-name,
+.projects-entry-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-item[data-unfiled='true'] .projects-item-name {
+  color: var(--text-muted);
+}
+
+.projects-rename,
+.projects-create,
+.projects-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.projects-rename {
+  flex: 1 1 auto;
+}
+
+.projects-create {
+  margin-top: 12px;
+}
+
+.projects-input,
+.projects-select {
+  flex: 1 1 120px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+  background: var(--bg-field);
+  color: var(--text);
+  user-select: text;
+}
+
+.projects-input:focus,
+.projects-select:focus {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.projects-small-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.projects-small-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.projects-small-button:disabled {
+  opacity: 0.5;
+}
+
+.projects-small-button .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.projects-danger {
+  color: var(--danger);
+}
+
+.projects-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.projects-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.projects-detail-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.projects-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.projects-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.projects-count {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.projects-capture-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.projects-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.projects-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projects-profile {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.projects-profile .projects-select {
+  flex: 0 1 auto;
+}
+
+.projects-note,
+.projects-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projects-entry {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.projects-entry-open {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+}
+
+.projects-entry-open:hover .projects-entry-label {
+  color: var(--accent);
+}
+
+.projects-entry-meta {
+  display: flex;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projects-query-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  align-items: end;
+  gap: 8px;
+}
+
+.projects-field-wide {
+  grid-column: 1 / -1;
+}
+
+.projects-field-short .projects-input {
+  flex: none;
+}
+
+.projects-run {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+}
+
+.projects-run-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.projects-run-progress {
+  flex: 1 1 auto;
+  margin: 0;
+  font-weight: 500;
+}
+
+.projects-run-target {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.projects-run-target .projects-entry-label {
+  min-width: 0;
+}
+
+.projects-run-outcome {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.projects-run-target[data-outcome='captured'] .projects-run-outcome {
+  color: var(--ok);
+}
+
+.projects-run-target[data-outcome='failed'] .projects-run-outcome,
+.projects-run-target[data-outcome='timed-out'] .projects-run-outcome {
+  color: var(--danger);
+}
+
+/* The Changes panel's project picker, next to Capture now. */
+.changes-project-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.changes-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.changes-project-select {
+  max-width: 180px;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+  background: var(--bg-field);
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .projects-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* End of Projects (Phase 6) */
