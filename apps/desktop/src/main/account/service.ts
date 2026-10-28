@@ -85,8 +85,9 @@ export interface AccountMainService extends AccountService {
   /** Resolves once no exchange, refresh or revocation started so far is still running. */
   whenIdle(): Promise<void>;
   /**
-   * Stops the refresh timer, drops a pending sign-in (revoking a token it exchanged) and releases
-   * watchers. Answers the revocations still running (to hold the quit for, bounded), or `null`.
+   * Stops the refresh timer, drops a pending sign-in (revoking a token it exchanged), revokes a
+   * signed-in account's token kept for this run only (a memory-only store) and releases watchers.
+   * Answers the revocations still running (to hold the quit for, bounded), or `null`.
    */
   dispose(): Promise<void> | null;
 }
@@ -530,6 +531,14 @@ export async function createAccountService(deps: AccountServiceDeps): Promise<Ac
       clearInterval(interval);
       unsubscribe?.();
       if (pending) dropPending(pending, null, { closeListener: true });
+      // A token kept for this run only (no keychain) cannot be used after it: revoked now, so it does
+      // not stay valid on the backend (the quit is held for it, bounded).
+      if (account && !store.persistent) {
+        const token = account.token;
+        account = null;
+        refreshing = null;
+        void revoke(token);
+      }
       for (const waiter of waiters.splice(0)) waiter.resolve(state());
       listeners.clear();
       return revoking.size === 0 ? null : Promise.allSettled([...revoking]).then(() => undefined);

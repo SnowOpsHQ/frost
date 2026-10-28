@@ -48,7 +48,9 @@ renderer never sees a token". Each line maps to one named test.
   `UNPACKAGED_HTTP_API_HOSTS`. The base is an origin only. A missing or invalid base or JWKS is
   `unconfigured`: nothing is sent, `signIn` answers `unconfigured`.
 - **Keychain.** The token lives in the secret store's `account` blob; memory-only (no real keychain)
-  still signs in for this run and the state says `memory-only`.
+  still signs in for this run and the state says `memory-only`. Such a token cannot be used after the
+  run, so quitting revokes it (inside the quit hold, bounded by `QUIT_REVOKE_TIMEOUT_MS`): it does not
+  stay valid on the backend for its 30 days.
 - **Tokens stay in main; logs carry no secret.** No answer carries a token, code, verifier, `state`,
   snapshot or user ID (`AccountStateSchema` is strict; the router validates every output). The
   service's log goes through a redactor: fixed messages, and any token, code, verifier, `state`,
@@ -121,11 +123,12 @@ renderer never sees a token". Each line maps to one named test.
 - `entitlements-none-unless-signed-in` — a snapshot held without a stored account is cleared at start; `entitlements()` is `none` while `confirming`.
 - `user-id-for-main-only` — main's `userId()` is the confirmed account's ID (`null` while signed out or `confirming`), and `onChange` listeners are called after each change (Search Console binds its connection to that ID); neither is on the IPC `AccountService`.
 - `memory-only-keychain-signs-in` — with a memory-only store sign-in works for the run and the state says `memory-only`.
+- `memory-only-token-revoked-on-dispose` — with a memory-only store, `dispose()` (the quit) revokes the signed-in account's token and answers the revocation to hold the quit for; with a persistent store it revokes nothing (the token outlives the run).
 - `watch-long-polls` — `watch` answers at once for an older version, else at the next change; aborting releases it; more than `MAX_PENDING_ACCOUNT_WATCHES` answer the oldest early.
 - `logs-carry-no-secret` — across every path above, the log never contains the fake token, code, verifier, `state`, snapshot or email.
 
 ## Quitting (`apps/desktop/src/main/account/__tests__/quit.test.ts`, fake app)
-- `quit-held-only-for-revocations` — with nothing to revoke, `will-quit` passes; otherwise it is held until the revocations settle or `QUIT_REVOKE_TIMEOUT_MS` passes, then quits again once; another holder (telemetry) holding the same quit does not make it hang or quit twice.
+- `quit-held-only-for-revocations` — with nothing to revoke (a memory-only account counts: its token is revoked at quit), `will-quit` passes; otherwise it is held until the revocations settle or `QUIT_REVOKE_TIMEOUT_MS` passes, then quits again once; another holder (telemetry) holding the same quit does not make it hang or quit twice.
 
 ## Gestures (`apps/desktop/src/main/account/__tests__/gestures.test.ts`)
 - `gesture-per-app-window` — a window created after the tracker (and one that existed before) is tracked; a gesture is consumed once, only for its own window; a closed window has none.

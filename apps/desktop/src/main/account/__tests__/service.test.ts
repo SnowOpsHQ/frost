@@ -613,6 +613,31 @@ describe('account sign-in flow', () => {
     expect(out.service.dispose()).not.toBeNull();
   });
 
+  test('memory-only-token-revoked-on-dispose', async () => {
+    // Kept for this run only: the quit revokes it, and the quit is held for that.
+    const h = await harness({ store: fakeStore(false) });
+    await toSignedIn(h);
+    expect(stateOf(h).keychain).toBe('memory-only');
+    h.api.signOut.mockClear();
+    let release!: () => void;
+    h.api.signOut.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(ok(null)))));
+    const wait = h.service.dispose();
+    expect(wait).not.toBeNull();
+    expect(h.api.signOut).toHaveBeenCalledExactlyOnceWith(TOKEN);
+    release();
+    await wait;
+    // A persistent account outlives the run: nothing is revoked.
+    const kept = await harness();
+    await toSignedIn(kept);
+    kept.api.signOut.mockClear();
+    expect(kept.service.dispose()).toBeNull();
+    expect(kept.api.signOut).not.toHaveBeenCalled();
+    // Signed out already: nothing to revoke either.
+    const out = await harness({ store: fakeStore(false) });
+    expect(out.service.dispose()).toBeNull();
+    expect(out.api.signOut).not.toHaveBeenCalled();
+  });
+
   test('refresh-network-keeps-grace', async () => {
     for (const where of ['session', 'entitlements'] as const) {
       const h = await harness();

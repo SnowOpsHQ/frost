@@ -95,8 +95,9 @@ export async function createAccountMain(): Promise<AccountMain> {
     focusWindow,
     log,
   });
-  // On quit: a token exchanged but not confirmed (or a sign-out still revoking) is revoked first, and
-  // secrets still on their way to disk are written, holding the quit at most QUIT_REVOKE_TIMEOUT_MS
+  // On quit: a token exchanged but not confirmed, a sign-out still revoking, or a signed-in token kept
+  // for this run only (memory-only keychain) is revoked first, and secrets still on their way to disk
+  // are written, holding the quit at most QUIT_REVOKE_TIMEOUT_MS
   // (only when there is either).
   holdQuitFor(app, () => {
     gestures.dispose();
