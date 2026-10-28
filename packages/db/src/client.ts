@@ -13,7 +13,10 @@ import type * as schema from './schema';
 
 export type SessionDatabase = SqliteRemoteDatabase<typeof schema>;
 
-/** A Drizzle database over `db` (its own handle stays the caller's to close). */
+/**
+ * A Drizzle database over `db`. The handle stays the caller's to close: the driver wrapping it is
+ * never closed here, and Drizzle never closes it.
+ */
 export function createDrizzle(db: DatabaseSync): SessionDatabase {
   return createDrizzleOver(createNodeSqliteDriver(db));
 }

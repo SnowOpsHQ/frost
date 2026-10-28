@@ -24,7 +24,10 @@ function rollBackOpen(db: DatabaseSync): void {
   if (db.isOpen && db.isTransaction) db.exec('ROLLBACK');
 }
 
-/** A driver over `db`, which it owns from now on: `close()` closes it. */
+/**
+ * A driver over `db`. Only `close()` closes the handle; until it is called the handle is the
+ * caller's too (`createDrizzle` never calls it, so there `db` stays the caller's to close).
+ */
 export function createNodeSqliteDriver(db: DatabaseSync): SqlDriver {
   const run = (item: SqlBatchItem): SqlResult => {
     if (!isScript(item)) return execute(db, item.sql, item.params, item.method);

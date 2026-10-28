@@ -11,7 +11,7 @@ import * as schema from './schema';
 // driver transaction; Drizzle's own `transaction()` (which would `await` between statements) is
 // not used.
 
-/** A Drizzle database over `driver` (the driver stays the caller's to close). */
+/** A Drizzle database over `driver` (the driver stays the caller's to close; Drizzle never closes it). */
 export function createDrizzleOver(driver: SqlDriver): SessionDatabase {
   return drizzle(
     async (sql, params, method) => (await driver.execute(sql, params, method)) as { rows: unknown[] },

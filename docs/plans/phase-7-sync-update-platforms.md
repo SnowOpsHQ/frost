@@ -710,6 +710,17 @@ sync.
   `require('@libsql/<target>')` → its `index.node`, by ordinary Node resolution from `libsql`'s
   directory. N-API, so the same file runs under Node and Electron's main (no rebuild).
   `LIBSQL_JS_DEV` set in the environment makes it load `libsql/index.node` instead (Task 7).
+- **Entry point.** The driver imports `@libsql/client/sqlite3` (0.18's local client; it passes
+  `syncUrl`/`authToken`/`syncInterval` to the native `libsql` `Database`, which syncs the embedded
+  replica itself), so at runtime only `libsql`, `@libsql/core` (+ `js-base64`), `@neon-rs/load`,
+  `detect-libc` and the platform prebuild are needed; `@libsql/hrana-client`,
+  `@libsql/isomorphic-ws`, `ws` and `promise-limit` are installed but never loaded.
+- **SQLite version.** libSQL 0.5.29 bundles SQLite 3.45.1 (2024-01-30), compiled with
+  `SQLITE_DEFAULT_RECURSIVE_TRIGGERS`; its connections nevertheless read `PRAGMA
+  recursive_triggers` as 0, like `node:sqlite`'s (`drivers-are-named` asserts both, so a libSQL
+  upgrade that changes either shows). `node:sqlite` in Node 26 and Electron 45 is SQLite 3.53.4.
+  Migrations meant to run over both drivers, and Task 8's mirrored `ci_*` SQL, stay within 3.45
+  features (`LIBSQL_SQLITE_VERSION` in `sync.spec.ts`).
 - **Seam.** `SqlDriver` (`driver-types.ts`) has `execute`, `batch`, `exec`, `close`, `isOpen`,
   `kind`. `batch` items are statements or scripts (`{ script }`): `runMigrationsOver` runs each
   migration's SQL and its id row as one batch, so a migration is one transaction on both drivers
@@ -740,6 +751,16 @@ sync.
   own parser can't read them differently: no query on either URL (`?authToken=`, `?tls=0` would
   turn `libsql:` into `http:`), loopback `http:` only as the literal written. A `syncUrl` is
   accepted only for a file named `frost-sync.db`, never `frost-browser.db`.
+- **Windows paths.** libSQL's URL parser (`@libsql/core/uri.js`) hands everything after `file:`
+  (or after `file://<empty host>`) to the native module, which opens it as a Rust `Path`: so
+  `file:///C:/…` would name `/C:/…`. `libsqlFileUrl` emits `file:C:/…` on Windows (`file:///…` on
+  POSIX), and `libsqlFilePath` accepts exactly those two forms and refuses `/C:/…`, drive-relative
+  `C:x`, and any UNC / SMB path (a decoded `\` or leading `//`, however encoded). The round-trip
+  is unit-tested with `path.win32` on every platform; that libSQL really opens `C:/…` is checked
+  only when the suite runs on Windows CI.
 - **Not done here.** No driver was opened with a `syncUrl` (that needs a server; Task 8's `sqld`
-  test). `libsqlFileUrl` on Windows gives `file:///C:/…`, which libSQL reads as `/C:/…`; whether
-  SQLite opens that on Windows is unverified.
+  test).
+- **Review fixes.** Windows file URLs and UNC refusal (above); the `sqlite3` entry; the SQLite
+  version note; `libsql-reads-numbers` binds a real `true`, reads a join's duplicate column names
+  and expects a `RangeError` past 2^53 − 1; the feature file gained `drivers-are-named`; the
+  handle-ownership comments in `client.ts` and `driver-node-sqlite.ts` now agree.

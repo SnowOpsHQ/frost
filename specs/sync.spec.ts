@@ -60,6 +60,15 @@ export const LIBSQL_LOOPBACK_HOSTS = ['127.0.0.1', '[::1]'] as const;
  */
 export const LIBSQL_INT_MODE = 'number' as const;
 
+/**
+ * The SQLite each driver runs, which differ: `libsql` 0.5.29 bundles SQLite 3.45.1 (compiled with
+ * `SQLITE_DEFAULT_RECURSIVE_TRIGGERS`; the driver's connections still read `PRAGMA
+ * recursive_triggers` as 0, as `node:sqlite`'s do), while Node 26 and Electron 45's `node:sqlite`
+ * bundle 3.53.4. A migration or query meant to run over both drivers (`MIGRATIONS`, and Phase 6's
+ * `ci_*` tables when Task 8 mirrors them) uses only what SQLite 3.45 supports.
+ */
+export const LIBSQL_SQLITE_VERSION = '3.45.1' as const;
+
 /** What the libSQL driver is asked to open. */
 export interface LibsqlConfig {
   /** The local database: a `file:` URL with an absolute, percent-encoded path. */
@@ -102,21 +111,33 @@ function decodes(text: string): string | null {
   }
 }
 
+/** A Windows drive path, `C:/…` (a drive-relative `C:x` is not absolute). */
+const WINDOWS_DRIVE = /^[A-Za-z]:\//;
+
 /**
- * The local file path a `file:` URL names, or why it is refused. Only `file:///<path>` or
- * `file:/<path>`: an absolute path, no host (not even `localhost`), no `?query` (libSQL would read
- * `authToken` or `tls` from it) and no `#fragment`. Checked on the string itself, not through a
- * URL parser, so libSQL's own parser can't read it differently.
+ * The local file path a `file:` URL names (as libSQL will open it), or why it is refused:
+ * - POSIX: `file:///<path>` or `file:/<path>`, naming `/<path>`;
+ * - Windows: `file:<drive>:/<path>`, naming `<drive>:/<path>`. libSQL's URL parser hands the path
+ *   after `file:` to the native module as is, so `file:///C:/…` would name `/C:/…`, which Windows
+ *   can't open; that form is refused.
+ *
+ * Always an absolute path with no host (not even `localhost`), no `?query` (libSQL would read
+ * `authToken` or `tls` from it) and no `#fragment`. Once decoded it holds no `\`, no NUL and no
+ * leading `//`, so no UNC / SMB share (`//server/share`, `\\server\share`) can be named, however
+ * it is encoded. Checked on the string itself, not through a URL parser, so libSQL's own parser
+ * can't read it differently.
  */
 export function libsqlFilePath(url: string): string | LibsqlConfigProblem {
   if (url.length > MAX_LIBSQL_URL_CHARS || !PRINTABLE.test(url)) return 'url-invalid';
   if (!url.startsWith('file:')) return 'url-not-file';
   const rest = url.slice('file:'.length);
-  const encoded = rest.startsWith('///') ? rest.slice(2) : rest.startsWith('/') && !rest.startsWith('//') ? rest : null;
+  const encoded = WINDOWS_DRIVE.test(rest) ? rest : rest.startsWith('///') ? rest.slice(2) : rest.startsWith('/') && !rest.startsWith('//') ? rest : null;
   if (encoded === null) return 'url-not-absolute';
-  if (/[?#\\]/.test(encoded) || encoded.length < 2 || encoded.endsWith('/')) return 'url-invalid';
+  if (/[?#\\]/.test(encoded) || encoded.endsWith('/')) return 'url-invalid';
   const path = decodes(encoded);
-  if (path === null || path.includes('\0')) return 'url-invalid';
+  if (path === null || /[\0\\]/.test(path)) return 'url-invalid';
+  const local = WINDOWS_DRIVE.test(path) ? path.slice(2) : path;
+  if (!local.startsWith('/') || local.startsWith('//') || local.length < 2 || /^\/[A-Za-z]:/.test(path)) return 'url-invalid';
   return path;
 }
 

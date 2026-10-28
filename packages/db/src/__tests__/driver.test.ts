@@ -15,6 +15,7 @@ import {
   DB_DRIVER_IDS,
   DEFAULT_DB_DRIVER,
   LIBSQL_INT_MODE,
+  LIBSQL_SQLITE_VERSION,
   MAX_LIBSQL_AUTH_TOKEN_CHARS,
   MAX_LIBSQL_URL_CHARS,
   SYNC_REPLICA_FILE_NAME,
@@ -35,9 +36,9 @@ import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
 import { createSessionRepository, type StoredDecision } from '../repository';
 import { createSettingsRepository } from '../settings';
 
-// Counts how often `@libsql/client` is loaded (its real module is still what loads).
+// Counts how often `@libsql/client` (its local `sqlite3` entry, what the driver imports) is loaded (its real module is still what loads).
 const libsqlLoads = vi.hoisted(() => ({ count: 0 }));
-vi.mock('@libsql/client', async (importOriginal) => {
+vi.mock('@libsql/client/sqlite3', async (importOriginal) => {
   libsqlLoads.count += 1;
   return importOriginal();
 });
@@ -110,6 +111,12 @@ describe('driver ids', () => {
       const driver = await openIn(driverCase, `${driverCase.kind}.db`);
       expect(driver.kind).toBe(driverCase.kind);
       expect(driver.isOpen).toBe(true);
+      // Phase 6's `_no_replace` guards rely on recursive triggers being off: so they are, on both.
+      expect(await all(driver, 'PRAGMA recursive_triggers')).toEqual([[0]]);
+      const [[version]] = (await all(driver, 'SELECT sqlite_version()')) as [[string]];
+      if (driverCase.kind === 'libsql') expect(version).toBe(LIBSQL_SQLITE_VERSION);
+      // `node:sqlite` is the newer SQLite: what both run is what 3.45 supports.
+      else expect(version.localeCompare(LIBSQL_SQLITE_VERSION, 'en', { numeric: true })).toBeGreaterThan(0);
       await driver.close();
       await driver.close();
       expect(driver.isOpen).toBe(false);
@@ -326,15 +333,20 @@ describe.each(DRIVERS)('libsql-reads-numbers ($kind)', (driverCase) => {
   test('libsql-reads-numbers', async () => {
     const driver = await openIn(driverCase);
     await driver.exec('CREATE TABLE v (i INTEGER, b INTEGER, x BLOB, r REAL, s TEXT, n INTEGER)');
-    await driver.execute('INSERT INTO v (i, b, x, r, s, n) VALUES (?, ?, ?, ?, ?, ?)', [Number.MAX_SAFE_INTEGER, 1, new Uint8Array([1, 2]), 1.5, 'a', null], 'run');
+    // A real boolean is bound as 1 (and read back as 1, not `true`).
+    await driver.execute('INSERT INTO v (i, b, x, r, s, n) VALUES (?, ?, ?, ?, ?, ?)', [Number.MAX_SAFE_INTEGER, true, new Uint8Array([1, 2]), 1.5, 'a', null], 'run');
+    expect(await all(driver, 'SELECT typeof(b) FROM v')).toEqual([['integer']]);
     const [row] = await all(driver, 'SELECT i, b, x, r, s, n FROM v');
     expect(row).toEqual([Number.MAX_SAFE_INTEGER, 1, new Uint8Array([1, 2]), 1.5, 'a', null]);
     expect(row![2]).toBeInstanceOf(Uint8Array);
     expect((await driver.execute('SELECT s FROM v WHERE i = ?', [Number.MAX_SAFE_INTEGER], 'get')).rows).toEqual(['a']);
     expect((await driver.execute('SELECT s FROM v WHERE i = 0', [], 'get')).rows).toBeUndefined();
-    // Beyond 2^53 - 1 an integer is never rounded: reading it throws.
+    // Two columns with the same name (a join) both come back, in column order.
+    await driver.exec("CREATE TABLE w (i INTEGER, s TEXT); INSERT INTO w VALUES (1, 'w');");
+    expect(await all(driver, 'SELECT v.s, w.s, w.i AS s FROM v JOIN w')).toEqual([['a', 'w', 1]]);
+    // Beyond 2^53 - 1 an integer is never rounded: reading it throws a RangeError.
     await driver.execute('INSERT INTO v (i) VALUES (9007199254740993)', [], 'run');
-    await expect(driver.execute('SELECT i FROM v WHERE i > ?', [Number.MAX_SAFE_INTEGER], 'all')).rejects.toThrow();
+    await expect(driver.execute('SELECT i FROM v WHERE i > ?', [Number.MAX_SAFE_INTEGER], 'all')).rejects.toBeInstanceOf(RangeError);
   });
 });
 
@@ -349,6 +361,9 @@ describe('libsql-url-rules', () => {
     [{ url: replica, syncUrl: 'https://sqld.example.com:8443', authToken: 'eyJhbGciOiJFZERTQSJ9.e30.c2ln', syncInterval: 60 }],
     [{ url: replica, syncUrl: 'http://127.0.0.1:8080' }, true],
     [{ url: replica, syncUrl: 'http://[::1]:8080/' }, true],
+    // Windows: `file:<drive>:/…`, what libSQL hands Windows as `C:/…`.
+    [{ url: 'file:C:/Users/u/AppData/Roaming/frost/frost-browser.db' }],
+    [{ url: 'file:c:/Users/u/AppData/Roaming/frost/frost-sync.db', syncUrl: 'https://sqld.example.com' }],
   ];
   const refused: [LibsqlConfig, LibsqlConfigProblem, boolean?][] = [
     [{ url: 'libsql://db-org.turso.io' }, 'url-not-file'],
@@ -365,6 +380,21 @@ describe('libsql-url-rules', () => {
     [{ url: 'file:///home/u/%E0%A4%A.db' }, 'url-invalid'],
     [{ url: 'file:///home/u/a%00.db' }, 'url-invalid'],
     [{ url: 'file:///' }, 'url-invalid'],
+    // UNC / SMB shares, however encoded.
+    [{ url: 'file:////srv/share/frost-sync.db', syncUrl: 'https://sqld.example.com' }, 'url-invalid'],
+    [{ url: 'file:////srv/share/x.db' }, 'url-invalid'],
+    [{ url: 'file:/%2F%2Fsrv/share/x.db' }, 'url-invalid'],
+    [{ url: 'file:///%2Fsrv/share/x.db' }, 'url-invalid'],
+    [{ url: 'file:///%5C%5Csrv%5Cshare%5Cx.db' }, 'url-invalid'],
+    [{ url: 'file:%5C%5Csrv%5Cshare%5Cx.db' }, 'url-not-absolute'],
+    [{ url: 'file:C:/%5C%5Csrv/x.db' }, 'url-invalid'],
+    [{ url: 'file:C://srv/share/x.db' }, 'url-invalid'],
+    [{ url: 'file:C:/a%5Cb.db' }, 'url-invalid'],
+    // Windows paths libSQL would misread: `/C:/…`, drive-relative `C:x`.
+    [{ url: 'file:///C:/Users/u/x.db' }, 'url-invalid'],
+    [{ url: 'file:/C%3A/Users/u/x.db' }, 'url-invalid'],
+    [{ url: 'file:C:x.db' }, 'url-not-absolute'],
+    [{ url: 'file:C:/' }, 'url-invalid'],
     [{ url: `file:///${'a'.repeat(MAX_LIBSQL_URL_CHARS)}` }, 'url-invalid'],
     [{ url: replica, syncUrl: 'http://sqld.example.com' }, 'sync-url-scheme'],
     [{ url: replica, syncUrl: 'http://127.0.0.1:8080' }, 'sync-url-scheme'],
@@ -403,6 +433,15 @@ describe('libsql-url-rules', () => {
     for (const [config, problem, allowLoopbackHttp] of refused) expect(libsqlConfigProblem(config, { allowLoopbackHttp }), JSON.stringify(config)).toBe(problem);
     expect(libsqlFilePath('file:///Users/u/Library/Application%20Support/frost/frost-sync.db')).toBe('/Users/u/Library/Application Support/frost/frost-sync.db');
     expect(libsqlFilePath('file:/tmp/x.db')).toBe('/tmp/x.db');
+    expect(libsqlFilePath('file:C:/Users/u/My%20Files/x.db')).toBe('C:/Users/u/My Files/x.db');
+    // Every accepted URL names exactly the path libSQL's own parser reads from it (no host, no query).
+    const { parseUri } = await import('@libsql/core/uri');
+    for (const [config] of accepted) {
+      const parsed = parseUri(config.url);
+      expect(parsed.path, config.url).toBe(libsqlFilePath(config.url));
+      expect(parsed.authority?.host ?? '', config.url).toBe('');
+      expect(parsed.query, config.url).toBeUndefined();
+    }
 
     // The driver refuses the same configs before libSQL is even loaded, and names the problem.
     const before = libsqlLoads.count;
@@ -418,9 +457,25 @@ describe('libsql-url-rules', () => {
     }
     expect(libsqlLoads.count).toBe(before);
 
-    // A file URL for a path with spaces and `#` round-trips; a driver without a `syncUrl` has no `sync()`.
+    // `libsqlFileUrl` round-trips through `libsqlFilePath` on both platforms' paths (spaces, `#`,
+    // `%`, `?`, non-ASCII), and refuses what Windows can't name on a drive.
+    const roundTrip = (file: string, pathApi: typeof path) => pathApi.normalize(libsqlFilePath(libsqlFileUrl(file, pathApi)));
+    for (const file of ['/home/u/.config/frost/with space #1.db', '/tmp/a%b?c/ünï.db']) {
+      expect(roundTrip(file, path.posix)).toBe(file);
+      expect(libsqlFileUrl(file, path.posix)).toMatch(/^file:\/\/\//);
+    }
+    for (const file of ['C:\\Users\\u\\AppData\\Roaming\\frost\\with space #1.db', 'D:\\a%b?c\\ünï.db']) {
+      expect(roundTrip(file, path.win32)).toBe(file);
+      expect(libsqlFileUrl(file, path.win32)).toMatch(/^file:[CD]:\//);
+      expect(libsqlConfigProblem({ url: libsqlFileUrl(file, path.win32) })).toBeNull();
+    }
+    expect(libsqlFileUrl('C:\\Users\\u\\frost-sync.db', path.win32)).toBe('file:C:/Users/u/frost-sync.db');
+    for (const file of ['\\\\srv\\share\\x.db', '\\\\?\\C:\\x.db', '//srv/share/x.db']) expect(() => libsqlFileUrl(file, path.win32), file).toThrow();
+    expect(() => libsqlFileUrl('relative.db', path.posix)).toThrow();
+
+    // The real platform's temporary path round-trips and opens; a driver without a `syncUrl` has no `sync()`.
     const odd = path.join(dir, 'with space #1.db');
-    expect(libsqlFilePath(libsqlFileUrl(odd))).toBe(odd);
+    expect(path.normalize(libsqlFilePath(libsqlFileUrl(odd)))).toBe(odd);
     const driver = await openLibsqlDriver({ url: libsqlFileUrl(odd) });
     opened.push(driver);
     expect('sync' in driver).toBe(false);

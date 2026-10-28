@@ -1,15 +1,16 @@
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import type { Client, InArgs, ResultSet } from '@libsql/client';
+import type { Client, InArgs, ResultSet } from '@libsql/client/sqlite3';
 import { DB_BUSY_TIMEOUT_MS } from '@app/specs/browser-session-db.spec';
 import { LIBSQL_INT_MODE, libsqlConfigProblem, type LibsqlConfig, type LibsqlConfigProblem, type LibsqlUrlOptions } from '@app/specs/sync.spec';
 import { isScript, type SqlDriver, type SqlMethod, type SqlQuery, type SqlResult } from './driver-types';
 
 // The libSQL driver (Phase 7 Task 6; spec `sync.spec.ts`; acceptance `sync-driver.feature.md`):
 // `@libsql/client` over a local `file:` database, or an embedded replica of a remote primary when
-// a `syncUrl` is given (Task 8's `SYNC_REPLICA_FILE_NAME`). `@libsql/client` (and its native
-// `libsql` module) is loaded with `await import()` the first time a driver is opened, never by
-// importing `@app/db`: its index does not reach this file, so the main bundle never contains it.
+// a `syncUrl` is given (Task 8's `SYNC_REPLICA_FILE_NAME`). Its `sqlite3` entry: the local client,
+// which is all `libsqlConfigProblem` allows (`file:` URLs; the native `libsql` module syncs an
+// embedded replica itself), so its WebSocket / HTTP clients (`hrana-client`, `ws`) never load. It
+// is loaded with `await import()` the first time a driver is opened, never by importing
+// `@app/db`: its index does not reach this file, so the main bundle never contains it.
 //
 // Same values as `node:sqlite`: `intMode: 'number'` (`LIBSQL_INT_MODE`; exact to 2^53 − 1, a
 // larger stored integer throws a `RangeError` when read), booleans as 0/1, blobs converted from
@@ -37,10 +38,20 @@ export interface LibsqlDriver extends SqlDriver {
   readonly sync?: () => Promise<LibsqlSyncResult>;
 }
 
-/** The `file:` URL of the absolute path `file` (percent-encoded, as `libsqlFilePath` reads it). */
-export function libsqlFileUrl(file: string): string {
-  if (!path.isAbsolute(file)) throw new Error('libsqlFileUrl needs an absolute path');
-  return pathToFileURL(file).href;
+/**
+ * The `file:` URL of the absolute path `file`, percent-encoded per segment, as `libsqlFilePath`
+ * reads it back: `file:///a/b.db` on POSIX, `file:C:/a/b.db` on Windows (`pathApi` `path.win32`;
+ * libSQL opens whatever follows `file:`, and Windows can't open `/C:/…`). A Windows path that is
+ * not on a drive (a UNC share, `\\?\` device paths) is refused.
+ */
+export function libsqlFileUrl(file: string, pathApi: typeof path = path): string {
+  if (!pathApi.isAbsolute(file)) throw new Error('libsqlFileUrl needs an absolute path');
+  const normalized = pathApi.normalize(file);
+  const encode = (segments: string) => segments.split('/').map(encodeURIComponent).join('/');
+  if (pathApi.sep === '/') return `file://${encode(normalized)}`;
+  const forward = normalized.replaceAll('\\', '/');
+  if (!/^[A-Za-z]:\//.test(forward)) throw new Error('libsqlFileUrl needs a path on a drive');
+  return `file:${forward.slice(0, 2)}${encode(forward.slice(2))}`;
 }
 
 /** `value` as `node:sqlite` would read it: a blob as `Uint8Array`, anything else as is. */
@@ -119,7 +130,7 @@ function driverOver(client: Client): LibsqlDriver {
 export async function openLibsqlDriver(config: LibsqlConfig, options: LibsqlUrlOptions = {}): Promise<LibsqlDriver> {
   const problem = libsqlConfigProblem(config, options);
   if (problem !== null) throw new LibsqlConfigError(problem);
-  const { createClient } = await import('@libsql/client');
+  const { createClient } = await import('@libsql/client/sqlite3');
   const { url, syncUrl, authToken, syncInterval } = config;
   const client = createClient({
     url,

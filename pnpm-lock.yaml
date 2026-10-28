@@ -297,6 +297,9 @@ importers:
         specifier: 0.45.4
         version: 0.45.4(@libsql/client@0.18.0)
     devDependencies:
+      '@libsql/core':
+        specifier: 0.18.0
+        version: 0.18.0
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5
