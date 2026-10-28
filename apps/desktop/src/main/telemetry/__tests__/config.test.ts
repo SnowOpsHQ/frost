@@ -4,8 +4,9 @@
 import { describe, expect, test } from 'vitest';
 import { ACCOUNT_CONFIG_ENV } from '@app/specs/account-state.schema';
 import { GSC_CONFIG_ENV } from '@app/specs/gsc.spec';
-import { TELEMETRY_CONFIG_ENV } from '@app/specs/telemetry-consent.schema';
-import { resolveTelemetryConfig, type TelemetryEnv } from '../config';
+import { TELEMETRY_CONFIG_ENV, TELEMETRY_TEST_ENV } from '@app/specs/telemetry-consent.schema';
+import { TELEMETRY_LIMITS } from '@app/specs/telemetry-privacy.spec';
+import { resolveTelemetryConfig, testExportDelayMs, type TelemetryEnv } from '../config';
 
 const ENDPOINT = 'https://otel.example.test/v1/traces';
 const DSN = 'https://publickey@errors.example.test/42';
@@ -64,6 +65,19 @@ describe('telemetry configuration', () => {
       expect(resolve(isPackaged, { [ACCOUNT_CONFIG_ENV.apiBaseUrl]: 'https://api.example.test' }, runtime)).toEqual({ otelEndpoint: null, sentryDsn: null });
       expect(resolve(isPackaged, { [GSC_CONFIG_ENV.clientSecret]: 'built-secret' }, runtime)).toEqual({ otelEndpoint: null, sentryDsn: null });
     }
+  });
+
+  test('telemetry-test-export-delay', () => {
+    const delay = (isPackaged: boolean, value: string | undefined, buildTime: TelemetryEnv = {}) =>
+      testExportDelayMs({ isPackaged, buildTime, runtime: { [TELEMETRY_TEST_ENV.exportDelayMs]: value } });
+    expect(delay(false, '60000')).toBe(60_000);
+    expect(delay(false, '0')).toBe(0);
+    expect(delay(false, String(TELEMETRY_LIMITS.maxExportDelayMs))).toBe(TELEMETRY_LIMITS.maxExportDelayMs);
+    for (const bad of [undefined, '', ' 5', '5 ', '-1', '1.5', '1e3', '0x10', 'abc', String(TELEMETRY_LIMITS.maxExportDelayMs + 1)]) expect(delay(false, bad), String(bad)).toBeNull();
+    // Packaged, or anything baked in: never read.
+    expect(delay(true, '60000')).toBeNull();
+    expect(delay(false, '60000', env(ENDPOINT, undefined))).toBeNull();
+    expect(delay(false, '60000', { [ACCOUNT_CONFIG_ENV.apiBaseUrl]: 'https://api.example.test' })).toBeNull();
   });
 
   test('telemetry-config-shapes', () => {

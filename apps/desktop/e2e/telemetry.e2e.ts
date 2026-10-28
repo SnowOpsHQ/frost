@@ -11,6 +11,7 @@ import { IPC_BRIDGE_KEY } from '@app/specs/ipc-transport.spec';
 import {
   RENDERER_ERROR_MECHANISMS,
   TELEMETRY_CONFIG_ENV,
+  TELEMETRY_TEST_ENV,
   TELEMETRY_CONSENT_FILE,
   TelemetryConsentFileSchema,
   TelemetryStateSchema,
@@ -51,12 +52,15 @@ const privateMessage = (where: string) =>
   `${where} failed for https://private-site.example.com/account?token=abc123 (alice@example.com) at /home/alice/secret-project/notes.txt ` +
   `on (${HOST_NAME}) (${HOST_LABEL}) as (${USER_NAME}) in ${APP_DIR}/src/main/index.ts`;
 
-async function launch(): Promise<void> {
+async function launch(env: Readonly<Record<string, string>> = {}): Promise<void> {
   ({ app, page } = await launchApp([], {
     userDataDir: profile,
-    env: { [TELEMETRY_CONFIG_ENV.otelEndpoint]: fake.otelEndpoint, [TELEMETRY_CONFIG_ENV.sentryDsn]: fake.sentryDsn },
+    env: { [TELEMETRY_CONFIG_ENV.otelEndpoint]: fake.otelEndpoint, [TELEMETRY_CONFIG_ENV.sentryDsn]: fake.sentryDsn, ...env },
   }));
 }
+
+/** Holds span batches back for the whole run (tests only, unpackaged): a span waits in the queue until quitting flushes it. */
+const HOLD_BATCHES = { [TELEMETRY_TEST_ENV.exportDelayMs]: String(TELEMETRY_LIMITS.maxExportDelayMs) };
 
 /** Calls a `telemetry.*` procedure from the chrome page, as the renderer would. */
 async function call(type: 'query' | 'mutation', name: string, input?: unknown): Promise<unknown> {
@@ -155,6 +159,7 @@ test('telemetry-errors-on-sends-scrubbed', async () => {
 });
 
 test('telemetry-off-stops-at-once', async () => {
+  test.setTimeout(90_000);
   const off = await setConsent('errors', false);
   expect(off.consent).toEqual({ usage: false, errors: false });
   const before = fake.posts().length;
@@ -164,19 +169,34 @@ test('telemetry-off-stops-at-once', async () => {
   expect(fake.posts().length).toBe(before);
   expect(allEvents().some((event) => JSON.stringify(event).includes(' off failed for'))).toBe(false);
 
-  // End to end, a queued span: start with `usage` on (written before launch), turn it off before the
-  // startup span's batch leaves (`exportDelayMs`), and it never reaches the collector.
+  // End to end, a queued span: start with `usage` on (written before launch) and the batches held back
+  // (so nothing here depends on how fast the app launches). First the control: the startup span waits
+  // in the queue, and quitting flushes it to the collector.
+  const usageOn = () => writeFile(path.join(profile, TELEMETRY_CONSENT_FILE), JSON.stringify({ v: 1, usage: true, errors: false, decidedAt: Date.now() }));
   await closeApp(app);
   app = undefined;
-  await writeFile(path.join(profile, TELEMETRY_CONSENT_FILE), JSON.stringify({ v: 1, usage: true, errors: false, decidedAt: Date.now() }));
+  await usageOn();
+  let traces = fake.traces().length;
+  await launch(HOLD_BATCHES);
+  expect((await telemetryState()).consent).toEqual({ usage: true, errors: false });
+  await wait(2_000);
+  expect(fake.traces().length).toBe(traces);
+  await closeApp(app);
+  app = undefined;
+  await expect.poll(() => fake.traces().slice(traces).flatMap(spanNames)).toContain('app.start');
+
+  // Then the same start, turned off before quitting: the queued span is dropped, never sent.
+  await usageOn();
+  traces = fake.traces().length;
   const posts = fake.posts().length;
-  const launchedAt = Date.now();
-  await launch();
+  await launch(HOLD_BATCHES);
   expect((await setConsent('usage', false)).consent).toEqual({ usage: false, errors: false });
-  expect(Date.now() - launchedAt).toBeLessThan(TELEMETRY_LIMITS.exportDelayMs);
-  await wait(QUIET_MS);
+  await closeApp(app);
+  app = undefined;
+  await wait(2_000);
   expect(fake.posts().length).toBe(posts);
-  expect(fake.traces().flatMap(spanNames)).not.toContain('app.start');
+  expect(fake.traces().slice(traces).flatMap(spanNames)).not.toContain('app.start');
+  await launch();
 });
 
 test('telemetry-consent-persists', async () => {

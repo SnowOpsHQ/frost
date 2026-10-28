@@ -229,13 +229,19 @@ test.describe.serial('the Search Console panel', () => {
   test('gsc-panel-range-change', async () => {
     await showData('page', 28);
     const before = dateQueries().length;
-    await rangeButton(7).click();
-    await expect(rangeButton(7)).toHaveAttribute('aria-pressed', 'true');
-    // The last data stays shown, dimmed, until the new read answers.
-    await expect(panel()).toHaveAttribute('data-pending', 'true');
-    await expect(page.getByTestId('gsc-total-clicks')).toBeVisible();
+    // The fake holds the new read until it is released, so the pending state is there to see.
+    const release = google.holdQueries();
+    try {
+      await rangeButton(7).click();
+      await expect(rangeButton(7)).toHaveAttribute('aria-pressed', 'true');
+      // The last data stays shown, dimmed, until the new read answers.
+      await expect.poll(() => dateQueries().length).toBe(before + 1);
+      await expect(panel()).toHaveAttribute('data-pending', 'true');
+      await expect(page.getByTestId('gsc-total-clicks')).toBeVisible();
+    } finally {
+      release();
+    }
     const range = gscDateRange(7, Date.now());
-    await expect.poll(() => dateQueries().length).toBe(before + 1);
     expect(dateQueries().at(-1)!.body).toMatchObject({ startDate: range.start, endDate: range.end });
     await expect(panel()).toHaveAttribute('data-pending', 'false');
     await expect(panel()).toHaveAttribute('data-state', 'data');

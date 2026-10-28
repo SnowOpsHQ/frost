@@ -100,7 +100,7 @@ connected); each test after connecting sets the scope, range, metric and fake ro
 - `gsc-panel-not-connected` — on Pro without a Google account: the connect prompt; its button opens Settings on Search Console.
 - `gsc-panel-page-totals-and-chart` — connected (through Settings' Connect), the page on the loopback site matched to its URL-prefix property: the totals and the chart's table are the fake rows, the line ends at the last answered day, the totals and the freshness note say "through" it, and the read was the page filter.
 - `gsc-panel-property-scope` — Whole property names the property's `siteUrl`, shows the property's totals and reads without a page filter.
-- `gsc-panel-range-change` — 7 days sends one new read over the 7-day range, keeping the last data shown (dimmed) until it answers.
+- `gsc-panel-range-change` — 7 days sends one new read over the 7-day range, keeping the last data shown (dimmed: `data-pending`) until it answers (the fake holds the read until the test releases it, `holdQueries`, so the check never races a fast answer).
 - `gsc-panel-top-queries` — the top queries table lists the fake queries, most clicks first.
 - `gsc-panel-position-inverted` — the position metric draws the inverted axis.
 - `gsc-panel-no-property-and-not-web` — a host no property covers says so with the host; a non-web tab says only web pages have data.

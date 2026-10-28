@@ -511,6 +511,27 @@ describe('export formats', () => {
     expect(otel.calls).toHaveLength(1);
   });
 
+  test('export-delay-option', async () => {
+    vi.useFakeTimers();
+    const otel = fakeTransport();
+    const { telemetry } = setup({ sentry: undefined, consent: { usage: true, errors: false }, otel: { endpoint: OTEL_ENDPOINT, send: otel.send, exportDelayMs: TELEMETRY_LIMITS.maxExportDelayMs } });
+    telemetry.span('app.start', {}, () => undefined);
+    await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.maxExportDelayMs - 1);
+    expect(otel.calls).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(otel.calls).toHaveLength(1);
+    // Anything else is the default delay.
+    for (const exportDelayMs of [-1, 1.5, Number.NaN, TELEMETRY_LIMITS.maxExportDelayMs + 1]) {
+      const other = fakeTransport();
+      const { telemetry: t } = setup({ sentry: undefined, consent: { usage: true, errors: false }, otel: { endpoint: OTEL_ENDPOINT, send: other.send, exportDelayMs } });
+      t.span('app.start', {}, () => undefined);
+      await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.exportDelayMs - 1);
+      expect(other.calls, String(exportDelayMs)).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(other.calls, String(exportDelayMs)).toHaveLength(1);
+    }
+  });
+
   test('sentry-sends-only-events', async () => {
     const { telemetry, sentry } = setup({ otel: undefined, consent: { usage: false, errors: true } });
     telemetry.captureException(new Error('boom'), { mechanism: 'onuncaughtexception', handled: false });

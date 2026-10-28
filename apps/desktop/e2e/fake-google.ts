@@ -83,6 +83,12 @@ export interface FakeGoogle {
   revokeRefreshTokens(): void;
   /** Every request seen (method and path), in order. */
   readonly requests: string[];
+  /**
+   * Holds every Search Analytics query from now on: each is recorded in `queries` at once, but
+   * answered only after the returned `release` is called (so a test can see a read in flight). Closing
+   * the fake releases them too.
+   */
+  holdQueries(): () => void;
   close(): Promise<void>;
 }
 
@@ -116,6 +122,8 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
   const pendingCodes = new Map<string, { challenge: string; redirectUri: string }>();
   const liveAccess = new Set<string>();
   const liveRefresh = new Set<string>();
+  /** While set, Search Analytics queries wait for it (`holdQueries`). */
+  let hold: { readonly released: Promise<void>; readonly release: () => void } | null = null;
 
   const json = (res: ServerResponse, status: number, body: unknown): void => {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify(body));
@@ -237,6 +245,7 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
           return apiError(res, 400, 'INVALID_ARGUMENT', 'badRequest');
         }
         google.queries.push({ siteUrl, body });
+        if (hold) await hold.released;
         if (!google.sites.some((site) => site.siteUrl === siteUrl && site.permissionLevel !== 'siteUnverifiedUser')) return apiError(res, 403, 'PERMISSION_DENIED', 'forbidden');
         const dimensions = body.dimensions as unknown;
         if (Array.isArray(dimensions) && dimensions[0] === 'date') return json(res, 200, { rows: google.dateRows(String(body.startDate), String(body.endDate)), responseAggregationType: 'byProperty' });
@@ -287,10 +296,24 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
     refreshTokens: [],
     verifiers: [],
     requests: [],
+    holdQueries: () => {
+      if (!hold) {
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        hold = { released, release };
+      }
+      const current = hold;
+      return () => {
+        if (hold === current) hold = null;
+        current.release();
+      };
+    },
     expireAccessTokens: () => liveAccess.clear(),
     revokeRefreshTokens: () => liveRefresh.clear(),
     close: () =>
       new Promise<void>((resolve) => {
+        hold?.release();
+        hold = null;
         server.close(() => resolve());
         server.closeAllConnections();
       }),

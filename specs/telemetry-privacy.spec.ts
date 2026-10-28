@@ -131,7 +131,10 @@ export const SPAN_NAME_FALLBACK = 'span';
  * - `maxFilenameChars`: a frame's file (after `appRelativeFilename`) is cut to this;
  * - `maxQueuedSpans`: spans waiting for export (more are dropped);
  * - `maxExportBatch`: spans per OTLP request;
- * - `exportDelayMs`: how long an ended span waits before its batch is exported;
+ * - `exportDelayMs`: how long an ended span waits before its batch is exported (`createTelemetry`
+ *   takes another one, `otel.exportDelayMs`, an integer up to `maxExportDelayMs`, for tests only;
+ *   anything else is this);
+ * - `maxExportDelayMs`: the longest such delay;
  * - `maxQueuedEvents`: error envelopes waiting to be sent (more are dropped);
  * - `sendTimeoutMs`: one request's deadline (OTLP or Sentry);
  * - `flushTimeoutMs`: `flush()`'s deadline when the caller gives none;
@@ -150,6 +153,7 @@ export const TELEMETRY_LIMITS = {
   maxQueuedSpans: 512,
   maxExportBatch: 128,
   exportDelayMs: 5_000,
+  maxExportDelayMs: 600_000,
   maxQueuedEvents: 30,
   sendTimeoutMs: 10_000,
   flushTimeoutMs: 10_000,

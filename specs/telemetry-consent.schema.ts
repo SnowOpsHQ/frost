@@ -45,6 +45,17 @@ export const TELEMETRY_CONFIG_ENV = {
 } as const;
 
 /**
+ * For tests only (e2e): `FROST_TELEMETRY_EXPORT_DELAY_MS`, the span batch delay in milliseconds (an
+ * integer from 0 to `TELEMETRY_LIMITS.maxExportDelayMs`; anything else is ignored). Like the
+ * `FROST_GSC_*` fakes it is never baked in and is read only by an unpackaged build with no
+ * `FROST_PUBLIC_*` value baked in (`build-config.spec.ts`): a build with real values ignores it. It
+ * lets a test hold the startup span in the queue instead of racing the default delay.
+ */
+export const TELEMETRY_TEST_ENV = {
+  exportDelayMs: 'FROST_TELEMETRY_EXPORT_DELAY_MS',
+} as const;
+
+/**
  * Hosts an **unpackaged** build may send telemetry to over plain `http:` (a local collector in
  * tests). A packaged build requires `https:`. Neither value may carry a password, query or fragment;
  * the DSN carries its public key as the URL's user name and its project as the last path segment.

@@ -69,6 +69,8 @@ Review focus "Telemetry UI matches behaviour". Each line maps to one named test.
   with consent on, and `configured()` says so; `span` still runs its function.
 - `otlp-json-export` — OTLP/HTTP JSON to the endpoint: hex IDs, nanosecond strings, a child shares its
   parent's trace; batches are capped and the queue is bounded.
+- `export-delay-option` — `otel.exportDelayMs` replaces the batch delay (an integer up to
+  `maxExportDelayMs`); anything else is the default `exportDelayMs`.
 - `otlp-export-is-scheduled` — a batch leaves `exportDelayMs` after its first span, not before.
 - `sentry-sends-only-events` — envelopes go to the DSN's envelope endpoint and carry only `event` items,
   without a trace header; an attachment from a shared scope is dropped; an event that skipped
@@ -208,6 +210,9 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 - `telemetry-config-baked-build-ignores-runtime` — a build with either value baked in ignores the
   run-time environment for both, packaged or not (a renamed executable reads as unpackaged); so does a
   build with only another module's value baked in (the account's, Search Console's).
+- `telemetry-test-export-delay` — `TELEMETRY_TEST_ENV.exportDelayMs` is read only unpackaged with
+  nothing baked in, and only as an integer from 0 to `maxExportDelayMs`; otherwise it is `null` (the
+  default delay).
 - `telemetry-config-shapes` — an endpoint with credentials, a query or a fragment is refused; a DSN
   needs a public key (`DSN_PUBLIC_KEY_PATTERN`), no password, a project (`DSN_PROJECT_ID_PATTERN`),
   no query or fragment.
@@ -264,8 +269,10 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   arrive at the Sentry endpoint without the URL, host, email, paths (the checkout's too), the
   machine's host name, its first label or the login name they carried; no request carries the cookie
   stored for the collector's origin, a detailed user agent or a locale.
-- `telemetry-off-stops-at-once` — after `setConsent` off, nothing more arrives; started with `usage` on
-  (a consent file written before launch) and turned off before the startup span's batch leaves, the
-  `app.start` span never reaches the collector.
+- `telemetry-off-stops-at-once` — after `setConsent` off, nothing more arrives. Then, started with
+  `usage` on (a consent file written before launch) and the batch held back
+  (`TELEMETRY_TEST_ENV.exportDelayMs` at its maximum, so nothing depends on how fast the app launches):
+  quitting flushes the queued `app.start` span to the collector, and turned off before quitting
+  instead, it never reaches it.
 - `telemetry-consent-persists` — consent survives a restart on the same profile (the file is
   `TelemetryConsentFileSchema`), and with `usage` on the `app.start` span arrives at the collector.

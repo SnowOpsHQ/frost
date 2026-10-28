@@ -78,6 +78,7 @@ missing disables its feature with an honest "not configured in this build" state
 | `FROST_PUBLIC_SENTRY_DSN` | desktop | Sentry DSN for error reports (only sent with consent). |
 | `FROST_PUBLIC_OTEL_ENDPOINT` | desktop | OTLP/HTTP traces endpoint (only sent with consent). |
 | `FROST_GSC_*_URL` (unpackaged only) | desktop e2e | Fake Google OAuth and GSC API endpoints. |
+| `FROST_TELEMETRY_EXPORT_DELAY_MS` (unpackaged only) | desktop e2e | Span batch delay for tests (holds the startup span in the queue). |
 | `DATABASE_URL` | backend | Postgres URL; unset in dev → a local PGlite directory. |
 | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` | backend | better-auth's secret and public base URL. |
 | `ENTITLEMENT_SIGNING_KEY`, `ENTITLEMENT_KEY_ID` | backend | Ed25519 private JWK (server-side only) and its `kid`. |

@@ -2,8 +2,10 @@ import {
   DSN_PROJECT_ID_PATTERN,
   DSN_PUBLIC_KEY_PATTERN,
   TELEMETRY_CONFIG_ENV,
+  TELEMETRY_TEST_ENV,
   UNPACKAGED_HTTP_TELEMETRY_HOSTS,
 } from '@app/specs/telemetry-consent.schema';
+import { TELEMETRY_LIMITS } from '@app/specs/telemetry-privacy.spec';
 import { runtimeOverridesAllowed, type PublicEnv } from '@app/specs/build-config.spec';
 
 // The build's telemetry configuration (spec `telemetry-consent.schema.ts`, `TELEMETRY_CONFIG_ENV`;
@@ -71,4 +73,17 @@ export function resolveTelemetryConfig(sources: TelemetryConfigSources): Telemet
     otelEndpoint: endpointOf(pick(TELEMETRY_CONFIG_ENV.otelEndpoint), sources.isPackaged),
     sentryDsn: dsnOf(pick(TELEMETRY_CONFIG_ENV.sentryDsn), sources.isPackaged),
   };
+}
+
+/**
+ * For tests only: `TELEMETRY_TEST_ENV.exportDelayMs` from the run-time environment, read only by an
+ * unpackaged build with nothing baked in, as an integer from 0 to `maxExportDelayMs`; else `null`
+ * (the default batch delay).
+ */
+export function testExportDelayMs(sources: TelemetryConfigSources): number | null {
+  if (!runtimeOverridesAllowed(sources.isPackaged, sources.buildTime)) return null;
+  const value = sources.runtime[TELEMETRY_TEST_ENV.exportDelayMs];
+  if (value === undefined || !/^\d{1,7}$/.test(value)) return null;
+  const ms = Number(value);
+  return ms <= TELEMETRY_LIMITS.maxExportDelayMs ? ms : null;
 }

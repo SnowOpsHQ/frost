@@ -75,6 +75,13 @@ export interface OtelChannelOptions {
   scrub: Scrubber;
   /** Live consent for `usage`. */
   enabled: () => boolean;
+  /** The batch delay (`TELEMETRY_LIMITS.exportDelayMs` when absent or not an integer in `[0, maxExportDelayMs]`). */
+  exportDelayMs?: number | undefined;
+}
+
+/** `value` when it is an allowed batch delay, else `TELEMETRY_LIMITS.exportDelayMs`. */
+function exportDelayOf(value: number | undefined): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= TELEMETRY_LIMITS.maxExportDelayMs ? value : TELEMETRY_LIMITS.exportDelayMs;
 }
 
 export class OtelChannel {
@@ -91,8 +98,10 @@ export class OtelChannel {
   /** Bumped at every turn-off: a span is only exported in the epoch it started in. */
   private epoch = 0;
   private readonly startEpochs = new WeakMap<object, number>();
+  private readonly exportDelayMs: number;
 
   constructor(private readonly options: OtelChannelOptions) {
+    this.exportDelayMs = exportDelayOf(options.exportDelayMs);
     this.scopeVersion = serviceVersion(options.resource, options.scrub);
     const resource: Record<string, string> = {
       'service.name': TELEMETRY_SERVICE_NAME,
@@ -181,7 +190,7 @@ export class OtelChannel {
     if (this.startEpochs.get(span) !== this.epoch) return;
     if (this.queue.length >= TELEMETRY_LIMITS.maxQueuedSpans) return;
     this.queue.push(this.toOtlp(span));
-    this.schedule(this.queue.length >= TELEMETRY_LIMITS.maxExportBatch ? 0 : TELEMETRY_LIMITS.exportDelayMs);
+    this.schedule(this.queue.length >= TELEMETRY_LIMITS.maxExportBatch ? 0 : this.exportDelayMs);
   }
 
   private schedule(delayMs: number): void {
@@ -190,7 +199,7 @@ export class OtelChannel {
     this.timer = setTimeout(() => {
       this.timer = undefined;
       void this.exportNext().then(() => {
-        if (this.queue.length > 0) this.schedule(this.queue.length >= TELEMETRY_LIMITS.maxExportBatch ? 0 : TELEMETRY_LIMITS.exportDelayMs);
+        if (this.queue.length > 0) this.schedule(this.queue.length >= TELEMETRY_LIMITS.maxExportBatch ? 0 : this.exportDelayMs);
       });
     }, delayMs);
     this.timer.unref?.();

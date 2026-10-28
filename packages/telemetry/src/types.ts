@@ -33,7 +33,13 @@ export interface TelemetryOptions {
   consent?: TelemetryConsent;
   resource: TelemetryResource;
   /** The `usage` channel: an OTLP/HTTP traces endpoint (`…/v1/traces`). Without an `http(s)` endpoint the channel is a no-op. */
-  otel?: { endpoint?: string | undefined; send: Send; headers?: Record<string, string> };
+  otel?: {
+    endpoint?: string | undefined;
+    send: Send;
+    headers?: Record<string, string>;
+    /** For tests only: the batch delay instead of `TELEMETRY_LIMITS.exportDelayMs` (an integer up to `maxExportDelayMs`; anything else is ignored). */
+    exportDelayMs?: number | undefined;
+  };
   /** The `errors` channel: a Sentry DSN. Without a valid DSN the channel is a no-op. */
   sentry?: { dsn?: string | undefined; send: Send; environment?: string };
   /** The app's root directory (`app.getAppPath()`): stack frames under it are reported relative to it. */

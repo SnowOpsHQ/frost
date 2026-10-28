@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { app, net } from 'electron';
 import { buildTimePublicEnv } from '../account/build-config';
-import { resolveTelemetryConfig } from './config';
+import { resolveTelemetryConfig, testExportDelayMs } from './config';
 import { createConsentStore } from './consent-store';
 import { installTelemetry, unconfiguredTelemetryMain, type TelemetryMain } from './install';
 
@@ -30,6 +30,9 @@ export function createTelemetryMain(started: Promise<void>): TelemetryMain {
 function startTelemetryMain(started: Promise<void>): TelemetryMain {
   const store = createConsentStore({ dir: app.getPath('userData'), fs, now: Date.now, log });
   // Build-time values; only an unpackaged build with none baked in reads them from its environment.
-  const config = resolveTelemetryConfig({ isPackaged: app.isPackaged, buildTime: buildTimePublicEnv(), runtime: process.env });
-  return installTelemetry({ app, process, fetch: (url, init) => net.fetch(url, init), store, config, started, log });
+  const sources = { isPackaged: app.isPackaged, buildTime: buildTimePublicEnv(), runtime: process.env };
+  const config = resolveTelemetryConfig(sources);
+  // Tests only: an unpackaged build with nothing baked in may hold span batches back (e2e).
+  const exportDelayMs = testExportDelayMs(sources);
+  return installTelemetry({ app, process, fetch: (url, init) => net.fetch(url, init), store, config, started, log, exportDelayMs });
 }

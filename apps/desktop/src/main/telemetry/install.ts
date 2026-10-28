@@ -52,6 +52,8 @@ export interface TelemetryMainDeps {
   readonly now?: () => number;
   /** Literal strings scrubbed from everything sent (default: the machine's host and login names). */
   readonly redact?: readonly string[];
+  /** For tests only (`testExportDelayMs`): the span batch delay; default `TELEMETRY_LIMITS.exportDelayMs`. */
+  readonly exportDelayMs?: number | null;
 }
 
 /**
@@ -134,7 +136,7 @@ export function installTelemetry(deps: TelemetryMainDeps): TelemetryMain {
       platform: proc.platform,
       ...(proc.versions.electron ? { runtime: { name: 'electron', version: proc.versions.electron } } : {}),
     },
-    otel: { endpoint: config.otelEndpoint ?? undefined, send },
+    otel: { endpoint: config.otelEndpoint ?? undefined, send, ...(typeof deps.exportDelayMs === 'number' ? { exportDelayMs: deps.exportDelayMs } : {}) },
     sentry: { dsn: config.sentryDsn ?? undefined, send, environment: app.isPackaged ? 'production' : 'development' },
     // Stack frames under the app's root are reported as `app:///…`.
     appRoot: app.getAppPath(),

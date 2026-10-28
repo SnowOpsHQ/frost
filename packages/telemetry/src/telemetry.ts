@@ -19,7 +19,15 @@ export function createTelemetry(options: TelemetryOptions): Telemetry {
   const endpoint = httpUrl(options.otel?.endpoint);
   const otel =
     options.otel && endpoint
-      ? new OtelChannel({ endpoint: endpoint.href, send: options.otel.send, headers: options.otel.headers, resource: options.resource, scrub, enabled: () => !closed && consent.usage })
+      ? new OtelChannel({
+          endpoint: endpoint.href,
+          send: options.otel.send,
+          headers: options.otel.headers,
+          resource: options.resource,
+          scrub,
+          enabled: () => !closed && consent.usage,
+          exportDelayMs: options.otel.exportDelayMs,
+        })
       : undefined;
   const sentry = options.sentry
     ? SentryChannel.create({
