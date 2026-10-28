@@ -55,9 +55,11 @@ function fusesPlugin(env: NodeJS.ProcessEnv) {
   return plugin.fusesConfig as unknown as Record<string, unknown>;
 }
 
+/** The darwin makers (the Linux-only ones are linux-package-config.test.ts's), prepared for arm64. */
 async function makers(): Promise<Map<string, { platforms: string[]; config: Record<string, unknown> }>> {
   const result = new Map<string, { platforms: string[]; config: Record<string, unknown> }>();
   for (const maker of (makeForgeConfig({}).makers ?? []) as MakerBase<Record<string, unknown>>[]) {
+    if (!maker.platforms.includes('darwin')) continue;
     await maker.prepareConfig('arm64');
     result.set(maker.name, { platforms: maker.platforms, config: maker.config });
   }
@@ -164,8 +166,7 @@ describe('forge config (macOS package)', () => {
 
   test('makes-zip-and-dmg', async () => {
     const byName = await makers();
-    // The darwin makers only; the Linux ones are specs/linux-package.feature.md's.
-    expect([...byName].filter(([, maker]) => maker.platforms.includes('darwin')).map(([name]) => name).sort()).toEqual(['dmg', 'zip']);
+    expect([...byName.keys()].sort()).toEqual(['dmg', 'zip']);
     expect(byName.get('zip')?.platforms.sort()).toEqual(['darwin', 'linux']);
     expect(byName.get('dmg')?.platforms).toEqual(['darwin']);
     expect(byName.get('dmg')?.config).toMatchObject({ format: MAC_DMG_FORMAT });

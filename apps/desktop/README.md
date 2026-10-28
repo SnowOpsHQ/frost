@@ -536,7 +536,7 @@ ID); CI never receives these secrets.
 ## Building on Linux
 Prerequisites: Node ≥ 22.18 and pnpm 12.15.0 (as above), `dpkg-deb` (the deb maker and the deb
 checks; part of Debian and Ubuntu), `mksquashfs` (`squashfs-tools`, for the AppImage) and, for
-`verify:linux`, a display (`xvfb-run -a` on a headless machine). `make:linux` downloads the
+`verify:linux`, `unzip` and a display (`xvfb-run -a` on a headless machine). `make:linux` downloads the
 AppImage runtime pinned in `specs/linux-package.spec.ts`.
 
 ```sh
@@ -558,9 +558,20 @@ run. The deb runs no maintainer scripts; its only setuid file is Chromium's `chr
 only where unprivileged user namespaces are unavailable.
 
 `verify:linux` checks the fuses, the files in `resources/` and `app.asar`, launch and debugging
-lockdown on the packaged tree, the deb's metadata and files, and the AppImage's runtime and
-contents (`specs/linux-package.feature.md`). Electron does not enforce ASAR integrity on Linux:
+lockdown on the packaged tree, the deb's metadata and files, the AppImage's runtime and contents,
+and the zip's contents (`specs/linux-package.feature.md`; CI uploads the AppImage and deb, not the
+zip). Electron does not enforce ASAR integrity on Linux:
 the fuse is on, but `app.asar` is not hash-checked at startup there (the check says so).
+
+**The AppImage does not start on stock Ubuntu 23.10+ (24.04 included); use the deb there.**
+AppArmor on those releases restricts unprivileged user namespaces, so Chromium's namespace sandbox
+is unavailable, and its setuid fallback (`chrome-sandbox`) cannot work inside the AppImage's
+`nosuid` mount (nor in the unzipped zip, where it is not setuid root). The deb is fine: it installs
+`chrome-sandbox` setuid root. To run the AppImage there, either add an AppArmor profile that allows
+`userns` for it, or allow unprivileged user namespaces system-wide with
+`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. Never use `--no-sandbox`. The CI
+job sets that sysctl before `verify:linux` (and launches the packaged tree, not the AppImage), so a
+passing run does not mean the AppImage starts on a stock Ubuntu 24.04.
 
 ## Follow-ups
 App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update.

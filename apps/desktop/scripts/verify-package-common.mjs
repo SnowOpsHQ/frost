@@ -45,9 +45,16 @@ export function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-/** `out` is stdout + stderr (for messages); `stdout` alone for parsing. */
+/** How long one `run` command may take before it is killed and its check fails. */
+export const RUN_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * `out` is stdout + stderr (for messages); `stdout` alone for parsing. A command still running
+ * after `RUN_TIMEOUT_MS` is killed and throws, so a hung tool fails its check instead of the job.
+ */
 export function run(command, argv, options = {}) {
-  const result = spawnSync(command, argv, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...options });
+  const result = spawnSync(command, argv, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: RUN_TIMEOUT_MS, ...options });
+  if (result.error?.code === 'ETIMEDOUT') throw new Error(`${command} ${argv.join(' ')}: killed after ${RUN_TIMEOUT_MS / 1000} s`);
   if (result.error) throw result.error;
   return { status: result.status, stdout: result.stdout, out: `${result.stdout}${result.stderr}`.trim() };
 }
@@ -81,13 +88,16 @@ export function launch(executable, argv, ms) {
     const child = spawn(executable, [`--user-data-dir=${profile}`, ...argv], { env: appEnv(), stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (chunk) => (stderr += chunk));
-    child.on('error', reject);
     const timer = setTimeout(() => {
       child.removeAllListeners('exit');
       child.once('exit', () => resolve({ alive: true, stderr }));
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 5_000).unref();
     }, ms);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
     child.once('exit', (code, signal) => {
       clearTimeout(timer);
       resolve({ alive: false, code, signal, stderr });
@@ -134,7 +144,10 @@ function unpackedEntries(asar) {
 export function assertPackagedResources(resourcesDir, { allowlist, asarTopLevel, where }) {
   const entries = readdirSync(resourcesDir).sort();
   const expected = [...allowlist].sort();
-  assert(entries.join() === expected.join(), `${where} resources/ holds ${entries.join(', ') || '(nothing)'}, expected ${expected.join(', ')}`);
+  assert(
+    entries.join() === expected.join(),
+    `${where} resources/ holds ${entries.join(', ') || '(nothing)'}, expected ${expected.join(', ')}`,
+  );
 
   const asar = path.join(resourcesDir, 'app.asar');
   const topLevel = [...new Set(listPackage(asar, { isPack: false }).map((entry) => entry.split(/[\\/]/)[1]))].sort();

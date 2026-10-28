@@ -372,6 +372,14 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   `no-stray-files`, `launches-and-stays-alive`, `refuses-remote-debugging`, `deb-metadata`,
   `appimage-contents`. **Left to CI:** the same run on Ubuntu 24.04 (its `dpkg-deb`, Xvfb, the
   AppArmor user-namespace sysctl). Installing the deb with `apt`/`dpkg -i` is not exercised.
-- **Known limit.** The deb's `/usr/share/doc/frost/copyright` is Electron's `LICENSE` from the
+- **Known limits.** The deb's `/usr/share/doc/frost/copyright` is Electron's `LICENSE` from the
   packaged tree (electron-installer-debian copies it; it has no license option); frost's own
-  license is `package.json#license`.
+  license is `package.json#license`. The AppImage (and the unzipped zip) does not start on stock
+  Ubuntu 23.10+/24.04: AppArmor restricts unprivileged user namespaces and `chrome-sandbox` cannot
+  be setuid inside the `nosuid` mount; the deb is fine. CI sets the sysctl, so its pass does not
+  show otherwise (README, `linux-package.feature.md`).
+- **Review fixes.** The Linux makers moved to `apps/desktop/linux-makers.ts` (`forge.config.ts`
+  only spreads them in); an arch without a pinned AppImage runtime throws
+  (`appimage-runtime-fails-closed`). `deb-metadata` allows only the exact `LINUX_DEB_INSTALL_PATHS`;
+  `zip-contents` checks the unzipped tree; every external command in the verifier is killed after
+  5 minutes. Re-verified locally: all eight checks pass.

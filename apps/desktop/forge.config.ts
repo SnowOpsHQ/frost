@@ -1,13 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
-import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion, type FuseV1Config } from '@electron/fuses';
-import { MakerAppImage } from '@reforged/maker-appimage';
+import { linuxMakers } from './linux-makers.ts';
 import { NOTICES_FILE } from './third-party-notices.ts';
 import {
   MAC_APP_CATEGORY,
@@ -19,7 +18,6 @@ import {
   MAC_SIGNING_ENV,
   PACKAGED_FUSES,
 } from '@app/specs/macos-package.spec';
-import { LINUX_APPIMAGE_RUNTIME, LINUX_DEB_OPTIONS, LINUX_DESKTOP_CATEGORIES, LINUX_EXECUTABLE_NAME, LINUX_PACKAGE_NAME } from '@app/specs/linux-package.spec';
 
 type MacSigning = Pick<NonNullable<ForgeConfig['packagerConfig']>, 'osxSign' | 'osxNotarize'>;
 
@@ -101,25 +99,7 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
         }
       },
     },
-    makers: [
-      new MakerZIP({}, ['darwin', 'linux']),
-      new MakerDMG({ format: MAC_DMG_FORMAT }, ['darwin']),
-      // specs/linux-package.spec.ts: no maintainer scripts; unsigned (no repository key).
-      new MakerDeb({ options: { ...LINUX_DEB_OPTIONS, categories: [...LINUX_DESKTOP_CATEGORIES] } }, ['linux']),
-      // The AppImage runtime is pinned per arch (the maker's default is a moving tag, unchecked);
-      // verify-linux-package.mjs checks the AppImage starts with exactly the pinned bytes.
-      new MakerAppImage(
-        (arch) => ({
-          options: {
-            name: LINUX_PACKAGE_NAME,
-            bin: LINUX_EXECUTABLE_NAME,
-            categories: [...LINUX_DESKTOP_CATEGORIES],
-            runtime: Object.hasOwn(LINUX_APPIMAGE_RUNTIME, arch) ? LINUX_APPIMAGE_RUNTIME[arch as keyof typeof LINUX_APPIMAGE_RUNTIME].url : undefined,
-          },
-        }),
-        ['linux'],
-      ),
-    ],
+    makers: [new MakerZIP({}, ['darwin', 'linux']), new MakerDMG({ format: MAC_DMG_FORMAT }, ['darwin']), ...linuxMakers()],
     plugins: [
       new VitePlugin({
         // Object entries name the bundles (.vite/build/main.cjs, .vite/build/preload.cjs) so the two

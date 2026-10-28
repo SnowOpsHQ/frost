@@ -6,13 +6,24 @@
 //   node apps/desktop/scripts/verify-linux-package.mjs [--out <apps/desktop/out>] [--arch x64]
 //
 // Each scenario prints `PASS <name>` or `FAIL <name>: <reason>` (and `INFO <name>: …` for stated
-// facts); any failure exits 1. Needs `dpkg-deb` for the deb checks.
+// facts); any failure exits 1. Needs `dpkg-deb` for the deb checks and `unzip` for the zip.
 //
-// Only the packaged tree (`out/frost-linux-x64`) is launched. The deb and AppImage trees are
+// Only the packaged tree (`out/frost-linux-x64`) is launched. The deb, AppImage and zip trees are
 // extracted as an unprivileged user (so the deb's setuid `chrome-sandbox` is not root-owned there)
 // and checked statically: same resources, same fuses.
 import { createHash } from 'node:crypto';
-import { accessSync, constants, existsSync, openSync, readFileSync, readSync, closeSync, realpathSync, statSync } from 'node:fs';
+import {
+  accessSync,
+  closeSync,
+  constants,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +35,7 @@ import {
   LINUX_DEB_ARCH,
   LINUX_DEB_BIN_LINK,
   LINUX_DEB_DESKTOP_FILE,
-  LINUX_DEB_INSTALL_ROOTS,
+  LINUX_DEB_INSTALL_PATHS,
   LINUX_DEB_OPTIONS,
   LINUX_DEB_SETUID_FILES,
   LINUX_EXECUTABLE_NAME,
@@ -70,6 +81,7 @@ const packaged = path.resolve(args.out, artifacts.packaged);
 const executable = path.join(packaged, LINUX_EXECUTABLE_NAME);
 const deb = path.resolve(args.out, artifacts.deb);
 const appImage = path.resolve(args.out, artifacts.appImage);
+const zip = path.resolve(args.out, artifacts.zip);
 const resourceRules = { allowlist: PACKAGED_RESOURCES_ALLOWLIST, asarTopLevel: PACKAGED_ASAR_TOP_LEVEL };
 
 /** The resource and fuse checks of one app tree (the packaged dir, or the deb / AppImage extracted). */
@@ -110,13 +122,16 @@ await checks.check('asar-integrity', async () => {
   assert(integrity === 'ENABLE', `EnableEmbeddedAsarIntegrityValidation is ${integrity}, expected ENABLE`);
   checks.info(
     'asar-integrity',
-    'EnableEmbeddedAsarIntegrityValidation is on, but Electron does not enforce ASAR integrity on Linux (a known platform gap; app.asar is not hash-checked at startup)',
+    'EnableEmbeddedAsarIntegrityValidation is on, but Electron does not enforce ASAR integrity on Linux ' +
+      '(a known platform gap; app.asar is not hash-checked at startup)',
   );
   const onlyAsar = await fuseState(executable, 'OnlyLoadAppFromAsar');
   assert(onlyAsar === 'ENABLE', `OnlyLoadAppFromAsar is ${onlyAsar}, expected ENABLE`);
 });
 
-await checks.check('no-stray-files', () => assertPackagedResources(path.join(packaged, 'resources'), { ...resourceRules, where: artifacts.packaged }));
+await checks.check('no-stray-files', () =>
+  assertPackagedResources(path.join(packaged, 'resources'), { ...resourceRules, where: artifacts.packaged }),
+);
 
 await checks.check('launches-and-stays-alive', () => assertLaunchesAndStaysAlive(executable, LINUX_LAUNCH_ALIVE_MS));
 
@@ -159,17 +174,24 @@ await checks.check('deb-metadata', async () => {
     });
   const byPath = new Map(files.map((f) => [f.file.replace(/\/$/, ''), f]));
   for (const { file } of files) {
-    // A directory entry above an install root (`./`, `./usr/`, `./usr/lib/`) is fine; anything else lies under one.
-    const isParent = file.endsWith('/') && LINUX_DEB_INSTALL_ROOTS.some((root) => root.startsWith(file));
-    assert(isParent || LINUX_DEB_INSTALL_ROOTS.some((root) => file.startsWith(root)), `${file} is outside ${LINUX_DEB_INSTALL_ROOTS.join(', ')}`);
+    // A directory entry above an install path (`./`, `./usr/`, `./usr/share/` …) is fine; anything
+    // else is an install path, or lies under one that is a directory.
+    const above = file.endsWith('/') && LINUX_DEB_INSTALL_PATHS.some((allowed) => allowed.startsWith(file));
+    const allowed = LINUX_DEB_INSTALL_PATHS.some((p) => (p.endsWith('/') ? file.startsWith(p) : file === p));
+    assert(above || allowed, `${file} is not in LINUX_DEB_INSTALL_PATHS`);
   }
-  assert(byPath.get(`${LINUX_DEB_APP_DIR}/${LINUX_EXECUTABLE_NAME}`)?.mode.startsWith('-rwx'), `no executable ${LINUX_DEB_APP_DIR}/${LINUX_EXECUTABLE_NAME}`);
+  const appExecutable = `${LINUX_DEB_APP_DIR}/${LINUX_EXECUTABLE_NAME}`;
+  assert(byPath.get(appExecutable)?.mode.startsWith('-rwx'), `no executable ${appExecutable}`);
   const link = byPath.get(LINUX_DEB_BIN_LINK);
-  assert(link?.target === `../lib/${LINUX_PACKAGE_NAME}/${LINUX_EXECUTABLE_NAME}`, `${LINUX_DEB_BIN_LINK} -> ${link?.target}, expected the app`);
+  const linkTarget = `../lib/${LINUX_PACKAGE_NAME}/${LINUX_EXECUTABLE_NAME}`;
+  assert(link?.target === linkTarget, `${LINUX_DEB_BIN_LINK} -> ${link?.target}, expected ${linkTarget}`);
   assert(byPath.has(LINUX_DEB_DESKTOP_FILE), `no ${LINUX_DEB_DESKTOP_FILE}`);
   for (const { owner, file } of files) assert(owner === 'root/root', `${file} is owned by ${owner}, expected root/root`);
   const setuid = files.filter((f) => /^.{3}[sS]|^.{6}[sS]/.test(f.mode)).map((f) => f.file);
-  assert(setuid.join() === LINUX_DEB_SETUID_FILES.join(), `setuid/setgid files: ${setuid.join(', ') || '(none)'}, expected ${LINUX_DEB_SETUID_FILES.join(', ')}`);
+  assert(
+    setuid.join() === LINUX_DEB_SETUID_FILES.join(),
+    `setuid/setgid files: ${setuid.join(', ') || '(none)'}, expected ${LINUX_DEB_SETUID_FILES.join(', ')}`,
+  );
 
   await withTempDir('frost-deb-', async (dir) => {
     const extract = run('dpkg-deb', ['-x', deb, dir]);
@@ -184,9 +206,10 @@ await checks.check('appimage-contents', async () => {
   // Checked before the AppImage is run at all: its runtime is exactly the pinned one.
   const runtime = LINUX_APPIMAGE_RUNTIME[args.arch];
   const prefix = sha256Prefix(appImage, runtime.bytes);
-  assert(prefix === runtime.sha256, `runtime (first ${runtime.bytes} bytes) has SHA-256 ${prefix}, expected the pinned ${runtime.sha256}`);
+  assert(prefix === runtime.sha256, `runtime (first ${runtime.bytes} bytes) has SHA-256 ${prefix}, expected ${runtime.sha256}`);
   const offset = run(appImage, ['--appimage-offset'], { env: appEnv() });
-  assert(offset.status === 0 && offset.stdout.trim() === String(runtime.bytes), `--appimage-offset: ${offset.out}, expected ${runtime.bytes}`);
+  const offsetOk = offset.status === 0 && offset.stdout.trim() === String(runtime.bytes);
+  assert(offsetOk, `--appimage-offset: ${offset.out}, expected ${runtime.bytes}`);
 
   await withTempDir('frost-appimage-', async (dir) => {
     const extract = run(appImage, ['--appimage-extract'], { cwd: dir, env: appEnv() });
@@ -194,8 +217,21 @@ await checks.check('appimage-contents', async () => {
     const root = path.join(dir, 'squashfs-root');
     const appDir = path.join(root, LINUX_APPIMAGE_APP_DIR);
     const appRun = realpathSync(path.join(root, 'AppRun'));
-    assert(appRun === realpathSync(path.join(appDir, LINUX_EXECUTABLE_NAME)), `AppRun resolves to ${appRun}, expected the app's executable`);
+    const appExecutable = realpathSync(path.join(appDir, LINUX_EXECUTABLE_NAME));
+    assert(appRun === appExecutable, `AppRun resolves to ${appRun}, expected ${appExecutable}`);
     await assertAppTree(appDir, `AppImage ${LINUX_APPIMAGE_APP_DIR}`);
+  });
+});
+
+// Not uploaded by CI, but published by `make:linux` all the same: its tree must hold up too.
+await checks.check('zip-contents', async () => {
+  assert(existsSync(zip) && statSync(zip).size > 0, `missing or empty ${zip}`);
+  await withTempDir('frost-zip-', async (dir) => {
+    const unzip = run('unzip', ['-q', zip, '-d', dir]);
+    assert(unzip.status === 0, `unzip exited ${unzip.status}: ${unzip.out.slice(-500)}`);
+    const entries = readdirSync(dir);
+    assert(entries.join() === artifacts.packaged, `zip holds ${entries.join(', ')}, expected ${artifacts.packaged}/ only`);
+    await assertAppTree(path.join(dir, artifacts.packaged), `zip ${artifacts.packaged}`);
   });
 });
 

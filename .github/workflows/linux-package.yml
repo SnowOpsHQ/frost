@@ -54,10 +54,10 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # mksquashfs for the AppImage maker, Xvfb for the launch checks. dpkg-deb (the deb maker and
-      # the deb checks) is part of the runner image.
+      # mksquashfs for the AppImage maker, unzip for the zip check, Xvfb for the launch checks.
+      # dpkg-deb (the deb maker and the deb checks) is part of the runner image.
       - name: Install packaging tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends squashfs-tools xvfb
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends squashfs-tools unzip xvfb
 
       - name: Build
         id: build
@@ -70,7 +70,8 @@ jobs:
         run: pnpm make:linux
 
       # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces Chromium's sandbox needs.
-      # Allow them instead of weakening the app: the packaged app runs with its sandbox on.
+      # Allow them instead of weakening the app: the packaged app runs with its sandbox on. (So this
+      # run does not show the AppImage starts on a stock 24.04: specs/linux-package.feature.md.)
       - name: Allow unprivileged user namespaces (Chromium sandbox)
         if: ${{ !cancelled() && steps.make.outcome == 'success' }}
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0

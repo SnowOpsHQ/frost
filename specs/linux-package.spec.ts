@@ -47,20 +47,33 @@ export const LINUX_DEB_OPTIONS = {
   homepage: 'https://github.com/SnowOpsHQ/frost',
 } as const;
 
-/**
- * Where the deb installs the app (`dpkg-deb -c`, without the leading `.`). Every file of the deb
- * lies under one of `LINUX_DEB_INSTALL_ROOTS`.
- */
+/** Where the deb installs the app (`dpkg-deb -c`, without the leading `.`). */
 export const LINUX_DEB_APP_DIR = `/usr/lib/${LINUX_PACKAGE_NAME}`;
 export const LINUX_DEB_BIN_LINK = `/usr/bin/${LINUX_PACKAGE_NAME}`;
 export const LINUX_DEB_DESKTOP_FILE = `/usr/share/applications/${LINUX_PACKAGE_NAME}.desktop`;
-export const LINUX_DEB_INSTALL_ROOTS = [`${LINUX_DEB_APP_DIR}/`, '/usr/bin/', '/usr/share/'] as const;
+
+/**
+ * Everything the deb installs: a path ending in `/` is a directory and everything under it, any
+ * other path is that one file. Besides these, the deb holds only the directory entries above them
+ * (`./`, `./usr/`, `./usr/share/` …). Anything else (another `/usr/bin` entry, a D-Bus or systemd
+ * file …) fails `deb-metadata`.
+ */
+export const LINUX_DEB_INSTALL_PATHS = [
+  `${LINUX_DEB_APP_DIR}/`,
+  LINUX_DEB_BIN_LINK,
+  LINUX_DEB_DESKTOP_FILE,
+  `/usr/share/doc/${LINUX_PACKAGE_NAME}/`,
+  `/usr/share/lintian/overrides/${LINUX_PACKAGE_NAME}`,
+  `/usr/share/pixmaps/${LINUX_PACKAGE_NAME}.png`,
+] as const;
 
 /**
  * The only setuid file in the deb: Chromium's sandbox helper, setuid root (mode 4755). Chromium
- * uses it only where unprivileged user namespaces are unavailable; elsewhere (and always in the
- * AppImage, whose image is mounted `nosuid`) the namespace sandbox is used. The sandbox is never
- * turned off (`--no-sandbox` is not used anywhere).
+ * uses it only where unprivileged user namespaces are unavailable; elsewhere it uses the namespace
+ * sandbox. The AppImage (mounted `nosuid`) and the zip cannot carry a setuid helper, so they need
+ * the namespace sandbox: on stock Ubuntu 23.10+ AppArmor restricts unprivileged user namespaces
+ * and they do not start (a known limit, `linux-package.feature.md`). The sandbox is never turned
+ * off (`--no-sandbox` is not used anywhere).
  */
 export const LINUX_DEB_SETUID_FILES = [`${LINUX_DEB_APP_DIR}/chrome-sandbox`] as const;
 
@@ -106,7 +119,7 @@ export function linuxArtifacts(version: string, arch: LinuxArch) {
   return {
     /** `electron-forge package` output (the executable is `<packaged>/<LINUX_EXECUTABLE_NAME>`). */
     packaged: dir,
-    /** `@electron-forge/maker-zip`. */
+    /** `@electron-forge/maker-zip`; it holds the packaged tree as `<packaged>/`. */
     zip: `make/zip/linux/${arch}/${dir}-${version}.zip`,
     /** `@electron-forge/maker-deb` (electron-installer-debian's `<name>_<version>_<arch>.deb`). */
     deb: `make/deb/${arch}/${LINUX_PACKAGE_NAME}_${version}_${LINUX_DEB_ARCH[arch]}.deb`,

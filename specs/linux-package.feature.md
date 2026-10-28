@@ -23,6 +23,9 @@ repository; the AppImage embeds no signature.
 - **Scenario: appimage-options-as-specified** — for every `LINUX_ARCHS` arch the AppImage maker's
   options name `LINUX_PACKAGE_NAME`, run `LINUX_EXECUTABLE_NAME`, carry `LINUX_DESKTOP_CATEGORIES`
   and use the pinned runtime `LINUX_APPIMAGE_RUNTIME[arch].url` (never the maker's moving default).
+- **Scenario: appimage-runtime-fails-closed** — for an arch with no `LINUX_APPIMAGE_RUNTIME` pin
+  (`arm64`, `armv7l`, `ia32`), preparing the AppImage maker throws, so the make fails instead of
+  downloading the maker's unchecked default (`linux-makers.ts` `appImageRuntime`).
 - **Scenario: linux-fuses-unchanged** — the FusesPlugin config holds exactly `PACKAGED_FUSES`, the
   same on Linux as on macOS, and the `postPackage` hook runs nothing for a linux package.
 - **Scenario: linux-scripts** — `@app/desktop`'s `make:linux` is
@@ -33,8 +36,10 @@ repository; the AppImage embeds no signature.
 ## Built packages (`verify-linux-package.mjs`, on Linux)
 Every check prints `PASS <name>` or `FAIL <name>: <reason>` (and `INFO <name>: …` for stated facts);
 any failure exits non-zero. Only the packaged tree (`out/<linuxArtifacts().packaged>`) is launched.
-The deb and AppImage trees are extracted as an unprivileged user and checked statically: the
-extracted deb's `chrome-sandbox` is not root-owned, and nothing here turns the sandbox off.
+The deb, AppImage and zip trees are extracted as an unprivileged user and checked statically: the
+extracted deb's `chrome-sandbox` is not root-owned, and nothing here turns the sandbox off. Every
+external command (`dpkg-deb`, `unzip`, the AppImage's `--appimage-*`) is killed after 5 minutes and
+fails its check.
 - **Scenario: fuses-read-back** — `@electron/fuses` reads the packaged executable's fuse wire and
   every `PACKAGED_FUSES` entry has its configured state.
 - **Scenario: asar-integrity** — `EnableEmbeddedAsarIntegrityValidation` is on. Electron enforces
@@ -55,7 +60,8 @@ extracted deb's `chrome-sandbox` is not root-owned, and nothing here turns the s
   `LINUX_PACKAGE_NAME`, `Version` = `package.json#version`, `Architecture` = `LINUX_DEB_ARCH[arch]`,
   and `Section`, `Maintainer`, `Homepage` from `LINUX_DEB_OPTIONS`. `dpkg-deb -I`: the control
   archive holds `control` only (no maintainer scripts). `dpkg-deb -c`: every entry is owned by
-  `root/root` and lies under `LINUX_DEB_INSTALL_ROOTS`; `LINUX_DEB_APP_DIR/<executable>` is
+  `root/root` and is one of `LINUX_DEB_INSTALL_PATHS` (a file, or a directory and what lies under
+  it) or a directory entry above one; `LINUX_DEB_APP_DIR/<executable>` is
   executable, `LINUX_DEB_BIN_LINK` links to it, `LINUX_DEB_DESKTOP_FILE` exists, and the setuid /
   setgid files are exactly `LINUX_DEB_SETUID_FILES`. Then `dpkg-deb -x` into a temporary directory
   (always removed): the `fuses-read-back` and `no-stray-files` checks pass on
@@ -65,6 +71,9 @@ extracted deb's `chrome-sandbox` is not root-owned, and nothing here turns the s
   `--appimage-offset` reports that size. Then `--appimage-extract` in a temporary directory (always
   removed): `squashfs-root/AppRun` resolves to the app's executable under `LINUX_APPIMAGE_APP_DIR`,
   and the `fuses-read-back` and `no-stray-files` checks pass on that tree.
+- **Scenario: zip-contents** — `linuxArtifacts().zip` exists; unzipped into a temporary directory
+  (always removed) it holds `<linuxArtifacts().packaged>/` only, and the `fuses-read-back` and
+  `no-stray-files` checks pass on that tree. (CI does not upload the zip.)
 
 ## CI (`.github/workflows/linux-package.yml`)
 Checked by `platform-workflows.test.ts` (the named test below), by actionlint
@@ -79,5 +88,13 @@ Checked by `platform-workflows.test.ts` (the named test below), by actionlint
 
 ## Known limits
 - No signing (see above); x64 only; Electron's default icon.
+- **The AppImage does not start on stock Ubuntu 23.10+ (24.04 included).** AppArmor there
+  restricts unprivileged user namespaces, so Chromium's namespace sandbox is unavailable, and the
+  fallback setuid `chrome-sandbox` cannot work inside the AppImage's `nosuid` mount. The same holds
+  for the unzipped zip (its `chrome-sandbox` is not setuid root). The deb is unaffected: it installs
+  `chrome-sandbox` setuid root. Safe remedies: an AppArmor profile allowing `userns` for the
+  AppImage, or `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. Never
+  `--no-sandbox`. CI sets that sysctl before `verify:linux`, so a passing CI run does not show that
+  the AppImage runs on a stock Ubuntu 24.04 (and CI launches the packaged tree, not the AppImage).
 - The deb's `/usr/share/doc/frost/copyright` is the packaged tree's `LICENSE`, which is Electron's
   (electron-installer-debian copies it); frost's own license is `package.json#license`.

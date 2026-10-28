@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { FuseV1Options } from '@electron/fuses';
 import type { MakerBase } from '@electron-forge/maker-base';
+import type { ForgeArch } from '@electron-forge/shared-types';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { describe, expect, test } from 'vitest';
 import {
@@ -12,10 +13,10 @@ import {
   LINUX_EXECUTABLE_NAME,
   LINUX_LICENSE,
   LINUX_PACKAGE_NAME,
-  type LinuxArch,
 } from '@app/specs/linux-package.spec';
 import { PACKAGED_FUSES } from '@app/specs/macos-package.spec';
 import { makeForgeConfig } from '../../forge.config';
+import { appImageRuntime } from '../../linux-makers';
 
 type PackageJson = { license: string; scripts: Record<string, string> };
 const readPackageJson = (relative: string) => JSON.parse(readFileSync(new URL(relative, import.meta.url), 'utf8')) as PackageJson;
@@ -25,7 +26,7 @@ const rootPackageJson = readPackageJson('../../../../package.json');
 type MakerInfo = { platforms: string[]; config: { options?: Record<string, unknown> } & Record<string, unknown> };
 
 /** The makers that target linux, by name, with their config for `arch`. */
-async function linuxMakers(arch: LinuxArch): Promise<Map<string, MakerInfo>> {
+async function linuxMakerConfigs(arch: ForgeArch): Promise<Map<string, MakerInfo>> {
   const result = new Map<string, MakerInfo>();
   for (const maker of (makeForgeConfig({}).makers ?? []) as MakerBase<Record<string, unknown>>[]) {
     if (!maker.platforms.includes('linux')) continue;
@@ -37,14 +38,14 @@ async function linuxMakers(arch: LinuxArch): Promise<Map<string, MakerInfo>> {
 
 describe('forge config (Linux packages)', () => {
   test('makes-zip-deb-and-appimage', async () => {
-    const byName = await linuxMakers('x64');
+    const byName = await linuxMakerConfigs('x64');
     expect([...byName.keys()].sort()).toEqual(['AppImage', 'deb', 'zip']);
     expect(byName.get('deb')?.platforms).toEqual(['linux']);
     expect(byName.get('AppImage')?.platforms).toEqual(['linux']);
   });
 
   test('deb-options-as-specified', async () => {
-    const deb = (await linuxMakers('x64')).get('deb');
+    const deb = (await linuxMakerConfigs('x64')).get('deb');
     // Exactly the spec's options: in particular no `scripts` (no maintainer scripts).
     expect(deb?.config).toEqual({ options: { ...LINUX_DEB_OPTIONS, categories: [...LINUX_DESKTOP_CATEGORIES] } });
     expect(deb?.config.options).not.toHaveProperty('scripts');
@@ -52,7 +53,7 @@ describe('forge config (Linux packages)', () => {
   });
 
   test.each(LINUX_ARCHS)('appimage-options-as-specified (%s)', async (arch) => {
-    const appImage = (await linuxMakers(arch)).get('AppImage');
+    const appImage = (await linuxMakerConfigs(arch)).get('AppImage');
     expect(appImage?.config.options).toEqual({
       name: LINUX_PACKAGE_NAME,
       bin: LINUX_EXECUTABLE_NAME,
@@ -61,6 +62,16 @@ describe('forge config (Linux packages)', () => {
     });
     // A dated release, never the moving `continuous` tag.
     expect(LINUX_APPIMAGE_RUNTIME[arch].url).toMatch(/^https:\/\/github\.com\/AppImage\/type2-runtime\/releases\/download\/\d{8}\//);
+  });
+
+  test('appimage-runtime-fails-closed', async () => {
+    // An arch without a pinned runtime fails the make instead of using the maker's moving default.
+    for (const arch of ['arm64', 'armv7l', 'ia32'] as const) {
+      expect(() => appImageRuntime(arch), arch).toThrow(/no pinned AppImage runtime for/);
+      await expect(linuxMakerConfigs(arch), arch).rejects.toThrow(/no pinned AppImage runtime for/);
+    }
+    for (const arch of LINUX_ARCHS) expect(appImageRuntime(arch)).toBe(LINUX_APPIMAGE_RUNTIME[arch].url);
+    expect(() => appImageRuntime('toString')).toThrow(/no pinned AppImage runtime for/);
   });
 
   test('linux-fuses-unchanged', async () => {
@@ -76,7 +87,8 @@ describe('forge config (Linux packages)', () => {
 
     const commands: string[][] = [];
     const withRecorder = makeForgeConfig({}, (command, args) => void commands.push([command, ...args]));
-    await withRecorder.hooks?.postPackage?.({} as never, { platform: 'linux', arch: 'x64', outputPaths: [`/out/${LINUX_PACKAGE_NAME}-linux-x64`] });
+    const outputPaths = [`/out/${LINUX_PACKAGE_NAME}-linux-x64`];
+    await withRecorder.hooks?.postPackage?.({} as never, { platform: 'linux', arch: 'x64', outputPaths });
     expect(commands).toEqual([]);
   });
 
