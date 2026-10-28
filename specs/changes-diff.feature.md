@@ -204,7 +204,8 @@ normalised, so one search has one canonical JSON. `TODO(phase-3-merge)`: replace
 - **Scenario: diff-is-deterministic** — the same inputs twice give deep-equal diffs, and inputs
   with every object's keys shuffled give the same diff; changes are in region, field, then document
   order.
-- **Scenario: diff-work-is-bounded** — each in under ~250 ms, and each diff parses with
+- **Scenario: diff-work-is-bounded** — each within its work budget (measured at tens of ms; the test
+  allows 1.5 s of wall clock for a loaded runner), and each diff parses with
   `SnapshotDiffSchema`: two snapshots at every cap with all text different keep `maxChanges`
   changes with `truncated` and a full summary; regions at their caps where every block shares 20
   words with every other (and none is similar enough) take the pairing fallback (reported by the

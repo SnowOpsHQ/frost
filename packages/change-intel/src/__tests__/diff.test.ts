@@ -183,6 +183,10 @@ function atCaps(seed: string, blocksPerRegion = L.maxBlocksPerRegion, blockChars
   };
 }
 
+// Measured at about 40–65 ms on a desktop. The work budget (`DiffProbe`) is the real bound; this
+// wall-clock guard only catches a blow-up, with room for a loaded shared runner (turbo runs suites in parallel).
+const WALL_BUDGET_MS = 1_500;
+
 const timed = <T>(run: () => T): [T, number] => {
   const start = performance.now();
   const result = run();
@@ -197,7 +201,7 @@ describe('bounds', () => {
     diffSnapshots(before, after); // warm up the JIT once
     const probe: DiffProbe = { work: 0, fallbacks: [] };
     const [result, ms] = timed(() => diffSnapshots(before, after, probe));
-    expect(ms).toBeLessThan(250);
+    expect(ms).toBeLessThan(WALL_BUDGET_MS);
     expect(result.changes).toHaveLength(D.maxChanges);
     expect(result.truncated).toBe(true);
     expect(result.changeCount).toBeGreaterThan(D.maxChanges);
@@ -214,7 +218,7 @@ describe('bounds', () => {
     const [sharedBefore, sharedAfter] = [valid(shared()), valid(shared())];
     const sharedProbe: DiffProbe = { work: 0, fallbacks: [] };
     const [sharedResult, sharedMs] = timed(() => diffSnapshots(sharedBefore, sharedAfter, sharedProbe));
-    expect(sharedMs).toBeLessThan(250);
+    expect(sharedMs).toBeLessThan(WALL_BUDGET_MS);
     expect(sharedProbe.fallbacks).toContain('pairing:main');
     expect(SnapshotDiffSchema.safeParse(sharedResult).success).toBe(true);
 
@@ -224,7 +228,7 @@ describe('bounds', () => {
     });
     const bigProbe: DiffProbe = { work: 0, fallbacks: [] };
     const [bigResult, bigMs] = timed(() => diffSnapshots(big('a'), big('b'), bigProbe));
-    expect(bigMs).toBeLessThan(250);
+    expect(bigMs).toBeLessThan(WALL_BUDGET_MS);
     expect(bigProbe.fallbacks).toContain('text:main');
     expect(bigResult.summary.main).toEqual({ added: 1_000, removed: 1_000, changed: 0 });
     expect(SnapshotDiffSchema.safeParse(bigResult).success).toBe(true);
@@ -235,7 +239,7 @@ describe('bounds', () => {
     });
     const nearProbe: DiffProbe = { work: 0, fallbacks: [] };
     const [nearResult, nearMs] = timed(() => diffSnapshots(valid(near('a')), valid(near('b')), nearProbe));
-    expect(nearMs).toBeLessThan(250);
+    expect(nearMs).toBeLessThan(WALL_BUDGET_MS);
     expect(nearProbe.fallbacks).toEqual([]);
     for (const r of PAGE_REGIONS) expect(nearResult.summary[r]).toEqual({ added: 0, removed: 0, changed: L.maxBlocksPerRegion });
     expect(nearResult.changes.every((c) => c.field === 'text' && c.kind === 'changed' && c.segments)).toBe(true);
