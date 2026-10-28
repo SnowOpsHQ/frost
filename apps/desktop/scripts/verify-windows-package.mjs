@@ -27,6 +27,7 @@ import {
   WIN_EXECUTABLE,
   WIN_LAUNCH_ALIVE_MS,
   WIN_NUPKG_APP_DIR,
+  WIN_SQUIRREL_OBSOLETE_EXIT_MS,
   WIN_TAMPER_EXIT_MS,
   winArtifacts,
 } from '../../../specs/windows-package.spec.ts';
@@ -204,6 +205,7 @@ if (args.static) {
     'asar-tamper-refused',
     'launches-and-stays-alive',
     'refuses-remote-debugging',
+    'squirrel-obsolete-exits',
     'squirrel-artifacts',
     'zip-contents',
   ]) {
@@ -228,6 +230,16 @@ await checks.check('asar-tamper-refused', () =>
 await checks.check('launches-and-stays-alive', () => assertLaunchesAndStaysAlive(executable, WIN_LAUNCH_ALIVE_MS));
 
 await checks.check('refuses-remote-debugging', () => assertRefusesRemoteDebugging(executable));
+
+// Squirrel's events are handled before anything starts (src/main/update/squirrel-events.ts): the
+// one without side effects must exit 0 at once, not open frost. (Exiting in time is enough.)
+await checks.check('squirrel-obsolete-exits', async () => {
+  const result = await launch(executable, ['--squirrel-obsolete', version], WIN_SQUIRREL_OBSOLETE_EXIT_MS, {
+    profileLast: true,
+  });
+  assert(!result.alive, `--squirrel-obsolete: still running after ${WIN_SQUIRREL_OBSOLETE_EXIT_MS / 1000} s`);
+  assert(result.code === 0, `--squirrel-obsolete: exit code ${result.code} (signal ${result.signal}), expected 0`);
+});
 
 await checks.check('squirrel-artifacts', async () => {
   const squirrelDir = path.dirname(setupExe);
@@ -262,8 +274,7 @@ await checks.check('squirrel-artifacts', async () => {
   const aware = versionInfo?.getAllLanguagesForStringValues().map((lang) => versionInfo.getStringValues(lang).SquirrelAwareVersion);
   checks.info(
     'squirrel-artifacts',
-    `${WIN_EXECUTABLE} SquirrelAwareVersion ${aware?.join(', ') || '(none)'}; frost does not handle --squirrel-* events yet ` +
-      '(windows-package.feature.md, Known limits)',
+    `${WIN_EXECUTABLE} SquirrelAwareVersion ${aware?.join(', ') || '(none)'} (frost handles the --squirrel-* events itself)`,
   );
 });
 

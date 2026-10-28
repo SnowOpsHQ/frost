@@ -89,11 +89,14 @@ export function appEnv() {
  * or `{ alive: true }` after `ms` (then it is terminated, by its PID only). The fresh
  * `--user-data-dir` keeps the check independent of an installed frost that may be running: on a
  * shared profile the single-instance lock would make the launched copy hand over to it and exit 0.
+ * `profileLast` puts `--user-data-dir` after `argv`, for a check whose first argument must be
+ * `argv[1]` (Squirrel's events).
  */
-export function launch(executable, argv, ms) {
+export function launch(executable, argv, ms, { profileLast = false } = {}) {
   const profile = mkdtempSync(path.join(tmpdir(), 'frost-verify-profile-'));
+  const profileArg = `--user-data-dir=${profile}`;
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, [`--user-data-dir=${profile}`, ...argv], { env: appEnv(), stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(executable, profileLast ? [...argv, profileArg] : [profileArg, ...argv], { env: appEnv(), stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (chunk) => (stderr += chunk));
     const timer = setTimeout(() => {

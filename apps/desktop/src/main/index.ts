@@ -45,6 +45,7 @@ import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
+import { handleSquirrelEvent } from './update/squirrel-events';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
@@ -58,7 +59,8 @@ const debugRefusal = remoteDebuggingRefusal({
 if (debugRefusal !== null) {
   console.error(`frost: ${debugRefusal}`);
   app.exit(1);
-} else {
+} else if (!handleSquirrelEvent(app)) {
+  // Not a Squirrel install event (Windows: those make or remove shortcuts and exit; windows-package.spec.ts).
   start();
 }
 

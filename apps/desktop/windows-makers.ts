@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
-import { WIN_ARCHS, WIN_SQUIRREL_OPTIONS, winSetupExe, type WinArch } from '@app/specs/windows-package.spec';
+import { WIN_ARCHS, WIN_SQUIRREL_OPTIONS, WIN_VERSION_STRINGS, winSetupExe, type WinArch } from '@app/specs/windows-package.spec';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 
@@ -24,4 +24,14 @@ export function squirrelOptions(arch: string, appVersion: string = version) {
  */
 export function windowsMakers() {
   return [new MakerSquirrel((arch) => squirrelOptions(arch), ['win32']), new MakerZIP({}, ['win32'])];
+}
+
+/**
+ * Packager options for `frost.exe`'s version resource (specs/windows-package.spec.ts
+ * `WIN_VERSION_STRINGS`), replacing Electron's company and copyright strings. `appCopyright` is
+ * also the macOS bundle's `NSHumanReadableCopyright`.
+ */
+export function windowsPackagerConfig() {
+  const { LegalCopyright, ...win32metadata } = WIN_VERSION_STRINGS;
+  return { win32metadata, appCopyright: LegalCopyright };
 }

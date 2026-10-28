@@ -7,7 +7,7 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion, type FuseV1Config } from '@electron/fuses';
 import { linuxMakers } from './linux-makers.ts';
-import { windowsMakers } from './windows-makers.ts';
+import { windowsMakers, windowsPackagerConfig } from './windows-makers.ts';
 import { NOTICES_FILE } from './third-party-notices.ts';
 import {
   MAC_APP_CATEGORY,
@@ -79,6 +79,7 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
       // The licenses of the bundled third-party packages (third-party-notices.ts), beside app.asar in
       // resources/ (specs/seo-speed.feature.md, Licenses). Relative to the app directory Forge runs in.
       extraResource: [NOTICES_FILE],
+      ...windowsPackagerConfig(),
       ...signing,
     },
     rebuildConfig: {},

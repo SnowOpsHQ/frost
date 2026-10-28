@@ -458,7 +458,15 @@ sync.
 - **Line endings.** The job runs `git config --global core.autocrlf false` before checkout:
   `ci-workflows.test.ts`, `platform-workflows.test.ts` and other tests read repo files and match
   on `\n`. No `.gitattributes` was added.
-- **Known limits.** frost does not handle Squirrel's `--squirrel-*` events yet (Electron's exe is
-  Squirrel-aware, `SquirrelAwareVersion` 1), so installing creates no shortcut and frost starts
-  during install and uninstall; installing and uninstalling are not exercised by any check
-  (`windows-package.feature.md`).
+- **Review fixes.** Squirrel's events are handled: Electron's exe is Squirrel-aware
+  (`SquirrelAwareVersion` 1), so `apps/desktop/src/main/update/squirrel-events.ts` runs in main
+  right after the remote-debugging refusal and before `start()` (no single-instance lock, database
+  or window). Packaged on Windows only, and only for an exact `argv[1]`: install/updated run
+  `..\Update.exe --createShortcut frost.exe`, uninstall `--removeShortcut` (no shell, detached, no
+  stdio), then exit 0 when it exits or after 5 s; obsolete exits 0 at once; firstrun starts
+  normally; a missing `Update.exe` or a spawn failure exits 0 quietly (`squirrel-events.test.ts`).
+  `verify:win` gains `squirrel-obsolete-exits` (`launch` can now put the profile argument last).
+  `frost.exe`'s version resource carries `WIN_VERSION_STRINGS` (`windowsPackagerConfig`, one
+  spread line in `packagerConfig`; `appCopyright` is also the macOS bundle's copyright string).
+- **Known limits.** Installing and uninstalling (and so the shortcuts) are not exercised by any
+  check (`windows-package.feature.md`).

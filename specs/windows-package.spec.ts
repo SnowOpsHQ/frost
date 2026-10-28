@@ -85,6 +85,60 @@ export const WIN_ASAR_INTEGRITY_RESOURCE = {
   alg: 'SHA256',
 } as const;
 
+/**
+ * Squirrel's events. Electron's exe declares itself Squirrel-aware (`SquirrelAwareVersion` 1 in its
+ * version resource), so Squirrel starts `frost.exe` with one of these as the first argument
+ * (`argv[1]`, followed by the version) and leaves the shortcuts to the app, which must then exit.
+ * Handled only in a packaged build on Windows, before anything else starts (no single-instance
+ * lock, no database, no window), by `apps/desktop/src/main/update/squirrel-events.ts`:
+ * - `create-shortcut` / `remove-shortcut`: run Squirrel's `Update.exe` with
+ *   `winSquirrelShortcutArgs(...)`, wait for it at most `WIN_SQUIRREL_HOOK_WAIT_MS`, then exit 0;
+ * - `exit`: exit 0 at once (an older version being removed after an update).
+ * Anything else in `argv[1]`, including `WIN_SQUIRREL_FIRSTRUN`, starts frost normally. A missing
+ * `Update.exe` or a failed spawn still exits 0, quietly: Squirrel only waits for the exit.
+ */
+export const WIN_SQUIRREL_EVENTS = {
+  '--squirrel-install': 'create-shortcut',
+  '--squirrel-updated': 'create-shortcut',
+  '--squirrel-uninstall': 'remove-shortcut',
+  '--squirrel-obsolete': 'exit',
+} as const;
+export type WinSquirrelEvent = keyof typeof WIN_SQUIRREL_EVENTS;
+
+/** Squirrel's first launch after installing: frost starts as usual. */
+export const WIN_SQUIRREL_FIRSTRUN = '--squirrel-firstrun';
+
+/**
+ * Squirrel's `Update.exe`, relative to the directory of the running `frost.exe`
+ * (`%LocalAppData%\frost\app-<version>\frost.exe` → `%LocalAppData%\frost\Update.exe`).
+ */
+export const WIN_SQUIRREL_UPDATE_EXE = ['..', 'Update.exe'] as const;
+
+/** The `Update.exe` arguments for a shortcut event: the shortcuts point at `WIN_EXECUTABLE`. */
+export function winSquirrelShortcutArgs(action: 'create-shortcut' | 'remove-shortcut') {
+  return [action === 'create-shortcut' ? '--createShortcut' : '--removeShortcut', WIN_EXECUTABLE] as const;
+}
+
+/** How long a shortcut event waits for `Update.exe` before exiting anyway. */
+export const WIN_SQUIRREL_HOOK_WAIT_MS = 5_000;
+
+/** Squirrel kills a hook that runs longer than this; every event path ends well before it. */
+export const WIN_SQUIRREL_HOOK_LIMIT_MS = 15_000;
+
+/** `squirrel-obsolete-exits`: `frost.exe --squirrel-obsolete` must have exited 0 within this time. */
+export const WIN_SQUIRREL_OBSOLETE_EXIT_MS = 5_000;
+
+/**
+ * The version resource strings Packager writes into `frost.exe` (`packagerConfig.win32metadata`,
+ * and `appCopyright` for `LegalCopyright`), instead of Electron's defaults.
+ */
+export const WIN_VERSION_STRINGS = {
+  CompanyName: 'SnowOpsHQ',
+  ProductName: 'frost',
+  FileDescription: 'frost',
+  LegalCopyright: 'Copyright (C) 2026 SnowOpsHQ',
+} as const;
+
 /** A packaged app must still be running this long after launch (no crash, no sandbox abort). */
 export const WIN_LAUNCH_ALIVE_MS = 10_000;
 

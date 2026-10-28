@@ -14,6 +14,7 @@ import {
   WIN_PACKAGE_NAME,
   WIN_SIGNING_OPTIONS,
   WIN_SQUIRREL_OPTIONS,
+  WIN_VERSION_STRINGS,
   winArtifacts,
   winSetupExe,
 } from '@app/specs/windows-package.spec';
@@ -104,6 +105,13 @@ describe('forge config (Windows packages)', () => {
     const outputPaths = [`C:\\out\\${winArtifacts('0.0.0', 'x64').packaged}`];
     await withRecorder.hooks?.postPackage?.({} as never, { platform: 'win32', arch: 'x64', outputPaths });
     expect(commands).toEqual([]);
+  });
+
+  test('windows-version-strings', () => {
+    const { packagerConfig } = makeForgeConfig({});
+    const { LegalCopyright, ...metadata } = WIN_VERSION_STRINGS;
+    expect(packagerConfig).toMatchObject({ win32metadata: metadata, appCopyright: LegalCopyright });
+    expect(packagerConfig?.win32metadata).toEqual(metadata);
   });
 
   test('resources-allowlist-matches-linux', () => {

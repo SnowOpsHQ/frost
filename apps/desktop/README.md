@@ -598,20 +598,20 @@ warns before `Setup.exe` runs ("Windows protected your PC": More info › Run an
 you trust that run. `verify:win` fails if a signature ever appears, until the docs say otherwise.
 
 `Setup.exe` installs per user into `%LocalAppData%\frost` (no administrator rights; there is no MSI)
-and starts frost. Squirrel's `Update.exe` is installed with it, but frost never runs it: there is
-no auto-update yet. Known limit: frost does not handle Squirrel's install and uninstall events yet,
-so no Start-menu or desktop shortcut is created (start `%LocalAppData%\frost\app-<version>\frost.exe`),
-and frost also starts while installing and uninstalling (`specs/windows-package.feature.md`). The zip
+and starts frost. Installing creates Start-menu and desktop shortcuts and uninstalling removes them:
+frost handles Squirrel's install events by running Squirrel's `Update.exe` for the shortcuts only,
+then exits (`src/main/update/squirrel-events.ts`). frost never asks `Update.exe` to update: there
+is no auto-update yet. The zip
 needs no installer: unzip it anywhere and run `frost.exe`.
 
 `verify:win` checks the fuses, the files in `resources/` and `app.asar`, the ASAR integrity
 resource in `frost.exe` (Electron checks `app.asar`'s header hash at startup on Windows) and that a
-copy with a tampered header refuses to start, launch and debugging lockdown, the Squirrel artifacts
+copy with a tampered header refuses to start, launch and debugging lockdown, that a Squirrel event
+launch exits at once, the Squirrel artifacts
 (the `RELEASES` hash and size, the app tree inside the `.nupkg`), the zip's contents and the absence
 of signatures. Off Windows, `node apps/desktop/scripts/verify-windows-package.mjs --static` runs the
 file checks against `pnpm --filter @app/desktop exec electron-forge package --platform win32 --arch x64`
 output (no Wine needed); making the installer needs Windows.
 
 ## Follow-ups
-App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update,
-handling Squirrel's install events on Windows (shortcuts).
+App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update.
