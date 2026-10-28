@@ -46,6 +46,7 @@ import { remoteDebuggingRefusal } from './security/policy';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
+import { createTelemetryMain } from './telemetry/main';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
@@ -73,6 +74,10 @@ function start(): void {
   const started = new Promise<void>((resolve) => (markStarted = resolve));
   const windowOptions = { windows: () => BrowserWindow.getAllWindows(), openWindow: () => openMainWindow(), started };
   if (!claimSingleInstance(app, windowOptions)) return;
+
+  // Telemetry (specs/telemetry.feature.md, Desktop): its consent read synchronously, before any window
+  // (off by default); `telemetry.telemetry` is the `span` / `captureException` handle for main.
+  const telemetry = createTelemetryMain(started);
 
   // Global backstop: every renderer is sandboxed even if a future WebContents forgets the explicit pref.
   app.enableSandbox();
@@ -425,6 +430,7 @@ function start(): void {
         }),
         settings: searchEngine,
         account: account.service,
+        telemetry: telemetry.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

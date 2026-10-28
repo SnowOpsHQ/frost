@@ -101,3 +101,114 @@ Review focus "Telemetry UI matches behaviour". Each line maps to one named test.
   `Cannot`); by default the host name, its first label and the login name.
 - `frames-are-app-relative` — app root, `app.asar`, `app://`, `node_modules`, `node:`, `<…>` (scrubbed),
   other files and URLs; a file is capped and a hostile one handled in linear time.
+
+## Desktop (Phase 4 Task 7)
+
+Spec: `specs/telemetry-consent.schema.ts` (`TELEMETRY_CONFIG_ENV`, `UNPACKAGED_HTTP_TELEMETRY_HOSTS`,
+`DSN_PUBLIC_KEY_PATTERN`, `DSN_PROJECT_ID_PATTERN`, `TELEMETRY_CONSENT_FILE`,
+`TELEMETRY_CONSENT_FILE_VERSION`, `TELEMETRY_CONSENT_FILE_MAX_BYTES`, `TelemetryConsentFileSchema`,
+`TelemetryStateSchema`, `SetConsentInputSchema`, `RENDERER_ERROR_MECHANISMS`, `RendererErrorInputSchema`,
+`RendererErrorResultSchema`) and, without Zod for the renderer, `specs/telemetry-consent.spec.ts`
+(`RENDERER_ERROR_SOURCES`, `RENDERER_ERROR_LIMITS`, `RENDERER_ERROR_RATE_LIMIT`). Main wires `@app/telemetry` (`apps/desktop/src/main/telemetry/`); the
+chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemetry-router.ts`).
+
+### Decisions
+- **Consent is known before anything could leave.** `userData/telemetry-consent.json` is read
+  synchronously when main starts, before any window opens and before telemetry is created. Missing,
+  unreadable, too large, not JSON, another version or any other shape reads as both off. Writes are
+  atomic (a temporary file renamed over it, `0600`); if a write fails the file is removed, so the next
+  start is off (fail closed).
+- **Toggling is synchronous.** `telemetry.setConsent` changes main's telemetry and writes the file
+  before it answers; off drops what is queued at once (no flush).
+- **Configured, not revealed.** The build's DSN and OTLP endpoint (`FROST_PUBLIC_SENTRY_DSN`,
+  `FROST_PUBLIC_OTEL_ENDPOINT`) are read like the account's configuration (build time; an unpackaged
+  build's run-time environment wins; packaged requires `https:`, unpackaged may use
+  `http://127.0.0.1`). The chrome sees only whether each is configured, as a boolean.
+- **One door: `net.fetch`.** `POST`, `credentials: 'omit'`, `cache: 'no-store'`, `redirect: 'error'`,
+  the package's abort signal passed through, and not before the app is ready.
+- **No identifier.** The resource is the app's version and platform (and the runtime's name and
+  version for error events); stack frames are relative to the app's root.
+- **Crashes behave as before.** Main's uncaught exceptions are observed with Node's
+  `uncaughtExceptionMonitor`, which does not replace Electron's default handler (its error dialog
+  stays). Electron's main runs Node's `warn` mode for unhandled rejections; an `unhandledRejection`
+  listener would silence that warning, so main's listener emits the same
+  `UnhandledPromiseRejectionWarning` itself, and the process keeps running as before. An error seen by
+  both is reported once.
+- **One `app.start` span** from telemetry's creation to the first window (`platform`, `outcome`,
+  `duration_ms`).
+- **Quitting is bounded.** On `will-quit`, with a channel on, the quit waits for `shutdown()` (at most
+  `shutdownTimeoutMs`) and then goes on; with both off it is not held.
+- **Renderer errors** are the chrome's `error` and `unhandledrejection` events, cut to
+  `RENDERER_ERROR_LIMITS`, at most `RENDERER_ERROR_RATE_LIMIT` per window of time (in the chrome and
+  again in the router), scrubbed by the package and dropped when `errors` is off.
+
+### Spec schema (`apps/desktop/src/main/telemetry/__tests__/telemetry-consent-spec.test.ts`)
+- `telemetry-state-is-strict` — a state with an endpoint, DSN or any other member is refused;
+  `configured` is booleans only.
+- `telemetry-inputs-are-strict` — `SetConsentInputSchema` and `RendererErrorInputSchema` refuse
+  unknown channels, extra members, non-booleans and fields over `RENDERER_ERROR_LIMITS`.
+- `consent-file-schema-is-strict` — another `v`, an extra member or a wrong type is refused.
+- `renderer-limits-match-the-package` — `RENDERER_ERROR_LIMITS`' name and message caps are
+  `TELEMETRY_LIMITS.maxTypeChars` and `maxMessageChars`.
+
+### Consent store (`apps/desktop/src/main/telemetry/__tests__/consent-store.test.ts`, fake fs)
+- `consent-store-defaults` — no file: both off, nothing written.
+- `consent-store-corrupt-is-default` — not JSON, another version, an extra member, a wrong type, an
+  over-large file and a read error all read as both off.
+- `consent-store-reads-sync` — the file is read once, synchronously, when the store is created.
+- `consent-store-writes-atomically` — a write goes to a temporary file (`0600`) renamed over the
+  file, valid against `TelemetryConsentFileSchema` with `decidedAt`; a failed write removes the
+  temporary file and the file, and answers `false`; a store created afterwards reads what was written.
+
+### Configuration (`apps/desktop/src/main/telemetry/__tests__/config.test.ts`)
+- `telemetry-config-missing-is-not-configured` — no value, or an empty one, is `null` per channel.
+- `telemetry-config-packaged-requires-https` — packaged: `http:` (even loopback) is refused.
+- `telemetry-config-unpackaged-allows-loopback-http` — unpackaged: `http://127.0.0.1` is accepted,
+  other `http:` hosts refused.
+- `telemetry-config-runtime-env-only-unpackaged` — the run-time environment wins only unpackaged.
+- `telemetry-config-shapes` — an endpoint with credentials, a query or a fragment is refused; a DSN
+  needs a public key (`DSN_PUBLIC_KEY_PATTERN`), no password, a project (`DSN_PROJECT_ID_PATTERN`),
+  no query or fragment.
+
+### Main wiring (`apps/desktop/src/main/telemetry/__tests__/install.test.ts`, fake app, process and fetch)
+- `consent-off-sends-nothing` — with the defaults, the `app.start` span, a main uncaught exception, an
+  unhandled rejection and a renderer error make no fetch, also after flush and quit; quitting is not held.
+- `set-consent-is-synchronous` — `setConsent` has changed the telemetry and written the store when it
+  returns; turning `errors` off drops a queued event (no fetch afterwards); the state's version goes up.
+- `transport-is-net-fetch` — `POST` with `credentials: 'omit'`, `cache: 'no-store'`,
+  `redirect: 'error'` and the abort signal, only after the app is ready; `retry-after` is passed back.
+- `crash-behaviour-is-unchanged` — no `uncaughtException` listener is added (the monitor is used); an
+  unhandled rejection still emits `UnhandledPromiseRejectionWarning`; with `errors` on both are
+  reported (an error seen twice once), unhandled, with their mechanism.
+- `app-start-span` — one `app.start` span ends when startup completes, with `platform`, `outcome` and
+  `duration_ms`; the resource carries the version and platform only.
+- `shutdown-on-will-quit-is-bounded` — with a channel on, the first `will-quit` is held until
+  `shutdown` finishes (at most `shutdownTimeoutMs` with a collector that never answers), then the app
+  quits again and that `will-quit` passes.
+- `renderer-errors-are-reported` — with `errors` on, a renderer error is captured with its source's
+  mechanism, its stack frames parsed and scrubbed; `dropped` when off or not configured.
+
+### Router (`packages/ipc-contract/src/__tests__/telemetry-router.test.ts`)
+- `telemetry-procedures-enforce-sender` — every `telemetry.*` procedure rejects a foreign sender before
+  the service is called; each is the right type.
+- `telemetry-answers-carry-no-secret` — answers never carry the DSN or endpoint; a service answer with
+  any other member is a masked internal error.
+- `telemetry-inputs-are-validated` — malformed `setConsent` and `reportError` inputs are `BAD_REQUEST`
+  before the service is called.
+- `report-error-is-rate-limited` — after `RENDERER_ERROR_RATE_LIMIT.maxReports` within `windowMs` the
+  rest answer `rate-limited` without reaching the service; a new window resumes.
+
+### Renderer (`apps/desktop/src/renderer/__tests__/settings-telemetry-errors.test.ts`)
+- `renderer-errors-are-sent` — `error` and `unhandledrejection` events are reported with their source,
+  name, message and stack cut to `RENDERER_ERROR_LIMITS` (never splitting a surrogate pair); a
+  non-error reason is reported as text; a failing report never throws or reports itself; after
+  `maxReports` in a window nothing more is sent until the next.
+
+### End to end (`apps/desktop/e2e/telemetry.e2e.ts`, a fake OTLP collector and Sentry endpoint)
+- `telemetry-nothing-before-consent` — with the defaults, the startup span, a renderer error and a
+  main unhandled rejection send nothing; the state says both off and both configured.
+- `telemetry-errors-on-sends-scrubbed` — after `setConsent` on, a renderer error and a main rejection
+  arrive at the Sentry endpoint without the URL, host, email or path they carried.
+- `telemetry-off-stops-at-once` — after `setConsent` off, nothing more arrives.
+- `telemetry-consent-persists` — consent survives a restart on the same profile (the file is
+  `TelemetryConsentFileSchema`), and with `usage` on the `app.start` span arrives at the collector.

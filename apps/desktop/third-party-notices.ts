@@ -56,6 +56,13 @@ export const NOTICE_PACKAGES: readonly NoticePackage[] = [
   },
   { name: 'xmlchars', from: 'node_modules/saxes', use: 'Used by saxes.' },
   { name: 'jose', from: 'apps/desktop', use: 'Verifying the signed entitlement snapshots in the main process (EdDSA only).' },
+  { name: '@opentelemetry/api', from: 'packages/telemetry', use: 'Usage traces in the main process, sent only with consent (@app/telemetry).' },
+  { name: '@opentelemetry/sdk-trace', from: 'packages/telemetry', use: 'Usage traces in the main process, sent only with consent (@app/telemetry).' },
+  { name: '@opentelemetry/resources', from: 'packages/telemetry', use: 'Usage traces in the main process, sent only with consent (@app/telemetry).' },
+  { name: '@opentelemetry/core', from: 'node_modules/@opentelemetry/sdk-trace', use: 'Used by @opentelemetry/sdk-trace and @opentelemetry/resources.' },
+  { name: '@opentelemetry/semantic-conventions', from: 'node_modules/@opentelemetry/resources', use: 'Used by @opentelemetry/resources.' },
+  { name: '@sentry/core', from: 'packages/telemetry', use: 'Error reports from the main process and the app window, sent only with consent (@app/telemetry).' },
+  { name: '@sentry/conventions', from: 'node_modules/@sentry/core', use: 'Used by @sentry/core.' },
 ];
 
 /** The directory of package `name` as Node would find it from `from` (walking up `node_modules`). */

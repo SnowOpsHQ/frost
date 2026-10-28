@@ -9,6 +9,7 @@ export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryServic
 export type { ChecksService } from './checks-service';
 export type { AccountService } from './account-service';
 export { requireFeature } from './account-router';
+export type { TelemetryService } from './telemetry-service';
 export {
   createContext,
   createSenderPolicy,

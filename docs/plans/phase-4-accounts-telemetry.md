@@ -246,7 +246,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Failing tests:** unit tests for the store and the router; e2e `telemetry.e2e.ts` with a fake
   OTLP collector and a fake Sentry endpoint: nothing arrives with defaults; enabling sends; disabling
   stops at once; a renderer error with a URL arrives scrubbed.
-- [ ] commit `feat(telemetry): consent store, settings procedures and main wiring`
+- [x] commit `feat(telemetry): consent store, settings procedures and main wiring`
 
 ### Task 8: Desktop — Search Console connection and read API
 - **Spec:** `specs/gsc.schema.ts` (`GSC_SCOPE`, `GscStatusSchema`, `GscPropertySchema`,
@@ -314,7 +314,10 @@ Stable and Zod-typed; changing one is a breaking change that needs the owning ph
   `createGscService(...)` in `apps/desktop/src/main/gsc/service.ts`; the Phase 5 agent tool calls it
   in main (it is gated on `search-console` itself).
 - **Telemetry:** `@app/telemetry` `span(name, attrs, fn)` and `captureException(error)`; only
-  `SPAN_ATTRIBUTE_ALLOWLIST` keys are exported, so a phase adds its attribute keys there.
+  `SPAN_ATTRIBUTE_ALLOWLIST` keys are exported, so a phase adds its attribute keys there. Main's
+  instance is the `TelemetryHandle` from `createTelemetryMain(started).telemetry`
+  (`apps/desktop/src/main/telemetry/install.ts`; `telemetry` in `main/index.ts`); consent changes only
+  through `telemetry.setConsent`.
 
 ## As built
 (Filled in at Task 11.)

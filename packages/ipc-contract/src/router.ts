@@ -20,6 +20,7 @@ import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
+import { telemetryRouter } from './telemetry-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -282,6 +283,8 @@ export const appRouter = router({
   checks: checksRouter,
   // Phase 4 Tasks 4 and 5 (`entitlements-client.feature.md`, `account-signin.feature.md`): entitlements and sign-in.
   account: accountRouter,
+  // Phase 4 Task 7 (`telemetry.feature.md`, Desktop): telemetry consent and renderer errors.
+  telemetry: telemetryRouter,
 });
 
 export type AppRouter = typeof appRouter;

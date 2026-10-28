@@ -11,6 +11,7 @@ import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
+import type { TelemetryService } from './telemetry-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -173,4 +174,6 @@ export interface IpcServices {
   readonly checks?: ChecksService;
   /** The account and its verified entitlements (Phase 4, `account-service.ts`). */
   readonly account?: AccountService;
+  /** Telemetry consent and renderer errors (Phase 4 Task 7, `telemetry-service.ts`). */
+  readonly telemetry?: TelemetryService;
 }

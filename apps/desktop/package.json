@@ -24,6 +24,7 @@
     "@app/ipc-contract": "workspace:*",
     "@app/seo-core": "workspace:*",
     "@app/specs": "workspace:*",
+    "@app/telemetry": "workspace:*",
     "axe-core": "4.14.0",
     "jose": "^6.2.13",
     "parse5": "^8.0.1",
