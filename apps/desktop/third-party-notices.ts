@@ -55,6 +55,15 @@ export const NOTICE_PACKAGES: readonly NoticePackage[] = [
     license: { source: 'https://github.com/lddubeau/saxes/blob/v6.0.0/LICENSE', text: SAXES_LICENSE },
   },
   { name: 'xmlchars', from: 'node_modules/saxes', use: 'Used by saxes.' },
+  { name: 'ai', from: 'apps/agent-runtime', use: 'The AI agent’s chat loop, in its own utility process (the agent runtime).' },
+  { name: '@ai-sdk/provider', from: 'apps/agent-runtime', use: 'Used by the agent runtime’s model providers.' },
+  { name: '@ai-sdk/provider-utils', from: 'node_modules/ai', use: 'Used by the agent runtime’s model providers.' },
+  { name: '@ai-sdk/anthropic', from: 'apps/agent-runtime', use: 'The agent’s bring-your-own-key Anthropic model route.' },
+  { name: '@ai-sdk/openai', from: 'apps/agent-runtime', use: 'The agent’s bring-your-own-key OpenAI model route.' },
+  { name: '@ai-sdk/gateway', from: 'apps/agent-runtime', use: 'The agent’s model gateway route.' },
+  { name: '@vercel/oidc', from: 'node_modules/@ai-sdk/gateway', use: 'Used by @ai-sdk/gateway (bundled; frost always sends a key).' },
+  { name: 'eventsource-parser', from: 'node_modules/@ai-sdk/provider-utils', use: 'Reading streamed model responses in the agent runtime.' },
+  { name: '@workflow/serde', from: 'node_modules/@ai-sdk/provider-utils', use: 'Used by the AI SDK.' },
 ];
 
 /** The directory of package `name` as Node would find it from `from` (walking up `node_modules`). */

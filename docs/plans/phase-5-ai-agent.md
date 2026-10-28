@@ -44,9 +44,12 @@
    - Main checks the request against the configured route's allowlist (a canonical URL and an exact
      method and path: `POST https://api.anthropic.com/v1/messages`,
      `POST https://api.openai.com/v1/responses`,
-     `POST https://ai-gateway.vercel.sh/v4/ai/language-model`), drops every credential-like header the runtime sent, adds the
-     real credential, performs the request with Electron `net.fetch` on an in-memory session with no
-     cookies, and streams the response body back in chunks. Anything else is refused.
+     `POST https://ai-gateway.vercel.sh/v4/ai/language-model`), keeps only an allowlist of the
+     runtime's headers (so every credential, cookie or proxy header it sent is dropped), checks the
+     body (the configured model, no server-side tool, MCP server or file reference, OpenAI
+     `store: false`), adds the real credential, performs the request with Electron's `fetch` on an
+     in-memory session with no cookies and no redirects, and streams the response body back in
+     chunks (an error status's body is withheld). Anything else is refused.
    - **Why:** the key never enters the agent process, so no bug, dependency or log line there can
      leak it; main is the single place that decides where the agent may reach. The cost (one hop of
      streaming over a MessagePort) is small next to model latency.
@@ -55,17 +58,25 @@
      `node:http(s)`, `node:net` or `node:child_process`.
 6. **Agent process lockdown.** `utilityProcess.fork` with:
    - an empty environment (only `NODE_ENV`), so no inherited secret is visible;
-   - `execArgv: ['--permission', '--allow-fs-read=<its own bundle>']` (Node's permission model in
-     Electron 45's Node 24): no file writes, no reads beyond its bundle, no child processes, no
-     workers, no native addons. If a platform refuses the flags, main logs that once and the
-     runtime still runs with the globals removed: the agent settings page says which (never claims
-     a lockdown that isn't in effect);
+   - `execArgv: ['--permission', '--allow-fs-read=<its build directory>']`;
    - `stdio: 'ignore'` in packaged builds; `serviceName: 'frost agent'`.
 
-   Node's permission model doesn't cover sockets in Node 24, so "no direct network" rests on the
-   globals removal and on the bundle's imports (a test asserts the bundle imports none of the
-   network modules). The runtime holds no credential, so even a socket opened by a dependency bug
-   carries nothing secret.
+   **What this does not give us (verified, Task 2):** Electron 45 does not enforce Node's
+   permission model in a utility process: the flags show in `process.execArgv`, but file reads and
+   writes elsewhere succeed and `process.permission` is undefined. So the agent process is **not**
+   OS-sandboxed and **not** file-restricted on Electron 45. The flags stay (harmless, and in effect
+   should a later Electron enforce them), and the runtime reports what is actually in effect in
+   `ready.lockdown` (`permissionModel: false` today); main's host exposes that report and the agent
+   settings page says "File sandbox: not in effect", never claiming one.
+
+   The agent process's isolation rests on: holding no secret (keys stay in main's proxy, decision
+   5; an empty environment); the narrow, validated protocol (every message parsed both ways, no
+   message that approves, grants, changes a setting or carries a key); the removed network globals
+   and builtin lookups (`fetch`, `WebSocket`, `EventSource`, `process.getBuiltinModule`,
+   `binding`, `dlopen`, …) and a bundle whose own sources import no network or process module; and
+   main deciding every action (decision 7). A socket opened by a dependency bug carries nothing
+   secret, and no tool reaches the file system.
+
 7. **Approvals live entirely in main.** Each tool's `execute` in the runtime is only a request
    (`tool.invoke`) to main. Main's broker decides: run on a standing grant, ask the user, or refuse;
    main runs the tool and answers `tool.result`. The protocol has **no message** by which the agent
@@ -163,7 +174,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   the key; logs never print it), `proxy-allowlist` (other hosts, schemes, ports and paths refused;
   redirects not followed off the allowlist), credential headers from the runtime dropped, the stored
   file is not plaintext, crash restart.
-- [ ] commit `feat(agent): main-side agent host, key store and model proxy`
+- [x] commit `feat(agent): main-side agent host, key store and model proxy`
 
 ### Task 4: Approval broker and standing grants (security review)
 - **Files:** `apps/desktop/src/main/agent/approvals.ts`, `grants.ts`; migration
@@ -254,3 +265,20 @@ _Filled in as tasks land._
   '--allow-fs-read=…']` lists the flags in `process.execArgv` but does not enforce them (file
   writes and reads elsewhere succeed; `process.permission` is undefined), so `ready.lockdown.permissionModel`
   is `false` there and the settings page must say so.
+- **Task 3.** `apps/desktop/src/main/agent/index.ts` exports `createAgent({ electron:
+  { utilityProcess, MessageChannelMain, safeStorage, session }, userData, buildDir: __dirname,
+  packaged: app.isPackaged, log })` → `{ host, credentials, settings, proxy, entitlements, start(),
+  dispose() }` (Task 6 wires it with one line). The rules (header allowlists, body checks, caps) are
+  plain functions in `specs/agent-proxy.spec.ts`; acceptance `specs/agent-host.feature.md`. Facts it
+  rests on, checked on Electron 45: `session.fetch` with `redirect: 'error'` rejects a 3xx
+  ("Attempted to redirect, but redirect policy was 'error'"; `manual` rejects too), and with
+  `credentials: 'omit'` sends and stores no cookie; `safeStorage`'s synchronous API is deprecated
+  and on Linux its `isEncryptionAvailable()` answers `false` while the asynchronous encryptor
+  works, so keys use the asynchronous API, and `weak` is decided from the encryptor's output (`v10`:
+  Chromium's fixed key; `v11`: a secret service), not from `getSelectedStorageBackend()` (which said
+  `basic_text` while a secret service was in use). Route and model live in `agent-settings.json`
+  (the database's settings repository is typed per setting; no other phase's table changes). A
+  throwaway smoke forked the built runtime through the host, ran a turn over the real proxy and
+  `session.fetch` to a local HTTPS stand-in for the endpoint (the key arrived only as `x-api-key`,
+  no cookie was stored, a redirect was refused), and a killed runtime was restarted and served the
+  next turn.
