@@ -2,6 +2,8 @@ import type { SkillRegistry } from '@app/ai-skills/skills';
 import type { AgentGrantsStore } from './grants';
 import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
 import { e2eAgentScriptFrom } from './e2e-seam';
+import type { AgentEntitlements } from './entitlements';
+import { resolveAgentPorts, type AgentPorts } from './ports';
 import { createAgent, type AgentElectron } from './index';
 import { createAgentSession, type AgentSession } from './session';
 import { createBrowserPageToolRunner, type PageToolsBrowser, type PageToolsWebContents } from './tools';
@@ -11,7 +13,9 @@ import { createBrowserPageToolRunner, type PageToolsBrowser, type PageToolsWebCo
 // grants, approval broker) with the real page tools and the tab controller's URLs, the session
 // manager over it, the e2e seam (unpackaged only), and disposal when the app quits. The runtime is
 // forked on the first message (the session calls `start()`), not at launch. `wire.ts` passes the
-// Electron modules; tests pass fakes.
+// Electron modules; tests pass fakes. The search tools' data ports (Task 8) and the entitlements
+// port are optional: without them the ports answer "not connected in this build" and every agent
+// feature is allowed (the lead wires Phases 3 and 4 here; the plan's Task 8 as-built note).
 
 /** The parts of Electron's `app` used here. */
 export interface AgentServiceApp {
@@ -37,6 +41,10 @@ export interface AgentServiceDeps {
   readonly buildDir: string;
   /** The skills the panel can run (default: the built-ins; Task 9 passes the built-ins composed with the user's). */
   readonly skills?: SkillRegistry;
+  /** The search tools' data ports (default: each not connected, `resolveAgentPorts`). */
+  readonly ports?: AgentPorts;
+  /** Which agent features may run (default: all; the lead wires Phase 4's `requireFeature`). */
+  readonly entitlements?: AgentEntitlements;
   readonly log?: (line: string) => void;
 }
 
@@ -55,7 +63,8 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     packaged: deps.app.isPackaged,
     log,
     grantsStore: deps.sessionStore.agentGrants,
-    toolRunner: createBrowserPageToolRunner({ browser: deps.browser, webContents: deps.webContents }),
+    toolRunner: createBrowserPageToolRunner({ browser: deps.browser, webContents: deps.webContents, ports: resolveAgentPorts(deps.ports) }),
+    ...(deps.entitlements ? { entitlements: deps.entitlements } : {}),
     tabUrl,
     e2eAgentScript,
   });

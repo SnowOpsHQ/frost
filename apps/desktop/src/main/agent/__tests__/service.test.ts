@@ -1,14 +1,17 @@
-// Spec: specs/agent-session.spec.ts (AGENT_E2E_SCRIPT_SWITCH, AGENT_E2E_SCRIPT_ENV)
-// Acceptance: specs/agent-session.feature.md (Wiring)
+// Spec: specs/agent-session.spec.ts (AGENT_E2E_SCRIPT_SWITCH, AGENT_E2E_SCRIPT_ENV),
+// specs/agent-search-tools.spec.ts (PORT_NOT_CONNECTED_REASONS)
+// Acceptance: specs/agent-session.feature.md (Wiring), specs/agent-search-tools.feature.md (Wiring)
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createScriptedModelFactory, scriptedModelFactoryFromEnv, startRuntime, type RuntimePort } from '@app/agent-runtime';
+import { createFakeSerpPort } from '@app/ai-skills/fakes';
+import { PORT_NOT_CONNECTED_REASONS } from '@app/specs/agent-search-tools.spec';
 import { AgentE2eScriptSchema } from '@app/specs/agent-e2e-script.schema';
 import { AGENT_E2E_SCRIPT_ENV, AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
 import type { AgentElectron } from '../index';
-import { createAgentServiceFrom, type AgentServiceApp } from '../service';
+import { createAgentServiceFrom, type AgentServiceApp, type AgentServiceDeps } from '../service';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, type FakePort } from './fakes';
 import { createMemoryGrantsStore } from '../grants';
 
@@ -17,7 +20,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function setup(options: { packaged?: boolean; script?: unknown } = {}) {
+function setup(options: { packaged?: boolean; script?: unknown } & Pick<AgentServiceDeps, 'ports' | 'entitlements'> = {}) {
   const userData = mkdtempSync(path.join(tmpdir(), 'frost-agent-service-'));
   dirs.push(userData);
   let switchValue = '';
@@ -61,7 +64,16 @@ function setup(options: { packaged?: boolean; script?: unknown } = {}) {
     navigate: () => false,
     seo: { getAudit: () => ({ status: 'unavailable' as const, url: '', reason: 'no-tab' as const }) },
   };
-  const service = createAgentServiceFrom({ app, electron, browser, webContents: { getAllWebContents: () => [] }, sessionStore: { agentGrants: createMemoryGrantsStore() }, buildDir: '/app/.vite/build' });
+  const service = createAgentServiceFrom({
+    app,
+    electron,
+    browser,
+    webContents: { getAllWebContents: () => [] },
+    sessionStore: { agentGrants: createMemoryGrantsStore() },
+    buildDir: '/app/.vite/build',
+    ...(options.ports ? { ports: options.ports } : {}),
+    ...(options.entitlements ? { entitlements: options.entitlements } : {}),
+  });
   return { service, forks, quit };
 }
 
@@ -90,5 +102,33 @@ describe('agent service wiring', () => {
     expect(service.getState().setup.ready).toBe(false);
     expect(await service.send(null, 'Hi')).toBe('setup-needed');
     expect(forks.calls.length).toBe(0);
+  });
+
+  test('service-wires-ports-and-entitlements', async () => {
+    const script = { steps: [{ toolCalls: [{ toolName: 'serp_results', input: { query: 'running shoes' } }] }, { text: ['Read them.'] }] };
+    const toolOutput = async (service: ReturnType<typeof setup>['service']) => {
+      await vi.waitFor(() => expect(service.getState().version).toBeGreaterThan(1));
+      expect(await service.send(null, 'Who ranks?')).toBe('started');
+      await vi.waitFor(() => expect(service.getState().running).toBe(false));
+      const assistant = service.getState().active!.messages.find((message) => message.kind === 'assistant' && message.tools.length > 0);
+      return assistant?.kind === 'assistant' ? assistant.tools[0]! : null;
+    };
+    // No ports given: the tool tells the model the data isn't connected.
+    const plain = setup({ script });
+    expect(await toolOutput(plain.service)).toMatchObject({ toolName: 'serp_results', status: 'done', outputPreview: JSON.stringify({ unavailable: PORT_NOT_CONNECTED_REASONS.serp }) });
+    plain.quit[0]!();
+    // A port given: its answer, mapped.
+    const serp = createFakeSerpPort();
+    const wired = setup({ script, ports: { serp } });
+    const card = await toolOutput(wired.service);
+    expect(card).toMatchObject({ toolName: 'serp_results', status: 'done' });
+    expect(card!.outputPreview).toContain('"resultsTotal":2');
+    expect(serp.calls).toEqual([{ method: 'results', query: { query: 'running shoes' } }]);
+    wired.quit[0]!();
+    // The entitlements port is the one given.
+    const gated = setup({ script, entitlements: { allowed: (feature) => feature !== 'agent' } });
+    await vi.waitFor(() => expect(gated.service.getState().version).toBeGreaterThan(1));
+    expect(await gated.service.send(null, 'Hi')).toBe('not-entitled');
+    gated.quit[0]!();
   });
 });

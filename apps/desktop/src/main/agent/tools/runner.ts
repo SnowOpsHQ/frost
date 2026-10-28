@@ -1,4 +1,4 @@
-import { getToolDefinition, type GscPort, type IntentPort, type SerpPort } from '@app/ai-skills';
+import { getToolDefinition } from '@app/ai-skills';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { pageUrlOf } from '@app/specs/agent-approvals.spec';
 import { EXECUTE_JS_LIMITS, PAGE_SCRIPT_TIMEOUT_MS, PAGE_TEXT_DEFAULT_CHARS, pageKeyOf, pageSource } from '@app/specs/agent-page-tools.spec';
@@ -9,6 +9,7 @@ import type { ToolRunContext, ToolRunner, ToolRunOutcome } from '../approvals';
 import { auditNotReady, clip, summariseAudit, summarisePageData } from './audit-summary';
 import type { TabNavigation, NavigateOptions } from './navigator';
 import { clickScript, executeScript, pageTextScript, parsePageAnswer, SCRIPT_WORLDS, type PageExpectation } from './page-scripts';
+import { createSearchTools, type SearchToolInput, type SearchToolPorts } from './search-tools';
 
 // The agent's core page tools (Phase 5 Task 5; spec `specs/agent-page-tools.spec.ts`, acceptance
 // `specs/agent-page-tools.feature.md`): the broker's `ToolRunner` for `page_audit`, `page_data`,
@@ -30,7 +31,8 @@ import { clickScript, executeScript, pageTextScript, parsePageAnswer, SCRIPT_WOR
 //   tab until the user reloads or closes it); frost does not reload the page on its own.
 // - Every tool honours `signal` (an abort answers `failed`), and no tool reads cookies, storage or
 //   the page's main world.
-// - SERP, intent and GSC tools answer `unavailable` until Task 8 maps their ports.
+// - `serp_results`, `search_intent`, `run_ai_search` and `gsc_performance` run over `deps.ports`
+//   (Task 8, `search-tools.ts`): a missing port answers `unavailable`.
 
 /** The part of a tab's WebContents the page scripts need (Electron's `WebContents`; tests use fakes). */
 export interface PageContents {
@@ -48,8 +50,8 @@ export interface PageToolDeps {
   readonly navigate: (tabId: number, href: string, options: NavigateOptions) => Promise<TabNavigation>;
   /** Milliseconds clock for `elapsedMs` (default `Date.now`). */
   readonly now?: () => number;
-  /** Task 8's data ports; until it maps them their tools answer `unavailable`. */
-  readonly ports?: { readonly serp?: SerpPort | null; readonly intent?: IntentPort | null; readonly gsc?: GscPort | null };
+  /** The search tools' data ports (Task 8); a missing one makes its tools answer `unavailable`. */
+  readonly ports?: SearchToolPorts;
 }
 
 /** Script answers main will parse (characters): far above what any capped script writes (`execute_javascript`'s own cap is `EXECUTE_JS_LIMITS.maxAnswerChars`). */
@@ -125,6 +127,14 @@ function fitString<T extends Record<string, unknown>>(data: T, key: keyof T & st
 
 export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
   const now = deps.now ?? Date.now;
+  const search = createSearchTools({
+    ...(deps.ports ? { ports: deps.ports } : {}),
+    // `gsc_performance` without a `url`: the page the chat's tab shows now.
+    tabUrl: (tabId) => {
+      const contents = deps.contentsOf(tabId);
+      return contents === null || contents.isDestroyed() ? null : contents.getURL();
+    },
+  });
 
   /** The tab's live page, if it is (still) the expected one; else why not. */
   const livePage = (context: ToolRunContext, expected: PageExpectation): PageContents | ToolErrorCode => {
@@ -315,8 +325,7 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
         case 'search_intent':
         case 'run_ai_search':
         case 'gsc_performance':
-          // Task 8 maps these over `deps.ports`.
-          return fail('unavailable');
+          return search.run({ toolName: definition.name, input: value } as SearchToolInput, context);
       }
     },
   };

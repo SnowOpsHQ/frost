@@ -266,7 +266,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - **Files:** tool handlers in `apps/desktop/src/main/agent/tools/` over `@app/ai-skills` ports; main
   wires `null` ports until the lead connects Phases 3 and 4.
 - **Tests:** each tool answers `unavailable` without a port and maps the fake's answer with one.
-- [ ] commit `feat(agent): SERP, intent and GSC tools over ports`
+- [x] commit `feat(agent): SERP, intent and GSC tools over ports`
 
 ### Task 9: Grants page, chat retention and export, skills editor
 - Migrations `0031_agent_chats`, `0032_agent_skills`. Chats stored locally with a retention setting
@@ -538,3 +538,50 @@ _Filled in as tasks land._
   the chat on screen with no inputs. The styles test now also refuses `-schema` specs and
   `@app/ai-skills` in the panel's files (the renderer stays Zod-free). E2e
   `agent-skill-narrows-tools`.
+- **Task 8.** Spec `specs/agent-search-tools.spec.ts` (`SEARCH_TOOL_LIMITS`, `SEARCH_TOOL_TIMEOUT_MS`
+  30 s, `SEARCH_TOOL_SOURCES`, `PORT_NOT_CONNECTED_REASONS`, `GSC_NO_PAGE_REASON`), acceptance
+  `specs/agent-search-tools.feature.md`. Handlers in `apps/desktop/src/main/agent/tools/search-tools.ts`,
+  called by the page tool runner with the re-parsed input: `serp_results` → `SerpPort.results`,
+  `run_ai_search` → `SerpPort.aiSearch` (only `via: 'approval'`), `search_intent` →
+  `IntentPort.classify`, `gsc_performance` → `GscPort.performance` (no `url`: the chat tab's page
+  without its fragment, from its WebContents; no web page there: data `{ unavailable:
+  GSC_NO_PAGE_REASON }` and the port isn't asked; `days` default `defaultGscDays`). Each query gets
+  a signal aborted on Stop and at the timeout (`timeout`); a port that throws or answers off-shape
+  fails the call (`failed`). `ok` data is bounded: top 10 results (20 features), 20 citations,
+  25 GSC queries, each list with its total; text cleaned of control and invisible characters and
+  cut; numbers finite or `null` (`ctr` and confidences clamped to 0–1); unknown intents dropped.
+  **Unavailable reasons:** the broker turns runner error codes into fixed messages (Task 4), so a
+  port's `unavailable` answer is returned as data `{ unavailable: <reason> }` (cleaned, ≤ 500
+  characters): the reason stays inside the untrusted wrapper (it may come from a remote service
+  later), the model can explain it, and the broker and protocol stay unchanged. The card then shows
+  "Done" with that text; a tool with no port at all still fails `unavailable` (fixed message).
+  Wiring: `apps/desktop/src/main/agent/ports/index.ts` `resolveAgentPorts(ports?)` gives each port
+  not given (or `null`) `unavailablePort(PORT_NOT_CONNECTED_REASONS.…)` ("Search result data isn't
+  connected in this build." …); `createAgentServiceFrom` / `createAgentService` take
+  `ports?: { serp?, intent?, gsc? }` and `entitlements?: AgentEntitlements` (passed to
+  `createAgent`); main's `index.ts` is unchanged. Thin adapters with TODOs for the mapping:
+  `ports/serp-adapter.ts` `serpAdapter(service: SerpReadService | null)` (`results(query,
+  { signal })`, optional `aiSearch`), `ports/intent-adapter.ts` `intentAdapter(service:
+  IntentReadService | null)` (`classify`), `ports/gsc-adapter.ts` `gscAdapter(service:
+  GscReadService | null)` (`performance({ url, days }, { signal })`); each read service is a minimal
+  structural type answering the port's data or `null` (no data: `unavailable` with a plain reason; a
+  throw: a fixed reason, never the error's text; an abort passes through). **For the lead, after
+  Phases 3 and 4 merge:** align the three `*ReadService` types with
+  `packages/ipc-contract/src/serp-service.ts` / `gsc-service.ts` (or wrap each service in an object
+  of that shape), then change main's services line to
+
+  ```ts
+  agent: createAgentService({
+    app, browser, webContents, sessionStore, log: logSession,
+    ports: { serp: serpAdapter(services.serp), intent: intentAdapter(services.serp), gsc: gscAdapter(services.gsc) },
+    entitlements: { allowed: (feature) => requireFeature(AGENT_FEATURE_FLAGS[feature]) },
+  }),
+  ```
+
+  with `import { gscAdapter, intentAdapter, serpAdapter } from './agent/ports';` (and wherever the
+  intent query lives, if not in the SERP service). `AGENT_FEATURE_FLAGS` is the lead's map from
+  `AgentFeature` (`agent`, `agent.skills`, `agent.mcp`; `apps/desktop/src/main/agent/entitlements.ts`)
+  to Phase 4's flags; `allowed` must answer a boolean synchronously, so if Phase 4's
+  `requireFeature(flag)` throws or is async, wrap it (`try { requireFeature(flag); return true } catch
+  { return false }`, or read a cached plan). The broker checks `agent` (and `agent.mcp` for MCP
+  tools) per call; the session checks `agent` per send and `agent.skills` per skill run.

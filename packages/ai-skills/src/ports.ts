@@ -2,7 +2,7 @@
 // 4; acceptance `specs/agent-protocol.feature.md`). Phases 3 and 4 export Zod-typed read APIs
 // (`packages/ipc-contract/src/serp-service.ts`, `gsc-service.ts`); main adapts each to its port
 // with a thin mapping. Until one is wired, main passes `unavailablePort(reason)` and the tool
-// answers `unavailable`. Every query is read-only: no port changes anything anywhere, and each
+// tells the model why (`apps/desktop/src/main/agent/ports/`). Every query is read-only: no port changes anything anywhere, and each
 // takes an optional `{ signal }` so a stopped chat abandons it.
 import { AGENT_PROTOCOL_LIMITS } from '@app/specs/agent-protocol.schema';
 
@@ -16,8 +16,9 @@ export interface PortQueryOptions {
 }
 
 /**
- * The `unavailable` answer. `reason` reaches the model as a failed tool result's message, so it is
- * cut to that message's cap (`AGENT_PROTOCOL_LIMITS.maxErrorChars`), never splitting a surrogate pair.
+ * The `unavailable` answer. `reason` reaches the model as the tool's data (`{ unavailable: reason }`,
+ * main's search tools, Task 8; cut again there to `SEARCH_TOOL_LIMITS.maxReasonChars`), and is cut
+ * here to `AGENT_PROTOCOL_LIMITS.maxErrorChars`, never splitting a surrogate pair.
  */
 export function unavailable(reason: string): PortAnswer<never> {
   return { status: 'unavailable', reason: capChars(reason, AGENT_PROTOCOL_LIMITS.maxErrorChars) };
