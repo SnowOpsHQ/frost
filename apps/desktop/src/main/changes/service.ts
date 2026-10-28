@@ -11,6 +11,7 @@ import type { z } from 'zod';
 import type { LoadTimes } from './loads';
 import { parseRegionAnswer, type RegionTarget } from './regions';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex, storedPageUrl } from './snapshot';
+import { readScreenshots } from '../screenshots/service';
 
 // Capturing a page into its versioned history, and reading it back (Phase 6 Task 3; spec
 // `changes.spec.ts`, `changes.schema.ts`; acceptance `changes-capture.feature.md`, The service).
@@ -350,6 +351,8 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     // Phase 5's reads (`CHANGES_READ_API`): the same answers.
     listPages: (input) => service.pages(input),
     getVersion: (input) => service.version(input),
+    // Screenshots' rows, as `screenshots.list` reads them (Task 5, `screenshot.feature.md`, Listing).
+    listScreenshots: (input) => guarded('screenshots read', () => readScreenshots(store, input), { screenshots: [], next: null }),
   };
   return service;
 }

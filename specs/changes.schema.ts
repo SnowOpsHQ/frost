@@ -25,6 +25,7 @@ import {
   type VersionInput,
 } from './changes.spec';
 import { RenderProfileSchema } from './render-profile.schema.spec';
+import { ScreenshotsAnswerSchema, ScreenshotsInputSchema } from './screenshot.schema';
 import { isWebUrl } from './web-url.spec';
 
 export * from './changes.spec';
@@ -162,7 +163,10 @@ export const CHANGES_READ_API = {
     input: DiffInputSchema,
     output: DiffAnswerSchema,
   },
-  // listScreenshots: ReadOperation<typeof ScreenshotsInputSchema, typeof ScreenshotsAnswerSchema>
-  // comes with screenshots (Phase 6 Task 5, `screenshot.schema.ts`).
+  listScreenshots: {
+    description: 'Screenshots taken of one page and/or in one project, newest first: kind (viewport, full page or a selected area), pixel size, file size, the render profile and search parameters they were taken with, and when. Images are not included.',
+    input: ScreenshotsInputSchema,
+    output: ScreenshotsAnswerSchema,
+  },
 } as const satisfies Record<string, ReadOperation<z.ZodType, z.ZodType>>;
 export type ChangesReadApi = typeof CHANGES_READ_API;

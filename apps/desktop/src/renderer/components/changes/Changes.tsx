@@ -3,6 +3,7 @@ import type { SeoAuditResponse } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import { DIFF_FIELD_LABELS, DIFF_REGION_LABELS, type Change, type SnapshotDiff } from '@app/specs/capture.spec';
 import { CAPTURE_REFUSAL_MESSAGES, type CaptureAnswer, type HistoryCursor, type HistoryVersion } from '@app/specs/changes.spec';
+import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { changesPaletteSources, onPageCaptured } from '../../changes-palette';
 import {
@@ -25,6 +26,8 @@ import {
   olderInLane,
   pageUrlOf,
   regionCount,
+  screenshotOutcomeKind,
+  screenshotOutcomeText,
   shownLane,
   unchangedRegions,
   versionSummaryText,
@@ -37,19 +40,24 @@ import { registerPaletteActions } from '../../palette/registry';
 import { formatCount } from '../../seo-view';
 import { captureProject, useCaptureProject } from './capture-project';
 import { CaptureGlyph, ChangesIcon } from './changes-icons';
+import { ScreenshotControls, ScreenshotGallery, takeScreenshot } from './Screenshots';
 
 // The Changes panel (acceptance `changes-panel.feature.md`): the current page's captured versions,
 // newest first and grouped into lanes, "Capture now", and the diff of two versions of a lane, by
 // region. Its history is independent of the audit: the sidebar shows this panel before its audit
-// states, and only capturing needs a ready audit. Everything from the page is React text in a
+// states, and only capturing needs a ready audit. Screenshots (`Screenshots.tsx`,
+// `screenshot.feature.md`) need only a web page, and announce in the same live region. Everything from the page is React text in a
 // `<bdi>` (never markup, never a link); no inline styles (strict CSP).
 
 /** `changes.capture` of `tabId` (into `projectId`, Unfiled when `undefined`); `null` on an IPC failure. */
 const capturePage = (tabId: number, projectId?: string): Promise<CaptureAnswer | null> => ipc.changes.capture.mutate(captureInput(tabId, projectId)).catch(() => null);
 
 // The command palette's Changes actions (`changes-palette.ts`), once per module instance. They capture
-// into the same project as the panel (`capture-project.ts`, the one seam Task 6's picker sets).
-const unregisterPaletteActions = registerPaletteActions(...changesPaletteSources({ capture: (tabId) => capturePage(tabId, captureProject()) }));
+// and take screenshots into the same project as the panel (`capture-project.ts`, the one seam Task 6's
+// picker sets).
+const unregisterPaletteActions = registerPaletteActions(
+  ...changesPaletteSources({ capture: (tabId) => capturePage(tabId, captureProject()), screenshot: (tabId, kind) => takeScreenshot(tabId, kind, captureProject()) }),
+);
 import.meta.hot?.dispose(unregisterPaletteActions);
 
 type AuditState = 'none' | SeoAuditResponse['status'];
@@ -405,6 +413,10 @@ function PageChanges({ tab, response }: { readonly tab: TabState; readonly respo
   const [selected, setSelected] = useState<string | null>(null);
   const [compareWith, setCompareWith] = useState<string | null>(null);
   const [captured, setCaptured] = useState<string | null>(null);
+  // Bumped after each saved screenshot: the gallery reads again.
+  const [shots, setShots] = useState(0);
+  const announceShot = useCallback((answer: TakeScreenshotAnswer | null | undefined) => setOutcome(answer === undefined ? null : { text: screenshotOutcomeText(answer), kind: screenshotOutcomeKind(answer) }), []);
+  const shotSaved = useCallback(() => setShots((n) => n + 1), []);
   const audit: AuditState = response?.status ?? 'none';
   const ready = response?.status === 'ready';
   const capturable = canCapture(tab, response);
@@ -459,6 +471,7 @@ function PageChanges({ tab, response }: { readonly tab: TabState; readonly respo
             {captureHint(audit, tab.loading)}
           </p>
         ) : null}
+        <ScreenshotControls tab={tab} projectId={projectId} announce={announceShot} saved={shotSaved} />
         <p className="changes-status" role="status" aria-live="polite" data-testid="changes-capture-status" data-outcome={outcome?.kind ?? ''}>
           {outcome?.text ?? ''}
         </p>
@@ -508,6 +521,7 @@ function PageChanges({ tab, response }: { readonly tab: TabState; readonly respo
           <DiffView lane={lane} to={to} compareWith={compareWith} onCompare={setCompareWith} hasMore={state.next !== null} onLoadMore={history.loadMore} />
         </>
       ) : null}
+      <ScreenshotGallery url={pageUrlOf(tab.url)} generation={shots} />
     </div>
   );
 }

@@ -30,7 +30,16 @@ import {
   shownLane,
   unchangedRegions,
   versionSummaryText,
+  canScreenshot,
+  formatBytes,
+  pixelSizeText,
+  screenshotAlt,
+  screenshotInput,
+  screenshotKindLabel,
+  screenshotOutcomeKind,
+  screenshotOutcomeText,
 } from '../changes-view';
+import { SCREENSHOT_KIND_LABELS, SCREENSHOT_REFUSALS, SCREENSHOT_REFUSAL_MESSAGES } from '@app/specs/screenshot.spec';
 
 const ZERO: ChangeCounts = { added: 0, removed: 0, changed: 0 };
 const summaryOf = (counts: Partial<Record<DiffRegion, Partial<ChangeCounts>>>): DiffSummary =>
@@ -189,5 +198,45 @@ describe('changes-view', () => {
     // A text change's context is the block it follows.
     expect(contextLabel('text')).toBe('Follows');
     expect(contextLabel('link')).toBe('URL');
+  });
+});
+
+// Spec: specs/screenshot.spec.ts (SCREENSHOT_KIND_LABELS, SCREENSHOT_REFUSALS, SCREENSHOT_REFUSAL_MESSAGES)
+// Acceptance: specs/screenshot.feature.md (The Changes panel; Scenario screenshot-view-helpers)
+describe('screenshot helpers', () => {
+  const ID = '0190a000-0000-7000-8000-000000000001';
+  test('screenshot-view-helpers', () => {
+    const page = { url: 'https://example.com/a', error: null, crashed: false };
+    // A web page that shows (loading or not); not an empty tab, an error panel or a crash.
+    expect(canScreenshot(page)).toBe(true);
+    expect(canScreenshot({ ...page, url: 'about:blank' })).toBe(false);
+    expect(canScreenshot({ ...page, crashed: true })).toBe(false);
+    expect(canScreenshot({ ...page, error: { kind: 'network' } as never })).toBe(false);
+    expect(canScreenshot(undefined)).toBe(false);
+    // The input carries the project only when one is chosen.
+    expect(screenshotInput(3, 'full')).toEqual({ tabId: 3, kind: 'full' });
+    expect(screenshotInput(3, 'area', ID)).toEqual({ tabId: 3, kind: 'area', projectId: ID });
+    // Sizes and bytes.
+    expect(pixelSizeText(1_280, 4_000)).toBe('1,280 × 4,000 px');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1_536)).toBe('1.5 kB');
+    expect(formatBytes(2_400_000)).toBe('2.4 MB');
+    expect(formatBytes(52_428_800)).toBe('52.4 MB');
+    // Kinds are named by the spec's labels.
+    for (const kind of ['viewport', 'full', 'area'] as const) expect(screenshotKindLabel(kind)).toBe(SCREENSHOT_KIND_LABELS[kind]);
+    // Outcomes: saved by kind (and cut at a cap), each refusal its message, a failed call the store's.
+    expect(screenshotOutcomeText({ status: 'saved', id: ID, kind: 'viewport', width: 800, height: 600, bytes: 9, truncated: false })).toBe('Saved a screenshot of the viewport (800 × 600 px).');
+    expect(screenshotOutcomeText({ status: 'saved', id: ID, kind: 'full', width: 800, height: 16_384, bytes: 9, truncated: true })).toBe(
+      'Saved a full-page screenshot (800 × 16,384 px). The page is taller than a screenshot keeps, so it was cut at the bottom.',
+    );
+    expect(screenshotOutcomeText({ status: 'saved', id: ID, kind: 'area', width: 20, height: 30, bytes: 9, truncated: false })).toBe('Saved a screenshot of the selected area (20 × 30 px).');
+    for (const reason of SCREENSHOT_REFUSALS) expect(screenshotOutcomeText({ status: 'refused', reason })).toBe(SCREENSHOT_REFUSAL_MESSAGES[reason]);
+    expect(screenshotOutcomeText(null)).toBe(SCREENSHOT_REFUSAL_MESSAGES['store-failed']);
+    expect(screenshotOutcomeKind({ status: 'saved', id: ID, kind: 'area', width: 1, height: 1, bytes: 1, truncated: false })).toBe('saved');
+    expect(screenshotOutcomeKind({ status: 'refused', reason: 'cancelled' })).toBe('cancelled');
+    expect(screenshotOutcomeKind({ status: 'refused', reason: 'busy' })).toBe('refused');
+    expect(screenshotOutcomeKind(null)).toBe('failed');
+    // The image's alt text says what it is, in frost's words.
+    expect(screenshotAlt({ kind: 'full', width: 800, height: 2_000 })).toBe('Full page screenshot, 800 × 2,000 px');
   });
 });

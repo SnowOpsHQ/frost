@@ -140,6 +140,6 @@ describe('changes router', () => {
     await expect(procedure(ctxFor(changes), 'pages')({})).resolves.toEqual(PAGES);
     expect(changes.pages).toHaveBeenLastCalledWith({});
     // Phase 5 reads the same operations through CHANGES_READ_API, exported from this package.
-    expect(Object.keys(CHANGES_READ_API).sort()).toEqual(['diff', 'getVersion', 'history', 'listPages']);
+    expect(Object.keys(CHANGES_READ_API).sort()).toEqual(['diff', 'getVersion', 'history', 'listPages', 'listScreenshots']);
   });
 });

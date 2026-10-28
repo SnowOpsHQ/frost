@@ -32,7 +32,7 @@ function everySource(): PaletteSource[] {
     ...devtoolsPaletteSources(() => undefined),
     ...browserPolishPaletteSources({ openFind: yes, reopenClosedTab: vi.fn(async () => 1), showHistory: yes, setSearchEngine: yes }),
     ...checksPaletteSources({ checkLinks: yes, checkSitemaps: yes, checkHreflang: yes, stop: yes, known: () => undefined }),
-    ...changesPaletteSources({ capture: vi.fn(async () => null) }),
+    ...changesPaletteSources({ capture: vi.fn(async () => null), screenshot: vi.fn(async () => null) }),
   ];
 }
 

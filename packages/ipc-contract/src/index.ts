@@ -8,6 +8,7 @@ export type { DevtoolsService } from './devtools-service';
 export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
 export type { ChecksService } from './checks-service';
 export type { ChangesReadApi, ChangesReadService, ChangesService } from './changes-service';
+export type { ScreenshotsService } from './changes-service';
 export {
   createContext,
   createSenderPolicy,

@@ -5,13 +5,15 @@ import { searchEngine } from '@app/specs/browser-polish.spec';
 import { DIFF_REGIONS, DIFF_REGION_LABELS, type Change, type ChangeCounts, type ChangeKind, type DiffField, type DiffRegion, type SnapshotDiff } from '@app/specs/capture.spec';
 // Type-only: the schema file holds Zod, which must stay out of the chrome's bundle (strict Trusted Types).
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
-import { MAX_HISTORY_PAGE } from '@app/specs/capture-db.spec';
+import { MAX_HISTORY_PAGE, type ScreenshotKind } from '@app/specs/capture-db.spec';
 import { CAPTURE_REFUSAL_MESSAGES, type CaptureAnswer, type CaptureInput, type DiffSummary, type HistoryVersion } from '@app/specs/changes.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { QUICK_RENDER_PROFILES, isDefaultRenderProfile, renderProfileSummary, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
+import { SCREENSHOT_KIND_LABELS, SCREENSHOT_REFUSAL_MESSAGES, type ScreenshotEntry, type TakeScreenshotAnswer, type TakeScreenshotInput } from '@app/specs/screenshot.spec';
 
 // The Changes panel's pure helpers (acceptance `changes-panel.feature.md`): lanes and their labels,
-// version summaries, the diff grouped by region, and the capture outcome's wording. No React, no IPC.
+// version summaries, the diff grouped by region, and the capture outcome's wording; and the
+// screenshots' (`screenshot.feature.md`): sizes, bytes, kinds and outcomes. No React, no IPC.
 
 /** Versions read per `changes.history` page (and per "Load more"). */
 export const HISTORY_PAGE_SIZE = 20;
@@ -210,4 +212,66 @@ const CONTEXT_LABELS: Partial<Readonly<Record<DiffField, string>>> = {
 /** The label of a change's context line. */
 export function contextLabel(field: DiffField): string {
   return CONTEXT_LABELS[field] ?? 'Where';
+}
+
+// ---- Screenshots (Task 5, `screenshot.feature.md`, The Changes panel) ---------------------------
+
+/** Screenshots read per `screenshots.list` page (and per "Load more"). */
+export const SCREENSHOTS_PAGE_SIZE = 12;
+
+/**
+ * Whether the Screenshot buttons are offered: the tab shows a web page (loading or not; no error
+ * panel, no crash). Main's refusal stays the authority (only the active tab, `screenshot.feature.md`).
+ */
+export function canScreenshot(tab: Pick<TabState, 'url' | 'error' | 'crashed'> | undefined): boolean {
+  return !!tab && isWebUrl(tab.url) && tab.error === null && !tab.crashed;
+}
+
+/** The take procedure's input: the tab, the kind, and the project when one is chosen (Unfiled otherwise). */
+export function screenshotInput(tabId: number, kind: ScreenshotKind, projectId?: string): TakeScreenshotInput {
+  return projectId === undefined ? { tabId, kind } : { tabId, kind, projectId };
+}
+
+/** "1,280 × 800 px". */
+export function pixelSizeText(width: number, height: number): string {
+  return `${count(width)} × ${count(height)} px`;
+}
+
+/** A file's size: "512 B", "1.5 kB", "2.4 MB" (decimal units). */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1_000) return `${count(bytes)} B`;
+  const [value, unit] = bytes < 1_000_000 ? [bytes / 1_000, 'kB'] : [bytes / 1_000_000, 'MB'];
+  return `${(Math.round(value * 10) / 10).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${unit}`;
+}
+
+/** A kind's name (`SCREENSHOT_KIND_LABELS`). */
+export function screenshotKindLabel(kind: ScreenshotKind): string {
+  return SCREENSHOT_KIND_LABELS[kind];
+}
+
+/** What a saved screenshot is of, in a sentence. */
+const SAVED_WHAT: Readonly<Record<ScreenshotKind, string>> = {
+  viewport: 'a screenshot of the viewport',
+  full: 'a full-page screenshot',
+  area: 'a screenshot of the selected area',
+};
+
+/** What a screenshot's outcome says (`null`: the call itself failed). */
+export function screenshotOutcomeText(answer: TakeScreenshotAnswer | null): string {
+  if (answer === null) return SCREENSHOT_REFUSAL_MESSAGES['store-failed'];
+  if (answer.status === 'refused') return SCREENSHOT_REFUSAL_MESSAGES[answer.reason];
+  const saved = `Saved ${SAVED_WHAT[answer.kind]} (${pixelSizeText(answer.width, answer.height)}).`;
+  return answer.truncated ? `${saved} The page is taller than a screenshot keeps, so it was cut at the bottom.` : saved;
+}
+
+/** The outcome's kind, for styling and tests: `saved`, `cancelled`, `refused` or `failed`. */
+export function screenshotOutcomeKind(answer: TakeScreenshotAnswer | null): 'saved' | 'cancelled' | 'refused' | 'failed' {
+  if (answer === null) return 'failed';
+  if (answer.status === 'saved') return 'saved';
+  return answer.reason === 'cancelled' ? 'cancelled' : 'refused';
+}
+
+/** A screenshot image's alt text: "Full page screenshot, 800 × 2,000 px". */
+export function screenshotAlt(entry: Pick<ScreenshotEntry, 'kind' | 'width' | 'height'>): string {
+  return `${screenshotKindLabel(entry.kind)} screenshot, ${pixelSizeText(entry.width, entry.height)}`;
 }
