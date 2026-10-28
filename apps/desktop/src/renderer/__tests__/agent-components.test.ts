@@ -102,6 +102,29 @@ describe('agent panel components', () => {
     expect(calls.answerApproval).toHaveBeenCalledExactlyOnceWith('approval-1', 'deny');
   });
 
+  test('approval-code-hint-and-destination', () => {
+    // jsdom has no layout: the code block reports a box shorter than its content.
+    const heights = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.tagName === 'PRE' ? 900 : 0;
+    });
+    const client = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.tagName === 'PRE' ? 260 : 0;
+    });
+    try {
+      render(createElement(AgentApprovalCard, { approval: { request: jsApproval('a;\n'.repeat(80)), queued: 0 }, covered: false }));
+      expect(byTestId('agent-approval-code-more')!.textContent).toMatch(/scroll/i);
+      expect(byTestId('agent-approval-destination')).toBeNull();
+    } finally {
+      heights.mockRestore();
+      client.mockRestore();
+    }
+    render(createElement(AgentApprovalCard, { key: 'nav', approval: { request: approval(), queued: 0 }, covered: false, context: { activeChatId: 'other', chats: [{ id: approval().chatId, title: 'Shop audit' }] } }));
+    expect(byTestId('agent-approval-destination')!.textContent).toBe('https://next.example.com/b');
+    expect(byTestId('agent-approval-destination')!.tagName).toBe('BDI');
+    expect(byTestId('agent-approval-chat')!.textContent).toContain('Shop audit');
+    expect(byTestId('agent-approval-code-more')).toBeNull();
+  });
+
   test('settings-key-field-never-keeps-the-key', async () => {
     const secret = 'sk-test-0123456789abcdef';
     render(createElement(AgentSettings, { setup: setup({ protection: 'weak' }), grantsCount: 0, readToolsAllowed: true }));

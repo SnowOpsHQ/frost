@@ -96,20 +96,34 @@ async function send(text: string): Promise<void> {
   await expect(page.locator('[data-testid="agent-message"][data-kind="user"]').last()).toHaveText(text);
 }
 
-/** Records, in the chrome, when "Allow once" first appears and when it first becomes enabled. */
+type Arming = { appearedAt: number; disabledAtFirst: boolean; enabledAt: number | null };
+
+/**
+ * Records, in the chrome, for each approval card (by its id) when its "Allow once" first appears,
+ * whether it was disabled then, and when it first became enabled.
+ */
 const watchArming = () =>
   page.evaluate(() => {
-    const holder = window as unknown as { __arming: { appearedAt: number; disabledAtFirst: boolean; enabledAt: number | null } | null };
-    holder.__arming = null;
+    const holder = window as unknown as { __arming: Record<string, Arming> };
+    holder.__arming = {};
     const check = () => {
-      const button = document.querySelector<HTMLButtonElement>('[data-testid="agent-allow-once"]');
-      if (button === null) return;
-      if (holder.__arming === null) holder.__arming = { appearedAt: performance.now(), disabledAtFirst: button.disabled, enabledAt: null };
-      if (!button.disabled && holder.__arming.enabledAt === null) holder.__arming.enabledAt = performance.now();
+      const card = document.querySelector<HTMLElement>('[data-testid="agent-approval"]');
+      const button = card?.querySelector<HTMLButtonElement>('[data-testid="agent-allow-once"]');
+      const id = card?.dataset['approvalId'];
+      if (!button || id === undefined) return;
+      holder.__arming[id] ??= { appearedAt: performance.now(), disabledAtFirst: button.disabled, enabledAt: null };
+      if (!button.disabled && holder.__arming[id].enabledAt === null) holder.__arming[id].enabledAt = performance.now();
     };
-    new MutationObserver(check).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled'] });
+    new MutationObserver(check).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled', 'data-approval-id'] });
   });
-const arming = () => page.evaluate(() => (window as unknown as { __arming: { appearedAt: number; disabledAtFirst: boolean; enabledAt: number | null } | null }).__arming);
+/** What `watchArming` saw for the card on screen now. */
+const arming = async (): Promise<Arming | null> => {
+  const id = await approvalCard().getAttribute('data-approval-id');
+  return page.evaluate((id) => (window as unknown as { __arming: Record<string, Arming> }).__arming[id ?? ''] ?? null, id);
+};
+
+/** The attached tab view's bounds, as main laid it out. */
+const viewBounds = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children.map((child) => child.getBounds())[0] ?? null);
 
 test.beforeAll(async () => {
   site = await startSite();
@@ -136,6 +150,7 @@ test('agent-approval-flow', async () => {
   await expect(approvalCard()).toBeVisible();
   await expect(page.getByTestId('agent-approval-title')).toHaveText(`Allow navigation to ${site.origin}?`);
   await expect(page.getByTestId('agent-approval-input')).toHaveText(JSON.stringify({ url: next }));
+  await expect(page.getByTestId('agent-approval-destination')).toHaveText(next);
   // A plain-http origin can't carry a standing grant: no "Always allow on this site".
   await expect(page.getByTestId('agent-allow-always')).toHaveCount(0);
   await expect(toolCards().last()).toHaveAttribute('data-status', 'awaiting-approval');
@@ -155,6 +170,25 @@ test('agent-approval-flow', async () => {
   await expect(page.getByTestId('agent-send')).toBeVisible();
   // The context meter shows the last step's tokens against the model's window.
   await expect(page.getByTestId('agent-context-meter-text')).toHaveText('1.2k of 1M tokens (0%)');
+});
+
+test('agent-panel-keeps-the-page-view-clear', async () => {
+  await launchWith([{ text: ['unused'] }]);
+  // Open: the tab's view ends at or before the panel's left edge.
+  const panelLeft = async () => (await panel().boundingBox())!.x;
+  await expect.poll(async () => {
+    const view = await viewBounds();
+    return view !== null && view.x + view.width <= Math.ceil(await panelLeft());
+  }).toBe(true);
+  const openWidth = (await viewBounds())!.width;
+  // Collapsed: the page widens again; the rail stays clear of it too.
+  await page.getByTestId('agent-collapse').click();
+  await expect(panel()).toHaveAttribute('data-open', 'false');
+  await expect.poll(async () => (await viewBounds())!.width).toBeGreaterThan(openWidth);
+  await expect.poll(async () => {
+    const view = (await viewBounds())!;
+    return view.x + view.width <= Math.ceil(await panelLeft());
+  }).toBe(true);
 });
 
 test('agent-approval-deny', async () => {
@@ -189,13 +223,15 @@ test('agent-stop', async () => {
 });
 
 test('agent-execute-js-asks-every-time', async () => {
-  const first = "const heading = document.querySelector('h1');\nheading ? heading.textContent : null";
-  const second = 'document.title.length * 2';
+  // Longer than the code block shows (a hint says so), and a line padded far to the right.
+  const first = ["const heading = document.querySelector('h1');", ...Array.from({ length: 30 }, (_, i) => `// step ${i + 1}`), 'heading ? heading.textContent : null'].join('\n');
+  const second = `document.title;${' '.repeat(300)}fetch('/x')`;
   await launchWith([
     { toolCalls: [{ toolName: 'execute_javascript', input: { code: first } }] },
     { toolCalls: [{ toolName: 'execute_javascript', input: { code: second } }] },
     { text: ['Done with the page.'] },
   ]);
+  await watchArming();
   await send('Read the heading');
 
   // The first run asks, showing the whole code and the note; it can't be allowed for the site.
@@ -204,12 +240,32 @@ test('agent-execute-js-asks-every-time', async () => {
   await expect(page.getByTestId('agent-approval-code')).toHaveText(first);
   await expect(page.getByTestId('agent-approval-note')).toHaveText(EXECUTE_JS_APPROVAL_NOTE);
   await expect(page.getByTestId('agent-allow-always')).toHaveCount(0);
+  await expect(page.getByTestId('agent-approval-code-more')).toBeVisible();
+  const firstId = await approvalCard().getAttribute('data-approval-id');
   await page.getByTestId('agent-allow-once').click();
   await expect(toolCards().first()).toHaveAttribute('data-status', 'done');
   await expect(toolCards().first().getByTestId('agent-tool-output')).toContainText('Agent start');
 
   // Allowed once is not allowed again: the next run asks too. Escape in the card denies it.
   await expect(page.getByTestId('agent-approval-code')).toHaveText(second);
+  // A new card: disarmed when it appeared, for a whole delay.
+  expect(await approvalCard().getAttribute('data-approval-id')).not.toBe(firstId);
+  await expect.poll(async () => (await arming())?.enabledAt ?? null).not.toBeNull();
+  const armed = (await arming())!;
+  expect(armed.disabledAtFirst).toBe(true);
+  expect(armed.enabledAt! - armed.appearedAt).toBeGreaterThanOrEqual(APPROVAL_ENABLE_DELAY_MS - 50);
+  // Nothing hides past the block's right edge: the padded call wraps into view.
+  const layout = await page.getByTestId('agent-approval-code').evaluate((pre) => {
+    const text = pre.querySelector('code')!.firstChild as Text;
+    const at = text.data.indexOf('fetch');
+    const range = document.createRange();
+    range.setStart(text, at);
+    range.setEnd(text, at + 'fetch'.length);
+    const word = range.getBoundingClientRect();
+    const box = pre.getBoundingClientRect();
+    return { overflowX: pre.scrollWidth - pre.clientWidth, inside: word.left >= box.left && word.right <= box.right };
+  });
+  expect(layout).toEqual({ overflowX: 0, inside: true });
   await page.getByTestId('agent-approval-title').click();
   await expect(approvalCard()).toBeFocused();
   await page.keyboard.press('Escape');
@@ -251,6 +307,11 @@ test('agent-settings-never-shows-key', async () => {
   );
   expect(leaks).toEqual({ text: false, html: false, values: false });
   await expect(field).toHaveValue('');
+  // Off Linux the OS keychain may have taken it: remove it, so no test key is left behind.
+  if ((await message.textContent()) === AGENT_SET_KEY_MESSAGES.stored) {
+    await row.getByTestId('agent-key-clear').click();
+    await expect(message).toHaveText('Key removed.');
+  }
 });
 
 test('agent-renders-tool-output-as-text', async () => {

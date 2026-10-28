@@ -89,6 +89,17 @@ describe('agent panel view model', () => {
     expect(approvalCardModel({ request: { ...jsApproval(code), input: JSON.stringify({ code, extra: 1 }) }, queued: 0 }).input).toContain('extra');
   });
 
+  test('approval-names-destination-and-asking-chat', () => {
+    expect(approvalCardModel({ request: approval(), queued: 0 }).destination).toBe('https://next.example.com/b');
+    expect(approvalCardModel({ request: jsApproval(), queued: 0 }).destination).toBeNull();
+    const chatId = approval().chatId;
+    const chats = [{ id: chatId, title: 'Audit the shop' }, { id: 'other', title: 'Other' }];
+    // On screen: not named. Another chat asking: named by its title.
+    expect(approvalCardModel({ request: approval(), queued: 0 }, { activeChatId: chatId, chats }).askingChat).toBeNull();
+    expect(approvalCardModel({ request: approval(), queued: 0 }, { activeChatId: 'other', chats }).askingChat).toBe('Audit the shop');
+    expect(approvalCardModel({ request: approval(), queued: 0 }, { activeChatId: null, chats: [] }).askingChat).toBe('another chat');
+  });
+
   test('always-allow-only-when-grantable', () => {
     expect(approvalCardModel({ request: approval({ grantable: false }), queued: 0 }).showAlways).toBe(false);
     expect(approvalCardModel({ request: approval({ grantable: true }), queued: 0 }).showAlways).toBe(true);

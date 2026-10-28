@@ -11,19 +11,27 @@ export function agentWatchRetryMs(failures: number): number {
   return Math.min(AGENT_WATCH_RETRY_MS.max, AGENT_WATCH_RETRY_MS.first * 2 ** Math.min(n - 1, 16));
 }
 
-type Watch = (sinceVersion: number) => Promise<AgentState>;
+/**
+ * The pause before polling again after an answer that didn't advance the version (the long-poll
+ * timed out, or main is shutting down and answers at once): never a tight loop.
+ */
+export const AGENT_WATCH_IDLE_PAUSE_MS = 250;
 
-const defaultWatch: Watch = (sinceVersion) => ipc.agent.watch.query({ sinceVersion });
+type Watch = (sinceVersion: number, signal: AbortSignal) => Promise<AgentState>;
+
+const defaultWatch: Watch = (sinceVersion, signal) => ipc.agent.watch.query({ sinceVersion }, { signal });
 
 /**
  * Long-polls `agent.watch` (as `useBrowserState` does `browser.watch`): each answer is the panel's
  * whole `AgentState` and its version. A failed poll waits (`agentWatchRetryMs`, backing off) and
- * tries again; unmounting stops the loop and drops any answer still in flight.
+ * tries again; an answer that didn't advance the version pauses `AGENT_WATCH_IDLE_PAUSE_MS` first.
+ * Unmounting stops the loop and aborts the poll in flight (its answer, if any, is dropped).
  */
 export function useAgentState(watch: Watch = defaultWatch): AgentState | null {
   const [state, setState] = useState<AgentState | null>(null);
   useEffect(() => {
     let live = true;
+    const abort = new AbortController();
     let since = 0;
     let failures = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -36,9 +44,13 @@ export function useAgentState(watch: Watch = defaultWatch): AgentState | null {
     void (async () => {
       while (live) {
         try {
-          const next = await watch(since);
+          const next = await watch(since, abort.signal);
           if (!live) return;
           failures = 0;
+          if (next.version === since) {
+            await sleep(AGENT_WATCH_IDLE_PAUSE_MS);
+            continue;
+          }
           since = next.version;
           setState(next);
         } catch {
@@ -50,6 +62,7 @@ export function useAgentState(watch: Watch = defaultWatch): AgentState | null {
     })();
     return () => {
       live = false;
+      abort.abort();
       clearTimeout(timer);
       wake?.();
     };

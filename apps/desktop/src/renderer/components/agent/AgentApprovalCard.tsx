@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { ApprovalDecision } from '@app/specs/agent-approvals.spec';
 import { AGENT_APPROVAL_BUTTONS } from '@app/specs/agent-panel.spec';
 import { APPROVAL_ENABLE_DELAY_MS, type AgentState } from '@app/specs/agent-session.spec';
 import { agentActions } from '../../agent-actions';
-import { answerMessage, approvalCardModel } from '../../agent-view';
+import { answerMessage, approvalCardModel, type ApprovalContext } from '../../agent-view';
 import { usePromptArmed } from '../../hooks/usePromptArmed';
 
 // The approval card (`agent-panel.feature.md`, Approvals; Task 4's review): main's oldest pending
@@ -11,13 +11,35 @@ import { usePromptArmed } from '../../hooks/usePromptArmed';
 // reorders under the pointer), "N more waiting" behind it. The Allow buttons stay disabled for
 // `APPROVAL_ENABLE_DELAY_MS` after the card appears (and again after the window regains focus, or
 // while the tab's fullscreen page covers the chrome), so a click meant for something else can't
-// approve a call. Deny and Escape always work. It shows the page and the whole input; for
-// `execute_javascript` the exact code in a scrollable monospace block and its note.
+// approve a call. Deny and Escape always work. It shows the page, `navigate`'s full destination,
+// the chat asking when it isn't the one on screen, and the whole input; for `execute_javascript`
+// the exact code in a scrollable, wrapping monospace block (nothing hides past its right edge; a
+// hint says when more lies below) and its note.
+
+/** Whether a scroller has content below what it shows. */
+function useMoreBelow<T extends HTMLElement>(): [RefObject<T | null>, boolean, () => void] {
+  const ref = useRef<T>(null);
+  const [more, setMore] = useState(false);
+  const measure = () => {
+    const el = ref.current;
+    setMore(el !== null && el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+  };
+  useLayoutEffect(() => {
+    measure();
+    const el = ref.current;
+    if (el === null || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, more, measure];
+}
 
 type Approval = NonNullable<AgentState['approval']>;
 
-export function AgentApprovalCard({ approval, covered }: { readonly approval: Approval; readonly covered: boolean }) {
-  const model = approvalCardModel(approval);
+export function AgentApprovalCard({ approval, covered, context }: { readonly approval: Approval; readonly covered: boolean; readonly context?: ApprovalContext }) {
+  const model = approvalCardModel(approval, context);
+  const [codeBlock, moreCode, measureCode] = useMoreBelow<HTMLPreElement>();
   const armed = usePromptArmed(covered, APPROVAL_ENABLE_DELAY_MS);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -49,6 +71,7 @@ export function AgentApprovalCard({ approval, covered }: { readonly approval: Ap
       aria-labelledby="agent-approval-title"
       tabIndex={-1}
       data-testid="agent-approval"
+      data-approval-id={model.id}
       data-tool={model.toolName}
       data-armed={armed}
       data-untrusted={model.untrusted}
@@ -64,6 +87,20 @@ export function AgentApprovalCard({ approval, covered }: { readonly approval: Ap
         {model.title}
       </h3>
       <p className="agent-approval-label">{model.label}</p>
+      {model.askingChat !== null ? (
+        <p className="agent-approval-page" data-testid="agent-approval-chat">
+          <span className="agent-approval-key">Asked by</span>
+          <bdi className="agent-approval-url">{model.askingChat}</bdi>
+        </p>
+      ) : null}
+      {model.destination !== null ? (
+        <p className="agent-approval-page">
+          <span className="agent-approval-key">Opens</span>
+          <bdi className="agent-approval-url" data-testid="agent-approval-destination">
+            {model.destination}
+          </bdi>
+        </p>
+      ) : null}
       {model.pageUrl !== null ? (
         <p className="agent-approval-page">
           <span className="agent-approval-key">Page</span>
@@ -73,9 +110,14 @@ export function AgentApprovalCard({ approval, covered }: { readonly approval: Ap
         </p>
       ) : null}
       {model.code !== null ? (
-        <pre className="agent-code" data-testid="agent-approval-code" tabIndex={0} aria-label="The JavaScript to run">
+        <pre ref={codeBlock} className="agent-code" data-testid="agent-approval-code" tabIndex={0} aria-label="The JavaScript to run" onScroll={measureCode}>
           <code>{model.code}</code>
         </pre>
+      ) : null}
+      {model.code !== null && moreCode ? (
+        <p className="agent-approval-more" data-testid="agent-approval-code-more">
+          More code below: scroll to read all of it
+        </p>
       ) : null}
       {model.input !== null ? (
         <pre className="agent-pre agent-approval-input" data-testid="agent-approval-input" tabIndex={0} aria-label="The exact input">

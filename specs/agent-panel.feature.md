@@ -16,11 +16,13 @@ to one named test.
   `PAGE_MIN_WIDTH`, and the page area shrinks (its box is reported to main, so the tab's view never
   covers a panel). Collapsed, the agent is a rail `AGENT_RAIL_WIDTH` wide with its toggle (and a
   badge while a turn runs or an approval waits); open, a panel `AGENT_PANEL_WIDTH` wide. It starts
-  closed and remembers open / closed (`AGENT_PANEL_STORAGE_KEY`). A new approval request opens it.
+  closed and remembers the user's open / closed choice (`AGENT_PANEL_STORAGE_KEY`). A new approval
+  request opens it for now without changing that choice.
 - **Toggle.** The rail's button and the palette's "Toggle AI agent" (plus "AI agent settings" and
   "New AI agent chat"). No keyboard shortcut: shortcuts are main's menu table, not the panel's.
 - **State.** The panel renders main's `AgentState` only, long-polled over `agent.watch` with backoff
-  on error, stopped on unmount. Intents go over the sender-guarded `agent.*` procedures, each with a
+  on error and a short pause after an answer that didn't advance the version (never a tight loop);
+  unmounting aborts the poll in flight. Intents go over the sender-guarded `agent.*` procedures, each with a
   safe fallback on an IPC failure.
 - **Inert text.** Model text, page text and tool output are React text children only (no HTML, no
   Markdown); tool output sits in a `<pre>` under "untrusted data, shown as text".
@@ -29,7 +31,9 @@ to one named test.
   `APPROVAL_ENABLE_DELAY_MS` after the card appears (and again after the window regains focus, and
   while the tab's fullscreen page covers the chrome: the permission bar's arming, with this delay).
   Deny and Escape always work. "Always allow on this site" only when `grantable`. The card shows the
-  page and the whole input; `execute_javascript` its exact code in a scrollable monospace block and
+  page, `navigate`'s full destination ("Opens", bidi-isolated), the chat asking when it isn't the
+  one on screen, and the whole input; `execute_javascript` its exact code in a scrollable monospace
+  block that wraps (nothing hides past its right edge), a hint while more code lies below, and
   `EXECUTE_JS_APPROVAL_NOTE`.
 - **Keys.** A key field per slot is a password input the panel never keeps in state: Save reads it,
   empties it before the call, and shows main's answer. A slot says only "Key saved" / "No key".
@@ -41,6 +45,7 @@ to one named test.
 - **Scenario: tool-card-status-and-tone** — each status's label and tone; output kept verbatim.
 - **Scenario: approval-titles-per-tool** — navigate, click, execute_javascript, MCP, read tools.
 - **Scenario: approval-card-shows-whole-input-and-code** — input in full, code as code, queued count.
+- **Scenario: approval-names-destination-and-asking-chat** — navigate's URL; another chat by title.
 - **Scenario: always-allow-only-when-grantable**, **answer-messages**, **set-key-messages**.
 - **Scenario: context-meter** — tokens against the window with a percentage; tokens only without one.
 - **Scenario: setup-checklist-and-protection-wording**, **isolation-wording-is-honest**.
@@ -50,24 +55,34 @@ to one named test.
 - **Scenario: tool-output-renders-as-text** — markup in the output stays text; no element is made.
 - **Scenario: approval-buttons-arm-after-delay**, **approval-covered-stays-disarmed**.
 - **Scenario: approval-escape-denies-and-no-always-unless-grantable**.
+- **Scenario: approval-code-hint-and-destination** — the hint while code overflows; the "Opens" line.
+- **Scenario: agent-panel-swapped-approval-starts-disarmed** (`agent-panel.test.ts`) — the next
+  request's card is disarmed for a whole delay.
+- **Scenario: agent-panel-approval-opens-without-changing-the-preference** (`agent-panel.test.ts`).
 - **Scenario: settings-key-field-never-keeps-the-key** — password input, emptied, never in the DOM.
 - **Scenario: composer-enter-sends-shift-enter-does-not** — and Stop replaces Send while running.
 
 ## Wiring
-- **Scenario: agent-watch-hook-backs-off-and-stops** (`agent-state-hook.test.ts`).
+- **Scenario: agent-watch-hook-backs-off-and-stops**, **agent-watch-pauses-when-version-does-not-advance**
+  (`agent-state-hook.test.ts`).
 - **Scenario: agent-palette-actions** (`agent-palette.test.ts`).
 - **Scenario: agent-styles-are-delimited** (`src/__tests__/agent-styles.test.ts`) — every `.agent`
-  rule in `agent.css`; no inline style or HTML injection in the panel; no Zod schema imported.
+  rule in `agent.css`; approved code wraps (`pre-wrap`); no inline style or HTML injection in the
+  panel; no Zod schema imported.
 
 ## End to end (`apps/desktop/e2e/agent.e2e.ts`, scripted model seam)
 - **Scenario: agent-approval-flow** — a scripted navigate shows the card with the destination's
   origin; Allow once is disabled for the delay; allowed, the tab navigates and the scripted text
   streams in; the context meter shows the step's tokens.
+- **Scenario: agent-panel-keeps-the-page-view-clear** — open, the tab's view ends at the panel's left
+  edge; collapsed, it widens again.
 - **Scenario: agent-approval-deny** — denied: no navigation, the card says Denied, the chat goes on.
 - **Scenario: agent-stop** — Stop during an approval: the card expires and the turn ends.
 - **Scenario: agent-execute-js-asks-every-time** — each run asks, with the full code and the note;
-  Escape denies.
+  the next card starts disarmed; long code shows the hint and padded code wraps into view; Escape
+  denies.
 - **Scenario: agent-settings-never-shows-key** — a password field; Save answers honestly
-  (`no-keychain` with `--password-store=basic` on Linux); the key is in no text, markup or value.
+  (`no-keychain` with `--password-store=basic` on Linux; elsewhere a stored key is cleared again);
+  the key is in no text, markup or value.
 - **Scenario: agent-renders-tool-output-as-text** — page text that looks like markup shows
   literally; no element is made and nothing runs.

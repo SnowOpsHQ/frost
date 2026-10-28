@@ -14,6 +14,11 @@ test('agent-styles-are-delimited', () => {
   const css = read('components/agent/agent.css');
   expect(css).toContain(`--agent-panel-width: ${AGENT_PANEL_WIDTH}px;`);
   expect(css).toContain(`--agent-rail-width: ${AGENT_RAIL_WIDTH}px;`);
+  // Approved code wraps: nothing hides past the block's right edge.
+  const codeRule = css.slice(css.indexOf('.agent-code {'), css.indexOf('}', css.indexOf('.agent-code {')));
+  expect(codeRule).toContain('white-space: pre-wrap;');
+  expect(codeRule).toContain('overflow-wrap: anywhere;');
+  expect(css).not.toMatch(/white-space:\s*pre\s*;/);
   // No remote resource or script-ish CSS under the strict CSP.
   expect(css).not.toMatch(/@import|url\(|expression\(/);
   expect(read('components/agent/AgentPanel.tsx')).toContain("import './agent.css';");

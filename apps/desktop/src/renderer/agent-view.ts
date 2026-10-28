@@ -105,6 +105,16 @@ export interface ApprovalCardModel {
   readonly untrusted: boolean;
   /** "N more waiting", or `null` when this is the only one. */
   readonly queuedText: string | null;
+  /** `navigate`'s full destination URL (its "Opens" line), `null` for other tools. */
+  readonly destination: string | null;
+  /** The chat asking, named when it isn't the one on screen (`null`: it is, or unknown). */
+  readonly askingChat: string | null;
+}
+
+/** Where the panel is: the chat on screen and every chat's title (to name another chat asking). */
+export interface ApprovalContext {
+  readonly activeChatId: string | null;
+  readonly chats: readonly Pick<AgentChatSummary, 'id' | 'title'>[];
 }
 
 /** Where a request acts, for its title: the page URL, else the origin, else "this page". */
@@ -135,7 +145,26 @@ function inputIsOnlyCode(input: string): boolean {
   }
 }
 
-export function approvalCardModel(approval: { readonly request: AgentApprovalView; readonly queued: number }): ApprovalCardModel {
+/** `navigate`'s destination: the input's `url` string, exactly as main will be asked to load it. */
+function destinationOf(request: AgentApprovalView): string | null {
+  if (request.toolName !== 'navigate') return null;
+  try {
+    const value: unknown = JSON.parse(request.input);
+    const url = typeof value === 'object' && value !== null ? (value as { url?: unknown }).url : undefined;
+    return typeof url === 'string' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The asking chat's title when it isn't the chat on screen. */
+function askingChatOf(request: AgentApprovalView, context: ApprovalContext | undefined): string | null {
+  if (context === undefined || request.chatId === context.activeChatId) return null;
+  const title = context.chats.find((chat) => chat.id === request.chatId)?.title.trim() ?? '';
+  return title === '' ? 'another chat' : title;
+}
+
+export function approvalCardModel(approval: { readonly request: AgentApprovalView; readonly queued: number }, context?: ApprovalContext): ApprovalCardModel {
   const { request, queued } = approval;
   const untrusted = isMcpToolName(request.toolName) || request.risk === 'external';
   const code = request.toolName === 'execute_javascript' ? request.code : null;
@@ -152,6 +181,8 @@ export function approvalCardModel(approval: { readonly request: AgentApprovalVie
     showAlways: request.grantable === true,
     untrusted,
     queuedText: queued > 0 ? `${queued} more waiting` : null,
+    destination: destinationOf(request),
+    askingChat: askingChatOf(request, context),
   };
 }
 

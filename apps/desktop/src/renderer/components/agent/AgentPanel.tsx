@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types).
 import type { TabState } from '@app/specs/browser.spec';
 import { AGENT_PANEL_TITLE } from '@app/specs/agent-panel.spec';
@@ -35,7 +35,22 @@ type View = 'chat' | 'chats' | 'settings';
 
 export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   const state = useAgentState();
-  const [open, setOpen] = useAgentPanelOpen();
+  // `remembered` is the user's own choice (persisted); a new approval opens the panel for now
+  // (`autoOpened`) without changing it.
+  const [remembered, setRemembered] = useAgentPanelOpen();
+  const [autoOpened, setAutoOpened] = useState(false);
+  const open = remembered || autoOpened;
+  const auto = useRef(autoOpened);
+  auto.current = autoOpened;
+  /** The user opens or collapses the panel: that is remembered, and any auto-open ends. */
+  const setOpen = useCallback(
+    (next: boolean | ((was: boolean) => boolean)) => {
+      const wasAuto = auto.current;
+      setAutoOpened(false);
+      setRemembered((was) => (typeof next === 'function' ? next(was || wasAuto) : next));
+    },
+    [setRemembered],
+  );
   const [view, setView] = useState<View>('chat');
   const toggle = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement | null>(null);
@@ -70,11 +85,11 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
     [setOpen],
   );
 
-  // A new approval request opens the panel, so it is never missed.
+  // A new approval request opens the panel, so it is never missed (the remembered choice stays).
   const approvalId = state?.approval?.request.id ?? null;
   useEffect(() => {
-    if (approvalId !== null) setOpen(true);
-  }, [approvalId, setOpen]);
+    if (approvalId !== null) setAutoOpened(true);
+  }, [approvalId]);
 
   // Focus follows an explicit open or collapse (never a state update); the composer may only be
   // there once the first state arrived.
@@ -164,7 +179,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
               )}
             </div>
             {/* One request at a time, oldest first; keyed by id, so each new one arms afresh. */}
-            {state.approval !== null ? <AgentApprovalCard key={state.approval.request.id} approval={state.approval} covered={covered} /> : null}
+            {state.approval !== null ? <AgentApprovalCard key={state.approval.request.id} approval={state.approval} covered={covered} context={{ activeChatId: active?.id ?? null, chats: state.chats }} /> : null}
             <footer className="agent-foot">
               <AgentContextMeter active={active} />
               <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} />

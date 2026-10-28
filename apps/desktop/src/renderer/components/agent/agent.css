@@ -330,10 +330,18 @@
   user-select: text;
 }
 
+/* Approved code wraps: nothing may hide past the right edge (a long run of spaces included). */
 .agent-code {
   max-height: 260px;
-  white-space: pre;
-  overflow-wrap: normal;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-approval-more {
+  margin: -3px 0 0;
+  color: var(--caution);
+  font-size: 11.5px;
+  font-weight: 600;
 }
 
 /* Hints, banners, checklists. */
