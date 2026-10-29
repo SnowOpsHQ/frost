@@ -246,7 +246,8 @@ describe('extractor on a DOM', () => {
         prepare: (_document, window) => chromiumVisibility(window),
       });
     expect(deep(20)).toMatchObject({ partial: false, headings: [{ level: 2, text: 'Deep' }] });
-    expect(deep(2_000)).toMatchObject({ partial: true, headings: [] });
+    // Past the extractor's 256-wrapper scan (`WRAPPER_SCAN` in extract.ts): deeper only makes jsdom slower.
+    expect(deep(400)).toMatchObject({ partial: true, headings: [] });
   });
 
   test('extractor-reads-bot-robots', () => {
