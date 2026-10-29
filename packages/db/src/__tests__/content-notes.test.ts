@@ -94,7 +94,9 @@ describe('content notes', () => {
     expect(await notes.notes('javascript:alert(1)')).toEqual(EMPTY_NOTES);
   });
 
-  test('notes-are-pruned', async () => {
+  // 1,000 sequential writes: well under a second alone, but past the 5 s default on a loaded CI
+  // runner while the package's file-backed driver suites run beside it.
+  test('notes-are-pruned', { timeout: 30_000 }, async () => {
     const url = (i: number) => `https://example.com/p/${i}`;
     for (let i = 0; i <= MAX_CONTENT_NOTE_URLS; i++) {
       await notes.setTargetQuery(url(i), `query ${i}`, 1_000 + i);
