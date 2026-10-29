@@ -84,7 +84,8 @@ export const SEO_PANELS = [
   { id: 'javascript', label: 'JavaScript', available: true, categories: ['javascript'] },
   // Phase 6 Task 4 (`changes-panel.feature.md`): the page's captured versions and their diffs (no rules).
   { id: 'changes', label: 'Changes', available: true, categories: [] },
-  { id: 'inspector', label: 'Inspector', available: true, categories: [] }, // Phase 6 Task 8 (`inspector.feature.md`): the read-only DOM inspector (no rules).
+  // Phase 6 Task 8 (`inspector.feature.md`): the read-only DOM inspector (no rules).
+  { id: 'inspector', label: 'Inspector', available: true, categories: [] },
 ] as const satisfies readonly { id: string; label: string; available: boolean; categories: readonly SeoCategory[] }[];
 export type SeoPanelId = (typeof SEO_PANELS)[number]['id'];
 export const DEFAULT_SEO_PANEL: SeoPanelId = 'overview';

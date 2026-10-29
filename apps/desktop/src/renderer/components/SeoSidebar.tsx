@@ -23,9 +23,8 @@ import { Schema } from './seo/Schema';
 import { Social } from './seo/Social';
 import { Speed } from './seo/Speed';
 import { Changes } from './changes/Changes';
-import { ChangesIcon } from './changes/changes-icons';
+import { ChangesIcon, InspectorIcon } from './changes/changes-icons';
 import { Inspector } from './changes/Inspector';
-import { InspectorIcon } from './changes/changes-icons';
 
 // The SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance `seo-sidebar.feature.md`, Sidebar): docked
 // right of the page area, the open panel and then the persistent rail at the window's edge. The

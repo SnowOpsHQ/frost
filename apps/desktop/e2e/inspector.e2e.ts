@@ -8,13 +8,16 @@ import { closeApp, launchApp, pageAt } from './harness';
 import { chromeHelpers } from './helpers';
 
 /**
- * A page with landmarks, an H1 and a link. Its own capture listener on `document` records every
- * click it hears (the picker stops the user's click on `window`, before it).
+ * A page with landmarks, an H1, a link and a frame holding a link of its own. Its own capture
+ * listeners on `document` record every click and context menu they hear (the picker stops the user's
+ * on `window`, before them).
  */
 const PAGE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Inspect me</title>
 <meta name="description" content="A page to inspect"><style>body{margin:0;font:16px sans-serif}h1{margin:40px 20px;font-size:40px}p{margin:20px}</style></head>
-<body><header><nav><a href="/other">Other page</a></nav></header><main><h1 id="title" class="hero">Inspect me</h1><p>Some text and <a id="go" href="/other">a link</a>.</p></main><footer>Foot</footer>
-<script>window.__heard = []; document.addEventListener('click', (event) => window.__heard.push(event.isTrusted), true);</script></body></html>`;
+<body><header><nav><a href="/other">Other page</a></nav></header><main><h1 id="title" class="hero">Inspect me</h1><p>Some text and <a id="go" href="/other">a link</a>.</p>
+<iframe id="frame" title="frame" srcdoc="<a id='in' href='/other' style='display:block;font:30px sans-serif;padding:20px'>Frame link</a>"></iframe></main><footer>Foot</footer>
+<script>window.__heard = []; window.__menus = []; document.addEventListener('click', (event) => window.__heard.push(event.isTrusted), true);
+document.addEventListener('contextmenu', (event) => window.__menus.push(event.isTrusted), true);</script></body></html>`;
 const OTHER_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Other</title></head><body><main><h2>Another page</h2></main></body></html>';
 
 async function startSite() {
@@ -88,10 +91,24 @@ async function clearOutline(): Promise<void> {
   await expect.poll(htmlChildren).toBe(2);
 }
 
+/** The context menus main popped up (recorded instead of shown). */
+const frostMenus = () => app.evaluate(() => (globalThis as unknown as { __contextMenus: unknown[] }).__contextMenus.length);
+const pageMenus = () => tabPage.evaluate(() => (window as unknown as { __menus: boolean[] }).__menus);
+/** Where the frame's document is (`about:srcdoc` until its link is followed). */
+const frameUrl = () => tabPage.evaluate(() => (document.getElementById('frame') as HTMLIFrameElement).contentWindow!.location.href);
+
 test.beforeAll(async () => {
   site = await startSite();
   ({ app, page } = await launchApp());
   await page.waitForLoadState('domcontentloaded');
+  // No native context menu in the test: record each menu main pops up instead of showing it.
+  await app.evaluate(({ Menu }) => {
+    const record = globalThis as unknown as { __contextMenus: Electron.Menu[] };
+    record.__contextMenus = [];
+    Menu.prototype.popup = function (this: Electron.Menu) {
+      record.__contextMenus.push(this);
+    };
+  });
   url = `${site.origin}/inspect`;
   await go(url);
   tabPage = await pageAt(app, url);
@@ -165,6 +182,32 @@ test('inspector-pick-by-mouse', async () => {
   expect(await tabPage.evaluate(() => (window as unknown as { __heard: boolean[] }).__heard)).toEqual([]);
   expect(await htmlChildren()).toBe(3);
   await clearOutline();
+});
+
+test('inspector-pick-covers-frames-and-menus', async () => {
+  await expect.poll(() => tabPage.evaluate(() => (document.getElementById('frame') as HTMLIFrameElement).contentDocument?.getElementById('in') !== null)).toBe(true);
+  expect(await frameUrl()).toBe('about:srcdoc');
+  const menus = await frostMenus();
+  await startPick();
+  // A right-click while picking opens no menu: neither the page's nor frost's.
+  const h1 = (await tabPage.locator('h1').boundingBox())!;
+  await tabPage.mouse.click(h1.x + h1.width / 2, h1.y + h1.height / 2, { button: 'right' });
+  await page.waitForTimeout(300);
+  expect(await pageMenus()).toEqual([]);
+  expect(await frostMenus()).toBe(menus);
+  await expect(hint()).toBeVisible();
+  // A click over the frame picks the frame: its link is not followed.
+  await clickOnPage('#frame');
+  await expect(details()).toHaveAttribute('data-tag', 'iframe');
+  await expect(row('1.1.2')).toHaveAttribute('aria-selected', 'true');
+  await page.waitForTimeout(300);
+  expect(await frameUrl()).toBe('about:srcdoc');
+  expect(tabPage.url()).toBe(url);
+  await clearOutline();
+  // Not picking, the page's right-click is its own again (and frost's menu opens).
+  await tabPage.mouse.click(h1.x + h1.width / 2, h1.y + h1.height / 2, { button: 'right' });
+  await expect.poll(pageMenus).toEqual([true]);
+  await expect.poll(frostMenus).toBe(menus + 1);
 });
 
 test('inspector-ignores-synthetic-click', async () => {

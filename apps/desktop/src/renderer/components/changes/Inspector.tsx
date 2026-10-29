@@ -14,6 +14,7 @@ import {
   ROOT_KEY,
   canInspect,
   mergeChildren,
+  moreKey,
   pathKey,
   pathsToReveal,
   pickOutcomeText,
@@ -35,19 +36,18 @@ import { InspectorIcon, PickGlyph } from './changes-icons';
 // lazily read tree (the ARIA tree-view pattern: arrows, Home/End, roving tabIndex), "Pick element",
 // and the selected node's details. Everything from the page is React text (never markup, never a
 // link), and no inline styles (strict CSP). Hovering or focusing a row outlines its node on the page
-// (`inspector.highlight`); leaving it removes the outline. A `stale` answer, and every new document
-// in the tab, reads the tree again from the top.
+// (`inspector.highlight`); leaving it removes the outline. Every new document or URL in the tab reads
+// the top of the tree again: the same document keeps the tree (rows that changed start afresh), a new
+// one (a `stale` answer) starts over, with a note.
 
-/** Most pages of children read to reveal one picked node at one level (`maxChildren` each). */
-const MAX_REVEAL_PAGES = 50;
+/** Most pages of children read to reveal one picked node, over all its levels (`maxChildren` each). */
+const MAX_REVEAL_PAGES = 100;
 
 // ---- Pick runs (outside any component, so the palette and a remounted panel share them) ----------
 
 const picking = new Set<number>();
 const pickChanged = new Set<() => void>();
 const pickFinished = new Set<(tabId: number, answer: InspectorPickAnswer | null) => void>();
-/** The document token each tab's panel last read (the palette's pick passes it). */
-const docTokens = new Map<number, string>();
 const notifyPick = (): void => {
   for (const listener of [...pickChanged]) listener();
 };
@@ -80,8 +80,10 @@ const subscribePick = (listener: () => void): (() => void) => {
 };
 const usePicking = (tabId: number): boolean => useSyncExternalStore(subscribePick, () => picking.has(tabId));
 
-// The command palette's Inspector actions (`inspector-palette.ts`), once per module instance.
-const unregisterPaletteActions = registerPaletteActions(...inspectorPaletteSources({ pick: (tabId) => startPick(tabId, docTokens.get(tabId) ?? null) }));
+// The command palette's Inspector actions (`inspector-palette.ts`), once per module instance. Its pick
+// is for whichever document the tab shows (`null`): the panel reads that document if it is not the one
+// it shows.
+const unregisterPaletteActions = registerPaletteActions(...inspectorPaletteSources({ pick: (tabId) => startPick(tabId, null) }));
 import.meta.hot?.dispose(unregisterPaletteActions);
 
 // ---- The panel -----------------------------------------------------------------------------------
@@ -113,8 +115,10 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
   const [tree, setTree] = useState<Tree>(() => new Map());
   const treeRef = useRef<Tree>(tree);
   const tokenRef = useRef<string | null>(null);
-  /** Bumped by each fresh read of the tree: an older read's answers are dropped. */
+  /** Bumped by each read of the tree's top: an older read's answers are dropped. */
   const generation = useRef(0);
+  /** Bumped by each reveal, pick and read of the tree's top: a reveal under way stops. */
+  const revealRun = useRef(0);
   const [status, setStatus] = useState<'loading' | 'ready' | 'refused'>('loading');
   const [message, setMessage] = useState('');
   const [note, setNote] = useState<string | null>(null);
@@ -125,27 +129,64 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
   const isPicking = usePicking(tabId);
   const rowRefs = useRef(new Map<string, HTMLLIElement>());
   const pendingFocus = useRef<string | null>(null);
+  /** The row whose node the hover outline is on (`null`: none). */
+  const hovered = useRef<string | null>(null);
 
   const commit = useCallback((next: Tree) => {
     treeRef.current = next;
     setTree(next);
   }, []);
 
-  /** Reads the tree from the top (`token`: the document it was for; a new one is `stale`, and read afresh with `staleNote`). */
+  /** Outlines the row `key`'s node on the page (`null`: takes that outline off, always, whatever the panel is doing). */
+  const outline = useCallback(
+    (key: string | null): void => {
+      const token = tokenRef.current;
+      if (key === null) {
+        if (hovered.current !== null && token !== null) void ipc.inspector.highlight.mutate({ tabId, node: null, docToken: token }).catch(() => null);
+        hovered.current = null;
+        return;
+      }
+      const entry = treeRef.current.get(key);
+      if (!entry || token === null || picking.has(tabId)) return;
+      hovered.current = key;
+      void ipc.inspector.highlight.mutate({ tabId, node: { path: entry.path, tag: entry.row.tag }, docToken: token }).catch(() => null);
+    },
+    [tabId],
+  );
+
+  /**
+   * Reads the top of the tree. `again`: for the document the panel shows; the same one answering
+   * keeps the tree (and its outlines), another one (`stale`) is cleared and read afresh, with a note.
+   */
   const load = useCallback(
-    async (token: string | null, staleNote: string | null = null): Promise<void> => {
+    async (again: boolean, staleNote: string | null = null): Promise<void> => {
       const run = ++generation.current;
-      setStatus('loading');
-      const answer = await ipc.inspector.children.query({ tabId, path: [], docToken: token, offset: 0 }).catch(() => null);
+      revealRun.current += 1;
+      outline(null);
+      const token = again ? tokenRef.current : null;
+      const rootTag = treeRef.current.get(ROOT_KEY)?.row.tag ?? null;
+      if (token === null || rootTag === null) setStatus('loading');
+      const answer = await ipc.inspector.children
+        .query(token === null || rootTag === null ? { tabId, path: [], tag: null, docToken: null, offset: 0 } : { tabId, path: [], tag: rootTag, docToken: token, offset: 0 })
+        .catch(() => null);
       if (run !== generation.current) return;
-      if (answer !== null && answer.status === 'refused' && answer.reason === 'stale' && token !== null) return load(null, refusalText('stale'));
+      if (answer !== null && answer.status === 'refused' && token !== null && (answer.reason === 'stale' || answer.reason === 'not-found')) {
+        // Another document (or another root): its outlines and any pick go, and it is read afresh.
+        void ipc.inspector.clear.mutate({ tabId }).catch(() => null);
+        return load(false, answer.reason === 'stale' ? refusalText('stale') : null);
+      }
       if (answer === null || answer.status === 'refused') {
         setMessage(refusalText(answer === null ? 'failed' : answer.reason));
         setStatus('refused');
         return;
       }
+      if (token !== null && rootTag !== null) {
+        // The same document: the tree stays as it is, with the top read again.
+        commit(mergeChildren(treeRef.current, answer));
+        setStatus('ready');
+        return;
+      }
       tokenRef.current = answer.docToken;
-      docTokens.set(tabId, answer.docToken);
       commit(mergeChildren(new Map(), answer));
       setFocusKey(ROOT_KEY);
       setDetails(null);
@@ -153,33 +194,38 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
       setNote(staleNote);
       setStatus('ready');
     },
-    [tabId, commit],
+    [tabId, commit, outline],
   );
 
-  // A new document (or its load ending) reads the tree again; the token tells whether the page changed.
+  // A new document, or a new URL in the same one, reads the top of the tree again. Loading is not
+  // waited for: a page that never stops loading still shows its tree.
   useEffect(() => {
-    if (tab.loading) return;
-    void load(tokenRef.current);
-  }, [tab.documentSeq, tab.loading, load]);
+    void load(tokenRef.current !== null);
+  }, [tab.documentSeq, tab.url, load]);
 
   // Leaving the tab (or closing the panel) ends a pick and takes every outline off its page.
   useEffect(
     () => () => {
       generation.current += 1;
+      revealRun.current += 1;
       void ipc.inspector.clear.mutate({ tabId }).catch(() => null);
     },
     [tabId],
   );
 
-  /** One page of `path`'s children from `offset`, or `null` (a `stale` answer reads the tree again; another refusal is announced). */
+  /** One page of the node's children from `offset`, or `null` (a `stale` answer reads the tree afresh; another refusal is announced). */
   const readChildren = useCallback(
-    async (path: NodePath, offset: number): Promise<OkChildren | null> => {
+    async (entry: Pick<TreeEntry, 'path' | 'row'>, offset: number): Promise<OkChildren | null> => {
       const run = generation.current;
-      const answer = await ipc.inspector.children.query({ tabId, path, docToken: tokenRef.current, offset }).catch(() => null);
+      const token = tokenRef.current;
+      if (token === null) return null;
+      const answer = await ipc.inspector.children.query({ tabId, path: entry.path, tag: entry.row.tag, docToken: token, offset }).catch(() => null);
       if (run !== generation.current) return null;
       if (answer === null || answer.status === 'refused') {
-        if (answer?.status === 'refused' && answer.reason === 'stale') void load(null, refusalText('stale'));
-        else setAnnounce(refusalText(answer === null ? 'failed' : answer.reason));
+        if (answer?.status === 'refused' && answer.reason === 'stale') {
+          void ipc.inspector.clear.mutate({ tabId }).catch(() => null);
+          void load(false, refusalText('stale'));
+        } else setAnnounce(refusalText(answer === null ? 'failed' : answer.reason));
         return null;
       }
       return answer;
@@ -191,41 +237,60 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
     const entry = treeRef.current.get(key);
     if (!entry || entry.row.childElementCount === 0) return;
     if (entry.kids !== null) return commit(setExpanded(treeRef.current, key, true));
-    const answer = await readChildren(entry.path, 0);
+    const answer = await readChildren(entry, 0);
     if (answer) commit(mergeChildren(treeRef.current, answer));
   };
   const collapse = (key: string): void => commit(setExpanded(treeRef.current, key, false));
-  const showMore = async (entry: TreeEntry): Promise<void> => {
-    const answer = await readChildren(entry.path, entry.kids?.length ?? 0);
-    if (answer) commit(mergeChildren(treeRef.current, answer));
+  /** Reads the node's next children; focus moves to the first of them (from the keyboard, or when "Show more" goes). */
+  const showMore = async (key: string): Promise<void> => {
+    const entry = treeRef.current.get(key);
+    if (!entry || !entry.more) return;
+    const from = entry.kids?.length ?? 0;
+    const answer = await readChildren(entry, from);
+    if (!answer) return;
+    const next = mergeChildren(treeRef.current, answer);
+    commit(next);
+    const first = next.get(key)?.kids?.[from];
+    if (first !== undefined && (focusKey === moreKey(key) || document.activeElement === rowRefs.current.get(moreKey(key)))) {
+      pendingFocus.current = first;
+      setFocusKey(first);
+    }
   };
 
   const select = async (key: string): Promise<void> => {
     const entry = treeRef.current.get(key);
-    if (!entry) return;
+    const token = tokenRef.current;
+    if (!entry || token === null) return;
     setFocusKey(key);
     setDetails({ key, status: 'loading' });
     const run = generation.current;
-    const answer = await ipc.inspector.node.query({ tabId, path: entry.path, docToken: tokenRef.current }).catch(() => null);
+    const answer = await ipc.inspector.node.query({ tabId, path: entry.path, tag: entry.row.tag, docToken: token }).catch(() => null);
     if (run !== generation.current) return;
-    if (answer !== null && answer.status === 'refused' && answer.reason === 'stale') return void load(null, refusalText('stale'));
+    if (answer !== null && answer.status === 'refused' && answer.reason === 'stale') {
+      void ipc.inspector.clear.mutate({ tabId }).catch(() => null);
+      return void load(false, refusalText('stale'));
+    }
     setDetails((current) => (current?.key !== key ? current : answer === null || answer.status === 'refused' ? { key, status: 'refused', message: refusalText(answer === null ? 'failed' : answer.reason) } : { key, status: 'ready', node: answer.node }));
   };
 
-  /** Opens the tree down to `path` (reading as many pages of children as it takes), then selects it. */
+  /** Opens the tree down to `path` (at most `MAX_REVEAL_PAGES` pages of children in all), then selects it; a new pick or read stops it. */
   const reveal = async (path: NodePath): Promise<void> => {
+    const run = ++revealRun.current;
+    let pages = 0;
     for (const prefix of pathsToReveal(path)) {
       const key = pathKey(prefix);
       const target = pathKey(path.slice(0, prefix.length + 1));
-      for (let pages = 0; !treeRef.current.get(key)?.kids?.includes(target); pages++) {
+      while (!treeRef.current.get(key)?.kidSet?.has(target)) {
         const entry = treeRef.current.get(key);
         if (!entry || (entry.kids !== null && !entry.more) || pages >= MAX_REVEAL_PAGES) return;
-        const answer = await readChildren(prefix, entry.kids?.length ?? 0);
-        if (!answer) return;
+        pages += 1;
+        const answer = await readChildren(entry, entry.kids?.length ?? 0);
+        if (!answer || run !== revealRun.current) return;
         commit(mergeChildren(treeRef.current, answer));
       }
       if (!treeRef.current.get(key)!.expanded) commit(setExpanded(treeRef.current, key, true));
     }
+    if (run !== revealRun.current) return;
     const key = pathKey(path);
     pendingFocus.current = key;
     await select(key);
@@ -236,16 +301,14 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
   onPicked.current = (answer) => {
     setAnnounce(pickOutcomeText(answer));
     if (answer === null || answer.status === 'refused') {
-      if (answer?.status === 'refused' && answer.reason === 'stale') void load(null, refusalText('stale'));
+      if (answer?.status === 'refused' && answer.reason === 'stale') void load(false, refusalText('stale'));
       return;
     }
-    setOutlined(true);
     void (async () => {
-      if (answer.docToken !== tokenRef.current) await load(null, tokenRef.current === null ? null : refusalText('stale'));
-      if (answer.docToken === tokenRef.current) {
-        await reveal(answer.path);
-        setOutlined(true);
-      }
+      if (answer.docToken !== tokenRef.current) await load(false, tokenRef.current === null ? null : refusalText('stale'));
+      if (answer.docToken !== tokenRef.current) return;
+      setOutlined(true);
+      await reveal(answer.path);
     })();
   };
   useEffect(() => {
@@ -258,10 +321,20 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
     };
   }, [tabId]);
 
-  // A new pick (from the button or the palette) starts with no outcome announced.
+  // A new pick (from the button or the palette) starts with no outcome announced, and stops a reveal.
   useEffect(() => {
-    if (isPicking) setAnnounce('');
+    if (!isPicking) return;
+    setAnnounce('');
+    revealRun.current += 1;
+    hovered.current = null;
   }, [isPicking]);
+
+  const rows = visibleRows(tree);
+
+  // The hovered row gone (closed, read again, the tree replaced): its outline goes too.
+  useEffect(() => {
+    if (hovered.current !== null && !rows.some((row) => row.key === hovered.current)) outline(null);
+  });
 
   // Focus follows the keyboard (and a revealed node) once its row is rendered.
   useEffect(() => {
@@ -274,14 +347,9 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
     row.scrollIntoView?.({ block: 'nearest' });
   }, [tree, focusKey]);
 
-  /** Outlines `path` on the page while its row is hovered or focused (`null`: off). Not while picking. */
-  const outline = (path: NodePath | null): void => {
-    if (picking.has(tabId) || status !== 'ready') return;
-    void ipc.inspector.highlight.mutate({ tabId, path, docToken: tokenRef.current }).catch(() => null);
-  };
-
-  const rows = visibleRows(tree);
   const onTreeKey = (event: KeyboardEvent<HTMLUListElement>): void => {
+    // Tree keys belong to the rows only.
+    if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'treeitem') return;
     const action = treeKeyAction(event.key, rows, focusKey);
     if (action === null) return;
     event.preventDefault();
@@ -290,7 +358,25 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
       rowRefs.current.get(action.key)?.focus();
     } else if (action.type === 'expand') void expand(action.key);
     else if (action.type === 'collapse') collapse(action.key);
+    else if (action.type === 'more') void showMore(action.key);
     else void select(action.key);
+  };
+
+  /** One ref callback per row key (stable, so React calls it only when the row mounts or unmounts). */
+  const refCallbacks = useRef(new Map<string, (el: HTMLLIElement | null) => void>());
+  const refFor = (key: string): ((el: HTMLLIElement | null) => void) => {
+    let callback = refCallbacks.current.get(key);
+    if (!callback) {
+      callback = (el) => {
+        if (el) rowRefs.current.set(key, el);
+        else {
+          rowRefs.current.delete(key);
+          refCallbacks.current.delete(key);
+        }
+      };
+      refCallbacks.current.set(key, callback);
+    }
+    return callback;
   };
 
   const renderItem = (key: string, level: number) => {
@@ -300,6 +386,7 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
     const expanded = expandable && entry.expanded;
     const labelId = `${ids}-row-${key || 'root'}`;
     const label = `<${rowLabel(entry.row)}>`;
+    const more = moreKey(key);
     return (
       <li
         key={key}
@@ -313,20 +400,17 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
         data-testid="inspector-row"
         data-path={key}
         data-tag={entry.row.tag}
-        ref={(el) => {
-          if (el) rowRefs.current.set(key, el);
-          else rowRefs.current.delete(key);
-        }}
+        ref={refFor(key)}
         onFocus={(event) => {
           if (event.target !== event.currentTarget) return;
           setFocusKey(key);
-          outline(entry.path);
+          outline(key);
         }}
         onBlur={(event) => {
           if (event.target === event.currentTarget) outline(null);
         }}
       >
-        <span className="inspector-row" data-selected={details?.key === key} onClick={() => void select(key)} onMouseEnter={() => outline(entry.path)} onMouseLeave={() => outline(null)}>
+        <span className="inspector-row" data-selected={details?.key === key} onClick={() => void select(key)} onMouseEnter={() => outline(key)} onMouseLeave={() => outline(null)}>
           <span
             className="inspector-twisty"
             data-open={expanded}
@@ -352,10 +436,21 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
           <ul role="group" className="inspector-group">
             {entry.kids.map((kid) => renderItem(kid, level + 1))}
             {entry.more ? (
-              <li role="none" className="inspector-more">
-                <button type="button" className="seo-action" data-testid="inspector-show-more" onClick={() => void showMore(entry)}>
-                  {INSPECTOR_LABELS.showMore}
-                </button>
+              <li
+                key={more}
+                role="treeitem"
+                className="inspector-item inspector-more"
+                aria-level={level + 1}
+                tabIndex={focusKey === more ? 0 : -1}
+                data-testid="inspector-show-more"
+                data-path={more}
+                ref={refFor(more)}
+                onFocus={(event) => {
+                  if (event.target === event.currentTarget) setFocusKey(more);
+                }}
+                onClick={() => void showMore(key)}
+              >
+                <span className="inspector-row inspector-more-row">{INSPECTOR_LABELS.showMore}</span>
               </li>
             ) : null}
           </ul>
@@ -378,6 +473,7 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
             data-testid="inspector-clear"
             onClick={() => {
               setOutlined(false);
+              hovered.current = null;
               void ipc.inspector.clear.mutate({ tabId }).catch(() => null);
             }}
           >

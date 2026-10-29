@@ -77,15 +77,15 @@ afterEach(() => {
 describe('inspector service', () => {
   test('inspector-service-refusals', async () => {
     const { service, contents, setActive } = setup();
-    expect(await service.children(9, [], null, 0)).toEqual({ status: 'refused', reason: 'no-tab' });
-    expect(await service.children(2, [], null, 0)).toEqual({ status: 'refused', reason: 'not-active' });
+    expect(await service.children(9, [], null, null, 0)).toEqual({ status: 'refused', reason: 'no-tab' });
+    expect(await service.children(2, [], null, null, 0)).toEqual({ status: 'refused', reason: 'not-active' });
     expect(await service.pick(2, null)).toEqual({ status: 'refused', reason: 'not-active' });
-    expect(await service.highlight(2, [1], null)).toEqual({ status: 'refused', reason: 'not-active' });
+    expect(await service.highlight(2, { path: [1], tag: 'body' }, TOKEN)).toEqual({ status: 'refused', reason: 'not-active' });
     contents.url = 'about:blank';
-    expect(await service.node(1, [1], null)).toEqual({ status: 'refused', reason: 'no-page' });
+    expect(await service.node(1, [1], 'body', TOKEN)).toEqual({ status: 'refused', reason: 'no-page' });
     contents.url = 'https://example.com/page';
     contents.destroyed = true;
-    expect(await service.children(1, [], null, 0)).toEqual({ status: 'refused', reason: 'no-tab' });
+    expect(await service.children(1, [], null, null, 0)).toEqual({ status: 'refused', reason: 'no-tab' });
     contents.destroyed = false;
     // Clear works on any open tab (the panel clears the one it leaves); nothing ran in the page above.
     expect(contents.requests).toEqual([]);
@@ -93,15 +93,15 @@ describe('inspector service', () => {
     setActive(1);
     expect(await service.clear(2)).toEqual({ status: 'ok' });
     expect(ops(contents)).toEqual(['clear']);
-    expect(await service.children(1, [], null, 0)).toEqual({ status: 'refused', reason: 'failed' }); // `{ status: 'ok' }` is no children answer
+    expect(await service.children(1, [], null, null, 0)).toEqual({ status: 'refused', reason: 'failed' }); // `{ status: 'ok' }` is no children answer
   });
 
   test('inspector-service-deadlines', async () => {
     const { service, contents, logs } = setup(() => never());
     const started = Date.now();
-    expect(await service.children(1, [], null, 0)).toEqual({ status: 'refused', reason: 'failed' });
-    expect(await service.node(1, [], null)).toEqual({ status: 'refused', reason: 'failed' });
-    expect(await service.highlight(1, null, null)).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.children(1, [], null, null, 0)).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.node(1, [], 'html', TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.highlight(1, null, TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
     expect(await service.clear(1)).toEqual({ status: 'refused', reason: 'failed' });
     // A pick that never answers fails after its own deadline (pick + script), and is ended in the page too.
     expect(await service.pick(1, null)).toEqual({ status: 'refused', reason: 'failed' });
@@ -111,7 +111,7 @@ describe('inspector service', () => {
     expect(logs).toContain('inspector: the children script did not answer in time');
     // A script that rejects is a failure too.
     contents.answer = () => Promise.reject(new Error('page said SECRET'));
-    expect(await service.node(1, [], null)).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.node(1, [], 'html', TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
     expect(logs.join('\n')).not.toContain('SECRET');
     // The spec's deadlines are the defaults.
     expect(INSPECTOR_SCRIPT_LIMITS).toMatchObject({ scriptTimeoutMs: INSPECTOR_LIMITS.scriptTimeoutMs, pickTimeoutMs: INSPECTOR_LIMITS.pickTimeoutMs });
@@ -119,10 +119,10 @@ describe('inspector service', () => {
 
   test('inspector-service-validates-answers', async () => {
     const { service, contents, logs } = setup();
-    expect(await service.children(1, [], null, 0)).toEqual(CHILDREN);
-    expect(await service.children(1, [], TOKEN, 0)).toEqual(CHILDREN);
+    expect(await service.children(1, [], null, null, 0)).toEqual(CHILDREN);
+    expect(await service.children(1, [], 'html', TOKEN, 0)).toEqual(CHILDREN);
     contents.answer = () => NODE;
-    expect(await service.node(1, [1, 0], TOKEN)).toEqual(NODE);
+    expect(await service.node(1, [1, 0], 'h1', TOKEN)).toEqual(NODE);
     const garbage: [unknown, string][] = [
       [{ status: 'stale' }, 'stale'],
       [{ status: 'not-found' }, 'not-found'],
@@ -149,14 +149,14 @@ describe('inspector service', () => {
     ];
     for (const [i, [raw, reason]] of garbage.entries()) {
       contents.answer = () => raw;
-      expect(await service.children(1, [], TOKEN, 0), `garbage ${i}`).toEqual({ status: 'refused', reason });
+      expect(await service.children(1, [], 'html', TOKEN, 0), `garbage ${i}`).toEqual({ status: 'refused', reason });
     }
     contents.answer = () => ({ ...NODE, node: { ...NODE.node, region: 'sidebar' } });
-    expect(await service.node(1, [1, 0], TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.node(1, [1, 0], 'h1', TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
     contents.answer = () => ({ ...NODE, node: { ...NODE.node, styles: [{ name: 'cursor', value: 'x' }] } });
-    expect(await service.node(1, [1, 0], TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.node(1, [1, 0], 'h1', TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
     contents.answer = () => ({ status: 'refused', reason: 'busy' });
-    expect(await service.highlight(1, [1], TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.highlight(1, { path: [1], tag: 'body' }, TOKEN)).toEqual({ status: 'refused', reason: 'failed' });
     // No page text in the log.
     expect(logs.join('\n')).not.toContain('SECRET');
   });
@@ -219,6 +219,15 @@ describe('inspector service', () => {
     expect(esc.preventDefault).toHaveBeenCalled();
     expect(await picking).toEqual({ status: 'refused', reason: 'cancelled' });
     expect(ops(s.contents)).toEqual(['pick', 'cancelPick']);
+    // Its key-up is kept from the page too, once; then Esc reaches the page again.
+    expect(s.contents.listenerCount('before-input-event')).toBe(1);
+    const up = { preventDefault: vi.fn() };
+    s.contents.emit('before-input-event', up, { type: 'keyUp', key: 'Escape' });
+    expect(up.preventDefault).toHaveBeenCalled();
+    expect(s.contents.listenerCount('before-input-event')).toBe(0);
+    const later = { preventDefault: vi.fn() };
+    s.contents.emit('before-input-event', later, { type: 'keyUp', key: 'Escape' });
+    expect(later.preventDefault).not.toHaveBeenCalled();
   });
 
   test('inspector-tabs-follow-the-browser', () => {

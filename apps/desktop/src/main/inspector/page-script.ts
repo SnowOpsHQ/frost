@@ -13,8 +13,13 @@ import { INSPECTOR_LIMITS, INSPECTOR_WORLD_ID, type InspectorLimits, type NodePa
 // - `node`: a node's details: tag, capped attributes, box, a few computed styles, its landmark region
 //   (the rules of `changes/regions.ts`, inlined: a function cannot be shared across serialisation;
 //   a test checks the two agree) and its SEO facts.
-// - `pick`: hover outline, trusted click picks; Esc, the timeout, the page moving on or the overlay's
-//   host being removed end it with nothing (`null`). The selection outline stays afterwards.
+// - `pick`: a transparent cover in the overlay takes the pointer (so no element or frame under it
+//   gets an event), the element under the pointer is found by hit-testing (`elementsFromPoint`,
+//   the host left out) for the hover outline, and a trusted click picks it; Esc, the timeout, the
+//   page moving on or the overlay's host being removed end it with nothing (`null`). The selection
+//   outline stays afterwards.
+// - `children` / `node` / `highlight` name a node by path and expected tag: within one document a path
+//   can come to name another element, and then it is `not-found`.
 // - `highlight` / `clear` / `cancelPick`: a tree row's outline, everything off, the pick ended.
 //
 // Read-only: no page element's attributes, styles or text are ever written. The outlines are drawn
@@ -56,6 +61,8 @@ interface PageEvent {
   readonly isTrusted: boolean;
   readonly key?: string;
   readonly target?: unknown;
+  readonly clientX?: number;
+  readonly clientY?: number;
   preventDefault(): void;
   stopPropagation(): void;
   stopImmediatePropagation?(): void;
@@ -100,15 +107,20 @@ export interface InspectorDocument {
   readonly defaultView: PageView | null;
   createElement(name: string): PageElement;
   querySelectorAll(selectors: string): PageList<PageElement>;
+  /** Hit-testing (Chromium has it; a test DOM may not: then the event's own target is used). */
+  elementsFromPoint?(x: number, y: number): PageList<PageElement>;
 }
 
-/** One call into the page (`op`), with its arguments. `token` `null`: whichever document is shown. */
+/**
+ * One call into the page (`op`), with its arguments. `token` `null`: whichever document is shown;
+ * `tag`: the tag the caller expects at `path` (another element there is `not-found`; `null`: any).
+ */
 export type InspectorRequest =
   | { readonly op: 'token' }
-  | { readonly op: 'children'; readonly path: NodePath; readonly token: string | null; readonly offset: number }
-  | { readonly op: 'node'; readonly path: NodePath; readonly token: string | null }
+  | { readonly op: 'children'; readonly path: NodePath; readonly tag: string | null; readonly token: string | null; readonly offset: number }
+  | { readonly op: 'node'; readonly path: NodePath; readonly tag: string; readonly token: string }
   | { readonly op: 'pick'; readonly token: string | null }
-  | { readonly op: 'highlight'; readonly path: NodePath | null; readonly token: string | null }
+  | { readonly op: 'highlight'; readonly node: { readonly path: NodePath; readonly tag: string } | null; readonly token: string }
   | { readonly op: 'clear' }
   | { readonly op: 'cancelPick' };
 
@@ -124,7 +136,7 @@ export const INSPECTOR_STATE_KEY = '__frostInspector';
 export interface InspectorState {
   readonly token: string;
   /** The overlay's host and its two outlines, while anything is outlined. */
-  overlay: { readonly host: PageElement; readonly hover: PageElement; readonly selected: PageElement; redraw(): void; drop(): void } | null;
+  overlay: { readonly host: PageElement; readonly hover: PageElement; readonly selected: PageElement; readonly catcher: PageElement; redraw(): void; drop(): void } | null;
   /** Ends the pick under way with nothing picked. */
   pick: { cancel(): void } | null;
   /** The element the hover outline follows (the pointer while picking, or a tree row's node). */
@@ -176,7 +188,9 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
     const value = el.getAttribute(name);
     return value === null ? null : String(value);
   };
+  /** `raw` resolved against the document's base URL (`''` stays `''`: a missing URL is not the page's own). */
   const resolveUrl = (raw: string): string => {
+    if (raw.trim() === '') return '';
     try {
       return cut(new URL(cut(raw.trim(), L.maxUrlChars * 2), document.baseURI).href, L.maxUrlChars);
     } catch {
@@ -212,6 +226,11 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
       el = childAt(el, i);
     }
     return el;
+  };
+  /** The element at `path` if its tag is `tag` (`null`: any), else `null`: within one document a path can come to name another element. */
+  const resolveTagged = (path: NodePath, tag: string | null): PageElement | null => {
+    const el = resolve(path);
+    return el && (tag === null || tagOf(el) === tag) ? el : null;
   };
   /** The path of `target` (or of its ancestor at `maxPathDepth`), `null` if it is not under `<html>` or is our host. */
   const pathOf = (target: PageElement): NodePath | null => {
@@ -284,6 +303,8 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
   const regionOf = (target: PageElement): string => {
     const chain: PageElement[] = [];
     for (let el: PageElement | null = target; el !== null; el = el.parentElement) chain.push(el);
+    // `<head>` and what is in it: not in the page body, so in no landmark.
+    if (chain.some((el) => el.localName === 'head' && el.parentElement === document.documentElement)) return 'head';
     let region: string | null = null;
     let sectioned = false;
     for (let i = chain.length - 1; i >= 0; i--) {
@@ -330,7 +351,7 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
       image:
         tag === 'img'
           ? {
-              src: el.currentSrc ? cut(String(el.currentSrc), L.maxUrlChars) : resolveUrl(attr(el, 'src') ?? ''),
+              src: el.currentSrc ? cut(String(el.currentSrc), L.maxUrlChars) : attr(el, 'src') === null ? null : resolveUrl(attr(el, 'src')!),
               alt: attr(el, 'alt') === null ? null : value(attr(el, 'alt')),
               naturalWidth: Math.max(0, Math.floor(finite(el.naturalWidth))),
               naturalHeight: Math.max(0, Math.floor(finite(el.naturalHeight))),
@@ -391,11 +412,16 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
     const label = document.createElement('span');
     css(label, { position: 'absolute', left: '-2px', padding: '2px 6px', 'border-radius': '4px', background: '#1e3a8a', color: '#ffffff', font: '600 11px/14px ui-monospace, SFMono-Regular, Menlo, monospace', 'white-space': 'nowrap', 'pointer-events': 'none' });
     hover.append(label);
-    layer.append(selected, hover);
+    // While picking: a transparent cover over the viewport takes every pointer event, so no page
+    // element and no frame under it gets one (the element is found by hit-testing instead).
+    const catcher = document.createElement('div');
+    css(catcher, { position: 'absolute', display: 'none', top: '0px', left: '0px', right: '0px', bottom: '0px', background: 'transparent', cursor: 'crosshair', 'pointer-events': 'auto', 'touch-action': 'none' });
+    layer.append(selected, hover, catcher);
     shadow.append(layer);
     let frame = false;
     const redraw = (): void => {
       frame = false;
+      css(catcher, { display: S.pick !== null ? 'block' : 'none' });
       place(selected, S.selected, null);
       place(hover, S.hover, label);
     };
@@ -409,19 +435,14 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
     const observer =
       typeof Observer === 'function'
         ? new Observer(() => {
-            if (host.isConnected === false) {
-              // The page took the host out: the pick ends, and nothing is outlined any more.
-              S.hover = null;
-              S.selected = null;
-              S.pick?.cancel();
-              current.drop();
-            }
+            if (host.isConnected === false) lost();
           })
         : null;
     const current: NonNullable<InspectorState['overlay']> = {
       host,
       hover,
       selected,
+      catcher,
       redraw,
       drop: (): void => {
         if (S.overlay !== current) return;
@@ -443,8 +464,16 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
     observer?.observe(document, { childList: true });
     return current;
   };
-  /** Draws both outlines; the host goes once nothing is outlined and no pick is under way. */
+  /** The page took the host out: the pick ends, and nothing is outlined any more. */
+  function lost(): void {
+    S.hover = null;
+    S.selected = null;
+    S.pick?.cancel();
+    S.overlay?.drop();
+  }
+  /** Draws both outlines (and the cover while picking); the host goes once nothing is outlined and no pick is under way. */
   const refresh = (): void => {
+    if (S.overlay && S.overlay.host.isConnected === false) return lost();
     const nothing = (S.hover === null || S.hover.isConnected === false) && (S.selected === null || S.selected.isConnected === false);
     if (nothing && S.pick === null) {
       S.overlay?.drop();
@@ -467,7 +496,7 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
     return true;
   }
   if (request.op === 'children') {
-    const el = resolve(request.path);
+    const el = resolveTagged(request.path, request.tag);
     if (!el) return { status: 'not-found' };
     const host = ownHost();
     const kids = el.children;
@@ -490,17 +519,17 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
     return { status: 'ok', docToken: S.token, path: request.path, node: row(el, index), offset: request.offset, children, more };
   }
   if (request.op === 'node') {
-    const el = resolve(request.path);
+    const el = resolveTagged(request.path, request.tag);
     if (!el) return { status: 'not-found' };
     return { status: 'ok', docToken: S.token, path: request.path, node: details(el) };
   }
   if (request.op === 'highlight') {
-    if (request.path === null) {
+    if (request.node === null) {
       S.hover = null;
       refresh();
       return { status: 'ok' };
     }
-    const el = resolve(request.path);
+    const el = resolveTagged(request.node.path, request.node.tag);
     if (!el) return { status: 'not-found' };
     S.hover = el;
     refresh();
@@ -517,27 +546,56 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
     const pick = { cancel: () => finish(null) };
     S.pick = pick;
     const host = overlay().host;
+    refresh();
     const swallow = (event: PageEvent): void => {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();
     };
+    /** Whether the overlay is still in the page (a page that took it out has ended the pick). */
+    const live = (): boolean => {
+      if (host.isConnected !== false) return true;
+      lost();
+      return false;
+    };
+    /** The page element under the event's point (hit-testing, the overlay's host left out); without hit-testing, its target. */
+    const under = (event: PageEvent): PageElement | null => {
+      if (typeof document.elementsFromPoint === 'function') {
+        const x = event.clientX;
+        const y = event.clientY;
+        if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+        const hits = document.elementsFromPoint(x, y);
+        for (let i = 0; i < hits.length && i < 64; i++) {
+          const hit = hits[i];
+          if (isElement(hit) && hit !== host) return hit;
+        }
+        return null;
+      }
+      return isElement(event.target) && event.target !== host ? event.target : null;
+    };
     const onMove: Listener = (event) => {
-      if (!event.isTrusted || !isElement(event.target) || event.target === host) return;
-      if (S.hover === event.target) return;
-      S.hover = event.target;
+      if (!event.isTrusted) return;
+      swallow(event);
+      if (!live()) return;
+      const el = under(event);
+      if (el === null || S.hover === el) return;
+      S.hover = el;
       refresh();
     };
-    // The press and release are stopped too: the page's later listeners never hear them, nothing is
-    // focused or selected, and no default action runs. Only a trusted click picks.
-    const onPress: Listener = (event) => {
-      if (event.isTrusted) swallow(event);
+    // Every other pointer, mouse and touch event, and the context menu, is stopped too: the page's
+    // later listeners never hear them, nothing is focused, selected or opened, and no default action
+    // runs. Only a trusted click picks.
+    const onOther: Listener = (event) => {
+      if (!event.isTrusted) return;
+      swallow(event);
+      live();
     };
     const onClick: Listener = (event) => {
       if (!event.isTrusted) return;
       swallow(event);
-      if (!isElement(event.target)) return;
-      const path = pathOf(event.target);
+      if (!live()) return;
+      const el = under(event);
+      const path = el === null ? null : pathOf(el);
       if (path === null) return;
       const picked = resolve(path);
       finish(picked ? { status: 'picked', docToken: S.token, path } : null, picked);
@@ -547,15 +605,12 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
       swallow(event);
       finish(null);
     };
-    const onLeave: Listener = () => finish(null);
+    const onLeave: Listener = (event) => {
+      if (event.isTrusted) finish(null);
+    };
     const listeners: [string, Listener][] = [
       ['pointermove', onMove],
-      ['pointerdown', onPress],
-      ['mousedown', onPress],
-      ['pointerup', onPress],
-      ['mouseup', onPress],
-      ['auxclick', onPress],
-      ['dblclick', onPress],
+      ...['mousemove', 'pointerover', 'pointerout', 'mouseover', 'mouseout', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'auxclick', 'dblclick', 'contextmenu', 'touchstart', 'touchmove', 'touchend', 'touchcancel'].map((type): [string, Listener] => [type, onOther]),
       ['click', onClick],
       ['keydown', onKey],
     ];
@@ -572,7 +627,8 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
       refresh();
       resolvePick(result);
     }
-    for (const [type, listener] of listeners) view.addEventListener(type, listener, true);
+    // Not passive: a touch's default action (scrolling, a tap's click) is cancelled too.
+    for (const [type, listener] of listeners) view.addEventListener(type, listener, { capture: true, passive: false });
     view.addEventListener('pagehide', onLeave);
   });
 }

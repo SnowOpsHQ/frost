@@ -31,8 +31,15 @@ function page(body = BODY, { head = '<title>t</title><meta name="description" co
   const L: InspectorScriptLimits = { ...INSPECTOR_SCRIPT_LIMITS, ...limits };
   const call = (request: InspectorRequest) => inspectPage(document as unknown as InspectorDocument, store, INSPECTOR_STATE_KEY, request, L);
   const token = () => (call({ op: 'token' }) as { docToken: string }).docToken;
-  const children = (path: NodePath, offset = 0, t: string | null = token()) => call({ op: 'children', path, token: t, offset }) as Record<string, unknown>;
-  const node = (path: NodePath, t: string | null = token()) => call({ op: 'node', path, token: t }) as Record<string, unknown>;
+  /** The tag at `path` (the test's own reckoning; `'none'` where no element is). */
+  const tagAt = (path: NodePath): string => {
+    let el: Element | undefined = document.documentElement;
+    for (const i of path) el = el?.children[i];
+    return el ? el.localName : 'none';
+  };
+  const children = (path: NodePath, offset = 0, t: string | null = token(), tag: string | null = tagAt(path)) => call({ op: 'children', path, tag, token: t, offset }) as Record<string, unknown>;
+  const node = (path: NodePath, t: string = token(), tag: string = tagAt(path)) => call({ op: 'node', path, tag, token: t }) as Record<string, unknown>;
+  const highlight = (path: NodePath | null, t: string = token(), tag: string = path ? tagAt(path) : '') => call({ op: 'highlight', node: path === null ? null : { path, tag }, token: t });
   const pick = (t: string | null = token()) => call({ op: 'pick', token: t }) as Promise<unknown>;
   const state = () => store[INSPECTOR_STATE_KEY] as InspectorState;
   const host = () => state()?.overlay?.host as unknown as HTMLElement | undefined;
@@ -44,7 +51,7 @@ function page(body = BODY, { head = '<title>t</title><meta name="description" co
   const mouse = (type: string) => new window.MouseEvent(type, { bubbles: true, composed: true, cancelable: true, button: 0 });
   const pointer = (type: string) => new window.PointerEvent(type, { bubbles: true, composed: true, cancelable: true, button: 0, pointerId: 1 });
   const esc = () => trusted(document.body, new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  return { dom, window, document, store, call, token, children, node, pick, state, host, trusted, mouse, pointer, esc, html: () => document.documentElement.outerHTML };
+  return { dom, window, document, store, call, token, tagAt, children, node, highlight, pick, state, host, trusted, mouse, pointer, esc, html: () => document.documentElement.outerHTML };
 }
 
 /** The element-index path of `el` from `<html>` (the test's own reckoning). */
@@ -82,7 +89,9 @@ describe('tree and token', () => {
     expect(main.children[0]).toMatchObject({ tag: 'h1', id: 'title', classes: ['hero', 'big'], textPreview: 'Big title tail', childElementCount: 1 });
     expect(main.children[2]).toMatchObject({ tag: 'div', id: 'host', shadow: true, childElementCount: 0 });
     expect(main.node).toMatchObject({ index: 1, tag: 'main' });
-    // No element at the path: not found.
+    // No element at the path, or another element than the caller expects there: not found.
+    expect(p.children([1, 1], 0, t, 'section')).toEqual({ status: 'not-found' });
+    expect(p.node([1, 1, 0], t, 'p')).toEqual({ status: 'not-found' });
     expect(p.children([1, 7])).toEqual({ status: 'not-found' });
     expect(p.node([0, 0, 9])).toEqual({ status: 'not-found' });
   });
@@ -131,7 +140,7 @@ describe('tree and token', () => {
     const other = 'f'.repeat(32);
     expect(p.children([], 0, other)).toEqual({ status: 'stale' });
     expect(p.node([1], other)).toEqual({ status: 'stale' });
-    expect(p.call({ op: 'highlight', path: [1], token: other })).toEqual({ status: 'stale' });
+    expect(p.highlight([1], other)).toEqual({ status: 'stale' });
     return expect(p.pick(other)).resolves.toEqual({ status: 'stale' });
   });
 });
@@ -155,11 +164,18 @@ describe('node details', () => {
     expect(h1.box).toEqual({ x: 0, y: 0, width: 0, height: 0 });
     expect(details(p.document.querySelector('a')!)).toMatchObject({ region: 'nav', seo: { link: { href: 'https://example.com/home', rel: 'nofollow', target: '_blank' }, headingLevel: null } });
     expect(details(p.document.querySelector('img')!).seo.image).toEqual({ src: 'https://example.com/i.png', alt: 'Logo', naturalWidth: 0, naturalHeight: 0 });
-    expect(details(p.document.querySelector('meta[name]')!).seo.meta).toEqual({ name: 'description', content: 'About tea' });
+    expect(details(p.document.querySelector('meta[name]')!)).toMatchObject({ region: 'head', seo: { meta: { name: 'description', content: 'About tea' } } });
+    expect(details(p.document.head).region).toBe('head');
     expect(details(p.document.querySelector('link')!).seo.linkRel).toEqual({ rel: 'canonical', href: 'https://example.com/canonical' });
     expect(details(p.document.querySelector('footer p')!)).toMatchObject({ region: 'footer', seo: { lang: 'fr' } });
     expect(details(p.document.querySelector('header')!).region).toBe('header');
     expect(details(p.document.body).region).toBe('other');
+    // A missing URL is reported missing, never as the page's own.
+    const bare = page('<img alt=""><a name="x">anchor</a>', { head: '<link rel="preload">' });
+    const bareDetails = (el: Element) => (InspectorNodeAnswerSchema.parse(bare.node(pathTo(el))) as { node: { seo: Record<string, unknown> } }).node.seo;
+    expect(bareDetails(bare.document.querySelector('img')!).image).toEqual({ src: null, alt: '', naturalWidth: 0, naturalHeight: 0 });
+    expect(bareDetails(bare.document.querySelector('a')!).link).toBeNull();
+    expect(bareDetails(bare.document.querySelector('link')!).linkRel).toEqual({ rel: 'preload', href: '' });
   });
 
   test('inspector-region-agrees-with-regions', () => {
@@ -244,6 +260,43 @@ describe('pick', () => {
     expect(heard).toEqual(['late-capture:true', 'click:true']);
   });
 
+  test('inspector-pick-hit-tests-under-the-cover', async () => {
+    const p = page(`${BODY}<iframe id="frame"></iframe>`);
+    const before = p.html();
+    const frame = p.document.getElementById('frame')!;
+    const heard: string[] = [];
+    for (const type of ['pointermove', 'contextmenu', 'touchstart', 'click']) p.document.addEventListener(type, () => heard.push(type), true);
+    frame.addEventListener('click', () => heard.push('frame-click'));
+    const picking = p.pick();
+    const host = p.host()!;
+    // Chromium's hit-testing at the pointer: the cover (retargeted to the host) first, then what is under it.
+    const asked: [number, number][] = [];
+    (p.document as unknown as { elementsFromPoint(x: number, y: number): Element[] }).elementsFromPoint = (x, y) => {
+      asked.push([x, y]);
+      return [host, frame, p.document.body, p.document.documentElement];
+    };
+    const at = { clientX: 30, clientY: 40, bubbles: true, composed: true, cancelable: true };
+    p.trusted(host, new p.window.PointerEvent('pointermove', at));
+    expect(p.state().hover).toBe(frame);
+    // A right-click opens no menu (the page's or frost's: Chromium shows none for a cancelled `contextmenu`); a touch does nothing.
+    expect(p.trusted(host, new p.window.MouseEvent('contextmenu', { ...at, button: 2 })).defaultPrevented).toBe(true);
+    expect(p.trusted(host, new p.window.Event('touchstart', { bubbles: true, cancelable: true })).defaultPrevented).toBe(true);
+    expect(p.state().pick).not.toBeNull();
+    // The click picks the element under the cover (the frame itself: nothing inside it is reached).
+    const click = p.trusted(host, new p.window.MouseEvent('click', { ...at, button: 0 }));
+    await expect(picking).resolves.toEqual({ status: 'picked', docToken: p.token(), path: pathTo(frame) });
+    expect(click.defaultPrevented).toBe(true);
+    expect(heard).toEqual([]);
+    expect(asked).toEqual([
+      [30, 40],
+      [30, 40],
+    ]);
+    // The cover is up only while picking.
+    expect((p.state().overlay!.catcher as unknown as HTMLElement).style.getPropertyValue('display')).toBe('none');
+    p.call({ op: 'clear' });
+    expect(p.html()).toBe(before);
+  });
+
   test('inspector-pick-ends-without-picking', async () => {
     // Esc.
     const esc = page();
@@ -265,7 +318,11 @@ describe('pick', () => {
     // The page leaving.
     const left = page();
     const byLeave = left.pick();
+    // The page's own `pagehide` does not end it; the real one does.
     left.window.dispatchEvent(new left.window.Event('pagehide'));
+    await settle();
+    expect(left.state().pick).not.toBeNull();
+    left.trusted(left.window, new left.window.Event('pagehide'));
     await expect(byLeave).resolves.toBeNull();
     // A second pick ends the first.
     const twice = page();
@@ -287,6 +344,14 @@ describe('pick', () => {
     expect(host.style.getPropertyValue('display')).toBe('none');
     removed.trusted(removed.document.querySelector('h1')!, removed.mouse('click'));
     expect(removed.state().selected).toBeNull();
+    // A click right after the host was taken out (before any observer ran) picks nothing either.
+    const quick = page();
+    const byQuick = quick.pick();
+    quick.host()!.remove();
+    quick.trusted(quick.document.querySelector('h1')!, quick.mouse('click'));
+    await expect(byQuick).resolves.toBeNull();
+    expect(quick.state().selected).toBeNull();
+    expect(quick.state().overlay).toBeNull();
   });
 });
 
@@ -294,15 +359,16 @@ describe('outlines', () => {
   test('inspector-outline-lifecycle', () => {
     const p = page();
     const before = p.html();
-    expect(p.call({ op: 'highlight', path: [1, 1, 0], token: p.token() })).toEqual({ status: 'ok' });
+    expect(p.highlight([1, 1, 0])).toEqual({ status: 'ok' });
     expect(p.state().hover).toBe(p.document.querySelector('h1'));
     const host = p.host()!;
     expect(host.parentElement).toBe(p.document.documentElement);
     // While it is up, paths and child counts ignore it.
     expect(InspectorChildrenAnswerSchema.parse(p.children([]))).toMatchObject({ node: { childElementCount: 2 }, children: [{ tag: 'head' }, { tag: 'body' }], more: false });
-    expect(p.call({ op: 'highlight', path: [1, 9], token: p.token() })).toEqual({ status: 'not-found' });
+    expect(p.highlight([1, 9])).toEqual({ status: 'not-found' });
+    expect(p.highlight([1, 1, 0], p.token(), 'h2')).toEqual({ status: 'not-found' });
     // Nothing outlined any more: the host goes.
-    expect(p.call({ op: 'highlight', path: null, token: p.token() })).toEqual({ status: 'ok' });
+    expect(p.highlight(null)).toEqual({ status: 'ok' });
     expect(host.isConnected).toBe(false);
     expect(p.html()).toBe(before);
   });
@@ -314,7 +380,7 @@ describe('outlines', () => {
     p.children([]);
     p.children([1, 1]);
     p.node([1, 1, 0]);
-    p.call({ op: 'highlight', path: [1, 0], token: t });
+    p.highlight([1, 0], t);
     const picking = p.pick();
     p.trusted(p.document.querySelector('p')!, p.pointer('pointermove'));
     p.trusted(p.document.querySelector('p')!, p.mouse('click'));
@@ -328,15 +394,16 @@ describe('outlines', () => {
 
 describe('scripts', () => {
   test('inspector-scripts-are-self-contained', async () => {
-    const requests: InspectorRequest[] = [{ op: 'token' }, { op: 'children', path: [1], token: null, offset: 0 }, { op: 'node', path: [1, 1, 0], token: null }, { op: 'highlight', path: null, token: null }, { op: 'clear' }, { op: 'cancelPick' }, { op: 'pick', token: null }];
+    const t = 'a'.repeat(32);
+    const requests: InspectorRequest[] = [{ op: 'token' }, { op: 'children', path: [], tag: null, token: null, offset: 0 }, { op: 'node', path: [1, 1, 0], tag: 'h1', token: t }, { op: 'highlight', node: null, token: t }, { op: 'clear' }, { op: 'cancelPick' }, { op: 'pick', token: null }];
     for (const request of requests) expect(() => new vm.Script(inspectorScript(request))).not.toThrow();
     // Run in a fresh context with the page's document: nothing from this module is needed.
     const p = page();
     const context = p.dom.getInternalVMContext();
     const token = (vm.runInContext(inspectorScript({ op: 'token' }), context) as { docToken: string }).docToken;
     expect(token).toMatch(DOC_TOKEN_PATTERN);
-    expect(InspectorChildrenAnswerSchema.parse(vm.runInContext(inspectorScript({ op: 'children', path: [1], token, offset: 0 }), context))).toMatchObject({ status: 'ok', docToken: token });
-    expect(InspectorNodeAnswerSchema.parse(vm.runInContext(inspectorScript({ op: 'node', path: [1, 1, 0], token }), context))).toMatchObject({ status: 'ok', node: { tag: 'h1', region: 'main' } });
+    expect(InspectorChildrenAnswerSchema.parse(vm.runInContext(inspectorScript({ op: 'children', path: [1], tag: 'body', token, offset: 0 }), context))).toMatchObject({ status: 'ok', docToken: token });
+    expect(InspectorNodeAnswerSchema.parse(vm.runInContext(inspectorScript({ op: 'node', path: [1, 1, 0], tag: 'h1', token }), context))).toMatchObject({ status: 'ok', node: { tag: 'h1', region: 'main' } });
     const picking = vm.runInContext(inspectorScript({ op: 'pick', token }), context) as Promise<unknown>;
     expect(vm.runInContext(inspectorScript({ op: 'cancelPick' }), context)).toBe(true);
     await expect(picking).resolves.toBeNull();

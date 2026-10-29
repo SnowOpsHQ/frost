@@ -9,7 +9,7 @@ import { FEATURE_PANEL_JUMPS } from '@app/specs/command-palette.spec';
 import { INSPECTOR_REFUSAL_MESSAGES, type InspectorChild, type InspectorChildrenAnswer, type InspectorNode, type InspectorPickAnswer } from '@app/specs/inspector.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import { inspectorPaletteSources } from '../inspector-palette';
-import { ROOT_KEY, boxText, canInspect, mergeChildren, pathKey, pathsToReveal, pickOutcomeText, rowLabel, seoRows, setExpanded, summaryRows, treeKeyAction, visibleRows, type Tree } from '../inspector-view';
+import { ROOT_KEY, boxText, canInspect, mergeChildren, moreKey, pathKey, pathsToReveal, pickOutcomeText, rowLabel, seoRows, setExpanded, summaryRows, treeKeyAction, visibleRows, type Tree } from '../inspector-view';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
 
@@ -44,7 +44,7 @@ describe('inspector view', () => {
 
   test('inspector-tree-model', () => {
     const tree = sampleTree();
-    expect(visibleRows(tree).map((r) => [r.key, r.level, r.row.tag, r.expanded, r.expandable])).toEqual([
+    expect(visibleRows(tree).map((r) => (r.kind === 'node' ? [r.key, r.level, r.row.tag, r.expanded, r.expandable] : [r.key]))).toEqual([
       ['', 1, 'html', true, true],
       ['0', 2, 'head', false, true],
       ['1', 2, 'body', true, true],
@@ -59,13 +59,29 @@ describe('inspector view', () => {
     expect(visibleRows(setExpanded(closed, '1', true))).toEqual(visibleRows(tree));
     // "Show more" appends the next page; a fresh read of the first page replaces the list.
     let list: Tree = mergeChildren(new Map(), answer([], row(0, 'html', 3), [row(0, 'li'), row(1, 'li')], true));
+    // While more are left, the open node's last row is its "Show more".
+    expect(visibleRows(list).map((r) => [r.kind, r.key, r.level])).toEqual([
+      ['node', '', 1],
+      ['node', '0', 2],
+      ['node', '1', 2],
+      ['more', moreKey(''), 2],
+    ]);
     list = mergeChildren(list, answer([], row(0, 'html', 3), [row(2, 'li')], false, 2));
+    expect(list.get(ROOT_KEY)!.kidSet).toEqual(new Set(['0', '1', '2']));
+    expect(visibleRows(list).some((r) => r.kind === 'more')).toBe(false);
     expect(list.get(ROOT_KEY)).toMatchObject({ kids: ['0', '1', '2'], more: false, expanded: true });
     list = mergeChildren(list, answer([], row(0, 'html', 1), [row(0, 'li')]));
     expect(list.get(ROOT_KEY)!.kids).toEqual(['0']);
-    // A child read again keeps its own loaded children.
-    const again = mergeChildren(tree, answer([1], row(1, 'body', 3), [row(0, 'header'), row(1, 'main', 1, { id: 'm' }), row(2, 'footer')]));
-    expect(again.get('1.1')).toMatchObject({ kids: ['1.1.0'], expanded: true, row: { id: 'm' } });
+    // A child read again keeps its own loaded children while its row is the same element's.
+    const again = mergeChildren(tree, answer([1], row(1, 'body', 3), [row(0, 'header'), row(1, 'main', 1, { textPreview: 'new text' }), row(2, 'footer')]));
+    expect(again.get('1.1')).toMatchObject({ kids: ['1.1.0'], expanded: true, row: { textPreview: 'new text' } });
+    // Another element at that path now: it starts afresh, and what was read under it goes.
+    const changed = mergeChildren(tree, answer([1], row(1, 'body', 3), [row(0, 'header'), row(1, 'section', 1), row(2, 'footer')]));
+    expect(changed.get('1.1')).toMatchObject({ kids: null, kidSet: null, expanded: false, row: { tag: 'section' } });
+    expect(changed.has('1.1.0')).toBe(false);
+    // A child no longer listed goes, with what is under it.
+    const fewer = mergeChildren(tree, answer([1], row(1, 'body', 1), [row(0, 'header')]));
+    expect([...fewer.keys()].sort()).toEqual(['', '0', '1', '1.0']);
   });
 
   test('inspector-tree-keys', () => {
@@ -89,6 +105,13 @@ describe('inspector view', () => {
     expect(act('Enter', '1.1.0')).toEqual({ type: 'select', key: '1.1.0' });
     expect(act(' ', '1')).toEqual({ type: 'select', key: '1' });
     expect(act('a', '1')).toBeNull();
+    // On "Show more": Enter and Space read the next children; ← goes to its node.
+    const paged = visibleRows(mergeChildren(new Map(), answer([], row(0, 'html', 5), [row(0, 'li')], true)));
+    expect(treeKeyAction('ArrowDown', paged, '0')).toEqual({ type: 'focus', key: moreKey('') });
+    expect(treeKeyAction('Enter', paged, moreKey(''))).toEqual({ type: 'more', key: '' });
+    expect(treeKeyAction(' ', paged, moreKey(''))).toEqual({ type: 'more', key: '' });
+    expect(treeKeyAction('ArrowLeft', paged, moreKey(''))).toEqual({ type: 'focus', key: '' });
+    expect(treeKeyAction('ArrowRight', paged, moreKey(''))).toBeNull();
     expect(act('ArrowDown', 'missing')).toBeNull();
   });
 

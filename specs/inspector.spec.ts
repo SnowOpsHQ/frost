@@ -15,13 +15,17 @@
  * host element of the inspector's own, appended to `<html>` while something is outlined and removed
  * once nothing is.
  *
- * Honesty note (`INSPECTOR_PICK_NOTE`): while an element is being picked, the page sees the pointer
- * moving over it (frost only listens), and the page's own capture listeners on `window` registered
- * before the picker's still see the click; frost stops it there, so no later listener, the target or
- * its default action (following a link, submitting a form) gets it. The page cannot pick for the
- * user: only trusted input (`event.isTrusted`) picks or ends a pick, and main hears Esc first.
+ * Honesty note (`INSPECTOR_PICK_NOTE`): while an element is being picked, a transparent catcher in
+ * the overlay's closed root covers the viewport, and the element under the pointer is found by
+ * hit-testing (`elementsFromPoint`, the overlay's host left out). So no page element, and no frame,
+ * receives the pointer, touch, click or context-menu events: nothing is hovered, followed, submitted
+ * or opened. What the page can still see: the overlay's host element, and those events in its own
+ * capture listeners on `window` registered before the picker's, with the **host** as their target
+ * (never the element under the pointer); frost stops them there. The page cannot pick for the user:
+ * only trusted input (`event.isTrusted`) picks or ends a pick, and main hears Esc first (its key-up
+ * too).
  */
-import type { PageRegion } from './capture.spec';
+import { PAGE_REGIONS } from './capture.spec';
 
 /**
  * The isolated world the inspector's scripts run in (its token, children, node details, the picker,
@@ -99,7 +103,7 @@ export const INSPECTOR_REFUSAL_MESSAGES: Readonly<Record<InspectorRefusal, strin
 export const INSPECTOR_PICK_HINT = 'Click an element on the page · Esc to cancel';
 
 /** Said beside Pick element: what the page itself can observe while picking. */
-export const INSPECTOR_PICK_NOTE = 'While picking, the page can see the pointer move, and its earliest click listeners still see the click; frost stops the click there.';
+export const INSPECTOR_PICK_NOTE = 'While picking, frost covers the page: no element or frame under the pointer gets your clicks. The page can see that a cover is there, and its earliest listeners see the events on the cover, not on the element.';
 
 /** The Inspector panel's words. */
 export const INSPECTOR_LABELS = {
@@ -121,14 +125,22 @@ export const INSPECTOR_LABELS = {
   shadow: 'shadow root (not entered)',
 } as const;
 
-/** How a node's region is named in its details (the landmark rules of `changes-diff.feature.md`, Regions). */
-export const INSPECTOR_REGION_LABELS: Readonly<Record<PageRegion, string>> = {
+/**
+ * A node's region: its landmark region (the rules of `changes-diff.feature.md`, Regions), or `head`
+ * for `<head>` and everything in it (not in the page body, so in no landmark).
+ */
+export const INSPECTOR_REGIONS = [...PAGE_REGIONS, 'head'] as const;
+export type InspectorRegion = (typeof INSPECTOR_REGIONS)[number];
+
+/** How a node's region is named in its details. */
+export const INSPECTOR_REGION_LABELS: Readonly<Record<InspectorRegion, string>> = {
   main: 'Main content',
   nav: 'Navigation',
   header: 'Header',
   aside: 'Aside',
   footer: 'Footer',
   other: 'Outside the landmarks',
+  head: 'Not in the page body',
 };
 
 // ---- Inputs ------------------------------------------------------------------------------------
@@ -136,32 +148,38 @@ export const INSPECTOR_REGION_LABELS: Readonly<Record<PageRegion, string>> = {
 /** A node's path: element-child indices from `document.documentElement` (at most `maxPathDepth`). */
 export type NodePath = number[];
 
-/** `inspector.children`: the node at `path` and up to `maxChildren` of its children from `offset`. `docToken` `null`: the tab's current document, whichever it is. */
+/**
+ * `inspector.children`: the node at `path` (whose tag must be `tag`: another element there is
+ * `not-found`) and up to `maxChildren` of its children from `offset`. `docToken` and `tag` may be
+ * `null` only for the first read of a document: `<html>`'s children from offset 0.
+ */
 export interface InspectorChildrenInput {
   tabId: number;
   path: NodePath;
+  tag: string | null;
   docToken: string | null;
   offset: number;
 }
 
-/** `inspector.node`: the details of the node at `path`. */
+/** `inspector.node`: the details of the node at `path` (whose tag must be `tag`). */
 export interface InspectorNodeInput {
   tabId: number;
   path: NodePath;
-  docToken: string | null;
+  tag: string;
+  docToken: string;
 }
 
-/** `inspector.pick`: pick an element on the tab's page with the mouse. */
+/** `inspector.pick`: pick an element on the tab's page with the mouse (`docToken` `null`: whichever document is shown). */
 export interface InspectorPickInput {
   tabId: number;
   docToken: string | null;
 }
 
-/** `inspector.highlight`: outline the node at `path` on the page (`null`: hide that outline). */
+/** `inspector.highlight`: outline the node `{ path, tag }` on the page (`null`: hide that outline). */
 export interface InspectorHighlightInput {
   tabId: number;
-  path: NodePath | null;
-  docToken: string | null;
+  node: { path: NodePath; tag: string } | null;
+  docToken: string;
 }
 
 /** `inspector.cancelPick` and `inspector.clear`: the tab. */
@@ -207,11 +225,11 @@ export interface InspectorSeoFacts {
   headingLevel: number | null;
   /** `a[href]` / `area[href]`: the resolved URL, `rel` and `target`. */
   link: { href: string; rel: string; target: string } | null;
-  /** `img`: its current source (resolved), its `alt` (`null`: no attribute) and its natural size. */
-  image: { src: string; alt: string | null; naturalWidth: number; naturalHeight: number } | null;
+  /** `img`: its current source (resolved; `null`: none), its `alt` (`null`: no attribute) and its natural size. */
+  image: { src: string | null; alt: string | null; naturalWidth: number; naturalHeight: number } | null;
   /** `meta[name]` / `meta[property]`: the name and content. */
   meta: { name: string; content: string } | null;
-  /** `link[rel]`: the `rel` and the resolved `href`. */
+  /** `link[rel]`: the `rel` and the resolved `href` (`''`: no `href`). */
   linkRel: { rel: string; href: string } | null;
   /** The element's language: its own or its nearest ancestor's `lang` (`null`: none set). */
   lang: string | null;
@@ -230,8 +248,8 @@ export interface InspectorNode {
   offset: { x: number; y: number };
   /** The computed styles of `computedStyleProps`, in that order. */
   styles: { name: InspectorStyleProp; value: string }[];
-  /** Its landmark region (`changes-diff.feature.md`, Regions). */
-  region: PageRegion;
+  /** Its landmark region (`changes-diff.feature.md`, Regions), or `head`. */
+  region: InspectorRegion;
   seo: InspectorSeoFacts;
   childElementCount: number;
 }

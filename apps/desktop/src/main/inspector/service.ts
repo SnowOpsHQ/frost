@@ -52,6 +52,8 @@ export interface InspectorServiceDeps {
 }
 
 const ACTIVE_POLL_MS = 250;
+/** Longest main waits for the key-up of an Esc it took (ms). */
+const ESCAPE_UP_MS = 5_000;
 const refused = (reason: InspectorRefusal) => ({ status: 'refused', reason }) as const;
 /** An error's name: never its message (it may quote the page). */
 const nameOf = (error: unknown): string => (error instanceof Error ? error.name : 'unknown error');
@@ -156,10 +158,15 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
     };
     const onDestroyed = (): void => cancel();
     // Esc is heard by main before the page gets it, so a page cannot keep its own Esc from cancelling.
+    // Its key-up is kept from the page too (as `browser/tab-events.ts` does for fullscreen), even once the pick has ended.
+    let escapeTaken = false;
     const onKey = (event: { preventDefault(): void } | undefined, input?: { type?: unknown; key?: unknown }): void => {
-      if (input?.type !== 'keyDown' || input.key !== 'Escape') return;
+      if (input?.key !== 'Escape' || (input.type !== 'keyDown' && input.type !== 'keyUp')) return;
       event?.preventDefault();
-      cancel();
+      if (input.type === 'keyDown') {
+        escapeTaken = true;
+        cancel();
+      }
     };
     contents.on('did-start-navigation', onNavigate);
     contents.on('destroyed', onDestroyed);
@@ -190,30 +197,46 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
       contents.removeListener('did-start-navigation', onNavigate);
       contents.removeListener('destroyed', onDestroyed);
       contents.removeListener('before-input-event', onKey);
+      if (escapeTaken && !contents.isDestroyed()) swallowEscapeUp(contents);
     }
   }
 
+  /** Keeps the key-up of an Esc main took from the page (the next one only, for at most a few seconds). */
+  function swallowEscapeUp(contents: InspectorContents): void {
+    const stop = (): void => {
+      clearTimeout(timer);
+      contents.removeListener('before-input-event', onUp);
+    };
+    const onUp = (event: { preventDefault(): void } | undefined, input?: { type?: unknown; key?: unknown }): void => {
+      if (input?.key !== 'Escape' || input.type !== 'keyUp') return;
+      event?.preventDefault();
+      stop();
+    };
+    const timer = setTimeout(stop, ESCAPE_UP_MS);
+    contents.on('before-input-event', onUp);
+  }
+
   return {
-    children: (tabId, path, docToken, offset) =>
+    children: (tabId, path, tag, docToken, offset) =>
       guarded<InspectorChildrenAnswer>(
         'children',
         async () => {
           const contents = targetOf(tabId);
           if (typeof contents === 'string') return refused(contents);
-          const answer = checked(parse(await script(contents, { op: 'children', path, token: docToken, offset }, limits.scriptTimeoutMs), OK_CHILDREN, 'children'), path, docToken);
+          const answer = checked(parse(await script(contents, { op: 'children', path, tag, token: docToken, offset }, limits.scriptTimeoutMs), OK_CHILDREN, 'children'), path, docToken);
           if (typeof answer === 'string') return refused(answer);
           return answer.offset === offset ? answer : refused('failed');
         },
         refused('failed'),
       ),
 
-    node: (tabId, path, docToken) =>
+    node: (tabId, path, tag, docToken) =>
       guarded<InspectorNodeAnswer>(
         'node',
         async () => {
           const contents = targetOf(tabId);
           if (typeof contents === 'string') return refused(contents);
-          const answer = checked(parse(await script(contents, { op: 'node', path, token: docToken }, limits.scriptTimeoutMs), OK_NODE, 'node'), path, docToken);
+          const answer = checked(parse(await script(contents, { op: 'node', path, tag, token: docToken }, limits.scriptTimeoutMs), OK_NODE, 'node'), path, docToken);
           return typeof answer === 'string' ? refused(answer) : answer;
         },
         refused('failed'),
@@ -240,13 +263,13 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
       return true;
     },
 
-    highlight: (tabId, path, docToken) =>
+    highlight: (tabId, node, docToken) =>
       guarded<InspectorAck>(
         'highlight',
         async () => {
           const contents = targetOf(tabId);
           if (typeof contents === 'string') return refused(contents);
-          const answer = parse(await script(contents, { op: 'highlight', path, token: docToken }, limits.scriptTimeoutMs), ACK, 'highlight');
+          const answer = parse(await script(contents, { op: 'highlight', node, token: docToken }, limits.scriptTimeoutMs), ACK, 'highlight');
           return typeof answer === 'string' ? refused(answer) : answer;
         },
         refused('failed'),

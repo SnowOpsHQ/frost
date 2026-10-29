@@ -34,11 +34,11 @@ const OK: InspectorAck = { status: 'ok' };
 
 function fakeInspector() {
   return {
-    children: vi.fn(async (_tabId: number, _path: NodePath, _token: string | null, _offset: number): Promise<InspectorChildrenAnswer> => CHILDREN),
-    node: vi.fn(async (_tabId: number, _path: NodePath, _token: string | null): Promise<InspectorNodeAnswer> => NODE),
+    children: vi.fn(async (_tabId: number, _path: NodePath, _tag: string | null, _token: string | null, _offset: number): Promise<InspectorChildrenAnswer> => CHILDREN),
+    node: vi.fn(async (_tabId: number, _path: NodePath, _tag: string, _token: string): Promise<InspectorNodeAnswer> => NODE),
     pick: vi.fn(async (_tabId: number, _token: string | null): Promise<InspectorPickAnswer> => PICKED),
     cancelPick: vi.fn(async (_tabId: number) => true),
-    highlight: vi.fn(async (_tabId: number, _path: NodePath | null, _token: string | null): Promise<InspectorAck> => OK),
+    highlight: vi.fn(async (_tabId: number, _node: { path: NodePath; tag: string } | null, _token: string): Promise<InspectorAck> => OK),
     clear: vi.fn(async (_tabId: number): Promise<InspectorAck> => OK),
   } satisfies InspectorService;
 }
@@ -68,11 +68,11 @@ async function errorOf(run: Promise<unknown>): Promise<TRPCError> {
 }
 
 const VALID_INPUT: Record<string, unknown> = {
-  children: { tabId: 1, path: [1, 0], docToken: TOKEN, offset: 200 },
-  node: { tabId: 1, path: [1, 0], docToken: null },
+  children: { tabId: 1, path: [1, 0], tag: 'main', docToken: TOKEN, offset: 200 },
+  node: { tabId: 1, path: [1, 0], tag: 'h1', docToken: TOKEN },
   pick: { tabId: 1, docToken: TOKEN },
   cancelPick: { tabId: 1 },
-  highlight: { tabId: 1, path: null, docToken: TOKEN },
+  highlight: { tabId: 1, node: null, docToken: TOKEN },
   clear: { tabId: 1 },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
@@ -106,22 +106,39 @@ describe('inspector router', () => {
     const badTokens = ['', 'x'.repeat(32), TOKEN.toUpperCase(), `${TOKEN}0`, 5, undefined];
     // Never a selector, a script or page text, under any key.
     const smuggled = [{ selector: 'h1' }, { code: 'alert(1)' }, { script: 'x' }, { html: '<b>' }, { world: 0 }];
-    const tree = { tabId: 1, path: [], docToken: null };
+    const badTags = ['', 'x'.repeat(INSPECTOR_LIMITS.maxNameChars + 1), 5, undefined];
+    const first = { tabId: 1, path: [], tag: null, docToken: null, offset: 0 };
+    const tree = { tabId: 1, path: [1], tag: 'body', docToken: TOKEN };
     const bad: Record<string, unknown[]> = {
       children: [
-        ...badTabs.map((tab) => ({ path: [], docToken: null, offset: 0, ...tab })),
+        ...badTabs.map((tab) => ({ ...first, ...tab, ...('tabId' in tab ? {} : { tabId: undefined }) })),
         ...badPaths.map((path) => ({ ...tree, path, offset: 0 })),
         ...badTokens.map((docToken) => ({ ...tree, docToken, offset: 0 })),
+        ...badTags.map((tag) => ({ ...tree, tag, offset: 0 })),
+        // A null token or tag only for the first read: `<html>`'s children from offset 0.
+        { ...tree, docToken: null, offset: 0 },
+        { ...tree, tag: null, offset: 0 },
+        { ...first, offset: 200 },
+        { ...first, path: [1] },
+        { ...first, docToken: TOKEN, offset: 200 },
         { ...tree },
         { ...tree, offset: -1 },
         { ...tree, offset: 1.5 },
         { ...tree, offset: '0' },
         ...smuggled.map((extra) => ({ ...tree, offset: 0, ...extra })),
       ],
-      node: [...badPaths.map((path) => ({ ...tree, path })), ...badTokens.map((docToken) => ({ ...tree, docToken })), { tabId: 1, path: [] }, ...smuggled.map((extra) => ({ ...tree, ...extra }))],
+      node: [...badPaths.map((path) => ({ ...tree, path })), ...badTokens.map((docToken) => ({ ...tree, docToken })), ...badTags.map((tag) => ({ ...tree, tag })), { ...tree, docToken: null }, { ...tree, tag: null }, ...smuggled.map((extra) => ({ ...tree, ...extra }))],
       pick: [...badTokens.map((docToken) => ({ tabId: 1, docToken })), { tabId: 0, docToken: null }, ...smuggled.map((extra) => ({ tabId: 1, docToken: null, ...extra }))],
       cancelPick: [...badTabs, undefined, { tabId: 1, extra: 1 }],
-      highlight: [...badPaths.filter((path) => path !== null).map((path) => ({ ...tree, path })), ...badTokens.map((docToken) => ({ ...tree, docToken })), ...smuggled.map((extra) => ({ ...tree, ...extra }))],
+      highlight: [
+        ...badPaths.filter((path) => path !== null).map((path) => ({ tabId: 1, node: { path, tag: 'p' }, docToken: TOKEN })),
+        ...badTags.map((tag) => ({ tabId: 1, node: { path: [1], tag }, docToken: TOKEN })),
+        ...badTokens.map((docToken) => ({ tabId: 1, node: null, docToken })),
+        { tabId: 1, node: null, docToken: null },
+        { tabId: 1, path: [1], docToken: TOKEN },
+        { tabId: 1, node: { path: [1], tag: 'p', extra: 1 }, docToken: TOKEN },
+        ...smuggled.map((extra) => ({ tabId: 1, node: null, docToken: TOKEN, ...extra })),
+      ],
       clear: [...badTabs, undefined, ...smuggled.map((extra) => ({ tabId: 1, ...extra }))],
     };
     for (const name of PROCEDURES) {
@@ -141,15 +158,17 @@ describe('inspector router', () => {
     const inspector = fakeInspector();
     const call = (name: string, input?: unknown) => procedure(ctxFor(inspector), name)(input);
     await expect(call('children', VALID_INPUT.children)).resolves.toEqual(CHILDREN);
-    expect(inspector.children).toHaveBeenLastCalledWith(1, [1, 0], TOKEN, 200);
+    expect(inspector.children).toHaveBeenLastCalledWith(1, [1, 0], 'main', TOKEN, 200);
+    await expect(call('children', { tabId: 1, path: [], tag: null, docToken: null, offset: 0 })).resolves.toEqual(CHILDREN);
+    expect(inspector.children).toHaveBeenLastCalledWith(1, [], null, null, 0);
     await expect(call('node', VALID_INPUT.node)).resolves.toEqual(NODE);
-    expect(inspector.node).toHaveBeenLastCalledWith(1, [1, 0], null);
+    expect(inspector.node).toHaveBeenLastCalledWith(1, [1, 0], 'h1', TOKEN);
     await expect(call('pick', VALID_INPUT.pick)).resolves.toEqual(PICKED);
     expect(inspector.pick).toHaveBeenLastCalledWith(1, TOKEN);
     await expect(call('cancelPick', { tabId: 3 })).resolves.toBe(true);
     expect(inspector.cancelPick).toHaveBeenLastCalledWith(3);
-    await expect(call('highlight', { tabId: 1, path: [1], docToken: null })).resolves.toEqual(OK);
-    expect(inspector.highlight).toHaveBeenLastCalledWith(1, [1], null);
+    await expect(call('highlight', { tabId: 1, node: { path: [1], tag: 'body' }, docToken: TOKEN })).resolves.toEqual(OK);
+    expect(inspector.highlight).toHaveBeenLastCalledWith(1, { path: [1], tag: 'body' }, TOKEN);
     await expect(call('clear', { tabId: 2 })).resolves.toEqual(OK);
     expect(inspector.clear).toHaveBeenLastCalledWith(2);
     inspector.pick.mockResolvedValueOnce({ status: 'refused', reason: 'busy' });

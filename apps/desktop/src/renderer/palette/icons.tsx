@@ -25,8 +25,7 @@ import { RenderProfileIcon } from '../components/RenderProfile';
 import { ContentIcon } from '../components/seo/content-icons';
 import { JavascriptIcon } from '../components/seo/javascript-icons';
 import type { PaletteIconName } from './registry';
-import { ChangesIcon } from '../components/changes/changes-icons';
-import { InspectorIcon } from '../components/changes/changes-icons';
+import { ChangesIcon, InspectorIcon } from '../components/changes/changes-icons';
 
 // The command palette's glyphs: frost's own stroked shapes on the same 24×24 grid as `icons.tsx`
 // (inherit `currentColor`; sized by styles.css, no inline styles). The ones the toolbar and the SEO

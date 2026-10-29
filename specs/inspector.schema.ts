@@ -6,11 +6,11 @@
  * it, and every answer a page script gives is checked with the same schemas in main before it is used.
  */
 import { z } from 'zod';
-import { PAGE_REGIONS } from './capture.spec';
 import {
   DOC_TOKEN_PATTERN,
   INSPECTOR_LIMITS,
   INSPECTOR_REFUSALS,
+  INSPECTOR_REGIONS,
   type InspectorAck,
   type InspectorChild,
   type InspectorChildrenAnswer,
@@ -39,10 +39,16 @@ const px = z.number().finite().min(-1e9).max(1e9);
 
 // ---- Inputs ------------------------------------------------------------------------------------
 
-export const InspectorChildrenInputSchema = z.strictObject({ tabId, path: NodePathSchema, docToken, offset: index }) satisfies z.ZodType<InspectorChildrenInput>;
-export const InspectorNodeInputSchema = z.strictObject({ tabId, path: NodePathSchema, docToken }) satisfies z.ZodType<InspectorNodeInput>;
+/** A tag as a row names it (lowercased `localName`, capped). */
+export const TagSchema = z.string().min(1).max(L.maxNameChars);
+
+/** `null` token and tag only for the first read of a document: `<html>`'s children from offset 0. */
+export const InspectorChildrenInputSchema = z
+  .strictObject({ tabId, path: NodePathSchema, tag: TagSchema.nullable(), docToken, offset: index })
+  .refine((input) => (input.docToken !== null && input.tag !== null) || (input.path.length === 0 && input.offset === 0), { message: 'a null token or tag is only for the first read' }) satisfies z.ZodType<InspectorChildrenInput>;
+export const InspectorNodeInputSchema = z.strictObject({ tabId, path: NodePathSchema, tag: TagSchema, docToken: DocTokenSchema }) satisfies z.ZodType<InspectorNodeInput>;
 export const InspectorPickInputSchema = z.strictObject({ tabId, docToken }) satisfies z.ZodType<InspectorPickInput>;
-export const InspectorHighlightInputSchema = z.strictObject({ tabId, path: NodePathSchema.nullable(), docToken }) satisfies z.ZodType<InspectorHighlightInput>;
+export const InspectorHighlightInputSchema = z.strictObject({ tabId, node: z.strictObject({ path: NodePathSchema, tag: TagSchema }).nullable(), docToken: DocTokenSchema }) satisfies z.ZodType<InspectorHighlightInput>;
 export const InspectorTabInputSchema = z.strictObject({ tabId }) satisfies z.ZodType<InspectorTabInput>;
 
 // ---- Answers -----------------------------------------------------------------------------------
@@ -82,11 +88,11 @@ export const InspectorNodeSchema = z.strictObject({
   box: z.strictObject({ x: px, y: px, width: px.nonnegative(), height: px.nonnegative() }),
   offset: z.strictObject({ x: px, y: px }),
   styles: z.array(z.strictObject({ name: z.enum(L.computedStyleProps), value })).max(L.computedStyleProps.length),
-  region: z.enum(PAGE_REGIONS),
+  region: z.enum(INSPECTOR_REGIONS),
   seo: z.strictObject({
     headingLevel: z.int().min(1).max(6).nullable(),
     link: z.strictObject({ href: url, rel: value, target: value }).nullable(),
-    image: z.strictObject({ src: url, alt: value.nullable(), naturalWidth: count, naturalHeight: count }).nullable(),
+    image: z.strictObject({ src: url.nullable(), alt: value.nullable(), naturalWidth: count, naturalHeight: count }).nullable(),
     meta: z.strictObject({ name: value, content: value }).nullable(),
     linkRel: z.strictObject({ rel: value, href: url }).nullable(),
     lang: value.nullable(),

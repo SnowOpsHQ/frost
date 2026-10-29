@@ -179,7 +179,8 @@ test('empty-tab-shows-hint', async () => {
   // Compliance have suites of their own: seo-schema, seo-indexability, seo-speed and
   // seo-compliance.e2e.ts): none is left disabled or "coming soon".
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(SEO_PANELS.length);
-  // Eleven since Phase 2.5 Task 2 (JavaScript, seo-javascript.e2e.ts); twelve since Phase 6 Task 4 (Changes, changes.e2e.ts).
+  // Eleven since Phase 2.5 Task 2 (JavaScript, seo-javascript.e2e.ts); twelve since Phase 6 Task 4 (Changes, changes.e2e.ts);
+  // thirteen since Phase 6 Task 8 (Inspector, inspector.e2e.ts).
   await expect(page.getByTestId('seo-rail-item')).toHaveCount(13);
   expect(SEO_PANELS.filter((panel) => !panel.available).map((panel) => panel.id)).toEqual([]);
   for (const panel of SEO_PANELS) await expect(railItem(panel.id)).toBeEnabled();
