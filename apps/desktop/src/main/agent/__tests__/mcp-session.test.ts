@@ -13,7 +13,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { AGENT_PROTOCOL_VERSION, type ChatMessage } from '@app/specs/agent-protocol.schema';
 import { AGENT_TOOL_NAMES, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
 import { createMcpManager, createMemoryMcpSecrets, createMemoryMcpStore, mcpResultData, type McpManager } from '../mcp';
-import { nodeSpawn } from '../mcp/node';
+import { nodeSpawn, removeTempDir } from '../mcp/node';
 import { wrapToolOutput } from '../tool-output';
 import { setupSession } from './session-fakes';
 
@@ -43,7 +43,7 @@ async function readyManager(flags: { mcp?: boolean } = {}) {
     isExecutable: (file) => fs.existsSync(file),
     realpath: (file) => fs.promises.realpath(file),
     makeTempDir: () => fs.promises.mkdtemp(path.join(os.tmpdir(), 'frost-mcp-session-')),
-    removeDir: (dir) => fs.promises.rm(dir, { recursive: true, force: true }),
+    removeDir: removeTempDir,
     pathEnv: process.env['PATH'] ?? '',
     homes: [os.homedir()],
     runtimeDir: null,
