@@ -160,8 +160,10 @@ describe('region extraction', () => {
     expect(answer.links.list).toHaveLength(CAPTURE_LIMITS.maxLinks);
     expect(answer.links.total).toBe(25_000);
     for (const region of PAGE_REGIONS) expect(answer.regions[region].truncated).toBe(true);
-    // Roughly within the budget (jsdom is far slower than Chromium; the deadline is checked as it goes).
-    expect(elapsed).toBeLessThan(CAPTURE_LIMITS.extractBudgetMs * 3);
+    // The deadline is checked as it goes, so the walk ends near the budget (jsdom is far slower than
+    // Chromium). The wall-clock guard only catches a runaway walk, with room for a loaded runner:
+    // turbo runs the suites in parallel, and this took over 3x the budget once under that load.
+    expect(elapsed).toBeLessThan(CAPTURE_LIMITS.extractBudgetMs * 10);
   }, 60_000);
 
   test('regions-script-is-self-contained', async () => {
