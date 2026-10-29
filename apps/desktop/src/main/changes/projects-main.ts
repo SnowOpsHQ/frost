@@ -1,9 +1,9 @@
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import type { ChangeIntelRepository } from '@app/db';
 import type { BrowserService, ProjectsService } from '@app/ipc-contract';
 import type { MainScreenshotsService } from '../screenshots/service';
 import { createScreenshotFiles } from '../screenshots/store';
-import { createCaptureRuns } from './capture-run';
+import { createCaptureRuns, stopRunOnQuit } from './capture-run';
 import { createProjectsService, type MainProjectsService } from './projects';
 import { confirmDeleteProject } from './projects-dialog';
 import { createPurgeFiles } from './purge-files';
@@ -19,7 +19,8 @@ import type { MainChangesService } from './service';
 // that still have rows. Retention (Task 7, `retention.ts`; acceptance `retention.feature.md`) joins it:
 // its procedures go out with the projects', it hears of each capture and screenshot into a project and
 // of each run's end, and at startup (after that retry) it enforces due policies and sweeps orphan
-// files. Main `index.ts` creates it with one line.
+// files. A quit or a window closing stops a run under way, its tab closed before the session is saved
+// (`stopRunOnQuit`). Main `index.ts` creates it with one line.
 
 export interface MainProjectsDeps {
   /** `SessionStore.changeIntel`. */
@@ -57,6 +58,9 @@ export function createMainProjects({ store, userData, browser, changes, screensh
     afterRun: (projectId) => afterRun(projectId),
     log,
   });
+  // Quitting (or closing the window) stops a run with its tab closed at once, so the session saved
+  // at the window's close and flushed at `will-quit` never restores it as one of the user's tabs.
+  stopRunOnQuit(app, runs);
   const projects = createProjectsService({
     store,
     files,

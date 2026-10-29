@@ -26,7 +26,7 @@ import type { SessionDatabase } from '../client';
 import { capped, isCount, isHash, isId, isJson, isJsonOrNull, isOneOf, isRetention, isStoredUrl, isTime, pageKey, pageSize, SHA256_GLOB, trimmedText, utf8Bytes, UUIDV7_GLOB } from './checks';
 import { uuidv7 } from './ids';
 import { createPurgeOperations, type PurgeOperations } from './purge';
-import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciScreenshots, ciTombstones, ciVersions } from './schema';
+import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions } from './schema';
 
 export type { ExecutePurgeResult, PurgeCounts, PurgePlan, PurgePolicy, PurgeRecord } from './purge';
 
@@ -224,6 +224,8 @@ export interface ChangeIntelRepository extends PurgeOperations {
   isHashReferenced(sha256: string): Promise<boolean>;
   /** Every distinct screenshot hash (the orphan sweep keeps these files), or one project's (its usage measures them). */
   screenshotHashes(filter?: { readonly projectId?: string }): Promise<string[]>;
+  /** Whether the database holds any capture, screenshot or purge row (the orphan sweep skips a database with none: it may be a fresh one). */
+  hasAnyChangeIntelRows(): Promise<boolean>;
 
   createProject(name: string, now: number): Promise<Project | null>;
   renameProject(id: string, name: string, now: number): Promise<boolean>;
@@ -650,6 +652,17 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         .from(ciScreenshots)
         .where(projectId === undefined ? undefined : eq(ciScreenshots.projectId, projectId));
       return rows.map((row) => row.sha256).filter(isHash);
+    },
+
+    async hasAnyChangeIntelRows() {
+      for (const [table, column] of [
+        [ciScreenshots, ciScreenshots.id],
+        [ciPurges, ciPurges.id],
+        [ciCaptures, ciCaptures.id],
+      ] as const) {
+        if ((await db.select({ id: column }).from(table).limit(1)).length > 0) return true;
+      }
+      return false;
     },
 
     // ---- Projects ----

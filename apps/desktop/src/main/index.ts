@@ -48,9 +48,7 @@ import { registerAppWideGuards, registerSecurity, type SecurityOptions } from '.
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
 import { createMainWindow, createTabView, loadRenderer } from './window';
-import { createLoadTimes } from './changes/loads';
-import { runRegions } from './changes/regions';
-import { changesTabs, createChangesService } from './changes/service';
+import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
 import { createMainProjects } from './changes/projects-main';
 import { createMainInspector } from './inspector/service';
@@ -318,10 +316,7 @@ function start(): void {
   });
 
   // Change intelligence (specs/changes-capture.feature.md): the active tab's ready audit and its regions, captured into the session database.
-  // A capture needs an audit taken after the tab's latest load, so each tab's load times are kept.
-  const changeLoads = createLoadTimes();
-  app.on('web-contents-created', (_event, contents) => changeLoads.watch(contents));
-  const changes = createChangesService({ store: sessionStore.changeIntel, tabs: changesTabs(browser, (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null, changeLoads), extract: runRegions, log: logSession });
+  const changes = createMainChanges({ store: sessionStore.changeIntel, browser, tabContents, log: logSession });
   // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
   const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession });
   // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.

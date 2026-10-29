@@ -116,8 +116,8 @@ the source is `manual` and the search parameters are `searchParamsOf(tabId)` (`n
    The project (default Unfiled) must be live (`no-project`).
 3. The regions are extracted (`extract-failed`). If the tab is no longer active, or its audit or
    page changed meanwhile, the capture is refused (`not-active` / `no-audit`).
-4. The snapshot is built and parsed (`invalid-page`). The render profile is recorded as canonical
-   JSON (the audit's profile, or `null`) with its `partial`; the search parameters as canonical JSON.
+4. The snapshot is built and parsed (`invalid-page`). The render profile is recorded by the rule
+   below (the audit's profile, or `null`, with its `partial`); the search parameters as canonical JSON.
 5. Through one write queue (captures are written one at a time): read the lane's head. An equal
    identity hash appends a capture of it with no diff. Otherwise the new version is diffed against
    the head's snapshot (`diffSnapshots(null, …)` when the head's snapshot does not read back), and
@@ -139,6 +139,21 @@ parses, else computes it (`null` when the versions are in different lanes or eit
 `pages` answers the captured pages. A database failure answers empty (or `null`) and logs.
 `ChangesReadService` (`listPages`, `history`, `getVersion`, `diff`) is the same reads, each answer
 parsing with its `CHANGES_READ_API` output schema.
+
+## The render profile recorded (`profile-in-effect.ts`; captures and screenshots)
+One rule for a capture's and a screenshot's render profile: the profile **set on the tab** when the
+page was read is recorded (canonical JSON), whatever its status, with `partial` when it may not all
+have been in effect on what was read: it was set or changed after the page loaded (`needsReload`), or
+it is still `applying`, or it `failed`. No profile is `null`.
+- A capture takes it from its audit (`AuditRenderProfile`: the browser's same rule, at the audit's
+  time; `partial` is `renderProfilePartial`).
+- A screenshot takes it from the tab as it captures (`TabState.renderProfile`, through
+  `tabProfileInEffect`: `partial` = `needsReload` or a status other than `active`).
+- A profile that does not fit its schema: a capture is refused (`invalid-page`); a screenshot records
+  none, with a log line.
+- Limit: `ci_screenshots` has no `partial` column (no migration for it): a screenshot's row records
+  the profile only, so a partial or failed one reads back as the profile. The screenshot service's
+  log says when it recorded a partial one.
 
 ## Router (`changes.*`)
 `capture` (mutation: `CaptureInputSchema` → `CaptureAnswer`), `history` (`HistoryInputSchema` →
@@ -178,8 +193,11 @@ closed), then its strict input.
   `br` splits, text is NFC-normalised and whitespace collapsed, words are counted per region, and
   `text` is `blocks.join('\n')`.
 - **Scenario: regions-are-bounded** — a hostile DOM (100 000 elements, deep nesting, a huge text
-  node, thousands of links and headings) answers `partial`, within every cap, roughly within the
-  budget, and parses with `RegionAnswerSchema`.
+  node, thousands of links and headings) answers `partial`, within every cap, and parses with
+  `RegionAnswerSchema`. The caps are checked with a budget large enough that the deadline never
+  falls first (the test does not depend on the runner's speed); the deadline is checked on its own,
+  with a budget already spent: the same DOM answers `partial`, every region truncated, without
+  walking it.
 
 ### Snapshot (`snapshot.test.ts`)
 - **Scenario: snapshot-builder-fits-the-schema** — a real audit (`runAudit` over a rich page
@@ -219,6 +237,10 @@ closed), then its strict input.
 - **Scenario: capture-records-profile-and-params** — the capture and version record the audit's
   render profile and `partial`, and the search parameters (`searchParamsOf`, or the run's), and the
   lane key is `laneKeyFor` of them.
+- **Scenario: profile-in-effect-rule** — one rule for both: an `active` loaded profile is not
+  partial; `needsReload`, `applying` and `failed` are partial and still recorded; none is `null`; a
+  profile that does not fit its schema does not read back. Test:
+  `apps/desktop/src/main/changes/__tests__/profile-in-effect.test.ts` `profile-in-effect-rule`.
 - **Scenario: unchanged-page-reuses-version** — a second capture of the same page is a new capture
   of the same version, with no diff.
 - **Scenario: changed-page-stores-diff** — a changed page makes a new version whose stored diff

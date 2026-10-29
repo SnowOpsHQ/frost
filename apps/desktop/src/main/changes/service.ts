@@ -9,6 +9,7 @@ import { CAPTURE_BUSY, CAPTURE_STALE_RETRIES, DiffSummarySchema, type CaptureAns
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import type { z } from 'zod';
 import type { LoadTimes } from './loads';
+import { recordedProfile } from './profile-in-effect';
 import { parseRegionAnswer, type RegionTarget } from './regions';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex, storedPageUrl } from './snapshot';
 import { readScreenshots } from '../screenshots/service';
@@ -179,10 +180,9 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     const params = given === null ? null : SearchParamsSchema.safeParse(given);
     if (params !== null && !params.success) return failed('invalid-page', 'its search parameters do not fit their schema');
     const searchParams = params?.data ?? null;
-    const rendered = response.renderProfile ?? null;
-    const parsedProfile = rendered === null ? null : RenderProfileSchema.safeParse(rendered.profile);
-    if (parsedProfile !== null && !parsedProfile.success) return failed('invalid-page', 'its render profile does not fit its schema');
-    const profile = rendered === null || parsedProfile === null ? null : { profile: parsedProfile.data, partial: rendered.partial };
+    // The audit's profile in effect, by the rule screenshots follow too (`profile-in-effect.ts`).
+    const profile = recordedProfile(response.renderProfile ?? null);
+    if (profile === undefined) return failed('invalid-page', 'its render profile does not fit its schema');
 
     // The regions, read in the capture world (untrusted: validated, then checked against the tab again).
     let raw: unknown;
@@ -226,7 +226,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
       projectId,
       laneKey: lane,
       pageUrl: page,
-      renderProfileJson: profile === null ? null : canonicalJson(profile.profile),
+      renderProfileJson: profile?.json ?? null,
       renderProfilePartial: profile?.partial ?? false,
       searchParamsJson: searchParams === null ? null : canonicalJson(searchParams),
       source: options.source ?? 'manual',

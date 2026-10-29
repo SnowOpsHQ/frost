@@ -151,19 +151,22 @@ describe('region extraction', () => {
 
     // A hostile DOM: 100 000 elements, 2 000 levels deep, thousands of links and headings, a huge text node.
     const hostile = documentOf(`<main>${'<div>'.repeat(2_000)}deep${'</div>'.repeat(2_000)}${'<p><a href="/x">l</a><h3>h</h3><span>s</span></p>'.repeat(25_000)}<p>${'z'.repeat(3_000_000)}</p></main>`);
-    const started = performance.now();
-    const raw = extractRegions(hostile as unknown as RegionDocument, CAPTURE_LIMITS, REGION_EXTRACT_LIMITS, CAPTURE_BLOCK_ELEMENTS);
-    const elapsed = performance.now() - started;
-    const answer = RegionAnswerSchema.parse(raw);
+    // The caps, with a budget the walk never reaches (jsdom's speed under load is not under test).
+    const unhurried = { ...CAPTURE_LIMITS, extractBudgetMs: 3_600_000 };
+    const answer = RegionAnswerSchema.parse(extractRegions(hostile as unknown as RegionDocument, unhurried, REGION_EXTRACT_LIMITS, CAPTURE_BLOCK_ELEMENTS));
+    // Partial by its caps alone (the huge text node is read only to `maxScanChars`).
     expect(answer.partial).toBe(true);
-    expect(answer.headings.length).toBeLessThanOrEqual(CAPTURE_LIMITS.maxHeadings);
+    expect(answer.headings).toHaveLength(CAPTURE_LIMITS.maxHeadings);
     expect(answer.links.list).toHaveLength(CAPTURE_LIMITS.maxLinks);
     expect(answer.links.total).toBe(25_000);
     for (const region of PAGE_REGIONS) expect(answer.regions[region].truncated).toBe(true);
-    // The deadline is checked as it goes, so the walk ends near the budget (jsdom is far slower than
-    // Chromium). The wall-clock guard only catches a runaway walk, with room for a loaded runner:
-    // turbo runs the suites in parallel, and this took over 3x the budget once under that load.
-    expect(elapsed).toBeLessThan(CAPTURE_LIMITS.extractBudgetMs * 10);
+
+    // The deadline, on its own: a budget already spent stops the walk at its first check.
+    const spent = { ...CAPTURE_LIMITS, extractBudgetMs: -1 };
+    const late = RegionAnswerSchema.parse(extractRegions(hostile as unknown as RegionDocument, spent, REGION_EXTRACT_LIMITS, CAPTURE_BLOCK_ELEMENTS));
+    expect(late.partial).toBe(true);
+    for (const region of PAGE_REGIONS) expect(late.regions[region].truncated).toBe(true);
+    expect(late.links.list.length).toBeLessThan(CAPTURE_LIMITS.maxLinks);
   }, 60_000);
 
   test('regions-script-is-self-contained', async () => {

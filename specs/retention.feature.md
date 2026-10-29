@@ -88,6 +88,12 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
     `ORPHAN_TMP_MIN_AGE_MS` (a screenshot being written has its file before its row);
   - regular files named `<sha>.png.tmp-<16 hex>` older than `ORPHAN_TMP_MIN_AGE_MS`.
 - Nothing else: symlinks, directories, other names and fresh files stay. One log line with counts.
+- It is skipped (nothing listed is removed) when the rows that would name the files may be elsewhere:
+  - the session database is `':memory:'` (it fell back: the file on disk, with its rows, is not open);
+  - the database looks fresh (`hasAnyChangeIntelRows()` is false: no `ci_screenshots`, `ci_purges` or
+    `ci_captures` row) while the directory holds hash-named files: it may have been moved aside as
+    corrupt and recreated, and the aside copy still names them.
+  Either skip logs one line with counts only (how many hash-named and temporary files were left).
 
 ## Router
 - `projects.setRetention`, `retentionPreview`, `purgeNow`, `usage`, `purgeLog` and `compact` start
@@ -134,6 +140,12 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
 - **Scenario: orphan-sweep-deletes-only-hash-named-files** — symlinks, directories, odd names, a fresh
   temporary file and a fresh orphan stay; an old temporary file and an old orphan go. Test:
   `retention.test.ts` `orphan-sweep-deletes-only-hash-named-files`.
+- **Scenario: sweep-skips-an-in-memory-database** — with `databaseFile` `':memory:'`, an old orphan
+  and an old temporary file stay. Test: `retention.test.ts` `sweep-skips-an-in-memory-database`.
+- **Scenario: sweep-skips-a-fresh-database** — no capture, screenshot or purge row and old hash-named
+  files in the directory: every file stays, one log line with the count; once any row exists the
+  sweep runs again. Tests: `retention.test.ts` `sweep-skips-a-fresh-database`; the read:
+  `packages/db/src/change-intel/__tests__/retention.test.ts` `has-any-change-intel-rows`.
 - **Scenario: usage-counts-measured-bytes** — Test: `retention.test.ts` `usage-counts-measured-bytes`.
 - **Scenario: compact-shrinks-and-refuses-during-a-run** — Test: `retention.test.ts`
   `compact-shrinks-and-refuses-during-a-run` (and `compact-failed`); the repository's `VACUUM`:

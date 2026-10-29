@@ -5,7 +5,7 @@ import type { ScreenshotsService } from '@app/ipc-contract';
 import { UNFILED_PROJECT_ID, type ScreenshotKind } from '@app/specs/capture-db.spec';
 import { SearchParamsSchema, type SearchParams } from '@app/specs/capture-search-params.schema';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
-import type { RenderProfile, TabRenderProfile } from '@app/specs/render-profile.spec';
+import type { AuditRenderProfile, TabRenderProfile } from '@app/specs/render-profile.spec';
 import {
   SCREENSHOT_LIMITS,
   ScreenshotEntrySchema,
@@ -18,6 +18,7 @@ import {
   type TakeScreenshotAnswer,
 } from '@app/specs/screenshot.schema';
 import type { z } from 'zod';
+import { recordedProfile, tabProfileInEffect } from '../changes/profile-in-effect';
 import { storedPageUrl } from '../changes/snapshot';
 import { captureArea, captureFullPage, captureViewport, ScreenshotFailure, type CaptureOptions, type Captured, type ScreenshotTarget } from './capture';
 import type { ScreenshotImaging } from './imaging';
@@ -41,8 +42,8 @@ export interface ScreenshotTabs {
   activeTabId(): number | null;
   /** The tab's live page WebContents, `null` for an id that names no open tab. */
   contentsOf(tabId: number): ScreenshotContents | null;
-  /** The render profile in effect on the tab (`null`: none, or one that failed to apply). */
-  renderProfileOf(tabId: number): RenderProfile | null;
+  /** The render profile set on the tab, `partial` when not all of it is in effect (`tabProfileInEffect`); `null`: none. */
+  renderProfileOf(tabId: number): AuditRenderProfile | null;
 }
 
 export type ScreenshotCapturers = Readonly<Record<ScreenshotKind, (target: ScreenshotTarget, options: CaptureOptions) => Promise<Captured>>>;
@@ -167,11 +168,13 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
     const given = options.searchParams !== undefined ? options.searchParams : searchParamsOf(tabId);
     const params = given === null ? null : SearchParamsSchema.safeParse(given);
     if (params !== null && !params.success) return 'its search parameters do not fit their schema';
-    const profile = tabs.renderProfileOf(tabId);
-    const parsedProfile = profile === null ? null : RenderProfileSchema.safeParse(profile);
+    // The profile in effect, by the rule captures follow (`profile-in-effect.ts`).
+    const profile = recordedProfile(tabs.renderProfileOf(tabId));
     // A profile that does not read back is recorded as none (said in the log); the screenshot is still taken.
-    if (parsedProfile !== null && !parsedProfile.success) log('the tab\'s render profile does not fit its schema: recorded as none');
-    return { renderProfileJson: parsedProfile?.success ? canonicalJson(parsedProfile.data) : null, searchParamsJson: params === null ? null : canonicalJson(params.data) };
+    if (profile === undefined) log('the tab\'s render profile does not fit its schema: recorded as none');
+    // The row has no `partial` column: a partial profile is recorded as the profile, and said in the log.
+    else if (profile?.partial) log('the tab\'s render profile was not all in effect: recorded without partial');
+    return { renderProfileJson: profile?.json ?? null, searchParamsJson: params === null ? null : canonicalJson(params.data) };
   };
 
   async function takeTab(tabId: number, options: TakeOptions, run: { controller: AbortController | null }): Promise<TakeScreenshotAnswer> {
@@ -394,9 +397,6 @@ export function screenshotTabs(
   return {
     activeTabId: () => browser.getState().activeTabId,
     contentsOf,
-    renderProfileOf: (tabId) => {
-      const profile = browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null;
-      return profile && profile.status !== 'failed' ? profile.profile : null;
-    },
+    renderProfileOf: (tabId) => tabProfileInEffect(browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null),
   };
 }

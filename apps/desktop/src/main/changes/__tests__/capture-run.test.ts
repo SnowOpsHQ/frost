@@ -1,13 +1,14 @@
 // Spec: specs/projects.spec.ts (PROJECT_RUN_LIMITS, RUN_STATES, RUN_TARGET_OUTCOMES, RUN_RETRY_REFUSALS,
 // MOBILE_QUERY_PROFILE, RUN_SCREENSHOT_KIND)
 // Acceptance: specs/projects.feature.md (Capture now; Scenarios: capture run)
+import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import type { CaptureAnswer } from '@app/specs/changes.spec';
 import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, type RunState } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
-import { createCaptureRuns, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
+import { createCaptureRuns, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
 
 const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const ID = '01920000-0000-7000-8000-000000000001';
@@ -285,6 +286,86 @@ describe('capture run', () => {
     await run(RETRY * 2);
     expect(screenshot).toHaveBeenCalledTimes(2);
     expect(runs.state().targets[0]).toMatchObject({ outcome: 'captured', screenshot: 'saved' });
+  });
+
+  test('capture-run-retries-a-busy-screenshot', async () => {
+    // Another screenshot of the tab under way (`busy`): asked again while the target's time lasts.
+    const { runs, screenshot } = setup();
+    screenshot.mockResolvedValueOnce({ status: 'refused', reason: 'busy' }).mockResolvedValueOnce({ status: 'refused', reason: 'busy' });
+    await runs.start(plan(pages(A), { screenshot: true }));
+    await run(RETRY * 6);
+    expect(screenshot).toHaveBeenCalledTimes(3);
+    expect(runs.state()).toMatchObject({ state: 'done', targets: [{ outcome: 'captured', screenshot: 'saved' }] });
+
+    // While it stays busy, the target's time runs out: captured, its screenshot failed.
+    const busy = setup();
+    busy.screenshot.mockResolvedValue({ status: 'refused', reason: 'busy' });
+    await busy.runs.start(plan(pages(A), { screenshot: true }));
+    await run(TIMEOUT + RETRY * 4);
+    expect(busy.runs.state()).toMatchObject({ state: 'done', targets: [{ outcome: 'captured', screenshot: 'failed' }] });
+  });
+
+  test('capture-run-stops-on-quit', async () => {
+    // Quitting while a capture is under way: the run's tab closes at once (before the session store's
+    // flush), the user's tab is in front again, and the run ends cancelled once its capture returns.
+    const app = new EventEmitter();
+    const { runs, capture, tabs, state, browser } = setup();
+    stopRunOnQuit(app as never, runs);
+    let answer: (value: CaptureAnswer) => void = () => undefined;
+    capture.mockImplementationOnce(() => new Promise<CaptureAnswer>((resolve) => (answer = resolve)));
+    await runs.start(plan(pages(A, B)));
+    await run(RETRY * 2);
+    expect(capture).toHaveBeenCalledOnce();
+    expect(tabs.map((t) => t.id)).toEqual([1, 10]);
+    app.emit('before-quit');
+    expect(tabs.map((t) => t.id)).toEqual([1]);
+    expect(state.activeTabId).toBe(1);
+    answer(CAPTURED);
+    await run();
+    expect(runs.state()).toMatchObject({ state: 'cancelled', targets: [{ outcome: 'captured' }, { outcome: 'cancelled' }] });
+    expect(browser.closeTab).toHaveBeenCalledOnce();
+    expect(runs.running()).toBeNull();
+    // With no run under way, quitting does nothing.
+    app.emit('before-quit');
+    expect(browser.closeTab).toHaveBeenCalledOnce();
+
+    // A window closing (the last one quits the app on Linux and Windows only after it closed): the
+    // listener is registered as the window is created, ahead of the controller's own.
+    const other = setup();
+    const quitting = new EventEmitter();
+    stopRunOnQuit(quitting as never, other.runs);
+    const window = new EventEmitter();
+    quitting.emit('browser-window-created', {}, window);
+    await other.runs.start(plan(pages(A, B)));
+    expect(other.tabs.map((t) => t.id)).toEqual([1, 10]);
+    window.emit('close');
+    expect(other.tabs.map((t) => t.id)).toEqual([1]);
+    expect(other.state.activeTabId).toBe(1);
+    await run();
+    expect(other.runs.state().state).toBe('cancelled');
+
+    // Stopped during its screenshot, which then finds no tab: cancelled, the capture kept without it.
+    const shooting = setup();
+    const stopping = new EventEmitter();
+    stopRunOnQuit(stopping as never, shooting.runs);
+    shooting.screenshot.mockImplementationOnce(async () => {
+      stopping.emit('before-quit');
+      return { status: 'refused', reason: 'no-tab' };
+    });
+    await shooting.runs.start(plan(pages(A, B), { screenshot: true }));
+    await run();
+    expect(shooting.runs.state()).toMatchObject({ state: 'cancelled', targets: [{ outcome: 'captured', screenshot: null }, { outcome: 'cancelled' }] });
+    expect(shooting.tabs.map((t) => t.id)).toEqual([1]);
+
+    // Stopped while the project is checked again, as a run starts: no tab is opened for it.
+    let live: (value: boolean) => void = () => undefined;
+    const starting = setup({ isLive: () => new Promise<boolean>((resolve) => (live = resolve)) });
+    const started = starting.runs.start(plan(pages(A)));
+    starting.runs.stop();
+    live(true);
+    expect(await started).toEqual({ status: 'refused', reason: 'no-tab' });
+    expect(starting.browser.newTab).not.toHaveBeenCalled();
+    expect(starting.runs.running()).toBeNull();
   });
 
   test('capture-run-applies-profiles', async () => {

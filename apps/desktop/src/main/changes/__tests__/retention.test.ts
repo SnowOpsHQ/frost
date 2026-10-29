@@ -463,8 +463,11 @@ describe('retention service', () => {
     // An old orphan file a screenshot is reusing right now: the sweep waits for the hash's lock, then
     // finds the new row and keeps the file.
     clock = Date.now();
-    const { service, repo, real, unlinked } = setup();
+    const { service, repo, files, real, unlinked } = setup();
     const id = await project(repo, 'Guides');
+    // A row (another file's): the database is not a fresh one, so the sweep runs.
+    await screenshot(repo, files, id, B, 'png kept');
+    unlinked.length = 0;
     const { sha256: hash } = await real.write(Buffer.from('png orphan'));
     utimesSync(real.fileFor(hash), new Date(clock - 2 * HOUR), new Date(clock - 2 * HOUR));
     const release = await real.lock(hash);
@@ -536,6 +539,50 @@ describe('retention service', () => {
     // No directory yet: nothing to do.
     unlinkSync(real.dir);
     expect(await service.sweepOrphans()).toEqual({ removed: 0, temporary: 0 });
+  });
+
+  test('sweep-skips-an-in-memory-database', async () => {
+    // The session database fell back to `:memory:`: the rows naming the files are in the file on disk.
+    clock = Date.now();
+    const { service, real, unlinked, log } = setup({ databaseFile: ':memory:' });
+    const orphan = (await real.write(Buffer.from('png on disk'))).sha256;
+    utimesSync(real.fileFor(orphan), new Date(clock - 2 * HOUR), new Date(clock - 2 * HOUR));
+    const tmp = path.join(real.dir, `${sha('tmp')}.png.tmp-0123456789abcdef`);
+    writeFileSync(tmp, 'x');
+    utimesSync(tmp, new Date(clock - 2 * HOUR), new Date(clock - 2 * HOUR));
+
+    expect(await service.sweepOrphans()).toEqual({ removed: 0, temporary: 0 });
+    expect(unlinked).toEqual([]);
+    expect(exists(real.fileFor(orphan))).toBe(true);
+    expect(exists(tmp)).toBe(true);
+    expect(log.mock.calls.map(([line]) => line).filter((line) => line.includes('sweep'))).toEqual(['retention: the orphan sweep was skipped (an in-memory database): 2 files left']);
+  });
+
+  test('sweep-skips-a-fresh-database', async () => {
+    // Moved aside as corrupt and recreated: no row here names the files, but the aside copy does.
+    clock = Date.now();
+    const { service, repo, files, real, unlinked, log } = setup();
+    const id = await project(repo, 'Guides');
+    const hashes = [];
+    for (const png of ['png one', 'png two']) {
+      const { sha256: hash } = await real.write(Buffer.from(png));
+      utimesSync(real.fileFor(hash), new Date(clock - 2 * HOUR), new Date(clock - 2 * HOUR));
+      hashes.push(hash);
+    }
+
+    expect(await service.sweepOrphans()).toEqual({ removed: 0, temporary: 0 });
+    // `startup` sweeps the same way.
+    await service.startup();
+    expect(unlinked).toEqual([]);
+    for (const hash of hashes) expect(exists(real.fileFor(hash))).toBe(true);
+    const lines = log.mock.calls.map(([line]) => line).filter((line) => line.includes('sweep'));
+    expect(lines).toEqual(['retention: the orphan sweep was skipped (a fresh database): 2 files left', 'retention: the orphan sweep was skipped (a fresh database): 2 files left']);
+
+    // Once a row exists, the sweep runs again: the unnamed old files go.
+    const kept = await screenshot(repo, files, id, A, 'png kept');
+    utimesSync(real.fileFor(kept), new Date(clock - 2 * HOUR), new Date(clock - 2 * HOUR));
+    expect(await service.sweepOrphans()).toEqual({ removed: 2, temporary: 0 });
+    expect(exists(real.fileFor(kept))).toBe(true);
   });
 
   test('usage-counts-measured-bytes', async () => {

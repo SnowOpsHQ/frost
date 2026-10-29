@@ -180,6 +180,7 @@ export interface IpcServices {
   readonly changes?: ChangesService;
   /** Change intelligence: screenshots of the active tab and their gallery (Phase 6 Task 5, `changes-service.ts`). */
   readonly screenshots?: ScreenshotsService;
+  /** Change intelligence: projects, their capture runs and their retention (Phase 6 Tasks 6–7, `projects-router.ts`). */
   readonly projects?: ProjectsService;
   /** The read-only DOM inspector of the active tab (Phase 6 Task 8, `inspector-router.ts`). */
   readonly inspector?: InspectorService;

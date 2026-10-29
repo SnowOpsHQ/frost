@@ -12,8 +12,9 @@ procedures are `changes-capture.feature.md`, the diff `changes-diff.feature.md`.
 `components/changes/` (`Changes.tsx`, `changes-icons.tsx`).
 
 ## Where it lives
-- A **Changes** rail item, after JavaScript, with frost's own icon. The panel has no rule categories
-  (`categories: []`): it scores nothing, so its rail item has no status dot.
+- A **Changes** rail item, after Phase 3's panels (SERP, Visibility), with frost's own icon. The
+  panel has no rule categories (`categories: []`): it scores nothing, so its rail item has no status
+  dot.
 - The panel is one per tab and page: a new tab or another URL starts afresh, while an in-page anchor
   (the same URL but its `#fragment`, `pageUrlOf`) is the same page and keeps its state.
 - The rail scrolls (no scrollbar drawn) in a window too short for every item.

@@ -340,6 +340,25 @@ describe('retention', () => {
     expect(await t.repo.screenshotHashes({ projectId: 'nope' })).toEqual([]);
   });
 
+  test('has-any-change-intel-rows', async () => {
+    // Projects alone do not count: a fresh database has Unfiled (and these two) but nothing captured.
+    expect(await t.repo.hasAnyChangeIntelRows()).toBe(false);
+    await t.repo.appendScreenshot(screenshotInput({ pageUrl: PAGE, createdAt: 5_000, sha256: sha256('a'), bytes: 10, projectId: p }));
+    expect(await t.repo.hasAnyChangeIntelRows()).toBe(true);
+
+    const other = openTestDb();
+    const gone = (await other.repo.createProject('Gone', 1))!.id;
+    await capture(other.repo, { url: PAGE, snapshot: snap(1), at: 1_000, projectId: gone });
+    expect(await other.repo.hasAnyChangeIntelRows()).toBe(true);
+    // A purge record alone (every capture purged) counts too.
+    expect(await other.repo.tombstoneProject(gone, 2_000)).toBe(true);
+    const everything = (await other.repo.planPurge({ projectId: gone, policy: { mode: 'all' }, now: 3_000 }))!;
+    expect((await other.repo.executePurge(everything, 'project-deleted', 3_000))?.status).toBe('purged');
+    expect(count(other.raw, 'ci_captures')).toBe(0);
+    expect(count(other.raw, 'ci_purges')).toBe(1);
+    expect(await other.repo.hasAnyChangeIntelRows()).toBe(true);
+  });
+
   test('compact-vacuums', async () => {
     // Purged rows leave free pages in the file; `compact` (VACUUM) gives them back, keeping every row.
     const big = (n: number) => `{"v":${n},"pad":"${'x'.repeat(100_000)}"}`;

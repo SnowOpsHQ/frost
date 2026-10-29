@@ -80,7 +80,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
      again every `captureRetryMs` while it answers `no-audit`, `busy` or `not-active`; `no-tab` ends the
      run (`tab-closed`), `no-project` ends it (`cancelled`), any other refusal fails the target;
   5. with screenshots asked, a viewport screenshot linked to the capture (`captureId`, the same search
-     parameters), asked again while it answers `not-active` and the target's time lasts; its size is
+     parameters), asked again while it answers `not-active` or `busy` (another screenshot of the tab
+     under way) and the target's time lasts; its size is
      the page area's below the sheet's band;
   6. the outcome (`RUN_TARGET_OUTCOMES`), with the capture's change count.
 - **Timing:** while its tab is not active the run waits (`waiting-for-tab`) and that time does not
@@ -91,6 +92,18 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   remaining targets are `cancelled`. A capture under way when Cancel comes stays, without its screenshot.
 - **End:** its tab closes if still open; the remembered tab is activated again only if the run's tab
   was the one in front (else the user's choice of tab stays) and the remembered one is still open.
+- **Quit:** a run never leaves its tab in the saved session (the next launch would restore it as one
+  of the user's tabs). The session store saves the strip as it changes and when the window closes
+  (its `close` event), and flushes on `will-quit` (`flushBeforeQuit`, after both). Phase 6's wiring
+  (`projects-main.ts`, `stopRunOnQuit`) stops the run, closing its tab **at once** (not when the run's
+  loop next looks), the remembered tab in front again as at its end, on:
+  - the app's `before-quit` (Quit from the menu or the dock: it comes before any window closes);
+  - each window's `close` (registered from `browser-window-created`, so before the controller's own
+    `close` listener saves the strip): closing the last window on Linux and Windows quits the app only
+    after the window closed, when `before-quit` is too late.
+  The run then ends `cancelled`, as a Cancel would; one stopped while it starts (its project being
+  checked again) opens no tab (`no-tab`). Limit: a crash or a killed process saves nothing
+  more, so a run tab already in the last saved strip stays there.
 - **State:** `RunState`, served by the long-poll `projects.runState(sinceVersion)` (answers at once
   when newer, else on the next change or after `runStateWatchTimeoutMs`; at most
   `maxPendingRunWatches` wait).
@@ -173,6 +186,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `capture-run-applies-profiles`, `capture-run-never-removes-a-pin`, `capture-run-cancels-on-tab-close`,
   `capture-run-cancels`, `capture-run-cancel-during-a-capture`, `capture-run-times-out-per-target`,
   `capture-run-restores-previous-tab`, `capture-run-keeps-the-users-tab`, `one-run-at-a-time`,
+  `capture-run-retries-a-busy-screenshot`, `capture-run-stops-on-quit` (the hook: `before-quit` and a
+  window's `close` close the run's tab at once, even during a capture),
   `capture-run-caps-targets`, `run-state-long-polls`; and over the real controller, render profiles and
   pins, `capture-run-pins.test.ts` `capture-run-never-removes-a-pin`. The capture's `pageUrl`:
   `service.test.ts` `capture-records-profile-and-params`.

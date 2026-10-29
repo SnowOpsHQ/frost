@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { openSessionStore, type SessionStore } from '@app/db';
-import type { RenderProfile } from '@app/specs/render-profile.spec';
+import type { AuditRenderProfile, RenderProfile } from '@app/specs/render-profile.spec';
 import { cancelAreaScript, measureScript, restoreScroll, scrollAndSettle, selectAreaScript, type PageMeasure } from '../page-script';
 import type { CapturedImage, ScreenshotTarget } from '../capture';
 import type { Bitmap, ScreenshotImaging } from '../imaging';
@@ -179,7 +179,7 @@ export interface ServiceSetup {
   readonly files: ScreenshotFiles;
   readonly imaging: ReturnType<typeof fakeImaging>;
   readonly tabs: Map<number, FakeTab>;
-  readonly state: { active: number | null; profiles: Map<number, RenderProfile | null> };
+  readonly state: { active: number | null; profiles: Map<number, RenderProfile | AuditRenderProfile | null> };
   readonly logs: string[];
   readonly revealed: string[];
   readonly cleanup: () => void;
@@ -196,7 +196,7 @@ export function serviceSetup(deps: Partial<ScreenshotsServiceDeps> = {}): Servic
     [1, new FakeTab()],
     [2, new FakeTab({ url: 'https://example.com/other' })],
   ]);
-  const state = { active: 1 as number | null, profiles: new Map<number, RenderProfile | null>() };
+  const state = { active: 1 as number | null, profiles: new Map<number, RenderProfile | AuditRenderProfile | null>() };
   const logs: string[] = [];
   const revealed: string[] = [];
   let clock = 1_700_000_000_000;
@@ -210,7 +210,11 @@ export function serviceSetup(deps: Partial<ScreenshotsServiceDeps> = {}): Servic
         const tab = tabs.get(tabId);
         return tab && !tab.destroyed ? tab : null;
       },
-      renderProfileOf: (tabId) => state.profiles.get(tabId) ?? null,
+      // A bare profile is a whole one (an `active` profile the page loaded under).
+      renderProfileOf: (tabId) => {
+        const profile = state.profiles.get(tabId) ?? null;
+        return profile === null ? null : 'partial' in profile ? profile : { profile, partial: false };
+      },
     },
     reveal: (file) => revealed.push(file),
     now: () => (clock += 1_000),

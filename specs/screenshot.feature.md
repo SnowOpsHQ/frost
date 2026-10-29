@@ -69,8 +69,12 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
 - Any main-frame navigation while it runs, an in-page one (`#fragment`, `history.pushState`) too,
   cancels it (`cancelled`): the screenshot would otherwise be recorded under a URL the tab no longer
   shows.
-- It records the tab's render profile in effect (`TabState.renderProfile`, unless `failed`; as
-  canonical JSON; one that does not fit its schema is recorded as none, with a log line) and its
+- It records the tab's render profile by the rule captures follow too
+  (`changes-capture.feature.md`, The render profile recorded): the profile set on the tab as it
+  captures (`TabState.renderProfile`), whatever its status, as canonical JSON; one that does not fit
+  its schema is recorded as none, with a log line. `ci_screenshots` has no `partial` column: a
+  partial one (`needsReload`, `applying` or `failed`) is recorded as the profile, with a log line
+  saying it was partial. It also records its
   search parameters (`searchParamsOf`; `null` until Phase 3, `TODO(phase-3-merge)`). Main-internal
   callers (Task 6's capture run) may pass a `captureId` and the query's search parameters.
 - Main builds the PNG (`createFromBitmap` → `toPNG`); one over `maxPngBytes` is refused
@@ -172,8 +176,10 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
   is not sane numbers is refused. Test: `page-script.test.ts`.
 - **Scenario: image-sizes-fit-their-limits** — thumbnails and previews fit their limits, never
   upscaled, a tall thumbnail showing the top. Test: `service.test.ts`.
-- **Scenario: screenshot-tabs-read-the-profile-in-effect** — a tab's render profile is recorded only
-  while it is in effect (not `failed`). Test: `service.test.ts`.
+- **Scenario: screenshot-tabs-read-the-profile-in-effect** — a tab's render profile is read by the
+  rule captures follow: an `active` loaded one is not partial; `needsReload`, `applying` and `failed`
+  ones are partial and still recorded (the row cannot say partial; the log does). Test:
+  `service.test.ts`.
 - **Scenario: screenshot-paths-are-main-only** — file names come only from hashes; a symlinked
   `screenshots` or `frost-captures` directory is refused (nothing written through it); a non-hex or
   traversal-looking hash is rejected by `fileFor`; files are `0600` and directories `0700` (POSIX).

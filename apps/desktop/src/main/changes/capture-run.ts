@@ -35,6 +35,8 @@ import { storedPageUrl } from './snapshot';
 // It only acts on its own tab while that tab is the active one: `navigate` acts on the active tab, and
 // a capture or a screenshot needs it in front. While the user has another tab in front the run waits,
 // and that time does not count against the target. Progress goes out as `RunState`, long-polled.
+// Quitting, or a window closing, stops a run with its tab closed at once (`stopRunOnQuit`): the
+// session saved then never holds it.
 
 /** A tab as the run reads it (`BrowserState.tabs`). */
 export interface RunTab {
@@ -112,6 +114,11 @@ export interface CaptureRuns {
   start(plan: RunPlan): Promise<StartRunAnswer>;
   /** Cancels the run under way; whether there was one. */
   cancel(): boolean;
+  /**
+   * Cancels the run under way and closes its tab now, not when its loop next looks (the tab in front
+   * before comes back, as at its end): quitting never leaves the run's tab in the saved session.
+   */
+  stop(): void;
   /** The project of the run under way, else `null`. */
   running(): string | null;
   state(): RunState;
@@ -180,9 +187,28 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     publish({ targets: current.targets.map((target) => (target.outcome === 'pending' || target.outcome === 'running' ? { ...target, outcome: 'cancelled' } : target)) });
   };
 
-  type Run = { readonly projectId: string; cancelled: boolean; wake: (() => void) | null };
+  type Run = { readonly projectId: string; cancelled: boolean; wake: (() => void) | null; tabId: number | null; readonly previous: number | null };
   /** The run under way (reserved as soon as one starts): its cancel flag and the wake-up of its current wait. */
   let active: Run | null = null;
+
+  /**
+   * Closes the run's tab if it is still open; the tab in front before comes back, but only if the
+   * run's tab was the one in front (else the user chose another, and keeps it).
+   */
+  const closeRunTab = (run: Run): void => {
+    const tabId = run.tabId;
+    run.tabId = null;
+    if (tabId === null) return;
+    try {
+      const state = browser.getState();
+      const open = state.tabs.some((tab) => tab.id === tabId);
+      const inFront = state.activeTabId === tabId;
+      if (open) browser.closeTab(tabId);
+      if (inFront && run.previous !== null && browser.getState().tabs.some((tab) => tab.id === run.previous)) browser.activateTab(run.previous);
+    } catch {
+      log('the run’s tab could not be closed');
+    }
+  };
 
   /** Waits `ms`, or until the run is cancelled. */
   const pause = (run: Run, ms: number): Promise<void> =>
@@ -322,8 +348,11 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         shot = { status: 'refused', reason: 'capture-failed' };
       }
       if (shot.status === 'saved') return done('saved');
-      // Another tab came to the front meanwhile: asked again while the target's time lasts.
-      if (shot.reason === 'not-active') {
+      // Cancelled (or stopped, its tab closed) meanwhile: the capture stays, without its screenshot.
+      if (run.cancelled) return done(null, 'cancelled');
+      // Another tab came to the front meanwhile, or another screenshot of the tab is under way: asked
+      // again while the target's time lasts.
+      if (shot.reason === 'not-active' || shot.reason === 'busy') {
         await pause(run, limits.captureRetryMs);
         continue;
       }
@@ -332,8 +361,8 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     }
   }
 
-  async function execute(run: Run, plan: RunPlan, groups: readonly RunGroup[], firstTab: number, previous: number | null): Promise<void> {
-    let tabId: number | null = firstTab;
+  async function execute(run: Run, plan: RunPlan, groups: readonly RunGroup[]): Promise<void> {
+    let tabId: number | null = run.tabId;
     let end: RunStateName = 'done';
     let index = 0;
     try {
@@ -348,6 +377,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
           }
           browser.closeTab(tabId!);
           tabId = openTab(groups[g]!.profile);
+          run.tabId = tabId;
           if (tabId === null) {
             log('no tab could be opened for the run');
             end = 'failed';
@@ -366,7 +396,8 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
           }
           if (visited.result !== null) setTarget(index, visited.result);
           index += 1;
-          const ended = visited.end ?? (run.cancelled ? 'cancelled' : null);
+          // Cancelled meanwhile (a `stop` also closed its tab): the run was cancelled, whatever the visit met.
+          const ended = run.cancelled ? 'cancelled' : visited.end;
           if (ended !== null) {
             end = ended;
             break groups;
@@ -375,17 +406,8 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       }
     } finally {
       cancelRest();
-      // Its tab goes (if still open); the tab in front before comes back, but only if the run's tab
-      // was the one in front (else the user chose another, and keeps it).
-      try {
-        const state = browser.getState();
-        const open = tabId !== null && state.tabs.some((tab) => tab.id === tabId);
-        const inFront = tabId !== null && state.activeTabId === tabId;
-        if (open) browser.closeTab(tabId!);
-        if (inFront && previous !== null && browser.getState().tabs.some((tab) => tab.id === previous)) browser.activateTab(previous);
-      } catch {
-        log('the run’s tab could not be closed');
-      }
+      // Its tab goes (if still open; `stop` may have closed it already).
+      closeRunTab(run);
       active = null;
       publish({ state: end });
       log(`run ${end}`);
@@ -399,7 +421,13 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       const targets = plan.targets.slice(0, limits.maxRunTargets);
       if (targets.length === 0) return { status: 'refused', reason: 'no-targets' };
       // Reserved at once: one run at a time, while the project is checked again.
-      const run: Run = { projectId: plan.projectId, cancelled: false, wake: null };
+      let previous: number | null = null;
+      try {
+        previous = browser.getState().activeTabId;
+      } catch {
+        previous = null;
+      }
+      const run: Run = { projectId: plan.projectId, cancelled: false, wake: null, tabId: null, previous };
       active = run;
       let live = true;
       try {
@@ -411,15 +439,15 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         active = null;
         return { status: 'refused', reason: 'not-found' };
       }
+      // Stopped (the app quitting) while the project was checked: no tab is opened for it.
+      if (run.cancelled) {
+        active = null;
+        return { status: 'refused', reason: 'no-tab' };
+      }
       const groups = groupByProfile(targets, plan.profile);
       const ordered = groups.flatMap((group) => group.targets);
-      let previous: number | null = null;
-      try {
-        previous = browser.getState().activeTabId;
-      } catch {
-        previous = null;
-      }
       const tabId = openTab(groups[0]!.profile);
+      run.tabId = tabId;
       const runId = uuid(now());
       const base = { runId, projectId: plan.projectId, current: 0, total: ordered.length, omitted: plan.targets.length - targets.length, screenshot: plan.screenshot };
       const initial = ordered.map((target): RunTarget => ({ kind: target.kind, label: target.label, outcome: 'pending', changeCount: null, screenshot: null }));
@@ -429,7 +457,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         return { status: 'refused', reason: 'no-tab' };
       }
       publish({ ...base, state: 'running', targets: initial });
-      void execute(run, plan, groups, tabId, previous);
+      void execute(run, plan, groups);
       return { status: 'started', runId };
     },
 
@@ -438,6 +466,14 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       active.cancelled = true;
       active.wake?.();
       return true;
+    },
+
+    stop() {
+      const run = active;
+      if (run === null) return;
+      run.cancelled = true;
+      run.wake?.();
+      closeRunTab(run);
     },
 
     running: () => active?.projectId ?? null,
@@ -465,4 +501,23 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       });
     },
   };
+}
+
+/** What `stopRunOnQuit` needs of Electron's `app` (and of each window it creates). */
+export interface QuitEvents {
+  on(event: 'before-quit', listener: () => void): unknown;
+  on(event: 'browser-window-created', listener: (event: unknown, window: { on(event: 'close', listener: () => void): unknown }) => void): unknown;
+}
+
+/**
+ * Stops the run under way (its tab closed at once) as the app quits or a window closes, before the
+ * session store saves the strip a last time and flushes it (`projects.feature.md`, Quit): on
+ * `before-quit`, and on each window's `close`, registered as the window is created so it runs before
+ * the browser controller's own `close` listener (which saves the strip).
+ */
+export function stopRunOnQuit(app: QuitEvents, runs: Pick<CaptureRuns, 'stop'>): void {
+  app.on('before-quit', () => runs.stop());
+  app.on('browser-window-created', (_event, window) => {
+    window.on('close', () => runs.stop());
+  });
 }

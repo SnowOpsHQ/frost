@@ -49,6 +49,7 @@ function setup(deps: Partial<ProjectsServiceDeps> = {}) {
   const runs = {
     start: vi.fn(async (_plan: RunPlan): Promise<StartRunAnswer> => ({ status: 'started', runId: uuidv7(tick()) })),
     cancel: vi.fn(() => true),
+    stop: vi.fn(() => undefined),
     running: vi.fn(() => state.running),
     state: vi.fn(() => IDLE),
     watch: vi.fn(async (_since: number) => IDLE),

@@ -37,7 +37,8 @@ import { createPurgeFiles, type PurgeFiles } from './purge-files';
 //   database file and its `-wal` by `stat`.
 // - Compact `VACUUM`s the session database after main's dialog, never during a capture run.
 // - The startup orphan sweep removes only regular, hash-named files no row names (and old crash
-//   leftovers of a write), never following a link.
+//   leftovers of a write), never following a link; it is skipped for an in-memory database and for
+//   a fresh one (no capture, screenshot or purge row) beside hash-named files.
 
 export interface RetentionServiceDeps {
   /** `SessionStore.changeIntel`. */
@@ -198,6 +199,13 @@ export function createRetentionService(deps: RetentionServiceDeps): MainRetentio
       const entries = await readdir(dir, { withFileTypes: true });
       const named = entries.filter((entry) => entry.isFile() && (SCREENSHOT_FILE_NAME_PATTERN.test(entry.name) || SCREENSHOT_TMP_NAME_PATTERN.test(entry.name)));
       if (named.length === 0) return { removed, temporary };
+      // The rows that would name these files may be elsewhere: the database file on disk (an
+      // in-memory fallback), or a copy moved aside as corrupt (a fresh database with none of its own).
+      const skipped = inMemory ? 'an in-memory database' : named.some((entry) => SCREENSHOT_FILE_NAME_PATTERN.test(entry.name)) && !(await store.hasAnyChangeIntelRows()) ? 'a fresh database' : null;
+      if (skipped !== null) {
+        log(`the orphan sweep was skipped (${skipped}): ${plural(named.length, 'file', 'files')} left`);
+        return { removed, temporary };
+      }
       const kept = new Set(await store.screenshotHashes());
       const cutoff = now() - ORPHAN_TMP_MIN_AGE_MS;
       for (const entry of named) {

@@ -348,16 +348,29 @@ describe('screenshots service', () => {
     expect(SCREENSHOT_LIMITS.thumbWidth).toBe(320);
   });
 
-  test('screenshot-tabs-read-the-profile-in-effect', () => {
-    const state = { activeTabId: 1, tabs: [{ id: 1, renderProfile: { profile: PHONE, source: 'tab', pinned: false, needsReload: false, status: 'active' } }, { id: 2, renderProfile: { profile: PHONE, source: 'tab', pinned: false, needsReload: false, status: 'failed' } }, { id: 3, renderProfile: null }] };
+  test('screenshot-tabs-read-the-profile-in-effect', async () => {
+    // The rule captures follow (`profile-in-effect.ts`): the profile set on the tab, partial unless it is active and the page loaded under it.
+    const profiled = (needsReload: boolean, status: string) => ({ profile: PHONE, source: 'tab', pinned: false, needsReload, status });
+    const state = { activeTabId: 1, tabs: [{ id: 1, renderProfile: profiled(false, 'active') }, { id: 2, renderProfile: profiled(false, 'failed') }, { id: 3, renderProfile: null }, { id: 5, renderProfile: profiled(true, 'active') }, { id: 6, renderProfile: profiled(false, 'applying') }] };
     const tabs = screenshotTabs({ getState: () => state as never }, () => null);
     expect(tabs.activeTabId()).toBe(1);
-    expect(tabs.renderProfileOf(1)).toEqual(PHONE);
-    // A failed profile is not in effect: the page shows unemulated.
-    expect(tabs.renderProfileOf(2)).toBeNull();
+    expect(tabs.renderProfileOf(1)).toEqual({ profile: PHONE, partial: false });
+    // A failed profile is recorded as captures record it: the profile, partial.
+    expect(tabs.renderProfileOf(2)).toEqual({ profile: PHONE, partial: true });
     expect(tabs.renderProfileOf(3)).toBeNull();
     expect(tabs.renderProfileOf(4)).toBeNull();
+    // Set after the load ("Reload to apply"): an audit's `partial`.
+    expect(tabs.renderProfileOf(5)).toEqual({ profile: PHONE, partial: true });
+    expect(tabs.renderProfileOf(6)).toEqual({ profile: PHONE, partial: true });
+
+    // The row records the profile (it has no `partial` column); the log says it was partial.
+    const { service, raw, state: shots, logs } = start();
+    shots.profiles.set(1, { profile: PHONE, partial: true });
+    saved(await service.take(1, { kind: 'viewport' }));
+    expect(rows(raw)[0]).toMatchObject({ render_profile: canonicalJson(PHONE) });
+    expect(logs).toEqual(["screenshots: the tab's render profile was not all in effect: recorded without partial"]);
   });
+
   test('area-selection-cancels', async () => {
     const { service, tabs, state, raw, files } = start();
     const tab = tabs.get(1)!;
