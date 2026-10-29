@@ -126,7 +126,7 @@ line maps to one named test.
 - `logs-carry-no-secret` — across the whole flow no log line carries a token, code, verifier, `state` or the client secret.
 - `refresh-backs-off` — after a failed refresh no refresh is sent within the backoff (1 s, doubling, at most 5 minutes) and callers get the failure; a success resets it.
 - `connection-owned-by-account` — the blob carries the owner; `accessToken` for another (or no) account answers `not-connected` and sends nothing; a connect whose exchange lands for another account is revoked.
-- `memory-only-revoked-on-dispose` — a refresh token never written to the keychain (memory-only store, or a failed write) is reported `memory-only` and revoked by `dispose`, which answers that revocation; a persisted one is not revoked.
+- `memory-only-revoked-on-dispose` — a refresh token never written to the keychain (memory-only store, a write that throws, or a persistent store's write that resolves `false`) is reported `memory-only` and revoked by `dispose`, which answers that revocation; a quit before the write has landed waits for its answer and revokes on `false`; a persisted one is not revoked.
 - `dispose-during-exchange-awaited` — `dispose` while a code is being exchanged answers a promise that settles only after the exchange landed and its tokens were revoked.
 
 ## Redaction (`apps/desktop/src/main/gsc/__tests__/redact.test.ts`)

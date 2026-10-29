@@ -71,11 +71,13 @@ export interface SecretStore {
    */
   read(name: SecretName): Promise<string | null>;
   /**
-   * Stores `value`: this run reads it at once; resolves once it is on disk (never rejects). A failed
-   * disk write keeps it for this run and removes the stale file. Throws (synchronously) for an unknown
-   * name, a value that is not a string, or one longer than `MAX_SECRET_CHARS`.
+   * Stores `value`: this run reads it at once. Resolves `true` once it is on disk, `false` when it is
+   * kept for this run only: a memory-only store, or a failed encrypt or disk write, which also removes
+   * the stale file (never rejects). Callers that must not outlive the run with a value only in memory
+   * (a grant to revoke at quit) decide from this, not from `persistent`. Throws (synchronously) for an
+   * unknown name, a value that is not a string, or one longer than `MAX_SECRET_CHARS`.
    */
-  write(name: SecretName, value: string): Promise<void>;
+  write(name: SecretName, value: string): Promise<boolean>;
   /** Deletes `name`: this run reads `null` at once; resolves once the file is gone (never rejects). */
   delete(name: SecretName): Promise<void>;
   /** Deletes every blob (and stray temporary files). */
@@ -172,7 +174,8 @@ export async function createSecretStore(options: CreateSecretStoreOptions): Prom
     fs.chmodSync(dir, SECRETS_DIR_MODE);
   };
 
-  const persist = async (name: SecretName, value: string): Promise<void> => {
+  /** Whether `value` reached the disk. */
+  const persist = async (name: SecretName, value: string): Promise<boolean> => {
     const file = fileOf(name);
     const temp = `${file}.${randomBytes(6).toString('hex')}${SECRET_TEMP_SUFFIX}`;
     try {
@@ -183,11 +186,13 @@ export async function createSecretStore(options: CreateSecretStoreOptions): Prom
       fs.writeFileSync(temp, encrypted, { mode: SECRET_FILE_MODE, flag: 'wx' });
       fs.chmodSync(temp, SECRET_FILE_MODE);
       fs.renameSync(temp, file);
+      return true;
     } catch (error) {
       // Never leave an older value on disk to come back at the next start.
       removeFile(temp);
       removeFile(file);
       log(`secret store: could not write ${name} (${errorCode(error)}); kept for this run only`);
+      return false;
     }
   };
 
@@ -250,8 +255,8 @@ export async function createSecretStore(options: CreateSecretStoreOptions): Prom
       if (value.length > MAX_SECRET_CHARS) throw new Error('secret store: value too long');
       values.set(name, value);
       changed(name);
-      if (!persistent) return Promise.resolve();
-      return enqueue(() => persist(name, value), undefined);
+      if (!persistent) return Promise.resolve(false);
+      return enqueue(() => persist(name, value), false);
     },
     delete(name) {
       checkName(name);
@@ -289,7 +294,7 @@ export function memorySecretStore(): SecretStore {
   return {
     persistent: false,
     read: (name) => (checkName(name), Promise.resolve(values.get(name) ?? null)),
-    write: (name, value) => (checkName(name), values.set(name, value), Promise.resolve()),
+    write: (name, value) => (checkName(name), values.set(name, value), Promise.resolve(false)),
     delete: (name) => (checkName(name), values.delete(name), Promise.resolve()),
     clear: () => (values.clear(), Promise.resolve()),
     pending: () => false,

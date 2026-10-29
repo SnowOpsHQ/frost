@@ -200,16 +200,38 @@ export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
 
   // ---- The store (never throws: a failing keychain keeps the connection for this run) ------------
 
-  /** Whether the token reached the keychain (a memory-only store, or a failed write: this run only). */
-  const save = (token: string, by: string): boolean => {
+  /** The last save still on its way to the disk: the quit waits for it before deciding to revoke. */
+  let saving: Promise<void> | null = null;
+
+  /**
+   * Stores the connection. It counts as kept for the next run while the store is persistent, until
+   * the write reports otherwise: a failed encrypt or disk write keeps it for this run only.
+   */
+  const save = (token: string, by: string): void => {
+    persisted = store.persistent;
+    let written: Promise<boolean>;
     try {
       // This run reads it at once; the disk follows in order (the store's queue).
-      void store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: token, scope: GSC_SCOPE, owner: by }));
-      return store.persistent;
+      written = store.write(GSC_SECRET, JSON.stringify({ v: 1, refreshToken: token, scope: GSC_SCOPE, owner: by }));
     } catch {
       log('gsc: the connection could not be stored; kept for this run only');
-      return false;
+      persisted = false;
+      return;
     }
+    const run: Promise<void> = written
+      .then(
+        (onDisk) => {
+          if (onDisk || refreshToken !== token || !persisted) return;
+          persisted = false;
+          log('gsc: the connection could not be stored; kept for this run only');
+          changed();
+        },
+        () => undefined,
+      )
+      .finally(() => {
+        if (saving === run) saving = null;
+      });
+    saving = run;
   };
   const forget = (): void => {
     try {
@@ -351,7 +373,7 @@ export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
     refreshFailures = 0;
     retryAt = 0;
     generation++;
-    persisted = save(newRefresh, p.owner);
+    save(newRefresh, p.owner);
     error = null;
     log('gsc: connected');
     changed();
@@ -386,7 +408,7 @@ export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
     if (value.refresh_token !== undefined && value.refresh_token !== token) {
       pin(value.refresh_token);
       refreshToken = value.refresh_token;
-      persisted = save(value.refresh_token, owner ?? '');
+      save(value.refresh_token, owner ?? '');
     }
     access = { token: value.access_token, expiresAt: deps.now() + value.expires_in * 1000 };
     return { ok: true, token: value.access_token };
@@ -508,8 +530,10 @@ export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
     dispose() {
       disposed = true;
       if (pending) dropPending(pending, null, { closeListener: true });
-      // A grant this run cannot keep is not left alive at Google.
-      if (refreshToken !== null && !persisted) {
+      // A grant this run cannot keep is not left alive at Google. With a save still on its way to the
+      // disk this is decided once it has landed: a failed write is only known then.
+      const revokeUnkept = (): void => {
+        if (refreshToken === null || persisted) return;
         const token = refreshToken;
         refreshToken = null;
         owner = null;
@@ -518,9 +542,15 @@ export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
         generation++;
         log('gsc: revoking a connection kept for this run only');
         void revoke(token);
-      }
-      if (inflight.size === 0) return null;
+      };
+      const landing = saving;
+      if (landing === null) revokeUnkept();
+      if (landing === null && inflight.size === 0) return null;
       return (async () => {
+        if (landing !== null) {
+          await landing;
+          revokeUnkept();
+        }
         while (inflight.size > 0) await Promise.allSettled([...inflight]);
       })();
     },

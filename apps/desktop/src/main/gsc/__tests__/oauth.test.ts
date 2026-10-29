@@ -420,6 +420,27 @@ describe('Search Console connection', () => {
     const second = h.google.refreshTokens.at(-1)!;
     await unsaved.dispose();
     expect(h.google.revoked).toContain(second);
+    // A persistent store whose write did not reach the disk (the encrypt or the disk failed): the same,
+    // also when the quit comes before the write has landed.
+    const refused = { ...memoryStore(), write: async () => false };
+    const lost = await authWith({ store: refused });
+    await connect(lost);
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the write's answer lands
+    expect(lost.persisted()).toBe(false);
+    const third = h.google.refreshTokens.at(-1)!;
+    await lost.dispose();
+    expect(h.google.revoked).toContain(third);
+    let land!: (onDisk: boolean) => void;
+    const slow = { ...memoryStore(), write: () => new Promise<boolean>((resolve) => (land = resolve)) };
+    const landing = await authWith({ store: slow });
+    await connect(landing);
+    const fourth = h.google.refreshTokens.at(-1)!;
+    const quit = landing.dispose();
+    expect(quit).toBeInstanceOf(Promise);
+    expect(h.google.revoked).not.toContain(fourth);
+    land(false);
+    await quit;
+    expect(h.google.revoked).toContain(fourth);
     // Persisted: kept for the next run, not revoked.
     const kept = await authWith({ store: memoryStore() });
     await connect(kept);

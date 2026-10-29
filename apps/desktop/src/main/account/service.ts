@@ -172,7 +172,7 @@ export async function createAccountService(deps: AccountServiceDeps): Promise<Ac
       status: s,
       user: user ? { email: user.email, name: user.name } : null,
       entitlements: ents,
-      keychain: store.persistent ? 'persistent' : 'memory-only',
+      keychain: (account ? accountKept : store.persistent) ? 'persistent' : 'memory-only',
       requestId: showsRequest ? (pending?.request.requestId ?? null) : null,
       fingerprint: showsRequest ? (pending?.request.fingerprint ?? null) : null,
       error,
@@ -227,9 +227,32 @@ export async function createAccountService(deps: AccountServiceDeps): Promise<Ac
     return true;
   };
 
+  /**
+   * Whether the signed-in account's token outlives this run: counted so while the store is
+   * persistent, until its write reports otherwise (a failed encrypt or disk write). The last write
+   * still on its way to the disk: the quit waits for it before deciding to revoke.
+   */
+  let accountKept = false;
+  let accountSaving: Promise<void> | null = null;
+
   /** This run reads it at once; the disk follows in order (the store's queue; the quit waits for it). */
   const writeAccount = (value: StoredAccount): void => {
-    void store.write(ACCOUNT_SECRET, JSON.stringify(value));
+    accountKept = store.persistent;
+    const run: Promise<void> = store
+      .write(ACCOUNT_SECRET, JSON.stringify(value))
+      .then(
+        (onDisk) => {
+          if (onDisk || account?.token !== value.token || !accountKept) return;
+          accountKept = false;
+          log('account: the session could not be stored; kept for this run only');
+          bump();
+        },
+        () => undefined,
+      )
+      .finally(() => {
+        if (accountSaving === run) accountSaving = null;
+      });
+    accountSaving = run;
   };
   const deleteAccount = (): void => {
     void store.delete(ACCOUNT_SECRET);
@@ -393,6 +416,7 @@ export async function createAccountService(deps: AccountServiceDeps): Promise<Ac
         deleteAccount();
       } else {
         account = parsed.data;
+        accountKept = true;
         remember(account.token, account.user.email);
       }
     }
@@ -540,16 +564,26 @@ export async function createAccountService(deps: AccountServiceDeps): Promise<Ac
       clearInterval(interval);
       unsubscribe?.();
       if (pending) dropPending(pending, null, { closeListener: true });
-      // A token kept for this run only (no keychain) cannot be used after it: revoked now, so it does
-      // not stay valid on the backend (the quit is held for it, bounded).
-      if (account && !store.persistent) {
+      // A token kept for this run only (no keychain, or a write that failed) cannot be used after it:
+      // revoked, so it does not stay valid on the backend (the quit is held for it, bounded). With a
+      // write still on its way to the disk this is decided once it has landed.
+      const revokeUnkept = (): void => {
+        if (!account || accountKept) return;
         const token = account.token;
         account = null;
         refreshing = null;
         void revoke(token);
-      }
+      };
+      const landing = accountSaving;
+      if (landing === null) revokeUnkept();
       for (const waiter of waiters.splice(0)) waiter.resolve(state());
       listeners.clear();
+      if (landing !== null) {
+        return landing.then(() => {
+          revokeUnkept();
+          return Promise.allSettled([...revoking, ...exchanging]).then(() => undefined);
+        });
+      }
       const outstanding = [...revoking, ...exchanging];
       return outstanding.length === 0 ? null : Promise.allSettled(outstanding).then(() => undefined);
     },

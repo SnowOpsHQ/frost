@@ -131,17 +131,17 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
   `none` for every flag and never fires.
 
 ## Secret store (`apps/desktop/src/main/account/__tests__/secret-store.test.ts`)
-- `secret-round-trip` — a written blob reads back, also from a new instance; on disk it is the `safeStorage` ciphertext, not the value.
+- `secret-round-trip` — a written blob reads back, also from a new instance; `write` resolves `true` once it is on disk, which holds the `safeStorage` ciphertext, not the value.
 - `secret-file-modes` — the file is `0600`, the directory `0700`, and no temporary file is left.
 - `basic-text-is-memory-only` — with Linux `basic_text` nothing is written to disk and `persistent` is false; values live for the run.
 - `unknown-backend-is-memory-only` — with Linux `unknown`, as `basic_text`.
-- `encryption-unavailable-is-memory-only` — with encryption unavailable, as `basic_text`.
+- `encryption-unavailable-is-memory-only` — with encryption unavailable, as `basic_text`; `write` resolves `false`.
 - `undecryptable-secret-is-kept` — before the keychain worked in this run, a blob that does not decrypt reads as absent but its file stays (a later read may succeed); the log names the blob only.
 - `corrupt-secret-is-deleted` — after a decrypt or encrypt succeeded, a blob that does not decrypt is deleted; an empty file is deleted at once.
 - `secret-store-needs-app-ready` — creating the store before the app is ready throws.
 - `secret-names-allowlisted` — a name outside `SECRET_NAMES` (or a path) is refused, as is an over-long value.
 - `secret-delete-and-clear` — `delete(name)` and `clear()` remove blobs (and stray temporary files).
-- `failed-write-leaves-no-stale-value` — when the rename fails, the old file is removed and the run keeps the new value.
+- `failed-write-leaves-no-stale-value` — when the rename or the encrypt fails, the old file is removed and the run keeps the new value; `write` resolves `false` although the store is `persistent`.
 - `secret-reencrypts-when-asked` — a blob whose decrypt answers `shouldReEncrypt` reads its value and is written again with the current key.
 - `keychain-check-is-bounded` — an asynchronous encryptor that never answers whether it is available makes the store memory-only after `KEYCHAIN_CHECK_TIMEOUT_MS`.
 - `secret-writes-are-ordered` — a write, a delete and a write in a row leave the last on disk; a read whose decrypt finishes after a newer write answers the newer value and does not bring the old one back; `whenIdle()` resolves once the disk has caught up, and `pending()` says whether it has not.

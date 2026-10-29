@@ -22,7 +22,7 @@ export interface MemoryStore {
   persistent: boolean;
   readonly values: Map<SecretName, string>;
   read(name: SecretName): Promise<string | null>;
-  write(name: SecretName, value: string): Promise<void>;
+  write(name: SecretName, value: string): Promise<boolean>;
   delete(name: SecretName): Promise<void>;
 }
 
@@ -32,7 +32,7 @@ export function memoryStore(persistent = true): MemoryStore {
     persistent,
     values,
     read: async (name) => values.get(name) ?? null,
-    write: async (name, value) => void values.set(name, value),
+    write: async (name, value) => (values.set(name, value), persistent),
     delete: async (name) => void values.delete(name),
   };
 }

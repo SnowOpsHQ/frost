@@ -54,7 +54,8 @@ describe('secret store', () => {
     const store = await create({ log });
     expect(store.persistent).toBe(true);
     expect(await store.read('account')).toBeNull();
-    await store.write('account', SECRET);
+    // Resolves true: on disk.
+    expect(await store.write('account', SECRET)).toBe(true);
     expect(await store.read('account')).toBe(SECRET);
     expect(files()).toEqual(['account.bin']);
     const onDisk = readFileSync(path.join(dir, 'account.bin'));
@@ -118,7 +119,7 @@ describe('secret store', () => {
       for (const safeStorage of [fakeSafeStorage({ available: false }), rejecting]) {
         const store = await create({ safeStorage, platform });
         expect(store.persistent, platform).toBe(false);
-        await store.write('account', SECRET);
+        expect(await store.write('account', SECRET)).toBe(false);
         expect(await store.read('account')).toBe(SECRET);
         expect(existsSync(dir)).toBe(false);
       }
@@ -260,7 +261,9 @@ describe('secret store', () => {
     // A failing encryptor is the same: kept for the run, nothing stale left.
     await (await create()).write('gsc', 'old-gsc');
     const refusing = await create({ safeStorage: { ...fakeSafeStorage(), encryptStringAsync: vi.fn(() => Promise.reject(new Error('encryption failed'))) }, log });
-    await refusing.write('gsc', 'new-gsc');
+    // The store is persistent, but this write is not on disk: it says so.
+    expect(refusing.persistent).toBe(true);
+    expect(await refusing.write('gsc', 'new-gsc')).toBe(false);
     expect(await refusing.read('gsc')).toBe('new-gsc');
     expect(files()).not.toContain('gsc.bin');
   });

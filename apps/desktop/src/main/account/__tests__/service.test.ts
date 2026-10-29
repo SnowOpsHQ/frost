@@ -42,7 +42,7 @@ function fakeStore(persistent = true, initial: Record<string, string> = {}) {
     persistent,
     values,
     read: vi.fn(async (name: string) => values.get(name) ?? null),
-    write: vi.fn(async (name: string, value: string) => void values.set(name, value)),
+    write: vi.fn(async (name: string, value: string) => (values.set(name, value), persistent)),
     delete: vi.fn(async (name: string) => void values.delete(name)),
   };
 }
@@ -648,6 +648,16 @@ describe('account sign-in flow', () => {
     expect(h.api.signOut).toHaveBeenCalledExactlyOnceWith(TOKEN);
     release();
     await wait;
+    // A persistent store whose write did not reach the disk: this run only, so the same.
+    const refused = fakeStore();
+    refused.write.mockImplementation(async (name: string, value: string) => (refused.values.set(name, value), false));
+    const lost = await harness({ store: refused });
+    await toSignedIn(lost);
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the write's answer lands
+    expect(stateOf(lost).keychain).toBe('memory-only');
+    lost.api.signOut.mockClear();
+    await lost.service.dispose();
+    expect(lost.api.signOut).toHaveBeenCalledExactlyOnceWith(TOKEN);
     // A persistent account outlives the run: nothing is revoked.
     const kept = await harness();
     await toSignedIn(kept);

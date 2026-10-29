@@ -37,7 +37,7 @@ function memoryStore() {
   return {
     blobs,
     read: vi.fn(async (name: SecretName) => blobs.get(name) ?? null),
-    write: vi.fn(async (name: SecretName, value: string) => void blobs.set(name, value)),
+    write: vi.fn(async (name: SecretName, value: string) => (blobs.set(name, value), true)),
     delete: vi.fn(async (name: SecretName) => void blobs.delete(name)),
   };
 }

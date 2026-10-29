@@ -131,7 +131,7 @@ renderer never sees a token". Each line maps to one named test.
 - `entitlements-none-unless-signed-in` — a snapshot held without a stored account is cleared at start; `entitlements()` is `none` while `confirming`.
 - `user-id-for-main-only` — main's `userId()` is the confirmed account's ID (`null` while signed out or `confirming`), and `onChange` listeners are called after each change (Search Console binds its connection to that ID); neither is on the IPC `AccountService`.
 - `memory-only-keychain-signs-in` — with a memory-only store sign-in works for the run and the state says `memory-only`.
-- `memory-only-token-revoked-on-dispose` — with a memory-only store, `dispose()` (the quit) revokes the signed-in account's token and answers the revocation to hold the quit for; with a persistent store it revokes nothing (the token outlives the run).
+- `memory-only-token-revoked-on-dispose` — with a memory-only store, or a persistent one whose write resolved `false` (the keychain state says `memory-only`), `dispose()` (the quit) revokes the signed-in account's token and answers the revocation to hold the quit for; a token on disk is not revoked (it outlives the run).
 - `watch-long-polls` — `watch` answers at once for an older version, else at the next change; aborting releases it; more than `MAX_PENDING_ACCOUNT_WATCHES` answer the oldest early.
 - `logs-carry-no-secret` — across every path above, the log never contains the fake token, code, verifier, `state`, snapshot or email.
 
