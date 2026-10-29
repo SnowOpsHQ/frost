@@ -122,7 +122,8 @@ describe('MCP manager with the fake server (no sandbox)', () => {
     expect(spawn).toHaveBeenCalledTimes(1);
     const [command, args, options] = spawn.mock.calls[0]!;
     expect([command, args]).toEqual([node, [FIXTURE]]);
-    expect(options).toMatchObject({ shell: false, detached: true });
+    // A process group of its own on POSIX (`stdio.ts`); Windows has none, so it is not detached there.
+    expect(options).toMatchObject({ shell: false, detached: process.platform !== 'win32' });
     expect(Object.keys(options.env).sort()).toEqual(['HOME', 'PATH']);
     expect(options.env['HOME']).toBe(options.cwd);
     expect(fs.readdirSync(options.cwd)).toEqual([]);
