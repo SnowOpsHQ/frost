@@ -13,6 +13,7 @@ import {
   TOOL_RESULT_MAX_CHARS,
   type AgentToolName,
 } from '@app/specs/agent-tools.spec';
+import { PROBE_AGENT_IDS, PROBE_LIMITS } from '@app/specs/visibility-probes.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 
 export interface AgentToolDefinition<N extends AgentToolName = AgentToolName, S extends z.ZodType = z.ZodType> {
@@ -146,7 +147,7 @@ export const visibilityProbesTool = defineTool(
 
 export const runVisibilityProbesTool = defineTool(
   'run_visibility_probes',
-  `Fetches the page in the user's current tab as search and AI crawlers would (once as frost's own browser and once with each crawler's user agent, plus the site's robots.txt), waits for the run and returns what each was served, as visibility_probes does. The user may be asked to allow it first; it works only while the chat's tab is the tab on screen. ${UNTRUSTED_OUTPUT_NOTE}`,
+  `Fetches the page in the user's current tab as search and AI crawlers would (up to ${PROBE_LIMITS.maxRequests} requests: ${PROBE_AGENT_IDS.length} user agents, frost's own browser's and each crawler's, redirects followed, without cookies; robots.txt may come from cache), waits for the run and returns what each was served, as visibility_probes does. The user may be asked to allow it first. It works only while the chat's tab is the tab on screen and only for public pages, runs at most once per page in a turn and not again within a minute (a repeat answers the last results with reused: true). Stopping the chat stops the wait; a run already started finishes. ${UNTRUSTED_OUTPUT_NOTE}`,
   z.strictObject({}),
 );
 

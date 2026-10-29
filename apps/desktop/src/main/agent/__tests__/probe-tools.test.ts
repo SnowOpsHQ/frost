@@ -5,8 +5,8 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createFakeProbesPort, FAKE_PROBE_REPORT } from '@app/ai-skills/fakes';
 import { canGrant, grantOriginFor } from '@app/specs/agent-approvals.spec';
-import { PROBE_TOOL_LIMITS, PROBE_TOOL_REASONS, PROBE_TOOL_SOURCE } from '@app/specs/agent-search-tools.spec';
-import type { ProbeReport } from '@app/ai-skills';
+import { PROBE_TOOL_LIMITS, PROBE_TOOL_REASONS, PROBE_TOOL_SOURCE, PROBE_RUN_MAX_REQUESTS, PROBE_RUN_USER_AGENTS } from '@app/specs/agent-search-tools.spec';
+import type { ProbeReport, ProbesPort } from '@app/ai-skills';
 import { resolveAgentPorts } from '../ports';
 import { createPageToolRunner, type PageContents } from '../tools';
 import { RUN_PROBES_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
@@ -17,7 +17,17 @@ const PAGE = 'https://example.com/products';
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
+
+/** A runner over `port` on a tab showing `PAGE` (each one with its own run memory). */
+const directRunner = (port: ProbesPort, url = PAGE) =>
+  createPageToolRunner({
+    contentsOf: () => ({ executeJavaScriptInIsolatedWorld: async () => null, getURL: () => url, isDestroyed: () => false }),
+    audit: () => ({ status: 'pending', url: '' }),
+    navigate: async () => ({ status: 'no-tab' }),
+    ports: resolveAgentPorts({ probes: port }),
+  });
 
 /** A broker whose real page tool runner reads `port`, on tab 7 showing `tab.url` (its WebContents too). */
 async function setup(port = createFakeProbesPort({ latest: { status: 'ok', data: { ...FAKE_PROBE_REPORT, url: PAGE } } }), options: Parameters<typeof setupBroker>[0] = {}) {
@@ -87,7 +97,7 @@ describe('visibility probe tools', () => {
     expect(await s.settle('call-1')).toMatchObject({ ok: true, output: { data: { started: true } } });
     expect(s.broker.pending()).toEqual([]);
     // The grant doesn't cover another origin.
-    s.moveTo('https://other.example/page');
+    s.moveTo('https://shop.example.org/page');
     s.fake.invoke('call-2', 'run_visibility_probes', {});
     await flush();
     expect(s.broker.pending()).toHaveLength(1);
@@ -126,13 +136,20 @@ describe('visibility probe tools', () => {
     await vi.advanceTimersByTimeAsync(PROBE_TOOL_LIMITS.pollMs * 4);
     expect(await pending).toMatchObject({ ok: true, data: { started: true, status: 'done', agentsTotal: 2 } });
     expect(reads).toBe(4);
-    // Stopped while waiting: the call fails, and polling ends.
+    // Stopped while waiting: the call fails and polling ends; the run itself was started once and is
+    // not stopped (Phase 3's run has no stop: it finishes on its own).
     reads = 0;
+    let runs = 0;
+    const stopPort = { ...port, run: async () => ((runs += 1), { status: 'ok' as const, data: { started: true } }) };
     const stop = new AbortController();
-    const stopped = runner.run('run_visibility_probes', {}, { ...context, signal: stop.signal });
+    const stopped = directRunner(stopPort).run('run_visibility_probes', {}, { ...context, signal: stop.signal });
     await vi.advanceTimersByTimeAsync(PROBE_TOOL_LIMITS.pollMs);
     stop.abort();
     expect(await stopped).toEqual({ ok: false, code: 'failed' });
+    expect(runs).toBe(1);
+    const readsAtStop = reads;
+    await vi.advanceTimersByTimeAsync(PROBE_TOOL_LIMITS.pollMs * 4);
+    expect(reads).toBe(readsAtStop);
   });
 
   test('run-visibility-probes-approval-card-says-what-it-fetches', async () => {
@@ -147,5 +164,64 @@ describe('visibility probe tools', () => {
     } finally {
       s.stop();
     }
+  });
+
+  test('run-visibility-probes-capped-per-turn-and-cooled-down', async () => {
+    let clock = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const s = await setup(undefined, { grants: [{ tool: 'run_visibility_probes', origin: 'https://example.com', createdAt: 1 }] });
+    // A model looping on the tool under a grant: exactly one run.
+    for (let i = 1; i <= 6; i += 1) {
+      s.fake.invoke(`call-${i}`, 'run_visibility_probes', {});
+      const result = await s.settle(`call-${i}`);
+      expect(result).toMatchObject({ ok: true, output: { data: i === 1 ? { started: true, status: 'done' } : { reused: true, status: 'done', url: PAGE } } });
+    }
+    expect(s.port.calls.filter((call) => call.method === 'run')).toHaveLength(1);
+    expect(s.broker.pending()).toEqual([]);
+    // A new turn within the cooldown: still reused.
+    s.broker.register('chat-1', { tabId: 7, allowedTools: ['run_visibility_probes'] });
+    clock += PROBE_TOOL_LIMITS.cooldownMs - 1;
+    s.fake.invoke('call-next', 'run_visibility_probes', {});
+    expect(await s.settle('call-next')).toMatchObject({ ok: true, output: { data: { reused: true } } });
+    expect(s.port.calls.filter((call) => call.method === 'run')).toHaveLength(1);
+    // After it, a new turn may run again (once).
+    s.broker.register('chat-1', { tabId: 7, allowedTools: ['run_visibility_probes'] });
+    clock += 2;
+    s.fake.invoke('call-later', 'run_visibility_probes', {});
+    expect(await s.settle('call-later')).toMatchObject({ ok: true, output: { data: { started: true } } });
+    expect(s.port.calls.filter((call) => call.method === 'run')).toHaveLength(2);
+    // Reused with no report for the page: the cooldown sentence.
+    const empty = directRunner(createFakeProbesPort({ latest: { status: 'unavailable', reason: PROBE_TOOL_REASONS.idle, state: 'idle' } }));
+    const context = { tabId: 7, signal: new AbortController().signal, via: 'approval' as const, expectedOrigin: 'https://example.com', expectedUrl: PAGE };
+    await empty.run('run_visibility_probes', {}, context);
+    expect(await empty.run('run_visibility_probes', {}, context)).toEqual({ ok: true, data: { reused: true, unavailable: PROBE_TOOL_REASONS.cooldown }, source: PROBE_TOOL_SOURCE });
+    // A start that didn't happen (not the active tab) doesn't count.
+    const notActive = createFakeProbesPort({ run: { status: 'ok', data: { started: false } } });
+    const inactive = directRunner(notActive);
+    await inactive.run('run_visibility_probes', {}, context);
+    await inactive.run('run_visibility_probes', {}, context);
+    expect(notActive.calls.filter((call) => call.method === 'run')).toHaveLength(2);
+  });
+
+  test('run-visibility-probes-private-page-never-asks', async () => {
+    for (const url of ['http://localhost:3000/admin', 'http://192.168.1.4/', 'http://intranet/wiki', 'https://printer.local/']) {
+      const s = await setup(undefined, { tabUrl: url });
+      s.fake.invoke('call-1', 'run_visibility_probes', {});
+      expect(await s.settle('call-1'), url).toEqual({ ok: true, output: { untrusted: true, source: PROBE_TOOL_SOURCE, data: { unavailable: PROBE_TOOL_REASONS.privatePage } } });
+      expect(s.broker.pending()).toEqual([]);
+      expect(s.port.calls).toEqual([]);
+      expect(s.broker.activity('chat-1')).toEqual([expect.objectContaining({ callId: 'call-1', status: 'done', approvalId: null })]);
+    }
+    // The tool refuses one too, should a call reach it.
+    const port = createFakeProbesPort();
+    expect(await directRunner(port, 'http://localhost:3000/admin').run('run_visibility_probes', {}, { tabId: 7, signal: new AbortController().signal, via: 'approval', expectedOrigin: 'http://localhost:3000', expectedUrl: 'http://localhost:3000/admin' })).toEqual({
+      ok: true,
+      data: { unavailable: PROBE_TOOL_REASONS.privatePage },
+      source: PROBE_TOOL_SOURCE,
+    });
+    expect(port.calls).toEqual([]);
+    // Reading the last run of a private page is still a read (it asks there, as every read tool does).
+    expect(PROBE_RUN_MAX_REQUESTS).toBe(24);
+    expect(PROBE_RUN_USER_AGENTS).toBe(6);
   });
 });

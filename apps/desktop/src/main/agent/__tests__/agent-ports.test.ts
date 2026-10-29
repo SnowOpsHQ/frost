@@ -224,14 +224,20 @@ describe('agent ports', () => {
       const download = vi.fn(async (): Promise<IntentEnableOutcome> => 'ready');
       const hostClassify = vi.fn(async () => ({ ok: true as const, result: { label: 'transactional' as const, confidence: 0.7, scores: { informational: 0.1, navigational: 0.1, commercial: 0.1, transactional: 0.7 }, model: INTENT_MODEL.id } }));
       const classifier = createIntentClassifier({ store: { present: async () => present, download }, host: { classify: hostClassify, dispose: () => undefined } });
-      const readApi = { classifyIntent: (query: string) => classifier.classify(query) } satisfies Pick<SerpReadApi, 'classifyIntent'>;
-      return { port: intentAdapter(readApi)!, download, hostClassify };
+      // Shaped exactly as `setupSerp` builds it: `{ ...serp.readApi, probes, runProbes }`, with
+      // `serp.readApi`'s `classifyIntent` as `serp/service.ts` writes it. It has no `enableIntent`.
+      const serpReadApi = { snapshot: (_tabId: number): SerpState => READY_STATE, classifyIntent: (query: string) => classifier.classify(query).catch((): IntentAnswer => ({ state: 'unavailable' })) };
+      const readApi: SerpReadApi = { ...serpReadApi, probes: () => ({ ...PROBES_DONE, status: 'idle', rows: [], diffs: [], startedAt: null, finishedAt: null }), runProbes: () => false };
+      expect(Object.keys(readApi).sort()).toEqual(['classifyIntent', 'probes', 'runProbes', 'snapshot']);
+      return { port: intentAdapter(readApi)!, download, hostClassify, classifier };
     };
     // No model on disk: `model-missing` handed on unchanged; nothing downloaded or loaded.
     const missing = harness(false);
     for (let i = 0; i < 3; i += 1) expect(await missing.port.classify({ query: 'buy tea' })).toEqual({ status: 'unavailable', reason: INTENT_ADAPTER_REASONS['model-missing'], state: 'model-missing' });
     expect(missing.download).not.toHaveBeenCalled();
     expect(missing.hostClassify).not.toHaveBeenCalled();
+    // The classifier's state is untouched (never `downloading`).
+    expect(missing.classifier.state()).toBe('model-missing');
     // The model present: classified on this computer, still no download.
     const ready = harness(true);
     expect(await ready.port.classify({ query: 'buy tea' })).toMatchObject({ status: 'ok', data: { primary: 'transactional' } });

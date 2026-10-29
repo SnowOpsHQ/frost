@@ -14,6 +14,7 @@ import type { AgentMcpView } from './agent-mcp.spec';
 import { MAX_OUTPUT_TOKENS, type KeyProtection } from './agent-proxy.spec';
 import type { AgentToolRisk, ModelId, ModelRoute, ToolErrorCode } from './agent-tools.spec';
 import type { SkillInputSlot } from './skills.spec';
+import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
 
 // ---- Bounds ----------------------------------------------------------------------------------
 
@@ -62,12 +63,13 @@ export const APPROVAL_ENABLE_DELAY_MS = 500;
 /** What an `execute_javascript` approval card says beside the code (Task 5 review). */
 export const EXECUTE_JS_APPROVAL_NOTE = 'Runs alongside any code you allowed earlier on this page.';
 /**
- * What a `run_visibility_probes` approval card says (Task 8, the SERP wiring): what frost will
- * actually do, plainly. Phase 3's probes fetch the page once per agent it models (its own browser,
- * then search and AI crawlers, each with that crawler's user agent) and read the site's robots.txt.
+ * What a `run_visibility_probes` approval card says (Task 8, the SERP wiring and its security
+ * review): what frost will actually do, plainly. Phase 3's probes fetch the page once per agent it
+ * models (its own browser, then search and AI crawlers, each with that crawler's user agent),
+ * following redirects, without cookies, and read the site's robots.txt from main's cache. Its run
+ * can't be stopped once started.
  */
-export const RUN_PROBES_APPROVAL_NOTE =
-  "frost will fetch this page as search and AI crawlers would: one request as its own browser and one with each crawler's user agent it models, plus the site's robots.txt. The site sees these requests.";
+export const RUN_PROBES_APPROVAL_NOTE = `frost will fetch this page as search and AI crawlers would: up to ${PROBE_LIMITS.maxRequests} requests (${PROBE_AGENT_IDS.length} user agents, its own browser's and each crawler's it models, redirects followed), without cookies; robots.txt may come from cache. The site sees these requests. Stop stops waiting; a run already started finishes.`;
 
 /**
  * Each allowed model's context window (tokens), for the context meter; `null` where frost has no
@@ -81,8 +83,6 @@ export const MODEL_CONTEXT_WINDOWS: Readonly<Record<ModelId, number | null>> = {
   'openai/gpt-5': null,
   'openai/gpt-5-mini': null,
 };
-
-// ---- The e2e seam ----------------------------------------------------------------------------
 
 // ---- The history a turn sends (whole-branch review) ---------------------------------------------
 
@@ -119,6 +119,8 @@ export function historyBudgetChars(modelId: ModelId, reservedChars = 0): number 
   const chars = (window - MAX_OUTPUT_TOKENS - HISTORY_HEADROOM_TOKENS) * HISTORY_CHARS_PER_TOKEN - Math.max(0, reservedChars);
   return Math.min(CHAT_HISTORY_MAX_CHARS, Math.max(HISTORY_MIN_BUDGET_CHARS, Math.floor(chars)));
 }
+
+// ---- The e2e seam ----------------------------------------------------------------------------
 
 /**
  * The e2e seam's switch (unpackaged builds only; a packaged build refuses to start with it,

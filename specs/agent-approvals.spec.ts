@@ -202,9 +202,10 @@ export function runTargetFor(toolName: string, input: unknown, tabUrl: string | 
 
 /**
  * Whether a standing grant may be created for (`allow-always`) or used by `toolName` on `origin`:
- * an `act` catalogue tool the catalogue says is grantable (`navigate`, `click`), on a grantable
- * origin (`isGrantOrigin`). Never for `read` tools (covered by the read-tools setting),
- * `run_ai_search`, `execute`, `external` or an unknown name.
+ * an `act` catalogue tool the catalogue says is grantable (`navigate`, `click`,
+ * `run_visibility_probes`), on a grantable origin (`isGrantOrigin`: public `https:`). Never for
+ * `read` tools (covered by the read-tools setting), `run_ai_search`, `execute`, `external` or an
+ * unknown name.
  */
 export function canGrant(toolName: unknown, origin: unknown): boolean {
   return isAgentToolName(toolName) && AGENT_TOOLS[toolName].risk === 'act' && isGrantable(toolName) && isGrantOrigin(origin);

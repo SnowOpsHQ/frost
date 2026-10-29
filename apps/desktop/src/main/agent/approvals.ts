@@ -24,7 +24,7 @@ import {
   type ToolRunVia,
 } from '@app/specs/agent-approvals.spec';
 import { ToolInputSchema, type JsonValue, type ToolResult } from '@app/specs/agent-protocol.schema';
-import { completeToolInput } from '@app/specs/agent-search-tools.spec';
+import { completeToolInput, invokeTimeAnswer } from '@app/specs/agent-search-tools.spec';
 import { mcpServerIdOf, mcpToolLabel } from '@app/specs/agent-mcp.spec';
 import { AGENT_TOOLS, isAgentToolName, isGrantable, isMcpToolName, TOOL_ERROR_CODES, toolRisk, type AgentToolRisk, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import type { AgentEntitlements } from './entitlements';
@@ -64,6 +64,11 @@ export interface ToolRunContext {
    * URL to load (`parseWebUrl(url).href`); `null` otherwise.
    */
   readonly expectedUrl: string | null;
+  /**
+   * An opaque token, the same object for every call of one turn of one chat (a new one each turn):
+   * lets a tool bound itself per turn (`run_visibility_probes`). Absent outside the broker.
+   */
+  readonly turn?: object;
 }
 
 /** A tool run's outcome: data and where it came from, or why there is none. */
@@ -405,6 +410,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
           via,
           expectedOrigin: decided.target.expectedOrigin,
           expectedUrl: decided.target.expectedUrl,
+          turn: chat,
         });
       } catch {
         outcome = { ok: false, code: 'failed' };
@@ -539,6 +545,20 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
         pageUrl,
         target: runTargetFor(invoke.toolName, input.value, tabUrl),
       };
+      // A call frost answers as it arrives, without asking or running anything (a probe run for a
+      // private page: nothing would be fetched, so an approval card would only invite a reflex Allow).
+      const answered = invokeTimeAnswer(invoke.toolName, pageUrl);
+      if (answered !== null) {
+        const result = wrapToolOutput(invoke.toolName, answered.source, answered.data);
+        if (result === null) {
+          fail(call, 'failed');
+          return;
+        }
+        call.settled = true;
+        send(call.chatId, call.callId, call.toolName, result);
+        setStatus(call, 'done');
+        return;
+      }
       const decision = decide(risk, {
         grantable: isGrantable(invoke.toolName),
         hasGrant: grantOrigin !== null && deps.grants.has(invoke.toolName, grantOrigin),

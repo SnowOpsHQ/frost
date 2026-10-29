@@ -25,6 +25,8 @@ import { chromeHelpers } from './helpers';
 import { selfSignedCertificate } from './tls';
 import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
 import { SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH, packSignatureUrl } from '@app/specs/serp-selector-pack.spec';
+import { INTENT_MODEL_DIR } from '@app/specs/intent-classifier.spec';
+import { readdir } from 'node:fs/promises';
 
 // The agent panel end to end, on the unpackaged build's scripted model seam
 // (`--frost-e2e-agent-script=<file>`): the runtime plays a JSON script as its model, so no provider
@@ -631,7 +633,9 @@ test('agent-serp-tools-read-the-serp-service', async () => {
   const engineRequests: { path: string; userAgent: string }[] = [];
   const engine = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://x');
-    engineRequests.push({ path: url.pathname, userAgent: request.headers['user-agent'] ?? '' });
+    // Only what the app sent counts (it asks for the engine by name; a stray local request elsewhere
+    // in this worker reaching a reused port would name 127.0.0.1).
+    if ((request.headers.host ?? '').split(':')[0] === SEARCH_HOST) engineRequests.push({ path: url.pathname, userAgent: request.headers['user-agent'] ?? '' });
     const answer = engineAnswer(url, pack);
     if (answer) response.writeHead(answer.status, { 'Content-Type': answer.type }).end(answer.body);
     else response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
@@ -677,6 +681,9 @@ test('agent-serp-tools-read-the-serp-service', async () => {
     const intentCard = page.locator('[data-testid="agent-tool-card"][data-tool="search_intent"]');
     await expect(intentCard).toHaveAttribute('data-status', 'done');
     await expect(intentCard.getByTestId('agent-tool-output')).toContainText('"state":"model-missing"');
+    // Nothing downloaded the model: its directory under the profile is still absent or empty.
+    const userData = await app!.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+    expect(await readdir(path.join(userData, INTENT_MODEL_DIR)).catch(() => [])).toEqual([]);
     // Reading the SERP requested nothing: the engine saw only the user's own loads (the page, its
     // robots.txt for the audit, the pack the user asked for), and nothing as a crawler.
     const expected = [PACK_PATH, packSignatureUrl(PACK_PATH), '/search', '/robots.txt', '/favicon.ico'];

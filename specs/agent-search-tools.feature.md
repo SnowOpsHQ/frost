@@ -66,7 +66,16 @@ and 4 merge), `service.ts` (`ports`, `entitlements`). Each line maps to one name
   `https:` only, covers it; another origin asks.
 - **Scenario: run-visibility-probes-not-active-and-read-refused** — Phase 3 runs only for the active
   tab (`started: false`); `via: 'read'` refused; no port: `unavailable`.
-- **Scenario: run-visibility-probes-waits-for-the-run** — polls until the run ends; Stop ends it.
+- **Scenario: run-visibility-probes-waits-for-the-run** — polls until the run ends; Stop stops the
+  waiting (the call fails); a run already started finishes on its own (Phase 3's run has no stop).
+- **Scenario: run-visibility-probes-capped-per-turn-and-cooled-down** — repeated calls under a grant
+  start exactly one run (`maxRunsPerTurn`); later calls answer the last report with `reused: true`;
+  within `cooldownMs` a new turn reuses too; after it, a new run.
+- **Scenario: run-visibility-probes-private-page-never-asks** — a page on a local or private host is
+  answered `privatePage` as the call arrives, with no approval card and no fetch.
+- **Scenario: probes-integration-fetches-the-approved-page** (`probes-integration.test.ts`) — Phase 3's
+  real `createProbes` behind `probesAdapter`: every fetch is for the approved page; an inactive tab
+  fetches nothing.
 - **Scenario: run-visibility-probes-approval-card-says-what-it-fetches** — `RUN_PROBES_APPROVAL_NOTE`.
 - **Scenario: intent-adapter-never-downloads** — Phase 3's classifier with no model: `model-missing`
   unchanged, no download, no model load; the adapter can't reach the enabling path.

@@ -1,5 +1,6 @@
 import type { PortAnswer, ProbeReport, ProbesPort } from '@app/ai-skills';
-import { PROBE_TOOL_LIMITS as P, PROBE_TOOL_REASONS, PROBE_TOOL_SOURCE, SEARCH_TOOL_LIMITS } from '@app/specs/agent-search-tools.spec';
+import { isPublicPage } from '@app/specs/agent-approvals.spec';
+import { gscPageUrl, PROBE_TOOL_LIMITS as P, PROBE_TOOL_REASONS, PROBE_TOOL_SOURCE, SEARCH_TOOL_LIMITS } from '@app/specs/agent-search-tools.spec';
 import type { ToolErrorCode } from '@app/specs/agent-tools.spec';
 import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 import { cleanText, fitBudget } from './search-tools';
@@ -13,7 +14,12 @@ import { cleanText, fitBudget } from './search-tools';
 // - `visibility_probes` (read) only reads the last run; it never starts one.
 // - `run_visibility_probes` (act: the broker asked the user, or a standing grant for the page's
 //   origin covered it; never `via: 'read'`) starts a run, then waits for it (polling the read side,
-//   at most `PROBE_TOOL_LIMITS.waitMs`, stopping with the chat) and answers what each agent was served.
+//   at most `PROBE_TOOL_LIMITS.waitMs`) and answers what each agent was served. Stop ends only the
+//   wait: Phase 3's run has no stop, so a run already started finishes.
+// - Bounded against amplification (security review): only a public page is probed (the broker
+//   answers a private one as the call arrives; this refuses it again), at most `maxRunsPerTurn` run
+//   per page in one turn (the broker's `turn` token), and none for the same tab and page within
+//   `cooldownMs`; a call past either reads the last report (`reused: true`) and fetches nothing.
 // Every answer is bounded (`SEARCH_TOOL_LIMITS.budgetChars`; strings cut, directives capped).
 
 export interface ProbePageCheck {
@@ -65,6 +71,10 @@ function bounded(report: ProbeReport) {
 }
 
 export function createProbeTools(deps: ProbeToolDeps) {
+  /** The pages each turn has probed (by the broker's turn token). */
+  const runsByTurn = new WeakMap<object, Map<string, number>>();
+  /** When each tab page was last probed (insertion order: oldest first), for the cooldown. */
+  const lastRun = new Map<string, number>();
   const setTimer = deps.setTimeout ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
   const clearTimer = deps.clearTimeout ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const now = deps.now ?? Date.now;
@@ -114,12 +124,39 @@ export function createProbeTools(deps: ProbeToolDeps) {
       if (typeof check === 'string') return fail(check);
       if (toolName === 'visibility_probes') return read(port, context, check);
 
+      // Only a public page is fetched (the broker already answers a private one without asking).
+      const page = gscPageUrl(context.expectedUrl);
+      if (page === null || !isPublicPage(page)) return ok({ unavailable: PROBE_TOOL_REASONS.privatePage });
+      const key = `${context.tabId} ${page}`;
+      const turnRuns = context.turn === undefined ? null : (runsByTurn.get(context.turn) ?? new Map<string, number>());
+      if (context.turn !== undefined && turnRuns !== null) runsByTurn.set(context.turn, turnRuns);
+      const previous = lastRun.get(key);
+      const capped = turnRuns !== null && (turnRuns.get(key) ?? 0) >= P.maxRunsPerTurn;
+      if (capped || (previous !== undefined && now() - previous < P.cooldownMs)) {
+        // Nothing is fetched again: the last report, if there is one for this page.
+        const last = await read(port, context, check);
+        if (last.ok && typeof last.data === 'object' && last.data !== null && !('unavailable' in last.data)) return ok({ reused: true, ...(last.data as Record<string, unknown>) });
+        return ok({ reused: true, unavailable: PROBE_TOOL_REASONS.cooldown });
+      }
+      // Counted before the call (a second call can't slip in while this one awaits).
+      turnRuns?.set(key, (turnRuns.get(key) ?? 0) + 1);
+      lastRun.delete(key);
+      lastRun.set(key, now());
+      while (lastRun.size > P.maxTracked) lastRun.delete(lastRun.keys().next().value!);
+      const forget = () => {
+        turnRuns?.set(key, Math.max(0, (turnRuns.get(key) ?? 1) - 1));
+        if (previous === undefined) lastRun.delete(key);
+        else lastRun.set(key, previous);
+      };
+
       let started: PortAnswer<{ readonly started: boolean }>;
       try {
         started = await port.run(context.tabId, { signal: context.signal, tabId: context.tabId });
       } catch {
+        forget();
         return fail('failed');
       }
+      if (started.status !== 'ok' || started.data.started !== true) forget();
       if (context.signal.aborted) return fail('failed');
       if (started.status === 'unavailable') return answerOf(started, check);
       if (started.status !== 'ok' || started.data.started !== true) return ok({ started: false, unavailable: PROBE_TOOL_REASONS.notActive });

@@ -115,8 +115,13 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
   get only small, append-only one-line registrations. DB migrations use ids `0030`–`0039`.
 - **Keys** never reach the renderer, logs, the agent process or the model's context. The renderer can
   set or clear a key and learn whether one is set; it can never read one back.
-- **No shell, file or fetch tools.** The agent's tools are the ones listed here; MCP tools are
-  labelled untrusted and always need a per-call approval.
+- **No shell, file or general fetch tools.** frost's own tools include no shell, file or general
+  fetch tool. The only fetches the agent can cause are `navigate` (the chat's tab loads one http(s)
+  address through the address bar's path and its browse guards; it asks unless a grant for the
+  destination's origin exists) and `run_visibility_probes` (the chat tab's own page, by approval or
+  grant only, public pages only, at most one run per page per turn and none again for that tab and
+  page within 60 s). The search tools read what frost's own services hold or serve; none fetches a
+  site. MCP tools are labelled untrusted and always need a per-call approval.
 
 ## Threat model (the approval system)
 | Threat | Mitigation | Test |
@@ -131,6 +136,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 | `execute_javascript` takes over the page or hangs | Runs in a dedicated isolated world (never the main world), per-call approval showing the exact code, a timeout and a result size cap | Task 4/5 |
 | A standing grant outlives the user's intent | Grants are per tool and per origin, listed on the grants page, revocable one by one or all at once | Task 9 |
 | An MCP server is hostile | Labelled untrusted; nothing auto-granted; stdio servers need explicit approval to start, run in an OS sandbox profile where available, and the UI says when none is | Task 10 `mcp-start-requires-the-dialog`, `mcp-bubblewrap-contains-the-server`, `mcp-tool-asks-every-call-and-result-is-untrusted`, `agent-mcp-tool-asks` |
+| The agent makes frost fetch a site (volume, crawler-UA impersonation, side-effect GETs) | Only `navigate` and `run_visibility_probes` fetch on the agent's behalf. `run_visibility_probes` is `act` (approval, or a grant for the page's public `https:` origin) and page-bound (an approval binds the exact page; a moved tab fetches nothing). It runs only for the chat tab's own page while that tab is active, never for a local, private or intranet page (answered as data when the call arrives, with no approval card), at most once per page per turn and not again for the same tab and page within 60 s (a repeat reuses the last report). A run is Phase 3's bounded probe: at most 24 GETs (6 user agents, up to 3 redirects each), no cookies, robots.txt from main's cache, through the SERP fetcher lane and its private-address rules. The approval card says it fetches as search and AI crawlers would, and that Stop ends only the wait. GETs only: a site that changes state on GET is already exposed to every crawler. | Task 8 `run-visibility-probes-capped-per-turn-and-cooled-down`, `run-visibility-probes-private-page-never-asks`, `run-visibility-probes-asks-and-binds-the-page`, `run-visibility-probes-grants-like-click`, `probes-integration-fetches-the-approved-page`, `probes-integration-inactive-tab-fetches-nothing` |
 
 ## Review Focus
 - The agent process can't approve, grant, read keys or reach the network (Tasks 1, 2, 3, 4).
@@ -932,3 +938,21 @@ _Filled in as tasks land._
   (`mcp/secrets.ts`, `session.ts`). **Follow-up:** the text-cutting helpers (`cutText`, `clip`, the
   runtime's `cut`, the search tools' and MCP's cutters) do the same surrogate-safe cut in several
   places; fold them into one spec helper in a later change.
+- **Task 8, SERP wiring security review.** `run_visibility_probes` is bounded and scoped.
+  `PROBE_TOOL_LIMITS.maxRunsPerTurn` (1) applies per page per turn, through the broker's
+  `ToolRunContext.turn` token (a new object each turn); `cooldownMs` (60 s) applies per tab and page
+  across turns, with the last 64 pages remembered. A call past either reads the last report and
+  answers it with `reused: true` (or the cooldown sentence) and fetches nothing; a start that didn't
+  happen (not the active tab) doesn't count. A page that isn't `isPublicPage` is answered
+  `{ unavailable: privatePage }` by the broker as the call arrives (`invokeTimeAnswer`), with no
+  approval card: nothing would be fetched, so asking would only invite a reflex Allow; the tool
+  refuses such a page again. Stop ends only the agent's wait: Phase 3's `runProbes` has no stop (and
+  `serp-service.ts` is Phase 3's), so a run already started finishes; the description and the
+  approval card say so, and both now say "up to 24 requests (6 user agents, its own browser's and
+  each crawler's it models, redirects followed), without cookies; robots.txt may come from cache",
+  computed from Phase 3's `PROBE_LIMITS` and `PROBE_AGENT_IDS`. `probes-adapter.ts` drops user info
+  and fragment from `url` and `finalUrl`. Tests: `probes-integration.test.ts` runs Phase 3's real
+  `createProbes` (fake fetcher) behind `probesAdapter` and the runner (every fetch is the approved
+  page; an inactive tab fetches nothing); `intent-adapter-never-downloads` uses a `setupSerp`-shaped
+  read API (no `enableIntent`) and checks the classifier stays `model-missing`; the e2e checks the
+  intent model directory stays empty and counts only requests the app addressed to the engine by name.

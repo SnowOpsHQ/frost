@@ -22,6 +22,7 @@
  * (`GSC_NOT_PUBLIC_REASON`) without asking the port.
  */
 import { isPublicPage } from './agent-approvals.spec';
+import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
 import { modelPageUrl } from './agent-page-tools.spec';
 import { AGENT_TOOL_INPUT_LIMITS, TOOL_RESULT_MAX_CHARS } from './agent-tools.spec';
 
@@ -126,6 +127,13 @@ export function completeToolInput(toolName: string, input: unknown, tabUrl: stri
  * and as each search and AI crawler Phase 3 models, and reads robots.txt). Both are page tools: the
  * run's page must be the expected one (an approved run: exactly the approved page), and Phase 3 runs
  * probes only for the **active** tab, so a chat whose tab isn't on screen is told so.
+ *
+ * Bounded against amplification (Task 8 security review): at most `maxRunsPerTurn` run per page in
+ * one turn, and none again for the same tab and page within `cooldownMs` across turns; a call past
+ * either answers the last report with `reused: true` (or the cooldown sentence) and fetches nothing.
+ * A page that isn't public (a local, private or intranet host) is never probed: main answers it as
+ * data when the call arrives, without asking the user (`invokeTimeAnswer`). Stop ends only the
+ * agent's wait: Phase 3's run has no stop, so a run already started finishes on its own.
  */
 export const PROBE_TOOL_NAMES = ['visibility_probes', 'run_visibility_probes'] as const;
 
@@ -139,7 +147,17 @@ export const PROBE_TOOL_LIMITS = {
   maxUrlChars: 500,
   /** Directives listed per agent. */
   maxDirectives: 16,
+  /** Runs one turn may start for one page (more calls reuse the last report). */
+  maxRunsPerTurn: 1,
+  /** How long after a run the same tab and page can't be probed again, across turns (milliseconds). */
+  cooldownMs: 60_000,
+  /** Pages whose last run is remembered for the cooldown (oldest forgotten first). */
+  maxTracked: 64,
 } as const;
+
+/** The most requests one run makes to the site (Phase 3's `PROBE_LIMITS.maxRequests`), and its user agents. */
+export const PROBE_RUN_MAX_REQUESTS = PROBE_LIMITS.maxRequests;
+export const PROBE_RUN_USER_AGENTS = PROBE_AGENT_IDS.length;
 
 export const PROBE_TOOL_SOURCE = 'frost:visibility-probes';
 
@@ -148,5 +166,18 @@ export const PROBE_TOOL_REASONS = {
   notActive: "frost runs probes only for the tab on screen, and the chat's tab is not it. Ask the user to switch back to it.",
   idle: 'No probe run for this page yet. run_visibility_probes starts one (the user is asked first).',
   otherPage: 'The last probe run was for another page.',
+  privatePage: 'frost probes only public web pages, and this page is on a local or private address, so nothing was fetched.',
+  cooldown: 'This page was probed less than a minute ago, so nothing was fetched again. Use the last results (visibility_probes) or try later.',
 } as const;
+
+/**
+ * What main answers for a call as it arrives, without asking or running it, or `null`: a
+ * `run_visibility_probes` call for a page that isn't public (`isPublicPage`). Nothing would be
+ * fetched anyway (the tool refuses such pages too), so asking the user to approve it would only
+ * teach them to click Allow.
+ */
+export function invokeTimeAnswer(toolName: string, pageUrl: string | null): { readonly source: string; readonly data: unknown } | null {
+  if (toolName === 'run_visibility_probes' && pageUrl !== null && !isPublicPage(pageUrl)) return { source: PROBE_TOOL_SOURCE, data: { unavailable: PROBE_TOOL_REASONS.privatePage } };
+  return null;
+}
 
