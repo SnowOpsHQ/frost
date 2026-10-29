@@ -20,6 +20,7 @@ import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
+import { serpRouter } from './serp-router';
 import { telemetryRouter } from './telemetry-router';
 import { gscRouter } from './gsc-router';
 import type { BrowserService } from './services';
@@ -282,6 +283,8 @@ export const appRouter = router({
   settings: settingsRouter,
   // Phase 2.5 Task 7 (`seo-checks.feature.md`): link status, sitemap and hreflang reciprocity checks.
   checks: checksRouter,
+  // Phase 3 Task 4 (`serp-overlay.feature.md`): the SERP overlay's reading, outlines, pack updates and intent.
+  serp: serpRouter,
   // Phase 4 Tasks 4 and 5 (`entitlements-client.feature.md`, `account-signin.feature.md`): entitlements and sign-in.
   account: accountRouter,
   // Phase 4 Task 7 (`telemetry.feature.md`, Desktop): telemetry consent and renderer errors.

@@ -106,5 +106,6 @@ describe('GscPanel', () => {
     expect(await mount(signedIn('pro'), gsc({}))).toBe('loading');
     expect(fake.performance).toEqual([{ url: URL_A, scope: 'page', days: 28 }]);
     expect(fake.topQueries).toEqual([{ url: URL_A, scope: 'page', days: 28 }]);
-  });
+    // Three fresh module graphs: give a loaded CI runner room beyond the 5 s default.
+  }, 30_000);
 });

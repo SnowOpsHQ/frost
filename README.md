@@ -25,6 +25,18 @@ browser and run SEO skills.
   sidebar gains Content and JavaScript panels (eleven, with 111 rules). What the app does now:
   [`apps/desktop/README.md`](apps/desktop/README.md); the plan and how it was built:
   [`docs/plans/phase-2.5-seo-tooling.md`](docs/plans/phase-2.5-seo-tooling.md).
+- **Phase 3 — SERP, intent and indexability:** built (Tasks 1–7); its macOS release check runs on
+  the macOS CI runner. Two new sidebar panels (thirteen in all):
+  - **SERP**, on a Google, Bing or DuckDuckGo result page you load. It shows the page's composition,
+    page-1 ownership by domain, outlines of the features on the page, the tab's search parameters,
+    and an honest "couldn't read this layout" state. It reads the page with selectors that are
+    signed data, updatable without an app release.
+  - **Visibility**, which on request fetches the page as Googlebot, Bingbot and AI crawlers fetch it,
+    beside a normal browser, and marks the differences.
+
+  An optional on-device intent classifier labels queries with its confidence; its model is
+  downloaded only after you agree. The plan and how it was built:
+  [`docs/plans/phase-3-serp-intent.md`](docs/plans/phase-3-serp-intent.md).
 - **Phase 4 — Accounts, entitlements, telemetry and Search Console:** built. Sign in to a frost
   account through the system browser, confirmed in the app; a plan (`free` or `pro`) arrives as a
   signed snapshot that main verifies, with offline grace, and gates features on. Telemetry (usage
@@ -34,7 +46,7 @@ browser and run SEO skills.
   only. The plan and how it was built:
   [`docs/plans/phase-4-accounts-telemetry.md`](docs/plans/phase-4-accounts-telemetry.md); the
   backend: [`apps/backend/README.md`](apps/backend/README.md).
-- **Next:** Phases 3 to 7 are being built in parallel; next up is Phase 5, the AI agent
+- **Next:** Phases 5 to 7 are being built in parallel; next up is Phase 5, the AI agent
   (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 
 ## Clean-room note
@@ -44,7 +56,8 @@ no third-party code, bundles, or UI assets.** Third-party open-source libraries 
 only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOTICES`).
 
 ## Layout
-- `apps/desktop/` — the Electron app (main, preload, the React chrome), packaged with Electron Forge.
+- `apps/desktop/` — the Electron app (main, preload, the React chrome, the on-device intent utility
+  process), packaged with Electron Forge.
 - `apps/backend/` — the account API (`@app/backend`): web and desktop sign-in, signed entitlement
   snapshots and an admin CLI. Hono, better-auth and Drizzle on Postgres (PGlite in dev and tests).
   Never deployed from this repo.
@@ -60,8 +73,9 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
 - `specs/` — machine-checkable spec artifacts (constants, Zod schemas, `*.feature.md` acceptance
   lists); every scenario maps to a named test.
 - `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, 8-phase roadmap).
-- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–2.5 and 4).
-- `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner.
+- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–4).
+- `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner, and
+  `scripts/sign-selectors.mjs` (`pnpm sign:selectors`, for maintainers signing a selector pack).
 
 ## Getting started
 1. Node ≥ 22.18 and pnpm 12.15.0 (`package.json#packageManager`); `pnpm install`.

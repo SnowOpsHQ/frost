@@ -28,6 +28,12 @@ export interface NoticePackage {
    * repository's LICENSE at the published version (`source`), reproduced verbatim.
    */
   readonly license?: { readonly source: string; readonly text: string };
+  /**
+   * Further notices the package needs that its tarball does not ship (a native library's own
+   * third-party notices): the upstream file at the published version (`source`), committed verbatim
+   * under `apps/desktop/licenses/` (`file`, relative to apps/desktop).
+   */
+  readonly notices?: { readonly source: string; readonly file: string };
 }
 
 /**
@@ -35,6 +41,13 @@ export interface NoticePackage {
  * v6.0.0: the npm tarball does not include it.
  */
 const SAXES_LICENSE = "The ISC License\n\nCopyright (c) Contributors\n\nPermission to use, copy, modify, and/or distribute this software for any\npurpose with or without fee is hereby granted, provided that the above\ncopyright notice and this permission notice appear in all copies.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\nWITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\nMERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\nANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\nWHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\nACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR\nIN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n\n====\n\nThe following license is the one that governed sax, from which saxes\nwas forked. Isaac Schlueter is not *directly* involved with saxes so\ndon't go bugging him for saxes issues.\n\nThe ISC License\n\nCopyright (c) Isaac Z. Schlueter and Contributors\n\nPermission to use, copy, modify, and/or distribute this software for any\npurpose with or without fee is hereby granted, provided that the above\ncopyright notice and this permission notice appear in all copies.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\nWITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\nMERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\nANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\nWHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\nACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR\nIN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n\n====\n\n`String.fromCodePoint` by Mathias Bynens is no longer used, but it can\nstill be found in old commits. It was once used according to terms of\nMIT License, as follows:\n\n    Copyright Mathias Bynens <https://mathiasbynens.be/>\n\n    Permission is hereby granted, free of charge, to any person obtaining\n    a copy of this software and associated documentation files (the\n    \"Software\"), to deal in the Software without restriction, including\n    without limitation the rights to use, copy, modify, merge, publish,\n    distribute, sublicense, and/or sell copies of the Software, and to\n    permit persons to whom the Software is furnished to do so, subject to\n    the following conditions:\n\n    The above copyright notice and this permission notice shall be\n    included in all copies or substantial portions of the Software.\n\n    THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\n    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\n    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\n    NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE\n    LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\n    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\n    WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.";
+
+/**
+ * ONNX Runtime's LICENSE (MIT), from its repository at v1.31.1: neither onnxruntime-node's nor
+ * onnxruntime-common's npm tarball includes it.
+ */
+const ONNXRUNTIME_LICENSE = "MIT License\n\nCopyright (c) Microsoft Corporation\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.";
+const ONNXRUNTIME_LICENSE_SOURCE = 'https://github.com/microsoft/onnxruntime/blob/v1.31.1/LICENSE';
 
 export const NOTICE_PACKAGES: readonly NoticePackage[] = [
   { name: 'web-vitals', from: 'apps/desktop', use: 'Injected, unmodified, into an isolated world of the pages frost measures (the Page Speed panel).' },
@@ -55,6 +68,14 @@ export const NOTICE_PACKAGES: readonly NoticePackage[] = [
     license: { source: 'https://github.com/lddubeau/saxes/blob/v6.0.0/LICENSE', text: SAXES_LICENSE },
   },
   { name: 'xmlchars', from: 'node_modules/saxes', use: 'Used by saxes.' },
+  {
+    name: 'onnxruntime-node',
+    from: 'apps/desktop',
+    use: 'Running the on-device intent model in a utility process (the SERP panel); its native ONNX Runtime library ships with it.',
+    license: { source: ONNXRUNTIME_LICENSE_SOURCE, text: ONNXRUNTIME_LICENSE },
+    notices: { source: 'https://github.com/microsoft/onnxruntime/blob/v1.31.1/ThirdPartyNotices.txt', file: 'licenses/onnxruntime-1.31.1-ThirdPartyNotices.txt' },
+  },
+  { name: 'onnxruntime-common', from: 'node_modules/onnxruntime-node', use: 'Used by onnxruntime-node.', license: { source: ONNXRUNTIME_LICENSE_SOURCE, text: ONNXRUNTIME_LICENSE } },
   { name: 'jose', from: 'apps/desktop', use: 'Verifying the signed entitlement snapshots in the main process (EdDSA only).' },
   { name: '@opentelemetry/api', from: 'packages/telemetry', use: 'Usage traces in the main process, sent only with consent (@app/telemetry).' },
   { name: '@opentelemetry/sdk-trace', from: 'packages/telemetry', use: 'Usage traces in the main process, sent only with consent (@app/telemetry).' },
@@ -129,6 +150,10 @@ export function buildThirdPartyNotices(packages: readonly NoticePackage[] = NOTI
       parts.push('', `The package ships no license file. Its package.json declares ${license}${license === 'Apache-2.0' ? '; the license’s full text is given in the web-vitals section above (its terms and conditions, up to "END OF TERMS AND CONDITIONS")' : ''}.`);
     }
     for (const file of files) parts.push('', `---- ${file} ----`, '', readFileSync(path.join(dir, file), 'utf8').replace(/\r\n/g, '\n').trimEnd());
+    if (pkg.notices) {
+      const text = readFileSync(path.join(root, 'apps/desktop', pkg.notices.file), 'utf8');
+      parts.push('', `---- ${path.basename(pkg.notices.file)} (from ${pkg.notices.source}: the package ships no copy) ----`, '', text.replace(/\r\n/g, '\n').trimEnd());
+    }
     parts.push('');
   }
   return `${parts.join('\n')}\n`;

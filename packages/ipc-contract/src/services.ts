@@ -11,6 +11,7 @@ import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
+import type { SerpService } from './serp-service';
 import type { TelemetryService } from './telemetry-service';
 import type { GscIpcService } from './gsc-service';
 
@@ -173,6 +174,8 @@ export interface IpcServices {
   readonly settings?: SettingsService;
   /** The link, sitemap and hreflang checks (Phase 2.5 Task 7, `checks-service.ts`). */
   readonly checks?: ChecksService;
+  /** The SERP overlay (Phase 3 Task 4, `serp-service.ts`): reading, outlines, pack updates and intent. */
+  readonly serp?: SerpService;
   /** The account and its verified entitlements (Phase 4, `account-service.ts`). */
   readonly account?: AccountService;
   /** Telemetry consent and renderer errors (Phase 4 Task 7, `telemetry-service.ts`). */

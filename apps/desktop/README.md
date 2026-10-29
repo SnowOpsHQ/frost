@@ -1,12 +1,18 @@
 # @app/desktop
 
-The frost Electron app (main, preload, renderer), packaged with Electron Forge. As of Phase 2.5 it is
+The frost Electron app (main, preload, renderer), packaged with Electron Forge. As of Phase 3 it is
 a usable, hardened browser with a docked SEO sidebar that audits the page you are on and gives it a
 health score. Around the audit sit the day-to-day SEO tools: render profiles, a served-vs-rendered
 comparison, content and snippet tools, a command palette, a devtools drawer, and link, sitemap and
-hreflang checks. Phase 4 adds a frost account with plans, opt-in telemetry and a read-only Search
-Console panel, set up in a Settings view. The agent comes in a later phase
-(`docs/design/IMPLEMENTATION-PLAN.md` §4).
+hreflang checks. Phase 3 adds:
+- a SERP panel that reads the search result pages you load;
+- an optional on-device intent classifier;
+- a Visibility panel that fetches a page as search and AI crawlers do.
+
+Phase 4 adds a frost account with plans, opt-in telemetry and a read-only Search Console
+panel, set up in a Settings view.
+
+The agent comes in a later phase (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 
 ## What it does
 
@@ -35,9 +41,11 @@ Console panel, set up in a Settings view. The agent comes in a later phase
   **Clear Browsing Data…** (File menu; the app menu on macOS; the command palette) clears, after a
   confirmation: visits, permission decisions, site storage and cache, the render profiles pinned to
   sites, the recently closed tabs, and frost's cached robots.txt answers, recorded responses,
-  served HTML, devtools logs and link-check answers (running checks are cancelled). It keeps the
-  Content panel's target queries and snippet drafts unless its checkbox (unchecked by default) is
-  ticked, and it keeps preferences (the search engine, the "Open in" hosts you allowed).
+  served HTML, devtools logs and link-check answers (running checks are cancelled), and the SERP
+  readings and intent answers (a running probe run is cancelled). It keeps the Content panel's
+  target queries and snippet drafts unless its checkbox (unchecked by default) is ticked. It keeps
+  preferences (the search engine, the "Open in" hosts you allowed), the downloaded intent model and
+  an installed selector pack.
 - One frost per profile: launching it again shows the running window.
 
 ### SEO sidebar (Phase 2)
@@ -122,6 +130,8 @@ The panels, in rail order:
   impact, each with its description, help URL and elements as text selectors. Only critical and
   serious violations score (one warning each), and only after a check ran on that document.
 - **JavaScript** (Phase 2.5, below).
+- **SERP** and **Visibility** (Phase 3, below). They have no rail dot: a dot is an audit verdict,
+  and these panels show observations.
 
 ### SEO tooling (Phase 2.5)
 Acceptance: the feature files named below; how it was built: `docs/plans/phase-2.5-seo-tooling.md`.
@@ -236,6 +246,101 @@ Acceptance: the feature files named below; how it was built: `docs/plans/phase-2
   cancels a run. Five rules (`links-broken`, `links-internal-redirect`, `sitemap-page-not-listed`,
   `sitemap-unreachable`, `hreflang-no-return-link`) score finished runs only.
 
+### SERP, intent and indexability (Phase 3)
+Acceptance: `serp-panels.feature.md` and the feature files named below; how it was built:
+`docs/plans/phase-3-serp-intent.md`.
+
+- **SERP panel** (`serp-overlay.feature.md`). On a Google, Bing or DuckDuckGo web result page you
+  loaded in a tab, the panel shows:
+  - the tab's search parameters: engine, query, country (`gl`), language (`hl`), the device from
+    the tab's render profile, and the page. They are always visible, and each tab keeps its own;
+  - the intent chip: the query's intent (informational, navigational, commercial or transactional)
+    with its confidence, or **Enable on-device intent** while the model is missing;
+  - the page's composition, as a bar and a count per result type (organic results, ads, featured
+    snippets, related questions, videos, images, knowledge panels, shopping, related searches …);
+  - page-1 ownership: the organic results grouped by registrable domain, with count, share and
+    positions. Ads are not counted, and a subdomain of a shared host (`alice.github.io`) is its own
+    owner;
+  - the results list;
+  - **Outline features on the page**: each block's box with its type label, drawn in the tab and
+    following scrolling. It is removed on navigation, a tab switch, toggling it off or leaving the
+    panel;
+  - the selector pack's version, and **Check for selector updates**.
+
+  On any other page it says "Not a search result page". When the pack's selectors do not match
+  the layout, it says "Couldn't read this layout" with the reason and the update action, and never
+  guesses. The panel renders without waiting for the audit.
+- **Selector packs** (`serp-selector-pack.feature.md`). What frost reads on a result page is data,
+  not code: for each engine, its hosts, paths, URL parameters and the CSS selectors of each result
+  block. A fixed reader frost ships applies them.
+  - A pack is signed: a detached Ed25519 signature over its exact bytes, checked against the public
+    key the app embeds before the pack is parsed.
+  - The app ships one (version 1) and verifies it at every start. If it fails, SERP reading is off
+    (`disabled`); frost never reads with an unsigned pack.
+  - "Check for selector updates" installs a remote pack only if its signature verifies, it parses,
+    and its version is higher. An installed pack is verified again at every start.
+- **On-device intent** (`intent-classifier.feature.md`). **Enable on-device intent** (the SERP panel
+  or the palette) first states what it downloads: the all-MiniLM-L6-v2 sentence-embedding model by
+  sentence-transformers (Apache-2.0), 23.3 MB with its vocabulary, from `huggingface.co`, once.
+  - Only after you confirm is the model downloaded, checked against its pinned sha256 and stored in
+    the profile. It is hashed again every time it is loaded.
+  - Queries are classified on this computer, in a utility process running ONNX Runtime on the CPU,
+    and never leave it. The answer is the label nearest frost's own example queries, nudged by plain
+    cues ("buy", "near me", "vs", "login", a bare domain), with its probability as the confidence.
+- **Visibility panel** (`visibility-probes.feature.md`). **Run visibility probes** fetches the active
+  tab's URL once as each of six agents: frost's own browser (the baseline), Googlebot smartphone,
+  Bingbot, GPTBot, ClaudeBot and PerplexityBot.
+  - A table has a column per agent and a row per fact: HTTP status, redirects and final URL, the
+    robots.txt verdict for the agent's token, meta robots and `X-Robots-Tag` (general and
+    agent-specific), effective `noindex`, canonical, word count, size and visible-text similarity.
+    Differences from the browser are marked.
+  - robots.txt is reported, not obeyed. The AI crawlers' meta robots and `X-Robots-Tag` rows are
+    labelled frost's model, as their operators document only their robots.txt tokens.
+  - **Stop** keeps what was found. A new document, an in-page move to another URL, closing the tab
+    or Clear Browsing Data cancels the run.
+  - A query box classifies any query you type, on this computer only.
+- **Palette.** Open SERP panel, Open Visibility panel, Outline SERP features / Hide SERP outlines,
+  Check for selector updates, Enable on-device intent (with the same prompt, inline), and Run /
+  Stop visibility probes (with the disclosure, inline).
+
+**Security model.**
+- **Isolated SERP world.** The reader and the outlines run only in the tab's isolated SERP world
+  (`SERP_WORLD_ID`), never the page's main world. The reader is one fixed function, given the
+  pack's layout as JSON arguments; a selector is never spliced into code.
+  - The reader takes its DOM methods from its own world's prototypes, so the page cannot clobber
+    them.
+  - An invalid selector fails closed (`bad-selector`).
+  - Its work is capped in results, text, nodes visited and time.
+- **The SERP workers.** The reader's answer is validated and analysed in a `worker_threads` worker
+  of the SERP's own (`serp-analysis.cjs`, capped heap, hard deadline, no Electron APIs). The probes'
+  bodies, headers and robots.txt are parsed in a second instance of the same bundle.
+- **Outlines** are one host element holding a closed shadow root styled through the CSSOM, as the
+  Phase 2 highlight is.
+- **The intent utility process** is least privilege, though not an OS sandbox (see Known limits):
+  - it gets no Electron API beyond `process.parentPort`, no `execArgv`, and an explicit environment
+    of one variable; Electron adds only what its runtime needs. An empty environment would inherit
+    main's whole environment in Electron 45;
+  - main reads and verifies the model and vocabulary and posts their bytes, so the process never
+    opens a file or socket;
+  - every message either way is Zod-validated, and a malformed one is dropped;
+  - a hang or crash ends the request as unavailable and restarts the process, with a backoff.
+
+  `--frost-intent-selftest` (used by `verify:mac`) loads ONNX Runtime in the packaged app's utility
+  process, checks the environment is isolated, and exits. It runs on a throwaway profile.
+- **Packaged builds** also refuse the three Phase 3 e2e seams: `--frost-e2e-serp-pack-key`,
+  `--frost-e2e-serp-pack-url` and `--frost-e2e-intent-fake`.
+
+**For maintainers: signing a selector pack.** `pnpm sign:selectors <pack.json>` writes
+`<pack.json>.sig`.
+- It reads the path of the Ed25519 private key (PKCS8 PEM) from `FROST_SERP_SIGNING_KEY`, and
+  refuses to run without it. The key is kept outside the repo, in the maintainers' private key
+  store, and a key path inside the repo is refused.
+- It checks the new signature before writing it and says whether its key is one the app embeds.
+- `pnpm sign:selectors --verify <pack.json>` checks a signature.
+- A pack's bytes are kept exact in git (`.gitattributes`).
+- To publish an update, attach `serp-selectors.json` and its `.sig` to a GitHub release, with a
+  higher `version`.
+
 ### Account, telemetry and Search Console (Phase 4)
 Acceptance: the feature files named below; how it was built:
 `docs/plans/phase-4-accounts-telemetry.md`; the account API: `apps/backend/README.md`. A build that
@@ -296,7 +401,7 @@ lacks a value says "not configured in this build" for that feature and sends not
   never reads with it, and signing in as a different account revokes it. **Disconnect** deletes it
   and revokes it at Google. Settings shows "Connected", with no Google account name (frost asks
   Google for none).
-- **Search Console panel** (`gsc-panel.feature.md`). A rail panel (the twelfth; no status dot, no
+- **Search Console panel** (`gsc-panel.feature.md`). A rail panel (no status dot, no
   rerun button or audit footer) for the active tab's page or its whole property, over 7, 28 or 90
   days: clicks, impressions, CTR and average position, a frost-drawn chart of one metric, and the
   top 25 queries. The property is the longest URL-prefix property that matches, else the domain
@@ -326,8 +431,9 @@ The details, each with its named tests, are in `specs/*.feature.md`.
   while the find bar is open, Mod+G / Mod+Shift+G are taken in `before-input-event` of every tab
   and of the chrome, so a page can neither see nor block them; on every platform each is taken by
   exactly one handler.
-- **Packaged builds** refuse remote debugging, `--host-resolver-rules` and the e2e suite's
-  public-hosts switch (`PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
+- **Packaged builds** refuse remote debugging, `--host-resolver-rules` and the e2e suite's switches
+  (public hosts and, since Phase 3, the SERP pack key and URL and the intent fake;
+  `PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
   `specs/macos-package.spec.ts`) disable run-as-Node, `NODE_OPTIONS` and the Node inspector flags,
   and turn on cookie encryption, ASAR integrity validation and loading the app only from its ASAR.
 - **Tokens stay in main** (Phase 4). The account's desktop token, the entitlement snapshot and
@@ -414,6 +520,19 @@ their logs** (each surface says so):
   document, URL and user agent, with the tab's render-profile user agent when one is in effect.
 - **Link, sitemap and hreflang checks**, only when you start them (see above), with the tab's
   render-profile user agent when one is in effect.
+- **Selector pack updates**, only on "Check for selector updates": the pack and its `.sig` (a
+  second try of both if the release moved in between), from the latest GitHub release's asset
+  `serp-selectors.json`. `https:` only, 256 KB, 10 s.
+- **The intent model**, only after you confirm **Enable on-device intent**: the model (about 23 MB)
+  and its vocabulary (about 230 KB) from `huggingface.co`, at a pinned revision, through its
+  redirects to Hugging Face's download host. `https:` only, capped at the pinned sizes, frost's own
+  user agent.
+- **Visibility probes**, only on "Run visibility probes": one `GET` of the page per agent, at most
+  6 calls and 24 requests with redirects (3 each), 2 at once, 5 MB and 10 s each. Each sends the
+  agent's user agent string from your network. robots.txt comes from frost's cache, asked once per
+  origin an agent ended on.
+- frost never requests a search engine by itself: the SERP panel reads only result pages you
+  loaded.
 - **DNS lookups** of each of those requests' host names, before every hop (see below).
 - **The account API** (Phase 4, only in a build configured for it): the session and the signed
   entitlements at start, every 6 hours and on Refresh, the token exchange after a sign-in and the
@@ -439,10 +558,16 @@ All the fetched requests go through **one bounded fetcher** in main (`seo/fetche
 - a body cap and one deadline per call (queue wait included);
 - per-origin queues: 2 requests at once, a minimum gap between starts, at most 1,000 waiting.
 
-Main runs it in **two lanes** over the same hop and rules, each with its own per-origin queues:
-`audit` (robots.txt and the served HTML, 200 ms apart) and `checks` (the user-started checks,
-250 ms apart). An audit's requests never wait behind a 500-link check; the cost is that a site can
-see both lanes at once (up to 4 requests in flight).
+Main runs it in **three lanes** over the same hop and rules, each with its own per-origin queues:
+- `audit` (robots.txt and the served HTML, 200 ms apart);
+- `checks` (the user-started checks, 250 ms apart);
+- the SERP lane (Phase 3: probes, pack updates and the model download, with the `checks` lane's
+  limits).
+
+An audit's requests never wait behind a 500-link check, and a probe never waits behind a link
+check. The cost is that a site can see every lane at once (up to 6 requests in flight). Repeated
+`X-Robots-Tag` headers are kept apart for the probes (`separateHeaders`); other repeated headers are
+joined.
 
 **One private-address check** (`specs/private-address.spec.ts`) serves the fetcher and the
 palette's "Open in". Not public:
@@ -519,6 +644,27 @@ proxy, the proxy resolves the name itself.
   headers of a page restored from the back/forward cache or reached by `pushState` ("Unknown").
   An accessibility check that times out may leave the page's renderer busy for a while.
 - No download manager (downloads are cancelled with a notice).
+- **SERP, intent and probes (Phase 3).**
+  - **Web results of Google, Bing and DuckDuckGo only.**
+  - The bundled selectors were written from public knowledge of the engines' markup and tested on
+    frost's own synthetic pages, not checked against live result pages. A layout they miss shows
+    "Couldn't read this layout", never a guess.
+  - No remote pack is published yet, so "Check for selector updates" reports the update source as
+    unreachable until a maintainer publishes `serp-selectors.json` and its `.sig` as a GitHub
+    release asset. Packs are checked only when you ask; there are no scheduled checks.
+  - **A user agent is not a crawler.** Probes come from your network and IP address, the page is not
+    rendered the way the crawler renders it, and nothing proves the request is the real bot, so sites
+    that verify bots may answer the real crawler differently. Crawler user agents from your address
+    can also trip a site's bot protection.
+  - **No OS sandbox for the intent process.** Electron cannot apply Chromium's OS sandbox to a Node
+    utility process: its isolation is by design (bytes in, an explicit environment, no file,
+    network or Electron imports in its code), not by the OS.
+  - **`app.asar.unpacked` is outside ASAR integrity.** ONNX Runtime's native binding and library
+    cannot load from the archive. The app's code signature and the macOS bundle seal vouch for
+    them, not the ASAR integrity check.
+  - Clear Browsing Data keeps the downloaded intent model and an installed selector pack.
+  - Repeated response headers are joined into one value, except `X-Robots-Tag` in the probes.
+  - The DNS-rebinding window above applies to the SERP lane's requests too.
 - **Keychain.** Linux without a keyring (`basic_text`) is memory-only: the account and a Search
   Console connection last for the run, and quitting revokes them. Under Playwright Linux is always
   memory-only (its loader adds `--password-store=basic`), so the e2e branches that restart with a
@@ -554,13 +700,19 @@ From the repo root (`pnpm install` first):
   pages (run `build` first; needs a display, `xvfb-run` on a headless Linux).
 - `pnpm --filter @app/desktop notices` — regenerates `THIRD_PARTY_NOTICES` from the installed
   packages' license files (a test fails when the committed copy is stale). Packaging ships it as
-  `resources/THIRD_PARTY_NOTICES`.
+  `resources/THIRD_PARTY_NOTICES`. Since Phase 3 it covers ONNX Runtime: `onnxruntime-node` and
+  `onnxruntime-common` (MIT; the licence is taken from upstream, as the packages ship none) and ONNX
+  Runtime's own third-party notices (`licenses/`). The intent model is downloaded, not shipped; its
+  Apache-2.0 attribution is in the enable prompt.
+- `pnpm sign:selectors` (from the repo root) — signs or verifies a selector pack (maintainers; see
+  [SERP, intent and indexability](#serp-intent-and-indexability-phase-3)).
 - `pnpm security:electronegativity`, `pnpm security:semgrep` (needs `uv`) — the CI security gates.
 - `pnpm make:mac` (on macOS) — `electron-forge make --platform darwin --arch arm64`
   (see [Building on a Mac](#building-on-a-mac)).
 - `pnpm verify:mac` (on macOS, after `make:mac`) — checks the bundle id, arch, signature and
-  entitlements, fuses, launch and debugging lockdown, and that the `.app` inside the published zip
-  and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
+  entitlements, fuses, launch and debugging lockdown, that the intent runtime is unpacked and loads
+  in the packaged utility process (`intent-runtime-loads`, the self-test), and that the `.app`
+  inside the published zip and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
 
 If your shell exports `ELECTRON_RUN_AS_NODE` (some terminals and agent harnesses do), unset it for
 manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it itself.
@@ -651,22 +803,32 @@ Desktop app type, and telemetry an endpoint and a DSN of your own.
   bounded fetcher, robots.txt fetching, the served HTML and its parse, the link, sitemap and
   hreflang checks, recorded responses, the speed and accessibility runners, the highlight overlay,
   content notes), `devtools/` (the drawer's network and console logs, storage, robots.txt verdicts
-  and its service), `account/` (configuration, the secret store, the loopback listener, PKCE, the
-  API client, entitlements, sign-in, quit holds), `gsc/` (Search Console's OAuth, API client,
-  property matching and service), `telemetry/` (the consent store and the wiring of
-  `@app/telemetry`), `security/`, `protocol/` (`app://`), `menu.ts`, `session-store.ts`,
-  `clear-browsing-data.ts`, `window.ts` (the window and tab-view factories).
+  and its service), `serp/` (the selector pack's verify and store and the bundled `packs/`, engine
+  detection, the reader script, the SERP worker and its analysis, the service, outlines, the
+  probes and their parse, `setup.ts`), `intent/` (the classifier, the model store, the utility
+  process host, the self-test, `setup.ts`), `account/` (configuration, the secret store, the
+  loopback listener, PKCE, the API client, entitlements, sign-in, quit holds), `gsc/` (Search
+  Console's OAuth, API client, property matching and service), `telemetry/` (the consent store and
+  the wiring of `@app/telemetry`), `security/`, `protocol/` (`app://`), `menu.ts`,
+  `session-store.ts`, `clear-browsing-data.ts`, `window.ts` (the window and tab-view factories).
+- `src/workers/intent/` — the intent utility process: its entry, the message handling, frost's
+  WordPiece tokenizer, the embedding, the prototype queries, the keyword fake and the self-test
+  model.
 - `src/preload/` — the chrome's preload: the IPC bridge only.
 - `src/renderer/` — the chrome (React): `App.tsx` (layout), `components/` (`SeoSidebar.tsx` and one
   file per panel in `components/seo/`, the drawer's tabs in `components/devtools/`, the palette,
-  find bar, History and render-profile views), the Settings sheet (`settings-*.tsx`, with
-  `account-view.ts` and the other `settings-*` view models), `palette/` (the action registry, matcher, built-ins
-  and "Open in" consent), each feature's `*-palette.ts` actions, `hooks/`, and pure helpers with
-  unit tests.
+  find bar, History and render-profile views; `seo/Serp.tsx` and `seo/Visibility.tsx` since
+  Phase 3, `seo/GscPanel.tsx` since Phase 4), the Settings sheet (`settings-*.tsx`, with
+  `account-view.ts` and the other `settings-*` view models), `palette/` (the action registry,
+  matcher, built-ins and "Open in" consent), each feature's `*-palette.ts` actions, `hooks/`
+  (`useSerp.ts` among them), and pure helpers with unit tests (`serp-view.ts`, `visibility-view.ts`
+  and `gsc-view.ts` among them).
 - `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers;
   `fake-backend.ts`, `fake-google.ts` and `fake-telemetry.ts` are the Phase 4 suites' in-test fakes).
-- `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string),
-  `third-party-notices.ts` and `THIRD_PARTY_NOTICES`; `scripts/measure-snippet-font.mjs` (builds the
+- `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string), `vite.intent.config.ts`
+  (the intent worker's build, `onnxruntime-node` external), `intent-runtime.ts` (the packaging hook
+  that copies ONNX Runtime's files for the target, and the unpack glob),
+  `third-party-notices.ts`, `licenses/` and `THIRD_PARTY_NOTICES`; `scripts/measure-snippet-font.mjs` (builds the
   snippet width table, run in Electron) and `scripts/verify-mac-package.mjs`.
 - The audit engine itself is `packages/seo-core` (`@app/seo-core`): pure TypeScript, no Electron,
   DOM or Zod.
