@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { compactVerify, createLocalJWKSet, decodeProtectedHeader } from 'jose';
@@ -205,7 +206,8 @@ describe('admin CLI', () => {
     expect(postgres).toBe('Postgres db.internal.example:5432');
     for (const secret of ['admin', 'hunter2', 'sslmode', url]) expect(postgres).not.toContain(secret);
     const pglite = describeDatabaseTarget(parseDatabaseEnv({ PGLITE_DIR: '/tmp/frost-test-pglite' }));
-    expect(pglite).toBe('PGlite /tmp/frost-test-pglite');
+    // The directory is resolved (env.ts), so on Windows it gains a drive and backslashes.
+    expect(pglite).toBe(`PGlite ${path.resolve('/tmp/frost-test-pglite')}`);
   });
 
   it('cli-revoke', async () => {

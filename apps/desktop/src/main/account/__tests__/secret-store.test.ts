@@ -77,16 +77,19 @@ describe('secret store', () => {
     const store = await create();
     await store.write('gsc', SECRET);
     await store.write('entitlements', '{}');
-    expect(mode(dir)).toBe(SECRETS_DIR_MODE);
-    expect(mode(path.join(dir, 'gsc.bin'))).toBe(SECRET_FILE_MODE);
-    expect(mode(path.join(dir, 'entitlements.bin'))).toBe(SECRET_FILE_MODE);
     expect(files()).toEqual(['entitlements.bin', 'gsc.bin']);
+    // POSIX permission bits: Windows has none (its ACLs are not modelled by `mode`).
+    if (process.platform !== 'win32') {
+      expect(mode(dir)).toBe(SECRETS_DIR_MODE);
+      expect(mode(path.join(dir, 'gsc.bin'))).toBe(SECRET_FILE_MODE);
+      expect(mode(path.join(dir, 'entitlements.bin'))).toBe(SECRET_FILE_MODE);
+    }
     // An existing directory with looser permissions is tightened.
     rmSync(dir, { recursive: true });
     realFs.mkdirSync(dir, { mode: 0o755 });
     realFs.chmodSync(dir, 0o755);
     await (await create()).write('account', SECRET);
-    expect(mode(dir)).toBe(SECRETS_DIR_MODE);
+    if (process.platform !== 'win32') expect(mode(dir)).toBe(SECRETS_DIR_MODE);
   });
 
   test('basic-text-is-memory-only', async () => {
