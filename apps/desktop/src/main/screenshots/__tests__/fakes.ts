@@ -135,6 +135,9 @@ export class FakeTab extends EventEmitter implements ScreenshotTarget {
     const width = Math.round(this.page.innerWidth * this.page.scale);
     const height = Math.round(this.page.innerHeight * this.page.scale);
     const bitmap = documentRows(width, height, Math.round(this.scroll.y * this.page.scale));
+    // A horizontal scrollbar under the page (`clientHeight` below `innerHeight`): its rows are not the document's.
+    const client = Math.round(this.page.clientHeight * this.page.scale);
+    for (let r = client; r < height; r++) bitmap.fill(255, r * width * 4, (r + 1) * width * 4);
     return { isEmpty: () => false, getScaleFactors: () => [1], getSize: () => ({ width, height }), toBitmap: () => Buffer.from(bitmap) };
   }
 }

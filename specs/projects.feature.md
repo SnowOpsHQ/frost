@@ -162,6 +162,10 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   is never overridden by the default arriving late; a chosen project that is deleted falls back to the
   default; when the sheet changes the projects or their pages the picker reads them again (and the
   default with them, unless the user chose). "Projects" opens the sheet on the chosen project.
+- **Scenario: picker-refresh-never-outlives-the-picker** — a refresh (on focus, or after the sheet
+  changed the projects) that answers after the picker left its page or the panel closed changes
+  nothing: the capture destination stays as the picker gave it back. Test:
+  `apps/desktop/src/renderer/__tests__/project-picker.test.ts`.
 
 ## Command palette
 - "Open projects" opens the sheet; "Add this page to a project" (a web page in the tab) opens it asking

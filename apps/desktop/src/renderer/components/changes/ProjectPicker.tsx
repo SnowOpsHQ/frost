@@ -23,6 +23,8 @@ export function ProjectPicker({ url }: { readonly url: string }) {
   const chosen = useRef(false);
   /** The page's default project (the first one listing it), once known. */
   const fallback = useRef<string | undefined>(undefined);
+  /** Which mount a read belongs to: a read that answers after the picker left (or moved to another page) changes nothing. */
+  const lifetime = useRef(0);
 
   /** The list, and the choice kept only while its project is in it. */
   const listed = useCallback((list: readonly ProjectSummary[]) => {
@@ -36,7 +38,7 @@ export function ProjectPicker({ url }: { readonly url: string }) {
   }, []);
   /** Reads the projects and the page's default again; the default applies unless the user chose. */
   const read = useCallback(
-    (isLive: () => boolean = () => true) =>
+    (isLive: () => boolean) =>
       Promise.all([ipc.projects.list.query(), ipc.projects.forPage.query({ url })])
         .then(([all, listing]) => {
           if (!isLive()) return;
@@ -47,15 +49,18 @@ export function ProjectPicker({ url }: { readonly url: string }) {
         .catch(() => undefined),
     [url, listed],
   );
-  const refresh = useCallback(() => void read(), [read]);
+  const refresh = useCallback(() => {
+    const mount = lifetime.current;
+    void read(() => lifetime.current === mount);
+  }, [read]);
 
   useEffect(() => {
-    let live = true;
+    const mount = ++lifetime.current;
     chosen.current = false;
     fallback.current = undefined;
-    void read(() => live);
+    void read(() => lifetime.current === mount);
     return () => {
-      live = false;
+      lifetime.current += 1;
       setCaptureProject(undefined);
     };
   }, [read]);

@@ -1,6 +1,6 @@
 // Spec: specs/screenshot.spec.ts (SCREENSHOT_WORLD_ID, SCREENSHOT_LIMITS, SCREENSHOT_REFUSALS)
 // Acceptance: specs/screenshot.feature.md (Kinds; Scenarios bitmap-of-a-captured-image, viewport-and-area-capture-the-view,
-// full-page-restores-scroll, full-page-rows-at-any-ratio, deadlines-bound-every-step)
+// full-page-restores-scroll, full-page-skips-the-horizontal-scrollbar, full-page-rows-at-any-ratio, deadlines-bound-every-step)
 import { describe, expect, test } from 'vitest';
 import { SCREENSHOT_LIMITS, SCREENSHOT_WORLD_ID } from '@app/specs/screenshot.spec';
 import { bitmapOf, captureArea, captureFullPage, captureViewport, deviceScale, ScreenshotFailure } from '../capture';
@@ -117,6 +117,19 @@ describe('capture', () => {
     hostile.override = (kind) => (kind === 'measure' ? { scrollHeight: 'tall' } : undefined);
     expect(await failure(captureFullPage(hostile, { signal: live() }))).toBe('capture-failed');
     expect(hostile.scripts.filter((s) => s.kind === 'scroll')).toEqual([]);
+  });
+
+  test('full-page-skips-the-horizontal-scrollbar', async () => {
+    // An 80 px viewport whose last 15 px are a horizontal scrollbar: every document row once, no
+    // scrollbar row in between, at whole and fractional ratios.
+    for (const ratio of [1, 2, 1.5]) {
+      const tab = new FakeTab({ innerHeight: 80, clientHeight: 65, scrollHeight: 250, scale: ratio, devicePixelRatio: ratio });
+      const shot = await captureFullPage(tab, { signal: live() });
+      const width = Math.round(100 * ratio);
+      expect(shot.bitmap, `ratio ${ratio}`).toMatchObject({ width, height: Math.round(250 * ratio) });
+      expect(shot.truncated).toBe(false);
+      for (let y = 0; y < shot.bitmap.height; y++) if (rowAt(shot.bitmap.bitmap, width, 0, y) !== y) throw new Error(`ratio ${ratio}: row ${y} is ${rowAt(shot.bitmap.bitmap, width, 0, y)}`);
+    }
   });
 
   test('full-page-rows-at-any-ratio', async () => {

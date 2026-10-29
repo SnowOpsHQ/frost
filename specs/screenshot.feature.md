@@ -215,6 +215,10 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
   `cancelled`, run the cancel script and write nothing; no listener is left on the tab; an in-page
   navigation cancels a full page too, and its scroll is restored. Test:
   `apps/desktop/src/main/screenshots/__tests__/service.test.ts`.
+- **Scenario: full-page-skips-the-horizontal-scrollbar** — a page with a horizontal scrollbar under it
+  (`clientHeight` below `innerHeight`): only each capture's rows above the scaled `clientHeight` are
+  placed, so every document row appears once and no scrollbar row does, at whole and fractional
+  ratios. Test: `capture.test.ts`.
 - **Scenario: full-page-rows-at-any-ratio** — a 10,000 CSS px page in a 653 px viewport at whole and
   fractional ratios (0.8 to 2.25, sizes rounded, scroll positions snapped to device pixels) gives
   exactly `round(10,000 × ratio)` rows (or the cap), each document row once, in order. Test:

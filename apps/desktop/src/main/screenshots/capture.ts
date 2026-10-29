@@ -183,6 +183,9 @@ export async function captureFullPage(target: ScreenshotTarget, { signal, limits
     // missed however the page snaps its scroll position), and its rows are placed from there on.
     // `planStitch` sets the size and the caps; at most `maxSegments` captures are taken.
     const maxScroll = Math.max(0, measure.scrollHeight - measure.clientHeight);
+    // A capture is the whole view, a horizontal scrollbar under the page included: only its rows
+    // above `clientHeight` are the document's.
+    const usable = Math.min(first.height, Math.round(measure.clientHeight * scale));
     let height = 0;
     let segments = 0;
     while (height < plan.height && segments < limits.maxSegments) {
@@ -190,7 +193,7 @@ export async function captureFullPage(target: ScreenshotTarget, { signal, limits
       const position = segments === 0 ? top : await step(() => runScroll(target, at.x, want), run.signal, 'it could not be scrolled');
       const shot = segments === 0 ? first : await captureView(target, run.signal);
       const cropTop = height - Math.round(position.y * scale);
-      const rows = Math.min(plan.height - height, shot.height - cropTop);
+      const rows = Math.min(plan.height - height, Math.min(usable, shot.height) - cropTop);
       // The page did not scroll as far as asked (or scrolled past what is placed): its rows stop here.
       if (cropTop < 0 || rows <= 0) break;
       composeStitch(out, width, plan.height, { ...shot, cropTop, cropHeight: rows, destY: height });
