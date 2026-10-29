@@ -10,12 +10,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, describe, expect, onTestFinished, test, vi } from 'vitest';
-import { MCP_ERRORS, MCP_NO_SANDBOX_SENTENCE, type McpSandboxMode } from '@app/specs/agent-mcp.spec';
+import { MCP_ERRORS, MCP_NO_SANDBOX_SENTENCE, mcpCommandLine, type McpSandboxMode } from '@app/specs/agent-mcp.spec';
 import type { AgentFeature } from '../entitlements';
 import type { ToolRunContext } from '../approvals';
 import { createMcpManager, createMemoryMcpStore, createMemoryMcpSecrets, nodeMcpDeps, type McpManager, type McpManagerDeps, type McpStartPrompt } from '../mcp';
 import { nodeSpawn } from '../mcp/node';
 import type { SpawnLike } from '../mcp/stdio';
+
+/**
+ * The variables libuv adds to a child's environment on Windows when frost's own has them (its
+ * `required_vars`), less `PATH`, which frost sets itself.
+ */
+const WINDOWS_REQUIRED_ENV = new Set(['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'TMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR']);
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/fake-mcp-server.mjs', import.meta.url));
 
@@ -112,7 +118,7 @@ describe('MCP manager with the fake server (no sandbox)', () => {
     expect(await manager.start(id)).toBe('ready');
     expect(confirmStart).toHaveBeenCalledTimes(2);
     const node = fs.realpathSync(process.execPath);
-    expect(confirmStart.mock.calls[1]![0]).toEqual({ name: 'Fake Tools', commandLine: `${node} ${FIXTURE}`, sandbox: 'none', allowNetwork: false, readPaths: [], envNames: [] });
+    expect(confirmStart.mock.calls[1]![0]).toEqual({ name: 'Fake Tools', commandLine: mcpCommandLine(node, [FIXTURE]), sandbox: 'none', allowNetwork: false, readPaths: [], envNames: [] });
     expect(spawn).toHaveBeenCalledTimes(1);
     const [command, args, options] = spawn.mock.calls[0]!;
     expect([command, args]).toEqual([node, [FIXTURE]]);
@@ -181,9 +187,11 @@ describe('MCP manager with the fake server (no sandbox)', () => {
     const probe = await manager.runner.run('mcp__faketools__probe', { file: FIXTURE, outside }, approved());
     expect(probe.ok).toBe(true);
     const report = JSON.parse((probe as { data: { text: string } }).data.text) as { cwd: string; envNames: string[]; fileReadable: boolean; writeOutside: boolean; writeOwn: boolean };
-    // macOS's CoreFoundation sets `__CF_USER_TEXT_ENCODING` inside every process it starts; it is not
-    // passed by frost (the child's environment is built from nothing).
-    expect(report.envNames.filter((name) => !(process.platform === 'darwin' && name === '__CF_USER_TEXT_ENCODING'))).toEqual(['FAKE_MODE', 'HOME', 'PATH']);
+    // macOS's CoreFoundation sets `__CF_USER_TEXT_ENCODING` inside every process it starts, and on
+    // Windows libuv copies the system variables a process needs (`WINDOWS_REQUIRED_ENV`) from frost's
+    // own environment; neither is passed by frost (the child's environment is built from nothing).
+    const added = (name: string) => (process.platform === 'darwin' && name === '__CF_USER_TEXT_ENCODING') || (process.platform === 'win32' && WINDOWS_REQUIRED_ENV.has(name.toUpperCase()));
+    expect(report.envNames.filter((name) => !added(name))).toEqual(['FAKE_MODE', 'HOME', 'PATH']);
     expect(report.writeOwn).toBe(true);
     // Without a sandbox it can do what the user can: the settings say so.
     expect(report.fileReadable).toBe(true);
@@ -280,7 +288,9 @@ describe('MCP manager with the fake server (no sandbox)', () => {
 
 // Acceptance: specs/agent-mcp.feature.md (Readable folders): checked as saved and again, on real
 // paths, at every start (a symlink can point anywhere by then).
-describe('MCP readable folders at start', () => {
+// Readable folders are bind-mounted into a sandbox (bubblewrap, `sandbox-exec`), so they are POSIX
+// paths only; on Windows, which has no sandbox here, none can be saved.
+describe.skipIf(process.platform === 'win32')('MCP readable folders at start', () => {
   const saveWith = async (manager: McpManager, readPaths: string[]) => manager.save({ name: 'Reader', transport: 'stdio', command: process.execPath, args: [FIXTURE], readPaths, allowNetwork: false, env: [] });
 
   test('mcp-read-folder-refused-at-save', async () => {
@@ -339,7 +349,8 @@ describe('MCP start ownership', () => {
     () => false,
   );
 
-  test('mcp-stop-during-final-folder-check-spawns-nothing', async () => {
+  // Its race is the readable-folder check, which Windows never reaches (no readable folders there).
+  test.skipIf(process.platform === 'win32')('mcp-stop-during-final-folder-check-spawns-nothing', async () => {
     const gate = deferred();
     let checks = 0;
     let reached!: () => void;
@@ -420,7 +431,8 @@ describe('MCP start ownership', () => {
     expect(await manager.stop(id)).toBe(true);
     expect(await starting).toBe('failed');
     const pid = children[0]!.pid;
-    expect(killed[0]).toEqual([pid, 'SIGTERM']);
+    // POSIX signals the process group; Windows has none, so the child itself is stopped (`stdio.ts`).
+    if (process.platform !== 'win32') expect(killed[0]).toEqual([pid, 'SIGTERM']);
     // No orphan: the process is gone.
     await vi.waitFor(() => {
       let alive = true;

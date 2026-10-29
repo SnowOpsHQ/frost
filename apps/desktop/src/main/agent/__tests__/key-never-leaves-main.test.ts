@@ -1,5 +1,6 @@
 // Spec: docs/plans/phase-5-ai-agent.md (decision 5; threat model "A key leaks to the renderer, a log
 // or the model") · specs/agent-proxy.spec.ts · Acceptance: specs/agent-host.feature.md (Key isolation)
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, test, vi } from 'vitest';
 import type { MessageChannelMain, safeStorage, session, utilityProcess } from 'electron';
 import { createModel, startRuntime, type RuntimePort } from '@app/agent-runtime';
@@ -10,7 +11,8 @@ import { createFakeChannel, createFakeFork, createFakeSafeStorage, createMemoryF
 
 const KEY = 'sk-ant-never-leaves-main-0123456789';
 const USER_DATA = '/user-data';
-const CREDENTIALS = `${USER_DATA}/agent-credentials.json`;
+// Built as the store builds it (`path.join`: backslashes on Windows), so the memory fs finds it.
+const CREDENTIALS = path.join(USER_DATA, 'agent-credentials.json');
 
 /** A scripted Anthropic Messages stream: one text block, then the end of the turn. */
 const ANTHROPIC_SSE = [
