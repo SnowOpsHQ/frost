@@ -20,6 +20,7 @@ import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
+import { serpRouter } from './serp-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -280,6 +281,8 @@ export const appRouter = router({
   settings: settingsRouter,
   // Phase 2.5 Task 7 (`seo-checks.feature.md`): link status, sitemap and hreflang reciprocity checks.
   checks: checksRouter,
+  // Phase 3 Task 4 (`serp-overlay.feature.md`): the SERP overlay's reading, outlines, pack updates and intent.
+  serp: serpRouter,
   // Phase 5 Task 6a (`agent-session.feature.md`): the agent panel (chats, approvals, model and keys).
   agent: agentRouter,
 });

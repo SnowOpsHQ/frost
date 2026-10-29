@@ -61,6 +61,13 @@
  * `perOriginConcurrency` of each (4 requests in flight) and each lane's rate. robots.txt itself stays
  * in the `audit` lane (cached per origin): the checks ask main's robots.txt fetcher for it.
  *
+ * **The SERP lane (Phase 3).** A third instance, outside `FETCHER_LANES`, serves what the SERP
+ * features fetch on the user's request: the visibility probes, "Check for selector updates" and the
+ * intent model's download. It is created by `apps/desktop/src/main/serp/setup.ts` over the same hop
+ * and resolver, with `SERP_FETCHER_LIMITS` (`serp-service.spec.ts`: the `checks` lane's limits) and
+ * per-origin queues of its own, so a link check never makes a probe wait. A site can then see up to
+ * three lanes' requests at once.
+ *
  * Sites can see these requests: every surface that makes them says so (`FETCH_DISCLOSURE`).
  */
 
@@ -149,6 +156,15 @@ export interface BoundedFetchRequest {
   readonly keepHeaders?: readonly string[];
   /** Characters kept of each kept header's value (default `FETCHER_LIMITS.maxHeaderValueChars`; a `Link` header listing alternates needs more). */
   readonly maxHeaderChars?: number;
+  /**
+   * Kept headers (lowercase names, also in `keepHeaders`) whose repeated values are kept apart,
+   * joined with `\n` (which no header value can hold), instead of `, `: a header whose values carry
+   * their own commas and scopes (`X-Robots-Tag: googlebot: nofollow` and `X-Robots-Tag: noindex`)
+   * cannot be split again once joined with `, `. Read from the hop's raw header list when it reports
+   * one (Electron's `headers` already joins duplicates with `, ` and drops some), else from an array
+   * value. Default: none (every value joined with `, `, as before).
+   */
+  readonly separateHeaders?: readonly string[];
   /** Aborts the call (queued or running): `aborted`. */
   readonly signal?: AbortSignal;
 }
@@ -174,7 +190,7 @@ export interface BoundedFetchResult {
   /** Redirects followed (the hops in `chain`). */
   readonly redirects: number;
   readonly chain: readonly FetchRedirect[];
-  /** The final response's kept headers (`keepHeaders`), lowercase names, values joined with `, ` and cut. */
+  /** The final response's kept headers (`keepHeaders`), lowercase names, values joined with `, ` (`\n` for `separateHeaders`) and cut. */
   readonly headers: Readonly<Record<string, string>>;
   /** The body exactly as read (at most `maxBytes`; empty unless read). Never decoded by the fetcher. */
   readonly body: Uint8Array<ArrayBuffer>;
