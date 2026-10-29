@@ -869,6 +869,16 @@ _Filled in as tasks land._
   `bwrap --help` lists it (seccomp is not used: no filter is installed); bubblewrap only at
   `/usr/bin/bwrap` or `/bin/bwrap`; `structuredContent` dropped; the system prompt says MCP tools'
   names, descriptions and schemas are untrusted text.
+- **Task 10 Codex review.** Best-effort sends (`notifications/cancelled`, `ping` replies) now run
+  on a signal of the connection's (aborted by `close()`, a flood or the transport closing) combined
+  with their own `notificationTimeoutMs` (5 s); at most `maxOutstandingNotifications` (4)
+  cancellations are in flight (more are skipped), so a server that never answers can't keep `POST`s
+  open (`mcp-http-cancellation-bounded`). A start re-checks ownership after its last await (the
+  final readable-folder check) right before the spawn, and every point where it finds it lost
+  ownership (Stop, disable, delete, a newer start) releases what it made since (`abandon`: the
+  temporary folder, the client, the process group); `failRun` on a detached run releases it too, and
+  `endRun` closes the stdio transport even without a client (`mcp-stop-during-final-folder-check-spawns-nothing`,
+  `mcp-disable-during-temp-folder-leaves-no-folder`, `mcp-stop-during-initialize-kills-the-group`).
 
 ## Lead follow-ups (Task 9)
 - **Clear Browsing Data and the agent.** Today it clears neither standing grants nor chats. In

@@ -21,6 +21,9 @@ none at all over HTTP (`mcp-client-answers-ping-refuses-other-server-requests`).
 - Scenario: a call past its timeout fails `timeout`, aborts the transport's own work for it, and the
   server is told it was cancelled; a closed connection fails what is in flight
   → `mcp-client-timeout-and-close`, `mcp-http-timeout-aborts-the-request`
+- Scenario (Codex review): the cancellation sent after a deadline has its own deadline
+  (`notificationTimeoutMs`), is aborted when the connection closes, and at most
+  `maxOutstandingNotifications` are in flight → `mcp-http-cancellation-bounded`
 - Scenario (security review B1): a server that floods requests or notifications (more than
   `maxServerMessagesPerSecond`, or `maxServerMessagesPerCall` while a request is open) is
   disconnected (`flood`); main's memory stays bounded → `mcp-client-server-message-budget`,
@@ -71,6 +74,10 @@ none at all over HTTP (`mcp-client-answers-ping-refuses-other-server-requests`).
 - Nothing starts at launch or because a chat runs; a disabled server can't start
   → `mcp-start-requires-the-dialog`, `mcp-disabled-or-not-entitled-tools-absent`
 - Stop ends it and removes its temporary folder → `mcp-start-requires-the-dialog`
+- A Stop, disable or delete while a start awaits (a folder check, the temporary folder, the
+  handshake) leaves nothing behind: no spawn after the last check, the temporary folder removed, a
+  spawned process group stopped → `mcp-stop-during-final-folder-check-spawns-nothing`,
+  `mcp-disable-during-temp-folder-leaves-no-folder`, `mcp-stop-during-initialize-kills-the-group`
 
 ## Readable folders (security review B2)
 - A folder a sandboxed server may read is refused when it is, is inside, or holds `/run`,

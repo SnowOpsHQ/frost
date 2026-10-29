@@ -439,6 +439,47 @@ describe('HTTP transport', () => {
     expect(reads - after).toBeLessThanOrEqual(1);
   });
 
+  test('mcp-http-cancellation-bounded', async () => {
+    // Codex review: the cancellation after a deadline was a POST nothing ever aborted.
+    vi.useFakeTimers();
+    try {
+      const requests: { method: string; signal: AbortSignal }[] = [];
+      const transport = createHttpTransport({
+        url: URL_,
+        resolveHost: async () => ['93.184.216.34'],
+        token: async () => null,
+        // A server that never answers anything.
+        fetch: (_url, init) => {
+          requests.push({ method: JSON.parse(init.body ?? '{}').method, signal: init.signal });
+          return new Promise<Response>((_resolve, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+        },
+      });
+      const client = createMcpClient(transport, { timeoutMs: 1_000 });
+      const call = client.callTool('x', {}, new AbortController().signal).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await call).toMatchObject({ code: 'timeout' });
+      const cancels = () => requests.filter((request) => request.method === 'notifications/cancelled');
+      expect(requests.find((request) => request.method === 'tools/call')!.signal.aborted).toBe(true);
+      expect(cancels()).toHaveLength(1);
+      expect(cancels()[0]!.signal.aborted).toBe(false);
+      // Its own deadline.
+      await vi.advanceTimersByTimeAsync(MCP_LIMITS.notificationTimeoutMs);
+      expect(cancels()[0]!.signal.aborted).toBe(true);
+      // Many deadlines at once: at most `maxOutstandingNotifications` cancellations in flight.
+      const calls = Array.from({ length: 10 }, () => client.callTool('x', {}, new AbortController().signal).catch(() => undefined));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.all(calls);
+      const open = cancels().filter((request) => !request.signal.aborted);
+      expect(open).toHaveLength(MCP_LIMITS.maxOutstandingNotifications);
+      // Closing the connection aborts them at once.
+      await client.close();
+      expect(cancels().every((request) => request.signal.aborted)).toBe(true);
+      expect(requests.every((request) => request.signal.aborted)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('mcp-http-event-stream', async () => {
     const body = 'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n: comment\ndata: {"jsonrpc":"2.0",\ndata: "id":1,"result":{}}\n\ndata: {"never":"read"}\n\n';
     const transport = createHttpTransport({ url: URL_, fetch: async () => new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' } }), resolveHost: async () => ['93.184.216.34'], token: async () => null });

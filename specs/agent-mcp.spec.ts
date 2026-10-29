@@ -115,6 +115,15 @@ export const MCP_LIMITS = {
   maxServerMessagesPerCall: 2_000,
   /** `ping`s frost answers per second (the only server request it answers, and only over stdio). */
   maxPingRepliesPerSecond: 5,
+  /**
+   * Best-effort messages frost sends without waiting for an answer (`notifications/cancelled`, a
+   * `ping`'s reply): each one's deadline (milliseconds), aborted too when the connection closes, and
+   * how many cancellations may be in flight at once (more are skipped; `ping` replies have their own
+   * per-second budget). Over HTTP each one is a `POST`, so a server that never answers can't pile
+   * them up (Codex review).
+   */
+  notificationTimeoutMs: 5_000,
+  maxOutstandingNotifications: 4,
   /** Bytes queued on a command server's stdin, and how long a full stdin may stay full (milliseconds): past either, `too-large`. */
   maxQueuedWriteBytes: 1024 * 1024,
   maxWriteStallMs: 10_000,

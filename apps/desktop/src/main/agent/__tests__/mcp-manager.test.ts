@@ -326,6 +326,115 @@ describe('MCP readable folders at start', () => {
   });
 });
 
+// Codex review: a Stop (or disable, delete, newer start) while a start awaits must leave nothing behind.
+describe('MCP start ownership', () => {
+  const deferred = () => {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => (release = resolve));
+    return { promise, release };
+  };
+  const docs = path.join(FAKE_HOME, 'servers', 'docs');
+  const isDir = (file: string) => fs.promises.stat(file).then(
+    (stat) => stat.isDirectory(),
+    () => false,
+  );
+
+  test('mcp-stop-during-final-folder-check-spawns-nothing', async () => {
+    const gate = deferred();
+    let checks = 0;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => (reached = resolve));
+    const { manager, spawn, tempDirs } = setup({
+      // The second check (after the temporary folder exists) waits for the test.
+      isDirectory: async (file) => {
+        checks += 1;
+        if (checks === 2) {
+          reached();
+          await gate.promise;
+        }
+        return isDir(file);
+      },
+    });
+    expect((await manager.save({ name: 'Racer', transport: 'stdio', command: process.execPath, args: [FIXTURE], readPaths: [docs], allowNetwork: false, env: [] })).result).toBe('saved');
+    await manager.setEnabled('racer', true);
+    const starting = manager.start('racer');
+    await waiting;
+    expect(await manager.stop('racer')).toBe(true);
+    gate.release();
+    expect(await starting).toBe('failed');
+    expect(spawn).not.toHaveBeenCalled();
+    expect(manager.view().servers[0]).toMatchObject({ status: 'stopped', lastError: null });
+    // The temporary folder made before the Stop is gone too.
+    await vi.waitFor(() => expect(tempDirs.every((dir) => !fs.existsSync(dir))).toBe(true));
+    expect(tempDirs).toHaveLength(1);
+  });
+
+  test('mcp-disable-during-temp-folder-leaves-no-folder', async () => {
+    const gate = deferred();
+    let made!: () => void;
+    const madeIt = new Promise<void>((resolve) => (made = resolve));
+    const dirs: string[] = [];
+    const { manager, spawn } = setup({
+      makeTempDir: async () => {
+        const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'frost-mcp-race-'));
+        dirs.push(dir);
+        made();
+        await gate.promise;
+        return dir;
+      },
+    });
+    const id = await addFixture(manager);
+    await manager.setEnabled(id, true);
+    const starting = manager.start(id);
+    await madeIt;
+    expect(await manager.setEnabled(id, false)).toBe(true);
+    gate.release();
+    expect(await starting).toBe('failed');
+    expect(spawn).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(fs.existsSync(dirs[0]!)).toBe(false));
+  });
+
+  test('mcp-stop-during-initialize-kills-the-group', async () => {
+    // A server that never answers `initialize`: Stop while it waits ends its process group.
+    const killed: [number, string][] = [];
+    const children: { pid: number; exitCode: number | null; killed: boolean }[] = [];
+    const { manager } = setup({
+      killGroup: (pid, signal) => {
+        killed.push([pid, signal]);
+        try {
+          process.kill(-pid, signal);
+        } catch {
+          // Already gone.
+        }
+      },
+      spawn: vi.fn<SpawnLike>((command, _args, options) => {
+        const child = nodeSpawn(command, ['-e', 'setInterval(() => {}, 1000)'], options);
+        children.push(child as unknown as { pid: number; exitCode: number | null; killed: boolean });
+        return child;
+      }),
+    });
+    const id = await addFixture(manager);
+    await manager.setEnabled(id, true);
+    const starting = manager.start(id);
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    expect(await manager.stop(id)).toBe(true);
+    expect(await starting).toBe('failed');
+    const pid = children[0]!.pid;
+    expect(killed[0]).toEqual([pid, 'SIGTERM']);
+    // No orphan: the process is gone.
+    await vi.waitFor(() => {
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+    });
+    expect(manager.view().servers[0]).toMatchObject({ status: 'stopped' });
+  });
+});
+
 /** Whether this machine's bubblewrap can make a sandbox (unprivileged user namespaces allowed). */
 function bubblewrapWorks(): boolean {
   if (process.platform !== 'linux') return false;

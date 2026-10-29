@@ -271,24 +271,40 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
     return detecting;
   };
 
-  /** Ends a run: closes its client, removes its folder. The server's status is the caller's. */
+  /** Ends a run: closes its client and its process group, removes its folder. The server's status is the caller's. Idempotent. */
   const endRun = async (run: Run) => {
     run.controller.abort();
     const client = run.client;
+    const stdio = run.stdio;
     run.client = null;
+    run.stdio = null;
     run.tools = new Map();
     if (client !== null) await client.close().catch(() => undefined);
+    // A transport whose client never came (or whose close didn't reach it): its group is stopped too.
+    if (stdio !== null) await stdio.close().catch(() => undefined);
     const dir = run.tempDir;
     run.tempDir = null;
     if (dir !== null) await deps.removeDir(dir).catch(() => log('agent mcp: a temporary folder could not be removed'));
   };
 
+  /** Releases runs ended in the background (their cleanup is awaited by `dispose`). */
+  const releasing = new Set<Promise<void>>();
+  const release = (run: Run): Promise<void> => {
+    const done = endRun(run).finally(() => releasing.delete(done));
+    releasing.add(done);
+    return done;
+  };
+
   const failRun = (server: Server, run: Run, code: McpErrorCode, status: number | null = null) => {
-    if (server.run !== run) return;
+    // No longer the server's run: nothing to report, but whatever it holds is released.
+    if (server.run !== run) {
+      void release(run);
+      return;
+    }
     server.run = null;
     server.status = 'failed';
     server.error = { code, status };
-    void endRun(run);
+    void release(run);
     changed();
   };
 
@@ -335,6 +351,15 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
   const connect = async (server: Server, run: Run): Promise<McpStartResult> => {
     const config = server.config;
     const current = () => server.run === run && !run.controller.signal.aborted;
+    /**
+     * The run lost ownership (Stop, disable, delete, or a newer start) while an await was pending:
+     * whatever it made since (a temporary folder, a process, a client) is released here, because
+     * `stopServer` already detached it and can't see what came after (Codex review).
+     */
+    const abandon = async (): Promise<'failed'> => {
+      await release(run);
+      return 'failed';
+    };
     let transport: McpTransport;
     let stdio: StdioTransport | null = null;
     if (config.transport === 'http') {
@@ -347,12 +372,12 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
       transport = createHttpTransport({ url, fetch: deps.fetch, resolveHost: deps.resolveHost, token: () => deps.secrets.withToken(config.id, async (token) => token) });
     } else {
       const sandbox = await sandboxHere();
-      if (!current()) return 'failed';
+      if (!current()) return abandon();
       // The real path: what runs, what the dialog shows, what a sandbox profile names (macOS refuses
       // to exec a symlink whose own path the profile allows, checked on macOS 27).
       const found = resolveCommand(config.command, deps.pathEnv, platform, deps.isExecutable);
       const command = found === null ? null : await deps.realpath(found).catch(() => null);
-      if (!current()) return 'failed';
+      if (!current()) return abandon();
       if (command === null) {
         failRun(server, run, 'not-found');
         return 'failed';
@@ -363,7 +388,7 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
       // temporary folders and frost's data; any missing or refused one stops the start.
       const context = await readContext(null);
       const readPaths = context === null ? null : await vetReadPaths(config.readPaths, context);
-      if (!current()) return 'failed';
+      if (!current()) return abandon();
       if (context === null || readPaths === null) {
         failRun(server, run, 'read-path');
         return 'failed';
@@ -376,7 +401,7 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
       } catch {
         allowed = false;
       }
-      if (!current()) return 'failed';
+      if (!current()) return abandon();
       if (!allowed) {
         server.run = null;
         server.status = 'stopped';
@@ -393,7 +418,7 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
         }
         env = Object.fromEntries(config.envNames.map((name) => [name, values[name]!]));
       }
-      if (!current()) return 'failed';
+      if (!current()) return abandon();
       try {
         run.tempDir = await deps.makeTempDir();
         run.tempDir = await deps.realpath(run.tempDir);
@@ -401,10 +426,13 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
         failRun(server, run, 'spawn-failed');
         return 'failed';
       }
-      if (!current()) return 'failed';
+      if (!current()) return abandon();
       // Checked again with the server's own folder known: nothing listed may be it, hold it or sit in it.
       const tempDir = run.tempDir;
-      if ((await vetReadPaths(readPaths, { ...context, tempDir })) === null) {
+      const vetted = await vetReadPaths(readPaths, { ...context, tempDir });
+      // Ownership again, after the last await and right before the spawn (nothing awaits in between).
+      if (!current()) return abandon();
+      if (vetted === null) {
         failRun(server, run, 'read-path');
         return 'failed';
       }
@@ -450,7 +478,7 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
     try {
       const init = await client.initialize(signal);
       const listed = init.tools ? await client.listTools(signal) : [];
-      if (!current()) return 'failed';
+      if (!current()) return abandon();
       const tools = new Map<string, ServerTool>();
       const byName = new Map(listed.filter((tool) => typeof tool.name === 'string').map((tool) => [tool.name as string, tool] as const));
       for (const { name, original } of mcpToolNames(config.id, listed.map((tool) => tool.name))) {
@@ -466,7 +494,7 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
       changed();
       return 'ready';
     } catch (error) {
-      if (!current()) return 'failed';
+      if (!current()) return abandon();
       const code = error instanceof McpFailure ? classify(error.code) : 'protocol';
       failRun(server, run, code, error instanceof McpFailure ? error.status : null);
       return 'failed';
@@ -761,6 +789,8 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
     async dispose() {
       disposed = true;
       await Promise.all([...servers.values()].map((server) => stopServer(server)));
+      // Runs that failed or lost their start in the background: their folders and processes too.
+      await Promise.all([...releasing]);
     },
   };
 }

@@ -109,6 +109,30 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
   let windowStart = now();
   let windowCount = 0;
   let pings = 0;
+  /** Aborted when the connection ends (closed, flooded, or `close()`): best-effort sends stop with it. */
+  const connection = new AbortController();
+  let notifying = 0;
+
+  /**
+   * Sends a message frost doesn't wait on (a cancellation, a `ping`'s reply), aborted after
+   * `notificationTimeoutMs` or when the connection ends. Cancellations past
+   * `maxOutstandingNotifications` in flight are skipped (`ping` replies have their own budget,
+   * `maxPingRepliesPerSecond`, and go over stdio only). Never rejects.
+   */
+  const notify = (message: JsonRpcOutgoing, capped: boolean) => {
+    if (closed !== null || (capped && notifying >= MCP_LIMITS.maxOutstandingNotifications)) return;
+    const counted = capped ? 1 : 0;
+    notifying += counted;
+    const deadline = new AbortController();
+    const timer = setTimer(() => deadline.abort(), MCP_LIMITS.notificationTimeoutMs);
+    void transport
+      .send(message, AbortSignal.any([connection.signal, deadline.signal]))
+      .catch(() => undefined)
+      .finally(() => {
+        clearTimer(timer);
+        notifying -= counted;
+      });
+  };
 
   const failAll = (code: McpErrorCode) => {
     for (const [id, entry] of [...pending]) {
@@ -120,12 +144,14 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
   transport.onClose((code) => {
     if (closed === null) closed = code;
     failAll(code);
+    connection.abort();
   });
 
   const flood = () => {
     if (closed !== null) return;
     closed = 'flood';
     failAll('flood');
+    connection.abort();
     void transport.close('flood').catch(() => undefined);
   };
 
@@ -155,7 +181,7 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
       // The one request answered: `ping`, over stdio, a few a second. Every other one goes unanswered.
       if (message['method'] === 'ping' && answersServerRequests && (typeof id === 'number' || (typeof id === 'string' && id.length <= 256)) && pings < MCP_LIMITS.maxPingRepliesPerSecond) {
         pings += 1;
-        void transport.send({ jsonrpc: '2.0', id, result: {} }, new AbortController().signal).catch(() => undefined);
+        notify({ jsonrpc: '2.0', id, result: {} }, false);
       }
       return;
     }
@@ -202,7 +228,7 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
       const onAbort = () => {
         if (done) return;
         // The server may go on; frost tells it the request is cancelled (best effort).
-        if (closed === null) void transport.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'cancelled' } }, new AbortController().signal).catch(() => undefined);
+        notify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'cancelled' } }, true);
         fail(new McpFailure('timeout'));
       };
       const timer = setTimer(onAbort, timeoutMs);
@@ -260,6 +286,7 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
     async close() {
       if (closed === null) closed = 'exited';
       failAll('exited');
+      connection.abort();
       await transport.close().catch(() => undefined);
     },
   };
