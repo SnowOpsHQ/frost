@@ -71,7 +71,9 @@ export function nodeMcpDeps(session: () => McpSessionLike): Pick<
     ),
     realpath: (file) => fs.promises.realpath(file),
     makeTempDir: () => fs.promises.mkdtemp(path.join(os.tmpdir(), 'frost-mcp-')),
-    removeDir: (dir) => fs.promises.rm(dir, { recursive: true, force: true }),
+    // Retried briefly: on Windows a folder that was a just-stopped process's working directory can
+    // refuse deletion (`EBUSY`, `EPERM`) for a moment after the process exits.
+    removeDir: (dir) => fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
     pathEnv,
     // Both of the user's home folders (they differ when `HOME` is set elsewhere), and the session's runtime folder.
     homes: [os.homedir(), accountHome()].filter((home): home is string => typeof home === 'string' && home.startsWith('/')),
