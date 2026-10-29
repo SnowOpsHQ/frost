@@ -85,7 +85,7 @@ not be set (better-auth would turn its telemetry back on); startup refuses them.
 
 `src/principal.ts` resolves "who is this request" through a chain: an `Authorization: Bearer`
 header goes to `AppDeps.verifyBearer` (by default `desktopTokenVerifier`: the desktop tokens in
-`desktop_tokens`; tests may stand in their own; a verifier that throws refuses), otherwise the
+`desktop_tokens`; tests may stand in their own; a verifier that throws, as when the database is down, answers 503 `unavailable`, never 401, so the desktop keeps its offline grace), otherwise the
 better-auth session cookie. A presented
 but invalid credential is 401 and never falls through to another. On an unsafe method (`POST` …)
 the cookie counts only for a same-origin request (`Origin`, else `Sec-Fetch-Site`); desktop write

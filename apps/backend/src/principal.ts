@@ -24,12 +24,15 @@ export type Resolution =
   /** A credential of this kind was presented and is not valid. */
   | { readonly kind: 'rejected' }
   /** No credential of this kind: ask the next resolver. */
-  | { readonly kind: 'absent' };
+  | { readonly kind: 'absent' }
+  /** The credential could not be checked now (the verifier failed): neither valid nor refused. */
+  | { readonly kind: 'unavailable' };
 
 export type PrincipalResolver = (request: Request) => Promise<Resolution>;
 
 const ABSENT: Resolution = { kind: 'absent' };
 const REJECTED: Resolution = { kind: 'rejected' };
+const UNAVAILABLE: Resolution = { kind: 'unavailable' };
 
 /** RFC 6750 `b64token`, bounded; the scheme is case-insensitive. */
 const BEARER = /^bearer +([A-Za-z0-9\-._~+/]{1,512}=*)$/i;
@@ -43,8 +46,10 @@ export function bearerToken(request: Request): string | null | undefined {
 }
 
 /**
- * `Authorization: Bearer …` through `verify`. Without a verifier every presented bearer is refused;
- * a verifier that throws refuses too (logged by error name only).
+ * `Authorization: Bearer …` through `verify`. Without a verifier every presented bearer is refused.
+ * A verifier that throws (the database is down) is `unavailable`, not a refusal: a 401 would end the
+ * desktop's session, while a 503 is a network failure to it, with offline grace (logged by error
+ * name only).
  */
 export function bearerResolver(verify: BearerVerifier | undefined): PrincipalResolver {
   return async (request) => {
@@ -56,7 +61,7 @@ export function bearerResolver(verify: BearerVerifier | undefined): PrincipalRes
       principal = await verify(token);
     } catch (error) {
       console.error(`[backend] bearer verification failed: ${error instanceof Error ? error.name : 'unknown'}`);
-      return REJECTED;
+      return UNAVAILABLE;
     }
     return principal ? { kind: 'principal', principal } : REJECTED;
   };
@@ -83,11 +88,13 @@ export function webSessionResolver(auth: Auth, origin: string): PrincipalResolve
   };
 }
 
-export async function resolvePrincipal(resolvers: readonly PrincipalResolver[], request: Request): Promise<Principal | null> {
+/** The first resolver's answer that is not `absent`: a principal, `null` (refused or none), or `'unavailable'`. */
+export async function resolvePrincipal(resolvers: readonly PrincipalResolver[], request: Request): Promise<Principal | null | 'unavailable'> {
   for (const resolve of resolvers) {
     const resolution = await resolve(request);
     if (resolution.kind === 'principal') return resolution.principal;
     if (resolution.kind === 'rejected') return null;
+    if (resolution.kind === 'unavailable') return 'unavailable';
   }
   return null;
 }
@@ -96,10 +103,17 @@ export interface PrincipalEnv {
   Variables: { principal: Principal };
 }
 
-/** 401 `{ error: 'unauthorized' }` unless a resolver answers a principal (then `c.get('principal')`). */
+/**
+ * 401 `{ error: 'unauthorized' }` unless a resolver answers a principal (then `c.get('principal')`);
+ * 503 `{ error: 'unavailable' }` when the credential could not be checked.
+ */
 export function requirePrincipal(resolvers: readonly PrincipalResolver[]) {
   return createMiddleware<PrincipalEnv>(async (c, next) => {
     const principal = await resolvePrincipal(resolvers, c.req.raw);
+    if (principal === 'unavailable') {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'unavailable' }, 503);
+    }
     if (!principal) {
       c.header('WWW-Authenticate', 'Bearer realm="frost"');
       return c.json({ error: 'unauthorized' }, 401);

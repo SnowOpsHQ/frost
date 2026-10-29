@@ -613,6 +613,28 @@ describe('account sign-in flow', () => {
     expect(out.service.dispose()).not.toBeNull();
   });
 
+  test('exchange-in-flight-awaited-on-dispose', async () => {
+    // Quitting while the code exchange is still running: the quit waits for it, and the token it
+    // then gets is revoked, never left valid on the backend.
+    const h = await harness();
+    h.gestures.add(WINDOW);
+    expect(await h.service.signIn(WINDOW)).toBe('started');
+    let answer!: (value: unknown) => void;
+    h.api.exchange.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)) as never);
+    h.loops.started.at(-1)!.callback();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.api.exchange).toHaveBeenCalledTimes(1);
+    const wait = h.service.dispose();
+    expect(wait).not.toBeNull();
+    let settled = false;
+    void wait!.then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    answer(ok({ token: TOKEN, expiresAt: Date.now() + 1000, user: { id: 'u1', email: 'dana@example.com', name: null } }));
+    await wait;
+    expect(h.api.signOut).toHaveBeenCalledWith(TOKEN);
+  });
+
   test('memory-only-token-revoked-on-dispose', async () => {
     // Kept for this run only: the quit revokes it, and the quit is held for that.
     const h = await harness({ store: fakeStore(false) });

@@ -235,7 +235,8 @@ describe('session hardening', () => {
     await captureConsole(async () => {
       res = await throwing.request(SESSION_PATH, { headers: { authorization: 'Bearer desktop-token-1' } });
     });
-    expect(res?.status).toBe(401);
+    expect(res?.status).toBe(503);
+    expect(await res?.json()).toEqual({ error: 'unavailable' });
     await throwing.close();
 
     const b = await open({ verifyBearer: (t) => Promise.resolve(t === 'tok' ? { user: { id: 'u1', email: 'dana@example.com', name: null } } : null) });

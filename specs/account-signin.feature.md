@@ -125,6 +125,7 @@ renderer never sees a token". Each line maps to one named test.
 - `refresh-401-signs-out` — a 401 on refresh drops the token, `markRefreshFailed('auth')`, `signed-out` with `session-ended`.
 - `refresh-not-reused-across-accounts` — a refresh still running for an account that signed out is not handed to the next account: its own refresh runs with its own token, and the late answer changes nothing.
 - `revocations-awaited-on-dispose` — `dispose` drops a pending sign-in and answers its revocation (and a sign-out's) to wait for; nothing to wait for answers `null`.
+- `exchange-in-flight-awaited-on-dispose` — quitting while the code exchange still runs waits for it, and the token it then gets is revoked.
 - `refresh-network-keeps-grace` — a network failure keeps the account and calls `markRefreshFailed('network')`.
 - `refresh-invalid-snapshot-is-free` — an entitlements answer that does not parse is `markRefreshFailed('invalid')`.
 - `entitlements-none-unless-signed-in` — a snapshot held without a stored account is cleared at start; `entitlements()` is `none` while `confirming`.

@@ -142,6 +142,8 @@ export async function createAccountService(deps: AccountServiceDeps): Promise<Ac
   const inflight = new Set<Promise<unknown>>();
   /** Revocations still running (a quit waits for them, bounded). */
   const revoking = new Set<Promise<void>>();
+  // Code exchanges still running, each with the revocation it starts when its request was dropped meanwhile.
+  const exchanging = new Set<Promise<void>>();
   /** The refresh running, for the account (token) it runs for: never handed to another account. */
   let refreshing: { readonly token: string; readonly run: Promise<boolean> } | null = null;
 
@@ -265,13 +267,20 @@ export async function createAccountService(deps: AccountServiceDeps): Promise<Ac
       return;
     }
     p.phase = 'exchanging';
-    const exchanged = await api.exchange({ code, verifier: p.request.verifier, redirectUri: p.loopback?.redirectUri ?? '' });
+    const exchange = api.exchange({ code, verifier: p.request.verifier, redirectUri: p.loopback?.redirectUri ?? '' });
+    // Replaced, cancelled or quit while exchanging: the token it gets is revoked, and a quit waits for
+    // that (`dispose`), so no unconfirmed token outlives the run.
+    const settled = exchange.then(
+      async (result) => {
+        if (result.ok && pending !== p) await revoke(result.value.token);
+      },
+      () => undefined,
+    );
+    exchanging.add(settled);
+    void settled.finally(() => exchanging.delete(settled));
+    const exchanged = await exchange;
     if (exchanged.ok) remember(exchanged.value.token, exchanged.value.user.email);
-    if (pending !== p) {
-      // Replaced or cancelled while exchanging: the token it got is not kept.
-      if (exchanged.ok) void revoke(exchanged.value.token);
-      return;
-    }
+    if (pending !== p) return;
     if (!exchanged.ok) {
       log(`account: the code exchange failed (${exchanged.failure})`);
       dropPending(p, errorOfFailure(exchanged.failure), { closeListener: false });
@@ -541,7 +550,8 @@ export async function createAccountService(deps: AccountServiceDeps): Promise<Ac
       }
       for (const waiter of waiters.splice(0)) waiter.resolve(state());
       listeners.clear();
-      return revoking.size === 0 ? null : Promise.allSettled([...revoking]).then(() => undefined);
+      const outstanding = [...revoking, ...exchanging];
+      return outstanding.length === 0 ? null : Promise.allSettled(outstanding).then(() => undefined);
     },
   };
 }

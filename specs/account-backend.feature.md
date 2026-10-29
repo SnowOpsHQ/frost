@@ -44,7 +44,8 @@ Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to on
   with addresses and token-like strings masked, dropping its extra arguments.
 - **One door for "who is this".** `/v1/session` (and every later authenticated route) asks a chain of
   principal resolvers: an `Authorization: Bearer` header goes to the bearer verifier (Task 3's desktop
-  tokens; without one, a bearer is refused; a verifier that throws refuses too; the scheme is
+  tokens; without one, a bearer is refused; a verifier that throws, as when the database is down, answers 503 `unavailable`, which the desktop
+  treats as a network failure, so offline grace applies rather than a sign-out; the scheme is
   case-insensitive), otherwise the better-auth web session cookie. A presented but invalid credential
   is 401; it never falls through to another credential. On an unsafe method the cookie counts only for
   a same-origin request (`Origin`, else `Sec-Fetch-Site`); desktop write routes use the bearer alone.
@@ -96,7 +97,8 @@ Tasks 1 and 3 (`docs/plans/phase-4-accounts-telemetry.md`). Each line maps to on
 - `auth-answers-carry-no-session-token` — sign-in and get-session answers carry no session token.
 - `db-errors-not-logged` — a failing query answers 500 `internal`; nothing logged carries the email, name, hash or query parameters.
 - `session-answer-validated` — a principal that would break `SessionResponseSchema` answers 500 `internal`, not the bad body.
-- `bearer-verifier-errors-and-scheme` — a throwing verifier is 401; `bearer`/`BEARER` are accepted.
+- `bearer-verifier-errors-and-scheme` — a throwing verifier is 503 `unavailable` (never 401, which would
+  end the desktop's session); `bearer`/`BEARER` are accepted.
 - `cookie-on-unsafe-method-needs-same-origin` — on `POST` the cookie counts with a same-origin `Origin` or `Sec-Fetch-Site`, not with none or another site.
 - `healthz-503-when-db-closed` — `/healthz` answers 503 `unavailable` once the database is closed.
 
