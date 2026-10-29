@@ -267,6 +267,10 @@ describe('agent ports', () => {
         ],
       },
     });
+    // User info and fragments never reach the model (`modelPageUrl`).
+    probes = { ...PROBES_DONE, url: 'https://u:pw@example.com/a#top', rows: [{ ...PROBES_DONE.rows[0]!, finalUrl: 'https://u:pw@example.com/a#x' }] };
+    const stripped = await port.latest(4);
+    expect(stripped.status === 'ok' && [stripped.data.url, stripped.data.agents[0]!.finalUrl]).toEqual(['https://example.com/a', 'https://example.com/a']);
     // Idle: said, with the state.
     probes = { ...PROBES_DONE, status: 'idle', rows: [], diffs: [], startedAt: null, finishedAt: null };
     expect(await port.latest(4)).toMatchObject({ status: 'unavailable', state: 'idle' });

@@ -1,6 +1,7 @@
 import type { PortAnswer, ProbeReport, ProbesPort } from '@app/ai-skills';
 import { isPublicPage } from '@app/specs/agent-approvals.spec';
-import { gscPageUrl, PROBE_TOOL_LIMITS as P, PROBE_TOOL_REASONS, PROBE_TOOL_SOURCE, SEARCH_TOOL_LIMITS } from '@app/specs/agent-search-tools.spec';
+import { modelPageUrl } from '@app/specs/agent-page-tools.spec';
+import { PROBE_TOOL_LIMITS as P, PROBE_TOOL_REASONS, PROBE_TOOL_SOURCE, SEARCH_TOOL_LIMITS } from '@app/specs/agent-search-tools.spec';
 import type { ToolErrorCode } from '@app/specs/agent-tools.spec';
 import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 import { cleanText, fitBudget } from './search-tools';
@@ -125,7 +126,7 @@ export function createProbeTools(deps: ProbeToolDeps) {
       if (toolName === 'visibility_probes') return read(port, context, check);
 
       // Only a public page is fetched (the broker already answers a private one without asking).
-      const page = gscPageUrl(context.expectedUrl);
+      const page = modelPageUrl(context.expectedUrl);
       if (page === null || !isPublicPage(page)) return ok({ unavailable: PROBE_TOOL_REASONS.privatePage });
       const key = `${context.tabId} ${page}`;
       const turnRuns = context.turn === undefined ? null : (runsByTurn.get(context.turn) ?? new Map<string, number>());

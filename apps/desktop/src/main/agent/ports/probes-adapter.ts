@@ -1,5 +1,6 @@
 import { unavailable, type PortAnswer, type ProbeAgentResult, type ProbeReport, type ProbesPort } from '@app/ai-skills';
-import { gscPageUrl, PROBE_TOOL_REASONS } from '@app/specs/agent-search-tools.spec';
+import { modelPageUrl } from '@app/specs/agent-page-tools.spec';
+import { PROBE_TOOL_REASONS } from '@app/specs/agent-search-tools.spec';
 import { PROBE_AGENTS } from '@app/specs/visibility-probes.spec';
 
 // The `ProbesPort` over Phase 3's visibility probes (Phase 5 Task 8, the SERP wiring; acceptance
@@ -60,8 +61,8 @@ export function probeReportOf(state: ProbesStateLike): ProbeReport {
     outcome: row.outcome,
     status: row.status,
     redirects: row.hops.length,
-    // User info never reaches the model (the page URL helper drops it, and the fragment).
-    finalUrl: row.finalUrl === null ? null : gscPageUrl(row.finalUrl),
+    // The URL the model sees (`modelPageUrl`: no user info, no fragment), as every page tool hands it.
+    finalUrl: row.finalUrl === null ? null : modelPageUrl(row.finalUrl),
     robots: row.robots?.verdict ?? null,
     noindex: row.noindex,
     nofollow: row.nofollow,
@@ -71,7 +72,7 @@ export function probeReportOf(state: ProbesStateLike): ProbeReport {
     differsIn: [...(diffs.get(row.agent)?.facts ?? [])],
     textSimilarity: diffs.get(row.agent)?.textSimilarity ?? null,
   }));
-  return { url: gscPageUrl(state.url) ?? '', status: state.status, startedAt: iso(state.startedAt), finishedAt: iso(state.finishedAt), agents };
+  return { url: modelPageUrl(state.url) ?? '', status: state.status, startedAt: iso(state.startedAt), finishedAt: iso(state.finishedAt), agents };
 }
 
 /** `readApi` as a `ProbesPort`, or `null` without one. */
