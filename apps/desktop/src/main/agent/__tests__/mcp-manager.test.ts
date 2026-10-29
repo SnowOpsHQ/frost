@@ -14,7 +14,7 @@ import { MCP_ERRORS, MCP_NO_SANDBOX_SENTENCE, mcpCommandLine, type McpSandboxMod
 import type { AgentFeature } from '../entitlements';
 import type { ToolRunContext } from '../approvals';
 import { createMcpManager, createMemoryMcpStore, createMemoryMcpSecrets, nodeMcpDeps, type McpManager, type McpManagerDeps, type McpStartPrompt } from '../mcp';
-import { nodeSpawn } from '../mcp/node';
+import { nodeSpawn, removeTempDir } from '../mcp/node';
 import type { SpawnLike } from '../mcp/stdio';
 
 /**
@@ -78,7 +78,8 @@ function setup(overrides: Partial<McpManagerDeps> = {}, flags: Partial<Record<Ag
       tempDirs.push(dir);
       return dir;
     },
-    removeDir: (dir) => fs.promises.rm(dir, { recursive: true, force: true }),
+    // The product's remover (its retries matter on Windows, where the stopped server holds the folder briefly).
+    removeDir: removeTempDir,
     pathEnv: process.env['PATH'] ?? '',
     homes: [FAKE_HOME],
     runtimeDir: process.env['XDG_RUNTIME_DIR'] ?? null,

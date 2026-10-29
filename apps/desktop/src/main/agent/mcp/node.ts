@@ -39,6 +39,13 @@ function accountHome(): string | null {
   }
 }
 
+/**
+ * Removes a run's temporary folder. Retried briefly: the server was only signalled to stop, and on
+ * Windows the folder that was its working directory refuses deletion (`EBUSY`, `EPERM`) until the
+ * process has exited.
+ */
+export const removeTempDir = (dir: string): Promise<void> => fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+
 export function nodeMcpDeps(session: () => McpSessionLike): Pick<
   McpManagerDeps,
   'spawn' | 'fetch' | 'resolveHost' | 'detectSandbox' | 'isExecutable' | 'isDirectory' | 'realpath' | 'makeTempDir' | 'removeDir' | 'pathEnv' | 'homes' | 'runtimeDir' | 'tmpDir' | 'platform'
@@ -71,9 +78,7 @@ export function nodeMcpDeps(session: () => McpSessionLike): Pick<
     ),
     realpath: (file) => fs.promises.realpath(file),
     makeTempDir: () => fs.promises.mkdtemp(path.join(os.tmpdir(), 'frost-mcp-')),
-    // Retried briefly: on Windows a folder that was a just-stopped process's working directory can
-    // refuse deletion (`EBUSY`, `EPERM`) for a moment after the process exits.
-    removeDir: (dir) => fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+    removeDir: removeTempDir,
     pathEnv,
     // Both of the user's home folders (they differ when `HOME` is set elsewhere), and the session's runtime folder.
     homes: [os.homedir(), accountHome()].filter((home): home is string => typeof home === 'string' && home.startsWith('/')),
