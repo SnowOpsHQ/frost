@@ -286,13 +286,16 @@ describe('outline overlay (jsdom)', () => {
       return { left: 10, top: y, width: 500, height: 40, right: 510, bottom: y + 40, x: 10, y, toJSON: () => ({}) } as DOMRect;
     };
     const store: Record<string, unknown> = {};
-    const result = await paintOutlines(dom.window.document as unknown as OutlineDocument, google.layout, OUTLINE_CONFIG, planOutlines, readSerp, store);
+    // The reader's time budget is the spec's 150 ms; a cold jsdom read on a loaded CI runner can pass
+    // it and read nothing. This test checks what is outlined, not how fast (read-script.test.ts does).
+    const reader: typeof readSerp = (doc, layout, limits) => readSerp(doc, layout, { ...limits, budgetMs: 10_000 });
+    const result = await paintOutlines(dom.window.document as unknown as OutlineDocument, google.layout, OUTLINE_CONFIG, planOutlines, reader, store);
     expect(result.on).toBe(true);
     expect(result.boxes).toBeGreaterThan(3);
     const labels = [...((store[SERP_OUTLINE_KEY] as OutlineState).root as unknown as ShadowRoot).children].map((b) => b.textContent);
     expect(labels).toContain('Organic 1');
     expect(labels).toContain('Ad 1');
-    await paintOutlines(dom.window.document as unknown as OutlineDocument, null, OUTLINE_CONFIG, planOutlines, readSerp, store);
+    await paintOutlines(dom.window.document as unknown as OutlineDocument, null, OUTLINE_CONFIG, planOutlines, reader, store);
   });
 });
 
