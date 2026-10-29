@@ -13,6 +13,9 @@ import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
 import type { UpdateService } from './update-router';
 import type { SerpService } from './serp-service';
+import type { ChangesService, ScreenshotsService } from './changes-service';
+import type { ProjectsService } from './projects-router';
+import type { InspectorService } from './inspector-router';
 import type { TelemetryService } from './telemetry-service';
 import type { GscIpcService } from './gsc-service';
 
@@ -179,6 +182,14 @@ export interface IpcServices {
   readonly update?: UpdateService;
   /** The SERP overlay (Phase 3 Task 4, `serp-service.ts`): reading, outlines, pack updates and intent. */
   readonly serp?: SerpService;
+  /** Change intelligence: captures and their history (Phase 6 Task 3, `changes-service.ts`). */
+  readonly changes?: ChangesService;
+  /** Change intelligence: screenshots of the active tab and their gallery (Phase 6 Task 5, `changes-service.ts`). */
+  readonly screenshots?: ScreenshotsService;
+  /** Change intelligence: projects, their capture runs and their retention (Phase 6 Tasks 6–7, `projects-router.ts`). */
+  readonly projects?: ProjectsService;
+  /** The read-only DOM inspector of the active tab (Phase 6 Task 8, `inspector-router.ts`). */
+  readonly inspector?: InspectorService;
   /** The account and its verified entitlements (Phase 4, `account-service.ts`). */
   readonly account?: AccountService;
   /** Telemetry consent and renderer errors (Phase 4 Task 7, `telemetry-service.ts`). */

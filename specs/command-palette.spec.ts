@@ -132,6 +132,8 @@ export const FEATURE_PANEL_JUMPS = [
   'serp',
   'visibility',
   'search-console',
+  'changes',
+  'inspector',
 ] as const satisfies readonly PalettePanel[];
 
 /**

@@ -1,0 +1,10 @@
+{
+  // The engine alone, with no Node (or DOM) types: anything outside plain ECMAScript fails to type-check.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["src"],
+  "exclude": ["src/**/__tests__"]
+}

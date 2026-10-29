@@ -27,6 +27,9 @@ import { SerpIcon, VisibilityIcon } from './seo/serp-icons';
 import { Social } from './seo/Social';
 import { Speed } from './seo/Speed';
 import { Visibility } from './seo/Visibility';
+import { Changes } from './changes/Changes';
+import { ChangesIcon, InspectorIcon } from './changes/changes-icons';
+import { Inspector } from './changes/Inspector';
 
 // The SEO sidebar (spec `seo-sidebar.spec.ts`; acceptance `seo-sidebar.feature.md`, Sidebar): docked
 // right of the page area, the open panel and then the persistent rail at the window's edge. The
@@ -55,6 +58,8 @@ const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   javascript: JavascriptIcon,
   serp: SerpIcon,
   visibility: VisibilityIcon,
+  changes: ChangesIcon,
+  inspector: InspectorIcon,
   'search-console': GscIcon,
 };
 
@@ -151,6 +156,8 @@ function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: Ta
   // The SERP and Visibility panels render from main's `serp.*` state, never waiting for the audit (serp-panels.feature.md).
   if (tab && panel === 'serp') return <Serp tab={tab} />;
   if (tab && panel === 'visibility') return <Visibility tab={tab} />;
+  if (panel === 'changes') return <Changes tab={tab} response={response} />; // Phase 6: history shows whatever the audit's state.
+  if (panel === 'inspector') return <Inspector tab={tab} />; // Phase 6 Task 8: the page's DOM, whatever the audit's state.
   // Search Console has no rules: it does not wait for the audit (`gsc-panel.feature.md`).
   if (panel === 'search-console') return <GscPanel tab={tab} />;
   if (!tab || response === null) return <Hint testId="seo-empty" title="No page yet" message="Open a web page and frost audits it here: a health score, ranked issues and what search engines read." />;

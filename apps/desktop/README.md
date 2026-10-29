@@ -410,6 +410,69 @@ lacks a value says "not configured in this build" for that feature and sends not
   own words, and their buttons open Settings. It reads only while it shows, never on a timer; main
   caches answers for 15 minutes.
 
+### Change intelligence (Phase 6)
+Acceptance: `changes-capture.feature.md`, `changes-diff.feature.md`, `changes-panel.feature.md`,
+`screenshot.feature.md`, `projects.feature.md`, `retention.feature.md`, `inspector.feature.md` and
+`capture-db.feature.md`; how it was built, with the database schema:
+`docs/plans/phase-6-change-intelligence.md`.
+
+- **Changes panel** (a rail item after Visibility). It shows the current page's history, newest
+  first.
+  - **Capture now** records the page from its settled audit plus a region read. Captures go into
+    the project chosen in the panel's picker: the first project listing the page, else Unfiled.
+  - A capture identical to the page's latest version adds a capture of that version, not a new
+    version.
+  - Versions are kept per **lane**: the URL with its render profile and search parameters. A phone
+    capture never diffs against a desktop one, and the panel shows the lanes as chips.
+  - On a search results page, a capture records the SERP panel's search parameters (engine, query,
+    `gl`, `hl`, device, page); on any other page it records none.
+  - The **diff** between two versions of a lane is grouped by region: head, HTTP, structured data,
+    main content, navigation, header, sidebar, footer, elsewhere on the page, and audit. Text edits
+    show word-level changes, every value is inert text, and truncated or partial captures say so.
+  - What is compared: title, meta description, canonical, robots meta and `X-Robots-Tag`, lang,
+    viewport, Open Graph, hreflang, HTTP status, indexable, headings, links, text blocks and word
+    counts per region, structured-data types and JSON-LD blocks, image totals, and the audit's
+    findings and score.
+  - Rules whose result depends on timing or on optional checks are left out (page speed,
+    accessibility, served HTML, link/sitemap checks), so an unchanged page stays one version.
+- **Screenshots** (from the Changes panel or the palette).
+  - **Viewport.**
+  - **Select area:** drag on the page, Esc to cancel.
+  - **Full page:** the page is scrolled and the captures are stitched. The page can see the
+    scrolling, and the scroll position is restored.
+  - Each records the render profile and search parameters. The gallery shows thumbnails, a preview,
+    Reveal in folder and Copy image.
+  - Files are PNGs named by their SHA-256 under `<userData>/frost-captures/screenshots/`, with the
+    directory `0700` and files `0600`, never named by anything the page or the chrome supplies.
+- **Projects** (a sheet over the page area, from the Changes panel or the palette).
+  - A project holds pages and searches (engine, query, country, language, device: desktop, mobile or
+    tablet), and an optional render profile. A search is stored as the parameters the SERP panel
+    reads from its URL, so a run's capture of it and a capture you take of the same results page
+    share a lane.
+  - **Capture now** visits each target in a tab of its own, one at a time, with optional viewport
+    screenshots and visible progress. It waits while you are on another tab; Cancel, or closing its
+    tab, stops it. Quitting stops it too, and its tab is not restored next launch.
+  - A site's pinned render profile still applies in the run's tabs, and the capture records the
+    profile in effect.
+  - Deleting a project asks first, and purges its captures and screenshots.
+- **Retention** (in the project view).
+  - Keep everything (the default), keep the last N versions of each page, or keep N days. Each page
+    always keeps its newest version.
+  - The policy is applied after captures into the project (at most once a day, and at the end of
+    each run) and at startup. Each application is recorded in the purge log.
+  - **Purge now** shows what it would remove, asks in main's dialog, and reports the bytes actually
+    freed.
+  - **Usage** is measured: stored bytes of captures and diffs, screenshot files by `lstat` (missing
+    files counted), the database file, and what is shared with another project.
+  - **Compact** runs `VACUUM`; deleted data frees space in the file only after it.
+  - Clear Browsing Data leaves change intelligence alone: retention and Purge now are its deletion
+    path.
+- **Inspector panel.** A read-only, lazily expanded DOM tree with keyboard tree navigation.
+  - **Pick element** outlines what is under the pointer; a click selects it, Esc cancels.
+  - A node's details: attributes, box, a few computed styles, its landmark region, and SEO facts
+    for headings, links, images and meta.
+  - Hovering a row outlines it on the page.
+
 ## Security model (summary)
 The details, each with its named tests, are in `specs/*.feature.md`.
 - **Two kinds of WebContents.** The chrome (the React UI) is served from `app://app` with a strict
@@ -444,6 +507,20 @@ The details, each with its named tests, are in `specs/*.feature.md`.
   only through `openExternalIfAllowed`, on a live click in the window that asked.
 - CI gates: Electronegativity, Semgrep (`ipc-sender-guard`, `webcontents-factory`,
   `debugger-allowlist`) and the e2e suite (`specs/ci-gates.feature.md`).
+
+- **Change intelligence (Phase 6).**
+  - **Append-only:** SQLite triggers refuse `UPDATE`, `DELETE` and `REPLACE` on captured rows
+    (versions, captures, diffs, screenshots) and on the purge log. A row is deleted only after an
+    immutable tombstone of a recorded purge names it, and a purged id can never be inserted again.
+  - **What the triggers cover:** frost's own code and any SQL that respects the schema; anyone who
+    can write the file can drop them.
+  - **Isolated worlds:** the capture's region read (`CAPTURE_WORLD_ID`, 1600), the screenshot
+    scroll and area selector (1601) and the inspector (1602) each run only in their own world. The
+    selector and picker accept only trusted input, draw in a closed shadow root and are always
+    removed; while picking, a cover keeps clicks away from the page and its frames.
+  - **Screenshot files** are written through a no-follow directory handle, checked after the rename,
+    and guarded by a per-hash lock against purges. The startup orphan sweep deletes only
+    hash-named files that no row references, and skips an in-memory or fresh database.
 
 ### Audits
 Everything the page hands over is untrusted.
@@ -532,7 +609,8 @@ their logs** (each surface says so):
   agent's user agent string from your network. robots.txt comes from frost's cache, asked once per
   origin an agent ended on.
 - frost never requests a search engine by itself: the SERP panel reads only result pages you
-  loaded.
+  loaded, and a project's **Capture now** loads its saved searches only when you start it (one
+  ordinary tab visit per search, like typing it).
 - **DNS lookups** of each of those requests' host names, before every hop (see below).
 - **The account API** (Phase 4, only in a build configured for it): the session and the signed
   entitlements at start, every 6 hours and on Refresh, the token exchange after a sign-in and the
@@ -727,6 +805,29 @@ Acceptance: `specs/sync-config.feature.md`, `specs/sync-engine.feature.md`.
   configuration does not rely on it (a baked-in value pins the build), but the pre-existing e2e
   public-hosts switch (`E2E_PUBLIC_HOSTS_SWITCH`) and the remote-debugging refusal still do.
 
+- **Change intelligence (Phase 6).**
+  - **Full-page screenshots** repeat fixed and sticky elements in each segment, lazy content appears
+    as the page scrolls, and encoding a 16,384 px tall shot takes up to about half a second on
+    main's thread.
+  - **What the page can see:** pointer events while you select an area or pick an element, the
+    overlay's host element, and the scroll of a full-page shot.
+  - **Capture now** works in a visible tab, one target at a time. A search engine may show a
+    consent page or a challenge instead of results, and that is what gets captured. A page that
+    redirects itself by script after it first loads counts as the tab moving away, and its target
+    fails.
+  - **Search parameters:** saved searches are read with the bundled selector pack, not an updated
+    one. A result page's lane follows its canonical search URL, so the engine's tracking parameters
+    never split a search.
+  - **Region read and inspector:** neither enters shadow roots or iframes (a click inside one picks
+    its host or frame).
+  - **Capture time and versions:** a capture cut short by its deadline whose text differs can still
+    make a new version.
+  - **Screenshots and profiles:** a screenshot's profile does not record whether it was only
+    partly in effect (captures do).
+  - **Screenshot files** are not synced, and a file removed by hand shows as missing and is never
+    re-created.
+  - **Disk space** freed by deletion returns to the disk only after Compact.
+
 ## Running, building, testing
 From the repo root (`pnpm install` first):
 - `pnpm --filter @app/desktop start` — dev run (Vite dev server; it overwrites `.vite/build` with a
@@ -853,7 +954,10 @@ Desktop app type, and telemetry an endpoint and a DSN of your own.
   process host, the self-test, `setup.ts`), `account/` (configuration, the secret store, the
   loopback listener, PKCE, the API client, entitlements, sign-in, quit holds), `gsc/` (Search
   Console's OAuth, API client, property matching and service), `telemetry/` (the consent store and
-  the wiring of `@app/telemetry`), `security/`, `protocol/` (`app://`), `menu.ts`,
+  the wiring of `@app/telemetry`), `changes/` (Phase 6: the region read, the capture snapshot and
+  service, load times, projects, the capture run, retention and purges), `screenshots/` (stitching,
+  the page scripts, capture, imaging, the file store and the service), `inspector/` (the page
+  script and the service), `security/`, `protocol/` (`app://`), `menu.ts`,
   `session-store.ts`, `clear-browsing-data.ts`, `window.ts` (the window and tab-view factories).
 - `src/workers/intent/` — the intent utility process: its entry, the message handling, frost's
   WordPiece tokenizer, the embedding, the prototype queries, the keyword fake and the self-test
@@ -862,11 +966,11 @@ Desktop app type, and telemetry an endpoint and a DSN of your own.
 - `src/renderer/` — the chrome (React): `App.tsx` (layout), `components/` (`SeoSidebar.tsx` and one
   file per panel in `components/seo/`, the drawer's tabs in `components/devtools/`, the palette,
   find bar, History and render-profile views; `seo/Serp.tsx` and `seo/Visibility.tsx` since
-  Phase 3, `seo/GscPanel.tsx` since Phase 4), the Settings sheet (`settings-*.tsx`, with
-  `account-view.ts` and the other `settings-*` view models), `palette/` (the action registry,
-  matcher, built-ins and "Open in" consent), each feature's `*-palette.ts` actions, `hooks/`
-  (`useSerp.ts` among them), and pure helpers with unit tests (`serp-view.ts`, `visibility-view.ts`
-  and `gsc-view.ts` among them).
+  Phase 3, `seo/GscPanel.tsx` since Phase 4; `changes/` for Phase 6's Changes, Screenshots,
+  Projects, Retention and Inspector), the Settings sheet (`settings-*.tsx`, with `account-view.ts`
+  and the other `settings-*` view models), `palette/` (the action registry, matcher, built-ins and
+  "Open in" consent), each feature's `*-palette.ts` actions, `hooks/` (`useSerp.ts` among them), and
+  pure helpers with unit tests (`serp-view.ts`, `visibility-view.ts` and `gsc-view.ts` among them).
 - `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers;
   `fake-backend.ts`, `fake-google.ts` and `fake-telemetry.ts` are the Phase 4 suites' in-test fakes).
 - `libsql-packaging.ts` (the Forge hook that ships libSQL in the app), `intent-runtime.ts` (the

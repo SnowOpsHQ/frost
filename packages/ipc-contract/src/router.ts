@@ -26,6 +26,9 @@ import { telemetryRouter } from './telemetry-router';
 import { gscRouter } from './gsc-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
+import { changesRouter, screenshotsRouter } from './changes-router';
+import { projectsRouter } from './projects-router';
+import { inspectorRouter } from './inspector-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).
@@ -288,6 +291,11 @@ export const appRouter = router({
   update: updateRouter,
   // Phase 3 Task 4 (`serp-overlay.feature.md`): the SERP overlay's reading, outlines, pack updates and intent.
   serp: serpRouter,
+  // Phase 6 Task 3 (`changes-capture.feature.md`): capture a page into its versioned history, and read it.
+  changes: changesRouter,
+  screenshots: screenshotsRouter,
+  projects: projectsRouter,
+  inspector: inspectorRouter,
   // Phase 4 Tasks 4 and 5 (`entitlements-client.feature.md`, `account-signin.feature.md`): entitlements and sign-in.
   account: accountRouter,
   // Phase 4 Task 7 (`telemetry.feature.md`, Desktop): telemetry consent and renderer errors.

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { MIGRATIONS_TABLE } from '@app/specs/browser-session-db.spec';
+import { CHANGE_INTEL_MIGRATIONS } from './change-intel/migrations';
 
 // Forward-only migrations (spec `browser-session-db.feature.md`, Migrations). Each one is a
 // numbered SQL string compiled into the main bundle: nothing is read from disk at runtime. Append
@@ -88,6 +89,7 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  ...CHANGE_INTEL_MIGRATIONS,
 ];
 
 /**

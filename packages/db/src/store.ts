@@ -1,4 +1,5 @@
 import { createDrizzle } from './client';
+import { createChangeIntelRepository, type ChangeIntelRepository } from './change-intel/repository';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
 import { createSettingsRepository, type SettingsRepository } from './settings';
@@ -20,6 +21,8 @@ export interface SessionStore {
   /** Browser polish (Phase 2.5 Task 6): the History view's reads and deletes, and local preferences. */
   readonly history: HistoryRepository;
   readonly settings: SettingsRepository;
+  /** Change intelligence (Phase 6): captures, versions, diffs, screenshots, projects and audited purges. */
+  readonly changeIntel: ChangeIntelRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /** Flushes pending writes, then closes the database (idempotent; never rejects). */
@@ -41,6 +44,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     contentNotes: createContentNotesRepository(drizzle),
     history: createHistoryRepository(drizzle),
     settings: createSettingsRepository(drizzle),
+    changeIntel: createChangeIntelRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },

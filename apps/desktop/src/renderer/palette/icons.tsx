@@ -27,6 +27,7 @@ import { GscIcon } from '../components/seo/gsc-icons';
 import { JavascriptIcon } from '../components/seo/javascript-icons';
 import { SerpIcon, VisibilityIcon } from '../components/seo/serp-icons';
 import type { PaletteIconName } from './registry';
+import { ChangesIcon, InspectorIcon } from '../components/changes/changes-icons';
 
 // The command palette's glyphs: frost's own stroked shapes on the same 24×24 grid as `icons.tsx`
 // (inherit `currentColor`; sized by styles.css, no inline styles). The ones the toolbar and the SEO
@@ -212,6 +213,8 @@ const ICONS: Readonly<Record<PaletteIconName, (props: GlyphProps) => ReactNode>>
   'tab-close': TabCloseGlyph,
   'tab-switch': TabSwitchGlyph,
   clear: ClearGlyph,
+  'panel-changes': ChangesIcon,
+  'panel-inspector': InspectorIcon,
 };
 
 /** Each group's glyph, for an action without its own. */

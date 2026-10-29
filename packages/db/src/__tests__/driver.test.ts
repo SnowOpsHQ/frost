@@ -2,7 +2,7 @@
 // libsqlConfigProblem), specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, MAX_RECENT_VISITS),
 // specs/browser-polish.spec.ts (HISTORY_PAGE_SIZE, DEFAULT_SEARCH_ENGINE)
 // Acceptance: specs/sync-driver.feature.md
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -513,8 +513,11 @@ function importGraph(entry: string): { files: Set<string>; packages: Set<string>
     const source = readFileSync(file, 'utf8');
     for (const match of source.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)['"]([^'"]+)['"]/g)) {
       const specifier = match[1]!;
-      if (specifier.startsWith('.')) visit(path.resolve(path.dirname(file), `${specifier.replace(/\.ts$/, '')}.ts`));
-      else packages.add(specifier);
+      if (specifier.startsWith('.')) {
+        // A module file (`./x` is `./x.ts`), else a folder's index (`./x` is `./x/index.ts`).
+        const base = path.resolve(path.dirname(file), specifier.replace(/\.ts$/, ''));
+        visit(existsSync(`${base}.ts`) ? `${base}.ts` : path.join(base, 'index.ts'));
+      } else packages.add(specifier);
     }
   };
   visit(entry);

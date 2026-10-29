@@ -7,3 +7,32 @@ export type { ContentNotes, ContentNotesRepository, SnippetVariant } from './con
 export { openSessionStore, type SessionStore } from './store';
 export type { HistoryCursor, HistoryPage, HistoryRepository, HistoryVisit, JumpBackIn } from './history';
 export type { SettingsRepository } from './settings';
+export {
+  isUuidv7,
+  uuidv7,
+  type AppendCaptureInput,
+  type AppendCaptureResult,
+  type AppendDiffInput,
+  type AppendScreenshotInput,
+  type CapturedPage,
+  type ChangeIntelCursor,
+  type ChangeIntelRepository,
+  type ChangeIntelUsage,
+  type DiffSummary,
+  type ExecutePurgeResult,
+  type HistoryEntry,
+  type HistoryPage as ChangeHistoryPage,
+  type Project,
+  type ProjectPage,
+  type ProjectQuery,
+  type PurgeCounts,
+  type PurgePlan,
+  type PurgePolicy,
+  type PurgeRecord,
+  type RetentionPolicy,
+  type ScreenshotPage,
+  type StoredDiff,
+  type StoredScreenshot,
+  type StoredVersion,
+  type VersionSummary,
+} from './change-intel';

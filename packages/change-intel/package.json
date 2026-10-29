@@ -1,0 +1,24 @@
+{
+  "name": "@app/change-intel",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "description": "Pure change-intelligence engine: canonical JSON and the region-tagged diff of two capture snapshots. No Electron, DOM, Node or Zod.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.src.json",
+    "test": "vitest run",
+    "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.src.json"
+  },
+  "dependencies": {
+    "@app/specs": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

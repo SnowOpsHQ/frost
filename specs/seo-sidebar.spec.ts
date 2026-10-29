@@ -56,6 +56,7 @@ export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, str
  * with `categories` covers the rules of those categories (`seo-rules.spec.ts`), and its rail dot is
  * `error` if any of them fails with severity `error`, `warn` if any fails with `warning`, else
  * `pass` (info findings never colour a dot).
+ * A panel without categories (Changes) scores nothing, so it has no status dot.
  */
 /**
  * On-Page covers every category except the ones with a panel of their own beyond it (Social, Schema,
@@ -86,6 +87,10 @@ export const SEO_PANELS = [
   { id: 'visibility', label: 'Visibility', available: true, categories: [] },
   // Phase 4 Task 10 (`gsc-panel.feature.md`): Search Console performance. No rules, so no rail dot.
   { id: 'search-console', label: 'Search Console', available: true, categories: [] },
+  // Phase 6 Task 4 (`changes-panel.feature.md`): the page's captured versions and their diffs (no rules).
+  { id: 'changes', label: 'Changes', available: true, categories: [] },
+  // Phase 6 Task 8 (`inspector.feature.md`): the read-only DOM inspector (no rules).
+  { id: 'inspector', label: 'Inspector', available: true, categories: [] },
 ] as const satisfies readonly { id: string; label: string; available: boolean; categories: readonly SeoCategory[] }[];
 export type SeoPanelId = (typeof SEO_PANELS)[number]['id'];
 export const DEFAULT_SEO_PANEL: SeoPanelId = 'overview';
