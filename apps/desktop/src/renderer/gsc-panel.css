@@ -1,0 +1,306 @@
+/* The Search Console panel (Phase 4 Task 10, specs/gsc-panel.feature.md). Bundled and served from
+   app:// (CSP style-src 'self'): no inline styles; the chart is SVG attributes plus these classes. */
+
+:root {
+  --gsc-line: var(--accent);
+  --gsc-grid: #e7ebf1;
+  --gsc-axis: var(--text-faint);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gsc-grid: #30353e;
+  }
+}
+
+.gsc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: panel-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.gsc-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gsc-property {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.gsc-property-label {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gsc-property .seo-page-text {
+  min-width: 0;
+}
+
+/* Notices: one card per state (signed out, not Pro, not connected, no property, errors). */
+.gsc-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 16px;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 12px;
+  background: var(--seo-card);
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+
+.gsc-notice-art {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 4px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--seo-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, var(--seo-bg));
+  color: var(--accent);
+}
+
+.gsc-notice-art .icon {
+  width: 26px;
+  height: 26px;
+}
+
+.gsc-notice[data-state='auth-expired'] .gsc-notice-art,
+.gsc-notice[data-state='quota'] .gsc-notice-art,
+.gsc-notice[data-state='network'] .gsc-notice-art,
+.gsc-notice[data-state='invalid'] .gsc-notice-art {
+  background: color-mix(in srgb, var(--caution) 12%, var(--seo-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--caution) 22%, var(--seo-bg));
+  color: var(--caution);
+}
+
+.gsc-notice-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.gsc-notice-message {
+  max-width: 34ch;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.gsc-notice-button {
+  margin-top: 6px;
+}
+
+/* Totals: four tiles, each the chart's metric switch. */
+.gsc-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.gsc-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 10px;
+  background: var(--seo-card);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.gsc-tile:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--seo-card-edge));
+}
+
+.gsc-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gsc-tile[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.gsc-tile-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.gsc-tile-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.gsc-tile-hint {
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+
+/* The chart. */
+.gsc-chart {
+  position: relative;
+  margin: 0;
+  padding: 8px 6px 4px;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 12px;
+  background: var(--seo-card);
+  box-shadow: var(--shadow-card);
+}
+
+.gsc-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.gsc-grid {
+  stroke: var(--gsc-grid);
+  stroke-width: 1;
+}
+
+.gsc-axis-label {
+  fill: var(--gsc-axis);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gsc-line {
+  fill: none;
+  stroke: var(--gsc-line);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gsc-dot {
+  fill: var(--gsc-line);
+}
+
+/* Top queries. */
+.gsc-queries-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 11.5px;
+}
+
+.gsc-queries-table th {
+  padding: 0 0 6px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.gsc-queries-table th:first-child {
+  width: 40%;
+}
+
+.gsc-queries-table abbr {
+  text-decoration: none;
+}
+
+.gsc-queries-table td {
+  padding: 4px 0;
+  border-top: 1px solid var(--seo-card-edge);
+  font-variant-numeric: tabular-nums;
+}
+
+.gsc-query {
+  overflow: hidden;
+  padding-right: 6px;
+}
+
+.gsc-query .seo-page-text {
+  display: block;
+}
+
+.gsc-queries-table .gsc-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.gsc-muted,
+.gsc-freshness {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.gsc-freshness {
+  padding: 0 2px;
+}
+
+/* Loading. */
+.gsc-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gsc .gsc-skeleton-tile {
+  height: 56px;
+  border-radius: 10px;
+}
+
+.gsc .gsc-skeleton-chart {
+  height: 150px;
+  border-radius: 12px;
+}
+
+.gsc-data {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: opacity 160ms ease;
+}
+
+/* Another scope or range is being read: the last data stays, dimmed. */
+.gsc[data-pending='true'] .gsc-data {
+  opacity: 0.55;
+}
+
+.gsc-through {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gsc,
+  .gsc-data {
+    animation: none;
+    transition: none;
+  }
+}

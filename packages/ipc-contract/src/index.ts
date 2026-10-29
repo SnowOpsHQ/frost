@@ -8,6 +8,10 @@ export type { DevtoolsService } from './devtools-service';
 export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
 export type { ChecksService } from './checks-service';
 export type { SerpProbesService, SerpReadApi, SerpService } from './serp-service';
+export type { AccountService, SettingsRequests } from './account-service';
+export { requireFeature } from './account-router';
+export type { TelemetryService } from './telemetry-service';
+export type { GscIpcService, GscService } from './gsc-service';
 export {
   createContext,
   createSenderPolicy,

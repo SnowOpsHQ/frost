@@ -122,9 +122,17 @@ export type PalettePanel = SeoPanelId;
  * the built-ins leave theirs out: one row per panel. `content`: "Open Content panel", with "Set
  * target query…" and "Copy snippet as HTML" (`seo-content.feature.md`, Command palette); `javascript`:
  * "Open JavaScript panel", with "Fetch served HTML again" (`seo-javascript.feature.md`); `serp` and
- * `visibility`: "Open SERP panel" and "Open Visibility panel", with the SERP actions (`serp-panels.feature.md`).
+ * `visibility`: "Open SERP panel" and "Open Visibility panel", with the SERP actions (`serp-panels.feature.md`);
+ * `search-console`: "Open Search Console panel", with its scope actions (`gsc-panel.feature.md`). One entry
+ * per line, append-only: each phase adds its own line.
  */
-export const FEATURE_PANEL_JUMPS = ['content', 'javascript', 'serp', 'visibility'] as const satisfies readonly PalettePanel[];
+export const FEATURE_PANEL_JUMPS = [
+  'content',
+  'javascript',
+  'serp',
+  'visibility',
+  'search-console',
+] as const satisfies readonly PalettePanel[];
 
 /**
  * Copy actions (`seo.copyValue({ tabId, audit, key })`): main writes, with Electron's `clipboard`,

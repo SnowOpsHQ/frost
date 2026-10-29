@@ -9,6 +9,8 @@ import { webVitalsSource } from './vite.web-vitals.ts';
 // `virtual:web-vitals-iife` is the web-vitals IIFE as a string (vite.web-vitals.ts).
 export default defineConfig({
   plugins: [webVitalsSource()],
+  // Public build-time values (`import.meta.env.FROST_PUBLIC_*`, src/main/account/config.ts); never a secret.
+  envPrefix: ['VITE_', 'FROST_PUBLIC_'],
   build: {
     rollupOptions: {
       external: ['node:sqlite'],

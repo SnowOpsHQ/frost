@@ -26,6 +26,7 @@ export const PALETTE_ICON_NAMES = [
   'panel-javascript',
   'panel-serp',
   'panel-visibility',
+  'panel-search-console',
   'sidebar',
   'highlight',
   'audit',
