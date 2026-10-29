@@ -14,12 +14,17 @@ import {
   MODEL_CONTEXT_WINDOWS,
   STOP_DEADLINE_MESSAGE,
   STOP_DEADLINE_MS,
+  CHAT_HISTORY_MAX_CHARS,
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  historyBudgetChars,
+  HISTORY_MIN_BUDGET_CHARS,
+  OMITTED_TOOL_OUTPUT,
   type AgentState,
 } from '@app/specs/agent-session.spec';
 import { ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, DEFAULT_MODEL_ID, MAX_TOOL_STEPS, type ModelId } from '@app/specs/agent-tools.spec';
 import type { ApprovalRequestView, ToolActivity } from '../approvals';
 import type { AgentChatEvent, AgentHostStatus } from '../host';
-import { attachToolResult, chatTitle, createAgentSession, historyWindow, isolationView } from '../session';
+import { attachToolResult, chatTitle, compactHistory, createAgentSession, historyWindow, isolationView } from '../session';
 import { AGENT_SYSTEM_PROMPT } from '../system-prompt';
 
 function fakeDeps() {
@@ -34,6 +39,7 @@ function fakeDeps() {
     pending: [] as ApprovalRequestView[],
     activity: [] as ToolActivity[],
     hostAccepts: true,
+    modelId: DEFAULT_MODEL_ID as ModelId,
   };
   const deps = {
     host: {
@@ -62,7 +68,7 @@ function fakeDeps() {
       answer: vi.fn(async () => ({ ok: true as const, granted: false })),
     },
     credentials: { protection: async () => 'os' as const, hasKey: async () => true, setKey: async () => 'stored' as const, clearKey: async () => true },
-    settings: { current: () => ({ route: 'gateway' as const, modelId: DEFAULT_MODEL_ID as ModelId }), set: async () => true, onChange: () => () => undefined },
+    settings: { current: () => ({ route: 'gateway' as const, modelId: fake.modelId }), set: async () => true, onChange: () => () => undefined },
     entitlements: { allowed: () => true },
     grants: { list: () => [], readToolsAllowed: () => true, onChange: () => () => undefined, revoke: async () => true, revokeAll: async () => true, setReadToolsAllowed: async () => true },
     start: async () => true,
@@ -409,6 +415,78 @@ describe('session review fixes (Task 6a)', () => {
     expect(await sending).toBe('unavailable');
     expect(session.getState().running).toBe(false);
     expect(f.sent).toEqual([]);
+  });
+});
+
+describe('history budget (whole-branch review)', () => {
+  const user = (content: string): ChatMessage => ({ role: 'user', content });
+  const call = (id: string, text = ''): ChatMessage => ({ role: 'assistant', content: text, toolCalls: [{ callId: id, toolName: 'page_text', input: {} }] });
+  const big = (id: string, chars = 30_000): Extract<ChatMessage, { role: 'tool' }> => ({
+    role: 'tool',
+    callId: id,
+    toolName: 'page_text',
+    result: { ok: true, output: { untrusted: true, source: `page_text https://example.com/${id}`, data: { text: 'x'.repeat(chars) } } },
+  });
+  const size = (messages: readonly ChatMessage[]) => messages.reduce((sum, message) => sum + JSON.stringify(message).length, 0);
+
+  test('history-budget-follows-the-model', () => {
+    expect(historyBudgetChars('anthropic/claude-sonnet-5-5')).toBe(CHAT_HISTORY_MAX_CHARS);
+    const unknown = historyBudgetChars('openai/gpt-5');
+    expect(unknown).toBeLessThan(DEFAULT_CONTEXT_WINDOW_TOKENS * 3);
+    expect(unknown).toBeGreaterThan(HISTORY_MIN_BUDGET_CHARS);
+    expect(historyBudgetChars('openai/gpt-5', 50_000)).toBe(unknown - 50_000);
+    expect(historyBudgetChars('openai/gpt-5', 10_000_000)).toBe(HISTORY_MIN_BUDGET_CHARS);
+  });
+
+  test('compact-history-shortens-oldest-tool-outputs-first', () => {
+    const history: ChatMessage[] = [user('one'), call('a'), big('a'), call('b'), big('b'), { role: 'assistant', content: 'done', toolCalls: [] }, user('two')];
+    expect(compactHistory(history, size(history))).toEqual(history);
+    const budget = size(history) - 10_000;
+    const compacted = compactHistory(history, budget);
+    expect(size(compacted)).toBeLessThanOrEqual(budget);
+    // Only the oldest output was shortened; every call keeps a result right after it.
+    expect(compacted[2]).toEqual({ role: 'tool', callId: 'a', toolName: 'page_text', result: { ok: true, output: { untrusted: true, source: 'page_text https://example.com/a', data: OMITTED_TOOL_OUTPUT } } });
+    expect(compacted[4]).toEqual(big('b'));
+    expect(compacted.map((message) => message.role)).toEqual(history.map((message) => message.role));
+  });
+
+  test('compact-history-drops-oldest-exchanges-last', () => {
+    const history: ChatMessage[] = [user('one ' + 'y'.repeat(20_000)), { role: 'assistant', content: 'z'.repeat(20_000), toolCalls: [] }, user('two'), call('a'), big('a'), user('three')];
+    const compacted = compactHistory(history, 5_000);
+    // The outputs went first, then the first exchange; the last exchange always stays.
+    expect(compacted[0]).toEqual(user('two'));
+    expect(compacted.at(-1)).toEqual(user('three'));
+    expect((compacted[2] as Extract<ChatMessage, { role: 'tool' }>).result).toMatchObject({ output: { data: OMITTED_TOOL_OUTPUT } });
+    expect(compactHistory([user('only')], 1)).toEqual([user('only')]);
+  });
+
+  test('turn-history-fits-the-model-and-memory', async () => {
+    const f = fakeDeps();
+    f.fake.modelId = 'openai/gpt-5';
+    const session = createAgentSession(f.deps);
+    let chatId: string | null = null;
+    // 40 turns, each reading 30,000 characters of page text: far past the unknown model's window.
+    for (let turn = 0; turn < 40; turn += 1) {
+      await session.send(chatId, `Turn ${turn}`);
+      chatId = session.getState().active!.id;
+      const id = `t${turn}`;
+      f.emit({ type: 'chat.tool-call', chatId, callId: id, toolName: 'page_text', input: {} });
+      f.brokerRan(chatId, id, 'page_text', big(id).result);
+      f.emit({ type: 'chat.step', chatId, step: 1, text: '', toolCalls: [{ callId: id, toolName: 'page_text', input: {} }] });
+      f.emit({ type: 'chat.finish', chatId, finishReason: 'stop', steps: 1, usage: { input: null, output: null } });
+      f.fake.activity = [];
+    }
+    await session.send(chatId, 'And now?');
+    const sent = f.sent.filter((m): m is Extract<MainToRuntimeMessage, { type: 'chat.start' }> => m.type === 'chat.start').at(-1)!;
+    expect(size(sent.messages)).toBeLessThanOrEqual(historyBudgetChars('openai/gpt-5', AGENT_SYSTEM_PROMPT.length + JSON.stringify(sent.mcpTools ?? []).length));
+    expect(sent.messages[0]).toEqual(user('Turn 0'));
+    expect(sent.messages.at(-1)).toEqual(user('And now?'));
+    // The latest output is whole, the oldest ones shortened, and each still answers its call.
+    expect(sent.messages.at(-2)).toEqual(big('t39'));
+    expect(sent.messages[2]).toMatchObject({ role: 'tool', callId: 't0', result: { output: { data: OMITTED_TOOL_OUTPUT } } });
+    // In memory the chat is bounded too: it was trimmed past CHAT_HISTORY_MAX_CHARS.
+    expect(40 * 30_000).toBeGreaterThan(CHAT_HISTORY_MAX_CHARS);
+    expect(session.getState().active!.truncated).toBe(true);
   });
 });
 

@@ -330,7 +330,9 @@ test('agent-settings-never-shows-key', async () => {
   await page.getByTestId('agent-settings-toggle').click();
   await expect(page.getByTestId('agent-settings')).toBeVisible();
   // Honest about isolation: no file sandbox is claimed on Electron 45.
-  await expect(page.getByTestId('agent-isolation')).not.toContainText('file access limited');
+  // (The runtime hasn't started in this test, so the line says so; it never claims more.)
+  await expect(page.getByTestId('agent-isolation')).toContainText('Agent process:');
+  for (const claim of ['File sandbox: in effect', 'file access limited', 'network access']) await expect(page.getByTestId('agent-isolation')).not.toContainText(claim);
 
   const row = page.locator('[data-testid="agent-key"][data-slot="gateway"]');
   const field = row.getByTestId('agent-key-input');

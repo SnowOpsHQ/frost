@@ -1,7 +1,7 @@
 import { getToolDefinition } from '@app/ai-skills';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { pageUrlOf } from '@app/specs/agent-approvals.spec';
-import { EXECUTE_JS_LIMITS, PAGE_SCRIPT_TIMEOUT_MS, PAGE_TEXT_DEFAULT_CHARS, pageKeyOf, pageSource } from '@app/specs/agent-page-tools.spec';
+import { EXECUTE_JS_LIMITS, modelPageUrl, PAGE_SCRIPT_TIMEOUT_MS, PAGE_TEXT_DEFAULT_CHARS, pageKeyOf, pageSource } from '@app/specs/agent-page-tools.spec';
 import type { JsonValue } from '@app/specs/agent-protocol.schema';
 import { EXECUTE_JS_TIMEOUT_MS, TOOL_RESULT_MAX_CHARS, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import { parseWebUrl, webOrigin } from '@app/specs/web-url.spec';
@@ -295,8 +295,8 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
       case 'done': {
         const landed = webOrigin(result.url) ?? context.expectedOrigin;
         const data = {
-          requested: href,
-          url: result.url,
+          requested: modelPageUrl(href) ?? href,
+          url: modelPageUrl(result.url) ?? result.url,
           title: result.title,
           status: result.httpStatus,
           settled: result.settled,

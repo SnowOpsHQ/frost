@@ -11,7 +11,7 @@
 import { MAX_TOOL_CALLS_PER_TURN, type ApprovalDecision, type ToolActivityStatus } from './agent-approvals.spec';
 import type { ChatRetention } from './agent-data.spec';
 import type { AgentMcpView } from './agent-mcp.spec';
-import type { KeyProtection } from './agent-proxy.spec';
+import { MAX_OUTPUT_TOKENS, type KeyProtection } from './agent-proxy.spec';
 import type { AgentToolRisk, ModelId, ModelRoute, ToolErrorCode } from './agent-tools.spec';
 import type { SkillInputSlot } from './skills.spec';
 
@@ -83,6 +83,42 @@ export const MODEL_CONTEXT_WINDOWS: Readonly<Record<ModelId, number | null>> = {
 };
 
 // ---- The e2e seam ----------------------------------------------------------------------------
+
+// ---- The history a turn sends (whole-branch review) ---------------------------------------------
+
+/**
+ * Characters per token assumed when fitting a chat's history to a model's context window. Low on
+ * purpose: JSON tool output and text in many languages run at about three characters per token or
+ * fewer, and overestimating the room is what makes every later turn fail.
+ */
+export const HISTORY_CHARS_PER_TOKEN = 3;
+/** Tokens kept free beside the history (besides `MAX_OUTPUT_TOKENS`): the system prompt and the tools' definitions. */
+export const HISTORY_HEADROOM_TOKENS = 24_000;
+/** The context window assumed for a model with no published figure (`MODEL_CONTEXT_WINDOWS` `null`). */
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
+/**
+ * The most of a chat's history main keeps in memory and sends, as the JSON text of its messages
+ * (characters): past it the oldest tool outputs are shortened first, then the oldest exchanges go.
+ */
+export const CHAT_HISTORY_MAX_CHARS = 1_000_000;
+/** The most of a chat's display entries kept in memory (their text and card previews, characters). */
+export const CHAT_ENTRIES_MAX_CHARS = 500_000;
+/** The least a turn's history may be given, whatever the model (characters): a long message fits. */
+export const HISTORY_MIN_BUDGET_CHARS = 80_000;
+/** What a shortened tool result says instead of its data (still wrapped untrusted, still paired with its call). */
+export const OMITTED_TOOL_OUTPUT = '[older tool output omitted]';
+
+/**
+ * The characters of history a turn on `modelId` may send: its context window (or
+ * `DEFAULT_CONTEXT_WINDOW_TOKENS`) less the output cap and `HISTORY_HEADROOM_TOKENS`, at
+ * `HISTORY_CHARS_PER_TOKEN`, less `reservedChars` (what else the request carries: the system
+ * prompt, MCP tool definitions), within `HISTORY_MIN_BUDGET_CHARS`–`CHAT_HISTORY_MAX_CHARS`.
+ */
+export function historyBudgetChars(modelId: ModelId, reservedChars = 0): number {
+  const window = MODEL_CONTEXT_WINDOWS[modelId] ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
+  const chars = (window - MAX_OUTPUT_TOKENS - HISTORY_HEADROOM_TOKENS) * HISTORY_CHARS_PER_TOKEN - Math.max(0, reservedChars);
+  return Math.min(CHAT_HISTORY_MAX_CHARS, Math.max(HISTORY_MIN_BUDGET_CHARS, Math.floor(chars)));
+}
 
 /**
  * The e2e seam's switch (unpackaged builds only; a packaged build refuses to start with it,

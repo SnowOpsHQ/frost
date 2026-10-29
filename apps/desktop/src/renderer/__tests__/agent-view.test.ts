@@ -161,12 +161,12 @@ describe('agent panel view model', () => {
   });
 
   test('isolation-wording-is-honest', () => {
-    expect(isolationLine(setup())).toBe('Agent process: network access removed; file sandbox not available on this platform');
-    expect(isolationLine(setup({ isolation: { networkGlobalsRemoved: true, fileSandbox: true, note: '' } }))).toBe('Agent process: network access removed; file access limited to its own files');
-    expect(isolationLine(setup({ isolation: { networkGlobalsRemoved: false, fileSandbox: false, note: '' } }))).toBe('Agent process: some network functions could not be removed; file sandbox not available on this platform');
+    expect(isolationLine(setup())).toBe('Agent process: network functions removed. File sandbox: not in effect');
+    expect(isolationLine(setup({ isolation: { networkGlobalsRemoved: true, fileSandbox: true, note: '' } }))).toBe('Agent process: network functions removed. File sandbox: in effect');
+    expect(isolationLine(setup({ isolation: { networkGlobalsRemoved: false, fileSandbox: false, note: '' } }))).toBe('Agent process: some network functions could not be removed. File sandbox: not in effect');
     expect(isolationLine(setup({ runtime: { status: 'stopped', lastFailure: null }, isolation: { networkGlobalsRemoved: false, fileSandbox: false, note: '' } }))).toMatch(/not started yet/);
     // Never claims a sandbox that isn't there.
-    expect(isolationLine(setup())).not.toMatch(/sandboxed|file access limited/);
+    expect(isolationLine(setup())).not.toMatch(/sandboxed|file access limited|network access/);
   });
 
   test('model-and-route-options', () => {

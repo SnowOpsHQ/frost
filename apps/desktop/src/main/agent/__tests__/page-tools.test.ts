@@ -506,3 +506,14 @@ describe('every tool', () => {
     }
   });
 });
+
+describe('the URL the model sees (whole-branch review)', () => {
+  test('model-page-url-drops-user-info-and-fragment', async () => {
+    const { modelPageUrl } = await import('@app/specs/agent-page-tools.spec');
+    const { gscPageUrl } = await import('@app/specs/agent-search-tools.spec');
+    expect(modelPageUrl('https://user:secret@example.com/a?q=1#top')).toBe('https://example.com/a?q=1');
+    expect(modelPageUrl('http://example.com/')).toBe('http://example.com/');
+    for (const other of ['file:///etc/passwd', 'app://app/', '', null, 5]) expect(modelPageUrl(other)).toBeNull();
+    expect(gscPageUrl('https://user:secret@example.com/a#x')).toBe(modelPageUrl('https://user:secret@example.com/a#x'));
+  });
+});

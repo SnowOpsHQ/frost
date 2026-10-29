@@ -202,3 +202,17 @@ export function pageKeyOf(url: unknown): string | null {
 export function pageSource(origin: string): string {
   return `page:${origin}`;
 }
+
+/**
+ * A page's URL as the model is told it (`page_audit`, `page_data`, `navigate`'s answer,
+ * `gsc_performance`'s page): an `http(s)` URL without user info or fragment; `null` for anything else.
+ * One helper, so no tool hands the model a `user:password@` part or a fragment another doesn't.
+ */
+export function modelPageUrl(url: unknown): string | null {
+  const parsed = parseWebUrl(url);
+  if (parsed === null) return null;
+  parsed.username = '';
+  parsed.password = '';
+  parsed.hash = '';
+  return parsed.href;
+}

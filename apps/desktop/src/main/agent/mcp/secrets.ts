@@ -12,10 +12,10 @@ import { createCredentialStore, type CredentialFs, type SafeStorageLike, type Se
 
 export type McpSecretSlot = `mcp-token.${string}` | `mcp-env.${string}`;
 
-export const tokenSlot = (id: string): McpSecretSlot => `mcp-token.${id}`;
-export const envSlot = (id: string): McpSecretSlot => `mcp-env.${id}`;
+const tokenSlot = (id: string): McpSecretSlot => `mcp-token.${id}`;
+const envSlot = (id: string): McpSecretSlot => `mcp-env.${id}`;
 
-export function isMcpSecretSlot(value: unknown): value is McpSecretSlot {
+function isMcpSecretSlot(value: unknown): value is McpSecretSlot {
   if (typeof value !== 'string') return false;
   const dot = value.indexOf('.');
   const kind = value.slice(0, dot);
@@ -23,13 +23,13 @@ export function isMcpSecretSlot(value: unknown): value is McpSecretSlot {
 }
 
 /** Environment values as stored: canonical JSON of `{ NAME: value }` (bounded, names and values checked). */
-export function encodeEnvValues(values: Readonly<Record<string, string>>): string | null {
+function encodeEnvValues(values: Readonly<Record<string, string>>): string | null {
   const entries = Object.entries(values);
   if (entries.length > MCP_LIMITS.maxEnvVars || !entries.every(([name, value]) => isMcpEnvName(name) && isMcpEnvValue(value))) return null;
   return JSON.stringify(Object.fromEntries(entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
 }
 
-export function decodeEnvValues(text: string): Record<string, string> | null {
+function decodeEnvValues(text: string): Record<string, string> | null {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -72,7 +72,7 @@ export interface McpSecretsDeps {
   readonly log?: (line: string) => void;
 }
 
-export class McpSecretsUnavailable extends Error {}
+class McpSecretsUnavailable extends Error {}
 
 export function createMcpSecrets(deps: McpSecretsDeps): McpSecrets {
   const store = createCredentialStore<McpSecretSlot>({

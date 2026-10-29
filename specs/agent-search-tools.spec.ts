@@ -22,8 +22,8 @@
  * (`GSC_NOT_PUBLIC_REASON`) without asking the port.
  */
 import { isPublicPage } from './agent-approvals.spec';
+import { modelPageUrl } from './agent-page-tools.spec';
 import { AGENT_TOOL_INPUT_LIMITS, TOOL_RESULT_MAX_CHARS } from './agent-tools.spec';
-import { parseWebUrl } from './web-url.spec';
 
 /** The tools this covers (`AGENT_TOOL_NAMES`' search tools). */
 export const SEARCH_TOOL_NAMES = ['serp_results', 'search_intent', 'run_ai_search', 'gsc_performance'] as const;
@@ -90,14 +90,9 @@ export const GSC_NO_PAGE_REASON = "The chat's tab shows no web page, so there is
 /** `gsc_performance` for a page that isn't on a public host (a local or private address). */
 export const GSC_NOT_PUBLIC_REASON = 'Search performance data is only read for public web pages, and this address is not one.';
 
-/** The page `gsc_performance` reads for `url`: an `http(s)` URL without user info or fragment, or `null`. */
+/** The page `gsc_performance` reads for `url`: the URL the model sees (`modelPageUrl`), or `null`. */
 export function gscPageUrl(url: unknown): string | null {
-  const parsed = parseWebUrl(url);
-  if (parsed === null) return null;
-  parsed.username = '';
-  parsed.password = '';
-  parsed.hash = '';
-  return parsed.href;
+  return modelPageUrl(url);
 }
 
 /** Whether `gsc_performance` may read `url` (`gscPageUrl` of it is a public page). */

@@ -156,3 +156,20 @@ Each line maps to one named test.
   the seam's script plays; quitting disposes the session and the runtime.
 - **Scenario: service-packaged-ignores-the-e2e-script** — packaged, the switch is ignored and a key
   is needed.
+
+## History budget (whole-branch review; `session-state.test.ts`)
+- **Decision.** A turn's history fits the model: `historyBudgetChars(modelId, reserved)` from
+  `MODEL_CONTEXT_WINDOWS` (`DEFAULT_CONTEXT_WINDOW_TOKENS` when unknown) at `HISTORY_CHARS_PER_TOKEN`,
+  less the output cap, `HISTORY_HEADROOM_TOKENS` and what else the request carries. Past it the
+  oldest tool outputs are shortened to `OMITTED_TOOL_OUTPUT` (still paired with their calls), then
+  the oldest exchanges go; the last exchange stays. A chat keeps at most `CHAT_HISTORY_MAX_CHARS` of
+  history and `CHAT_ENTRIES_MAX_CHARS` of entries in memory.
+- **Scenario: history-budget-follows-the-model** — the budget follows the window, the reserve and
+  its bounds.
+- **Scenario: compact-history-shortens-oldest-tool-outputs-first** — only as many of the oldest
+  outputs as needed are shortened; the roles and pairing are unchanged.
+- **Scenario: compact-history-drops-oldest-exchanges-last** — then whole exchanges from the front;
+  the last always stays.
+- **Scenario: turn-history-fits-the-model-and-memory** — after 40 turns of 30,000-character outputs
+  on a model with no published window, `chat.start` fits the budget with the first request, the
+  latest output whole and the oldest shortened, and the chat was trimmed in memory.

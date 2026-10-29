@@ -139,7 +139,7 @@ describe('agent panel components', () => {
     expect(host.querySelector('[data-slot="gateway"] [data-testid="agent-key-message"]')!.textContent).toBe(AGENT_SET_KEY_MESSAGES['no-keychain']);
     expect(host.innerHTML).not.toContain(secret);
     expect(byTestId('agent-protection')!.textContent).toBe("No system keychain is available, so frost can't store a key here");
-    expect(byTestId('agent-isolation')!.textContent).toBe('Agent process: network access removed; file sandbox not available on this platform');
+    expect(byTestId('agent-isolation')!.textContent).toBe('Agent process: network functions removed. File sandbox: not in effect');
     // The model list is exactly the route's.
     const models = [...host.querySelectorAll<HTMLOptionElement>('[data-testid="agent-model"] option')].map((o) => o.value);
     expect(models).toEqual(setup().allowedModels);

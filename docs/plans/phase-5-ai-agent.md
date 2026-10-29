@@ -125,7 +125,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 | The agent process approves its own call | No approve/grant message exists in the protocol; main drops unknown or malformed messages; approvals arrive only over the `enforceSender` IPC from the app window | Task 1 `agent-cannot-approve`, Task 4 |
 | A page or a tab's renderer answers an approval | `agent.answerApproval` is an IPC procedure behind `enforceSender` (app windows only); approval ids are random and single-use | Task 5 |
 | A stale approval is replayed | Each approval is bound to one call id, its tool name and a hash of its exact input; answered once; expires with the turn | Task 4 |
-| A key leaks to the renderer, a log or the model | Keys stored with `safeStorage`, only behind the OS keychain (refused with Chromium's fixed key, which the unsandboxed agent process could decrypt); only main's proxy reads them; error bodies are withheld from the runtime; the settings procedures answer `hasKey` only; the runtime never sees one | Task 3 `key-never-leaves-main`, `credentials-weak-blob-never-used` |
+| A key leaks to the renderer, a log or the model | Keys stored with `safeStorage`, only behind the OS keychain (refused with Chromium's fixed key, which the unsandboxed agent process could decrypt); only main's proxy reads them; error bodies are withheld from the runtime; the settings procedures answer `hasKey` only; the runtime never sees one. **Stated plainly:** the keychain stops offline theft of the key file (a copied profile, a backup); it does not stop code running as the same user, such as a compromised agent runtime, which can ask the keychain itself (macOS and Linux; Windows untested) | Task 3 `key-never-leaves-main`, `credentials-weak-blob-never-used` |
 | Code execution in the agent process (a dependency bug) | Not sandboxed on Electron 45: it runs as the user. It holds no secret, loads no module and generates no code from strings after startup, has no network globals, speaks only the validated protocol (floods restart it), and main decides every action and every model request | Task 2/3 lockdown tests, `host-flood-restarts` |
 | The agent reaches arbitrary hosts | Model requests go through main's proxy and its endpoint allowlist; the runtime has no network globals | Task 3 `proxy-allowlist` |
 | `execute_javascript` takes over the page or hangs | Runs in a dedicated isolated world (never the main world), per-call approval showing the exact code, a timeout and a result size cap | Task 4/5 |
@@ -355,7 +355,8 @@ _Filled in as tasks land._
   tool that wants to explain a miss returns it as data. Migration `0030_agent_grants` creates
   `agent_grants` and `agent_preferences` (the read-tools setting, key `read_tools_allowed`), appended
   to `MIGRATIONS` as `...AGENT_GRANTS_MIGRATIONS`; when Phase 6's `...CHANGE_INTEL_MIGRATIONS`
-  (`0040`+) merges, ours must stay before it (ids strictly increase). `@app/desktop` now depends on
+  (`0040`+) merges, ours must stay before it (`runMigrations` applies the list in its order and
+  doesn't check the ids, so the order in `MIGRATIONS` is what counts). `@app/desktop` now depends on
   `@app/ai-skills` (main re-parses each input with the tool's own schema); its lockfile entry was
   added by hand because `pnpm install` currently refuses the AI SDK entries under the
   minimum-release-age policy (fine once they age past it).
@@ -559,7 +560,8 @@ _Filled in as tasks land._
   not given (or `null`) `unavailablePort(PORT_NOT_CONNECTED_REASONS.…)` ("Search result data isn't
   connected in this build." …); `createAgentServiceFrom` / `createAgentService` take
   `ports?: { serp?, intent?, gsc? }` and `entitlements?: AgentEntitlements` (passed to
-  `createAgent`); main's `index.ts` is unchanged. Thin adapters with TODOs for the mapping:
+  `createAgent`); main's `index.ts` is unchanged (until the SERP wiring below). Thin adapters, first
+  written against assumed read services:
   `ports/serp-adapter.ts` `serpAdapter(service: SerpReadService | null)` (`results(query,
   { signal })`, optional `aiSearch`), `ports/intent-adapter.ts` `intentAdapter(service:
   IntentReadService | null)` (`classify`), `ports/gsc-adapter.ts` `gscAdapter(service:
@@ -905,4 +907,28 @@ _Filled in as tasks land._
   and signed test pack from `serp-fixtures.ts`, the pack installed through the panel as a user
   would): the scripted model's `serp_results` card shows the fixture's organic results read by the
   real service, `search_intent` shows `model-missing`, and the engine saw no crawler request.
-
+- **Whole-branch review (session and IPC).** **History budget:** a turn's history is fitted to the
+  model's context, not just to `CHAT_MAX_MESSAGES`: `historyBudgetChars(modelId, reserved)` (spec)
+  is the context window (`MODEL_CONTEXT_WINDOWS`, or `DEFAULT_CONTEXT_WINDOW_TOKENS` 128,000 when
+  unknown) less `MAX_OUTPUT_TOKENS` and `HISTORY_HEADROOM_TOKENS` (24,000), at
+  `HISTORY_CHARS_PER_TOKEN` 3 (conservative), less the system prompt and MCP definitions sent, within
+  80,000–`CHAT_HISTORY_MAX_CHARS` (1,000,000). `compactHistory` shortens the oldest tool outputs
+  first (data `"[older tool output omitted]"`, still wrapped untrusted and answering its call), then
+  drops the oldest exchanges; the last one always stays. **Memory:** each chat keeps at most
+  `CHAT_HISTORY_MAX_CHARS` of history and `CHAT_ENTRIES_MAX_CHARS` (500,000) of display entries
+  (oldest first; `truncated` set, the stored rows rewritten), so 50 chats stay within about 75 M
+  characters. **Wording:** the settings say "Agent process: network functions removed. File sandbox:
+  not in effect" (its network functions, not all access; the cause is Electron 45), and the session's
+  isolation note says the same. **IPC:** the `BAD_REQUEST` masking is recorded as
+  `ipc-transport.feature.md` `input-errors-are-masked` with a transport test on a plain procedure.
+  **Migrations test:** `packages/db/src/agent-tables.ts` exports `AGENT_TABLES` (every Phase 5
+  table), appended to main's base list in `migrations.test.ts`. **One source for the tab's page:** the
+  broker's `tabUrl` (approvals, grants, `completeToolInput`) now reads the chat tab's live
+  WebContents URL, as the skills and page tools do (the tab strip's copy is no longer used).
+  **The URL the model sees:** `modelPageUrl` (`agent-page-tools.spec.ts`: `http(s)` without user
+  info or fragment) for `page_audit`, `page_data`, `navigate`'s answer and `gsc_performance`
+  (`gscPageUrl` uses it). The system prompt says "frost's own tools cannot run commands or read
+  files" (MCP command servers exist). Exports used only in their own file were made local
+  (`mcp/secrets.ts`, `session.ts`). **Follow-up:** the text-cutting helpers (`cutText`, `clip`, the
+  runtime's `cut`, the search tools' and MCP's cutters) do the same surrogate-safe cut in several
+  places; fold them into one spec helper in a later change.

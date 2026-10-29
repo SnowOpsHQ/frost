@@ -2,6 +2,7 @@
 import { createTRPCClient, TRPCClientError } from '@trpc/client';
 import { initTRPC } from '@trpc/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { z } from 'zod';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import {
@@ -97,6 +98,14 @@ const MALFORMED_ENVELOPES: readonly unknown[] = [
 ];
 
 /** A router with a procedure that fails unexpectedly, for masking tests. */
+// A strict input whose refusal Zod would describe by quoting what was sent (an unrecognized key).
+const strictRouter = router({
+  echo: publicProcedure
+    .use(enforceSender)
+    .input(z.strictObject({ name: z.string().max(8) }))
+    .query(({ input }) => input.name),
+});
+
 const boomRouter = router({
   boom: publicProcedure.use(enforceSender).query(() => {
     throw new Error('secret /etc/x');
@@ -223,6 +232,18 @@ describe('main handler', () => {
     const response = await handlerFor({}, boomRouter).call({ type: 'query', path: 'boom' });
     expectError(response, IPC_INTERNAL_ERROR_CODE);
     expect(response).toHaveProperty('error.message', IPC_INTERNAL_ERROR_CODE);
+  });
+
+  test('input-errors-are-masked', async () => {
+    // Phase 5 Task 6a review: a refused input's message is its code, never Zod's text.
+    const { call } = handlerFor({}, strictRouter);
+    for (const input of [{ name: 'ok', 'secret-key-sk-0123456789': 1 }, { name: 'secret-value-too-long' }, { name: 5 }]) {
+      const response = await call({ type: 'query', path: 'echo', input });
+      expectError(response, 'BAD_REQUEST');
+      expect(response).toHaveProperty('error.message', 'BAD_REQUEST');
+      expect(JSON.stringify(response)).not.toMatch(/secret|sk-0123|Unrecognized|expected/);
+    }
+    expect(await call({ type: 'query', path: 'echo', input: { name: 'ok' } })).toStrictEqual({ result: { data: 'ok' } });
   });
 
   test('uncloneable-output-is-internal-error', async () => {

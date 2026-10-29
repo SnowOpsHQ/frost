@@ -38,7 +38,9 @@ to one named test.
 - **Keys.** A key field per slot is a password input the panel never keeps in state: Save reads it,
   empties it before the call, and shows main's answer. A slot says only "Key saved" / "No key".
   Protection and isolation are said plainly, and a file sandbox is never claimed when the runtime
-  reports none.
+  reports none: "Agent process: network functions removed. File sandbox: not in effect" on
+  Electron 45 (its network functions, not all network access; the cause is Electron, not the
+  platform).
 
 ## View model (`renderer/__tests__/agent-view.test.ts`)
 - **Scenario: agent-panel-starts-closed** — only a stored `'1'` opens it.

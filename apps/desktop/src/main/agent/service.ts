@@ -117,10 +117,13 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     }
   };
   const e2eAgentScript = e2eAgentScriptFrom({ packaged: deps.app.isPackaged, switchValue: deps.app.commandLine.getSwitchValue(AGENT_E2E_SCRIPT_SWITCH), log });
-  const tabOf = (tabId: number) => deps.browser.getState().tabs.find((item) => item.id === tabId);
+  // "The tab's page" has one source: the chat tab's live WebContents (its URL and title, as the page
+  // tools read them), for the broker (approvals, grants, `completeToolInput`) and the skills alike,
+  // never the tab strip's copy.
+  const liveContents = (tabId: number) => deps.webContents.getAllWebContents().find((item) => !item.isDestroyed() && deps.browser.tabIdOf(item) === tabId);
   const tabUrl = (tabId: number): string | null => {
-    const tab = tabOf(tabId);
-    return tab === undefined || tab.url === '' ? null : tab.url;
+    const url = liveContents(tabId)?.getURL() ?? '';
+    return url === '' ? null : url;
   };
   const entitlements = deps.entitlements ?? createDefaultAgentEntitlements();
   const mcpSession = (): McpSessionLike => {
@@ -162,10 +165,9 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     grants: agent.grants,
     start: () => agent.start(),
     activeTabId: () => deps.browser.getState().activeTabId,
-    // A skill's `pageUrl` and `pageTitle`: one source, the chat tab's live page at send time (its
-    // WebContents' URL and title, as the page tools read it), never the tab strip's copy.
+    // A skill's `pageUrl` and `pageTitle`: the same source, at send time.
     tabPage: (tabId) => {
-      const contents = deps.webContents.getAllWebContents().find((item) => !item.isDestroyed() && deps.browser.tabIdOf(item) === tabId);
+      const contents = liveContents(tabId);
       if (contents === undefined) return null;
       const url = contents.getURL();
       const title = contents.getTitle();

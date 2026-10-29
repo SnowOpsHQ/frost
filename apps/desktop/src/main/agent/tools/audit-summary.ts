@@ -1,5 +1,5 @@
 import type { Finding, SeoAudit, SeoAuditResponse } from '@app/seo-core';
-import { PAGE_AUDIT_LIMITS as L, PAGE_TITLE_MAX_CHARS } from '@app/specs/agent-page-tools.spec';
+import { modelPageUrl, PAGE_AUDIT_LIMITS as L, PAGE_TITLE_MAX_CHARS } from '@app/specs/agent-page-tools.spec';
 import { renderProfileSummary, type AuditRenderProfile } from '@app/specs/render-profile.spec';
 
 // `page_audit` and `page_data` (Phase 5 Task 5; acceptance `specs/agent-page-tools.feature.md`):
@@ -70,7 +70,7 @@ export function summariseAudit(audit: SeoAudit, renderProfile?: AuditRenderProfi
   const page = audit.page;
   const base = {
     status: 'ready',
-    url: clip(audit.url, L.maxUrlChars),
+    url: clip(modelPageUrl(audit.url) ?? audit.url, L.maxUrlChars),
     score: audit.score,
     band: audit.band,
     indexable: audit.indexable,
@@ -113,7 +113,7 @@ export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderPr
   }
   const hreflang = audit.indexability.hreflang;
   const base = {
-    url: clip(page.url, L.maxUrlChars),
+    url: clip(modelPageUrl(page.url) ?? page.url, L.maxUrlChars),
     title: page.title ? { text: clip(page.title.text, PAGE_TITLE_MAX_CHARS), length: page.title.length } : null,
     titleCount: page.titleTotal,
     metaDescription: page.description ? { text: clip(page.description.text, L.maxFactChars), length: page.description.length } : null,

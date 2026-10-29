@@ -8,12 +8,16 @@ import {
   AGENT_DELTA_COALESCE_MS,
   AGENT_NOTICE_MESSAGES,
   AGENT_SET_KEY_RESULTS,
+  CHAT_ENTRIES_MAX_CHARS,
+  CHAT_HISTORY_MAX_CHARS,
   CHAT_TEXT_MAX_CHARS,
   CHAT_TITLE_MAX_CHARS,
   EXECUTE_JS_APPROVAL_NOTE,
   RUN_PROBES_APPROVAL_NOTE,
   MAX_CHATS_KEPT_IN_MEMORY,
+  historyBudgetChars,
   MAX_DISPLAY_ENTRIES,
+  OMITTED_TOOL_OUTPUT,
   MAX_PENDING_AGENT_WATCHES,
   MAX_TOOL_CARDS_PER_TURN,
   MODEL_CONTEXT_WINDOWS,
@@ -174,6 +178,9 @@ interface Entry {
   readonly skill?: { readonly id: string; readonly name: string };
 }
 
+/** An entry's size in memory, roughly: its text and its cards' previews (characters). */
+const entrySize = (entry: Entry): number => entry.text.length + entry.tools.reduce((sum, card) => sum + card.inputPreview.length + (card.outputPreview?.length ?? 0) + 64, 0);
+
 /** A skill run, resolved and checked (before the turn is held). */
 interface SkillRun {
   readonly skill: Skill;
@@ -281,6 +288,41 @@ export function historyWindow(history: readonly ChatMessage[]): ChatMessage[] {
   return [history[anchor]!, ...history.slice(tail)];
 }
 
+const messageChars = (message: ChatMessage): number => JSON.stringify(message).length;
+
+/** `message`'s result with its data replaced by `OMITTED_TOOL_OUTPUT` (same call, same source, still untrusted). */
+function omittedResult(message: Extract<ChatMessage, { role: 'tool' }>): Extract<ChatMessage, { role: 'tool' }> {
+  const source = message.result.ok ? message.result.output.source : message.toolName;
+  return { role: 'tool', callId: message.callId, toolName: message.toolName, result: { ok: true, output: { untrusted: true, source, data: OMITTED_TOOL_OUTPUT } } };
+}
+
+/**
+ * `history` within `maxChars` (the JSON text of its messages): the oldest tool outputs are
+ * shortened first (`OMITTED_TOOL_OUTPUT`, each still answering its call), then the oldest exchanges
+ * (a user message and everything up to the next one) are dropped; the last exchange always stays.
+ * Unchanged (the same messages) when it already fits.
+ */
+export function compactHistory(history: readonly ChatMessage[], maxChars: number): ChatMessage[] {
+  const out = history.slice();
+  let total = out.reduce((sum, message) => sum + messageChars(message), 0);
+  for (let index = 0; index < out.length && total > maxChars; index += 1) {
+    const message = out[index]!;
+    if (message.role !== 'tool') continue;
+    const short = omittedResult(message);
+    const saved = messageChars(message) - messageChars(short);
+    if (saved <= 0) continue;
+    out[index] = short;
+    total -= saved;
+  }
+  while (total > maxChars) {
+    let next = 1;
+    while (next < out.length && out[next]!.role !== 'user') next += 1;
+    if (next >= out.length) break;
+    for (const message of out.splice(0, next)) total -= messageChars(message);
+  }
+  return out;
+}
+
 /**
  * Appends main's result for `callId` to `history` when it answers a call of the last assistant
  * message and only results follow that message (the pairing the runtime reads, `toModelMessages`);
@@ -325,7 +367,7 @@ function approvalView(request: ApprovalRequestView): AgentApprovalView {
 }
 
 /** A skill as the panel's picker shows it (field by field: never its template). */
-export function skillView(skill: Skill, builtin: boolean): AgentSkillView {
+function skillView(skill: Skill, builtin: boolean): AgentSkillView {
   return {
     id: skill.id,
     name: skill.name,
@@ -354,7 +396,7 @@ export function pairedHistory(messages: readonly ChatMessage[]): ChatMessage[] {
 }
 
 /** What a skill run's user entry says: the page it ran on, the target query and the note the user gave (`''` for none). */
-export function skillEntryText(inputs: SkillRun['inputs'], pageUrl: string | null = null): string {
+function skillEntryText(inputs: SkillRun['inputs'], pageUrl: string | null = null): string {
   const lines: string[] = [];
   if (pageUrl !== null) lines.push(`Page: ${pageUrl}`);
   if (inputs.targetQuery !== undefined) lines.push(`Target query: ${inputs.targetQuery}`);
@@ -369,7 +411,7 @@ export function isolationView(lockdown: ReturnType<AgentHost['lockdown']>): Agen
   const sandbox = fileSandbox
     ? 'The agent process runs as you, with file access limited to its own files.'
     : 'The agent process runs as you, without an OS sandbox or file restrictions.';
-  const network = networkGlobalsRemoved ? 'It holds no key and has no network of its own' : 'It holds no key, but some of its network functions could not be removed';
+  const network = networkGlobalsRemoved ? 'It holds no key and its network functions are removed' : 'It holds no key, but some of its network functions could not be removed';
   return { networkGlobalsRemoved, fileSandbox, note: `${sandbox} ${network}; frost decides every action and every model request.` };
 }
 
@@ -582,17 +624,35 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     }
   };
 
-  /** Keeps a chat's memory bounded: its history to twice what a turn sends, its entries likewise. */
+  /**
+   * Keeps a chat's memory bounded: its history to twice what a turn sends and `CHAT_HISTORY_MAX_CHARS`
+   * (oldest tool outputs shortened first), its entries to twice what the panel shows and
+   * `CHAT_ENTRIES_MAX_CHARS` (oldest first).
+   */
   const trim = (chat: Chat) => {
-    if (chat.history.length > CHAT_MAX_MESSAGES * 2) {
-      chat.history = historyWindow(chat.history);
+    const cut = () => {
       chat.truncated = true;
       chat.stored = null;
+    };
+    if (chat.history.length > CHAT_MAX_MESSAGES * 2) {
+      chat.history = historyWindow(chat.history);
+      cut();
+    }
+    const compacted = compactHistory(chat.history, CHAT_HISTORY_MAX_CHARS);
+    if (compacted.length !== chat.history.length || compacted.some((message, index) => message !== chat.history[index])) {
+      chat.history = compacted;
+      cut();
     }
     if (chat.entries.length > MAX_DISPLAY_ENTRIES * 2) {
       chat.entries = chat.entries.slice(-MAX_DISPLAY_ENTRIES);
-      chat.truncated = true;
-      chat.stored = null;
+      cut();
+    }
+    let entryChars = chat.entries.reduce((sum, entry) => sum + entrySize(entry), 0);
+    if (entryChars > CHAT_ENTRIES_MAX_CHARS) {
+      let drop = 0;
+      while (drop < chat.entries.length - 1 && entryChars > CHAT_ENTRIES_MAX_CHARS) entryChars -= entrySize(chat.entries[drop++]!);
+      chat.entries = chat.entries.slice(drop);
+      cut();
     }
   };
 
@@ -1127,7 +1187,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     const posted = deps.host.send({
       type: 'chat.start',
       chatId: chat.id,
-      messages: historyWindow(chat.history),
+      // Within the model's context too (a long chat of large tool results would otherwise fail every turn).
+      messages: compactHistory(historyWindow(chat.history), historyBudgetChars(modelId, AGENT_SYSTEM_PROMPT.length + JSON.stringify(mcpTools).length)),
       systemPrompt: AGENT_SYSTEM_PROMPT,
       modelId,
       route,

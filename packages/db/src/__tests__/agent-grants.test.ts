@@ -7,10 +7,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { beforeEach, describe, expect, test } from 'vitest';
-import { AGENT_CHAT_TABLES, AGENT_SKILL_TABLES } from '@app/specs/agent-data.spec';
-import { AGENT_MCP_TABLES } from '@app/specs/agent-mcp.spec';
-import { AGENT_GRANT_TABLES, DEFAULT_READ_TOOLS_ALLOWED, MAX_AGENT_GRANTS, READ_TOOLS_PREFERENCE_KEY } from '@app/specs/agent-approvals.spec';
+import { DEFAULT_READ_TOOLS_ALLOWED, MAX_AGENT_GRANTS, READ_TOOLS_PREFERENCE_KEY } from '@app/specs/agent-approvals.spec';
 import { createAgentGrantsRepository, type AgentGrantsRepository } from '../agent-grants';
+import { AGENT_TABLES } from '../agent-tables';
 import { agentGrants, agentPreferences } from '../agent-grants-schema';
 import { createDrizzle } from '../client';
 import { MIGRATIONS, runMigrations } from '../migrations';
@@ -53,7 +52,7 @@ describe('agent grants (db)', () => {
     expect(MIGRATIONS.map((m) => m.id)).toContain('0030_agent_grants');
     const tables = raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'agent_%' ORDER BY name").all().map((row) => String(row['name']));
     // Task 9's and Task 10's tables (`agent-chats.test.ts`, `agent-skills.test.ts`, `agent-mcp.test.ts`) sit beside them.
-    expect(tables).toEqual([...AGENT_GRANT_TABLES, ...AGENT_CHAT_TABLES, ...AGENT_SKILL_TABLES, ...AGENT_MCP_TABLES].sort());
+    expect(tables).toEqual([...AGENT_TABLES].sort());
     expect(columns('agent_grants')).toEqual(drizzleColumns(agentGrants));
     expect(columns('agent_preferences')).toEqual(drizzleColumns(agentPreferences));
     // The key is (tool, origin): no second row for one pair.

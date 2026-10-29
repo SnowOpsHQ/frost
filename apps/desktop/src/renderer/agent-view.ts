@@ -309,9 +309,11 @@ export const setKeyMessage = (result: AgentSetKeyResult): string => AGENT_SET_KE
 export function isolationLine(setup: Pick<AgentSetupView, 'isolation' | 'runtime'>): string {
   const { isolation, runtime } = setup;
   if (!isolation.networkGlobalsRemoved && runtime.status !== 'ready') return 'Agent process: not started yet; it starts with your first message';
-  const network = isolation.networkGlobalsRemoved ? 'network access removed' : 'some network functions could not be removed';
-  const files = isolation.fileSandbox ? 'file access limited to its own files' : 'file sandbox not available on this platform';
-  return `Agent process: ${network}; ${files}`;
+  // Its network functions (the globals), not all network access: it is not OS-sandboxed. The file
+  // sandbox isn't in effect because Electron 45 doesn't enforce Node's permission model there.
+  const network = isolation.networkGlobalsRemoved ? 'network functions removed' : 'some network functions could not be removed';
+  const files = isolation.fileSandbox ? 'File sandbox: in effect' : 'File sandbox: not in effect';
+  return `Agent process: ${network}. ${files}`;
 }
 
 export function runtimeLine(runtime: AgentSetupView['runtime']): string {
