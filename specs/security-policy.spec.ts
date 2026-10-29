@@ -130,8 +130,11 @@ export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
  * (`SERP_E2E_PACK_KEY_SWITCH`, `SERP_E2E_PACK_URL_SWITCH`, `serp-selector-pack.spec.ts`).
  * `frost-e2e-intent-fake` too (Phase 3 Task 2): the e2e seam that runs the intent utility process's
  * deterministic fake in place of the model (`INTENT_E2E_FAKE_SWITCH`, `intent-classifier.spec.ts`).
+ * `frost-update-feed`, `frost-update-public-key`, `frost-update-test-cert` too (Phase 7 Task 5): the
+ * update client's e2e seams (`update-client.spec.ts`), which point it at another feed, trust another
+ * signing key, and accept one pinned certificate on the update session.
  */
-export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-e2e-serp-pack-key', 'frost-e2e-serp-pack-url', 'frost-e2e-intent-fake'] as const;
+export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-e2e-serp-pack-key', 'frost-e2e-serp-pack-url', 'frost-e2e-intent-fake', 'frost-update-feed', 'frost-update-public-key', 'frost-update-test-cert'] as const;
 export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;
 
 /**

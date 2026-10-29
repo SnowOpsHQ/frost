@@ -432,8 +432,8 @@ The details, each with its named tests, are in `specs/*.feature.md`.
   and of the chrome, so a page can neither see nor block them; on every platform each is taken by
   exactly one handler.
 - **Packaged builds** refuse remote debugging, `--host-resolver-rules` and the e2e suite's switches
-  (public hosts and, since Phase 3, the SERP pack key and URL and the intent fake;
-  `PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
+  (public hosts and, since Phase 3, the SERP pack key and URL and the intent fake; since Phase 7, the
+  update e2e switches; `PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
   `specs/macos-package.spec.ts`) disable run-as-Node, `NODE_OPTIONS` and the Node inspector flags,
   and turn on cookie encryption, ASAR integrity validation and loading the app only from its ASAR.
 - **Tokens stay in main** (Phase 4). The account's desktop token, the entitlement snapshot and
@@ -585,6 +585,44 @@ pinned to the address checked, so a name whose answer changes between the check 
 (DNS rebinding, a TTL of zero) can still reach a private address in that window; and behind a
 proxy, the proxy resolves the name itself.
 
+## Updates
+Acceptance: `specs/update-client.feature.md` (and `update-manifest.feature.md` for the signed
+manifest).
+- **Off unless a feed is configured.** No build ships a feed, and **no feed is hosted yet**, so every
+  build today (dev, tests, packaged) makes no update request and shows nothing about updates (the
+  command palette offers no update action either).
+- **Pointing a build at a feed.** Set `FROST_UPDATE_FEED_URL` to an `https:` URL before starting
+  frost (any build); unpackaged builds also take `--frost-update-feed=<url>` (which wins), and
+  `http:` only to `127.0.0.1` / `[::1]`. The feed serves an envelope signed with
+  `pnpm sign:update-manifest`; frost trusts only the public key compiled into it.
+- **What happens.** With a feed, frost checks 30 s after start and then every 6 h (automatic checks
+  can be turned off in the command palette: Turn Automatic Update Checks Off / On; Check for Updates
+  checks once either way). A verified, newer offer shows a notice under the find bar's row (under the toolbar when no find bar is open): Release notes
+  (plain text), Download, Skip this version (not for a required update) and Later. Nothing
+  downloads until you click Download; the file is checked against its signed size and SHA-256 and
+  deleted if it differs. Requests go through a separate in-memory session with no cookies, no
+  referrer and only a `User-Agent: frost/<version> (update check)` header; the install ID that
+  decides staged rollout stays on the device.
+- **Unsigned builds install by hand.** frost has no code-signing certificates, so no build can
+  update itself: once verified, the notice says "This build can't update itself: install it by
+  hand" and **Show file** reveals the file in your file manager (frost never opens or runs it).
+
+## Sync (groundwork, off)
+Acceptance: `specs/sync-config.feature.md`, `specs/sync-engine.feature.md`.
+- **Off, and nothing in the app turns it on.** There is no setting, command or IPC for sync yet.
+  Only a hand-written `frost-sync.json` in the profile directory (`userData`) enables it; without
+  one, frost never loads libSQL and creates no sync file.
+- **`{"enabled": true}` with no `url` is local staging only.** Rows are mirrored into the local
+  replica `frost-sync.db` beside the session database, and **nothing leaves the device**.
+- **With a `url`** (`libsql:` or `https:`), the replica is a libSQL embedded replica of that
+  endpoint. A token is kept only as `safeStorage` ciphertext, and frost refuses to store or use one
+  when `safeStorage` can't encrypt (or, on Linux, uses the `basic_text` backend). Talking to a real
+  server has not been tested yet.
+- **What would sync.** Only Phase 6's change-intelligence tables (`ci_*`), copied row by row. Never
+  the session database's history, permission decisions, render-profile pins or content notes.
+  Phase 6 isn't merged into this branch, so today every table is skipped and the replica holds
+  only the engine's own bookkeeping. Screenshot files are not synced.
+
 ## Known limits
 - **Lab data only.** Speed values are one visit in this tab on this machine, not field data; the
   panel and every rule say so. INP needs an interaction; LCP stops at the first input or scroll; a
@@ -694,6 +732,8 @@ From the repo root (`pnpm install` first):
 - `pnpm --filter @app/desktop start` — dev run (Vite dev server; it overwrites `.vite/build` with a
   dev bundle, so run `build` again before the e2e).
 - `pnpm --filter @app/desktop build` — `electron-forge package` for the host platform.
+  The app ships libSQL's native module for that platform; see
+  [libSQL in the packaged app](#libsql-in-the-packaged-app).
 - `pnpm lint` / `pnpm test` — strict TypeScript and the Vitest suites of every package
   (`@app/seo-core`'s rules each have a passing and a failing fixture).
 - `pnpm --filter @app/desktop test:e2e` — Playwright e2e against the unpackaged build, on loopback
@@ -710,9 +750,13 @@ From the repo root (`pnpm install` first):
 - `pnpm make:mac` (on macOS) — `electron-forge make --platform darwin --arch arm64`
   (see [Building on a Mac](#building-on-a-mac)).
 - `pnpm verify:mac` (on macOS, after `make:mac`) — checks the bundle id, arch, signature and
-  entitlements, fuses, launch and debugging lockdown, that the intent runtime is unpacked and loads
-  in the packaged utility process (`intent-runtime-loads`, the self-test), and that the `.app`
-  inside the published zip and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
+  entitlements, fuses, libSQL's unpacked module, launch and debugging lockdown, that the intent runtime
+  is unpacked and loads in the packaged utility process (`intent-runtime-loads`, the self-test), and
+  that the `.app` inside the published zip and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
+- `pnpm make:linux`, `pnpm verify:linux` (on Linux) — the AppImage, deb and zip for x64, and their
+  checks (see [Building on Linux](#building-on-linux)). CI: `.github/workflows/linux-package.yml`.
+- `pnpm make:win`, `pnpm verify:win` (on Windows) — the Squirrel installer and zip for x64, and
+  their checks (see [Building on Windows](#building-on-windows)). CI: `.github/workflows/windows.yml`.
 
 If your shell exports `ELECTRON_RUN_AS_NODE` (some terminals and agent harnesses do), unset it for
 manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it itself.
@@ -825,13 +869,46 @@ Desktop app type, and telemetry an endpoint and a DSN of your own.
   and `gsc-view.ts` among them).
 - `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers;
   `fake-backend.ts`, `fake-google.ts` and `fake-telemetry.ts` are the Phase 4 suites' in-test fakes).
-- `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string), `vite.intent.config.ts`
-  (the intent worker's build, `onnxruntime-node` external), `intent-runtime.ts` (the packaging hook
-  that copies ONNX Runtime's files for the target, and the unpack glob),
-  `third-party-notices.ts`, `licenses/` and `THIRD_PARTY_NOTICES`; `scripts/measure-snippet-font.mjs` (builds the
-  snippet width table, run in Electron) and `scripts/verify-mac-package.mjs`.
+- `libsql-packaging.ts` (the Forge hook that ships libSQL in the app), `intent-runtime.ts` (the
+  hook that copies ONNX Runtime's files for the target), `vite.web-vitals.ts` (serves the
+  `web-vitals` IIFE to main as a string), `vite.intent.config.ts` (the intent worker's build,
+  `onnxruntime-node` external), `third-party-notices.ts`, `licenses/` and `THIRD_PARTY_NOTICES`;
+  `scripts/measure-snippet-font.mjs` (builds the snippet width table, run in Electron),
+  `scripts/verify-mac-package.mjs`, and `scripts/verify-linux-package.mjs` and
+  `scripts/verify-windows-package.mjs` with the checks they share in `scripts/verify-package-common.mjs`.
 - The audit engine itself is `packages/seo-core` (`@app/seo-core`): pure TypeScript, no Electron,
   DOM or Zod.
+
+## libSQL in the packaged app
+Main bundles all of its dependencies except libSQL, the driver for opt-in sync. libSQL's native
+module (`@libsql/<target>/index.node`, N-API) is found at runtime, so:
+- main `require`s `@libsql/client/sqlite3` from `app.asar/node_modules`;
+- a Forge `packageAfterCopy` hook (`libsql-packaging.ts`) copies the packages that entry loads, and
+  the prebuild for the target, into the app;
+- only that `index.node` is unpacked to `resources/app.asar.unpacked/`. All JavaScript stays in
+  `app.asar`, and the fuses are unchanged.
+
+The full list is in `specs/sync-package.spec.ts` and `specs/sync-package.feature.md`. The libSQL
+code is about 0.25 MB of JavaScript in `app.asar` plus the prebuild: 9.7 MB uncompressed on Linux
+x64, about 4.1 MB compressed in the zip and deb.
+
+The prebuild packaged is the build machine's own, since pnpm installs only that one. **So each
+platform is packaged on that platform.** `electron-forge package --platform win32` on Linux fails,
+naming the missing `@libsql/win32-x64-msvc`. CI builds each platform on its own runner.
+
+**Integrity.** Electron's ASAR integrity check (macOS, Windows) covers `app.asar`'s header, which
+records the unpacked file's size and SHA-256. It does not check the unpacked file's bytes when the
+file is loaded. On macOS the bundle's code signature seals the file. On Windows and Linux nothing
+checks it at runtime; the package verifiers compare it with the header at build time
+(`unpacked-allowlist`, Linux and Windows; on macOS signing may rewrite the file, so the seal
+vouches for its bytes). Every verifier also checks the following:
+- `app.asar/node_modules` holds exactly the allowed packages (`asar-node-modules-allowlist`);
+- libSQL loads from the packaged `app.asar` (`libsql-loads`). This check runs the repository's
+  Electron, at the packaged version, as Node, because the packaged binary's `RunAsNode` fuse is
+  off;
+- the packaged executable itself loads the prebuild (`sync-replica-opens`): started on a throwaway
+  profile whose `frost-sync.json` turns local staging on, its main opens `frost-sync.db` through
+  libSQL. On macOS this is also where library validation would refuse the prebuild.
 
 ## Building on a Mac
 Prerequisites:
@@ -883,5 +960,92 @@ Real signing uses the hardened runtime with only `com.apple.security.cs.allow-ji
 (`MAC_ENTITLEMENTS` in `specs/macos-package.spec.ts`). It has not been exercised yet (no Developer
 ID); CI never receives these secrets.
 
+## Building on Linux
+Prerequisites: Node ≥ 22.18 and pnpm 12.15.0 (as above), `dpkg-deb` (the deb maker and the deb
+checks; part of Debian and Ubuntu), `mksquashfs` (`squashfs-tools`, for the AppImage) and, for
+`verify:linux`, `unzip` and a display (`xvfb-run -a` on a headless machine). `make:linux` downloads the
+AppImage runtime pinned in `specs/linux-package.spec.ts`.
+
+```sh
+pnpm install
+pnpm make:linux
+pnpm verify:linux    # or: xvfb-run -a pnpm verify:linux
+```
+
+Artifacts, under `apps/desktop/out/`:
+- `frost-linux-x64/` (the packaged tree; `frost` is the executable)
+- `make/AppImage/x64/frost-<version>-x64.AppImage`
+- `make/deb/x64/frost_<version>_amd64.deb` (installs to `/usr/lib/frost`, with `/usr/bin/frost`)
+- `make/zip/linux/x64/frost-linux-x64-<version>.zip`
+
+**The packages are unsigned.** frost has no Linux repository key: the deb is not served from an
+apt repository and carries no signature, and the AppImage embeds none. The `frost-linux-x64`
+artifact of the Linux package workflow is built and checked in CI; trust it as far as you trust that
+run. The deb runs no maintainer scripts; its only setuid file is Chromium's `chrome-sandbox`, used
+only where unprivileged user namespaces are unavailable.
+
+`verify:linux` checks the fuses, the files in `resources/` and `app.asar`, libSQL (unpacked prebuild, `node_modules`, that it loads), launch and debugging
+lockdown on the packaged tree, the deb's metadata and files, the AppImage's runtime and contents,
+and the zip's contents (`specs/linux-package.feature.md`; CI uploads the AppImage and deb, not the
+zip). Electron does not enforce ASAR integrity on Linux:
+the fuse is on, but `app.asar` is not hash-checked at startup there (the check says so).
+
+**The AppImage does not start on stock Ubuntu 23.10+ (24.04 included); use the deb there.**
+AppArmor on those releases restricts unprivileged user namespaces, so Chromium's namespace sandbox
+is unavailable, and its setuid fallback (`chrome-sandbox`) cannot work inside the AppImage's
+`nosuid` mount (nor in the unzipped zip, where it is not setuid root). The deb is fine: it installs
+`chrome-sandbox` setuid root. To run the AppImage there, either add an AppArmor profile that allows
+`userns` for it, or allow unprivileged user namespaces system-wide with
+`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. Never use `--no-sandbox`. The CI
+job sets that sysctl before `verify:linux` (and launches the packaged tree, not the AppImage), so a
+passing run does not mean the AppImage starts on a stock Ubuntu 24.04.
+
+## Building on Windows
+Prerequisites: Windows 10 or later (x64), Node ≥ 22.18 and pnpm 12.15.0 (as above). The Squirrel
+maker's tools (NuGet, Squirrel, 7-Zip) come with the `electron-winstaller` package; `verify:win`
+uses Windows' own `tar.exe` to read the zip and the `.nupkg`.
+
+```sh
+pnpm install
+pnpm make:win
+pnpm verify:win
+```
+
+Artifacts, under `apps/desktop/out/`:
+- `frost-win32-x64/` (the packaged tree; `frost.exe` is the executable)
+- `make/squirrel.windows/x64/frost-<version>-x64-setup.exe` (the installer), with
+  `frost-<version>-full.nupkg` and `RELEASES` beside it
+- `make/zip/win32/x64/frost-win32-x64-<version>.zip` (the packaged tree's contents, no top folder)
+
+**The installer and the app are unsigned.** frost has no Authenticode certificate, so SmartScreen
+warns before `Setup.exe` runs ("Windows protected your PC": More info › Run anyway). The
+`frost-windows-x64` artifact of the Windows workflow is built and checked in CI; trust it as far as
+you trust that run. `verify:win` fails if a signature ever appears, until the docs say otherwise.
+
+`Setup.exe` installs per user into `%LocalAppData%\frost` (no administrator rights; there is no MSI)
+and starts frost. Installing creates Start-menu and desktop shortcuts and uninstalling removes them:
+frost handles Squirrel's install events by running Squirrel's `Update.exe` for the shortcuts only,
+then exits (`src/main/update/squirrel-events.ts`). frost never asks `Update.exe` to update: an
+update is installed by hand (see Updates). The zip
+needs no installer: unzip it anywhere and run `frost.exe`.
+
+`verify:win` checks the fuses, the files in `resources/` and `app.asar`, libSQL (as on Linux), the ASAR integrity
+resource in `frost.exe` (Electron checks `app.asar`'s header hash at startup on Windows) and that a
+copy with a tampered header refuses to start, launch and debugging lockdown, that a Squirrel event
+launch exits at once, the Squirrel artifacts
+(the `RELEASES` hash and size, the app tree inside the `.nupkg`), the zip's contents and the absence
+of signatures. Off Windows, `node apps/desktop/scripts/verify-windows-package.mjs --static` runs the
+file checks against `pnpm --filter @app/desktop exec electron-forge package --platform win32 --arch x64`
+output (no Wine needed); making the installer needs Windows. That package needs libSQL's win32
+prebuild, which pnpm installs only on Windows (see
+[libSQL in the packaged app](#libsql-in-the-packaged-app)). For a local cross-check, first:
+1. download `@libsql/win32-x64-msvc` at the version `libsql` pins
+   (`https://registry.npmjs.org/@libsql/win32-x64-msvc/-/win32-x64-msvc-<version>.tgz`);
+2. check its SHA-512 against `pnpm-lock.yaml`;
+3. extract its `package/` directory to `node_modules/@libsql/win32-x64-msvc`.
+
+Remove that directory afterwards. `--static` skips `libsql-loads` off Windows.
+
 ## Follow-ups
-App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update.
+App icon (Electron's default for now), x64/universal builds, signing in CI, a hosted update feed and
+in-place updates (they need signed builds).

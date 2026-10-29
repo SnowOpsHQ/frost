@@ -13,6 +13,7 @@ import { javascriptPaletteSources } from '../javascript-palette';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext, type PaletteSource } from '../palette/registry';
 import { renderProfilePaletteSources } from '../render-profile-palette';
+import { updatePaletteSources } from '../update-palette';
 import { serpPaletteSources } from '../serp-palette';
 
 const URL_A = 'https://www.example.com/a';
@@ -33,6 +34,7 @@ function everySource(): PaletteSource[] {
     ...devtoolsPaletteSources(() => undefined),
     ...browserPolishPaletteSources({ openFind: yes, reopenClosedTab: vi.fn(async () => 1), showHistory: yes, setSearchEngine: yes }),
     ...checksPaletteSources({ checkLinks: yes, checkSitemaps: yes, checkHreflang: yes, stop: yes, known: () => undefined }),
+    ...updatePaletteSources({ check: vi.fn(async () => null), setChecks: vi.fn(async () => null), known: () => undefined }),
     ...serpPaletteSources({ setOutlines: yes, checkPackUpdate: vi.fn(async () => 'not-newer' as const), enableIntent: vi.fn(async () => 'ready' as const), refreshIntent: yes, runProbes: yes, stopProbes: yes, knownSerp: () => undefined, knownProbes: () => undefined, knownIntent: () => undefined }),
     ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn() }),
   ];

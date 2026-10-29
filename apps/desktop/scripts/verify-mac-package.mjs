@@ -28,6 +28,8 @@ import {
   macArtifacts,
 } from '../../../specs/macos-package.spec.ts';
 import { PACKAGED_DEBUG_REFUSAL, PACKAGED_FORBIDDEN_SWITCHES } from '../../../specs/security-policy.spec.ts';
+// libSQL's unpacked prebuild and runtime packages (specs/sync-package.spec.ts), checked as on Linux and Windows.
+import { assertAsarNodeModules, assertLibsqlLoads, assertSyncReplicaOpens, assertUnpackedAllowlist } from './verify-package-common.mjs';
 import { INTENT_LIMITS, INTENT_SELFTEST_FAILED, INTENT_SELFTEST_OK, INTENT_SELFTEST_SWITCH } from '../../../specs/intent-classifier.spec.ts';
 import { INTENT_NATIVE_FILES } from '../intent-runtime.ts';
 
@@ -181,9 +183,33 @@ await check('fuses-read-back', async () => {
   }
 });
 
+// The unpacked prebuild is sealed by the bundle signature (signature-verifies); these check what it is.
+const resources = path.join(appPath, 'Contents/Resources');
+const target = `darwin-${args.arch}`;
+await check('unpacked-allowlist', () => assertUnpackedAllowlist(resources, { target, where: artifacts.app }));
+await check('asar-node-modules-allowlist', () => assertAsarNodeModules(resources, { target, where: artifacts.app }));
+await check('libsql-loads', () => {
+  // The packaged Electron version: the bundled framework's Info.plist (CFBundleShortVersionString, or
+  // CFBundleVersion where the framework sets only that), accepted only if it looks like a version.
+  const framework = path.join(appPath, 'Contents/Frameworks/Electron Framework.framework/Resources/Info.plist');
+  const electronVersion = ['CFBundleShortVersionString', 'CFBundleVersion']
+    .map((key) => run('plutil', ['-extract', key, 'raw', '-o', '-', framework]))
+    .find((read) => read.status === 0 && /^\d+\.\d+\.\d+/.test(read.out.trim()))
+    ?.out.trim();
+  assert(electronVersion, `cannot read the Electron version from ${framework}`);
+  return assertLibsqlLoads(resources, { target, where: artifacts.app, electronVersion });
+});
+
 await check('launches-and-stays-alive', async () => {
   const result = await launch([], MAC_LAUNCH_ALIVE_MS);
   assert(result.alive, `exited after <${MAC_LAUNCH_ALIVE_MS} ms (code ${result.code}, signal ${result.signal}): ${result.stderr.trim()}`);
+});
+
+// The packaged, re-signed executable loading the unpacked prebuild: this is where library
+// validation under the hardened runtime would refuse it (specs/sync-package.feature.md).
+await check('sync-replica-opens', async () => {
+  const ms = await assertSyncReplicaOpens(executable, { where: artifacts.app });
+  console.log(`INFO sync-replica-opens: the ${mode}-signed executable loaded libSQL's unpacked prebuild and opened the replica (local staging) in ${ms} ms`);
 });
 
 await check('refuses-remote-debugging', async () => {

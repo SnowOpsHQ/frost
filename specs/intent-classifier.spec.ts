@@ -324,3 +324,4 @@ export const INTENT_SELFTEST_FAILED = 'intent self-test failed' as const;
 
 /** The utility process's name (`app.getAppMetrics()`, `child-process-gone`). */
 export const INTENT_SERVICE_NAME = 'frost intent' as const;
+

@@ -68,6 +68,17 @@ export const NOTICE_PACKAGES: readonly NoticePackage[] = [
     license: { source: 'https://github.com/lddubeau/saxes/blob/v6.0.0/LICENSE', text: SAXES_LICENSE },
   },
   { name: 'xmlchars', from: 'node_modules/saxes', use: 'Used by saxes.' },
+  // libSQL ships in app.asar/node_modules rather than in a bundle (specs/sync-package.spec.ts).
+  { name: '@libsql/client', from: 'packages/db', use: 'The libSQL driver of the opt-in sync replica (loaded only when sync is used).' },
+  { name: '@libsql/core', from: 'node_modules/@libsql/client', use: 'Used by @libsql/client.' },
+  { name: 'js-base64', from: 'node_modules/@libsql/core', use: 'Used by @libsql/core.' },
+  {
+    name: 'libsql',
+    from: 'node_modules/@libsql/client',
+    use: 'libSQL’s Node binding, used by @libsql/client, with its native prebuild for the platform (@libsql/<target>, the same project, version and license; it ships no license file of its own).',
+  },
+  { name: '@neon-rs/load', from: 'node_modules/libsql', use: 'Used by libsql (finds its native prebuild).' },
+  { name: 'detect-libc', from: 'node_modules/libsql', use: 'Used by libsql (finds its native prebuild).' },
   {
     name: 'onnxruntime-node',
     from: 'apps/desktop',

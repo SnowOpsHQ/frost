@@ -86,6 +86,14 @@ const LAYOUT: EngineLayout = { results: '#results', blocks: [{ type: 'organic', 
 
 /** Lets the overlay's timers and animation frames run. */
 const frames = (ms = 80) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Waits until `check` holds (or 3 s pass). The overlay waits at least four times its last pass's
+ * cost before the next, so on a loaded runner a fixed wait can end before a pass that is coming.
+ */
+async function settled(check: () => boolean): Promise<void> {
+  const end = Date.now() + 3_000;
+  while (!check() && Date.now() < end) await frames(20);
+}
 
 /** A jsdom page, a scripted reader (`answers` in turn, the last one repeated) and a ResizeObserver stub. */
 function pageWith(answers: unknown[], body = '<div id="results"></div>') {
@@ -155,6 +163,7 @@ describe('outline overlay (jsdom)', () => {
     dom.window.dispatchEvent(new dom.window.Event('resize'));
     observers[0]!.fire(800, 600);
     document.dispatchEvent(new dom.window.Event('scroll'));
+    await settled(() => state()!.draws() >= 2);
     await frames();
     expect(state()!.draws()).toBe(2);
     expect(read).toHaveBeenCalledTimes(2);
@@ -162,7 +171,7 @@ describe('outline overlay (jsdom)', () => {
     expect(boxes()[0]!.style.getPropertyValue('top')).toBe('40px');
     // An inner scroller's `scroll` (it does not bubble) is heard in the capture phase.
     document.getElementById('results')!.dispatchEvent(new dom.window.Event('scroll'));
-    await frames();
+    await settled(() => state()!.draws() >= 3);
     expect(state()!.draws()).toBe(3);
     await paint(null);
   });
@@ -172,7 +181,7 @@ describe('outline overlay (jsdom)', () => {
     await expect(paint()).resolves.toEqual({ on: true, boxes: 1 });
     // The page changed under the overlay and can no longer be read: stale boxes go.
     document.dispatchEvent(new dom.window.Event('scroll'));
-    await frames();
+    await settled(() => state()!.draws() >= 2);
     expect(boxes()).toHaveLength(0);
     expect(state()!.boxes()).toBe(0);
     // A reader that throws draws nothing either.
@@ -286,13 +295,16 @@ describe('outline overlay (jsdom)', () => {
       return { left: 10, top: y, width: 500, height: 40, right: 510, bottom: y + 40, x: 10, y, toJSON: () => ({}) } as DOMRect;
     };
     const store: Record<string, unknown> = {};
-    const result = await paintOutlines(dom.window.document as unknown as OutlineDocument, google.layout, OUTLINE_CONFIG, planOutlines, readSerp, store);
+    // The reader's time budget is the spec's 150 ms; a cold jsdom read on a loaded CI runner can pass
+    // it and read nothing. This test checks what is outlined, not how fast (read-script.test.ts does).
+    const reader: typeof readSerp = (doc, layout, limits) => readSerp(doc, layout, { ...limits, budgetMs: 10_000 });
+    const result = await paintOutlines(dom.window.document as unknown as OutlineDocument, google.layout, OUTLINE_CONFIG, planOutlines, reader, store);
     expect(result.on).toBe(true);
     expect(result.boxes).toBeGreaterThan(3);
     const labels = [...((store[SERP_OUTLINE_KEY] as OutlineState).root as unknown as ShadowRoot).children].map((b) => b.textContent);
     expect(labels).toContain('Organic 1');
     expect(labels).toContain('Ad 1');
-    await paintOutlines(dom.window.document as unknown as OutlineDocument, null, OUTLINE_CONFIG, planOutlines, readSerp, store);
+    await paintOutlines(dom.window.document as unknown as OutlineDocument, null, OUTLINE_CONFIG, planOutlines, reader, store);
   });
 });
 

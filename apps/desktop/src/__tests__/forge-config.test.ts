@@ -24,6 +24,7 @@ import {
   MAC_SIGNING_ENV,
   PACKAGED_FUSES,
 } from '@app/specs/macos-package.spec';
+import { PACKAGED_ASAR_NODE_MODULES, PACKAGED_ASAR_UNPACK, packagedTarget } from '@app/specs/sync-package.spec';
 import { makeForgeConfig } from '../../forge.config';
 import { NOTICES_FILE } from '../../third-party-notices';
 import { copyIntentRuntime, INTENT_ASAR_UNPACK, intentRuntimeFiles } from '../../intent-runtime';
@@ -65,9 +66,11 @@ function fusesPlugin(env: NodeJS.ProcessEnv) {
   return plugin.fusesConfig as unknown as Record<string, unknown>;
 }
 
+/** The darwin makers (the Linux-only ones are linux-package-config.test.ts's), prepared for arm64. */
 async function makers(): Promise<Map<string, { platforms: string[]; config: Record<string, unknown> }>> {
   const result = new Map<string, { platforms: string[]; config: Record<string, unknown> }>();
   for (const maker of (makeForgeConfig({}).makers ?? []) as MakerBase<Record<string, unknown>>[]) {
+    if (!maker.platforms.includes('darwin')) continue;
     await maker.prepareConfig('arm64');
     result.set(maker.name, { platforms: maker.platforms, config: maker.config });
   }
@@ -89,7 +92,7 @@ describe('forge config (macOS package)', () => {
       appBundleId: MAC_BUNDLE_ID,
       appCategoryType: MAC_APP_CATEGORY,
       darwinDarkModeSupport: true,
-      asar: { unpack: INTENT_ASAR_UNPACK },
+      asar: { unpack: PACKAGED_ASAR_UNPACK },
     });
     expect(packageJson.productName).toBe(MAC_PRODUCT_NAME);
   });
@@ -135,7 +138,7 @@ describe('forge config (macOS package)', () => {
   });
 
   test('ad-hoc-signs-when-unsigned (re-seals the packaged bundle)', async () => {
-    expect(await postPackage({}, 'darwin')).toEqual([AD_HOC_SEAL(`/out/${MAC_PRODUCT_NAME}-darwin-arm64/${MAC_PRODUCT_NAME}.app`)]);
+    expect(await postPackage({}, 'darwin')).toEqual([AD_HOC_SEAL(path.join(`/out/${MAC_PRODUCT_NAME}-darwin-arm64`, `${MAC_PRODUCT_NAME}.app`))]);
     expect(await postPackage({}, 'linux')).toEqual([]);
     expect(await postPackage({ ...SIGNING_ENV }, 'darwin')).toEqual([]);
   });
@@ -208,23 +211,31 @@ describe('forge config (macOS package)', () => {
       expect(file, file).not.toMatch(/\.(map|d\.ts|ts)$|\/(lib|script|esm)\//);
     }
     expect(new Set(files).size).toBe(files.length);
+    expect(natives(intentRuntimeFiles('win32', 'x64'))).toEqual([`${ORT}/bin/napi-v6/win32/x64/onnxruntime.dll`, `${ORT}/bin/napi-v6/win32/x64/onnxruntime_binding.node`]);
     // No binaries for a target frost does not package the runtime for: the build fails loudly.
-    expect(() => intentRuntimeFiles('win32', 'x64')).toThrow(/win32-x64/);
     expect(() => intentRuntimeFiles('darwin', 'x64')).toThrow(/darwin-x64/);
   });
 
   test('intent-runtime-copied-by-the-package-hook', async () => {
+    // The hook copies libSQL too (libsql-packaging.test.ts), whose prebuild is installed for the host
+    // only: run it for the host's packaged target, and check the intent runtime's part of the copy.
+    const target = packagedTarget(process.platform, process.arch);
+    if (target === null) return; // a host frost does not package
     const buildPath = mkdtempSync(path.join(tmpdir(), 'frost-intent-pack-'));
     try {
-      await makeForgeConfig({}).hooks?.packageAfterCopy?.({} as never, buildPath, '45.0.0', 'linux', 'x64');
+      await makeForgeConfig({}).hooks?.packageAfterCopy?.({} as never, buildPath, '45.0.0', process.platform as never, process.arch as never);
       const copied = (dir: string, prefix = ''): string[] =>
         readdirSync(path.join(dir, prefix), { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? copied(dir, path.join(prefix, entry.name)) : [path.join(prefix, entry.name).split(path.sep).join('/')]));
-      expect(copied(buildPath).sort()).toEqual([...intentRuntimeFiles('linux', 'x64')].sort());
-      const binding = `${ORT}/bin/napi-v6/linux/x64/onnxruntime_binding.node`;
+      const intent = (files: string[]) => files.filter((file) => /^node_modules\/onnxruntime-(node|common)\//.test(file)).sort();
+      const expected = [...intentRuntimeFiles(process.platform, process.arch)].sort();
+      expect(intent(copied(buildPath))).toEqual(expected);
+      // Both runtimes, and nothing else: the packages app.asar may hold (sync-package.spec.ts).
+      expect(readdirSync(path.join(buildPath, 'node_modules')).flatMap((name) => (name.startsWith('@') ? readdirSync(path.join(buildPath, 'node_modules', name)).map((sub) => `${name}/${sub}`) : [name])).sort()).toEqual(PACKAGED_ASAR_NODE_MODULES[target]);
+      const binding = `${ORT}/bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`;
       expect(statSync(path.join(buildPath, binding)).size).toBeGreaterThan(0);
       // Copying again (a re-run) is idempotent.
-      copyIntentRuntime(buildPath, 'linux', 'x64');
-      expect(copied(buildPath).sort()).toEqual([...intentRuntimeFiles('linux', 'x64')].sort());
+      copyIntentRuntime(buildPath, process.platform, process.arch);
+      expect(intent(copied(buildPath))).toEqual(expected);
     } finally {
       rmSync(buildPath, { recursive: true, force: true });
     }
@@ -236,7 +247,7 @@ describe('forge config (macOS package)', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'frost-intent-asar-'));
     try {
       const app = path.join(root, 'app');
-      for (const file of ['.vite/build/main.cjs', `${ORT}/dist/index.js`, `${ORT}/bin/napi-v6/linux/x64/onnxruntime_binding.node`, `${ORT}/bin/napi-v6/linux/x64/libonnxruntime.so.1`, `${ORT}/bin/napi-v6/darwin/arm64/libonnxruntime.1.dylib`]) {
+      for (const file of ['.vite/build/main.cjs', '.vite/build/stray.node', `${ORT}/dist/index.js`, `${ORT}/dist/stray.node`, `${ORT}/bin/napi-v6/linux/x64/onnxruntime_binding.node`, `${ORT}/bin/napi-v6/linux/x64/libonnxruntime.so.1`, `${ORT}/bin/napi-v6/darwin/arm64/libonnxruntime.1.dylib`, `${ORT}/bin/napi-v6/win32/x64/onnxruntime.dll`]) {
         mkdirSync(path.dirname(path.join(app, file)), { recursive: true });
         writeFileSync(path.join(app, file), 'x');
       }
@@ -246,7 +257,8 @@ describe('forge config (macOS package)', () => {
         existsSync(path.join(dir, prefix))
           ? readdirSync(path.join(dir, prefix), { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? unpacked(dir, path.join(prefix, entry.name)) : [path.join(prefix, entry.name).split(path.sep).join('/')]))
           : [];
-      expect(unpacked(`${archive}.unpacked`).sort()).toEqual([`${ORT}/bin/napi-v6/darwin/arm64/libonnxruntime.1.dylib`, `${ORT}/bin/napi-v6/linux/x64/libonnxruntime.so.1`, `${ORT}/bin/napi-v6/linux/x64/onnxruntime_binding.node`]);
+      // A native file outside onnxruntime-node/bin/ stays in the archive.
+      expect(unpacked(`${archive}.unpacked`).sort()).toEqual([`${ORT}/bin/napi-v6/darwin/arm64/libonnxruntime.1.dylib`, `${ORT}/bin/napi-v6/linux/x64/libonnxruntime.so.1`, `${ORT}/bin/napi-v6/linux/x64/onnxruntime_binding.node`, `${ORT}/bin/napi-v6/win32/x64/onnxruntime.dll`]);
       expect(listPackage(archive, { isPack: false })).toEqual(expect.arrayContaining([`/.vite/build/main.cjs`, `/${ORT}/dist/index.js`].map((file) => file.split('/').join(path.sep))));
     } finally {
       rmSync(root, { recursive: true, force: true });

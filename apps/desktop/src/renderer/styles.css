@@ -160,11 +160,12 @@ input {
      stack (the workspace, then the devtools drawer), status bar. The prompt row is empty (0 high)
      unless the active tab shows a permission prompt; the editor bar's row is empty unless it is open
      (render-profile.feature.md); the find bar's unless the active tab's is open
-     (browser-polish.feature.md); the drawer's band is there only while it is open
+     (browser-polish.feature.md); the update notice's unless it has something to show
+     (update-client.feature.md); the drawer's band is there only while it is open
      (devtools.feature.md). The command palette's sheet and the History sheet are not rows: they sit
      at the top of the workspace's page column (command-palette.spec.ts). Each takes its height from
      the page area, so the tab's view is laid out clear of them all. */
-  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto auto auto minmax(0, 1fr) var(--status-height);
+  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto auto auto auto minmax(0, 1fr) var(--status-height);
   height: 100%;
 }
 
@@ -7565,6 +7566,176 @@ input {
 }
 
 /* End of link and sitemap checks */
+
+/* ---- Update notice (update-client.feature.md, Chrome) ------------------------------------- */
+
+/* The row under the find bar; empty (0 high) unless an update is offered, downloading, ready or failed. */
+.update-slot {
+  min-width: 0;
+}
+
+.update-bar {
+  border-bottom: 1px solid var(--prompt-edge);
+  background: var(--bg-prompt);
+  box-shadow: var(--shadow-prompt);
+  animation: prompt-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.update-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 7px 10px 7px 14px;
+}
+
+.update-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-prompt));
+  color: var(--accent);
+}
+
+.update-icon[data-tone='error'] {
+  background: color-mix(in srgb, var(--danger) 13%, var(--bg-prompt));
+  color: var(--danger);
+}
+
+.update-icon .icon,
+.update-icon .mark {
+  width: 17px;
+  height: 17px;
+}
+
+.update-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-headline {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.update-required {
+  color: var(--text);
+}
+
+.update-percent {
+  font-variant-numeric: tabular-nums;
+}
+
+.update-progress {
+  flex: 0 1 160px;
+  min-width: 80px;
+  height: 6px;
+  accent-color: var(--accent);
+}
+
+.update-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.update-button {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--border-field);
+  border-radius: 8px;
+  background: var(--bg-field);
+  box-shadow: var(--shadow-field);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+
+.update-button:hover:not(:disabled) {
+  background: var(--bg-field-hover);
+  border-color: color-mix(in srgb, var(--border-field) 70%, var(--text-faint));
+}
+
+.update-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.update-button.update-primary {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-field));
+  color: var(--accent);
+}
+
+.update-button.update-quiet {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.update-button:disabled {
+  opacity: 0.55;
+}
+
+.update-button:focus-visible,
+.update-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.update-dismiss {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-faint);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.update-dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.update-dismiss .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* The signed release notes: plain text, wrapped, scrolled when long. */
+.update-notes {
+  max-height: 160px;
+  margin: 0;
+  padding: 0 14px 12px 56px;
+  overflow: auto;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-bar {
+    animation: none;
+  }
+}
 
 /* SERP and Visibility panels (Phase 3 Task 6, specs/serp-panels.feature.md) ---------------------- */
 

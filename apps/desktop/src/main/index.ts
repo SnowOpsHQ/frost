@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, ipcMain, net, session, webContents, type WebContents } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, safeStorage, session, shell, webContents, type WebContents } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -49,6 +49,9 @@ import { setupSerp } from './serp/setup';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
+import { handleSquirrelEvent } from './update/squirrel-events';
+import { startUpdateService } from './update/service';
+import { startSyncService } from './sync/service';
 import { createTelemetryMain } from './telemetry/main';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 
@@ -63,8 +66,9 @@ const debugRefusal = remoteDebuggingRefusal({
 if (debugRefusal !== null) {
   console.error(`frost: ${debugRefusal}`);
   app.exit(1);
-} else if (!runIntentSelfTestIfAsked(app)) {
-  // `--frost-intent-selftest` (specs/intent-classifier.spec.ts) runs instead of the app: no window.
+} else if (!handleSquirrelEvent(app) && !runIntentSelfTestIfAsked(app)) {
+  // Not a Squirrel install event (Windows: those make or remove shortcuts and exit; windows-package.spec.ts),
+  // nor `--frost-intent-selftest` (specs/intent-classifier.spec.ts), which runs instead of the app: no window.
   start();
 }
 
@@ -398,6 +402,13 @@ function start(): void {
     const serp = setupSerp({ app, browser, isBrowseContents, hop, resolve, robots: (pageUrl) => robotsFetcher.get(pageUrl), userData: app.getPath('userData'), switches: app.commandLine, log: logSession });
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
+    // Updates (specs/update-client.feature.md): off unless a feed is configured; every step past a check waits for the user.
+    // Never throws and returns at once (the client is built in the background; a failure leaves updates disabled).
+    const update = startUpdateService({ app, net, session, shell, log: logSession });
+    app.once('will-quit', () => update.dispose());
+    // Sync (specs/sync-engine.feature.md): off unless userData/frost-sync.json turns it on; never throws, runs in the background.
+    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession });
+    app.once('will-quit', () => void sync.dispose());
     // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
     // check), before the first window (its gestures are tracked from creation).
     const account = await createAccountMain();
@@ -441,6 +452,7 @@ function start(): void {
           log: logSession,
         }),
         settings: searchEngine,
+        update: update.service,
         // The SERP overlay (specs/serp-overlay.feature.md).
         serp: serp.service,
         account: account.service,
