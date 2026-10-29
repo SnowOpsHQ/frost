@@ -260,6 +260,9 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   auditor's robots.txt answers and recorded responses, and answers `true`; it closes no tab.
 - **Scenario: clear-goes-on-after-a-failure** — a part that throws or rejects is logged once and
   the other parts still run.
+- **Scenario: clear-forgets-agent-grants** — with the agent wired, right after the permission
+  decisions it forgets the agent's standing grants (per-site trust, like a permission). Agent chats
+  are not cleared here; the agent panel's retention and delete controls are their deletion path.
 - **Scenario: clear-dialog-options** — the confirmation is `dialog.showMessageBox` with
   `CLEAR_BROWSING_DATA.dialog`, parented to the given window (none: an app-modal box); only
   `confirmIndex` confirms.

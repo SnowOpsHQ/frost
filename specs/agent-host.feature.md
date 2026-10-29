@@ -213,3 +213,9 @@ one named test.
 ## Entitlements (`entitlements.test.ts`)
 - **Scenario: entitlements-default-allowed** — the default port allows `agent`, `agent.skills` and
   `agent.mcp`.
+- **Scenario: entitlements-follow-the-account** — wired to Phase 4's account, every agent feature
+  maps to the `ai-agent` flag (`AGENT_FEATURE_FLAGS`): allowed while the verified snapshot grants
+  it, refused when `requireFeature` throws (free, signed out, an unverified or expired snapshot).
+  A build without the account system (`unconfigured`: no API base or entitlement keys baked in, as
+  in development, the e2e suite or a self-built copy) has no plan to check and nowhere to get one:
+  there every agent feature is allowed. Shipped builds are configured, so the plan applies.

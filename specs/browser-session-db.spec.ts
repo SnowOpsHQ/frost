@@ -99,7 +99,7 @@ export const CLEAR_BROWSING_DATA = {
     type: 'warning',
     message: 'Clear browsing data?',
     detail:
-      'This clears your recent visits, every site permission you allowed or blocked, the render profiles pinned to sites, and the cookies, site data and cache of every site. Your target queries and snippet drafts are kept unless you tick the box below, and open tabs stay open.',
+      'This clears your recent visits, every site permission you allowed or blocked, the AI agent’s standing grants, the render profiles pinned to sites, and the cookies, site data and cache of every site. Your target queries and snippet drafts are kept unless you tick the box below, and open tabs stay open.',
     checkboxLabel: 'Also remove target queries and snippet drafts',
     checkboxChecked: false,
     buttons: ['Clear Browsing Data', 'Cancel'],
