@@ -120,3 +120,9 @@ export function sentryEvents(transport: FakeTransport): Record<string, unknown>[
 
 /** Let queued macrotasks (the error queue's drain) run. */
 export const tick = (ms = 5) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Waits until `check` holds, or 3 s pass (a fixed wait can end first on a loaded CI runner). */
+export async function until(check: () => boolean): Promise<void> {
+  const end = Date.now() + 3_000;
+  while (!check() && Date.now() < end) await tick(10);
+}
