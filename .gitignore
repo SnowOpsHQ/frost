@@ -11,3 +11,8 @@ playwright-report/
 test-results/
 .vite/
 *.tsbuildinfo
+
+# Update signing (pnpm sign:update-manifest): a private key or a signed envelope never belongs in the
+# repo. Keys live in the maintainer's private key store; envelopes are generated locally.
+*.pem
+*.signed.json

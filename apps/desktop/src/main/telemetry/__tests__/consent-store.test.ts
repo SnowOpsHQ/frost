@@ -12,7 +12,8 @@ import {
 import { DEFAULT_CONSENT } from '@app/specs/telemetry-privacy.spec';
 import { createConsentStore, type ConsentFs } from '../consent-store';
 
-const DIR = '/profile';
+// Resolved, so it is the same string the store builds paths from on every platform (`\\profile` on Windows otherwise).
+const DIR = path.resolve('/profile');
 const FILE = path.join(DIR, TELEMETRY_CONSENT_FILE);
 const NOW = 1_760_000_000_000;
 

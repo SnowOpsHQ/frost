@@ -6,8 +6,12 @@ import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion, type FuseV1Config } from '@electron/fuses';
+import { linuxMakers } from './linux-makers.ts';
+import { windowsMakers, windowsPackagerConfig } from './windows-makers.ts';
 import { NOTICES_FILE } from './third-party-notices.ts';
-import { copyIntentRuntime, INTENT_ASAR_UNPACK } from './intent-runtime.ts';
+import { libsqlPackageAfterCopy } from './libsql-packaging.ts';
+import { PACKAGED_ASAR_UNPACK } from '@app/specs/sync-package.spec';
+import { copyIntentRuntime } from './intent-runtime.ts';
 import {
   MAC_APP_CATEGORY,
   MAC_BUNDLE_ID,
@@ -74,16 +78,26 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
       appBundleId: MAC_BUNDLE_ID,
       appCategoryType: MAC_APP_CATEGORY,
       darwinDarkModeSupport: true,
-      // The intent runtime's native binding and library (intent-runtime.ts) cannot be loaded from
-      // inside the archive: they go to app.asar.unpacked (specs/intent-classifier.feature.md, Packaging).
-      asar: { unpack: INTENT_ASAR_UNPACK },
+      // Only native files are unpacked, as they cannot be loaded from inside the archive: libSQL's
+      // prebuild (specs/sync-package.spec.ts) and the intent runtime's binding and library
+      // (intent-runtime.ts; specs/intent-classifier.feature.md, Packaging). All JS stays in app.asar.
+      asar: { unpack: PACKAGED_ASAR_UNPACK },
       // The licenses of the bundled third-party packages (third-party-notices.ts), beside app.asar in
       // resources/ (specs/seo-speed.feature.md, Licenses). Relative to the app directory Forge runs in.
       extraResource: [NOTICES_FILE],
+      ...windowsPackagerConfig(),
       ...signing,
     },
     rebuildConfig: {},
     hooks: {
+      // Forge's Vite plugin packages only .vite/: copy the native runtimes into the app before the
+      // ASAR is made, each with the target's binaries only. libSQL's runtime packages and prebuild
+      // (libsql-packaging.ts), and the intent utility process's onnxruntime-node and
+      // onnxruntime-common (intent-runtime.ts; specs/intent-classifier.feature.md, Packaging).
+      packageAfterCopy: async (config, buildPath, electronVersion, platform, arch) => {
+        await libsqlPackageAfterCopy(config, buildPath, electronVersion, platform, arch);
+        copyIntentRuntime(buildPath, platform, arch);
+      },
       // Packager rewrites Info.plist and renames the bundle after the fuse flip re-signed it, so
       // the bundle seal no longer matches (`codesign --verify --strict` fails). Without a real
       // identity, re-seal the finished .app ad-hoc (osxSign does this when signing for real).
@@ -100,12 +114,8 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
           ]);
         }
       },
-      // Forge's Vite plugin packages only .vite/: copy the intent utility process's native runtime
-      // (onnxruntime-node and onnxruntime-common, the target's binaries only) into the app before the
-      // ASAR is made (intent-runtime.ts; specs/intent-classifier.feature.md, Packaging).
-      packageAfterCopy: async (_config, buildPath, _electronVersion, platform, arch) => copyIntentRuntime(buildPath, platform, arch),
     },
-    makers: [new MakerZIP({}, ['darwin', 'linux']), new MakerDMG({ format: MAC_DMG_FORMAT }, ['darwin'])],
+    makers: [new MakerZIP({}, ['darwin', 'linux']), new MakerDMG({ format: MAC_DMG_FORMAT }, ['darwin']), ...linuxMakers(), ...windowsMakers()],
     plugins: [
       new VitePlugin({
         // Object entries name the bundles (.vite/build/main.cjs, .vite/build/preload.cjs) so the two

@@ -11,6 +11,7 @@ import { SeoSidebar } from './components/SeoSidebar';
 import { StatusBar } from './components/StatusBar';
 import { TabStrip } from './components/TabStrip';
 import { Toolbar } from './components/Toolbar';
+import { UpdateBar } from './components/UpdateBar';
 import { useBrowserState } from './hooks/useBrowserState';
 import { useHistoryView } from './hooks/useHistoryView';
 import { useNotice } from './hooks/useNotice';
@@ -25,7 +26,8 @@ import { useProjectsSheet } from './components/changes/projects-sheet';
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`). Its rows: the
 // tab strip, the toolbar, the permission prompt bar, the render-profile editor bar while open
 // (`render-profile.feature.md`), the find bar while the active tab's is open
-// (`browser-polish.feature.md`), the workspace (the page column, with the command palette's sheet
+// (`browser-polish.feature.md`), the update notice while it has something to show
+// (`update-client.feature.md`), the workspace (the page column, with the command palette's sheet
 // or the History sheet over the page area, and the SEO sidebar docked on its right:
 // `command-palette.feature.md`, `seo-sidebar.feature.md`), the SEO devtools drawer while open
 // (`devtools.feature.md`), and the status bar; and the fullscreen notice. The page area takes what
@@ -63,6 +65,8 @@ export function App() {
       <div className="render-slot">{profileOpen ? <RenderProfileBar tab={tab} onClose={() => setProfileOpen(false)} /> : null}</div>
       {/* The find bar's row: empty unless the active tab's bar is open, and while the History sheet shows. */}
       <div className="find-slot">{historyOpen ? null : <FindBar find={state?.find} />}</div>
+      {/* The update notice's row (`update-client.feature.md`, Chrome): always present, empty unless there is something to act on. */}
+      <UpdateBar />
       {/* The workspace and, under it, the devtools drawer's band: the drawer is clamped against their height. */}
       <div className="workspace-stack">
         <div className="workspace">

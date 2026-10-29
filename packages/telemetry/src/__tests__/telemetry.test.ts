@@ -23,7 +23,7 @@ import {
 } from '@app/specs/telemetry-privacy.spec';
 import { createTelemetry, type Telemetry, type TelemetryOptions } from '../index';
 import { eventsOnly, SentryChannel } from '../sentry';
-import { attributeMap, fakeTransport, OTEL_ENDPOINT, otlpBodies, otlpSpans, parseEnvelope, RESOURCE, SENTRY_DSN, sentryEvents, tick, type FakeTransport } from './fakes';
+import { attributeMap, fakeTransport, OTEL_ENDPOINT, otlpBodies, otlpSpans, parseEnvelope, RESOURCE, SENTRY_DSN, sentryEvents, tick, until, type FakeTransport } from './fakes';
 
 /** Let promise callbacks run without letting any timer fire. */
 async function microtasks(rounds = 100): Promise<void> {
@@ -155,7 +155,7 @@ describe('telemetry consent gate', () => {
       await vi.advanceTimersByTimeAsync(TELEMETRY_LIMITS.exportDelayMs);
       vi.useRealTimers();
       await telemetry.flush();
-      await tick(20);
+      await until(() => sentry.calls.length > 0);
       expect(sentry.calls).toHaveLength(1);
       expect(JSON.stringify(sentryEvents(sentry))).not.toContain('queued, then off');
       vi.useFakeTimers();
@@ -177,7 +177,7 @@ describe('telemetry consent gate', () => {
       const { telemetry, sentry } = setup({ otel: undefined, consent: { usage: false, errors: true } });
       sentry.hold();
       telemetry.captureException(new Error('in flight'));
-      await tick(20);
+      await until(() => sentry.calls.length > 0);
       expect(sentry.calls).toHaveLength(1);
       telemetry.setConsent('errors', false);
       expect(sentry.calls[0]!.signal.aborted).toBe(true);
@@ -573,7 +573,7 @@ describe('export formats', () => {
     client.captureException(new Error('internal for alice@example.com'), { data: { __sentry__: true } });
     channel.captureException(new Error('rebuilt'), undefined);
     await channel.flush(1_000);
-    await tick(20);
+    await until(() => direct.calls.length > 0);
     expect(direct.calls).toHaveLength(1);
     expect(direct.calls[0]!.body).not.toContain('alice');
     expect(direct.calls[0]!.body).toContain('rebuilt');

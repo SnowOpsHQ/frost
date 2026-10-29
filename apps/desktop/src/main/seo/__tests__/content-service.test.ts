@@ -11,17 +11,18 @@ import { rawSnapshot } from '../../../test/seo-fakes';
 import { createContentService } from '../content-notes';
 
 const URL_A = 'https://example.com/guides/tea';
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+const cleanups: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
 /** A session store on a fresh profile directory (removed after the test). */
 function store(): SessionStore {
   const dir = mkdtempSync(path.join(tmpdir(), 'frost-content-'));
   const opened = openSessionStore({ dir });
-  cleanups.push(() => {
-    void opened.close();
+  // Closed before removal: Windows refuses to delete a database file that is still open.
+  cleanups.push(async () => {
+    await opened.close();
     rmSync(dir, { recursive: true, force: true });
   });
   return opened;

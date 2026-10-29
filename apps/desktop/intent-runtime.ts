@@ -1,6 +1,7 @@
 import { copyFileSync, mkdirSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { INTENT_NATIVE_FILES } from '@app/specs/sync-package.spec';
 import { packageDir } from './third-party-notices.ts';
 
 // The intent classifier's native runtime in the package (Phase 3 Task 2;
@@ -11,19 +12,13 @@ import { packageDir } from './third-party-notices.ts';
 // `dist/` JavaScript, and of the N-API binaries only the target platform and architecture's binding
 // and the one shared library it links against (`libonnxruntime.1.dylib` on macOS — the
 // `.1.31.1.dylib` beside it in the package is the same file under another name — and
-// `libonnxruntime.so.1` on Linux, found through the binding's `@loader_path` / `$ORIGIN` rpath).
+// `libonnxruntime.so.1` on Linux, found through the binding's `@loader_path` / `$ORIGIN` rpath;
+// `onnxruntime.dll` beside the binding on Windows).
 // `INTENT_ASAR_UNPACK` then takes the native files out of `app.asar` into `app.asar.unpacked`,
 // where the process can load them (`require` of the binding from the archive is redirected there).
 
-/** The binaries each supported target needs, under `bin/napi-v6/<platform>/<arch>/`. */
-export const INTENT_NATIVE_FILES: Readonly<Record<string, readonly string[]>> = {
-  'darwin-arm64': ['onnxruntime_binding.node', 'libonnxruntime.1.dylib'],
-  'linux-x64': ['onnxruntime_binding.node', 'libonnxruntime.so.1'],
-  'linux-arm64': ['onnxruntime_binding.node', 'libonnxruntime.so.1'],
-};
-
-/** `packagerConfig.asar.unpack`: native modules and shared libraries (matched on the file name). */
-export const INTENT_ASAR_UNPACK = '*.{node,dylib,so,so.*}';
+// The packages, binaries per target and unpack glob are the spec's (Packaging).
+export { INTENT_ASAR_UNPACK, INTENT_NATIVE_FILES } from '@app/specs/sync-package.spec';
 
 const ORT = 'onnxruntime-node';
 const COMMON = 'onnxruntime-common';

@@ -14,6 +14,7 @@ import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { changesPaletteSources } from '../changes-palette';
 import { createPaletteRegistry, type PaletteContext, type PaletteSource } from '../palette/registry';
 import { renderProfilePaletteSources } from '../render-profile-palette';
+import { updatePaletteSources } from '../update-palette';
 import { serpPaletteSources } from '../serp-palette';
 import { projectsPaletteSources, retentionPaletteSources } from '../projects-palette';
 import { inspectorPaletteSources } from '../inspector-palette';
@@ -36,6 +37,7 @@ function everySource(): PaletteSource[] {
     ...devtoolsPaletteSources(() => undefined),
     ...browserPolishPaletteSources({ openFind: yes, reopenClosedTab: vi.fn(async () => 1), showHistory: yes, setSearchEngine: yes }),
     ...checksPaletteSources({ checkLinks: yes, checkSitemaps: yes, checkHreflang: yes, stop: yes, known: () => undefined }),
+    ...updatePaletteSources({ check: vi.fn(async () => null), setChecks: vi.fn(async () => null), known: () => undefined }),
     ...serpPaletteSources({ setOutlines: yes, checkPackUpdate: vi.fn(async () => 'not-newer' as const), enableIntent: vi.fn(async () => 'ready' as const), refreshIntent: yes, runProbes: yes, stopProbes: yes, knownSerp: () => undefined, knownProbes: () => undefined, knownIntent: () => undefined }),
     ...changesPaletteSources({ capture: vi.fn(async () => null), screenshot: vi.fn(async () => null) }),
     ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }),
