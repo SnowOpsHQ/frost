@@ -1,0 +1,1061 @@
+/* Agent panel (Phase 5 Task 6b; specs/agent-panel.spec.ts, AGENT_PANEL_WIDTH / AGENT_RAIL_WIDTH).
+   Imported by AgentPanel.tsx and bundled by Vite with the chrome's styles (app://, CSP style-src
+   'self'): no inline styles anywhere. Every `.agent` rule lives in this file. It sits in the
+   workspace row between the page column and the SEO sidebar; like the SEO panel it gives way
+   (shrinks) before the page goes under --page-min-width. Light and dark follow the OS. */
+
+:root {
+  --agent-panel-width: 380px;
+  --agent-rail-width: 40px;
+  --agent-bg: #f6f7fa;
+  --agent-card: #ffffff;
+  --agent-edge: #e3e7ee;
+  --agent-user: #e6eefc;
+  --agent-code-bg: #f1f3f7;
+  --agent-approval-edge: #c98b16;
+  --agent-approval-bg: #fffaf0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --agent-bg: #181a1f;
+    --agent-card: #1f2228;
+    --agent-edge: #2c3038;
+    --agent-user: #243251;
+    --agent-code-bg: #15171b;
+    --agent-approval-edge: #d9a441;
+    --agent-approval-bg: #2a2518;
+  }
+}
+
+.agent {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--bg-chrome-edge);
+  background: var(--bg-chrome);
+}
+
+/* Collapsed: the rail and its toggle. */
+.agent-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+  width: var(--agent-rail-width);
+  padding: 8px 0;
+}
+
+.agent-rail-toggle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--icon);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.agent-rail-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.agent-rail-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-rail-toggle .icon {
+  width: 19px;
+  height: 19px;
+}
+
+.agent-rail-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-chrome);
+}
+
+.agent-rail-badge[data-badge='approval'] {
+  background: var(--caution);
+}
+
+/* Open: the panel. */
+.agent-main {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 var(--agent-panel-width);
+  width: var(--agent-panel-width);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--agent-bg);
+  animation: agent-panel-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes agent-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  height: 48px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+  background: var(--bg-chrome);
+}
+
+.agent-head-mark {
+  display: grid;
+  place-items: center;
+  margin-right: 8px;
+  color: var(--accent);
+}
+
+.agent-head-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-head-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.agent-head-sub {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-head-tool {
+  width: 30px;
+  height: 30px;
+}
+
+.agent-head-tool .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.agent-head-tool[aria-pressed='true'] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Collapse: the chevron points to the window edge the panel folds toward (its rail). */
+.agent-collapse-icon {
+  transform: rotate(-90deg);
+}
+
+.agent-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.agent-scroll,
+.agent-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-field) transparent;
+  user-select: text;
+  cursor: auto;
+}
+
+/* Messages. Text is plain text (pre-wrap), never markup. */
+.agent-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.agent-msg-user {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 8px 11px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--agent-user);
+}
+
+.agent-msg-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.agent-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: agent-caret 1s steps(2, start) infinite;
+}
+
+@keyframes agent-caret {
+  to {
+    visibility: hidden;
+  }
+}
+
+.agent-truncated {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+/* Tool cards. */
+.agent-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--agent-edge);
+  border-radius: 10px;
+  background: var(--agent-card);
+}
+
+.agent-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-tool-label {
+  flex: 1;
+  min-width: 0;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.agent-chip {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.agent-chip[data-tone='running'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.agent-chip[data-tone='ok'] {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+
+.agent-chip[data-tone='denied'],
+.agent-chip[data-tone='failed'] {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.agent-chip[data-tone='expired'] {
+  background: color-mix(in srgb, var(--caution) 16%, transparent);
+  color: var(--caution);
+}
+
+.agent-tool-summary {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.agent-tool-output {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-tool-caption {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.agent-pre,
+.agent-code {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 7px;
+  background: var(--agent-code-bg);
+  font: 11.5px/1.45 ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* Approved code wraps: nothing may hide past the right edge (a long run of spaces included). */
+.agent-code {
+  max-height: 260px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-approval-more {
+  margin: -3px 0 0;
+  color: var(--caution);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* Hints, banners, checklists. */
+.agent-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: auto 0;
+  padding: 16px;
+  border: 1px dashed var(--agent-edge);
+  border-radius: 12px;
+  text-align: left;
+}
+
+.agent-hint-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.agent-hint-text {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.agent-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-check {
+  display: flex;
+  flex-direction: column;
+  padding-left: 14px;
+  border-left: 3px solid var(--caution);
+}
+
+.agent-check[data-ok='true'] {
+  border-left-color: var(--ok);
+}
+
+.agent-check-label {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.agent-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--caution) 14%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.agent-banner[data-tone='error'] {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+
+.agent-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-banner-close {
+  width: 24px;
+  height: 24px;
+}
+
+.agent-banner-close .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* The approval card: above the composer, one at a time. */
+.agent-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex: none;
+  max-height: 55%;
+  margin: 0 10px 8px;
+  padding: 11px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--agent-approval-edge);
+  border-radius: 12px;
+  background: var(--agent-approval-bg);
+  box-shadow: var(--shadow-card);
+  user-select: text;
+}
+
+.agent-approval:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-approval-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.agent-approval-label,
+.agent-approval-note,
+.agent-approval-queued,
+.agent-approval-message {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agent-approval-note {
+  color: var(--caution);
+}
+
+.agent-approval-page {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.agent-approval-key {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.agent-approval-url {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Buttons. */
+.agent-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  color: var(--text);
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.agent-button:hover:not(:disabled) {
+  background: var(--bg-field-hover);
+  border-color: var(--text-faint);
+}
+
+.agent-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-button:disabled {
+  opacity: 0.45;
+}
+
+.agent-button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.agent-button-primary:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+
+.agent-button .icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* The footer: the context meter and the composer. */
+.agent-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--bg-chrome-edge);
+  background: var(--bg-chrome);
+}
+
+.agent-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-meter-bar {
+  flex: 0 0 72px;
+  height: 5px;
+  appearance: none;
+  border: 0;
+  border-radius: 3px;
+  background: var(--seo-track);
+  overflow: hidden;
+}
+
+.agent-meter-bar::-webkit-progress-bar {
+  background: var(--seo-track);
+}
+
+.agent-meter-bar::-webkit-progress-value {
+  background: var(--accent);
+}
+
+.agent-meter[data-level='high'] .agent-meter-bar::-webkit-progress-value {
+  background: var(--caution);
+}
+
+.agent-meter[data-level='full'] .agent-meter-bar::-webkit-progress-value {
+  background: var(--danger);
+}
+
+.agent-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.agent-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+  background: var(--bg-field);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+  user-select: text;
+}
+
+.agent-input:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.agent-input:disabled {
+  opacity: 0.6;
+}
+
+.agent-send {
+  height: 36px;
+}
+
+/* Skills (Task 7): the picker above the composer, and a skill's fields in place of the message. */
+.agent-composer-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-skill-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-skill-bar-label {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.agent-skill-select {
+  flex: 1;
+  height: 26px;
+  font-size: 12px;
+}
+
+.agent-skill-select:disabled {
+  opacity: 0.6;
+}
+
+.agent-skill {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.agent-skill-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.agent-skill-input {
+  width: 100%;
+}
+
+.agent-skill-input:disabled {
+  opacity: 0.6;
+}
+
+.agent-field-warning {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.agent-msg-skill {
+  margin: 0 0 2px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Chats. */
+.agent-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-chat-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+}
+
+.agent-chat-item[data-selected='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.agent-chat-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.agent-chat-select:hover {
+  background: var(--bg-hover);
+}
+
+.agent-chat-select:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.agent-chat-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-chat-delete {
+  width: 28px;
+  height: 28px;
+}
+
+.agent-chat-delete .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.agent-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* Settings. */
+.agent-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--agent-edge);
+  border-radius: 12px;
+  background: var(--agent-card);
+}
+
+.agent-section-title {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.agent-section-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-muted {
+  color: var(--text-muted);
+}
+
+.agent-field-label {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.agent-select,
+.agent-text-field {
+  height: 30px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  color: var(--text);
+  font: inherit;
+}
+
+.agent-text-field {
+  flex: 1;
+  user-select: text;
+}
+
+.agent-select:focus-visible,
+.agent-text-field:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.agent-key {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 6px;
+}
+
+.agent-key-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-key[data-primary='true'] .agent-field-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.agent-key-row {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-key-message {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+/* Task 9: chat export, the grants page and the skills editor (specs/agent-data.spec.ts). */
+.agent-chats-hint {
+  margin: 0 4px 8px;
+}
+
+.agent-chat-export-toggle {
+  width: 28px;
+  height: 28px;
+}
+
+.agent-chat-export-toggle .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.agent-chat-export {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 8px;
+}
+
+.agent-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-toggle input {
+  margin: 2px 0 0;
+}
+
+.agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--agent-edge);
+  border-radius: 8px;
+}
+
+.agent-skill-item {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.agent-list-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agent-list-title {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.agent-list-sub {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.agent-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.agent-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--agent-approval-edge);
+  border-radius: 8px;
+  background: var(--agent-approval-bg);
+}
+
+.agent-field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
+.agent-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.agent-risk {
+  margin-left: 6px;
+}
+
+.agent-risk[data-risk='act'],
+.agent-risk[data-risk='execute'] {
+  color: var(--agent-approval-edge);
+}
+
+.agent-skill-instructions {
+  min-height: 140px;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.agent-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  list-style: none;
+}
+
+.agent-slot-list li[data-used='true'] {
+  color: var(--text);
+}
+
+.agent-slot {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--agent-code-bg);
+  font-size: 11.5px;
+}
+
+.agent-skill-input-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* MCP servers (Task 10): every server and MCP tool carries an "Untrusted" chip. */
+.agent-untrusted {
+  color: var(--agent-approval-edge);
+  border-color: var(--agent-approval-edge);
+}
+
+.agent-mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-mcp-server {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border-field);
+  border-radius: 8px;
+}
+
+.agent-mcp-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-mcp-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.agent-mcp-target {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.agent-mcp-add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.agent-mcp-lines {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}

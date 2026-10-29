@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AgentPanel } from './components/agent/AgentPanel';
 import { CommandPalette } from './components/CommandPalette';
 import { DevtoolsDrawer } from './components/devtools/DevtoolsDrawer';
 import { FindBar } from './components/FindBar';
@@ -78,6 +79,7 @@ export function App() {
             <SettingsSlot tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>
+          <AgentPanel tab={tab} />
           <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} notesGeneration={state?.contentNotesGeneration} />
         </div>
         {/* The SEO devtools drawer (`devtools.feature.md`): a band under the workspace, which shrinks above it. */}

@@ -32,6 +32,12 @@
       "rationale": "False positive: the scanner cannot evaluate the non-literal value; it is APP_CSP from security-policy.spec.ts, strict per test app-csp-is-strict and enforced end to end by e2e boots-under-strict-csp-without-violations."
     },
     {
+      "id": "DANGEROUS_FUNCTIONS_JS_CHECK",
+      "file": "apps/desktop/src/main/agent/tools/runner.ts",
+      "source": "return executeJavascript(value as { code: string }, context);",
+      "rationale": "Reviewed (Phase 5 execute_javascript): runs only code the user approved for this one call (approval broker, via 'approval' only), in the dedicated agent isolated world of a browse tab (never main world, app pages or main), page-checked, time- and size-capped; agent-page-tools.feature.md, test execute-js-never-main-world."
+    },
+    {
       "id": "CERTIFICATE_VERIFY_PROC_JS_CHECK",
       "file": "apps/desktop/src/main/update/service.ts",
       "source": "if (UPDATE_TEST_CERT_PATTERN.test(pin)) updateSession.setCertificateVerifyProc(pinnedCertificateVerifier(pin));",

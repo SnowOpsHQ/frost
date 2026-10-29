@@ -134,7 +134,8 @@ export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
  * update client's e2e seams (`update-client.spec.ts`), which point it at another feed, trust another
  * signing key, and accept one pinned certificate on the update session.
  */
-export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-e2e-serp-pack-key', 'frost-e2e-serp-pack-url', 'frost-e2e-intent-fake', 'frost-update-feed', 'frost-update-public-key', 'frost-update-test-cert'] as const;
+// `frost-e2e-agent-script` too (Phase 5 Task 6a): the agent's scripted-model seam (`AGENT_E2E_SCRIPT_SWITCH`, `agent-session.spec.ts`).
+export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-e2e-serp-pack-key', 'frost-e2e-serp-pack-url', 'frost-e2e-intent-fake', 'frost-e2e-agent-script', 'frost-update-feed', 'frost-update-public-key', 'frost-update-test-cert'] as const;
 export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;
 
 /**

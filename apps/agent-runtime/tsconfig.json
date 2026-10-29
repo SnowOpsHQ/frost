@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    // Node types: the runtime is Node (an Electron utility process); its web globals (`fetch`,
+    // `Response`, `ReadableStream`, `AbortSignal`) come from them too.
+    "types": ["node"]
+  },
+  "include": ["src", "*.ts"]
+}

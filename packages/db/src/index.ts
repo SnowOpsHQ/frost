@@ -7,6 +7,10 @@ export type { ContentNotes, ContentNotesRepository, SnippetVariant } from './con
 export { openSessionStore, type SessionStore } from './store';
 export type { HistoryCursor, HistoryPage, HistoryRepository, HistoryVisit, JumpBackIn } from './history';
 export type { SettingsRepository } from './settings';
+export type { AgentGrantsRepository, StoredAgentGrant } from './agent-grants';
+export type { AgentChatRowsUpdate, AgentChatsRepository, StoredAgentChatHead, StoredAgentChatRows } from './agent-chats';
+export type { AgentSkillsRepository, StoredAgentSkill } from './agent-skills';
+export type { AgentMcpRepository, AgentMcpServerWrite, StoredAgentMcpServer } from './agent-mcp';
 export {
   isUuidv7,
   uuidv7,

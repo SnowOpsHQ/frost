@@ -31,6 +31,10 @@ The real-Electron round trip is `ipc-e2e.feature.md`.
   formatted shape (`{ message, code, data: { code, httpStatus, path? } }`): no `stack`, no `cause`.
 - **Scenario: internal-errors-are-masked** — a procedure throwing a plain `Error('secret /etc/x')`
   resolves `INTERNAL_SERVER_ERROR` with message `INTERNAL_SERVER_ERROR`.
+- **Scenario: input-errors-are-masked** — (Phase 5 Task 6a review) a refused input resolves
+  `BAD_REQUEST` with message `BAD_REQUEST`, never the validator's text, which can quote what was
+  sent (an unrecognized key's name; `agent.setKey`'s input holds a key). Also
+  `agent-set-key-answer-has-no-key` (`agent-router.test.ts`).
 - **Scenario: uncloneable-output-is-internal-error** — a procedure whose output cannot be
   structured-cloned (a function, or an object holding one) resolves `INTERNAL_SERVER_ERROR` (with
   the request `id`) instead of a result Electron would fail to send back.

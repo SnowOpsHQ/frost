@@ -9,6 +9,7 @@ export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryServic
 export type { ChecksService } from './checks-service';
 export type { UpdateService } from './update-router';
 export type { SerpProbesService, SerpReadApi, SerpService } from './serp-service';
+export type { AgentService } from './agent-service';
 export type { ChangesReadApi, ChangesReadService, ChangesService } from './changes-service';
 export type { ScreenshotsService } from './changes-service';
 export type { ProjectsService } from './projects-router';

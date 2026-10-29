@@ -54,6 +54,9 @@ import { startUpdateService } from './update/service';
 import { startSyncService } from './sync/service';
 import { createTelemetryMain } from './telemetry/main';
 import { createMainWindow, createTabView, loadRenderer } from './window';
+import { createAgentService } from './agent/wire';
+import { gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
+import { accountAgentEntitlements } from './agent/entitlements';
 import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
 import { createMainProjects } from './changes/projects-main';
@@ -433,6 +436,8 @@ function start(): void {
     telemetryMain.useGestures((windowId) => account.gestures.consume(windowId));
     // Search Console (specs/gsc.feature.md): read-only, gated on `search-console`; reuses the account's store and gestures.
     const gsc = await createGscMain(account);
+    // The AI agent (specs/agent-host.feature.md): its SERP, intent, probe and Search Console tools, gated on the account's `ai-agent` flag.
+    const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) }, entitlements: accountAgentEntitlements(account.entitlements, { configured: () => account.service.state().status !== 'unconfigured' }) });
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,
@@ -472,6 +477,7 @@ function start(): void {
         update: update.service,
         // The SERP overlay (specs/serp-overlay.feature.md).
         serp: serp.service,
+        agent,
         changes,
         screenshots,
         projects,
@@ -486,6 +492,7 @@ function start(): void {
     clearBrowsingData = createClearBrowsingData({
       confirm: () => confirmClearBrowsingData(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
       forgetPermissionDecisions: () => permissions.forgetDecisions(),
+      forgetAgentGrants: () => agent.forgetAgentGrants(),
       clearStoredData: () => sessionStore.writer.clearBrowsingData(),
       clearBrowseStorage,
       // The SEO auditor's robots.txt answers and recorded responses (seo-indexability.feature.md).

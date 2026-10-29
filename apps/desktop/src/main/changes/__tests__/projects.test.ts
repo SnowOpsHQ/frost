@@ -190,7 +190,8 @@ describe('projects service', () => {
     expect(runs.start.mock.calls[0]![0].targets.map((target) => target.url)).toEqual([PARAMS.url, 'https://duckduckgo.com/?q=green+tea&kl=de-de']);
   });
 
-  test('project-page-cap', async () => {
+  // MAX_PROJECT_PAGES sequential writes to a file-backed database: slow where each write syncs (Windows CI).
+  test('project-page-cap', { timeout: 120_000 }, async () => {
     const { service } = setup();
     const id = await created(service, 'Many');
     for (let i = 0; i < MAX_PROJECT_PAGES; i++) expect((await service.addPage(id, `https://example.com/${i}`)).status).toBe('added');

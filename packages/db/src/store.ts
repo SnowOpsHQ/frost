@@ -1,4 +1,8 @@
 import { createDrizzle } from './client';
+import { createAgentGrantsRepository, type AgentGrantsRepository } from './agent-grants';
+import { createAgentChatsRepository, type AgentChatsRepository } from './agent-chats';
+import { createAgentSkillsRepository, type AgentSkillsRepository } from './agent-skills';
+import { createAgentMcpRepository, type AgentMcpRepository } from './agent-mcp';
 import { createChangeIntelRepository, type ChangeIntelRepository } from './change-intel/repository';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
@@ -21,6 +25,14 @@ export interface SessionStore {
   /** Browser polish (Phase 2.5 Task 6): the History view's reads and deletes, and local preferences. */
   readonly history: HistoryRepository;
   readonly settings: SettingsRepository;
+  /** The agent's standing grants and read-tools setting (Phase 5 Task 4), written at once. */
+  readonly agentGrants: AgentGrantsRepository;
+  /** The agent's stored chats and their retention (Phase 5 Task 9), written at once. */
+  readonly agentChats: AgentChatsRepository;
+  /** The user's agent skills (Phase 5 Task 9), written at once. */
+  readonly agentSkills: AgentSkillsRepository;
+  /** The agent's MCP servers (Phase 5 Task 10), written at once. */
+  readonly agentMcp: AgentMcpRepository;
   /** Change intelligence (Phase 6): captures, versions, diffs, screenshots, projects and audited purges. */
   readonly changeIntel: ChangeIntelRepository;
   /** Whether the database is still open (`close()` closes it). */
@@ -44,6 +56,10 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     contentNotes: createContentNotesRepository(drizzle),
     history: createHistoryRepository(drizzle),
     settings: createSettingsRepository(drizzle),
+    agentGrants: createAgentGrantsRepository(drizzle),
+    agentChats: createAgentChatsRepository(drizzle),
+    agentSkills: createAgentSkillsRepository(drizzle),
+    agentMcp: createAgentMcpRepository(drizzle),
     changeIntel: createChangeIntelRepository(drizzle),
     get isOpen() {
       return db.isOpen;

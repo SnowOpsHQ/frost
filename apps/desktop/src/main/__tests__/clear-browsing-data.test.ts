@@ -60,6 +60,17 @@ describe('clear browsing data', () => {
     expect(parts.confirm).toHaveBeenCalledTimes(2);
   });
 
+  test('clear-forgets-agent-grants', async () => {
+    const { parts, order } = fakeParts(true);
+    const forgetAgentGrants = vi.fn(async () => {
+      order.push('agent');
+      return true;
+    });
+    await expect(createClearBrowsingData({ ...parts, forgetAgentGrants })()).resolves.toBe(true);
+    expect(order).toEqual(['confirm', 'forget', 'agent', 'stored', 'storage', 'seo']);
+    expect(forgetAgentGrants).toHaveBeenCalledOnce();
+  });
+
   test('clear-goes-on-after-a-failure', async () => {
     const { parts, order } = fakeParts(true);
     parts.forgetPermissionDecisions.mockImplementationOnce(() => {

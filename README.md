@@ -46,6 +46,15 @@ browser and run SEO skills.
   only. The plan and how it was built:
   [`docs/plans/phase-4-accounts-telemetry.md`](docs/plans/phase-4-accounts-telemetry.md); the
   backend: [`apps/backend/README.md`](apps/backend/README.md).
+- **Phase 5 — AI agent:** built. A sidebar agent that audits and operates the browser, in a
+  utility process of its own that holds no keys: main makes every model request (your own
+  Anthropic or OpenAI key, or the Vercel AI Gateway; keys stay in the OS keychain). Read-only tools
+  run on a standing grant; navigate, click and visibility probes ask unless granted for the site;
+  `execute_javascript`, AI search and MCP tools ask every time, and tool output reaches the model
+  as untrusted data. SERP, intent, probes and Search Console come from Phases 3 and 4, and the
+  agent is gated on the account's `ai-agent` flag. Skills, a grants page, chat retention and export,
+  a context meter and MCP connections (labelled untrusted, sandboxed where the OS allows) round it
+  out. The plan and how it was built: [`docs/plans/phase-5-ai-agent.md`](docs/plans/phase-5-ai-agent.md).
 - **Phase 6 — Change intelligence:** built (Tasks 1–8). Per-page change history and visual evidence,
   kept locally, with explicit retention controls:
   - **Changes** (a sidebar panel) captures what a page says to search engines. Each distinct state
@@ -62,7 +71,14 @@ browser and run SEO skills.
   The database refuses changes to captured rows; they are removed only by a recorded purge. The
   plan, its schema and how it was built:
   [`docs/plans/phase-6-change-intelligence.md`](docs/plans/phase-6-change-intelligence.md).
-- **Next:** Phases 5 and 7 are in review; next up is integrating them (`docs/design/IMPLEMENTATION-PLAN.md` §4).
+- **Phase 7 — Cross-platform packaging, signed auto-update and sync groundwork:** built. Linux
+  (AppImage, deb, zip) and Windows (Squirrel installer, zip) packages beside the macOS one, each
+  verified in CI; an Ed25519-signed, staged update manifest, with nothing downloaded or installed
+  without a click (builds are unsigned, so updates install by hand); and a libSQL driver seam with
+  the groundwork for opt-in sync of change intelligence. The plan and how it was built:
+  [`docs/plans/phase-7-sync-update-platforms.md`](docs/plans/phase-7-sync-update-platforms.md).
+- **Next:** finishing sync (the switch to turn it on, a worker thread, a real server), and code
+  signing for macOS and Windows (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 
 ## Clean-room note
 frost is a **clean-room** build. It is designed from a written behavioral/design
@@ -92,7 +108,7 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
 - `specs/` — machine-checkable spec artifacts (constants, Zod schemas, `*.feature.md` acceptance
   lists); every scenario maps to a named test.
 - `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, 8-phase roadmap).
-- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–4 and 6).
+- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–7).
 - `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner, and
   `scripts/sign-selectors.mjs` (`pnpm sign:selectors`, for maintainers signing a selector pack).
 

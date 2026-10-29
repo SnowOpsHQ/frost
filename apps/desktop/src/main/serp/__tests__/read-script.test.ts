@@ -387,7 +387,8 @@ describe('reading synthetic result pages', () => {
     expect(window.pwned).toBeUndefined();
     // Self-contained: evaluated in the page's own world it answers as the function does.
     const layout = layoutOf(PACK, 'google');
-    const evaluated = window.eval(serpReadScript(layout)) as SerpRead;
+    // With the tests' read budget: a cold read on a loaded runner can pass the spec's 150 ms.
+    const evaluated = window.eval(serpReadScript(layout, { ...SERP_READ_LIMITS, budgetMs: READ_TEST_BUDGET_MS })) as SerpRead;
     expect(titles(evaluated)).toEqual(titles(read(dom(fixture('google.html')).window.document, layout)));
     // Run once, in the SERP world only.
     const calls: { worldId: number; scripts: { code: string }[] }[] = [];

@@ -18,8 +18,11 @@ export interface PromptArming {
   dispose(): void;
 }
 
-/** A fresh arming starts disarmed; `onChange` hears every change of `armed()`. */
-export function createPromptArming(onChange: (armed: boolean) => void): PromptArming {
+/**
+ * A fresh arming starts disarmed; `onChange` hears every change of `armed()`. `delayMs` defaults to
+ * `PROMPT_ARMING_DELAY_MS` (the agent's approval cards pass `APPROVAL_ENABLE_DELAY_MS`).
+ */
+export function createPromptArming(onChange: (armed: boolean) => void, delayMs: number = PROMPT_ARMING_DELAY_MS): PromptArming {
   let armed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -34,7 +37,7 @@ export function createPromptArming(onChange: (armed: boolean) => void): PromptAr
     clearTimeout(timer);
     timer = undefined;
     set(false);
-    if (!covered) timer = setTimeout(() => set(true), PROMPT_ARMING_DELAY_MS);
+    if (!covered) timer = setTimeout(() => set(true), delayMs);
   };
   disarm();
   return {

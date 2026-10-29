@@ -12,10 +12,12 @@ import { senderRejection, type IpcContext } from './sender';
 // formatter also allowlists `data` so nothing else internal is ever sent (`error-shape-hides-internals`).
 // An unexpected error's message (wrapped as INTERNAL_SERVER_ERROR) may itself carry internals (paths,
 // SQL…), so it is replaced by the code (`ipc-transport.feature.md`, `internal-errors-are-masked`).
+// A refused input's message is replaced by its code too (Phase 5 Task 6a review): Zod's issues can
+// quote what was sent (an unrecognized key's name, say), and `agent.setKey`'s input holds a key.
 const t = initTRPC.context<IpcContext>().create({
   isDev: false,
   errorFormatter: ({ shape }) => ({
-    message: shape.data.code === IPC_INTERNAL_ERROR_CODE ? IPC_INTERNAL_ERROR_CODE : shape.message,
+    message: shape.data.code === IPC_INTERNAL_ERROR_CODE ? IPC_INTERNAL_ERROR_CODE : shape.data.code === 'BAD_REQUEST' ? 'BAD_REQUEST' : shape.message,
     code: shape.code,
     data: { code: shape.data.code, httpStatus: shape.data.httpStatus, path: shape.data.path },
   }),

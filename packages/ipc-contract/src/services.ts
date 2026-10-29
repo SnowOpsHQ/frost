@@ -7,6 +7,7 @@ import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import type { AccountService } from './account-service';
 import type { ChecksService } from './checks-service';
+import type { AgentService } from './agent-service';
 import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
@@ -182,6 +183,8 @@ export interface IpcServices {
   readonly update?: UpdateService;
   /** The SERP overlay (Phase 3 Task 4, `serp-service.ts`): reading, outlines, pack updates and intent. */
   readonly serp?: SerpService;
+  /** The agent panel (Phase 5 Task 6a, `agent-service.ts`). */
+  readonly agent?: AgentService;
   /** Change intelligence: captures and their history (Phase 6 Task 3, `changes-service.ts`). */
   readonly changes?: ChangesService;
   /** Change intelligence: screenshots of the active tab and their gallery (Phase 6 Task 5, `changes-service.ts`). */

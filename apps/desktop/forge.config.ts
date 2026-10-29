@@ -131,6 +131,7 @@ export function makeForgeConfig(env: NodeJS.ProcessEnv = process.env, run: RunCo
           { entry: { 'intent-worker': 'src/workers/intent/index.ts' }, config: 'vite.intent.config.ts', target: 'main' },
           // The SERP analysis worker (.vite/build/serp-analysis.cjs; specs/serp-overlay.feature.md, Analysis).
           { entry: { 'serp-analysis': 'src/main/serp/serp-worker.ts' }, config: 'vite.main.config.ts', target: 'main' },
+          { entry: { 'agent-runtime': 'src/main/agent/runtime-entry.ts' }, config: 'vite.main.config.ts', target: 'main' }, // the agent runtime's utility process (runtime-entry.ts)
         ],
         renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],
       }),

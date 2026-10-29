@@ -16,6 +16,7 @@ import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
 import { accountRouter } from './account-router';
 import { checksRouter } from './checks-router';
+import { agentRouter } from './agent-router';
 import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
@@ -291,6 +292,8 @@ export const appRouter = router({
   update: updateRouter,
   // Phase 3 Task 4 (`serp-overlay.feature.md`): the SERP overlay's reading, outlines, pack updates and intent.
   serp: serpRouter,
+  // Phase 5 Task 6a (`agent-session.feature.md`): the agent panel (chats, approvals, model and keys).
+  agent: agentRouter,
   // Phase 6 Task 3 (`changes-capture.feature.md`): capture a page into its versioned history, and read it.
   changes: changesRouter,
   screenshots: screenshotsRouter,

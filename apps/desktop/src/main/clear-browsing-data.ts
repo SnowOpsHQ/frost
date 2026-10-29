@@ -16,6 +16,8 @@ export interface ClearBrowsingDataParts {
   confirm(): Promise<boolean | 'with-content-notes'>;
   /** Every remembered permission decision and the back-off, in memory (the broker). */
   forgetPermissionDecisions(): void;
+  /** The AI agent's standing grants (per-site trust, like a permission; `clear-forgets-agent-grants`). Its chats are not cleared here. */
+  forgetAgentGrants?(): Promise<unknown>;
   /** Every stored visit and decision (the session writer, after its earlier writes). */
   clearStoredData(): Promise<void>;
   /** The browse partition's storage and HTTP cache (`clearBrowseStorage`). */
@@ -49,6 +51,7 @@ export function createClearBrowsingData(parts: ClearBrowsingDataParts): () => Pr
     });
     if (!confirmed) return false;
     await attempt('permission decisions', () => parts.forgetPermissionDecisions());
+    await attempt('agent grants', () => parts.forgetAgentGrants?.());
     await attempt('recently closed tabs', () => parts.forgetClosedTabs?.());
     await attempt('stored visits and decisions', () => parts.clearStoredData());
     await attempt('site storage and cache', () => parts.clearBrowseStorage());
