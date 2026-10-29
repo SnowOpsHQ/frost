@@ -12,13 +12,19 @@ runtime message can start, add or define a server or a tool (`agent-cannot-appro
 
 frost's own minimal client (`mcp/client.ts`) speaks JSON-RPC 2.0 for `initialize`,
 `notifications/initialized`, `tools/list` and `tools/call` only; it declares no client capability,
-answers a server's `ping` and refuses every other server request (`mcp-client-answers-ping-refuses-other-server-requests`).
+answers only a server's `ping` (over stdio, at most `maxPingRepliesPerSecond`) and nothing else, and
+none at all over HTTP (`mcp-client-answers-ping-refuses-other-server-requests`).
 
 ## Client
 - Scenario: handshake, paginated listing, JSON-RPC errors → `mcp-client-handshake-and-calls`
 - Scenario: an unknown protocol revision is refused → `mcp-client-refuses-unknown-protocol-version`
-- Scenario: a call past its timeout fails `timeout` and the server is told it was cancelled; a
-  closed connection fails what is in flight → `mcp-client-timeout-and-close`
+- Scenario: a call past its timeout fails `timeout`, aborts the transport's own work for it, and the
+  server is told it was cancelled; a closed connection fails what is in flight
+  → `mcp-client-timeout-and-close`, `mcp-http-timeout-aborts-the-request`
+- Scenario (security review B1): a server that floods requests or notifications (more than
+  `maxServerMessagesPerSecond`, or `maxServerMessagesPerCall` while a request is open) is
+  disconnected (`flood`); main's memory stays bounded → `mcp-client-server-message-budget`,
+  `mcp-flood-of-server-requests-disconnects`
 
 ## HTTP servers
 - Given an HTTP server's URL, Then it must be `https:` on a public host, with no user name,
@@ -31,7 +37,10 @@ answers a server's `ping` and refuses every other server request (`mcp-client-an
 - 401/403 → `unauthorized`; other errors → `http-status` (the status is shown); a redirect →
   `redirect`; a body that isn't JSON or an event stream → `protocol` → `mcp-http-statuses-and-redirects`
 - A reply body, or an event stream, larger than `maxMessageBytes` fails `too-large`
-  → `mcp-http-body-bounded`; an event stream is read until the reply arrives → `mcp-http-event-stream`
+  → `mcp-http-body-bounded`; an event stream is read until the reply arrives, in linear time, with a
+  line and a keep-alive cap → `mcp-http-event-stream`, `mcp-http-event-stream-linear`
+- Server requests inside an event stream are never answered (no `POST` each)
+  → `mcp-http-server-requests-not-answered`
 
 ## Command servers
 - A command is one program (a name on `PATH` without spaces, or an absolute path), never a shell
@@ -46,25 +55,51 @@ answers a server's `ping` and refuses every other server request (`mcp-client-an
   → `mcp-command-rules`, `mcp-stdio-launch-minimal-env-and-cwd`
 - Output lines are bounded (`too-large` ends it and stops the process group); stderr is drained and
   never shown → `mcp-stdio-lines-bounded`, `mcp-flood-ends-the-connection`
+- Writes are bounded: more than `maxQueuedWriteBytes` queued on stdin, or a stdin full for
+  `maxWriteStallMs`, ends it → `mcp-stdio-write-backpressure`
+- Ending a connection signals the whole process group, even after the leader exited; at app quit
+  every group gets `SIGKILL` at once → `mcp-stdio-kills-the-group-after-the-leader-exits`
 - A missing command fails `not-found` (and asks nothing) → `mcp-stdio-command-not-found-and-exit`,
   `mcp-command-not-found`
 
 ## Start
 - Given a command server, When the user presses Start, Then main shows its native dialog every
-  time: "Start an untrusted MCP server?", the exact command line, and the sandbox sentence; only
-  "Start server" starts it (Cancel is the default) → `mcp-start-dialog-wording`, `mcp-start-requires-the-dialog`
+  time: "Start an untrusted MCP server?", the exact command line, the sandbox sentence, every
+  readable folder (real paths), whether the network is allowed, and every environment variable's
+  name (never a value); only "Start server" starts it (Cancel is the default)
+  → `mcp-start-dialog-wording`, `mcp-start-requires-the-dialog`
 - Nothing starts at launch or because a chat runs; a disabled server can't start
   → `mcp-start-requires-the-dialog`, `mcp-disabled-or-not-entitled-tools-absent`
 - Stop ends it and removes its temporary folder → `mcp-start-requires-the-dialog`
 
+## Readable folders (security review B2)
+- A folder a sandboxed server may read is refused when it is, is inside, or holds `/run`,
+  `/var/run`, `/proc`, `/sys`, `/dev`, `/tmp` (so `/tmp/.X11-unix`), `/var/tmp`, `/private/tmp`,
+  `/private/var/run`, `/private/var/folders`, `$XDG_RUNTIME_DIR`, frost's `userData`, the system's
+  temporary folder or the server's own; when it is a home folder or above one (`/home`, `/`); or when
+  it is, is inside or holds a home's `.ssh`, `.gnupg`, `.config`, `Library`, `.aws`, `.docker`,
+  `.kube`, `.password-store` or `.local/share/keyrings` → `mcp-read-folder-allowed-inside-home`,
+  `mcp-read-folder-refuses-home-and-above`, `mcp-read-folder-refuses-secret-folders`,
+  `mcp-read-folder-refuses-runtime-temp-and-user-data`, `mcp-read-folder-path-tricks`
+- Checked when saved (as typed and as it resolves) and again at every start on real paths: a
+  symlink (to the runtime folder, `.ssh`, home, a parent), a symlinked parent, `..`, a trailing
+  slash or a missing folder refuses the start before the dialog → `mcp-read-folder-refused-at-save`,
+  `mcp-read-folder-symlink-tricks-refused-at-start`
+- bubblewrap binds them strictly `--ro-bind`, the server's own folder last → `mcp-bubblewrap-argv-golden`
+
 ## Sandboxes
 - macOS (`/usr/bin/sandbox-exec`): a deny-by-default profile → `mcp-macos-profile-golden`
-- Linux with bubblewrap: `/` read-only, empty `/tmp`, `/run` and home (the listed folders and the
-  server's own folder put back), every namespace unshared (network only if allowed),
+- macOS hides `/Users`, `/Volumes`, `/private/var/folders`, `/private/tmp`, the homes and
+  `userData`; with the network, IP only plus the DNS socket (no unix socket) → `mcp-macos-profile-golden`
+- Linux with bubblewrap (only `/usr/bin/bwrap` or `/bin/bwrap`): `/` read-only, empty `/tmp`, `/run`,
+  every home and `userData` (the listed folders and the server's own folder put back), every
+  namespace unshared and `--disable-userns` where supported (network only if allowed),
   `--die-with-parent`, `--new-session`, no capabilities → `mcp-bubblewrap-argv-golden`,
-  `mcp-bubblewrap-network-and-home-command`
-- Run for real on a machine with a working bubblewrap: the server can't read an unlisted file in
-  the home folder, can't write outside its folder, has no network → `mcp-bubblewrap-contains-the-server`
+  `mcp-bubblewrap-hides-every-home-and-user-data`, `mcp-bubblewrap-network-and-home-command`
+- Run for real on a machine with a working bubblewrap: the server can't read a fake home's secret or
+  an unlisted file in the real home, can't see a host `/tmp` file, the session bus
+  (`/run/user/<uid>/bus`) or `userData`, can't write outside its folder, has no network
+  → `mcp-bubblewrap-contains-the-server`
 - No launcher, or one that doesn't answer as expected: `none`, said plainly ("This server runs
   without a sandbox. It can do anything your user account can.") → `mcp-sandbox-fallback-reported-as-none`
 - A launcher that fails is reported (`sandbox-failed`) and nothing else runs
@@ -92,12 +127,13 @@ answers a server's `ping` and refuses every other server request (`mcp-client-an
   `mcp-disabled-or-not-entitled-tools-absent`
 
 ## Calls
-- Every call asks (`external`), is never grantable, and "Always allow" is refused
-  → `mcp-asks-every-call`, `mcp-tool-asks-every-call-and-result-is-untrusted`
+- Every call asks (`external`), is never grantable, and "Always allow" is refused; an MCP tool the
+  turn didn't offer (a skill turn) is refused unasked → `mcp-asks-every-call`,
+  `mcp-tool-asks-every-call-and-result-is-untrusted`, `agent-cannot-approve-mcp`
 - Input is checked against the sanitised schema in main before the user is asked, and again before
   it is sent → `mcp-invalid-input-refused-before-asking`, `mcp-calls-validated-and-mapped`
 - Only `via: 'approval'` runs → `mcp-calls-validated-and-mapped`
-- Results: text parts only (others left out with a note), `isError` and JSON-RPC errors as
+- Results: text parts only (others, and `structuredContent`, left out with a note), `isError` and JSON-RPC errors as
   `isError: true` data, wrapped untrusted and capped → `mcp-calls-validated-and-mapped`,
   `mcp-results-wrapped-and-bounded`
 

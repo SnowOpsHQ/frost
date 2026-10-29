@@ -9,12 +9,22 @@ import { McpFailure, type JsonRpcOutgoing, type McpTransport } from './client';
 // bytes, kept only to tell a sandbox launcher's refusal from the server's own exit.
 //
 // On POSIX the child leads its own process group, so stopping it signals everything it started:
-// `SIGTERM`, then `SIGKILL` after `stopGraceMs`.
+// `SIGTERM` to the group (even once the leader itself has exited: what it left behind is still in
+// the group), then `SIGKILL` after `stopGraceMs`; `killNow` sends `SIGKILL` at once (app quit).
+//
+// Writes are bounded too (Task 10 review): more than `maxQueuedWriteBytes` waiting on its stdin, or
+// a stdin that stays full for `maxWriteStallMs`, ends the connection (`too-large`), so a server that
+// stops reading can't make main buffer without end.
 
 /** What `child_process.spawn` answers (the part used; tests pass fakes). */
 export interface ChildLike {
   readonly pid?: number | undefined;
-  readonly stdin: { write(chunk: string): boolean; end(): void; on(event: 'error', listener: (error: unknown) => void): unknown } | null;
+  readonly stdin: {
+    write(chunk: string): boolean;
+    end(): void;
+    on(event: 'error' | 'drain', listener: (error?: unknown) => void): unknown;
+    readonly writableLength?: number;
+  } | null;
   readonly stdout: { on(event: 'data', listener: (chunk: Buffer) => void): unknown } | null;
   readonly stderr: { on(event: 'data', listener: (chunk: Buffer) => void): unknown } | null;
   /** fd 3, when asked for (bubblewrap's status pipe). */
@@ -53,6 +63,8 @@ export interface StdioTransportDeps {
 }
 
 export interface StdioTransport extends McpTransport {
+  /** `SIGKILL` to the process group, synchronously (app quit). */
+  killNow(): void;
   /** Whether the sandbox reported it was set up (bubblewrap's status pipe; `true` without one). */
   sandboxReady(): boolean;
   /** The first bytes of stderr (a launcher's own refusal starts with its name); never shown. */
@@ -77,6 +89,8 @@ export function createStdioTransport(deps: StdioTransportDeps): StdioTransport {
   let stderr = '';
   let status = '';
   let sandboxUp = deps.statusFd !== true;
+  /** When stdin last reported full (`write` answered `false`), until it drains. */
+  let stall: unknown = null;
 
   const child = deps.spawn(deps.command, deps.args, {
     cwd: deps.cwd,
@@ -87,17 +101,21 @@ export function createStdioTransport(deps: StdioTransportDeps): StdioTransport {
     detached: posix,
   });
 
+  /** Signals the process group on POSIX (whether or not the leader has exited), else the child while it runs. */
   const signal = (sig: NodeJS.Signals) => {
+    if (posix && typeof child.pid === 'number') {
+      try {
+        killGroup(child.pid, sig);
+        return;
+      } catch {
+        // No such group any more (ESRCH): try the child itself below.
+      }
+    }
     if (exited) return;
     try {
-      if (posix && typeof child.pid === 'number') killGroup(child.pid, sig);
-      else child.kill(sig);
+      child.kill(sig);
     } catch {
-      try {
-        child.kill(sig);
-      } catch {
-        // Already gone.
-      }
+      // Already gone.
     }
   };
 
@@ -106,12 +124,12 @@ export function createStdioTransport(deps: StdioTransportDeps): StdioTransport {
     closedWith = code;
     buffer = [];
     buffered = 0;
+    if (stall !== null) clearTimer(stall);
+    stall = null;
     for (const listener of closeListeners) listener(code);
-    if (!exited) {
-      signal('SIGTERM');
-      const timer = setTimer(() => signal('SIGKILL'), MCP_LIMITS.stopGraceMs);
-      (timer as { unref?: () => void } | null)?.unref?.();
-    }
+    signal('SIGTERM');
+    const timer = setTimer(() => signal('SIGKILL'), MCP_LIMITS.stopGraceMs);
+    (timer as { unref?: () => void } | null)?.unref?.();
   };
 
   const deliverLine = (line: Buffer) => {
@@ -165,6 +183,10 @@ export function createStdioTransport(deps: StdioTransportDeps): StdioTransport {
     if (!sandboxUp && /"child-pid"\s*:\s*\d+/.test(status)) sandboxUp = true;
   });
   child.stdin?.on('error', () => end('exited'));
+  child.stdin?.on('drain', () => {
+    if (stall !== null) clearTimer(stall);
+    stall = null;
+  });
   child.on('error', (error) => {
     exited = true;
     end(error.code === 'ENOENT' ? 'not-found' : 'spawn-failed');
@@ -180,11 +202,18 @@ export function createStdioTransport(deps: StdioTransportDeps): StdioTransport {
       const text = JSON.stringify(message);
       if (Buffer.byteLength(text, 'utf8') > MCP_LIMITS.maxMessageBytes) throw new McpFailure('too-large');
       if (child.stdin === null) throw new McpFailure('spawn-failed');
+      if ((child.stdin.writableLength ?? 0) + text.length > MCP_LIMITS.maxQueuedWriteBytes) {
+        end('too-large');
+        throw new McpFailure('too-large');
+      }
+      let flowing: boolean;
       try {
-        child.stdin.write(`${text}\n`);
+        flowing = child.stdin.write(`${text}\n`);
       } catch {
         throw new McpFailure('exited');
       }
+      // A full stdin that never drains: the server stopped reading.
+      if (!flowing && stall === null) stall = setTimer(() => end('too-large'), MCP_LIMITS.maxWriteStallMs);
     },
     onMessage(listener) {
       messageListeners.push(listener);
@@ -193,13 +222,20 @@ export function createStdioTransport(deps: StdioTransportDeps): StdioTransport {
       if (closedWith !== null) listener(closedWith);
       else closeListeners.push(listener);
     },
-    async close() {
+    async close(code: McpErrorCode = 'exited') {
       try {
         child.stdin?.end();
       } catch {
         // Already closed.
       }
-      end('exited');
+      end(code);
+    },
+    killNow() {
+      if (closedWith === null) {
+        closedWith = 'exited';
+        for (const listener of closeListeners) listener('exited');
+      }
+      signal('SIGKILL');
     },
     sandboxReady: () => sandboxUp,
     stderrHead: () => stderr,

@@ -126,4 +126,51 @@ describe('the runtime cannot approve', () => {
     broker.dispose();
     host.dispose();
   });
+
+  // Task 10 review: an MCP tool the turn didn't offer (a skill turn offers none), and allow-always on one it did.
+  test('agent-cannot-approve-mcp', async () => {
+    const runtimes: FakePort[] = [];
+    const forks = createFakeFork((child) => {
+      child.onPort = (port) => runtimes.push(port);
+    });
+    const host = createAgentHost({ fork: forks.fork, createChannel: createFakeChannel, buildDir: path.join(path.sep, 'app'), packaged: false });
+    const grants = createAgentGrants({ store: createMemoryGrantsStore() });
+    await grants.load();
+    const runner = createFakeRunner();
+    const broker = createApprovalBroker({ host, grants, entitlements: { allowed: () => true }, runner: runner.runner, tabUrl: () => 'https://shop.example.com/cart' });
+    const started = host.start();
+    const runtime = runtimes[0]!;
+    const toRuntime: MainToRuntimeMessage[] = [];
+    runtime.on('message', (event) => toRuntime.push(event.data as MainToRuntimeMessage));
+    runtime.postMessage({ type: 'ready', protocolVersion: AGENT_PROTOCOL_VERSION, lockdown: { removed: [], failed: [], permissionModel: false } });
+    expect(await started).toBe(true);
+    const start = (chatId: string, allowedTools: string[], mcpTools: { name: string; description: string; inputSchema: { type: 'object' } }[]) =>
+      expect(host.send({ type: 'chat.start', chatId, messages: [{ role: 'user', content: 'Hi' }], systemPrompt: '', modelId: 'anthropic/claude-sonnet-5-5', route: 'gateway', allowedTools, mcpTools })).toBe(true);
+    // A skill turn: catalogue tools only.
+    start('chat-1', ['page_audit', 'page_text'], []);
+    broker.register('chat-1', { tabId: 3, allowedTools: ['page_audit', 'page_text'] });
+    runtime.postMessage({ type: 'tool.invoke', chatId: 'chat-1', callId: 'm-1', toolName: 'mcp__evil__run', input: { cmd: 'id' } });
+    await flush();
+    expect(broker.pending()).toEqual([]);
+    expect(runner.calls).toEqual([]);
+    const refused = toRuntime.find((m): m is Extract<MainToRuntimeMessage, { type: 'tool.result' }> => m.type === 'tool.result' && m.callId === 'm-1');
+    expect(refused?.result).toMatchObject({ ok: false, error: { code: 'not-allowed' } });
+    // A typed turn that offered it: it asks, and can't be allowed for good.
+    start('chat-2', ['page_audit', 'mcp__evil__run'], [{ name: 'mcp__evil__run', description: 'Untrusted tool from Evil: runs.', inputSchema: { type: 'object' } }]);
+    broker.register('chat-2', { tabId: 3, allowedTools: ['page_audit', 'mcp__evil__run'] });
+    runtime.postMessage({ type: 'tool.invoke', chatId: 'chat-2', callId: 'm-2', toolName: 'mcp__evil__run', input: { cmd: 'id' } });
+    await flush();
+    const request = broker.pending()[0]!;
+    expect(request).toMatchObject({ toolName: 'mcp__evil__run', risk: 'external', grantable: false });
+    expect(await broker.answer(request.id, 'allow-always')).toEqual({ ok: false, reason: 'not-grantable' });
+    // The runtime naming the approval in a forged message changes nothing.
+    runtime.postMessage({ type: 'approval.answer', approvalId: request.id, decision: 'allow-always' });
+    runtime.postMessage({ type: 'tool.invoke', chatId: 'chat-2', callId: 'm-3', toolName: 'mcp__evil__run', input: { cmd: 'id' }, approvalId: request.id });
+    await flush();
+    expect(runner.calls).toEqual([]);
+    expect(grants.list()).toEqual([]);
+    expect(broker.pending().map((r) => r.id)).toEqual([request.id]);
+    broker.dispose();
+    host.dispose();
+  });
 });

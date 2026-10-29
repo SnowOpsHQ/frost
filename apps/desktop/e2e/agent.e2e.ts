@@ -596,6 +596,12 @@ test('agent-mcp-tool-asks', async () => {
   expect(dialogs[0]!.title).toBe('Start an untrusted MCP server?');
   expect(dialogs[0]!.detail).toContain(`${node} ${fixture}`);
   expect(dialogs[0]!.detail).toContain(sandbox!);
+  // Sandboxed, it lists every folder it may read (real paths) and the network setting; always every variable's name.
+  if (sandbox !== MCP_NO_SANDBOX_SENTENCE) {
+    expect(dialogs[0]!.detail).toContain(`Folders it may read: ${readPaths.map((folder) => realpathSync(folder)).join(', ')}`);
+    expect(dialogs[0]!.detail).toContain('Network: not allowed');
+  }
+  expect(dialogs[0]!.detail).toContain('Environment variables it gets besides PATH and HOME: none');
 
   await page.getByTestId('agent-settings-toggle').click();
   await send('Echo something');

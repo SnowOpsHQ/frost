@@ -11,9 +11,14 @@ import { MCP_ACCEPTED_PROTOCOL_VERSIONS, MCP_CLIENT_INFO, MCP_LIMITS, MCP_PROTOC
 // needs none of that, and bounding what a hostile server sends meant replacing both transports
 // anyway; what is left (ids, a handshake, three methods) is small enough to own and test here.
 //
-// The client declares no capabilities (no sampling, roots or elicitation): a server's request to
-// it is answered "method not found", except `ping` (answered empty). Notifications from the server
-// are ignored. Every request has a timeout and an abort signal; a response is matched by id only.
+// The client declares no capabilities (no sampling, roots or elicitation), so a server has nothing
+// to ask it (Task 10 review): over stdio only `ping` is answered, at most `maxPingRepliesPerSecond`;
+// every other server request gets no answer at all, and over HTTP none does (an answer would be a
+// `POST` each). Notifications are ignored. Whatever a server sends on its own (requests,
+// notifications, answers to nothing frost asked) is budgeted per connection,
+// `maxServerMessagesPerSecond` and `maxServerMessagesPerCall` while a request is open: past either,
+// the connection is closed (`flood`). Every request has a timeout and the caller's abort signal; both
+// abort the transport's own work for it (an HTTP request, an event stream), not just the wait.
 
 /** A JSON-RPC message as frost sends it. */
 export type JsonRpcOutgoing =
@@ -53,7 +58,10 @@ export interface McpTransport {
   onClose(listener: (code: McpErrorCode) => void): void;
   /** Tells the transport the negotiated protocol revision (HTTP sends it as a header). */
   setProtocolVersion?(version: string): void;
-  close(): Promise<void>;
+  /** `false`: never answer a server's request (HTTP: each answer would be a request of its own). Default `true` (only `ping`). */
+  readonly answersServerRequests?: boolean;
+  /** Ends the connection for good; `onClose` hears `code` (default `exited`). */
+  close(code?: McpErrorCode): Promise<void>;
 }
 
 /** A tool as the server listed it (untrusted, unchecked beyond its shape). */
@@ -79,6 +87,8 @@ export interface McpClientOptions {
   readonly timeoutMs?: number;
   readonly setTimeout?: (callback: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
+  /** Milliseconds clock for the budgets (default `Date.now`). */
+  readonly now?: () => number;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -90,9 +100,15 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
   const timeoutMs = options.timeoutMs ?? MCP_LIMITS.callTimeoutMs;
   const setTimer = options.setTimeout ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
   const clearTimer = options.clearTimeout ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
-  const pending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void }>();
+  const now = options.now ?? Date.now;
+  const pending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; noise: number }>();
   let nextId = 1;
   let closed: McpErrorCode | null = null;
+  const answersServerRequests = transport.answersServerRequests !== false;
+  // The budgets: what the server sent on its own this second, and `ping`s answered this second.
+  let windowStart = now();
+  let windowCount = 0;
+  let pings = 0;
 
   const failAll = (code: McpErrorCode) => {
     for (const [id, entry] of [...pending]) {
@@ -106,36 +122,53 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
     failAll(code);
   });
 
-  const reply = (message: JsonRpcOutgoing) => {
-    // Answers to the server's own requests: best effort, on a signal of their own.
-    void transport.send(message, new AbortController().signal).catch(() => undefined);
+  const flood = () => {
+    if (closed !== null) return;
+    closed = 'flood';
+    failAll('flood');
+    void transport.close('flood').catch(() => undefined);
+  };
+
+  /** Counts one message the server sent on its own; `false` (and the connection closed) past a budget. */
+  const spend = (): boolean => {
+    const at = now();
+    if (at - windowStart >= 1000 || at < windowStart) {
+      windowStart = at;
+      windowCount = 0;
+      pings = 0;
+    }
+    windowCount += 1;
+    let over = windowCount > MCP_LIMITS.maxServerMessagesPerSecond;
+    for (const entry of pending.values()) if ((entry.noise += 1) > MCP_LIMITS.maxServerMessagesPerCall) over = true;
+    if (over) flood();
+    return !over;
   };
 
   transport.onMessage((message) => {
-    if (!isObject(message) || message['jsonrpc'] !== '2.0') return;
-    const id = message['id'];
-    const method = message['method'];
-    if (typeof method === 'string') {
-      // A request from the server (it has an id): `ping` is answered, anything else refused.
-      if (typeof id === 'number' || typeof id === 'string') {
-        if (typeof id === 'string' && id.length > 256) return;
-        reply(method === 'ping' ? { jsonrpc: '2.0', id, result: {} } : { jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
+    if (closed !== null) return;
+    const id = isObject(message) ? message['id'] : undefined;
+    const entry = isObject(message) && message['jsonrpc'] === '2.0' && typeof message['method'] !== 'string' && typeof id === 'number' ? pending.get(id) : undefined;
+    // Anything but an answer to an open request of frost's comes out of the budget.
+    if (entry === undefined) {
+      if (!spend()) return;
+      if (!isObject(message) || message['jsonrpc'] !== '2.0') return;
+      // The one request answered: `ping`, over stdio, a few a second. Every other one goes unanswered.
+      if (message['method'] === 'ping' && answersServerRequests && (typeof id === 'number' || (typeof id === 'string' && id.length <= 256)) && pings < MCP_LIMITS.maxPingRepliesPerSecond) {
+        pings += 1;
+        void transport.send({ jsonrpc: '2.0', id, result: {} }, new AbortController().signal).catch(() => undefined);
       }
-      // A notification: nothing frost acts on.
       return;
     }
-    if (typeof id !== 'number') return;
-    const entry = pending.get(id);
-    if (entry === undefined) return;
-    pending.delete(id);
-    if (Object.hasOwn(message, 'error')) {
-      const error = message['error'];
+    pending.delete(id as number);
+    const answer = message as Record<string, unknown>;
+    if (Object.hasOwn(answer, 'error')) {
+      const error = answer['error'];
       const code = isObject(error) && typeof error['code'] === 'number' && Number.isInteger(error['code']) ? error['code'] : -32603;
       const text = isObject(error) && typeof error['message'] === 'string' ? error['message'].slice(0, 2000) : '';
       entry.reject(new McpRpcError(code, text));
       return;
     }
-    const result = message['result'];
+    const result = answer['result'];
     if (!isObject(result)) {
       entry.reject(new McpFailure('protocol'));
       return;
@@ -148,6 +181,10 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
     if (signal.aborted) return Promise.reject(new McpFailure('timeout'));
     const id = nextId;
     nextId += 1;
+    // Aborted by the deadline, the caller's signal or the connection closing: the transport's own
+    // work for this request (an HTTP request, an event stream) stops too, not just the wait.
+    const own = new AbortController();
+    const sendSignal = AbortSignal.any([signal, own.signal]);
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       let done = false;
       const finish = () => {
@@ -156,32 +193,30 @@ export function createMcpClient(transport: McpTransport, options: McpClientOptio
         signal.removeEventListener('abort', onAbort);
         pending.delete(id);
       };
-      const onAbort = () => {
+      const fail = (error: Error) => {
         if (done) return;
         finish();
+        own.abort();
+        reject(error);
+      };
+      const onAbort = () => {
+        if (done) return;
         // The server may go on; frost tells it the request is cancelled (best effort).
-        void transport.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'cancelled' } }, new AbortController().signal).catch(() => undefined);
-        reject(new McpFailure('timeout'));
+        if (closed === null) void transport.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'cancelled' } }, new AbortController().signal).catch(() => undefined);
+        fail(new McpFailure('timeout'));
       };
       const timer = setTimer(onAbort, timeoutMs);
       signal.addEventListener('abort', onAbort, { once: true });
       pending.set(id, {
+        noise: 0,
         resolve: (value) => {
           if (done) return;
           finish();
           resolve(value);
         },
-        reject: (error) => {
-          if (done) return;
-          finish();
-          reject(error);
-        },
+        reject: (error) => fail(error),
       });
-      transport.send({ jsonrpc: '2.0', id, method, params }, signal).catch((error: unknown) => {
-        if (done) return;
-        finish();
-        reject(error instanceof McpFailure ? error : new McpFailure('network'));
-      });
+      transport.send({ jsonrpc: '2.0', id, method, params }, sendSignal).catch((error: unknown) => fail(error instanceof McpFailure ? error : new McpFailure('network')));
     });
   };
 

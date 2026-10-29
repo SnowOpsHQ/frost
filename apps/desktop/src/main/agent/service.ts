@@ -86,7 +86,7 @@ export interface AgentServiceDeps {
    * (`mcp/node.ts`: `spawn` without a shell, the `agent-mcp` session, temporary folders, the
    * sandbox detection) and the encrypted secrets file. Tests pass fakes.
    */
-  readonly mcp?: Partial<Omit<McpManagerDeps, 'store' | 'entitlements' | 'confirmStart'>>;
+  readonly mcp?: Partial<Omit<McpManagerDeps, 'store' | 'entitlements' | 'confirmStart' | 'userData'>>;
   readonly log?: (line: string) => void;
 }
 
@@ -133,6 +133,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     ...nodeMcpDeps(mcpSession),
     secrets: createMcpSecrets({ safeStorage: deps.electron.safeStorage, userData: deps.app.getPath('userData'), fs, log }),
     ...deps.mcp,
+    userData: deps.app.getPath('userData'),
     store: deps.sessionStore.agentMcp ?? createMemoryMcpStore(),
     entitlements,
     confirmStart: (prompt) => dialogs.confirmMcpStart(prompt),
@@ -191,6 +192,8 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
   deps.app.once('will-quit', () => {
     clearTimer(pruning);
     session.dispose();
+    // Command servers' process groups get SIGKILL now, before the app goes (no timer may outlive it).
+    mcp.killAll();
     void mcp.dispose();
     agent.dispose();
   });

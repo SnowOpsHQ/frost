@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, onTestFinished, test, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { MCP_ERRORS, MCP_NO_SANDBOX_SENTENCE, type McpSandboxMode } from '@app/specs/agent-mcp.spec';
 import type { AgentFeature } from '../entitlements';
 import type { ToolRunContext } from '../approvals';
@@ -32,6 +32,22 @@ const managers: McpManager[] = [];
 afterEach(async () => {
   for (const manager of managers.splice(0)) await manager.dispose();
 });
+
+/**
+ * A fake home and userData for the readable-folder rules, outside the temporary folders (a folder
+ * there is never readable): under the package's own `node_modules/.cache`.
+ */
+const CACHE = path.join(path.dirname(fileURLToPath(new URL('../../../../package.json', import.meta.url))), 'node_modules', '.cache');
+fs.mkdirSync(CACHE, { recursive: true });
+const BASE = fs.realpathSync(fs.mkdtempSync(path.join(CACHE, 'frost-mcp-test-')));
+const FAKE_HOME = path.join(BASE, 'home');
+const USER_DATA = path.join(FAKE_HOME, '.config', 'frost');
+fs.mkdirSync(USER_DATA, { recursive: true });
+fs.mkdirSync(path.join(FAKE_HOME, '.ssh'));
+fs.writeFileSync(path.join(FAKE_HOME, 'secret.txt'), 'home secret');
+fs.writeFileSync(path.join(FAKE_HOME, '.ssh', 'id_test'), 'key');
+fs.mkdirSync(path.join(FAKE_HOME, 'servers', 'docs'), { recursive: true });
+afterAll(() => fs.rmSync(BASE, { recursive: true, force: true }));
 
 function setup(overrides: Partial<McpManagerDeps> = {}, flags: Partial<Record<AgentFeature, boolean>> = {}) {
   const spawn = vi.fn<SpawnLike>((command, args, options) => nodeSpawn(command, args, options));
@@ -58,7 +74,14 @@ function setup(overrides: Partial<McpManagerDeps> = {}, flags: Partial<Record<Ag
     },
     removeDir: (dir) => fs.promises.rm(dir, { recursive: true, force: true }),
     pathEnv: process.env['PATH'] ?? '',
-    home: os.homedir(),
+    homes: [FAKE_HOME],
+    runtimeDir: process.env['XDG_RUNTIME_DIR'] ?? null,
+    tmpDir: os.tmpdir(),
+    userData: USER_DATA,
+    isDirectory: (file) => fs.promises.stat(file).then(
+      (stat) => stat.isDirectory(),
+      () => false,
+    ),
     ...overrides,
   });
   managers.push(manager);
@@ -89,7 +112,7 @@ describe('MCP manager with the fake server (no sandbox)', () => {
     expect(await manager.start(id)).toBe('ready');
     expect(confirmStart).toHaveBeenCalledTimes(2);
     const node = fs.realpathSync(process.execPath);
-    expect(confirmStart.mock.calls[1]![0]).toEqual({ name: 'Fake Tools', commandLine: `${node} ${FIXTURE}`, sandbox: 'none', allowNetwork: false });
+    expect(confirmStart.mock.calls[1]![0]).toEqual({ name: 'Fake Tools', commandLine: `${node} ${FIXTURE}`, sandbox: 'none', allowNetwork: false, readPaths: [], envNames: [] });
     expect(spawn).toHaveBeenCalledTimes(1);
     const [command, args, options] = spawn.mock.calls[0]!;
     expect([command, args]).toEqual([node, [FIXTURE]]);
@@ -200,6 +223,19 @@ describe('MCP manager with the fake server (no sandbox)', () => {
     expect(manager.view().servers[0]).toMatchObject({ status: 'failed', lastError: MCP_ERRORS['too-large'] });
   });
 
+  test('mcp-flood-of-server-requests-disconnects', async () => {
+    // The reviewer's probe: a server flooding requests and never reading stdin grew main to 884 MB.
+    const { manager } = setup();
+    const id = await addFixture(manager, [FIXTURE, '--flood-requests']);
+    await manager.setEnabled(id, true);
+    const before = process.memoryUsage().rss;
+    const started = Date.now();
+    expect(await manager.start(id)).toBe('failed');
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(manager.view().servers[0]).toMatchObject({ status: 'failed', lastError: MCP_ERRORS.flood });
+    expect(process.memoryUsage().rss - before).toBeLessThan(200 * 1024 * 1024);
+  });
+
   test('mcp-command-not-found', async () => {
     const { manager, confirmStart } = setup();
     await manager.save({ name: 'Missing', transport: 'stdio', command: 'frost-no-such-program-xyz', args: [], readPaths: [], allowNetwork: false, env: [] });
@@ -240,10 +276,60 @@ describe('MCP manager with the fake server (no sandbox)', () => {
   });
 });
 
+// Acceptance: specs/agent-mcp.feature.md (Readable folders): checked as saved and again, on real
+// paths, at every start (a symlink can point anywhere by then).
+describe('MCP readable folders at start', () => {
+  const saveWith = async (manager: McpManager, readPaths: string[]) => manager.save({ name: 'Reader', transport: 'stdio', command: process.execPath, args: [FIXTURE], readPaths, allowNetwork: false, env: [] });
+
+  test('mcp-read-folder-refused-at-save', async () => {
+    const { manager } = setup();
+    for (const folder of [FAKE_HOME, path.dirname(FAKE_HOME), '/', '/home', path.join(FAKE_HOME, '.ssh'), path.join(FAKE_HOME, '.config'), USER_DATA, '/run/user', '/tmp', `${FAKE_HOME}/servers/../.ssh`, `${FAKE_HOME}/servers/`])
+      expect((await saveWith(manager, [folder])).result, folder).toBe('invalid');
+    // Through a symlink, as it resolves now.
+    const alias = path.join(BASE, 'alias-home');
+    fs.symlinkSync(FAKE_HOME, alias);
+    onTestFinished(() => fs.rmSync(alias, { force: true }));
+    expect((await saveWith(manager, [alias])).result).toBe('invalid');
+    expect((await saveWith(manager, [path.join(alias, '.ssh')])).result).toBe('invalid');
+    expect((await saveWith(manager, [path.join(FAKE_HOME, 'servers', 'docs')])).result).toBe('saved');
+  });
+
+  test('mcp-read-folder-symlink-tricks-refused-at-start', async () => {
+    const { manager, spawn, confirmStart } = setup();
+    const docs = path.join(FAKE_HOME, 'servers', 'docs');
+    expect((await saveWith(manager, [docs])).result).toBe('saved');
+    await manager.setEnabled('reader', true);
+    const swapped = path.join(FAKE_HOME, 'servers', 'docs-real');
+    fs.renameSync(docs, swapped);
+    onTestFinished(() => {
+      fs.rmSync(docs, { recursive: true, force: true });
+      fs.renameSync(swapped, docs);
+    });
+    const runtime = process.env['XDG_RUNTIME_DIR'] ?? '/run';
+    // After saving, the folder became a symlink into the runtime folder (D-Bus, agents), into
+    // `.ssh`, onto home itself, or vanished: each start refuses, asks nothing, runs nothing.
+    for (const target of [runtime, `/run/user/${process.getuid?.() ?? 0}`, path.join(FAKE_HOME, '.ssh'), FAKE_HOME, path.dirname(FAKE_HOME), os.tmpdir(), USER_DATA, null]) {
+      fs.rmSync(docs, { recursive: true, force: true });
+      if (target !== null) fs.symlinkSync(target, docs);
+      expect(await manager.start('reader'), String(target)).toBe('failed');
+      expect(manager.view().servers[0]!.lastError).toBe(MCP_ERRORS['read-path']);
+    }
+    expect(confirmStart).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    // A symlink to an allowed folder is fine; the dialog lists its real path.
+    fs.rmSync(docs, { recursive: true, force: true });
+    fs.symlinkSync(swapped, docs);
+    expect(await manager.start('reader')).toBe('ready');
+    expect(confirmStart.mock.calls[0]![0].readPaths).toEqual([swapped]);
+  });
+});
+
 /** Whether this machine's bubblewrap can make a sandbox (unprivileged user namespaces allowed). */
 function bubblewrapWorks(): boolean {
   if (process.platform !== 'linux') return false;
-  const probe = spawnSync('bwrap', ['--unshare-all', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', 'true'], { timeout: 5000 });
+  const bwrap = ['/usr/bin/bwrap', '/bin/bwrap'].find((file) => fs.existsSync(file));
+  if (bwrap === undefined) return false;
+  const probe = spawnSync(bwrap, ['--unshare-all', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', 'true'], { timeout: 5000 });
   return probe.status === 0;
 }
 
@@ -254,7 +340,8 @@ describe.skipIf(!bubblewrapWorks())('MCP manager with the fake server under bubb
     const readPaths = [path.dirname(path.dirname(node)), path.dirname(FIXTURE)].filter((folder) => folder.startsWith('/') && folder !== '/');
     // The real detection (`bwrap --version`), main's own launch plan.
     const { detectSandbox } = nodeMcpDeps(() => ({ fetch: async () => new Response(), resolveHost: async () => ({ endpoints: [] }) }));
-    const { manager, confirmStart, spawn } = setup({ detectSandbox });
+    // The real home and a fake one holding a secret (so the check holds wherever the repository is).
+    const { manager, confirmStart, spawn } = setup({ detectSandbox, homes: [os.homedir(), FAKE_HOME] });
     const saved = await manager.save({ name: 'Boxed', transport: 'stdio', command: node, args: [FIXTURE], readPaths, allowNetwork: false, env: [] });
     expect(saved.result).toBe('saved');
     await manager.setEnabled('boxed', true);
@@ -267,10 +354,24 @@ describe.skipIf(!bubblewrapWorks())('MCP manager with the fake server under bubb
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'frost-mcp-host-'));
     onTestFinished(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
     const outside = path.join(outsideDir, 'probe.txt');
-    const probe = await manager.runner.run('mcp__boxed__probe', { file: hidden, outside }, approved());
+    // A host file in /tmp, the session bus, the fake home's secret, frost's userData.
+    const hostTmp = path.join(outsideDir, 'host.txt');
+    fs.writeFileSync(hostTmp, 'host');
+    const bus = `/run/user/${process.getuid?.() ?? 0}/bus`;
+    const exists = [hostTmp, bus, path.join(FAKE_HOME, 'secret.txt'), USER_DATA, path.join(FAKE_HOME, '.ssh', 'id_test')];
+    const probe = await manager.runner.run('mcp__boxed__probe', { file: path.join(FAKE_HOME, 'secret.txt'), outside, exists }, approved());
     expect(probe.ok).toBe(true);
-    const report = JSON.parse((probe as { data: { text: string } }).data.text) as { envNames: string[]; fileReadable: boolean; writeOutside: boolean; writeOwn: boolean; network: boolean };
-    if (hidden.startsWith(`${os.homedir()}/`)) expect(report.fileReadable).toBe(false);
+    const report = JSON.parse((probe as { data: { text: string } }).data.text) as { exists: Record<string, boolean>; envNames: string[]; fileReadable: boolean; writeOutside: boolean; writeOwn: boolean; network: boolean };
+    expect(report.fileReadable).toBe(false);
+    expect(report.exists).toEqual(Object.fromEntries(exists.map((item) => [item, false])));
+    // Unsandboxed, the same paths are there (so the check above means something).
+    expect(fs.existsSync(hostTmp) && fs.existsSync(path.join(FAKE_HOME, 'secret.txt'))).toBe(true);
+    if (hidden.startsWith(`${os.homedir()}/`)) {
+      const real = await manager.runner.run('mcp__boxed__probe', { file: hidden, outside, exists: [] }, approved());
+      expect(JSON.parse((real as { data: { text: string } }).data.text).fileReadable).toBe(false);
+    }
+    // No namespace of its own (`--disable-userns`), where bubblewrap has it.
+    if (spawn.mock.calls[0]![1].includes('--disable-userns')) expect(spawn.mock.calls[0]![1]).toContain('--unshare-user');
     expect(report.writeOutside).toBe(false);
     expect(fs.existsSync(outside)).toBe(false);
     expect(report.writeOwn).toBe(true);

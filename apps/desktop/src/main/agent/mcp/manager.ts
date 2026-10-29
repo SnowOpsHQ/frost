@@ -1,5 +1,6 @@
 import {
   cutText,
+  isAllowedMcpReadFolder,
   isMcpServerId,
   mcpCommandLine,
   mcpServerIdFor,
@@ -19,6 +20,7 @@ import {
   type AgentMcpView,
   type McpErrorCode,
   type McpInputSchema,
+  type McpReadFolderContext,
   type McpSandboxMode,
   type McpSaveResult,
   type McpServerStatus,
@@ -26,13 +28,13 @@ import {
   type McpTokenResult,
 } from '@app/specs/agent-mcp.spec';
 import { McpServerConfigSchema, McpToolDefinitionSchema, type AgentSaveMcpServerInput, type McpServerConfig, type McpToolDefinition } from '@app/specs/agent-mcp.schema';
-import { isBoundedJson, type JsonValue } from '@app/specs/agent-protocol.schema';
+import type { JsonValue } from '@app/specs/agent-protocol.schema';
 import { TOOL_RESULT_MAX_CHARS, UNSAFE_CODE_CHARS } from '@app/specs/agent-tools.spec';
 import type { ToolRunContext, ToolRunner, ToolRunOutcome } from '../approvals';
 import type { AgentEntitlements } from '../entitlements';
 import { createMcpClient, McpFailure, McpRpcError, type McpClient, type McpTransport } from './client';
 import { createHttpTransport, type HttpTransportDeps } from './http';
-import { launchPlan, resolveCommand } from './sandbox';
+import { launchPlan, resolveCommand, type DetectedSandbox } from './sandbox';
 import type { McpSecrets } from './secrets';
 import { createStdioTransport, type SpawnLike, type StdioTransport } from './stdio';
 
@@ -69,6 +71,9 @@ export interface McpStartPrompt {
   readonly commandLine: string;
   readonly sandbox: McpSandboxMode;
   readonly allowNetwork: boolean;
+  /** The folders it may read, as real paths (what the sandbox binds), and its variables' names (never values). */
+  readonly readPaths: readonly string[];
+  readonly envNames: readonly string[];
 }
 
 export interface McpManagerDeps {
@@ -81,15 +86,24 @@ export interface McpManagerDeps {
   readonly fetch: HttpTransportDeps['fetch'];
   readonly resolveHost: HttpTransportDeps['resolveHost'];
   /** The sandbox here, detected once (`sandbox.ts` `detectSandbox`). */
-  readonly detectSandbox: () => Promise<{ readonly mode: McpSandboxMode; readonly launcher: string | null }>;
+  readonly detectSandbox: () => Promise<DetectedSandbox>;
   readonly isExecutable: (file: string) => boolean;
+  readonly isDirectory: (file: string) => Promise<boolean>;
   readonly realpath: (file: string) => Promise<string>;
   /** A new, empty, owner-only folder for one start. */
   readonly makeTempDir: () => Promise<string>;
   readonly removeDir: (dir: string) => Promise<void>;
-  /** main's `PATH` and the user's home folder. */
+  /** main's `PATH`. */
   readonly pathEnv: string;
-  readonly home: string;
+  /**
+   * What a sandbox hides and a readable folder is checked against (each resolved to its real path at
+   * every start): the user's home folders, `$XDG_RUNTIME_DIR`, the system's temporary folder and
+   * frost's `userData`.
+   */
+  readonly homes: readonly string[];
+  readonly runtimeDir: string | null;
+  readonly tmpDir: string;
+  readonly userData: string;
   readonly platform?: NodeJS.Platform;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
@@ -118,6 +132,8 @@ export interface McpManager {
   /** The broker's runner for MCP tools. */
   readonly runner: ToolRunner;
   onChange(listener: () => void): () => void;
+  /** App quit: `SIGKILL` to every command server's process group, synchronously. */
+  killAll(): void;
   /** Stops every server (app quit). */
   dispose(): Promise<void>;
 }
@@ -131,6 +147,8 @@ interface ServerTool {
 interface Run {
   readonly controller: AbortController;
   client: McpClient | null;
+  /** A command server's transport (for `killAll`). */
+  stdio: StdioTransport | null;
   tempDir: string | null;
   sandbox: McpSandboxMode;
   tools: Map<string, ServerTool>;
@@ -175,8 +193,7 @@ export function mcpResultData(serverName: string, tool: string, result: Record<s
   }
   const data: Record<string, JsonValue> = { server: serverName, tool: cutText(tool, 256), isError: result['isError'] === true, text: texts.join('\n\n') };
   if (cut) data['truncated'] = true;
-  const structured = result['structuredContent'];
-  if (texts.length === 0 && isObject(structured) && isBoundedJson(structured, RESULT_TEXT_BUDGET)) data['structuredContent'] = JSON.parse(JSON.stringify(structured)) as JsonValue;
+  // `structuredContent` is never passed on (Task 10 review): its strings would reach the model uncleaned.
   if (omitted > 0) data['note'] = `frost passes on text only: ${omitted} other part${omitted === 1 ? ' was' : 's were'} left out.`;
   return data;
 }
@@ -220,8 +237,8 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
   const platform = deps.platform ?? process.platform;
   const servers = new Map<string, Server>();
   const listeners = new Set<() => void>();
-  let detected: { readonly mode: McpSandboxMode; readonly launcher: string | null } | null = null;
-  let detecting: Promise<{ readonly mode: McpSandboxMode; readonly launcher: string | null }> | null = null;
+  let detected: DetectedSandbox | null = null;
+  let detecting: Promise<DetectedSandbox> | null = null;
   let disposed = false;
 
   const changed = () => {
@@ -341,10 +358,21 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
         return 'failed';
       }
       run.sandbox = sandbox.mode;
-      // Every start asks, showing exactly what will run and how it is contained.
+      // The readable folders, on their real paths now (a symlink or a renamed folder can't slip
+      // something else in since saving), checked against home, its secret folders, the runtime and
+      // temporary folders and frost's data; any missing or refused one stops the start.
+      const context = await readContext(null);
+      const readPaths = context === null ? null : await vetReadPaths(config.readPaths, context);
+      if (!current()) return 'failed';
+      if (context === null || readPaths === null) {
+        failRun(server, run, 'read-path');
+        return 'failed';
+      }
+      // Every start asks, showing exactly what will run, what it may read and get, and how it is contained.
       let allowed = false;
       try {
-        allowed = (await deps.confirmStart({ name: config.name, commandLine: mcpCommandLine(command, config.args), sandbox: sandbox.mode, allowNetwork: config.allowNetwork })) === true;
+        allowed =
+          (await deps.confirmStart({ name: config.name, commandLine: mcpCommandLine(command, config.args), sandbox: sandbox.mode, allowNetwork: config.allowNetwork, readPaths, envNames: [...config.envNames] })) === true;
       } catch {
         allowed = false;
       }
@@ -374,16 +402,28 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
         return 'failed';
       }
       if (!current()) return 'failed';
-      const plan = launchPlan(sandbox.mode, {
-        command,
-        args: config.args,
-        tempDir: run.tempDir,
-        home: deps.home,
-        allowNetwork: config.allowNetwork,
-        readPaths: config.readPaths,
-        pathEnv: deps.pathEnv,
-        env,
-      }, undefined, sandbox.mode === 'bubblewrap' && sandbox.launcher !== null ? sandbox.launcher : undefined);
+      // Checked again with the server's own folder known: nothing listed may be it, hold it or sit in it.
+      const tempDir = run.tempDir;
+      if ((await vetReadPaths(readPaths, { ...context, tempDir })) === null) {
+        failRun(server, run, 'read-path');
+        return 'failed';
+      }
+      const plan = launchPlan(
+        sandbox.mode,
+        {
+          command,
+          args: config.args,
+          tempDir,
+          hidden: [...context.realHomes, context.userData],
+          allowNetwork: config.allowNetwork,
+          readPaths,
+          pathEnv: deps.pathEnv,
+          env,
+          disableUserns: sandbox.disableUserns === true,
+        },
+        undefined,
+        sandbox.mode === 'bubblewrap' && sandbox.launcher !== null ? sandbox.launcher : undefined,
+      );
       try {
         stdio = createStdioTransport({ spawn: deps.spawn, command: plan.command, args: plan.args, env: plan.env, cwd: plan.cwd, statusFd: plan.statusFd, platform, ...(deps.killGroup ? { killGroup: deps.killGroup } : {}) });
       } catch {
@@ -391,6 +431,7 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
         return 'failed';
       }
       transport = stdio;
+      run.stdio = stdio;
     }
     const launched = stdio;
     /** Why the connection ended: a sandbox that never came up is the sandbox's failure, not the server's. */
@@ -430,6 +471,31 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
       failRun(server, run, code, error instanceof McpFailure ? error.status : null);
       return 'failed';
     }
+  };
+
+  /** The real paths a readable folder is checked against; `null` if they can't be resolved. */
+  const readContext = async (tempDir: string | null): Promise<(McpReadFolderContext & { readonly realHomes: readonly string[] }) | null> => {
+    const real = async (file: string) => deps.realpath(file).catch(() => null);
+    const homes = (await Promise.all(deps.homes.map((home) => real(home)))).filter((home): home is string => home !== null);
+    const userData = (await real(deps.userData)) ?? deps.userData;
+    const tmpDir = (await real(deps.tmpDir)) ?? deps.tmpDir;
+    const runtimeDir = deps.runtimeDir === null ? null : ((await real(deps.runtimeDir)) ?? deps.runtimeDir);
+    // Without a home to hide, nothing is hidden: refuse rather than run a sandbox that claims it.
+    if (homes.length === 0 && deps.homes.length > 0) return null;
+    // Checked against both a home as given and its real path; the sandbox hides the real ones.
+    return { homes: [...new Set([...homes, ...deps.homes.filter((home) => home.startsWith('/'))])], realHomes: [...new Set(homes)], runtimeDir, userData, tmpDir, tempDir };
+  };
+
+  /** Each folder's real path, if it is a directory and allowed (`isAllowedMcpReadFolder`); `null` if any isn't. */
+  const vetReadPaths = async (folders: readonly string[], context: McpReadFolderContext): Promise<string[] | null> => {
+    const out: string[] = [];
+    for (const folder of folders) {
+      if (!isAllowedMcpReadFolder(folder, context)) return null;
+      const real = await deps.realpath(folder).catch(() => null);
+      if (real === null || !isAllowedMcpReadFolder(real, context) || !(await deps.isDirectory(real).catch(() => false))) return null;
+      if (!out.includes(real)) out.push(real);
+    }
+    return out;
   };
 
   const findTool = (toolName: string): { server: Server; run: Run; tool: ServerTool } | null => {
@@ -518,6 +584,16 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
       const parsed = McpServerConfigSchema.safeParse(candidate);
       if (!parsed.success) return { result: 'invalid' };
       const config = parsed.data;
+      // Readable folders are checked here too (as typed and as they resolve now), so a refused one
+      // is said at once; every start checks them again.
+      if (config.transport === 'stdio' && config.readPaths.length > 0) {
+        const context = await readContext(null);
+        if (context === null || !config.readPaths.every((folder) => isAllowedMcpReadFolder(folder, context))) return { result: 'invalid' };
+        for (const folder of config.readPaths) {
+          const real = await deps.realpath(folder).catch(() => null);
+          if (real !== null && !isAllowedMcpReadFolder(real, context)) return { result: 'invalid' };
+        }
+      }
       // Environment values: the ones typed now, else the stored ones for names still listed.
       if (input.transport === 'stdio') {
         const typed = input.env.filter((item) => item.value !== undefined);
@@ -599,7 +675,7 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
       if (!entitled()) return 'not-entitled';
       if (!server.config.enabled) return 'disabled';
       if (server.status === 'starting' || server.status === 'ready') return 'busy';
-      const run: Run = { controller: new AbortController(), client: null, tempDir: null, sandbox: server.config.transport === 'http' ? 'n/a' : (detected?.mode ?? 'none'), tools: new Map(), inFlight: 0 };
+      const run: Run = { controller: new AbortController(), client: null, stdio: null, tempDir: null, sandbox: server.config.transport === 'http' ? 'n/a' : (detected?.mode ?? 'none'), tools: new Map(), inFlight: 0 };
       server.run = run;
       server.status = 'starting';
       server.error = null;
@@ -669,6 +745,17 @@ export function createMcpManager(deps: McpManagerDeps): McpManager {
     onChange(listener) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
+    },
+
+    killAll() {
+      disposed = true;
+      for (const server of servers.values()) {
+        try {
+          server.run?.stdio?.killNow();
+        } catch {
+          // Already gone.
+        }
+      }
     },
 
     async dispose() {

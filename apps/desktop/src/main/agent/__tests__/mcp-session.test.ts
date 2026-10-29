@@ -45,7 +45,11 @@ async function readyManager(flags: { mcp?: boolean } = {}) {
     makeTempDir: () => fs.promises.mkdtemp(path.join(os.tmpdir(), 'frost-mcp-session-')),
     removeDir: (dir) => fs.promises.rm(dir, { recursive: true, force: true }),
     pathEnv: process.env['PATH'] ?? '',
-    home: os.homedir(),
+    homes: [os.homedir()],
+    runtimeDir: null,
+    tmpDir: os.tmpdir(),
+    userData: path.join(os.homedir(), '.config', 'frost-test-unused'),
+    isDirectory: async () => true,
   });
   managers.push(manager);
   entitlement['agent.mcp'] = true;

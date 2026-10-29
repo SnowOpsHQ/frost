@@ -813,9 +813,53 @@ _Filled in as tasks land._
   host's abstract sockets (an X11 display among them); a sandbox reads the rest of `/` (system files,
   other users' world-readable files); macOS lets the server run only the command and programs in
   the listed folders (a launcher such as `npx` that runs other programs needs their folders listed);
-  if frost is killed outright an unsandboxed server may outlive it (it sees its stdin close;
-  `--die-with-parent` ties the sandboxed process to bubblewrap, not to frost); environment values
-  sit in the add form's React state until saved (then the form is cleared).
+  if frost is killed outright an unsandboxed server may outlive it (it sees its stdin close; under
+  bubblewrap `--die-with-parent` kills the sandboxed process when bubblewrap or its parent, frost,
+  dies); environment values sit in the add form's React state until saved (then the form is cleared).
+  (`structuredContent` is no longer passed on at all: see the review below.)
+- **Task 10 review.** **B1 floods:** the client answers no server request but `ping`, over stdio
+  only and at most `maxPingRepliesPerSecond` (5); over HTTP none at all (each answer would be a
+  `POST`: the reviewer's 900 KB event stream had made 20,001). Whatever a server sends on its own is
+  budgeted per connection, `maxServerMessagesPerSecond` (200) and `maxServerMessagesPerCall` (2,000)
+  while a request is open; past either the connection closes `flood`. stdin is bounded:
+  `maxQueuedWriteBytes` (1 MiB) queued, or `write()` full for `maxWriteStallMs` (10 s), closes it
+  `too-large`. The reviewer's flood server (884 MB in 4 s before) now leaves main at 72 MB with an
+  empty stdin queue. **B2 readable folders:** `isAllowedMcpReadFolder` (spec) refuses a folder that
+  is, is inside or holds `/run`, `/var/run`, `/proc`, `/sys`, `/dev`, `/tmp` (with `/tmp/.X11-unix`),
+  `/var/tmp`, `/private/tmp`, `/private/var/run`, `/private/var/folders`, `/var/folders`,
+  `$XDG_RUNTIME_DIR`, `userData`, the system's temporary folder or the server's own; a home folder or
+  anything above one (`/home`, `/`); and a home's `.ssh`, `.gnupg`, `.config`, `Library`, `.aws`,
+  `.docker`, `.kube`, `.password-store`, `.local/share/keyrings`, inside one or above one. Checked at
+  save (as typed and resolved) and at every start on real paths (`realpath`, a directory), before
+  the dialog and again once the temporary folder exists; a refused or missing one fails the start
+  `read-path`. bubblewrap binds them strictly `--ro-bind`, the temporary folder last. The dialog lists
+  every readable folder (real paths), the network setting and every environment variable's name.
+  **S1** event streams are scanned linearly (the reviewer's 4 MB single line: 4,028 ms before,
+  166 ms after), with a 1 MiB line cap and a 100,000-line cap (keep-alives). **S2** see B1. **S3**
+  each request has its own `AbortController`, aborted by its deadline, the caller's signal or the
+  connection closing, and combined into the transport's signal (the `fetch` and the stream reader stop).
+  **S4/S5/S6** macOS: network is `(remote ip)` plus `/private/var/run/mDNSResponder` (no unix
+  socket); reads of `/Users`, `/Volumes`, `/private/var/folders`, `/private/tmp`, every home and
+  `userData` are denied, with the command, its temporary folder and the vetted folders allowed back;
+  bubblewrap puts a tmpfs over every home (`os.homedir()` and `os.userInfo().homedir`, real paths)
+  and `userData` when it isn't inside one. **Verified on the Mac again (macOS 27.0.1, by hand with the
+  builder's own output):** home, another temporary folder, `/private/tmp`, `/Users/Shared`,
+  `/Volumes` and Application Support `EPERM`; a listed folder readable; writes only in its own
+  folder; without the network TCP `EPERM`, with it TCP and DNS work while a unix-socket connect is
+  `EPERM` (unsandboxed it connects). **S7** a connection's end signals the process group even after
+  the leader exited; at `will-quit` `killAll()` sends `SIGKILL` to every group synchronously.
+  **S8** tests: the bubblewrap run now hides a fake home's secret (wherever the repository lives),
+  a host `/tmp` file, `/run/user/<uid>/bus` and `userData`; regression tests for each probe
+  (`mcp-client-server-message-budget`, `mcp-flood-of-server-requests-disconnects`,
+  `mcp-stdio-write-backpressure`, `mcp-http-event-stream-linear`,
+  `mcp-http-server-requests-not-answered`, `mcp-http-timeout-aborts-the-request`), the symlink and
+  `..` tricks, and `agent-cannot-approve-mcp`. The real-sandbox test still skips where bubblewrap
+  can't make a sandbox (CI without user namespaces); the argv and profile builders are checked
+  everywhere. **Nits:** honest network sentences (localhost and abstract sockets on Linux,
+  localhost over IP on macOS; both read the system's files); `--unshare-user --disable-userns` when
+  `bwrap --help` lists it (seccomp is not used: no filter is installed); bubblewrap only at
+  `/usr/bin/bwrap` or `/bin/bwrap`; `structuredContent` dropped; the system prompt says MCP tools'
+  names, descriptions and schemas are untrusted text.
 
 ## Lead follow-ups (Task 9)
 - **Clear Browsing Data and the agent.** Today it clears neither standing grants nor chats. In

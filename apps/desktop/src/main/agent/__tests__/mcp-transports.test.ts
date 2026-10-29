@@ -2,7 +2,7 @@
 // Acceptance: specs/agent-mcp.feature.md (Client, Command servers, HTTP servers)
 import { EventEmitter } from 'node:events';
 import { describe, expect, test, vi } from 'vitest';
-import { MCP_LIMITS, MCP_PROTOCOL_VERSION } from '@app/specs/agent-mcp.spec';
+import { MCP_LIMITS, MCP_PROTOCOL_VERSION, type McpErrorCode } from '@app/specs/agent-mcp.spec';
 import { createMcpClient, McpFailure, McpRpcError, type JsonRpcOutgoing, type McpTransport } from '../mcp/client';
 import { createHttpTransport, type McpFetchInit } from '../mcp/http';
 import { createStdioTransport, type ChildLike, type SpawnOptions } from '../mcp/stdio';
@@ -15,9 +15,24 @@ function fakeChild() {
   const status = new EventEmitter();
   const written: string[] = [];
   const signals: string[] = [];
+  const stdinEvents = new EventEmitter();
+  const stdin = {
+    queued: 0,
+    full: false,
+    write(chunk: string) {
+      written.push(chunk);
+      if (stdin.full) stdin.queued += chunk.length;
+      return !stdin.full;
+    },
+    end: () => undefined,
+    on: (event: string, listener: (error?: unknown) => void) => stdinEvents.on(event, listener),
+    get writableLength() {
+      return stdin.queued;
+    },
+  };
   const child: ChildLike = {
     pid: 4242,
-    stdin: { write: (chunk: string) => (written.push(chunk), true), end: () => undefined, on: () => undefined },
+    stdin,
     stdout: { on: (event, listener) => stdout.on(event, listener) },
     stderr: { on: (event, listener) => stderr.on(event, listener) },
     stdio: [null, null, null, { on: (event: string, listener: (chunk: Buffer) => void) => status.on(event, listener) }],
@@ -26,6 +41,12 @@ function fakeChild() {
   };
   return {
     child,
+    stdin,
+    drain: () => {
+      stdin.full = false;
+      stdin.queued = 0;
+      stdinEvents.emit('drain');
+    },
     written,
     signals,
     out: (text: string) => stdout.emit('data', Buffer.from(text)),
@@ -84,6 +105,57 @@ describe('stdio transport', () => {
     expect(codes).toEqual(['not-found', 'exited']);
   });
 
+  test('mcp-stdio-write-backpressure', async () => {
+    vi.useFakeTimers();
+    try {
+      // A server that stops reading: stdin full for `maxWriteStallMs` ends the connection.
+      const stalled = fakeChild();
+      const killed: [number, string][] = [];
+      const a = createStdioTransport({ spawn: () => stalled.child, command: 'x', args: [], env: {}, cwd: '/tmp', platform: 'linux', killGroup: (pid, signal) => killed.push([pid, signal]) });
+      const codes: string[] = [];
+      a.onClose((code) => codes.push(code));
+      stalled.stdin.full = true;
+      await a.send({ jsonrpc: '2.0', id: 1, method: 'ping' }, new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(MCP_LIMITS.maxWriteStallMs - 1);
+      expect(codes).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(codes).toEqual(['too-large']);
+      expect(killed[0]).toEqual([4242, 'SIGTERM']);
+      // One that drains in time stays open.
+      const slow = fakeChild();
+      const b = createStdioTransport({ spawn: () => slow.child, command: 'x', args: [], env: {}, cwd: '/tmp', platform: 'linux', killGroup: () => undefined });
+      const bCodes: string[] = [];
+      b.onClose((code) => bCodes.push(code));
+      slow.stdin.full = true;
+      await b.send({ jsonrpc: '2.0', id: 1, method: 'ping' }, new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(MCP_LIMITS.maxWriteStallMs / 2);
+      slow.drain();
+      await vi.advanceTimersByTimeAsync(MCP_LIMITS.maxWriteStallMs);
+      expect(bCodes).toEqual([]);
+      // More than `maxQueuedWriteBytes` waiting: refused and closed at once, nothing more written.
+      const queued = fakeChild();
+      const c = createStdioTransport({ spawn: () => queued.child, command: 'x', args: [], env: {}, cwd: '/tmp', platform: 'linux', killGroup: () => undefined });
+      queued.stdin.full = true;
+      queued.stdin.queued = MCP_LIMITS.maxQueuedWriteBytes;
+      await expect(c.send({ jsonrpc: '2.0', id: 1, method: 'ping' }, new AbortController().signal)).rejects.toMatchObject({ code: 'too-large' });
+      expect(queued.written).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('mcp-stdio-kills-the-group-after-the-leader-exits', () => {
+    const fake = fakeChild();
+    const killed: [number, string][] = [];
+    const transport = createStdioTransport({ spawn: () => fake.child, command: 'x', args: [], env: {}, cwd: '/tmp', platform: 'linux', killGroup: (pid, signal) => killed.push([pid, signal]) });
+    // The leader exits; what it started may still run in its group.
+    fake.exit();
+    expect(killed).toEqual([[4242, 'SIGTERM']]);
+    // App quit: SIGKILL to the group at once.
+    transport.killNow();
+    expect(killed.at(-1)).toEqual([4242, 'SIGKILL']);
+  });
+
   test('mcp-stdio-bubblewrap-status', () => {
     const fake = fakeChild();
     const transport = createStdioTransport({ spawn: () => fake.child, command: 'bwrap', args: [], env: {}, cwd: '/tmp', statusFd: true, platform: 'linux', killGroup: () => undefined });
@@ -96,21 +168,31 @@ describe('stdio transport', () => {
 });
 
 /** A transport the test answers by hand. */
-function scripted(answer: (message: JsonRpcOutgoing, deliver: (message: unknown) => void) => void): McpTransport & { sent: JsonRpcOutgoing[]; close: () => Promise<void>; closeWith: (code: 'exited') => void } {
+function scripted(answer: (message: JsonRpcOutgoing, deliver: (message: unknown) => void) => void, options: { answersServerRequests?: boolean } = {}) {
   const listeners: ((message: unknown) => void)[] = [];
-  const closers: ((code: 'exited') => void)[] = [];
+  const closers: ((code: McpErrorCode) => void)[] = [];
   const sent: JsonRpcOutgoing[] = [];
-  return {
+  const closed: string[] = [];
+  const signals: AbortSignal[] = [];
+  const transport: McpTransport & { sent: JsonRpcOutgoing[]; closed: string[]; signals: AbortSignal[]; closeWith: (code: 'exited') => void; deliver: (message: unknown) => void } = {
     sent,
-    async send(message) {
+    closed,
+    signals,
+    async send(message, signal) {
       sent.push(message);
+      signals.push(signal);
       queueMicrotask(() => answer(message, (reply) => listeners.forEach((listener) => listener(reply))));
     },
     onMessage: (listener) => void listeners.push(listener),
     onClose: (listener) => void closers.push(listener),
-    close: async () => undefined,
+    close: async (code = 'exited') => {
+      closed.push(code);
+    },
     closeWith: (code) => closers.forEach((listener) => listener(code)),
+    deliver: (message) => listeners.forEach((listener) => listener(message)),
+    ...(options.answersServerRequests === false ? { answersServerRequests: false } : {}),
   };
+  return transport;
 }
 
 describe('JSON-RPC client', () => {
@@ -138,22 +220,55 @@ describe('JSON-RPC client', () => {
   });
 
   test('mcp-client-answers-ping-refuses-other-server-requests', async () => {
-    let deliverRef: ((message: unknown) => void) | null = null;
-    const transport = scripted((message, deliver) => {
-      deliverRef = deliver;
-      init(message, deliver);
-    });
+    const transport = scripted((message, deliver) => init(message, deliver));
     const client = createMcpClient(transport);
     await client.initialize(new AbortController().signal);
-    deliverRef!({ jsonrpc: '2.0', id: 'p1', method: 'ping' });
-    deliverRef!({ jsonrpc: '2.0', id: 'p2', method: 'sampling/createMessage', params: {} });
-    deliverRef!({ jsonrpc: '2.0', id: 'p3', method: 'roots/list' });
+    transport.deliver({ jsonrpc: '2.0', id: 'p1', method: 'ping' });
+    transport.deliver({ jsonrpc: '2.0', id: 'p2', method: 'sampling/createMessage', params: {} });
+    transport.deliver({ jsonrpc: '2.0', id: 'p3', method: 'roots/list' });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(transport.sent.slice(2)).toEqual([
-      { jsonrpc: '2.0', id: 'p1', result: {} },
-      { jsonrpc: '2.0', id: 'p2', error: { code: -32601, message: 'Method not found' } },
-      { jsonrpc: '2.0', id: 'p3', error: { code: -32601, message: 'Method not found' } },
-    ]);
+    // Only `ping` is answered; frost declares no capability, so nothing else gets an answer at all.
+    expect(transport.sent.slice(2)).toEqual([{ jsonrpc: '2.0', id: 'p1', result: {} }]);
+    // Over HTTP not even `ping` (each answer would be a POST).
+    const http = scripted((message, deliver) => init(message, deliver), { answersServerRequests: false });
+    await createMcpClient(http).initialize(new AbortController().signal);
+    for (let i = 0; i < 50; i += 1) http.deliver({ jsonrpc: '2.0', id: i, method: 'ping' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(http.sent).toHaveLength(2);
+  });
+
+  test('mcp-client-server-message-budget', async () => {
+    // A flood of server requests (the reviewer's probe): a few pings answered, then disconnected.
+    let clock = 0;
+    const transport = scripted((message, deliver) => init(message, deliver));
+    const client = createMcpClient(transport, { now: () => clock });
+    await client.initialize(new AbortController().signal);
+    for (let i = 0; i < 10_000; i += 1) transport.deliver({ jsonrpc: '2.0', id: 1, method: 'ping' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(transport.sent.slice(2).length).toBe(MCP_LIMITS.maxPingRepliesPerSecond);
+    expect(transport.closed).toEqual(['flood']);
+    await expect(client.callTool('a', {}, new AbortController().signal)).rejects.toMatchObject({ code: 'flood' });
+    // Under the per-second budget, but past the per-call one while a request is open: also a flood.
+    const slow = scripted((message, deliver) => init(message, deliver));
+    const slowClient = createMcpClient(slow, { now: () => clock });
+    await slowClient.initialize(new AbortController().signal);
+    const call = slowClient.callTool('a', {}, new AbortController().signal).catch((error: unknown) => error);
+    for (let i = 0; i <= MCP_LIMITS.maxServerMessagesPerCall; i += 1) {
+      if (i % (MCP_LIMITS.maxServerMessagesPerSecond - 1) === 0) clock += 1000;
+      slow.deliver({ jsonrpc: '2.0', method: 'notifications/progress' });
+    }
+    expect(await call).toMatchObject({ code: 'flood' });
+    expect(slow.closed).toEqual(['flood']);
+    // Answers to frost's own requests never count.
+    clock = 0;
+    const busy = scripted((message, deliver) => {
+      init(message, deliver);
+      if ('id' in message && 'method' in message && message.method === 'tools/call') deliver({ jsonrpc: '2.0', id: message.id, result: { content: [] } });
+    });
+    const busyClient = createMcpClient(busy, { now: () => clock });
+    await busyClient.initialize(new AbortController().signal);
+    for (let i = 0; i < MCP_LIMITS.maxServerMessagesPerSecond * 2; i += 1) await busyClient.callTool('a', {}, new AbortController().signal);
+    expect(busy.closed).toEqual([]);
   });
 
   test('mcp-client-refuses-unknown-protocol-version', async () => {
@@ -172,9 +287,17 @@ describe('JSON-RPC client', () => {
       expect(await settled).toMatchObject({ code: 'timeout' });
       // The server is told the request is cancelled.
       expect(transport.sent.at(-1)).toMatchObject({ method: 'notifications/cancelled', params: { requestId: 1 } });
+      // The deadline aborts the transport's own work for the request, not only the wait.
+      expect(transport.signals[0]!.aborted).toBe(true);
+      const caller = new AbortController();
+      const stopped = client.callTool('a', {}, caller.signal).catch((error: unknown) => error);
+      caller.abort();
+      await stopped;
+      expect(transport.signals.at(-2)!.aborted).toBe(true);
       const pending = client.callTool('a', {}, new AbortController().signal).catch((error: unknown) => error);
       transport.closeWith('exited');
       expect(await pending).toBeInstanceOf(McpFailure);
+      expect(transport.signals.at(-1)!.aborted).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -236,6 +359,84 @@ describe('HTTP transport', () => {
     const stream = new Response(new ReadableStream({ pull: (controller) => controller.enqueue(new TextEncoder().encode(`data: ${'x'.repeat(64 * 1024)}\n`)) }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
     const sse = createHttpTransport({ url: URL_, fetch: async () => stream, resolveHost: async () => ['93.184.216.34'], token: async () => null });
     await expect(sse.send({ jsonrpc: '2.0', id: 1, method: 'ping' }, new AbortController().signal)).rejects.toMatchObject({ code: 'too-large' });
+  });
+
+  test('mcp-http-event-stream-linear', async () => {
+    // The reviewer's probe: ~4 MB of one line in 1 KB chunks took 4 s (rescanned per chunk).
+    const chunk = 1024;
+    const piece = new TextEncoder().encode(`data: ${'x'.repeat(chunk - 6)}`);
+    const fill = new TextEncoder().encode('x'.repeat(chunk));
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent === 0) controller.enqueue(piece);
+        else if (sent < 4 * 1024 * 1024) controller.enqueue(fill);
+        else controller.close();
+        sent += chunk;
+      },
+    });
+    const transport = createHttpTransport({ url: URL_, fetch: async () => new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }), resolveHost: async () => ['93.184.216.34'], token: async () => null });
+    const started = performance.now();
+    await expect(transport.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, new AbortController().signal)).rejects.toMatchObject({ code: 'too-large' });
+    expect(performance.now() - started).toBeLessThan(1500);
+  });
+
+  test('mcp-http-server-requests-not-answered', async () => {
+    // The reviewer's probe: 20,000 server requests in one event stream made 20,000 POSTs.
+    let posts = 0;
+    const requests = 'data: {"jsonrpc":"2.0","id":7,"method":"ping"}\n\n'.repeat(20_000);
+    const transport = createHttpTransport({
+      url: URL_,
+      resolveHost: async () => ['93.184.216.34'],
+      token: async () => 'secret-token-1234',
+      fetch: async (_url, init) => {
+        posts += 1;
+        const method = JSON.parse(init.body ?? '{}').method;
+        if (method === 'initialize') return json({ jsonrpc: '2.0', id: 1, result: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: { tools: {} } } });
+        if (method === 'tools/list') return new Response(requests, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+        return new Response(null, { status: 202 });
+      },
+    });
+    const client = createMcpClient(transport);
+    await client.initialize(new AbortController().signal);
+    const before = posts;
+    await expect(client.listTools(AbortSignal.timeout(3000))).rejects.toMatchObject({ code: 'flood' });
+    // The one request frost made, nothing more.
+    expect(posts - before).toBe(1);
+  });
+
+  test('mcp-http-timeout-aborts-the-request', async () => {
+    // The reviewer's probe: a keep-alive-only stream outlived the client's timeout.
+    let fetchSignal: AbortSignal | null = null;
+    let reads = 0;
+    const transport = createHttpTransport({
+      url: URL_,
+      resolveHost: async () => ['93.184.216.34'],
+      token: async () => null,
+      fetch: async (_url, init) => {
+        // The call's request (the cancel notification that follows has a signal of its own).
+        if (JSON.parse(init.body ?? '{}').method !== 'tools/call') return new Response(null, { status: 202 });
+        fetchSignal = init.signal;
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              reads += 1;
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              controller.enqueue(new TextEncoder().encode(':\n'));
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'text/event-stream' } },
+        );
+      },
+    });
+    const client = createMcpClient(transport, { timeoutMs: 200 });
+    await expect(client.callTool('x', {}, new AbortController().signal)).rejects.toMatchObject({ code: 'timeout' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect((fetchSignal as AbortSignal | null)?.aborted).toBe(true);
+    const after = reads;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    // Nothing reads the stream any more.
+    expect(reads - after).toBeLessThanOrEqual(1);
   });
 
   test('mcp-http-event-stream', async () => {

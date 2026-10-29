@@ -2,10 +2,10 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AGENT_MCP_PARTITION, BUBBLEWRAP_COMMAND } from '@app/specs/agent-mcp.spec';
+import { AGENT_MCP_PARTITION } from '@app/specs/agent-mcp.spec';
 import type { McpFetchInit } from './http';
 import type { McpManagerDeps } from './manager';
-import { detectSandbox, resolveCommand } from './sandbox';
+import { detectSandbox } from './sandbox';
 import type { SpawnLike } from './stdio';
 
 // The MCP manager's operating-system pieces (Phase 5 Task 10): `child_process.spawn` (always
@@ -30,9 +30,18 @@ const isExecutable = (file: string): boolean => {
 /** `spawn`, never through a shell whatever the caller passes. */
 export const nodeSpawn: SpawnLike = (command, args, options) => spawn(command, [...args], { ...options, stdio: [...options.stdio], shell: false });
 
+/** The account's home folder from the user database (`os.userInfo()`), or `null`. */
+function accountHome(): string | null {
+  try {
+    return os.userInfo().homedir;
+  } catch {
+    return null;
+  }
+}
+
 export function nodeMcpDeps(session: () => McpSessionLike): Pick<
   McpManagerDeps,
-  'spawn' | 'fetch' | 'resolveHost' | 'detectSandbox' | 'isExecutable' | 'realpath' | 'makeTempDir' | 'removeDir' | 'pathEnv' | 'home' | 'platform'
+  'spawn' | 'fetch' | 'resolveHost' | 'detectSandbox' | 'isExecutable' | 'isDirectory' | 'realpath' | 'makeTempDir' | 'removeDir' | 'pathEnv' | 'homes' | 'runtimeDir' | 'tmpDir' | 'platform'
 > {
   const pathEnv = process.env['PATH'] ?? '';
   return {
@@ -47,7 +56,6 @@ export function nodeMcpDeps(session: () => McpSessionLike): Pick<
           () => true,
           () => false,
         ),
-        findBubblewrap: () => resolveCommand(BUBBLEWRAP_COMMAND, pathEnv, process.platform, isExecutable),
         run: (command, args) =>
           new Promise((resolve) => {
             execFile(command, [...args], { timeout: 3_000, maxBuffer: 4096, windowsHide: true, shell: false, env: { PATH: pathEnv } }, (error, stdout) => {
@@ -57,11 +65,18 @@ export function nodeMcpDeps(session: () => McpSessionLike): Pick<
           }),
       }),
     isExecutable,
+    isDirectory: (file) => fs.promises.stat(file).then(
+      (stat) => stat.isDirectory(),
+      () => false,
+    ),
     realpath: (file) => fs.promises.realpath(file),
     makeTempDir: () => fs.promises.mkdtemp(path.join(os.tmpdir(), 'frost-mcp-')),
     removeDir: (dir) => fs.promises.rm(dir, { recursive: true, force: true }),
     pathEnv,
-    home: os.homedir(),
+    // Both of the user's home folders (they differ when `HOME` is set elsewhere), and the session's runtime folder.
+    homes: [os.homedir(), accountHome()].filter((home): home is string => typeof home === 'string' && home.startsWith('/')),
+    runtimeDir: process.env['XDG_RUNTIME_DIR'] ?? null,
+    tmpDir: os.tmpdir(),
     platform: process.platform,
   };
 }

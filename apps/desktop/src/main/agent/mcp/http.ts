@@ -40,10 +40,29 @@ export interface HttpTransportDeps {
 
 const SESSION_ID = /^[\x21-\x7e]{1,256}$/;
 
-/** Reads `body` to its end within `max` bytes; `null` when it is longer. */
-async function readBounded(body: ReadableStream<Uint8Array> | null, max: number): Promise<Uint8Array | null> {
-  if (body === null) return new Uint8Array();
+/** A reader whose `read()` ends (rejects `timeout`) as soon as `signal` aborts, cancelling the body. */
+function abortable(body: ReadableStream<Uint8Array>, signal: AbortSignal) {
   const reader = body.getReader();
+  const onAbort = () => void reader.cancel().catch(() => undefined);
+  signal.addEventListener('abort', onAbort, { once: true });
+  return {
+    async read(): Promise<ReadableStreamReadResult<Uint8Array>> {
+      if (signal.aborted) throw new McpFailure('timeout');
+      const next = await reader.read();
+      if (signal.aborted) throw new McpFailure('timeout');
+      return next;
+    },
+    async release() {
+      signal.removeEventListener('abort', onAbort);
+      await reader.cancel().catch(() => undefined);
+    },
+  };
+}
+
+/** Reads `body` to its end within `max` bytes; `null` when it is longer. Stops when `signal` aborts. */
+async function readBounded(body: ReadableStream<Uint8Array> | null, max: number, signal: AbortSignal): Promise<Uint8Array | null> {
+  if (body === null) return new Uint8Array();
+  const reader = abortable(body, signal);
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -51,14 +70,11 @@ async function readBounded(body: ReadableStream<Uint8Array> | null, max: number)
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > max) {
-        await reader.cancel().catch(() => undefined);
-        return null;
-      }
+      if (total > max) return null;
       chunks.push(value);
     }
   } finally {
-    reader.releaseLock();
+    await reader.release();
   }
   const out = new Uint8Array(total);
   let offset = 0;
@@ -69,16 +85,27 @@ async function readBounded(body: ReadableStream<Uint8Array> | null, max: number)
   return out;
 }
 
+/** The longest event-stream line (characters) and the most lines of one stream (keep-alives included). */
+export const SSE_MAX_LINE_CHARS = 1024 * 1024;
+export const SSE_MAX_LINES = 100_000;
+
 /**
  * Reads an event stream within `max` bytes, handing each `message` event's JSON data to `deliver`
- * until `done()` holds (the reply frost waits for has come), then stops reading.
+ * until `done()` holds (the reply frost waits for has come), then stops reading. Linear in the
+ * stream's length (Task 10 review): each chunk is scanned once for line breaks from where the last
+ * scan stopped; a line over `SSE_MAX_LINE_CHARS`, an event's data over `max`, or more than
+ * `SSE_MAX_LINES` lines (a stream of keep-alives) fails `too-large`; `signal` (the request's
+ * deadline or Stop) ends it at once.
  */
-async function readEvents(body: ReadableStream<Uint8Array>, max: number, deliver: (value: unknown) => void, done: () => boolean): Promise<void> {
-  const reader = body.getReader();
+async function readEvents(body: ReadableStream<Uint8Array>, max: number, deliver: (value: unknown) => void, done: () => boolean, signal: AbortSignal): Promise<void> {
+  const reader = abortable(body, signal);
   const decoder = new TextDecoder('utf-8');
   let total = 0;
   let pending = '';
+  let scanned = 0;
+  let lines = 0;
   let data: string[] = [];
+  let dataChars = 0;
   let event = '';
   const dispatch = () => {
     if (data.length > 0 && (event === '' || event === 'message')) {
@@ -89,7 +116,21 @@ async function readEvents(body: ReadableStream<Uint8Array>, max: number, deliver
       }
     }
     data = [];
+    dataChars = 0;
     event = '';
+  };
+  const handle = (line: string) => {
+    if ((lines += 1) > SSE_MAX_LINES) throw new McpFailure('too-large');
+    if (line === '') return dispatch();
+    if (line.startsWith(':')) return;
+    const colon = line.indexOf(':');
+    const field = colon === -1 ? line : line.slice(0, colon);
+    let text = colon === -1 ? '' : line.slice(colon + 1);
+    if (text.startsWith(' ')) text = text.slice(1);
+    if (field === 'data') {
+      if ((dataChars += text.length + 1) > max) throw new McpFailure('too-large');
+      data.push(text);
+    } else if (field === 'event') event = text.slice(0, 64);
   };
   try {
     while (!done()) {
@@ -98,26 +139,23 @@ async function readEvents(body: ReadableStream<Uint8Array>, max: number, deliver
       total += value.byteLength;
       if (total > max) throw new McpFailure('too-large');
       pending += decoder.decode(value, { stream: true });
-      let index: number;
-      while ((index = pending.search(/\r\n|\r|\n/)) !== -1) {
-        const line = pending.slice(0, index);
-        pending = pending.slice(index + (pending.startsWith('\r\n', index) ? 2 : 1));
-        if (line === '') dispatch();
-        else if (line.startsWith(':')) continue;
-        else {
-          const colon = line.indexOf(':');
-          const field = colon === -1 ? line : line.slice(0, colon);
-          let text = colon === -1 ? '' : line.slice(colon + 1);
-          if (text.startsWith(' ')) text = text.slice(1);
-          if (field === 'data') data.push(text);
-          else if (field === 'event') event = text;
-        }
-        if (done()) break;
+      let start = 0;
+      // Only the new text is scanned (a `\r` just before it may start a `\r\n`).
+      for (let index = Math.max(scanned - 1, 0); index < pending.length && !done(); index += 1) {
+        const code = pending.charCodeAt(index);
+        if (code !== 10 && code !== 13) continue;
+        if (code === 13 && index === pending.length - 1) break;
+        handle(pending.slice(start, index));
+        start = index + (code === 13 && pending.charCodeAt(index + 1) === 10 ? 2 : 1);
+        index = start - 1;
       }
+      pending = pending.slice(start);
+      scanned = pending.length;
+      if (pending.length > SSE_MAX_LINE_CHARS) throw new McpFailure('too-large');
     }
     if (!done()) dispatch();
   } finally {
-    await reader.cancel().catch(() => undefined);
+    await reader.release();
   }
 }
 
@@ -207,6 +245,7 @@ export function createHttpTransport(deps: HttpTransportDeps): McpTransport {
             deliver(value);
           },
           () => answered,
+          signal,
         );
         return;
       }
@@ -214,7 +253,7 @@ export function createHttpTransport(deps: HttpTransportDeps): McpTransport {
         await response.body?.cancel().catch(() => undefined);
         throw new McpFailure('protocol');
       }
-      const bytes = await readBounded(response.body, MCP_LIMITS.maxMessageBytes);
+      const bytes = await readBounded(response.body, MCP_LIMITS.maxMessageBytes, signal);
       if (bytes === null) throw new McpFailure('too-large');
       let value: unknown;
       try {
@@ -233,10 +272,12 @@ export function createHttpTransport(deps: HttpTransportDeps): McpTransport {
     setProtocolVersion(version) {
       protocolVersion = version;
     },
-    async close() {
+    // Over HTTP frost answers no server request at all: each answer would be a `POST` (Task 10 review).
+    answersServerRequests: false,
+    async close(code: McpErrorCode = 'exited') {
       if (closed) return;
       closed = true;
-      for (const listener of closeListeners) listener('exited');
+      for (const listener of closeListeners) listener(code);
       if (sessionId === null) return;
       // Ends the server's session (best effort, briefly).
       const controller = new AbortController();

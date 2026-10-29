@@ -7,6 +7,7 @@ import {
   isMcpArg,
   isMcpCommand,
   isMcpEnvName,
+  isAllowedMcpReadFolder,
   isMcpReadPath,
   isSanitizedMcpInputSchema,
   mcpCommandLine,
@@ -247,6 +248,9 @@ describe('MCP server configuration', () => {
     for (const name of ['PATH', 'HOME', 'path', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', '1X', 'A-B', '']) expect(isMcpEnvName(name), name).toBe(false);
     for (const folder of ['/opt/tools', '/home/me/servers/docs']) expect(isMcpReadPath(folder), folder).toBe(true);
     for (const folder of ['/', 'relative', '/a/../b', '/a/./b', '/a//b', '/a/', '']) expect(isMcpReadPath(folder), folder).toBe(false);
+    // System folders, anything in them and anything above them (Task 10 review).
+    for (const folder of ['/run', '/run/user/1000', '/var/run', '/var', '/proc', '/proc/1', '/sys', '/dev', '/dev/shm', '/tmp', '/tmp/.X11-unix', '/var/tmp', '/private', '/private/tmp', '/private/var/run', '/private/var/folders/ab/c', '/var/folders'])
+      expect(isMcpReadPath(folder), folder).toBe(false);
   });
 
   test('mcp-config-schema', () => {
@@ -272,15 +276,58 @@ describe('MCP server configuration', () => {
   });
 
   test('mcp-start-dialog-wording', () => {
-    const { dialog, confirmIndex } = mcpStartDialog({ name: 'Local', commandLine: '/usr/bin/node server.js', sandbox: 'none', allowNetwork: false });
+    const { dialog, confirmIndex } = mcpStartDialog({ name: 'Local', commandLine: '/usr/bin/node server.js', sandbox: 'none', allowNetwork: false, readPaths: [], envNames: ['API_MODE'] });
     expect(dialog.message).toContain('untrusted');
     expect(dialog.detail).toContain('/usr/bin/node server.js');
     expect(dialog.detail).toContain(MCP_NO_SANDBOX_SENTENCE);
+    // Every variable's name (never a value).
+    expect(dialog.detail).toContain('Environment variables it gets besides PATH and HOME: API_MODE');
+    // Sandboxed: every readable folder and whether the network is allowed.
+    const boxed = mcpStartDialog({ name: 'Local', commandLine: 'x', sandbox: 'bubblewrap', allowNetwork: false, readPaths: ['/home/me/servers/a', '/opt/b'], envNames: [] }).dialog.detail;
+    expect(boxed).toContain('Folders it may read: /home/me/servers/a, /opt/b');
+    expect(boxed).toContain('Network: not allowed');
+    expect(boxed).toContain('Environment variables it gets besides PATH and HOME: none');
     expect(dialog.buttons[confirmIndex]).toBe('Start server');
     expect([dialog.defaultId, dialog.cancelId]).toEqual([0, 0]);
     expect(MCP_NO_SANDBOX_SENTENCE).toBe('This server runs without a sandbox. It can do anything your user account can.');
     expect(mcpSandboxSentence('bubblewrap', false)).toContain('no network');
-    expect(mcpSandboxSentence('macos-sandbox', true)).toContain('may use the network');
+    // Honest about what network and reading mean in each sandbox.
+    expect(mcpSandboxSentence('bubblewrap', true)).toContain('including services on this computer (localhost, and local abstract sockets');
+    expect(mcpSandboxSentence('bubblewrap', false)).toContain("it can read this computer's system files");
+    expect(mcpSandboxSentence('macos-sandbox', true)).toContain('may use the network over IP, including services on this computer listening on localhost; local sockets stay closed');
     expect(mcpSandboxSentence('none', true)).toBe(MCP_NO_SANDBOX_SENTENCE);
+  });
+});
+
+// Spec: specs/agent-mcp.spec.ts (isAllowedMcpReadFolder, MCP_FORBIDDEN_SYSTEM_FOLDERS, MCP_FORBIDDEN_HOME_FOLDERS)
+// Acceptance: specs/agent-mcp.feature.md (Readable folders)
+describe('MCP readable folders (Task 10 review)', () => {
+  const context = { homes: ['/home/me', '/srv/accounts/me'], runtimeDir: '/run/user/1000', userData: '/home/me/.config/frost', tmpDir: '/tmp', tempDir: '/tmp/frost-mcp-x' };
+
+  test('mcp-read-folder-allowed-inside-home', () => {
+    for (const folder of ['/home/me/servers/docs', '/home/me/.local/share/mise/installs/node/26', '/opt/tools', '/srv/accounts/me/projects/x', '/usr/lib/node_modules']) expect(isAllowedMcpReadFolder(folder, context), folder).toBe(true);
+  });
+
+  test('mcp-read-folder-refuses-home-and-above', () => {
+    for (const folder of ['/home/me', '/home', '/', '/srv/accounts/me', '/srv/accounts', '/srv']) expect(isAllowedMcpReadFolder(folder, context), folder).toBe(false);
+  });
+
+  test('mcp-read-folder-refuses-secret-folders', () => {
+    for (const folder of ['/home/me/.ssh', '/home/me/.ssh/keys', '/home/me/.gnupg', '/home/me/.gnupg/private-keys-v1.d', '/home/me/.config', '/home/me/.config/other', '/home/me/Library', '/home/me/Library/Keychains', '/home/me/.aws', '/home/me/.docker', '/home/me/.local/share/keyrings', '/home/me/.local/share', '/home/me/.local', '/srv/accounts/me/.ssh'])
+      expect(isAllowedMcpReadFolder(folder, context), folder).toBe(false);
+  });
+
+  test('mcp-read-folder-refuses-runtime-temp-and-user-data', () => {
+    for (const folder of ['/run/user/1000', '/run/user/1000/bus', '/run/user', '/tmp', '/tmp/frost-mcp-x', '/tmp/frost-mcp-x/sub', '/home/me/.config/frost', '/home/me/.config/frost/Partitions'])
+      expect(isAllowedMcpReadFolder(folder, context), folder).toBe(false);
+    // A runtime folder outside /run, its parent, and a temporary folder elsewhere.
+    const odd = { ...context, runtimeDir: '/var/lib/runtime/me', tmpDir: '/scratch/tmp', tempDir: '/scratch/tmp/frost-mcp-1' };
+    for (const folder of ['/var/lib/runtime/me', '/var/lib/runtime', '/var/lib/runtime/me/gnupg', '/scratch/tmp', '/scratch', '/scratch/tmp/frost-mcp-1/x']) expect(isAllowedMcpReadFolder(folder, odd), folder).toBe(false);
+    expect(isAllowedMcpReadFolder('/var/lib/other', odd)).toBe(true);
+  });
+
+  test('mcp-read-folder-path-tricks', () => {
+    // `..`, `.`, doubled and trailing slashes are refused as typed (main also checks the real path).
+    for (const folder of ['/home/me/servers/../.ssh', '/home/me/./.ssh', '/home/me//.ssh', '/home/me/servers/', '/run/user/1000/', '/home/me/servers/..']) expect(isAllowedMcpReadFolder(folder, context), folder).toBe(false);
   });
 });

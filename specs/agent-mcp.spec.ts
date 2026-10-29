@@ -106,6 +106,18 @@ export const MCP_LIMITS = {
   maxTextParts: 64,
   /** After asking a command server to stop, how long before it is killed (milliseconds). */
   stopGraceMs: 2_000,
+  /**
+   * What a server may send on its own (requests and notifications, and answers to nothing frost
+   * asked), per connection: per second, and while one request of frost's is open. Past either, frost
+   * disconnects it (`flood`). frost declares no client capability, so a server has nothing to ask.
+   */
+  maxServerMessagesPerSecond: 200,
+  maxServerMessagesPerCall: 2_000,
+  /** `ping`s frost answers per second (the only server request it answers, and only over stdio). */
+  maxPingRepliesPerSecond: 5,
+  /** Bytes queued on a command server's stdin, and how long a full stdin may stay full (milliseconds): past either, `too-large`. */
+  maxQueuedWriteBytes: 1024 * 1024,
+  maxWriteStallMs: 10_000,
   /** The command line as the start dialog shows it (characters). */
   maxCommandLineChars: 40_000,
 } as const;
@@ -219,17 +231,75 @@ export function isMcpEnvValue(value: unknown): value is string {
 }
 
 /**
- * A folder a sandboxed command may read: absolute (POSIX), no `.` or `..` part, no doubled or
- * trailing `/`, not `/` itself, safe text. (Only the sandboxes use them; without one the command
- * reads everything anyway.)
+ * System folders no readable folder may be, be inside, or hold (Task 10 review): they hold the
+ * session's sockets (D-Bus, the display server, agents, `docker.sock`), every process, devices, and
+ * the temporary folders other programs (and other MCP servers) use. A bind of any of them, or of a
+ * folder above one, would let a sandboxed server reach what the sandbox hides.
+ */
+export const MCP_FORBIDDEN_SYSTEM_FOLDERS = ['/run', '/var/run', '/proc', '/sys', '/dev', '/tmp', '/var/tmp', '/private/tmp', '/private/var/run', '/private/var/folders', '/var/folders'] as const;
+
+/**
+ * Folders inside a home folder that hold secrets or sockets (keys, agents, keyrings, app data): never
+ * readable, nor anything inside them or above them. Home itself is never readable either; folders
+ * elsewhere inside home are.
+ */
+export const MCP_FORBIDDEN_HOME_FOLDERS = ['.ssh', '.gnupg', '.config', 'Library', '.aws', '.docker', '.kube', '.password-store', '.local/share/keyrings'] as const;
+
+/**
+ * A folder as typed for a sandboxed command to read: absolute (POSIX), no `.` or `..` part, no
+ * doubled or trailing `/`, safe text, and not a system folder, inside one or above one
+ * (`MCP_FORBIDDEN_SYSTEM_FOLDERS`; `/` is above them all). Main checks again, on real paths and
+ * against the home folders and frost's own data, when the server starts (`isAllowedMcpReadFolder`).
  */
 export function isMcpReadPath(path: unknown): path is string {
   if (typeof path !== 'string' || path.length < 2 || path.length > L.maxPathChars || !isSafeInputText(path) || !path.startsWith('/')) return false;
   if (path.endsWith('/') || path.includes('//')) return false;
-  return path
+  if (!path
     .slice(1)
     .split('/')
-    .every((part) => part !== '' && part !== '.' && part !== '..');
+    .every((part) => part !== '' && part !== '.' && part !== '..')) return false;
+  return !MCP_FORBIDDEN_SYSTEM_FOLDERS.some((folder) => overlaps(path, folder));
+}
+
+/** Whether `inner` is `outer` or inside it (both normalised absolute POSIX paths). */
+export function isPathWithin(inner: string, outer: string): boolean {
+  if (outer === '/') return inner.startsWith('/');
+  return inner === outer || inner.startsWith(`${outer}/`);
+}
+
+/** Whether `a` and `b` are the same folder, or one holds the other. */
+const overlaps = (a: string, b: string) => isPathWithin(a, b) || isPathWithin(b, a);
+
+/** What a readable folder is checked against when a server starts: real paths, as main resolved them. */
+export interface McpReadFolderContext {
+  /** The user's home folders (`os.homedir()` and the account's), resolved. */
+  readonly homes: readonly string[];
+  /** `$XDG_RUNTIME_DIR` resolved, or `null`. */
+  readonly runtimeDir: string | null;
+  /** frost's `userData`, resolved. */
+  readonly userData: string;
+  /** The system's temporary folder and the server's own one, resolved (`null` before it exists). */
+  readonly tmpDir: string;
+  readonly tempDir: string | null;
+}
+
+/**
+ * Whether `folder` (a real path: symlinks and `..` already resolved) may be bound read-only for a
+ * sandboxed server: `isMcpReadPath`; not a home folder or above one (so not `/home` or `/`); not one
+ * of the home's secret folders (`MCP_FORBIDDEN_HOME_FOLDERS`), inside one or above one; and not
+ * `$XDG_RUNTIME_DIR`, frost's `userData`, the temporary folders or the server's own, inside one or
+ * above one. A folder inside home otherwise is fine (a server's own files).
+ */
+export function isAllowedMcpReadFolder(folder: string, context: McpReadFolderContext): boolean {
+  if (!isMcpReadPath(folder)) return false;
+  for (const home of context.homes) {
+    if (isPathWithin(home, folder)) return false;
+    for (const secret of MCP_FORBIDDEN_HOME_FOLDERS) if (overlaps(folder, `${home}/${secret}`)) return false;
+  }
+  for (const other of [context.runtimeDir, context.userData, context.tmpDir, context.tempDir]) {
+    if (other !== null && other !== '' && overlaps(folder, other)) return false;
+  }
+  return true;
 }
 
 /** A bearer token as stored: trimmed, printable ASCII with no space, `minTokenChars`–`maxTokenChars`. `null` when refused. */
@@ -525,17 +595,20 @@ export function validateMcpInput(schema: McpInputSchema, value: unknown, depth =
 
 /** Where macOS keeps `sandbox-exec` (its presence is the check). */
 export const MACOS_SANDBOX_EXEC = '/usr/bin/sandbox-exec';
-/** Linux's bubblewrap, looked up on `PATH` and asked `--version`. */
-export const BUBBLEWRAP_COMMAND = 'bwrap';
+/** Linux's bubblewrap: looked for only at these system paths (never on `PATH`), and asked `--version`. */
+export const BUBBLEWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap'] as const;
 
 /** What each sandbox mode means, said plainly in the settings and the start dialog. */
 export function mcpSandboxSentence(mode: McpSandboxMode, allowNetwork: boolean): string {
-  const network = allowNetwork ? 'It may use the network.' : 'It has no network access.';
   switch (mode) {
     case 'macos-sandbox':
-      return `Runs in a macOS sandbox: it can't read your home folder (except the folders you listed) and writes only to its own temporary folder. ${network}`;
+      return `Runs in a macOS sandbox: it can read this computer's system files, but not your home folder (except the folders you listed), other accounts' folders, external drives or temporary folders, and writes only to its own temporary folder. ${
+        allowNetwork ? 'It may use the network over IP, including services on this computer listening on localhost; local sockets stay closed.' : 'It has no network access.'
+      }`;
     case 'bubblewrap':
-      return `Runs in a bubblewrap sandbox: it can't read your home folder (except the folders you listed) and writes only to its own temporary folder. ${network}`;
+      return `Runs in a bubblewrap sandbox: it can read this computer's system files, but not your home folder (except the folders you listed), and writes only to its own temporary folder. ${
+        allowNetwork ? "It may use the network, including services on this computer (localhost, and local abstract sockets such as the display server's)." : 'It has no network access.'
+      }`;
     case 'none':
       return MCP_NO_SANDBOX_SENTENCE;
     case 'n/a':
@@ -581,17 +654,32 @@ export const MCP_ERRORS = {
   'not-entitled': 'MCP connections are not available on this plan.',
   'no-keychain': "No system keychain is available, so frost can't store the server's secrets here.",
   'secrets-failed': "The server's saved secrets could not be read.",
+  flood: 'The server sent more messages than frost accepts, so frost disconnected it.',
+  'read-path':
+    "A folder listed for the server to read is missing or not allowed (your home folder itself or a folder above it, a folder holding keys or app data such as .ssh or .config, frost's own data, or a temporary or system folder).",
 } as const;
 export type McpErrorCode = keyof typeof MCP_ERRORS;
 
 /** The start dialog for a command server (main's native confirm; only `confirmIndex` starts it). */
-export function mcpStartDialog(server: { readonly name: string; readonly commandLine: string; readonly sandbox: McpSandboxMode; readonly allowNetwork: boolean }) {
+export function mcpStartDialog(server: {
+  readonly name: string;
+  readonly commandLine: string;
+  readonly sandbox: McpSandboxMode;
+  readonly allowNetwork: boolean;
+  /** The folders it may read (real paths), and the names of the variables it gets (never their values). */
+  readonly readPaths: readonly string[];
+  readonly envNames: readonly string[];
+}) {
+  const sandboxed = server.sandbox === 'bubblewrap' || server.sandbox === 'macos-sandbox';
+  const folders = sandboxed ? `\n\nFolders it may read: ${server.readPaths.length === 0 ? 'none' : server.readPaths.join(', ')}` : '';
+  const env = `\n\nEnvironment variables it gets besides PATH and HOME: ${server.envNames.length === 0 ? 'none' : server.envNames.join(', ')}`;
+  const network = sandboxed ? `\n\nNetwork: ${server.allowNetwork ? 'allowed' : 'not allowed'}` : '';
   return {
     dialog: {
       type: 'warning' as const,
       title: 'Start an untrusted MCP server?',
       message: `Start the MCP server "${server.name}"? It is untrusted: frost does not vouch for this program.`,
-      detail: `frost will run exactly this command, without a shell:\n\n${server.commandLine}\n\n${mcpSandboxSentence(server.sandbox, server.allowNetwork)}`,
+      detail: `frost will run exactly this command, without a shell:\n\n${server.commandLine}\n\n${mcpSandboxSentence(server.sandbox, server.allowNetwork)}${folders}${network}${env}`,
       buttons: ['Cancel', 'Start server'] as const,
       defaultId: 0,
       cancelId: 0,

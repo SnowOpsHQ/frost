@@ -9,15 +9,17 @@
 // - `hostile`: a schema with `$ref`, `anyOf`, a `pattern` and a huge enum, and a description with
 //   control and bidi characters;
 // - `bad name!` and `bad_name_`: two names that collide once rewritten.
-// With `--flood` it writes one huge line instead of answering `tools/list`.
+// With `--flood` it writes one huge line instead of answering `tools/list`; with `--flood-requests`
+// it answers `initialize`, then sends requests as fast as it can and never reads its stdin again.
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 
 const flood = process.argv.includes('--flood');
+const floodRequests = process.argv.includes('--flood-requests');
 const tools = [
   { name: 'echo', description: 'Echoes text back.', inputSchema: { type: 'object', properties: { text: { type: 'string', maxLength: 200 } }, required: ['text'], additionalProperties: false } },
-  { name: 'probe', description: 'Reports what this process can reach.', inputSchema: { type: 'object', properties: { file: { type: 'string' }, outside: { type: 'string' } }, required: ['file', 'outside'] } },
+  { name: 'probe', description: 'Reports what this process can reach.', inputSchema: { type: 'object', properties: { file: { type: 'string' }, outside: { type: 'string' }, exists: { type: 'array', items: { type: 'string' } } }, required: ['file', 'outside'] } },
   { name: 'mixed', description: 'Answers several kinds of content.', inputSchema: { type: 'object' } },
   { name: 'fails', description: 'Always fails.', inputSchema: { type: 'object' } },
   {
@@ -81,7 +83,8 @@ async function call(name, args) {
       } catch {
         writeOwn = false;
       }
-      const report = { cwd: process.cwd(), envNames: Object.keys(process.env).sort(), fileReadable, writeOutside, writeOwn, network: await canConnect() };
+      const exists = Object.fromEntries((args.exists ?? []).map((item) => [item, fs.existsSync(item)]));
+      const report = { exists, cwd: process.cwd(), envNames: Object.keys(process.env).sort(), fileReadable, writeOutside, writeOwn, network: await canConnect() };
       return { content: [{ type: 'text', text: JSON.stringify(report) }] };
     }
     case 'mixed':
@@ -116,8 +119,19 @@ process.stdin.on('end', () => process.exit(0));
 async function handle(message) {
   if (message.method === 'initialize') {
     send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: '1' } } });
-    // A server's own request: frost answers ping, refuses anything else.
+    // A server's own request: frost answers ping (a few a second), nothing else.
     send({ jsonrpc: '2.0', id: 'srv-1', method: 'sampling/createMessage', params: {} });
+    if (floodRequests) {
+      process.stdin.pause();
+      const lines = '{"jsonrpc":"2.0","id":1,"method":"ping"}\n'.repeat(4096);
+      const pump = () => {
+        while (process.stdout.write(lines)) {
+          // As fast as the pipe takes it.
+        }
+        process.stdout.once('drain', pump);
+      };
+      pump();
+    }
     return;
   }
   if (message.method === 'tools/list') {
