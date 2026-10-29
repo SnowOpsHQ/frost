@@ -33,11 +33,15 @@ export function storedPageUrl(url: unknown): string | null {
 
 /**
  * The lane a capture belongs to (`ci_versions.lane_key`): the SHA-256 of
- * `canonicalJson({ url, renderProfile, searchParams })`, the URL in its stored form. `null` when the
- * URL is not a storable page.
+ * `canonicalJson({ url, renderProfile, searchParams })`, the URL in its stored form: a result page's
+ * canonical search URL (`searchParams.url`) when it has search parameters, else the page's. `null`
+ * when the URL is not a storable page.
  */
 export function laneKeyFor(url: string, renderProfile: RenderProfile | null, searchParams: SearchParams | null): string | null {
-  const stored = storedPageUrl(url);
+  // A result page's lane is its search, not the URL it was reached at: Phase 3's canonical `url`
+  // drops the engine's session and tracking parameters, so a manual capture and a project run's
+  // capture of one search share a lane.
+  const stored = storedPageUrl(searchParams?.url ?? url);
   return stored === null ? null : sha256Hex(canonicalJson({ url: stored, renderProfile, searchParams }));
 }
 

@@ -667,8 +667,8 @@ schema.
   the page scrolls. A page can see the scrolling.
 - Capture-now visits pages in a visible tab, one at a time; a search engine may show a consent page
   or a challenge instead of results, and that is what gets captured.
-- Saved searches are read with the bundled selector pack, not an updated one; a lane is still keyed
-  on the page URL too, so one search reached at another URL is a lane of its own.
+- Saved searches are read with the bundled selector pack, not an updated one. A result page's lane
+  follows its canonical search URL (Phase 3's `params.url`), so tracking parameters never split it.
 - Screenshot files are not synced in this phase; rows carry the hash for Phase 7.
 
 ## Self-review notes

@@ -174,8 +174,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - Saved searches are read with the **bundled** selector pack, not one installed by "Check for
   selector updates": a pack update that renames an engine's parameters changes what the SERP service
   reads on a run tab (which the capture records), not the saved search's URL.
-- A lane is still the page's URL, profile and search parameters: one search reached at another URL
-  (an engine's own tracking parameters in it) is a lane of its own.
+- A result page's lane follows its canonical search URL (Phase 3's `params.url`), not the URL it was
+  reached at, so an engine's own tracking parameters never split one search into two lanes.
 - A run waits for its tab with no end while another tab is in front; Cancel or closing the tab ends it.
 - A page that redirects itself by script after its first commit is taken as the tab moving away: that
   target fails.

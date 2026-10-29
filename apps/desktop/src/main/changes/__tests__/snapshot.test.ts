@@ -194,6 +194,8 @@ describe('capture snapshot', () => {
     const keys = new Set([lane, laneKeyFor(`${PAGE}?a=1`, null, null), laneKeyFor(PAGE, DEFAULT_RENDER_PROFILE, null), laneKeyFor(PAGE, { ...DEFAULT_RENDER_PROFILE, device: 'phone' }, null), laneKeyFor(PAGE, null, params)]);
     expect(keys.size).toBe(5);
     for (const key of keys) expect(key).toMatch(/^[0-9a-f]{64}$/);
+    // A result page's lane follows its canonical search URL, not the engine's tracking parameters.
+    expect(laneKeyFor(`${params.url}&ei=abc&sca_esv=1`, null, params)).toBe(laneKeyFor(params.url, null, params));
     // Not a storable page: no lane.
     expect(laneKeyFor('file:///etc/passwd', null, null)).toBeNull();
     expect(laneKeyFor(`https://example.com/${'x'.repeat(20_000)}`, null, null)).toBeNull();

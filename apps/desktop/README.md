@@ -667,9 +667,9 @@ proxy, the proxy resolves the name itself.
     consent page or a challenge instead of results, and that is what gets captured. A page that
     redirects itself by script after it first loads counts as the tab moving away, and its target
     fails.
-  - **Search parameters:** a lane is still keyed on the page's URL, so the same search reached at
-    another URL (with an engine's own tracking parameters) is a lane of its own. Saved searches are
-    read with the bundled selector pack, not an updated one.
+  - **Search parameters:** saved searches are read with the bundled selector pack, not an updated
+    one. A result page's lane follows its canonical search URL, so the engine's tracking parameters
+    never split a search.
   - **Region read and inspector:** neither enters shadow roots or iframes (a click inside one picks
     its host or frame).
   - **Capture time and versions:** a capture cut short by its deadline whose text differs can still

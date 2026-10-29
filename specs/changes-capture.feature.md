@@ -215,7 +215,9 @@ closed), then its strict input.
   served-HTML rules fail builds the same snapshot (and identity) as one where they pass; the score is
   `scoreAudit` of the kept findings.
 - **Scenario: lane-key-is-canonical** — the lane key ignores key order and the URL's fragment and
-  userinfo, and differs for another URL, render profile or search parameters.
+  userinfo, and differs for another URL, render profile or search parameters. A result page's lane
+  uses its canonical search URL (Phase 3's `params.url`), so the engine's tracking parameters never
+  split one search into two lanes.
 
 ### Search parameters of a tab (`serp-params.test.ts`)
 - **Scenario: serp-state-to-search-params** — a `ready` state of the page answers its
