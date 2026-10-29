@@ -181,7 +181,9 @@ describe('MCP manager with the fake server (no sandbox)', () => {
     const probe = await manager.runner.run('mcp__faketools__probe', { file: FIXTURE, outside }, approved());
     expect(probe.ok).toBe(true);
     const report = JSON.parse((probe as { data: { text: string } }).data.text) as { cwd: string; envNames: string[]; fileReadable: boolean; writeOutside: boolean; writeOwn: boolean };
-    expect(report.envNames).toEqual(['FAKE_MODE', 'HOME', 'PATH']);
+    // macOS's CoreFoundation sets `__CF_USER_TEXT_ENCODING` inside every process it starts; it is not
+    // passed by frost (the child's environment is built from nothing).
+    expect(report.envNames.filter((name) => !(process.platform === 'darwin' && name === '__CF_USER_TEXT_ENCODING'))).toEqual(['FAKE_MODE', 'HOME', 'PATH']);
     expect(report.writeOwn).toBe(true);
     // Without a sandbox it can do what the user can: the settings say so.
     expect(report.fileReadable).toBe(true);
@@ -283,7 +285,7 @@ describe('MCP readable folders at start', () => {
 
   test('mcp-read-folder-refused-at-save', async () => {
     const { manager } = setup();
-    for (const folder of [FAKE_HOME, path.dirname(FAKE_HOME), '/', '/home', path.join(FAKE_HOME, '.ssh'), path.join(FAKE_HOME, '.config'), USER_DATA, '/run/user', '/tmp', `${FAKE_HOME}/servers/../.ssh`, `${FAKE_HOME}/servers/`])
+    for (const folder of [FAKE_HOME, path.dirname(FAKE_HOME), '/', path.dirname(os.homedir()), path.join(FAKE_HOME, '.ssh'), path.join(FAKE_HOME, '.config'), USER_DATA, '/run/user', '/tmp', `${FAKE_HOME}/servers/../.ssh`, `${FAKE_HOME}/servers/`])
       expect((await saveWith(manager, [folder])).result, folder).toBe('invalid');
     // Through a symlink, as it resolves now.
     const alias = path.join(BASE, 'alias-home');
