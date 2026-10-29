@@ -6,14 +6,13 @@ import {
   DELETED_NOT_PURGED,
   PROJECTS_TITLE,
   QUERY_FIELD_MAX_CHARS,
-  QUERY_LOCATION_NOTE,
   RUN_TARGET_OUTCOME_LABELS,
-  SEARCH_DEVICE_LABELS,
   queryLabel,
   type ProjectDetail,
   type ProjectSummary,
   type RunState,
 } from '@app/specs/projects.spec';
+import { SERP_DEVICE_LABELS, SERP_DEVICES } from '@app/specs/serp.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { CloseIcon, PlusIcon } from '../../icons';
 import { actions, ipc } from '../../ipc';
@@ -275,7 +274,7 @@ function ProjectView({
     event.preventDefault();
     const parsed = queryFromForm(form);
     if ('problem' in parsed) return say(parsed.problem);
-    if (await change(ipc.projects.addSearch.mutate({ projectId, params: parsed.params }).catch(() => null), 'Query added.')) setForm((current) => ({ ...EMPTY_QUERY_FORM, engine: current.engine }));
+    if (await change(ipc.projects.addSearch.mutate({ projectId, search: parsed.search }).catch(() => null), 'Query added.')) setForm((current) => ({ ...EMPTY_QUERY_FORM, engine: current.engine }));
   };
   const setProfile = (choice: string) => {
     const profile = profileOfChoice(choice);
@@ -414,23 +413,17 @@ function ProjectView({
           <label className="projects-field">
             <span>Device</span>
             <select className="projects-select" data-testid="projects-query-device" {...field('device')}>
-              <option value="">Any</option>
-              {(['desktop', 'mobile'] as const).map((device) => (
+              {SERP_DEVICES.map((device) => (
                 <option key={device} value={device}>
-                  {SEARCH_DEVICE_LABELS[device]}
+                  {SERP_DEVICE_LABELS[device]}
                 </option>
               ))}
             </select>
-          </label>
-          <label className="projects-field">
-            <span>Location</span>
-            <input className="projects-input" data-testid="projects-query-location" type="text" spellCheck={false} autoComplete="off" maxLength={QUERY_FIELD_MAX_CHARS.location} {...field('location')} />
           </label>
           <button type="submit" className="projects-small-button" data-testid="projects-query-add">
             <PlusIcon />
             <span>Add query</span>
           </button>
-          <p className="projects-note projects-field-wide">{QUERY_LOCATION_NOTE}</p>
         </form>
       </section>
 

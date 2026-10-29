@@ -94,8 +94,12 @@ export const MAX_DIFF_SUMMARY_JSON_BYTES = 4_096;
 /** Largest stored render profile (a capture's, a screenshot's, a project's), as JSON. */
 export const MAX_PROFILE_JSON_BYTES = 4_096;
 
-/** Largest stored search parameters (a capture's, a screenshot's, a project query's), as JSON. */
-export const MAX_SEARCH_PARAMS_JSON_BYTES = 4_096;
+/**
+ * Largest stored search parameters (a capture's, a screenshot's, a project query's), as JSON: room
+ * for Phase 3's largest (`serp-search-params.schema.ts`: a `url` of `SERP_PARAM_LIMITS.maxUrlChars`
+ * and a query of `maxQueryChars`, in UTF-8).
+ */
+export const MAX_SEARCH_PARAMS_JSON_BYTES = 16_384;
 
 /** Largest stored area rectangle of an `area` screenshot, as JSON. */
 export const MAX_RECT_JSON_BYTES = 256;

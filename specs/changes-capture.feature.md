@@ -7,7 +7,7 @@ answer types) and `specs/changes.schema.ts` (`CaptureInputSchema`, `HistoryInput
 `VersionInputSchema`, `DiffInputSchema`, `PagesInputSchema`, the answer schemas,
 `RegionAnswerSchema`, `CHANGES_READ_API`). Phase 6 Task 3; the snapshot and its diff are
 `changes-diff.feature.md`, the storage `capture-db.feature.md`. Implemented by
-`apps/desktop/src/main/changes/` (`regions.ts`, `snapshot.ts`, `service.ts`) and
+`apps/desktop/src/main/changes/` (`regions.ts`, `snapshot.ts`, `service.ts`, `serp-params.ts`) and
 `packages/ipc-contract/src/changes-{router,service}.ts`.
 
 ## The region extraction (`regions.ts`)
@@ -99,7 +99,8 @@ The regions that lost blocks are `truncated`, the snapshot `partial`. A snapshot
 ## The service (`service.ts`)
 `capture(tabId, { projectId?, source?, searchParams? })`; the IPC passes only `projectId`, a
 project's capture run (Task 6) also `source: 'project'` and the query's `searchParams`. Otherwise
-the source is `manual` and the search parameters are `searchParamsOf(tabId)` (`null` until Phase 3).
+the source is `manual` and the search parameters are `searchParamsOf(tabId, page)`: Phase 3's for
+the tab's result page, `null` for any other page (`changes-diff.feature.md`, Search parameters).
 1. A second capture of a tab while one runs answers `busy`.
 2. The tab must be open (`no-tab`) and active (`not-active`). Its URL must fit a snapshot (at most
    `maxUrlChars` in its stored form; else `invalid-page`, since the audit holds it cut). It must have
@@ -216,6 +217,14 @@ closed), then its strict input.
 - **Scenario: lane-key-is-canonical** — the lane key ignores key order and the URL's fragment and
   userinfo, and differs for another URL, render profile or search parameters.
 
+### Search parameters of a tab (`serp-params.test.ts`)
+- **Scenario: serp-state-to-search-params** — a `ready` state of the page answers its
+  `snapshot.params`, an `unreadable` one its `params` (`null` when it has none); `not-serp`,
+  `pending`, `disabled`, a state of another page or another tab, and anything that does not fit
+  (garbage, parameters failing `SearchParamsSchema`) answer `null`.
+- **Scenario: serp-params-are-late-bound** — the holder answers `null` for every tab until it is bound
+  to a `SerpReadApi`, then that API's answer for the tab and page; a read API that throws is `null`.
+
 ### Load times (`loads.test.ts`)
 - **Scenario: load-times-follow-the-main-frame** — `did-navigate`, `did-finish-load` and a main-frame
   `did-navigate-in-page` to another URL set the tab's load time; a fragment-only move and a
@@ -237,6 +246,12 @@ closed), then its strict input.
 - **Scenario: capture-records-profile-and-params** — the capture and version record the audit's
   render profile and `partial`, and the search parameters (`searchParamsOf`, or the run's), and the
   lane key is `laneKeyFor` of them.
+- **Scenario: capture-records-the-serp-tabs-params** — a manual capture of a tab whose SERP state is a
+  ready reading of its page records Phase 3's parameters (`searchParamsOf` is asked with the tab and
+  its stored page URL); a capture of a tab that is not a result page records `null`.
+- **Scenario: one-search-shares-a-lane** — a run's capture of a search (its parameters given) and a
+  manual capture of the same page whose SERP state reads the same search land in one lane: one
+  version, two captures.
 - **Scenario: profile-in-effect-rule** — one rule for both: an `active` loaded profile is not
   partial; `needsReload`, `applying` and `failed` are partial and still recorded; none is `null`; a
   profile that does not fit its schema does not read back. Test:

@@ -7,7 +7,7 @@ import { canonicalJson, snapshotIdentityJson } from '@app/change-intel';
 import { MAX_SNAPSHOT_JSON_BYTES } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS as L, CaptureSnapshotSchema, PAGE_REGIONS } from '@app/specs/capture-snapshot.schema';
 import { DEFAULT_RENDER_PROFILE } from '@app/specs/render-profile.spec';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { auditOf, regionAnswer, regionText } from './fakes';
 import { scoreAudit, type Finding, type SeoAudit } from '@app/seo-core';
 import { CAPTURE_CONTEXT_CATEGORIES, CAPTURE_EXCLUDED_RULES, CAPTURE_PAGE_CATEGORIES, isCapturedRule } from '@app/specs/changes.spec';
@@ -182,7 +182,7 @@ describe('capture snapshot', () => {
   });
 
   test('lane-key-is-canonical', () => {
-    const params: SearchParams = { engine: 'google', query: 'green tea', country: 'de', language: 'de', location: null, device: 'mobile' };
+    const params: SearchParams = { engine: 'google', engineLabel: 'Google', query: 'green tea', gl: 'de', hl: 'de', device: 'mobile', page: 1, offset: null, url: 'https://www.google.com/search?q=green+tea&gl=de&hl=de' };
     const lane = laneKeyFor(PAGE, null, null);
     expect(lane).toBe(sha(canonicalJson({ url: PAGE, renderProfile: null, searchParams: null })));
     // The fragment and userinfo are not part of the page.

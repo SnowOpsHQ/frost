@@ -1,19 +1,20 @@
-// Type-only: the schema file holds Zod, which must stay out of the chrome's bundle (strict Trusted Types).
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import { SEARCH_ENGINES } from '@app/specs/browser-polish.spec';
 import { UNFILED_PROJECT_ID, type RetentionMode } from '@app/specs/capture-db.spec';
 import {
   PROJECT_REFUSAL_MESSAGES,
+  QUERY_FIELD_MAX_CHARS,
   RUN_REFUSAL_MESSAGES,
   RUN_STATE_LABELS,
   type AddPageAnswer,
   type ProjectRefusal,
   type ProjectSummary,
   type RunState,
+  type SavedSearchInput,
   type RunStateName,
   type StartRunAnswer,
 } from '@app/specs/projects.spec';
 import { QUICK_RENDER_PROFILES, isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
+import { SERP_DEVICES } from '@app/specs/serp.spec';
 import {
   PURGE_REASON_LABELS,
   RETENTION_REFUSAL_MESSAGES,
@@ -64,31 +65,30 @@ export interface QueryForm {
   readonly query: string;
   readonly country: string;
   readonly language: string;
-  readonly location: string;
   readonly device: string;
 }
 
-export const EMPTY_QUERY_FORM: QueryForm = { engine: SEARCH_ENGINES[0].id, query: '', country: '', language: '', location: '', device: '' };
+export const EMPTY_QUERY_FORM: QueryForm = { engine: SEARCH_ENGINES[0].id, query: '', country: '', language: '', device: 'desktop' };
 
 const COUNTRY = /^[a-z]{2}$/;
 const LANGUAGE = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/;
 
 /**
  * The search the form describes: trimmed, the country and language lowercased, blanks as `null`; or
- * what to fix (main checks it again with `SearchParamsSchema`).
+ * what to fix (main checks it again with `SavedSearchInputSchema`, then reads its URL as Phase 3 does).
  */
-export function queryFromForm(form: QueryForm): { readonly params: SearchParams } | { readonly problem: string } {
+export function queryFromForm(form: QueryForm): { readonly search: SavedSearchInput } | { readonly problem: string } {
   const engine = SEARCH_ENGINES.find((candidate) => candidate.id === form.engine)?.id;
   const query = form.query.trim();
   const country = form.country.trim().toLowerCase();
   const language = form.language.trim().toLowerCase();
-  const location = form.location.trim();
+  const device = SERP_DEVICES.find((candidate) => candidate === form.device);
   if (engine === undefined) return { problem: 'Choose a search engine.' };
   if (query === '') return { problem: 'Enter a query.' };
   if (country !== '' && !COUNTRY.test(country)) return { problem: 'A country is two letters, like “de”.' };
-  if (language !== '' && (!LANGUAGE.test(language) || language.length > 35)) return { problem: 'A language is a code like “en” or “pt-br”.' };
-  const device = form.device === 'desktop' || form.device === 'mobile' ? form.device : null;
-  return { params: { engine, query, country: country === '' ? null : country, language: language === '' ? null : language, location: location === '' ? null : location, device } };
+  if (language !== '' && (!LANGUAGE.test(language) || language.length > QUERY_FIELD_MAX_CHARS.language)) return { problem: 'A language is a code like “en” or “pt-br”.' };
+  if (device === undefined) return { problem: 'Choose a device.' };
+  return { search: { engine, query, country: country === '' ? null : country, language: language === '' ? null : language, device } };
 }
 
 /** Loopback hosts a scheme-less address gets `http:` for (as the address bar: `LOOPBACK_HTTP_HOSTS`, `LOOPBACK_IPV4_PATTERN`). */

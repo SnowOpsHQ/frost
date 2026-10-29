@@ -8,22 +8,23 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { canonicalJson } from '@app/change-intel';
 import { uuidv7, type AppendScreenshotInput, type ChangeIntelRepository } from '@app/db';
 import { CAPTURES_DIR_NAME, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { CHANGES_READ_API } from '@app/specs/changes.schema';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
 import { SCREENSHOT_LIMITS, SCREENSHOTS_DIR_NAME, ScreenshotsAnswerSchema, type TakeScreenshotAnswer } from '@app/specs/screenshot.schema';
 import { fakeEvent } from '../../../test/electron-fake';
+import { lateSearchParams } from '../../changes/serp-params';
 import { createChangesService } from '../../changes/service';
 import { previewSize, thumbnailPlan } from '../imaging';
 import { screenshotTabs } from '../service';
 import { serviceSetup, until, type ServiceSetup } from './fakes';
 
 const PHONE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' };
-const PARAMS: SearchParams = { engine: 'google', query: 'green tea', country: 'de', language: 'de', location: null, device: 'mobile' };
+const PARAMS: SearchParams = { engine: 'google', engineLabel: 'Google', query: 'green tea', gl: 'de', hl: 'de', device: 'mobile', page: 1, offset: null, url: 'https://www.google.com/search?q=green+tea&gl=de&hl=de' };
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 let setup: ServiceSetup | null = null;
@@ -116,6 +117,27 @@ describe('screenshots service', () => {
     expect(rows(raw)[3]).toMatchObject({ capture_id: capture!.status === 'appended' ? capture!.captureId : null, search_params: canonicalJson(other) });
     // Two equal images share one file.
     expect(readdirSync(files.dir).sort()).toEqual([...new Set(rows(raw).map((r) => `${r['sha256'] as string}.png`))].sort());
+  });
+
+  test('take-records-the-serp-tabs-params', async () => {
+    // Phase 3's read API: tab 1 is a result page (a ready reading of its page), tab 2 is not.
+    const late = lateSearchParams();
+    const searchParamsOf = vi.fn(late.of);
+    const { service, raw, state } = start({ searchParamsOf });
+    late.bind({
+      snapshot: (tabId: number) =>
+        (tabId === 1
+          ? { status: 'ready', tabId, documentSeq: 1, url: 'https://example.com/page', readAt: 1, snapshot: { status: 'ready', params: PARAMS } }
+          : { status: 'not-serp', tabId, url: 'https://example.com/other' }) as never,
+    });
+    const serp = saved(await service.take(1, { kind: 'viewport' }));
+    expect(searchParamsOf).toHaveBeenLastCalledWith(1, 'https://example.com/page');
+    state.active = 2;
+    const plain = saved(await service.take(2, { kind: 'viewport' }));
+    expect(searchParamsOf).toHaveBeenLastCalledWith(2, 'https://example.com/other');
+    const byId = new Map(rows(raw).map((row) => [row.id, row]));
+    expect(byId.get(serp.id)).toMatchObject({ search_params: canonicalJson(PARAMS) });
+    expect(byId.get(plain.id)).toMatchObject({ search_params: null });
   });
 
   test('screenshot-reports-its-project', async () => {

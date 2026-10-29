@@ -1,4 +1,5 @@
-// Spec: specs/projects.spec.ts (PROJECT_REFUSALS, RUN_REFUSALS, searchUrlFor, queryLabel, DELETE_PROJECT),
+// Spec: specs/projects.spec.ts (PROJECT_REFUSALS, RUN_REFUSALS, SavedSearchInput, searchUrlFor, queryLabel, DELETE_PROJECT),
+// specs/serp-search-params.schema.ts (SearchParamsSchema: a saved search is Phase 3's parameters of its URL),
 // specs/projects.schema.ts (answers), specs/capture-db.spec.ts (UNFILED_PROJECT_ID, MAX_PROJECT_PAGES)
 // Acceptance: specs/projects.feature.md (The service; Deleting a project; Scenarios: service)
 import { createHash } from 'node:crypto';
@@ -10,8 +11,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { canonicalJson } from '@app/change-intel';
 import { openSessionStore, uuidv7, type ChangeIntelRepository } from '@app/db';
 import { MAX_PROJECT_PAGES, PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME } from '@app/specs/capture-db.spec';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
-import { CreateProjectAnswerSchema, ProjectDetailSchema, ProjectsAnswerSchema, searchUrlFor, type RunState, type StartRunAnswer } from '@app/specs/projects.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
+import { CreateProjectAnswerSchema, ProjectDetailSchema, ProjectsAnswerSchema, type RunState, type SavedSearchInput, type StartRunAnswer } from '@app/specs/projects.schema';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { CaptureRuns, RunPlan } from '../capture-run';
 import { createProjectsService, type ProjectsServiceDeps } from '../projects';
@@ -19,7 +20,9 @@ import { createProjectsService, type ProjectsServiceDeps } from '../projects';
 const A = 'https://example.com/a';
 const B = 'https://example.com/b';
 const PHONE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' };
-const PARAMS: SearchParams = { engine: 'bing', query: 'green tea', country: 'de', language: 'de', location: 'Berlin', device: 'mobile' };
+const SEARCH: SavedSearchInput = { engine: 'bing', query: 'green tea', country: 'de', language: 'de', device: 'mobile' };
+/** What Phase 3 reads from `SEARCH`'s URL (`https://www.bing.com/search?q=green%20tea&cc=de&setlang=de`). */
+const PARAMS: SearchParams = { engine: 'bing', engineLabel: 'Bing', query: 'green tea', gl: 'de', hl: 'de', device: 'mobile', page: 1, offset: null, url: 'https://www.bing.com/search?q=green+tea&cc=de&setlang=de' };
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 
 let clock = 2_000_000;
@@ -57,7 +60,7 @@ function setup(deps: Partial<ProjectsServiceDeps> = {}) {
   const log = vi.fn((_message: string) => undefined);
   const service = createProjectsService({ store: opened.changeIntel, files, confirmDelete, activeUrl: () => state.activeUrl, runs, now: tick, log, ...deps });
   const count = (sql: string, ...args: string[]) => (raw.prepare(sql).get(...args) as { n: number }).n;
-  return { service, repo: opened.changeIntel, files, unlinked, confirmDelete, state, runs, log, count };
+  return { service, repo: opened.changeIntel, files, unlinked, confirmDelete, state, runs, log, count, raw };
 }
 
 /** Creates a project and answers its id. */
@@ -143,14 +146,13 @@ describe('projects service', () => {
     expect(await service.addCurrentPage(id)).toEqual({ status: 'refused', reason: 'no-page' });
     state.activeUrl = null;
     expect(await service.addCurrentPage(id)).toEqual({ status: 'refused', reason: 'no-page' });
-    // A query: the search parameters, location recorded only.
-    const query = await service.addQuery(id, PARAMS);
+    // A query: Phase 3's search parameters of its URL.
+    const query = await service.addQuery(id, SEARCH);
     expect(query).toMatchObject({ status: 'added' });
-    expect(await service.addQuery(id, { ...PARAMS, query: '  padded  ' })).toEqual({ status: 'refused', reason: 'invalid-query' });
+    expect(await service.addQuery(id, { ...SEARCH, query: '  padded  ' })).toEqual({ status: 'refused', reason: 'invalid-query' });
     const detail = ProjectDetailSchema.parse(await service.get(id))!;
     expect(detail.pages.map((p) => p.url)).toEqual([A, B, 'https://example.com/c?x=1']);
-    expect(detail.queries).toEqual([{ id: query.status === 'added' ? query.query.id : '', params: PARAMS, url: searchUrlFor(PARAMS), lastCapturedAt: null, changeCount: null }]);
-    expect(detail.queries[0]!.url).not.toContain('Berlin');
+    expect(detail.queries).toEqual([{ id: query.status === 'added' ? query.query.id : '', params: PARAMS, url: PARAMS.url, lastCapturedAt: null, changeCount: null }]);
     // Remove.
     expect(await service.removePage(id, detail.pages[0]!.id)).toEqual({ status: 'ok' });
     expect(await service.removePage(id, detail.pages[0]!.id)).toEqual({ status: 'refused', reason: 'not-found' });
@@ -161,6 +163,30 @@ describe('projects service', () => {
     expect((await service.forPage(B)).projects.map((p) => p.id)).toEqual([id]);
     expect((await service.forPage(A)).projects).toEqual([]);
     expect(await service.get(uuidv7(tick()))).toBeNull();
+  });
+
+  test('saved-search-is-phase-3-params', async () => {
+    const { service, raw, repo, runs } = setup();
+    const id = await created(service, 'Searches');
+    // Stored as what Phase 3 reads from the search's URL; Google and DuckDuckGo by their own names.
+    expect((await service.addQuery(id, SEARCH)).status).toBe('added');
+    expect((await service.addQuery(id, { engine: 'duckduckgo', query: 'green  tea', country: 'de', language: 'de', device: 'tablet' })).status).toBe('added');
+    const stored = raw.prepare('SELECT query, search_params FROM ci_project_queries WHERE project_id = ? ORDER BY created_at').all(id) as { query: string; search_params: string }[];
+    expect(stored[0]).toEqual({ query: 'green tea', search_params: canonicalJson(PARAMS) });
+    expect(JSON.parse(stored[1]!.search_params)).toEqual({ engine: 'duckduckgo', engineLabel: 'DuckDuckGo', query: 'green tea', gl: 'de-de', hl: null, device: 'tablet', page: 1, offset: null, url: 'https://duckduckgo.com/?q=green+tea&kl=de-de' });
+    // Not a search the form can send, or one Phase 3 does not read back: invalid.
+    for (const bad of [{ ...SEARCH, location: 'Berlin' }, { ...SEARCH, device: null }, { ...SEARCH, engine: 'altavista' }, { ...SEARCH, country: 'DE' }, { ...SEARCH, language: 'a'.repeat(14) }, { ...SEARCH, query: 'tab\there' }]) {
+      expect(await service.addQuery(id, bad as unknown as SavedSearchInput), JSON.stringify(bad)).toEqual({ status: 'refused', reason: 'invalid-query' });
+    }
+    // Rows that are not Phase 3's parameters of their own URL are skipped: Phase 6's earlier shape, a tampered URL.
+    await repo.addQuery(id, 'old', canonicalJson({ engine: 'google', query: 'old', country: 'de', language: 'de', location: 'Berlin', device: 'mobile' }), tick());
+    await repo.addQuery(id, 'evil', canonicalJson({ ...PARAMS, query: 'evil', url: 'https://evil.example/search?q=evil' }), tick());
+    await repo.addQuery(id, 'other', canonicalJson({ ...PARAMS, query: 'other' }), tick());
+    const detail = ProjectDetailSchema.parse(await service.get(id))!;
+    expect(detail.queries.map((query) => query.params.query)).toEqual(['green tea', 'green tea']);
+    expect(detail.queries.map((query) => query.url)).toEqual([PARAMS.url, 'https://duckduckgo.com/?q=green+tea&kl=de-de']);
+    expect((await service.startRun(id, false)).status).toBe('started');
+    expect(runs.start.mock.calls[0]![0].targets.map((target) => target.url)).toEqual([PARAMS.url, 'https://duckduckgo.com/?q=green+tea&kl=de-de']);
   });
 
   test('project-page-cap', async () => {
@@ -175,16 +201,16 @@ describe('projects service', () => {
     const id = await created(service, 'Guides');
     await service.addPage(id, A);
     await service.addPage(id, B);
-    await service.addQuery(id, PARAMS);
-    await service.addQuery(id, { ...PARAMS, device: 'desktop' });
+    await service.addQuery(id, SEARCH);
+    await service.addQuery(id, { ...SEARCH, device: 'desktop' });
     await capture(repo, id, A, 'one');
     await capture(repo, id, A, 'two', { changeCount: 4 });
     const last = await capture(repo, id, A, 'two');
     // Captured into another project only: not this project's capture.
     await capture(repo, UNFILED_PROJECT_ID, B, 'b');
     // The mobile query captured twice; the desktop one shares its URL but not its lane.
-    await capture(repo, id, searchUrlFor(PARAMS), 'serp 1', { searchParams: PARAMS });
-    await capture(repo, id, searchUrlFor(PARAMS), 'serp 2', { searchParams: PARAMS, changeCount: 7 });
+    await capture(repo, id, PARAMS.url, 'serp 1', { searchParams: PARAMS });
+    await capture(repo, id, PARAMS.url, 'serp 2', { searchParams: PARAMS, changeCount: 7 });
     const detail = (await service.get(id))!;
     const lastAt = (await repo.history({ pageUrl: A, projectId: id, limit: 1 })).entries[0]!.lastCapturedAt;
     expect(last.newVersion).toBe(false);
@@ -297,7 +323,7 @@ describe('projects service', () => {
     const { service, runs } = setup();
     const id = await created(service, 'Guides');
     expect(await service.startRun(id, false)).toEqual({ status: 'refused', reason: 'no-targets' });
-    await service.addQuery(id, PARAMS);
+    await service.addQuery(id, SEARCH);
     await service.addPage(id, A);
     await service.setRenderProfile(id, PHONE);
     expect(await service.startRun(id, true)).toMatchObject({ status: 'started' });
@@ -307,7 +333,7 @@ describe('projects service', () => {
       screenshot: true,
       targets: [
         { kind: 'page', label: A, url: A, searchParams: null },
-        { kind: 'query', label: '“green tea” on Bing (DE, de, mobile, Berlin)', url: searchUrlFor(PARAMS), searchParams: PARAMS },
+        { kind: 'query', label: '“green tea” on Bing (DE, de, mobile)', url: PARAMS.url, searchParams: PARAMS },
       ],
     });
     expect(await service.startRun(uuidv7(tick()), false)).toEqual({ status: 'refused', reason: 'not-found' });
@@ -330,7 +356,7 @@ describe('projects service', () => {
     expect(await service.rename(id, 'Name')).toEqual({ status: 'refused', reason: 'store-failed' });
     expect(await service.remove(id)).toEqual({ status: 'refused', reason: 'store-failed' });
     expect(await service.addPage(id, A)).toEqual({ status: 'refused', reason: 'store-failed' });
-    expect(await service.addQuery(id, PARAMS)).toEqual({ status: 'refused', reason: 'store-failed' });
+    expect(await service.addQuery(id, SEARCH)).toEqual({ status: 'refused', reason: 'store-failed' });
     expect(await service.forPage(A)).toEqual({ projects: [] });
     expect(await service.startRun(id, false)).toEqual({ status: 'refused', reason: 'store-failed' });
     // The log says what failed, never the error's message.

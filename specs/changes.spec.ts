@@ -11,7 +11,7 @@
  * lane's latest version.
  */
 import type { CaptureSnapshot, ChangeCounts, DiffRegion, PageRegion, SnapshotDiff } from './capture.spec';
-import type { SearchParams } from './capture-search-params.schema';
+import type { SearchParams } from './serp-search-params.schema';
 import type { RenderProfile } from './render-profile.spec';
 import { CHECKS_RULE_SPECS } from './seo-checks.spec';
 import { SEO_RULE_SPECS, type SeoCategory, type SeoRuleId } from './seo-rules.spec';
@@ -164,8 +164,8 @@ export type CaptureAnswer =
 export type DiffSummary = Record<DiffRegion, ChangeCounts>;
 
 /**
- * One version in a page's history. `renderProfile` and `searchParams` say which lane it is in
- * (`laneKey`); `summary` and `changeCount` are its stored diff against `parentVersionId` (`null`
+ * One version in a page's history. `renderProfile` and `searchParams` (Phase 3's, `null` for a page
+ * that is not a result page) say which lane it is in (`laneKey`); `summary` and `changeCount` are its stored diff against `parentVersionId` (`null`
  * for a first version, or when that diff is gone or unreadable).
  */
 export interface HistoryVersion {

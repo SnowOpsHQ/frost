@@ -75,7 +75,8 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
   its schema is recorded as none, with a log line. `ci_screenshots` has no `partial` column: a
   partial one (`needsReload`, `applying` or `failed`) is recorded as the profile, with a log line
   saying it was partial. It also records its
-  search parameters (`searchParamsOf`; `null` until Phase 3, `TODO(phase-3-merge)`). Main-internal
+  search parameters (`searchParamsOf(tabId, page)`: Phase 3's for the tab's result page, `null` for
+  any other page; `changes-diff.feature.md`, Search parameters). Main-internal
   callers (Task 6's capture run) may pass a `captureId` and the query's search parameters.
 - Main builds the PNG (`createFromBitmap` → `toPNG`); one over `maxPngBytes` is refused
   (`too-large`) and nothing is written. The encode is synchronous on main's thread and bounded by the
@@ -195,6 +196,9 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
 - **Scenario: take-records-profile-and-params** — the row holds the tab's render profile and the
   search parameters (canonical JSON), the project, the kind, `segments`, `rect` and the pixel size;
   the file is named by the PNG's hash. Test: `service.test.ts`.
+- **Scenario: take-records-the-serp-tabs-params** — a screenshot of a tab whose SERP state reads its
+  page records Phase 3's parameters (`searchParamsOf` asked with the tab and its stored page URL); one
+  of a tab that is not a result page records `null`. Test: `service.test.ts`.
 - **Scenario: take-refuses-what-it-cannot-take** — no tab, not active, no web page, no project, too
   large, a capture failure and a store failure each answer their refusal, write nothing, and log no
   page text. Test: `service.test.ts`.

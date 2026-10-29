@@ -1,11 +1,11 @@
 // Spec: specs/projects.spec.ts (PROJECT_RUN_LIMITS, RUN_STATES, RUN_TARGET_OUTCOMES, RUN_RETRY_REFUSALS,
-// MOBILE_QUERY_PROFILE, RUN_SCREENSHOT_KIND)
+// MOBILE_QUERY_PROFILE, TABLET_QUERY_PROFILE, RUN_SCREENSHOT_KIND)
 // Acceptance: specs/projects.feature.md (Capture now; Scenarios: capture run)
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import type { CaptureAnswer } from '@app/specs/changes.spec';
-import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, type RunState } from '@app/specs/projects.spec';
+import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, TABLET_QUERY_PROFILE, type RunState } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
 import { createCaptureRuns, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
@@ -16,7 +16,7 @@ const A = 'https://example.com/a';
 const B = 'https://example.com/b';
 const PHONE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' };
 const NO_JS: RenderProfile = { ...DEFAULT_RENDER_PROFILE, javascriptDisabled: true };
-const PARAMS: SearchParams = { engine: 'google', query: 'green tea', country: 'de', language: 'de', location: 'Berlin', device: 'mobile' };
+const PARAMS: SearchParams = { engine: 'google', engineLabel: 'Google', query: 'green tea', gl: 'de', hl: 'de', device: 'mobile', page: 1, offset: null, url: 'https://www.google.com/search?q=green+tea&gl=de&hl=de' };
 const SEARCH = 'https://www.google.com/search?q=green%20tea&hl=de&gl=de';
 const { captureRetryMs: RETRY, targetActiveTimeoutMs: TIMEOUT } = PROJECT_RUN_LIMITS;
 const CAPTURED: CaptureAnswer = { status: 'captured', captureId: ID, versionId: ID, newVersion: true, changeCount: 2 };
@@ -94,7 +94,7 @@ function fakeBrowser() {
 function setup(deps: Partial<CaptureRunDeps> = {}) {
   const fake = fakeBrowser();
   /** The tab, URL and profile each capture saw. */
-  const seen: { tabId: number; url: string; profile: RenderProfile; options: unknown }[] = [];
+  const seen: { tabId: number; url: string; profile: RenderProfile; options: Parameters<CaptureRunDeps['capture']>[1] }[] = [];
   const capture = vi.fn(async (tabId: number, options: Parameters<CaptureRunDeps['capture']>[1]): Promise<CaptureAnswer> => {
     const tab = fake.tab(tabId)!;
     seen.push({ tabId, url: tab.url, profile: fake.effective(tab), options });
@@ -265,6 +265,27 @@ describe('capture run', () => {
       ['page', 'saved'],
       ['query', 'saved'],
     ]);
+    // The run tab's own parameters from the SERP service win (for a page too); none: the target's.
+    const serp = { ...PARAMS, device: 'tablet' as const };
+    const asked: [number, string][] = [];
+    const read = setup({
+      searchParamsOf: (tabId, pageUrl) => {
+        asked.push([tabId, pageUrl]);
+        return pageUrl === A ? null : serp;
+      },
+    });
+    await read.runs.start(plan([...pages(A), query(desktop)], { screenshot: true }));
+    await run();
+    expect(asked).toEqual([
+      [10, A],
+      [10, SEARCH],
+    ]);
+    expect(read.seen.map((s) => s.options.searchParams)).toEqual([null, serp]);
+    expect(read.screenshot).toHaveBeenNthCalledWith(2, 10, { kind: 'viewport', projectId: PROJECT, captureId: ID, searchParams: serp });
+    const page = setup({ searchParamsOf: () => serp });
+    await page.runs.start(plan(pages(A)));
+    await run();
+    expect(page.seen[0]!.options.searchParams).toEqual(serp);
     // A refused screenshot is said, and the capture still counts.
     const other = setup();
     other.screenshot.mockResolvedValue({ status: 'refused', reason: 'capture-failed' });
@@ -387,6 +408,12 @@ describe('capture run', () => {
     ]);
     expect(runs.state().state).toBe('done');
     expect(pins.size).toBe(0);
+    // A tablet query is visited as a tablet.
+    const tablet = setup();
+    await tablet.runs.start(plan([query({ ...PARAMS, device: 'tablet' }, SEARCH, 'tablet')]));
+    await run(RETRY * 6);
+    expect(tablet.browser.setRenderProfile.mock.calls).toEqual([[10, TABLET_QUERY_PROFILE]]);
+    expect(tablet.seen.map((s) => s.profile)).toEqual([TABLET_QUERY_PROFILE]);
   });
 
   test('capture-run-never-removes-a-pin', async () => {

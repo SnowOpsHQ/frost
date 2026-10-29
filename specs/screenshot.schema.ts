@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { MAX_STORED_URL_LENGTH } from './browser-session-db.spec';
 import { MAX_HISTORY_PAGE, SCREENSHOT_KINDS, UUIDV7_PATTERN } from './capture-db.spec';
-import { SearchParamsSchema } from './capture-search-params.schema';
+import { SearchParamsSchema } from './serp-search-params.schema';
 import { RenderProfileSchema } from './render-profile.schema.spec';
 import {
   SCREENSHOT_IMAGE_SIZES,
@@ -85,6 +85,7 @@ export const ScreenshotEntrySchema = z
     bytes: positive,
     segments: positive,
     renderProfile: RenderProfileSchema.nullable(),
+    /** Phase 3's search parameters of a result page (`serp-search-params.schema.ts`); `null` for any other page. */
     searchParams: SearchParamsSchema.nullable(),
     createdAt: count,
   })

@@ -1,6 +1,7 @@
 import { clipboard, ClipboardItem, nativeImage, shell, type WebContents } from 'electron';
 import type { ChangeIntelRepository } from '@app/db';
 import type { TabRenderProfile } from '@app/specs/render-profile.spec';
+import type { SearchParamsOf } from '../changes/serp-params';
 import { electronImaging } from './imaging';
 import { createScreenshotsService, screenshotTabs, type MainScreenshotsService } from './service';
 import { createScreenshotFiles } from './store';
@@ -22,9 +23,11 @@ export interface MainScreenshotsDeps {
   /** Main's live map of the tabs' WebContents (by WebContents id). */
   readonly tabContents: ReadonlyMap<number, WebContents>;
   readonly log: (message: string) => void;
+  /** The tab's search parameters from Phase 3's SERP service (`lateSearchParams().of`: `null` until it is bound). */
+  readonly searchParamsOf: SearchParamsOf;
 }
 
-export function createMainScreenshots({ store, userData, browser, tabContents, log }: MainScreenshotsDeps): MainScreenshotsService {
+export function createMainScreenshots({ store, userData, browser, tabContents, log, searchParamsOf }: MainScreenshotsDeps): MainScreenshotsService {
   const contentsOf = (tabId: number): WebContents | null => [...tabContents.values()].find((contents) => !contents.isDestroyed() && browser.tabIdOf(contents) === tabId) ?? null;
   return createScreenshotsService({
     store,
@@ -33,5 +36,6 @@ export function createMainScreenshots({ store, userData, browser, tabContents, l
     imaging: electronImaging({ nativeImage, clipboard, ClipboardItem }),
     reveal: (file) => shell.showItemInFolder(file),
     log,
+    searchParamsOf,
   });
 }

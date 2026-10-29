@@ -3,7 +3,8 @@ import { canonicalJson } from '@app/change-intel';
 import { isUuidv7, uuidv7 as defaultUuidv7, type ChangeIntelRepository, type StoredScreenshot } from '@app/db';
 import type { ScreenshotsService } from '@app/ipc-contract';
 import { UNFILED_PROJECT_ID, type ScreenshotKind } from '@app/specs/capture-db.spec';
-import { SearchParamsSchema, type SearchParams } from '@app/specs/capture-search-params.schema';
+import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
+import type { SearchParamsOf } from '../changes/serp-params';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import type { AuditRenderProfile, TabRenderProfile } from '@app/specs/render-profile.spec';
 import {
@@ -60,8 +61,11 @@ export interface ScreenshotsServiceDeps {
   readonly uuidv7?: (now?: number) => string;
   /** One line per refusal or failed read (never page text, a URL or a path). */
   readonly log?: (message: string) => void;
-  /** The search parameters a screenshot of the tab records. */
-  readonly searchParamsOf?: (tabId: number) => SearchParams | null;
+  /**
+   * The search parameters a screenshot of the tab records: Phase 3's for the tab's result page
+   * `pageUrl` (stored form), `null` for any other page (`changes/serp-params.ts`; default: always `null`).
+   */
+  readonly searchParamsOf?: SearchParamsOf;
   readonly limits?: ScreenshotLimits;
   /** How often a running screenshot checks that its tab is still in front (ms). */
   readonly activePollMs?: number;
@@ -86,8 +90,8 @@ export interface MainScreenshotsService extends ScreenshotsService {
 
 const ACTIVE_POLL_MS = 250;
 
-// TODO(phase-3-merge): the tab's visible search parameters (serp-search-params.schema.ts)
-const noSearchParams = (_tabId: number): SearchParams | null => null;
+/** Before Phase 3's SERP service is bound (and in tests): no search parameters. */
+const noSearchParams: SearchParamsOf = () => null;
 
 const refused = (reason: ScreenshotRefusal): TakeScreenshotAnswer => ({ status: 'refused', reason });
 /** An error's code or name: never its message (a file error's message holds its path, a database error's its parameters). */
@@ -164,8 +168,8 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
   };
 
   /** The JSON the row records of the tab: its render profile in effect and its search parameters (canonical), or why not. */
-  const lane = (tabId: number, options: TakeOptions): { renderProfileJson: string | null; searchParamsJson: string | null } | string => {
-    const given = options.searchParams !== undefined ? options.searchParams : searchParamsOf(tabId);
+  const lane = (tabId: number, page: string, options: TakeOptions): { renderProfileJson: string | null; searchParamsJson: string | null } | string => {
+    const given = options.searchParams !== undefined ? options.searchParams : searchParamsOf(tabId, page);
     const params = given === null ? null : SearchParamsSchema.safeParse(given);
     if (params !== null && !params.success) return 'its search parameters do not fit their schema';
     // The profile in effect, by the rule captures follow (`profile-in-effect.ts`).
@@ -190,7 +194,7 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       return failed('store-failed', `the project could not be read (${codeOf(error)})`);
     }
     if (options.captureId !== undefined && !isUuidv7(options.captureId)) return failed('store-failed', 'its capture id is not one');
-    const recorded = lane(tabId, options);
+    const recorded = lane(tabId, page, options);
     if (typeof recorded === 'string') return failed('store-failed', recorded);
 
     // Taken while the tab stays on this page (any main-frame navigation, an in-page one too, would

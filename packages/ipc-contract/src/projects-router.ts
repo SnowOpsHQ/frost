@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import type { RetentionMode } from '@app/specs/capture-db.spec';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import {
   AddPageAnswerSchema,
@@ -26,6 +25,7 @@ import {
   StartRunInputSchema,
   type AddPageAnswer,
   type AddQueryAnswer,
+  type SavedSearchInput,
   type CreateProjectAnswer,
   type DeleteProjectAnswer,
   type ProjectChangeAnswer,
@@ -99,7 +99,8 @@ export interface ProjectsService extends RetentionService {
   /** Adds the active tab's page (main reads its URL). */
   addCurrentPage(projectId: string): Promise<AddPageAnswer>;
   removePage(projectId: string, pageId: string): Promise<ProjectChangeAnswer>;
-  addQuery(projectId: string, params: SearchParams): Promise<AddQueryAnswer>;
+  /** Adds a saved search: main builds its URL and stores the search parameters Phase 3 reads from it. */
+  addQuery(projectId: string, search: SavedSearchInput): Promise<AddQueryAnswer>;
   removeQuery(projectId: string, queryId: string): Promise<ProjectChangeAnswer>;
   /** Live projects listing `url` as a page. */
   forPage(url: string): Promise<ProjectsAnswer>;
@@ -177,7 +178,7 @@ export const projectsRouter = router({
     .use(requireProjects)
     .input(AddQueryInputSchema)
     .output(AddQueryAnswerSchema)
-    .mutation(({ ctx, input }) => ctx.projects.addQuery(input.projectId, input.params)),
+    .mutation(({ ctx, input }) => ctx.projects.addQuery(input.projectId, input.search)),
   removeSearch: publicProcedure
     .use(enforceSender)
     .use(requireProjects)

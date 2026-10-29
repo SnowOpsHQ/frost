@@ -6,8 +6,10 @@
  */
 import { z } from 'zod';
 import { MAX_STORED_URL_LENGTH } from './browser-session-db.spec';
-import { MAX_PROJECT_PAGES, MAX_PROJECT_QUERIES, MAX_PROJECTS, PROJECT_NAME_MAX_CHARS, RETENTION_MODES, UUIDV7_PATTERN } from './capture-db.spec';
-import { SearchParamsSchema } from './capture-search-params.schema';
+import { SEARCH_ENGINE_IDS } from './browser-polish.spec';
+import { MAX_PROJECT_PAGES, MAX_PROJECT_QUERIES, MAX_PROJECTS, PROJECT_NAME_MAX_CHARS, PROJECT_QUERY_MAX_CHARS, RETENTION_MODES, UUIDV7_PATTERN } from './capture-db.spec';
+import { SearchParamsSchema } from './serp-search-params.schema';
+import { SERP_DEVICES } from './serp.spec';
 import {
   PROJECT_REFUSALS,
   PROJECT_RUN_LIMITS,
@@ -16,6 +18,7 @@ import {
   RUN_STATES,
   RUN_TARGET_KINDS,
   RUN_TARGET_OUTCOMES,
+  QUERY_FIELD_MAX_CHARS,
   type AddPageAnswer,
   type AddQueryAnswer,
   type CreateProjectAnswer,
@@ -25,6 +28,7 @@ import {
   type ProjectsAnswer,
   type ProjectSummary,
   type RunState,
+  type SavedSearchInput,
   type StartRunAnswer,
 } from './projects.spec';
 import { RenderProfileSchema } from './render-profile.schema.spec';
@@ -56,8 +60,21 @@ export const RenameProjectInputSchema = z.strictObject({ projectId: id, name });
 export const SetProjectProfileInputSchema = z.strictObject({ projectId: id, profile: RenderProfileSchema.nullable() });
 export const AddPageInputSchema = z.strictObject({ projectId: id, url: webUrl });
 export const RemovePageInputSchema = z.strictObject({ projectId: id, pageId: id });
-/** `addQuery`: the search (engine, query, country, language, location, device); `location` is recorded only. */
-export const AddQueryInputSchema = z.strictObject({ projectId: id, params: SearchParamsSchema });
+/** A saved search as the query form describes it (`SavedSearchInput`); main reads its URL as Phase 3 does before storing it. */
+export const SavedSearchInputSchema = z.strictObject({
+  engine: z.enum(SEARCH_ENGINE_IDS),
+  query: z
+    .string()
+    .min(1)
+    .max(PROJECT_QUERY_MAX_CHARS)
+    .regex(PRINTABLE)
+    .refine((value) => value === value.trim(), { message: 'query must be trimmed' }),
+  country: z.string().regex(/^[a-z]{2}$/).nullable(),
+  language: z.string().max(QUERY_FIELD_MAX_CHARS.language).regex(/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/).nullable(),
+  device: z.enum(SERP_DEVICES),
+}) satisfies z.ZodType<SavedSearchInput>;
+/** `addQuery`: the project and the search. */
+export const AddQueryInputSchema = z.strictObject({ projectId: id, search: SavedSearchInputSchema });
 export const RemoveQueryInputSchema = z.strictObject({ projectId: id, queryId: id });
 export const ForPageInputSchema = z.strictObject({ url: webUrl });
 /** `startRun`: the project, and whether to take a viewport screenshot of each captured target. */

@@ -4,7 +4,7 @@ Spec: `specs/capture.spec.ts` (`CAPTURE_SNAPSHOT_VERSION`, `PAGE_REGIONS`, `DIFF
 `DIFF_REGION_LABELS`, `CAPTURE_WORLD_ID`, `CAPTURE_LIMITS`, `DIFF_ENGINE_VERSION`, `DIFF_LIMITS`,
 `DIFF_FIELDS`, `DIFF_FIELD_LABELS`, `CHANGE_KINDS`, `TOTAL_COUNTERS`, the shapes),
 `specs/capture-snapshot.schema.ts` (`CaptureSnapshotSchema`, `ChangeSchema`, `InlineSegmentSchema`,
-`SnapshotDiffSchema`) and `specs/capture-search-params.schema.ts` (`SearchParamsSchema`). Phase 6
+`SnapshotDiffSchema`) and `specs/serp-search-params.schema.ts` (`SearchParamsSchema`). Phase 6
 Task 2; the storage is `capture-db.feature.md`. Implemented by `packages/change-intel`
 (`@app/change-intel`): pure TypeScript, no Electron, DOM, Node or Zod, so main and the chrome can
 both run it. Each scenario maps to one named test in `packages/change-intel/src/__tests__/`.
@@ -177,13 +177,31 @@ the objects passed in.
   in `maxChangeTextChars`, so they always rebuild the uncut before and after.
 
 ## Search parameters
-`SearchParamsSchema` is a strict object with every key present: `engine` (`SEARCH_ENGINE_IDS`),
-`query` (trimmed, 1–`PROJECT_QUERY_MAX_CHARS`), `country` (two lowercase letters), `language` (a
-lowercase BCP 47-style tag, at most 35 characters), `location` (trimmed, 1–100) and `device`
-(`desktop` / `mobile`), each of the last four `null` when unset. `query` and `location` refuse
-control characters, bidirectional formatting characters and lone surrogates. Nothing is
-normalised, so one search has one canonical JSON. `TODO(phase-3-merge)`: replaced by Phase 3's
-`serp-search-params.schema.ts`, keeping stored rows readable.
+Captures, screenshots and saved searches record **Phase 3's search parameters**
+(`specs/serp-search-params.schema.ts`, `SearchParamsSchema`): `engine`, `engineLabel`, `query`, `gl`,
+`hl`, `device` (`desktop` / `mobile` / `tablet`), `page`, `offset` and the canonical `url`, as Phase
+3's `matchSerp` reads them from a result page's URL (normalised there: the query's whitespace
+collapsed, `gl` and `hl` lowercased, only the known parameters in `url`), so one search has one
+canonical JSON. The stored `search_params` columns stay nullable: a capture or screenshot of a page
+that is not a result page records `null`.
+
+Where they come from (`apps/desktop/src/main/changes/serp-params.ts`):
+- **A tab's** (`searchParamsOf(tabId, pageUrl)`, a manual capture's and screenshot's, and a run's):
+  Phase 3's `SerpReadApi.snapshot(tabId)`, late-bound (the changes and screenshots services are made
+  before `setupSerp` runs; until it has, every answer is `null`). Only a finished reading counts: a
+  `ready` state's `snapshot.params`, or an `unreadable` state's `params`; `not-serp`, `pending`,
+  `disabled`, a state of another tab and anything that does not fit is `null`. The state must be of
+  the page being captured: its `url` (the page's own URL, which every non-disabled `SerpState` has) in
+  the stored form (`storedPageUrl`) must equal the capture's or screenshot's page, so a reading of
+  the page before a navigation is never recorded. The parameters are checked with
+  `SearchParamsSchema`. The capture's own settled-audit and URL checks still apply on top.
+- **A saved search's**: `searchParamsForUrl(url, device)`: `matchSerp` with the bundled selector pack
+  (verified once with its signature; `null` while it does not verify) (`projects.feature.md`, Saved
+  searches).
+
+Rows written in Phase 6's earlier shape (`country`, `language`, `location`) exist only in development
+profiles (nothing was released); they no longer parse and are skipped where a row that does not
+parse is skipped. There is no migration: captured rows are append-only by design.
 
 ## Scenarios
 ### Diff (`diff.test.ts`)
@@ -262,10 +280,10 @@ normalised, so one search has one canonical JSON. `TODO(phase-3-merge)`: replace
   is `partial`), and never when both sides are complete.
 
 ### Schemas (`schemas.test.ts`)
-- **Scenario: search-params-schema-rejects-unknown-keys** — a valid value parses unchanged; an extra
-  key, a missing key, an unknown engine, a blank or untrimmed query, an uppercase country, an
-  uppercase or malformed language tag, a long location, a control character, a bidirectional
-  formatting character, a lone surrogate and an unknown device are each refused.
+- **Scenario: search-params-refuse-the-old-shape** — Phase 3's search parameters parse unchanged;
+  Phase 6's earlier shape (`country`, `language`, `location`), an extra or missing key, a `null`
+  device and a non-`http(s)` URL are each refused (Phase 3's own cases are its
+  `serp-search-params.schema.ts` tests).
 - **Scenario: capture-snapshot-schema-caps** — the valid fixture parses; a list one over its cap, a
   string one over its cap, unsorted findings, a missing region, a region over `maxRegionChars` and
   an unknown key are each refused; every diff the engine produces in these tests parses with

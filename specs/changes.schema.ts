@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { CAPTURE_LIMITS as L, DIFF_REGIONS, PAGE_REGIONS, type PageRegion } from './capture.spec';
 import { MAX_HISTORY_PAGE, SHA256_HEX_PATTERN, UUIDV7_PATTERN } from './capture-db.spec';
 import { CaptureSnapshotSchema, SnapshotDiffSchema } from './capture-snapshot.schema';
-import { SearchParamsSchema } from './capture-search-params.schema';
+import { SearchParamsSchema } from './serp-search-params.schema';
 import {
   CAPTURE_REFUSALS,
   type CaptureAnswer,
@@ -75,6 +75,7 @@ export const HistoryVersionSchema = z.strictObject({
   lastCapturedAt: time.nullable(),
   laneKey: z.string().regex(SHA256_HEX_PATTERN),
   renderProfile: RenderProfileSchema.nullable(),
+  /** Phase 3's search parameters of a result page (`serp-search-params.schema.ts`); `null` for any other page. */
   searchParams: SearchParamsSchema.nullable(),
   parentVersionId: id.nullable(),
   summary: DiffSummarySchema.nullable(),
@@ -149,7 +150,7 @@ export const CHANGES_READ_API = {
     output: PagesAnswerSchema,
   },
   history: {
-    description: 'The distinct versions of one page, newest first, each with its lane (render profile and search parameters), how often it was captured, and how many changes it brought against the version before it.',
+    description: 'The distinct versions of one page, newest first, each with its lane (render profile and, for a search results page, its search parameters: engine, query, country gl, language hl, device, page and canonical URL), how often it was captured, and how many changes it brought against the version before it.',
     input: HistoryInputSchema,
     output: HistoryAnswerSchema,
   },
@@ -164,7 +165,7 @@ export const CHANGES_READ_API = {
     output: DiffAnswerSchema,
   },
   listScreenshots: {
-    description: 'Screenshots taken of one page and/or in one project, newest first: kind (viewport, full page or a selected area), pixel size, file size, the render profile and search parameters they were taken with, and when. Images are not included.',
+    description: 'Screenshots taken of one page and/or in one project, newest first: kind (viewport, full page or a selected area), pixel size, file size, the render profile and search parameters (of a search results page; null for any other page) they were taken with, and when. Images are not included.',
     input: ScreenshotsInputSchema,
     output: ScreenshotsAnswerSchema,
   },

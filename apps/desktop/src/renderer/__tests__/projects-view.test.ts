@@ -4,7 +4,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { TabState } from '@app/specs/browser.spec';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import { PROJECT_REFUSAL_MESSAGES, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS, type RunState } from '@app/specs/projects.spec';
+import { PROJECT_REFUSAL_MESSAGES, QUERY_FIELD_MAX_CHARS, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS, type RunState } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, type RetentionUsage } from '@app/specs/retention.spec';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
@@ -61,12 +61,23 @@ describe('projects view', () => {
   });
 
   test('projects-view-query-form', () => {
-    expect(queryFromForm({ ...EMPTY_QUERY_FORM, query: '  green tea ', country: ' DE ', language: 'PT-BR', location: '  Berlin ', device: 'mobile' })).toEqual({
-      params: { engine: 'google', query: 'green tea', country: 'de', language: 'pt-br', location: 'Berlin', device: 'mobile' },
+    expect(queryFromForm({ ...EMPTY_QUERY_FORM, query: '  green tea ', country: ' DE ', language: 'PT-BR', device: 'tablet' })).toEqual({
+      search: { engine: 'google', query: 'green tea', country: 'de', language: 'pt-br', device: 'tablet' },
     });
-    expect(queryFromForm({ ...EMPTY_QUERY_FORM, engine: 'bing', query: 'tea' })).toEqual({ params: { engine: 'bing', query: 'tea', country: null, language: null, location: null, device: null } });
-    for (const bad of [{ query: '   ' }, { query: 'x', engine: 'other' }, { query: 'x', country: 'deu' }, { query: 'x', country: 'd1' }, { query: 'x', language: 'english!' }]) {
-      expect(queryFromForm({ ...EMPTY_QUERY_FORM, ...bad })).toHaveProperty('problem');
+    // Desktop unless chosen; no location.
+    expect(EMPTY_QUERY_FORM).not.toHaveProperty('location');
+    expect(queryFromForm({ ...EMPTY_QUERY_FORM, engine: 'bing', query: 'tea' })).toEqual({ search: { engine: 'bing', query: 'tea', country: null, language: null, device: 'desktop' } });
+    for (const bad of [
+      { query: '   ' },
+      { query: 'x', engine: 'other' },
+      { query: 'x', country: 'deu' },
+      { query: 'x', country: 'd1' },
+      { query: 'x', language: 'english!' },
+      { query: 'x', language: 'a'.repeat(QUERY_FIELD_MAX_CHARS.language + 1) },
+      { query: 'x', device: '' },
+      { query: 'x', device: 'watch' },
+    ]) {
+      expect(queryFromForm({ ...EMPTY_QUERY_FORM, ...bad }), JSON.stringify(bad)).toHaveProperty('problem');
     }
   });
 

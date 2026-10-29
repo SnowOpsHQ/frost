@@ -1,48 +1,38 @@
 // Spec: specs/capture-snapshot.schema.ts (CaptureSnapshotSchema, SnapshotDiffSchema),
-// specs/capture-search-params.schema.ts (SearchParamsSchema), specs/capture.spec.ts (CAPTURE_LIMITS)
+// specs/serp-search-params.schema.ts (SearchParamsSchema), specs/capture.spec.ts (CAPTURE_LIMITS)
 // Acceptance: specs/changes-diff.feature.md (The snapshot, Search parameters, Schemas)
 import { afterAll, describe, expect, test } from 'vitest';
 import { CaptureSnapshotSchema, SnapshotDiffSchema, CAPTURE_LIMITS as L, type CaptureSnapshot } from '@app/specs/capture-snapshot.schema';
-import { SearchParamsSchema, type SearchParams } from '@app/specs/capture-search-params.schema';
-import { PROJECT_QUERY_MAX_CHARS } from '@app/specs/capture-db.spec';
+import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
 import { base, diff, diffsChecked, edited, region, sha } from './fixtures';
 
 describe('search parameters', () => {
-  const params: SearchParams = { engine: 'google', query: 'frost seo browser', country: 'de', language: 'de-de', location: 'Berlin', device: 'mobile' };
-  const unset: SearchParams = { engine: 'bing', query: 'q', country: null, language: null, location: null, device: null };
+  const params: SearchParams = {
+    engine: 'google',
+    engineLabel: 'Google',
+    query: 'frost seo browser',
+    gl: 'de',
+    hl: 'de',
+    device: 'mobile',
+    page: 1,
+    offset: null,
+    url: 'https://www.google.com/search?q=frost+seo+browser&gl=de&hl=de',
+  };
 
-  test('search-params-schema-rejects-unknown-keys', () => {
+  test('search-params-refuse-the-old-shape', () => {
+    // Phase 3's schema is the one every capture, screenshot and saved search records.
     expect(SearchParamsSchema.parse(params)).toEqual(params);
-    expect(SearchParamsSchema.parse(unset)).toEqual(unset);
-    expect(SearchParamsSchema.safeParse({ ...params, query: 'q'.repeat(PROJECT_QUERY_MAX_CHARS) }).success).toBe(true);
-    expect(SearchParamsSchema.safeParse({ ...params, language: 'zh-hant-tw' }).success).toBe(true);
-    expect(SearchParamsSchema.safeParse({ ...params, query: 'café 東京 😀' }).success).toBe(true);
-    const { device: _device, ...missing } = params;
+    expect(SearchParamsSchema.parse({ ...params, gl: null, hl: null, device: 'tablet' })).toEqual({ ...params, gl: null, hl: null, device: 'tablet' });
+    const { url: _url, ...missing } = params;
     const refused: unknown[] = [
-      { ...params, page: 2 },
+      // Phase 6's earlier shape (development profiles only): skipped where it is read.
+      { engine: 'google', query: 'frost seo browser', country: 'de', language: 'de', location: 'Berlin', device: 'mobile' },
+      { engine: 'bing', query: 'q', country: null, language: null, location: null, device: null },
+      { ...params, location: 'Berlin' },
+      { ...params, extra: 1 },
       missing,
-      { ...params, engine: 'altavista' },
-      { ...params, query: '' },
-      { ...params, query: '   ' },
-      { ...params, query: ' padded' },
-      { ...params, query: 'q'.repeat(PROJECT_QUERY_MAX_CHARS + 1) },
-      { ...params, query: 'line\nbreak' },
-      { ...params, country: 'DE' },
-      { ...params, country: 'deu' },
-      { ...params, language: 'english' },
-      { ...params, language: 'de-DE' },
-      { ...params, language: 'EN' },
-      { ...params, query: 'abc\u202edef' },
-      { ...params, query: 'left\u200fmark' },
-      { ...params, location: 'Berlin\u2066' },
-      { ...params, query: 'lone \ud800 surrogate' },
-      { ...params, location: 'trail \udc00' },
-      { ...params, language: `en-${'a'.repeat(8)}-${'b'.repeat(8)}-${'c'.repeat(8)}-${'d'.repeat(8)}` },
-      { ...params, location: '' },
-      { ...params, location: 'x'.repeat(101) },
-      { ...params, location: 'Berlin\u0007' },
-      { ...params, device: 'tablet' },
-      { ...params, device: undefined },
+      { ...params, device: null },
+      { ...params, url: 'javascript:alert(1)' },
     ];
     for (const value of refused) expect(SearchParamsSchema.safeParse(value).success, JSON.stringify(value)).toBe(false);
   });

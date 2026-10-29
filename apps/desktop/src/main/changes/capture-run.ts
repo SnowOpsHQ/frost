@@ -1,10 +1,10 @@
 import { uuidv7 as defaultUuidv7 } from '@app/db';
 import type { ScreenshotKind } from '@app/specs/capture-db.spec';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import type { CaptureAnswer } from '@app/specs/changes.spec';
 import {
-  MOBILE_QUERY_PROFILE,
   PROJECT_RUN_LIMITS,
+  QUERY_DEVICE_PROFILES,
   RUN_RETRY_REFUSALS,
   RUN_SCREENSHOT_KIND,
   type ProjectRunLimits,
@@ -18,6 +18,7 @@ import {
 } from '@app/specs/projects.spec';
 import { isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
+import type { SearchParamsOf } from './serp-params';
 import { storedPageUrl } from './snapshot';
 
 // A project's capture run (Phase 6 Task 6; spec `projects.spec.ts`, `PROJECT_RUN_LIMITS`; acceptance
@@ -25,12 +26,14 @@ import { storedPageUrl } from './snapshot';
 // browse tabs opened through the browser controller (no WebContents of its own), captures each into
 // the project through the changes service, and closes its tab when it is done.
 //
-// Render profiles: targets are grouped by the profile they need (the project's, or a mobile query's
-// `MOBILE_QUERY_PROFILE`). Each group gets a fresh tab whose profile is set once, before its first
+// Render profiles: targets are grouped by the profile they need (the project's, or a mobile or tablet
+// query's `QUERY_DEVICE_PROFILES`). Each group gets a fresh tab whose profile is set once, before its first
 // navigation, with no pin; a group needing frost's default gets no profile set at all. The run never
 // sets the default profile on a tab (that is a Reset, which also unpins the site the tab shows) and
 // never changes a tab's profile after it has loaded. A site's pin still applies in a run tab (pins are
-// the user's choice); the capture records the profile actually in effect (the audit's).
+// the user's choice); the capture records the profile actually in effect (the audit's), and the search
+// parameters the run tab actually shows: Phase 3's SERP service's for the landed page
+// (`searchParamsOf`), else the target's own (the saved search's for a query, none for a page).
 //
 // It only acts on its own tab while that tab is the active one: `navigate` acts on the active tab, and
 // a capture or a screenshot needs it in front. While the user has another tab in front the run waits,
@@ -87,6 +90,8 @@ export interface CaptureRunDeps {
   readonly limits?: Partial<ProjectRunLimits>;
   /** Called once a run has ended, with its project (retention enforces the project's policy; `retention.ts`). */
   readonly afterRun?: (projectId: string) => void;
+  /** The run tab's search parameters for the landed page from Phase 3's SERP service (`serp-params.ts`); none: the target's. */
+  readonly searchParamsOf?: SearchParamsOf;
 }
 
 /** What one run visits: built by the projects service from the project's rows. */
@@ -102,7 +107,7 @@ export interface RunPlanTarget {
   readonly kind: RunTargetKind;
   readonly label: string;
   readonly url: string;
-  /** A query's search parameters (recorded with its capture); `null` for a page. */
+  /** A query's saved search parameters (recorded when the SERP service has none for the run tab); `null` for a page. */
   readonly searchParams: SearchParams | null;
 }
 
@@ -135,9 +140,10 @@ interface RunGroup {
   readonly targets: readonly RunPlanTarget[];
 }
 
-/** The profile a target needs (`null`: the default): a mobile query's, else the project's. */
+/** The profile a target needs (`null`: the default): a mobile or tablet query's, else the project's. */
 function profileFor(target: RunPlanTarget, project: RenderProfile | null): RenderProfile | null {
-  const wanted = target.searchParams?.device === 'mobile' ? MOBILE_QUERY_PROFILE : project;
+  const device = target.searchParams?.device;
+  const wanted = device === 'mobile' || device === 'tablet' ? QUERY_DEVICE_PROFILES[device] : project;
   return wanted === null || isDefaultRenderProfile(wanted) ? null : wanted;
 }
 
@@ -274,7 +280,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     /** The page of the first commit after the navigation (a redirect allowed): the capture must be of it. */
     let landed: string | null = null;
     let sawLoading = false;
-    let captured: { readonly captureId: string; readonly changeCount: number | null } | null = null;
+    let captured: { readonly captureId: string; readonly changeCount: number | null; readonly searchParams: SearchParams | null } | null = null;
     const failed: Visit = { result: { outcome: 'failed', changeCount: null, screenshot: null }, end: null };
     const done = (screenshot: RunScreenshotOutcome | null, end: Visit['end'] = null): Visit => ({ result: { outcome: 'captured', changeCount: captured!.changeCount, screenshot }, end });
 
@@ -322,7 +328,10 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       }
 
       if (captured === null) {
-        const answer = await deps.capture(tabId, { projectId: plan.projectId, source: 'project', searchParams: target.searchParams, ...(landed === null ? {} : { pageUrl: landed }) });
+        // The run tab's own search parameters for the landed page, else the target's.
+        const own = landed === null || deps.searchParamsOf === undefined ? null : deps.searchParamsOf(tabId, landed);
+        const searchParams = own ?? target.searchParams;
+        const answer = await deps.capture(tabId, { projectId: plan.projectId, source: 'project', searchParams, ...(landed === null ? {} : { pageUrl: landed }) });
         if (answer.status === 'refused') {
           if (answer.reason === 'no-tab') return { result: null, end: 'tab-closed' };
           // The project went while the run was under way: nothing more can be filed in it.
@@ -334,7 +343,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
           log(`target ${index + 1}: capture refused (${answer.reason})`);
           return failed;
         }
-        captured = { captureId: answer.captureId, changeCount: answer.newVersion ? answer.changeCount : 0 };
+        captured = { captureId: answer.captureId, changeCount: answer.newVersion ? answer.changeCount : 0, searchParams };
         if (!plan.screenshot) return done(null);
         setTarget(index, { outcome: 'running', changeCount: captured.changeCount });
         // Looks at the tab again (cancel, close, in front, still the page) before the screenshot.
@@ -343,7 +352,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
 
       let shot: TakeScreenshotAnswer;
       try {
-        shot = await deps.screenshot(tabId, { kind: RUN_SCREENSHOT_KIND, projectId: plan.projectId, captureId: captured.captureId, searchParams: target.searchParams });
+        shot = await deps.screenshot(tabId, { kind: RUN_SCREENSHOT_KIND, projectId: plan.projectId, captureId: captured.captureId, searchParams: captured.searchParams });
       } catch {
         shot = { status: 'refused', reason: 'capture-failed' };
       }

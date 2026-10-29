@@ -4,7 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import { MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import { MAX_RETENTION_DAYS, MAX_RETENTION_VERSIONS, PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SavedSearchInput } from '@app/specs/projects.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import type { ProjectsAnswer, RunState } from '@app/specs/projects.spec';
@@ -17,7 +17,7 @@ const WINDOW_ID = 7;
 const PAGE = 'https://example.com/guides/tea';
 const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const ITEM = '01920000-0000-7000-8000-000000000001';
-const PARAMS: SearchParams = { engine: 'google', query: 'green tea', country: 'de', language: 'de', location: 'Berlin', device: null };
+const PARAMS: SavedSearchInput = { engine: 'google', query: 'green tea', country: 'de', language: 'de', device: 'tablet' };
 const LIST: ProjectsAnswer = { projects: [{ id: UNFILED_PROJECT_ID, name: 'Unfiled', unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null } }] };
 const STATE: RunState = { version: 3, runId: ITEM, projectId: PROJECT, state: 'running', current: 1, total: 1, omitted: 0, screenshot: false, targets: [{ kind: 'page', label: PAGE, outcome: 'running', changeCount: null, screenshot: null }] };
 
@@ -85,7 +85,7 @@ const VALID_INPUT: Record<string, unknown> = {
   addPage: { projectId: PROJECT, url: PAGE },
   addCurrentPage: { projectId: PROJECT },
   removePage: { projectId: PROJECT, pageId: ITEM },
-  addSearch: { projectId: PROJECT, params: PARAMS },
+  addSearch: { projectId: PROJECT, search: PARAMS },
   removeSearch: { projectId: PROJECT, queryId: ITEM },
   forPage: { url: PAGE },
   startRun: { projectId: PROJECT, screenshot: true },
@@ -132,8 +132,10 @@ describe('projects router', () => {
       { ...PARAMS, country: 'DE' },
       { ...PARAMS, country: 'deu' },
       { ...PARAMS, language: 'EN' },
-      { ...PARAMS, device: 'tablet' },
-      { ...PARAMS, location: '' },
+      { ...PARAMS, language: 'a'.repeat(14) },
+      { ...PARAMS, device: null },
+      { ...PARAMS, device: 'watch' },
+      { ...PARAMS, location: 'Berlin' },
       { ...PARAMS, extra: 1 },
       { engine: 'google', query: 'x' },
     ];
@@ -146,7 +148,7 @@ describe('projects router', () => {
       addPage: [{ projectId: PROJECT }, { projectId: PROJECT, url: PAGE, extra: 1 }, ...badUrls.map((url) => ({ projectId: PROJECT, url })), ...badIds.map((projectId) => ({ projectId, url: PAGE }))],
       addCurrentPage: [{}, { projectId: PROJECT, url: PAGE }, ...badIds.map((projectId) => ({ projectId }))],
       removePage: [{ projectId: PROJECT }, ...badIds.map((pageId) => ({ projectId: PROJECT, pageId }))],
-      addSearch: [{ projectId: PROJECT }, { projectId: PROJECT, params: null }, ...badParams.map((params) => ({ projectId: PROJECT, params }))],
+      addSearch: [{ projectId: PROJECT }, { projectId: PROJECT, search: null }, { projectId: PROJECT, params: PARAMS }, ...badParams.map((search) => ({ projectId: PROJECT, search }))],
       removeSearch: [{ projectId: PROJECT }, ...badIds.map((queryId) => ({ projectId: PROJECT, queryId }))],
       forPage: [{}, { url: PAGE, extra: 1 }, ...badUrls.map((url) => ({ url }))],
       startRun: [{ projectId: PROJECT }, { projectId: PROJECT, screenshot: 'yes' }, { projectId: PROJECT, screenshot: true, extra: 1 }, ...badIds.map((projectId) => ({ projectId, screenshot: false }))],

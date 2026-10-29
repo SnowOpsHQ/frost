@@ -4,7 +4,7 @@ import { scoreAudit, type SchemaEntity, type SeoAudit } from '@app/seo-core';
 import { MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import { MAX_SNAPSHOT_JSON_BYTES } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS as L, CAPTURE_SNAPSHOT_VERSION, PAGE_REGIONS, type CaptureJsonLdBlock, type CaptureSnapshot, type PageRegion } from '@app/specs/capture.spec';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { isCapturedRule, type RegionAnswer } from '@app/specs/changes.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';

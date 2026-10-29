@@ -87,7 +87,10 @@ describe('changes-view', () => {
     const custom = { ...DEFAULT_RENDER_PROFILE, device: 'tablet' as const, network: '4g' as const };
     expect(laneLabel({ renderProfile: custom, searchParams: null })).toBe(renderProfileSummary(custom));
     // Search parameters follow the profile.
-    expect(laneLabel({ renderProfile: null, searchParams: { engine: 'bing', query: 'cold brew', country: 'us', language: 'en', location: null, device: 'mobile' } })).toBe('Default · “cold brew” · Bing · us · en · mobile');
+    const params = { engine: 'bing', engineLabel: 'Bing', query: 'cold brew', gl: 'us', hl: 'en', device: 'mobile' as const, page: 1, offset: null, url: 'https://www.bing.com/search?q=cold+brew&cc=us&setlang=en' };
+    expect(laneLabel({ renderProfile: null, searchParams: params })).toBe('Default · “cold brew” · Bing · us · en · mobile');
+    // Phase 3's engine label, an unset gl / hl left out, a later page said.
+    expect(laneLabel({ renderProfile: null, searchParams: { ...params, engine: 'duckduckgo', engineLabel: 'DuckDuckGo', gl: 'us-en', hl: null, device: 'tablet', page: 2, offset: null } })).toBe('Default · “cold brew” · DuckDuckGo · us-en · tablet · page 2');
     // The shown lane: the chosen one while it is listed, else the newest version's.
     expect(shownLane(lanes, laneA)!.key).toBe(laneA);
     expect(shownLane(lanes, null)!.key).toBe(laneB);

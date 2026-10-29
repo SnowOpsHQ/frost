@@ -10,6 +10,7 @@ import { createPurgeFiles } from './purge-files';
 import { createRetentionService } from './retention';
 import { confirmCompact, confirmPurgeNow } from './retention-dialog';
 import type { MainChangesService } from './service';
+import type { SearchParamsOf } from './serp-params';
 
 // Main's projects service over Electron (Phase 6 Task 6; acceptance `projects.feature.md`): the
 // capture runs drive the browser controller's own tabs (an ordinary browse tab: no WebContents of
@@ -33,9 +34,11 @@ export interface MainProjectsDeps {
   /** `SessionStore.file`: the database file (usage measures it, Compact rewrites it), or `':memory:'`. */
   readonly databaseFile: string;
   readonly log: (message: string) => void;
+  /** The run tab's search parameters from Phase 3's SERP service (`lateSearchParams().of`: `null` until it is bound). */
+  readonly searchParamsOf: SearchParamsOf;
 }
 
-export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
+export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
   const files = createScreenshotFiles(userData);
   // One purge at a time, whoever asks (a delete, Purge now, an enforcement).
   const purges = createPurgeFiles({ store, files, log: (message) => log(`projects: ${message}`) });
@@ -55,6 +58,7 @@ export function createMainProjects({ store, userData, browser, changes, screensh
     isLive: async (projectId) => (await store.project(projectId)) !== null,
     capture: (tabId, options) => changes.capture(tabId, options),
     screenshot: (tabId, options) => screenshots.take(tabId, options),
+    searchParamsOf,
     afterRun: (projectId) => afterRun(projectId),
     log,
   });

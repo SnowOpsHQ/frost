@@ -2,20 +2,24 @@ import { canonicalJson } from '@app/change-intel';
 import type { ChangeIntelRepository, HistoryEntry, Project } from '@app/db';
 import type { ProjectsService, RetentionService } from '@app/ipc-contract';
 import { PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import { SearchParamsSchema, type SearchParams } from '@app/specs/capture-search-params.schema';
-import { queryLabel, searchUrlFor, type ProjectEntryCaptures, type ProjectRefusal, type ProjectSummary, type RunRefusal } from '@app/specs/projects.spec';
+import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
+import { SavedSearchInputSchema } from '@app/specs/projects.schema';
+import { queryLabel, searchLocaleFor, searchUrlFor, type ProjectEntryCaptures, type ProjectRefusal, type ProjectSummary, type RunRefusal } from '@app/specs/projects.spec';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { ScreenshotFiles } from '../screenshots/store';
 import type { CaptureRuns, RunPlanTarget } from './capture-run';
 import { createPurgeFiles, type PurgeFiles } from './purge-files';
+import { searchParamsForUrl } from './serp-params';
 import { storedPageUrl } from './snapshot';
 
 // Projects (Phase 6 Task 6; spec `projects.spec.ts`, `projects.schema.ts`; acceptance
 // `projects.feature.md`, The service): named lists of pages and search queries over `@app/db`'s
 // project rows, and their "Capture now" runs (`capture-run.ts`). Deleting a project asks first in
 // main's own dialog, tombstones it, purges its captures and screenshots as one recorded
-// `project-deleted` purge, and unlinks each screenshot file no row names any more. Every method
+// `project-deleted` purge, and unlinks each screenshot file no row names any more. A saved search is
+// stored as Phase 3's search parameters of its URL (`serp-params.ts`, `searchParamsForUrl`); a row
+// that is not (Phase 6's earlier shape, a tampered URL) is skipped. Every method
 // answers: a refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`), a database failure is
 // `store-failed` and one log line (its code, never its message: that may hold URLs).
 
@@ -58,13 +62,28 @@ function profileOf(json: string | null): RenderProfile | null {
   }
 }
 
+/**
+ * A saved search's stored parameters: Phase 3's (`SearchParamsSchema`), and exactly what Phase 3 reads
+ * from their own `url` (so a run only ever visits an engine's result page); else `null` (skipped).
+ */
 function paramsOf(json: string): SearchParams | null {
   try {
     const parsed = SearchParamsSchema.safeParse(JSON.parse(json));
-    return parsed.success ? parsed.data : null;
+    if (!parsed.success) return null;
+    const again = searchParamsForUrl(parsed.data.url, parsed.data.device);
+    return again !== null && canonicalJson(again) === canonicalJson(parsed.data) ? parsed.data : null;
   } catch {
     return null;
   }
+}
+
+/** The search parameters Phase 3 reads from a saved search's URL, with the country and language it asked for; else `null`. */
+function savedSearchParams(input: unknown): SearchParams | null {
+  const parsed = SavedSearchInputSchema.safeParse(input);
+  if (!parsed.success) return null;
+  const params = searchParamsForUrl(searchUrlFor(parsed.data), parsed.data.device);
+  const { gl, hl } = searchLocaleFor(parsed.data);
+  return params !== null && params.engine === parsed.data.engine && params.gl === gl && params.hl === hl ? params : null;
 }
 
 const summaryOf = (project: Project): ProjectSummary => ({
@@ -185,8 +204,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
           for (const query of queries) {
             const params = paramsOf(query.searchParamsJson);
             if (params === null) continue;
-            const url = searchUrlFor(params);
-            queryEntries.push({ id: query.id, params, url, ...(await capturesOf(projectId, url, canonicalJson(params))) });
+            queryEntries.push({ id: query.id, params, url: params.url, ...(await capturesOf(projectId, params.url, canonicalJson(params))) });
           }
           return { project: summaryOf(project), pages: pageEntries, queries: queryEntries };
         },
@@ -265,14 +283,14 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
     removePage: (projectId, pageId) =>
       guarded('remove page', async () => ((await store.removePage(projectId, pageId, now())) ? { status: 'ok' as const } : refused<ProjectRefusal>('not-found')), storeFailed),
 
-    addQuery: (projectId, params) =>
+    addQuery: (projectId, search) =>
       guarded(
         'add query',
         async () => {
-          const parsed = SearchParamsSchema.safeParse(params);
-          if (!parsed.success) return refused<ProjectRefusal>('invalid-query');
+          const params = savedSearchParams(search);
+          if (params === null) return refused<ProjectRefusal>('invalid-query');
           if ((await store.project(projectId)) === null) return refused<ProjectRefusal>('not-found');
-          const added = await store.addQuery(projectId, parsed.data.query, canonicalJson(parsed.data), now());
+          const added = await store.addQuery(projectId, params.query, canonicalJson(params), now());
           return added === null ? refused<ProjectRefusal>('limit') : { status: 'added' as const, query: { id: added.id } };
         },
         storeFailed,
@@ -295,7 +313,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
           const targets: RunPlanTarget[] = (await store.projectPages(projectId)).map((page) => ({ kind: 'page', label: page.url, url: page.url, searchParams: null }));
           for (const query of await store.projectQueries(projectId)) {
             const params = paramsOf(query.searchParamsJson);
-            if (params !== null) targets.push({ kind: 'query', label: queryLabel(params), url: searchUrlFor(params), searchParams: params });
+            if (params !== null) targets.push({ kind: 'query', label: queryLabel(params), url: params.url, searchParams: params });
           }
           if (targets.length === 0) return refused<RunRefusal>('no-targets');
           return runs.start({ projectId, profile: profileOf(project.renderProfileJson), screenshot, targets });

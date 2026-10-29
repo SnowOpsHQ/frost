@@ -140,7 +140,7 @@ For the Phase 7 (libSQL sync) teammate. The tables are in the session database
 |---|---|---|
 | `ci_projects` | `id`, `name`, `render_profile` (JSON, nullable), `retention_mode` (`forever`/`versions`/`days`), `retention_value` (nullable int), `created_at`, `updated_at`, `deleted_at` (nullable) | `UNFILED_PROJECT_ID` (`00000000-0000-7000-8000-000000000000`, named "Unfiled") is inserted by the migration. It is the same on every device, and cannot be deleted. |
 | `ci_project_pages` | `id`, `project_id`, `url`, `created_at`, `updated_at`, `deleted_at` | one live row per `(project_id, url)`. |
-| `ci_project_queries` | `id`, `project_id`, `query`, `search_params` (JSON `SearchParams`), `created_at`, `updated_at`, `deleted_at` | |
+| `ci_project_queries` | `id`, `project_id`, `query`, `search_params` (JSON `SearchParams`: Phase 3's, of the saved search's URL), `created_at`, `updated_at`, `deleted_at` | |
 
 ### Append-only tables (immutable)
 
@@ -222,10 +222,12 @@ What a purge removes:
   and `CHANGES_READ_API`: Zod input and output schemas (from `specs/changes.schema.ts`) for
   `listPages`, `history`, `getVersion`, `diff` and `listScreenshots`. They are read-only, bounded and
   main-side.
-- **Phase 3 (SERP).** Search parameters are frost's own `SearchParams`
-  (`specs/capture-search-params.schema.ts`), stored as validated JSON. `TODO(phase-3-merge)`: replace
-  it with `specs/serp-search-params.schema.ts`, and make a manual capture of a SERP tab record the
-  tab's visible search parameters (`searchParamsOf(tabId)` answers `null` until then).
+- **Phase 3 (SERP).** Done. Search parameters are Phase 3's `SearchParams`
+  (`specs/serp-search-params.schema.ts`), stored as validated canonical JSON (`null` for a page that
+  is not a result page). A capture or screenshot of a SERP tab records the tab's parameters from
+  `SerpReadApi.snapshot(tabId)` (`changes/serp-params.ts`, bound late in main `index.ts` after
+  `setupSerp`); a saved search stores what Phase 3's `matchSerp` reads from its URL with the bundled
+  pack. Phase 6 edits none of Phase 3's files.
 - **Phase 7 (sync).** See Conventions. Every synced row has `id` (UUIDv7) and `created_at`. Captured
   tables only ever insert. Deletions travel as `ci_tombstones` with their `ci_purges` row. Screenshot
   files are content-addressed blobs.
@@ -276,7 +278,8 @@ What a purge removes:
     `CAPTURE_WORLD_ID`, `CAPTURE_SNAPSHOT_VERSION`, `DIFF_ENGINE_VERSION`, `DIFF_LIMITS`, and region
     labels.
   - `specs/capture-snapshot.schema.ts` (Zod): `CaptureSnapshotSchema`, `SnapshotDiffSchema`.
-  - `specs/capture-search-params.schema.ts`: `SearchParamsSchema`, with the Phase 3 TODO.
+  - `specs/serp-search-params.schema.ts`: Phase 3's `SearchParamsSchema` (Phase 6 first had a
+    schema of its own here; it was replaced when Phase 3 merged).
   - `specs/changes-diff.feature.md`.
 - **The capture snapshot** (v1):
   - URL, HTTP status, `X-Robots-Tag`, indexable, score;
@@ -314,7 +317,7 @@ What a purge removes:
   - `text-edit-is-a-change-with-segments`;
   - `heading-and-link-moves`;
   - `structured-data-type-changes`;
-  - `search-params-schema-rejects-unknown-keys`;
+  - `search-params-refuse-the-old-shape`;
   - `canonical-json-is-key-order-free`.
 - [x] commit `feat(change-intel): capture snapshot and region-tagged diff engine`
 - [x] Review fixes: commit `fix(change-intel): address diff engine review findings`
@@ -332,7 +335,7 @@ What a purge removes:
 - **Service** (`changes/service.ts`):
   - `capture(tabId, projectId?)`, for the active tab only;
   - it records the tab's render profile (the audit's `renderProfile`, with `partial`) and search
-    parameters (`searchParamsOf`, `null` until Phase 3);
+    parameters (`searchParamsOf`: Phase 3's for a SERP tab, else `null`);
   - it appends through `@app/db`, writing the diff against the lane's latest version;
   - reads: `history`, `version`, `diff` (stored or computed), `pages`;
   - it never rejects.
@@ -421,8 +424,8 @@ What a purge removes:
 - **Main** (`apps/desktop/src/main/changes/projects.ts`, `changes/capture-run.ts`):
   - project CRUD (a delete is confirmed in main's dialog: the project is tombstoned and a
     `project-deleted` purge runs);
-  - add the current page, add a URL (`http(s)` only), add a query with `SearchParams` (engine,
-    country, language, device);
+  - add the current page, add a URL (`http(s)` only), add a query (engine, query, country,
+    language, device), stored as Phase 3's `SearchParams` of its URL;
   - **capture now** opens one capture tab, activates it, and applies the project's render profile
     (tab-scoped). It visits each page, then each query's search URL (built from `SEARCH_ENGINES`
     plus parameters frost knows for that engine). For each it waits for the ready audit, captures
@@ -552,7 +555,7 @@ schema.
 - **Purge rules:** `all` is for `project-deleted` only, and screenshots are grouped by lane.
 
 ### Task 2: diff engine
-`specs/capture.spec.ts`, `specs/capture-snapshot.schema.ts`, `specs/capture-search-params.schema.ts`,
+`specs/capture.spec.ts`, `specs/capture-snapshot.schema.ts`, `specs/serp-search-params.schema.ts`,
 `specs/changes-diff.feature.md`, `packages/change-intel`.
 - **Work budget:** one budget per diff (`maxWorkCells`), plus `maxLcsCells` per list, with an
   order-insensitive fallback.
@@ -640,14 +643,20 @@ schema.
 - **Run screenshots:** a `busy` one is retried.
 
 ### For the lead and Phase 7
-- `TODO(phase-3-merge)` markers:
-  - `changes/service.ts`, `screenshots/service.ts`, `specs/capture-search-params.schema.ts`, and
-    two feature files.
-  - Phase 3's `SearchParams` describes a result page as seen; Phase 6's also describes a search to
-    run (`ci_project_queries`).
-  - Captured rows are append-only, so map stored JSON on read rather than migrate it; a lane splits
-    at the swap.
-  - Phase 3's service needs a `paramsOf(tabId)`-style accessor for `searchParamsOf`.
+- **Phase 3's search parameters: done** (`feat(changes): record Phase 3 search parameters`); every
+  phase-3-merge marker is resolved.
+  - Phase 6's own schema file is gone; every import is Phase 3's `serp-search-params.schema.ts`.
+  - Captures and screenshots of a SERP tab record the tab's parameters: `lateSearchParams()`
+    (`changes/serp-params.ts`) is made before the services and bound to `setupSerp(...).readApi`
+    right after it runs (two hub lines in main `index.ts`). Only a `ready` or `unreadable` reading
+    whose `url` is the captured page counts; anything else is `null`.
+  - Saved searches (`ci_project_queries`) are Phase 3's parameters too: main builds the URL from the
+    form (engine, query, country, language, device; no location), reads it with Phase 3's
+    `matchSerp` and the bundled pack, and stores that. A run visits the canonical `url` and records
+    the run tab's own parameters, falling back to the saved search's, so a run's capture and a
+    manual one of the same search share a lane.
+  - Rows in Phase 6's earlier shape exist only in development profiles; they are skipped on read.
+    No migration (captured rows are append-only).
 - **Sync:** see Schema.
   - Inserts into the guarded tables must be `INSERT … WHERE NOT EXISTS`; even `ON CONFLICT DO
     NOTHING` aborts.
@@ -658,7 +667,8 @@ schema.
   the page scrolls. A page can see the scrolling.
 - Capture-now visits pages in a visible tab, one at a time; a search engine may show a consent page
   or a challenge instead of results, and that is what gets captured.
-- Search parameters are frost's own minimal `SearchParams` until Phase 3's schema is merged.
+- Saved searches are read with the bundled selector pack, not an updated one; a lane is still keyed
+  on the page URL too, so one search reached at another URL is a lane of its own.
 - Screenshot files are not synced in this phase; rows carry the hash for Phase 7.
 
 ## Self-review notes

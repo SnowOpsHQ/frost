@@ -8,14 +8,18 @@
  *
  * A project is a named list of pages and search queries. "Capture now" visits each of them in a tab
  * of its own and captures it into the project (`source: 'project'`), one run at a time, app-wide.
- * A query is visited at its search URL (`searchUrlFor`): the engine's own address from
- * `SEARCH_ENGINES` plus the parameters frost knows that engine takes (`SEARCH_PARAM_URL_RULES`).
+ * A query (a saved search) is what the form describes (`SavedSearchInput`): main builds its search
+ * URL (`searchUrlFor`: the engine's own address from `SEARCH_ENGINES` plus the selector pack's
+ * country and language parameters, `SEARCH_PARAM_URL_RULES`), reads that URL as Phase 3 reads a
+ * result page (`matchSerp` with the bundled selector pack), and stores those search parameters
+ * (`serp-search-params.schema.ts`). A run visits the stored parameters' canonical `url`.
  */
-import { SEARCH_ENGINES, searchEngine, searchEngineUrl, wellFormed, type SearchEngineId } from './browser-polish.spec';
+import { searchEngine, searchEngineUrl, wellFormed, type SearchEngineId } from './browser-polish.spec';
 import type { CaptureRefusal } from './changes.spec';
 import type { RetentionMode, ScreenshotKind } from './capture-db.spec';
-import type { SearchParams } from './capture-search-params.schema';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from './render-profile.spec';
+import type { SearchParams } from './serp-search-params.schema';
+import { SERP_DEVICE_LABELS, SERP_PARAM_LIMITS, type SerpDevice } from './serp.spec';
 
 // ---- The capture run ---------------------------------------------------------------------------
 
@@ -106,63 +110,88 @@ export interface RunState {
 }
 
 /**
- * The render profile a query with device `mobile` is visited with: a phone with a mobile browser's
- * user agent, otherwise frost's defaults. Other targets use the project's. A run groups its targets
- * by the profile they need and visits each group in a fresh tab whose profile is set once, before its
- * first navigation, with no pin; a group needing the default gets no profile set (setting the default
- * is a Reset, which would also unpin the site the tab shows). A site's pinned profile still applies in
- * a run tab without one of its own: pins are the user's choice, and the capture records the profile
- * actually in effect (the audit's `renderProfile`).
+ * The render profiles a query is visited with by its `device`: a `mobile` query as a phone, a
+ * `tablet` query as a tablet, each with a mobile browser's user agent and otherwise frost's defaults
+ * (Phase 3 reads the device back from the profile: `SERP_DEVICE_OF_PRESET`). Other targets (pages,
+ * `desktop` queries) use the project's. A run groups its targets by the profile they need and visits
+ * each group in a fresh tab whose profile is set once, before its first navigation, with no pin; a
+ * group needing the default gets no profile set (setting the default is a Reset, which would also
+ * unpin the site the tab shows). A site's pinned profile still applies in a run tab without one of its
+ * own: pins are the user's choice, and the capture records the profile actually in effect (the
+ * audit's `renderProfile`) and the search parameters the tab actually shows (below).
  */
 export const MOBILE_QUERY_PROFILE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'mobile' };
+export const TABLET_QUERY_PROFILE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'tablet', userAgent: 'mobile' };
+export const QUERY_DEVICE_PROFILES: Readonly<Record<Exclude<SerpDevice, 'desktop'>, RenderProfile>> = { mobile: MOBILE_QUERY_PROFILE, tablet: TABLET_QUERY_PROFILE };
 
-// ---- Search URLs -------------------------------------------------------------------------------
+// ---- Saved searches ----------------------------------------------------------------------------
 
 /**
- * frost's own table of the parameters each engine's results page takes:
- * - Google: `hl` = language, `gl` = country;
- * - Bing: `setlang` = language, `cc` = country;
- * - DuckDuckGo: `kl` = `<country>-<language>`, only when both are set (it takes one region value).
+ * The query form's search (`projects.addSearch`), before main reads it as a result page:
+ * - `engine`: one of `SEARCH_ENGINES`;
+ * - `query`: trimmed, 1–`PROJECT_QUERY_MAX_CHARS`;
+ * - `country`: two lowercase letters, or `null`;
+ * - `language`: a lowercase BCP 47-style tag (`en`, `pt-br`) of at most
+ *   `QUERY_FIELD_MAX_CHARS.language`, or `null`;
+ * - `device`: `desktop`, `mobile` or `tablet` (`SERP_DEVICES`).
  *
- * A parameter that is `null` is left out. `location` is **never sent**: it is recorded with the query
- * only (results pages take a place through cookies or settings frost does not set). `device` is not
- * a parameter either: a `mobile` query is visited with `MOBILE_QUERY_PROFILE`.
+ * There is no location: Phase 3's search parameters have none (a results page takes a place through
+ * cookies or settings frost does not set).
+ */
+export interface SavedSearchInput {
+  readonly engine: SearchEngineId;
+  readonly query: string;
+  readonly country: string | null;
+  readonly language: string | null;
+  readonly device: SerpDevice;
+}
+
+/**
+ * Each engine's country and language parameters, by the bundled selector pack's names
+ * (`packs/serp-selectors.json`, `params.gl` / `params.hl`), so the URL frost visits is one Phase 3
+ * reads back with the same `gl` and `hl`:
+ * - Google: `gl` = country, `hl` = language;
+ * - Bing: `cc` = country, `setlang` = language;
+ * - DuckDuckGo: one region parameter, `kl` = `<country>-<language>` (Phase 3's `gl`; it has no
+ *   `hl`), sent only when both are set.
+ *
+ * A parameter that is `null` is left out; the country comes before the language, as in Phase 3's
+ * canonical URL. `device` is not a parameter: a query is visited with `QUERY_DEVICE_PROFILES`.
  */
 export const SEARCH_PARAM_URL_RULES = {
-  google: { kind: 'separate', language: 'hl', country: 'gl' },
-  bing: { kind: 'separate', language: 'setlang', country: 'cc' },
-  duckduckgo: { kind: 'region', param: 'kl' },
-} as const satisfies Readonly<Record<SearchEngineId, { readonly kind: 'separate'; readonly language: string; readonly country: string } | { readonly kind: 'region'; readonly param: string }>>;
+  google: { kind: 'separate', gl: 'gl', hl: 'hl' },
+  bing: { kind: 'separate', gl: 'cc', hl: 'setlang' },
+  duckduckgo: { kind: 'region', gl: 'kl' },
+} as const satisfies Readonly<Record<SearchEngineId, { readonly kind: 'separate'; readonly gl: string; readonly hl: string } | { readonly kind: 'region'; readonly gl: string }>>;
 
-/** The search parameters no URL carries (recorded only). */
-export const SEARCH_PARAMS_NEVER_SENT = ['location'] as const satisfies readonly (keyof SearchParams)[];
+/** The `gl` and `hl` values `searchUrlFor(search)` sends (what Phase 3 must read back from it). */
+export function searchLocaleFor(search: Pick<SavedSearchInput, 'engine' | 'country' | 'language'>): { readonly gl: string | null; readonly hl: string | null } {
+  const rule: (typeof SEARCH_PARAM_URL_RULES)[SearchEngineId] = SEARCH_PARAM_URL_RULES[searchEngine(search.engine).id];
+  if (rule.kind === 'separate') return { gl: search.country, hl: search.language };
+  return { gl: search.country !== null && search.language !== null ? `${search.country}-${search.language}` : null, hl: null };
+}
 
 /**
- * The results page of `params` (pure): the engine's `SEARCH_ENGINES` URL for the query (lone
+ * The results page of `search` (pure): the engine's `SEARCH_ENGINES` URL for the query (lone
  * surrogates as U+FFFD, `encodeURIComponent`-encoded: `searchEngineUrl`), then its
- * `SEARCH_PARAM_URL_RULES` parameters, in that order, each value encoded the same way.
+ * `SEARCH_PARAM_URL_RULES` parameters (`searchLocaleFor`), in that order, each value encoded the same
+ * way. Main reads it with Phase 3's `matchSerp` and stores what that answers.
  */
-export function searchUrlFor(params: SearchParams): string {
-  const engine = searchEngine(params.engine).id;
-  const extra: [string, string][] = [];
+export function searchUrlFor(search: SavedSearchInput): string {
+  const engine = searchEngine(search.engine).id;
   const rule: (typeof SEARCH_PARAM_URL_RULES)[SearchEngineId] = SEARCH_PARAM_URL_RULES[engine];
-  if (rule.kind === 'separate') {
-    if (params.language !== null) extra.push([rule.language, params.language]);
-    if (params.country !== null) extra.push([rule.country, params.country]);
-  } else if (params.country !== null && params.language !== null) {
-    extra.push([rule.param, `${params.country}-${params.language}`]);
-  }
-  return searchEngineUrl(engine, params.query) + extra.map(([key, value]) => `&${key}=${encodeURIComponent(wellFormed(value))}`).join('');
+  const { gl, hl } = searchLocaleFor(search);
+  const extra: [string, string][] = [];
+  if (gl !== null) extra.push([rule.gl, gl]);
+  if (hl !== null && rule.kind === 'separate') extra.push([rule.hl, hl]);
+  return searchEngineUrl(engine, search.query) + extra.map(([key, value]) => `&${key}=${encodeURIComponent(wellFormed(value))}`).join('');
 }
 
-/** How a query reads in the project view and the run's list: `“query” on Engine` and its settings. */
+/** How a query reads in the project view and the run's list: `“query” on Engine` and its country, language and device. */
 export function queryLabel(params: SearchParams): string {
-  const label = SEARCH_ENGINES.find((engine) => engine.id === params.engine)?.label ?? params.engine;
-  const settings = [params.country?.toUpperCase(), params.language, params.device === null ? null : SEARCH_DEVICE_LABELS[params.device].toLowerCase(), params.location].filter((part): part is string => typeof part === 'string' && part !== '');
-  return `“${params.query}” on ${label}${settings.length > 0 ? ` (${settings.join(', ')})` : ''}`;
+  const settings = [params.gl?.toUpperCase(), params.hl, SERP_DEVICE_LABELS[params.device]?.toLowerCase()].filter((part): part is string => typeof part === 'string' && part !== '');
+  return `“${params.query}” on ${params.engineLabel}${settings.length > 0 ? ` (${settings.join(', ')})` : ''}`;
 }
-
-export const SEARCH_DEVICE_LABELS: Readonly<Record<NonNullable<SearchParams['device']>, string>> = { desktop: 'Desktop', mobile: 'Mobile' };
 
 // ---- Answers -----------------------------------------------------------------------------------
 
@@ -172,7 +201,8 @@ export const SEARCH_DEVICE_LABELS: Readonly<Record<NonNullable<SearchParams['dev
  * - `unfiled`: Unfiled cannot be renamed or deleted;
  * - `invalid-name`: blank, or too long, after trimming;
  * - `invalid-url`: not an `http(s)` URL frost can store;
- * - `invalid-query`: search parameters that do not fit `SearchParamsSchema`;
+ * - `invalid-query`: a search that does not fit `SavedSearchInputSchema`, or whose URL Phase 3 does
+ *   not read back as a result page with the country and language asked for;
  * - `invalid-profile`: not a render profile;
  * - `no-page`: the active tab shows no web page (Add the current page);
  * - `limit`: the project (or frost) holds as many as it can (`MAX_PROJECTS`, `MAX_PROJECT_PAGES`,
@@ -189,7 +219,7 @@ export const PROJECT_REFUSAL_MESSAGES: Readonly<Record<ProjectRefusal, string>> 
   unfiled: 'Unfiled cannot be renamed or deleted.',
   'invalid-name': 'Give the project a name.',
   'invalid-url': 'Enter an http or https address.',
-  'invalid-query': 'Enter a query, and a two-letter country and a language code (or leave them empty).',
+  'invalid-query': 'Enter a query, and a two-letter country and a short language code (or leave them empty).',
   'invalid-profile': 'That render profile cannot be used.',
   'no-page': 'The current tab shows no web page.',
   limit: 'This project cannot hold any more.',
@@ -242,8 +272,9 @@ export interface ProjectPageEntry extends ProjectEntryCaptures {
 
 export interface ProjectQueryEntry extends ProjectEntryCaptures {
   id: string;
+  /** The saved search, as Phase 3 reads its URL (`serp-search-params.schema.ts`). */
   params: SearchParams;
-  /** `searchUrlFor(params)`. */
+  /** `params.url`: the canonical URL a run visits. */
   url: string;
 }
 
@@ -270,11 +301,11 @@ export const PROJECTS_TITLE = 'Projects' as const;
 export const CAPTURE_RUN_NOTE =
   'frost visits each page in a tab of its own; search engines may show a consent page or a challenge, and that is what gets captured.' as const;
 
-/** The longest `language` and `location` the query form takes (`SEARCH_LANGUAGE_MAX_CHARS`, `SEARCH_LOCATION_MAX_CHARS` of the Zod schema). */
-export const QUERY_FIELD_MAX_CHARS = { language: 35, location: 100 } as const;
-
-/** Said in the query form: what `location` does (`SEARCH_PARAMS_NEVER_SENT`). */
-export const QUERY_LOCATION_NOTE = 'The location is recorded with the query; it is not sent to the search engine.' as const;
+/**
+ * The longest `language` the query form takes: a DuckDuckGo region (`<country>-<language>`) still
+ * fits Phase 3's `SERP_PARAM_LIMITS.maxLocaleChars`.
+ */
+export const QUERY_FIELD_MAX_CHARS = { language: SERP_PARAM_LIMITS.maxLocaleChars - 3 } as const;
 
 export const RUN_STATE_LABELS: Readonly<Record<RunStateName, string>> = {
   idle: 'Not run yet',

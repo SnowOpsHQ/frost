@@ -17,7 +17,7 @@
  * (only trusted input does), and it cannot keep Esc from cancelling (main hears it first).
  */
 import type { ScreenshotKind } from './capture-db.spec';
-import type { SearchParams } from './capture-search-params.schema';
+import type { SearchParams } from './serp-search-params.schema';
 import type { RenderProfile } from './render-profile.spec';
 
 /**

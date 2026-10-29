@@ -11,17 +11,18 @@ import { openSessionStore, uuidv7, type AppendCaptureInput, type SessionStore } 
 import type { SeoAuditResponse } from '@app/seo-core';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS, DIFF_ENGINE_VERSION, type CaptureSnapshot } from '@app/specs/capture-snapshot.schema';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { CAPTURE_BUSY, CHANGES_READ_API, type CaptureAnswer, type RegionAnswer } from '@app/specs/changes.schema';
 import { DEFAULT_RENDER_PROFILE, type AuditRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import { auditOf, regionAnswer, regionText } from './fakes';
 import { createChangesService, type ChangesServiceDeps } from '../service';
+import { lateSearchParams } from '../serp-params';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex } from '../snapshot';
 
 const PAGE = 'https://example.com/guides/tea';
 const OTHER = 'https://example.com/other';
 const PHONE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' };
-const PARAMS: SearchParams = { engine: 'google', query: 'green tea', country: 'de', language: 'de', location: null, device: 'mobile' };
+const PARAMS: SearchParams = { engine: 'google', engineLabel: 'Google', query: 'green tea', gl: 'de', hl: 'de', device: 'mobile', page: 1, offset: null, url: 'https://www.google.com/search?q=green+tea&gl=de&hl=de' };
 const SECRET = 'SECRET PAGE TEXT';
 
 /** One clock for every service and direct append in a test file, so rows are in the order they were made. */
@@ -231,7 +232,7 @@ describe('changes service', () => {
 
     // A project's capture run passes its source and the query's search parameters.
     const project = (await repo.createProject('Teas', 5))!;
-    const query: SearchParams = { ...PARAMS, query: 'oolong', device: null };
+    const query: SearchParams = { ...PARAMS, query: 'oolong', device: 'desktop' };
     const run = captured(await service.capture(1, { projectId: project.id, source: 'project', searchParams: query }));
     expect(rows('ci_captures', 'id = ?', run.captureId)).toMatchObject([{ project_id: project.id, source: 'project', search_params: canonicalJson(query), lane_key: laneKeyFor(PAGE, PHONE, query) }]);
     expect(run.newVersion).toBe(true);
@@ -240,7 +241,7 @@ describe('changes service', () => {
     expect(captured(await service.capture(1, { projectId: project.id, source: 'project', searchParams: query, pageUrl: PAGE })).newVersion).toBe(false);
     // Search parameters that do not fit their schema are refused.
     expect(refused(await service.capture(1, { searchParams: { ...PARAMS, extra: 1 } as SearchParams }))).toBe('invalid-page');
-    state.params = { ...PARAMS, country: 'DE' };
+    state.params = { ...PARAMS, gl: 'DE' };
     expect(refused(await service.capture(1))).toBe('invalid-page');
 
     // No profile: `null`, not partial.
@@ -248,6 +249,41 @@ describe('changes service', () => {
     state.response = { status: 'ready', url: PAGE, audit: auditOf(PAGE) };
     const plain = captured(await service.capture(1));
     expect(rows('ci_captures', 'id = ?', plain.captureId)).toMatchObject([{ render_profile: null, render_profile_partial: 0, search_params: null, lane_key: laneKeyFor(PAGE, null, null) }]);
+  });
+
+  test('capture-records-the-serp-tabs-params', async () => {
+    // Phase 3's read API: a ready reading of tab 1's page; tab 1 shows PAGE.
+    const serp = { status: 'ready' as string, url: PAGE };
+    const snapshot = vi.fn((tabId: number) => ({ status: serp.status, tabId, documentSeq: 1, url: serp.url, readAt: 1, snapshot: { status: 'ready', params: PARAMS } }) as never);
+    const late = lateSearchParams();
+    const searchParamsOf = vi.fn(late.of);
+    const { service, rows } = setup({ searchParamsOf });
+    late.bind({ snapshot });
+    const serpCapture = captured(await service.capture(1));
+    expect(searchParamsOf).toHaveBeenLastCalledWith(1, PAGE);
+    expect(rows('ci_captures', 'id = ?', serpCapture.captureId)).toMatchObject([{ search_params: canonicalJson(PARAMS), lane_key: laneKeyFor(PAGE, null, PARAMS) }]);
+    // The tab is no result page (or the reading is of another page): none.
+    serp.status = 'not-serp';
+    const plain = captured(await service.capture(1));
+    expect(rows('ci_captures', 'id = ?', plain.captureId)).toMatchObject([{ search_params: null, lane_key: laneKeyFor(PAGE, null, null) }]);
+    serp.status = 'ready';
+    serp.url = OTHER;
+    expect(rows('ci_captures', 'id = ?', captured(await service.capture(1)).captureId)).toMatchObject([{ search_params: null }]);
+  });
+
+  test('one-search-shares-a-lane', async () => {
+    const { service, state, rows, repo } = setup();
+    const project = (await repo.createProject('Teas', 5))!;
+    // A run's capture of the search (its parameters given), then a manual one the SERP service reads the same.
+    const run = captured(await service.capture(1, { projectId: project.id, source: 'project', searchParams: PARAMS, pageUrl: PAGE }));
+    state.params = { ...PARAMS };
+    const manual = captured(await service.capture(1));
+    expect(run.newVersion).toBe(true);
+    expect(manual.newVersion).toBe(false);
+    expect(manual.versionId).toBe(run.versionId);
+    const lanes = rows('ci_captures').map((row) => row.lane_key);
+    expect(lanes).toEqual([laneKeyFor(PAGE, null, PARAMS), laneKeyFor(PAGE, null, PARAMS)]);
+    expect(rows('ci_versions')).toHaveLength(1);
   });
 
   test('unchanged-page-reuses-version', async () => {

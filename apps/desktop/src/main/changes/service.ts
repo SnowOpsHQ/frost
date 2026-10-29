@@ -4,7 +4,8 @@ import type { ChangesReadService, ChangesService } from '@app/ipc-contract';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { MAX_DIFF_JSON_BYTES, MAX_SNAPSHOT_JSON_BYTES, UNFILED_PROJECT_ID, type CaptureSource } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS, CAPTURE_SNAPSHOT_VERSION, PAGE_REGIONS, CaptureSnapshotSchema, DIFF_ENGINE_VERSION, SnapshotDiffSchema, type CaptureSnapshot, type SnapshotDiff } from '@app/specs/capture-snapshot.schema';
-import { SearchParamsSchema, type SearchParams } from '@app/specs/capture-search-params.schema';
+import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
+import type { SearchParamsOf } from './serp-params';
 import { CAPTURE_BUSY, CAPTURE_STALE_RETRIES, DiffSummarySchema, type CaptureAnswer, type CaptureRefusal, type HistoryVersion } from '@app/specs/changes.schema';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import type { z } from 'zod';
@@ -42,8 +43,11 @@ export interface ChangesServiceDeps {
   readonly uuidv7?: (now?: number) => string;
   /** Where a refused capture or a failed read is reported (one line each; never page text). */
   readonly log?: (message: string) => void;
-  /** The search parameters a manual capture of the tab records. */
-  readonly searchParamsOf?: (tabId: number) => SearchParams | null;
+  /**
+   * The search parameters a manual capture of the tab records: Phase 3's for the tab's result page
+   * `pageUrl` (stored form), `null` for any other page (`serp-params.ts`; default: always `null`).
+   */
+  readonly searchParamsOf?: SearchParamsOf;
   /** How long an extraction may take (default `CAPTURE_LIMITS.extractTimeoutMs`). */
   readonly extractTimeoutMs?: number;
 }
@@ -64,8 +68,8 @@ export interface MainChangesService extends ChangesService, ChangesReadService {
   onCaptured(listener: (projectId: string) => void): void;
 }
 
-// TODO(phase-3-merge): the tab's visible search parameters (serp-search-params.schema.ts)
-const noSearchParams = (_tabId: number): SearchParams | null => null;
+/** Before Phase 3's SERP service is bound (and in tests): no search parameters. */
+const noSearchParams: SearchParamsOf = () => null;
 
 const refused = (reason: CaptureRefusal): CaptureAnswer => ({ status: 'refused', reason });
 /** An error's code or name: never its message (a database error's message holds its parameters, URLs among them). */
@@ -176,7 +180,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     } catch (error) {
       return failed('store-failed', `the project could not be read (${codeOf(error)})`);
     }
-    const given = options.searchParams !== undefined ? options.searchParams : searchParamsOf(tabId);
+    const given = options.searchParams !== undefined ? options.searchParams : searchParamsOf(tabId, page);
     const params = given === null ? null : SearchParamsSchema.safeParse(given);
     if (params !== null && !params.success) return failed('invalid-page', 'its search parameters do not fit their schema');
     const searchParams = params?.data ?? null;

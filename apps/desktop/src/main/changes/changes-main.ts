@@ -3,6 +3,7 @@ import type { ChangeIntelRepository } from '@app/db';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { createLoadTimes } from './loads';
 import { runRegions } from './regions';
+import type { SearchParamsOf } from './serp-params';
 import { changesTabs, createChangesService, type MainChangesService } from './service';
 
 // Main's changes service over Electron (Phase 6 Task 3; acceptance `changes-capture.feature.md`): the
@@ -22,11 +23,13 @@ export interface MainChangesDeps {
   /** Main's live map of the tabs' WebContents (by WebContents id). */
   readonly tabContents: ReadonlyMap<number, WebContents>;
   readonly log: (message: string) => void;
+  /** The tab's search parameters from Phase 3's SERP service (`lateSearchParams().of`: `null` until it is bound). */
+  readonly searchParamsOf: SearchParamsOf;
 }
 
-export function createMainChanges({ store, browser, tabContents, log }: MainChangesDeps): MainChangesService {
+export function createMainChanges({ store, browser, tabContents, log, searchParamsOf }: MainChangesDeps): MainChangesService {
   const loads = createLoadTimes();
   app.on('web-contents-created', (_event, contents) => loads.watch(contents));
   const contentsOf = (tabId: number): WebContents | null => [...tabContents.values()].find((contents) => !contents.isDestroyed() && browser.tabIdOf(contents) === tabId) ?? null;
-  return createChangesService({ store, tabs: changesTabs(browser, contentsOf, loads), extract: runRegions, log });
+  return createChangesService({ store, tabs: changesTabs(browser, contentsOf, loads), extract: runRegions, log, searchParamsOf });
 }

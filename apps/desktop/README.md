@@ -352,6 +352,8 @@ Acceptance: `changes-capture.feature.md`, `changes-diff.feature.md`, `changes-pa
     version.
   - Versions are kept per **lane**: the URL with its render profile and search parameters. A phone
     capture never diffs against a desktop one, and the panel shows the lanes as chips.
+  - On a search results page, a capture records the SERP panel's search parameters (engine, query,
+    `gl`, `hl`, device, page); on any other page it records none.
   - The **diff** between two versions of a lane is grouped by region: head, HTTP, structured data,
     main content, navigation, header, sidebar, footer, elsewhere on the page, and audit. Text edits
     show word-level changes, every value is inert text, and truncated or partial captures say so.
@@ -371,8 +373,10 @@ Acceptance: `changes-capture.feature.md`, `changes-diff.feature.md`, `changes-pa
   - Files are PNGs named by their SHA-256 under `<userData>/frost-captures/screenshots/`, with the
     directory `0700` and files `0600`, never named by anything the page or the chrome supplies.
 - **Projects** (a sheet over the page area, from the Changes panel or the palette).
-  - A project holds pages and searches (engine, query, country, language, device; a location is
-    recorded but never sent), and an optional render profile.
+  - A project holds pages and searches (engine, query, country, language, device: desktop, mobile or
+    tablet), and an optional render profile. A search is stored as the parameters the SERP panel
+    reads from its URL, so a run's capture of it and a capture you take of the same results page
+    share a lane.
   - **Capture now** visits each target in a tab of its own, one at a time, with optional viewport
     screenshots and visible progress. It waits while you are on another tab; Cancel, or closing its
     tab, stops it. Quitting stops it too, and its tab is not restored next launch.
@@ -663,9 +667,9 @@ proxy, the proxy resolves the name itself.
     consent page or a challenge instead of results, and that is what gets captured. A page that
     redirects itself by script after it first loads counts as the tab moving away, and its target
     fails.
-  - **Search parameters** use Phase 6's own `SearchParams` until Phase 3's schema is wired in. A
-    manual capture of a result page records none, so it sits in another lane than a project run's
-    capture of the same search.
+  - **Search parameters:** a lane is still keyed on the page's URL, so the same search reached at
+    another URL (with an engine's own tracking parameters) is a lane of its own. Saved searches are
+    read with the bundled selector pack, not an updated one.
   - **Region read and inspector:** neither enters shadow roots or iframes (a click inside one picks
     its host or frame).
   - **Capture time and versions:** a capture cut short by its deadline whose text differs can still

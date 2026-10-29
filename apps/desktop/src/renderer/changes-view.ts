@@ -1,10 +1,10 @@
 import type { SeoAuditResponse } from '@app/seo-core';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types).
 import type { TabState } from '@app/specs/browser.spec';
-import { searchEngine } from '@app/specs/browser-polish.spec';
+import { SERP_DEVICE_LABELS } from '@app/specs/serp.spec';
 import { DIFF_REGIONS, DIFF_REGION_LABELS, type Change, type ChangeCounts, type ChangeKind, type DiffField, type DiffRegion, type SnapshotDiff } from '@app/specs/capture.spec';
 // Type-only: the schema file holds Zod, which must stay out of the chrome's bundle (strict Trusted Types).
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { MAX_HISTORY_PAGE, type ScreenshotKind } from '@app/specs/capture-db.spec';
 import { CAPTURE_REFUSAL_MESSAGES, type CaptureAnswer, type CaptureInput, type DiffSummary, type HistoryVersion } from '@app/specs/changes.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
@@ -83,8 +83,8 @@ export function profileLabel(profile: RenderProfile | null): string {
 /** Search parameters in a few words (`null`: none). */
 export function searchParamsLabel(params: SearchParams | null): string | null {
   if (params === null) return null;
-  const parts = [`“${params.query}”`, searchEngine(params.engine).label];
-  for (const value of [params.country, params.language, params.location, params.device]) if (value !== null) parts.push(value);
+  const parts = [`“${params.query}”`, params.engineLabel];
+  for (const value of [params.gl, params.hl, SERP_DEVICE_LABELS[params.device]?.toLowerCase() ?? null, params.page > 1 ? `page ${params.page}` : null]) if (value !== null && value !== undefined) parts.push(value);
   return parts.join(' · ');
 }
 

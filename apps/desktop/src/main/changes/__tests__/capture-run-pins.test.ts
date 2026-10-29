@@ -3,7 +3,7 @@
 // The run over the real browser controller and its real render profiles and pins
 // (`browser/render-profile.ts`): a run never removes a pin the user saved.
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import type { SearchParams } from '@app/specs/capture-search-params.schema';
+import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import type { CaptureAnswer } from '@app/specs/changes.spec';
 import { MOBILE_QUERY_PROFILE } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
@@ -20,7 +20,7 @@ const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const ID = '01920000-0000-7000-8000-000000000001';
 const NO_JS: RenderProfile = { ...DEFAULT_RENDER_PROFILE, javascriptDisabled: true };
 const PHONE_BOT: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' };
-const MOBILE: SearchParams = { engine: 'google', query: 'tea', country: null, language: null, location: null, device: 'mobile' };
+const MOBILE: SearchParams = { engine: 'google', engineLabel: 'Google', query: 'tea', gl: null, hl: null, device: 'mobile', page: 1, offset: null, url: 'https://www.google.com/search?q=tea' };
 const DESKTOP: SearchParams = { ...MOBILE, device: 'desktop' };
 const SEARCH = 'https://www.google.com/search?q=tea';
 
