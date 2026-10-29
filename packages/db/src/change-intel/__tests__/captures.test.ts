@@ -210,6 +210,36 @@ describe('captures', () => {
     expect(await t.repo.history({ pageUrl: PAGE, projectId: 'nope', limit: 10 })).toEqual({ entries: [], next: null });
   });
 
+  test('history-follows-the-lane', async () => {
+    // One search reached at two URLs (tracking parameters differ): main gives both the same lane.
+    const first = 'https://www.google.com/search?q=tea&gl=us';
+    const second = 'https://www.google.com/search?q=tea&gl=us&ei=tracking';
+    const lane = laneOf('search:tea');
+    const into = async (url: string, snapshot: string, at: number) => {
+      const latest = await t.repo.latestVersion(lane);
+      const diff =
+        latest && latest.snapshotHash !== sha256(snapshot)
+          ? { id: uuidv7(at), fromVersionId: latest.id, engineVersion: 1, diffJson: '{}', summaryJson: '{"main":1}', changeCount: 1 }
+          : undefined;
+      return appended(await t.repo.appendCapture(captureInput({ url, snapshot, at, laneKey: lane, ...(diff ? { diff } : {}) })));
+    };
+    const v1 = await into(first, '{"v":1}', 1_000);
+    // Unchanged at the second URL: the lane's version is reused, and that URL's history shows it.
+    const again = await into(second, '{"v":1}', 2_000);
+    expect(again).toMatchObject({ versionId: v1.versionId, newVersion: false });
+    expect((await t.repo.history({ pageUrl: second })).entries.map((e) => e.id)).toEqual([v1.versionId]);
+    // Changed at the second URL: both URLs show the whole lane, with the diff against the first.
+    const v2 = await into(second, '{"v":2}', 3_000);
+    for (const url of [first, second]) {
+      const { entries } = await t.repo.history({ pageUrl: url });
+      expect(entries.map((e) => e.id), url).toEqual([v2.versionId, v1.versionId]);
+      expect(entries[0]!.diff?.fromVersionId, url).toBe(v1.versionId);
+    }
+    // Another page's lane stays out.
+    appended(await capture(t.repo, { url: OTHER, snapshot: '{"v":9}', at: 4_000 }));
+    expect((await t.repo.history({ pageUrl: first })).entries).toHaveLength(2);
+  });
+
   test('screenshots-round-trip', async () => {
     const shot = appended(await capture(t.repo, { url: PAGE, snapshot: '{"v":1}', at: 1_000 }));
     const first = screenshotInput({ pageUrl: PAGE, createdAt: 1_000, captureId: shot.captureId, renderProfileJson: PHONE });

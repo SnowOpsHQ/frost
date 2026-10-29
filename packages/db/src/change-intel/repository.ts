@@ -565,7 +565,10 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         .from(ciVersions)
         .where(
           and(
-            eq(ciVersions.pageUrl, key),
+            // The page's versions, and every version of a lane one of its captures went into: a result
+            // page's lane is its canonical search, so a version first stored at another URL of that
+            // search is this page's history too.
+            or(eq(ciVersions.pageUrl, key), sql`ci_versions.lane_key IN (SELECT c.lane_key FROM ci_captures c WHERE c.page_url = ${key})`),
             projectId === undefined ? undefined : sql`EXISTS (SELECT 1 FROM ci_captures c WHERE c.version_id = ci_versions.id AND c.project_id = ${projectId})`,
             cursor ? olderThan(ciVersions.createdAt, ciVersions.id, cursor) : undefined,
           ),

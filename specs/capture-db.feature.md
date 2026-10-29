@@ -156,6 +156,9 @@ transaction, decided inside it):
   capture count and last capture time, and the stored diff's summary and change count against its
   parent (none for the first). With `projectId` only versions captured in that project, counted in
   that project. The URL is matched without its fragment.
+- **Scenario: history-follows-the-lane** — a page's history also holds every version of a lane one
+  of its captures went into, wherever that version was first stored: two visits to one search at
+  different URLs (a result page's lane is its canonical search) share their history both ways.
 - **Scenario: screenshots-round-trip** — `appendScreenshot` stores a row (an `area` needs its rect,
   the other kinds have none; a `captureId` must name a capture; the project's liveness and the
   capture are checked inside the insert); `screenshot(id)`,
