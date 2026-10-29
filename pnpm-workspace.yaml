@@ -14,11 +14,18 @@ allowBuilds:
   # Pulled in by @doyensec/electronegativity (via escope). Its postinstall only
   # prints a message; it is not needed to run.
   es5-ext: false
+  # Pulled in by tsx (@app/backend's `dev` runner). Its postinstall only verifies the platform
+  # binary, which esbuild resolves from its `@esbuild/<platform>` optional dependency anyway.
+  esbuild: false
   # macOS only (via @electron-forge/maker-dmg → electron-installer-dmg → appdmg, all darwin-only
   # optional deps): small native addons appdmg needs to write the DMG's Finder alias and xattrs.
   # Their install script is `node-gyp rebuild`; never installed on Linux.
   fs-xattr: true
   macos-alias: true
+  # Windows Squirrel maker (@electron-forge/maker-squirrel). Its install script only copies the
+  # bundled 7-Zip for the host arch (vendor/7z-<arch>.exe) to vendor/7z.exe, which Squirrel.exe
+  # uses to pack the .nupkg. No download, no native build.
+  electron-winstaller: true
   # The intent classifier's runtime (Phase 3 Task 2): its postinstall only downloads optional GPU
   # (CUDA/TensorRT) binaries; the CPU binaries frost uses ship in the tarball.
   onnxruntime-node: false

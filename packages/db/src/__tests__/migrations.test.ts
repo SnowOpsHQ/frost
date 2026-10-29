@@ -6,6 +6,8 @@ import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, test } from 'vitest';
 import { MIGRATIONS_TABLE, SESSION_TABLES } from '@app/specs/browser-session-db.spec';
 import { CONTENT_TABLES } from '@app/specs/seo-content.spec';
+import { CHANGE_INTEL_TABLES } from '@app/specs/capture-db.spec';
+import * as changeIntel from '../change-intel/schema';
 import { seoSnippetVariants, seoTargetQueries } from '../content-schema';
 import { appSettings } from '../settings-schema';
 import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
@@ -65,7 +67,7 @@ describe('migrations', () => {
   test('migrations-create-schema', () => {
     const db = memory();
     expect(runMigrations(db)).toEqual(MIGRATIONS.map((m) => m.id));
-    expect(tableNames(db)).toEqual([...SESSION_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES].sort());
+    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES].sort());
     // Phase 2.5 Task 3's Content panel notes are session tables too (`seo-content.feature.md`, content-tables-migrate).
     expect(SESSION_TABLES).toEqual(expect.arrayContaining([...CONTENT_TABLES]));
     for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants, appSettings]) {
@@ -74,7 +76,7 @@ describe('migrations', () => {
     }
     // The schema's indexes exist too.
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row['name']);
-    expect(indexes).toEqual([recentVisits, renderProfilePins].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort());
+    expect(indexes).toEqual([recentVisits, renderProfilePins, ...Object.values(changeIntel)].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort());
     expect(recordedIds(db)).toEqual(MIGRATIONS.map((m) => m.id));
   });
 

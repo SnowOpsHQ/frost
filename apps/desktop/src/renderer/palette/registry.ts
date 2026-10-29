@@ -26,6 +26,7 @@ export const PALETTE_ICON_NAMES = [
   'panel-javascript',
   'panel-serp',
   'panel-visibility',
+  'panel-search-console',
   'sidebar',
   'highlight',
   'audit',
@@ -46,6 +47,8 @@ export const PALETTE_ICON_NAMES = [
   'tab-close',
   'tab-switch',
   'clear',
+  'panel-changes',
+  'panel-inspector',
 ] as const;
 export type PaletteIconName = (typeof PALETTE_ICON_NAMES)[number];
 

@@ -7,8 +7,18 @@ export type { JavascriptService } from './javascript-router';
 export type { DevtoolsService } from './devtools-service';
 export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
 export type { ChecksService } from './checks-service';
+export type { UpdateService } from './update-router';
 export type { SerpProbesService, SerpReadApi, SerpService } from './serp-service';
 export type { AgentService } from './agent-service';
+export type { ChangesReadApi, ChangesReadService, ChangesService } from './changes-service';
+export type { ScreenshotsService } from './changes-service';
+export type { ProjectsService } from './projects-router';
+export type { RetentionService } from './projects-router';
+export type { InspectorService } from './inspector-router';
+export type { AccountService, SettingsRequests } from './account-service';
+export { requireFeature } from './account-router';
+export type { TelemetryService } from './telemetry-service';
+export type { GscIpcService, GscService } from './gsc-service';
 export {
   createContext,
   createSenderPolicy,

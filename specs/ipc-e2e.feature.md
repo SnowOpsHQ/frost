@@ -6,7 +6,11 @@ test in `apps/desktop/e2e/ipc.e2e.ts` (Playwright `_electron`).
 
 **Harness:** the **unpackaged built** app (`pnpm --filter @app/desktop build` → `.vite/build`) is
 launched with `electron <apps/desktop>`; that bundle has no dev-server URL, so it loads
-`APP_ENTRY_URL`. `ELECTRON_RUN_AS_NODE` is removed from the child environment. A global setup
+`APP_ENTRY_URL`. `ELECTRON_RUN_AS_NODE` is removed from the child environment, and so is every
+inherited `FROST_PUBLIC_*`, `FROST_GSC_*` and `FROST_TELEMETRY_*` variable (the run-time configuration
+a developer's shell may export), before a suite's own `env` is applied: each suite sets exactly the
+configuration it tests. (Values in the build's environment or `apps/desktop/.env*` are baked in by
+Vite instead, and pin the build: see `apps/desktop/README.md`.) A global setup
 refuses to run against a missing bundle or a dev bundle left by `electron-forge start` (which bakes
 in the dev-server URL). The packaged binary cannot be driven: its fuses disable the Node inspector
 arguments Playwright needs, and they stay on. Entry points: `pnpm test:e2e` (Turbo, builds first) or

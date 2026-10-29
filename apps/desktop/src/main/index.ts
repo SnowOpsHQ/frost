@@ -1,10 +1,12 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { app, BrowserWindow, clipboard, ipcMain, net, session, webContents, type WebContents } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, safeStorage, session, shell, webContents, type WebContents } from 'electron';
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { createAccountMain } from './account/main';
 import { createWindowRegistry } from './app-windows';
+import { createGscMain } from './gsc/main';
 import { contextMenuTemplate } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
@@ -47,9 +49,18 @@ import { setupSerp } from './serp/setup';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
+import { handleSquirrelEvent } from './update/squirrel-events';
+import { startUpdateService } from './update/service';
+import { startSyncService } from './sync/service';
+import { createTelemetryMain } from './telemetry/main';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 import { createAgentService } from './agent/wire';
 import { intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
+import { createMainChanges } from './changes/changes-main';
+import { createMainScreenshots } from './screenshots/electron';
+import { createMainProjects } from './changes/projects-main';
+import { lateSearchParams } from './changes/serp-params';
+import { createMainInspector } from './inspector/service';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -62,8 +73,9 @@ const debugRefusal = remoteDebuggingRefusal({
 if (debugRefusal !== null) {
   console.error(`frost: ${debugRefusal}`);
   app.exit(1);
-} else if (!runIntentSelfTestIfAsked(app)) {
-  // `--frost-intent-selftest` (specs/intent-classifier.spec.ts) runs instead of the app: no window.
+} else if (!handleSquirrelEvent(app) && !runIntentSelfTestIfAsked(app)) {
+  // Not a Squirrel install event (Windows: those make or remove shortcuts and exit; windows-package.spec.ts),
+  // nor `--frost-intent-selftest` (specs/intent-classifier.spec.ts), which runs instead of the app: no window.
   start();
 }
 
@@ -77,6 +89,10 @@ function start(): void {
   const started = new Promise<void>((resolve) => (markStarted = resolve));
   const windowOptions = { windows: () => BrowserWindow.getAllWindows(), openWindow: () => openMainWindow(), started };
   if (!claimSingleInstance(app, windowOptions)) return;
+
+  // Telemetry (specs/telemetry.feature.md, Desktop): its consent read synchronously, before any window
+  // (off by default); `telemetryMain.telemetry` is the `span` / `captureException` handle for main.
+  const telemetryMain = createTelemetryMain(started);
 
   // Global backstop: every renderer is sandboxed even if a future WebContents forgets the explicit pref.
   app.enableSandbox();
@@ -313,6 +329,17 @@ function start(): void {
     contentNotesGeneration: () => content.generation(),
   });
 
+  // Change intelligence (specs/changes-capture.feature.md): the active tab's ready audit and its regions, captured into the session database.
+  // A SERP tab's search parameters come from Phase 3's read API, bound once setupSerp runs (null until then).
+  const serpParams = lateSearchParams();
+  const changes = createMainChanges({ store: sessionStore.changeIntel, browser, tabContents, log: logSession, searchParamsOf: serpParams.of });
+  // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
+  const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession, searchParamsOf: serpParams.of });
+  // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
+  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of });
+  // The DOM inspector (specs/inspector.feature.md): reads the active tab's page in its own isolated world; never writes to it.
+  const inspector = createMainInspector({ browser, tabContents, log: logSession });
+
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
   const securityOptions: SecurityOptions = {
@@ -391,8 +418,23 @@ function start(): void {
     // intent, the visibility probes (their own fetcher lane over this hop and resolver) and each tab's
     // page events, all wired in serp/setup.ts (disposed on will-quit there).
     const serp = setupSerp({ app, browser, isBrowseContents, hop, resolve, robots: (pageUrl) => robotsFetcher.get(pageUrl), userData: app.getPath('userData'), switches: app.commandLine, log: logSession });
+    serpParams.bind(serp.readApi);
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
+    // Updates (specs/update-client.feature.md): off unless a feed is configured; every step past a check waits for the user.
+    // Never throws and returns at once (the client is built in the background; a failure leaves updates disabled).
+    const update = startUpdateService({ app, net, session, shell, log: logSession });
+    app.once('will-quit', () => update.dispose());
+    // Sync (specs/sync-engine.feature.md): off unless userData/frost-sync.json turns it on; never throws, runs in the background.
+    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession });
+    app.once('will-quit', () => void sync.dispose());
+    // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
+    // check), before the first window (its gestures are tracked from creation).
+    const account = await createAccountMain();
+    // Turning telemetry on needs a live gesture in the sender's window (specs/telemetry.feature.md).
+    telemetryMain.useGestures((windowId) => account.gestures.consume(windowId));
+    // Search Console (specs/gsc.feature.md): read-only, gated on `search-console`; reuses the account's store and gestures.
+    const gsc = await createGscMain(account);
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,
@@ -429,9 +471,17 @@ function start(): void {
           log: logSession,
         }),
         settings: searchEngine,
+        update: update.service,
         // The SERP overlay (specs/serp-overlay.feature.md).
         serp: serp.service,
         agent: createAgentService({ app, browser, webContents, sessionStore, log: logSession, ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi) } }),
+        changes,
+        screenshots,
+        projects,
+        inspector,
+        account: account.service,
+        telemetry: telemetryMain.service,
+        gsc: gsc.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -464,7 +514,7 @@ function start(): void {
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
     // accelerators calling the controller directly (specs/tabs.feature.md, page-commands.feature.md).
-    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.() });
+    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.(), ...account.menu });
     // What the last launch saved, after the sessions are hardened and before any tab or window
     // exists: remembered decisions answer the first requests, and the chrome's first state already
     // has the restored tabs.

@@ -12,18 +12,23 @@ import { SeoSidebar } from './components/SeoSidebar';
 import { StatusBar } from './components/StatusBar';
 import { TabStrip } from './components/TabStrip';
 import { Toolbar } from './components/Toolbar';
+import { UpdateBar } from './components/UpdateBar';
 import { useBrowserState } from './hooks/useBrowserState';
 import { useHistoryView } from './hooks/useHistoryView';
 import { useNotice } from './hooks/useNotice';
 import { usePing } from './hooks/usePing';
 import { useSeoAudit } from './hooks/useSeoAudit';
 import { useSidebarOpen } from './hooks/useSidebarOpen';
+import { SettingsSlot } from './settings-view';
 import type { PanelJump } from './palette/registry';
+import { Projects } from './components/changes/Projects';
+import { useProjectsSheet } from './components/changes/projects-sheet';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`). Its rows: the
 // tab strip, the toolbar, the permission prompt bar, the render-profile editor bar while open
 // (`render-profile.feature.md`), the find bar while the active tab's is open
-// (`browser-polish.feature.md`), the workspace (the page column, with the command palette's sheet
+// (`browser-polish.feature.md`), the update notice while it has something to show
+// (`update-client.feature.md`), the workspace (the page column, with the command palette's sheet
 // or the History sheet over the page area, and the SEO sidebar docked on its right:
 // `command-palette.feature.md`, `seo-sidebar.feature.md`), the SEO devtools drawer while open
 // (`devtools.feature.md`), and the status bar; and the fullscreen notice. The page area takes what
@@ -48,6 +53,8 @@ export function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   // Browser polish (`browser-polish.feature.md`): the History sheet (per window) and the active tab's find bar.
   const [historyOpen, closeHistory] = useHistoryView(state?.historyViewSeq, tab);
+  // Projects (`projects.feature.md`): the Projects sheet over the page column, like History.
+  const [projectsOpen, closeProjects] = useProjectsSheet(historyOpen, closeHistory);
   return (
     <div className="chrome">
       <TabStrip state={state} />
@@ -59,6 +66,8 @@ export function App() {
       <div className="render-slot">{profileOpen ? <RenderProfileBar tab={tab} onClose={() => setProfileOpen(false)} /> : null}</div>
       {/* The find bar's row: empty unless the active tab's bar is open, and while the History sheet shows. */}
       <div className="find-slot">{historyOpen ? null : <FindBar find={state?.find} />}</div>
+      {/* The update notice's row (`update-client.feature.md`, Chrome): always present, empty unless there is something to act on. */}
+      <UpdateBar />
       {/* The workspace and, under it, the devtools drawer's band: the drawer is clamped against their height. */}
       <div className="workspace-stack">
         <div className="workspace">
@@ -66,6 +75,8 @@ export function App() {
           <div className="page-column" data-history={historyOpen ? 'open' : undefined}>
             <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
             {historyOpen ? <HistoryView onClose={closeHistory} /> : null}
+            {projectsOpen ? <Projects tab={tab} onClose={closeProjects} /> : null}
+            <SettingsSlot tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>
           <AgentPanel tab={tab} />

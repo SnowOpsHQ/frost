@@ -13,9 +13,10 @@ then `node apps/desktop/scripts/verify-mac-package.mjs`.
 ## Forge configuration (`forge-config.test.ts`)
 - **Scenario: identifies-the-mac-bundle** — `packagerConfig` sets `name` = `MAC_PRODUCT_NAME`,
   `executableName` = `MAC_EXECUTABLE_NAME`, `appBundleId` = `MAC_BUNDLE_ID`, `appCategoryType` =
-  `MAC_APP_CATEGORY`, `darwinDarkModeSupport: true` and an ASAR (`asar: { unpack }`, the intent
-  runtime's native files unpacked: `intent-classifier.feature.md`, Packaging);
-  `package.json#productName` is `MAC_PRODUCT_NAME`.
+  `MAC_APP_CATEGORY`, `darwinDarkModeSupport: true` and an ASAR with `asar: { unpack: PACKAGED_ASAR_UNPACK }`
+  (unpacking only native files: libSQL's prebuild, `sync-package.feature.md`, and the intent
+  runtime's binding and library, `intent-classifier.feature.md`, Packaging); `package.json#productName`
+  is `MAC_PRODUCT_NAME`.
 - **Scenario: flips-the-spec-fuses** — the FusesPlugin config holds exactly `PACKAGED_FUSES`.
 - **Scenario: ad-hoc-signs-when-unsigned** — without the full `MAC_SIGNING_ENV` set (each variable
   missing or empty in turn), there is no `osxSign` / `osxNotarize`, and the fuse flip resets the
@@ -30,8 +31,8 @@ then `node apps/desktop/scripts/verify-mac-package.mjs`.
 - **Scenario: signs-and-notarizes-when-configured** — with every `MAC_SIGNING_ENV` variable set,
   `osxSign.identity` is `APPLE_SIGNING_IDENTITY` and `osxNotarize` carries `APPLE_ID`,
   `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`; the fuse flip does not ad-hoc sign.
-- **Scenario: makes-zip-and-dmg** — makers are `zip` (darwin + linux) and `dmg` (darwin only,
-  format `MAC_DMG_FORMAT`).
+- **Scenario: makes-zip-and-dmg** — the darwin makers are exactly `zip` (darwin + linux) and `dmg`
+  (darwin only, format `MAC_DMG_FORMAT`); the Linux makers are in `linux-package.feature.md`.
 - **Scenario: linux-build-unaffected** — `@app/desktop`'s `build` script is still
   `electron-forge package` (the Linux CI gate), the DMG maker never targets linux, and
   `make:mac` targets darwin for exactly `MAC_ARCHS`.
@@ -52,6 +53,11 @@ Every check prints `PASS <name>` or `FAIL <name>: <reason>`; any failure exits n
   ad-hoc → no entitlements at all (empty, no keys); Developer ID → exactly `MAC_ENTITLEMENTS`.
 - **Scenario: fuses-read-back** — `@electron/fuses` reads the packaged app's fuse wire and every
   `PACKAGED_FUSES` entry has its configured state.
+- **libSQL** (`sync-package.feature.md`): `unpacked-allowlist`, `asar-node-modules-allowlist` and
+  `libsql-loads` run on `Contents/Resources` with target `darwin-<arch>`. `libsql-loads` compares
+  against the framework's Electron version. `unpacked-allowlist` checks only which files are
+  unpacked, because signing may rewrite the prebuild after the asar header recorded it. Its bytes
+  are covered by the bundle seal instead (`signature-verifies`, `codesign --verify --deep --strict`).
 - **Scenario: launches-and-stays-alive** — the packaged executable, started with no arguments
   other than a fresh throwaway `--user-data-dir` (so a running installed frost, which holds the
   single-instance lock on the default profile, cannot make it hand over and exit), is still running

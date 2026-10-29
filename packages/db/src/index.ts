@@ -11,3 +11,32 @@ export type { AgentGrantsRepository, StoredAgentGrant } from './agent-grants';
 export type { AgentChatRowsUpdate, AgentChatsRepository, StoredAgentChatHead, StoredAgentChatRows } from './agent-chats';
 export type { AgentSkillsRepository, StoredAgentSkill } from './agent-skills';
 export type { AgentMcpRepository, AgentMcpServerWrite, StoredAgentMcpServer } from './agent-mcp';
+export {
+  isUuidv7,
+  uuidv7,
+  type AppendCaptureInput,
+  type AppendCaptureResult,
+  type AppendDiffInput,
+  type AppendScreenshotInput,
+  type CapturedPage,
+  type ChangeIntelCursor,
+  type ChangeIntelRepository,
+  type ChangeIntelUsage,
+  type DiffSummary,
+  type ExecutePurgeResult,
+  type HistoryEntry,
+  type HistoryPage as ChangeHistoryPage,
+  type Project,
+  type ProjectPage,
+  type ProjectQuery,
+  type PurgeCounts,
+  type PurgePlan,
+  type PurgePolicy,
+  type PurgeRecord,
+  type RetentionPolicy,
+  type ScreenshotPage,
+  type StoredDiff,
+  type StoredScreenshot,
+  type StoredVersion,
+  type VersionSummary,
+} from './change-intel';

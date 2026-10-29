@@ -9,9 +9,31 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
+import { UPDATE_FEED_ENV } from '@app/specs/update-client.spec';
 
 /** apps/desktop: Electron loads `package.json#main` (`.vite/build/main.cjs`) from here. */
 export const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Inherited variables a launched app never sees: `ELECTRON_RUN_AS_NODE` (Electron would start as plain
+ * Node) and frost's run-time configuration (`FROST_PUBLIC_*`, the unpackaged-only `FROST_GSC_*` fakes
+ * and `FROST_TELEMETRY_*` test values), which a developer's shell may export: each suite passes what
+ * it tests. (A value in the build's environment or `apps/desktop/.env*` is baked in by Vite instead.)
+ */
+const STRIPPED_ENV_PREFIXES = ['FROST_PUBLIC_', 'FROST_GSC_', 'FROST_TELEMETRY_'] as const;
+
+/** The child's environment: this process's, without `ELECTRON_RUN_AS_NODE`, `STRIPPED_ENV_PREFIXES` and `UPDATE_FEED_ENV`, then `extra`. */
+export function childEnv(extra: Readonly<Record<string, string>> = {}): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined || key === 'ELECTRON_RUN_AS_NODE' || STRIPPED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    env[key] = value;
+  }
+  // A feed in the developer's environment must not reach the app under test (update-client.spec.ts,
+  // UPDATE_FEED_ENV); a suite that wants one passes it in `extra`.
+  delete env[UPDATE_FEED_ENV];
+  return Object.assign(env, extra);
+}
 
 /**
  * Launches the unpackaged built app (`pnpm --filter @app/desktop build` first). This bundle has no
@@ -26,15 +48,17 @@ export const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url))
  * frost profile, and no launch sees another's tabs or permission decisions. Pass `userDataDir` to
  * relaunch on the same profile (the caller then owns that directory); otherwise a temporary one is
  * created and removed when the app closes.
+ *
+ * `env` adds (or overrides) variables of the app's environment, e.g. the unpackaged-only
+ * `FROST_PUBLIC_*` run-time configuration (`specs/account-state.schema.ts`, `ACCOUNT_CONFIG_ENV`).
+ * Inherited `FROST_PUBLIC_*`, `FROST_GSC_*` and `FROST_TELEMETRY_*` variables are stripped first
+ * (`childEnv`), so a suite runs with exactly the configuration it sets.
  */
 export async function launchApp(
   extraArgs: readonly string[] = [],
-  options: { userDataDir?: string } = {},
+  options: { userDataDir?: string; env?: Readonly<Record<string, string>> } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
-  }
+  const env = childEnv(options.env);
   const ownProfile = options.userDataDir === undefined ? await mkdtemp(path.join(tmpdir(), 'frost-e2e-profile-')) : null;
   const userDataDir = options.userDataDir ?? ownProfile!;
   let app: ElectronApplication;
@@ -58,10 +82,7 @@ export async function launchApp(
  * over DevTools, for every page it drives). `stop()` kills its process tree.
  */
 export function launchUndrivenApp(userDataDir: string): { stop(): void } {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
-  }
+  const env = childEnv();
   const electron = createRequire(import.meta.url)('electron') as unknown as string;
   // Its own process group (like Playwright's launches), so `killProcessTree` takes all of it.
   const child = spawn(electron, [APP_DIR, `--user-data-dir=${userDataDir}`], { env, cwd: APP_DIR, detached: true, stdio: 'ignore' });

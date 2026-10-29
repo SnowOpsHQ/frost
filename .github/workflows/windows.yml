@@ -1,0 +1,118 @@
+# Windows packages (acceptance: specs/windows-package.feature.md). Lints and tests the repo on
+# Windows, builds the app, runs the e2e (being evaluated), makes the Squirrel installer and the zip
+# for x64, verifies them (verify-windows-package.mjs) and uploads Setup.exe + zip.
+name: Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/**'
+      - 'specs/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - 'turbo.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseded PR runs are cancelled; every run on main completes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        # Git Bash (part of the runner image): the same shell semantics as the other jobs.
+        shell: bash
+    steps:
+      # Check out with the repo's LF line endings (the runner's Git converts to CRLF by default):
+      # unit tests read workflow, spec and fixture files and match on `\n`.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Installs the pnpm version pinned by package.json#packageManager.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # @electron/get's download cache (checksum-verified on use), keyed on the lockfile's Electron.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Also fetches Electron's binary (@app/desktop postinstall runs `install-electron`) and selects
+      # the Squirrel maker's 7-Zip (pnpm-workspace.yaml allowBuilds).
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint and test
+        run: pnpm turbo run lint test
+
+      - name: Build
+        id: build
+        run: pnpm --filter @app/desktop build
+
+      # A real Windows desktop session, against the unpackaged build. Not reliable on Windows yet (4 of
+      # 187 fail on Windows-only harness issues: docs/plans/phase-7-sync-update-platforms.md, As built,
+      # Task 2), so it runs on main pushes and manual runs only, never gating the job; pull requests
+      # rely on the Linux and macOS e2e.
+      - name: e2e
+        id: e2e
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && github.event_name != 'pull_request' }}
+        continue-on-error: true
+        # Its own limit, so a hung suite cannot use up the job's and skip make and verify.
+        timeout-minutes: 20
+        run: pnpm --filter @app/desktop test:e2e
+
+      # Unsigned: frost has no Authenticode certificate (specs/windows-package.spec.ts).
+      - name: Make (Squirrel + zip, x64)
+        id: make
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm make:win
+
+      - name: Verify package
+        id: verify
+        if: ${{ !cancelled() && steps.make.outcome == 'success' }}
+        run: pnpm verify:win
+
+      # Only packages that passed verify are uploaded (7-day CI artifacts; nothing is published).
+      - name: Upload Setup.exe + zip
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frost-windows-x64
+          path: |
+            apps/desktop/out/make/squirrel.windows/x64/*-setup.exe
+            apps/desktop/out/make/zip/win32/x64/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() && (failure() || steps.e2e.outcome == 'failure') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report-windows
+          path: |
+            apps/desktop/playwright-report/
+            apps/desktop/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

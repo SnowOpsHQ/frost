@@ -16,7 +16,7 @@
     {
       "id": "OPEN_EXTERNAL_JS_CHECK",
       "file": "apps/desktop/src/main/security/gesture.ts",
-      "source": "shell.openExternal(target.href).catch((err: unknown) => console.error('openExternal failed', err));",
+      "source": "shell.openExternal(target.href).catch(() => console.error('frost: openExternal failed'));",
       "rationale": "Reviewed (moved from register.ts so the app pin and the browse guard share it): reached only when resolveExternalOpen allows the URL (scheme allowlist + trusted input gesture, security-policy.spec.ts), pinned by policy/register/guard unit tests and the external-url and browse-guard e2e."
     },
     {
@@ -36,6 +36,12 @@
       "file": "apps/desktop/src/main/agent/tools/runner.ts",
       "source": "return executeJavascript(value as { code: string }, context);",
       "rationale": "Reviewed (Phase 5 execute_javascript): runs only code the user approved for this one call (approval broker, via 'approval' only), in the dedicated agent isolated world of a browse tab (never main world, app pages or main), page-checked, time- and size-capped; agent-page-tools.feature.md, test execute-js-never-main-world."
+    },
+    {
+      "id": "CERTIFICATE_VERIFY_PROC_JS_CHECK",
+      "file": "apps/desktop/src/main/update/service.ts",
+      "source": "if (UPDATE_TEST_CERT_PATTERN.test(pin)) updateSession.setCertificateVerifyProc(pinnedCertificateVerifier(pin));",
+      "rationale": "Reviewed (Phase 7 Task 5): the update e2e's pin, unpackaged only (the switch is in PACKAGED_FORBIDDEN_SWITCHES and never read packaged), on the update session only; it accepts exactly one certificate by DER SHA-256 and defers every other to Chromium (-3). Tests switches-unpackaged-only, test-cert-pins-one-certificate."
     }
   ]
 }

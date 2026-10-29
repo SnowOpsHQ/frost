@@ -23,9 +23,11 @@ import {
 } from '../icons';
 import { RenderProfileIcon } from '../components/RenderProfile';
 import { ContentIcon } from '../components/seo/content-icons';
+import { GscIcon } from '../components/seo/gsc-icons';
 import { JavascriptIcon } from '../components/seo/javascript-icons';
 import { SerpIcon, VisibilityIcon } from '../components/seo/serp-icons';
 import type { PaletteIconName } from './registry';
+import { ChangesIcon, InspectorIcon } from '../components/changes/changes-icons';
 
 // The command palette's glyphs: frost's own stroked shapes on the same 24×24 grid as `icons.tsx`
 // (inherit `currentColor`; sized by styles.css, no inline styles). The ones the toolbar and the SEO
@@ -190,6 +192,7 @@ const ICONS: Readonly<Record<PaletteIconName, (props: GlyphProps) => ReactNode>>
   'panel-javascript': JavascriptIcon,
   'panel-serp': SerpIcon,
   'panel-visibility': VisibilityIcon,
+  'panel-search-console': GscIcon,
   sidebar: SidebarIcon,
   highlight: HighlightIcon,
   audit: AuditGlyph,
@@ -210,6 +213,8 @@ const ICONS: Readonly<Record<PaletteIconName, (props: GlyphProps) => ReactNode>>
   'tab-close': TabCloseGlyph,
   'tab-switch': TabSwitchGlyph,
   clear: ClearGlyph,
+  'panel-changes': ChangesIcon,
+  'panel-inspector': InspectorIcon,
 };
 
 /** Each group's glyph, for an action without its own. */

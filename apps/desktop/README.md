@@ -9,6 +9,9 @@ hreflang checks. Phase 3 adds:
 - an optional on-device intent classifier;
 - a Visibility panel that fetches a page as search and AI crawlers do.
 
+Phase 4 adds a frost account with plans, opt-in telemetry and a read-only Search Console
+panel, set up in a Settings view.
+
 The agent comes in a later phase (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 
 ## What it does
@@ -338,6 +341,138 @@ Acceptance: `serp-panels.feature.md` and the feature files named below; how it w
 - To publish an update, attach `serp-selectors.json` and its `.sig` to a GitHub release, with a
   higher `version`.
 
+### Account, telemetry and Search Console (Phase 4)
+Acceptance: the feature files named below; how it was built:
+`docs/plans/phase-4-accounts-telemetry.md`; the account API: `apps/backend/README.md`. A build that
+lacks a value says "not configured in this build" for that feature and sends nothing for it (see
+[Configuration](#configuration)).
+
+- **Settings** (`account-settings.feature.md`). A sheet over the page column, like History (the
+  page is laid out zero-high while it shows, and the find bar is hidden). Sections: Account, Search
+  Console, Telemetry. Opened from the menu's **Settings…** (Mod+,; the macOS app menu, elsewhere the
+  end of Edit) and the palette: "Settings", "Sign in to frost" (while signed out), "Search Console
+  settings", "Telemetry settings". It shows only what main answers: "Loading…" until then, and a
+  failed read is retried with backoff.
+- **Sign-in** (`account-signin.feature.md`; the backend's side: `account-backend.feature.md`).
+  - **Sign in** (a real click) opens the backend's sign-in page in the system browser. Main listens
+    on `127.0.0.1:<random port>/callback` for that one request, with a `state` and a PKCE verifier
+    only it knows. Without a live click in that window nothing opens.
+  - The page offers password sign-in, an emailed sign-in link and sign-up (the address must be
+    verified first). Once signed in (within the last 10 minutes), it asks "Continue to frost as …"
+    and shows a short code (`XXXX-XXXX`, from the request's PKCE challenge); Settings shows the same
+    code while it waits. Continue ends the browser's session: one sign-in yields one code.
+  - Back in the app, Settings asks **"Sign in as …?"**. Nothing is stored and no plan applies until
+    **Confirm sign-in** is clicked in the window that started it. The button takes no click for a
+    second after it appears and after the window regains focus. Cancel, Close or Esc drop the
+    request and revoke the token already exchanged.
+  - Sign out revokes the token at the backend and drops to `free`. Without a real keychain the
+    account lasts for this run only (Settings says so), and quitting revokes its token.
+- **Plan gating** (`entitlements-client.feature.md`). The backend signs a snapshot of the account's
+  plan and features (`free`: none; `pro`: `ai-agent`, `search-console`, `sync`). Main verifies it
+  against the public keys baked into the build (EdDSA only, the right `kid`, issuer, audience and
+  account) and gates on its feature flags, never on the plan name.
+  - A snapshot lives 3 days. Main refreshes at start, every 6 hours and on Settings' Refresh (at
+    most once per 30 s).
+  - When a refresh fails for a network reason, 7 days of offline grace follow the snapshot's
+    expiry; Settings shows the grace's end. A refused session signs out; a snapshot that does not
+    verify is `free`.
+  - Setting the clock back neither revives an expired snapshot nor extends grace: main keeps a
+    time high-water mark with the snapshot.
+- **Telemetry** (`telemetry.feature.md`). Two switches, both **off by default**; nothing leaves the
+  machine before you turn one on (a real click: a page cannot turn it on), and turning one off drops
+  what is queued at once (no final flush).
+  - **Usage** sends OpenTelemetry traces (OTLP/HTTP JSON). For now that is one `app.start` span:
+    your platform, whether startup worked and how long it took. Only allowlisted attributes leave
+    (`SPAN_ATTRIBUTE_ALLOWLIST`); the resource is frost's name, version and OS type.
+  - **Errors** sends Sentry error events: main's uncaught exceptions and unhandled rejections, and
+    the app window's errors (at most 10 a minute). Each event is rebuilt from an allowlist, with no
+    user, request, host name, breadcrumbs or tags; stack frames are relative to the app.
+  - **Scrubbing.** Every string that leaves loses URLs, emails, IP addresses, host names, absolute
+    paths, tokens and IDs, and the machine's host and login names (`SCRUB_RULES`).
+  - **No identifier.** No install ID, user ID or machine name. Requests carry `user-agent:
+    frost-telemetry`, no language and no cookies; the receiving server still sees your IP address,
+    as with any request. Settings lists what each switch sends in plain words, and says "for this
+    run only" if the choice could not be saved.
+  - Crashes behave as before: Electron's error dialog stays.
+- **Search Console** (`gsc.feature.md`), a Pro feature. **Connect** in Settings (a real click)
+  opens Google's consent page for read-only access (`webmasters.readonly`, nothing else; a wider or
+  missing grant is refused and revoked). The refresh token is kept in the keychain, the access
+  token in memory only. The connection belongs to the frost account that made it: another account
+  never reads with it, and signing in as a different account revokes it. **Disconnect** deletes it
+  and revokes it at Google. Settings shows "Connected", with no Google account name (frost asks
+  Google for none).
+- **Search Console panel** (`gsc-panel.feature.md`). A rail panel (no status dot, no
+  rerun button or audit footer) for the active tab's page or its whole property, over 7, 28 or 90
+  days: clicks, impressions, CTR and average position, a frost-drawn chart of one metric, and the
+  top 25 queries. The property is the longest URL-prefix property that matches, else the domain
+  property. The chart ends at the last day Google answered, and the panel says how far its data
+  lags. Signed out, not Pro, not connected, no matching property, no data and each error have their
+  own words, and their buttons open Settings. It reads only while it shows, never on a timer; main
+  caches answers for 15 minutes.
+
+### Change intelligence (Phase 6)
+Acceptance: `changes-capture.feature.md`, `changes-diff.feature.md`, `changes-panel.feature.md`,
+`screenshot.feature.md`, `projects.feature.md`, `retention.feature.md`, `inspector.feature.md` and
+`capture-db.feature.md`; how it was built, with the database schema:
+`docs/plans/phase-6-change-intelligence.md`.
+
+- **Changes panel** (a rail item after Visibility). It shows the current page's history, newest
+  first.
+  - **Capture now** records the page from its settled audit plus a region read. Captures go into
+    the project chosen in the panel's picker: the first project listing the page, else Unfiled.
+  - A capture identical to the page's latest version adds a capture of that version, not a new
+    version.
+  - Versions are kept per **lane**: the URL with its render profile and search parameters. A phone
+    capture never diffs against a desktop one, and the panel shows the lanes as chips.
+  - On a search results page, a capture records the SERP panel's search parameters (engine, query,
+    `gl`, `hl`, device, page); on any other page it records none.
+  - The **diff** between two versions of a lane is grouped by region: head, HTTP, structured data,
+    main content, navigation, header, sidebar, footer, elsewhere on the page, and audit. Text edits
+    show word-level changes, every value is inert text, and truncated or partial captures say so.
+  - What is compared: title, meta description, canonical, robots meta and `X-Robots-Tag`, lang,
+    viewport, Open Graph, hreflang, HTTP status, indexable, headings, links, text blocks and word
+    counts per region, structured-data types and JSON-LD blocks, image totals, and the audit's
+    findings and score.
+  - Rules whose result depends on timing or on optional checks are left out (page speed,
+    accessibility, served HTML, link/sitemap checks), so an unchanged page stays one version.
+- **Screenshots** (from the Changes panel or the palette).
+  - **Viewport.**
+  - **Select area:** drag on the page, Esc to cancel.
+  - **Full page:** the page is scrolled and the captures are stitched. The page can see the
+    scrolling, and the scroll position is restored.
+  - Each records the render profile and search parameters. The gallery shows thumbnails, a preview,
+    Reveal in folder and Copy image.
+  - Files are PNGs named by their SHA-256 under `<userData>/frost-captures/screenshots/`, with the
+    directory `0700` and files `0600`, never named by anything the page or the chrome supplies.
+- **Projects** (a sheet over the page area, from the Changes panel or the palette).
+  - A project holds pages and searches (engine, query, country, language, device: desktop, mobile or
+    tablet), and an optional render profile. A search is stored as the parameters the SERP panel
+    reads from its URL, so a run's capture of it and a capture you take of the same results page
+    share a lane.
+  - **Capture now** visits each target in a tab of its own, one at a time, with optional viewport
+    screenshots and visible progress. It waits while you are on another tab; Cancel, or closing its
+    tab, stops it. Quitting stops it too, and its tab is not restored next launch.
+  - A site's pinned render profile still applies in the run's tabs, and the capture records the
+    profile in effect.
+  - Deleting a project asks first, and purges its captures and screenshots.
+- **Retention** (in the project view).
+  - Keep everything (the default), keep the last N versions of each page, or keep N days. Each page
+    always keeps its newest version.
+  - The policy is applied after captures into the project (at most once a day, and at the end of
+    each run) and at startup. Each application is recorded in the purge log.
+  - **Purge now** shows what it would remove, asks in main's dialog, and reports the bytes actually
+    freed.
+  - **Usage** is measured: stored bytes of captures and diffs, screenshot files by `lstat` (missing
+    files counted), the database file, and what is shared with another project.
+  - **Compact** runs `VACUUM`; deleted data frees space in the file only after it.
+  - Clear Browsing Data leaves change intelligence alone: retention and Purge now are its deletion
+    path.
+- **Inspector panel.** A read-only, lazily expanded DOM tree with keyboard tree navigation.
+  - **Pick element** outlines what is under the pointer; a click selects it, Esc cancels.
+  - A node's details: attributes, box, a few computed styles, its landmark region, and SEO facts
+    for headings, links, images and meta.
+  - Hovering a row outlines it on the page.
+
 ## Security model (summary)
 The details, each with its named tests, are in `specs/*.feature.md`.
 - **Two kinds of WebContents.** The chrome (the React UI) is served from `app://app` with a strict
@@ -360,12 +495,32 @@ The details, each with its named tests, are in `specs/*.feature.md`.
   and of the chrome, so a page can neither see nor block them; on every platform each is taken by
   exactly one handler.
 - **Packaged builds** refuse remote debugging, `--host-resolver-rules` and the e2e suite's switches
-  (public hosts and, since Phase 3, the SERP pack key and URL and the intent fake;
-  `PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
+  (public hosts and, since Phase 3, the SERP pack key and URL and the intent fake; since Phase 7, the
+  update e2e switches; `PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
   `specs/macos-package.spec.ts`) disable run-as-Node, `NODE_OPTIONS` and the Node inspector flags,
   and turn on cookie encryption, ASAR integrity validation and loading the app only from its ASAR.
+- **Tokens stay in main** (Phase 4). The account's desktop token, the entitlement snapshot and
+  Search Console's tokens live in main, in `userData/secrets/` encrypted with `safeStorage`'s
+  asynchronous API (`specs/secret-store.spec.ts`; memory-only without a real keychain). No
+  procedure answers a token, code, verifier, `state` or snapshot: the chrome sees `AccountState`,
+  `GscStatus` and aggregated rows, and main's logs go through a redactor. The system browser opens
+  only through `openExternalIfAllowed`, on a live click in the window that asked.
 - CI gates: Electronegativity, Semgrep (`ipc-sender-guard`, `webcontents-factory`,
   `debugger-allowlist`) and the e2e suite (`specs/ci-gates.feature.md`).
+
+- **Change intelligence (Phase 6).**
+  - **Append-only:** SQLite triggers refuse `UPDATE`, `DELETE` and `REPLACE` on captured rows
+    (versions, captures, diffs, screenshots) and on the purge log. A row is deleted only after an
+    immutable tombstone of a recorded purge names it, and a purged id can never be inserted again.
+  - **What the triggers cover:** frost's own code and any SQL that respects the schema; anyone who
+    can write the file can drop them.
+  - **Isolated worlds:** the capture's region read (`CAPTURE_WORLD_ID`, 1600), the screenshot
+    scroll and area selector (1601) and the inspector (1602) each run only in their own world. The
+    selector and picker accept only trusted input, draw in a closed shadow root and are always
+    removed; while picking, a cover keeps clicks away from the page and its frames.
+  - **Screenshot files** are written through a no-follow directory handle, checked after the rename,
+    and guarded by a per-hash lock against purges. The startup orphan sweep deletes only
+    hash-named files that no row references, and skips an in-memory or fresh database.
 
 ### Audits
 Everything the page hands over is untrusted.
@@ -454,13 +609,23 @@ their logs** (each surface says so):
   agent's user agent string from your network. robots.txt comes from frost's cache, asked once per
   origin an agent ended on.
 - frost never requests a search engine by itself: the SERP panel reads only result pages you
-  loaded.
+  loaded, and a project's **Capture now** loads its saved searches only when you start it (one
+  ordinary tab visit per search, like typing it).
 - **DNS lookups** of each of those requests' host names, before every hop (see below).
+- **The account API** (Phase 4, only in a build configured for it): the session and the signed
+  entitlements at start, every 6 hours and on Refresh, the token exchange after a sign-in and the
+  revocation at sign-out. `net.fetch` with no cookies, no cache, no redirects and a timeout.
+- **Google** (only while Search Console is connected, and only for a Pro account): the token
+  endpoints, the property list and Search Analytics queries while the panel shows (cached 15
+  minutes), and the revocation at disconnect.
+- **Telemetry** (only with its switch on, and only to the endpoint baked into the build): see
+  Telemetry above.
 - **Tabs you ask for:** an "Open in" tool (sent the page URL, after you allowed its host once), the
   site's robots.txt or sitemap.xml from the palette, and searches with the chosen engine are
   ordinary browse-session tabs.
 
-The chrome itself requests nothing: no favicons, remote images, palette suggestions or telemetry.
+The chrome itself requests nothing: no favicons, remote images, palette suggestions or telemetry
+(its error reports go through main, and only with consent).
 
 All the fetched requests go through **one bounded fetcher** in main (`seo/fetcher.ts`,
 `specs/fetcher.spec.ts`), never the chrome or a worker:
@@ -497,6 +662,44 @@ from a non-public IP address. Two gaps are documented (`fetcher.spec.ts`): `net.
 pinned to the address checked, so a name whose answer changes between the check and the connection
 (DNS rebinding, a TTL of zero) can still reach a private address in that window; and behind a
 proxy, the proxy resolves the name itself.
+
+## Updates
+Acceptance: `specs/update-client.feature.md` (and `update-manifest.feature.md` for the signed
+manifest).
+- **Off unless a feed is configured.** No build ships a feed, and **no feed is hosted yet**, so every
+  build today (dev, tests, packaged) makes no update request and shows nothing about updates (the
+  command palette offers no update action either).
+- **Pointing a build at a feed.** Set `FROST_UPDATE_FEED_URL` to an `https:` URL before starting
+  frost (any build); unpackaged builds also take `--frost-update-feed=<url>` (which wins), and
+  `http:` only to `127.0.0.1` / `[::1]`. The feed serves an envelope signed with
+  `pnpm sign:update-manifest`; frost trusts only the public key compiled into it.
+- **What happens.** With a feed, frost checks 30 s after start and then every 6 h (automatic checks
+  can be turned off in the command palette: Turn Automatic Update Checks Off / On; Check for Updates
+  checks once either way). A verified, newer offer shows a notice under the find bar's row (under the toolbar when no find bar is open): Release notes
+  (plain text), Download, Skip this version (not for a required update) and Later. Nothing
+  downloads until you click Download; the file is checked against its signed size and SHA-256 and
+  deleted if it differs. Requests go through a separate in-memory session with no cookies, no
+  referrer and only a `User-Agent: frost/<version> (update check)` header; the install ID that
+  decides staged rollout stays on the device.
+- **Unsigned builds install by hand.** frost has no code-signing certificates, so no build can
+  update itself: once verified, the notice says "This build can't update itself: install it by
+  hand" and **Show file** reveals the file in your file manager (frost never opens or runs it).
+
+## Sync (groundwork, off)
+Acceptance: `specs/sync-config.feature.md`, `specs/sync-engine.feature.md`.
+- **Off, and nothing in the app turns it on.** There is no setting, command or IPC for sync yet.
+  Only a hand-written `frost-sync.json` in the profile directory (`userData`) enables it; without
+  one, frost never loads libSQL and creates no sync file.
+- **`{"enabled": true}` with no `url` is local staging only.** Rows are mirrored into the local
+  replica `frost-sync.db` beside the session database, and **nothing leaves the device**.
+- **With a `url`** (`libsql:` or `https:`), the replica is a libSQL embedded replica of that
+  endpoint. A token is kept only as `safeStorage` ciphertext, and frost refuses to store or use one
+  when `safeStorage` can't encrypt (or, on Linux, uses the `basic_text` backend). Talking to a real
+  server has not been tested yet.
+- **What would sync.** Only Phase 6's change-intelligence tables (`ci_*`), copied row by row. Never
+  the session database's history, permission decisions, render-profile pins or content notes.
+  Phase 6 isn't merged into this branch, so today every table is skipped and the replica holds
+  only the engine's own bookkeeping. Screenshot files are not synced.
 
 ## Known limits
 - **Lab data only.** Speed values are one visit in this tab on this machine, not field data; the
@@ -543,7 +746,7 @@ proxy, the proxy resolves the name itself.
   that it was scrolled to one, or which `hidden=until-found` element matched (`beforematch`).
 - **Shortcuts and settings.** Mod+Y (History) is a menu accelerator only, not reserved: Ctrl+Y is
   redo in a page's text field on Linux and Windows. The search engine is chosen in the command
-  palette (there is no settings view yet).
+  palette (the Settings view does not offer it yet).
 - **Content.** Readability is English only; stop-word lists cover English, Spanish, French and
   German. Pixel widths come from one measured sans-serif table; the previews show where a result
   would cut, not a pixel-exact rendering. Target queries, drafts and the "Open in" hosts you allowed
@@ -578,12 +781,60 @@ proxy, the proxy resolves the name itself.
   - Clear Browsing Data keeps the downloaded intent model and an installed selector pack.
   - Repeated response headers are joined into one value, except `X-Robots-Tag` in the probes.
   - The DNS-rebinding window above applies to the SERP lane's requests too.
+- **Keychain.** Linux without a keyring (`basic_text`) is memory-only: the account and a Search
+  Console connection last for the run, and quitting revokes them. Under Playwright Linux is always
+  memory-only (its loader adds `--password-store=basic`), so the e2e branches that restart with a
+  stored account or tamper with a stored blob run on macOS only (its mock keychain persists).
+- **Search Console account.** The status says "Connected" with no Google account name, and connect
+  has no in-app confirmation of which Google account was chosen: frost asks Google for no identity.
+- **Gating is client-side.** Main gates on a verified snapshot, but a modified client can skip any
+  check of its own. A paid feature that runs on a server must be enforced there.
+- **Offline grace after a downgrade.** A client that cannot reach the backend keeps a Pro snapshot
+  for its life plus grace (3 + 7 days) after the plan changed. Restoring an old `entitlements` blob
+  and setting the clock back into its life can replay that snapshot until its expiry (accepted
+  risk, `entitlements-client.feature.md`).
+- **Error reports are pattern-scrubbed.** URLs, hosts, emails, paths, tokens, IDs and the machine's
+  names are removed; free text a message quotes (a tab's title, typed text) is kept, cut to length.
+- **Search Console queries are untrusted text.** Anyone can make a search that shows up as a query;
+  the panel renders them inert, and anything that reads them (the Phase 5 agent) must treat them as
+  attacker-controlled.
+- **Not deployed.** The account API runs locally and in tests only; its `console` email transport
+  prints sign-in links and is for development (production refuses it). No real email transport
+  exists yet.
+- **`app.isPackaged` is name-based.** It only looks at the executable's name. The public build
+  configuration does not rely on it (a baked-in value pins the build), but the pre-existing e2e
+  public-hosts switch (`E2E_PUBLIC_HOSTS_SWITCH`) and the remote-debugging refusal still do.
+
+- **Change intelligence (Phase 6).**
+  - **Full-page screenshots** repeat fixed and sticky elements in each segment, lazy content appears
+    as the page scrolls, and encoding a 16,384 px tall shot takes up to about half a second on
+    main's thread.
+  - **What the page can see:** pointer events while you select an area or pick an element, the
+    overlay's host element, and the scroll of a full-page shot.
+  - **Capture now** works in a visible tab, one target at a time. A search engine may show a
+    consent page or a challenge instead of results, and that is what gets captured. A page that
+    redirects itself by script after it first loads counts as the tab moving away, and its target
+    fails.
+  - **Search parameters:** saved searches are read with the bundled selector pack, not an updated
+    one. A result page's lane follows its canonical search URL, so the engine's tracking parameters
+    never split a search.
+  - **Region read and inspector:** neither enters shadow roots or iframes (a click inside one picks
+    its host or frame).
+  - **Capture time and versions:** a capture cut short by its deadline whose text differs can still
+    make a new version.
+  - **Screenshots and profiles:** a screenshot's profile does not record whether it was only
+    partly in effect (captures do).
+  - **Screenshot files** are not synced, and a file removed by hand shows as missing and is never
+    re-created.
+  - **Disk space** freed by deletion returns to the disk only after Compact.
 
 ## Running, building, testing
 From the repo root (`pnpm install` first):
 - `pnpm --filter @app/desktop start` — dev run (Vite dev server; it overwrites `.vite/build` with a
   dev bundle, so run `build` again before the e2e).
 - `pnpm --filter @app/desktop build` — `electron-forge package` for the host platform.
+  The app ships libSQL's native module for that platform; see
+  [libSQL in the packaged app](#libsql-in-the-packaged-app).
 - `pnpm lint` / `pnpm test` — strict TypeScript and the Vitest suites of every package
   (`@app/seo-core`'s rules each have a passing and a failing fixture).
 - `pnpm --filter @app/desktop test:e2e` — Playwright e2e against the unpackaged build, on loopback
@@ -600,12 +851,94 @@ From the repo root (`pnpm install` first):
 - `pnpm make:mac` (on macOS) — `electron-forge make --platform darwin --arch arm64`
   (see [Building on a Mac](#building-on-a-mac)).
 - `pnpm verify:mac` (on macOS, after `make:mac`) — checks the bundle id, arch, signature and
-  entitlements, fuses, launch and debugging lockdown, that the intent runtime is unpacked and loads
-  in the packaged utility process (`intent-runtime-loads`, the self-test), and that the `.app`
-  inside the published zip and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
+  entitlements, fuses, libSQL's unpacked module, launch and debugging lockdown, that the intent runtime
+  is unpacked and loads in the packaged utility process (`intent-runtime-loads`, the self-test), and
+  that the `.app` inside the published zip and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
+- `pnpm make:linux`, `pnpm verify:linux` (on Linux) — the AppImage, deb and zip for x64, and their
+  checks (see [Building on Linux](#building-on-linux)). CI: `.github/workflows/linux-package.yml`.
+- `pnpm make:win`, `pnpm verify:win` (on Windows) — the Squirrel installer and zip for x64, and
+  their checks (see [Building on Windows](#building-on-windows)). CI: `.github/workflows/windows.yml`.
 
 If your shell exports `ELECTRON_RUN_AS_NODE` (some terminals and agent harnesses do), unset it for
 manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it itself.
+
+E2E configuration notes:
+- The harness also strips every inherited `FROST_PUBLIC_*`, `FROST_GSC_*` and `FROST_TELEMETRY_*`
+  variable from the app's environment before a suite applies its own, so a value your shell exports
+  never points a suite at another backend, collector or Google endpoint.
+- That covers the **run-time** environment only. Values set in the environment of `build`, or in
+  `apps/desktop/.env`, `.env.local`, `.env.production` …, are read by Vite (`envPrefix` `FROST_PUBLIC_`)
+  and **baked into the bundle**. A build with any `FROST_PUBLIC_*` value baked in is pinned to its
+  baked configuration as a whole (`specs/build-config.spec.ts`): it ignores the run-time environment,
+  including the suites' fakes, so the account, telemetry and Search Console suites fail against it.
+  Build for the e2e with no `FROST_PUBLIC_*` variable set and no such `.env*` file.
+
+## Configuration
+Phase 4's endpoints and keys are public build values (never a secret: anything in a build can be
+read out of it). None is committed; a build without one leaves its feature "not configured in this
+build" and sends nothing for it.
+
+| Variable | Feature | Meaning |
+|---|---|---|
+| `FROST_PUBLIC_API_BASE_URL` | Account | The account API's origin (no path, query or credentials). |
+| `FROST_PUBLIC_ENTITLEMENT_JWKS` | Account | JSON JWKS of the Ed25519 public keys that sign snapshots (`admin keygen` prints it; several `kid`s during a rotation). |
+| `FROST_PUBLIC_GSC_CLIENT_ID` | Search Console | Google OAuth client ID (Desktop app type). |
+| `FROST_PUBLIC_GSC_CLIENT_SECRET` | Search Console | That client's installed-app "secret" (not confidential by Google's own definition; never logged or committed). |
+| `FROST_PUBLIC_SENTRY_DSN` | Telemetry, errors | Sentry DSN for error events. |
+| `FROST_PUBLIC_OTEL_ENDPOINT` | Telemetry, usage | OTLP/HTTP traces endpoint. |
+| `FROST_GSC_AUTH_URL`, `FROST_GSC_TOKEN_URL`, `FROST_GSC_REVOKE_URL`, `FROST_GSC_API_BASE` | e2e only | Fake Google consent, token and revoke endpoints and API base (`https:`, or `http:` on `127.0.0.1` / `localhost`). |
+| `FROST_TELEMETRY_EXPORT_DELAY_MS` | e2e only | Span batch delay (holds the startup span in the queue). |
+
+The rule (`specs/build-config.spec.ts`, `runtimeOverridesAllowed`):
+- Values are baked in at build time (Vite, `envPrefix` `FROST_PUBLIC_` in `vite.main.config.ts`).
+- **If any `FROST_PUBLIC_*` value is baked in, the run-time environment is read for none of them**,
+  nor for the e2e-only values: a build made with real values is pinned to them as a whole, and
+  talks to Google's fixed endpoints.
+- Only an **unpackaged** build with **nothing** baked in (dev, e2e) reads them all from its run-time
+  environment.
+- A packaged build requires `https:` for the API base, the DSN and the OTLP endpoint. Unpackaged also
+  accepts `http:` on `127.0.0.1` (and `localhost` for the API base).
+- Vite reads `FROST_PUBLIC_*` from the build's environment **and** from `apps/desktop/.env`,
+  `.env.local`, `.env.production` …, so a stray `.env*` file pins a build too (see the e2e notes
+  above). Keep those files out of the repo.
+
+### Running against the local backend
+The backend's own steps are in `apps/backend/README.md` (Run locally). In short:
+
+```sh
+cp apps/backend/.env.example apps/backend/.env         # set BETTER_AUTH_SECRET (openssl rand -base64 32)
+pnpm --filter @app/backend admin keygen                # server lines into apps/backend/.env;
+                                                       # keep FROST_PUBLIC_ENTITLEMENT_JWKS for the desktop
+set -a; . apps/backend/.env; set +a
+pnpm --filter @app/backend dev                         # http://127.0.0.1:8787
+```
+
+Then, with nothing `FROST_PUBLIC_*` set and no `apps/desktop/.env*` file, build once and launch the
+unpackaged app with the configuration in its environment:
+
+```sh
+pnpm --filter @app/desktop build
+env -u ELECTRON_RUN_AS_NODE \
+  FROST_PUBLIC_API_BASE_URL=http://127.0.0.1:8787 \
+  FROST_PUBLIC_ENTITLEMENT_JWKS='{"keys":[…]}' \
+  pnpm --filter @app/desktop exec electron .
+```
+
+(`pnpm --filter @app/desktop start` with the same variables exported works too, but bakes them into
+the dev bundle; run `build` again with none set before the e2e.)
+
+In frost, open Settings and **Sign in**. In the browser, create an account, open the verification
+link the backend prints to its console, sign in, check the code and **Continue**; back in frost,
+**Confirm sign-in**. The plan is `free`. To make it `pro`:
+
+```sh
+pnpm --filter @app/backend admin grant alice@example.com pro
+```
+
+then **Refresh** in Settings. With PGlite (no `DATABASE_URL`) stop `dev` before an `admin` command
+and start it again after: PGlite is one process's database. Search Console also needs
+`FROST_PUBLIC_GSC_CLIENT_ID` and `FROST_PUBLIC_GSC_CLIENT_SECRET` from a Google OAuth client of the
+Desktop app type, and telemetry an endpoint and a DSN of your own.
 
 ## Source layout
 - `src/main/` — the main process: `index.ts` (wiring), `browser/` (the browser controller and its
@@ -618,7 +951,13 @@ manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it i
   and its service), `serp/` (the selector pack's verify and store and the bundled `packs/`, engine
   detection, the reader script, the SERP worker and its analysis, the service, outlines, the
   probes and their parse, `setup.ts`), `intent/` (the classifier, the model store, the utility
-  process host, the self-test, `setup.ts`), `security/`, `protocol/` (`app://`), `menu.ts`,
+  process host, the self-test, `setup.ts`), `account/` (configuration, the secret store, the
+  loopback listener, PKCE, the API client, entitlements, sign-in, quit holds), `gsc/` (Search
+  Console's OAuth, API client, property matching and service), `telemetry/` (the consent store and
+  the wiring of `@app/telemetry`), `changes/` (Phase 6: the region read, the capture snapshot and
+  service, load times, projects, the capture run, retention and purges), `screenshots/` (stitching,
+  the page scripts, capture, imaging, the file store and the service), `inspector/` (the page
+  script and the service), `security/`, `protocol/` (`app://`), `menu.ts`,
   `session-store.ts`, `clear-browsing-data.ts`, `window.ts` (the window and tab-view factories).
 - `src/workers/intent/` — the intent utility process: its entry, the message handling, frost's
   WordPiece tokenizer, the embedding, the prototype queries, the keyword fake and the self-test
@@ -627,17 +966,53 @@ manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it i
 - `src/renderer/` — the chrome (React): `App.tsx` (layout), `components/` (`SeoSidebar.tsx` and one
   file per panel in `components/seo/`, the drawer's tabs in `components/devtools/`, the palette,
   find bar, History and render-profile views; `seo/Serp.tsx` and `seo/Visibility.tsx` since
-  Phase 3), `palette/` (the action registry, matcher, built-ins and "Open in" consent), each
-  feature's `*-palette.ts` actions, `hooks/` (`useSerp.ts` among them), and pure helpers with unit
-  tests (`serp-view.ts` and `visibility-view.ts` among them).
-- `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers).
-- `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string), `vite.intent.config.ts`
-  (the intent worker's build, `onnxruntime-node` external), `intent-runtime.ts` (the packaging hook
-  that copies ONNX Runtime's files for the target, and the unpack glob),
-  `third-party-notices.ts`, `licenses/` and `THIRD_PARTY_NOTICES`; `scripts/measure-snippet-font.mjs` (builds the
-  snippet width table, run in Electron) and `scripts/verify-mac-package.mjs`.
+  Phase 3, `seo/GscPanel.tsx` since Phase 4; `changes/` for Phase 6's Changes, Screenshots,
+  Projects, Retention and Inspector), the Settings sheet (`settings-*.tsx`, with `account-view.ts`
+  and the other `settings-*` view models), `palette/` (the action registry, matcher, built-ins and
+  "Open in" consent), each feature's `*-palette.ts` actions, `hooks/` (`useSerp.ts` among them), and
+  pure helpers with unit tests (`serp-view.ts`, `visibility-view.ts` and `gsc-view.ts` among them).
+- `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers;
+  `fake-backend.ts`, `fake-google.ts` and `fake-telemetry.ts` are the Phase 4 suites' in-test fakes).
+- `libsql-packaging.ts` (the Forge hook that ships libSQL in the app), `intent-runtime.ts` (the
+  hook that copies ONNX Runtime's files for the target), `vite.web-vitals.ts` (serves the
+  `web-vitals` IIFE to main as a string), `vite.intent.config.ts` (the intent worker's build,
+  `onnxruntime-node` external), `third-party-notices.ts`, `licenses/` and `THIRD_PARTY_NOTICES`;
+  `scripts/measure-snippet-font.mjs` (builds the snippet width table, run in Electron),
+  `scripts/verify-mac-package.mjs`, and `scripts/verify-linux-package.mjs` and
+  `scripts/verify-windows-package.mjs` with the checks they share in `scripts/verify-package-common.mjs`.
 - The audit engine itself is `packages/seo-core` (`@app/seo-core`): pure TypeScript, no Electron,
   DOM or Zod.
+
+## libSQL in the packaged app
+Main bundles all of its dependencies except libSQL, the driver for opt-in sync. libSQL's native
+module (`@libsql/<target>/index.node`, N-API) is found at runtime, so:
+- main `require`s `@libsql/client/sqlite3` from `app.asar/node_modules`;
+- a Forge `packageAfterCopy` hook (`libsql-packaging.ts`) copies the packages that entry loads, and
+  the prebuild for the target, into the app;
+- only that `index.node` is unpacked to `resources/app.asar.unpacked/`. All JavaScript stays in
+  `app.asar`, and the fuses are unchanged.
+
+The full list is in `specs/sync-package.spec.ts` and `specs/sync-package.feature.md`. The libSQL
+code is about 0.25 MB of JavaScript in `app.asar` plus the prebuild: 9.7 MB uncompressed on Linux
+x64, about 4.1 MB compressed in the zip and deb.
+
+The prebuild packaged is the build machine's own, since pnpm installs only that one. **So each
+platform is packaged on that platform.** `electron-forge package --platform win32` on Linux fails,
+naming the missing `@libsql/win32-x64-msvc`. CI builds each platform on its own runner.
+
+**Integrity.** Electron's ASAR integrity check (macOS, Windows) covers `app.asar`'s header, which
+records the unpacked file's size and SHA-256. It does not check the unpacked file's bytes when the
+file is loaded. On macOS the bundle's code signature seals the file. On Windows and Linux nothing
+checks it at runtime; the package verifiers compare it with the header at build time
+(`unpacked-allowlist`, Linux and Windows; on macOS signing may rewrite the file, so the seal
+vouches for its bytes). Every verifier also checks the following:
+- `app.asar/node_modules` holds exactly the allowed packages (`asar-node-modules-allowlist`);
+- libSQL loads from the packaged `app.asar` (`libsql-loads`). This check runs the repository's
+  Electron, at the packaged version, as Node, because the packaged binary's `RunAsNode` fuse is
+  off;
+- the packaged executable itself loads the prebuild (`sync-replica-opens`): started on a throwaway
+  profile whose `frost-sync.json` turns local staging on, its main opens `frost-sync.db` through
+  libSQL. On macOS this is also where library validation would refuse the prebuild.
 
 ## Building on a Mac
 Prerequisites:
@@ -689,5 +1064,92 @@ Real signing uses the hardened runtime with only `com.apple.security.cs.allow-ji
 (`MAC_ENTITLEMENTS` in `specs/macos-package.spec.ts`). It has not been exercised yet (no Developer
 ID); CI never receives these secrets.
 
+## Building on Linux
+Prerequisites: Node ≥ 22.18 and pnpm 12.15.0 (as above), `dpkg-deb` (the deb maker and the deb
+checks; part of Debian and Ubuntu), `mksquashfs` (`squashfs-tools`, for the AppImage) and, for
+`verify:linux`, `unzip` and a display (`xvfb-run -a` on a headless machine). `make:linux` downloads the
+AppImage runtime pinned in `specs/linux-package.spec.ts`.
+
+```sh
+pnpm install
+pnpm make:linux
+pnpm verify:linux    # or: xvfb-run -a pnpm verify:linux
+```
+
+Artifacts, under `apps/desktop/out/`:
+- `frost-linux-x64/` (the packaged tree; `frost` is the executable)
+- `make/AppImage/x64/frost-<version>-x64.AppImage`
+- `make/deb/x64/frost_<version>_amd64.deb` (installs to `/usr/lib/frost`, with `/usr/bin/frost`)
+- `make/zip/linux/x64/frost-linux-x64-<version>.zip`
+
+**The packages are unsigned.** frost has no Linux repository key: the deb is not served from an
+apt repository and carries no signature, and the AppImage embeds none. The `frost-linux-x64`
+artifact of the Linux package workflow is built and checked in CI; trust it as far as you trust that
+run. The deb runs no maintainer scripts; its only setuid file is Chromium's `chrome-sandbox`, used
+only where unprivileged user namespaces are unavailable.
+
+`verify:linux` checks the fuses, the files in `resources/` and `app.asar`, libSQL (unpacked prebuild, `node_modules`, that it loads), launch and debugging
+lockdown on the packaged tree, the deb's metadata and files, the AppImage's runtime and contents,
+and the zip's contents (`specs/linux-package.feature.md`; CI uploads the AppImage and deb, not the
+zip). Electron does not enforce ASAR integrity on Linux:
+the fuse is on, but `app.asar` is not hash-checked at startup there (the check says so).
+
+**The AppImage does not start on stock Ubuntu 23.10+ (24.04 included); use the deb there.**
+AppArmor on those releases restricts unprivileged user namespaces, so Chromium's namespace sandbox
+is unavailable, and its setuid fallback (`chrome-sandbox`) cannot work inside the AppImage's
+`nosuid` mount (nor in the unzipped zip, where it is not setuid root). The deb is fine: it installs
+`chrome-sandbox` setuid root. To run the AppImage there, either add an AppArmor profile that allows
+`userns` for it, or allow unprivileged user namespaces system-wide with
+`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. Never use `--no-sandbox`. The CI
+job sets that sysctl before `verify:linux` (and launches the packaged tree, not the AppImage), so a
+passing run does not mean the AppImage starts on a stock Ubuntu 24.04.
+
+## Building on Windows
+Prerequisites: Windows 10 or later (x64), Node ≥ 22.18 and pnpm 12.15.0 (as above). The Squirrel
+maker's tools (NuGet, Squirrel, 7-Zip) come with the `electron-winstaller` package; `verify:win`
+uses Windows' own `tar.exe` to read the zip and the `.nupkg`.
+
+```sh
+pnpm install
+pnpm make:win
+pnpm verify:win
+```
+
+Artifacts, under `apps/desktop/out/`:
+- `frost-win32-x64/` (the packaged tree; `frost.exe` is the executable)
+- `make/squirrel.windows/x64/frost-<version>-x64-setup.exe` (the installer), with
+  `frost-<version>-full.nupkg` and `RELEASES` beside it
+- `make/zip/win32/x64/frost-win32-x64-<version>.zip` (the packaged tree's contents, no top folder)
+
+**The installer and the app are unsigned.** frost has no Authenticode certificate, so SmartScreen
+warns before `Setup.exe` runs ("Windows protected your PC": More info › Run anyway). The
+`frost-windows-x64` artifact of the Windows workflow is built and checked in CI; trust it as far as
+you trust that run. `verify:win` fails if a signature ever appears, until the docs say otherwise.
+
+`Setup.exe` installs per user into `%LocalAppData%\frost` (no administrator rights; there is no MSI)
+and starts frost. Installing creates Start-menu and desktop shortcuts and uninstalling removes them:
+frost handles Squirrel's install events by running Squirrel's `Update.exe` for the shortcuts only,
+then exits (`src/main/update/squirrel-events.ts`). frost never asks `Update.exe` to update: an
+update is installed by hand (see Updates). The zip
+needs no installer: unzip it anywhere and run `frost.exe`.
+
+`verify:win` checks the fuses, the files in `resources/` and `app.asar`, libSQL (as on Linux), the ASAR integrity
+resource in `frost.exe` (Electron checks `app.asar`'s header hash at startup on Windows) and that a
+copy with a tampered header refuses to start, launch and debugging lockdown, that a Squirrel event
+launch exits at once, the Squirrel artifacts
+(the `RELEASES` hash and size, the app tree inside the `.nupkg`), the zip's contents and the absence
+of signatures. Off Windows, `node apps/desktop/scripts/verify-windows-package.mjs --static` runs the
+file checks against `pnpm --filter @app/desktop exec electron-forge package --platform win32 --arch x64`
+output (no Wine needed); making the installer needs Windows. That package needs libSQL's win32
+prebuild, which pnpm installs only on Windows (see
+[libSQL in the packaged app](#libsql-in-the-packaged-app)). For a local cross-check, first:
+1. download `@libsql/win32-x64-msvc` at the version `libsql` pins
+   (`https://registry.npmjs.org/@libsql/win32-x64-msvc/-/win32-x64-msvc-<version>.tgz`);
+2. check its SHA-512 against `pnpm-lock.yaml`;
+3. extract its `package/` directory to `node_modules/@libsql/win32-x64-msvc`.
+
+Remove that directory afterwards. `--static` skips `libsql-loads` off Windows.
+
 ## Follow-ups
-App icon (Electron's default for now), x64/universal builds, signing in CI, signed auto-update.
+App icon (Electron's default for now), x64/universal builds, signing in CI, a hosted update feed and
+in-place updates (they need signed builds).
