@@ -130,11 +130,11 @@ export const SKILL_DATA_CLOSE = '</skill-inputs>';
  * Tools a user skill may list that act on pages or send model-chosen text to a third party: the
  * editor warns when a skill lists one (each call still needs the approval its risk class needs).
  */
-export const SKILL_ACTING_TOOLS = ['navigate', 'click', 'execute_javascript', 'run_ai_search'] as const;
+export const SKILL_ACTING_TOOLS = ['navigate', 'click', 'execute_javascript', 'run_ai_search', 'run_visibility_probes'] as const;
 
 export const SKILL_WARNINGS = {
   builtinName: "A built-in skill already has this name. Choose another, so the two can't be confused.",
-  actingTools: 'This skill may open pages, click, run JavaScript or send a query out. frost still asks you before each of those, but text on a page could try to steer them.',
+  actingTools: 'This skill may open pages, click, run JavaScript, send a query out or fetch pages as crawlers would. frost still asks you before each of those, but text on a page could try to steer them.',
 } as const;
 
 /** How the picker and the palette mark the user's own skills. */

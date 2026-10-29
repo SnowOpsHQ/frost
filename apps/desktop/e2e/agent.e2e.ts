@@ -23,6 +23,8 @@ import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { APP_DIR, closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 import { selfSignedCertificate } from './tls';
+import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
+import { SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH, packSignatureUrl } from '@app/specs/serp-selector-pack.spec';
 
 // The agent panel end to end, on the unpackaged build's scripted model seam
 // (`--frost-e2e-agent-script=<file>`): the runtime plays a JSON script as its model, so no provider
@@ -619,3 +621,70 @@ test('agent-mcp-tool-asks', async () => {
   await expect(toolCards().last().getByTestId('agent-tool-output')).toContainText('echo: from e2e');
   await expect(assistantTexts().last()).toHaveText('Echo done.');
 });
+
+test('agent-serp-tools-read-the-serp-service', async () => {
+  // Phase 3's synthetic engine (serp-fixtures.ts) and its signed test pack; no intent fake, so the
+  // on-device classifier has no model and must say so without downloading one.
+  const pack = signedTestPack();
+  const engineRequests: { path: string; userAgent: string }[] = [];
+  const engine = createServer((request, response) => {
+    const url = new URL(request.url ?? '/', 'http://x');
+    engineRequests.push({ path: url.pathname, userAgent: request.headers['user-agent'] ?? '' });
+    const answer = engineAnswer(url, pack);
+    if (answer) response.writeHead(answer.status, { 'Content-Type': answer.type }).end(answer.body);
+    else response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
+  });
+  await new Promise<void>((resolve) => engine.listen(0, '127.0.0.1', resolve));
+  const origin = `http://${SEARCH_HOST}:${(engine.address() as AddressInfo).port}`;
+  try {
+    const file = path.join(scripts, `script-serp-${Date.now()}.json`);
+    await writeFile(file, JSON.stringify({ steps: [{ toolCalls: [{ toolName: 'serp_results', input: { query: 'green tea' } }, { toolName: 'search_intent', input: { query: 'green tea' } }] }, { text: ['Read the results.'] }] }));
+    ({ app, page } = await launchApp([
+      `--host-resolver-rules=MAP ${SEARCH_HOST} 127.0.0.1`,
+      `--${E2E_PUBLIC_HOSTS_SWITCH}=${SEARCH_HOST}`,
+      `--${SERP_E2E_PACK_URL_SWITCH}=${origin}${PACK_PATH}`,
+      `--${SERP_E2E_PACK_KEY_SWITCH}=${pack.spki}`,
+      `--${AGENT_E2E_SCRIPT_SWITCH}=${file}`,
+      '--password-store=basic',
+    ]));
+    await page.waitForLoadState('domcontentloaded');
+    const searchUrl = `${origin}/search?q=green+tea`;
+    await go(searchUrl);
+    await contentsIdAt(searchUrl);
+    // The user installs the test pack (the only thing that requests one); the tab is then read.
+    if ((await page.getByTestId('seo-sidebar').getAttribute('data-open')) !== 'true' || (await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'serp') {
+      await page.locator('[data-testid="seo-rail-item"][data-panel="serp"]').click();
+    }
+    await page.getByTestId('serp-pack-update').click();
+    await expect(page.getByTestId('serp-pack-status')).toHaveAttribute('data-version', String(PACK_VERSION), { timeout: 20_000 });
+    await expect(page.getByTestId('serp-panel')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
+    await page.getByTestId('seo-toggle').click();
+
+    await page.getByTestId('agent-toggle').click();
+    await expect(panel()).toHaveAttribute('data-open', 'true');
+    await send('Who ranks for green tea?');
+    await expect(assistantTexts().last()).toHaveText('Read the results.');
+    // serp_results answered from the SERP service's reading of the tab: the fixture's organic results.
+    const serpCard = page.locator('[data-testid="agent-tool-card"][data-tool="serp_results"]');
+    await expect(serpCard).toHaveAttribute('data-status', 'done');
+    const serpOutput = serpCard.getByTestId('agent-tool-output');
+    await expect(serpOutput).toContainText('A guide to green tea');
+    await expect(serpOutput).toContainText('https://brewguide.example/guide');
+    await expect(serpOutput).toContainText('"query":"green tea"');
+    // search_intent: the classifier's own state, unchanged; no model was downloaded.
+    const intentCard = page.locator('[data-testid="agent-tool-card"][data-tool="search_intent"]');
+    await expect(intentCard).toHaveAttribute('data-status', 'done');
+    await expect(intentCard.getByTestId('agent-tool-output')).toContainText('"state":"model-missing"');
+    // Reading the SERP requested nothing: the engine saw only the user's own loads (the page, its
+    // robots.txt for the audit, the pack the user asked for), and nothing as a crawler.
+    const expected = [PACK_PATH, packSignatureUrl(PACK_PATH), '/search', '/robots.txt', '/favicon.ico'];
+    expect(engineRequests.filter((entry) => !expected.includes(entry.path))).toEqual([]);
+    expect(engineRequests.filter((entry) => /bot\b|crawler/i.test(entry.userAgent))).toEqual([]);
+  } finally {
+    await new Promise<void>((resolve) => {
+      engine.closeAllConnections();
+      engine.close(() => resolve());
+    });
+  }
+});
+

@@ -7,7 +7,17 @@
 import { AGENT_PROTOCOL_LIMITS } from '@app/specs/agent-protocol.schema';
 
 /** A port's answer: the data, or why there is none (shown to the model as an `unavailable` result). */
-export type PortAnswer<T> = { readonly status: 'ok'; readonly data: T } | { readonly status: 'unavailable'; readonly reason: string };
+export type PortAnswer<T> =
+  | { readonly status: 'ok'; readonly data: T }
+  | {
+      readonly status: 'unavailable';
+      readonly reason: string;
+      /**
+       * The source's own state code, when it has one the model should see unchanged (Phase 3's
+       * on-device intent: `model-missing`, `downloading` …). Bounded like an id.
+       */
+      readonly state?: string;
+    };
 
 /** Options every port query takes. */
 export interface PortQueryOptions {
@@ -25,8 +35,9 @@ export interface PortQueryOptions {
  * main's search tools, Task 8; cut again there to `SEARCH_TOOL_LIMITS.maxReasonChars`), and is cut
  * here to `AGENT_PROTOCOL_LIMITS.maxErrorChars`, never splitting a surrogate pair.
  */
-export function unavailable(reason: string): PortAnswer<never> {
-  return { status: 'unavailable', reason: capChars(reason, AGENT_PROTOCOL_LIMITS.maxErrorChars) };
+export function unavailable(reason: string, state?: string): PortAnswer<never> {
+  const capped = capChars(reason, AGENT_PROTOCOL_LIMITS.maxErrorChars);
+  return state !== undefined && /^[a-z][a-z0-9-]{0,63}$/.test(state) ? { status: 'unavailable', reason: capped, state } : { status: 'unavailable', reason: capped };
 }
 
 function capChars(text: string, max: number): string {
@@ -144,14 +155,59 @@ export interface GscPort {
   performance(query: GscPerformanceQuery, options?: PortQueryOptions): Promise<PortAnswer<GscPerformance>>;
 }
 
+// ---- Visibility probes -----------------------------------------------------------------------
+
+/** One agent's answer in a probe run, as the model reads it. */
+export interface ProbeAgentResult {
+  /** Phase 3's agent id (`PROBE_AGENT_IDS`: its own browser first, then the crawlers). */
+  readonly agent: string;
+  /** `browser`, `search` or `ai`. */
+  readonly kind: string;
+  /** How the fetch ended (`PROBE_OUTCOMES`). */
+  readonly outcome: string;
+  readonly status: number | null;
+  readonly redirects: number;
+  readonly finalUrl: string | null;
+  /** robots.txt's verdict for this agent (`allowed`, `disallowed`, `unknown`), `null` before it is known. */
+  readonly robots: string | null;
+  readonly noindex: boolean | null;
+  readonly nofollow: boolean | null;
+  readonly canonical: string | null;
+  readonly wordCount: number | null;
+  readonly title: string | null;
+  /** What differs from the browser's answer (`PROBE_DIFF_FACTS`), and the texts' similarity (0–1). */
+  readonly differsIn: readonly string[];
+  readonly textSimilarity: number | null;
+}
+
+export interface ProbeReport {
+  /** The page probed (fragment aside). */
+  readonly url: string;
+  /** `idle`, `running`, `done` or `stopped`. */
+  readonly status: string;
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly agents: readonly ProbeAgentResult[];
+}
+
+export interface ProbesPort {
+  /** The tab's last probe run for the page it shows now (`visibility_probes`): read-only, never fetches. */
+  latest(tabId: number, options?: PortQueryOptions): Promise<PortAnswer<ProbeReport>>;
+  /**
+   * Starts a run for the tab's page (`run_visibility_probes`, only after the broker allowed it):
+   * `started: false` when none could start (the tab isn't the active one, or shows no web page).
+   */
+  run(tabId: number, options?: PortQueryOptions): Promise<PortAnswer<{ readonly started: boolean }>>;
+}
+
 // ---- Not wired -------------------------------------------------------------------------------
 
 /**
  * A port standing in for any of the three when its source isn't connected: every query answers
  * `unavailable` with `reason` (capped), at once, whatever its signal.
  */
-export function unavailablePort(reason: string): SerpPort & IntentPort & GscPort {
+export function unavailablePort(reason: string): SerpPort & IntentPort & GscPort & ProbesPort {
   const answered = unavailable(reason);
   const answer = async (): Promise<PortAnswer<never>> => answered;
-  return { results: answer, aiSearch: answer, classify: answer, performance: answer };
+  return { results: answer, aiSearch: answer, classify: answer, performance: answer, latest: answer, run: answer };
 }

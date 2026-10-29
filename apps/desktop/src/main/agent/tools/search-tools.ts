@@ -1,4 +1,4 @@
-import { SEARCH_INTENTS, type GscPort, type IntentPort, type PortAnswer, type SearchIntent, type SerpPort } from '@app/ai-skills';
+import { SEARCH_INTENTS, type GscPort, type IntentPort, type PortAnswer, type ProbesPort, type SearchIntent, type SerpPort } from '@app/ai-skills';
 import { GSC_NO_PAGE_REASON, GSC_NOT_PUBLIC_REASON, gscPageUrl, isGscReadablePage, SEARCH_TOOL_LIMITS as L, SEARCH_TOOL_SOURCES, SEARCH_TOOL_TIMEOUT_MS, type SearchToolName } from '@app/specs/agent-search-tools.spec';
 import { AGENT_TOOL_INPUT_LIMITS, UNSAFE_INPUT_CHARS, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import type { ToolRunContext, ToolRunOutcome } from '../approvals';
@@ -22,6 +22,8 @@ export interface SearchToolPorts {
   readonly serp?: SerpPort | null;
   readonly intent?: IntentPort | null;
   readonly gsc?: GscPort | null;
+  /** Phase 3's visibility probes (`probe-tools.ts`). */
+  readonly probes?: ProbesPort | null;
 }
 
 export interface SearchToolDeps {
@@ -217,7 +219,9 @@ export function createSearchTools(deps: SearchToolDeps) {
           if (!isRecord(answer)) return finish(fail('failed'));
           if (answer.status === 'unavailable') {
             const reason = cleanText(answer.reason, L.maxReasonChars);
-            return finish({ ok: true, data: { unavailable: reason === null || reason === '' ? 'This data source gave no reason.' : reason }, source });
+            // The source's own state code (on-device intent's `model-missing` …), passed on unchanged.
+            const state = typeof answer.state === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(answer.state) ? { state: answer.state } : {};
+            return finish({ ok: true, data: { unavailable: reason === null || reason === '' ? 'This data source gave no reason.' : reason, ...state }, source });
           }
           if (answer.status !== 'ok') return finish(fail('failed'));
           let data: unknown;

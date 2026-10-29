@@ -56,3 +56,23 @@ and 4 merge), `service.ts` (`ports`, `entitlements`). Each line maps to one name
   input and its hash; the approved page is read after the tab moves; a private page is refused.
 - **Scenario: agent-search-tools-through-the-broker** — a scripted turn calls `serp_results` and
   the model's history holds the wrapped, mapped answer.
+
+## Probes and the SERP wiring (`probe-tools.test.ts`, `agent-ports.test.ts`, `agent.e2e.ts`)
+- **Scenario: visibility-probes-reads-without-fetching** — the tab's last run, bounded; another
+  page's run or none said as data; never starts a run.
+- **Scenario: run-visibility-probes-asks-and-binds-the-page** — asks (an `act` page tool); approved
+  runs and waits; a moved tab answers `expired` and fetches nothing.
+- **Scenario: run-visibility-probes-grants-like-click** — a grant for the tab page's origin, public
+  `https:` only, covers it; another origin asks.
+- **Scenario: run-visibility-probes-not-active-and-read-refused** — Phase 3 runs only for the active
+  tab (`started: false`); `via: 'read'` refused; no port: `unavailable`.
+- **Scenario: run-visibility-probes-waits-for-the-run** — polls until the run ends; Stop ends it.
+- **Scenario: run-visibility-probes-approval-card-says-what-it-fetches** — `RUN_PROBES_APPROVAL_NOTE`.
+- **Scenario: intent-adapter-never-downloads** — Phase 3's classifier with no model: `model-missing`
+  unchanged, no download, no model load; the adapter can't reach the enabling path.
+- **Scenario: probes-adapter-maps-the-run** — rows, diffs and kinds mapped; idle said; a refused
+  start is `started: false`.
+- **Scenario: agent-serp-tools-read-the-serp-service** (e2e) — on Phase 3's fixture SERP, the
+  scripted `serp_results` card shows the fixture's results from the real service and
+  `search_intent` `model-missing`; no crawler request.
+

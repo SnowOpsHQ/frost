@@ -11,6 +11,7 @@ import {
   CHAT_TEXT_MAX_CHARS,
   CHAT_TITLE_MAX_CHARS,
   EXECUTE_JS_APPROVAL_NOTE,
+  RUN_PROBES_APPROVAL_NOTE,
   MAX_CHATS_KEPT_IN_MEMORY,
   MAX_DISPLAY_ENTRIES,
   MAX_PENDING_AGENT_WATCHES,
@@ -317,7 +318,7 @@ function approvalView(request: ApprovalRequestView): AgentApprovalView {
     inputSha256: request.inputSha256,
     code: request.code,
     grantable: request.grantable,
-    note: request.toolName === 'execute_javascript' ? EXECUTE_JS_APPROVAL_NOTE : null,
+    note: request.toolName === 'execute_javascript' ? EXECUTE_JS_APPROVAL_NOTE : request.toolName === 'run_visibility_probes' ? RUN_PROBES_APPROVAL_NOTE : null,
     createdAt: request.createdAt,
     expiresAt: request.expiresAt,
   };

@@ -2,19 +2,39 @@
 // packages/ai-skills/src/ports.ts (PortAnswer, unavailablePort, fakes) · specs/agent-protocol.schema.ts (tool.result)
 // Acceptance: specs/agent-search-tools.feature.md (Wiring)
 //
-// The Phase 3 and Phase 4 types below are local copies of the parts of their read APIs the
-// adapters see, taken from `phase-3/serp-intent` at 45e8cf7 (`packages/ipc-contract/src/serp-service.ts`
-// `SerpReadApi`; `specs/serp-service.schema.ts` `SerpStateSchema`; `specs/serp-snapshot.schema.ts`
-// `SerpReadySchema`; `specs/intent-classifier.spec.ts` `IntentAnswer`) and `phase-4/accounts-telemetry`
+// Phase 3 is merged: its fixtures below are typed with its own types (`SerpReadApi` from
+// `@app/ipc-contract`, `SerpState`, `IntentAnswer`, `ProbesState`), and its real intent classifier
+// (`main/intent/classifier.ts`) is used for the no-download check. The Phase 4 types are local
+// copies of the parts of its read API the adapters see, taken from `phase-4/accounts-telemetry`
 // at bc692be (`packages/ipc-contract/src/gsc-service.ts` `GscService`; `specs/gsc.schema.ts`;
 // `specs/entitlements-snapshot.spec.ts` `FEATURE_FLAGS`; `EntitlementsReader.requireFeature(flag): void`,
 // which throws). Field names and kinds as there; nested objects copied as far as they matter.
 import { createHash } from 'node:crypto';
 import { describe, expect, test, vi } from 'vitest';
 import { createFakeGscPort, createFakeSerpPort } from '@app/ai-skills/fakes';
+import type { SerpReadApi } from '@app/ipc-contract';
+import { INTENT_MODEL, type IntentAnswer, type IntentEnableOutcome } from '@app/specs/intent-classifier.spec';
+import { SERP_RESULT_TYPES, type SerpResultType } from '@app/specs/serp-selector-pack.spec';
+import type { SerpState } from '@app/specs/serp-service.schema';
+import type { ProbesState } from '@app/specs/visibility-probes.schema';
+import { createIntentClassifier } from '../../intent/classifier';
 import { GSC_NOT_PUBLIC_REASON, PORT_NOT_CONNECTED_REASONS, SEARCH_TOOL_SOURCES } from '@app/specs/agent-search-tools.spec';
 import type { AgentFeature } from '../entitlements';
-import { GSC_ADAPTER_REASONS, gscAdapter, INTENT_ADAPTER_REASONS, intentAdapter, nearestGscRange, resolveAgentPorts, SERP_ADAPTER_REASONS, serpAdapter, type GscServiceLike, type IntentReadApiLike, type SerpReadApiLike } from '../ports';
+import {
+  GSC_ADAPTER_REASONS,
+  gscAdapter,
+  INTENT_ADAPTER_REASONS,
+  intentAdapter,
+  nearestGscRange,
+  probesAdapter,
+  resolveAgentPorts,
+  SERP_ADAPTER_REASONS,
+  serpAdapter,
+  type GscServiceLike,
+  type IntentReadApiLike,
+  type ProbesReadApiLike,
+  type SerpReadApiLike,
+} from '../ports';
 import type { createAgentService } from '../wire';
 import { createPageToolRunner } from '../tools';
 import { flush, setupBroker } from './approval-fakes';
@@ -30,7 +50,7 @@ describe('agent ports', () => {
     const serp = createFakeSerpPort();
     expect(resolveAgentPorts({ serp }).serp).toBe(serp);
     // Honest, plain reasons: no claim the data exists.
-    for (const reason of Object.values(PORT_NOT_CONNECTED_REASONS)) expect(reason).toMatch(/isn't connected in this build\.$/);
+    for (const reason of Object.values(PORT_NOT_CONNECTED_REASONS)) expect(reason).toMatch(/(isn't|aren't) connected in this build\.$/);
   });
 
   test('agent-port-adapters-are-thin', async () => {
@@ -39,8 +59,8 @@ describe('agent ports', () => {
     expect(gscAdapter(null)).toBeNull();
 
     // SERP: the chat tab's reading, for the same query only.
-    let state: Phase3SerpState = READY_STATE;
-    const snapshot = vi.fn((_tabId: number): Phase3SerpState => state);
+    let state: SerpState = READY_STATE;
+    const snapshot = vi.fn((_tabId: number): SerpState => state);
     const serp = serpAdapter(phase3ReadApi(snapshot))!;
     const ready = await serp.results({ query: '  Running   SHOES ' }, { tabId: 4 });
     expect(snapshot).toHaveBeenCalledWith(4);
@@ -61,7 +81,7 @@ describe('agent ports', () => {
     expect(await serp.results({ query: 'trail shoes' }, { tabId: 4 })).toEqual({ status: 'unavailable', reason: SERP_ADAPTER_REASONS.otherQuery });
     expect(await serp.results({ query: 'running shoes' })).toEqual({ status: 'unavailable', reason: SERP_ADAPTER_REASONS.noTab });
     for (const status of ['not-serp', 'pending', 'unreadable', 'disabled'] as const) {
-      state = { ...NOT_READY[status] } as Phase3SerpState;
+      state = { ...NOT_READY[status] } as SerpState;
       expect(await serp.results({ query: 'running shoes' }, { tabId: 4 })).toEqual({ status: 'unavailable', reason: SERP_ADAPTER_REASONS[status] });
     }
     snapshot.mockImplementationOnce(() => {
@@ -72,15 +92,16 @@ describe('agent ports', () => {
     expect(await serp.aiSearch({ query: 'x' }, { tabId: 4 })).toEqual({ status: 'unavailable', reason: SERP_ADAPTER_REASONS.aiSearch });
 
     // Intent: classifyIntent's labels and scores, most likely first; its states explained.
-    let answer: Phase3IntentAnswer = { state: 'ready', result: { label: 'commercial', confidence: 0.6, scores: { informational: 0.1, navigational: 0.05, commercial: 0.6, transactional: 0.25 }, model: 'fake' } };
+    let answer: IntentAnswer = { state: 'ready', result: { label: 'commercial', confidence: 0.6, scores: { informational: 0.1, navigational: 0.05, commercial: 0.6, transactional: 0.25 }, model: INTENT_MODEL.id } };
     const intent = intentAdapter(phase3ReadApi(snapshot, async () => answer))!;
     expect(await intent.classify({ query: 'best shoes' })).toEqual({
       status: 'ok',
       data: { query: 'best shoes', primary: 'commercial', intents: [{ intent: 'commercial', confidence: 0.6 }, { intent: 'transactional', confidence: 0.25 }, { intent: 'informational', confidence: 0.1 }, { intent: 'navigational', confidence: 0.05 }] },
     });
+    // Its states are passed on unchanged, with a sentence.
     for (const st of ['model-missing', 'downloading', 'unavailable', 'no-query'] as const) {
       answer = { state: st };
-      expect(await intent.classify({ query: 'x' })).toEqual({ status: 'unavailable', reason: INTENT_ADAPTER_REASONS[st] });
+      expect(await intent.classify({ query: 'x' })).toEqual({ status: 'unavailable', reason: INTENT_ADAPTER_REASONS[st], state: st });
     }
 
     // GSC: page scope, the nearest range, totals merged with the top queries, reason codes in words.
@@ -117,14 +138,15 @@ describe('agent ports', () => {
   });
 
   test('agent-port-adapters-accept-the-real-shapes', () => {
-    // Type-level: Phase 3's `SerpReadApi` and Phase 4's `GscService` (local copies below) are what
+    // Type-level: the merged `SerpReadApi` and Phase 4's `GscService` (a local copy below) are what
     // the adapters take; this file fails to compile if the adapters' structural types drift from them.
-    const readApi: Phase3SerpReadApi = phase3ReadApi(() => READY_STATE);
+    const readApi: SerpReadApi = phase3ReadApi(() => READY_STATE);
     const service: Phase4GscService = phase4Service(async () => PERFORMANCE_OK, async () => QUERIES_OK);
     const serpLike: SerpReadApiLike = readApi;
     const intentLike: IntentReadApiLike = readApi;
+    const probesLike: ProbesReadApiLike = readApi;
     const gscLike: GscServiceLike = service;
-    expect([serpAdapter(serpLike), intentAdapter(intentLike), gscAdapter(gscLike)].every((port) => port !== null)).toBe(true);
+    expect([serpAdapter(serpLike), intentAdapter(intentLike), probesAdapter(probesLike), gscAdapter(gscLike)].every((port) => port !== null)).toBe(true);
     // And the lead's wiring block compiles against `createAgentService`'s options as written in the plan.
     const requireFeature = (flag: Phase4FeatureFlag): void => {
       if (flag !== 'ai-agent') throw new Error('not entitled');
@@ -133,7 +155,7 @@ describe('agent ports', () => {
     const serp = { readApi };
     const gsc = { service };
     const options = {
-      ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), gsc: gscAdapter(gsc.service) },
+      ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) },
       entitlements: {
         allowed: (feature: AgentFeature) => {
           try {
@@ -194,38 +216,63 @@ describe('agent ports', () => {
     expect(local.fake.results('call-2')[0]).toMatchObject({ ok: true, output: { data: { unavailable: GSC_NOT_PUBLIC_REASON } } });
     expect(gsc.calls).toHaveLength(1);
   });
+
+  test('intent-adapter-never-downloads', async () => {
+    // Phase 3's real classifier over a store that records any download, wired as main's
+    // `serp/service.ts` wires `classifyIntent`.
+    const harness = (present: boolean) => {
+      const download = vi.fn(async (): Promise<IntentEnableOutcome> => 'ready');
+      const hostClassify = vi.fn(async () => ({ ok: true as const, result: { label: 'transactional' as const, confidence: 0.7, scores: { informational: 0.1, navigational: 0.1, commercial: 0.1, transactional: 0.7 }, model: INTENT_MODEL.id } }));
+      const classifier = createIntentClassifier({ store: { present: async () => present, download }, host: { classify: hostClassify, dispose: () => undefined } });
+      const readApi = { classifyIntent: (query: string) => classifier.classify(query) } satisfies Pick<SerpReadApi, 'classifyIntent'>;
+      return { port: intentAdapter(readApi)!, download, hostClassify };
+    };
+    // No model on disk: `model-missing` handed on unchanged; nothing downloaded or loaded.
+    const missing = harness(false);
+    for (let i = 0; i < 3; i += 1) expect(await missing.port.classify({ query: 'buy tea' })).toEqual({ status: 'unavailable', reason: INTENT_ADAPTER_REASONS['model-missing'], state: 'model-missing' });
+    expect(missing.download).not.toHaveBeenCalled();
+    expect(missing.hostClassify).not.toHaveBeenCalled();
+    // The model present: classified on this computer, still no download.
+    const ready = harness(true);
+    expect(await ready.port.classify({ query: 'buy tea' })).toMatchObject({ status: 'ok', data: { primary: 'transactional' } });
+    expect(ready.download).not.toHaveBeenCalled();
+    // The adapter's type has no way to reach the enabling path at all.
+    const readApi = phase3ReadApi(() => READY_STATE);
+    const enableIntent = vi.fn();
+    const port = intentAdapter(Object.assign(readApi, { enableIntent, ensureModel: enableIntent }))!;
+    await port.classify({ query: 'x' });
+    expect(enableIntent).not.toHaveBeenCalled();
+  });
+
+  test('probes-adapter-maps-the-run', async () => {
+    let probes: ProbesState = PROBES_DONE;
+    const runProbes = vi.fn((_tabId: number) => true);
+    const port = probesAdapter({ ...phase3ReadApi(() => READY_STATE), probes: () => probes, runProbes })!;
+    expect(await port.latest(4)).toEqual({
+      status: 'ok',
+      data: {
+        url: 'https://example.com/a',
+        status: 'done',
+        startedAt: new Date(1000).toISOString(),
+        finishedAt: new Date(2000).toISOString(),
+        agents: [
+          { agent: 'browser', kind: 'browser', outcome: 'ok', status: 200, redirects: 0, finalUrl: 'https://example.com/a', robots: 'allowed', noindex: false, nofollow: false, canonical: 'https://example.com/a', wordCount: 300, title: 'A', differsIn: [], textSimilarity: null },
+          { agent: 'gptbot', kind: 'ai', outcome: 'ok', status: 403, redirects: 1, finalUrl: 'https://example.com/blocked', robots: 'disallowed', noindex: null, nofollow: null, canonical: null, wordCount: null, title: null, differsIn: ['status', 'robots'], textSimilarity: null },
+        ],
+      },
+    });
+    // Idle: said, with the state.
+    probes = { ...PROBES_DONE, status: 'idle', rows: [], diffs: [], startedAt: null, finishedAt: null };
+    expect(await port.latest(4)).toMatchObject({ status: 'unavailable', state: 'idle' });
+    // Running starts a run; a refused start (not the active tab) is `started: false`.
+    expect(await port.run(4)).toEqual({ status: 'ok', data: { started: true } });
+    expect(runProbes).toHaveBeenCalledWith(4);
+    runProbes.mockReturnValueOnce(false);
+    expect(await port.run(4)).toEqual({ status: 'ok', data: { started: false } });
+  });
 });
 
 // ---- Local copies of the Phase 3 and Phase 4 shapes ----
-
-type Phase3SearchParams = { engine: string; engineLabel: string; query: string; gl: string | null; hl: string | null; device: 'desktop' | 'mobile'; page: number; offset: number | null; url: string };
-type Phase3SerpResult = { rank: number; type: 'organic' | 'ad' | 'people-also-ask'; position: number | null; featureSlot: number | null; title: string; url: string | null; redirected: boolean; domain: string | null };
-type Phase3SerpReady = {
-  status: 'ready';
-  params: Phase3SearchParams;
-  packVersion: number;
-  results: Phase3SerpResult[];
-  composition: { counts: Record<string, number>; features: { slot: number; type: 'people-also-ask'; results: number }[] };
-  ownership: { page: number; organic: number; complete: boolean; domains: { domain: string; count: number; share: number; positions: number[]; best: number }[] };
-  truncated: boolean;
-};
-type Phase3SerpState =
-  | { status: 'not-serp'; tabId: number; url: string }
-  | { status: 'pending'; tabId: number; documentSeq: number; url: string; params: Phase3SearchParams }
-  | { status: 'ready'; tabId: number; documentSeq: number; url: string; readAt: number; snapshot: Phase3SerpReady }
-  | { status: 'unreadable'; tabId: number; documentSeq: number; url: string; readAt: number; reason: 'no-container'; params: Phase3SearchParams | null; packVersion: number | null }
-  | { status: 'disabled'; tabId: number; reason: 'pack-invalid' };
-type Phase3IntentLabel = 'informational' | 'navigational' | 'commercial' | 'transactional';
-type Phase3IntentAnswer =
-  | { readonly state: 'ready'; readonly result: { readonly label: Phase3IntentLabel; readonly confidence: number; readonly scores: Readonly<Record<Phase3IntentLabel, number>>; readonly model: 'fake' } }
-  | { readonly state: 'model-missing' | 'downloading' | 'unavailable' }
-  | { readonly state: 'no-query' };
-interface Phase3SerpReadApi {
-  snapshot(tabId: number): Phase3SerpState;
-  classifyIntent(query: string): Promise<Phase3IntentAnswer>;
-  probes(tabId: number): { status: 'idle' };
-  runProbes(tabId: number): boolean;
-}
 
 type Phase4GscQuery = { url: string; scope: 'page' | 'property'; days: 7 | 28 | 90 };
 type Phase4Unavailable = { status: 'unavailable'; reason: 'unconfigured' | 'not-entitled' | 'not-connected' | 'no-property' | 'auth-expired' | 'quota' | 'network' | 'invalid' | 'not-a-web-page' };
@@ -245,8 +292,10 @@ interface Phase4GscService {
 }
 type Phase4FeatureFlag = 'ai-agent' | 'search-console' | 'sync';
 
-const PARAMS: Phase3SearchParams = { engine: 'engine', engineLabel: 'The search engine', query: 'running shoes', gl: 'us', hl: 'en', device: 'mobile', page: 1, offset: null, url: 'https://search.example/?q=running+shoes' };
-const READY_STATE: Phase3SerpState = {
+type SearchParams = Extract<SerpState, { status: 'pending' }>['params'];
+const COUNTS = { ...(Object.fromEntries(SERP_RESULT_TYPES.map((type) => [type, 0])) as Record<SerpResultType, number>), organic: 2, ad: 1, 'people-also-ask': 1 };
+const PARAMS: SearchParams = { engine: 'engine', engineLabel: 'The search engine', query: 'running shoes', gl: 'us', hl: 'en', device: 'mobile', page: 1, offset: null, url: 'https://search.example/?q=running+shoes' };
+const READY_STATE: SerpState = {
   status: 'ready',
   tabId: 4,
   documentSeq: 1,
@@ -262,19 +311,34 @@ const READY_STATE: Phase3SerpState = {
       { rank: 3, type: 'people-also-ask', position: null, featureSlot: 1, title: 'Which shoes?', url: null, redirected: false, domain: null },
       { rank: 4, type: 'organic', position: 2, featureSlot: null, title: 'Best shoes', url: 'https://reviews.example/best', redirected: false, domain: 'reviews.example' },
     ],
-    composition: { counts: { organic: 2, ad: 1, 'people-also-ask': 1 }, features: [{ slot: 1, type: 'people-also-ask', results: 1 }] },
+    composition: { counts: COUNTS, features: [{ slot: 1, type: 'people-also-ask', results: 1 }] },
     ownership: { page: 1, organic: 2, complete: true, domains: [] },
     truncated: false,
   },
 };
-const NOT_READY: Record<'not-serp' | 'pending' | 'unreadable' | 'disabled', Phase3SerpState> = {
+const NOT_READY: Record<'not-serp' | 'pending' | 'unreadable' | 'disabled', SerpState> = {
   'not-serp': { status: 'not-serp', tabId: 4, url: 'https://example.com/' },
   pending: { status: 'pending', tabId: 4, documentSeq: 1, url: PARAMS.url, params: PARAMS },
   unreadable: { status: 'unreadable', tabId: 4, documentSeq: 1, url: PARAMS.url, readAt: 1, reason: 'no-container', params: PARAMS, packVersion: 1 },
   disabled: { status: 'disabled', tabId: 4, reason: 'pack-invalid' },
 };
-function phase3ReadApi(snapshot: (tabId: number) => Phase3SerpState, classifyIntent: (query: string) => Promise<Phase3IntentAnswer> = async () => ({ state: 'model-missing' })): Phase3SerpReadApi {
-  return { snapshot, classifyIntent, probes: () => ({ status: 'idle' }), runProbes: () => false };
+const PROBE_ROW = { hops: [] as { url: string; status: number }[], robots: null, metaRobots: null, xRobotsTag: null, canonicals: null, contentType: 'text/html', bytes: 1000, truncated: false, textTruncated: false, partial: false, textHash: null, textSignature: null, durationMs: 10 };
+const PROBES_DONE: ProbesState = {
+  tabId: 4,
+  url: 'https://example.com/a',
+  status: 'done',
+  rows: [
+    { ...PROBE_ROW, agent: 'browser', outcome: 'ok', status: 200, finalUrl: 'https://example.com/a', robots: { url: 'https://example.com/robots.txt', verdict: 'allowed', rule: null, groupAgents: [], groupLine: null, fallback: false }, noindex: false, nofollow: false, canonical: 'https://example.com/a', wordCount: 300, title: 'A' },
+    { ...PROBE_ROW, agent: 'gptbot', outcome: 'ok', status: 403, hops: [{ url: 'https://example.com/a', status: 301 }], finalUrl: 'https://example.com/blocked', robots: { url: 'https://example.com/robots.txt', verdict: 'disallowed', rule: null, groupAgents: [], groupLine: null, fallback: false }, noindex: null, nofollow: null, canonical: null, wordCount: null, title: null },
+  ],
+  diffs: [{ agent: 'gptbot', facts: ['status', 'robots'], textSimilarity: null, contentTruncated: false }],
+  robotsTxt: [],
+  startedAt: 1000,
+  finishedAt: 2000,
+  version: 3,
+};
+function phase3ReadApi(snapshot: (tabId: number) => SerpState, classifyIntent: (query: string) => Promise<IntentAnswer> = async () => ({ state: 'model-missing' })): SerpReadApi {
+  return { snapshot, classifyIntent, probes: () => ({ ...PROBES_DONE, status: 'idle', rows: [], diffs: [], startedAt: null, finishedAt: null }), runProbes: () => false };
 }
 
 const PROPERTY: Phase4Property = { siteUrl: 'https://example.com/', kind: 'url-prefix', permissionLevel: 'siteOwner' };

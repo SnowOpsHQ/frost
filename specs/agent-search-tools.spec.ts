@@ -82,6 +82,7 @@ export const PORT_NOT_CONNECTED_REASONS = {
   serp: "Search result data isn't connected in this build.",
   intent: "Search intent data isn't connected in this build.",
   gsc: "Search performance data from the site owner's account isn't connected in this build.",
+  probes: "Visibility probes aren't connected in this build.",
 } as const;
 
 /** `gsc_performance` with no `url` when the chat's tab shows no web page. */
@@ -121,3 +122,36 @@ export function completeToolInput(toolName: string, input: unknown, tabUrl: stri
     ...(Object.hasOwn(given, 'days') ? {} : { days: AGENT_TOOL_INPUT_LIMITS.defaultGscDays }),
   };
 }
+
+// ---- Visibility probes (Phase 3's `SerpReadApi.probes` / `runProbes`) -------------------------
+
+/**
+ * `visibility_probes` (read: the chat tab's last probe run, `probes(tabId)`, never fetching) and
+ * `run_visibility_probes` (act: `runProbes(tabId)`, which fetches the tab's page as frost's browser
+ * and as each search and AI crawler Phase 3 models, and reads robots.txt). Both are page tools: the
+ * run's page must be the expected one (an approved run: exactly the approved page), and Phase 3 runs
+ * probes only for the **active** tab, so a chat whose tab isn't on screen is told so.
+ */
+export const PROBE_TOOL_NAMES = ['visibility_probes', 'run_visibility_probes'] as const;
+
+export const PROBE_TOOL_LIMITS = {
+  /** How long `run_visibility_probes` waits for the run to finish before answering how far it got (milliseconds). */
+  waitMs: 30_000,
+  /** How often it looks (milliseconds). */
+  pollMs: 500,
+  /** Characters of a row's title, URL and canonical. */
+  maxTitleChars: 200,
+  maxUrlChars: 500,
+  /** Directives listed per agent. */
+  maxDirectives: 16,
+} as const;
+
+export const PROBE_TOOL_SOURCE = 'frost:visibility-probes';
+
+/** Why there is nothing to read or run (frost's own words, said as data). */
+export const PROBE_TOOL_REASONS = {
+  notActive: "frost runs probes only for the tab on screen, and the chat's tab is not it. Ask the user to switch back to it.",
+  idle: 'No probe run for this page yet. run_visibility_probes starts one (the user is asked first).',
+  otherPage: 'The last probe run was for another page.',
+} as const;
+

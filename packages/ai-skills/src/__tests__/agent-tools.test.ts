@@ -38,7 +38,7 @@ describe('agent tool catalogue', () => {
       expect(tool.label).not.toContain('\n');
       expect(toolRisk(name)).toBe(tool.risk);
       expect(isGrantable(name)).toBe(tool.grantable);
-      if (tool.risk === 'read' || name === 'navigate' || name === 'click') expect(tool.grantable).toBe(true);
+      if (tool.risk === 'read' || name === 'navigate' || name === 'click' || name === 'run_visibility_probes') expect(tool.grantable).toBe(true);
       else expect(tool.grantable).toBe(false);
     }
     // An AI answer engine gets model-chosen text and may fetch URLs: it asks every call.
@@ -49,7 +49,9 @@ describe('agent tool catalogue', () => {
     expect(AGENT_TOOLS.click.risk).toBe('act');
     expect(AGENT_TOOLS.execute_javascript.risk).toBe('execute');
     expect(AGENT_TOOLS.execute_javascript.grantable).toBe(false);
-    for (const name of ['page_audit', 'page_data', 'page_text', 'serp_results', 'search_intent', 'gsc_performance'] as const) {
+    // Running the probes fetches the page as crawlers would: it asks unless a grant for the page's origin exists.
+    expect(AGENT_TOOLS.run_visibility_probes.risk).toBe('act');
+    for (const name of ['page_audit', 'page_data', 'page_text', 'serp_results', 'search_intent', 'gsc_performance', 'visibility_probes'] as const) {
       expect(AGENT_TOOLS[name].risk).toBe('read');
     }
     expect(Object.values(AGENT_TOOLS).some((tool) => tool.risk === 'external')).toBe(false);

@@ -49,6 +49,7 @@ import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './sess
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 import { createAgentService } from './agent/wire';
+import { intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -430,7 +431,7 @@ function start(): void {
         settings: searchEngine,
         // The SERP overlay (specs/serp-overlay.feature.md).
         serp: serp.service,
-        agent: createAgentService({ app, browser, webContents, sessionStore, log: logSession }),
+        agent: createAgentService({ app, browser, webContents, sessionStore, log: logSession, ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi) } }),
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

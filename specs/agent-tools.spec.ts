@@ -37,6 +37,9 @@ export const AGENT_TOOL_NAMES = [
   'search_intent',
   'run_ai_search',
   'gsc_performance',
+  // Phase 3's visibility probes (appended in Phase 5 Task 8's wiring to the SERP service).
+  'visibility_probes',
+  'run_visibility_probes',
 ] as const;
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 
@@ -65,6 +68,13 @@ export const AGENT_TOOLS: { readonly [N in AgentToolName]: AgentToolSpec & { rea
   search_intent: { name: 'search_intent', risk: 'read', grantable: true, label: "Classify a query's search intent" },
   run_ai_search: { name: 'run_ai_search', risk: 'act', grantable: false, label: 'Ask an AI search engine a query' },
   gsc_performance: { name: 'gsc_performance', risk: 'read', grantable: true, label: "Read a page's search performance" },
+  visibility_probes: { name: 'visibility_probes', risk: 'read', grantable: true, label: "Read this page's last visibility probes" },
+  /**
+   * `act`: frost fetches the tab's page from the network as its own browser and as each search and
+   * AI crawler Phase 3 models (`PROBE_AGENTS`), and reads the site's robots.txt: requests the site
+   * sees, on the user's behalf. Grantable per origin like `click` (public `https:` only).
+   */
+  run_visibility_probes: { name: 'run_visibility_probes', risk: 'act', grantable: true, label: 'Fetch this page as search and AI crawlers would' },
 };
 
 /** Whether `name` is one of frost's own tools. */

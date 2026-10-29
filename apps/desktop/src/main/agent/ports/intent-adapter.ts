@@ -2,11 +2,20 @@ import { SEARCH_INTENTS, unavailable, type IntentClassification, type IntentPort
 
 // The `IntentPort` over Phase 3's on-device intent classifier (Phase 5 Task 8 and its review;
 // acceptance `specs/agent-search-tools.feature.md`, Wiring). Written against
-// `SerpReadApi.classifyIntent(query)` (and `SerpService.classify(query)`, the same shape) answering
-// `IntentAnswer` (`specs/intent-classifier.spec.ts`) on `phase-3/serp-intent` at 45e8cf7: `ready`
-// with `{ label, confidence, scores }` (the labels are `SEARCH_INTENTS`), or the classifier's state.
-// It never downloads the model (only the user enables it), so a missing model is explained, not
-// fixed. The type below is a minimal structural copy; Phase 3's `SerpReadApi` is assignable to it.
+// `SerpReadApi.classifyIntent(query)` as merged (`packages/ipc-contract/src/serp-service.ts`; main's
+// `serp/service.ts` answers it with `classifier.classify(query)`), answering `IntentAnswer`
+// (`specs/intent-classifier.spec.ts`): `ready` with `{ label, confidence, scores }` (the labels are
+// `SEARCH_INTENTS`), or the classifier's state.
+//
+// **No download, ever.** The model is downloaded only by `IntentClassifier.ensureModel()` (the
+// user's "Enable on-device intent", `SerpService.enableIntent()`); `classify()` checks the state
+// and, unless `ready` (or `unavailable`, which retries the local process), answers the state with
+// no request (`main/intent/classifier.ts`). This adapter takes only `classifyIntent`
+// (`IntentReadApiLike` has no other member, so it can't reach `enableIntent` or `ensureModel`), and
+// hands a state such as `model-missing` to the model unchanged (`state`), with a sentence it can
+// relay. `agent-ports.test.ts` checks it with Phase 3's real classifier over a store that records
+// any download. `IntentReadApiLike` is a minimal structural type; the merged `SerpReadApi` is
+// assignable to it (type-level test).
 
 /** What classifying answers (`IntentAnswer`), as far as the adapter reads it. */
 export type IntentAnswerLike =
@@ -42,7 +51,7 @@ export function intentAdapter(readApi: IntentReadApiLike | null | undefined): In
         return unavailable(INTENT_ADAPTER_REASONS.failed);
       }
       options?.signal?.throwIfAborted();
-      if (answer.state !== 'ready') return unavailable(INTENT_ADAPTER_REASONS[answer.state] ?? INTENT_ADAPTER_REASONS.failed);
+      if (answer.state !== 'ready') return unavailable(INTENT_ADAPTER_REASONS[answer.state] ?? INTENT_ADAPTER_REASONS.failed, answer.state);
       const { label, scores } = answer.result;
       if (!isIntent(label)) return unavailable(INTENT_ADAPTER_REASONS.unknownLabel);
       const intents = SEARCH_INTENTS.map((intent) => ({ intent, confidence: typeof scores[intent] === 'number' ? scores[intent]! : 0 })).sort((a, b) => b.confidence - a.confidence);

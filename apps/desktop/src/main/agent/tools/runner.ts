@@ -10,6 +10,7 @@ import { auditNotReady, clip, summariseAudit, summarisePageData } from './audit-
 import type { TabNavigation, NavigateOptions } from './navigator';
 import { clickScript, executeScript, pageTextScript, parsePageAnswer, SCRIPT_WORLDS, type PageExpectation } from './page-scripts';
 import { createSearchTools, type SearchToolInput, type SearchToolPorts } from './search-tools';
+import { createProbeTools } from './probe-tools';
 
 // The agent's core page tools (Phase 5 Task 5; spec `specs/agent-page-tools.spec.ts`, acceptance
 // `specs/agent-page-tools.feature.md`): the broker's `ToolRunner` for `page_audit`, `page_data`,
@@ -32,7 +33,9 @@ import { createSearchTools, type SearchToolInput, type SearchToolPorts } from '.
 // - Every tool honours `signal` (an abort answers `failed`), and no tool reads cookies, storage or
 //   the page's main world.
 // - `serp_results`, `search_intent`, `run_ai_search` and `gsc_performance` run over `deps.ports`
-//   (Task 8, `search-tools.ts`): a missing port answers `unavailable`.
+//   (Task 8, `search-tools.ts`): a missing port answers `unavailable`;
+// - `visibility_probes` and `run_visibility_probes` run over `deps.ports.probes` (`probe-tools.ts`),
+//   page tools like the others: the tab must still show the expected page (approved: exactly it).
 
 /** The part of a tab's WebContents the page scripts need (Electron's `WebContents`; tests use fakes). */
 export interface PageContents {
@@ -129,6 +132,16 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
   const now = deps.now ?? Date.now;
   // `gsc_performance`'s page is in its input: the broker fills in the tab's as the call arrives.
   const search = createSearchTools(deps.ports ? { ports: deps.ports } : {});
+  const probeTools = createProbeTools({
+    port: deps.ports?.probes ?? null,
+    // The page check every page tool makes: the tab's live page must be the expected one.
+    page: (context) => {
+      const expected = expectationOf(context);
+      if (expected === null) return 'expired';
+      const contents = livePage(context, expected);
+      return typeof contents === 'string' ? contents : { expected, matches: (url: unknown) => isExpectedPage(url, expected) };
+    },
+  });
 
   /** The tab's live page, if it is (still) the expected one; else why not. */
   const livePage = (context: ToolRunContext, expected: PageExpectation): PageContents | ToolErrorCode => {
@@ -320,6 +333,9 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
         case 'run_ai_search':
         case 'gsc_performance':
           return search.run({ toolName: definition.name, input: value } as SearchToolInput, context);
+        case 'visibility_probes':
+        case 'run_visibility_probes':
+          return probeTools.run(definition.name, context);
       }
     },
   };

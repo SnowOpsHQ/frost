@@ -166,6 +166,8 @@ export function approvalTitle(request: AgentApprovalView): string {
       return `Allow click on ${placeOf(request)}?`;
     case 'execute_javascript':
       return `Run this JavaScript on ${placeOf(request)}?`;
+    case 'run_visibility_probes':
+      return `Fetch ${placeOf(request)} as search and AI crawlers would?`;
     default:
       if (isMcpToolName(request.toolName) || request.risk === 'external') return `${request.label}: allow "${mcpToolPartOf(request.toolName)}"?`;
       return request.pageUrl !== null || request.origin !== null ? `Allow "${request.label}" on ${placeOf(request)}?` : `Allow "${request.label}"?`;

@@ -146,7 +146,7 @@ export function isPublicPage(url: unknown): boolean {
 }
 
 /** Tools that act on the chat tab's page: the origin they act on is the tab's. */
-export const PAGE_TOOLS: readonly string[] = ['page_audit', 'page_data', 'page_text', 'click', 'execute_javascript'];
+export const PAGE_TOOLS: readonly string[] = ['page_audit', 'page_data', 'page_text', 'click', 'execute_javascript', 'visibility_probes', 'run_visibility_probes'];
 
 /** Whether `toolName` acts on the chat tab's page (`PAGE_TOOLS`): it needs a web page there, and an approval binds that page. */
 export function isTabBound(toolName: string): boolean {
@@ -157,7 +157,7 @@ export function isTabBound(toolName: string): boolean {
  * The origin a grant for a call to `toolName` is keyed to (`act` tools only):
  * - `navigate`: the destination's origin (`input.url`), never the tab's, so a grant for one site
  *   doesn't let the agent go to another;
- * - `click`: the origin of the page the chat's tab shows (`tabUrl`);
+ * - `click` and `run_visibility_probes`: the origin of the page the chat's tab shows (`tabUrl`);
  * - any other tool, or a non-`http(s)` URL: `null` (no grant applies).
  */
 export function grantOriginFor(toolName: string, input: unknown, tabUrl: string | null): string | null {
@@ -165,7 +165,7 @@ export function grantOriginFor(toolName: string, input: unknown, tabUrl: string 
     const url = typeof input === 'object' && input !== null ? (input as { url?: unknown }).url : undefined;
     return webOrigin(url);
   }
-  if (toolName === 'click') return webOrigin(tabUrl);
+  if (toolName === 'click' || toolName === 'run_visibility_probes') return webOrigin(tabUrl);
   return null;
 }
 
@@ -174,7 +174,7 @@ export function grantOriginFor(toolName: string, input: unknown, tabUrl: string 
  * origin for the other page tools (`PAGE_TOOLS`), else `null` (the call doesn't act on a site).
  */
 export function approvalOriginFor(toolName: string, input: unknown, tabUrl: string | null): string | null {
-  if (toolName === 'navigate' || toolName === 'click') return grantOriginFor(toolName, input, tabUrl);
+  if (toolName === 'navigate' || toolName === 'click' || toolName === 'run_visibility_probes') return grantOriginFor(toolName, input, tabUrl);
   return PAGE_TOOLS.includes(toolName) ? webOrigin(tabUrl) : null;
 }
 

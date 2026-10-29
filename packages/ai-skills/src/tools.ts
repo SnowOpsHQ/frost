@@ -138,6 +138,18 @@ export const gscPerformanceTool = defineTool(
   }),
 );
 
+export const visibilityProbesTool = defineTool(
+  'visibility_probes',
+  `Returns the last visibility probe run for the page in the user's current tab: for frost's own browser and for each search and AI crawler it models, the HTTP status, redirects, robots.txt verdict, noindex and nofollow, canonical, word count and title, and what differs from the browser's answer. Never fetches anything; run_visibility_probes starts a run. ${UNTRUSTED_OUTPUT_NOTE}`,
+  z.strictObject({}),
+);
+
+export const runVisibilityProbesTool = defineTool(
+  'run_visibility_probes',
+  `Fetches the page in the user's current tab as search and AI crawlers would (once as frost's own browser and once with each crawler's user agent, plus the site's robots.txt), waits for the run and returns what each was served, as visibility_probes does. The user may be asked to allow it first; it works only while the chat's tab is the tab on screen. ${UNTRUSTED_OUTPUT_NOTE}`,
+  z.strictObject({}),
+);
+
 /** Every catalogue tool's definition, in catalogue order. */
 export const AGENT_TOOL_DEFINITIONS = [
   pageAuditTool,
@@ -150,6 +162,8 @@ export const AGENT_TOOL_DEFINITIONS = [
   searchIntentTool,
   runAiSearchTool,
   gscPerformanceTool,
+  visibilityProbesTool,
+  runVisibilityProbesTool,
 ] as const;
 
 export type AnyAgentToolDefinition = (typeof AGENT_TOOL_DEFINITIONS)[number];

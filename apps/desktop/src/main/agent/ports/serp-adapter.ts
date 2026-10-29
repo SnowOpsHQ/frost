@@ -1,11 +1,12 @@
 import { unavailable, type AiSearchAnswer, type PortAnswer, type SerpPort, type SerpResults } from '@app/ai-skills';
 
-// The `SerpPort` over Phase 3's `SerpReadApi` (Phase 5 Task 8 and its review; acceptance
-// `specs/agent-search-tools.feature.md`, Wiring). Written against
-// `packages/ipc-contract/src/serp-service.ts` and `specs/serp-service.schema.ts` /
-// `serp-snapshot.schema.ts` as they stand on `phase-3/serp-intent` at 45e8cf7: the read API is per
-// tab (`snapshot(tabId)`: the reading of the result page the user loaded there) and has no
-// query-based results read and no AI answer read.
+// The `SerpPort` over Phase 3's `SerpReadApi` (Phase 5 Task 8, its review and the SERP wiring;
+// acceptance `specs/agent-search-tools.feature.md`, Wiring). Written against the merged
+// `packages/ipc-contract/src/serp-service.ts`, `specs/serp-service.schema.ts` /
+// `serp-snapshot.schema.ts` and `main/serp/setup.ts` (`readApi = { ...serp.readApi, probes,
+// runProbes }`; `snapshot` is `serpState(tabId).serp`): the read API is per tab (`snapshot(tabId)`:
+// the reading of the result page the user loaded there, read in the tab's isolated world if it has
+// none yet, never a request) and has no query-based results read and no AI answer read.
 //
 // So, until Phase 3 exports a query-based read:
 // - `serp_results` answers from the chat tab's reading when that tab shows a `ready` result page for
@@ -15,7 +16,7 @@ import { unavailable, type AiSearchAnswer, type PortAnswer, type SerpPort, type 
 // When a query-based read lands, add it to `SerpReadApiLike` (optional) and prefer it here.
 //
 // The types below are minimal structural copies of the parts of Phase 3's types this adapter reads;
-// Phase 3's `SerpReadApi` is assignable to `SerpReadApiLike` (a type-level test keeps it so).
+// the merged `SerpReadApi` is assignable to `SerpReadApiLike` (a type-level test keeps it so).
 
 /** A `ready` reading's snapshot, as far as the adapter reads it (`SerpReadySchema`). */
 export interface SerpReadyLike {
@@ -90,7 +91,7 @@ export function serpAdapter(readApi: SerpReadApiLike | null | undefined): SerpPo
       if (!sameQuery(state.snapshot.params.query, query.query)) return unavailable(SERP_ADAPTER_REASONS.otherQuery);
       return { status: 'ok', data: serpResultsOf(state) };
     },
-    // Phase 3 has no AI answer read (45e8cf7).
+    // Phase 3 has no AI answer read.
     aiSearch: async (): Promise<PortAnswer<AiSearchAnswer>> => unavailable(SERP_ADAPTER_REASONS.aiSearch),
   };
 }

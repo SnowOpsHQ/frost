@@ -14,6 +14,7 @@ import { ALLOWED_MODEL_IDS } from '@app/specs/agent-tools.spec';
 import { SKILL_SLOT_MAX_CHARS, SKILL_WARNINGS } from '@app/specs/skills.spec';
 import { SKILLS } from './agent-fixtures';
 import {
+  approvalTitle,
   pickedSkill,
   skillDisplayName,
   skillDraftWarnings,
@@ -244,5 +245,9 @@ describe('agent panel view model', () => {
     expect(skillDraftWarnings({ name: 'Mine', allowedTools: ['page_text'] }, ['Audit this page'])).toEqual([]);
     expect(skillDraftWarnings({ name: '  audit THIS   page ', allowedTools: ['page_text'] }, ['Audit this page'])).toEqual([SKILL_WARNINGS.builtinName]);
     for (const tool of ['navigate', 'click', 'execute_javascript', 'run_ai_search']) expect(skillDraftWarnings({ name: 'Mine', allowedTools: ['page_text', tool] }, [])).toEqual([SKILL_WARNINGS.actingTools]);
+  });
+
+  test('probe-approval-title', () => {
+    expect(approvalTitle(approval({ toolName: 'run_visibility_probes', label: 'Fetch this page as search and AI crawlers would', risk: 'act', origin: 'https://www.example.com', input: '{}' }))).toBe('Fetch https://www.example.com/a as search and AI crawlers would?');
   });
 });

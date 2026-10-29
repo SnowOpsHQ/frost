@@ -61,6 +61,13 @@ export const MAX_PENDING_AGENT_WATCHES = 4;
 export const APPROVAL_ENABLE_DELAY_MS = 500;
 /** What an `execute_javascript` approval card says beside the code (Task 5 review). */
 export const EXECUTE_JS_APPROVAL_NOTE = 'Runs alongside any code you allowed earlier on this page.';
+/**
+ * What a `run_visibility_probes` approval card says (Task 8, the SERP wiring): what frost will
+ * actually do, plainly. Phase 3's probes fetch the page once per agent it models (its own browser,
+ * then search and AI crawlers, each with that crawler's user agent) and read the site's robots.txt.
+ */
+export const RUN_PROBES_APPROVAL_NOTE =
+  "frost will fetch this page as search and AI crawlers would: one request as its own browser and one with each crawler's user agent it models, plus the site's robots.txt. The site sees these requests.";
 
 /**
  * Each allowed model's context window (tokens), for the context meter; `null` where frost has no

@@ -86,7 +86,7 @@ export const flush = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve();
 };
 
-export const ALL_TOOLS = ['page_audit', 'page_data', 'page_text', 'navigate', 'click', 'execute_javascript', 'serp_results', 'search_intent', 'run_ai_search', 'gsc_performance', 'mcp__files__read'];
+export const ALL_TOOLS = ['page_audit', 'page_data', 'page_text', 'navigate', 'click', 'execute_javascript', 'serp_results', 'search_intent', 'run_ai_search', 'gsc_performance', 'visibility_probes', 'run_visibility_probes', 'mcp__files__read'];
 
 /** A broker over the fakes, its chat `chat-1` registered on tab 7 (showing `tabUrl`) with `ALL_TOOLS`. */
 export async function setupBroker(

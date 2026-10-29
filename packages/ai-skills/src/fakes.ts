@@ -14,6 +14,8 @@ import type {
   IntentQuery,
   PortAnswer,
   PortQueryOptions,
+  ProbeReport,
+  ProbesPort,
   SerpPort,
   SerpQuery,
   SerpResults,
@@ -124,6 +126,35 @@ export function createFakeGscPort(options: { answer?: PortAnswer<GscPerformance>
     performance(query, queryOptions) {
       calls.push(query);
       return answerUnlessAborted(options.answer ?? ok({ ...FAKE_GSC_PERFORMANCE, url: query.url, days: query.days }), queryOptions);
+    },
+  };
+}
+
+export const FAKE_PROBE_REPORT: ProbeReport = {
+  url: 'https://example.com/',
+  status: 'done',
+  startedAt: FETCHED_AT,
+  finishedAt: FETCHED_AT,
+  agents: [
+    { agent: 'browser', kind: 'browser', outcome: 'ok', status: 200, redirects: 0, finalUrl: 'https://example.com/', robots: 'allowed', noindex: false, nofollow: false, canonical: 'https://example.com/', wordCount: 420, title: 'Example', differsIn: [], textSimilarity: null },
+    { agent: 'crawler', kind: 'search', outcome: 'ok', status: 200, redirects: 0, finalUrl: 'https://example.com/', robots: 'allowed', noindex: true, nofollow: false, canonical: 'https://example.com/', wordCount: 410, title: 'Example', differsIn: ['noindex'], textSimilarity: 0.97 },
+  ],
+};
+
+export type FakeProbesPort = ProbesPort & { readonly calls: { method: 'latest' | 'run'; tabId: number }[] };
+
+/** A `ProbesPort` answering `latest` / `run` (canned data by default: a finished run; `run` starts). */
+export function createFakeProbesPort(options: { latest?: PortAnswer<ProbeReport>; run?: PortAnswer<{ started: boolean }> } = {}): FakeProbesPort {
+  const calls: FakeProbesPort['calls'] = [];
+  return {
+    calls,
+    latest(tabId, queryOptions) {
+      calls.push({ method: 'latest', tabId });
+      return answerUnlessAborted(options.latest ?? ok(FAKE_PROBE_REPORT), queryOptions);
+    },
+    run(tabId, queryOptions) {
+      calls.push({ method: 'run', tabId });
+      return answerUnlessAborted(options.run ?? ok({ started: true }), queryOptions);
     },
   };
 }

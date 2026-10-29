@@ -667,12 +667,13 @@ _Filled in as tasks land._
   empty), each reason code as a sentence (`GSC_ADAPTER_REASONS`). The `*Like` types are minimal
   structural copies; `agent-ports.test.ts` keeps local copies of the real shapes (SHAs noted there)
   and checks at the type level that they are accepted and that the block below compiles against
-  `createAgentService`'s options. **For the lead, after Phases 3 and 4 merge**, in main's `index.ts`
-  (where `serp = setupSerp(…)`, `account = await createAccountMain()` and `gsc = createGscMain(account)`
-  already exist):
+  `createAgentService`'s options. **Phase 3 is wired** (the SERP wiring note below). **For the lead,
+  after Phase 4 merges**, in main's `index.ts` (where `account = await createAccountMain()` and
+  `gsc = createGscMain(account)` will exist), the agent line's `ports` gains `gsc` and the line gains
+  `entitlements`:
 
   ```ts
-  import { gscAdapter, intentAdapter, serpAdapter } from './agent/ports';
+  import { gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
   import type { AgentFeature } from './agent/entitlements';
   import type { FeatureFlag } from '@app/specs/entitlements-snapshot.spec';
 
@@ -680,7 +681,7 @@ _Filled in as tasks land._
 
   agent: createAgentService({
     app, browser, webContents, sessionStore, log: logSession,
-    ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), gsc: gscAdapter(gsc.service) },
+    ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) },
     entitlements: {
       allowed: (feature) => {
         try {
@@ -872,3 +873,36 @@ _Filled in as tasks land._
   turn stopped first, and on disk with `secure_delete`). Each is one line in the clear's parts, e.g.
   `await attempt('agent grants', () => agent.forgetAgentGrants())` and, when the new checkbox is
   ticked, `await attempt('agent chats', () => agent.deleteAllChatsUnconfirmed())`.
+- **Task 8, the SERP wiring** (after Phase 3 merged, `36f2c68`). Main's `index.ts` agent line now
+  passes `ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes:
+  probesAdapter(serp.readApi) }` (plus one import line); GSC and `AgentEntitlements` stay on their
+  defaults until Phase 4 (the lead's block above). The adapters were checked against the merged
+  `packages/ipc-contract/src/serp-service.ts` and `main/serp/setup.ts` (`readApi = { ...serp.readApi,
+  probes: probes.state, runProbes: probes.run }`; unchanged from 45e8cf7) and are now type-tested
+  against the merged `SerpReadApi`, `SerpState`, `IntentAnswer` and `ProbesState` themselves.
+  **No download:** Phase 3 downloads the intent model only in `IntentClassifier.ensureModel()` (the
+  user's "Enable on-device intent", `SerpService.enableIntent`); `classify()` (behind
+  `readApi.classifyIntent`) answers the state with no request unless the model is present. The
+  adapter's structural type has only `classifyIntent`, so it can't reach the enabling path; a state
+  such as `model-missing` reaches the model unchanged (`PortAnswer`'s `unavailable` gained an optional
+  `state`; the tool answers `{ unavailable: <sentence>, state: 'model-missing' }`). Tested with
+  Phase 3's real classifier over a store that records downloads (`intent-adapter-never-downloads`)
+  and end to end (no intent fake: `"state":"model-missing"`). **Probes** (two catalogue tools,
+  appended): `visibility_probes` (`read`, a page tool: the chat tab's last run from `probes(tabId)`,
+  never fetching; a run for another page or none is said as data) and `run_visibility_probes` (`act`,
+  grantable per the tab page's origin like `click`, public `https:` only; a page tool, so an approval
+  binds the exact page and a moved tab answers `expired`; the runner refuses `via: 'read'`): it calls
+  `runProbes(tabId)` — Phase 3 fetches the page once per `PROBE_AGENTS` entry (its own browser, then
+  search and AI crawlers, each with that crawler's user agent) plus robots.txt from main's cache,
+  only for the active tab — then polls the read side (every 500 ms, at most 30 s, stopping with the
+  chat) and answers each agent's status, redirects, robots verdict, noindex/nofollow, canonical,
+  word count, title and what differs from the browser's answer. A chat whose tab isn't the active one
+  gets `{ started: false, unavailable }`. Its approval card asks "Fetch <page> as search and AI
+  crawlers would?" with `RUN_PROBES_APPROVAL_NOTE` ("frost will fetch this page as search and AI
+  crawlers would: one request as its own browser and one with each crawler's user agent it models,
+  plus the site's robots.txt. The site sees these requests."); the skills editor's acting-tool warning
+  covers it. **SERP test:** e2e `agent-serp-tools-read-the-serp-service` (Phase 3's synthetic engine
+  and signed test pack from `serp-fixtures.ts`, the pack installed through the panel as a user
+  would): the scripted model's `serp_results` card shows the fixture's organic results read by the
+  real service, `search_intent` shows `model-missing`, and the engine saw no crawler request.
+
