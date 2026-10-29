@@ -40,19 +40,20 @@ const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 let clock = 1_800_000_000_000;
 const tick = () => (clock += 1_000);
 
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+const cleanups: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
 function setup(deps: Partial<RetentionServiceDeps> = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'frost-retention-'));
   const opened = openSessionStore({ dir });
   const raw = new DatabaseSync(opened.file, { readOnly: true });
-  cleanups.push(() => {
+  cleanups.push(async () => {
     raw.close();
-    void opened.close();
-    rmSync(dir, { recursive: true, force: true });
+    // Closed before the directory goes: Windows refuses to delete an open file.
+    await opened.close();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const real = createScreenshotFiles(dir);
   const unlinked: string[] = [];

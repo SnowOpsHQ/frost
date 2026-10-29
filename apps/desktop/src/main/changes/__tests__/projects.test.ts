@@ -28,9 +28,9 @@ const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 let clock = 2_000_000;
 const tick = () => (clock += 1_000);
 
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+const cleanups: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
 const IDLE: RunState = { version: 1, runId: null, projectId: null, state: 'idle', current: 0, total: 0, omitted: 0, screenshot: false, targets: [] };
@@ -39,10 +39,11 @@ function setup(deps: Partial<ProjectsServiceDeps> = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'frost-projects-'));
   const opened = openSessionStore({ dir });
   const raw = new DatabaseSync(opened.file, { readOnly: true });
-  cleanups.push(() => {
+  cleanups.push(async () => {
     raw.close();
-    void opened.close();
-    rmSync(dir, { recursive: true, force: true });
+    // Closed before the directory goes: Windows refuses to delete an open file.
+    await opened.close();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const unlinked: string[] = [];
   // No files on disk here: the lock is a no-op and nothing is measured.

@@ -29,9 +29,9 @@ const SECRET = 'SECRET PAGE TEXT';
 let clock = 1_000_000;
 const tick = () => (clock += 1_000);
 
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+const cleanups: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
 /** A session store on a fresh profile directory, and a second, read-only connection to look at its rows. */
@@ -39,10 +39,11 @@ function store(): { opened: SessionStore; raw: DatabaseSync } {
   const dir = mkdtempSync(path.join(tmpdir(), 'frost-changes-'));
   const opened = openSessionStore({ dir });
   const raw = new DatabaseSync(opened.file, { readOnly: true });
-  cleanups.push(() => {
+  cleanups.push(async () => {
     raw.close();
-    void opened.close();
-    rmSync(dir, { recursive: true, force: true });
+    // Closed before the directory goes: Windows refuses to delete an open file.
+    await opened.close();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   return { opened, raw };
 }

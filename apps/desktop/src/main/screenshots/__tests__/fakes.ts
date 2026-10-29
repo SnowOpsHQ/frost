@@ -185,7 +185,7 @@ export interface ServiceSetup {
   readonly state: { active: number | null; profiles: Map<number, RenderProfile | AuditRenderProfile | null> };
   readonly logs: string[];
   readonly revealed: string[];
-  readonly cleanup: () => void;
+  readonly cleanup: () => Promise<void>;
 }
 
 /** Tabs 1 and 2 open (1 active) on web pages, a real session store and file store in a fresh profile. */
@@ -225,10 +225,11 @@ export function serviceSetup(deps: Partial<ScreenshotsServiceDeps> = {}): Servic
     activePollMs: 10,
     ...deps,
   });
-  const cleanup = () => {
+  const cleanup = async (): Promise<void> => {
     raw.close();
-    void opened.close();
-    rmSync(userData, { recursive: true, force: true });
+    // Closed before the directory goes: Windows refuses to delete an open file.
+    await opened.close();
+    rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   };
   return { service, opened, raw, userData, files, imaging, tabs, state, logs, revealed, cleanup };
 }

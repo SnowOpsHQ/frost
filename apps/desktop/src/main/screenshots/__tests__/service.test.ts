@@ -29,9 +29,11 @@ const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 let setup: ServiceSetup | null = null;
 const others: ServiceSetup[] = [];
-afterEach(() => {
-  for (const one of [setup, ...others.splice(0)]) one?.cleanup();
+afterEach(async () => {
+  // Taken first, so a cleanup that throws does not leave a setup for the next test to clean up again.
+  const done = [setup, ...others.splice(0)];
   setup = null;
+  for (const one of done) await one?.cleanup();
 });
 const start = (deps: Parameters<typeof serviceSetup>[0] = {}) => (setup = serviceSetup(deps));
 /** One more service (its own profile), cleaned up with the test's. */
