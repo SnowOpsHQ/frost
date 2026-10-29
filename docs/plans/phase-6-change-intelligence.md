@@ -267,7 +267,8 @@ What a purge removes:
   - `same-hash-reuses-the-lane-version`;
   - `execute-purge-is-one-transaction` (an injected failure leaves everything);
   - `change-intel-sql-is-portable`.
-- [ ] commit `feat(db): append-only change-intelligence schema with audited purges`
+- [x] commit `feat(db): append-only change-intelligence schema with audited purges`
+- [x] Review fixes: commit `fix(db): address change-intelligence schema review findings`
 
 ### Task 2: Capture snapshot, search parameters and the diff engine
 - **Spec:**
@@ -315,7 +316,8 @@ What a purge removes:
   - `structured-data-type-changes`;
   - `search-params-schema-rejects-unknown-keys`;
   - `canonical-json-is-key-order-free`.
-- [ ] commit `feat(change-intel): capture snapshot and region-tagged diff engine`
+- [x] commit `feat(change-intel): capture snapshot and region-tagged diff engine`
+- [x] Review fixes: commit `fix(change-intel): address diff engine review findings`
 
 ### Task 3: Capturing a page (main, IPC)
 - **Spec:** `specs/changes.schema.ts` (procedure inputs and answers, and the read API's Zod schemas),
@@ -347,7 +349,8 @@ What a purge removes:
   - `region-answer-is-validated`;
   - router tests (`every-changes-procedure-enforces-sender`, inputs validated);
   - `read-api-schemas-parse-answers`.
-- [ ] commit `feat(changes): capture pages into versioned history`
+- [x] commit `feat(changes): capture pages into versioned history`
+- [x] Review fixes: commit `fix(changes): address capture review findings`
 
 ### Task 4: Changes panel
 - **Spec:** `specs/changes-panel.feature.md`; the `changes` entry in `SEO_PANELS` (hub, one line).
@@ -372,7 +375,8 @@ What a purge removes:
   - the loopback server changes the page; reload and capture v2;
   - the panel shows a `main` text change and a `head` title change, region-labelled;
   - a capture with no change adds no version.
-- [ ] commit `feat(changes): Changes panel with history and region diff`
+- [x] commit `feat(changes): Changes panel with history and region diff`
+- [x] Review fixes: commit `fix(changes): address Changes panel review findings`
 
 ### Task 5: Screenshots
 - **Spec:** `specs/screenshot.spec.ts` (`SCREENSHOT_LIMITS`: max stitched height, pixel area,
@@ -408,7 +412,8 @@ What a purge removes:
   - router tests;
   - e2e `screenshots.e2e.ts`: viewport, full page on a tall page (height > viewport, file hash
     matches), area by mouse drag, Esc cancels, the page's synthetic events do not select.
-- [ ] commit `feat(screenshots): viewport, area and stitched full-page screenshots`
+- [x] commit `feat(screenshots): viewport, area and stitched full-page screenshots`
+- [x] Review fixes: commit `fix(screenshots): address screenshot review findings`
 
 ### Task 6: Projects
 - **Spec:** `specs/projects.schema.ts`, `specs/projects.spec.ts` (caps: projects, pages and queries
@@ -441,7 +446,8 @@ What a purge removes:
   - router tests;
   - e2e `projects.e2e.ts`: create a project, add two loopback pages, capture now, both are captured
     and the run tab closes.
-- [ ] commit `feat(projects): projects with pages, queries and capture now`
+- [x] commit `feat(projects): projects with pages, queries and capture now`
+- [x] Review fixes: commit `fix(projects): address projects review findings`
 
 ### Task 7: Retention and disk usage
 - **Spec:** `specs/retention.spec.ts` (bounds of N, enforcement cadence), `specs/retention.feature.md`.
@@ -470,7 +476,8 @@ What a purge removes:
   - `usage-counts-measured-bytes`;
   - e2e: set "keep 1 version", capture three changes, purge now, one version remains, the purge log
     lists it.
-- [ ] commit `feat(retention): per-project retention, purge now and disk usage`
+- [x] commit `feat(retention): per-project retention, purge now and disk usage`
+- [x] Review fixes: commit `fix(retention): address retention review findings`
 
 ### Task 8: DOM inspector
 - **Spec:** `specs/inspector.spec.ts` (`INSPECTOR_WORLD_ID`, `INSPECTOR_LIMITS`: children per node,
@@ -495,14 +502,156 @@ What a purge removes:
   - router tests;
   - e2e `inspector.e2e.ts`: expand the tree to an H1, pick an element by mouse, its details show,
     the page's synthetic click does not pick, and nothing is left in the page's DOM afterwards.
-- [ ] commit `feat(inspector): read-only DOM inspector with element picker`
+- [x] commit `feat(inspector): read-only DOM inspector with element picker`
+- [x] Review fixes: commit `fix(inspector): address inspector review findings`
 
 ### Task 9: Docs, whole-branch review, release check
 - README status, `apps/desktop/README.md` (what Phase 6 does, known limits), this plan's "As built".
 - A whole-branch review (fresh reviewer); fixes in `fix(…)` commits.
 - Full unit, lint, Electronegativity, Semgrep and e2e locally (under the shared e2e lock); CI `ci`
   and `macos` green.
-- [ ] commit `docs: phase 6 change intelligence`
+- [x] Whole-branch review fixes: commit `fix(changes): address whole-branch review findings`
+- [x] commit `docs: phase 6 change intelligence`
+
+## As built
+
+Tasks 1–8 are implemented. Each was reviewed by a fresh reviewer, followed by a review-fix commit;
+a whole-branch review closed the phase. The branch merged `main` after Phase 3 landed. What the app
+does now is in `apps/desktop/README.md` (Change intelligence, Security model, Known limits); each
+behaviour, with its named tests, is in the feature files below. Where the build departs from or
+adds to the plan:
+
+### Across the phase
+- **Names.**
+  - `CAPTURE_REGIONS` shipped as `PAGE_REGIONS`.
+  - Diff regions are `head`, `http`, `structured-data`, the six page regions, and `audit`.
+  - The inspector's `tree` is `children` (paged, with `more`); every inspector call carries the
+    node's expected tag and the document token.
+  - Project searches are the procedures `projects.addSearch` / `removeSearch`. An existing test
+    forbids "query" in procedure names.
+- **Rail.** Changes and Inspector come after Phase 3's SERP and Visibility panels. A panel without
+  rule categories has no status dot (the same one-line change Phase 3 made in `seo-view.ts`).
+- **Isolated worlds.** 1600 for the capture's region read, 1601 for screenshots, 1602 for the
+  inspector.
+- **Hub lines.**
+  - Append-only registrations in `router.ts`, `services.ts`, `index.ts` (main and ipc-contract),
+    `App.tsx`, `SeoSidebar.tsx`, `SEO_PANELS`, `FEATURE_PANEL_JUMPS`, the palette's icon names,
+    `migrations.ts`, `store.ts`, `styles.css` (delimited sections) and `apps/desktop/package.json`.
+  - The existing migrations test lists the new tables.
+- **Timing guards.** Unit tests that time the hostile cases (the diff, the region read, the full-page
+  stitch) assert their work bounds, and allow wall-clock room for turbo's parallel load.
+
+### Task 1: schema
+`specs/capture-db.spec.ts`, `specs/capture-db.feature.md`. The Schema section above is the final
+schema.
+- **Review: `REPLACE`.** It deletes a conflicting row without firing delete triggers, so every table
+  gained `_no_replace` (and the mutable tables `_id_stays` / `_live_key_unique`).
+- **Extra trigger:** `ci_versions_unreferenced_only`.
+- **Ordering:** a new version always sorts after its parent.
+- **Tampered rows:** a tampered lane head never blocks the lane.
+- **Purge rules:** `all` is for `project-deleted` only, and screenshots are grouped by lane.
+
+### Task 2: diff engine
+`specs/capture.spec.ts`, `specs/capture-snapshot.schema.ts`, `specs/capture-search-params.schema.ts`,
+`specs/changes-diff.feature.md`, `packages/change-intel`.
+- **Work budget:** one budget per diff (`maxWorkCells`), plus `maxLcsCells` per list, with an
+  order-insensitive fallback.
+- **Pairing:** similar text blocks are paired through a word index.
+- **Duplicates:** exact items are matched before key matches.
+- **Identity and diff agree:**
+  - identity leaves out `takenAt` and `partial`, and sorts what the diff treats as unordered;
+  - a `hidden-text` change reports text past the kept blocks;
+  - a side cut short (`partial` / `truncated`) reports no false removals, and marks the diff
+    `partial`.
+- **`textHash`:** the SHA-256 of the region's normalised (NFC, lone surrogates as U+FFFD) blocks
+  joined with `\n`, cut at `maxHashedRegionChars`.
+
+### Task 3: capture
+`specs/changes.spec.ts`, `specs/changes.schema.ts`, `specs/changes-capture.feature.md`.
+- **Settled audit:** a capture needs a settled audit of the tab's current load. Its `takenAt` must
+  be after the last load or route change (`changes/loads.ts`), and robots.txt must not be pending.
+- **Context-dependent rules** are left out of the snapshot's findings: page speed, accessibility,
+  served HTML and the on-request checks. The score is recomputed with `scoreAudit` over the kept
+  findings, so an unchanged page stays one version.
+- **Partial captures:** one with no changes against its head is stored as another capture of the
+  head.
+- **Size cap:** a snapshot over its byte cap is shrunk, cutting the largest part first.
+
+### Task 4: Changes panel
+`specs/changes-panel.feature.md`.
+- **Capture now** is enabled only for a settled audit; main still decides.
+- **Projects:** the project comes from `capture-project.ts`, shared with the palette.
+- **History:** re-read after a capture, up to what was listed. Lanes are chips.
+
+### Task 5: screenshots
+`specs/screenshot.spec.ts`, `specs/screenshot.schema.ts`, `specs/screenshot.feature.md`.
+- **Full page:**
+  - each segment scrolls to where the placed rows end, so every row appears once at any pixel ratio
+    (property-tested, including fractional ratios);
+  - rows per CSS pixel follow `devicePixelRatio` when it agrees with the capture.
+- **Area:**
+  - one viewport capture, cropped in main;
+  - Esc is handled in main;
+  - removing the overlay's host ends the selection.
+- **Files:** written through a no-follow directory handle (`/proc/self/fd` on Linux), checked after
+  the rename, with a per-hash lock held from write to row.
+- **Thumbnails** are made when a shot is taken and kept in a 64-entry cache; there are no thumbnail
+  files.
+- **Copy image** uses `clipboard.write` with a `ClipboardItem`.
+- **Bounds:** every step has a deadline, and data URLs have a size cap.
+
+### Task 6: projects
+`specs/projects.spec.ts`, `specs/projects.schema.ts`, `specs/projects.feature.md`.
+- **Profiles:** targets are grouped by the profile they need, and each group gets a fresh tab with
+  that profile set before its first load. A run never resets a tab's profile, because Reset also
+  removes the site's pin.
+- **URL check:** a target is captured only at the URL its navigation committed (a redirect
+  allowed).
+- **Load failures** fail the target at once.
+- **Focus:** Cancel keeps you on your tab.
+- **Delete:** a project whose purge failed is purged again at startup.
+- **Sheets:** Projects and History close each other.
+- **Quit:** stops a run and closes its tab before the session is saved.
+
+### Task 7: retention
+`specs/retention.spec.ts`, `specs/retention.schema.ts`, `specs/retention.feature.md`.
+- **Purge now** follows the saved policy, which its dialog names; the form must be saved first.
+- **Enforcement** gives up if the policy changed mid-purge.
+- **Bytes:** the outcome reports bytes actually freed; `ci_purges.bytes` is the planned figure.
+- **Orphan sweep:** skips young files and re-checks references under the hash lock.
+- **Compact** answers its own `compact-failed`.
+
+### Task 8: inspector
+`specs/inspector.spec.ts`, `specs/inspector.schema.ts`, `specs/inspector.feature.md`.
+- **Pick cover:** while picking, a transparent cover in the closed shadow root takes the pointer,
+  so clicks, context menus and touches never reach the page or its frames. The node under the
+  pointer is found with `elementsFromPoint`.
+- **Head region:** elements under `<head>` have their own region ("Not in the page body").
+- **Reveal:** one total page budget.
+- **Re-reads:** the tree is re-read on a new document or URL; the same token keeps the tree.
+
+### Whole-branch review
+- **CSS merge:** restored, after the conflict resolution with Phase 3 interleaved two appended
+  sections.
+- **Orphan sweep:** skips an in-memory or fresh database (a moved-aside one still names the files).
+- **Profiles:** captures and screenshots record the profile in effect by one rule
+  (`changes/profile-in-effect.ts`).
+- **Quit:** stops a capture run.
+- **Run screenshots:** a `busy` one is retried.
+
+### For the lead and Phase 7
+- `TODO(phase-3-merge)` markers:
+  - `changes/service.ts`, `screenshots/service.ts`, `specs/capture-search-params.schema.ts`, and
+    two feature files.
+  - Phase 3's `SearchParams` describes a result page as seen; Phase 6's also describes a search to
+    run (`ci_project_queries`).
+  - Captured rows are append-only, so map stored JSON on read rather than migrate it; a lane splits
+    at the swap.
+  - Phase 3's service needs a `paramsOf(tabId)`-style accessor for `searchParamsOf`.
+- **Sync:** see Schema.
+  - Inserts into the guarded tables must be `INSERT … WHERE NOT EXISTS`; even `ON CONFLICT DO
+    NOTHING` aborts.
+  - Screenshot files are content-addressed blobs outside the database.
 
 ## Known limits (expected; confirmed in As built)
 - Full-page stitching repeats fixed and sticky elements in each segment, and lazy content appears as

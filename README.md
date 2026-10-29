@@ -37,6 +37,22 @@ browser and run SEO skills.
   An optional on-device intent classifier labels queries with its confidence; its model is
   downloaded only after you agree. The plan and how it was built:
   [`docs/plans/phase-3-serp-intent.md`](docs/plans/phase-3-serp-intent.md).
+- **Phase 6 — Change intelligence:** built (Tasks 1–8). Per-page change history and visual evidence,
+  kept locally, with explicit retention controls:
+  - **Changes** (a sidebar panel) captures what a page says to search engines. Each distinct state
+    becomes an immutable version, recorded with its render profile and search parameters, and a
+    readable diff shows what changed, by region: head, HTTP, structured data, main content,
+    navigation, header, sidebar, footer.
+  - **Screenshots** of the viewport, a selected area or the whole page (stitched as it scrolls),
+    stored by content hash in the profile directory.
+  - **Projects** group pages and searches. Capture now visits each one in a tab of its own.
+  - **Retention:** keep the last N versions or N days per project, Purge now with a preview,
+    measured disk usage, and a purge log.
+  - **Inspector** (a sidebar panel): a read-only DOM tree and element picker.
+
+  The database refuses changes to captured rows; they are removed only by a recorded purge. The
+  plan, its schema and how it was built:
+  [`docs/plans/phase-6-change-intelligence.md`](docs/plans/phase-6-change-intelligence.md).
 - **Next:** Phase 4, accounts, entitlements and telemetry (sign-in, plan gating, consent-gated
   telemetry, a read-only Search Console connection; `docs/design/IMPLEMENTATION-PLAN.md` §4).
 
@@ -53,13 +69,17 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
   health score, the schema, robots.txt, hreflang, page speed and security readers, the content
   report, the served-vs-rendered comparison and the link, sitemap and hreflang check readers. Pure
   TypeScript, with no Electron, DOM or Zod dependency.
+- `packages/change-intel/` — the change-intelligence diff engine (`@app/change-intel`): canonical
+  JSON, snapshot identity, the region-tagged diff between two captures and word-level inline diffs.
+  Pure TypeScript, like `seo-core`.
 - `packages/db/` — the local database (Drizzle over `node:sqlite`): the browser session, history,
-  pinned render profiles, content notes and app settings.
+  pinned render profiles, content notes and app settings, and change intelligence's append-only
+  captures, versions, diffs, screenshots, projects and purge log.
 - `packages/ipc-contract/` — the typed tRPC IPC contract and its sender guard.
 - `specs/` — machine-checkable spec artifacts (constants, Zod schemas, `*.feature.md` acceptance
   lists); every scenario maps to a named test.
 - `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, 8-phase roadmap).
-- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–3).
+- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–3 and 6).
 - `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner, and
   `scripts/sign-selectors.mjs` (`pnpm sign:selectors`, for maintainers signing a selector pack).
 
