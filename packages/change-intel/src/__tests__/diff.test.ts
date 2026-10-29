@@ -183,9 +183,10 @@ function atCaps(seed: string, blocksPerRegion = L.maxBlocksPerRegion, blockChars
   };
 }
 
-// Measured at about 40–65 ms on a desktop. The work budget (`DiffProbe`) is the real bound; this
-// wall-clock guard only catches a blow-up, with room for a loaded shared runner (turbo runs suites in parallel).
-const WALL_BUDGET_MS = 1_500;
+// Measured at about 40–65 ms on a desktop, several times that on a CI runner. The work budget
+// (`DiffProbe`) is the real bound; this wall-clock guard only catches a blow-up, with room for a
+// loaded shared runner (turbo runs suites in parallel). The heavy tests also set explicit timeouts.
+const WALL_BUDGET_MS = 5_000;
 
 const timed = <T>(run: () => T): [T, number] => {
   const start = performance.now();
@@ -244,7 +245,7 @@ describe('bounds', () => {
     for (const r of PAGE_REGIONS) expect(nearResult.summary[r]).toEqual({ added: 0, removed: 0, changed: L.maxBlocksPerRegion });
     expect(nearResult.changes.every((c) => c.field === 'text' && c.kind === 'changed' && c.segments)).toBe(true);
     expect(SnapshotDiffSchema.safeParse(nearResult).success).toBe(true);
-  });
+  }, 60_000);
 
   test('pairing-survives-unrelated-blocks', () => {
     // 25 paragraphs deleted, then 35 paragraphs of ~165 words with one word each changed.

@@ -178,5 +178,5 @@ describe('capture', () => {
     outcome = await timed(captureViewport(frozen, { signal: live(), limits: tight }));
     expect(outcome).toMatchObject({ reason: 'capture-failed' });
     expect(outcome.ms).toBeLessThan(1_000);
-  });
+  }, 30_000);
 });

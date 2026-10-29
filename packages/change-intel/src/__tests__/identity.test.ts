@@ -114,4 +114,4 @@ test('identity-and-diff-agree', () => {
   expect(seen.equal).toBeGreaterThan(50);
   expect(seen.ignoredOnly).toBeGreaterThan(20);
   expect(seen.completeDifferent).toBeGreaterThan(200);
-});
+}, 60_000);
