@@ -187,18 +187,9 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
     if (tabs.activeTabId() !== tabId) return refused('not-active');
     const page = storedPageUrl(contents.getURL());
     if (page === null) return refused('no-page');
-    const projectId = options.projectId ?? UNFILED_PROJECT_ID;
-    try {
-      if ((await store.project(projectId)) === null) return refused('no-project');
-    } catch (error) {
-      return failed('store-failed', `the project could not be read (${codeOf(error)})`);
-    }
-    if (options.captureId !== undefined && !isUuidv7(options.captureId)) return failed('store-failed', 'its capture id is not one');
-    const recorded = lane(tabId, page, options);
-    if (typeof recorded === 'string') return failed('store-failed', recorded);
-
     // Taken while the tab stays on this page (any main-frame navigation, an in-page one too, would
-    // record it under a URL it no longer shows) and in front; anything else cancels it.
+    // record it under a URL it no longer shows) and in front; anything else cancels it. Watched from
+    // here, before the project lookup: a navigation while that is pending cancels it too.
     const controller = new AbortController();
     const cancel = (): void => controller.abort('cancelled');
     const onNavigate = (details?: { isMainFrame?: unknown }): void => {
@@ -219,8 +210,21 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       if (contents.isDestroyed() || tabs.activeTabId() !== tabId) cancel();
     }, deps.activePollMs ?? ACTIVE_POLL_MS);
     run.controller = controller;
+    const projectId = options.projectId ?? UNFILED_PROJECT_ID;
+    let recorded: { renderProfileJson: string | null; searchParamsJson: string | null };
     let captured: Captured;
     try {
+      try {
+        if ((await store.project(projectId)) === null) return refused('no-project');
+      } catch (error) {
+        return failed('store-failed', `the project could not be read (${codeOf(error)})`);
+      }
+      // The tab moved on while the project was read: what it shows now is not `page`.
+      if (controller.signal.aborted) return refused('cancelled');
+      if (options.captureId !== undefined && !isUuidv7(options.captureId)) return failed('store-failed', 'its capture id is not one');
+      const lanes = lane(tabId, page, options);
+      if (typeof lanes === 'string') return failed('store-failed', lanes);
+      recorded = lanes;
       captured = await capturers[options.kind](contents, { signal: controller.signal, limits });
     } catch (error) {
       if (error instanceof ScreenshotFailure) return error.reason === 'cancelled' ? refused('cancelled') : failed(error.reason, error.message);

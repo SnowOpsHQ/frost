@@ -190,6 +190,40 @@ describe('screenshots service', () => {
     expect(order).toEqual(['append started', 'append settled', 'lock taken']);
   });
 
+  test('navigation-during-the-project-lookup-cancels', async () => {
+    // The tab moves on while its project is still being read: the pixels taken next would be the new
+    // page's, filed under the old URL. Refused, nothing written, no listener left.
+    let lookedUp: () => void = () => undefined;
+    let asked = false;
+    const ref: { setup?: ServiceSetup } = {};
+    const store = new Proxy({} as ChangeIntelRepository, {
+      get: (_target, key) => {
+        const real = ref.setup!.opened.changeIntel;
+        if (key === 'project') {
+          return async (id: string) => {
+            asked = true;
+            await new Promise<void>((resolve) => (lookedUp = resolve));
+            return real.project(id);
+          };
+        }
+        const value = (real as unknown as Record<PropertyKey, unknown>)[key];
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(real) : value;
+      },
+    });
+    ref.setup = start({ store });
+    const tab = ref.setup.tabs.get(1)!;
+    const taking = ref.setup.service.take(1, { kind: 'viewport' });
+    await until(() => asked);
+    tab.emit('did-start-navigation', fakeEvent({ url: 'https://example.com/next', isMainFrame: true, isSameDocument: false }));
+    lookedUp();
+    await expect(taking).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
+    expect(tab.captures).toBe(0);
+    expect(rows(ref.setup.raw)).toEqual([]);
+    expect(tab.listenerCount('did-start-navigation')).toBe(0);
+    expect(tab.listenerCount('destroyed')).toBe(0);
+    expect(tab.listenerCount('before-input-event')).toBe(0);
+  });
+
   test('take-refuses-what-it-cannot-take', async () => {
     const { service, tabs, logs } = start();
     const refusal = async (tabId: number, kind: 'viewport' | 'full' | 'area' = 'viewport', projectId?: string) => {

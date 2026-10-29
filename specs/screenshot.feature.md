@@ -199,6 +199,10 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
 - **Scenario: take-records-the-serp-tabs-params** — a screenshot of a tab whose SERP state reads its
   page records Phase 3's parameters (`searchParamsOf` asked with the tab and its stored page URL); one
   of a tab that is not a result page records `null`. Test: `service.test.ts`.
+- **Scenario: navigation-during-the-project-lookup-cancels** — the tab is watched from before its
+  project is read: a main-frame navigation while that is pending answers `cancelled`, captures
+  nothing, writes no row and leaves no listener (the pixels would be the new page's, filed under the
+  old URL).
 - **Scenario: take-refuses-what-it-cannot-take** — no tab, not active, no web page, no project, too
   large, a capture failure and a store failure each answer their refusal, write nothing, and log no
   page text. Test: `service.test.ts`.
