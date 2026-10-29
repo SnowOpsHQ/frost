@@ -14,6 +14,7 @@ import { OpenToolInputSchema, PageCommandInputSchema, SeoCopyValueInputSchema } 
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { ClearRenderProfileInputSchema, SetRenderProfileInputSchema } from '@app/specs/render-profile.schema.spec';
 import { SeoCopySchemaInputSchema, SeoCopyUrlInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema, SeoTabInputSchema } from '@app/specs/seo-snapshot.spec';
+import { accountRouter } from './account-router';
 import { checksRouter } from './checks-router';
 import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
@@ -21,6 +22,8 @@ import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
 import { updateRouter } from './update-router';
 import { serpRouter } from './serp-router';
+import { telemetryRouter } from './telemetry-router';
+import { gscRouter } from './gsc-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -285,6 +288,12 @@ export const appRouter = router({
   update: updateRouter,
   // Phase 3 Task 4 (`serp-overlay.feature.md`): the SERP overlay's reading, outlines, pack updates and intent.
   serp: serpRouter,
+  // Phase 4 Tasks 4 and 5 (`entitlements-client.feature.md`, `account-signin.feature.md`): entitlements and sign-in.
+  account: accountRouter,
+  // Phase 4 Task 7 (`telemetry.feature.md`, Desktop): telemetry consent and renderer errors.
+  telemetry: telemetryRouter,
+  // Phase 4 Task 8 (`gsc.feature.md`): the read-only Search Console connection and performance API.
+  gsc: gscRouter,
 });
 
 export type AppRouter = typeof appRouter;

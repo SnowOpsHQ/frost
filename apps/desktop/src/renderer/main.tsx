@@ -1,5 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+// Before `App`: the chrome's uncaught errors go to main from here on (kept only when `errors` is on).
+import './settings-telemetry-errors';
 import { App } from './App';
 import './styles.css';
 

@@ -16,7 +16,7 @@
     {
       "id": "OPEN_EXTERNAL_JS_CHECK",
       "file": "apps/desktop/src/main/security/gesture.ts",
-      "source": "shell.openExternal(target.href).catch((err: unknown) => console.error('openExternal failed', err));",
+      "source": "shell.openExternal(target.href).catch(() => console.error('frost: openExternal failed'));",
       "rationale": "Reviewed (moved from register.ts so the app pin and the browse guard share it): reached only when resolveExternalOpen allows the URL (scheme allowlist + trusted input gesture, security-policy.spec.ts), pinned by policy/register/guard unit tests and the external-url and browse-guard e2e."
     },
     {

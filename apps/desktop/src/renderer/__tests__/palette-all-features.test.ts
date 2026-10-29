@@ -8,6 +8,7 @@ import { browserPolishPaletteSources } from '../browser-polish-palette';
 import { checksPaletteSources } from '../checks-palette';
 import { contentPaletteSources } from '../content-palette';
 import { devtoolsPaletteSources } from '../devtools-palette';
+import { gscPaletteSources } from '../gsc-palette';
 import { javascriptPaletteSources } from '../javascript-palette';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext, type PaletteSource } from '../palette/registry';
@@ -35,6 +36,7 @@ function everySource(): PaletteSource[] {
     ...checksPaletteSources({ checkLinks: yes, checkSitemaps: yes, checkHreflang: yes, stop: yes, known: () => undefined }),
     ...updatePaletteSources({ check: vi.fn(async () => null), setChecks: vi.fn(async () => null), known: () => undefined }),
     ...serpPaletteSources({ setOutlines: yes, checkPackUpdate: vi.fn(async () => 'not-newer' as const), enableIntent: vi.fn(async () => 'ready' as const), refreshIntent: yes, runProbes: yes, stopProbes: yes, knownSerp: () => undefined, knownProbes: () => undefined, knownIntent: () => undefined }),
+    ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn() }),
   ];
 }
 

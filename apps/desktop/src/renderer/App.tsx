@@ -18,6 +18,7 @@ import { useNotice } from './hooks/useNotice';
 import { usePing } from './hooks/usePing';
 import { useSeoAudit } from './hooks/useSeoAudit';
 import { useSidebarOpen } from './hooks/useSidebarOpen';
+import { SettingsSlot } from './settings-view';
 import type { PanelJump } from './palette/registry';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`). Its rows: the
@@ -69,6 +70,7 @@ export function App() {
           <div className="page-column" data-history={historyOpen ? 'open' : undefined}>
             <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
             {historyOpen ? <HistoryView onClose={closeHistory} /> : null}
+            <SettingsSlot tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>
           <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} notesGeneration={state?.contentNotesGeneration} />

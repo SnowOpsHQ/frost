@@ -5,6 +5,7 @@ import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { AccountService } from './account-service';
 import type { ChecksService } from './checks-service';
 import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
@@ -12,6 +13,8 @@ import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
 import type { UpdateService } from './update-router';
 import type { SerpService } from './serp-service';
+import type { TelemetryService } from './telemetry-service';
+import type { GscIpcService } from './gsc-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -176,4 +179,10 @@ export interface IpcServices {
   readonly update?: UpdateService;
   /** The SERP overlay (Phase 3 Task 4, `serp-service.ts`): reading, outlines, pack updates and intent. */
   readonly serp?: SerpService;
+  /** The account and its verified entitlements (Phase 4, `account-service.ts`). */
+  readonly account?: AccountService;
+  /** Telemetry consent and renderer errors (Phase 4 Task 7, `telemetry-service.ts`). */
+  readonly telemetry?: TelemetryService;
+  /** The read-only Search Console connection and read API (Phase 4 Task 8, `gsc-service.ts`). */
+  readonly gsc?: GscIpcService;
 }
