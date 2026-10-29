@@ -19,6 +19,7 @@ import { contentRouter } from './content-router';
 import { javascriptRouter } from './javascript-router';
 import { devtoolsRouter } from './devtools-router';
 import { findRouter, historyRouter, settingsRouter } from './polish-router';
+import { serpRouter } from './serp-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 import { changesRouter, screenshotsRouter } from './changes-router';
@@ -282,6 +283,8 @@ export const appRouter = router({
   settings: settingsRouter,
   // Phase 2.5 Task 7 (`seo-checks.feature.md`): link status, sitemap and hreflang reciprocity checks.
   checks: checksRouter,
+  // Phase 3 Task 4 (`serp-overlay.feature.md`): the SERP overlay's reading, outlines, pack updates and intent.
+  serp: serpRouter,
   // Phase 6 Task 3 (`changes-capture.feature.md`): capture a page into its versioned history, and read it.
   changes: changesRouter,
   screenshots: screenshotsRouter,

@@ -82,6 +82,9 @@ export const SEO_PANELS = [
   { id: 'compliance', label: 'Compliance', available: true, categories: ['security', 'accessibility'] },
   // Phase 2.5 Task 2 (`seo-javascript.feature.md`): served HTML vs the rendered DOM.
   { id: 'javascript', label: 'JavaScript', available: true, categories: ['javascript'] },
+  // Phase 3 Task 6 (`serp-panels.feature.md`): no audit categories, so no rail dot.
+  { id: 'serp', label: 'SERP', available: true, categories: [] },
+  { id: 'visibility', label: 'Visibility', available: true, categories: [] },
   // Phase 6 Task 4 (`changes-panel.feature.md`): the page's captured versions and their diffs (no rules).
   { id: 'changes', label: 'Changes', available: true, categories: [] },
   // Phase 6 Task 8 (`inspector.feature.md`): the read-only DOM inspector (no rules).

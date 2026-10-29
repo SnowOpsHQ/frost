@@ -42,6 +42,8 @@ import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './se
 import { createShownTimes } from './seo/vitals-shown';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
 import { remoteDebuggingRefusal } from './security/policy';
+import { runIntentSelfTestIfAsked } from './intent/selftest';
+import { setupSerp } from './serp/setup';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
@@ -64,7 +66,8 @@ const debugRefusal = remoteDebuggingRefusal({
 if (debugRefusal !== null) {
   console.error(`frost: ${debugRefusal}`);
   app.exit(1);
-} else {
+} else if (!runIntentSelfTestIfAsked(app)) {
+  // `--frost-intent-selftest` (specs/intent-classifier.spec.ts) runs instead of the app: no window.
   start();
 }
 
@@ -400,6 +403,10 @@ function start(): void {
         isFullscreen: (tabId) => browser.isFullscreen(tabId),
       }),
     });
+    // The SERP overlay (specs/serp-overlay.feature.md): selector packs, the SERP worker, on-device
+    // intent, the visibility probes (their own fetcher lane over this hop and resolver) and each tab's
+    // page events, all wired in serp/setup.ts (disposed on will-quit there).
+    const serp = setupSerp({ app, browser, isBrowseContents, hop, resolve, robots: (pageUrl) => robotsFetcher.get(pageUrl), userData: app.getPath('userData'), switches: app.commandLine, log: logSession });
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
     attachIpcHandler({
@@ -438,6 +445,8 @@ function start(): void {
           log: logSession,
         }),
         settings: searchEngine,
+        // The SERP overlay (specs/serp-overlay.feature.md).
+        serp: serp.service,
         changes,
         screenshots,
         projects,
@@ -462,6 +471,8 @@ function start(): void {
         checks?.cancelAll();
         // Pinned render profiles go with the stored ones (specs/render-profile.feature.md).
         browser.forgetRenderProfilePins();
+        // The tabs' SERP readings, outlines and intent answers (serp-overlay.feature.md).
+        serp.onClearBrowsingData();
       },
       // Only when the dialog's checkbox was ticked (specs/seo-content.feature.md): through the content
       // service, so the notes generation goes up and open Content panels reset.

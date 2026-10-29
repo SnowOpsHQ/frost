@@ -21,6 +21,8 @@ export type HopResult =
       readonly body: AsyncIterable<Uint8Array>;
       /** The response's headers (lowercase names), when the hop reports them. */
       readonly headers?: Readonly<Record<string, string | readonly string[]>>;
+      /** The response's headers as received, name and value alternating, duplicates apart (Electron's `rawHeaders`), when the hop reports them. */
+      readonly rawHeaders?: readonly string[];
       cancel(): void;
     };
 
@@ -103,15 +105,29 @@ function safeResolve(location: string, base: string): string {
   }
 }
 
-/** The kept headers of a hop's answer: lowercase names, arrays joined with `, `, values cut to `maxChars`. */
-function keptHeaders(headers: Readonly<Record<string, string | readonly string[]>> | undefined, keep: readonly string[], maxChars: number): Record<string, string> {
+/**
+ * The kept headers of a hop's answer: lowercase names, arrays joined with `, `, values cut to
+ * `maxChars`. The `separate` names keep their repeated values apart, joined with `\n`: from the raw
+ * header list when the hop reports one, else from an array value (any CR or LF inside a value
+ * becomes a space, so `\n` only ever separates values).
+ */
+function keptHeaders(result: { readonly headers?: Readonly<Record<string, string | readonly string[]>>; readonly rawHeaders?: readonly string[] }, keep: readonly string[], separate: readonly string[], maxChars: number): Record<string, string> {
   const out: Record<string, string> = {};
-  if (!headers) return out;
-  for (const [name, value] of Object.entries(headers)) {
+  const oneLine = (value: string): string => value.replace(/[\r\n]+/g, ' ');
+  for (const [name, value] of Object.entries(result.headers ?? {})) {
     const lower = name.toLowerCase();
     if (!keep.includes(lower)) continue;
-    const joined = Array.isArray(value) ? value.join(', ') : String(value);
-    out[lower] = joined.slice(0, maxChars);
+    const values: string[] = Array.isArray(value) ? value.map(String) : [String(value)];
+    out[lower] = (separate.includes(lower) ? values.map(oneLine).join('\n') : values.join(', ')).slice(0, maxChars);
+  }
+  const raw = result.rawHeaders;
+  if (Array.isArray(raw)) {
+    for (const name of separate) {
+      if (!keep.includes(name)) continue;
+      const values: string[] = [];
+      for (let i = 0; i + 1 < raw.length; i += 2) if (String(raw[i]).toLowerCase() === name) values.push(oneLine(String(raw[i + 1])));
+      if (values.length > 0) out[name] = values.join('\n').slice(0, maxChars);
+    }
   }
   return out;
 }
@@ -308,7 +324,7 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
           status = null;
           continue;
         }
-        headers = keptHeaders(result.headers, keep, request.maxHeaderChars ?? limits.maxHeaderValueChars);
+        headers = keptHeaders(result, keep, request.separateHeaders ?? [], request.maxHeaderChars ?? limits.maxHeaderValueChars);
         const wanted = method !== 'HEAD' && (request.readBody ? request.readBody(result.status) : true);
         if (!wanted) {
           result.cancel();
@@ -401,8 +417,8 @@ export function netHop(net: NetRequester, session: Session): Hop {
         settled = true;
         // An aborted body must never surface as an unhandled stream error.
         response.on('error', () => undefined);
-        const headers = (response as { headers?: Record<string, string | string[]> }).headers;
-        resolve({ kind: 'response', status: response.statusCode, body: response as unknown as AsyncIterable<Uint8Array>, ...(headers ? { headers } : {}), cancel: abort });
+        const { headers, rawHeaders } = response as { headers?: Record<string, string | string[]>; rawHeaders?: string[] };
+        resolve({ kind: 'response', status: response.statusCode, body: response as unknown as AsyncIterable<Uint8Array>, ...(headers ? { headers } : {}), ...(Array.isArray(rawHeaders) ? { rawHeaders } : {}), cancel: abort });
       });
       request.on('error', (error) => {
         if (settled) return;

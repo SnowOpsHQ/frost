@@ -7566,6 +7566,120 @@ input {
 
 /* End of link and sitemap checks */
 
+/* SERP and Visibility panels (Phase 3 Task 6, specs/serp-panels.feature.md) ---------------------- */
+
+.serp,
+.visibility {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* The search parameters bar: a compact grid of label / value pairs. */
+.serp-params {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 12px;
+  background: var(--seo-card);
+  box-shadow: var(--shadow-card);
+}
+
+.serp-param {
+  min-width: 0;
+}
+
+.serp-param[data-key='engine'],
+.serp-param[data-key='query'] {
+  grid-column: span 2;
+}
+
+.serp-param-label {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.serp-param-value {
+  margin: 1px 0 0;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* The query's intent: a chip, its confidence, or the classifier's state. */
+.serp-intent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0;
+  padding: 0 2px;
+}
+
+.serp-intent .seo-note {
+  margin: 0;
+}
+
+.serp-intent-chip {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.serp-intent-confidence {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.serp-intent-query {
+  flex: 1 1 100%;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.serp-intent .serp-enable {
+  flex: 1 1 100%;
+}
+
+.serp-enable-prompt {
+  margin-top: 4px;
+}
+
+.serp-enable .seo-panel-tools {
+  align-items: center;
+  margin-top: 8px;
+}
+
+.serp-tools {
+  margin-top: 0;
+}
+
+/* The composition bar: SVG segments (geometry and colour are attributes, never styles). */
+.serp-bar {
+  display: block;
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--seo-track);
+}
+
+.serp-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 10px 0 0;
 /* Changes panel (Phase 6) ------------------------------------------------------------------------
    Phase 6 Task 4, specs/changes-panel.feature.md: Capture now, the page's versions (by lane) and the
    diff of two versions, by region. Kinds are text and colour; page text wraps anywhere. */
@@ -8263,6 +8377,10 @@ input {
   list-style: none;
 }
 
+.serp-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 .projects-item {
   display: flex;
   align-items: center;
@@ -8435,6 +8553,191 @@ input {
   font-size: 12px;
 }
 
+.serp-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+.serp-count-value {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tables (ownership, probes): real table markup, scrolling sideways when wider than the panel. */
+.serp-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.serp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.serp-table th,
+.serp-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--seo-card-edge);
+  text-align: left;
+  vertical-align: top;
+}
+
+.serp-table thead th {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.serp-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.serp-table tbody th {
+  font-weight: 500;
+}
+
+.serp-table .serp-num {
+  text-align: right;
+}
+
+.serp-domain {
+  max-width: 150px;
+}
+
+/* The results list. */
+.serp-results {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.serp-result {
+  display: flex;
+  gap: 9px;
+  padding: 7px 0;
+  border-top: 1px solid var(--seo-card-edge);
+}
+
+.serp-result:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.serp-result-rank {
+  flex: none;
+  width: 22px;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.serp-result-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.serp-result-type {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.serp-result-title {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.serp-result-domain {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.serp-pack-status {
+  margin: 0;
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+/* A state that is not a reading. */
+.serp-state-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.serp-state-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--seo-bg));
+  color: var(--accent);
+}
+
+.serp-state[data-state='unreadable'] .serp-state-icon,
+.serp-state[data-state='disabled'] .serp-state-icon {
+  background: color-mix(in srgb, var(--caution) 14%, var(--seo-bg));
+  color: var(--caution);
+}
+
+.serp-state-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.serp-state-message {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* The probe table: one column per agent; a cell that differs from the browser is marked. */
+.visibility-table {
+  min-width: 560px;
+  font-size: 11.5px;
+}
+
+/* The fact column stays in view while the agents scroll sideways. */
+.visibility-table thead th:first-child,
+.visibility-table tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--seo-card);
+}
+
+.visibility-table thead th[data-differs='true'] {
+  color: var(--caution);
+}
+
+.visibility-table td[data-diff='true'] {
+  background: color-mix(in srgb, var(--caution) 13%, transparent);
+  color: var(--caution);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--caution);
+}
+
+.visibility-table td .seo-page-text {
+  display: block;
+  max-width: 140px;
+  overflow: hidden;
 .projects-profile {
   flex-direction: row;
   align-items: center;
@@ -8789,6 +9092,44 @@ input {
   white-space: nowrap;
 }
 
+.visibility-disclosure {
+  margin-top: 0;
+}
+
+.visibility-robots-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+}
+
+.visibility-robots-file {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.visibility-robots-file .seo-note {
+  flex: none;
+  margin: 0;
+}
+
+.visibility-query {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.visibility-query .seo-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.visibility .serp-intent {
+  margin-top: 10px;
+}
+
+/* End of SERP and Visibility panels */
 .inspector-more {
   padding: 2px 0 2px 18px;
 }

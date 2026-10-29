@@ -10,6 +10,7 @@ import type { ContentService } from './content-service';
 import type { JavascriptService } from './javascript-router';
 import type { DevtoolsService } from './devtools-service';
 import type { FindService, HistoryService, SettingsService } from './polish-services';
+import type { SerpService } from './serp-service';
 import type { ChangesService, ScreenshotsService } from './changes-service';
 import type { ProjectsService } from './projects-router';
 import type { InspectorService } from './inspector-router';
@@ -173,6 +174,8 @@ export interface IpcServices {
   readonly settings?: SettingsService;
   /** The link, sitemap and hreflang checks (Phase 2.5 Task 7, `checks-service.ts`). */
   readonly checks?: ChecksService;
+  /** The SERP overlay (Phase 3 Task 4, `serp-service.ts`): reading, outlines, pack updates and intent. */
+  readonly serp?: SerpService;
   /** Change intelligence: captures and their history (Phase 6 Task 3, `changes-service.ts`). */
   readonly changes?: ChangesService;
   /** Change intelligence: screenshots of the active tab and their gallery (Phase 6 Task 5, `changes-service.ts`). */

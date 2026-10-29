@@ -24,6 +24,7 @@ import {
 import { RenderProfileIcon } from '../components/RenderProfile';
 import { ContentIcon } from '../components/seo/content-icons';
 import { JavascriptIcon } from '../components/seo/javascript-icons';
+import { SerpIcon, VisibilityIcon } from '../components/seo/serp-icons';
 import type { PaletteIconName } from './registry';
 import { ChangesIcon, InspectorIcon } from '../components/changes/changes-icons';
 
@@ -188,6 +189,8 @@ const ICONS: Readonly<Record<PaletteIconName, (props: GlyphProps) => ReactNode>>
   'panel-speed': SpeedIcon,
   'panel-compliance': ComplianceIcon,
   'panel-javascript': JavascriptIcon,
+  'panel-serp': SerpIcon,
+  'panel-visibility': VisibilityIcon,
   sidebar: SidebarIcon,
   highlight: HighlightIcon,
   audit: AuditGlyph,

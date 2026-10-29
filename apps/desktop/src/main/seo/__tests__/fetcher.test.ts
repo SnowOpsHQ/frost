@@ -390,9 +390,42 @@ describe('net hop', () => {
     const message = Object.assign(new EventEmitter(), { statusCode: 200, headers: { 'content-type': 'text/html' } });
     requests[0]!.request.emit('response', message);
     await expect(answering).resolves.toMatchObject({ kind: 'response', status: 200, headers: { 'content-type': 'text/html' } });
+    expect(await answering).not.toHaveProperty('rawHeaders');
     // Without a user agent the session's own is sent (no header set).
     void hop('https://example.com/', new AbortController().signal, { method: 'HEAD' });
     expect(requests[1]!.options).toMatchObject({ method: 'HEAD' });
     expect(requests[1]!.request.setHeader).not.toHaveBeenCalled();
+  });
+
+  test('fetcher-separates-repeated-headers', async () => {
+    // Electron's `headers` joins duplicate `X-Robots-Tag`s with `, `; only `rawHeaders` keeps them apart.
+    const raw = ['Content-Type', 'text/html', 'X-Robots-Tag', 'googlebot: nofollow', 'x-robots-tag', 'noindex', 'Link', '<a>; rel=x', 'Link', '<b>; rel=y'];
+    const answer = (): HopResult => ({ kind: 'response', status: 200, body: body(['x']), headers: { 'content-type': 'text/html', 'x-robots-tag': 'googlebot: nofollow, noindex', link: '<a>; rel=x, <b>; rel=y' }, rawHeaders: raw, cancel: vi.fn() });
+    const { hop } = fakeHop({ [PAGE]: () => Promise.resolve(answer()) });
+    const fetcher = createBoundedFetcher({ hop, limits: { perOriginIntervalMs: 0 } });
+    const keepHeaders = ['content-type', 'x-robots-tag', 'link'];
+    // By default every value is joined with `, `, as before.
+    expect((await fetcher.fetch({ url: PAGE, page: PAGE, keepHeaders })).headers).toEqual({ 'content-type': 'text/html', 'x-robots-tag': 'googlebot: nofollow, noindex', link: '<a>; rel=x, <b>; rel=y' });
+    // Named headers keep their values apart (`\n`), from the raw list; the others are unchanged.
+    expect((await fetcher.fetch({ url: PAGE, page: PAGE, keepHeaders, separateHeaders: ['x-robots-tag'] })).headers).toEqual({ 'content-type': 'text/html', 'x-robots-tag': 'googlebot: nofollow\nnoindex', link: '<a>; rel=x, <b>; rel=y' });
+    // A separate header that is not kept stays out; the cap applies to the joined value.
+    expect((await fetcher.fetch({ url: PAGE, page: PAGE, keepHeaders: ['content-type'], separateHeaders: ['x-robots-tag'] })).headers).toEqual({ 'content-type': 'text/html' });
+    expect((await fetcher.fetch({ url: PAGE, page: PAGE, keepHeaders, separateHeaders: ['x-robots-tag'], maxHeaderChars: 22 })).headers['x-robots-tag']).toBe('googlebot: nofollow\nno');
+    // Without a raw list, an array value is kept apart; a CR or LF inside a value never splits it.
+    const arrays = fakeHop({ [PAGE]: () => Promise.resolve(ok('x', 200, { 'x-robots-tag': ['noindex', 'bingbot:\r\n nofollow'] })) });
+    const plain = createBoundedFetcher({ hop: arrays.hop, limits: { perOriginIntervalMs: 0 } });
+    expect((await plain.fetch({ url: PAGE, page: PAGE, keepHeaders, separateHeaders: ['x-robots-tag'] })).headers['x-robots-tag']).toBe('noindex\nbingbot:  nofollow');
+    expect((await plain.fetch({ url: PAGE, page: PAGE, keepHeaders })).headers['x-robots-tag']).toBe('noindex, bingbot:\r\n nofollow');
+    // `netHop` passes Electron's raw list through.
+    class FakeRequest extends EventEmitter {
+      abort = vi.fn();
+      end = vi.fn();
+      setHeader = vi.fn();
+    }
+    const request = new FakeRequest();
+    const net: NetRequester = { request: () => request as unknown as Electron.ClientRequest };
+    const answering = netHop(net, {} as Electron.Session)(PAGE, new AbortController().signal);
+    request.emit('response', Object.assign(new EventEmitter(), { statusCode: 200, headers: { 'x-robots-tag': 'a, b' }, rawHeaders: ['X-Robots-Tag', 'a', 'X-Robots-Tag', 'b'] }));
+    await expect(answering).resolves.toMatchObject({ headers: { 'x-robots-tag': 'a, b' }, rawHeaders: ['X-Robots-Tag', 'a', 'X-Robots-Tag', 'b'] });
   });
 });

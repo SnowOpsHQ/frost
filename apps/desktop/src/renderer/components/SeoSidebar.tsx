@@ -20,8 +20,11 @@ import { OnPage } from './seo/OnPage';
 import { AuditProfileNote } from './seo/AuditProfileNote';
 import { Overview } from './seo/Overview';
 import { Schema } from './seo/Schema';
+import { Serp } from './seo/Serp';
+import { SerpIcon, VisibilityIcon } from './seo/serp-icons';
 import { Social } from './seo/Social';
 import { Speed } from './seo/Speed';
+import { Visibility } from './seo/Visibility';
 import { Changes } from './changes/Changes';
 import { ChangesIcon, InspectorIcon } from './changes/changes-icons';
 import { Inspector } from './changes/Inspector';
@@ -51,6 +54,8 @@ const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   speed: SpeedIcon,
   compliance: ComplianceIcon,
   javascript: JavascriptIcon,
+  serp: SerpIcon,
+  visibility: VisibilityIcon,
   changes: ChangesIcon,
   inspector: InspectorIcon,
 };
@@ -145,6 +150,9 @@ function Hint({ title, message, testId, reason, retry }: { readonly title: strin
 }
 
 function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: TabState | undefined; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null; readonly notesGeneration?: number }) {
+  // The SERP and Visibility panels render from main's `serp.*` state, never waiting for the audit (serp-panels.feature.md).
+  if (tab && panel === 'serp') return <Serp tab={tab} />;
+  if (tab && panel === 'visibility') return <Visibility tab={tab} />;
   if (panel === 'changes') return <Changes tab={tab} response={response} />; // Phase 6: history shows whatever the audit's state.
   if (panel === 'inspector') return <Inspector tab={tab} />; // Phase 6 Task 8: the page's DOM, whatever the audit's state.
   if (!tab || response === null) return <Hint testId="seo-empty" title="No page yet" message="Open a web page and frost audits it here: a health score, ranked issues and what search engines read." />;

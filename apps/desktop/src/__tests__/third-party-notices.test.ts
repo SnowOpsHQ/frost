@@ -1,5 +1,5 @@
 // Spec: specs/seo-speed.feature.md (Licenses) · the injected libraries are used unmodified (Global Constraints)
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
@@ -35,6 +35,21 @@ describe('third-party notices', () => {
     // The other bundled runtime packages too.
     for (const pkg of NOTICE_PACKAGES) expect(text, pkg.name).toMatch(new RegExp(`\\n${pkg.name.replace('/', '\\/')} \\d`));
     expect(tarballUrl('@trpc/client', '11.19.0')).toBe('https://registry.npmjs.org/@trpc/client/-/client-11.19.0.tgz');
+  });
+
+  test('notices-cover-the-intent-runtime', () => {
+    // specs/intent-classifier.feature.md (Packaging): onnxruntime-node and onnxruntime-common ship in
+    // the package (the native library too) with no license file of their own, so the notices carry
+    // ONNX Runtime's MIT license and the native library's own third-party notices, from upstream.
+    const text = committed();
+    for (const name of ['onnxruntime-node', 'onnxruntime-common']) {
+      expect(readdirSync(packageDir(name, name === 'onnxruntime-node' ? 'apps/desktop' : 'node_modules/onnxruntime-node')).filter((file) => /^licen[cs]e/i.test(file))).toEqual([]);
+      expect(text).toMatch(new RegExp(`\\n${name} \\d+\\.\\d+\\.\\d+\\n=+\\nLicense: MIT`));
+    }
+    expect(text).toContain('MIT License\n\nCopyright (c) Microsoft Corporation');
+    const notices = readFileSync(path.join(APP, 'licenses/onnxruntime-1.31.1-ThirdPartyNotices.txt'), 'utf8');
+    expect(notices.startsWith('THIRD PARTY SOFTWARE NOTICES AND INFORMATION')).toBe(true);
+    expect(text).toContain(notices.trimEnd());
   });
 
   test('injected-libraries-are-unmodified', () => {
