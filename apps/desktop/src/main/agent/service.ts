@@ -7,7 +7,9 @@ import { chatExportText } from './chat-export';
 import { createChatHistory, createMemoryChatsStore, type AgentChatsStore } from './chat-history';
 import type { ChatSnapshot } from './chat-record';
 import { e2eAgentScriptFrom } from './e2e-seam';
-import type { AgentEntitlements } from './entitlements';
+import { AGENT_MCP_PARTITION } from '@app/specs/agent-mcp.spec';
+import { createDefaultAgentEntitlements, type AgentEntitlements } from './entitlements';
+import { createMcpManager, createMcpSecrets, createMemoryMcpStore, nodeMcpDeps, type McpManagerDeps, type McpServersStore, type McpSessionLike, type McpStartPrompt } from './mcp';
 import { resolveAgentPorts, type AgentPorts } from './ports';
 import { createAgent, type AgentElectron } from './index';
 import { createAgentSession, type AgentSession } from './session';
@@ -36,6 +38,8 @@ export interface AgentDialogs {
   confirmRetentionChange(retention: ChatRetention, chats: number): Promise<boolean>;
   /** Asks where to save an export (`defaultName` offered): the chosen file, or `null` if cancelled. */
   chooseExportPath(defaultName: string, format: ChatExportFormat): Promise<string | null>;
+  /** Asks before a command MCP server starts (Task 10), showing the exact command line: `true` only when the user confirmed. */
+  confirmMcpStart(prompt: McpStartPrompt): Promise<boolean>;
 }
 
 /** The parts of Electron's `app` used here. */
@@ -60,7 +64,7 @@ export interface AgentServiceDeps {
    * The browser-session database: `agentGrants` (the standing grants' table), and Task 9's
    * `agentChats` and `agentSkills` (each in memory when absent: nothing persists).
    */
-  readonly sessionStore: { readonly agentGrants: AgentGrantsStore; readonly agentChats?: AgentChatsStore; readonly agentSkills?: AgentSkillsStore };
+  readonly sessionStore: { readonly agentGrants: AgentGrantsStore; readonly agentChats?: AgentChatsStore; readonly agentSkills?: AgentSkillsStore; readonly agentMcp?: McpServersStore };
   /** Main's build directory (`__dirname`): the runtime's bundle is beside main's. */
   readonly buildDir: string;
   /** frost's own skills (default: the built-ins); the user's are composed after them (Task 9). */
@@ -77,10 +81,16 @@ export interface AgentServiceDeps {
   readonly ports?: AgentPorts;
   /** Which agent features may run (default: all; the lead wires Phase 4's `requireFeature`). */
   readonly entitlements?: AgentEntitlements;
+  /**
+   * MCP servers' operating-system pieces and secrets (Task 10); default: Node's and Electron's
+   * (`mcp/node.ts`: `spawn` without a shell, the `agent-mcp` session, temporary folders, the
+   * sandbox detection) and the encrypted secrets file. Tests pass fakes.
+   */
+  readonly mcp?: Partial<Omit<McpManagerDeps, 'store' | 'entitlements' | 'confirmStart'>>;
   readonly log?: (line: string) => void;
 }
 
-const NO_DIALOGS: AgentDialogs = { confirmDeleteAllChats: async () => false, confirmRetentionChange: async () => false, chooseExportPath: async () => null };
+const NO_DIALOGS: AgentDialogs = { confirmDeleteAllChats: async () => false, confirmRetentionChange: async () => false, chooseExportPath: async () => null, confirmMcpStart: async () => false };
 
 export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
   const log = deps.log ?? (() => undefined);
@@ -112,6 +122,23 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     const tab = tabOf(tabId);
     return tab === undefined || tab.url === '' ? null : tab.url;
   };
+  const entitlements = deps.entitlements ?? createDefaultAgentEntitlements();
+  const mcpSession = (): McpSessionLike => {
+    const session = deps.electron.session.fromPartition(AGENT_MCP_PARTITION);
+    if (typeof session.resolveHost !== 'function') throw new Error('no resolver');
+    // Electron's `session.fetch` takes any request init; the MCP transport sends `POST` and `DELETE`.
+    return session as unknown as McpSessionLike;
+  };
+  const mcp = createMcpManager({
+    ...nodeMcpDeps(mcpSession),
+    secrets: createMcpSecrets({ safeStorage: deps.electron.safeStorage, userData: deps.app.getPath('userData'), fs, log }),
+    ...deps.mcp,
+    store: deps.sessionStore.agentMcp ?? createMemoryMcpStore(),
+    entitlements,
+    confirmStart: (prompt) => dialogs.confirmMcpStart(prompt),
+    now,
+    log,
+  });
   const agent = createAgent({
     electron: deps.electron,
     userData: deps.app.getPath('userData'),
@@ -120,7 +147,8 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     log,
     grantsStore: deps.sessionStore.agentGrants,
     toolRunner: createBrowserPageToolRunner({ browser: deps.browser, webContents: deps.webContents, ports: resolveAgentPorts(deps.ports) }),
-    ...(deps.entitlements ? { entitlements: deps.entitlements } : {}),
+    entitlements,
+    mcp,
     tabUrl,
     e2eAgentScript,
   });
@@ -149,12 +177,13 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     confirmRetentionChange: (retention, chats) => dialogs.confirmRetentionChange(retention, chats),
     exportChat,
     scripted: e2eAgentScript !== null,
+    mcp,
     now,
     log,
   });
   // The stored route, model, grants, skills and chats (pruned first), and which keys are set, for
   // the panel's first state; the runtime itself waits for the first message.
-  void Promise.all([agent.settings.load(), agent.grants.load(), userSkills.load(), history.load().then((chats) => session.restore(chats))]).then(() => session.refreshSetup());
+  void Promise.all([agent.settings.load(), agent.grants.load(), userSkills.load(), mcp.load(), history.load().then((chats) => session.restore(chats))]).then(() => session.refreshSetup());
   // Then daily, while frost runs (startup's prune is the load's).
   const setTimer = deps.setInterval ?? ((callback: () => void, ms: number) => setInterval(callback, ms).unref());
   const clearTimer = deps.clearInterval ?? ((handle: unknown) => clearInterval(handle as ReturnType<typeof setInterval>));
@@ -162,6 +191,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
   deps.app.once('will-quit', () => {
     clearTimer(pruning);
     session.dispose();
+    void mcp.dispose();
     agent.dispose();
   });
   return session;

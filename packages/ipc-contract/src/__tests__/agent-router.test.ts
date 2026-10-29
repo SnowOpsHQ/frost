@@ -11,12 +11,14 @@ import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from '@app/specs/skills.spec';
+import { MCP_LIMITS, type McpSaveResult, type McpStartResult, type McpTokenResult } from '@app/specs/agent-mcp.spec';
 import { appRouter, createSenderPolicy, type AgentService, type IpcContext } from '../index';
 import { createIpcRequestHandler } from '../transport/main';
 
 const WINDOW_ID = 7;
 const CHAT = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const KEY = 'sk-ant-secret-key-0123456789abcdef';
+const TOKEN = 'mcp-bearer-token-0123456789abcdef';
 
 function stateAt(version: number): AgentState {
   return {
@@ -41,6 +43,7 @@ function stateAt(version: number): AgentState {
     grantsCount: 0,
     grantsVersion: 1,
     chatRetention: '30d',
+    mcp: { available: true, servers: [] },
   };
 }
 
@@ -75,6 +78,12 @@ function fakeAgent(version = 3) {
     saveSkill: vi.fn(async (_draft: unknown, _mode: string): Promise<AgentSaveSkillResult> => ({ result: 'saved', id: 'my-skill' })),
     deleteSkill: vi.fn(async (_id: string) => true),
     duplicateSkill: vi.fn(async (_id: string): Promise<AgentSaveSkillResult> => ({ result: 'saved', id: 'audit-this-page-copy' })),
+    saveMcpServer: vi.fn(async (_input: unknown): Promise<{ result: McpSaveResult; id?: string }> => ({ result: 'saved', id: 'docs' })),
+    deleteMcpServer: vi.fn(async (_id: string) => true),
+    setMcpServerEnabled: vi.fn(async (_id: string, _enabled: boolean) => true),
+    startMcpServer: vi.fn(async (_id: string): Promise<McpStartResult> => 'ready'),
+    stopMcpServer: vi.fn(async (_id: string) => true),
+    setMcpToken: vi.fn(async (_id: string, _token: string | null): Promise<McpTokenResult> => 'stored'),
   } satisfies AgentService;
   return {
     service,
@@ -134,6 +143,12 @@ const VALID_INPUT: Record<string, unknown> = {
   saveSkill: { skill: { id: 'my-skill', name: 'Mine', description: 'D', allowedTools: ['page_text'], instructions: 'Read {{pageUrl}}', inputs: [] }, mode: 'create' },
   deleteSkill: { id: 'my-skill' },
   duplicateSkill: { id: 'audit-this-page' },
+  saveMcpServer: { name: 'Docs', transport: 'http', url: 'https://mcp.example.com/mcp' },
+  deleteMcpServer: { id: 'docs' },
+  setMcpServerEnabled: { id: 'docs', enabled: true },
+  startMcpServer: { id: 'docs' },
+  stopMcpServer: { id: 'docs' },
+  setMcpToken: { id: 'docs', token: TOKEN },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 
@@ -228,6 +243,12 @@ describe('agent router', () => {
       ],
       deleteSkill: [undefined, { id: 'Bad Id' }],
       duplicateSkill: [undefined, { id: 5 }],
+      saveMcpServer: [undefined, { name: '', transport: 'http', url: 'https://mcp.example.com/' }, { name: 'Docs', transport: 'ftp', url: 'https://mcp.example.com/' }],
+      deleteMcpServer: [undefined, { id: '' }],
+      setMcpServerEnabled: [undefined, { id: 'docs' }, { id: 'docs', enabled: 'yes' }],
+      startMcpServer: [undefined, { id: 'docs', force: true }],
+      stopMcpServer: [undefined, {}],
+      setMcpToken: [undefined, { id: 'docs' }, { id: 'docs', token: '' }, { id: 'docs', token: TOKEN, extra: 1 }],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -425,5 +446,56 @@ describe('agent.watch', () => {
     expect(fake.service.watch.mock.calls[0]?.[0]).toBe(3);
     fake.change(stateAt(4));
     await expect(pending).resolves.toEqual(stateAt(4));
+  });
+});
+
+// Spec: specs/agent-mcp.schema.ts (the MCP procedures' inputs), specs/agent-mcp.spec.ts (answers)
+// Acceptance: specs/agent-mcp.feature.md (Router)
+describe('agent router: MCP servers', () => {
+  test('mcp-procedures-bounded-inputs', async () => {
+    const refused: [string, unknown][] = [
+      // HTTP: https on a public host only.
+      ['saveMcpServer', { name: 'Docs', transport: 'http', url: 'http://mcp.example.com/' }],
+      ['saveMcpServer', { name: 'Docs', transport: 'http', url: 'https://localhost/mcp' }],
+      ['saveMcpServer', { name: 'Docs', transport: 'http', url: 'https://10.0.0.5/mcp' }],
+      ['saveMcpServer', { name: 'Docs', transport: 'http', url: 'https://user:pw@mcp.example.com/' }],
+      // Command servers: one program, no shell string, no relative path, bounded arguments.
+      ['saveMcpServer', { name: 'Local', transport: 'stdio', command: './server', args: [], readPaths: [], allowNetwork: false, env: [] }],
+      ['saveMcpServer', { name: 'Local', transport: 'stdio', command: 'node', args: ['a\nb'], readPaths: [], allowNetwork: false, env: [] }],
+      ['saveMcpServer', { name: 'Local', transport: 'stdio', command: 'node', args: Array(MCP_LIMITS.maxArgs + 1).fill('x'), readPaths: [], allowNetwork: false, env: [] }],
+      ['saveMcpServer', { name: 'Local', transport: 'stdio', command: 'node', args: [], readPaths: ['relative/dir'], allowNetwork: false, env: [] }],
+      ['saveMcpServer', { name: 'Local', transport: 'stdio', command: 'node', args: [], readPaths: [], allowNetwork: false, env: [{ name: 'LD_PRELOAD', value: '/x.so' }] }],
+      ['saveMcpServer', { name: 'Local', transport: 'stdio', command: 'node', args: [], readPaths: [], allowNetwork: false, env: [{ name: 'PATH', value: '/x' }] }],
+      ['saveMcpServer', { name: 'Docs', transport: 'http', url: 'https://mcp.example.com/', extra: true }],
+      ['deleteMcpServer', { id: 'Has Caps' }],
+      ['startMcpServer', { id: 'x'.repeat(17) }],
+      ['setMcpToken', { id: 'docs', token: 'x'.repeat(MCP_LIMITS.maxTokenChars * 2 + 1) }],
+    ];
+    for (const [name, input] of refused) {
+      const { service } = fakeAgent();
+      const error = await errorOf(procedure(ctxFor(service), name)(input));
+      expect(error.code, JSON.stringify(input)).toBe('BAD_REQUEST');
+      untouched(service);
+    }
+  });
+
+  test('mcp-procedures-answers-are-fixed-values', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'saveMcpServer')(VALID_INPUT['saveMcpServer'])).resolves.toEqual({ result: 'saved', id: 'docs' });
+    service.saveMcpServer.mockResolvedValueOnce({ result: 'saved', id: 'NOT AN ID' });
+    await expect(procedure(ctx, 'saveMcpServer')(VALID_INPUT['saveMcpServer'])).resolves.toEqual({ result: 'failed' });
+    service.startMcpServer.mockResolvedValueOnce('whatever' as McpStartResult);
+    await expect(procedure(ctx, 'startMcpServer')({ id: 'docs' })).resolves.toBe('failed');
+    // The token goes in once and never comes back.
+    service.setMcpToken.mockResolvedValueOnce(TOKEN as McpTokenResult);
+    const answer = await procedure(ctx, 'setMcpToken')({ id: 'docs', token: TOKEN });
+    expect(answer).toBe('failed');
+    expect(JSON.stringify(answer)).not.toContain(TOKEN);
+    expect(service.setMcpToken).toHaveBeenLastCalledWith('docs', TOKEN);
+    await expect(procedure(ctx, 'setMcpToken')({ id: 'docs', token: null })).resolves.toBe('stored');
+    // A command server's fields, copied one by one.
+    await procedure(ctx, 'saveMcpServer')({ name: 'Local', transport: 'stdio', command: 'node', args: ['server.js'], readPaths: ['/opt/tools'], allowNetwork: false, env: [{ name: 'API_MODE', value: 'test' }, { name: 'KEEP' }] });
+    expect(service.saveMcpServer).toHaveBeenLastCalledWith({ name: 'Local', transport: 'stdio', command: 'node', args: ['server.js'], readPaths: ['/opt/tools'], allowNetwork: false, env: [{ name: 'API_MODE', value: 'test' }, { name: 'KEEP' }] });
   });
 });

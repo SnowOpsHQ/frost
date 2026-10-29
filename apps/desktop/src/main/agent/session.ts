@@ -34,7 +34,9 @@ import {
   type AgentToolCardView,
   type AgentUsageView,
 } from '@app/specs/agent-session.spec';
-import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, MAX_TOOL_STEPS, routeModelId, type AgentToolName, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, isMcpToolName, MAX_TOOL_STEPS, routeModelId, type AgentToolName, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { MCP_LIMITS, type AgentMcpView } from '@app/specs/agent-mcp.spec';
+import type { McpToolDefinition } from '@app/specs/agent-mcp.schema';
 import { BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, skillPageUrl as skillPageUrlOf, type SkillInputSlot } from '@app/specs/skills.spec';
 import {
   DEFAULT_CHAT_RETENTION,
@@ -59,6 +61,7 @@ import { AGENT_CRASHED_MESSAGE, type AgentChatEvent, type AgentHost } from './ho
 import type { AgentSettings } from './settings';
 import { AGENT_SYSTEM_PROMPT } from './system-prompt';
 import { skillDetail, type UserSkills } from './user-skills';
+import type { McpManager } from './mcp';
 
 // The agent's chat session manager (Phase 5 Task 6a; spec `specs/agent-session.spec.ts`; acceptance
 // `specs/agent-session.feature.md`, Session). Main keeps the chats (in memory until Task 9) and runs
@@ -118,6 +121,11 @@ export interface AgentSessionDeps {
   readonly randomId?: () => string;
   /** One line per event; never a message, a tool's input or output, or a key. */
   readonly log?: (line: string) => void;
+  /**
+   * MCP servers (Task 10, `./mcp`): the tools a typed turn may also offer (never a skill's), their
+   * labels, the settings' view and the server procedures. Default: none.
+   */
+  readonly mcp?: Pick<McpManager, 'toolsForChat' | 'labelOf' | 'view' | 'onChange' | 'save' | 'remove' | 'setEnabled' | 'start' | 'stop' | 'setToken'>;
 }
 
 export interface AgentSession extends AgentService {
@@ -375,6 +383,34 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   const tabPage = deps.tabPage ?? (() => null);
   const history = deps.history ?? null;
   const userSkills = deps.userSkills ?? null;
+  const mcp = deps.mcp ?? null;
+  /** A card's label: the catalogue's, or "Untrusted tool from {server}" for an MCP tool. */
+  const labelFor = (toolName: string): string => {
+    if (mcp === null || !isMcpToolName(toolName)) return toolLabel(toolName);
+    try {
+      return mcp.labelOf(toolName);
+    } catch {
+      return toolLabel(toolName);
+    }
+  };
+  /** The MCP tools a typed turn offers (enabled, ready, entitled servers'); none if that fails. */
+  const mcpToolsNow = (): McpToolDefinition[] => {
+    if (mcp === null) return [];
+    try {
+      const tools = mcp.toolsForChat();
+      return Array.isArray(tools) ? tools.slice(0, MCP_LIMITS.maxToolsPerChat) : [];
+    } catch {
+      return [];
+    }
+  };
+  const mcpView = (): AgentMcpView => {
+    if (mcp === null) return { available: false, servers: [] };
+    try {
+      return mcp.view();
+    } catch {
+      return { available: false, servers: [] };
+    }
+  };
   const isBuiltinSkill = (id: string): boolean => {
     try {
       return userSkills !== null ? userSkills.isBuiltin(id) : (BUILTIN_SKILL_IDS as readonly string[]).includes(id);
@@ -527,6 +563,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       grantsCount: deps.grants.list().length,
       grantsVersion,
       chatRetention: retention(),
+      mcp: mcpView(),
     };
     return cached;
   };
@@ -627,7 +664,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         chat.entries = rows.entries.map((entry) => ({
           ...newEntry(entry.kind, entry.text),
           streaming: false,
-          tools: entry.tools.map((card) => ({ ...card, label: toolLabel(card.toolName) })),
+          tools: entry.tools.map((card) => ({ ...card, label: labelFor(card.toolName) })),
           ...(entry.kind === 'user' && entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}),
         }));
         // Rows that didn't read back as they were stored: the next save writes the chat anew.
@@ -801,7 +838,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         const card: ToolCard = {
           callId: event.callId,
           toolName: event.toolName,
-          label: toolLabel(event.toolName),
+          label: labelFor(event.toolName),
           status: activity?.status ?? 'requested',
           code: activity?.code ?? null,
           inputPreview: cutText(JSON.stringify(event.input) ?? 'null', TOOL_CARD_INPUT_PREVIEW_CHARS),
@@ -897,6 +934,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       bump();
     }),
     ...(userSkills !== null ? [userSkills.onChange(() => bump())] : []),
+    ...(mcp !== null ? [mcp.onChange(() => bump())] : []),
   ];
 
   // ---- Sending ----
@@ -1028,7 +1066,9 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     const tabId = chat?.tabId ?? deps.activeTabId();
     if (tabId === null) return refuse('no-tab');
     let content = text;
-    let allowedTools: readonly AgentToolName[] = ALL_TOOLS;
+    let allowedTools: readonly string[] = ALL_TOOLS;
+    // A typed turn also offers the ready MCP servers' tools (Task 10); a skill never does.
+    let mcpTools: McpToolDefinition[] = [];
     /** The page a skill ran on, as its `pageUrl` slot (shown in the chat). */
     let skillPageUrl: string | null = null;
     if (run !== null) {
@@ -1044,6 +1084,9 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       allowedTools = ALL_TOOLS.filter((name) => skillTools.has(name));
       if (rendered === null || rendered.length > L.maxMessageChars || allowedTools.length === 0) return refuse('unknown-skill');
       content = rendered;
+    } else {
+      mcpTools = mcpToolsNow().slice(0, L.maxAllowedTools - ALL_TOOLS.length);
+      allowedTools = [...ALL_TOOLS, ...mcpTools.map((tool) => tool.name)];
     }
     if (chat === undefined) {
       chat = {
@@ -1088,6 +1131,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       modelId,
       route,
       allowedTools: [...allowedTools],
+      mcpTools,
     });
     if (!posted) {
       deps.approvals.unregister(chat.id);
@@ -1442,6 +1486,53 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         return await userSkills.duplicate(id);
       } catch {
         return { result: 'failed' };
+      }
+    },
+
+    // ---- Task 10: MCP servers (`agent-mcp.spec.ts`; acceptance `agent-mcp.feature.md`) ----
+    async saveMcpServer(input) {
+      if (mcp === null) return { result: 'failed' };
+      try {
+        return await mcp.save(input);
+      } catch {
+        return { result: 'failed' };
+      }
+    },
+    async deleteMcpServer(id) {
+      try {
+        return mcp !== null && (await mcp.remove(id)) === true;
+      } catch {
+        return false;
+      }
+    },
+    async setMcpServerEnabled(id, enabled) {
+      try {
+        return mcp !== null && (await mcp.setEnabled(id, enabled)) === true;
+      } catch {
+        return false;
+      }
+    },
+    async startMcpServer(id) {
+      if (mcp === null) return 'unknown';
+      try {
+        return await mcp.start(id);
+      } catch {
+        return 'failed';
+      }
+    },
+    async stopMcpServer(id) {
+      try {
+        return mcp !== null && (await mcp.stop(id)) === true;
+      } catch {
+        return false;
+      }
+    },
+    async setMcpToken(id, token) {
+      if (mcp === null) return 'unknown';
+      try {
+        return await mcp.setToken(id, token);
+      } catch {
+        return 'failed';
       }
     },
     dispose() {

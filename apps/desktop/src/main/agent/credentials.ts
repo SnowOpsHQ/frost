@@ -42,7 +42,7 @@ export interface CredentialFs extends DirectorySync {
   rm(file: string, options: { readonly force: true }): Promise<void>;
 }
 
-export interface CredentialStoreDeps {
+export interface CredentialStoreDeps<S extends string = CredentialSlot> {
   readonly safeStorage: SafeStorageLike;
   /** The credentials file (`<userData>/agent-credentials.json`). */
   readonly file: string;
@@ -53,6 +53,15 @@ export interface CredentialStoreDeps {
   readonly log?: (line: string) => void;
   /** A random suffix for the temporary file (tests make it fixed). */
   readonly tempSuffix?: () => string;
+  /**
+   * The store's slots and how a value is normalised before it is stored (default: the model keys'
+   * `isCredentialSlot` and `normalizeKey`). Task 10's MCP store keeps a token and the environment
+   * values per server (`mcp-credentials.ts`). A slot never holds a line break (it is sealed in the blob).
+   */
+  readonly isSlot?: (value: unknown) => value is S;
+  readonly normalize?: (slot: S, value: unknown) => string | null;
+  /** The file read back, at most (bytes; default `CREDENTIAL_LIMITS.maxFileBytes`). */
+  readonly maxFileBytes?: number;
 }
 
 /**
@@ -66,26 +75,26 @@ export type SetKeyResult = 'stored' | 'invalid' | 'no-keychain' | 'failed';
 export type WithKeyResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reason: 'no-key' | 'unavailable' | 'failed' };
 
 /** What the settings page may use: no method here can return a key. */
-export interface CredentialSettings {
+export interface CredentialSettings<S extends string = CredentialSlot> {
   /** How well a stored key would be protected here (only `os` stores one; `weak` and `unavailable` say why not). */
   protection(): Promise<KeyProtection>;
   /** Whether the slot holds a key frost can use: stored, protected by the OS keychain, and decrypting. */
-  hasKey(slot: CredentialSlot): Promise<boolean>;
-  setKey(slot: CredentialSlot, key: string): Promise<SetKeyResult>;
-  clearKey(slot: CredentialSlot): Promise<boolean>;
+  hasKey(slot: S): Promise<boolean>;
+  setKey(slot: S, key: string): Promise<SetKeyResult>;
+  clearKey(slot: S): Promise<boolean>;
 }
 
-export interface CredentialStore extends CredentialSettings {
+export interface CredentialStore<S extends string = CredentialSlot> extends CredentialSettings<S> {
   /**
    * Runs `fn` with the slot's key (the model proxy only). The key is decrypted for this call and
    * dropped after; `fn` must not keep or return it.
    */
-  withKey<T>(slot: CredentialSlot, fn: (key: string) => T | Promise<T>): Promise<WithKeyResult<T>>;
+  withKey<T>(slot: S, fn: (key: string) => T | Promise<T>): Promise<WithKeyResult<T>>;
 }
 
 interface StoredFile {
   readonly version: 1;
-  readonly keys: Partial<Record<CredentialSlot, string>>;
+  readonly keys: Readonly<Record<string, string>>;
 }
 
 const EMPTY: StoredFile = { version: 1, keys: {} };
@@ -95,10 +104,10 @@ const LINUX_SECRET_SERVICE_TAG = 'v11';
 /** What a blob holds: this prefix, the slot, a line break, the key. */
 export const KEY_ENVELOPE = 'frost-agent-key/2\n';
 
-const seal = (slot: CredentialSlot, key: string): string => `${KEY_ENVELOPE}${slot}\n${key}`;
+const seal = (slot: string, key: string): string => `${KEY_ENVELOPE}${slot}\n${key}`;
 
 /** The key in `text` if it is `slot`'s envelope; `old` for a blob from before the envelope, `other` for another slot's. */
-function open(slot: CredentialSlot, text: string): { readonly key: string } | 'old' | 'other' {
+function open(slot: string, text: string): { readonly key: string } | 'old' | 'other' {
   if (!text.startsWith(KEY_ENVELOPE)) return 'old';
   const rest = text.slice(KEY_ENVELOPE.length);
   const newline = rest.indexOf('\n');
@@ -110,8 +119,8 @@ function open(slot: CredentialSlot, text: string): { readonly key: string } | 'o
 const PROBE = 'frost-protection-probe';
 
 /** The file's content read back, or empty when missing or not one frost wrote (a tampered file stores nothing). */
-function parseStored(bytes: Uint8Array): StoredFile {
-  if (bytes.byteLength > CREDENTIAL_LIMITS.maxFileBytes) return EMPTY;
+function parseStored(bytes: Uint8Array, isSlot: (value: unknown) => boolean = isCredentialSlot, maxFileBytes: number = CREDENTIAL_LIMITS.maxFileBytes): StoredFile {
+  if (bytes.byteLength > maxFileBytes) return EMPTY;
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -121,15 +130,15 @@ function parseStored(bytes: Uint8Array): StoredFile {
   if (typeof value !== 'object' || value === null || (value as { version?: unknown }).version !== 1) return EMPTY;
   const keys = (value as { keys?: unknown }).keys;
   if (typeof keys !== 'object' || keys === null || Array.isArray(keys)) return EMPTY;
-  const kept: Partial<Record<CredentialSlot, string>> = {};
+  const kept: Record<string, string> = {};
   for (const [slot, blob] of Object.entries(keys)) {
-    if (isCredentialSlot(slot) && typeof blob === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(blob)) kept[slot] = blob;
+    if (isSlot(slot) && !slot.includes('\n') && typeof blob === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(blob)) kept[slot] = blob;
   }
   return { version: 1, keys: kept };
 }
 
 /** A view of `store` for the settings page: no `withKey`, nothing that returns a key. */
-export function credentialSettings(store: CredentialSettings): CredentialSettings {
+export function credentialSettings<S extends string = CredentialSlot>(store: CredentialSettings<S>): CredentialSettings<S> {
   return {
     protection: () => store.protection(),
     hasKey: (slot) => store.hasKey(slot),
@@ -138,8 +147,11 @@ export function credentialSettings(store: CredentialSettings): CredentialSetting
   };
 }
 
-export function createCredentialStore(deps: CredentialStoreDeps): CredentialStore {
+export function createCredentialStore<S extends string = CredentialSlot>(deps: CredentialStoreDeps<S>): CredentialStore<S> {
   const log = deps.log ?? (() => undefined);
+  const isSlot = (deps.isSlot ?? isCredentialSlot) as (value: unknown) => value is S;
+  const normalize = deps.normalize ?? ((_slot: S, value: unknown) => normalizeKey(value));
+  const maxFileBytes = deps.maxFileBytes ?? CREDENTIAL_LIMITS.maxFileBytes;
   const platform = deps.platform ?? process.platform;
   const tempSuffix = deps.tempSuffix ?? (() => `${process.pid}-${crypto.randomUUID()}`);
   /** The file as last read or written; `null` until read, or after a read failed (read again next time). */
@@ -152,7 +164,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
   /** The stored file; `'error'` when it exists but could not be read (nothing is overwritten then). */
   const load = (): Promise<StoredFile | 'error'> => {
     if (loaded !== null) return loaded;
-    const reading = deps.fs.readFile(deps.file).then(parseStored, (error: unknown) => {
+    const reading = deps.fs.readFile(deps.file).then((bytes) => parseStored(bytes, isSlot, maxFileBytes), (error: unknown) => {
       if ((error as { code?: unknown }).code === 'ENOENT') return EMPTY;
       log('agent credentials: the key file could not be read');
       // Not remembered: the next call reads again.
@@ -198,7 +210,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
   };
 
   /** Encrypts `key` into `slot` (it was normalized); `failed` when encryption or the write fails. */
-  const store = async (slot: CredentialSlot, key: string): Promise<'stored' | 'failed'> => {
+  const store = async (slot: S, key: string): Promise<'stored' | 'failed'> => {
     let blob: string;
     try {
       blob = Buffer.from(await deps.safeStorage.encryptStringAsync(seal(slot, key))).toString('base64');
@@ -212,7 +224,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
   };
 
   /** The slot's key, decrypted, if frost may use it (`os` protection, the right tag, a valid key). */
-  const decrypt = async (slot: CredentialSlot): Promise<{ readonly key: string; readonly blob: string; readonly reEncrypt: boolean } | 'no-key' | 'unavailable' | 'failed'> => {
+  const decrypt = async (slot: S): Promise<{ readonly key: string; readonly blob: string; readonly reEncrypt: boolean } | 'no-key' | 'unavailable' | 'failed'> => {
     const current = await load();
     if (current === 'error') return 'failed';
     const blob = current.keys[slot];
@@ -225,7 +237,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
       const decrypted = await deps.safeStorage.decryptStringAsync(bytes);
       const opened = open(slot, decrypted.result);
       if (opened === 'old') return 'no-key';
-      if (opened === 'other' || normalizeKey(opened.key) !== opened.key) return 'failed';
+      if (opened === 'other' || normalize(slot, opened.key) !== opened.key) return 'failed';
       return { key: opened.key, blob, reEncrypt: decrypted.shouldReEncrypt };
     } catch {
       log('agent credentials: a stored key could not be decrypted');
@@ -237,15 +249,16 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
     protection,
 
     async hasKey(slot) {
-      if (!isCredentialSlot(slot)) return false;
+      if (!isSlot(slot)) return false;
       // Decrypted to be sure it is usable (the key itself goes nowhere).
       return typeof (await decrypt(slot)) === 'object';
     },
 
     setKey(slot, key) {
       return serial(async (): Promise<SetKeyResult> => {
-        const normalized = normalizeKey(key);
-        if (!isCredentialSlot(slot) || normalized === null) return 'invalid';
+        if (!isSlot(slot)) return 'invalid';
+        const normalized = normalize(slot, key);
+        if (normalized === null) return 'invalid';
         if ((await protection()) !== 'os') return 'no-keychain';
         return store(slot, normalized);
       });
@@ -253,7 +266,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
 
     clearKey(slot) {
       return serial(async () => {
-        if (!isCredentialSlot(slot)) return false;
+        if (!isSlot(slot)) return false;
         const current = await load();
         if (current === 'error') return false;
         if (current.keys[slot] === undefined) return true;
@@ -264,7 +277,7 @@ export function createCredentialStore(deps: CredentialStoreDeps): CredentialStor
     },
 
     async withKey(slot, fn) {
-      if (!isCredentialSlot(slot)) return { ok: false, reason: 'no-key' };
+      if (!isSlot(slot)) return { ok: false, reason: 'no-key' };
       const found = await decrypt(slot);
       if (typeof found !== 'object') return { ok: false, reason: found };
       const { key, blob, reEncrypt } = found;

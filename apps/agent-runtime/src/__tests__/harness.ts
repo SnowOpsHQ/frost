@@ -96,5 +96,6 @@ export const chatStart = (overrides: Partial<Extract<MainToRuntimeMessage, { typ
   modelId: 'anthropic/claude-sonnet-5-5',
   route: 'byok-anthropic',
   allowedTools: ['page_audit', 'page_text'],
+  mcpTools: [],
   ...overrides,
 });

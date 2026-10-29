@@ -130,7 +130,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 | The agent reaches arbitrary hosts | Model requests go through main's proxy and its endpoint allowlist; the runtime has no network globals | Task 3 `proxy-allowlist` |
 | `execute_javascript` takes over the page or hangs | Runs in a dedicated isolated world (never the main world), per-call approval showing the exact code, a timeout and a result size cap | Task 4/5 |
 | A standing grant outlives the user's intent | Grants are per tool and per origin, listed on the grants page, revocable one by one or all at once | Task 9 |
-| An MCP server is hostile | Labelled untrusted; nothing auto-granted; stdio servers need explicit approval to start, run in an OS sandbox profile where available, and the UI says when none is | Task 10 |
+| An MCP server is hostile | Labelled untrusted; nothing auto-granted; stdio servers need explicit approval to start, run in an OS sandbox profile where available, and the UI says when none is | Task 10 `mcp-start-requires-the-dialog`, `mcp-bubblewrap-contains-the-server`, `mcp-tool-asks-every-call-and-result-is-untrusted`, `agent-mcp-tool-asks` |
 
 ## Review Focus
 - The agent process can't approve, grant, read keys or reach the network (Tasks 1, 2, 3, 4).
@@ -280,7 +280,7 @@ Everything in the Phase 0–2.5 Global Constraints and `CONTRIBUTING.md` still h
 - HTTP and stdio MCP servers configured by the user, labelled untrusted; each tool needs per-call
   approval; stdio servers need explicit approval to start and run under an OS sandbox profile where
   one exists (macOS `sandbox-exec` profile); where none is available the UI says so plainly.
-- [ ] commit `feat(agent): MCP connections, untrusted`
+- [x] commit `feat(agent): MCP connections, untrusted`
 
 ---
 
@@ -723,6 +723,99 @@ _Filled in as tasks land._
   (`skillRunChatId`). User skills are marked "(Your skill)" in the picker and the palette, and the
   skills editor warns (still saving) when a user skill takes a built-in's name or lists `navigate`,
   `click`, `execute_javascript` or `run_ai_search` (`SKILL_WARNINGS`, `skills.spec.ts`).
+- **Task 10.** Spec `specs/agent-mcp.spec.ts` (Zod-free: `MCP_LIMITS`, transports, statuses,
+  `MCP_SANDBOX_MODES`, the name, URL, command, schema and description rules as pure functions, the
+  settings' words, the start dialog, the answers' sets), `specs/agent-mcp.schema.ts` (Zod:
+  `McpToolDefinitionSchema`, `McpServerConfigSchema`, the procedures' inputs), acceptance
+  `specs/agent-mcp.feature.md`. **Client: frost's own** (`apps/desktop/src/main/agent/mcp/client.ts`,
+  JSON-RPC 2.0: `initialize`, `notifications/initialized`, paginated `tools/list`, `tools/call`; no
+  client capabilities; a server's `ping` answered, every other server request refused, its
+  notifications ignored), not `@modelcontextprotocol/sdk` 1.32.2: its `Client` statically imports Ajv
+  and compiles each server's output schema with generated code in main, pulls Zod 3 and Zod 4-mini
+  beside our Zod 4, `zod-to-json-schema`, an OAuth client with PKCE and a few `server/` modules, and
+  its stdio transport uses `cross-spawn`, which on Windows runs a non-`.exe` command through
+  `cmd.exe`; bounding a hostile server (message size, event streams) meant replacing both transports
+  anyway. So no dependency was added (lockfile and notices unchanged); `main.cjs` gains only frost's
+  own code (about 120 KB of TypeScript source with the specs, unminified in the bundle). **Where it
+  runs: main** (decision 7 unchanged): the runtime only gets definitions in `chat.start` and results
+  in `tool.result`. **Transports:** Streamable HTTP (`mcp/http.ts`): `https:` on a public host
+  (`parseMcpServerUrl`), every request on the in-memory `agent-mcp` session with
+  `credentials: 'omit'`, `cache: 'no-store'` and `redirect: 'error'` (stricter than the brief's "no
+  off-origin redirect": none is followed, so the token can't travel), the host resolved with the
+  session's resolver before each request and refused if any address is private, JSON or event-stream
+  replies within `maxMessageBytes`, `Mcp-Session-Id` echoed and ended with a best-effort `DELETE`;
+  the optional bearer token in `agent-mcp-credentials.json` (the key store, generalised over slots:
+  `mcp-token.<id>`, `mcp-env.<id>`; same `os`-only rule, sealed per slot; write-only:
+  `agent.setMcpToken`). Command servers (`mcp/stdio.ts`): `child_process.spawn` with `shell: false`
+  (forced again in `mcp/node.ts`), its own process group on POSIX (Stop signals the group: `SIGTERM`,
+  `SIGKILL` after 2 s), a fresh `mkdtemp` folder as cwd and `HOME`, the environment exactly `PATH`,
+  `HOME` and the user's variables (names stored in the row, values encrypted; `PATH`, `HOME`, `LD_*`,
+  `DYLD_*` refused; values go through the launcher's environment, never its arguments), newline JSON
+  within `maxMessageBytes` (`too-large` ends it), stderr drained and never shown. The command is
+  resolved on `PATH` and then to its **real path** (what runs, what the dialog shows and what a
+  profile names: macOS 27 refuses to exec a symlink whose own path the profile allows, checked).
+  **Start:** never automatic; a command server's every Start shows main's native dialog
+  (`mcpStartDialog`: "Start an untrusted MCP server?", the exact command line with each argument
+  quoted when needed, the sandbox sentence; Cancel default) — every start, not once per app session.
+  A new server is saved **off**; "Use in chats" turns it on, off stops it. **Sandboxes, detected at
+  run time** (`mcp/sandbox.ts`, golden-tested builders): macOS `sandbox-exec` with frost's
+  deny-by-default profile; Linux `bwrap` (found on `PATH`, answering `--version`); otherwise `none`,
+  and the settings and the dialog say "This server runs without a sandbox. It can do anything your
+  user account can." A launcher that fails is reported `sandbox-failed` (bubblewrap's
+  `--json-status-fd 3` never said `child-pid`, or `sandbox-exec:` on stderr) and nothing else runs.
+  Beyond the brief, after checking on this machine: bubblewrap also gets an **empty `/run` and
+  `/tmp`** (with only `/` read-only and home on tmpfs, a sandboxed process connected to the D-Bus
+  session bus at `/run/user/<uid>/bus`, so it could reach the keyring or `systemd --user`; with
+  `/run` empty it can't), `--cap-drop ALL`, and `--ro-bind-try /run/systemd/resolve` only when the
+  network is allowed; and both sandboxes hide the home folder (macOS: `(deny file-read* (subpath
+  home))` with metadata still readable), so a server's own files must be listed (`readPaths`, ≤ 8
+  absolute folders, read-only; a command inside home is put back by itself). **Verified on this Linux
+  machine (bubblewrap 0.13.1):** `mcp-bubblewrap-contains-the-server` and the e2e ran the fake server
+  under bubblewrap: an unlisted file in home unreadable, a host path outside its folder unwritable,
+  no network, its own folder writable, environment `HOME`, `PATH` and `PWD` (bubblewrap adds `PWD`).
+  **Verified on the Mac (macOS 27.0.1, over SSH, by hand):** Node starts under the profile; home
+  file and listing `EPERM`; writes only in its folder; a TCP connect `EPERM` without the network,
+  allowed with it. Windows and Linux without bubblewrap: `none`, untested here. **Tools:**
+  `mcp__<serverId>__<tool>` (id from the name, lowercase alphanumerics ≤ 12 plus a number on a
+  clash), rewritten to `TOOL_NAME_PATTERN`, colliding names all dropped, ≤ 64 per server, ≤ 48 per
+  chat; descriptions cleaned, cut at 1024 and prefixed "Untrusted tool from {server}: "; input
+  schemas reduced to `type` / `description` / `properties` / `required` / `additionalProperties`
+  (boolean) / `items` (one schema) / `enum` (≤ 64 short safe values) / `minimum` / `maximum` /
+  `minLength` / `maxLength` / `minItems` / `maxItems`, depth 8, 1000 nodes, 64 properties, 16,000
+  characters (descriptions dropped first, then `{ type: 'object' }`); `pattern` is **dropped** (main
+  validates inputs, and a hostile pattern could stall it), as are `$ref`, combinators, `format`,
+  `const`, `default`. **Protocol version 6:** `chat.start.mcpTools` (≤ 48 `McpToolDefinition`s,
+  exactly one per MCP name in `allowedTools`; the schema must be already sanitised:
+  `isSanitizedMcpInputSchema`); the runtime builds them with `jsonSchema()` (no SDK validation) and
+  `execute` → `tool.invoke`. A typed turn offers the tools of enabled, ready servers with
+  `agent.mcp`; a skill never does. **Calls:** the broker asks every call (unchanged) and now refuses
+  an input the sanitised schema rejects before asking (`mcpInputAllowed`), labels it "Untrusted
+  tool from {server}" (`mcpLabel`); the runner (`McpManager.runner`, composed in `createAgent` by
+  name) runs only `via: 'approval'`, validates again, ≤ 4 calls per server, `callTimeoutMs` 60 s and
+  the turn's signal (`notifications/cancelled` sent), and answers `{ server, tool, isError, text }`
+  (text parts only, `structuredContent` only when there is no text, a note for left-out parts,
+  JSON-RPC errors as `isError: true` data), wrapped untrusted and capped by the broker. **Persistence:**
+  `0033_agent_mcp_servers` (`packages/db/src/agent-mcp*.ts`; `SessionStore.agentMcp`; no secret
+  column). **IPC** (all `enforceSender` first, strict bounded inputs, answers from fixed sets):
+  `agent.saveMcpServer`, `deleteMcpServer`, `setMcpServerEnabled`, `startMcpServer`,
+  `stopMcpServer`, `setMcpToken`; `AgentState.mcp` (`available`, servers with id, name, transport,
+  target, enabled, status, sandbox, sandbox sentence, network, read folders, env names, `hasToken`,
+  tool count, `lastError` as a fixed sentence). **UI:** "MCP servers" in the agent settings
+  (`AgentMcp.tsx`): "Untrusted" chip, status, sandbox sentence, tools, error, Use in chats, Start /
+  Stop, Delete (asks once more), a write-only token field for HTTP, and an add form (one argument per
+  line, folders, network, environment rows with password values); MCP tool cards carry "Untrusted";
+  the approval title is "Untrusted tool from {server}: allow "{tool}"?". There is no edit form
+  (delete and add again; `saveMcpServer` accepts an `id`). E2e `agent-mcp-tool-asks`. **Not
+  covered:** Windows has no sandbox (said plainly), and a `.cmd`/`.bat` command can't start (no
+  shell); HTTP OAuth (bearer tokens only); the server's own `GET` stream and `tools/list_changed`
+  (restart the server to refresh); the private-address check resolves before the session does
+  (a rebinding race remains, as in the SEO fetcher); with the network allowed bubblewrap shares the
+  host's abstract sockets (an X11 display among them); a sandbox reads the rest of `/` (system files,
+  other users' world-readable files); macOS lets the server run only the command and programs in
+  the listed folders (a launcher such as `npx` that runs other programs needs their folders listed);
+  if frost is killed outright an unsandboxed server may outlive it (it sees its stdin close;
+  `--die-with-parent` ties the sandboxed process to bubblewrap, not to frost); environment values
+  sit in the add form's React state until saved (then the form is cleared).
 
 ## Lead follow-ups (Task 9)
 - **Clear Browsing Data and the agent.** Today it clears neither standing grants nor chats. In

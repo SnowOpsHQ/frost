@@ -215,6 +215,7 @@ hidden
     const dialogs: AgentDialogs = {
       confirmDeleteAllChats: async () => false,
       confirmRetentionChange: async () => false,
+      confirmMcpStart: async () => false,
       chooseExportPath: async (name, format) => {
         asked.push([name, format]);
         return answer;

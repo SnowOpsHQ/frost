@@ -3,6 +3,7 @@ import { MIGRATIONS_TABLE } from '@app/specs/browser-session-db.spec';
 import { AGENT_GRANTS_MIGRATIONS } from './agent-grants-migrations';
 import { AGENT_CHATS_MIGRATIONS } from './agent-chats-migrations';
 import { AGENT_SKILLS_MIGRATIONS } from './agent-skills-migrations';
+import { AGENT_MCP_MIGRATIONS } from './agent-mcp-migrations';
 
 // Forward-only migrations (spec `browser-session-db.feature.md`, Migrations). Each one is a
 // numbered SQL string compiled into the main bundle: nothing is read from disk at runtime. Append
@@ -94,6 +95,7 @@ export const MIGRATIONS: readonly Migration[] = [
   ...AGENT_GRANTS_MIGRATIONS,
   ...AGENT_CHATS_MIGRATIONS,
   ...AGENT_SKILLS_MIGRATIONS,
+  ...AGENT_MCP_MIGRATIONS,
 ];
 
 /**

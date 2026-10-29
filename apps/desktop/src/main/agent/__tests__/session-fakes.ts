@@ -9,6 +9,7 @@ import type { MainToRuntimeMessage } from '@app/specs/agent-protocol.schema';
 import type { AgentState } from '@app/specs/agent-session.spec';
 import { createDefaultAgentEntitlements, type AgentEntitlements } from '../entitlements';
 import { createAgent } from '../index';
+import type { McpManager } from '../mcp';
 import { createAgentSession, type AgentSessionDeps } from '../session';
 import { createFakeRunner } from './approval-fakes';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, createMemoryFs, type FakePort } from './fakes';
@@ -30,6 +31,8 @@ export async function setupSession(
     /** Task 9's stored chats, skills editor and dialogs. */
     data?: Pick<AgentSessionDeps, 'history' | 'userSkills' | 'confirmDeleteAllChats' | 'confirmRetentionChange' | 'exportChat'>;
     now?: () => number;
+    /** Task 10's MCP servers (the real manager over the fake server, in `mcp-session.test.ts`). */
+    mcp?: McpManager;
   } = {},
 ) {
   const memory = createMemoryFs();
@@ -76,6 +79,7 @@ export async function setupSession(
     platform: 'linux',
     entitlements,
     toolRunner: runner.runner,
+    ...(options.mcp ? { mcp: options.mcp } : {}),
     tabUrl: (tabId) => (tabId === TAB ? tab.url : null),
     log: (line) => logs.push(line),
   });
@@ -101,6 +105,7 @@ export async function setupSession(
     ...(options.data ?? {}),
     ...(options.now ? { now: options.now } : {}),
     scripted: options.scripted === true,
+    ...(options.mcp ? { mcp: options.mcp } : {}),
     randomId: () => `00000000-0000-4000-8000-${String((ids += 1)).padStart(12, '0')}`,
     log: (line) => logs.push(line),
   });

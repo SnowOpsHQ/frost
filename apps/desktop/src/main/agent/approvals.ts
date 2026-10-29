@@ -25,6 +25,7 @@ import {
 } from '@app/specs/agent-approvals.spec';
 import { ToolInputSchema, type JsonValue, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { completeToolInput } from '@app/specs/agent-search-tools.spec';
+import { mcpServerIdOf, mcpToolLabel } from '@app/specs/agent-mcp.spec';
 import { AGENT_TOOLS, isAgentToolName, isGrantable, isMcpToolName, TOOL_ERROR_CODES, toolRisk, type AgentToolRisk, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import type { AgentEntitlements } from './entitlements';
 import type { AgentGrants } from './grants';
@@ -96,7 +97,7 @@ export interface ApprovalRequestView {
   readonly chatId: string;
   readonly callId: string;
   readonly toolName: string;
-  /** The catalogue's label, or "Use a tool from <server> (untrusted)" for an MCP tool. */
+  /** The catalogue's label, or "Untrusted tool from {server}" for an MCP tool. */
   readonly label: string;
   readonly risk: AgentToolRisk;
   /** The site the call acts on (`approvalOriginFor`), `null` for none. */
@@ -169,6 +170,13 @@ export interface ApprovalBrokerDeps {
   readonly randomId?: () => string;
   /** One line per event; never an input, an origin or tool output. */
   readonly log?: (line: string) => void;
+  /** An MCP tool's label, naming its server (Task 10; default: the server id from the name). */
+  readonly mcpLabel?: (toolName: string) => string;
+  /**
+   * Whether an MCP tool's input fits its server's sanitised schema (Task 10): `false` refuses the
+   * call `invalid-input` before the user is asked. Main's runner checks it again before the call.
+   */
+  readonly mcpInputAllowed?: (toolName: string, input: JsonValue) => boolean;
 }
 
 export interface ApprovalBroker {
@@ -249,11 +257,10 @@ interface ChatState {
 
 const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 
-/** The panel's one line for `toolName`. */
-export function toolLabel(toolName: string): string {
+/** The panel's one line for `toolName` (an MCP tool: "Untrusted tool from {server}", `serverName` or its id). */
+export function toolLabel(toolName: string, serverName: string | null = null): string {
   if (isAgentToolName(toolName)) return AGENT_TOOLS[toolName].label;
-  const server = isMcpToolName(toolName) ? toolName.split('__')[1] : 'an MCP server';
-  return `Use a tool from ${server} (untrusted)`;
+  return mcpToolLabel(serverName ?? mcpServerIdOf(toolName));
 }
 
 interface InputParser {
@@ -267,7 +274,7 @@ interface InputParser {
  * sees all of it (a catalogue input always does; a longer MCP input is refused rather than shown
  * cut). `null` when any of that fails.
  */
-function reparse(toolName: string, input: unknown): { canonical: string; value: JsonValue } | null {
+function reparse(toolName: string, input: unknown, mcpInputAllowed: (toolName: string, input: JsonValue) => boolean): { canonical: string; value: JsonValue } | null {
   // Each tool's schema, seen as a plain parser (their union of output types is too deep to infer).
   const definition = getToolDefinition(toolName) as { readonly inputSchema: InputParser } | undefined;
   const schema: InputParser | null = definition !== undefined ? definition.inputSchema : isMcpToolName(toolName) ? ToolInputSchema : null;
@@ -277,7 +284,7 @@ function reparse(toolName: string, input: unknown): { canonical: string; value: 
   if (canonical.length > APPROVAL_DISPLAY_MAX_CHARS) return null;
   const checked = ToolInputSchema.safeParse(JSON.parse(canonical));
   if (!checked.success) return null;
-  if (definition === undefined && !isSafeInputJson(checked.data)) return null;
+  if (definition === undefined && (!isSafeInputJson(checked.data) || !mcpInputAllowed(toolName, checked.data))) return null;
   return { canonical, value: checked.data };
 }
 
@@ -288,6 +295,21 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
   const clearTimer = deps.clearTimeout ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const randomId = deps.randomId ?? randomUUID;
   const log = deps.log ?? (() => undefined);
+  const labelOf = (toolName: string): string => {
+    if (!isMcpToolName(toolName) || deps.mcpLabel === undefined) return toolLabel(toolName);
+    try {
+      return deps.mcpLabel(toolName);
+    } catch {
+      return toolLabel(toolName);
+    }
+  };
+  const mcpInputAllowed = (toolName: string, value: JsonValue): boolean => {
+    try {
+      return deps.mcpInputAllowed === undefined || deps.mcpInputAllowed(toolName, value) === true;
+    } catch {
+      return false;
+    }
+  };
   const stats: ApprovalBrokerStats = { unregistered: 0, duplicates: 0, refused: 0, autoRun: 0, asked: 0 };
 
   const chats = new Map<string, ChatState>();
@@ -430,7 +452,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
       chatId: call.chatId,
       callId: call.callId,
       toolName: call.toolName,
-      label: toolLabel(call.toolName),
+      label: labelOf(call.toolName),
       risk: decided.risk,
       origin: decided.origin,
       pageUrl: decided.pageUrl,
@@ -497,7 +519,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
       const tabUrl = deps.tabUrl(chat.tabId);
       // Defaults that depend on the tab (Task 8 review: `gsc_performance`'s page) are filled in
       // before the input is parsed, so the approval shows, hashes and runs exactly that input.
-      const input = reparse(invoke.toolName, completeToolInput(invoke.toolName, invoke.input, tabUrl));
+      const input = reparse(invoke.toolName, completeToolInput(invoke.toolName, invoke.input, tabUrl), mcpInputAllowed);
       if (input === null) {
         stats.refused += 1;
         fail(call, 'invalid-input');

@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { AGENT_CHAT_TABLES, AGENT_SKILL_TABLES } from '@app/specs/agent-data.spec';
+import { AGENT_MCP_TABLES } from '@app/specs/agent-mcp.spec';
 import { AGENT_GRANT_TABLES, DEFAULT_READ_TOOLS_ALLOWED, MAX_AGENT_GRANTS, READ_TOOLS_PREFERENCE_KEY } from '@app/specs/agent-approvals.spec';
 import { createAgentGrantsRepository, type AgentGrantsRepository } from '../agent-grants';
 import { agentGrants, agentPreferences } from '../agent-grants-schema';
@@ -51,8 +52,8 @@ describe('agent grants (db)', () => {
   test('agent-grants-migrate', () => {
     expect(MIGRATIONS.map((m) => m.id)).toContain('0030_agent_grants');
     const tables = raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'agent_%' ORDER BY name").all().map((row) => String(row['name']));
-    // Task 9's tables (`agent-chats.test.ts`, `agent-skills.test.ts`) sit beside them.
-    expect(tables).toEqual([...AGENT_GRANT_TABLES, ...AGENT_CHAT_TABLES, ...AGENT_SKILL_TABLES].sort());
+    // Task 9's and Task 10's tables (`agent-chats.test.ts`, `agent-skills.test.ts`, `agent-mcp.test.ts`) sit beside them.
+    expect(tables).toEqual([...AGENT_GRANT_TABLES, ...AGENT_CHAT_TABLES, ...AGENT_SKILL_TABLES, ...AGENT_MCP_TABLES].sort());
     expect(columns('agent_grants')).toEqual(drizzleColumns(agentGrants));
     expect(columns('agent_preferences')).toEqual(drizzleColumns(agentPreferences));
     // The key is (tool, origin): no second row for one pair.
@@ -64,7 +65,7 @@ describe('agent grants (db)', () => {
     runMigrations(old, MIGRATIONS.filter((m) => m.id < '0030'));
     old.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('search_engine', 'x', 1)").run();
     // Phase 5's block only: other phases' migrations may be appended around it.
-    expect(runMigrations(old).filter((id) => id >= '0030' && id < '0040')).toEqual(['0030_agent_grants', '0031_agent_chats', '0032_agent_skills']);
+    expect(runMigrations(old).filter((id) => id >= '0030' && id < '0040')).toEqual(['0030_agent_grants', '0031_agent_chats', '0032_agent_skills', '0033_agent_mcp_servers']);
     expect(old.prepare('SELECT count(*) AS n FROM app_settings').get()!['n']).toBe(1);
   });
 

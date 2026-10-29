@@ -115,7 +115,7 @@ export async function captureProviderRequest(route: ModelRoute, modelId: ModelId
     post({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' });
   });
   const runtime = startRuntime(runtimeEnd, { modelFactory: createModel });
-  post({ type: 'chat.start', chatId: 'chat-1', route, modelId, systemPrompt: 'You are an SEO assistant.', allowedTools: ['page_audit', 'page_text', 'navigate'], messages: START_HISTORY });
+  post({ type: 'chat.start', chatId: 'chat-1', route, modelId, systemPrompt: 'You are an SEO assistant.', allowedTools: ['page_audit', 'page_text', 'navigate'], mcpTools: [], messages: START_HISTORY });
   await vi.waitFor(() => {
     if (requests.length < request) throw new Error(`waiting for request ${request} (${requests.length} so far)`);
   });

@@ -68,6 +68,9 @@ one named test.
   surrogates (`UNSAFE_INPUT_CHARS`; code allows line feeds and tabs).
 - **Scenario: mcp-tools-are-external** — an `mcp__<server>__<tool>` name is `external` and not
   grantable; other names (and a catalogue name) are not MCP tools; an unknown name has no risk.
+- **Scenario: chat-start-mcp-tools-match-allowed-names** (protocol version 6, Task 10;
+  `agent-mcp.feature.md`) — `chat.start.mcpTools` holds exactly one sanitised definition per MCP
+  name in `allowedTools`; a missing, extra, repeated or unsanitised one refuses the message.
 - **Scenario: caps-are-sane** — the caps are positive integers and the default model is allowed.
 - **Scenario: route-model-id** — the gateway keeps `provider/model`; a bring-your-own-key route drops
   the prefix; a model of the other provider, or one not allowed, is refused (`null`).

@@ -22,9 +22,11 @@ import {
   TOOL_ERROR_CODES,
   TOOL_RESULT_MAX_CHARS,
 } from './agent-tools.spec';
+import { MCP_LIMITS } from './agent-mcp.spec';
+import { McpToolDefinitionSchema } from './agent-mcp.schema';
 
 /** Bumped when a message changes shape; the runtime reports it in `ready` and main refuses another. */
-export const AGENT_PROTOCOL_VERSION = 5;
+export const AGENT_PROTOCOL_VERSION = 6;
 
 /**
  * The runtime's `chat.error` for a `chat.start` whose chat already has a turn running (that turn
@@ -243,7 +245,19 @@ export const ChatStartMessageSchema = z.strictObject({
     .array(ToolNameSchema)
     .max(L.maxAllowedTools)
     .refine((names) => new Set(names).size === names.length, { message: 'a tool is named twice' }),
-});
+  /**
+   * The MCP tools of this turn (Task 10, protocol version 6): main's sanitised definitions
+   * (`agent-mcp.schema.ts`), one for each MCP name in `allowedTools` and no other.
+   */
+  mcpTools: z.array(McpToolDefinitionSchema).max(MCP_LIMITS.maxToolsPerChat),
+}).refine(
+  (start) => {
+    const defined = start.mcpTools.map((tool) => tool.name);
+    const allowedMcp = start.allowedTools.filter((name) => isMcpToolName(name));
+    return new Set(defined).size === defined.length && defined.length === allowedMcp.length && allowedMcp.every((name) => defined.includes(name));
+  },
+  { message: 'MCP tools must match the allowed MCP names' },
+);
 
 export const MainToRuntimeMessageSchema = z.discriminatedUnion('type', [
   ChatStartMessageSchema,

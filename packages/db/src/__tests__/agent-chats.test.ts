@@ -72,14 +72,14 @@ describe('agent chats (db)', () => {
     expect(columns('agent_chat_entries')).toEqual(drizzleColumns(agentChatEntries));
     // Phase 5's block stays contiguous and in order.
     const ids = MIGRATIONS.map((m) => m.id);
-    expect(phase5(ids)).toEqual(['0030_agent_grants', '0031_agent_chats', '0032_agent_skills']);
+    expect(phase5(ids)).toEqual(['0030_agent_grants', '0031_agent_chats', '0032_agent_skills', '0033_agent_mcp_servers']);
     expect(ids.indexOf('0031_agent_chats')).toBe(ids.indexOf('0030_agent_grants') + 1);
     expect(ids.indexOf('0032_agent_skills')).toBe(ids.indexOf('0031_agent_chats') + 1);
     // A database with the grants only gains the chat tables and keeps its grants.
     const old = new DatabaseSync(':memory:');
     runMigrations(old, MIGRATIONS.filter((m) => m.id <= '0030_agent_grants'));
     old.prepare("INSERT INTO agent_grants (tool, origin, created_at) VALUES ('navigate', 'https://example.com', 1)").run();
-    expect(phase5(runMigrations(old))).toEqual(['0031_agent_chats', '0032_agent_skills']);
+    expect(phase5(runMigrations(old))).toEqual(['0031_agent_chats', '0032_agent_skills', '0033_agent_mcp_servers']);
     expect(old.prepare('SELECT count(*) AS n FROM agent_grants').get()!['n']).toBe(1);
   });
 

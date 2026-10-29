@@ -10,3 +10,4 @@ export type { SettingsRepository } from './settings';
 export type { AgentGrantsRepository, StoredAgentGrant } from './agent-grants';
 export type { AgentChatRowsUpdate, AgentChatsRepository, StoredAgentChatHead, StoredAgentChatRows } from './agent-chats';
 export type { AgentSkillsRepository, StoredAgentSkill } from './agent-skills';
+export type { AgentMcpRepository, AgentMcpServerWrite, StoredAgentMcpServer } from './agent-mcp';

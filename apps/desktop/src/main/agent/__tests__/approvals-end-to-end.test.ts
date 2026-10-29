@@ -103,6 +103,7 @@ describe('approvals end to end', () => {
       modelId: 'anthropic/claude-sonnet-5-5',
       route: 'byok-anthropic',
       allowedTools,
+      mcpTools: [],
     };
     expect(agent.host.send(message)).toBe(true);
 

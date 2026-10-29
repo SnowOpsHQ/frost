@@ -18,6 +18,7 @@ const chatStart = (chatId = 'chat-1'): MainToRuntimeMessage => ({
   modelId: 'anthropic/claude-sonnet-5-5',
   route: 'gateway',
   allowedTools: [],
+  mcpTools: [],
 });
 
 /** A host whose forks give the test the runtime's end of each port (`runtimes`, in fork order). */

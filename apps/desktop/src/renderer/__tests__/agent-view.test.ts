@@ -72,8 +72,10 @@ describe('agent panel view model', () => {
     expect(approvalCardModel({ request: approval(), queued: 0 }).title).toBe('Allow navigation to https://next.example.com?');
     expect(approvalCardModel({ request: approval({ toolName: 'click', label: 'Click something on this page', origin: 'https://www.example.com' }), queued: 0 }).title).toBe('Allow click on https://www.example.com/a?');
     expect(approvalCardModel({ request: jsApproval(), queued: 0 }).title).toBe('Run this JavaScript on https://www.example.com/a?');
-    const mcp = approvalCardModel({ request: approval({ toolName: 'mcp__docs__search', label: 'docs: search', risk: 'external', origin: null, pageUrl: null, grantable: false }), queued: 0 });
-    expect(mcp.title).toBe('Untrusted tool: allow docs: search?');
+    const mcp = approvalCardModel({ request: approval({ toolName: 'mcp__docs__search', label: 'Untrusted tool from Docs', risk: 'external', origin: null, pageUrl: null, grantable: false }), queued: 0 });
+    expect(mcp.title).toBe('Untrusted tool from Docs: allow "search"?');
+    expect(mcp.label).toBe('Untrusted tool from Docs');
+    expect(mcp.showAlways).toBe(false);
     expect(mcp.untrusted).toBe(true);
     expect(mcp.note).toBe(AGENT_MCP_APPROVAL_NOTE);
     const read = approvalCardModel({ request: approval({ toolName: 'page_text', label: "Read this page's visible text", risk: 'read' }), queued: 0 });

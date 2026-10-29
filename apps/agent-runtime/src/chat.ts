@@ -1,13 +1,14 @@
 // The chat loop (Phase 5 Task 2, plan decisions 5 and 7; acceptance `specs/agent-runtime.feature.md`,
 // Chat loop): one turn of a chat, from main's `chat.start` to `chat.finish` or `chat.error`.
 //
-// The model sees only the chat's allowed catalogue tools. Each tool's `execute` is a request: it
+// The model sees only the chat's allowed catalogue tools, and the MCP tools main defined for the
+// turn (`chat.start.mcpTools`, Task 10: sanitised JSON Schemas, untrusted descriptions). Each tool's `execute` is a request: it
 // posts `tool.invoke` and waits for main's `tool.result` (main's broker approves, runs or refuses;
 // nothing here can). A failed result is the tool's error output to the model, not an exception, so
 // the turn goes on. Tool calls run one at a time (acting tools must not race). Each step's output is
 // posted as `chat.step` for main's history. The system prompt is main's (`chat.start`); nothing here
 // adds one.
-import { APICallError, isStepCount, streamText, zodSchema, type FinishReason, type LanguageModel, type ModelMessage, type Tool, type ToolSet } from 'ai';
+import { APICallError, isStepCount, jsonSchema, streamText, zodSchema, type FinishReason, type LanguageModel, type ModelMessage, type Tool, type ToolSet } from 'ai';
 import type { z } from 'zod';
 import { getToolDefinition } from '@app/ai-skills';
 import {
@@ -22,7 +23,7 @@ import {
   type ToolResult,
 } from '@app/specs/agent-protocol.schema';
 import { MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
-import { isAgentToolName, MAX_TOOL_STEPS } from '@app/specs/agent-tools.spec';
+import { isAgentToolName, isMcpToolName, MAX_TOOL_STEPS } from '@app/specs/agent-tools.spec';
 import { ProxyFetchError } from './proxy-fetch';
 import { ModelNotAllowedError } from './provider';
 
@@ -241,15 +242,26 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
   };
 
   const tools: ToolSet = {};
+  // MCP tools (Task 10): main's sanitised definitions, as the protocol checked them (one per MCP name allowed).
+  const mcpDefinitions = new Map(start.mcpTools.map((tool) => [tool.name, tool] as const));
   for (const name of start.allowedTools) {
-    // MCP tools are offered once the protocol carries their definitions (Task 10).
-    if (!isAgentToolName(name)) continue;
+    const execute = (input: unknown, { toolCallId }: { toolCallId: string }) => invoke(toolCallId, name, input);
+    const toModelOutput = ({ output }: { output: ToolResult }) => toolResultOutput(output);
+    if (!isAgentToolName(name)) {
+      if (!isMcpToolName(name)) continue;
+      const mcp = mcpDefinitions.get(name);
+      if (mcp === undefined) continue;
+      // No validation here: main checks the input against the same schema before it calls the server.
+      const offered: Tool = { description: mcp.description, inputSchema: jsonSchema(mcp.inputSchema as Parameters<typeof jsonSchema>[0]), execute, toModelOutput };
+      tools[name] = offered;
+      continue;
+    }
     const definition = getToolDefinition(name);
     const offered: Tool = {
       description: definition.description,
       inputSchema: zodSchema(definition.inputSchema as z.ZodType<unknown>),
-      execute: (input: unknown, { toolCallId }: { toolCallId: string }) => invoke(toolCallId, name, input),
-      toModelOutput: ({ output }: { output: ToolResult }) => toolResultOutput(output),
+      execute,
+      toModelOutput,
     };
     tools[name] = offered;
   }

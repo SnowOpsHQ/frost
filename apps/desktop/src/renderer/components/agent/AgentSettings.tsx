@@ -3,7 +3,9 @@ import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { ChatRetention } from '@app/specs/agent-data.spec';
 import type { AgentSetupView } from '@app/specs/agent-session.spec';
 import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
+import type { AgentMcpView } from '@app/specs/agent-mcp.spec';
 import { agentActions } from '../../agent-actions';
+import { AgentMcp } from './AgentMcp';
 import {
   deleteAllChatsMessage,
   isolationLine,
@@ -27,7 +29,7 @@ import {
 // The key field is a password input the panel never keeps in state: Save reads it, empties it at
 // once, and shows main's answer (`AGENT_SET_KEY_MESSAGES`). Task 9 (`agent-data.feature.md`): how
 // long chats are kept and "Delete all chats" (main confirms in its own dialog), and the ways to the
-// grants page and the skills editor.
+// grants page and the skills editor. Task 10 (`agent-mcp.feature.md`): the MCP servers (`AgentMcp`).
 
 function KeyRow({ slot, set, primary }: { readonly slot: CredentialSlot; readonly set: boolean; readonly primary: boolean }) {
   const field = useRef<HTMLInputElement>(null);
@@ -165,12 +167,15 @@ export function AgentSettings({
   grantsCount,
   readToolsAllowed,
   chatRetention,
+  mcp,
   onOpen,
 }: {
   readonly setup: AgentSetupView;
   readonly grantsCount: number;
   readonly readToolsAllowed: boolean;
   readonly chatRetention: ChatRetention;
+  /** The MCP servers (Task 10); absent: none, and none can be added. */
+  readonly mcp?: AgentMcpView;
   readonly onOpen: (view: 'grants' | 'skills') => void;
 }) {
   const [saveFailed, setSaveFailed] = useState(false);
@@ -232,7 +237,7 @@ export function AgentSettings({
         </p>
         <p className="agent-section-text">
           {readToolsAllowed ? 'Reading tools run without asking on public pages.' : 'Every tool asks before it runs.'} Opening pages and clicking ask first unless you
-          allowed a site; running JavaScript asks every time. Standing site grants: {grantsCount}.
+          allowed a site; running JavaScript and MCP tools ask every time. Standing site grants: {grantsCount}.
         </p>
         <div className="agent-key-row">
           <button type="button" className="agent-button" data-testid="agent-open-grants" onClick={() => onOpen('grants')}>
@@ -243,6 +248,7 @@ export function AgentSettings({
           </button>
         </div>
       </section>
+      <AgentMcp mcp={mcp ?? { available: false, servers: [] }} />
       <ChatHistorySection chatRetention={chatRetention} />
     </div>
   );

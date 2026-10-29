@@ -228,7 +228,7 @@ describe('approval broker', () => {
     for (let i = 0; i < 2; i += 1) {
       fake.invoke(`call-${i}`, 'mcp__files__read', { path: '/notes.txt' });
       const request = broker.pending().at(-1)!;
-      expect(request).toMatchObject({ toolName: 'mcp__files__read', risk: 'external', origin: null, grantable: false, label: 'Use a tool from files (untrusted)' });
+      expect(request).toMatchObject({ toolName: 'mcp__files__read', risk: 'external', origin: null, grantable: false, label: 'Untrusted tool from files' });
       expect(await broker.answer(request.id, 'allow-always')).toEqual({ ok: false, reason: 'not-grantable' });
       await broker.answer(request.id, 'allow-once');
       await flush();

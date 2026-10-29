@@ -138,7 +138,7 @@ describe('chat loop', () => {
   test('chat-offers-allowed-tools-only', async () => {
     const model = new MockLanguageModelV4({ doStream: [textStep(['ok'])] });
     const h = startHarness({ modelFactory: () => model });
-    h.send(chatStart({ allowedTools: ['page_audit', 'mcp__docs__search'] }));
+    h.send(chatStart({ allowedTools: ['page_audit'] }));
     await h.next('chat.finish');
     const offered = (model.doStreamCalls[0]?.tools ?? []).map((tool) => tool.name);
     expect(offered).toEqual(['page_audit']);
@@ -332,5 +332,44 @@ describe('chat loop', () => {
     h.send(chatStart());
     const error = await h.next('chat.error');
     expect(error.message).toBe('The model provider answered with an error (HTTP 529).');
+  });
+});
+
+// Spec: specs/agent-mcp.schema.ts (McpToolDefinitionSchema), specs/agent-protocol.schema.ts (chat.start.mcpTools)
+// Acceptance: specs/agent-mcp.feature.md (Runtime)
+describe('MCP tools in the chat loop', () => {
+  const definition = {
+    name: 'mcp__docs__search',
+    description: 'Untrusted tool from Docs: Searches the docs.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', maxLength: 100 } }, required: ['query'] },
+  } as const;
+
+  test('mcp-tools-offered-with-their-schema', async () => {
+    const model = new MockLanguageModelV4({ doStream: [toolStep('call-m', 'mcp__docs__search', { query: 'robots' }), textStep(['ok'])] });
+    const h = startHarness({ modelFactory: () => model });
+    h.onMessage((message) => {
+      if (message.type === 'tool.invoke') h.send({ type: 'tool.result', chatId: message.chatId, callId: message.callId, result: pageTextResult });
+    });
+    h.send(chatStart({ allowedTools: ['page_audit', definition.name], mcpTools: [definition] }));
+    await h.next('chat.finish');
+    const offered = model.doStreamCalls[0]?.tools ?? [];
+    expect(offered.map((tool) => tool.name)).toEqual(['page_audit', definition.name]);
+    const mcp = offered.find((tool) => tool.name === definition.name) as { description?: string; inputSchema?: unknown } | undefined;
+    expect(mcp?.description).toBe(definition.description);
+    expect(mcp?.inputSchema).toEqual(definition.inputSchema);
+    // Its execute is a request to main, like every tool's.
+    expect(h.of('tool.invoke')).toEqual([{ type: 'tool.invoke', chatId: 'chat-1', callId: 'call-m', toolName: definition.name, input: { query: 'robots' } }]);
+  });
+
+  test('mcp-name-without-definition-refused', async () => {
+    const model = new MockLanguageModelV4({ doStream: [textStep(['ok'])] });
+    const h = startHarness({ modelFactory: () => model });
+    // The protocol refuses a chat.start whose MCP names and definitions differ: no turn starts.
+    h.send(chatStart({ allowedTools: ['page_audit', definition.name] }));
+    h.send(chatStart({ chatId: 'chat-2', allowedTools: ['page_audit'], mcpTools: [definition] }));
+    h.send(chatStart({ chatId: 'chat-3', allowedTools: ['page_audit', definition.name], mcpTools: [{ ...definition, inputSchema: { type: 'object', $ref: '#/x' } as never }] }));
+    await settle();
+    expect(model.doStreamCalls).toEqual([]);
+    expect(h.of('chat.finish')).toEqual([]);
   });
 });

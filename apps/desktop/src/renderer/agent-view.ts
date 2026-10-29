@@ -12,6 +12,21 @@ import {
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
 import { CREDENTIAL_SLOTS, ROUTE_CREDENTIAL_SLOT, type CredentialSlot } from '@app/specs/agent-proxy.spec';
+import {
+  MCP_NO_SANDBOX_SENTENCE,
+  MCP_SAVE_MESSAGES,
+  MCP_SETTINGS_WORDS,
+  MCP_START_MESSAGES,
+  MCP_STATUS_LABELS,
+  MCP_TOKEN_MESSAGES,
+  MCP_UNTRUSTED_LABEL,
+  mcpServerIdOf,
+  type AgentMcpServerView,
+  type AgentMcpView,
+  type McpSaveResult,
+  type McpStartResult,
+  type McpTokenResult,
+} from '@app/specs/agent-mcp.spec';
 import type {
   AgentActiveChatView,
   AgentAnswerResult,
@@ -152,9 +167,15 @@ export function approvalTitle(request: AgentApprovalView): string {
     case 'execute_javascript':
       return `Run this JavaScript on ${placeOf(request)}?`;
     default:
-      if (isMcpToolName(request.toolName) || request.risk === 'external') return `Untrusted tool: allow ${request.label}?`;
+      if (isMcpToolName(request.toolName) || request.risk === 'external') return `${request.label}: allow "${mcpToolPartOf(request.toolName)}"?`;
       return request.pageUrl !== null || request.origin !== null ? `Allow "${request.label}" on ${placeOf(request)}?` : `Allow "${request.label}"?`;
   }
+}
+
+/** The tool part of an MCP tool name (`mcp__<server>__<tool>`), else the name. */
+function mcpToolPartOf(toolName: string): string {
+  const server = mcpServerIdOf(toolName);
+  return server === null ? toolName : toolName.slice(`mcp__${server}__`.length);
 }
 
 /** Whether the input holds only `code` (so the code block shows all of it). */
@@ -594,3 +615,111 @@ export function skillDraftWarnings(draft: Pick<SkillEditorDraft, 'name' | 'allow
 export function skillRunChatId(active: Pick<AgentActiveChatView, 'id' | 'tabId'> | null, activeTabId: number | null): string | null {
   return active !== null && activeTabId !== null && active.tabId === activeTabId ? active.id : null;
 }
+
+// ---- MCP servers (Task 10, `agent-mcp.spec.ts`) ----------------------------------------------
+
+export interface McpServerItem {
+  readonly id: string;
+  readonly name: string;
+  readonly transport: AgentMcpServerView['transport'];
+  readonly transportLabel: string;
+  readonly target: string;
+  readonly enabled: boolean;
+  readonly status: AgentMcpServerView['status'];
+  readonly statusLabel: string;
+  readonly tone: ToolTone;
+  /** The sandbox sentence (main's, `mcpSandboxSentence`). */
+  readonly sandboxNote: string;
+  /** Whether it runs with no sandbox at all (the sentence says so plainly). */
+  readonly unsandboxed: boolean;
+  readonly toolsText: string;
+  readonly error: string | null;
+  readonly canStart: boolean;
+  readonly canStop: boolean;
+  readonly hasToken: boolean;
+  readonly envNames: readonly string[];
+}
+
+const MCP_TONES: Readonly<Record<AgentMcpServerView['status'], ToolTone>> = { stopped: 'pending', starting: 'running', ready: 'ok', failed: 'failed' };
+
+export function mcpServerItems(view: AgentMcpView | null | undefined): readonly McpServerItem[] {
+  return (view?.servers ?? []).map((server) => ({
+    id: server.id,
+    name: server.name,
+    transport: server.transport,
+    transportLabel: server.transport === 'http' ? 'HTTP server' : 'Command',
+    target: server.target,
+    enabled: server.enabled,
+    status: server.status,
+    statusLabel: MCP_STATUS_LABELS[server.status] ?? MCP_STATUS_LABELS.failed,
+    tone: MCP_TONES[server.status] ?? 'failed',
+    sandboxNote: server.sandboxNote,
+    unsandboxed: server.transport === 'stdio' && server.sandbox === 'none',
+    toolsText: server.status === 'ready' ? `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}` : '',
+    error: server.lastError,
+    canStart: view?.available === true && server.enabled && (server.status === 'stopped' || server.status === 'failed'),
+    canStop: server.status === 'starting' || server.status === 'ready',
+    hasToken: server.hasToken,
+    envNames: server.envNames,
+  }));
+}
+
+/** The add-server form, as typed (one argument and one folder per line; environment rows). */
+export interface McpServerDraft {
+  readonly name: string;
+  readonly transport: 'http' | 'stdio';
+  readonly url: string;
+  readonly command: string;
+  readonly args: string;
+  readonly readPaths: string;
+  readonly allowNetwork: boolean;
+  readonly env: readonly { readonly name: string; readonly value: string }[];
+}
+
+export function emptyMcpDraft(): McpServerDraft {
+  return { name: '', transport: 'stdio', url: '', command: '', args: '', readPaths: '', allowNetwork: false, env: [] };
+}
+
+const lines = (text: string) =>
+  text
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+
+/**
+ * The draft as `agent.saveMcpServer`'s input: arguments one per line exactly as typed (no shell
+ * splitting or quoting: each line is one argument), blank lines dropped; environment rows with a
+ * name, their value sent only when typed. `null` when a required field is empty.
+ */
+export function mcpDraftToInput(draft: McpServerDraft): AgentSaveMcpServerRequest | null {
+  const name = draft.name.trim();
+  if (name === '') return null;
+  if (draft.transport === 'http') {
+    const url = draft.url.trim();
+    return url === '' ? null : { name, transport: 'http', url };
+  }
+  const command = draft.command.trim();
+  if (command === '') return null;
+  const args = draft.args.split(/\r\n|\r|\n/).filter((line) => line !== '');
+  const env = draft.env.filter((item) => item.name.trim() !== '').map((item) => ({ name: item.name.trim(), ...(item.value !== '' ? { value: item.value } : {}) }));
+  return { name, transport: 'stdio', command, args, readPaths: lines(draft.readPaths), allowNetwork: draft.allowNetwork, env };
+}
+
+/** What `agent.saveMcpServer` sends (the router's input shape; the renderer stays Zod-free). */
+export type AgentSaveMcpServerRequest =
+  | { readonly name: string; readonly transport: 'http'; readonly url: string; readonly id?: string }
+  | {
+      readonly name: string;
+      readonly transport: 'stdio';
+      readonly command: string;
+      readonly args: readonly string[];
+      readonly readPaths: readonly string[];
+      readonly allowNetwork: boolean;
+      readonly env: readonly { readonly name: string; readonly value?: string }[];
+      readonly id?: string;
+    };
+
+export const mcpSaveMessage = (result: McpSaveResult): string => MCP_SAVE_MESSAGES[result] ?? MCP_SAVE_MESSAGES.failed;
+export const mcpStartMessage = (result: McpStartResult): string | null => (Object.hasOwn(MCP_START_MESSAGES, result) ? MCP_START_MESSAGES[result] : null);
+export const mcpTokenMessage = (result: McpTokenResult): string => MCP_TOKEN_MESSAGES[result] ?? MCP_TOKEN_MESSAGES.failed;
+export { MCP_NO_SANDBOX_SENTENCE, MCP_SETTINGS_WORDS, MCP_UNTRUSTED_LABEL };

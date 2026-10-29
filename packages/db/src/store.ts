@@ -2,6 +2,7 @@ import { createDrizzle } from './client';
 import { createAgentGrantsRepository, type AgentGrantsRepository } from './agent-grants';
 import { createAgentChatsRepository, type AgentChatsRepository } from './agent-chats';
 import { createAgentSkillsRepository, type AgentSkillsRepository } from './agent-skills';
+import { createAgentMcpRepository, type AgentMcpRepository } from './agent-mcp';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
 import { createSettingsRepository, type SettingsRepository } from './settings';
@@ -29,6 +30,8 @@ export interface SessionStore {
   readonly agentChats: AgentChatsRepository;
   /** The user's agent skills (Phase 5 Task 9), written at once. */
   readonly agentSkills: AgentSkillsRepository;
+  /** The agent's MCP servers (Phase 5 Task 10), written at once. */
+  readonly agentMcp: AgentMcpRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /** Flushes pending writes, then closes the database (idempotent; never rejects). */
@@ -53,6 +56,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     agentGrants: createAgentGrantsRepository(drizzle),
     agentChats: createAgentChatsRepository(drizzle),
     agentSkills: createAgentSkillsRepository(drizzle),
+    agentMcp: createAgentMcpRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },

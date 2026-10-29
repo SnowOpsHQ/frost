@@ -194,7 +194,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
             <div className="agent-body">
               {view === 'settings' ? (
                 <div className="agent-scroll">
-                  <AgentSettings setup={state.setup} grantsCount={state.grantsCount} readToolsAllowed={state.readToolsAllowed} chatRetention={state.chatRetention} onOpen={setView} />
+                  <AgentSettings setup={state.setup} grantsCount={state.grantsCount} readToolsAllowed={state.readToolsAllowed} chatRetention={state.chatRetention} mcp={state.mcp} onOpen={setView} />
                 </div>
               ) : view === 'grants' ? (
                 <div className="agent-scroll">

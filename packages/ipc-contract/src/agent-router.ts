@@ -30,6 +30,8 @@ import {
 } from '@app/specs/agent-data.spec';
 import { AGENT_ANSWER_RESULTS, AGENT_SEND_RESULTS, AGENT_SET_KEY_RESULTS, AGENT_WATCH_TIMEOUT_MS, type AgentAnswerResult, type AgentSendResult, type AgentSetKeyResult, type AgentSkillRequest, type AgentState } from '@app/specs/agent-session.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
+import { isMcpServerId, MCP_SAVE_RESULTS, MCP_START_RESULTS, MCP_TOKEN_RESULTS, type McpSaveResult, type McpStartResult, type McpTokenResult } from '@app/specs/agent-mcp.spec';
+import { AgentMcpServerIdInputSchema, AgentSaveMcpServerInputSchema, AgentSetMcpServerEnabledInputSchema, AgentSetMcpTokenInputSchema } from '@app/specs/agent-mcp.schema';
 import type { AgentService } from './agent-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -230,4 +232,55 @@ export const agentRouter = router({
     .use(requireAgent)
     .input(AgentSkillIdInputSchema)
     .mutation(async ({ ctx, input }): Promise<AgentSaveSkillResult> => checkedSaveSkillResult(await ctx.agent.duplicateSkill(input.id))),
+
+  // ---- Task 10 (`agent-mcp.spec.ts`; acceptance `agent-mcp.feature.md`, Router) ----
+  saveMcpServer: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentSaveMcpServerInputSchema)
+    .mutation(async ({ ctx, input }): Promise<{ result: McpSaveResult; id?: string }> => {
+      // The fields, copied one by one (the schema is strict; main validates the server itself).
+      const server =
+        input.transport === 'http'
+          ? { ...(input.id !== undefined ? { id: input.id } : {}), name: input.name, transport: 'http' as const, url: input.url }
+          : {
+              ...(input.id !== undefined ? { id: input.id } : {}),
+              name: input.name,
+              transport: 'stdio' as const,
+              command: input.command,
+              args: [...input.args],
+              readPaths: [...input.readPaths],
+              allowNetwork: input.allowNetwork,
+              env: input.env.map((item) => ({ name: item.name, ...(item.value !== undefined ? { value: item.value } : {}) })),
+            };
+      const answer = (await ctx.agent.saveMcpServer(server)) as { result?: unknown; id?: unknown } | null;
+      const result = oneOf(MCP_SAVE_RESULTS, answer?.result, 'failed');
+      return result === 'saved' && isMcpServerId(answer?.id) ? { result, id: answer.id } : { result: result === 'saved' ? 'failed' : result };
+    }),
+  deleteMcpServer: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentMcpServerIdInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.agent.deleteMcpServer(input.id)) === true),
+  setMcpServerEnabled: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentSetMcpServerEnabledInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.agent.setMcpServerEnabled(input.id, input.enabled)) === true),
+  startMcpServer: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentMcpServerIdInputSchema)
+    .mutation(async ({ ctx, input }): Promise<McpStartResult> => oneOf(MCP_START_RESULTS, await ctx.agent.startMcpServer(input.id), 'failed')),
+  stopMcpServer: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentMcpServerIdInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.agent.stopMcpServer(input.id)) === true),
+  /** Write-only: the token goes renderer → main once; the answer is one of `MCP_TOKEN_RESULTS`. */
+  setMcpToken: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentSetMcpTokenInputSchema)
+    .mutation(async ({ ctx, input }): Promise<McpTokenResult> => oneOf(MCP_TOKEN_RESULTS, await ctx.agent.setMcpToken(input.id, input.token), 'failed')),
 });

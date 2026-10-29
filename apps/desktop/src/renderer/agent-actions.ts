@@ -14,6 +14,8 @@ import type {
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest } from '@app/specs/agent-session.spec';
 import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
+import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
+import type { AgentSaveMcpServerRequest } from './agent-view';
 import { ipc } from './ipc';
 
 // The agent panel's intents (spec `agent-panel.spec.ts`; procedures
@@ -50,6 +52,21 @@ export const agentActions = {
       .catch((): AgentSaveSkillResult => ({ result: 'failed' })),
   deleteSkill: (id: string): Promise<boolean> => ipc.agent.deleteSkill.mutate({ id }).catch(() => false),
   duplicateSkill: (id: string): Promise<AgentSaveSkillResult> => ipc.agent.duplicateSkill.mutate({ id }).catch((): AgentSaveSkillResult => ({ result: 'failed' })),
+  // Task 10 (`agent-mcp.spec.ts`): MCP servers. A command server's Start opens main's own dialog.
+  saveMcpServer: (server: AgentSaveMcpServerRequest): Promise<{ readonly result: McpSaveResult; readonly id?: string }> =>
+    ipc.agent.saveMcpServer
+      .mutate(
+        server.transport === 'http'
+          ? { ...server }
+          : { ...server, args: [...server.args], readPaths: [...server.readPaths], env: server.env.map((item) => ({ ...item })) },
+      )
+      .catch(() => ({ result: 'failed' as const })),
+  deleteMcpServer: (id: string): Promise<boolean> => ipc.agent.deleteMcpServer.mutate({ id }).catch(() => false),
+  setMcpServerEnabled: (id: string, enabled: boolean): Promise<boolean> => ipc.agent.setMcpServerEnabled.mutate({ id, enabled }).catch(() => false),
+  startMcpServer: (id: string): Promise<McpStartResult> => ipc.agent.startMcpServer.mutate({ id }).catch((): McpStartResult => 'failed'),
+  stopMcpServer: (id: string): Promise<boolean> => ipc.agent.stopMcpServer.mutate({ id }).catch(() => false),
+  /** Write-only: the token goes to main once; the answer never carries it. */
+  setMcpToken: (id: string, token: string | null): Promise<McpTokenResult> => ipc.agent.setMcpToken.mutate({ id, token }).catch((): McpTokenResult => 'failed'),
 };
 
 export type AgentActions = typeof agentActions;

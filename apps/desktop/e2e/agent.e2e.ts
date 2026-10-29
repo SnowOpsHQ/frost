@@ -1,9 +1,11 @@
 // Specs: specs/agent-panel.spec.ts (AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS, AGENT_APPROVAL_BUTTONS),
 // specs/agent-session.spec.ts (AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE),
 // specs/agent-e2e-script.schema.ts (the script format)
-// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL)
+// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL),
+// specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
 // Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools),
-// specs/agent-data.feature.md (End to end)
+// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end)
+import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
@@ -14,10 +16,11 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
 import { AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
 import { SKILL_USER_MARK } from '@app/specs/skills.spec';
+import { MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
-import { closeApp, launchApp } from './harness';
+import { APP_DIR, closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 import { selfSignedCertificate } from './tls';
 
@@ -543,4 +546,70 @@ test('agent-chat-export-and-restore', async () => {
     app = undefined;
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+// Task 10 (specs/agent-mcp.feature.md, End to end): a command MCP server configured in the
+// settings, started after main's native dialog (answered here by replacing `dialog.showMessageBox`
+// in main, test-only, so main's own code path runs), its tool called by the scripted model.
+test('agent-mcp-tool-asks', async () => {
+  const fixture = path.join(APP_DIR, 'src/main/agent/__tests__/fixtures/fake-mcp-server.mjs');
+  const node = realpathSync(process.execPath);
+  // Under a sandbox the server reads only what is listed: Node's install and the fixture's folder.
+  const readPaths = [path.dirname(path.dirname(node)), path.dirname(fixture)];
+  await launchWith([{ toolCalls: [{ toolName: 'mcp__faketools__echo', input: { text: 'from e2e' } }] }, { text: ['Echo done.'] }]);
+  await app!.evaluate(({ dialog }) => {
+    const holder = dialog as unknown as { showMessageBox: (...args: unknown[]) => Promise<{ response: number; checkboxChecked: boolean }> };
+    const seen: unknown[] = [];
+    (globalThis as { __frostMcpDialogs?: unknown[] }).__frostMcpDialogs = seen;
+    holder.showMessageBox = async (...args: unknown[]) => {
+      const options = args.find((arg) => typeof arg === 'object' && arg !== null && 'buttons' in arg) as { buttons: string[] } | undefined;
+      seen.push(options);
+      return { response: options?.buttons.indexOf('Start server') ?? 0, checkboxChecked: false };
+    };
+  });
+  await page.getByTestId('agent-settings-toggle').click();
+  await expect(page.getByTestId('agent-mcp')).toBeVisible();
+  await page.getByTestId('agent-mcp-field-name').fill('Fake Tools');
+  await page.getByTestId('agent-mcp-field-command').fill(node);
+  await page.getByTestId('agent-mcp-field-args').fill(fixture);
+  await page.getByTestId('agent-mcp-field-read').fill(readPaths.join('\n'));
+  await page.getByTestId('agent-mcp-save').click();
+  const row = page.locator('[data-testid="agent-mcp-server"][data-server="faketools"]');
+  await expect(row).toBeVisible();
+  await expect(row.getByTestId('agent-mcp-untrusted')).toHaveText('Untrusted');
+  await expect(row.getByTestId('agent-mcp-status')).toHaveText('Stopped');
+  // Off until the user turns it on.
+  await expect(row.getByTestId('agent-mcp-start')).toBeDisabled();
+  // The switch shows main's setting: it turns on once main has stored it.
+  await row.getByTestId('agent-mcp-enabled').click();
+  await expect(row.getByTestId('agent-mcp-enabled')).toBeChecked();
+  await row.getByTestId('agent-mcp-start').click();
+  await expect(row.getByTestId('agent-mcp-status')).toHaveText('Running');
+  await expect(row.getByTestId('agent-mcp-tools')).toHaveText('5 tools');
+  // The settings say plainly how it runs; never a sandbox that isn't there.
+  const sandbox = await row.getByTestId('agent-mcp-sandbox').textContent();
+  expect(sandbox === MCP_NO_SANDBOX_SENTENCE || sandbox!.includes('sandbox: it can')).toBe(true);
+  test.info().annotations.push({ type: 'mcp-sandbox', description: (await row.getByTestId('agent-mcp-sandbox').getAttribute('data-unsandboxed')) === 'true' ? 'none' : sandbox! });
+  // Main's dialog showed the exact command line, labelled untrusted.
+  const dialogs = (await app!.evaluate(() => structuredClone((globalThis as { __frostMcpDialogs?: unknown[] }).__frostMcpDialogs ?? []))) as { title: string; message: string; detail: string }[];
+  expect(dialogs).toHaveLength(1);
+  expect(dialogs[0]!.title).toBe('Start an untrusted MCP server?');
+  expect(dialogs[0]!.detail).toContain(`${node} ${fixture}`);
+  expect(dialogs[0]!.detail).toContain(sandbox!);
+
+  await page.getByTestId('agent-settings-toggle').click();
+  await send('Echo something');
+  await expect(approvalCard()).toBeVisible();
+  await expect(approvalCard()).toHaveAttribute('data-untrusted', 'true');
+  await expect(page.getByTestId('agent-approval-title')).toHaveText('Untrusted tool from Fake Tools: allow "echo"?');
+  await expect(page.getByTestId('agent-approval-input')).toHaveText(JSON.stringify({ text: 'from e2e' }));
+  // Never for the whole site.
+  await expect(page.getByTestId('agent-allow-always')).toHaveCount(0);
+  await expect(page.getByTestId('agent-allow-once')).toBeEnabled();
+  await page.getByTestId('agent-allow-once').click();
+  await expect(approvalCard()).toHaveCount(0);
+  await expect(toolCards().last()).toHaveAttribute('data-status', 'done');
+  await expect(toolCards().last().getByTestId('agent-tool-untrusted')).toHaveText('Untrusted');
+  await expect(toolCards().last().getByTestId('agent-tool-output')).toContainText('echo: from e2e');
+  await expect(assistantTexts().last()).toHaveText('Echo done.');
 });

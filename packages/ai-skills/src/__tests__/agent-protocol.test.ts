@@ -36,6 +36,7 @@ const mainToRuntime = [
     modelId: 'anthropic/claude-sonnet-5-5',
     route: 'gateway',
     allowedTools: ['page_audit', 'click', 'mcp__docs__search'],
+    mcpTools: [{ name: 'mcp__docs__search', description: 'Untrusted tool from Docs: Searches.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } }],
   },
   { type: 'chat.stop', chatId: CHAT },
   { type: 'tool.result', chatId: CHAT, callId: 'call_1', result: okResult },
@@ -260,9 +261,47 @@ describe('agent protocol', () => {
       { ...runtimeToMain[6], authorization: 'Bearer x' },
       { type: 'consent.give', chatId: CHAT },
       { type: 'permit', chatId: CHAT },
+      // Task 10: nothing from the runtime starts, adds or defines an MCP server or tool.
+      { type: 'mcp.start', serverId: 'docs' },
+      { type: 'mcp.add', name: 'Evil', command: '/bin/sh', args: ['-c', 'id'] },
+      { type: 'mcp.tools', tools: [] },
+      { ...runtimeToMain[5], mcpTools: [] },
+      { ...runtimeToMain[5], command: '/bin/sh' },
     ]) {
       expect(runtimeOk(message)).toBe(false);
     }
+    const mcpish = /mcp|server|spawn|command|sandbox/i;
+    for (const type of RUNTIME_TO_MAIN_MESSAGE_TYPES) expect(type).not.toMatch(mcpish);
+    for (const field of fields) expect(field).not.toMatch(mcpish);
+  });
+});
+
+// Spec: specs/agent-protocol.schema.ts (chat.start.mcpTools, protocol version 6), specs/agent-mcp.schema.ts
+// Acceptance: specs/agent-mcp.feature.md (Protocol)
+describe('chat.start MCP tools (protocol version 6, Task 10)', () => {
+  const start = mainToRuntime[0];
+  const tool = start.mcpTools[0];
+  test('chat-start-mcp-tools-match-allowed-names', () => {
+    expect(AGENT_PROTOCOL_VERSION).toBe(6);
+    expect(mainOk(start)).toBe(true);
+    expect(mainOk({ ...start, mcpTools: [] })).toBe(false);
+    expect(mainOk({ ...start, allowedTools: ['page_audit', 'click'] })).toBe(false);
+    expect(mainOk({ ...start, mcpTools: [tool, tool] })).toBe(false);
+    const { mcpTools: _omit, ...withoutField } = start;
+    expect(mainOk(withoutField)).toBe(false);
+    expect(mainOk({ ...start, allowedTools: ['page_audit'], mcpTools: [] })).toBe(true);
+  });
+
+  test('chat-start-mcp-tools-sanitised-and-bounded', () => {
+    const withTool = (changes: Record<string, unknown>) => ({ ...start, mcpTools: [{ ...tool, ...changes }] });
+    // An unsanitised schema (a `$ref`, an unknown keyword, keys out of order, a non-object root) is refused.
+    for (const inputSchema of [{ type: 'object', $ref: 'https://evil.example/' }, { type: 'object', properties: { q: { pattern: '^(a+)+$' } } }, { properties: {}, type: 'object' }, { type: 'string' }, null]) {
+      expect(mainOk(withTool({ inputSchema })), JSON.stringify(inputSchema)).toBe(false);
+    }
+    expect(mainOk(withTool({ name: 'search' }))).toBe(false);
+    expect(mainOk(withTool({ description: '' }))).toBe(false);
+    expect(mainOk(withTool({ description: 'x'.repeat(5000) }))).toBe(false);
+    expect(mainOk(withTool({ extra: true }))).toBe(false);
   });
 });
 

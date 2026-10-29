@@ -14,6 +14,8 @@ import type {
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
 import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
+import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
+import type { AgentSaveMcpServerInput } from '@app/specs/agent-mcp.schema';
 
 // The agent panel's main-side service as the `agent.*` procedures see it (Phase 5 Task 6a;
 // acceptance `agent-session.feature.md`, Router). Main implements it over its chat session manager
@@ -81,4 +83,17 @@ export interface AgentService {
   deleteSkill(id: string): Promise<boolean>;
   /** Stores a copy of a skill (to start from a built-in) under a free id. */
   duplicateSkill(id: string): Promise<AgentSaveSkillResult>;
+
+  // ---- Task 10 (`agent-mcp.spec.ts`; acceptance `agent-mcp.feature.md`) ----
+  /** Adds a server (no `id`) or changes one; environment values go to main's credential store. */
+  saveMcpServer(input: AgentSaveMcpServerInput): Promise<{ readonly result: McpSaveResult; readonly id?: string }>;
+  /** Stops and deletes a server, and its token and environment values. */
+  deleteMcpServer(id: string): Promise<boolean>;
+  /** Turns a server's tools on or off for chats (off also stops it). */
+  setMcpServerEnabled(id: string, enabled: boolean): Promise<boolean>;
+  /** Connects a server; a command server starts only after main's native dialog was confirmed. */
+  startMcpServer(id: string): Promise<McpStartResult>;
+  stopMcpServer(id: string): Promise<boolean>;
+  /** Stores (or with `null`, removes) an HTTP server's bearer token; never answers it. */
+  setMcpToken(id: string, token: string | null): Promise<McpTokenResult>;
 }

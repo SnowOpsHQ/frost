@@ -19,7 +19,7 @@
  */
 import { z } from 'zod';
 import { AGENT_E2E_SCRIPT_MAX_CHARS } from './agent-session.spec';
-import { AGENT_TOOL_NAMES } from './agent-tools.spec';
+import { isAgentToolName, isMcpToolName } from './agent-tools.spec';
 import { boundedJsonSchema } from './agent-protocol.schema';
 
 export const AGENT_E2E_SCRIPT_LIMITS = {
@@ -44,7 +44,7 @@ export const AgentE2eStepSchema = z
   .strictObject({
     text: z.array(z.string().min(1).max(L.maxChunkChars)).max(L.maxChunks).optional(),
     toolCalls: z
-      .array(z.strictObject({ toolName: z.enum(AGENT_TOOL_NAMES), input: boundedJsonSchema(L.maxInputChars, 'tool input is not bounded JSON') }))
+      .array(z.strictObject({ toolName: z.string().max(64).refine((name) => isAgentToolName(name) || isMcpToolName(name), { message: 'not a tool name' }), input: boundedJsonSchema(L.maxInputChars, 'tool input is not bounded JSON') }))
       .max(L.maxToolCalls)
       .optional(),
     /** The step's reported usage (default: 100 input and 10 output tokens). */

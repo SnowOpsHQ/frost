@@ -10,6 +10,7 @@
  */
 import { MAX_TOOL_CALLS_PER_TURN, type ApprovalDecision, type ToolActivityStatus } from './agent-approvals.spec';
 import type { ChatRetention } from './agent-data.spec';
+import type { AgentMcpView } from './agent-mcp.spec';
 import type { KeyProtection } from './agent-proxy.spec';
 import type { AgentToolRisk, ModelId, ModelRoute, ToolErrorCode } from './agent-tools.spec';
 import type { SkillInputSlot } from './skills.spec';
@@ -290,6 +291,8 @@ export interface AgentState {
   readonly grantsVersion: number;
   /** How long chats are kept on disk (Task 9, `agent-data.spec.ts`). */
   readonly chatRetention: ChatRetention;
+  /** The MCP servers and whether they may be used (Task 10, `agent-mcp.spec.ts`). Never a token or an environment value. */
+  readonly mcp: AgentMcpView;
 }
 
 /** What a refused send says (the panel shows it as a notice). */

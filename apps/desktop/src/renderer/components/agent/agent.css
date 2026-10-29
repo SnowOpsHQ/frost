@@ -1006,3 +1006,56 @@
   flex-direction: column;
   gap: 4px;
 }
+
+/* MCP servers (Task 10): every server and MCP tool carries an "Untrusted" chip. */
+.agent-untrusted {
+  color: var(--agent-approval-edge);
+  border-color: var(--agent-approval-edge);
+}
+
+.agent-mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-mcp-server {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border-field);
+  border-radius: 8px;
+}
+
+.agent-mcp-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-mcp-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.agent-mcp-target {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.agent-mcp-add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.agent-mcp-lines {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}

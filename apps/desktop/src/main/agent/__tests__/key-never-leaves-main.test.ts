@@ -104,6 +104,7 @@ async function runTurn(agent: Agent): Promise<AgentChatEvent[]> {
     modelId: 'anthropic/claude-sonnet-5-5',
     route: 'byok-anthropic',
     allowedTools: ['page_audit'],
+    mcpTools: [],
   };
   expect(agent.host.send(start)).toBe(true);
   await vi.waitFor(() => expect(events.some((event) => event.type === 'chat.finish' || event.type === 'chat.error')).toBe(true));
