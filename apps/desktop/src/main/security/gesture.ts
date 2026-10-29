@@ -48,6 +48,7 @@ export function trackUserGesture(contents: WebContents, now: () => number): User
 export function openExternalIfAllowed(url: string, userGesture: boolean): boolean {
   const target = parseExternalUrl(url);
   if (!target || resolveExternalOpen(url, { userGesture }) !== 'allow') return false;
-  shell.openExternal(target.href).catch((err: unknown) => console.error('openExternal failed', err));
+  // A fixed message: the error can carry the URL (a code, a token in a query).
+  shell.openExternal(target.href).catch(() => console.error('frost: openExternal failed'));
   return true;
 }

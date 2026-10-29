@@ -23,6 +23,7 @@ import {
 } from '../icons';
 import { RenderProfileIcon } from '../components/RenderProfile';
 import { ContentIcon } from '../components/seo/content-icons';
+import { GscIcon } from '../components/seo/gsc-icons';
 import { JavascriptIcon } from '../components/seo/javascript-icons';
 import { SerpIcon, VisibilityIcon } from '../components/seo/serp-icons';
 import type { PaletteIconName } from './registry';
@@ -191,6 +192,7 @@ const ICONS: Readonly<Record<PaletteIconName, (props: GlyphProps) => ReactNode>>
   'panel-javascript': JavascriptIcon,
   'panel-serp': SerpIcon,
   'panel-visibility': VisibilityIcon,
+  'panel-search-console': GscIcon,
   sidebar: SidebarIcon,
   highlight: HighlightIcon,
   audit: AuditGlyph,

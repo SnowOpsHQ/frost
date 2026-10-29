@@ -1,0 +1,4 @@
+# The root .gitignore ignores every .env*; keep the placeholder file tracked.
+!.env.example
+# The dev PGlite database (used when DATABASE_URL is unset).
+.data/

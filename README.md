@@ -37,6 +37,15 @@ browser and run SEO skills.
   An optional on-device intent classifier labels queries with its confidence; its model is
   downloaded only after you agree. The plan and how it was built:
   [`docs/plans/phase-3-serp-intent.md`](docs/plans/phase-3-serp-intent.md).
+- **Phase 4 — Accounts, entitlements, telemetry and Search Console:** built. Sign in to a frost
+  account through the system browser, confirmed in the app; a plan (`free` or `pro`) arrives as a
+  signed snapshot that main verifies, with offline grace, and gates features on. Telemetry (usage
+  traces and error reports) is off by default, scrubbed, and does what its two switches say. A
+  read-only Search Console connection feeds a page and site performance panel, and a Settings view
+  holds all of it. The account API is a lean backend (`apps/backend`) that runs locally and in tests
+  only. The plan and how it was built:
+  [`docs/plans/phase-4-accounts-telemetry.md`](docs/plans/phase-4-accounts-telemetry.md); the
+  backend: [`apps/backend/README.md`](apps/backend/README.md).
 - **Phase 6 — Change intelligence:** built (Tasks 1–8). Per-page change history and visual evidence,
   kept locally, with explicit retention controls:
   - **Changes** (a sidebar panel) captures what a page says to search engines. Each distinct state
@@ -53,8 +62,7 @@ browser and run SEO skills.
   The database refuses changes to captured rows; they are removed only by a recorded purge. The
   plan, its schema and how it was built:
   [`docs/plans/phase-6-change-intelligence.md`](docs/plans/phase-6-change-intelligence.md).
-- **Next:** Phase 4, accounts, entitlements and telemetry (sign-in, plan gating, consent-gated
-  telemetry, a read-only Search Console connection; `docs/design/IMPLEMENTATION-PLAN.md` §4).
+- **Next:** Phases 5 and 7 are in review; next up is integrating them (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 
 ## Clean-room note
 frost is a **clean-room** build. It is designed from a written behavioral/design
@@ -65,6 +73,9 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
 ## Layout
 - `apps/desktop/` — the Electron app (main, preload, the React chrome, the on-device intent utility
   process), packaged with Electron Forge.
+- `apps/backend/` — the account API (`@app/backend`): web and desktop sign-in, signed entitlement
+  snapshots and an admin CLI. Hono, better-auth and Drizzle on Postgres (PGlite in dev and tests).
+  Never deployed from this repo.
 - `packages/seo-core/` — the SEO audit engine (`@app/seo-core`): the rule catalog's checks, the
   health score, the schema, robots.txt, hreflang, page speed and security readers, the content
   report, the served-vs-rendered comparison and the link, sitemap and hreflang check readers. Pure
@@ -76,10 +87,12 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
   pinned render profiles, content notes and app settings, and change intelligence's append-only
   captures, versions, diffs, screenshots, projects and purge log.
 - `packages/ipc-contract/` — the typed tRPC IPC contract and its sender guard.
+- `packages/telemetry/` — consent-gated telemetry (`@app/telemetry`): OpenTelemetry traces and Sentry
+  error events behind a consent gate, with allowlists and scrubbing. Pure Node, no Electron import.
 - `specs/` — machine-checkable spec artifacts (constants, Zod schemas, `*.feature.md` acceptance
   lists); every scenario maps to a named test.
 - `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, 8-phase roadmap).
-- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–3 and 6).
+- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–4 and 6).
 - `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner, and
   `scripts/sign-selectors.mjs` (`pnpm sign:selectors`, for maintainers signing a selector pack).
 

@@ -3,6 +3,7 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { builtinModules } from 'node:module';
 import { createPackageWithOptions, listPackage } from '@electron/asar';
 import { build, mergeConfig, type InlineConfig } from 'vite';
@@ -269,7 +270,8 @@ describe('forge config (macOS package)', () => {
       const forgeLike: InlineConfig = {
         configFile: false,
         logLevel: 'silent',
-        root: path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..'),
+        // fileURLToPath, not URL.pathname: on Windows the pathname is `/D:/…`, which is no path.
+        root: fileURLToPath(new URL('../..', import.meta.url)),
         build: {
           outDir,
           emptyOutDir: true,

@@ -85,6 +85,8 @@ export const SEO_PANELS = [
   // Phase 3 Task 6 (`serp-panels.feature.md`): no audit categories, so no rail dot.
   { id: 'serp', label: 'SERP', available: true, categories: [] },
   { id: 'visibility', label: 'Visibility', available: true, categories: [] },
+  // Phase 4 Task 10 (`gsc-panel.feature.md`): Search Console performance. No rules, so no rail dot.
+  { id: 'search-console', label: 'Search Console', available: true, categories: [] },
   // Phase 6 Task 4 (`changes-panel.feature.md`): the page's captured versions and their diffs (no rules).
   { id: 'changes', label: 'Changes', available: true, categories: [] },
   // Phase 6 Task 8 (`inspector.feature.md`): the read-only DOM inspector (no rules).

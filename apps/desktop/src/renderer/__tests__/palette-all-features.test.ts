@@ -8,6 +8,7 @@ import { browserPolishPaletteSources } from '../browser-polish-palette';
 import { checksPaletteSources } from '../checks-palette';
 import { contentPaletteSources } from '../content-palette';
 import { devtoolsPaletteSources } from '../devtools-palette';
+import { gscPaletteSources } from '../gsc-palette';
 import { javascriptPaletteSources } from '../javascript-palette';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { changesPaletteSources } from '../changes-palette';
@@ -40,6 +41,7 @@ function everySource(): PaletteSource[] {
     ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }),
     ...retentionPaletteSources({ open: vi.fn(), lastProject: () => 'x', purgeNow: vi.fn(async () => null), compact: vi.fn(async () => null) }),
     ...inspectorPaletteSources({ pick: vi.fn(async () => null) }),
+    ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn() }),
   ];
 }
 

@@ -9,6 +9,9 @@ hreflang checks. Phase 3 adds:
 - an optional on-device intent classifier;
 - a Visibility panel that fetches a page as search and AI crawlers do.
 
+Phase 4 adds a frost account with plans, opt-in telemetry and a read-only Search Console
+panel, set up in a Settings view.
+
 The agent comes in a later phase (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 
 ## What it does
@@ -338,6 +341,75 @@ Acceptance: `serp-panels.feature.md` and the feature files named below; how it w
 - To publish an update, attach `serp-selectors.json` and its `.sig` to a GitHub release, with a
   higher `version`.
 
+### Account, telemetry and Search Console (Phase 4)
+Acceptance: the feature files named below; how it was built:
+`docs/plans/phase-4-accounts-telemetry.md`; the account API: `apps/backend/README.md`. A build that
+lacks a value says "not configured in this build" for that feature and sends nothing for it (see
+[Configuration](#configuration)).
+
+- **Settings** (`account-settings.feature.md`). A sheet over the page column, like History (the
+  page is laid out zero-high while it shows, and the find bar is hidden). Sections: Account, Search
+  Console, Telemetry. Opened from the menu's **Settings…** (Mod+,; the macOS app menu, elsewhere the
+  end of Edit) and the palette: "Settings", "Sign in to frost" (while signed out), "Search Console
+  settings", "Telemetry settings". It shows only what main answers: "Loading…" until then, and a
+  failed read is retried with backoff.
+- **Sign-in** (`account-signin.feature.md`; the backend's side: `account-backend.feature.md`).
+  - **Sign in** (a real click) opens the backend's sign-in page in the system browser. Main listens
+    on `127.0.0.1:<random port>/callback` for that one request, with a `state` and a PKCE verifier
+    only it knows. Without a live click in that window nothing opens.
+  - The page offers password sign-in, an emailed sign-in link and sign-up (the address must be
+    verified first). Once signed in (within the last 10 minutes), it asks "Continue to frost as …"
+    and shows a short code (`XXXX-XXXX`, from the request's PKCE challenge); Settings shows the same
+    code while it waits. Continue ends the browser's session: one sign-in yields one code.
+  - Back in the app, Settings asks **"Sign in as …?"**. Nothing is stored and no plan applies until
+    **Confirm sign-in** is clicked in the window that started it. The button takes no click for a
+    second after it appears and after the window regains focus. Cancel, Close or Esc drop the
+    request and revoke the token already exchanged.
+  - Sign out revokes the token at the backend and drops to `free`. Without a real keychain the
+    account lasts for this run only (Settings says so), and quitting revokes its token.
+- **Plan gating** (`entitlements-client.feature.md`). The backend signs a snapshot of the account's
+  plan and features (`free`: none; `pro`: `ai-agent`, `search-console`, `sync`). Main verifies it
+  against the public keys baked into the build (EdDSA only, the right `kid`, issuer, audience and
+  account) and gates on its feature flags, never on the plan name.
+  - A snapshot lives 3 days. Main refreshes at start, every 6 hours and on Settings' Refresh (at
+    most once per 30 s).
+  - When a refresh fails for a network reason, 7 days of offline grace follow the snapshot's
+    expiry; Settings shows the grace's end. A refused session signs out; a snapshot that does not
+    verify is `free`.
+  - Setting the clock back neither revives an expired snapshot nor extends grace: main keeps a
+    time high-water mark with the snapshot.
+- **Telemetry** (`telemetry.feature.md`). Two switches, both **off by default**; nothing leaves the
+  machine before you turn one on (a real click: a page cannot turn it on), and turning one off drops
+  what is queued at once (no final flush).
+  - **Usage** sends OpenTelemetry traces (OTLP/HTTP JSON). For now that is one `app.start` span:
+    your platform, whether startup worked and how long it took. Only allowlisted attributes leave
+    (`SPAN_ATTRIBUTE_ALLOWLIST`); the resource is frost's name, version and OS type.
+  - **Errors** sends Sentry error events: main's uncaught exceptions and unhandled rejections, and
+    the app window's errors (at most 10 a minute). Each event is rebuilt from an allowlist, with no
+    user, request, host name, breadcrumbs or tags; stack frames are relative to the app.
+  - **Scrubbing.** Every string that leaves loses URLs, emails, IP addresses, host names, absolute
+    paths, tokens and IDs, and the machine's host and login names (`SCRUB_RULES`).
+  - **No identifier.** No install ID, user ID or machine name. Requests carry `user-agent:
+    frost-telemetry`, no language and no cookies; the receiving server still sees your IP address,
+    as with any request. Settings lists what each switch sends in plain words, and says "for this
+    run only" if the choice could not be saved.
+  - Crashes behave as before: Electron's error dialog stays.
+- **Search Console** (`gsc.feature.md`), a Pro feature. **Connect** in Settings (a real click)
+  opens Google's consent page for read-only access (`webmasters.readonly`, nothing else; a wider or
+  missing grant is refused and revoked). The refresh token is kept in the keychain, the access
+  token in memory only. The connection belongs to the frost account that made it: another account
+  never reads with it, and signing in as a different account revokes it. **Disconnect** deletes it
+  and revokes it at Google. Settings shows "Connected", with no Google account name (frost asks
+  Google for none).
+- **Search Console panel** (`gsc-panel.feature.md`). A rail panel (no status dot, no
+  rerun button or audit footer) for the active tab's page or its whole property, over 7, 28 or 90
+  days: clicks, impressions, CTR and average position, a frost-drawn chart of one metric, and the
+  top 25 queries. The property is the longest URL-prefix property that matches, else the domain
+  property. The chart ends at the last day Google answered, and the panel says how far its data
+  lags. Signed out, not Pro, not connected, no matching property, no data and each error have their
+  own words, and their buttons open Settings. It reads only while it shows, never on a timer; main
+  caches answers for 15 minutes.
+
 ### Change intelligence (Phase 6)
 Acceptance: `changes-capture.feature.md`, `changes-diff.feature.md`, `changes-panel.feature.md`,
 `screenshot.feature.md`, `projects.feature.md`, `retention.feature.md`, `inspector.feature.md` and
@@ -427,6 +499,12 @@ The details, each with its named tests, are in `specs/*.feature.md`.
   `PACKAGED_FORBIDDEN_SWITCHES`), and the Electron fuses (`PACKAGED_FUSES` in
   `specs/macos-package.spec.ts`) disable run-as-Node, `NODE_OPTIONS` and the Node inspector flags,
   and turn on cookie encryption, ASAR integrity validation and loading the app only from its ASAR.
+- **Tokens stay in main** (Phase 4). The account's desktop token, the entitlement snapshot and
+  Search Console's tokens live in main, in `userData/secrets/` encrypted with `safeStorage`'s
+  asynchronous API (`specs/secret-store.spec.ts`; memory-only without a real keychain). No
+  procedure answers a token, code, verifier, `state` or snapshot: the chrome sees `AccountState`,
+  `GscStatus` and aggregated rows, and main's logs go through a redactor. The system browser opens
+  only through `openExternalIfAllowed`, on a live click in the window that asked.
 - CI gates: Electronegativity, Semgrep (`ipc-sender-guard`, `webcontents-factory`,
   `debugger-allowlist`) and the e2e suite (`specs/ci-gates.feature.md`).
 
@@ -534,11 +612,20 @@ their logs** (each surface says so):
   loaded, and a project's **Capture now** loads its saved searches only when you start it (one
   ordinary tab visit per search, like typing it).
 - **DNS lookups** of each of those requests' host names, before every hop (see below).
+- **The account API** (Phase 4, only in a build configured for it): the session and the signed
+  entitlements at start, every 6 hours and on Refresh, the token exchange after a sign-in and the
+  revocation at sign-out. `net.fetch` with no cookies, no cache, no redirects and a timeout.
+- **Google** (only while Search Console is connected, and only for a Pro account): the token
+  endpoints, the property list and Search Analytics queries while the panel shows (cached 15
+  minutes), and the revocation at disconnect.
+- **Telemetry** (only with its switch on, and only to the endpoint baked into the build): see
+  Telemetry above.
 - **Tabs you ask for:** an "Open in" tool (sent the page URL, after you allowed its host once), the
   site's robots.txt or sitemap.xml from the palette, and searches with the chosen engine are
   ordinary browse-session tabs.
 
-The chrome itself requests nothing: no favicons, remote images, palette suggestions or telemetry.
+The chrome itself requests nothing: no favicons, remote images, palette suggestions or telemetry
+(its error reports go through main, and only with consent).
 
 All the fetched requests go through **one bounded fetcher** in main (`seo/fetcher.ts`,
 `specs/fetcher.spec.ts`), never the chrome or a worker:
@@ -621,7 +708,7 @@ proxy, the proxy resolves the name itself.
   that it was scrolled to one, or which `hidden=until-found` element matched (`beforematch`).
 - **Shortcuts and settings.** Mod+Y (History) is a menu accelerator only, not reserved: Ctrl+Y is
   redo in a page's text field on Linux and Windows. The search engine is chosen in the command
-  palette (there is no settings view yet).
+  palette (the Settings view does not offer it yet).
 - **Content.** Readability is English only; stop-word lists cover English, Spanish, French and
   German. Pixel widths come from one measured sans-serif table; the previews show where a result
   would cut, not a pixel-exact rendering. Target queries, drafts and the "Open in" hosts you allowed
@@ -656,6 +743,29 @@ proxy, the proxy resolves the name itself.
   - Clear Browsing Data keeps the downloaded intent model and an installed selector pack.
   - Repeated response headers are joined into one value, except `X-Robots-Tag` in the probes.
   - The DNS-rebinding window above applies to the SERP lane's requests too.
+- **Keychain.** Linux without a keyring (`basic_text`) is memory-only: the account and a Search
+  Console connection last for the run, and quitting revokes them. Under Playwright Linux is always
+  memory-only (its loader adds `--password-store=basic`), so the e2e branches that restart with a
+  stored account or tamper with a stored blob run on macOS only (its mock keychain persists).
+- **Search Console account.** The status says "Connected" with no Google account name, and connect
+  has no in-app confirmation of which Google account was chosen: frost asks Google for no identity.
+- **Gating is client-side.** Main gates on a verified snapshot, but a modified client can skip any
+  check of its own. A paid feature that runs on a server must be enforced there.
+- **Offline grace after a downgrade.** A client that cannot reach the backend keeps a Pro snapshot
+  for its life plus grace (3 + 7 days) after the plan changed. Restoring an old `entitlements` blob
+  and setting the clock back into its life can replay that snapshot until its expiry (accepted
+  risk, `entitlements-client.feature.md`).
+- **Error reports are pattern-scrubbed.** URLs, hosts, emails, paths, tokens, IDs and the machine's
+  names are removed; free text a message quotes (a tab's title, typed text) is kept, cut to length.
+- **Search Console queries are untrusted text.** Anyone can make a search that shows up as a query;
+  the panel renders them inert, and anything that reads them (the Phase 5 agent) must treat them as
+  attacker-controlled.
+- **Not deployed.** The account API runs locally and in tests only; its `console` email transport
+  prints sign-in links and is for development (production refuses it). No real email transport
+  exists yet.
+- **`app.isPackaged` is name-based.** It only looks at the executable's name. The public build
+  configuration does not rely on it (a baked-in value pins the build), but the pre-existing e2e
+  public-hosts switch (`E2E_PUBLIC_HOSTS_SWITCH`) and the remote-debugging refusal still do.
 
 - **Change intelligence (Phase 6).**
   - **Full-page screenshots** repeat fixed and sticky elements in each segment, lazy content appears
@@ -708,6 +818,84 @@ From the repo root (`pnpm install` first):
 If your shell exports `ELECTRON_RUN_AS_NODE` (some terminals and agent harnesses do), unset it for
 manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it itself.
 
+E2E configuration notes:
+- The harness also strips every inherited `FROST_PUBLIC_*`, `FROST_GSC_*` and `FROST_TELEMETRY_*`
+  variable from the app's environment before a suite applies its own, so a value your shell exports
+  never points a suite at another backend, collector or Google endpoint.
+- That covers the **run-time** environment only. Values set in the environment of `build`, or in
+  `apps/desktop/.env`, `.env.local`, `.env.production` …, are read by Vite (`envPrefix` `FROST_PUBLIC_`)
+  and **baked into the bundle**. A build with any `FROST_PUBLIC_*` value baked in is pinned to its
+  baked configuration as a whole (`specs/build-config.spec.ts`): it ignores the run-time environment,
+  including the suites' fakes, so the account, telemetry and Search Console suites fail against it.
+  Build for the e2e with no `FROST_PUBLIC_*` variable set and no such `.env*` file.
+
+## Configuration
+Phase 4's endpoints and keys are public build values (never a secret: anything in a build can be
+read out of it). None is committed; a build without one leaves its feature "not configured in this
+build" and sends nothing for it.
+
+| Variable | Feature | Meaning |
+|---|---|---|
+| `FROST_PUBLIC_API_BASE_URL` | Account | The account API's origin (no path, query or credentials). |
+| `FROST_PUBLIC_ENTITLEMENT_JWKS` | Account | JSON JWKS of the Ed25519 public keys that sign snapshots (`admin keygen` prints it; several `kid`s during a rotation). |
+| `FROST_PUBLIC_GSC_CLIENT_ID` | Search Console | Google OAuth client ID (Desktop app type). |
+| `FROST_PUBLIC_GSC_CLIENT_SECRET` | Search Console | That client's installed-app "secret" (not confidential by Google's own definition; never logged or committed). |
+| `FROST_PUBLIC_SENTRY_DSN` | Telemetry, errors | Sentry DSN for error events. |
+| `FROST_PUBLIC_OTEL_ENDPOINT` | Telemetry, usage | OTLP/HTTP traces endpoint. |
+| `FROST_GSC_AUTH_URL`, `FROST_GSC_TOKEN_URL`, `FROST_GSC_REVOKE_URL`, `FROST_GSC_API_BASE` | e2e only | Fake Google consent, token and revoke endpoints and API base (`https:`, or `http:` on `127.0.0.1` / `localhost`). |
+| `FROST_TELEMETRY_EXPORT_DELAY_MS` | e2e only | Span batch delay (holds the startup span in the queue). |
+
+The rule (`specs/build-config.spec.ts`, `runtimeOverridesAllowed`):
+- Values are baked in at build time (Vite, `envPrefix` `FROST_PUBLIC_` in `vite.main.config.ts`).
+- **If any `FROST_PUBLIC_*` value is baked in, the run-time environment is read for none of them**,
+  nor for the e2e-only values: a build made with real values is pinned to them as a whole, and
+  talks to Google's fixed endpoints.
+- Only an **unpackaged** build with **nothing** baked in (dev, e2e) reads them all from its run-time
+  environment.
+- A packaged build requires `https:` for the API base, the DSN and the OTLP endpoint. Unpackaged also
+  accepts `http:` on `127.0.0.1` (and `localhost` for the API base).
+- Vite reads `FROST_PUBLIC_*` from the build's environment **and** from `apps/desktop/.env`,
+  `.env.local`, `.env.production` …, so a stray `.env*` file pins a build too (see the e2e notes
+  above). Keep those files out of the repo.
+
+### Running against the local backend
+The backend's own steps are in `apps/backend/README.md` (Run locally). In short:
+
+```sh
+cp apps/backend/.env.example apps/backend/.env         # set BETTER_AUTH_SECRET (openssl rand -base64 32)
+pnpm --filter @app/backend admin keygen                # server lines into apps/backend/.env;
+                                                       # keep FROST_PUBLIC_ENTITLEMENT_JWKS for the desktop
+set -a; . apps/backend/.env; set +a
+pnpm --filter @app/backend dev                         # http://127.0.0.1:8787
+```
+
+Then, with nothing `FROST_PUBLIC_*` set and no `apps/desktop/.env*` file, build once and launch the
+unpackaged app with the configuration in its environment:
+
+```sh
+pnpm --filter @app/desktop build
+env -u ELECTRON_RUN_AS_NODE \
+  FROST_PUBLIC_API_BASE_URL=http://127.0.0.1:8787 \
+  FROST_PUBLIC_ENTITLEMENT_JWKS='{"keys":[…]}' \
+  pnpm --filter @app/desktop exec electron .
+```
+
+(`pnpm --filter @app/desktop start` with the same variables exported works too, but bakes them into
+the dev bundle; run `build` again with none set before the e2e.)
+
+In frost, open Settings and **Sign in**. In the browser, create an account, open the verification
+link the backend prints to its console, sign in, check the code and **Continue**; back in frost,
+**Confirm sign-in**. The plan is `free`. To make it `pro`:
+
+```sh
+pnpm --filter @app/backend admin grant alice@example.com pro
+```
+
+then **Refresh** in Settings. With PGlite (no `DATABASE_URL`) stop `dev` before an `admin` command
+and start it again after: PGlite is one process's database. Search Console also needs
+`FROST_PUBLIC_GSC_CLIENT_ID` and `FROST_PUBLIC_GSC_CLIENT_SECRET` from a Google OAuth client of the
+Desktop app type, and telemetry an endpoint and a DSN of your own.
+
 ## Source layout
 - `src/main/` — the main process: `index.ts` (wiring), `browser/` (the browser controller and its
   parts, the navigation guard, permissions, address resolution, shortcuts, the context menu, the
@@ -719,10 +907,13 @@ manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it i
   and its service), `serp/` (the selector pack's verify and store and the bundled `packs/`, engine
   detection, the reader script, the SERP worker and its analysis, the service, outlines, the
   probes and their parse, `setup.ts`), `intent/` (the classifier, the model store, the utility
-  process host, the self-test, `setup.ts`), `changes/` (Phase 6: the region read, the capture
-  snapshot and service, load times, projects, the capture run, retention and purges),
-  `screenshots/` (stitching, the page scripts, capture, imaging, the file store and the service),
-  `inspector/` (the page script and the service), `security/`, `protocol/` (`app://`), `menu.ts`,
+  process host, the self-test, `setup.ts`), `account/` (configuration, the secret store, the
+  loopback listener, PKCE, the API client, entitlements, sign-in, quit holds), `gsc/` (Search
+  Console's OAuth, API client, property matching and service), `telemetry/` (the consent store and
+  the wiring of `@app/telemetry`), `changes/` (Phase 6: the region read, the capture snapshot and
+  service, load times, projects, the capture run, retention and purges), `screenshots/` (stitching,
+  the page scripts, capture, imaging, the file store and the service), `inspector/` (the page
+  script and the service), `security/`, `protocol/` (`app://`), `menu.ts`,
   `session-store.ts`, `clear-browsing-data.ts`, `window.ts` (the window and tab-view factories).
 - `src/workers/intent/` — the intent utility process: its entry, the message handling, frost's
   WordPiece tokenizer, the embedding, the prototype queries, the keyword fake and the self-test
@@ -731,11 +922,13 @@ manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it i
 - `src/renderer/` — the chrome (React): `App.tsx` (layout), `components/` (`SeoSidebar.tsx` and one
   file per panel in `components/seo/`, the drawer's tabs in `components/devtools/`, the palette,
   find bar, History and render-profile views; `seo/Serp.tsx` and `seo/Visibility.tsx` since
-  Phase 3; `changes/` for Phase 6's Changes, Screenshots, Projects, Retention and Inspector),
-  `palette/` (the action registry, matcher, built-ins and "Open in" consent), each
-  feature's `*-palette.ts` actions, `hooks/` (`useSerp.ts` among them), and pure helpers with unit
-  tests (`serp-view.ts` and `visibility-view.ts` among them).
-- `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers).
+  Phase 3, `seo/GscPanel.tsx` since Phase 4; `changes/` for Phase 6's Changes, Screenshots,
+  Projects, Retention and Inspector), the Settings sheet (`settings-*.tsx`, with `account-view.ts`
+  and the other `settings-*` view models), `palette/` (the action registry, matcher, built-ins and
+  "Open in" consent), each feature's `*-palette.ts` actions, `hooks/` (`useSerp.ts` among them), and
+  pure helpers with unit tests (`serp-view.ts`, `visibility-view.ts` and `gsc-view.ts` among them).
+- `e2e/` — Playwright suites (`harness.ts` launches the app; `helpers.ts` holds shared helpers;
+  `fake-backend.ts`, `fake-google.ts` and `fake-telemetry.ts` are the Phase 4 suites' in-test fakes).
 - `vite.web-vitals.ts` (serves the `web-vitals` IIFE to main as a string), `vite.intent.config.ts`
   (the intent worker's build, `onnxruntime-node` external), `intent-runtime.ts` (the packaging hook
   that copies ONNX Runtime's files for the target, and the unpack glob),

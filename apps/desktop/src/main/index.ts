@@ -4,7 +4,9 @@ import { app, BrowserWindow, clipboard, ipcMain, net, session, webContents, type
 import { appRouter, createSenderPolicy } from '@app/ipc-contract';
 import { attachIpcHandler } from '@app/ipc-contract/main';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { createAccountMain } from './account/main';
 import { createWindowRegistry } from './app-windows';
+import { createGscMain } from './gsc/main';
 import { contextMenuTemplate } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
@@ -47,6 +49,7 @@ import { setupSerp } from './serp/setup';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
 import { claimSingleInstance, reopenOnActivate } from './single-instance';
+import { createTelemetryMain } from './telemetry/main';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
@@ -80,6 +83,10 @@ function start(): void {
   const started = new Promise<void>((resolve) => (markStarted = resolve));
   const windowOptions = { windows: () => BrowserWindow.getAllWindows(), openWindow: () => openMainWindow(), started };
   if (!claimSingleInstance(app, windowOptions)) return;
+
+  // Telemetry (specs/telemetry.feature.md, Desktop): its consent read synchronously, before any window
+  // (off by default); `telemetryMain.telemetry` is the `span` / `captureException` handle for main.
+  const telemetryMain = createTelemetryMain(started);
 
   // Global backstop: every renderer is sandboxed even if a future WebContents forgets the explicit pref.
   app.enableSandbox();
@@ -408,6 +415,13 @@ function start(): void {
     serpParams.bind(serp.readApi);
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
+    // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
+    // check), before the first window (its gestures are tracked from creation).
+    const account = await createAccountMain();
+    // Turning telemetry on needs a live gesture in the sender's window (specs/telemetry.feature.md).
+    telemetryMain.useGestures((windowId) => account.gestures.consume(windowId));
+    // Search Console (specs/gsc.feature.md): read-only, gated on `search-console`; reuses the account's store and gestures.
+    const gsc = await createGscMain(account);
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,
@@ -450,6 +464,9 @@ function start(): void {
         screenshots,
         projects,
         inspector,
+        account: account.service,
+        telemetry: telemetryMain.service,
+        gsc: gsc.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -482,7 +499,7 @@ function start(): void {
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
     // accelerators calling the controller directly (specs/tabs.feature.md, page-commands.feature.md).
-    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.() });
+    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.(), ...account.menu });
     // What the last launch saved, after the sessions are hardened and before any tab or window
     // exists: remembered decisions answer the first requests, and the chrome's first state already
     // has the restored tabs.

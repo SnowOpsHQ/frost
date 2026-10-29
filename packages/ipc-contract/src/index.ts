@@ -13,6 +13,10 @@ export type { ScreenshotsService } from './changes-service';
 export type { ProjectsService } from './projects-router';
 export type { RetentionService } from './projects-router';
 export type { InspectorService } from './inspector-router';
+export type { AccountService, SettingsRequests } from './account-service';
+export { requireFeature } from './account-router';
+export type { TelemetryService } from './telemetry-service';
+export type { GscIpcService, GscService } from './gsc-service';
 export {
   createContext,
   createSenderPolicy,

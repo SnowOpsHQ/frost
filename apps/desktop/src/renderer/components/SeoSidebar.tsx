@@ -10,6 +10,8 @@ import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
 import { hostOf } from '../security';
 import { Compliance } from './seo/Compliance';
 import { Content } from './seo/Content';
+import { GscPanel } from './seo/GscPanel';
+import { GscIcon } from './seo/gsc-icons';
 import { ContentIcon } from './seo/content-icons';
 import { Images } from './seo/Images';
 import { Indexability } from './seo/Indexability';
@@ -58,6 +60,7 @@ const PANEL_ICONS: Readonly<Record<SeoPanelId, typeof OverviewIcon>> = {
   visibility: VisibilityIcon,
   changes: ChangesIcon,
   inspector: InspectorIcon,
+  'search-console': GscIcon,
 };
 
 function Rail({
@@ -155,6 +158,8 @@ function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: Ta
   if (tab && panel === 'visibility') return <Visibility tab={tab} />;
   if (panel === 'changes') return <Changes tab={tab} response={response} />; // Phase 6: history shows whatever the audit's state.
   if (panel === 'inspector') return <Inspector tab={tab} />; // Phase 6 Task 8: the page's DOM, whatever the audit's state.
+  // Search Console has no rules: it does not wait for the audit (`gsc-panel.feature.md`).
+  if (panel === 'search-console') return <GscPanel tab={tab} />;
   if (!tab || response === null) return <Hint testId="seo-empty" title="No page yet" message="Open a web page and frost audits it here: a health score, ranked issues and what search engines read." />;
   if (response.status === 'pending') return <Skeleton />;
   if (response.status === 'unavailable') {
@@ -235,6 +240,8 @@ export function SeoSidebar({
     if (tabId !== undefined && highlightToClear(highlight, panel, open)) void actions.setHighlight(tabId, 'off');
   }, [tabId, highlight, panel, open]);
   const current = SEO_PANELS.find((p) => p.id === panel)!;
+  // A panel without rules (Search Console) shows neither the audit's rerun button nor its footer.
+  const audited = current.categories.length > 0;
   const ready = response?.status === 'ready' ? response : null;
   const host = tab ? hostOf(tab.url) : '';
   const select = (id: SeoPanelId) => {
@@ -256,17 +263,19 @@ export function SeoSidebar({
                 {host || 'SEO audit'}
               </span>
             </div>
-            <button
-              type="button"
-              className="tool seo-head-tool"
-              data-testid="seo-rerun"
-              aria-label="Run the audit again"
-              title="Run the audit again"
-              disabled={!tab || !canRerun(response)}
-              onClick={() => tab && void actions.rerunAudit(tab.id)}
-            >
-              <ReloadIcon />
-            </button>
+            {audited ? (
+              <button
+                type="button"
+                className="tool seo-head-tool"
+                data-testid="seo-rerun"
+                aria-label="Run the audit again"
+                title="Run the audit again"
+                disabled={!tab || !canRerun(response)}
+                onClick={() => tab && void actions.rerunAudit(tab.id)}
+              >
+                <ReloadIcon />
+              </button>
+            ) : null}
             <button type="button" className="tool seo-head-tool" data-testid="seo-collapse" aria-label="Collapse the SEO sidebar" title="Collapse (Ctrl/⌘+Shift+S)" onClick={() => {
                 onOpenChange(false);
                 railItems.get(panel)?.focus();
@@ -277,7 +286,7 @@ export function SeoSidebar({
           <div className="seo-body">
             <PanelBody tab={tab} panel={panel} response={response} notesGeneration={notesGeneration} />
           </div>
-          {ready ? (
+          {ready && audited ? (
             <footer className="seo-foot" data-testid="seo-duration" data-ms={Math.round(ready.audit.durationMs)}>
               Audited {new Date(ready.audit.takenAt).toLocaleTimeString()} · read in {Math.max(1, Math.round(ready.audit.durationMs))} ms
             </footer>
