@@ -6,6 +6,11 @@ import { ACCOUNT_SETTINGS_TEXT, FEATURE_LABELS } from '@app/specs/account-settin
 // The Settings view's Account section as a view model (Phase 4 Task 9; acceptance
 // `account-settings.feature.md`, View models). Pure: every `AccountState` main answers becomes the
 // words and buttons the section shows. Nothing here guesses: the section shows what main said.
+// frost is free and open source (2026-10-29): the account is only for sync, so the section lists what
+// the account adds (`ACCOUNT_FEATURES`) and never offers a plan to buy.
+
+/** What an account adds (`ACCOUNT_FEATURES` in `entitlements-snapshot.spec.ts`; a value import of it would pull Zod in). */
+const ACCOUNT_FEATURE_FLAGS: readonly FeatureFlag[] = Object.freeze(['sync']);
 
 /** The account section's buttons (each calls one `account.*` procedure from its click). */
 export type AccountButton = 'sign-in' | 'cancel' | 'confirm' | 'refresh' | 'sign-out';
@@ -14,11 +19,10 @@ export type Tone = 'ok' | 'warn' | 'error' | 'neutral';
 
 export interface PlanView {
   readonly label: string;
-  readonly pro: boolean;
-  /** One line on whether the plan's features count now (active, offline grace, or why Free). */
+  /** One line on whether the account's features count now (active, offline grace, or why sync is off). */
   readonly status: string;
   readonly tone: Tone;
-  /** Every feature this build knows, in plain words, and whether the plan includes it now. */
+  /** What the account adds (sync), in plain words, and whether it counts now. */
   readonly features: readonly { readonly flag: FeatureFlag; readonly label: string; readonly included: boolean }[];
 }
 
@@ -54,7 +58,7 @@ export const ACCOUNT_ERROR_MESSAGES: Readonly<Record<AccountError, string>> = Ob
   'exchange-failed': "The sign-in couldn't be completed. Try again.",
   network: "frost couldn't reach the account service. Check your connection and try again.",
   cancelled: 'The sign-in was cancelled in the browser.',
-  'session-ended': 'Your session ended, so you were signed out. Sign in again to keep using Pro.',
+  'session-ended': 'Your session ended, so you were signed out. Sign in again to keep syncing.',
 });
 
 /** What each `account.signIn` answer but `started` says (shown under the button). */
@@ -86,20 +90,20 @@ export function initialOf(name: string | null, email: string): string {
 
 /** The plan as the signed-in section shows it. */
 export function planView(entitlements: Entitlements, formatDate: (ms: number) => string = formatDateTime): PlanView {
-  const features = (Object.keys(FEATURE_LABELS) as FeatureFlag[]).map((flag) => ({ flag, label: FEATURE_LABELS[flag], included: entitlements.features.includes(flag) }));
-  const label = PLAN_LABELS[entitlements.plan];
-  const base = { label, pro: entitlements.plan === 'pro', features };
+  const features = ACCOUNT_FEATURE_FLAGS.map((flag) => ({ flag, label: FEATURE_LABELS[flag], included: entitlements.features.includes(flag) }));
+  const base = { label: PLAN_LABELS[entitlements.plan], features };
+  const words = ACCOUNT_SETTINGS_TEXT.status;
   switch (entitlements.status) {
     case 'active':
-      return { ...base, status: `${label} is active.`, tone: 'ok' };
+      return { ...base, status: words.active, tone: 'ok' };
     case 'grace':
-      return { ...base, status: `Offline — ${label} stays available until ${formatDate(entitlements.graceEndsAtMs ?? 0)}`, tone: 'warn' };
+      return { ...base, status: words.grace(formatDate(entitlements.graceEndsAtMs ?? 0)), tone: 'warn' };
     case 'expired':
-      return { ...base, status: "Free — your plan's last check has run out and no newer one was confirmed. Refresh to check again.", tone: 'error' };
+      return { ...base, status: words.expired, tone: 'error' };
     case 'invalid':
-      return { ...base, status: "Free — your plan couldn't be verified. Refresh to try again.", tone: 'error' };
+      return { ...base, status: words.invalid, tone: 'error' };
     case 'none':
-      return { ...base, status: 'Checking your plan…', tone: 'neutral' };
+      return { ...base, status: words.none, tone: 'neutral' };
   }
 }
 

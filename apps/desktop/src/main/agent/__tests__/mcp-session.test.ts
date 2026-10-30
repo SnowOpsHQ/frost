@@ -67,7 +67,7 @@ describe('MCP tools in a chat', () => {
       mcp,
       steps: [{ toolCalls: [{ toolName: 'mcp__faketools__echo', input: { text: 'hi' } }] }, { toolCalls: [{ toolName: 'mcp__faketools__echo', input: { text: 'again' } }] }, { text: ['Done.'] }],
     }));
-    expect(AGENT_PROTOCOL_VERSION).toBe(6);
+    expect(AGENT_PROTOCOL_VERSION).toBeGreaterThanOrEqual(6); // `mcpTools` since 6
     expect(await s.session.send(null, 'Use the echo tool.')).toBe('started');
     const start = s.starts()[0]!;
     expect(start.mcpTools.map((tool) => tool.name)).toEqual(['mcp__faketools__echo', 'mcp__faketools__probe', 'mcp__faketools__mixed', 'mcp__faketools__fails', 'mcp__faketools__hostile']);

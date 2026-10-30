@@ -1,13 +1,15 @@
 /**
  * The agent's tool catalogue, caps, models and model endpoints (Phase 5 Task 1; acceptance
- * `agent-protocol.feature.md`). Plain values and pure functions with no imports, so the chrome
- * renderer can use them without bundling Zod (strict Trusted Types); the MessagePort messages are
- * in `agent-protocol.schema.ts`, the tools' input schemas in `@app/ai-skills`.
+ * `agent-protocol.feature.md`). Plain values and pure functions, importing only the import-free
+ * `agent-chatgpt.spec.ts` (ChatGPT model ids), so the chrome renderer can use them without bundling
+ * Zod (strict Trusted Types); the MessagePort messages are in `agent-protocol.schema.ts`, the tools'
+ * input schemas in `@app/ai-skills`.
  *
  * Used by the agent runtime (which tools it offers the model), main's approval broker (each tool's
  * risk class and whether a standing grant may cover it), main's model proxy (the endpoint
  * allowlist) and the agent panel (labels, models).
  */
+import { chatgptSlugOf, isChatgptModelId, type ChatgptModelId } from './agent-chatgpt.spec';
 
 // ---- Tools -----------------------------------------------------------------------------------
 
@@ -177,17 +179,26 @@ export const AGENT_TOOL_INPUT_LIMITS = {
 // ---- Models ----------------------------------------------------------------------------------
 
 /**
- * How main reaches a model: the user's own key for one provider (bring-your-own-key), or a gateway
- * key that takes `provider/model` ids.
+ * How main reaches a model: the user's own key for one provider (bring-your-own-key), a gateway
+ * key that takes `provider/model` ids, or the user's ChatGPT plan (`chatgpt`: Sign in with ChatGPT,
+ * `agent-chatgpt.spec.ts`; OpenAI models from the account's own list, `chatgpt/<slug>` ids).
  */
-export const MODEL_ROUTES = ['byok-anthropic', 'byok-openai', 'gateway'] as const;
+export const MODEL_ROUTES = ['byok-anthropic', 'byok-openai', 'gateway', 'chatgpt'] as const;
 export type ModelRoute = (typeof MODEL_ROUTES)[number];
+
+/** The routes that use a stored key (`agent-proxy.spec.ts`, `ROUTE_CREDENTIAL_SLOT`); `chatgpt` uses the sign-in's tokens. */
+export const KEY_ROUTES = ['byok-anthropic', 'byok-openai', 'gateway'] as const;
+export type KeyRoute = (typeof KEY_ROUTES)[number];
+
+export function isKeyRoute(route: unknown): route is KeyRoute {
+  return typeof route === 'string' && (KEY_ROUTES as readonly string[]).includes(route);
+}
 
 export const MODEL_PROVIDERS = ['anthropic', 'openai'] as const;
 export type ModelProvider = (typeof MODEL_PROVIDERS)[number];
 
 /** The provider each bring-your-own-key route serves. */
-export const BYOK_ROUTE_PROVIDER: Readonly<Record<Exclude<ModelRoute, 'gateway'>, ModelProvider>> = {
+export const BYOK_ROUTE_PROVIDER: Readonly<Record<Exclude<KeyRoute, 'gateway'>, ModelProvider>> = {
   'byok-anthropic': 'anthropic',
   'byok-openai': 'openai',
 };
@@ -208,7 +219,20 @@ export function isAllowedModelId(modelId: unknown): modelId is ModelId {
   return typeof modelId === 'string' && (ALLOWED_MODEL_IDS as readonly string[]).includes(modelId);
 }
 
-/** The provider of an allowed model id (its prefix), or `null` for any other id. */
+/**
+ * Any model id a route may carry: a catalogue id (`ModelId`, closed: every `Record<ModelId, …>`
+ * stays total) or a ChatGPT id (`ChatgptModelId`, `chatgpt/<slug>`, open: the account lists them).
+ * Settings, `chat.start` and the views carry this; code that indexes a catalogue record narrows
+ * with `isAllowedModelId` first. The two sets never overlap.
+ */
+export type AgentModelId = ModelId | ChatgptModelId;
+
+/** Whether `modelId` is a catalogue id or a well-formed ChatGPT id (`isChatgptModelId`). */
+export function isAgentModelId(modelId: unknown): modelId is AgentModelId {
+  return isAllowedModelId(modelId) || isChatgptModelId(modelId);
+}
+
+/** The provider of an allowed model id (its prefix), or `null` for any other id (a ChatGPT id included). */
 export function modelProvider(modelId: unknown): ModelProvider | null {
   if (!isAllowedModelId(modelId)) return null;
   const prefix = modelId.slice(0, modelId.indexOf('/'));
@@ -217,10 +241,14 @@ export function modelProvider(modelId: unknown): ModelProvider | null {
 
 /**
  * The id the route's provider expects for `modelId`: the gateway takes the `provider/model` id as
- * is; a bring-your-own-key route drops the prefix (`claude-sonnet-5-5`). `null` (refused) for an id
- * not in `ALLOWED_MODEL_IDS`, or one whose provider isn't the bring-your-own-key route's.
+ * is; a bring-your-own-key route drops the prefix (`claude-sonnet-5-5`); the `chatgpt` route takes
+ * only a ChatGPT id and sends its slug. `null` (refused) for an id not in `ALLOWED_MODEL_IDS` on a
+ * key route, one whose provider isn't the bring-your-own-key route's, or any but a well-formed
+ * `chatgpt/<slug>` on the `chatgpt` route. (Whether the slug is in the account's list is main's
+ * check, not this format check.)
  */
 export function routeModelId(route: ModelRoute, modelId: string): string | null {
+  if (route === 'chatgpt') return isChatgptModelId(modelId) ? chatgptSlugOf(modelId) : null;
   const provider = modelProvider(modelId);
   if (provider === null) return null;
   if (route === 'gateway') return modelId;
@@ -245,6 +273,8 @@ export const MODEL_REQUESTS: Readonly<Record<ModelRoute, readonly ModelRequestTa
   'byok-anthropic': [{ method: 'POST', url: 'https://api.anthropic.com/v1/messages' }],
   'byok-openai': [{ method: 'POST', url: 'https://api.openai.com/v1/responses' }],
   gateway: [{ method: 'POST', url: 'https://ai-gateway.vercel.sh/v4/ai/language-model' }],
+  // The ChatGPT plan's one inference endpoint (`CHATGPT_ENDPOINTS.responses`; a test keeps them equal).
+  chatgpt: [{ method: 'POST', url: 'https://api.openai.com/v1/responses' }],
 };
 
 /**

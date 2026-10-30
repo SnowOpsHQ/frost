@@ -1059,3 +1059,50 @@
   font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12px;
 }
+
+/* The ChatGPT plan (specs/agent-chatgpt.spec.ts, CHATGPT_UI): the settings' actions wrap, the
+   composer's "Using ChatGPT plan · Manage usage" line, the one-time notice and a plan failure. */
+.agent-chatgpt-actions {
+  flex-wrap: wrap;
+}
+
+.agent-chatgpt-inuse {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.agent-chatgpt-inuse .agent-link,
+.agent-chatgpt-error .agent-link {
+  font-size: inherit;
+}
+
+.agent-chatgpt-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--agent-edge);
+  border-radius: 10px;
+  background: var(--agent-card);
+}
+
+.agent-chatgpt-notice .agent-key-row {
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-chatgpt-error {
+  align-items: flex-start;
+}
+
+.agent-chatgpt-error-text {
+  margin: 0;
+}
+
+.agent-chatgpt-usage-button {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  text-decoration: none;
+}

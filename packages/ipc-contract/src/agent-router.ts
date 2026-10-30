@@ -13,7 +13,9 @@ import {
   AgentSetChatRetentionInputSchema,
   AgentSetReadToolsAllowedInputSchema,
   AgentSkillIdInputSchema,
+  AgentChatgptSignInInputSchema,
 } from '@app/specs/agent-ipc.schema';
+import { CHATGPT_SIGN_IN_RESULTS, CHATGPT_SIGN_OUT_RESULTS, type ChatgptSignInResult, type ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import {
   AGENT_DELETE_ALL_CHATS_RESULTS,
   AGENT_SAVE_SKILL_RESULTS,
@@ -283,4 +285,30 @@ export const agentRouter = router({
     .use(requireAgent)
     .input(AgentSetMcpTokenInputSchema)
     .mutation(async ({ ctx, input }): Promise<McpTokenResult> => oneOf(MCP_TOKEN_RESULTS, await ctx.agent.setMcpToken(input.id, input.token), 'failed')),
+
+  // ---- ChatGPT plan (`agent-chatgpt.spec.ts`; acceptance `agent-chatgpt.feature.md`, Router) ----
+  /** For the sender's window: main spends its live user gesture before the browser opens (`needs-gesture` without one). */
+  chatgptSignIn: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentChatgptSignInInputSchema)
+    .mutation(async ({ ctx, input }): Promise<ChatgptSignInResult> => {
+      // `enforceSender` admitted only a known app window, so there is a window id.
+      const windowId = ctx.sender?.windowId;
+      if (typeof windowId !== 'number') throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'no sender window' });
+      const options = { ...(input.reconsent === true ? { reconsent: true } : {}), ...(input.differentAccount === true ? { differentAccount: true } : {}) };
+      return oneOf(CHATGPT_SIGN_IN_RESULTS, await ctx.agent.chatgptSignIn(windowId, options), 'failed');
+    }),
+  chatgptCancel: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .mutation(({ ctx }) => ctx.agent.chatgptCancel() === true),
+  chatgptSignOut: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .mutation(async ({ ctx }): Promise<ChatgptSignOutResult> => oneOf(CHATGPT_SIGN_OUT_RESULTS, await ctx.agent.chatgptSignOut(), 'not-revoked')),
+  chatgptAcknowledge: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .mutation(async ({ ctx }) => (await ctx.agent.chatgptAcknowledge()) === true),
 });

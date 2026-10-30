@@ -8,6 +8,13 @@
  * same set the backend publishes at `ENTITLEMENT_KEYS_PATH`) and derives what main and the chrome
  * see (`EntitlementsSchema`).
  *
+ * - **frost is free and open source (decision of 2026-10-29).** No local feature needs a frost
+ *   account or a plan: the AI agent and Search Console are never gated (`UNGATED_FEATURES`), signed
+ *   out or on any plan, and no client checks their flags. A frost account is needed only for what
+ *   needs the server: `sync` (`ACCOUNT_FEATURES`), which every plan includes, so its gate
+ *   (`requireFeature('sync')`) passes exactly when an account is signed in with a snapshot that
+ *   verifies. Plans and every flag stay on the wire (older clients, and a flag a server may still
+ *   withdraw); the snapshot's format, signature and fail-closed rules below are unchanged.
  * - **Which plan includes which feature is server-side** (`PLAN_FEATURES`). A snapshot carries the
  *   plan and its feature flags; the client gates on flags, never on the plan, so a plan can change
  *   its features without a desktop release.
@@ -16,7 +23,8 @@
  *   flags. The header is exact: no parameter other than `alg`, `kid` and `typ` is accepted (no
  *   embedded `jwk`, `jku`, `x5u` or `crit`).
  * - **Fail closed.** A missing, unsigned, tampered, wrong-`kid`, wrong-audience, wrong-account or
- *   expired-beyond-grace snapshot is `free`; a verification error is never a paid plan.
+ *   expired-beyond-grace snapshot is `free` with no flags; a verification error never grants a flag
+ *   (so it never turns on sync; the ungated features do not read flags at all).
  *
  * Clean-room: from RFC 7515 (JWS), RFC 7517 (JWK), RFC 7519 (JWT claim names), RFC 8037 (OKP keys,
  * EdDSA), RFC 8725 (explicit `typ`) and RFC 7638 (key thumbprints, the CLI's default `kid`).
@@ -47,7 +55,10 @@ export const ENTITLEMENT_KEYS_PATH = '/.well-known/frost-entitlement-keys';
 
 // ---- Plans and flags ----------------------------------------------------------------------------
 
-/** The plans the backend grants (admin CLI `grant <email> <plan>`). No billing in v1. */
+/**
+ * The plans the backend grants (admin CLI `grant <email> <plan>`). No billing. Since 2026-10-29 both
+ * include every feature (`PLAN_FEATURES`); `pro` is kept so rows and snapshots that name it stay valid.
+ */
 export const PLANS = ['free', 'pro'] as const;
 export type Plan = (typeof PLANS)[number];
 
@@ -59,12 +70,27 @@ export const FEATURE_FLAGS = ['ai-agent', 'search-console', 'sync'] as const;
 export type FeatureFlag = (typeof FEATURE_FLAGS)[number];
 
 /**
+ * Features no client gates (decision of 2026-10-29: frost is free and open source): available signed
+ * out and on any plan. Their flags stay in snapshots for wire compatibility only; nothing may check
+ * them (no `requireFeature`, no `has`) to turn the feature off.
+ */
+export const UNGATED_FEATURES = Object.freeze(['ai-agent', 'search-console'] as const satisfies readonly FeatureFlag[]);
+
+/**
+ * Features that need a signed-in frost account, because they need the server, not because of a
+ * plan: every plan includes them (`PLAN_FEATURES`), so their gate passes exactly when an account is
+ * signed in with a verified snapshot (signed out, entitlements are `none`: fails closed).
+ */
+export const ACCOUNT_FEATURES = Object.freeze(['sync'] as const satisfies readonly FeatureFlag[]);
+
+/**
  * The server's plan → features mapping (the backend signs `PLAN_FEATURES[plan]` into `features`).
- * Moving a feature between plans is a change here and on the server only.
+ * Moving a feature between plans is a change here and on the server only. Every plan includes every
+ * flag (2026-10-29): no feature is paid.
  */
 export const PLAN_FEATURES: Readonly<Record<Plan, readonly FeatureFlag[]>> = Object.freeze({
-  free: Object.freeze([]),
-  pro: Object.freeze(['ai-agent', 'search-console', 'sync'] as const),
+  free: Object.freeze([...FEATURE_FLAGS]),
+  pro: Object.freeze([...FEATURE_FLAGS]),
 });
 
 /** A plan identifier on the wire: a known `Plan` or one a newer server added. */

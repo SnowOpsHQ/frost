@@ -11,7 +11,19 @@ import {
   AGENT_SET_KEY_MESSAGES,
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
-import { CREDENTIAL_SLOTS, ROUTE_CREDENTIAL_SLOT, type CredentialSlot } from '@app/specs/agent-proxy.spec';
+import { CREDENTIAL_SLOTS, routeCredentialSlot, type CredentialSlot } from '@app/specs/agent-proxy.spec';
+import {
+  CHATGPT_SIGN_IN_ERROR_MESSAGES,
+  CHATGPT_UI,
+  chatgptFailureMessage,
+  type ChatgptAccountView,
+  type ChatgptAuthState,
+  type ChatgptFailure,
+  type ChatgptModelView,
+  type ChatgptPlanUsage,
+  type ChatgptSignInResult,
+  type ChatgptSignOutResult,
+} from '@app/specs/agent-chatgpt.spec';
 import {
   MCP_NO_SANDBOX_SENTENCE,
   MCP_SAVE_MESSAGES,
@@ -42,7 +54,20 @@ import type {
   AgentToolCardView,
 } from '@app/specs/agent-session.spec';
 import { SKILL_ACTING_TOOLS, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_NAMES, SKILL_USER_MARK, SKILL_WARNINGS, templateSlots, type SkillInputSlot, type SkillSlotName } from '@app/specs/skills.spec';
-import { AGENT_TOOL_NAMES, AGENT_TOOLS, ALLOWED_MODEL_IDS, MODEL_ROUTES, UNSAFE_INPUT_CHARS, isMcpToolName, routeModelId, type AgentToolName, type AgentToolRisk, type ModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
+import {
+  AGENT_TOOL_NAMES,
+  AGENT_TOOLS,
+  ALLOWED_MODEL_IDS,
+  MODEL_ROUTES,
+  UNSAFE_INPUT_CHARS,
+  isAllowedModelId,
+  isMcpToolName,
+  routeModelId,
+  type AgentModelId,
+  type AgentToolName,
+  type AgentToolRisk,
+  type ModelRoute,
+} from '@app/specs/agent-tools.spec';
 import {
   AGENT_SAVE_SKILL_MESSAGES,
   CHAT_EXPORT_MESSAGES,
@@ -273,29 +298,60 @@ export function contextMeter(active: Pick<AgentActiveChatView, 'contextTokens' |
 // ---- Settings --------------------------------------------------------------------------------
 
 export const routeLabel = (route: ModelRoute): string => AGENT_ROUTE_LABELS[route] ?? route;
-export const modelLabel = (modelId: ModelId): string => AGENT_MODEL_LABELS[modelId] ?? modelId;
+/** A model's name: the catalogue's, or for a ChatGPT model its account list's `display_name` (`setup.chatgpt.models`). */
+export const modelLabel = (modelId: AgentModelId, chatgptModels: readonly ChatgptModelView[] = []): string =>
+  isAllowedModelId(modelId) ? (AGENT_MODEL_LABELS[modelId] ?? modelId) : (chatgptModels.find((model) => model.id === modelId)?.label ?? modelId);
 export const slotLabel = (slot: CredentialSlot): string => AGENT_KEY_SLOT_LABELS[slot] ?? slot;
-export const slotForRoute = (route: ModelRoute): CredentialSlot => ROUTE_CREDENTIAL_SLOT[route];
+/** The key slot the route uses, `null` for the `chatgpt` route (a sign-in, not a key). */
+export const slotForRoute = (route: ModelRoute): CredentialSlot | null => routeCredentialSlot(route);
 
+/** Every route, the ChatGPT plan ("ChatGPT plan", a sign-in rather than a key) included. */
 export function routeOptions(): readonly { readonly value: ModelRoute; readonly label: string }[] {
   return MODEL_ROUTES.map((value) => ({ value, label: routeLabel(value) }));
 }
 
-/** The model choices: exactly the setup's `allowedModels` (what the selected route serves). */
-export function modelOptions(setup: Pick<AgentSetupView, 'allowedModels'>): readonly { readonly value: ModelId; readonly label: string }[] {
-  return setup.allowedModels.map((value) => ({ value, label: modelLabel(value) }));
+/** The model choices: exactly the setup's `allowedModels` (what the selected route serves; on `chatgpt` the account's list, by its names). */
+export function modelOptions(setup: Pick<AgentSetupView, 'allowedModels'> & Partial<Pick<AgentSetupView, 'chatgpt'>>): readonly { readonly value: AgentModelId; readonly label: string }[] {
+  const listed = setup.chatgpt?.models ?? [];
+  return setup.allowedModels.map((value) => ({ value, label: modelLabel(value, listed) }));
 }
 
-/** The model to keep when switching to `route`: the current one if it serves it, else its first. */
-export function modelForRoute(route: ModelRoute, current: ModelId): ModelId | null {
+/**
+ * The model to keep when switching to `route`: the current one if it serves it, else its first. On
+ * `chatgpt` only the account's last list counts (`chatgptModels`, in the server's order): `null`
+ * when it is empty (main would refuse the pair).
+ */
+export function modelForRoute(route: ModelRoute, current: AgentModelId, chatgptModels: readonly ChatgptModelView[] = []): AgentModelId | null {
+  if (route === 'chatgpt') return chatgptModels.some((model) => model.id === current) ? current : (chatgptModels[0]?.id ?? null);
   if (routeModelId(route, current) !== null) return current;
   return ALLOWED_MODEL_IDS.find((id) => routeModelId(route, id) !== null) ?? null;
+}
+
+/**
+ * What picking `route` in the settings does: store it with the model to keep (`set`), or, for the
+ * ChatGPT plan before the account listed a model, only show its sign-in (`preview`: nothing is
+ * stored, since main refuses a `chatgpt` pair without a listed model); `none` if nothing can be set.
+ */
+export type RouteChoice = { readonly kind: 'set'; readonly route: ModelRoute; readonly modelId: AgentModelId } | { readonly kind: 'preview'; readonly route: 'chatgpt' } | { readonly kind: 'none' };
+export function routeChoice(route: ModelRoute, setup: Pick<AgentSetupView, 'modelId' | 'chatgpt'>): RouteChoice {
+  const modelId = modelForRoute(route, setup.modelId, setup.chatgpt.models);
+  if (modelId !== null) return { kind: 'set', route, modelId };
+  return route === 'chatgpt' ? { kind: 'preview', route } : { kind: 'none' };
+}
+
+/**
+ * While the settings preview the ChatGPT plan (picked before a model was listed): the model to store
+ * once the account lists one (its first), else `null` (keep previewing).
+ */
+export function previewModel(setup: Pick<AgentSetupView, 'route' | 'chatgpt'>): AgentModelId | null {
+  if (setup.route === 'chatgpt') return null;
+  return setup.chatgpt.models[0]?.id ?? null;
 }
 
 /** The key slots in the order the settings list them: the selected route's first. */
 export function keySlotsFor(route: ModelRoute): readonly CredentialSlot[] {
   const first = slotForRoute(route);
-  return [first, ...CREDENTIAL_SLOTS.filter((slot) => slot !== first)];
+  return first === null ? CREDENTIAL_SLOTS : [first, ...CREDENTIAL_SLOTS.filter((slot) => slot !== first)];
 }
 
 export const keyStateLabel = (set: boolean): string => (set ? AGENT_KEY_SET_LABEL : AGENT_KEY_UNSET_LABEL);
@@ -339,14 +395,159 @@ export interface ChecklistItem {
 /** The setup checklist (the settings page and the empty chat's hint). */
 export function setupChecklist(setup: AgentSetupView): readonly ChecklistItem[] {
   const slot = slotForRoute(setup.route);
-  const hasKey = setup.keys[slot] === true;
+  const hasKey = slot !== null && setup.keys[slot] === true;
   return [
     { id: 'route', label: 'Model route', value: routeLabel(setup.route), ok: true },
-    { id: 'model', label: 'Model', value: modelLabel(setup.modelId), ok: setup.allowedModels.includes(setup.modelId) },
-    { id: 'key', label: slotLabel(slot), value: keyStateLabel(hasKey), ok: hasKey || setup.ready },
+    { id: 'model', label: 'Model', value: modelLabel(setup.modelId, setup.chatgpt.models), ok: setup.allowedModels.includes(setup.modelId) },
+    // On the `chatgpt` route this line is the sign-in's state, not a key.
+    slot === null
+      ? { id: 'key', label: routeLabel(setup.route), value: chatgptChecklistValue(setup.chatgpt.account), ok: setup.ready }
+      : { id: 'key', label: slotLabel(slot), value: keyStateLabel(hasKey), ok: hasKey || setup.ready },
     { id: 'keychain', label: 'Key storage', value: protectionMessage(setup), ok: setup.protection === 'os' },
     { id: 'isolation', label: 'Isolation', value: isolationLine(setup), ok: setup.isolation.networkGlobalsRemoved },
   ];
+}
+
+// ---- ChatGPT plan (`agent-chatgpt.spec.ts`, `CHATGPT_UI`; plan Task 5) -------------------------
+// The renderer sees only `ChatgptAccountView` (state, email, plan usage, the notice flag, the last
+// sign-in failure) and the account's model list: never a token, a client id or a host id.
+
+/** The sign-in's line in the setup checklist (in place of a key). */
+export function chatgptChecklistValue(account: Pick<ChatgptAccountView, 'state' | 'planUsage'>): string {
+  if (account.state === 'signed-in' && account.planUsage !== 'on') return CHATGPT_UI.checklist.planUsageOff;
+  return CHATGPT_UI.checklist[account.state] ?? CHATGPT_UI.checklist['signed-out'];
+}
+
+/**
+ * The settings' ChatGPT actions: `sign-in` ("Continue with ChatGPT", or "Sign in again" once the
+ * sign-in ended), `cancel` (a pending sign-in), `reconsent` ("Turn on plan usage"), `sign-out`, and
+ * `different-account` (sign out, forget the registration, sign in fresh).
+ */
+export type ChatgptAction = 'sign-in' | 'cancel' | 'reconsent' | 'sign-out' | 'different-account';
+export interface ChatgptActionButton {
+  readonly action: ChatgptAction;
+  readonly label: string;
+  readonly primary: boolean;
+}
+
+export interface ChatgptSettingsModel {
+  readonly state: ChatgptAuthState;
+  /** "Signed in as …" (signed in or expired with an email), else `null`. */
+  readonly account: string | null;
+  readonly planUsage: ChatgptPlanUsage | null;
+  /** The state's sentence (`null` when signed out: the description says what the route is). */
+  readonly status: string | null;
+  /** Why the last sign-in failed (fixed copy), else `null`. */
+  readonly error: string | null;
+  readonly actions: readonly ChatgptActionButton[];
+}
+
+const button = (action: ChatgptAction, label: string, primary = false): ChatgptActionButton => ({ action, label, primary });
+
+/** The settings' ChatGPT section for the account as main shows it. */
+export function chatgptSettingsModel(account: ChatgptAccountView): ChatgptSettingsModel {
+  const error = account.error !== undefined ? (CHATGPT_SIGN_IN_ERROR_MESSAGES[account.error] ?? null) : null;
+  const signedInAs = account.email !== undefined && account.email !== '' ? `${CHATGPT_UI.signedInAs} ${account.email}` : null;
+  const different = button('different-account', CHATGPT_UI.useDifferentAccount);
+  switch (account.state) {
+    case 'pending':
+      return { state: 'pending', account: null, planUsage: null, status: CHATGPT_UI.pending, error, actions: [button('cancel', CHATGPT_UI.cancel)] };
+    case 'signed-in': {
+      const planUsage = account.planUsage === 'on' ? 'on' : 'declined';
+      return {
+        state: 'signed-in',
+        account: signedInAs ?? CHATGPT_UI.checklist['signed-in'],
+        planUsage,
+        status: planUsage === 'on' ? CHATGPT_UI.planUsageOn : CHATGPT_UI.planUsageDeclined,
+        error,
+        actions: [...(planUsage === 'declined' ? [button('reconsent', CHATGPT_UI.reconsentButton, true)] : []), button('sign-out', CHATGPT_UI.signOut), different],
+      };
+    }
+    case 'expired':
+      return { state: 'expired', account: signedInAs, planUsage: null, status: CHATGPT_UI.expired, error, actions: [button('sign-in', CHATGPT_UI.signInAgain, true), different] };
+    default:
+      // Signed out; a returning sign-in that came back as another account offers the way to switch.
+      return {
+        state: 'signed-out',
+        account: null,
+        planUsage: null,
+        status: null,
+        error,
+        actions: [button('sign-in', CHATGPT_UI.continueButton, true), ...(account.error === 'account-mismatch' ? [different] : [])],
+      };
+  }
+}
+
+/** `chatgptSignIn`'s options for an action that signs in, `null` for the others. */
+export function chatgptSignInOptions(action: ChatgptAction): { readonly reconsent?: true; readonly differentAccount?: true } | null {
+  if (action === 'sign-in') return {};
+  if (action === 'reconsent') return { reconsent: true };
+  if (action === 'different-account') return { differentAccount: true };
+  return null;
+}
+
+/** What the settings say after a sign-in was asked for (`null`: it started; the account's state shows the rest). */
+export function chatgptSignInMessage(result: ChatgptSignInResult): string | null {
+  switch (result) {
+    case 'started':
+      return null;
+    case 'needs-gesture':
+      return CHATGPT_UI.needsGesture;
+    case 'no-keychain':
+      return CHATGPT_UI.noKeychain;
+    case 'browser-failed':
+      return CHATGPT_UI.browserFailed;
+    case 'not-revoked':
+      // "Use a different account" stopped: ChatGPT didn't confirm the sign-out, nothing was switched.
+      return CHATGPT_UI.switchNotRevoked;
+    default:
+      return CHATGPT_UI.signInFailed;
+  }
+}
+
+export function chatgptSignOutMessage(result: ChatgptSignOutResult | 'failed'): string {
+  if (result === 'signed-out') return CHATGPT_UI.signedOut;
+  if (result === 'not-revoked') return CHATGPT_UI.notRevoked;
+  return CHATGPT_UI.signOutFailed;
+}
+
+/**
+ * Near the composer: "Using ChatGPT plan · Manage usage" while the route is selected and the plan is
+ * really in use (signed in with plan usage on: never while signed out, waiting, expired, declined, or
+ * before main read the stored sign-in, which it shows as signed out), and the one-time "You're using
+ * your ChatGPT plan" notice with it, until "Got it".
+ */
+export function chatgptComposerModel(setup: Pick<AgentSetupView, 'route' | 'chatgpt'>): { readonly inUse: boolean; readonly notice: boolean } {
+  const { account } = setup.chatgpt;
+  const inUse = setup.route === 'chatgpt' && account.state === 'signed-in' && account.planUsage === 'on';
+  return { inUse, notice: inUse && !account.acknowledged };
+}
+
+/** A plan failure's recovery: "Manage usage" (the usage page), "Turn on plan usage" (re-consent), "Sign in again", or none. */
+export type ChatgptRecovery = 'manage-usage' | 'reconsent' | 'sign-in' | null;
+export interface ChatgptErrorModel {
+  /** A heading (the usage limit's), else `null`. */
+  readonly title: string | null;
+  readonly message: string;
+  readonly recovery: ChatgptRecovery;
+  /** The recovery's label (`null` with none). */
+  readonly label: string | null;
+}
+
+/** The chat's banner for a ChatGPT plan failure: fixed copy (never the runtime's or the server's words) and its recovery. */
+export function chatgptErrorModel(failure: ChatgptFailure): ChatgptErrorModel {
+  const message = chatgptFailureMessage(failure);
+  switch (failure.reason) {
+    case 'usage-limit':
+      return { title: CHATGPT_UI.usageLimitTitle, message, recovery: 'manage-usage', label: CHATGPT_UI.manageUsage };
+    case 'plan-usage-off':
+      return { title: null, message, recovery: 'reconsent', label: CHATGPT_UI.reconsentButton };
+    case 'signed-out':
+      return { title: null, message, recovery: 'sign-in', label: CHATGPT_UI.signInAgain };
+    default:
+      // `plan-unavailable` (retry later), `not-eligible`, `unsupported` (the message names the param).
+      return { title: null, message, recovery: null, label: null };
+  }
 }
 
 // ---- Chat ------------------------------------------------------------------------------------

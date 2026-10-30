@@ -7,11 +7,13 @@ import { memorySecretStore } from '../account/secret-store';
 import { openExternalIfAllowed } from '../security/gesture';
 import { buildTimePublicEnv } from '../account/build-config';
 import { resolveGscConfig } from './config';
-import { createGscService, type GscMainService } from './service';
+import { createGscService, GSC_UNGATED_ACCESS, type GscMainService } from './service';
 
 // Search Console in the main process (Phase 4 Task 8; acceptance `gsc.feature.md`): the one
 // Electron-facing wiring of the pure modules beside it. Call once, after `createAccountMain()` (it
-// reuses the account's secret store, gesture tracker and entitlements).
+// reuses the account's secret store and gesture tracker). Search Console is free and needs no frost
+// account (2026-10-29): it is not gated, and the Google connection is this profile's, so it must not
+// be wired to the account's entitlements or user ID.
 
 export interface GscMain {
   /** The IPC `gsc.*` service (`services.gsc`), and the `GscService` read API Phase 5 calls in main. */
@@ -40,10 +42,7 @@ function unconfiguredGscService(): Promise<GscMainService> {
     config: null,
     fetch: () => Promise.reject(new Error('gsc: unconfigured')),
     store: memorySecretStore(),
-    entitled: () => false,
-    onEntitlementsChange: () => () => undefined,
-    userId: () => null,
-    onAccountChange: () => () => undefined,
+    ...GSC_UNGATED_ACCESS,
     startLoopback,
     openInBrowser: () => false,
     consumeGesture: () => false,
@@ -58,12 +57,8 @@ async function startGscMain(account: AccountMain): Promise<GscMain> {
     config,
     fetch: (url, init) => net.fetch(url, init),
     store: account.secretStore,
-    // Main's entitlements gate: `none` unless signed in with the account's own snapshot (fails closed).
-    entitled: () => account.entitlements.has('search-console'),
-    onEntitlementsChange: (listener) => account.entitlements.onChange(() => listener()),
-    // The connection belongs to the frost account that made it; a different account's sign-in drops it.
-    userId: () => account.service.userId(),
-    onAccountChange: (listener) => account.service.onChange(listener),
+    // Not gated, and owned by this profile: signing in or out of frost (for sync) never touches it.
+    ...GSC_UNGATED_ACCESS,
     startLoopback,
     openInBrowser: openExternalIfAllowed,
     consumeGesture: (windowId) => account.gestures.consume(windowId),

@@ -282,7 +282,8 @@ describe('chat.start MCP tools (protocol version 6, Task 10)', () => {
   const start = mainToRuntime[0];
   const tool = start.mcpTools[0];
   test('chat-start-mcp-tools-match-allowed-names', () => {
-    expect(AGENT_PROTOCOL_VERSION).toBe(6);
+    // Version 6 added `mcpTools`; 7 (the ChatGPT plan's `chat.start` values) keeps them.
+    expect(AGENT_PROTOCOL_VERSION).toBeGreaterThanOrEqual(6);
     expect(mainOk(start)).toBe(true);
     expect(mainOk({ ...start, mcpTools: [] })).toBe(false);
     expect(mainOk({ ...start, allowedTools: ['page_audit', 'click'] })).toBe(false);

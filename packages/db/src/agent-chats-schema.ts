@@ -11,7 +11,7 @@ export const agentChats = sqliteTable('agent_chats', {
   title: text('title').notNull(),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
-  /** The model the last turn used (`ALLOWED_MODEL_IDS`), if any. */
+  /** The model the last turn used (`isAgentModelId`: a catalogue id or a `chatgpt/<slug>`), if any. */
   modelId: text('model_id'),
   /** The last turn's token usage and the context the next one starts from, if reported. */
   inputTokens: integer('input_tokens'),

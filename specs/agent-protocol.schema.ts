@@ -14,8 +14,8 @@
 import { z } from 'zod';
 import {
   CHAT_MAX_MESSAGES,
+  isAgentModelId,
   isAgentToolName,
-  isAllowedModelId,
   isMcpToolName,
   MAX_TOOL_STEPS,
   MODEL_ROUTES,
@@ -25,8 +25,11 @@ import {
 import { MCP_LIMITS } from './agent-mcp.spec';
 import { McpToolDefinitionSchema } from './agent-mcp.schema';
 
-/** Bumped when a message changes shape; the runtime reports it in `ready` and main refuses another. */
-export const AGENT_PROTOCOL_VERSION = 6;
+/**
+ * Bumped when a message changes shape; the runtime reports it in `ready` and main refuses another.
+ * 7: `chat.start` takes the `chatgpt` route and `chatgpt/<slug>` model ids (`agent-chatgpt.spec.ts`).
+ */
+export const AGENT_PROTOCOL_VERSION = 7;
 
 /**
  * The runtime's `chat.error` for a `chat.start` whose chat already has a turn running (that turn
@@ -57,7 +60,7 @@ export const AGENT_PROTOCOL_LIMITS = {
   maxErrorChars: 2000,
   /** One `chat.delta`'s text (characters). */
   maxDeltaChars: 16_000,
-  /** A model id (characters); main checks it against `ALLOWED_MODEL_IDS`. */
+  /** A model id (characters): a catalogue id or a `chatgpt/<slug>` (`isAgentModelId`); main checks it against the route. */
   maxModelIdChars: 128,
   /** A proxied request's URL (characters); main checks it with `isAllowedModelRequest`. */
   maxUrlChars: 4096,
@@ -239,7 +242,7 @@ export const ChatStartMessageSchema = z.strictObject({
     .max(CHAT_MAX_MESSAGES)
     .refine((messages) => messages.at(-1)?.role === 'user', { message: "a turn starts from the user's message" }),
   systemPrompt: z.string().max(L.maxSystemPromptChars),
-  modelId: z.string().max(L.maxModelIdChars).refine(isAllowedModelId, { message: 'not an allowed model' }),
+  modelId: z.string().max(L.maxModelIdChars).refine(isAgentModelId, { message: 'not an allowed model' }),
   route: z.enum(MODEL_ROUTES),
   allowedTools: z
     .array(ToolNameSchema)

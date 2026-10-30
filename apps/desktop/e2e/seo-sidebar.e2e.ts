@@ -8,7 +8,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_LABEL } from '@app/specs/seo-rules.spec';
-import { COMING_SOON_LABEL, PAGE_MIN_WIDTH, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH, SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
+import { COMING_SOON_LABEL, PAGE_MIN_WIDTH, RAIL_TOOLTIP_DELAY_MS, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH, SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -345,6 +345,29 @@ test('busy-page-times-out-then-retries', async () => {
   await expect(page.getByTestId('seo-fact-title-value')).toHaveText('A page that keeps its main thread busy');
 });
 
+test('rail-tooltip-shows-quickly', async () => {
+  await audit(`${site.origin}/guides/cold-brew`);
+  const tip = page.getByTestId('seo-rail-tip');
+  await railItem('links').hover();
+  await expect(tip).toHaveText('Links', { timeout: RAIL_TOOLTIP_DELAY_MS + 400 });
+  await expect(railItem('links')).not.toHaveAttribute('title');
+  // The tip sits beside its item, over the panel.
+  const [item, box] = [(await railItem('links').boundingBox())!, (await tip.boundingBox())!];
+  expect(box.x).toBeGreaterThanOrEqual(item.x + item.width);
+  expect(Math.abs(box.y + box.height / 2 - (item.y + item.height / 2))).toBeLessThanOrEqual(2);
+  // The next item's label replaces it at once.
+  await railItem('images').hover();
+  await expect(tip).toHaveText('Images', { timeout: 100 });
+  await page.mouse.move(600, 400);
+  await expect(tip).toHaveCount(0);
+  // Collapsed: the page would cover a drawn tip, so the native one stays.
+  await page.getByTestId('seo-toggle').click();
+  await expect(railItem('links')).toHaveAttribute('title', 'Links');
+  await railItem('links').hover();
+  await expect(tip).toHaveCount(0);
+  await page.getByTestId('seo-toggle').click();
+});
+
 test('narrow-window-keeps-page-usable', async () => {
   const url = `${site.origin}/guides/cold-brew`;
   await audit(url);
@@ -376,12 +399,15 @@ test('sidebar-toggle-resizes-page', async () => {
     const id = await contentsIdAt(url);
     const open = await viewBounds();
     const panel = page.getByTestId('seo-panel');
+    // Docked left: the rail and the panel sit between the window's edge and the page.
+    expect(open.x).toBeGreaterThanOrEqual(SIDEBAR_RAIL_WIDTH + SIDEBAR_PANEL_WIDTH);
 
     // The toolbar button.
     await page.getByTestId('seo-toggle').click();
     await expect(panel).toHaveCount(0);
     await expect(page.getByTestId('seo-toggle')).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(async () => (await viewBounds()).width).toBe(open.width + SIDEBAR_PANEL_WIDTH);
+    expect((await viewBounds()).x).toBe(open.x - SIDEBAR_PANEL_WIDTH);
     // The persistent rail keeps the page's status.
     await expect(railItem('on-page')).toHaveAttribute('data-status', 'pass');
     // Collapsing from the panel's own button leaves focus on its rail item.

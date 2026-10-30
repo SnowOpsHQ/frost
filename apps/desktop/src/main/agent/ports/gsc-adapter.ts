@@ -38,7 +38,8 @@ export interface GscServiceLike {
 /** Each of Phase 4's reason codes as a sentence the model can relay (frost's own words). */
 export const GSC_ADAPTER_REASONS: Readonly<Record<string, string>> = {
   unconfigured: "Search performance data isn't set up in this build.",
-  'not-entitled': "Search performance data isn't included in the user's plan.",
+  // Search Console is never gated (`gsc.spec.ts`: main never answers `not-entitled`); kept for wire compatibility, worded as `unconfigured`.
+  'not-entitled': "Search performance data isn't set up in this build.",
   'not-connected': "No search performance account is connected. The user can connect one in frost's settings.",
   'not-a-web-page': "That address isn't a web page.",
   invalid: 'The search performance request was not accepted.',

@@ -1,6 +1,6 @@
 // Spec: specs/account-state.schema.ts (AccountStateSchema, SIGN_IN_RESULTS, CONFIRM_TIMEOUT_MS,
 // ACCOUNT_REFRESH_INTERVAL_MS, MAX_PENDING_ACCOUNT_WATCHES), specs/account-api.schema.ts (requestFingerprint,
-// DesktopAuthorizeQuerySchema), specs/entitlements-snapshot.spec.ts (NO_ENTITLEMENTS)
+// DesktopAuthorizeQuerySchema), specs/entitlements-snapshot.spec.ts (NO_ENTITLEMENTS, ACCOUNT_FEATURES, PLAN_FEATURES)
 // Acceptance: specs/account-signin.feature.md (The flow) · review focus "A website or another app cannot
 // sign the user in to someone else's account" · plan Global Constraints "Tokens stay in main", "Logs never carry secrets"
 import { request } from 'node:http';
@@ -13,7 +13,16 @@ import {
   MAX_PENDING_ACCOUNT_WATCHES,
   type AccountState,
 } from '@app/specs/account-state.schema';
-import { NO_ENTITLEMENTS, OFFLINE_GRACE_MS, type Entitlements, type EntitlementRefreshFailure } from '@app/specs/entitlements-snapshot.spec';
+import {
+  ACCOUNT_FEATURES,
+  DEFAULT_PLAN,
+  EntitlementsSchema,
+  NO_ENTITLEMENTS,
+  OFFLINE_GRACE_MS,
+  PLAN_FEATURES,
+  type Entitlements,
+  type EntitlementRefreshFailure,
+} from '@app/specs/entitlements-snapshot.spec';
 import type { AccountApi, ApiResult } from '../api-client';
 import type { AccountConfig } from '../config';
 import { entitlementsReaderOf, FeatureNotEntitledError, noEntitlementsReader, type EntitlementsController, type EntitlementsReader } from '../entitlements';
@@ -852,6 +861,31 @@ describe("main's entitlements reader", () => {
     await toSignedIn(h);
     await Promise.resolve();
     expect(seen).toHaveLength(4);
+  });
+
+  test('sync-needs-sign-in-not-a-plan', async () => {
+    // The default plan, verified: every flag (2026-10-29). Sync's gate is being signed in, not a plan.
+    const free: Entitlements = EntitlementsSchema.parse({ plan: DEFAULT_PLAN, features: [...PLAN_FEATURES[DEFAULT_PLAN]], status: 'active', expiresAtMs: FAR_FUTURE, graceEndsAtMs: FAR_FUTURE + OFFLINE_GRACE_MS });
+    const ents = fakeEntitlements();
+    ents.controller.update.mockImplementation(async (_snapshot: string, who: string) => {
+      ents.set(free, who);
+      return free;
+    });
+    const h = await harness({ entitlements: ents.controller });
+    const reader = entitlementsReaderOf(h.service);
+    expect(ACCOUNT_FEATURES).toEqual(['sync']);
+    // Signed out: no account, no sync.
+    expectNone(reader);
+    await toSignedIn(h);
+    await h.service.whenIdle();
+    await vi.waitFor(() => expect(reader.current()).toEqual(free));
+    for (const flag of ACCOUNT_FEATURES) {
+      expect(reader.has(flag)).toBe(true);
+      expect(() => reader.requireFeature(flag)).not.toThrow();
+    }
+    expect(await h.service.signOut()).toBe(true);
+    await vi.waitFor(() => expect(reader.current()).toEqual(NO_ENTITLEMENTS));
+    expectNone(reader);
   });
 
   test('unconfigured-reader-is-none', async () => {

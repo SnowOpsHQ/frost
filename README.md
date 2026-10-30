@@ -38,8 +38,9 @@ browser and run SEO skills.
   downloaded only after you agree. The plan and how it was built:
   [`docs/plans/phase-3-serp-intent.md`](docs/plans/phase-3-serp-intent.md).
 - **Phase 4 — Accounts, entitlements, telemetry and Search Console:** built. Sign in to a frost
-  account through the system browser, confirmed in the app; a plan (`free` or `pro`) arrives as a
-  signed snapshot that main verifies, with offline grace, and gates features on. Telemetry (usage
+  account through the system browser, confirmed in the app; a signed snapshot arrives that main
+  verifies, with offline grace. frost is free and open source (2026-10-29): only sync needs an account;
+  the AI agent and Search Console work signed out. Telemetry (usage
   traces and error reports) is off by default, scrubbed, and does what its two switches say. A
   read-only Search Console connection feeds a page and site performance panel, and a Settings view
   holds all of it. The account API is a lean backend (`apps/backend`) that runs locally and in tests

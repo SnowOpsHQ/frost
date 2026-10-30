@@ -11,9 +11,10 @@ import type {
   ChatExportResult,
   ChatRetention,
 } from '@app/specs/agent-data.spec';
+import type { ChatgptSignInResult, ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest } from '@app/specs/agent-session.spec';
-import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
+import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
 import type { AgentSaveMcpServerRequest } from './agent-view';
 import { ipc } from './ipc';
@@ -35,7 +36,7 @@ export const agentActions = {
   deleteChat: (chatId: string): Promise<boolean> => ipc.agent.deleteChat.mutate({ chatId }).catch(() => false),
   answerApproval: (approvalId: string, decision: ApprovalDecision): Promise<AgentAnswerResult> =>
     ipc.agent.answerApproval.mutate({ approvalId, decision }).catch((): AgentAnswerResult => 'unknown'),
-  setModel: (route: ModelRoute, modelId: ModelId): Promise<boolean> => ipc.agent.setModel.mutate({ route, modelId }).catch(() => false),
+  setModel: (route: ModelRoute, modelId: AgentModelId): Promise<boolean> => ipc.agent.setModel.mutate({ route, modelId }).catch(() => false),
   setKey: (slot: CredentialSlot, key: string): Promise<AgentSetKeyResult> => ipc.agent.setKey.mutate({ slot, key }).catch((): AgentSetKeyResult => 'failed'),
   clearKey: (slot: CredentialSlot): Promise<boolean> => ipc.agent.clearKey.mutate({ slot }).catch(() => false),
   listGrants: (): Promise<readonly AgentGrantView[] | null> => ipc.agent.listGrants.query().catch(() => null),
@@ -67,6 +68,12 @@ export const agentActions = {
   stopMcpServer: (id: string): Promise<boolean> => ipc.agent.stopMcpServer.mutate({ id }).catch(() => false),
   /** Write-only: the token goes to main once; the answer never carries it. */
   setMcpToken: (id: string, token: string | null): Promise<McpTokenResult> => ipc.agent.setMcpToken.mutate({ id, token }).catch((): McpTokenResult => 'failed'),
+  // ChatGPT plan (`agent-chatgpt.spec.ts`): main spends the click's gesture, then opens the browser; no token ever comes back.
+  chatgptSignIn: (options: { readonly reconsent?: boolean; readonly differentAccount?: boolean } = {}): Promise<ChatgptSignInResult> =>
+    ipc.agent.chatgptSignIn.mutate({ ...options }).catch((): ChatgptSignInResult => 'failed'),
+  chatgptCancel: (): Promise<boolean> => ipc.agent.chatgptCancel.mutate().catch(() => false),
+  chatgptSignOut: (): Promise<ChatgptSignOutResult | 'failed'> => ipc.agent.chatgptSignOut.mutate().catch((): 'failed' => 'failed'),
+  chatgptAcknowledge: (): Promise<boolean> => ipc.agent.chatgptAcknowledge.mutate().catch(() => false),
 };
 
 export type AgentActions = typeof agentActions;

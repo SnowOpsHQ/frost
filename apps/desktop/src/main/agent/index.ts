@@ -1,14 +1,20 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { CHATGPT_PARTITION } from '@app/specs/agent-chatgpt.spec';
 import { AGENT_MODEL_PARTITION, AGENT_SETTINGS_FILE, CREDENTIALS_FILE } from '@app/specs/agent-proxy.spec';
 import type { JsonValue } from '@app/specs/agent-protocol.schema';
+import type { ChatgptE2eSeam } from '@app/specs/agent-chatgpt-e2e.schema';
 import { isMcpToolName } from '@app/specs/agent-tools.spec';
+import { startLoopback } from '../account/loopback';
 import { createApprovalBroker, unavailableToolRunner, type ApprovalBroker, type ToolRunner } from './approvals';
+import { createChatgptAuthInUserData, type ChatgptAuth } from './chatgpt';
+import { createChatgptRoute, type ChatgptRoute } from './chatgpt/route';
+import { createMemoryChatgptStore } from './chatgpt/e2e-seam';
 import { createCredentialStore, credentialSettings, type CredentialFs, type CredentialSettings, type SafeStorageLike } from './credentials';
 import { createDefaultAgentEntitlements, type AgentEntitlements } from './entitlements';
 import { createAgentGrants, createMemoryGrantsStore, type AgentGrants, type AgentGrantsStore } from './grants';
 import { createAgentHost, type AgentHost, type HostChild, type HostPort } from './host';
-import { createModelProxy, type ModelProxy, type ProxyRequestInit } from './model-proxy';
+import { createModelProxy, type ModelProxy } from './model-proxy';
 import { createAgentSettings, type AgentSettings, type SettingsFs } from './settings';
 import type { McpManager, McpSessionLike } from './mcp';
 
@@ -25,10 +31,11 @@ export interface AgentElectron {
   readonly MessageChannelMain: new () => { readonly port1: HostPort; readonly port2: HostPort };
   readonly safeStorage: SafeStorageLike;
   /**
-   * `fromPartition`: the model proxy's session (`fetch`), and Task 10's `agent-mcp` session (`fetch`
-   * for MCP servers, `resolveHost` for their private-address check).
+   * `fromPartition`: the model proxy's session (`fetch`), Task 10's `agent-mcp` session (`fetch`
+   * for MCP servers, `resolveHost` for their private-address check), and the ChatGPT sign-in's
+   * in-memory `agent-chatgpt` session (`fetch` for the auth server and the model list).
    */
-  readonly session: { fromPartition(partition: string): { fetch(url: string, init: ProxyRequestInit): Promise<Response>; resolveHost?: McpSessionLike['resolveHost'] } };
+  readonly session: { fromPartition(partition: string): { fetch(url: string, init: RequestInit): Promise<Response>; resolveHost?: McpSessionLike['resolveHost'] } };
 }
 
 export interface CreateAgentDeps {
@@ -60,6 +67,21 @@ export interface CreateAgentDeps {
    * `toolRunner`), labels and input check for the broker. Default: none (MCP calls answer `unavailable`).
    */
   readonly mcp?: Pick<McpManager, 'runner' | 'labelOf' | 'inputAllowed'>;
+  /**
+   * Opens the ChatGPT sign-in's authorize page in the system browser (main passes its
+   * scheme-allowlisted `shell.openExternal`, for the authorize page only); `userGesture`: the
+   * sign-in spent a live user gesture. Default: never opened (the sign-in answers `browser-failed`).
+   */
+  readonly openExternal?: (url: string, userGesture: boolean) => boolean;
+  /** Brings an app window to the front when a ChatGPT sign-in started from it succeeds; default: nothing. */
+  readonly focusWindow?: (windowId: number) => void;
+  /** The ChatGPT sign-in (tests pass their own); default: the encrypted store in `userData`, on the `agent-chatgpt` session. */
+  readonly chatgptAuth?: ChatgptAuth;
+  /**
+   * The ChatGPT plan's e2e seam (unpackaged only, Task 6; `chatgpt/e2e-seam.ts`): the sign-in's
+   * endpoints, where plan requests are sent, and the store kind. Default none (the real endpoints).
+   */
+  readonly chatgptE2e?: ChatgptE2eSeam | null;
 }
 
 export interface Agent {
@@ -74,6 +96,8 @@ export interface Agent {
   readonly entitlements: AgentEntitlements;
   /** Standing grants and the read-tools setting (the grants page, Task 9). */
   readonly grants: AgentGrants;
+  /** The ChatGPT plan route: the sign-in, the account's models, readiness and plan failures (`start()` it once the settings load). */
+  readonly chatgpt: ChatgptRoute;
   /** Every `tool.invoke`: `register`/`unregister` per turn, `pending()`, `answer()` (main's IPC only), `activity()`. */
   readonly approvals: ApprovalBroker;
   /** Loads the settings and grants, then forks the runtime if needed and waits for `ready` (`false` if it failed). */
@@ -96,6 +120,25 @@ export function createAgent(deps: CreateAgentDeps): Agent {
   });
   const store = createCredentialStore({ safeStorage: electron.safeStorage, file: path.join(deps.userData, CREDENTIALS_FILE), fs: files, log, ...(deps.platform ? { platform: deps.platform } : {}) });
   const settings = createAgentSettings({ file: path.join(deps.userData, AGENT_SETTINGS_FILE), fs: files, log });
+  // The ChatGPT sign-in: its own encrypted record and host id in `userData`, its requests on the
+  // in-memory `agent-chatgpt` session (looked up per request, after app ready).
+  const chatgptAuth =
+    deps.chatgptAuth ??
+    createChatgptAuthInUserData({
+      userData: deps.userData,
+      fs: files,
+      safeStorage: electron.safeStorage,
+      ...(deps.platform ? { platform: deps.platform } : {}),
+      fetch: (url, init) => electron.session.fromPartition(CHATGPT_PARTITION).fetch(url, init),
+      now: () => Date.now(),
+      startLoopback,
+      openExternal: deps.openExternal ?? (() => false),
+      ...(deps.focusWindow ? { focusWindow: deps.focusWindow } : {}),
+      ...(deps.chatgptE2e ? { endpoints: deps.chatgptE2e.endpoints } : {}),
+      ...(deps.chatgptE2e?.store === 'memory' ? { store: createMemoryChatgptStore() } : {}),
+      log,
+    });
+  const chatgpt = createChatgptRoute({ auth: chatgptAuth, settings, log });
   const proxy = createModelProxy({
     host,
     credentials: store,
@@ -103,6 +146,9 @@ export function createAgent(deps: CreateAgentDeps): Agent {
     // The in-memory session, looked up per request (after app ready; no `persist:`, so no cookie,
     // cache or connection state reaches the disk).
     fetch: (url, init) => electron.session.fromPartition(AGENT_MODEL_PARTITION).fetch(url, init),
+    // The plan's credential is the sign-in's access token; its failures go to the session through the route.
+    chatgpt: { withAccessToken: (fn, options) => chatgptAuth.withAccessToken(fn, options), report: (failure) => chatgpt.report(failure), onAccountChange: (listener) => chatgpt.onAccountChange(listener) },
+    ...(deps.chatgptE2e ? { chatgptResponsesUrl: deps.chatgptE2e.endpoints.responses } : {}),
     log,
   });
   const entitlements = deps.entitlements ?? createDefaultAgentEntitlements();
@@ -130,6 +176,7 @@ export function createAgent(deps: CreateAgentDeps): Agent {
     proxy: { state: () => proxy.state() },
     entitlements,
     grants,
+    chatgpt,
     approvals,
     async start() {
       // The proxy reads the route from the settings, the broker the grants: both are loaded before
@@ -140,6 +187,7 @@ export function createAgent(deps: CreateAgentDeps): Agent {
     dispose() {
       approvals.dispose();
       proxy.dispose();
+      void chatgpt.dispose();
       host.dispose();
     },
   };

@@ -287,6 +287,43 @@ describe('proxy rules', () => {
     });
     afterEach(() => vi.unstubAllGlobals());
 
+    test('proxy-accepts-real-provider-requests (chatgpt: namespaced tools and calls, no output cap)', async () => {
+      const modelId = 'chatgpt/gpt-6.1-sol';
+      for (const which of [1, 2] as const) {
+        // The second request carries the first step's encrypted reasoning and its two calls in the `frost` namespace.
+        const request = await captureProviderRequest('chatgpt', modelId, which);
+        const headers = filterRequestHeaders('chatgpt', request.headers);
+        const sentNames = request.headers.map(([name]) => name.toLowerCase()).filter((name) => name !== 'content-type' && name !== 'authorization');
+        expect(headers.map(([name]) => name).sort()).toEqual([...sentNames].sort());
+        const text = request.body as string;
+        expect(checkModelRequestBody('chatgpt', modelId, text, headers), `request ${which}`).toEqual({ ok: true, body: text });
+        const body = JSON.parse(text) as { input: Record<string, unknown>[]; tools: Record<string, unknown>[] };
+        expect(body.tools).toEqual([expect.objectContaining({ type: 'namespace', name: 'frost' })]);
+        expect(body.input.some((item) => item.role === 'system')).toBe(false);
+        const calls = body.input.filter((item) => item.type === 'function_call');
+        expect(calls.length).toBe(which === 1 ? 2 : 4);
+        expect(calls.every((call) => call.namespace === 'frost')).toBe(true);
+        if (which === 2) expect(text).toMatch(/ZW5jcnlwdGVk/);
+        // Not a request the user's OpenAI key route would send, nor the reverse.
+        expect(checkModelRequestBody('byok-openai', 'openai/gpt-5', text).ok).toBe(false);
+        expect(checkModelRequestBody('chatgpt', 'chatgpt/gpt-6.1-mini', text, headers)).toEqual({ ok: false, reason: 'model' });
+      }
+    });
+
+    test('proxy-accepts-real-provider-requests (chatgpt: MCP tools are inside the frost namespace too)', async () => {
+      const modelId = 'chatgpt/gpt-6.1-sol';
+      const mcp = { name: 'mcp__docs__search', description: 'Untrusted tool from Docs: Searches the docs.', inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } };
+      const request = await captureProviderRequest('chatgpt', modelId, 1, [mcp as never]);
+      const text = request.body as string;
+      expect(checkModelRequestBody('chatgpt', modelId, text, filterRequestHeaders('chatgpt', request.headers))).toEqual({ ok: true, body: text });
+      const body = JSON.parse(text) as { tools: { type: string; name: string; tools?: { type: string; name: string }[] }[] };
+      // One group, the `frost` namespace, holding frost's tools and the MCP tool; nothing at the top level.
+      expect(body.tools).toHaveLength(1);
+      expect(body.tools[0]).toMatchObject({ type: 'namespace', name: 'frost' });
+      expect(body.tools[0]!.tools!.map((tool) => [tool.type, tool.name])).toEqual(expect.arrayContaining([['function', 'page_audit'], ['function', mcp.name]]));
+      expect(body.tools.some((tool) => tool.name === mcp.name)).toBe(false);
+    });
+
     test('proxy-accepts-real-provider-requests', async () => {
       for (const route of MODEL_ROUTES) {
         for (const modelId of ALLOWED_MODEL_IDS) {

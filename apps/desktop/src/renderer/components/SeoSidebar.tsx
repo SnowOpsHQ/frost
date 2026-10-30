@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { SeoAuditResponse } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import { IDLE_A11Y_RUN } from '@app/specs/seo-compliance.spec';
-import { COMING_SOON_LABEL, DEFAULT_SEO_PANEL, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
+import { COMING_SOON_LABEL, DEFAULT_SEO_PANEL, RAIL_TOOLTIP_DELAY_MS, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { AuditArt, ChevronIcon, ComplianceIcon, ImagesIcon, IndexabilityIcon, LinksIcon, OnPageIcon, OverviewIcon, ReloadIcon, SchemaIcon, SocialIcon, SpeedIcon } from '../icons';
 import { actions } from '../ipc';
 import type { PanelJump } from '../palette/registry';
@@ -77,8 +77,31 @@ function Rail({
   readonly itemRefs: Map<SeoPanelId, HTMLButtonElement>;
 }) {
   const statuses = railStatuses(response);
+  // The hovered item's label, drawn beside it over the open panel (the native `title` waits ~1 s).
+  // Collapsed, the tab's view sits beside the rail and would cover it: the native `title` stays.
+  const [tip, setTip] = useState<{ readonly label: string; readonly x: number; readonly y: number } | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const hideTip = () => {
+    window.clearTimeout(timer.current);
+    setTip(null);
+  };
+  const showTip = (el: HTMLElement, label: string) => {
+    window.clearTimeout(timer.current);
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      setTip({ label, x: r.right + 8, y: r.top + r.height / 2 });
+    };
+    // Already showing (moving down the rail): the next label at once.
+    if (tip) place();
+    else timer.current = window.setTimeout(place, RAIL_TOOLTIP_DELAY_MS);
+  };
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => {
+    if (!open) hideTip();
+  }, [open]);
   return (
-    <nav className="seo-rail" aria-label="SEO panels" data-testid="seo-rail">
+    <>
+    <nav className="seo-rail" aria-label="SEO panels" data-testid="seo-rail" onScroll={hideTip}>
       {SEO_PANELS.map((item) => {
         const Icon = PANEL_ICONS[item.id];
         const status = statuses[item.id];
@@ -101,8 +124,13 @@ function Rail({
             aria-disabled={!item.available}
             disabled={!item.available}
             aria-label={label}
-            title={label}
-            onClick={() => onSelect(item.id)}
+            title={open ? undefined : label}
+            onPointerEnter={(e) => open && showTip(e.currentTarget, label)}
+            onPointerLeave={hideTip}
+            onClick={() => {
+              hideTip();
+              onSelect(item.id);
+            }}
           >
             <Icon />
             {status ? <span className="seo-rail-dot" data-status={status} aria-hidden="true" /> : null}
@@ -111,6 +139,12 @@ function Rail({
         );
       })}
     </nav>
+    {tip ? (
+      <div className="seo-rail-tip" data-testid="seo-rail-tip" role="presentation" aria-hidden="true" style={{ left: tip.x, top: tip.y }}>
+        {tip.label}
+      </div>
+    ) : null}
+    </>
   );
 }
 
@@ -254,6 +288,7 @@ export function SeoSidebar({
   };
   return (
     <aside className="seo" data-testid="seo-sidebar" data-open={open} aria-label="SEO">
+      <Rail open={open} panel={panel} response={response} onSelect={select} itemRefs={railItems} />
       {open ? (
         <div className="seo-panel" data-testid="seo-panel" data-panel={panel}>
           <header className="seo-head">
@@ -293,7 +328,6 @@ export function SeoSidebar({
           ) : null}
         </div>
       ) : null}
-      <Rail open={open} panel={panel} response={response} onSelect={select} itemRefs={railItems} />
     </aside>
   );
 }

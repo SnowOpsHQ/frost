@@ -20,7 +20,8 @@ import {
 //
 // - Binds `LOOPBACK_HOST` only, on a random port in `LOOPBACK_PORT_RANGE`; requires
 //   `Host: 127.0.0.1:<port>` (a DNS-rebound name is refused).
-// - Serves only `GET LOOPBACK_CALLBACK_PATH` while waiting; everything else is 404. A missing, wrong
+// - Serves only `GET <callbackPath>` while waiting (`LOOPBACK_CALLBACK_PATH` unless the caller names
+//   another, as the ChatGPT sign-in's `/auth/callback`); everything else is 404. A missing, wrong
 //   or repeated `state` (compared in constant time), a repeated `code`/`error`, or neither, is 400 and
 //   the request keeps waiting.
 // - The first valid callback is answered 303 to `LOOPBACK_DONE_PATH` (code-free), handed over, and from
@@ -54,12 +55,17 @@ export interface StartLoopbackOptions {
   readonly doneLingerMs?: number;
   /** Defaults to `LOOPBACK_REQUEST_TIMEOUT_MS` (tests shorten it). */
   readonly requestTimeoutMs?: number;
+  /**
+   * The only path that takes the redirect (default `LOOPBACK_CALLBACK_PATH`): `/` and up to 64
+   * letters, digits, `_`, `-` and inner `/` (no dot segment, no query), never `LOOPBACK_DONE_PATH`.
+   */
+  readonly callbackPath?: string;
 }
 
 export interface Loopback {
   readonly address: string;
   readonly port: number;
-  /** `http://127.0.0.1:<port>/callback` (`LOOPBACK_REDIRECT_PATTERN`). */
+  /** `http://127.0.0.1:<port><callbackPath>` (`http://127.0.0.1:<port>/callback` by default, `LOOPBACK_REDIRECT_PATTERN`). */
   readonly redirectUri: string;
   /** Stops listening at once (cancel); reports nothing. Idempotent. */
   close(): void;
@@ -89,8 +95,13 @@ function listen(server: Server): Promise<number> {
   });
 }
 
-/** Starts a listener for one pending request. Rejects when no port in range could be bound. */
+/** A callback path the listener accepts as `callbackPath`. */
+const CALLBACK_PATH_PATTERN = /^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
+
+/** Starts a listener for one pending request. Rejects when no port in range could be bound, or for a malformed `callbackPath`. */
 export async function startLoopback(options: StartLoopbackOptions): Promise<Loopback> {
+  const callbackPath = options.callbackPath ?? LOOPBACK_CALLBACK_PATH;
+  if (callbackPath.length > 64 || !CALLBACK_PATH_PATTERN.test(callbackPath) || callbackPath === LOOPBACK_DONE_PATH) throw new Error('loopback: invalid callback path');
   const expectedState = digest(options.state);
   let phase: 'waiting' | 'done' | 'closed' = 'waiting';
   let port = 0;
@@ -120,7 +131,7 @@ export async function startLoopback(options: StartLoopbackOptions): Promise<Loop
       res.once('finish', finish);
       return send(res, 200, DONE_HTML, { 'Content-Type': 'text/html; charset=utf-8' });
     }
-    if (phase !== 'waiting' || path !== LOOPBACK_CALLBACK_PATH) return send(res, 404, 'Not found');
+    if (phase !== 'waiting' || path !== callbackPath) return send(res, 404, 'Not found');
 
     const params = new URLSearchParams(queryAt < 0 ? '' : raw.slice(queryAt + 1));
     const states = params.getAll('state');
@@ -195,7 +206,7 @@ export async function startLoopback(options: StartLoopbackOptions): Promise<Loop
   return {
     address: LOOPBACK_HOST,
     port,
-    redirectUri: `http://${LOOPBACK_HOST}:${port}${LOOPBACK_CALLBACK_PATH}`,
+    redirectUri: `http://${LOOPBACK_HOST}:${port}${callbackPath}`,
     close: finish,
     closed,
   };

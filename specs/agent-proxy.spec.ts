@@ -11,7 +11,8 @@
  * the installed providers actually send (captured offline through the runtime's proxied fetch; test
  * `proxy-accepts-real-provider-requests` keeps them honest).
  */
-import { DEFAULT_MODEL_ID, isAllowedModelId, MAX_TOOL_STEPS, modelProvider, routeModelId, type ModelId, type ModelRoute } from './agent-tools.spec';
+import { CHATGPT_TOOL_NAMESPACE, type ChatgptModelView } from './agent-chatgpt.spec';
+import { DEFAULT_MODEL_ID, isAgentModelId, MAX_TOOL_STEPS, MODEL_ROUTES, modelProvider, routeModelId, type AgentModelId, type KeyRoute, type ModelRoute } from './agent-tools.spec';
 
 // ---- Host ------------------------------------------------------------------------------------
 
@@ -54,15 +55,30 @@ export const AGENT_SETTINGS_FILE = 'agent-settings.json';
 
 export interface AgentModelSettings {
   readonly route: ModelRoute;
-  readonly modelId: ModelId;
+  /** A catalogue id, or a `chatgpt/<slug>` on the `chatgpt` route (`AgentModelId`). */
+  readonly modelId: AgentModelId;
 }
 
 /** A new install: the gateway route and `DEFAULT_MODEL_ID`. */
 export const DEFAULT_AGENT_MODEL_SETTINGS: AgentModelSettings = { route: 'gateway', modelId: DEFAULT_MODEL_ID };
 
-/** Whether `route` may serve `modelId` (an allowed model whose provider the route serves). */
+/**
+ * Whether `route` may serve `modelId`, as a format check: an allowed model whose provider the route
+ * serves, or a well-formed `chatgpt/<slug>` on the `chatgpt` route (main also requires the slug to
+ * be in the account's last model list).
+ */
 export function isValidModelSettings(value: { readonly route: unknown; readonly modelId: unknown }): value is AgentModelSettings {
-  return (value.route === 'gateway' || value.route === 'byok-anthropic' || value.route === 'byok-openai') && isAllowedModelId(value.modelId) && routeModelId(value.route, value.modelId) !== null;
+  return (MODEL_ROUTES as readonly unknown[]).includes(value.route) && isAgentModelId(value.modelId) && routeModelId(value.route as ModelRoute, value.modelId) !== null;
+}
+
+/**
+ * Whether main may use these settings: `isValidModelSettings`, and on the `chatgpt` route the model
+ * in `chatgptModels`, the account's last model list (persisted with the settings, so a restart
+ * without network keeps the choice). A ChatGPT id the list no longer has is not usable.
+ */
+export function isUsableModelSettings(value: { readonly route: unknown; readonly modelId: unknown }, chatgptModels: readonly ChatgptModelView[]): value is AgentModelSettings {
+  if (!isValidModelSettings(value)) return false;
+  return value.route !== 'chatgpt' || chatgptModels.some((model) => model.id === value.modelId);
 }
 
 // ---- Credentials -----------------------------------------------------------------------------
@@ -75,11 +91,17 @@ export function isCredentialSlot(value: unknown): value is CredentialSlot {
   return typeof value === 'string' && (CREDENTIAL_SLOTS as readonly string[]).includes(value);
 }
 
-export const ROUTE_CREDENTIAL_SLOT: Readonly<Record<ModelRoute, CredentialSlot>> = {
+/** The slot each key route uses. The `chatgpt` route has none: its credential is the sign-in's access token. */
+export const ROUTE_CREDENTIAL_SLOT: Readonly<Record<KeyRoute, CredentialSlot>> = {
   'byok-anthropic': 'anthropic',
   'byok-openai': 'openai',
   gateway: 'gateway',
 };
+
+/** The slot `route` uses, or `null` for the `chatgpt` route (no stored key). */
+export function routeCredentialSlot(route: ModelRoute): CredentialSlot | null {
+  return route === 'chatgpt' ? null : ROUTE_CREDENTIAL_SLOT[route];
+}
 
 /** The encrypted keys' file in `userData` (mode 0600, written atomically). */
 export const CREDENTIALS_FILE = 'agent-credentials.json';
@@ -154,6 +176,12 @@ export const PROXY_REFUSALS = [
   'redirect',
   'no-chat',
   'turn-budget',
+  /**
+   * The ChatGPT plan refused this turn already (a usage limit, not eligible, plan usage off, an
+   * unsupported request): nothing goes out on the plan again until the turn ends (the SDK's retry
+   * would repeat it). Not the runtime's fault.
+   */
+  'plan-paused',
 ] as const;
 export type ProxyRefusal = (typeof PROXY_REFUSALS)[number];
 
@@ -192,7 +220,9 @@ const USER_AGENT = matching(/^ai-sdk-[a-z-]+\/[0-9A-Za-z.+-]+( [\x21-\x7e]+){0,8
  * - OpenAI (Responses): `content-type`, `user-agent`;
  * - gateway: `ai-gateway-protocol-version`, `ai-language-model-specification-version`,
  *   `ai-language-model-id`, `ai-language-model-streaming`, `ai-gateway-auth-method` (main sets it),
- *   `content-type`, `user-agent`.
+ *   `content-type`, `user-agent`;
+ * - ChatGPT plan: the OpenAI provider's, as `byok-openai` (no `openai-organization` or
+ *   `openai-project`: the route takes `Authorization: Bearer` only).
  */
 export const REQUEST_HEADER_ALLOWLIST: Readonly<Record<ModelRoute, Readonly<Record<string, HeaderRule>>>> = {
   'byok-anthropic': {
@@ -207,6 +237,9 @@ export const REQUEST_HEADER_ALLOWLIST: Readonly<Record<ModelRoute, Readonly<Reco
     },
   },
   'byok-openai': {
+    'user-agent': USER_AGENT,
+  },
+  chatgpt: {
     'user-agent': USER_AGENT,
   },
   gateway: {
@@ -242,7 +275,8 @@ export function filterRequestHeaders(route: ModelRoute, pairs: HeaderPairs): [st
 /**
  * The headers main adds after the kept ones: the content type and the route's credential. The
  * Anthropic provider sends its key as `x-api-key`; OpenAI and the gateway as `Authorization:
- * Bearer` (the providers' sources), and the gateway also names the method (`api-key`).
+ * Bearer` (the providers' sources), and the gateway also names the method (`api-key`). On the
+ * `chatgpt` route `key` is the sign-in's access token, sent as `Authorization: Bearer` only.
  */
 export function mainRequestHeaders(route: ModelRoute, key: string): [string, string][] {
   const headers: [string, string][] = [['content-type', 'application/json']];
@@ -344,12 +378,14 @@ const outputCap = (value: unknown): boolean => Number.isInteger(value) && (value
  * Top-level body fields each route may send (the providers' text generation requests with frost's
  * options). Absent from the lists, so refused: Anthropic `mcp_servers`, `container`,
  * `context_management`, `compaction`, `fallbacks`; OpenAI `previous_response_id`, `conversation`,
- * `prompt`, `background`; the gateway's `headers`, `responseFormat` and any provider routing.
+ * `prompt`, `background`; the gateway's `headers`, `responseFormat` and any provider routing; on the
+ * ChatGPT plan also every `CHATGPT_FORBIDDEN_BODY_FIELDS` (no output cap, no sampling knobs).
  */
 export const BODY_FIELDS: Readonly<Record<ModelRoute, readonly string[]>> = {
   'byok-anthropic': ['model', 'max_tokens', 'system', 'messages', 'tools', 'tool_choice', 'stream', 'temperature', 'top_k', 'top_p', 'stop_sequences', 'thinking', 'output_config'],
   'byok-openai': ['model', 'input', 'instructions', 'store', 'include', 'tools', 'tool_choice', 'stream', 'temperature', 'top_p', 'max_output_tokens', 'reasoning', 'text', 'parallel_tool_calls'],
   gateway: ['prompt', 'tools', 'toolChoice', 'providerOptions', 'includeRawChunks', 'maxOutputTokens', 'temperature', 'topP', 'topK', 'stopSequences', 'presencePenalty', 'frequencyPenalty', 'seed'],
+  chatgpt: ['model', 'input', 'instructions', 'store', 'stream', 'include', 'tools', 'tool_choice', 'reasoning', 'text', 'parallel_tool_calls'],
 };
 
 // Anthropic Messages: each block's keys, and which role may carry it (what the provider emits for
@@ -395,6 +431,26 @@ export const OPENAI_INPUT_ITEM_TYPES: readonly string[] = Object.keys(OPENAI_ITE
 /** OpenAI `include` values allowed (reasoning carried in the request, since nothing is stored). */
 export const OPENAI_INCLUDE: readonly string[] = ['reasoning.encrypted_content'];
 const openaiTool = (value: unknown) => shaped(value, { type: oneOf('function'), name: isString, description: isString, parameters: isObject, strict: oneOf(true, false) }) && isObject(value) && value.type === 'function' && isString(value.name);
+
+// The ChatGPT plan (Responses with the route's limits): the same items, but no `system` message
+// (the route rejects one; instructions or developer messages carry it), each item's identifying
+// keys required (a message without a role is refused), and a function call may name the namespace
+// its tool came from. Tools only as namespace groups of plain function tools,
+// under `CHATGPT_TOOL_NAMESPACE.name` only.
+const CHATGPT_ITEMS: Readonly<Record<string, Readonly<Record<string, (value: unknown) => boolean>>>> = {
+  ...OPENAI_ITEMS,
+  message: { ...OPENAI_ITEMS.message!, role: oneOf('user', 'assistant', 'developer') },
+  function_call: { ...OPENAI_ITEMS.function_call!, namespace: oneOf(CHATGPT_TOOL_NAMESPACE.name) },
+};
+/** The keys each ChatGPT input item must carry (absent is refused, not passed). */
+const CHATGPT_REQUIRED_ITEM_KEYS: Readonly<Record<string, readonly string[]>> = {
+  message: ['role', 'content'],
+  function_call: ['call_id', 'name', 'arguments'],
+  function_call_output: ['call_id', 'output'],
+  reasoning: ['id', 'summary'],
+};
+const chatgptNamespace = (value: unknown) =>
+  shaped(value, { type: oneOf('namespace'), name: oneOf(CHATGPT_TOOL_NAMESPACE.name), description: isString, tools: arrayOf(openaiTool) }) && isObject(value) && value.type === 'namespace' && value.name === CHATGPT_TOOL_NAMESPACE.name && Array.isArray(value.tools);
 
 // The gateway: the language model call options. Parts per role, each with its keys; part and message
 // provider options only the ones the providers attach to their own output (Anthropic's thinking
@@ -496,6 +552,9 @@ export function checkModelRequestBody(route: ModelRoute, modelId: string, body: 
         check = models.length !== 1 || models[0]![1] !== expected ? refuse('model') : checkGateway(parsed, modelProvider(modelId) === 'openai');
         break;
       }
+      case 'chatgpt':
+        check = parsed.model === expected ? checkChatgpt(parsed) : refuse('model');
+        break;
       default:
         return refuse('model');
     }
@@ -545,6 +604,35 @@ function checkOpenAi(body: Json): BodyCheck {
   }
   if (tools !== undefined && !arrayOf(openaiTool)(tools)) return refuse('tool');
   if (toolChoice !== undefined && !oneOf('auto', 'none', 'required')(toolChoice) && !(shaped(toolChoice, { type: oneOf('function'), name: isString }) && isObject(toolChoice) && toolChoice.type === 'function')) return refuse('tool');
+  if (reasoning !== undefined && !shaped(reasoning, { effort: oneOf('minimal', 'low', 'medium', 'high'), summary: oneOf('auto', 'concise', 'detailed') })) return refuse('body-field');
+  if (text !== undefined && !shaped(text, { verbosity: oneOf('low', 'medium', 'high'), format: (format) => shaped(format, { type: oneOf('text') }) })) return refuse('body-field');
+  return OK;
+}
+
+/**
+ * The ChatGPT plan's Responses body: `store: false` and `stream: true` required, `input` an array
+ * of `CHATGPT_ITEMS` (no `system` message), tools only in the `frost` namespace, no output cap or
+ * sampling field (`BODY_FIELDS.chatgpt` already left them out).
+ */
+function checkChatgpt(body: Json): BodyCheck {
+  if (body.store !== false) return refuse('store');
+  if (body.stream !== true) return refuse('body-field');
+  const { input, include, tools, tool_choice: toolChoice, reasoning, text, instructions, parallel_tool_calls: parallel } = body;
+  if (include !== undefined && !arrayOf((value) => isString(value) && OPENAI_INCLUDE.includes(value))(include)) return refuse('body-field');
+  if (instructions !== undefined && !isString(instructions)) return refuse('content');
+  if (!Array.isArray(input)) return refuse('content');
+  for (const item of input) {
+    if (!isObject(item)) return refuse('content');
+    const type = item.type ?? (isString(item.role) ? 'message' : undefined);
+    if (!isString(type) || !Object.hasOwn(CHATGPT_ITEMS, type) || !shaped(item, CHATGPT_ITEMS[type]!)) return refuse('content');
+    // Each item's identifying fields are present, not just allowed: a message names its role and
+    // content; a call, its id, name and arguments; an output, its call id and output.
+    if (!CHATGPT_REQUIRED_ITEM_KEYS[type]!.every((key) => item[key] !== undefined)) return refuse('content');
+  }
+  if (tools !== undefined && !arrayOf(chatgptNamespace)(tools)) return refuse('tool');
+  // A tool inside a namespace can't be named by `tool_choice`; only the modes are allowed.
+  if (toolChoice !== undefined && !oneOf('auto', 'none', 'required')(toolChoice)) return refuse('tool');
+  if (parallel !== undefined && !oneOf(true, false)(parallel)) return refuse('body-field');
   if (reasoning !== undefined && !shaped(reasoning, { effort: oneOf('minimal', 'low', 'medium', 'high'), summary: oneOf('auto', 'concise', 'detailed') })) return refuse('body-field');
   if (text !== undefined && !shaped(text, { verbosity: oneOf('low', 'medium', 'high'), format: (format) => shaped(format, { type: oneOf('text') }) })) return refuse('body-field');
   return OK;

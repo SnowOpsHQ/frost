@@ -11,7 +11,7 @@ import { APPROVAL_DECISIONS, MAX_GRANT_ORIGIN_CHARS } from './agent-approvals.sp
 import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_RETENTIONS } from './agent-data.spec';
 import { CREDENTIAL_LIMITS, CREDENTIAL_SLOTS, isValidModelSettings } from './agent-proxy.spec';
 import { CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
-import { ALLOWED_MODEL_IDS, MODEL_ROUTES } from './agent-tools.spec';
+import { isAgentModelId, MODEL_ROUTES, type AgentModelId } from './agent-tools.spec';
 import { SKILL_ID_PATTERN, SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from './skills.spec';
 
 /** A chat id: main makes them with `crypto.randomUUID`. */
@@ -59,8 +59,12 @@ export const AgentChatInputSchema = z.strictObject({ chatId: AgentChatIdSchema }
 
 export const AgentAnswerApprovalInputSchema = z.strictObject({ approvalId: AgentApprovalIdSchema, decision: z.enum(APPROVAL_DECISIONS) });
 
+/**
+ * A route and model: a catalogue id, or a `chatgpt/<slug>` on the `chatgpt` route (bounded and
+ * well-formed here; main also requires the slug to be in the account's last model list).
+ */
 export const AgentSetModelInputSchema = z
-  .strictObject({ route: z.enum(MODEL_ROUTES), modelId: z.enum(ALLOWED_MODEL_IDS) })
+  .strictObject({ route: z.enum(MODEL_ROUTES), modelId: z.custom<AgentModelId>((value) => typeof value === 'string' && value.length <= 128 && isAgentModelId(value)) })
   .refine((value) => isValidModelSettings(value), { message: 'the route does not serve this model' });
 
 /**
@@ -72,6 +76,20 @@ export const AgentSetModelInputSchema = z
 export const AgentSetKeyInputSchema = z.strictObject({ slot: z.enum(CREDENTIAL_SLOTS), key: z.string().min(1).max(CREDENTIAL_LIMITS.maxKeyChars * 2) });
 
 export const AgentClearKeyInputSchema = z.strictObject({ slot: z.enum(CREDENTIAL_SLOTS) });
+
+// ---- ChatGPT plan (`agent-chatgpt.spec.ts`; plan `docs/plans/agent-chatgpt-plan.md`) ---------
+
+/**
+ * `agent.chatgptSignIn`: start a sign-in (main spends the sender window's live user gesture, then
+ * opens the system browser). `reconsent` asks the browser to show the consent screen again
+ * (`prompt=consent`), to turn plan usage on after it was declined. `differentAccount` ("Use a
+ * different account"; v1 keeps one account) first signs the current account out (revoking its
+ * tokens) and forgets frost's registration, so the sign-in registers fresh and may come back as
+ * another account. `agent.chatgptCancel`, `agent.chatgptSignOut` and `agent.chatgptAcknowledge`
+ * take no input (`AgentChatgptNoInputSchema`, or none, as `agent.newChat`).
+ */
+export const AgentChatgptSignInInputSchema = z.strictObject({ reconsent: z.boolean().optional(), differentAccount: z.boolean().optional() });
+export const AgentChatgptNoInputSchema = z.strictObject({});
 
 // ---- Task 9: grants page, chat data, skills editor (`agent-data.spec.ts`) --------------------
 

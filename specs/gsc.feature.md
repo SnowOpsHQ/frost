@@ -24,12 +24,16 @@ line maps to one named test.
   The callback's code is exchanged with the verifier (and the installed-app client secret, which Google
   does not treat as confidential). One connect at a time: a new one replaces the pending one;
   `cancelConnect` drops it. A callback with an OAuth `error` is `cancelled`.
-- **The connection belongs to the frost account that made it.** The `gsc` blob carries the signed-in
-  frost account's user ID (main only; it never crosses IPC). While another account, or none, is signed
-  in, the status is not `connected`, reads answer `not-entitled` (none) or `not-connected` (another),
-  and neither token is ever sent. Signing in as a different account disconnects the old connection
-  (revoked and deleted); signing out and back in as the same account keeps it. A connect whose exchange
-  lands after the account changed is revoked.
+- **The connection belongs to its owner (`userId()`).** The `gsc` blob carries the owner the service
+  was given when it was made (main only; it never crosses IPC). While another owner, or none, is
+  current, the status is not `connected`, reads answer `not-connected`, and neither token is ever
+  sent. A different owner disconnects the old connection (revoked and deleted); no owner, then the
+  same one again, keeps it. A connect whose exchange lands after the owner changed is revoked.
+- **In main the owner is this frost profile, not a frost account (2026-10-29).** frost is free and
+  open source, and Search Console needs no frost account: main passes `GSC_PROFILE_OWNER` whoever is
+  signed in to frost (or nobody), so signing in or out (for sync) never connects, disconnects or hides
+  the Google connection. A blob stored under any other owner (a frost user ID, by a build from before
+  this decision) is never read with, and is revoked and deleted at start: connect once again.
 - **Tokens stay in main.** The refresh token lives in the secret store's `gsc` blob (memory-only
   without a real keychain); the access token only in memory, with its expiry (refreshed
   `GSC_ACCESS_TOKEN_SKEW_MS` early, one refresh at a time; after a failed refresh none is tried for
@@ -41,9 +45,12 @@ line maps to one named test.
   `invalid_grant` ends the connection (blob deleted, error `auth-expired`). `disconnect` deletes the blob
   at once and revokes the refresh token at Google's revoke endpoint (best effort; a quit waits for it at
   most `GSC_QUIT_REVOKE_TIMEOUT_MS`).
-- **Gated on `search-console`** (a `pro` feature): every read answers `not-entitled`, and `connect`
-  answers `not-entitled`, before anything is sent. The gate is the account service's `entitlements()`
-  (`none` unless signed in). `disconnect` always works.
+- **Not gated (2026-10-29; `UNGATED_FEATURES` in `entitlements-snapshot.spec.ts`).** Search Console
+  is free, signed out or on any plan: main passes `GSC_UNGATED_ACCESS` (`entitled` always true, the
+  profile as owner) and must not wire the service to the account's entitlements. `GscStatus.entitled`
+  (always `true` from main) and the `not-entitled` answers stay in the schema for wire compatibility,
+  and the service keeps its `entitled` seam: when it answers false, every read answers `not-entitled`,
+  and `connect` too, before anything is sent. `disconnect` always works.
 - **The read API never throws.** Every answer is `{ status: 'ok', … }` or `{ status: 'unavailable',
   reason }` (`GSC_UNAVAILABLE_REASONS`), checked in this order: `unconfigured`, `not-entitled`,
   `not-connected`, then the input (`not-a-web-page` for a non-`http(s)` URL, `invalid` otherwise), then
@@ -133,7 +140,8 @@ line maps to one named test.
 - `redactor-keeps-long-lived-secrets` — the client secret and refresh tokens stay scrubbed however many other values were remembered after them; Google's token shapes are scrubbed without being remembered.
 
 ## Service (`apps/desktop/src/main/gsc/__tests__/service.test.ts`)
-- `not-entitled-refused-before-network` — without `search-console` every read answers `not-entitled` and `connect` answers `not-entitled`, with no request to Google.
+- `not-entitled-refused-before-network` — with the `entitled` seam false every read answers `not-entitled` and `connect` answers `not-entitled`, with no request to Google.
+- `search-console-ungated-without-account` — with main's `GSC_UNGATED_ACCESS` (no frost account at all) the status is entitled, Connect works and reads answer `ok`; the blob's owner is `GSC_PROFILE_OWNER`; a blob stored under a frost user ID is revoked and deleted at start.
 - `unconfigured-and-not-connected` — no client: `unconfigured` everywhere; configured but not connected: `not-connected`.
 - `not-a-web-page-and-invalid` — a non-`http(s)` URL is `not-a-web-page`; any other malformed query is `invalid`.
 - `performance-page-vs-property-bodies` — page scope sends the `page equals` filter for the URL without its fragment; property scope sends none; both over the computed range, to the matched property.
@@ -147,7 +155,7 @@ line maps to one named test.
 - `status-watch-long-polls` — `watch` answers at once when newer, else on the next change (connect, disconnect, entitlement change).
 - `dispose-awaits-revocation` — `dispose` drops a pending connect and answers the revocations still running; nothing to wait for answers `null`.
 - `read-across-reconnect-not-answered` — a read waiting for Google while the account disconnects and reconnects answers `not-connected`, not the old connection's data, and keeps nothing.
-- `connection-belongs-to-frost-account` — signed out: `not-entitled`, not connected, nothing sent; another account: not connected, `not-connected`, nothing sent, and the old connection revoked and deleted; the same account again: connected and read as before.
+- `connection-belongs-to-frost-account` — the owner rule with the seams: no owner (and `entitled` false): not connected, nothing sent; another owner: not connected, `not-connected`, nothing sent, and the old connection revoked and deleted; the same owner again: connected and read as before.
 - `identical-reads-merged` — identical reads in flight at once make one call to Google and get the same answer.
 - `api-rate-limited` — more than `GSC_RATE_LIMIT.burst` API calls at once: the rest answer `quota` unsent; tokens come back at `perSecond`.
 - `keychain-reports-this-run-only` — connected with a memory-only store, or after a failed write, the status says `memory-only`; a persisted connection says `persistent`.
@@ -161,7 +169,7 @@ line maps to one named test.
 - `gsc-without-service-fail-closed` — without `services.gsc` every procedure is a masked internal error.
 - `answers-carry-no-secret` — no answer of any procedure carries the fake tokens or codes.
 
-## End to end (`apps/desktop/e2e/gsc.e2e.ts`; fake backend (pro) and fake Google)
-- `gsc-connect-needs-gesture` — signed in as `pro`, `gsc.connect` without a click answers `needs-gesture` and opens nothing.
+## End to end (`apps/desktop/e2e/gsc.e2e.ts`; fake backend (never signed in to) and fake Google)
+- `gsc-connect-needs-gesture` — signed out of frost, the status is entitled and not connected, a read answers `not-connected`, and `gsc.connect` without a click answers `needs-gesture` and opens nothing.
 - `gsc-connect-read-only-and-performance` — with a real click `connect` opens the read-only consent URL; following it as the browser connects; `gsc.performance` for a page on the loopback test site answers the fake rows for its URL-prefix property, and `gsc.topQueries` the fake queries; no answer carries a token or code, and neither does anything main printed (nor the client secret).
 - `gsc-disconnect-revokes` — `gsc.disconnect` makes the fake see the revocation; reads answer `not-connected`.

@@ -1,18 +1,23 @@
-// Spec: specs/agent-tools.spec.ts (MODEL_REQUESTS, isAllowedModelRequest, routeModelId) · Acceptance:
-// specs/agent-runtime.feature.md (Providers). Proves the installed providers' endpoint paths are the
-// ones main's proxy allows: each model's request is captured by the proxied fetch, never sent.
+// Spec: specs/agent-tools.spec.ts (MODEL_REQUESTS, isAllowedModelRequest, routeModelId) ·
+// specs/agent-chatgpt.spec.ts (CHATGPT_TOOL_NAMESPACE, CHATGPT_FORBIDDEN_BODY_FIELDS) · specs/agent-proxy.spec.ts
+// (checkModelRequestBody) · Acceptance: specs/agent-runtime.feature.md (Providers), specs/agent-chatgpt.feature.md
+// (Runtime). Proves the installed providers' endpoint paths are the ones main's proxy allows: each
+// model's request is captured by the proxied fetch, never sent.
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
-import { MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
-import { ALLOWED_MODEL_IDS, isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES, routeModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
+import { CHATGPT_FORBIDDEN_BODY_FIELDS, CHATGPT_TOOL_NAMESPACE } from '@app/specs/agent-chatgpt.spec';
+import { checkModelRequestBody, MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
+import { ALLOWED_MODEL_IDS, isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES, routeModelId, type AgentModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
 import { createModel, ModelNotAllowedError, PLACEHOLDER_API_KEY } from '../provider';
 import { CREDENTIAL_HEADERS, createProxyFetch } from '../proxy-fetch';
 import { chatStart, startHarness, stubNetworkGlobals } from './harness';
 
-const MODEL_FOR_ROUTE: Record<ModelRoute, (typeof ALLOWED_MODEL_IDS)[number]> = {
+const CHATGPT_MODEL = 'chatgpt/gpt-6.1-sol';
+const MODEL_FOR_ROUTE: Record<ModelRoute, AgentModelId> = {
   'byok-anthropic': 'anthropic/claude-sonnet-5-5',
   'byok-openai': 'openai/gpt-5',
   gateway: 'anthropic/claude-sonnet-5-5',
+  chatgpt: CHATGPT_MODEL,
 };
 
 /** Streams one request from `route`'s model and answers it `refused`; returns what was posted. */
@@ -113,8 +118,9 @@ describe('providers', () => {
     h.send(chatStart({ route, modelId: MODEL_FOR_ROUTE[route] }));
     const request = await h.next('fetch.request');
     const body = JSON.parse(request.body as string) as Record<string, unknown>;
-    const field = route === 'byok-anthropic' ? 'max_tokens' : route === 'byok-openai' ? 'max_output_tokens' : 'maxOutputTokens';
-    expect(body[field]).toBe(MAX_OUTPUT_TOKENS);
+    // The ChatGPT plan takes no output cap (`max_output_tokens` is refused there): none is sent.
+    if (route === 'chatgpt') expect(body).not.toHaveProperty('max_output_tokens');
+    else expect(body[route === 'byok-anthropic' ? 'max_tokens' : route === 'byok-openai' ? 'max_output_tokens' : 'maxOutputTokens']).toBe(MAX_OUTPUT_TOKENS);
     await h.next('chat.error');
   });
 
@@ -124,5 +130,121 @@ describe('providers', () => {
     expect(() => createModel('byok-openai', 'anthropic/claude-opus-5-5', fetch)).toThrow(ModelNotAllowedError);
     expect(() => createModel('gateway', 'mistral/large', fetch)).toThrow(ModelNotAllowedError);
     expect(() => createModel('byok-anthropic', 'claude-sonnet-5-5', fetch)).toThrow(ModelNotAllowedError);
+    // The ChatGPT route serves only `chatgpt/<slug>` ids, and a ChatGPT id no other route.
+    expect(() => createModel('chatgpt', 'openai/gpt-5', fetch)).toThrow(ModelNotAllowedError);
+    expect(() => createModel('byok-openai', 'chatgpt/gpt-5', fetch)).toThrow(ModelNotAllowedError);
+  });
+
+  test('provider-chatgpt-request (namespaced tools, store off, streaming, no output cap, no system item)', async () => {
+    const h = startHarness({ modelFactory: createModel });
+    h.onMessage((message) => {
+      if (message.type === 'fetch.request') h.send({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' });
+    });
+    const mcp = { name: 'mcp__docs__search', description: 'Untrusted tool from Docs: Searches the docs.', inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } };
+    h.send(
+      chatStart({
+        route: 'chatgpt',
+        modelId: CHATGPT_MODEL,
+        allowedTools: ['page_audit', 'page_text', mcp.name],
+        mcpTools: [mcp as never],
+        messages: [
+          { role: 'user', content: 'Audit this page.' },
+          { role: 'assistant', content: 'Reading it.', toolCalls: [{ callId: 'call-1', toolName: 'page_audit', input: {} }] },
+          { role: 'tool', callId: 'call-1', toolName: 'page_audit', result: { ok: true, output: { untrusted: true, source: 'page_audit', data: { score: 80 } } } },
+          { role: 'user', content: 'Go on.' },
+        ],
+      }),
+    );
+    const request = await h.next('fetch.request');
+    expect({ method: request.method, url: request.url }).toEqual(MODEL_REQUESTS.chatgpt[0]);
+    const text = request.body as string;
+    const body = JSON.parse(text) as Record<string, unknown> & { input: Record<string, unknown>[]; tools: Record<string, unknown>[] };
+    expect(body.model).toBe('gpt-6.1-sol');
+    expect(body.store).toBe(false);
+    expect(body.stream).toBe(true);
+    for (const field of [...CHATGPT_FORBIDDEN_BODY_FIELDS, 'max_output_tokens', 'temperature', 'top_p']) expect(body, field).not.toHaveProperty(field);
+    // Every tool, frost's and MCP's, inside the one `frost` namespace; nothing outside it.
+    expect(body.tools).toHaveLength(1);
+    expect(body.tools[0]).toMatchObject({ type: 'namespace', name: CHATGPT_TOOL_NAMESPACE.name, description: CHATGPT_TOOL_NAMESPACE.description });
+    expect((body.tools[0]!.tools as { type: string; name: string }[]).map((tool) => [tool.type, tool.name])).toEqual([
+      ['function', 'page_audit'],
+      ['function', 'page_text'],
+      ['function', mcp.name],
+    ]);
+    // `input` is an array with no system item: the system prompt is a developer message.
+    expect(Array.isArray(body.input)).toBe(true);
+    expect(body.input.some((item) => item.role === 'system')).toBe(false);
+    expect(body.input[0]).toEqual({ role: 'developer', content: 'You are frost’s SEO assistant.' });
+    // A function call from the history names the namespace its tool is in.
+    expect(body.input.find((item) => item.type === 'function_call')).toMatchObject({ call_id: 'call-1', name: 'page_audit', namespace: 'frost' });
+    // And main's rules for the route accept it as sent.
+    expect(checkModelRequestBody('chatgpt', CHATGPT_MODEL, text)).toEqual({ ok: true, body: text });
+    // No credential, and the placeholder key nowhere.
+    for (const [name, value] of request.headers) {
+      expect(CREDENTIAL_HEADERS.has(name.toLowerCase())).toBe(false);
+      expect(value).not.toContain(PLACEHOLDER_API_KEY);
+    }
+    await h.next('chat.error');
+  });
+
+  test('provider-chatgpt-request (a namespaced call round-trips through a two-step turn)', async () => {
+    const h = startHarness({ modelFactory: createModel });
+    const sse = (events: readonly unknown[]) => new TextEncoder().encode(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''));
+    let requests = 0;
+    h.onMessage((message) => {
+      if (message.type === 'tool.invoke') {
+        h.send({ type: 'tool.result', chatId: message.chatId, callId: message.callId, result: { ok: true, output: { untrusted: true, source: message.toolName, data: { score: 80 } } } });
+        return;
+      }
+      if (message.type !== 'fetch.request') return;
+      requests += 1;
+      if (requests > 1) {
+        h.send({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' });
+        return;
+      }
+      // The model calls `page_audit` in the `frost` namespace.
+      h.send({ type: 'fetch.response-start', requestId: message.requestId, status: 200, statusText: 'OK', headers: [['content-type', 'text/event-stream']] });
+      h.send({
+        type: 'fetch.chunk',
+        requestId: message.requestId,
+        bytes: sse([
+          { type: 'response.created', response: { id: 'resp_1', created_at: 1, model: 'gpt-6.1-sol' } },
+          { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', id: 'fc_1', call_id: 'call_ns', name: 'page_audit', namespace: 'frost', arguments: '' } },
+          { type: 'response.function_call_arguments.delta', item_id: 'fc_1', output_index: 0, delta: '{}' },
+          { type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', id: 'fc_1', call_id: 'call_ns', name: 'page_audit', namespace: 'frost', arguments: '{}', status: 'completed' } },
+          { type: 'response.completed', response: { incomplete_details: null, usage: { input_tokens: 10, output_tokens: 5 } } },
+        ]),
+      });
+      h.send({ type: 'fetch.end', requestId: message.requestId });
+    });
+    h.send(chatStart({ route: 'chatgpt', modelId: CHATGPT_MODEL, allowedTools: ['page_audit'] }));
+    const invoke = await h.next('tool.invoke');
+    expect(invoke).toMatchObject({ callId: 'call_ns', toolName: 'page_audit' });
+    const second = await h.next('fetch.request', () => requests >= 2);
+    const text = h.of('fetch.request')[1]!.body as string;
+    const body = JSON.parse(text) as { input: Record<string, unknown>[] };
+    // The call goes back with its namespace, followed by its output.
+    const call = body.input.findIndex((item) => item.type === 'function_call');
+    expect(body.input[call]).toMatchObject({ type: 'function_call', call_id: 'call_ns', name: 'page_audit', namespace: 'frost', arguments: '{}' });
+    expect(body.input[call + 1]).toMatchObject({ type: 'function_call_output', call_id: 'call_ns' });
+    expect(checkModelRequestBody('chatgpt', CHATGPT_MODEL, text)).toEqual({ ok: true, body: text });
+    expect(second.url).toBe(MODEL_REQUESTS.chatgpt[0]!.url);
+    await h.next('chat.error');
+  });
+
+  test('provider-chatgpt-request (a refused request speaks of the sign-in, not a key)', async () => {
+    for (const [route, expected] of [
+      ['chatgpt', 'ChatGPT refused the request (HTTP 401). Check the ChatGPT sign-in in the agent settings.'],
+      ['byok-openai', 'The model provider refused the key (HTTP 401). Check the key in the agent settings.'],
+    ] as const) {
+      const h = startHarness({ modelFactory: createModel });
+      h.onMessage((message) => {
+        if (message.type !== 'fetch.request') return;
+        h.send({ type: 'fetch.response-start', requestId: message.requestId, status: 401, statusText: '', headers: [['content-type', 'application/json']] });
+        h.send({ type: 'fetch.end', requestId: message.requestId });
+      });
+      h.send(chatStart({ route, modelId: MODEL_FOR_ROUTE[route] }));
+      expect((await h.next('chat.error')).message, route).toBe(expected);
+    }
   });
 });

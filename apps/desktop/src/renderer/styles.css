@@ -1037,14 +1037,14 @@ input {
 
 /* ---- SEO sidebar -------------------------------------------------------------------------- */
 
-/* Docked right of the page area: the panel, then the rail at the window's edge. The page area
+/* Docked left of the page area: the rail at the window's edge, then the panel. The page area
    shrinks to make room (the tab's view follows it through setPageBounds). */
 .seo {
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--bg-chrome-edge);
+  border-right: 1px solid var(--bg-chrome-edge);
   background: var(--bg-chrome);
 }
 
@@ -1056,7 +1056,7 @@ input {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--bg-chrome-edge);
+  border-left: 1px solid var(--bg-chrome-edge);
   background: var(--seo-bg);
   animation: seo-panel-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
@@ -1064,7 +1064,7 @@ input {
 @keyframes seo-panel-in {
   from {
     opacity: 0;
-    transform: translateX(8px);
+    transform: translateX(-8px);
   }
   to {
     opacity: 1;
@@ -1118,7 +1118,7 @@ input {
 
 /* Collapse: the chevron points to the window's edge. */
 .seo-collapse-icon {
-  transform: rotate(-90deg);
+  transform: rotate(90deg);
 }
 
 .seo-body {
@@ -1192,11 +1192,11 @@ input {
 .seo-rail-item[data-selected='true']::before {
   content: '';
   position: absolute;
-  left: -6px;
+  right: -6px;
   top: 9px;
   bottom: 9px;
   width: 3px;
-  border-radius: 0 3px 3px 0;
+  border-radius: 3px 0 0 3px;
   background: var(--accent);
 }
 
@@ -1211,6 +1211,23 @@ input {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* A rail item's label, beside it over the open panel (SeoSidebar's Rail places it). */
+.seo-rail-tip {
+  position: fixed;
+  z-index: 50;
+  transform: translateY(-50%);
+  padding: 4px 8px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: 6px;
+  background: var(--bg-chrome);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.3);
 }
 
 .seo-rail-dot {

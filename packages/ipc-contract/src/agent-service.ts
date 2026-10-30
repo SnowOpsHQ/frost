@@ -1,4 +1,5 @@
 import type { ApprovalDecision } from '@app/specs/agent-approvals.spec';
+import type { ChatgptSignInResult, ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import type {
   AgentDeleteAllChatsResult,
   AgentGrantView,
@@ -13,7 +14,7 @@ import type {
 } from '@app/specs/agent-data.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
-import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
+import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
 import type { AgentSaveMcpServerInput } from '@app/specs/agent-mcp.schema';
 
@@ -51,7 +52,7 @@ export interface AgentService {
   /** Answers the approval request `approvalId` once (the panel's buttons only). Never rejects. */
   answerApproval(approvalId: string, decision: ApprovalDecision): Promise<AgentAnswerResult>;
   /** Sets the route and model (the next turn uses them); `false` when the pair isn't valid or can't be stored. */
-  setModel(route: ModelRoute, modelId: ModelId): Promise<boolean>;
+  setModel(route: ModelRoute, modelId: AgentModelId): Promise<boolean>;
   /** Stores a key in `slot`; answers how that went, never the key. */
   setKey(slot: CredentialSlot, key: string): Promise<AgentSetKeyResult>;
   /** Removes the slot's key; `false` if it couldn't be removed. */
@@ -96,4 +97,19 @@ export interface AgentService {
   stopMcpServer(id: string): Promise<boolean>;
   /** Stores (or with `null`, removes) an HTTP server's bearer token; never answers it. */
   setMcpToken(id: string, token: string | null): Promise<McpTokenResult>;
+
+  // ---- ChatGPT plan (`agent-chatgpt.spec.ts`; plan `docs/plans/agent-chatgpt-plan.md`, Task 5) ----
+  /**
+   * Starts a ChatGPT sign-in for app window `windowId` (the IPC sender's): spends that window's live
+   * user gesture first (none: `needs-gesture`, nothing opened), then opens the authorize page in the
+   * system browser. `reconsent` asks for consent again (plan usage); `differentAccount` signs the
+   * current account out (revoking) and registers fresh first. Never a token in the answer.
+   */
+  chatgptSignIn(windowId: number, options: { readonly reconsent?: boolean; readonly differentAccount?: boolean }): Promise<ChatgptSignInResult>;
+  /** Ends a pending sign-in; `false` if none was pending. */
+  chatgptCancel(): boolean;
+  /** Revokes, then forgets the tokens (`not-revoked`: forgotten here, the server didn't confirm). */
+  chatgptSignOut(): Promise<ChatgptSignOutResult>;
+  /** Dismisses the one-time "You're using your ChatGPT plan" notice (persisted); `false` if not stored. */
+  chatgptAcknowledge(): Promise<boolean>;
 }

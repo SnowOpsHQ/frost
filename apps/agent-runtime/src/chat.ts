@@ -8,6 +8,12 @@
 // the turn goes on. Tool calls run one at a time (acting tools must not race). Each step's output is
 // posted as `chat.step` for main's history. The system prompt is main's (`chat.start`); nothing here
 // adds one.
+//
+// On the ChatGPT plan route (`chat.start.route === 'chatgpt'`; `agent-chatgpt.feature.md`, Runtime)
+// the request follows the route's rules: every tool (frost's and MCP's) is grouped in the `frost`
+// namespace (`CHATGPT_TOOL_NAMESPACE`, `providerOptions.openai.namespace`), and a function call from
+// the history names it too; no output cap or sampling option is sent; `store: false`; and the
+// system prompt goes as a developer message (the route refuses a `system` item).
 import { APICallError, isStepCount, jsonSchema, streamText, zodSchema, type FinishReason, type LanguageModel, type ModelMessage, type Tool, type ToolSet } from 'ai';
 import type { z } from 'zod';
 import { getToolDefinition } from '@app/ai-skills';
@@ -22,8 +28,9 @@ import {
   type ToolCall,
   type ToolResult,
 } from '@app/specs/agent-protocol.schema';
+import { CHATGPT_TOOL_NAMESPACE } from '@app/specs/agent-chatgpt.spec';
 import { MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
-import { isAgentToolName, isMcpToolName, MAX_TOOL_STEPS } from '@app/specs/agent-tools.spec';
+import { isAgentToolName, isMcpToolName, MAX_TOOL_STEPS, type ModelRoute } from '@app/specs/agent-tools.spec';
 import { ProxyFetchError } from './proxy-fetch';
 import { ModelNotAllowedError } from './provider';
 
@@ -40,6 +47,25 @@ export const UNANSWERED_CALL_OUTPUT = { error: 'aborted', message: 'The chat was
 
 /** Provider options for every turn: OpenAI keeps nothing (`store: false`); other providers ignore it. */
 export const CHAT_PROVIDER_OPTIONS = { openai: { store: false } } as const;
+
+/**
+ * The ChatGPT plan route's provider options: nothing kept (`store: false`), and the system prompt as
+ * a developer message whatever the slug (the route refuses a `system` item; the provider would send
+ * one for a model it doesn't take for a reasoning model).
+ */
+export const CHATGPT_PROVIDER_OPTIONS = { openai: { store: false, systemMessageMode: 'developer' } } as const;
+
+/** Each tool's provider options on the ChatGPT plan route: grouped in the `frost` namespace (the route takes function tools only inside one). */
+export const CHATGPT_TOOL_PROVIDER_OPTIONS = { openai: { namespace: { name: CHATGPT_TOOL_NAMESPACE.name, description: CHATGPT_TOOL_NAMESPACE.description } } } as const;
+
+/**
+ * The call options a turn on `route` sends besides the prompt and tools: the output cap
+ * (`MAX_OUTPUT_TOKENS`, which main's proxy requires on the key routes and the ChatGPT plan refuses)
+ * and the provider options. Nothing else (no temperature, top-p or penalties) on any route.
+ */
+export function chatCallOptions(route: ModelRoute): { readonly maxOutputTokens?: number; readonly providerOptions: typeof CHAT_PROVIDER_OPTIONS | typeof CHATGPT_PROVIDER_OPTIONS } {
+  return route === 'chatgpt' ? { providerOptions: CHATGPT_PROVIDER_OPTIONS } : { maxOutputTokens: MAX_OUTPUT_TOKENS, providerOptions: CHAT_PROVIDER_OPTIONS };
+}
 
 export interface RunChatOptions {
   readonly start: ChatStart;
@@ -73,9 +99,11 @@ type ToolResultPart = Extract<Extract<ModelMessage, { role: 'tool' }>['content']
  * The protocol's chat history as AI SDK messages. Each assistant message's tool calls are followed
  * by one tool message with a result per call, in call order: main's result when the tool messages
  * right after it hold one, else `UNANSWERED_CALL_OUTPUT` (`error-json`). A tool result that answers
- * no call of the assistant message just before it is dropped: providers refuse both cases.
+ * no call of the assistant message just before it is dropped: providers refuse both cases. On the
+ * ChatGPT plan route (`namespaced`) each call names the `frost` namespace its tool is offered in.
  */
-export function toModelMessages(messages: readonly ChatMessage[]): ModelMessage[] {
+export function toModelMessages(messages: readonly ChatMessage[], namespaced = false): ModelMessage[] {
+  const callOptions = namespaced ? { providerOptions: { openai: { namespace: CHATGPT_TOOL_NAMESPACE.name } } } : {};
   const out: ModelMessage[] = [];
   for (let i = 0; i < messages.length; i += 1) {
     const message = messages[i]!;
@@ -89,7 +117,7 @@ export function toModelMessages(messages: readonly ChatMessage[]): ModelMessage[
       case 'assistant': {
         const content: AssistantContent = [];
         if (message.content !== '') content.push({ type: 'text', text: message.content });
-        for (const call of message.toolCalls) content.push({ type: 'tool-call', toolCallId: call.callId, toolName: call.toolName, input: call.input });
+        for (const call of message.toolCalls) content.push({ type: 'tool-call', toolCallId: call.callId, toolName: call.toolName, input: call.input, ...callOptions });
         if (content.length > 0) out.push({ role: 'assistant', content });
         if (message.toolCalls.length === 0) break;
         // The results right after it (the first for each call); the rest are orphans.
@@ -166,9 +194,11 @@ export function chatFinishReason(reason: FinishReason | undefined, steps: number
 
 /**
  * What the user reads when a turn fails: a short sentence by kind of failure, never the error's
- * own text (which may echo a request or response), a stack or a header.
+ * own text (which may echo a request or response), a stack or a header. On the ChatGPT plan route a
+ * refusal (401, 403) is about the sign-in, not a key (main shows its own words for the plan's
+ * documented failures in place of these).
  */
-export function chatErrorMessage(error: unknown): string {
+export function chatErrorMessage(error: unknown, route?: ModelRoute): string {
   let statusCode: number | undefined;
   for (let current: unknown = error, depth = 0; current !== null && typeof current === 'object' && depth < 8; depth += 1) {
     if (current instanceof ModelNotAllowedError) return 'This model is not available on the selected route.';
@@ -193,6 +223,7 @@ export function chatErrorMessage(error: unknown): string {
     if (typeof own === 'number' && Number.isInteger(own)) statusCode ??= own;
     current = (current as { lastError?: unknown }).lastError ?? (current as { cause?: unknown }).cause;
   }
+  if ((statusCode === 401 || statusCode === 403) && route === 'chatgpt') return `ChatGPT refused the request (HTTP ${statusCode}). Check the ChatGPT sign-in in the agent settings.`;
   if (statusCode === 401 || statusCode === 403) return `The model provider refused the key (HTTP ${statusCode}). Check the key in the agent settings.`;
   if (statusCode === 429) return 'The model provider is limiting requests (HTTP 429). Try again shortly.';
   if (statusCode !== undefined) return `The model provider answered with an error (HTTP ${statusCode}).`;
@@ -242,6 +273,9 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
   };
 
   const tools: ToolSet = {};
+  const chatgpt = start.route === 'chatgpt';
+  // On the ChatGPT plan, every tool in the `frost` namespace.
+  const toolOptions = chatgpt ? { providerOptions: CHATGPT_TOOL_PROVIDER_OPTIONS } : {};
   // MCP tools (Task 10): main's sanitised definitions, as the protocol checked them (one per MCP name allowed).
   const mcpDefinitions = new Map(start.mcpTools.map((tool) => [tool.name, tool] as const));
   for (const name of start.allowedTools) {
@@ -252,7 +286,7 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
       const mcp = mcpDefinitions.get(name);
       if (mcp === undefined) continue;
       // No validation here: main checks the input against the same schema before it calls the server.
-      const offered: Tool = { description: mcp.description, inputSchema: jsonSchema(mcp.inputSchema as Parameters<typeof jsonSchema>[0]), execute, toModelOutput };
+      const offered: Tool = { description: mcp.description, inputSchema: jsonSchema(mcp.inputSchema as Parameters<typeof jsonSchema>[0]), execute, toModelOutput, ...toolOptions };
       tools[name] = offered;
       continue;
     }
@@ -262,6 +296,7 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
       inputSchema: zodSchema(definition.inputSchema as z.ZodType<unknown>),
       execute,
       toModelOutput,
+      ...toolOptions,
     };
     tools[name] = offered;
   }
@@ -286,15 +321,15 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
       const result = streamText({
         model,
         ...(start.systemPrompt === '' ? {} : { instructions: start.systemPrompt }),
-        messages: toModelMessages(start.messages),
+        messages: toModelMessages(start.messages, chatgpt),
         tools,
         stopWhen: isStepCount(MAX_TOOL_STEPS),
         toolCallConcurrency: 1,
         maxRetries: CHAT_MAX_RETRIES,
-        // Main's proxy refuses a request without this cap (a provider's default can be its model's maximum).
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        // Main's proxy refuses a key route's request without the output cap (a provider's default can
+        // be its model's maximum), and the ChatGPT plan's with one.
+        ...chatCallOptions(start.route),
         abortSignal: signal,
-        providerOptions: CHAT_PROVIDER_OPTIONS,
         experimental_download: refuseDownload,
         // The default logs the error (and whatever it carries); the turn's failure is reported below.
         onError: () => {},
@@ -342,7 +377,7 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
     const usage = { input, output };
     const reported = Math.min(steps, MAX_TOOL_STEPS);
     if (signal.aborted) post({ type: 'chat.finish', chatId, finishReason: 'aborted', steps: reported, usage });
-    else if (failed) post({ type: 'chat.error', chatId, message: chatErrorMessage(error) });
+    else if (failed) post({ type: 'chat.error', chatId, message: chatErrorMessage(error, start.route) });
     else post({ type: 'chat.finish', chatId, finishReason: chatFinishReason(reason, steps), steps: reported, usage });
   };
 

@@ -11,6 +11,7 @@ import { startLoopback } from './loopback';
 import { holdQuitFor } from './quit';
 import { createSecretStore, memorySecretStore, type SecretStore } from './secret-store';
 import { redact } from './redact';
+import { focusWindow } from '../window-focus';
 import { createAccountService, type AccountMainService } from './service';
 import { createSettingsRequestsMain } from './settings-requests';
 
@@ -37,13 +38,6 @@ export interface AccountMain {
 }
 
 const log = (message: string): void => console.warn(`frost: ${redact(message)}`);
-
-function focusWindow(windowId: number): void {
-  const win = BrowserWindow.fromId(windowId);
-  if (!win || win.isDestroyed()) return;
-  if (win.isMinimized()) win.restore();
-  win.focus();
-}
 
 /**
  * The account in main. Never rejects: any exception while it is set up answers an unconfigured

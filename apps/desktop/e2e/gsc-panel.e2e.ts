@@ -23,7 +23,7 @@ const { go, press, chromeCaughtUp } = chromeHelpers(
   () => app!,
   () => page,
 );
-const { recordOpenExternal, call, accountState, signInInSettings, connectInSettings } = accountHelpers(
+const { recordOpenExternal, accountState, connectInSettings } = accountHelpers(
   () => app!,
   () => page,
 );
@@ -81,14 +81,13 @@ async function showData(scope: GscQueryScope, days: GscRangeDays): Promise<void>
   if ((await tile('clicks').getAttribute('aria-pressed')) !== 'true') await tile('clicks').click();
 }
 
-// One serial sequence, documented: the account's states follow each other as a user's would —
-// signed out, signed in on a free plan, granted Pro, then Search Console connected (through the
-// panel's own buttons and Settings). Every test after `gsc-panel-connect` sets up the scope, range,
-// metric and fake rows it needs itself (`showData`), so those can run in any order.
+// One serial sequence, documented, never signed in to frost (Search Console needs no account): not
+// connected, then connected (through the panel's own button and Settings). Every test after
+// `gsc-panel-page-totals-and-chart` sets up the scope, range, metric and fake rows it needs itself
+// (`showData`), so those can run in any order.
 test.describe.serial('the Search Console panel', () => {
   test.beforeAll(async () => {
     backend = await startFakeBackend();
-    backend.plan = 'free';
     google = await startFakeGoogle();
     site = await startLoopbackServer();
     google.sites = [{ siteUrl: `${site.origin}/`, permissionLevel: 'siteOwner' }];
@@ -107,7 +106,9 @@ test.describe.serial('the Search Console panel', () => {
     if (profile) await rm(profile, { recursive: true, force: true });
   });
 
-  test('gsc-panel-signed-out', async () => {
+  test('gsc-panel-not-connected', async () => {
+    // Never signed in to frost: Search Console needs no account (2026-10-29).
+    expect((await accountState()).status).toBe('signed-out');
     await go(pageUrl());
     // The audit is ready: Overview has its dot, the rerun button and the audit's footer …
     await expect(railItem('overview')).toHaveAttribute('data-status', /^(pass|warn|error)$/);
@@ -119,46 +120,12 @@ test.describe.serial('the Search Console panel', () => {
     await openPanel();
     await expect(page.getByTestId('seo-rerun')).toHaveCount(0);
     await expect(page.getByTestId('seo-duration')).toHaveCount(0);
-    await expect(panel()).toHaveAttribute('data-state', 'signed-out');
-    await expect(page.getByTestId('gsc-notice-title')).toHaveText('Search Console is part of frost Pro');
-    await expect(page.getByTestId('gsc-notice-message')).toHaveText(GSC_PANEL_COPY['signed-out'].message);
-    // No controls without access.
-    await expect(page.getByTestId('gsc-scopes')).toHaveCount(0);
-    // Sign in opens Settings on Account.
-    await expect(page.getByTestId('gsc-action')).toHaveText('Sign in');
-    await page.getByTestId('gsc-action').click();
-    await expect(settings()).toBeVisible();
-    await expect(page.locator('#settings-section-account')).toBeFocused();
-    expect(googleCalls()).toEqual([]);
-  });
-
-  test('gsc-panel-free-plan', async () => {
-    // Signed in on a free plan (the Settings sheet the panel opened).
-    if ((await settings().count()) === 0) await page.getByTestId('gsc-action').click();
-    await signInInSettings();
-    expect((await accountState()).entitlements.plan).toBe('free');
-    await page.getByTestId('settings-close').click();
-    await expect(settings()).toHaveCount(0);
-    await openPanel();
-    await expect(panel()).toHaveAttribute('data-state', 'needs-pro');
-    await expect(page.getByTestId('gsc-notice-title')).toHaveText('Search Console is part of frost Pro');
-    await expect(page.getByTestId('gsc-notice-message')).toHaveText(GSC_PANEL_COPY['needs-pro'].message);
-    await expect(page.getByTestId('gsc-action')).toHaveText('Account settings');
-    // Neither the panel nor anything else asked Google.
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(googleCalls()).toEqual([]);
-  });
-
-  test('gsc-panel-not-connected', async () => {
-    // The plan becomes Pro (the backend's admin grant): the next refresh brings Search Console.
-    backend.plan = 'pro';
-    expect(await call('mutation', 'account.refresh')).toBe(true);
-    await expect.poll(async () => (await accountState()).entitlements.plan).toBe('pro');
-    await openPanel();
     await expect(panel()).toHaveAttribute('data-state', 'not-connected');
     await expect(page.getByTestId('gsc-notice-title')).toHaveText(GSC_PANEL_COPY['not-connected'].title);
+    // No controls without a connection.
+    await expect(page.getByTestId('gsc-scopes')).toHaveCount(0);
     await expect(page.getByTestId('gsc-action')).toHaveText('Connect in Settings');
-    expect(google.queries).toEqual([]);
+    expect(googleCalls()).toEqual([]);
     // Connect opens Settings on Search Console (connecting itself needs the click there).
     await page.getByTestId('gsc-action').click();
     await expect(settings()).toBeVisible();

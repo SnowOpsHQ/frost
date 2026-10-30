@@ -55,8 +55,11 @@ const proxyFailuresAreFinal: LanguageModelMiddleware = {
 
 /**
  * The language model for `modelId` on `route`, sending its requests through `fetch`: Anthropic's
- * Messages API, OpenAI's Responses API, or the gateway's language model endpoint. Throws
- * `ModelNotAllowedError` for a model not allowed on the route (`routeModelId`).
+ * Messages API, OpenAI's Responses API (the user's key, or the ChatGPT plan: the same provider, a
+ * `chatgpt/<slug>` id's slug, main adding the sign-in's token), or the gateway's language model
+ * endpoint. Throws `ModelNotAllowedError` for a model not allowed on the route (`routeModelId`).
+ * The ChatGPT plan's request rules (`store: false`, tools in the `frost` namespace, no output cap or
+ * sampling field, no `system` item) are the chat loop's call options (`chat.ts`, `chatCallOptions`).
  */
 export const createModel: ModelFactory = (route, modelId, fetch) => {
   const providerModelId = routeModelId(route, modelId);
@@ -65,7 +68,7 @@ export const createModel: ModelFactory = (route, modelId, fetch) => {
   const model =
     route === 'byok-anthropic'
       ? createAnthropic(settings).languageModel(providerModelId)
-      : route === 'byok-openai'
+      : route === 'byok-openai' || route === 'chatgpt'
         ? createOpenAI(settings).responses(providerModelId)
         : createGateway(settings).languageModel(providerModelId);
   return wrapLanguageModel({ model, middleware: proxyFailuresAreFinal });

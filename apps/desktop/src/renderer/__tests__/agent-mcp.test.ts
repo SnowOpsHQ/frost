@@ -4,7 +4,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { MCP_NO_SANDBOX_SENTENCE, MCP_TOKEN_MESSAGES, mcpSandboxSentence, type AgentMcpServerView } from '@app/specs/agent-mcp.spec';
+import { MCP_NO_SANDBOX_SENTENCE, MCP_SETTINGS_WORDS, MCP_TOKEN_MESSAGES, mcpSandboxSentence, type AgentMcpServerView } from '@app/specs/agent-mcp.spec';
 import { card } from './agent-fixtures';
 
 const calls = vi.hoisted(() => ({
@@ -125,7 +125,9 @@ describe('MCP settings', () => {
 
   test('mcp-not-entitled', () => {
     render(createElement(AgentMcp, { mcp: { available: false, servers: [server()] } }));
-    expect(host.textContent).toContain('MCP connections are not available on this plan.');
+    expect(host.textContent).toContain(MCP_SETTINGS_WORDS.notEntitled);
+    // Not gated in this build: the (unreachable) copy names no plan.
+    expect(host.textContent).not.toMatch(/plan/i);
     expect(host.querySelector('[data-testid="agent-mcp-add"]')).toBeNull();
     expect(mcpServerItems({ available: false, servers: [server()] })[0]!.canStart).toBe(false);
   });

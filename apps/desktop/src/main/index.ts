@@ -56,7 +56,6 @@ import { createTelemetryMain } from './telemetry/main';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 import { createAgentService } from './agent/wire';
 import { gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
-import { accountAgentEntitlements } from './agent/entitlements';
 import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
 import { createMainProjects } from './changes/projects-main';
@@ -434,10 +433,11 @@ function start(): void {
     const account = await createAccountMain();
     // Turning telemetry on needs a live gesture in the sender's window (specs/telemetry.feature.md).
     telemetryMain.useGestures((windowId) => account.gestures.consume(windowId));
-    // Search Console (specs/gsc.feature.md): read-only, gated on `search-console`; reuses the account's store and gestures.
+    // Search Console (specs/gsc.feature.md): read-only and not gated (no frost account needed); reuses the account's store and gestures.
     const gsc = await createGscMain(account);
-    // The AI agent (specs/agent-host.feature.md): its SERP, intent, probe and Search Console tools, gated on the account's `ai-agent` flag.
-    const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) }, entitlements: accountAgentEntitlements(account.entitlements, { configured: () => account.service.state().status !== 'unconfigured' }) });
+    // The AI agent (specs/agent-host.feature.md): its SERP, intent, probe and Search Console tools. Not gated: no
+    // entitlements port is passed (it must not be wired to the account; specs/entitlements-client.feature.md).
+    const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,

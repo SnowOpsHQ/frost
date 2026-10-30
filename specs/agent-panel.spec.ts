@@ -7,6 +7,7 @@
  * sender-guarded `agent.*` procedures. It never holds a stored key: the key field is a password
  * input that is emptied once Save has been answered, and the panel says only whether a key is set.
  */
+import { CHATGPT_UI } from './agent-chatgpt.spec';
 import type { CredentialSlot, KeyProtection } from './agent-proxy.spec';
 import type { AgentAnswerResult, AgentSetKeyResult, AgentToolCardView } from './agent-session.spec';
 import type { ModelId, ModelRoute } from './agent-tools.spec';
@@ -47,8 +48,10 @@ export const AGENT_ROUTE_LABELS: Readonly<Record<ModelRoute, string>> = {
   gateway: 'AI Gateway key (Vercel)',
   'byok-anthropic': 'Your own Anthropic key',
   'byok-openai': 'Your own OpenAI key',
+  chatgpt: CHATGPT_UI.routeLabel,
 };
 
+/** The catalogue models' names (a ChatGPT model's name is its account list's `display_name`). */
 export const AGENT_MODEL_LABELS: Readonly<Record<ModelId, string>> = {
   'anthropic/claude-sonnet-5-5': 'Claude Sonnet 5.5',
   'anthropic/claude-opus-5-5': 'Claude Opus 5.5',

@@ -127,13 +127,17 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   only while its `url` is the tab's URL; otherwise the sidebar shows `pending`.
 
 ## Sidebar (renderer)
-- Docks right of the page area: the panel (`SIDEBAR_PANEL_WIDTH`), then the rail
-  (`SIDEBAR_RAIL_WIDTH`) at the window's edge. The page area (and so the tab's view, through
-  `setPageBounds`) shrinks to make room; collapsing hides the panel and keeps the rail. In a narrow
+- Docks left of the page area: the rail (`SIDEBAR_RAIL_WIDTH`) at the window's edge, then the
+  panel (`SIDEBAR_PANEL_WIDTH`). The page area (and so the tab's view, through `setPageBounds`)
+  shrinks and moves right to make room; collapsing hides the panel and keeps the rail. In a narrow
   window the page area keeps `PAGE_MIN_WIDTH` and the panel narrows instead
   (`narrow-window-keeps-page-usable`).
 - The rail lists `SEO_PANELS` in order: available panels as buttons with a status dot, the others
   disabled, labelled `COMING_SOON_LABEL`, without a dot. Since Tasks 5 and 6 every panel is available.
+- A rail item's label shows as a tooltip within `RAIL_TOOLTIP_DELAY_MS` of hovering it while the
+  panel is open (drawn over the panel; moving to the next item shows its label at once). With the
+  panel collapsed the tab's view sits beside the rail and would cover it, so the item keeps the
+  native `title` tooltip instead.
 - Overview: the score ring (0–100, coloured by band) with the band's label, error / warning / info
   counts, and the top `OVERVIEW_TOP_ISSUES` ranked issues ("Show all" for the rest). Each issue
   expands to its why, its fix and its facts and samples.

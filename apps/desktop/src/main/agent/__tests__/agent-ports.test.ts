@@ -7,8 +7,9 @@
 // (`main/intent/classifier.ts`) is used for the no-download check. The Phase 4 types are local
 // copies of the parts of its read API the adapters see, taken from `phase-4/accounts-telemetry`
 // at bc692be (`packages/ipc-contract/src/gsc-service.ts` `GscService`; `specs/gsc.schema.ts`;
-// `specs/entitlements-snapshot.spec.ts` `FEATURE_FLAGS`; `EntitlementsReader.requireFeature(flag): void`,
-// which throws). Field names and kinds as there; nested objects copied as far as they matter.
+// `specs/entitlements-snapshot.spec.ts` `FEATURE_FLAGS`). Field names and kinds as there; nested
+// objects copied as far as they matter. The agent is not gated (`UNGATED_FEATURES`): main passes no
+// entitlements port.
 import { createHash } from 'node:crypto';
 import { describe, expect, test, vi } from 'vitest';
 import { createFakeGscPort, createFakeSerpPort } from '@app/ai-skills/fakes';
@@ -19,7 +20,6 @@ import type { SerpState } from '@app/specs/serp-service.schema';
 import type { ProbesState } from '@app/specs/visibility-probes.schema';
 import { createIntentClassifier } from '../../intent/classifier';
 import { GSC_NOT_PUBLIC_REASON, PORT_NOT_CONNECTED_REASONS, SEARCH_TOOL_SOURCES } from '@app/specs/agent-search-tools.spec';
-import type { AgentFeature } from '../entitlements';
 import {
   GSC_ADAPTER_REASONS,
   gscAdapter,
@@ -147,27 +147,14 @@ describe('agent ports', () => {
     const probesLike: ProbesReadApiLike = readApi;
     const gscLike: GscServiceLike = service;
     expect([serpAdapter(serpLike), intentAdapter(intentLike), probesAdapter(probesLike), gscAdapter(gscLike)].every((port) => port !== null)).toBe(true);
-    // And the lead's wiring block compiles against `createAgentService`'s options as written in the plan.
-    const requireFeature = (flag: Phase4FeatureFlag): void => {
-      if (flag !== 'ai-agent') throw new Error('not entitled');
-    };
-    const AGENT_FEATURE_FLAGS: Readonly<Record<AgentFeature, Phase4FeatureFlag>> = { agent: 'ai-agent', 'agent.skills': 'ai-agent', 'agent.mcp': 'ai-agent' };
+    // And main's wiring (`main/index.ts`) compiles against `createAgentService`'s options: the ports
+    // only, no entitlements port (the agent is not gated).
     const serp = { readApi };
     const gsc = { service };
     const options = {
       ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) },
-      entitlements: {
-        allowed: (feature: AgentFeature) => {
-          try {
-            requireFeature(AGENT_FEATURE_FLAGS[feature]);
-            return true;
-          } catch {
-            return false;
-          }
-        },
-      },
-    } satisfies Pick<Parameters<typeof createAgentService>[0], 'ports' | 'entitlements'>;
-    expect(options.entitlements.allowed('agent')).toBe(true);
+    } satisfies Pick<Parameters<typeof createAgentService>[0], 'ports'>;
+    expect(Object.keys(options)).toEqual(['ports']);
   });
 
   test('agent-search-tools-through-the-broker', async () => {
@@ -300,7 +287,6 @@ interface Phase4GscService {
   performance(query: Phase4GscQuery): Promise<Phase4PerformanceAnswer>;
   topQueries(query: Phase4GscQuery): Promise<Phase4QueriesAnswer>;
 }
-type Phase4FeatureFlag = 'ai-agent' | 'search-console' | 'sync';
 
 type SearchParams = Extract<SerpState, { status: 'pending' }>['params'];
 const COUNTS = { ...(Object.fromEntries(SERP_RESULT_TYPES.map((type) => [type, 0])) as Record<SerpResultType, number>), organic: 2, ad: 1, 'people-also-ask': 1 };

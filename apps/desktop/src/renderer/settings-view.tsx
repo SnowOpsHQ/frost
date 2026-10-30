@@ -91,7 +91,7 @@ function SettingsView({ section, focusSeq, account, closeLabel, onClose, onSecti
                   {entry.label}
                 </h2>
                 {entry.id === 'account' ? <AccountSettings state={account} /> : null}
-                {entry.id === 'search-console' ? <GscSettings onGoToAccount={() => onSection('account')} /> : null}
+                {entry.id === 'search-console' ? <GscSettings /> : null}
                 {entry.id === 'telemetry' ? <TelemetrySettings /> : null}
               </section>
             ))}

@@ -1,21 +1,24 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { CHATGPT_UI } from '@app/specs/agent-chatgpt.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { ChatRetention } from '@app/specs/agent-data.spec';
 import type { AgentSetupView } from '@app/specs/agent-session.spec';
-import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
+import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import type { AgentMcpView } from '@app/specs/agent-mcp.spec';
 import { agentActions } from '../../agent-actions';
 import { AgentMcp } from './AgentMcp';
+import { ChatgptAccountSection } from './AgentChatgpt';
 import {
   deleteAllChatsMessage,
   isolationLine,
   keySlotsFor,
   keyStateLabel,
-  modelForRoute,
   modelOptions,
+  previewModel,
   protectionMessage,
   retentionHint,
   retentionOptions,
+  routeChoice,
   routeOptions,
   runtimeLine,
   setKeyMessage,
@@ -30,6 +33,10 @@ import {
 // once, and shows main's answer (`AGENT_SET_KEY_MESSAGES`). Task 9 (`agent-data.feature.md`): how
 // long chats are kept and "Delete all chats" (main confirms in its own dialog), and the ways to the
 // grants page and the skills editor. Task 10 (`agent-mcp.feature.md`): the MCP servers (`AgentMcp`).
+// The ChatGPT plan (`agent-chatgpt.feature.md`, Panel): a route with a sign-in instead of a key
+// (`ChatgptAccountSection`) and the account's own models. Picked before the account listed a model,
+// the route is only previewed (its sign-in shown, nothing stored: main refuses that pair); once the
+// list arrives its first model is stored with the route.
 
 function KeyRow({ slot, set, primary }: { readonly slot: CredentialSlot; readonly set: boolean; readonly primary: boolean }) {
   const field = useRef<HTMLInputElement>(null);
@@ -179,11 +186,28 @@ export function AgentSettings({
   readonly onOpen: (view: 'grants' | 'skills') => void;
 }) {
   const [saveFailed, setSaveFailed] = useState(false);
-  const choose = (route: ModelRoute, modelId: ModelId | null) => {
-    if (modelId === null) return;
+  /** The ChatGPT plan picked before its account listed a model: shown, not stored. */
+  const [preview, setPreview] = useState<'chatgpt' | null>(null);
+  const store = (route: ModelRoute, modelId: AgentModelId) => {
     void agentActions.setModel(route, modelId).then((stored) => setSaveFailed(!stored));
   };
-  const slot = slotForRoute(setup.route);
+  const pickRoute = (route: ModelRoute) => {
+    const choice = routeChoice(route, setup);
+    setPreview(choice.kind === 'preview' ? 'chatgpt' : null);
+    if (choice.kind === 'set') store(choice.route, choice.modelId);
+  };
+  // Previewing, the account listed its models (after a sign-in): the route is stored with the first.
+  const listed = preview === 'chatgpt' ? previewModel(setup) : null;
+  useEffect(() => {
+    if (preview !== 'chatgpt') return;
+    if (setup.route === 'chatgpt') setPreview(null);
+    else if (listed !== null) {
+      setPreview(null);
+      store('chatgpt', listed);
+    }
+  }, [preview, listed, setup.route]);
+  const route: ModelRoute = preview ?? setup.route;
+  const slot = slotForRoute(route);
   return (
     <div className="agent-settings" data-testid="agent-settings">
       <section className="agent-section">
@@ -191,35 +215,48 @@ export function AgentSettings({
         <label className="agent-field-label" htmlFor="agent-route">
           How frost reaches the model
         </label>
-        <select id="agent-route" className="agent-select" data-testid="agent-route" value={setup.route} onChange={(event) => choose(event.target.value as ModelRoute, modelForRoute(event.target.value as ModelRoute, setup.modelId))}>
+        <select id="agent-route" className="agent-select" data-testid="agent-route" value={route} onChange={(event) => pickRoute(event.target.value as ModelRoute)}>
           {routeOptions().map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
           ))}
         </select>
-        <label className="agent-field-label" htmlFor="agent-model">
-          Model
-        </label>
-        <select id="agent-model" className="agent-select" data-testid="agent-model" value={setup.modelId} onChange={(event) => choose(setup.route, event.target.value as ModelId)}>
-          {modelOptions(setup).map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        {route === 'chatgpt' && (preview !== null || setup.allowedModels.length === 0) ? (
+          // No account list yet: nothing to choose, so a heading (no label pointing at a missing select).
+          <>
+            <p className="agent-field-label">Model</p>
+            <p className="agent-section-text agent-muted" data-testid="agent-model-none">
+              {setup.chatgpt.account.state === 'signed-in' ? CHATGPT_UI.noModels : CHATGPT_UI.signInToChooseModel}
+            </p>
+          </>
+        ) : (
+          <>
+            <label className="agent-field-label" htmlFor="agent-model">
+              Model
+            </label>
+            <select id="agent-model" className="agent-select" data-testid="agent-model" value={setup.modelId} onChange={(event) => store(setup.route, event.target.value as AgentModelId)}>
+              {modelOptions(setup).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         {saveFailed ? (
           <p className="agent-key-message" role="status">
             That choice could not be saved.
           </p>
         ) : null}
       </section>
+      {route === 'chatgpt' ? <ChatgptAccountSection account={setup.chatgpt.account} /> : null}
       <section className="agent-section">
         <h3 className="agent-section-title">Keys</h3>
         <p className="agent-section-text" data-testid="agent-protection" data-protection={setup.protection}>
           {protectionMessage(setup)}
         </p>
-        {keySlotsFor(setup.route).map((item) => (
+        {keySlotsFor(route).map((item) => (
           <KeyRow key={item} slot={item} set={setup.keys[item] === true} primary={item === slot} />
         ))}
         <p className="agent-section-text">Keys stay with frost's main process. The page, the agent process and the model never see them.</p>

@@ -1,12 +1,11 @@
 // Spec: specs/gsc-panel.spec.ts (GSC_PANEL_COPY, GSC_PANEL_TEXT, GSC_READING_STATES, GSC_REASON_STATES, GSC_PANEL_DEFAULTS,
 // GSC_SCOPE_LABELS), specs/gsc.spec.ts (gscDateRange, GSC_UNAVAILABLE_REASONS), specs/seo-sidebar.spec.ts (SEO_PANELS)
+// specs/entitlements-snapshot.spec.ts (UNGATED_FEATURES: no account or plan states, 2026-10-29)
 // Acceptance: specs/gsc-panel.feature.md (View model)
 import { describe, expect, test, vi } from 'vitest';
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
-import type { AccountStatus } from '@app/specs/account-state.schema';
-import type { EntitlementStatus } from '@app/specs/entitlements-snapshot.spec';
 import type { GscPerformanceAnswer, GscQueriesAnswer } from '@app/specs/gsc.schema';
-import { GSC_PANEL_COPY, GSC_PANEL_DEFAULTS, GSC_READING_STATES, GSC_PANEL_STATES } from '@app/specs/gsc-panel.spec';
+import { GSC_PANEL_ACTIONS, GSC_PANEL_COPY, GSC_PANEL_DEFAULTS, GSC_READING_STATES, GSC_PANEL_STATES } from '@app/specs/gsc-panel.spec';
 import { GSC_UNAVAILABLE_REASONS, gscDateRange, type GscStatus } from '@app/specs/gsc.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import {
@@ -19,7 +18,6 @@ import {
   gscReadRequest,
   requestKey,
   shownAnswers,
-  type GscAccount,
   type GscAnswers,
   type GscRequest,
   type GscViewInput,
@@ -46,10 +44,8 @@ const queries = (count = 2): GscQueriesAnswer => ({
 });
 const unavailable = (reason: (typeof GSC_UNAVAILABLE_REASONS)[number]) => ({ status: 'unavailable', reason }) as const;
 
-const account = (status: AccountStatus, entitlement: EntitlementStatus = status === 'signed-in' ? 'active' : 'none'): GscAccount => ({ status, entitlement });
-
 function input(changes: Partial<GscViewInput> = {}): GscViewInput {
-  return { gsc: status(), account: account('signed-in'), url: URL_A, prefs: GSC_PANEL_DEFAULTS, answers: null, pending: false, now: NOW, ...changes };
+  return { gsc: status(), url: URL_A, prefs: GSC_PANEL_DEFAULTS, answers: null, pending: false, now: NOW, ...changes };
 }
 
 describe('Search Console panel view model', () => {
@@ -83,25 +79,12 @@ describe('Search Console panel view model', () => {
 
   test('gate-before-reading', () => {
     const cases: [Partial<GscViewInput>, string, string | null][] = [
-      // Until both watches answered.
+      // Until the watch answered.
       [{ gsc: null }, 'loading', null],
-      [{ account: null }, 'loading', null],
-      [{ gsc: status({ entitled: false, connected: false }), account: null }, 'loading', null],
       [{ gsc: status({ configured: false, entitled: false, connected: false }) }, 'unconfigured', null],
-      // No account configuration in this build: nobody can sign in, so no "Sign in".
-      [{ gsc: status({ entitled: false, connected: false }), account: account('unconfigured') }, 'unconfigured', null],
-      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-out') }, 'signed-out', 'open-account'],
-      [{ gsc: status({ entitled: false, connected: false }), account: account('awaiting-browser') }, 'signed-out', 'open-account'],
-      [{ gsc: status({ entitled: false, connected: false }), account: account('confirming') }, 'signed-out', 'open-account'],
-      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in') }, 'needs-pro', 'open-account'],
-      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in', 'grace') }, 'needs-pro', 'open-account'],
-      // Signed in, the plan still being checked.
-      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in', 'none') }, 'loading', null],
-      // A Pro snapshot that expired or failed verification (main fell back to free).
-      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in', 'expired') }, 'plan-expired', 'open-account'],
-      [{ gsc: status({ entitled: false, connected: false }), account: account('signed-in', 'invalid') }, 'plan-unconfirmed', 'open-account'],
-      // A connection kept from before the plan changed is not read with.
-      [{ gsc: status({ entitled: false, connected: true }), account: account('signed-in') }, 'needs-pro', 'open-account'],
+      [{ gsc: status({ configured: false, connected: false }) }, 'unconfigured', null],
+      // No account or plan state: not connected is the connect prompt, whatever `entitled` says.
+      [{ gsc: status({ entitled: false, connected: false }) }, 'not-connected', 'open-gsc-settings'],
       [{ gsc: status({ connected: false }) }, 'not-connected', 'open-gsc-settings'],
       [{ gsc: status({ connected: false, connecting: true }) }, 'connecting', 'open-gsc-settings'],
       // Main ended the connection because Google refused it: Reconnect.
@@ -122,14 +105,12 @@ describe('Search Console panel view model', () => {
       expect(view.notice?.action ?? null).toBe(action);
       expect(gscReadRequest(input(changes)), JSON.stringify(changes)).toBeNull();
     }
-    // Signed out and free both say Search Console is part of frost Pro.
-    const notEntitled = status({ entitled: false, connected: false });
-    for (const who of [account('signed-out'), account('signed-in'), account('signed-in', 'expired'), account('signed-in', 'invalid')]) {
-      expect(gscPanelView(input({ gsc: notEntitled, account: who })).notice?.title).toBe('Search Console is part of frost Pro');
-    }
-    expect(gscPanelView(input({ gsc: notEntitled, account: account('signed-out') })).notice?.actionLabel).toBe('Sign in');
-    expect(gscPanelView(input({ gsc: notEntitled, account: account('signed-in', 'expired') })).notice?.message).toMatch(/expired/);
-    expect(gscPanelView(input({ gsc: notEntitled, account: account('signed-in', 'invalid') })).notice?.message).toMatch(/could not be confirmed/);
+    // Search Console is free and needs no frost account: no state, word or button is about one.
+    expect(GSC_PANEL_STATES).not.toContain('signed-out');
+    expect(GSC_PANEL_ACTIONS).toEqual(['open-gsc-settings', 'retry']);
+    for (const copy of Object.values(GSC_PANEL_COPY)) expect(`${copy.title} ${copy.message} ${copy.actionLabel ?? ''}`).not.toMatch(/\bPro\b|plan|sign in|account settings/i);
+    // `entitled` (always true from main) is not read: connected, it reads.
+    expect(gscReadRequest(input({ gsc: status({ entitled: false }) }))).toEqual({ url: URL_A, scope: 'page', days: 28, connection: 3 });
     expect(gscPanelView(input({ gsc: status({ connected: false, error: 'auth-expired' }) })).notice?.actionLabel).toBe('Reconnect in Settings');
     // Configured, entitled, connected, a web page: a read (fragment dropped), loading until answered.
     expect(gscReadRequest(input({ url: `${URL_A}#top` }))).toEqual({ url: URL_A, scope: 'page', days: 28, connection: 3 });
@@ -141,15 +122,15 @@ describe('Search Console panel view model', () => {
   });
 
   test('answer-states', () => {
-    const view = (answers: GscAnswers, who: AccountStatus = 'signed-in') => gscPanelView(input({ answers, account: account(who) }));
+    const view = (answers: GscAnswers) => gscPanelView(input({ answers }));
     for (const reason of GSC_UNAVAILABLE_REASONS) {
       const result = view({ performance: unavailable(reason), queries: unavailable(reason) });
       expect(GSC_PANEL_STATES).toContain(result.state);
       expect(result.notice, reason).not.toBeNull();
       expect(result.tiles, reason).toBeNull();
     }
-    expect(view({ performance: unavailable('not-entitled'), queries: unavailable('not-entitled') }).state).toBe('needs-pro');
-    expect(view({ performance: unavailable('not-entitled'), queries: unavailable('not-entitled') }, 'signed-out').state).toBe('signed-out');
+    // Never sent by main (not gated); if it were: the unconfigured words.
+    expect(view({ performance: unavailable('not-entitled'), queries: unavailable('not-entitled') }).state).toBe('unconfigured');
     expect(view({ performance: unavailable('not-connected'), queries: unavailable('not-connected') }).state).toBe('not-connected');
     const noProperty = view({ performance: unavailable('no-property'), queries: unavailable('no-property') });
     expect(noProperty.state).toBe('no-property');

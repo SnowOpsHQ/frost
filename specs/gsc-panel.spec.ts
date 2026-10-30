@@ -64,13 +64,10 @@ export const GSC_READ_DEBOUNCE_MS = 300;
 
 /**
  * Why there is nothing to chart, as the panel says it:
- * - `loading`: main has not answered the connection or the account yet, the plan is still being
- *   checked, or a read is running (a scope or range change keeps the last data shown, dimmed);
- * - `unconfigured`: this build has no Search Console client, or no account configuration;
- * - `signed-out`: nobody is signed in (Search Console is a Pro feature): Sign in opens Account;
- * - `needs-pro`: signed in on a plan without `search-console`: opens Account;
- * - `plan-expired` / `plan-unconfirmed`: signed in, but the plan's snapshot has expired, or failed
- *   verification (main fails closed to free): opens Account;
+ * - `loading`: main has not answered the connection yet, or a read is running (a scope or range
+ *   change keeps the last data shown, dimmed);
+ * - `unconfigured`: this build has no Search Console client (also shown for a `not-entitled` answer,
+ *   which main never sends: Search Console is free and needs no frost account, 2026-10-29);
  * - `not-connected` / `connecting`: no Google account connected yet: Connect opens Settings' Search Console;
  * - `not-a-web-page`: the tab shows no `http(s)` page;
  * - `no-property`: none of the user's verified properties covers the page's host;
@@ -83,10 +80,6 @@ export const GSC_READ_DEBOUNCE_MS = 300;
 export const GSC_PANEL_STATES = [
   'loading',
   'unconfigured',
-  'signed-out',
-  'needs-pro',
-  'plan-expired',
-  'plan-unconfirmed',
   'not-connected',
   'connecting',
   'not-a-web-page',
@@ -100,8 +93,8 @@ export const GSC_PANEL_STATES = [
 ] as const;
 export type GscPanelState = (typeof GSC_PANEL_STATES)[number];
 
-/** What a state's button does: open Settings on Account or on Search Console, or ask again. */
-export const GSC_PANEL_ACTIONS = ['open-account', 'open-gsc-settings', 'retry'] as const;
+/** What a state's button does: open Settings on Search Console, or ask again. */
+export const GSC_PANEL_ACTIONS = ['open-gsc-settings', 'retry'] as const;
 export type GscPanelAction = (typeof GSC_PANEL_ACTIONS)[number];
 
 /** A state's notice: a title, words, and at most one button (`GSC_PANEL_ACTIONS`) with its label. */
@@ -116,30 +109,6 @@ export interface GscPanelCopy {
 /** What each state but `loading` and `data` says (frost's own words). */
 export const GSC_PANEL_COPY: Readonly<Record<Exclude<GscPanelState, 'loading' | 'data'>, GscPanelCopy>> = Object.freeze({
   unconfigured: { title: 'Search Console unavailable', message: "Search Console isn't configured in this build.", action: null, actionLabel: null },
-  'signed-out': {
-    title: 'Search Console is part of frost Pro',
-    message: 'Sign in with a Pro account to see clicks, impressions and positions for the pages you visit.',
-    action: 'open-account',
-    actionLabel: 'Sign in',
-  },
-  'needs-pro': {
-    title: 'Search Console is part of frost Pro',
-    message: 'Your plan does not include Search Console. Pro adds it, with read-only access to your properties.',
-    action: 'open-account',
-    actionLabel: 'Account settings',
-  },
-  'plan-expired': {
-    title: 'Search Console is part of frost Pro',
-    message: 'Your Pro plan has expired, so Search Console is off. Check your plan in Account settings.',
-    action: 'open-account',
-    actionLabel: 'Account settings',
-  },
-  'plan-unconfirmed': {
-    title: 'Search Console is part of frost Pro',
-    message: 'Your Pro plan could not be confirmed, so Search Console is off for now. Check your account in Settings.',
-    action: 'open-account',
-    actionLabel: 'Account settings',
-  },
   'not-connected': {
     title: 'Connect Search Console',
     message: 'Connect a Google account in Settings to see how this page performs in search. frost only asks for read-only access.',
@@ -177,9 +146,10 @@ export const GSC_PANEL_TEXT = Object.freeze({
 /** The states that read (or show what was read): only these show the scope and range controls. */
 export const GSC_READING_STATES: readonly GscPanelState[] = Object.freeze(['loading', 'data', 'no-data', 'quota', 'network', 'invalid']);
 
-/** Each `gsc.performance` unavailable reason as a panel state (`not-entitled` is told apart by the account). */
-export const GSC_REASON_STATES: Readonly<Record<Exclude<GscUnavailableReason, 'not-entitled'>, GscPanelState>> = Object.freeze({
+/** Each `gsc.performance` unavailable reason as a panel state (`not-entitled`, never sent by main: unconfigured). */
+export const GSC_REASON_STATES: Readonly<Record<GscUnavailableReason, GscPanelState>> = Object.freeze({
   unconfigured: 'unconfigured',
+  'not-entitled': 'unconfigured',
   'not-connected': 'not-connected',
   'no-property': 'no-property',
   'auth-expired': 'auth-expired',

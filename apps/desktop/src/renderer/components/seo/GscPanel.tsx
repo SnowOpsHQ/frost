@@ -9,7 +9,7 @@ import { formatDay, formatMetric, gscPanelView, gscPrefs, gscReadRequest, type G
 import { useGscData } from '../../hooks/useGscData';
 import { ReloadIcon } from '../../icons';
 import { registerPaletteActions } from '../../palette/registry';
-import { useAccountState, useGscStatus } from '../../settings-hooks';
+import { useGscStatus } from '../../settings-hooks';
 import { requestSettings } from '../../settings-open';
 import { GscIcon } from './gsc-icons';
 import { PageText, Section } from './parts';
@@ -227,15 +227,13 @@ function Queries({ view }: { readonly view: GscPanelView }) {
 
 export function GscPanel({ tab }: { readonly tab: TabState | undefined }) {
   const gsc = useGscStatus();
-  const account = useAccountState();
   const prefs = useSyncExternalStore(gscPrefs.subscribe, gscPrefs.get);
-  const who = account === null ? null : { status: account.status, entitlement: account.entitlements.status };
-  const base = { gsc, account: who, url: tab?.url ?? '', prefs, answers: null, pending: false, now: Date.now() };
+  const base = { gsc, url: tab?.url ?? '', prefs, answers: null, pending: false, now: Date.now() };
   const { answers, pending, retry } = useGscData(gscReadRequest(base));
   const view = gscPanelView({ ...base, answers, pending });
   const act = (action: GscPanelAction) => {
     if (action === 'retry') retry();
-    else requestSettings(action === 'open-account' ? 'account' : 'search-console');
+    else requestSettings('search-console');
   };
   return (
     <div className="gsc" data-testid="gsc-panel" data-state={view.state} data-pending={view.pending} aria-busy={view.pending || view.state === 'loading'}>

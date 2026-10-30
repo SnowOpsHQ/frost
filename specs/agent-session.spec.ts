@@ -10,9 +10,10 @@
  */
 import { MAX_TOOL_CALLS_PER_TURN, type ApprovalDecision, type ToolActivityStatus } from './agent-approvals.spec';
 import type { ChatRetention } from './agent-data.spec';
+import type { ChatgptAccountView, ChatgptFailure, ChatgptModelView } from './agent-chatgpt.spec';
 import type { AgentMcpView } from './agent-mcp.spec';
 import { MAX_OUTPUT_TOKENS, type KeyProtection } from './agent-proxy.spec';
-import type { AgentToolRisk, ModelId, ModelRoute, ToolErrorCode } from './agent-tools.spec';
+import { isAllowedModelId, type AgentModelId, type AgentToolRisk, type ModelId, type ModelRoute, type ToolErrorCode } from './agent-tools.spec';
 import type { SkillInputSlot } from './skills.spec';
 import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
 
@@ -84,6 +85,11 @@ export const MODEL_CONTEXT_WINDOWS: Readonly<Record<ModelId, number | null>> = {
   'openai/gpt-5-mini': null,
 };
 
+/** A model's context window: the catalogue's figure, `null` for a ChatGPT model (no published figure frost relies on). */
+export function modelContextWindow(modelId: AgentModelId): number | null {
+  return isAllowedModelId(modelId) ? MODEL_CONTEXT_WINDOWS[modelId] : null;
+}
+
 // ---- The history a turn sends (whole-branch review) ---------------------------------------------
 
 /**
@@ -114,8 +120,8 @@ export const OMITTED_TOOL_OUTPUT = '[older tool output omitted]';
  * `HISTORY_CHARS_PER_TOKEN`, less `reservedChars` (what else the request carries: the system
  * prompt, MCP tool definitions), within `HISTORY_MIN_BUDGET_CHARS`–`CHAT_HISTORY_MAX_CHARS`.
  */
-export function historyBudgetChars(modelId: ModelId, reservedChars = 0): number {
-  const window = MODEL_CONTEXT_WINDOWS[modelId] ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
+export function historyBudgetChars(modelId: AgentModelId, reservedChars = 0): number {
+  const window = modelContextWindow(modelId) ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
   const chars = (window - MAX_OUTPUT_TOKENS - HISTORY_HEADROOM_TOKENS) * HISTORY_CHARS_PER_TOKEN - Math.max(0, reservedChars);
   return Math.min(CHAT_HISTORY_MAX_CHARS, Math.max(HISTORY_MIN_BUDGET_CHARS, Math.floor(chars)));
 }
@@ -141,7 +147,9 @@ export const AGENT_E2E_SCRIPT_MAX_CHARS = 64_000;
  * - `started`: the turn is running (its progress shows in `agent.watch`);
  * - `busy`: a turn is already running (one at a time, app-wide; nothing queued);
  * - `setup-needed`: the selected route has no usable key;
- * - `not-entitled`: the agent isn't available on this plan;
+ * - `not-entitled`: unreachable in this build: the agent is never gated (`UNGATED_FEATURES` in
+ *   `entitlements-snapshot.spec.ts`; main's entitlements port always allows). Kept for wire
+ *   compatibility and the port's test seam;
  * - `no-tab`: no tab to work on;
  * - `unknown-chat`: no such chat;
  * - `invalid`: empty text, or a skill input the skill doesn't declare;
@@ -179,14 +187,29 @@ export interface AgentIsolationView {
   readonly note: string;
 }
 
+/**
+ * The ChatGPT plan route's setup (`agent-chatgpt.spec.ts`): the account's view (never a token, a
+ * client id or a host id) and the models its last list offered, in the server's order.
+ */
+export interface AgentChatgptView {
+  readonly account: ChatgptAccountView;
+  readonly models: readonly ChatgptModelView[];
+}
+
 export interface AgentSetupView {
   readonly route: ModelRoute;
-  readonly modelId: ModelId;
-  /** The models the selected route serves. */
-  readonly allowedModels: readonly ModelId[];
+  /** A catalogue id, or a `chatgpt/<slug>` on the `chatgpt` route. */
+  readonly modelId: AgentModelId;
+  /** The models the selected route serves (on `chatgpt`, the account's listed models). */
+  readonly allowedModels: readonly AgentModelId[];
   /** Whether each slot holds a usable key (never the key). */
   readonly keys: { readonly anthropic: boolean; readonly openai: boolean; readonly gateway: boolean };
-  /** Whether a turn can start: the route's key is set (or the e2e seam is on). */
+  /** The ChatGPT sign-in and its models. */
+  readonly chatgpt: AgentChatgptView;
+  /**
+   * Whether a turn can start: the route's key is set, or on `chatgpt` signed in with plan usage on
+   * and the model in the account's last list (or the e2e seam is on).
+   */
   readonly ready: boolean;
   readonly protection: KeyProtection;
   readonly runtime: { readonly status: AgentRuntimeStatus; readonly lastFailure: AgentRuntimeFailure | null };
@@ -253,13 +276,21 @@ export interface AgentActiveChatView {
   readonly running: boolean;
   /** The last turn's failure (shown as a banner), `null` otherwise. */
   readonly error: string | null;
+  /**
+   * When that failure was the ChatGPT plan's (`agent-chatgpt.spec.ts`, `ChatgptFailure`: main's
+   * reading of the answer, never the runtime's words), its reason (and `param` for `unsupported`):
+   * `error` is then `chatgptFailureMessage(chatgptError)`, and the panel offers the reason's
+   * recovery ("Manage usage" first for `usage-limit`, sign in again for `signed-out` and
+   * `plan-usage-off`). `null` otherwise.
+   */
+  readonly chatgptError: ChatgptFailure | null;
   readonly usage: AgentUsageView | null;
   /** The context the next request starts from: the last step's input plus output tokens (`null`: unknown). */
   readonly contextTokens: number | null;
-  /** The model's context window (`MODEL_CONTEXT_WINDOWS`), `null` when unknown. */
+  /** The model's context window (`modelContextWindow`), `null` when unknown. */
   readonly contextWindow: number | null;
   /** The model the last turn used, `null` before one ran. */
-  readonly modelId: ModelId | null;
+  readonly modelId: AgentModelId | null;
 }
 
 /** An approval request as the panel shows it (main's broker's view, field for field). */
@@ -343,8 +374,10 @@ export interface AgentState {
 /** What a refused send says (the panel shows it as a notice). */
 export const AGENT_NOTICE_MESSAGES: Readonly<Record<AgentNoticeView['kind'], string>> = {
   busy: 'The agent is already answering. Stop it or wait for it to finish.',
+  /** On the `chatgpt` route the notice says `CHATGPT_SETUP_MESSAGES[chatgptSetupReason(…)]` instead (`agent-chatgpt.spec.ts`). */
   'setup-needed': 'Add a key for the selected model route in the agent settings first.',
-  'not-entitled': 'The agent is not available on this plan.',
+  /** Unreachable in this build (the agent is never gated); no plan is named. */
+  'not-entitled': 'The agent is turned off in this build.',
   'no-tab': 'Open a tab for the agent to work on first.',
   'unknown-chat': 'That chat is no longer available.',
   invalid: 'Type a message first.',

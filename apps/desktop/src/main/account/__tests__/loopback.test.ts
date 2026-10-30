@@ -77,6 +77,24 @@ describe('loopback listener', () => {
     expect(loopback.address).toBe('127.0.0.1');
   });
 
+  test('loopback-callback-path-parameter', async () => {
+    // The ChatGPT sign-in's redirect path (`CHATGPT_REDIRECT_PATH`); the default stays `/callback`.
+    const { loopback, callbacks } = await start({ callbackPath: '/auth/callback' });
+    expect(loopback.redirectUri).toBe(`http://127.0.0.1:${loopback.port}/auth/callback`);
+    expect((await get(loopback.port, callbackPath({ code: CODE, state: STATE }))).status).toBe(404);
+    expect((await get(loopback.port, `/auth/callback/?code=${CODE}&state=${STATE}`)).status).toBe(404);
+    expect(callbacks).toEqual([]);
+    const answer = await get(loopback.port, `/auth/callback?${new URLSearchParams({ code: CODE, state: STATE, client_id: 'oaiapp_x' }).toString()}`);
+    expect(answer.status).toBe(303);
+    expect(answer.headers.location).toBe(LOOPBACK_DONE_PATH);
+    expect(callbacks).toHaveLength(1);
+    expect(callbacks[0]!.code).toBe(CODE);
+    expect(callbacks[0]!.params.get('client_id')).toBe('oaiapp_x');
+    for (const bad of ['auth/callback', '/auth/../done', LOOPBACK_DONE_PATH, '/a?b', '/a b', `/${'a'.repeat(200)}`]) {
+      await expect(startLoopback({ state: STATE, onCallback: () => undefined, callbackPath: bad }), bad).rejects.toThrow();
+    }
+  });
+
   test('loopback-404-elsewhere', async () => {
     const { loopback, callbacks } = await start();
     const valid = callbackPath({ code: CODE, state: STATE });

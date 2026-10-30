@@ -101,12 +101,15 @@ export type PanelStatus = (typeof PANEL_STATUSES)[number];
 /** Label of an unavailable panel's rail item (also its tooltip, after the panel's name). */
 export const COMING_SOON_LABEL = 'Coming soon' as const;
 
+/** Hover delay before a rail item's label shows (panel open; the native `title` takes ~1 s). */
+export const RAIL_TOOLTIP_DELAY_MS = 120;
+
 /** How many ranked issues Overview lists before "Show all". */
 export const OVERVIEW_TOP_ISSUES = 5;
 
 /**
- * The sidebar docks right of the page area: the panel (`SIDEBAR_PANEL_WIDTH` CSS px) and, at the
- * window's right edge, the rail (`SIDEBAR_RAIL_WIDTH`). Collapsing hides the panel only: the rail
+ * The sidebar docks left of the page area: at the window's left edge the rail (`SIDEBAR_RAIL_WIDTH`
+ * CSS px), then the panel (`SIDEBAR_PANEL_WIDTH`). Collapsing hides the panel only: the rail
  * stays, with its status dots, and opening a panel from it expands the sidebar again. The page area
  * (and the tab's view laid over it) shrinks and grows to match. In a window too narrow for both,
  * the page area keeps `PAGE_MIN_WIDTH` and the panel gives way (it narrows, its content clipped);

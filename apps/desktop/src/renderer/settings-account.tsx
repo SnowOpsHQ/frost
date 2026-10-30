@@ -126,14 +126,14 @@ export function AccountSettings({ state }: { readonly state: AccountState | null
                   {view.email}
                 </bdi>
               </div>
-              <span className="settings-plan" data-testid="account-plan" data-pro={view.plan.pro ? 'true' : undefined}>
+              <span className="settings-plan" data-testid="account-plan">
                 {view.plan.label}
               </span>
             </div>
             <p className="settings-status" data-tone={view.plan.tone} data-testid="account-plan-status">
               {view.plan.status}
             </p>
-            <ul className="settings-features" aria-label="Pro features">
+            <ul className="settings-features" aria-label={ACCOUNT_SETTINGS_TEXT.featuresLabel}>
               {view.plan.features.map((feature) => (
                 <li key={feature.flag} className="settings-feature" data-included={feature.included ? 'true' : 'false'}>
                   <span className="settings-feature-mark" aria-hidden="true">

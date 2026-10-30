@@ -125,6 +125,9 @@ Semgrep ipc rules + a Playwright `openExternal` regression test) in CI.
 - Backend API + better-auth; signed entitlement snapshots with offline grace; consent-gated
   OTel/Sentry with working Settings toggles. Search Console connection (read-only OAuth scope, tokens in the OS
   keychain and main only) with a page/site performance panel. Deliverable: sign-in, plan gating, honest telemetry.
+  *(2026-10-29: frost is free and open source. No local feature is gated: the AI agent and Search
+  Console work signed out; a frost account is needed only for sync. See
+  `docs/plans/phase-4-accounts-telemetry.md`, "Change of 2026-10-29".)*
 
 **Phase 5 — AI agent**
 - Agent runtime utility process; Vercel AI SDK via Gateway; tool set (page audit/data/text, SERP,

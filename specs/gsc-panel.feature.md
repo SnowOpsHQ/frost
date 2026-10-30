@@ -3,8 +3,7 @@
 Spec: `specs/gsc-panel.spec.ts` (Zod-free: `GSC_PANEL_METRICS`, `GSC_METRIC_LABELS`, `GSC_LOWER_IS_BETTER`,
 `GSC_SCOPE_LABELS`, `GSC_PANEL_DEFAULTS`, `GSC_CHART`, `GSC_PANEL_STATES`, `GSC_PANEL_ACTIONS`,
 `GSC_PANEL_COPY`, `GSC_PANEL_TEXT`, `GSC_READING_STATES`, `GSC_REASON_STATES`), reading the API of `specs/gsc.spec.ts`
-/ `specs/gsc.schema.ts` (`gsc.watch`, `gsc.performance`, `gsc.topQueries`, `gscDateRange`) and the account of
-`specs/account-state.schema.ts` (`account.watch`). The rail entry is `SEO_PANELS`' `search-console`
+/ `specs/gsc.schema.ts` (`gsc.watch`, `gsc.performance`, `gsc.topQueries`, `gscDateRange`). The rail entry is `SEO_PANELS`' `search-console`
 (`specs/seo-sidebar.spec.ts`); its palette jump is in `FEATURE_PANEL_JUMPS` (`specs/command-palette.spec.ts`).
 Phase 4 Task 10. Each line maps to one named test.
 
@@ -13,17 +12,15 @@ Phase 4 Task 10. Each line maps to one named test.
   status dot (neutral), the sidebar's "Run the audit again" button and "Audited …" footer are hidden on
   it (they describe the audit, not this panel), and it does not wait for the page's audit: it shows its
   own states for every tab, pending or not.
-- **Gated in the chrome as well as in main.** Search Console is a `pro` feature. The panel reads
-  `gsc.watch` (configured, entitled, connected) and `account.watch` (signed in or not) first and sends no
-  read until the build is configured, the plan includes `search-console`, a Google account is connected
-  and the tab shows an `http(s)` page; main refuses the rest anyway (`not-entitled` before anything is
-  sent). Until both watches answered, and while a signed-in plan is still being checked, it is
-  `loading`. No account configuration in this build: the unconfigured words. Signed out: "Search Console
-  is part of frost Pro" and Sign in (Settings, Account); a free plan: the same title and Account
-  settings; a Pro snapshot that expired or failed verification (main falls back to free): words that say
-  so, and Account settings; not connected: Connect in Settings (Search Console section), or, when main
-  ended the connection because Google refused it (`error: 'auth-expired'`), Reconnect in Settings. The
-  panel never starts a connection or a sign-in itself: those need the click in Settings.
+- **No account, no plan (2026-10-29).** Search Console is free and needs no frost account
+  (`UNGATED_FEATURES`), so the panel does not read `account.watch` and has no sign-in or plan states.
+  It reads `gsc.watch` (configured, connected) first and sends no read until the build has a Search
+  Console client, a Google account is connected and the tab shows an `http(s)` page. Until the watch
+  answered it is `loading`. No client in this build: the unconfigured words; not connected: Connect in
+  Settings (Search Console section), or, when main ended the connection because Google refused it
+  (`error: 'auth-expired'`), Reconnect in Settings. `entitled` (always true from main) is not read, and
+  a `not-entitled` answer (which main never sends) shows the unconfigured words. The panel never starts
+  a connection itself: that needs the click in Settings.
 - **What it reads.** For the active tab's URL (its fragment dropped) and the chosen scope — **This page**
   (`page`) or **Whole property** (`property`, naming the matched property's `siteUrl`) — and range (7, 28 or
   90 days): `gsc.performance` (per-day rows and totals) and `gsc.topQueries`, both at once. Totals are
@@ -70,8 +67,8 @@ Phase 4 Task 10. Each line maps to one named test.
 ## View model (`apps/desktop/src/renderer/__tests__/gsc-view.test.ts`)
 - `format-metrics` — counts with separators (compact from a million), CTR as a percentage with one decimal (two below 1%), position with one decimal, no position as "—".
 - `format-freshness` — the freshness note from `gscDateRange` (dates as "Sep 29, 2026"), with "data through <last>" when the rows end early.
-- `gate-before-reading` — each `gsc.watch` / `account.watch` combination (watches not answered, account unconfigured, plan being checked, expired, unconfirmed, a connection ended with `auth-expired` …) gives its state, words and button, and a read only when configured, entitled, connected and on a web page.
-- `answer-states` — each unavailable reason gives its state, words and button (`not-entitled` told apart by the account; `no-property` names the host); `ok` without impressions is `no-data`; with data, the four tiles.
+- `gate-before-reading` — each `gsc.watch` value (not answered, unconfigured, not connected, connecting, a connection ended with `auth-expired` …) gives its state, words and button, and a read only when configured, connected and on a web page, whatever `entitled` says; no state, word or button is about an account or a plan.
+- `answer-states` — each unavailable reason gives its state, words and button (`not-entitled` the unconfigured words; `no-property` names the host); `ok` without impressions is `no-data`; with data, the four tiles.
 - `controls-only-when-reading` — the scope and range controls show in the reading states only (loading, data, no data, quota, network, invalid).
 - `property-scope-names-site` — the whole-property choice names the answered property's `siteUrl`.
 - `request-key` — the request ignores the fragment; the URL, scope, range or connection give a new one.
@@ -87,17 +84,15 @@ Phase 4 Task 10. Each line maps to one named test.
 - `use-gsc-data-keeps-data-for-scope-change` — a scope or range change keeps the last data as pending; another URL does not.
 
 ## Panel (`apps/desktop/src/renderer/__tests__/gsc-panel.test.ts`, jsdom, IPC faked)
-- `gsc-panel-not-entitled-reads-nothing` — signed out or on a free plan, the panel shows its notice and never calls `gsc.performance` or `gsc.topQueries`; connected on Pro it does, once.
+- `gsc-panel-reads-only-when-connected` — not connected, the panel shows its notice and never calls `gsc.performance` or `gsc.topQueries` (nor `account.watch`); connected, signed out of frost, it reads once.
 
 ## Palette (`apps/desktop/src/renderer/__tests__/gsc-palette.test.ts`)
 - `gsc-palette-actions` — "Open Search Console panel" (the panel's jump, in `FEATURE_PANEL_JUMPS`: the built-ins leave it out) opens the panel and focuses its rail item; "Search Console: whole property" and "Search Console: this page" set the scope and open the panel, each offered on a web page while the other scope is chosen.
 
-## End to end (`apps/desktop/e2e/gsc-panel.e2e.ts`; fakes `fake-backend.ts` (plan switchable), `fake-google.ts`)
-One documented serial sequence (the account's states follow each other: signed out, free, Pro, then
-connected); each test after connecting sets the scope, range, metric and fake rows it needs itself.
-- `gsc-panel-signed-out` — signed out, on a loopback page: "Search Console is part of frost Pro"; its button opens Settings on Account; the rail item has no dot, and neither the rerun button nor the audit footer shows (Overview has both); nothing reached the fake Google.
-- `gsc-panel-free-plan` — signed in on a free plan: the same title, Account settings; still nothing reached the fake Google.
-- `gsc-panel-not-connected` — on Pro without a Google account: the connect prompt; its button opens Settings on Search Console.
+## End to end (`apps/desktop/e2e/gsc-panel.e2e.ts`; fake `fake-google.ts`; never signed in to frost)
+One documented serial sequence (not connected, then connected); each test after connecting sets the
+scope, range, metric and fake rows it needs itself.
+- `gsc-panel-not-connected` — signed out of frost, on a loopback page: the connect prompt; its button opens Settings on Search Console; the rail item has no dot, and neither the rerun button nor the audit footer shows (Overview has both); nothing reached the fake Google.
 - `gsc-panel-page-totals-and-chart` — connected (through Settings' Connect), the page on the loopback site matched to its URL-prefix property: the totals and the chart's table are the fake rows, the line ends at the last answered day, the totals and the freshness note say "through" it, and the read was the page filter.
 - `gsc-panel-property-scope` — Whole property names the property's `siteUrl`, shows the property's totals and reads without a page filter.
 - `gsc-panel-range-change` — 7 days sends one new read over the 7-day range, keeping the last data shown (dimmed: `data-pending`) until it answers (the fake holds the read until the test releases it, `holdQueries`, so the check never races a fast answer).
