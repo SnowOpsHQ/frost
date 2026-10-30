@@ -365,6 +365,64 @@ describe('chatgpt sign-in', () => {
     expect(h.focused).toEqual([]);
   });
 
+  /** Holds the write storing `refreshToken` until released; writes stay in call order, like the real store's queue. */
+  function holdWriteOf(h: Harness, refreshToken: string) {
+    const write = h.store.write;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let held = false;
+    let queue: Promise<unknown> = Promise.resolve();
+    h.store.write = (state) => {
+      const run = queue.then(async () => {
+        if (!held && state.tokens?.refreshToken === refreshToken) {
+          held = true;
+          await gate;
+        }
+        return write(state);
+      });
+      queue = run.catch(() => undefined);
+      return run;
+    };
+    return { held: () => held, release };
+  }
+
+  const revokedTokens = (h: Harness) => new Set(h.recorded.filter((r) => r.url === CHATGPT_ENDPOINTS.revoke).map((r) => r.form!.get('token')));
+
+  test('chatgpt-cancel (signed out while the sign-in is being stored: stays signed out, both refresh tokens revoked)', async () => {
+    const h = await signedIn();
+    const hold = holdWriteOf(h, 'refresh-token-2');
+    expect(await h.auth.signIn({ windowId: 7 })).toBe('started');
+    expect(await h.redirect({ client_id: null })).toBe(303);
+    await h.until(hold.held, 'the sign-in to be stored');
+    const out = h.auth.signOut();
+    await h.until(() => revokedTokens(h).has('refresh-token-2'), 'the sign-out to revoke the new refresh token');
+    hold.release();
+    expect(await out).toBe('signed-out');
+    await h.auth.dispose();
+    expect(h.auth.view()).toEqual({ state: 'signed-out', acknowledged: false });
+    expect(await h.auth.withAccessToken((token) => token)).toEqual({ ok: false, reason: 'signed-out' });
+    expect((await h.realStore.read()) as object).toMatchObject({ tokens: null });
+    expect(revokedTokens(h)).toEqual(new Set(['refresh-token-1', 'refresh-token-2']));
+    expect(h.focused).toEqual([]);
+  });
+
+  test('chatgpt-cancel ("Use a different account" while the sign-in is being stored: the previous account is not restored)', async () => {
+    const h = await signedIn();
+    const hold = holdWriteOf(h, 'refresh-token-2');
+    expect(await h.auth.signIn()).toBe('started');
+    expect(await h.redirect({ client_id: null })).toBe(303);
+    await h.until(hold.held, 'the sign-in to be stored');
+    const switching = h.auth.signIn({ differentAccount: true });
+    await h.until(() => revokedTokens(h).has('refresh-token-2'), 'the switch to revoke the new refresh token');
+    hold.release();
+    expect(await switching).toBe('started');
+    expect(h.auth.view()).toMatchObject({ state: 'pending' });
+    expect(new URL(h.opened.at(-1)!).searchParams.get('client_id')).toBe(CHATGPT_DYNAMIC_CLIENT_ID);
+    await h.auth.dispose();
+    expect((await h.realStore.read()) as object).toMatchObject({ clientId: null, account: null, tokens: null });
+    expect(revokedTokens(h)).toEqual(new Set(['refresh-token-1', 'refresh-token-2']));
+  });
+
   test('chatgpt-exchange-refused', async () => {
     const h = setup();
     h.server.token = () => h.json(400, { error: 'invalid_grant' });

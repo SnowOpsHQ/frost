@@ -116,6 +116,9 @@ named test.
 - **Scenario: chatgpt-cancel** — Cancel closes the listener and ends the sign-in `cancelled`.
   Cancelled while the new sign-in is being stored, it is still not kept: the previous record is
   stored again, the new refresh token is revoked, nothing is signed in and no window is focused.
+  Ended instead by a sign-out or "Use a different account" while it is being stored, nothing is
+  put back: the user ends signed out (or switching), the new refresh token and the refresh token it
+  displaced are both revoked, and the previous account is not restored.
 
 ## Tokens (`service.test.ts`)
 - **Scenario: chatgpt-refresh-margin-and-earliest** — an access token is used as is until

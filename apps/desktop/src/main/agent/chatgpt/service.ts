@@ -371,11 +371,21 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
       return;
     }
     if (pending !== p) {
-      // Cancelled while it was being stored: the previous record goes back and the new grant is revoked.
-      state = before;
-      if (!(await persist())) await deps.store.clear().catch(() => false);
+      if (!signingOut && state.tokens === tokens) {
+        // Cancelled while it was being stored: the previous record goes back and the new grant is revoked.
+        state = before;
+        if (!(await persist())) await deps.store.clear().catch(() => false);
+        discard(clientId, answer);
+        log('agent chatgpt: a sign-in cancelled while being stored was not kept');
+        changed();
+        return;
+      }
+      // Ended by a sign-out or an account switch, which owns the state now: nothing is put back, and
+      // the new grant and the refresh token it displaced are revoked.
       discard(clientId, answer);
-      log('agent chatgpt: a sign-in cancelled while being stored was not kept');
+      const displaced = before.tokens;
+      if (displaced !== null && displaced.refreshToken !== tokens.refreshToken) discard(before.clientId ?? clientId, { refresh_token: displaced.refreshToken });
+      log('agent chatgpt: a sign-in ended while being stored was not kept');
       changed();
       return;
     }
