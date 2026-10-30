@@ -244,7 +244,9 @@ named test.
 - **Scenario: chatgpt-models-refreshed** — the list is asked for when an account becomes signed in
   with plan usage on (or another account does) and once at start; a token refresh doesn't ask
   again; a failed list keeps the last one, and so does an empty one (or one nothing in survives
-  the filter).
+  the filter). Each list belongs to the account it was asked for: when the usable account changes
+  while a list is being read, that list is dropped (never stored for the new account) and the new
+  account's list is asked for next.
 - **Scenario: chatgpt-account-change** — the route tells its listeners when the account's state,
   email or plan usage changes, not on a token refresh.
 - **Scenario: chatgpt-route-ready** — a turn may start on the route only when signed in, plan usage

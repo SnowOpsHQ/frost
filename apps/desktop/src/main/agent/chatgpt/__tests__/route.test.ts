@@ -7,6 +7,7 @@ import { CHATGPT_ENDPOINTS } from '@app/specs/agent-chatgpt.spec';
 import { createAgentSettings } from '../../settings';
 import { createMemoryFs } from '../../__tests__/fakes';
 import { createChatgptRoute } from '../route';
+import type { ChatgptAuth } from '../service';
 import { createHarness, EMAIL } from './harness';
 
 type Harness = ReturnType<typeof createHarness>;
@@ -83,6 +84,40 @@ describe('chatgpt route', () => {
     expect(route.view().models).toEqual([{ id: 'chatgpt/old', label: 'Old' }]);
     expect(await route.refreshModels()).toBe(true);
     expect(route.view().models.map((model) => model.id)).toEqual(['chatgpt/gpt-6.1-sol', 'chatgpt/gpt-6.1-mini']);
+    await route.dispose();
+  });
+
+  test('chatgpt-models-refreshed (an account switch mid-read: the old list is dropped, the new account asks)', async () => {
+    type Listed = Awaited<ReturnType<ChatgptAuth['listModels']>>;
+    let view: ReturnType<ChatgptAuth['view']> = { state: 'signed-in', email: 'a@example.com', planUsage: 'on', acknowledged: false };
+    const authListeners = new Set<() => void>();
+    const answers: ((listed: Listed) => void)[] = [];
+    const auth = {
+      view: () => view,
+      listModels: vi.fn(() => new Promise<Listed>((resolve) => answers.push(resolve))),
+      onChange: (listener: () => void) => {
+        authListeners.add(listener);
+        return () => void authListeners.delete(listener);
+      },
+      load: async () => undefined,
+      dispose: async () => undefined,
+    } as unknown as ChatgptAuth;
+    const memory = createMemoryFs();
+    const settings = createAgentSettings({ file: '/user-data/agent-settings.json', fs: memory.fs });
+    await settings.load();
+    const route = createChatgptRoute({ auth, settings });
+    await route.start();
+    await vi.waitFor(() => expect(answers).toHaveLength(1));
+    // Account A's list is still being read when the user switches to account B.
+    view = { state: 'signed-in', email: 'b@example.com', planUsage: 'on', acknowledged: false };
+    for (const listener of [...authListeners]) listener();
+    answers[0]!({ ok: true, models: [{ id: 'chatgpt/a-only', label: 'A only' }] });
+    // B's list is asked for, and A's never lands.
+    await vi.waitFor(() => expect(answers).toHaveLength(2));
+    expect(settings.chatgptModels()).toEqual([]);
+    answers[1]!({ ok: true, models: [{ id: 'chatgpt/b-only', label: 'B only' }] });
+    await vi.waitFor(() => expect(settings.chatgptModels()).toEqual([{ id: 'chatgpt/b-only', label: 'B only' }]));
+    expect(auth.listModels).toHaveBeenCalledTimes(2);
     await route.dispose();
   });
 

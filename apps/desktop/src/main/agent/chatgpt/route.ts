@@ -50,7 +50,8 @@ export function createChatgptRoute(deps: ChatgptRouteDeps): ChatgptRoute {
   const accountListeners = new Set<() => void>();
   /** The account as last seen (`state email planUsage`; `null` before `start`). */
   let account: string | null = null;
-  let refreshing: Promise<boolean> | null = null;
+  /** The model list being read, and the usable account it was asked for. */
+  let refreshing: { readonly key: string | null; readonly run: Promise<boolean> } | null = null;
   /** The signed-in account with plan usage on, as last seen (`null`: not usable): a change asks for the models. */
   let usable: string | null = null;
   let unsubscribe: (() => void) | null = null;
@@ -71,8 +72,18 @@ export function createChatgptRoute(deps: ChatgptRouteDeps): ChatgptRoute {
   };
 
   const refreshModels = (): Promise<boolean> => {
-    refreshing ??= (async () => {
+    // Each list belongs to the account it was asked for: a refresh for another account doesn't
+    // reuse the one in flight; it waits for it (one at a time) and asks for its own.
+    const key = usableKey();
+    if (refreshing !== null && refreshing.key === key) return refreshing.run;
+    const previous = refreshing?.run;
+    const run: Promise<boolean> = (async () => {
+      await previous?.catch(() => false);
       const listed = await deps.auth.listModels();
+      if (usableKey() !== key) {
+        log('agent chatgpt: the account changed while its model list was read; that list is dropped');
+        return false;
+      }
       if (!listed.ok) {
         log(`agent chatgpt: the model list could not be read (${listed.reason}); the last one is kept`);
         return false;
@@ -88,9 +99,10 @@ export function createChatgptRoute(deps: ChatgptRouteDeps): ChatgptRoute {
       notify();
       return stored;
     })().finally(() => {
-      refreshing = null;
+      if (refreshing?.run === run) refreshing = null;
     });
-    return refreshing;
+    refreshing = { key, run };
+    return run;
   };
 
   /** On a change of the sign-in: the list is asked for when an account becomes usable (or another does). */
@@ -155,7 +167,7 @@ export function createChatgptRoute(deps: ChatgptRouteDeps): ChatgptRoute {
       listeners.clear();
       failureListeners.clear();
       accountListeners.clear();
-      await refreshing?.catch(() => false);
+      await refreshing?.run.catch(() => false);
       await deps.auth.dispose();
     },
   };
