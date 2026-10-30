@@ -211,8 +211,9 @@ Decisions (`docs/plans/phase-8-ai-complete.md`, Task 6; spec `agent-data.spec.ts
   `duplicateSkillName`; a built-in's name gives `duplicateSkillName`. The import is refused whole
   (`limit`) if it would pass `MAX_USER_SKILLS`.
 - **The router rebuilds the review field by field** (as `checkedSaveSkillResult`): fixed values,
-  bounded text, catalogue tools only, the acting-tools flag recomputed from the tools; a malformed
-  entry fails the whole answer.
+  bounded text, catalogue tools only, each once, the acting-tools flag recomputed from the tools; a
+  malformed entry (an unknown or repeated tool among them: the list is never cut) fails the whole
+  answer.
 
 Scenarios (`apps/desktop/src/main/agent/__tests__/skill-files.test.ts` unless noted):
 - **Scenario: skill-export-writes-validated-envelope** — the chosen path only, a temporary file

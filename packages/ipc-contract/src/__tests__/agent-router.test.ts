@@ -526,7 +526,7 @@ describe('agent router', () => {
     expect(service.cancelSkillImport).toHaveBeenLastCalledWith(IMPORT_TOKEN);
 
     // The review is rebuilt field by field: extra fields dropped, the acting-tools flag recomputed
-    // from the tools, an invalid entry's instructions never carried, unknown tools left out.
+    // from the tools, an invalid entry's instructions never carried.
     const item = (IMPORT_PREVIEW as Extract<AgentSkillImportPreviewResult, { result: 'ready' }>).preview.items[0]!;
     const noisy = {
       result: 'ready',
@@ -536,7 +536,7 @@ describe('agent router', () => {
         room: 49,
         file: '/home/me/skills.json',
         items: [
-          { ...item, actingTools: false, tools: ['page_data', 'click', 'shell'], secret: KEY },
+          { ...item, actingTools: false, secret: KEY },
           { index: 1, valid: false, id: 'link-check', name: 'Link check', error: 'This entry is not a skill frost can read.', instructions: 'leak' },
         ],
       },
@@ -548,7 +548,7 @@ describe('agent router', () => {
         token: IMPORT_TOKEN,
         room: 49,
         items: [
-          { ...item, tools: ['page_data', 'click'], actingTools: true },
+          { ...item, actingTools: true },
           { index: 1, valid: false, id: 'link-check', name: 'Link check', error: 'This entry is not a skill frost can read.' },
         ],
       },
@@ -562,6 +562,9 @@ describe('agent router', () => {
       over({ description: 'd'.repeat(SKILL_LIMITS.maxDescriptionChars + 1) }),
       over({ id: 'Bad Id' }),
       over({ tools: ['shell'] }),
+      // Never cut: an unknown or repeated tool beside catalogue ones refuses the entry, not just the tool.
+      over({ tools: ['page_data', 'click', 'shell'] }),
+      over({ tools: ['page_data', 'click', 'page_data'] }),
       over({ tools: 'page_data' }),
       over({ conflict: 'replace' }),
       over({ inputs: [{ slot: 'pageUrl', label: 'x', placeholder: null }] }),

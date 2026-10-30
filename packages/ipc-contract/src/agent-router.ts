@@ -116,9 +116,10 @@ function checkedImportItem(value: unknown): AgentSkillImportItem | null {
   const description = bounded(item['description'], SKILL_LIMITS.maxDescriptionChars);
   const instructions = bounded(item['instructions'], SKILL_LIMITS.maxInstructionChars);
   if (name === null || description === null || instructions === null || !Array.isArray(item['tools']) || !Array.isArray(item['inputs'])) return null;
-  // Catalogue tools only, each once; the acting-tools flag is recomputed here, so it can't be dropped.
+  // Catalogue tools only, each once, never cut: an unknown or repeated tool refuses the entry. The
+  // acting-tools flag is recomputed here, so it can't be dropped.
   const tools = [...new Set(item['tools'].filter((tool): tool is AgentToolName => (AGENT_TOOL_NAMES as readonly unknown[]).includes(tool)))];
-  if (tools.length === 0) return null;
+  if (tools.length === 0 || tools.length !== item['tools'].length) return null;
   if (item['inputs'].length > SKILL_INPUT_SLOTS.length) return null;
   const inputs: { slot: SkillInputSlot; label: string; placeholder: string | null }[] = [];
   for (const raw of item['inputs'] as unknown[]) {
