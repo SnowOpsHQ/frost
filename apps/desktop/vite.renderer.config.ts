@@ -11,5 +11,8 @@ export default defineConfig({
     outDir: here('./.vite/renderer/main_window'),
     emptyOutDir: true,
   },
+  // Forge's renderer defaults set preserveSymlinks; workspace packages (@app/specs, …) then resolve
+  // under node_modules and the dev optimizer pre-bundles their raw .ts, failing on `type` imports.
+  resolve: { preserveSymlinks: false },
   plugins: [react()],
 });
