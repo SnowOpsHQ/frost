@@ -16,6 +16,7 @@ import type {
   SkillExportResult,
 } from '@app/specs/agent-data.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
+import type { ReasoningEffort } from '@app/specs/agent-reasoning.spec';
 import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
 import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
@@ -56,6 +57,11 @@ export interface AgentService {
   answerApproval(approvalId: string, decision: ApprovalDecision): Promise<AgentAnswerResult>;
   /** Sets the route and model (the next turn uses them); `false` when the pair isn't valid or can't be stored. */
   setModel(route: ModelRoute, modelId: AgentModelId): Promise<boolean>;
+  /**
+   * Stores the reasoning level (Phase 8 Task 8b; the next turn sends its effective level); `false`
+   * when it can't be stored.
+   */
+  setReasoningEffort(effort: ReasoningEffort): Promise<boolean>;
   /** Stores a key in `slot`; answers how that went, never the key. */
   setKey(slot: CredentialSlot, key: string): Promise<AgentSetKeyResult>;
   /** Removes the slot's key; `false` if it couldn't be removed. */

@@ -43,7 +43,7 @@ const composite = (route: ModelRoute, modelId: string, effort: ReasoningEffort, 
 /** The models each route serves (the ChatGPT route: one listed model). */
 const modelsOf = (route: ModelRoute): readonly AgentModelId[] => (route === 'chatgpt' ? [CHATGPT_MODEL] : ALLOWED_MODEL_IDS.filter((id) => routeModelId(route, id) !== null));
 const levelsOf = (route: ModelRoute, modelId: string) => (route === 'chatgpt' ? reasoningLevels(modelId, CHATGPT_LISTED) : MODEL_REASONING_SUPPORT[modelId as ModelId]);
-/** A request with no reasoning field, as today's runtime sends it on `route`. */
+/** A request with no reasoning field, as the runtime sends it on `route` at `auto`. */
 const plainFor = (route: ModelRoute, modelId: string): Record<string, unknown> => {
   if (route === 'byok-anthropic') return { ...ANTHROPIC, model: routeModelId(route, modelId) };
   if (route === 'byok-openai') return { ...OPENAI, model: routeModelId(route, modelId) };
@@ -729,7 +729,7 @@ describe('proxy rules', () => {
       }
     });
 
-    test('proxy-reasoning-must-match-settings (real requests: today\'s runtime sends no reasoning, so they pass at auto only)', async () => {
+    test('proxy-reasoning-must-match-settings (real requests captured at auto carry no reasoning, so they pass at auto only)', async () => {
       const targets: [ModelRoute, AgentModelId][] = MODEL_ROUTES.flatMap((route) => modelsOf(route).map((modelId) => [route, modelId] as [ModelRoute, AgentModelId]));
       for (const [route, modelId] of targets) {
         for (const which of [1, 2] as const) {

@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { cleanSlotValue, createBuiltinSkillRegistry, renderSkill, type Skill, type SkillRegistry } from '@app/ai-skills/skills';
 import type { AgentService } from '@app/ipc-contract';
 import { isApprovalDecision, type ApprovalDecision, type ToolActivityStatus } from '@app/specs/agent-approvals.spec';
-import { CHATGPT_SETUP_MESSAGES, chatgptFailureMessage, chatgptSetupReason, type ChatgptFailure } from '@app/specs/agent-chatgpt.spec';
+import { CHATGPT_SETUP_MESSAGES, chatgptFailureMessage, chatgptSetupReason, type ChatgptFailure, type ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import { AGENT_PROTOCOL_LIMITS, CHAT_BUSY_MESSAGE, type ChatMessage, type LockdownTarget, type ToolCall, type ToolResult } from '@app/specs/agent-protocol.schema';
-import { routeCredentialSlot, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
+import { routeCredentialSlot, type AgentModelSettings, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
+import { effectiveEffort, isReasoningEffort, reasoningLevels, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
 import {
   AGENT_DELTA_COALESCE_MS,
   AGENT_NOTICE_MESSAGES,
@@ -33,6 +34,7 @@ import {
   type AgentIsolationView,
   type AgentMessageView,
   type AgentNoticeView,
+  type AgentReasoningView,
   type AgentSendResult,
   type AgentSetKeyResult,
   type AgentSkillRequest,
@@ -105,7 +107,8 @@ export interface AgentSessionDeps {
   readonly host: Pick<AgentHost, 'send' | 'onChat' | 'onStatus' | 'status' | 'lastFailure' | 'lockdown' | 'activeChats' | 'strike' | 'restart'>;
   readonly approvals: Pick<ApprovalBroker, 'register' | 'unregister' | 'forget' | 'pending' | 'activity' | 'onChange' | 'onResult' | 'answer'>;
   readonly credentials: CredentialSettings;
-  readonly settings: Pick<AgentSettings, 'current' | 'set' | 'onChange'>;
+  /** `chatgptModels`: the account's last list, as main's proxy reads it (the levels a ChatGPT model offers). */
+  readonly settings: Pick<AgentSettings, 'current' | 'set' | 'onChange'> & Partial<Pick<AgentSettings, 'chatgptModels'>>;
   readonly entitlements: AgentEntitlements;
   readonly grants: Pick<AgentGrants, 'list' | 'readToolsAllowed' | 'onChange' | 'revoke' | 'revokeAll' | 'setReadToolsAllowed'>;
   /** Loads the settings and grants and starts the runtime (`createAgent().start`): `false` if it failed. */
@@ -632,6 +635,19 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   };
   /** Whether the route's credential is there: a stored key, or on `chatgpt` the sign-in. */
   const routeReady = (route: ModelRoute): boolean => (route === 'chatgpt' ? chatgptReady() : keySet(route));
+  /** The account's last model list as main's proxy reads it, so a turn's level is the one the proxy checks. */
+  const chatgptModels = (): readonly ChatgptModelView[] => {
+    try {
+      return deps.settings.chatgptModels?.() ?? [];
+    } catch {
+      return [];
+    }
+  };
+  /** The level in effect for the settings' model (what the next turn sends) and the levels it offers (Phase 8 Task 8b). */
+  const reasoningView = (settings: AgentModelSettings): AgentReasoningView => {
+    const models = chatgptModels();
+    return { effort: effectiveEffort(settings, models), levels: [...reasoningLevels(settings.modelId, models)] };
+  };
 
   const state = (): AgentState => {
     if (cached !== null) return cached;
@@ -651,6 +667,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         allowedModels: settings.route === 'chatgpt' ? chatgptView().models.map((model) => model.id) : ALLOWED_MODEL_IDS.filter((id) => routeModelId(settings.route, id) !== null),
         keys: { ...keys },
         chatgpt: chatgptView(),
+        reasoning: reasoningView(settings),
         ready: scripted || routeReady(settings.route),
         protection,
         runtime: { status: deps.host.status(), lastFailure: deps.host.lastFailure() },
@@ -1216,7 +1233,10 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     if (!started) return refuse('unavailable');
 
     // The runtime is ready: from here everything is synchronous until `chat.start` is posted.
-    const { route, modelId } = deps.settings.current();
+    const turnSettings = deps.settings.current();
+    const { route, modelId } = turnSettings;
+    // The level in effect, never the raw stored one: main's proxy checks the body against the same.
+    const reasoningEffort = effectiveEffort(turnSettings, chatgptModels());
     if (routeModelId(route, modelId) === null) return setupNeeded(route);
     let chat = chatId === null ? undefined : chats.get(chatId);
     if (chatId !== null && chat === undefined) return refuse('unknown-chat');
@@ -1295,6 +1315,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       route,
       allowedTools: [...allowedTools],
       mcpTools,
+      reasoningEffort,
     });
     if (!posted) {
       deps.approvals.unregister(chat.id);
@@ -1434,6 +1455,17 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       let stored = false;
       try {
         stored = (await deps.settings.set({ route, modelId })) === true;
+      } catch {
+        stored = false;
+      }
+      bump();
+      return stored;
+    },
+    async setReasoningEffort(effort: ReasoningEffort) {
+      if (!isReasoningEffort(effort)) return false;
+      let stored = false;
+      try {
+        stored = (await deps.settings.set({ reasoningEffort: effort })) === true;
       } catch {
         stored = false;
       }

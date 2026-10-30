@@ -1,5 +1,6 @@
-// Spec: specs/agent-ipc.schema.ts (the agent.* inputs), specs/agent-session.spec.ts (answers,
-// AGENT_WATCH_TIMEOUT_MS), specs/ipc-sender.spec.ts, specs/skills.spec.ts (SKILL_LIMITS, SKILL_SLOT_MAX_CHARS)
+// Spec: specs/agent-ipc.schema.ts (the agent.* inputs; AgentSetReasoningEffortInputSchema, Phase 8 Task 8b),
+// specs/agent-session.spec.ts (answers, AGENT_WATCH_TIMEOUT_MS, AgentSetupView.reasoning), specs/agent-reasoning.spec.ts
+// (REASONING_EFFORTS), specs/ipc-sender.spec.ts, specs/skills.spec.ts (SKILL_LIMITS, SKILL_SLOT_MAX_CHARS)
 // Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router), specs/agent-data.feature.md (Skills library)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -17,6 +18,7 @@ import {
   type SkillExportResult,
 } from '@app/specs/agent-data.spec';
 import { CREDENTIAL_LIMITS } from '@app/specs/agent-proxy.spec';
+import { REASONING_EFFORTS } from '@app/specs/agent-reasoning.spec';
 import { AGENT_WATCH_TIMEOUT_MS, CHAT_TEXT_MAX_CHARS, type AgentSetKeyResult, type AgentState } from '@app/specs/agent-session.spec';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
@@ -66,6 +68,7 @@ function stateAt(version: number): AgentState {
       allowedModels: ['anthropic/claude-sonnet-5-5'],
       keys: { anthropic: false, openai: false, gateway: true },
       chatgpt: { account: { state: 'signed-out', acknowledged: false }, models: [] },
+      reasoning: { effort: 'auto', levels: ['auto', 'low', 'medium', 'high'] },
       ready: true,
       protection: 'os',
       runtime: { status: 'ready', lastFailure: null },
@@ -103,6 +106,7 @@ function fakeAgent(version = 3) {
     deleteChat: vi.fn((chatId: string) => chatId === CHAT),
     answerApproval: vi.fn(async (_id: string, decision: string) => (decision === 'allow-always' ? ('granted' as const) : ('answered' as const))),
     setModel: vi.fn(async () => true),
+    setReasoningEffort: vi.fn(async (_effort: string) => true),
     setKey: vi.fn(async (_slot: string, _key: string): Promise<AgentSetKeyResult> => 'stored'),
     clearKey: vi.fn(async () => true),
     listGrants: vi.fn((): AgentGrantView[] => [{ tool: 'navigate', label: 'Open a web address in this tab', origin: 'https://example.com', createdAt: 5 }]),
@@ -177,6 +181,7 @@ const VALID_INPUT: Record<string, unknown> = {
   deleteChat: { chatId: CHAT },
   answerApproval: { approvalId: 'b1c2d3e4-0000-4000-8000-000000000001', decision: 'allow-once' },
   setModel: { route: 'byok-anthropic', modelId: 'anthropic/claude-opus-5-5' },
+  setReasoningEffort: { effort: 'high' },
   setKey: { slot: 'anthropic', key: KEY },
   clearKey: { slot: 'anthropic' },
   listGrants: undefined,
@@ -272,6 +277,7 @@ describe('agent router', () => {
         { route: 'gateway', modelId: 'anthropic/claude-haiku' },
         { route: 'gateway', modelId: 'anthropic/claude-sonnet-5-5', extra: 1 },
       ],
+      setReasoningEffort: [undefined, {}, { effort: 'minimal' }, { effort: 'high', modelId: 'openai/gpt-5' }],
       setKey: [
         undefined,
         { slot: 'anthropic' },
@@ -458,6 +464,50 @@ describe('agent router', () => {
     const foreign = ctxFor(service, 'https://evil.example');
     expect((await errorOf(procedure(foreign, 'setSkillEnabled')({ id: 'audit-this-page', enabled: false }))).code).toBe('FORBIDDEN');
     expect(service.setSkillEnabled).not.toHaveBeenCalled();
+  });
+
+  // Acceptance: specs/agent-session.feature.md (Router: agent-set-reasoning-effort-bounds)
+  test('agent-set-reasoning-effort-bounds', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    // Every level the user may choose reaches the service as is.
+    for (const effort of REASONING_EFFORTS) {
+      await expect(procedure(ctx, 'setReasoningEffort')({ effort })).resolves.toBe(true);
+      expect(service.setReasoningEffort).toHaveBeenLastCalledWith(effort);
+    }
+    // The answer is a boolean, whatever the service says.
+    service.setReasoningEffort.mockResolvedValueOnce(false);
+    await expect(procedure(ctx, 'setReasoningEffort')({ effort: 'low' })).resolves.toBe(false);
+    service.setReasoningEffort.mockResolvedValueOnce('stored' as never);
+    await expect(procedure(ctx, 'setReasoningEffort')({ effort: 'low' })).resolves.toBe(false);
+    service.setReasoningEffort.mockClear();
+    // Only the catalogue's names, in a strict object: a provider's wire value, another case, a
+    // missing or extra field (a model, a route) never reach the service.
+    for (const input of [
+      undefined,
+      null,
+      'high',
+      {},
+      { effort: '' },
+      { effort: 'minimal' },
+      { effort: 'none' },
+      { effort: 'xhigh' },
+      { effort: 'High' },
+      { effort: 'x'.repeat(10_000) },
+      { effort: 3 },
+      { effort: null },
+      { effort: ['high'] },
+      { effort: 'high', route: 'gateway' },
+      { reasoningEffort: 'high' },
+    ]) {
+      expect((await errorOf(procedure(ctx, 'setReasoningEffort')(input))).code, JSON.stringify(input)).toBe('BAD_REQUEST');
+    }
+    expect(service.setReasoningEffort).not.toHaveBeenCalled();
+    // A foreign sender, or a tab's page, is refused before the input is read.
+    expect((await errorOf(procedure(ctxFor(service, 'https://evil.example'), 'setReasoningEffort')({ effort: 'high' }))).code).toBe(IPC_SENDER_ERROR_CODE);
+    const tab: IpcContext = { ...ctx, sender: { origin: APP_ORIGIN, live: true, windowId: WINDOW_ID, isWindowContents: false, isMainFrame: true } };
+    expect((await errorOf(procedure(tab, 'setReasoningEffort')({ effort: 'high' }))).code).toBe(IPC_SENDER_ERROR_CODE);
+    expect(service.setReasoningEffort).not.toHaveBeenCalled();
   });
 
   test('agent-skill-file-procedures-enforce-sender-and-bounds', async () => {

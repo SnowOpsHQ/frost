@@ -13,6 +13,7 @@ import type { ChatRetention } from './agent-data.spec';
 import type { ChatgptAccountView, ChatgptFailure, ChatgptModelView } from './agent-chatgpt.spec';
 import type { AgentMcpView } from './agent-mcp.spec';
 import { MAX_OUTPUT_TOKENS, type KeyProtection } from './agent-proxy.spec';
+import type { ReasoningEffort } from './agent-reasoning.spec';
 import { isAllowedModelId, type AgentModelId, type AgentToolRisk, type ModelId, type ModelRoute, type ToolErrorCode } from './agent-tools.spec';
 import type { SkillCategory, SkillInputSlot } from './skills.spec';
 import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
@@ -202,6 +203,17 @@ export interface AgentChatgptView {
   readonly models: readonly ChatgptModelView[];
 }
 
+/**
+ * The reasoning setting as the panel shows it (Phase 8 Task 8b, Decision 8): the level in effect for
+ * the selected model (`effectiveEffort`: a stored level the model doesn't offer reads `auto`), which
+ * is the one the next turn sends, and the levels the model offers (`reasoningLevels`, `auto` first;
+ * on the `chatgpt` route `auto` plus what the account's list advertises for it).
+ */
+export interface AgentReasoningView {
+  readonly effort: ReasoningEffort;
+  readonly levels: readonly ReasoningEffort[];
+}
+
 export interface AgentSetupView {
   readonly route: ModelRoute;
   /** A catalogue id, or a `chatgpt/<slug>` on the `chatgpt` route. */
@@ -212,6 +224,8 @@ export interface AgentSetupView {
   readonly keys: { readonly anthropic: boolean; readonly openai: boolean; readonly gateway: boolean };
   /** The ChatGPT sign-in and its models. */
   readonly chatgpt: AgentChatgptView;
+  /** The reasoning level in effect for the selected model, and the levels it offers. */
+  readonly reasoning: AgentReasoningView;
   /**
    * Whether a turn can start: the route's key is set, or on `chatgpt` signed in with plan usage on
    * and the model in the account's last list (or the e2e seam is on).

@@ -6,6 +6,7 @@ import {
   AgentSendInputSchema,
   AgentSetKeyInputSchema,
   AgentSetModelInputSchema,
+  AgentSetReasoningEffortInputSchema,
   AgentWatchInputSchema,
   AgentExportChatInputSchema,
   AgentRevokeGrantInputSchema,
@@ -205,7 +206,7 @@ async function watchAgentState(agent: AgentService, sinceVersion: number): Promi
 
 /**
  * `watch` answers the panel's `AgentState`; `send` how the message (or skill run) went (`AGENT_SEND_RESULTS`);
- * `stop`, `selectChat`, `deleteChat`, `setModel`, `clearKey` whether they did it; `newChat` `null`;
+ * `stop`, `selectChat`, `deleteChat`, `setModel`, `setReasoningEffort`, `clearKey` whether they did it; `newChat` `null`;
  * `answerApproval` `AGENT_ANSWER_RESULTS`; `setKey` `AGENT_SET_KEY_RESULTS` (never the key).
  */
 export const agentRouter = router({
@@ -258,6 +259,11 @@ export const agentRouter = router({
     .use(requireAgent)
     .input(AgentSetModelInputSchema)
     .mutation(async ({ ctx, input }) => (await ctx.agent.setModel(input.route, input.modelId)) === true),
+  setReasoningEffort: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentSetReasoningEffortInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.agent.setReasoningEffort(input.effort)) === true),
   setKey: publicProcedure
     .use(enforceSender)
     .use(requireAgent)

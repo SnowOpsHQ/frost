@@ -248,8 +248,8 @@ one named test.
   the level, no `includeThoughts` the mapping doesn't send). On the `chatgpt` route the levels are
   `auto` plus the account's advertised ones (never `off`), `auto` only when none. `reasoning.summary` and
   `include` are not compared; the structural check's reason wins; the body answered is the
-  structural check's. The captured real requests (today's runtime sends no reasoning field) pass at
-  `auto` only.
+  structural check's. The captured real requests at `auto` (no reasoning field) pass at `auto` only;
+  those at each offered level are Task 8b's `reasoning-body-per-route` (`agent-runtime.feature.md`).
 - **Scenario: proxy-reasoning-off-maps-to-minimal-on-openai** — on `byok-openai` and gateway
   OpenAI models (GPT-5, for which the installed provider keeps `minimal`), `off` maps to
   `reasoning.effort` / `reasoningEffort` `minimal`: accepted under `off` only, and under `off` a

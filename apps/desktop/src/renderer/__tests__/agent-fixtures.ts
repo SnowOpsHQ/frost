@@ -8,6 +8,7 @@ export function setup(changes: Partial<AgentSetupView> = {}): AgentSetupView {
     allowedModels: ['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5', 'openai/gpt-5', 'openai/gpt-5-mini'],
     keys: { anthropic: false, openai: false, gateway: false },
     chatgpt: { account: { state: 'signed-out', acknowledged: false }, models: [] },
+    reasoning: { effort: 'auto', levels: ['auto', 'low', 'medium', 'high'] },
     ready: false,
     protection: 'os',
     runtime: { status: 'ready', lastFailure: null },

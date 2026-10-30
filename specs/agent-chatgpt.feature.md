@@ -259,6 +259,11 @@ named test.
   the filter). Each list belongs to the account it was asked for: when the usable account changes
   while a list is being read, that list is dropped (never stored for the new account) and the new
   account's list is asked for next.
+- **Scenario: chatgpt-models-keep-advertised-efforts** (Phase 8 Task 8b; `chatgpt/__tests__/models.test.ts`)
+  — `listModels` maps each entry's advertised levels (`ChatgptModelEntrySchema`'s `efforts`) into
+  its `ChatgptModelView` (no `efforts` key when it advertises none); the route stores them with the
+  settings, a restart reads them back, and so the route offers `auto` plus exactly those levels
+  (`reasoningLevels`), `auto` only for a model advertising none. A later list replaces them.
 - **Scenario: chatgpt-account-change** — the route tells its listeners when the account's state,
   email or plan usage changes, not on a token refresh.
 - **Scenario: chatgpt-route-ready** — a turn may start on the route only when signed in, plan usage
@@ -306,6 +311,12 @@ named test.
   A `401`/`403` the turn ends on is worded about the ChatGPT sign-in, not a key.
 - **Scenario: proxy-accepts-real-provider-requests (chatgpt)** — the installed provider's first and
   second requests on the route pass main's rules, and a key route's rules refuse them.
+- **Scenario: reasoning-body-per-route (chatgpt)** (Phase 8 Task 8b; `agent-runtime.feature.md`,
+  Providers) — at a level the account's list advertises, the runtime sends `openai.reasoningEffort`
+  with `forceReasoning: true`, so the request carries `reasoning.effort` (beside the provider's
+  `reasoning.summary` and `include: ['reasoning.encrypted_content']`, both allowed and not compared)
+  for a GPT-6.x slug and for one the provider doesn't recognise alike, still with no output cap; it
+  passes `checkModelRequest('chatgpt', …)` at that level. At `auto` nothing is forced.
 
 ## Panel (Task 5: `apps/desktop/src/renderer/__tests__/agent-chatgpt-view.test.ts`, `agent-chatgpt-components.test.ts`)
 The renderer sees `ChatgptAccountView` and the account's model list only (never a token); every

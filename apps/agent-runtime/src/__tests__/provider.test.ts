@@ -1,20 +1,22 @@
 // Spec: specs/agent-tools.spec.ts (MODEL_REQUESTS, isAllowedModelRequest, routeModelId, ALLOWED_MODEL_IDS,
 // byProvider) · specs/agent-chatgpt.spec.ts (CHATGPT_TOOL_NAMESPACE, CHATGPT_FORBIDDEN_BODY_FIELDS) ·
-// specs/agent-proxy.spec.ts (checkModelRequest: the structural check and the reasoning check at `auto`,
-// today's runtime sending no reasoning field; filterRequestHeaders, the gateway's `google` part
-// options) · Acceptance: specs/agent-runtime.feature.md (Providers), specs/agent-chatgpt.feature.md
+// specs/agent-proxy.spec.ts (checkModelRequest: the structural check and the reasoning check, at `auto`
+// where a turn sends no reasoning field and at each offered level; filterRequestHeaders, the gateway's `google` part
+// options) · specs/agent-reasoning.spec.ts (reasoningLevels, reasoningFieldsOf; the reasoning body
+// per route, Task 8b) · Acceptance: specs/agent-runtime.feature.md (Providers), specs/agent-chatgpt.feature.md
 // (Runtime). Proves the installed providers' endpoint paths are the ones main's proxy allows: each
 // model's request is captured by the proxied fetch, never sent.
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
-import { CHATGPT_FORBIDDEN_BODY_FIELDS, CHATGPT_TOOL_NAMESPACE } from '@app/specs/agent-chatgpt.spec';
+import { CHATGPT_FORBIDDEN_BODY_FIELDS, CHATGPT_TOOL_NAMESPACE, type ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import { checkModelRequest, filterRequestHeaders, MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
+import { reasoningFieldsOf, reasoningLevels, reasoningWire, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
 import { ALLOWED_MODEL_IDS, byProvider, GATEWAY_ONLY_PROVIDERS, isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES, routeModelId, type AgentModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
 import { createModel, ModelNotAllowedError, PLACEHOLDER_API_KEY } from '../provider';
 import { CREDENTIAL_HEADERS, createProxyFetch } from '../proxy-fetch';
 import { chatStart, startHarness, stubNetworkGlobals } from './harness';
 
-const CHATGPT_MODEL = 'chatgpt/gpt-6.1-sol';
+const CHATGPT_MODEL = 'chatgpt/gpt-6.1-sol' as const;
 const MODEL_FOR_ROUTE: Record<ModelRoute, AgentModelId> = {
   'byok-anthropic': 'anthropic/claude-sonnet-5-5',
   'byok-openai': 'openai/gpt-5',
@@ -23,7 +25,7 @@ const MODEL_FOR_ROUTE: Record<ModelRoute, AgentModelId> = {
 };
 
 /** Streams one request from `route`'s model and answers it `refused`; returns what was posted. */
-async function capture(route: ModelRoute, modelId: string) {
+async function capture(route: ModelRoute, modelId: string, providerOptions?: Record<string, Record<string, never>>) {
   const posted: RuntimeToMainMessage[] = [];
   const proxy = createProxyFetch((message) => {
     posted.push(message);
@@ -31,7 +33,7 @@ async function capture(route: ModelRoute, modelId: string) {
     return true;
   });
   const model = createModel(route, modelId, proxy.fetch);
-  await expect(model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }] })).rejects.toBeDefined();
+  await expect(model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }], ...(providerOptions ? { providerOptions } : {}) })).rejects.toBeDefined();
   const requests = posted.filter((message) => message.type === 'fetch.request');
   return requests;
 }
@@ -312,5 +314,75 @@ describe('providers', () => {
       h.send(chatStart({ route, modelId: MODEL_FOR_ROUTE[route] }));
       expect((await h.next('chat.error')).message, route).toBe(expected);
     }
+  });
+});
+
+// Acceptance: specs/agent-runtime.feature.md (Providers: reasoning-body-per-route), specs/agent-chatgpt.feature.md (Runtime)
+describe('reasoning body per route (Phase 8 Task 8b)', () => {
+  beforeEach(stubNetworkGlobals);
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A ChatGPT slug the installed OpenAI provider doesn't take for a reasoning model (no `gpt-<n>` name). */
+  const UNRECOGNISED_CHATGPT_MODEL = 'chatgpt/codex-sol-preview' as const;
+  const CHATGPT_MODELS: readonly ChatgptModelView[] = [CHATGPT_MODEL, UNRECOGNISED_CHATGPT_MODEL].map((id) => ({ id, label: id, efforts: ['low', 'medium', 'high'] }));
+  const served = (route: ModelRoute): readonly AgentModelId[] => (route === 'chatgpt' ? CHATGPT_MODELS.map((model) => model.id) : ALLOWED_MODEL_IDS.filter((id) => routeModelId(route, id) !== null));
+
+  /** The first request of a real turn on `route` with `modelId` at `reasoningEffort` (answered `refused`). */
+  async function turnRequest(route: ModelRoute, modelId: AgentModelId, reasoningEffort: ReasoningEffort) {
+    const h = startHarness({ modelFactory: createModel });
+    h.onMessage((message) => {
+      if (message.type === 'fetch.request') h.send({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' });
+    });
+    h.send(chatStart({ route, modelId, reasoningEffort }));
+    const request = await h.next('fetch.request');
+    await h.next('chat.error');
+    return { text: request.body as string, headers: filterRequestHeaders(route, request.headers) };
+  }
+
+  test('reasoning-body-per-route', async () => {
+    for (const route of MODEL_ROUTES) {
+      for (const modelId of served(route)) {
+        const levels = reasoningLevels(modelId, CHATGPT_MODELS);
+        for (const effort of levels) {
+          const label = `${route} ${modelId} ${effort}`;
+          const { text, headers } = await turnRequest(route, modelId, effort);
+          // Main's whole check (structural, then reasoning, then the gateway's option owners) passes
+          // the body as sent, at the same level.
+          expect(checkModelRequest(route, modelId, effort, text, headers), label).toEqual({ ok: true, body: text });
+          const fields = reasoningFieldsOf(route, JSON.parse(text));
+          if (effort === 'auto') expect(fields, label).toEqual({});
+          else expect(Object.keys(fields).length, label).toBeGreaterThan(0);
+          // And at no other offered level whose mapping differs: the fields are the mapping, exactly.
+          for (const other of levels) {
+            if (JSON.stringify(reasoningWire(route, modelId, other)) === JSON.stringify(reasoningWire(route, modelId, effort))) continue;
+            expect(checkModelRequest(route, modelId, other, text, headers), `${label} checked at ${other}`).toEqual({ ok: false, reason: 'reasoning' });
+          }
+          // The ChatGPT plan's rules hold at every level: no output cap.
+          if (route === 'chatgpt') expect(JSON.parse(text), label).not.toHaveProperty('max_output_tokens');
+        }
+      }
+    }
+  });
+
+  test('reasoning-body-per-route (what each provider writes, spelled out)', async () => {
+    const body = async (route: ModelRoute, modelId: AgentModelId, effort: ReasoningEffort) => JSON.parse((await turnRequest(route, modelId, effort)).text) as Record<string, unknown>;
+    // Claude with its key: adaptive thinking and the effort in `output_config`, within the output cap.
+    expect(await body('byok-anthropic', 'anthropic/claude-opus-5-5', 'high')).toMatchObject({ thinking: { type: 'adaptive' }, output_config: { effort: 'high' }, max_tokens: MAX_OUTPUT_TOKENS });
+    // GPT-5 with its key: `off` is `minimal`.
+    expect((await body('byok-openai', 'openai/gpt-5', 'off')).reasoning).toMatchObject({ effort: 'minimal' });
+    // The gateway carries the provider options as given.
+    expect((await body('gateway', 'google/gemini-3.8-flash', 'high')).providerOptions).toEqual({ openai: { store: false }, google: { thinkingConfig: { thinkingLevel: 'high' } } });
+    expect((await body('gateway', 'anthropic/claude-sonnet-5-5', 'low')).providerOptions).toEqual({ openai: { store: false }, anthropic: { thinking: { type: 'adaptive' }, effort: 'low' } });
+    // The ChatGPT plan: a GPT-6.x slug and one the provider doesn't recognise both carry the level.
+    for (const modelId of [CHATGPT_MODEL, UNRECOGNISED_CHATGPT_MODEL]) {
+      const sent = await body('chatgpt', modelId, 'medium');
+      expect(sent.reasoning, modelId).toMatchObject({ effort: 'medium' });
+      expect(sent, modelId).not.toHaveProperty('max_output_tokens');
+    }
+    // Why `forceReasoning` is sent there: without it the provider drops the level for that slug.
+    const [unforced] = await capture('chatgpt', UNRECOGNISED_CHATGPT_MODEL, { openai: { store: false, reasoningEffort: 'medium' } as never });
+    expect(JSON.parse(unforced!.body as string)).not.toHaveProperty('reasoning');
+    // At `auto` nothing is forced, so that slug's request carries no reasoning field.
+    expect(await body('chatgpt', UNRECOGNISED_CHATGPT_MODEL, 'auto')).not.toHaveProperty('reasoning');
   });
 });

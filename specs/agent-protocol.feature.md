@@ -72,6 +72,12 @@ one named test.
 - **`chat.start` on the ChatGPT plan** (protocol version 7, `agent-chatgpt.feature.md`): `route` may
   be `chatgpt` and `modelId` a `chatgpt/<slug>` (`isAgentModelId`); a runtime reporting an older
   version is refused.
+- **Scenario: chat-start-reasoning-effort** (protocol version 8, Phase 8 Task 8b, Decision 8;
+  `agent-reasoning.spec.ts`) — `chat.start.reasoningEffort` is required and is one of
+  `REASONING_EFFORTS` (`auto`, `off`, `low`, `medium`, `high`); a missing value, a provider's wire
+  value (`minimal`, `none`, `xhigh`), another case or another type refuses the message. Main sends
+  the effective level (`effectiveEffort`), never the raw stored one; a runtime reporting an older
+  version is refused (both sides read the one `AGENT_PROTOCOL_VERSION`).
 - **Scenario: chat-start-mcp-tools-match-allowed-names** (protocol version 6, Task 10;
   `agent-mcp.feature.md`) — `chat.start.mcpTools` holds exactly one sanitised definition per MCP
   name in `allowedTools`; a missing, extra, repeated or unsanitised one refuses the message.

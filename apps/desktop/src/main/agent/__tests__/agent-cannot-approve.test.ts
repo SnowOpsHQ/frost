@@ -43,7 +43,7 @@ describe('the runtime cannot approve', () => {
     runtime.postMessage({ type: 'ready', protocolVersion: AGENT_PROTOCOL_VERSION, lockdown: { removed: [], failed: [], permissionModel: false } });
     expect(await started).toBe(true);
     const allowedTools = ['navigate', 'click', 'execute_javascript', 'page_text'];
-    expect(host.send({ type: 'chat.start', chatId: 'chat-1', messages: [{ role: 'user', content: 'Hi' }], systemPrompt: '', modelId: 'anthropic/claude-sonnet-5-5', route: 'gateway', allowedTools, mcpTools: [] })).toBe(true);
+    expect(host.send({ type: 'chat.start', chatId: 'chat-1', messages: [{ role: 'user', content: 'Hi' }], systemPrompt: '', modelId: 'anthropic/claude-sonnet-5-5', route: 'gateway', allowedTools, mcpTools: [], reasoningEffort: 'auto' })).toBe(true);
     broker.register('chat-1', { tabId: 3, allowedTools });
 
     // One honest call that needs the user.
@@ -145,7 +145,7 @@ describe('the runtime cannot approve', () => {
     runtime.postMessage({ type: 'ready', protocolVersion: AGENT_PROTOCOL_VERSION, lockdown: { removed: [], failed: [], permissionModel: false } });
     expect(await started).toBe(true);
     const start = (chatId: string, allowedTools: string[], mcpTools: { name: string; description: string; inputSchema: { type: 'object' } }[]) =>
-      expect(host.send({ type: 'chat.start', chatId, messages: [{ role: 'user', content: 'Hi' }], systemPrompt: '', modelId: 'anthropic/claude-sonnet-5-5', route: 'gateway', allowedTools, mcpTools })).toBe(true);
+      expect(host.send({ type: 'chat.start', chatId, messages: [{ role: 'user', content: 'Hi' }], systemPrompt: '', modelId: 'anthropic/claude-sonnet-5-5', route: 'gateway', allowedTools, mcpTools, reasoningEffort: 'auto' })).toBe(true);
     // A skill turn: catalogue tools only.
     start('chat-1', ['page_audit', 'page_text'], []);
     broker.register('chat-1', { tabId: 3, allowedTools: ['page_audit', 'page_text'] });

@@ -324,11 +324,12 @@ describe('chatgpt spec', () => {
     expect(AgentSetModelInputSchema.safeParse({ route: 'chatgpt', modelId: 'openai/gpt-5' }).success).toBe(false);
     expect(AgentSetModelInputSchema.safeParse({ route: 'gateway', modelId: MODEL }).success).toBe(false);
     expect(AgentSetModelInputSchema.safeParse({ route: 'chatgpt', modelId: `chatgpt/${'a'.repeat(200)}` }).success).toBe(false);
-    const start = { type: 'chat.start', chatId: 'c1', messages: [{ role: 'user', content: 'hi' }], systemPrompt: 's', modelId: MODEL, route: 'chatgpt', allowedTools: [], mcpTools: [] };
+    const start = { type: 'chat.start', chatId: 'c1', messages: [{ role: 'user', content: 'hi' }], systemPrompt: 's', modelId: MODEL, route: 'chatgpt', allowedTools: [], mcpTools: [], reasoningEffort: 'auto' };
     const parsed = ChatStartMessageSchema.safeParse(start);
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
-    // `chat.start` accepts the `chatgpt` route and `chatgpt/<slug>` ids: a runtime from before them is refused.
-    expect(AGENT_PROTOCOL_VERSION).toBe(7);
+    // `chat.start` accepts the `chatgpt` route and `chatgpt/<slug>` ids since version 7 (8 added the
+    // reasoning level, Phase 8 Task 8b): a runtime from before them is refused.
+    expect(AGENT_PROTOCOL_VERSION).toBeGreaterThanOrEqual(7);
   });
 
   test('chatgpt-model-entry-efforts-parsed', () => {

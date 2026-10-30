@@ -104,6 +104,7 @@ describe('approvals end to end', () => {
       route: 'byok-anthropic',
       allowedTools,
       mcpTools: [],
+      reasoningEffort: 'auto',
     };
     expect(agent.host.send(message)).toBe(true);
 

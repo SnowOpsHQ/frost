@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { APPROVAL_DECISIONS, MAX_GRANT_ORIGIN_CHARS } from './agent-approvals.spec';
 import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_RETENTIONS, MAX_USER_SKILLS } from './agent-data.spec';
 import { CREDENTIAL_LIMITS, CREDENTIAL_SLOTS, isValidModelSettings } from './agent-proxy.spec';
+import { REASONING_EFFORTS } from './agent-reasoning.spec';
 import { CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
 import { isAgentModelId, MODEL_ROUTES, type AgentModelId } from './agent-tools.spec';
 import { SKILL_ID_PATTERN, SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from './skills.spec';
@@ -66,6 +67,13 @@ export const AgentAnswerApprovalInputSchema = z.strictObject({ approvalId: Agent
 export const AgentSetModelInputSchema = z
   .strictObject({ route: z.enum(MODEL_ROUTES), modelId: z.custom<AgentModelId>((value) => typeof value === 'string' && value.length <= 128 && isAgentModelId(value)) })
   .refine((value) => isValidModelSettings(value), { message: 'the route does not serve this model' });
+
+/**
+ * `agent.setReasoningEffort` (Phase 8 Task 8b, Decision 8): the level to store beside the route and
+ * model, one of `REASONING_EFFORTS` and nothing else (never a provider's wire value). Any level is
+ * stored; one the selected model doesn't offer acts as `auto` (`effectiveEffort`).
+ */
+export const AgentSetReasoningEffortInputSchema = z.strictObject({ effort: z.enum(REASONING_EFFORTS) });
 
 /**
  * A key to store. Bounded loosely (whitespace around a pasted key is trimmed by main's store,
