@@ -7,6 +7,9 @@ import { chatExportText } from './chat-export';
 import { createChatHistory, createMemoryChatsStore, type AgentChatsStore } from './chat-history';
 import type { ChatSnapshot } from './chat-record';
 import { e2eAgentScriptFrom } from './e2e-seam';
+import { chatgptE2eSeamFrom, e2eBrowser } from './chatgpt/e2e-seam';
+import { chatgptBrowserOpener } from './chatgpt/opener';
+import { CHATGPT_E2E_SWITCH } from '@app/specs/agent-chatgpt-e2e.schema';
 import { AGENT_MCP_PARTITION } from '@app/specs/agent-mcp.spec';
 import { createDefaultAgentEntitlements, type AgentEntitlements } from './entitlements';
 import { createMcpManager, createMcpSecrets, createMemoryMcpStore, nodeMcpDeps, type McpManagerDeps, type McpServersStore, type McpSessionLike, type McpStartPrompt } from './mcp';
@@ -21,9 +24,10 @@ import { createMemorySkillsStore, createUserSkills, type AgentSkillsStore } from
 // grants, approval broker) with the real page tools and the tab controller's URLs, the session
 // manager over it, the e2e seam (unpackaged only), and disposal when the app quits. The runtime is
 // forked on the first message (the session calls `start()`), not at launch. `wire.ts` passes the
-// Electron modules; tests pass fakes. The search tools' data ports (Task 8) and the entitlements
-// port are optional: without them the ports answer "not connected in this build" and every agent
-// feature is allowed (the lead wires Phases 3 and 4 here; the plan's Task 8 as-built note).
+// Electron modules; tests pass fakes. The search tools' data ports (Task 8) are optional: without
+// them the ports answer "not connected in this build" (main wires Phases 3 and 4's). The agent is
+// never gated (`UNGATED_FEATURES`): main passes no entitlements port, so every agent feature is
+// allowed; the port stays a seam for tests of the refusal paths.
 //
 // Task 9 (acceptance `specs/agent-data.feature.md`, Wiring): the stored chats (`sessionStore.agentChats`;
 // loaded and pruned at startup, pruned daily), the user's skills (`sessionStore.agentSkills`, composed
@@ -79,7 +83,7 @@ export interface AgentServiceDeps {
   readonly clearInterval?: (handle: unknown) => void;
   /** The search tools' data ports (default: each not connected, `resolveAgentPorts`). */
   readonly ports?: AgentPorts;
-  /** Which agent features may run (default: all; the lead wires Phase 4's `requireFeature`). */
+  /** Which agent features may run (default: all, always: the agent is not gated; tests pass a refusing port). Never wired to the account's entitlements. */
   readonly entitlements?: AgentEntitlements;
   /**
    * MCP servers' operating-system pieces and secrets (Task 10); default: Node's and Electron's
@@ -87,6 +91,15 @@ export interface AgentServiceDeps {
    * sandbox detection) and the encrypted secrets file. Tests pass fakes.
    */
   readonly mcp?: Partial<Omit<McpManagerDeps, 'store' | 'entitlements' | 'confirmStart' | 'userData'>>;
+  /**
+   * Opens the ChatGPT sign-in's authorize page in the system browser (`wire.ts`: the authorize page
+   * only, through the scheme-allowlisted opener, only with `userGesture`); default: never.
+   */
+  readonly openExternal?: (url: string, userGesture: boolean) => boolean;
+  /** Brings app window `windowId` to the front when a ChatGPT sign-in started from it succeeds; default: nothing. */
+  readonly focusWindow?: (windowId: number) => void;
+  /** Spends app window `windowId`'s live user gesture (main's per-window tracker); default: none, so no sign-in opens. */
+  readonly consumeGesture?: (windowId: number) => boolean;
   readonly log?: (line: string) => void;
 }
 
@@ -117,6 +130,10 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     }
   };
   const e2eAgentScript = e2eAgentScriptFrom({ packaged: deps.app.isPackaged, switchValue: deps.app.commandLine.getSwitchValue(AGENT_E2E_SCRIPT_SWITCH), log });
+  // The ChatGPT plan's e2e seam (unpackaged only): a local fake's endpoints, and a stand-in browser
+  // for its authorize page (still only that page, still only on a spent gesture).
+  const chatgptE2e = chatgptE2eSeamFrom({ packaged: deps.app.isPackaged, switchValue: deps.app.commandLine.getSwitchValue(CHATGPT_E2E_SWITCH), log });
+  const openExternal = chatgptE2e !== null ? chatgptBrowserOpener(e2eBrowser({ log }), chatgptE2e.endpoints.authorize) : deps.openExternal;
   // "The tab's page" has one source: the chat tab's live WebContents (its URL and title, as the page
   // tools read them), for the broker (approvals, grants, `completeToolInput`) and the skills alike,
   // never the tab strip's copy.
@@ -155,6 +172,9 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     mcp,
     tabUrl,
     e2eAgentScript,
+    ...(openExternal ? { openExternal } : {}),
+    ...(deps.focusWindow ? { focusWindow: deps.focusWindow } : {}),
+    chatgptE2e,
   });
   const session = createAgentSession({
     host: agent.host,
@@ -181,12 +201,16 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     exportChat,
     scripted: e2eAgentScript !== null,
     mcp,
+    chatgpt: agent.chatgpt,
+    ...(deps.consumeGesture ? { consumeGesture: deps.consumeGesture } : {}),
     now,
     log,
   });
   // The stored route, model, grants, skills and chats (pruned first), and which keys are set, for
   // the panel's first state; the runtime itself waits for the first message.
   void Promise.all([agent.settings.load(), agent.grants.load(), userSkills.load(), mcp.load(), history.load().then((chats) => session.restore(chats))]).then(() => session.refreshSetup());
+  // The stored ChatGPT sign-in, then the account's models (kept with the settings, so after them).
+  void agent.settings.load().then(() => agent.chatgpt.start());
   // Then daily, while frost runs (startup's prune is the load's).
   const setTimer = deps.setInterval ?? ((callback: () => void, ms: number) => setInterval(callback, ms).unref());
   const clearTimer = deps.clearInterval ?? ((handle: unknown) => clearInterval(handle as ReturnType<typeof setInterval>));

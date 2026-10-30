@@ -5,8 +5,15 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, test, vi } from 
 import type { MessageChannelMain, safeStorage, session, utilityProcess } from 'electron';
 import { createModel, startRuntime, type RuntimePort } from '@app/agent-runtime';
 import type { MainToRuntimeMessage } from '@app/specs/agent-protocol.schema';
+import { CHATGPT_ENDPOINTS, CHATGPT_TOOL_NAMESPACE } from '@app/specs/agent-chatgpt.spec';
+import type { AgentState } from '@app/specs/agent-session.spec';
+import { createChatHistory, createMemoryChatsStore } from '../chat-history';
+import type { ChatgptAuth } from '../chatgpt';
+import { createHarness } from '../chatgpt/__tests__/harness';
+import { createDefaultAgentEntitlements } from '../entitlements';
 import { createAgent, type Agent, type AgentChatEvent, type AgentElectron } from '../index';
 import type { ProxyRequestInit } from '../model-proxy';
+import { createAgentSession } from '../session';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, createMemoryFs, type FakePort } from './fakes';
 
 const KEY = 'sk-ant-never-leaves-main-0123456789';
@@ -43,7 +50,7 @@ const containsKey = (value: unknown) => texts(value).some((text) => text.include
 type Respond = (init: ProxyRequestInit) => Promise<Response>;
 
 /** The agent over fakes, with the real runtime in-process on the fake port main transfers. */
-function makeAgent(memory: ReturnType<typeof createMemoryFs>, safe: ReturnType<typeof createFakeSafeStorage>, respond: { next: Respond }, logLines: string[]) {
+function makeAgent(memory: ReturnType<typeof createMemoryFs>, safe: ReturnType<typeof createFakeSafeStorage>, respond: { next: Respond }, logLines: string[], chatgptAuth?: ChatgptAuth) {
   const runtimePorts: FakePort[] = [];
   const mainPorts: FakePort[] = [];
   const fetchCalls: { url: string; init: ProxyRequestInit }[] = [];
@@ -73,8 +80,10 @@ function makeAgent(memory: ReturnType<typeof createMemoryFs>, safe: ReturnType<t
           expect(partition).toBe('agent-model');
           return {
             fetch: (url, init) => {
-              fetchCalls.push({ url, init });
-              return respond.next(init);
+              // The model proxy's session: only the proxy's own request shape reaches it.
+              const sent = init as ProxyRequestInit;
+              fetchCalls.push({ url, init: sent });
+              return respond.next(sent);
             },
           };
         },
@@ -86,6 +95,7 @@ function makeAgent(memory: ReturnType<typeof createMemoryFs>, safe: ReturnType<t
     fs: memory.fs,
     platform: 'linux',
     log: (line) => void logLines.push(line),
+    ...(chatgptAuth ? { chatgptAuth } : {}),
   });
   return { agent, runtimePorts, mainPorts, fetchCalls, forks };
 }
@@ -232,6 +242,91 @@ describe('key isolation', () => {
 
     agent.dispose();
     expect(agent.host.status()).toBe('stopped');
+  });
+
+  test('key-never-leaves-main (the ChatGPT plan: no access, refresh or ID token outside main)', async () => {
+    const h = createHarness();
+    try {
+      h.server.models = { models: [{ slug: 'gpt-6.1-sol', display_name: 'GPT-6.1 Sol', visibility: 'list' }] };
+      const memory = createMemoryFs();
+      const safe = createFakeSafeStorage();
+      const logLines: string[] = [];
+      // A Responses stream with one text message (the plan's answer).
+      const answer = [
+        { type: 'response.created', response: { id: 'resp_1', created_at: 1, model: 'gpt-6.1-sol' } },
+        { type: 'response.output_item.added', output_index: 0, item: { type: 'message', id: 'msg_1' } },
+        { type: 'response.output_text.delta', item_id: 'msg_1', output_index: 0, content_index: 0, delta: 'Fix the title.', logprobs: [] },
+        { type: 'response.output_item.done', output_index: 0, item: { type: 'message', id: 'msg_1' } },
+        { type: 'response.completed', response: { incomplete_details: null, usage: { input_tokens: 10, output_tokens: 4 } } },
+      ]
+        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+        .join('');
+      const respond: { next: Respond } = { next: async () => new Response(new TextEncoder().encode(answer), { status: 200, headers: { 'content-type': 'text/event-stream' } }) };
+      const { agent, runtimePorts, mainPorts, fetchCalls } = makeAgent(memory, safe, respond, logLines, h.auth);
+      const chats = createMemoryChatsStore();
+      const session = createAgentSession({
+        host: agent.host,
+        approvals: agent.approvals,
+        credentials: agent.credentials,
+        settings: agent.settings,
+        entitlements: createDefaultAgentEntitlements(),
+        grants: agent.grants,
+        start: () => agent.start(),
+        activeTabId: () => 4,
+        history: createChatHistory({ store: chats, now: () => 1, log: (line) => void logLines.push(line) }),
+        chatgpt: agent.chatgpt,
+        log: (line) => void logLines.push(line),
+      });
+      const states: AgentState[] = [];
+      const record = () => void states.push(structuredClone(session.getState()));
+
+      await agent.settings.load();
+      await agent.chatgpt.start();
+      await h.signIn();
+      await vi.waitFor(() => expect(agent.chatgpt.view().models).toHaveLength(1));
+      expect(await session.setModel('chatgpt', 'chatgpt/gpt-6.1-sol')).toBe(true);
+      await session.refreshSetup();
+      record();
+      expect(session.getState().setup).toMatchObject({ route: 'chatgpt', ready: true, chatgpt: { account: { state: 'signed-in', planUsage: 'on' } } });
+      expect(await session.send(null, 'What should I fix first?')).toBe('started');
+      await vi.waitFor(() => expect(session.getState().running).toBe(false));
+      record();
+      expect(session.getState().active?.messages.at(-1)).toMatchObject({ text: 'Fix the title.' });
+      // A refreshed token for the second turn: still nowhere but the header.
+      h.clock.now += 3600_000;
+      expect(await session.send(session.getState().active!.id, 'And then?')).toBe('started');
+      await vi.waitFor(() => expect(session.getState().running).toBe(false));
+      record();
+      await vi.waitFor(() => expect(chats.heads.size).toBe(1));
+
+      // The tokens went out only as main's Authorization header, to the plan's one URL.
+      expect(fetchCalls.map((call) => call.url)).toEqual([CHATGPT_ENDPOINTS.responses, CHATGPT_ENDPOINTS.responses]);
+      expect(fetchCalls.map((call) => call.init.headers.find(([name]) => name === 'authorization')![1])).toEqual(['Bearer access-token-1', 'Bearer access-token-2']);
+      for (const call of fetchCalls) expect(call.init.body).not.toMatch(/access-token|refresh-token/);
+      expect(JSON.parse(fetchCalls[0]!.init.body)).toMatchObject({ store: false, stream: true, tools: [{ type: 'namespace', name: CHATGPT_TOOL_NAMESPACE.name }] });
+
+      const tokens = ['access-token-1', 'access-token-2', 'refresh-token-1', 'refresh-token-2', ...h.idTokens, 'auth-code-0123456789'];
+      const leaks = (value: unknown) => texts(value).filter((text) => tokens.some((token) => text.includes(token)) || /access-token|refresh-token/.test(text));
+      // Not in the panel's state (every state recorded, and the last one), the settings file, the chat record,
+      // a message to or from the runtime, a log line or the console.
+      expect(leaks(states)).toEqual([]);
+      expect(leaks(session.getState())).toEqual([]);
+      expect(leaks([...memory.files.values()].map((file) => file.data))).toEqual([]);
+      expect(leaks([...chats.heads.values(), ...chats.rows.values()])).toEqual([]);
+      expect(leaks(mainPorts.flatMap((port) => port.posted))).toEqual([]);
+      expect(leaks(runtimePorts.flatMap((port) => port.posted))).toEqual([]);
+      expect(leaks([logLines, h.logs, consoleCalls])).toEqual([]);
+      // The stored settings hold the route, the model and the list only.
+      expect(Object.keys(JSON.parse(memory.text(path.join(USER_DATA, 'agent-settings.json')) ?? 'null') as object).sort()).toEqual(['chatgptModels', 'modelId', 'route']);
+      // The sign-in's own file holds them, encrypted (the fake safe storage's sealed blob).
+      expect(leaks([...h.memory.files.values()].map((file) => file.data))).toEqual([]);
+
+      session.dispose();
+      agent.dispose();
+    } finally {
+      await h.auth.dispose();
+      await h.close();
+    }
   });
 
   test('key-never-leaves-main (a key that fails to decrypt)', async () => {

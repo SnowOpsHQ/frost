@@ -48,9 +48,30 @@ Decisions this plan makes (each recorded again under As built if it changes):
   the web sign-in (email and password, magic link) that the system browser uses.
 - **Which plan includes which feature is server-side.** The client reads flags, never plans, so a
   plan can change its features without a desktop release. In v1: `free` → no flags; `pro` →
-  `ai-agent`, `search-console`, `sync`.
+  `ai-agent`, `search-console`, `sync`. *(Superseded 2026-10-29: every plan has every flag; see
+  "Change of 2026-10-29" below.)*
 - **Search Console is a `pro` feature** (`search-console`). Phase 4 gates it, which is the phase's
-  own demonstration of plan gating. Moving it to `free` is a one-line server change.
+  own demonstration of plan gating. Moving it to `free` is a one-line server change. *(Superseded
+  2026-10-29: Search Console is not gated.)*
+
+### Change of 2026-10-29: frost is free and open source
+The owner decided that frost is open source and every feature that was "Pro" is free. No frost
+account is needed for any local feature; an account is needed only for sync (it needs the server).
+- **Specs:** `entitlements-snapshot.spec.ts` keeps `PLANS` (`free`, `pro`), `FEATURE_FLAGS` and the
+  snapshot's format, signature and fail-closed rules unchanged (wire compatibility); `PLAN_FEATURES`
+  gives every plan every flag; `UNGATED_FEATURES` (`ai-agent`, `search-console`) must never be
+  checked; `ACCOUNT_FEATURES` (`sync`) is gated by `requireFeature('sync')`, which now means "signed
+  in with a verified snapshot", not a plan. `entitlements.feature.md`, `entitlements-client.feature.md`,
+  `gsc.feature.md`, `gsc-panel.feature.md`, `account-settings.feature.md` and `agent-host.feature.md`
+  record it.
+- **Backend:** signs `PLAN_FEATURES` as before, so a `free` (default) account's snapshot carries every
+  flag; `grant <email> pro` still works.
+- **Desktop:** the agent's entitlements port is no longer wired to the account (default: allowed);
+  Search Console's service gets `GSC_UNGATED_ACCESS` (never gated; the Google connection belongs to
+  this profile, `GSC_PROFILE_OWNER`, not a frost account, so signing in or out never touches it; a
+  connection an older build stored under a frost account is revoked once and must be made again).
+  The Search Console panel and its Settings section have no sign-in or plan states; the Account
+  section says frost is free and open source and lists only what an account adds (sync).
 - **Secrets need a real keychain.** `safeStorage` with Linux's `basic_text` backend (no keyring) is
   obfuscation, so frost keeps tokens in memory only for that run and says so in Settings. The store
   uses `safeStorage`'s asynchronous API (`isAsyncEncryptionAvailable`, `encryptStringAsync`,
@@ -591,7 +612,8 @@ to the plan:
   the last data shown, dimmed. Position ticks are even from 1; CTR below 1 % has two decimals; a
   rate's best day needs `GSC_RATE_HIGHLIGHT_MIN_IMPRESSIONS`.
 - The panel also shows the top queries, and distinguishes loading, unconfigured, a Pro snapshot that
-  expired or failed verification and `auth-expired` (Reconnect in Settings).
+  expired or failed verification and `auth-expired` (Reconnect in Settings). *(2026-10-29: the plan
+  states are gone; Search Console needs no account.)*
 
 ## Integration notes
 For the lead merging Phases 3–7. Expected conflicts and how to resolve them:
@@ -621,9 +643,10 @@ Beyond the conflicts:
 - **Phase 5's credential store** also uses asynchronous `safeStorage`. Align on one secret store
   (`account/secret-store.ts`, `specs/secret-store.spec.ts`: add a name to `SECRET_NAMES`) rather than
   two with different keychain rules.
-- **Phase 5's `AgentEntitlements`:** wire it to `createAccountMain(...).entitlements` (the reader;
-  `ai-agent` flag), and its `GscPort` to `GscService` (`gsc.service` in `main/index.ts`). Treat
-  Search Console query strings as untrusted text in prompts.
+- **Phase 5's `AgentEntitlements`:** ~~wire it to `createAccountMain(...).entitlements` (the reader;
+  `ai-agent` flag)~~ — 2026-10-29: do **not** wire it; the agent is not gated (default port). Wire its
+  `GscPort` to `GscService` (`gsc.service` in `main/index.ts`). Treat Search Console query strings as
+  untrusted text in prompts.
 
 ## Credentials and config the owner must supply
 None is committed, and keys belong outside the repo (a secret manager, an untracked `.env`):

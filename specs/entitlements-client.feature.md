@@ -38,7 +38,13 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
   changes, heartbeat at most `ENTITLEMENT_HEARTBEAT_MS`), and `onChange` fires when it changes.
   Notifications are queued: a listener that changes the state (`clear()` …) from inside `onChange`
   never makes another listener see the changes out of order.
-- **One gate for main.** Other phases gate on `createAccountMain(...).entitlements`, a non-null
+- **Only sync is gated (2026-10-29).** frost is free and open source: the AI agent and Search
+  Console (`UNGATED_FEATURES`) are never gated, signed out or on any plan. Main does not wire them to
+  this reader (no `has`, no `requireFeature`), and must not: a missing, expired or unverifiable
+  snapshot never turns them off. `sync` (`ACCOUNT_FEATURES`) is the only gated flag, and every plan
+  includes it, so `requireFeature('sync')` passes exactly when an account is signed in with a
+  verified snapshot (active or grace) — the gate is "signed in", not a plan.
+- **One gate for main.** Account features (`ACCOUNT_FEATURES`) gate on `createAccountMain(...).entitlements`, a non-null
   `EntitlementsReader` over the account service's entitlements: `none` unless an account is signed in
   (confirmed) and the held snapshot is that account's (`sub` equals its user ID). Its `onChange`
   fires whenever what it answers changes: sign-in, sign-out, a session that ended, a new or refused
@@ -129,6 +135,8 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
   entitlements and fires `onChange` once with them; signing out answers `none` and fires again.
 - `unconfigured-reader-is-none` — an unconfigured account (and `noEntitlementsReader()`) answers
   `none` for every flag and never fires.
+- `sync-needs-sign-in-not-a-plan` — signed in on `free` (the default plan), `has('sync')` is true and
+  `requireFeature('sync')` passes; signed out it throws (`ACCOUNT_FEATURES`).
 
 ## Secret store (`apps/desktop/src/main/account/__tests__/secret-store.test.ts`)
 - `secret-round-trip` — a written blob reads back, also from a new instance; `write` resolves `true` once it is on disk, which holds the `safeStorage` ciphertext, not the value.

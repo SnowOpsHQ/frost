@@ -258,12 +258,6 @@
   font-weight: 600;
 }
 
-.settings-plan[data-pro='true'] {
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
 .settings-status[data-tone='ok'] {
   color: var(--ok);
 }

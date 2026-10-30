@@ -97,7 +97,8 @@ describe('admin CLI', () => {
     const before = await cli(['show', 'alice@example.com'], db);
     expect(before.code).toBe(CLI_EXIT.ok);
     expect(before.out).toMatch(/plan:\s+free/);
-    expect(before.out).toMatch(/features:\s+\(none\)/);
+    expect(before.out).toContain(`features: ${PLAN_FEATURES.free.join(', ')}`);
+    expect(before.out).toContain('sync');
 
     const granted = await cli(['grant', 'Alice@Example.com', 'pro'], db);
     expect(granted.code).toBe(CLI_EXIT.ok);

@@ -3,7 +3,7 @@ import { MAX_STORED_ROWS_PER_CHAT, STORED_CHAT_TITLE_MAX_CHARS } from '@app/spec
 import { AgentChatIdSchema } from '@app/specs/agent-ipc.schema';
 import { AGENT_PROTOCOL_LIMITS, AgentIdSchema, ChatMessageSchema, ToolNameSchema, type ChatMessage } from '@app/specs/agent-protocol.schema';
 import { MAX_TOOL_CARDS_PER_TURN, TOOL_CARD_INPUT_PREVIEW_CHARS, TOOL_CARD_OUTPUT_PREVIEW_CHARS, type AgentToolCardView, type AgentUsageView } from '@app/specs/agent-session.spec';
-import { isAllowedModelId, TOOL_ERROR_CODES, type ModelId, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { isAgentModelId, TOOL_ERROR_CODES, type AgentModelId, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import { SkillIdSchema } from '@app/specs/skills-schema';
 import { SKILL_LIMITS } from '@app/specs/skills.spec';
 
@@ -37,7 +37,7 @@ export interface ChatSnapshot {
   readonly title: string;
   readonly createdAt: number;
   readonly updatedAt: number;
-  readonly modelId: ModelId | null;
+  readonly modelId: AgentModelId | null;
   readonly usage: AgentUsageView | null;
   readonly contextTokens: number | null;
   readonly truncated: boolean;
@@ -168,7 +168,7 @@ export function decodeHead(row: ChatHeadRow, now: number): ChatHead | null {
     title: row.title,
     createdAt: Math.min(Math.max(0, row.createdAt), updatedAt),
     updatedAt,
-    modelId: isAllowedModelId(row.modelId) ? row.modelId : null,
+    modelId: isAgentModelId(row.modelId) ? row.modelId : null,
     usage: input === null && output === null ? null : { input, output },
     contextTokens: count(row.contextTokens),
     truncated: row.truncated === true,

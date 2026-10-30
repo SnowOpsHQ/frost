@@ -8,8 +8,9 @@
  * Main connects to Google with OAuth 2.0 for installed apps (authorization code, PKCE S256, the
  * shared loopback redirect listener) asking for exactly `GSC_SCOPE`, keeps the refresh token in the
  * secret store's `gsc` blob and the access token in memory, and reads the Search Console API v3
- * (`sites`, `searchAnalytics/query`). Search Console is a `pro` feature (`search-console`). No token,
- * code, verifier or `state` ever leaves main.
+ * (`sites`, `searchAnalytics/query`). Search Console is free and needs no frost account (2026-10-29:
+ * `UNGATED_FEATURES` in `entitlements-snapshot.spec.ts`); the connection is this frost profile's
+ * (`GSC_PROFILE_OWNER`). No token, code, verifier or `state` ever leaves main.
  *
  * Clean-room: frost's own names and limits; Google's endpoints and parameters are its public API.
  */
@@ -23,6 +24,15 @@
  * Without `openid email` Google names no account, so frost shows "Connected" without an email.
  */
 export const GSC_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
+
+// ---- Owner --------------------------------------------------------------------------------------
+
+/**
+ * Who a Google connection belongs to in main: this frost profile, whoever is signed in to frost (or
+ * nobody), since Search Console needs no frost account (2026-10-29). Not a frost user ID's shape, so a
+ * blob an older build stored under a frost account is another owner's: revoked and deleted at start.
+ */
+export const GSC_PROFILE_OWNER = 'frost-profile:local';
 
 // ---- Configuration ------------------------------------------------------------------------------
 
@@ -160,7 +170,7 @@ export type GscError = (typeof GSC_ERRORS)[number];
  * - `started`: the consent page was opened (`connecting`; a pending connect was replaced);
  * - `needs-gesture`: no live user gesture in the window that asked: nothing opened;
  * - `unconfigured`: this build has no Search Console client;
- * - `not-entitled`: the plan does not include `search-console`;
+ * - `not-entitled`: kept for wire compatibility; main never answers it (Search Console is not gated);
  * - `already-connected`: disconnect first;
  * - `browser-failed`: the listener or the browser could not be started.
  */
@@ -170,17 +180,16 @@ export type GscConnectResult = (typeof GSC_CONNECT_RESULTS)[number];
 /**
  * `gsc.status` / `gsc.watch` (`GscStatusSchema`): never a token, a code or an account name.
  *
- * **The connection belongs to the frost account that made it.** The `gsc` blob carries that
- * account's user ID; while another account (or none) is signed in the connection is not
- * `connected`, nothing reads with it and its tokens are never sent. Signing in as a different account
- * disconnects it (revoked and deleted); signing out and back in as the same account keeps it.
+ * **The connection belongs to this frost profile (`GSC_PROFILE_OWNER`), not to a frost account.** The
+ * `gsc` blob carries its owner; one stored under any other owner (a frost user ID, by an older build)
+ * is never read with and is revoked and deleted. Signing in or out of frost never touches it.
  */
 export interface GscStatus {
   /** This build has a Search Console client. */
   configured: boolean;
-  /** The plan includes `search-console` now. */
+  /** Always `true` from main (Search Console is not gated); kept for wire compatibility. */
   entitled: boolean;
-  /** A refresh token is held for the signed-in frost account. */
+  /** A refresh token is held for this profile. */
   connected: boolean;
   /** A connect is waiting for the browser. Never with `connected`. */
   connecting: boolean;
@@ -255,8 +264,8 @@ export function gscDateRange(days: number, nowMs: number): GscDateRange {
 /**
  * Why an answer has no data:
  * - `unconfigured`: no Search Console client in this build.
- * - `not-entitled`: the plan does not include `search-console` (checked before anything is sent).
- * - `not-connected`: no Google account is connected for the signed-in frost account (or the
+ * - `not-entitled`: kept for wire compatibility; main never answers it (Search Console is not gated).
+ * - `not-connected`: no Google account is connected for this profile (or the
  *   connection changed, by a disconnect or a new connection, while the read was running: what it read
  *   belongs to the old one and is not answered).
  * - `no-property`: no verified property covers the URL (or Google refused access to it).

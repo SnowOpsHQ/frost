@@ -11,6 +11,7 @@ import { registerPaletteActions } from '../../palette/registry';
 import { AgentApprovalCard } from './AgentApprovalCard';
 import { AgentChat } from './AgentChat';
 import { AgentChatList } from './AgentChatList';
+import { ChatgptComposerBar } from './AgentChatgpt';
 import { AgentComposer } from './AgentComposer';
 import { AgentContextMeter } from './AgentContextMeter';
 import { AgentGrants } from './AgentGrants';
@@ -216,6 +217,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
             {state.approval !== null ? <AgentApprovalCard key={state.approval.request.id} approval={state.approval} covered={covered} context={{ activeChatId: active?.id ?? null, chats: state.chats }} /> : null}
             <footer className="agent-foot">
               <AgentContextMeter active={active} />
+              <ChatgptComposerBar setup={state.setup} />
               <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} skills={state.skills} />
             </footer>
           </>

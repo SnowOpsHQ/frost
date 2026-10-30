@@ -162,8 +162,11 @@ one code); the fingerprint lets the user match the page to the app; and the desk
 ## Entitlements
 
 An account's plan is a row in `entitlements` (user, plan, updated); no row is `free`. Which features
-a plan has is `PLAN_FEATURES` in the spec, applied when signing (`free` → none; `pro` → `ai-agent`,
-`search-console`, `sync`); the desktop reads the flags, never the plan.
+a plan has is `PLAN_FEATURES` in the spec, applied when signing; the desktop reads the flags, never
+the plan. Since 2026-10-29 frost is free and open source: every plan (`free` and `pro`) carries every
+flag (`ai-agent`, `search-console`, `sync`), and the desktop gates only `sync`, which needs a signed-in
+account (the server), not a plan. The AI agent and Search Console work signed out. `pro` stays a valid
+plan so existing rows and grants keep working.
 
 A snapshot is a compact JWS, header exactly `{ alg: 'EdDSA', kid, typ: 'frost-entitlement+jwt' }`,
 claims `iss`, `aud` (`frost-desktop`), `sub` (user ID), `email`, `plan`, `features`, `iat`,

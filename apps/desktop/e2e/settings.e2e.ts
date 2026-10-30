@@ -221,7 +221,7 @@ test('settings-sign-in-needs-confirmation', async () => {
   await confirm.click();
   await expect(page.getByTestId('account-plan')).toHaveText('Pro');
   await expect(page.getByTestId('account-email')).toHaveText(backend.user.email);
-  await expect(page.getByTestId('account-plan-status')).toHaveText('Pro is active.');
+  await expect(page.getByTestId('account-plan-status')).toHaveText(ACCOUNT_SETTINGS_TEXT.status.active);
   expect(await accountState()).toMatchObject({ status: 'signed-in', entitlements: { plan: 'pro', status: 'active' } });
 
   // Signed in: the palette no longer offers "Sign in to frost".

@@ -4,12 +4,12 @@ import { gscConnectResultMessage, gscSection, type GscButton } from './settings-
 
 // The Settings view's Search Console section (Phase 4 Task 9; acceptance `account-settings.feature.md`):
 // renders `gscSection(status)` from `gsc.watch` and calls one `gsc.*` procedure per click (Connect from
-// the click itself: main needs a live user gesture in this window). Without Pro it points to Account.
+// the click itself: main needs a live user gesture in this window). It needs no frost account.
 // A button whose call runs is `aria-disabled` (it keeps focus).
 
-const LABELS: Readonly<Record<GscButton, string>> = { connect: 'Connect', cancel: 'Cancel', disconnect: 'Disconnect', 'go-to-account': 'Go to Account' };
+const LABELS: Readonly<Record<GscButton, string>> = { connect: 'Connect', cancel: 'Cancel', disconnect: 'Disconnect' };
 
-export function GscSettings({ onGoToAccount }: { readonly onGoToAccount: () => void }) {
+export function GscSettings() {
   const status = useGscStatus();
   const [busy, setBusy] = useState<GscButton | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -19,10 +19,6 @@ export function GscSettings({ onGoToAccount }: { readonly onGoToAccount: () => v
   const press = (button: GscButton) => {
     if (busy !== null) return;
     setNote(null);
-    if (button === 'go-to-account') {
-      onGoToAccount();
-      return;
-    }
     setBusy(button);
     const call: Promise<unknown> =
       button === 'connect' ? settingsActions.connectGsc().then((result) => setNote(gscConnectResultMessage(result))) : button === 'cancel' ? settingsActions.cancelGsc() : settingsActions.disconnectGsc();

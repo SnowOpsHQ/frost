@@ -6,7 +6,7 @@
 import { vi } from 'vitest';
 import { createMemoryPortPair, createModel, startRuntime } from '@app/agent-runtime';
 import type { MainToRuntimeMessage, RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
-import type { ModelId, ModelRoute } from '@app/specs/agent-tools.spec';
+import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 
 export type CapturedRequest = Extract<RuntimeToMainMessage, { type: 'fetch.request' }>;
 
@@ -34,8 +34,8 @@ const ANTHROPIC_STEP = sse([
   ['message_stop', { type: 'message_stop' }],
 ]);
 
-/** OpenAI Responses: a reasoning item (summary and encrypted content), a message and two function calls. */
-const OPENAI_STEP = sse([
+/** OpenAI Responses: a reasoning item (summary and encrypted content), a message and two function calls (in `namespace`, on the ChatGPT plan). */
+const openaiStep = (namespace?: string) => sse([
   [null, { type: 'response.created', response: { id: 'resp_1', created_at: 1, model: 'gpt-5' } }],
   [null, { type: 'response.output_item.added', output_index: 0, item: { type: 'reasoning', id: 'rs_1', encrypted_content: null } }],
   [null, { type: 'response.reasoning_summary_part.added', item_id: 'rs_1', output_index: 0, summary_index: 0 }],
@@ -45,12 +45,12 @@ const OPENAI_STEP = sse([
   [null, { type: 'response.output_item.added', output_index: 1, item: { type: 'message', id: 'msg_1' } }],
   [null, { type: 'response.output_text.delta', item_id: 'msg_1', output_index: 1, content_index: 0, delta: 'Reading the page.', logprobs: [] }],
   [null, { type: 'response.output_item.done', output_index: 1, item: { type: 'message', id: 'msg_1' } }],
-  [null, { type: 'response.output_item.added', output_index: 2, item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'page_audit', arguments: '' } }],
+  [null, { type: 'response.output_item.added', output_index: 2, item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'page_audit', arguments: '', ...(namespace ? { namespace } : {}) } }],
   [null, { type: 'response.function_call_arguments.delta', item_id: 'fc_1', output_index: 2, delta: '{}' }],
-  [null, { type: 'response.output_item.done', output_index: 2, item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'page_audit', arguments: '{}', status: 'completed' } }],
-  [null, { type: 'response.output_item.added', output_index: 3, item: { type: 'function_call', id: 'fc_2', call_id: 'call_2', name: 'page_text', arguments: '' } }],
+  [null, { type: 'response.output_item.done', output_index: 2, item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'page_audit', arguments: '{}', status: 'completed', ...(namespace ? { namespace } : {}) } }],
+  [null, { type: 'response.output_item.added', output_index: 3, item: { type: 'function_call', id: 'fc_2', call_id: 'call_2', name: 'page_text', arguments: '', ...(namespace ? { namespace } : {}) } }],
   [null, { type: 'response.function_call_arguments.delta', item_id: 'fc_2', output_index: 3, delta: '{"maxChars":100}' }],
-  [null, { type: 'response.output_item.done', output_index: 3, item: { type: 'function_call', id: 'fc_2', call_id: 'call_2', name: 'page_text', arguments: '{"maxChars":100}', status: 'completed' } }],
+  [null, { type: 'response.output_item.done', output_index: 3, item: { type: 'function_call', id: 'fc_2', call_id: 'call_2', name: 'page_text', arguments: '{"maxChars":100}', status: 'completed', ...(namespace ? { namespace } : {}) } }],
   [null, { type: 'response.completed', response: { incomplete_details: null, usage: { input_tokens: 10, output_tokens: 20 } } }],
 ]);
 
@@ -75,9 +75,10 @@ const gatewayStep = (provider: 'anthropic' | 'openai') =>
     [null, { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_use' }, usage: { inputTokens: { total: 10, noCache: 10 }, outputTokens: { total: 20, text: 20 } } }],
   ]);
 
-function firstStep(route: ModelRoute, modelId: ModelId): string {
+function firstStep(route: ModelRoute, modelId: AgentModelId): string {
   if (route === 'byok-anthropic') return ANTHROPIC_STEP;
-  if (route === 'byok-openai') return OPENAI_STEP;
+  if (route === 'byok-openai') return openaiStep();
+  if (route === 'chatgpt') return openaiStep('frost');
   return gatewayStep(modelId.startsWith('openai/') ? 'openai' : 'anthropic');
 }
 
@@ -94,7 +95,7 @@ const START_HISTORY: Extract<MainToRuntimeMessage, { type: 'chat.start' }>['mess
  * The `request`th `fetch.request` (1 or 2) of a turn on `route` with `modelId`: with 2, the first is
  * answered with the scripted reasoning-and-two-tool-calls step and both calls get a result.
  */
-export async function captureProviderRequest(route: ModelRoute, modelId: ModelId, request: 1 | 2 = 1): Promise<CapturedRequest> {
+export async function captureProviderRequest(route: ModelRoute, modelId: AgentModelId, request: 1 | 2 = 1, mcpTools: Extract<MainToRuntimeMessage, { type: 'chat.start' }>['mcpTools'] = []): Promise<CapturedRequest> {
   const [main, runtimeEnd] = createMemoryPortPair();
   const requests: CapturedRequest[] = [];
   const post = (message: MainToRuntimeMessage) => main.post(message);
@@ -115,7 +116,7 @@ export async function captureProviderRequest(route: ModelRoute, modelId: ModelId
     post({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' });
   });
   const runtime = startRuntime(runtimeEnd, { modelFactory: createModel });
-  post({ type: 'chat.start', chatId: 'chat-1', route, modelId, systemPrompt: 'You are an SEO assistant.', allowedTools: ['page_audit', 'page_text', 'navigate'], mcpTools: [], messages: START_HISTORY });
+  post({ type: 'chat.start', chatId: 'chat-1', route, modelId, systemPrompt: 'You are an SEO assistant.', allowedTools: ['page_audit', 'page_text', 'navigate', ...mcpTools.map((tool) => tool.name)], mcpTools: [...mcpTools], messages: START_HISTORY });
   await vi.waitFor(() => {
     if (requests.length < request) throw new Error(`waiting for request ${request} (${requests.length} so far)`);
   });

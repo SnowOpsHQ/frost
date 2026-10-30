@@ -30,7 +30,9 @@
    unpackaged-only scripted model seam (Task 6).
 3. **Entitlements.** Phase 4 is built in parallel. Agent features are gated through a local
    `AgentEntitlements` port (`apps/desktop/src/main/agent/entitlements.ts`) that defaults to
-   allowed. The lead wires it to Phase 4's `requireFeature(flag)` after both merge.
+   allowed. The lead wires it to Phase 4's `requireFeature(flag)` after both merge. *(2026-10-29:
+   superseded — frost is free and open source, the agent is never gated, and the port must not be
+   wired; see `docs/plans/phase-4-accounts-telemetry.md`, "Change of 2026-10-29".)*
 4. **SERP, intent and GSC** come from Phases 3 and 4, in flight. `packages/ai-skills` defines
    `SerpPort`, `IntentPort` and `GscPort` with fakes; a tool whose port is not wired answers
    `unavailable`. Phase 3 will export a Zod-typed read API from

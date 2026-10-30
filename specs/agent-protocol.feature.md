@@ -68,6 +68,9 @@ one named test.
   surrogates (`UNSAFE_INPUT_CHARS`; code allows line feeds and tabs).
 - **Scenario: mcp-tools-are-external** — an `mcp__<server>__<tool>` name is `external` and not
   grantable; other names (and a catalogue name) are not MCP tools; an unknown name has no risk.
+- **`chat.start` on the ChatGPT plan** (protocol version 7, `agent-chatgpt.feature.md`): `route` may
+  be `chatgpt` and `modelId` a `chatgpt/<slug>` (`isAgentModelId`); a runtime reporting an older
+  version is refused.
 - **Scenario: chat-start-mcp-tools-match-allowed-names** (protocol version 6, Task 10;
   `agent-mcp.feature.md`) — `chat.start.mcpTools` holds exactly one sanitised definition per MCP
   name in `allowedTools`; a missing, extra, repeated or unsanitised one refuses the message.

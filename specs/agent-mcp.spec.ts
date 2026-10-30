@@ -637,7 +637,8 @@ export const MCP_SETTINGS_WORDS = {
   title: 'MCP servers',
   explainer:
     'MCP servers add tools from other programs or services. frost does not vouch for them: their tools are labelled untrusted, every call asks you first, and what they answer is treated as data, never instructions.',
-  notEntitled: 'MCP connections are not available on this plan.',
+  /** Unreachable in this build (MCP is never gated: main's entitlements port always allows); no plan is named. */
+  notEntitled: 'MCP connections are turned off in this build.',
   noServers: 'No MCP servers yet.',
 } as const;
 
@@ -660,7 +661,7 @@ export const MCP_ERRORS = {
   'http-status': 'The server answered with an HTTP error.',
   network: 'The server could not be reached.',
   redirect: 'The server tried to redirect, and frost does not follow MCP redirects.',
-  'not-entitled': 'MCP connections are not available on this plan.',
+  'not-entitled': 'MCP connections are turned off in this build.',
   'no-keychain': "No system keychain is available, so frost can't store the server's secrets here.",
   'secrets-failed': "The server's saved secrets could not be read.",
   flood: 'The server sent more messages than frost accepts, so frost disconnected it.',
@@ -726,7 +727,7 @@ export interface AgentMcpServerView {
 }
 
 export interface AgentMcpView {
-  /** Whether MCP connections may be used (the `agent.mcp` entitlement). */
+  /** Whether MCP connections may be used (the `agent.mcp` entitlement; always `true` in this build: not gated). */
   readonly available: boolean;
   readonly servers: readonly AgentMcpServerView[];
 }
@@ -741,7 +742,7 @@ export const MCP_SAVE_MESSAGES: Readonly<Record<McpSaveResult, string>> = {
   unknown: 'That server is no longer there.',
   'no-keychain': "No system keychain is available, so frost can't store environment values here.",
   failed: 'The server could not be saved. Try again.',
-  'not-entitled': 'MCP connections are not available on this plan.',
+  'not-entitled': 'MCP connections are turned off in this build.',
 };
 
 /** `agent.startMcpServer`'s answer. */

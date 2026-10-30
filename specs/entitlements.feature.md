@@ -13,9 +13,16 @@ Task 4 adds the Desktop section. Review focus "A snapshot cannot be forged or re
 life". Each line maps to one named test.
 
 ## Decisions
+- **frost is free and open source (2026-10-29).** Every feature that was "Pro" is free, and no local
+  feature needs a frost account: the AI agent and Search Console (`UNGATED_FEATURES`) are never
+  gated, signed out or on any plan; no client may check their flags to turn them off. A frost
+  account is needed only for `sync` (`ACCOUNT_FEATURES`), because sync needs the server: every plan
+  includes it, so its gate is "signed in with a verified snapshot", not a plan. The snapshot format,
+  plans and flags are unchanged on the wire; only `PLAN_FEATURES` changed.
 - **The plan is the server's; the client reads flags.** An account's plan is a row in `entitlements`
   (user, plan, updated); no row means `DEFAULT_PLAN` (`free`). The snapshot carries the plan and
-  `PLAN_FEATURES[plan]`: `free` → none, `pro` → `ai-agent`, `search-console`, `sync`.
+  `PLAN_FEATURES[plan]`: every plan (`free` and `pro`) → `ai-agent`, `search-console`, `sync`. `pro`
+  is kept so existing rows, grants and snapshots that name it stay valid.
 - **A snapshot is a compact JWS** signed with one Ed25519 key (`alg: EdDSA`), its protected header
   exactly `alg`, `kid` and `typ: ENTITLEMENT_JWS_TYPE`. The claims (`iss`, `aud`, `sub` = user ID,
   `email`, `plan`, `features`, `iat`, `exp = iat + ENTITLEMENT_TTL_SECONDS`, `ver`) are validated
@@ -39,8 +46,8 @@ life". Each line maps to one named test.
 - `snapshot-verifies-with-published-key` — the snapshot verifies (EdDSA) with the key from `ENTITLEMENT_KEYS_PATH` and its claims match `EntitlementClaimsSchema`.
 - `snapshot-header` — the protected header is exactly `alg: EdDSA`, the configured `kid` and `typ: ENTITLEMENT_JWS_TYPE`.
 - `snapshot-claims` — `iss`, `aud`, `sub` (the user ID), `email`, `ver`; `exp - iat` is `ENTITLEMENT_TTL_SECONDS`.
-- `default-plan-is-free` — an account with no entitlement row gets `free` and no features.
-- `granted-pro-in-next-snapshot` — after `grant pro` the next snapshot is `pro` with `PLAN_FEATURES.pro`; after `grant free`, none again.
+- `default-plan-is-free` — an account with no entitlement row gets `free` with every feature flag (`PLAN_FEATURES.free`: nothing is paid).
+- `granted-pro-in-next-snapshot` — after `grant pro` the next snapshot is `pro` with `PLAN_FEATURES.pro`; after `grant free`, `free` with `PLAN_FEATURES.free` (every flag, too).
 - `entitlements-401-without-credentials` — no credential, or an invalid bearer, is 401 `{ error: 'unauthorized' }`.
 - `entitlements-bearer-principal` — a bearer accepted by the verifier gets a snapshot for its user (Task 3's hook).
 - `entitlements-no-store` — the answer is `Cache-Control: no-store` and matches `EntitlementsResponseSchema`.
@@ -52,7 +59,7 @@ life". Each line maps to one named test.
 
 ## Admin CLI (`apps/backend/src/__tests__/cli.test.ts`)
 - `cli-keygen-round-trips` — the private key `keygen` prints, loaded as the server's key, signs a snapshot that verifies with the JWKS it prints; the JWKS has no `d`.
-- `cli-grant-and-show` — `grant <email> pro` sets the plan (`show` prints it with its features); `show` of an account without a row prints `free`.
+- `cli-grant-and-show` — `grant <email> pro` sets the plan (`show` prints it with its features); `show` of an account without a row prints `free` with every feature.
 - `cli-unknown-user` — `grant` or `show` for an address with no account exits non-zero with a message and changes nothing.
 - `cli-unknown-plan` — `grant <email> gold` exits non-zero naming the valid plans.
 - `cli-usage` — no command, an unknown command or missing arguments exit non-zero with usage.

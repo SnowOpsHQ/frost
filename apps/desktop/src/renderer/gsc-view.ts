@@ -1,6 +1,4 @@
 // Type-only from the Zod specs (their schemas must stay out of this bundle: strict Trusted Types).
-import type { AccountStatus } from '@app/specs/account-state.schema';
-import type { EntitlementStatus } from '@app/specs/entitlements-snapshot.spec';
 import type { GscPerformanceAnswer, GscPerformanceRow, GscProperty, GscQueriesAnswer, GscQueryRow } from '@app/specs/gsc.schema';
 import {
   GSC_LOWER_IS_BETTER,
@@ -20,10 +18,10 @@ import { isWebUrl } from '@app/specs/web-url.spec';
 import { hostOf } from './security';
 
 // The Search Console panel as a view model (Phase 4 Task 10; spec `gsc-panel.spec.ts`; acceptance
-// `gsc-panel.feature.md`, View model). Pure: main's connection (`gsc.watch`), the account's status
-// (`account.watch`), the tab's URL, the panel's choices and the answers become what the panel shows,
-// and whether (and what) it reads. Nothing is read unless the build is configured, the plan includes
-// `search-console`, a Google account is connected and the tab shows a web page.
+// `gsc-panel.feature.md`, View model). Pure: main's connection (`gsc.watch`), the tab's URL, the
+// panel's choices and the answers become what the panel shows, and whether (and what) it reads.
+// Nothing is read unless the build is configured, a Google account is connected and the tab shows a
+// web page. Search Console is free and needs no frost account (2026-10-29): no account or plan state.
 
 // ---- Formatting ---------------------------------------------------------------------------------
 
@@ -180,17 +178,9 @@ export function shownAnswers(held: GscHeld | null, request: GscRequest | null, a
 
 // ---- States -------------------------------------------------------------------------------------
 
-/** What the panel needs of `account.watch`: who is signed in, and how their plan's snapshot stands. */
-export interface GscAccount {
-  readonly status: AccountStatus;
-  readonly entitlement: EntitlementStatus;
-}
-
 export interface GscViewInput {
   /** `gsc.watch` (`null` until main answers). */
   readonly gsc: GscStatus | null;
-  /** `account.watch` (`null` until main answers). */
-  readonly account: GscAccount | null;
   /** The active tab's URL (`''`: none). */
   readonly url: string;
   readonly prefs: GscPrefs;
@@ -239,28 +229,12 @@ export interface GscPanelView {
 
 type GateState = Exclude<GscPanelState, 'no-property' | 'no-data' | 'quota' | 'network' | 'invalid' | 'data'>;
 
-/** Why Search Console is off for `account` (main says it is not entitled). */
-function notEntitled(account: GscAccount): GateState {
-  if (account.status === 'unconfigured') return 'unconfigured';
-  if (account.status !== 'signed-in') return 'signed-out';
-  switch (account.entitlement) {
-    case 'none':
-      return 'loading'; // The plan is still being checked.
-    case 'expired':
-      return 'plan-expired';
-    case 'invalid':
-      return 'plan-unconfirmed';
-    default:
-      return 'needs-pro';
-  }
-}
-
 /** The state before anything is read, or `null` when a read can be sent. */
 function gate(input: GscViewInput): GateState | null {
-  const { gsc, account } = input;
-  if (gsc === null || account === null) return 'loading';
+  const { gsc } = input;
+  if (gsc === null) return 'loading';
   if (!gsc.configured) return 'unconfigured';
-  if (!gsc.entitled) return notEntitled(account);
+  // `gsc.entitled` is not read: always true from main (Search Console is not gated).
   if (!gsc.connected) {
     if (gsc.connecting) return 'connecting';
     // Main ended the connection because Google refused it: say so, and offer Reconnect.
@@ -270,7 +244,7 @@ function gate(input: GscViewInput): GateState | null {
   return null;
 }
 
-/** The read the panel sends now, or `null` (not configured, not entitled, not connected, not a web page). */
+/** The read the panel sends now, or `null` (not configured, not connected, not a web page). */
 export function gscReadRequest(input: GscViewInput): GscRequest | null {
   if (gate(input) !== null || input.gsc === null) return null;
   return { url: withoutFragment(input.url), scope: input.prefs.scope, days: input.prefs.days, connection: input.gsc.version };
@@ -291,7 +265,7 @@ export function gscPanelView(input: GscViewInput): GscPanelView {
   if (blocked !== null) state = blocked;
   else if (performance === null) state = 'loading';
   else if (performance.status === 'unavailable') {
-    state = performance.reason === 'not-entitled' ? notEntitled(input.account!) : GSC_REASON_STATES[performance.reason];
+    state = GSC_REASON_STATES[performance.reason];
   } else state = performance.totals.impressions === 0 ? 'no-data' : 'data';
 
   const ok = performance?.status === 'ok' ? performance : null;

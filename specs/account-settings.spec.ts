@@ -34,8 +34,8 @@ export const SETTINGS_MENU = {
 
 /** The palette's Settings actions (group `browser`): each opens the sheet on its section; `signedOutOnly` is offered only while signed out. */
 export const SETTINGS_PALETTE_ACTIONS = [
-  { id: 'settings.open', label: 'Settings', section: 'account', signedOutOnly: false, keywords: ['preferences', 'options', 'account', 'plan'] },
-  { id: 'settings.sign-in', label: 'Sign in to frost', section: 'account', signedOutOnly: true, keywords: ['account', 'log in', 'login', 'plan', 'pro'] },
+  { id: 'settings.open', label: 'Settings', section: 'account', signedOutOnly: false, keywords: ['preferences', 'options', 'account', 'sync'] },
+  { id: 'settings.sign-in', label: 'Sign in to frost', section: 'account', signedOutOnly: true, keywords: ['account', 'log in', 'login', 'sync'] },
   { id: 'settings.search-console', label: 'Search Console settings', section: 'search-console', signedOutOnly: false, keywords: ['google', 'gsc', 'connect', 'disconnect'] },
   { id: 'settings.telemetry', label: 'Telemetry settings', section: 'telemetry', signedOutOnly: false, keywords: ['privacy', 'usage', 'crash', 'errors', 'reports', 'diagnostics'] },
 ] as const satisfies readonly { id: string; label: string; section: SettingsSectionId; signedOutOnly: boolean; keywords: readonly string[] }[];
@@ -58,7 +58,10 @@ export function settingsRetryDelay(failures: number): number {
   return Math.min(SETTINGS_RETRY.maxMs, SETTINGS_RETRY.initialMs * 2 ** Math.max(0, Math.min(failures - 1, 30)));
 }
 
-/** The plan's features in plain words (every `FEATURE_FLAGS` value; the server decides which plan has which). */
+/**
+ * Each feature flag in plain words (every `FEATURE_FLAGS` value). The account section lists only the
+ * ones an account adds (`ACCOUNT_FEATURES`: sync); the others are free and need no account (2026-10-29).
+ */
 export const FEATURE_LABELS: Readonly<Record<FeatureFlag, string>> = Object.freeze({
   'ai-agent': 'AI agent',
   'search-console': 'Search Console performance data',
@@ -68,7 +71,7 @@ export const FEATURE_LABELS: Readonly<Record<FeatureFlag, string>> = Object.free
 /** The account section's fixed words. */
 export const ACCOUNT_SETTINGS_TEXT = {
   unconfigured: "Accounts aren't configured in this build",
-  signedOut: 'Sign in to see your plan and use Pro features such as Search Console.',
+  signedOut: 'frost is free and open source: the AI agent, Search Console and everything else work without an account. Sign in only to sync between devices.',
   awaitingBrowser: 'Finish signing in in your browser.',
   fingerprintHint: 'Your browser should show the same code',
   confirmQuestion: (email: string) => `Sign in to frost as ${email}?`,
@@ -78,6 +81,16 @@ export const ACCOUNT_SETTINGS_TEXT = {
   /** Close or Esc while a confirmation waits cancels the sign-in (the close button says so). */
   closeCancels: 'Cancel sign-in and close',
   keychain: "This system has no keychain; you'll be signed out when frost quits",
+  /** The signed-in card's list of what the account adds (`ACCOUNT_FEATURES`), as its accessible name. */
+  featuresLabel: 'What your account adds',
+  /** The account's snapshot as one line (never a plan to buy: every plan has every feature). */
+  status: {
+    active: 'Your account is active.',
+    grace: (until: string) => `Offline — your account's features stay available until ${until}`,
+    expired: "Your account's last check has run out and no newer one was confirmed, so sync is off. Refresh to check again.",
+    invalid: "Your account couldn't be verified, so sync is off for now. Refresh to try again.",
+    none: 'Checking your account…',
+  },
 } as const;
 
 /**
@@ -143,7 +156,6 @@ export const TELEMETRY_SETTINGS_TEXT = {
 /** The Search Console section's fixed words. */
 export const GSC_SETTINGS_TEXT = {
   unconfigured: "Search Console isn't configured in this build",
-  needsPro: 'Search Console is part of Pro. Sign in with a Pro account to connect it.',
   readOnly: "frost asks Google for read-only access: it can read your Search Console data, never change it.",
   connecting: 'Finish connecting in your browser.',
   connected: 'Connected',

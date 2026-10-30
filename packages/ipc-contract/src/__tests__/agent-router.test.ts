@@ -12,6 +12,7 @@ import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from '@app/specs/skills.spec';
 import { MCP_LIMITS, type McpSaveResult, type McpStartResult, type McpTokenResult } from '@app/specs/agent-mcp.spec';
+import type { ChatgptSignInResult, ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import { appRouter, createSenderPolicy, type AgentService, type IpcContext } from '../index';
 import { createIpcRequestHandler } from '../transport/main';
 
@@ -28,6 +29,7 @@ function stateAt(version: number): AgentState {
       modelId: 'anthropic/claude-sonnet-5-5',
       allowedModels: ['anthropic/claude-sonnet-5-5'],
       keys: { anthropic: false, openai: false, gateway: true },
+      chatgpt: { account: { state: 'signed-out', acknowledged: false }, models: [] },
       ready: true,
       protection: 'os',
       runtime: { status: 'ready', lastFailure: null },
@@ -84,6 +86,10 @@ function fakeAgent(version = 3) {
     startMcpServer: vi.fn(async (_id: string): Promise<McpStartResult> => 'ready'),
     stopMcpServer: vi.fn(async (_id: string) => true),
     setMcpToken: vi.fn(async (_id: string, _token: string | null): Promise<McpTokenResult> => 'stored'),
+    chatgptSignIn: vi.fn(async (_windowId: number, _options: { reconsent?: boolean; differentAccount?: boolean }): Promise<ChatgptSignInResult> => 'started'),
+    chatgptCancel: vi.fn(() => true),
+    chatgptSignOut: vi.fn(async (): Promise<ChatgptSignOutResult> => 'signed-out'),
+    chatgptAcknowledge: vi.fn(async () => true),
   } satisfies AgentService;
   return {
     service,
@@ -149,6 +155,10 @@ const VALID_INPUT: Record<string, unknown> = {
   startMcpServer: { id: 'docs' },
   stopMcpServer: { id: 'docs' },
   setMcpToken: { id: 'docs', token: TOKEN },
+  chatgptSignIn: { reconsent: true },
+  chatgptCancel: undefined,
+  chatgptSignOut: undefined,
+  chatgptAcknowledge: undefined,
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 
@@ -249,6 +259,10 @@ describe('agent router', () => {
       startMcpServer: [undefined, { id: 'docs', force: true }],
       stopMcpServer: [undefined, {}],
       setMcpToken: [undefined, { id: 'docs' }, { id: 'docs', token: '' }, { id: 'docs', token: TOKEN, extra: 1 }],
+      chatgptSignIn: [{ reconsent: 'yes' }, { differentAccount: 1 }, { reconsent: true, clientId: 'oaiapp_x' }, { windowId: 3 }],
+      chatgptCancel: [],
+      chatgptSignOut: [],
+      chatgptAcknowledge: [],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -360,6 +374,34 @@ describe('agent router', () => {
     await expect(procedure(ctx, 'duplicateSkill')({ id: 'audit-this-page' })).resolves.toStrictEqual({ result: 'failed' });
     service.listGrants.mockReturnValueOnce([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1, approvalId: 'leak' } as never]);
     await expect(procedure(ctx, 'listGrants')()).resolves.toStrictEqual([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1 }]);
+  });
+
+  test('agent-chatgpt-procedures (the sender\'s window for the gesture; fixed answers only)', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'chatgptSignIn')({})).resolves.toBe('started');
+    // The sender's own window (for its live gesture), never one the renderer names.
+    expect(service.chatgptSignIn).toHaveBeenLastCalledWith(WINDOW_ID, {});
+    await expect(procedure(ctx, 'chatgptSignIn')({ reconsent: true, differentAccount: false })).resolves.toBe('started');
+    expect(service.chatgptSignIn).toHaveBeenLastCalledWith(WINDOW_ID, { reconsent: true });
+    await expect(procedure(ctx, 'chatgptSignIn')({ differentAccount: true })).resolves.toBe('started');
+    expect(service.chatgptSignIn).toHaveBeenLastCalledWith(WINDOW_ID, { differentAccount: true });
+    for (const result of ['needs-gesture', 'no-keychain', 'browser-failed', 'failed'] as const) {
+      service.chatgptSignIn.mockResolvedValueOnce(result);
+      await expect(procedure(ctx, 'chatgptSignIn')({})).resolves.toBe(result);
+    }
+    await expect(procedure(ctx, 'chatgptCancel')()).resolves.toBe(true);
+    await expect(procedure(ctx, 'chatgptSignOut')()).resolves.toBe('signed-out');
+    await expect(procedure(ctx, 'chatgptAcknowledge')()).resolves.toBe(true);
+    // Anything else a service answered (a token, a URL) never leaves main.
+    service.chatgptSignIn.mockResolvedValueOnce('https://auth.openai.com/api/accounts/authorize?code=x' as never);
+    await expect(procedure(ctx, 'chatgptSignIn')({})).resolves.toBe('failed');
+    service.chatgptSignOut.mockResolvedValueOnce({ refreshToken: 'refresh-token-1' } as never);
+    await expect(procedure(ctx, 'chatgptSignOut')()).resolves.toBe('not-revoked');
+    service.chatgptCancel.mockReturnValueOnce('access-token-1' as never);
+    await expect(procedure(ctx, 'chatgptCancel')()).resolves.toBe(false);
+    service.chatgptAcknowledge.mockResolvedValueOnce('yes' as never);
+    await expect(procedure(ctx, 'chatgptAcknowledge')()).resolves.toBe(false);
   });
 
   test('agent-set-key-answer-has-no-key', async () => {

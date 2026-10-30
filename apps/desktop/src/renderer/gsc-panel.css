@@ -50,7 +50,7 @@
   min-width: 0;
 }
 
-/* Notices: one card per state (signed out, not Pro, not connected, no property, errors). */
+/* Notices: one card per state (not connected, no property, errors). */
 .gsc-notice {
   display: flex;
   flex-direction: column;

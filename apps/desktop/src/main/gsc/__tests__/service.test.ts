@@ -1,7 +1,7 @@
 // Spec: specs/gsc.spec.ts (gscDateRange, GSC_CACHE_TTL_MS, GSC_LIMITS, GSC_UNAVAILABLE_REASONS), specs/gsc.schema.ts
 // (GscStatusSchema, GscPerformanceAnswerSchema, GscQueriesAnswerSchema, GscPropertiesAnswerSchema, GscPropertyForAnswerSchema)
-// Acceptance: specs/gsc.feature.md (Service) · plan decision "Search Console is a `pro` feature" and
-// "Interfaces for other phases" (the read API never throws)
+// specs/entitlements-snapshot.spec.ts (UNGATED_FEATURES: Search Console is not gated, 2026-10-29)
+// Acceptance: specs/gsc.feature.md (Service) · plan "Interfaces for other phases" (the read API never throws)
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   GSC_CACHE_TTL_MS,
@@ -9,6 +9,7 @@ import {
   GSC_RATE_LIMIT,
   GscPerformanceAnswerSchema,
   GscQueriesAnswerSchema,
+  GSC_PROFILE_OWNER,
   GscStatusSchema,
   gscDateRange,
   type GscPerformanceQuery,
@@ -16,7 +17,8 @@ import {
 import { fakeDateRows } from '../../../../e2e/fake-google';
 import { searchAnalyticsBody } from '../api';
 import { GSC_SECRET } from '../oauth';
-import { createGscService, type GscMainService, type GscServiceDeps } from '../service';
+import { UNGATED_FEATURES } from '@app/specs/entitlements-snapshot.spec';
+import { createGscService, GSC_UNGATED_ACCESS, type GscMainService, type GscServiceDeps } from '../service';
 import { createHarness, memoryStore, OWNER, storedBlob, WINDOW_ID, type Harness } from './harness';
 
 const SITE = 'https://www.example.com/';
@@ -100,6 +102,29 @@ describe('Search Console service', () => {
     // Disconnect always works (and revokes).
     expect(await service.disconnect()).toBe(true);
     expect(h.google.revoked).toEqual(['stored-refresh-token-1']);
+  });
+
+  test('search-console-ungated-without-account', async () => {
+    expect(UNGATED_FEATURES).toContain('search-console');
+    // Main's wiring: no frost account at all (nobody signed in, no entitlements anywhere).
+    h.account.userId = null;
+    entitled = false;
+    const service = await connected({ ...GSC_UNGATED_ACCESS, onEntitlementsChange: undefined, onAccountChange: undefined });
+    expect(service.status()).toMatchObject({ configured: true, entitled: true, connected: true });
+    expect(JSON.parse((await h.store.read(GSC_SECRET))!).owner).toBe(GSC_PROFILE_OWNER);
+    expect(await service.performance(QUERY)).toMatchObject({ status: 'ok' });
+    expect(await service.topQueries(QUERY)).toMatchObject({ status: 'ok' });
+    // A connection an older build stored under a frost account is another owner's: revoked and deleted at start.
+    const store = memoryStore();
+    store.write(GSC_SECRET, storedBlob('stored-refresh-token-old', OWNER));
+    const later = await serviceWith({ ...GSC_UNGATED_ACCESS, store, onEntitlementsChange: undefined, onAccountChange: undefined });
+    expect(later.status()).toMatchObject({ entitled: true, connected: false });
+    await expect.poll(() => h.google.revoked.includes('stored-refresh-token-old')).toBe(true);
+    expect(await store.read(GSC_SECRET)).toBeNull();
+    // Connected under the profile, it stays connected for a later run, whoever is signed in to frost.
+    const kept = memoryStore();
+    kept.write(GSC_SECRET, storedBlob('stored-refresh-token-profile', GSC_PROFILE_OWNER));
+    expect((await serviceWith({ ...GSC_UNGATED_ACCESS, store: kept, onEntitlementsChange: undefined, onAccountChange: undefined })).status().connected).toBe(true);
   });
 
   test('unconfigured-and-not-connected', async () => {

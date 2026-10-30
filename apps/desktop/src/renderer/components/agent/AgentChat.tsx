@@ -3,6 +3,7 @@ import type { AgentActiveChatView, AgentMessageView, AgentNoticeView, AgentSetup
 import { isAtBottom, setupChecklist, userMessageSkillLabel, visibleNotice } from '../../agent-view';
 import { CloseIcon } from '../../icons';
 import { AgentToolCard } from './AgentToolCard';
+import { ChatgptErrorBanner } from './AgentChatgpt';
 
 // The selected chat (`agent-panel.feature.md`, Chat): its messages oldest first, the assistant's
 // text as it streams, tool cards, the last turn's error and a refused send's notice. Every text is
@@ -101,7 +102,10 @@ export function AgentChat({
       ) : (
         messages.map((message) => <Message key={message.id} message={message} />)
       )}
-      {active?.error ? (
+      {/* A ChatGPT plan failure: main's fixed copy and its recovery ("Manage usage" first at the usage limit). */}
+      {active?.error && active.chatgptError ? (
+        <ChatgptErrorBanner failure={active.chatgptError} />
+      ) : active?.error ? (
         <p className="agent-banner" role="alert" data-testid="agent-error" data-tone="error">
           {active.error}
         </p>

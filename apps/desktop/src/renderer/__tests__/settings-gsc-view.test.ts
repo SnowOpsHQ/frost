@@ -16,13 +16,14 @@ describe('Search Console view model', () => {
     expect(gscSection(status({ configured: false, keychain: 'memory-only', error: 'network' }))).toMatchObject({ kind: 'unconfigured', error: null, keychain: null });
   });
 
-  test('gsc-view-needs-pro', () => {
-    const section = gscSection(status({ entitled: false }));
-    expect(section).toMatchObject({ kind: 'needs-pro', message: GSC_SETTINGS_TEXT.needsPro, buttons: ['go-to-account'] });
-    expect(section.message).toMatch(/Pro/);
-    // Connected before the plan changed: still removable.
-    expect(gscSection(status({ entitled: false, connected: true })).buttons).toEqual(['go-to-account', 'disconnect']);
-    expect(gscSection(status({ entitled: false, connecting: true })).buttons).toEqual(['go-to-account', 'cancel']);
+  test('gsc-view-never-needs-an-account', () => {
+    // Search Console is not gated (2026-10-29): `entitled` changes nothing the section shows.
+    for (const changes of [{}, { connected: true }, { connecting: true }] as Partial<GscStatus>[]) {
+      expect(gscSection(status({ ...changes, entitled: false }))).toEqual(gscSection(status(changes)));
+    }
+    expect(gscSection(status({ entitled: false })).buttons).toEqual(['connect']);
+    const words = [...Object.values(GSC_SETTINGS_TEXT), ...Object.values(GSC_ERROR_MESSAGES), ...GSC_CONNECT_RESULTS.map(gscConnectResultMessage)];
+    for (const text of words) expect(String(text)).not.toMatch(/\bPro\b|plan|sign in/i);
   });
 
   test('gsc-view-connect-disconnect', () => {

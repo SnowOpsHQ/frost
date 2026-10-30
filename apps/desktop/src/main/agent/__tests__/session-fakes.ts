@@ -33,6 +33,10 @@ export async function setupSession(
     now?: () => number;
     /** Task 10's MCP servers (the real manager over the fake server, in `mcp-session.test.ts`). */
     mcp?: McpManager;
+    /** The ChatGPT plan route as the session sees it (`session-chatgpt.test.ts`); default: none. */
+    chatgpt?: AgentSessionDeps['chatgpt'];
+    /** Spends a window's live user gesture (the ChatGPT sign-in); default: none. */
+    consumeGesture?: AgentSessionDeps['consumeGesture'];
   } = {},
 ) {
   const memory = createMemoryFs();
@@ -106,6 +110,8 @@ export async function setupSession(
     ...(options.now ? { now: options.now } : {}),
     scripted: options.scripted === true,
     ...(options.mcp ? { mcp: options.mcp } : {}),
+    ...(options.chatgpt ? { chatgpt: options.chatgpt } : {}),
+    ...(options.consumeGesture ? { consumeGesture: options.consumeGesture } : {}),
     randomId: () => `00000000-0000-4000-8000-${String((ids += 1)).padStart(12, '0')}`,
     log: (line) => logs.push(line),
   });

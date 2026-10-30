@@ -54,8 +54,9 @@ to one named test.
 - `account-view-signed-out` — `signed-out` offers Sign in; each `ACCOUNT_ERRORS` value has its own message.
 - `account-view-awaiting-browser` — shows the fingerprint with "Your browser should show the same code" and Cancel.
 - `account-view-confirming` — asks "Sign in to frost as <email>?" with the fingerprint, Cancel then "Confirm sign-in".
-- `account-view-signed-in-plan` — email, name, plan badge, every feature in plain words (included or not), Refresh and Sign out; the initial is the name's first character (a whole grapheme).
-- `account-view-entitlement-status` — active, grace ("Offline — Pro stays available until <date and time>"), expired and invalid (Free, with a reason that does not claim it is only offline), none (checking).
+- `account-view-signed-out-says-free` — signed out says frost is free and open source, that the agent and Search Console need no account, and that signing in is only for sync; no copy anywhere in the section mentions Pro or upgrading (2026-10-29).
+- `account-view-signed-in-plan` — email, name, plan badge, what the account adds (`ACCOUNT_FEATURES`: sync) in plain words (included or not), Refresh and Sign out; the initial is the name's first character (a whole grapheme).
+- `account-view-entitlement-status` — active, grace ("Offline — your account's features stay available until <date and time>"), expired and invalid (sync is off, with a reason that does not claim it is only offline), none (checking); no line names a plan to buy.
 - `account-view-keychain-notice` — memory-only shows the no-keychain notice while a sign-in or account exists.
 - `account-view-sign-in-results` — each `SignInResult` but `started` has a message.
 
@@ -73,7 +74,7 @@ to one named test.
 
 ## Search Console (`apps/desktop/src/renderer/__tests__/settings-gsc-view.test.ts`)
 - `gsc-view-unconfigured` — not configured in this build, no button.
-- `gsc-view-needs-pro` — not entitled explains Pro and links to the Account section (Disconnect still offered if connected).
+- `gsc-view-never-needs-an-account` — Search Console is not gated (2026-10-29): whatever `entitled` says, the section offers Connect, Cancel or Disconnect as for any status, never a link to Account, and no copy mentions Pro.
 - `gsc-view-connect-disconnect` — not connected offers Connect and explains read-only access; connecting offers Cancel; connected offers Disconnect.
 - `gsc-view-errors-and-keychain` — each `GSC_ERRORS` value and each `GscConnectResult` but `started` has a message; memory-only shows the keychain notice only while connected or connecting.
 
@@ -105,6 +106,6 @@ to one named test.
 ## End to end (`apps/desktop/e2e/settings.e2e.ts`, fakes `fake-backend.ts`, `fake-telemetry.ts`, `fake-google.ts`)
 - `settings-opens-from-palette-and-menu` — the palette's "Settings" and the menu item (its accelerator Mod+,: a synthetic key never reaches the native menu, so the item is clicked) open the sheet on Account with focus there; Esc and Close close it; History and Settings never show together; "Sign in to frost" is offered while signed out.
 - `settings-sheet-not-covered-by-page` — while Settings shows, the tab's view is zero-high (nothing drawn over the sheet).
-- `settings-sign-in-needs-confirmation` — Sign in opens the authorize page; after the browser leg the view asks "Sign in to frost as <email>?" with the fingerprint the browser shows, the question focused; an immediate click and Enter on "Confirm sign-in" do nothing; Esc does not hide it silently (it cancels, tested in the unit tests); a deliberate click after the delay signs in; then the plan shows Pro.
+- `settings-sign-in-needs-confirmation` — Sign in opens the authorize page; after the browser leg the view asks "Sign in to frost as <email>?" with the fingerprint the browser shows, the question focused; an immediate click and Enter on "Confirm sign-in" do nothing; Esc does not hide it silently (it cancels, tested in the unit tests); a deliberate click after the delay signs in; then the account shows as active.
 - `settings-telemetry-toggles-follow-main` — the switches start off, show main's answers, and keep their state across a restart on the same profile.
-- `settings-search-console-connect-disconnect` — signed in as Pro, Connect opens Google's read-only consent; after the browser leg the view shows Connected; Disconnect revokes and shows Connect again.
+- `settings-search-console-connect-disconnect` — Connect (no plan needed: on the default `free` plan as on any) opens Google's read-only consent; after the browser leg the view shows Connected; Disconnect revokes and shows Connect again.

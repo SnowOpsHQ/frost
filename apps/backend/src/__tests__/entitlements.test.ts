@@ -16,6 +16,7 @@ import {
   EntitlementHeaderSchema,
   EntitlementJwksSchema,
   EntitlementsResponseSchema,
+  FEATURE_FLAGS,
   PLAN_FEATURES,
   type EntitlementClaims,
   type EntitlementJwks,
@@ -118,7 +119,9 @@ describe('snapshots', () => {
     const b = await open();
     const claims = await verified(b, await snapshotFor(b, await signedInWithPassword(b)));
     expect(claims.plan).toBe('free');
-    expect(claims.features).toEqual([]);
+    // frost is free and open source (2026-10-29): the default plan carries every flag.
+    expect(claims.features).toEqual([...FEATURE_FLAGS]);
+    expect(claims.features).toEqual([...PLAN_FEATURES.free]);
   });
 
   it('granted-pro-in-next-snapshot', async () => {
@@ -132,7 +135,7 @@ describe('snapshots', () => {
     await grant(b, 'alice@example.com', 'free');
     const free = await verified(b, await snapshotFor(b, cookie));
     expect(free.plan).toBe('free');
-    expect(free.features).toEqual([]);
+    expect(free.features).toEqual(['ai-agent', 'search-console', 'sync']);
   });
 
   it('entitlements-401-without-credentials', async () => {

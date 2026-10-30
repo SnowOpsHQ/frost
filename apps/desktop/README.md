@@ -394,11 +394,12 @@ lacks a value says "not configured in this build" for that feature and sends not
     as with any request. Settings lists what each switch sends in plain words, and says "for this
     run only" if the choice could not be saved.
   - Crashes behave as before: Electron's error dialog stays.
-- **Search Console** (`gsc.feature.md`), a Pro feature. **Connect** in Settings (a real click)
+- **Search Console** (`gsc.feature.md`), free and needing no frost account. **Connect** in Settings (a real click)
   opens Google's consent page for read-only access (`webmasters.readonly`, nothing else; a wider or
   missing grant is refused and revoked). The refresh token is kept in the keychain, the access
-  token in memory only. The connection belongs to the frost account that made it: another account
-  never reads with it, and signing in as a different account revokes it. **Disconnect** deletes it
+  token in memory only. The connection belongs to this frost profile, not a frost account: signing in
+  or out of frost never touches it (one an older build stored under a frost account is revoked once).
+  **Disconnect** deletes it
   and revokes it at Google. Settings shows "Connected", with no Google account name (frost asks
   Google for none).
 - **Search Console panel** (`gsc-panel.feature.md`). A rail panel (no status dot, no
@@ -406,7 +407,7 @@ lacks a value says "not configured in this build" for that feature and sends not
   days: clicks, impressions, CTR and average position, a frost-drawn chart of one metric, and the
   top 25 queries. The property is the longest URL-prefix property that matches, else the domain
   property. The chart ends at the last day Google answered, and the panel says how far its data
-  lags. Signed out, not Pro, not connected, no matching property, no data and each error have their
+  lags. Not connected, no matching property, no data and each error have their
   own words, and their buttons open Settings. It reads only while it shows, never on a timer; main
   caches answers for 15 minutes.
 
@@ -615,7 +616,7 @@ their logs** (each surface says so):
 - **The account API** (Phase 4, only in a build configured for it): the session and the signed
   entitlements at start, every 6 hours and on Refresh, the token exchange after a sign-in and the
   revocation at sign-out. `net.fetch` with no cookies, no cache, no redirects and a timeout.
-- **Google** (only while Search Console is connected, and only for a Pro account): the token
+- **Google** (only while Search Console is connected): the token
   endpoints, the property list and Search Analytics queries while the panel shows (cached 15
   minutes), and the revocation at disconnect.
 - **Telemetry** (only with its switch on, and only to the endpoint baked into the build): see
@@ -787,10 +788,11 @@ Acceptance: `specs/sync-config.feature.md`, `specs/sync-engine.feature.md`.
   stored account or tamper with a stored blob run on macOS only (its mock keychain persists).
 - **Search Console account.** The status says "Connected" with no Google account name, and connect
   has no in-app confirmation of which Google account was chosen: frost asks Google for no identity.
-- **Gating is client-side.** Main gates on a verified snapshot, but a modified client can skip any
-  check of its own. A paid feature that runs on a server must be enforced there.
-- **Offline grace after a downgrade.** A client that cannot reach the backend keeps a Pro snapshot
-  for its life plus grace (3 + 7 days) after the plan changed. Restoring an old `entitlements` blob
+- **Gating is client-side.** frost is free and open source (2026-10-29): only sync is gated, on a
+  verified snapshot of a signed-in account, and a modified client can skip any check of its own, so
+  sync must be enforced on its server.
+- **Offline grace after sign-out elsewhere.** A client that cannot reach the backend keeps its
+  snapshot for its life plus grace (3 + 7 days) after the account changed. Restoring an old `entitlements` blob
   and setting the clock back into its life can replay that snapshot until its expiry (accepted
   risk, `entitlements-client.feature.md`).
 - **Error reports are pattern-scrubbed.** URLs, hosts, emails, paths, tokens, IDs and the machine's

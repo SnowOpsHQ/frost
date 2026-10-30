@@ -8,6 +8,7 @@ import {
   GscPerformanceQuerySchema,
   GscQueriesAnswerSchema,
   GscUrlInputSchema,
+  GSC_PROFILE_OWNER,
   gscDateRange,
   type GoogleSearchAnalyticsResponse,
   type GscDateRange,
@@ -39,12 +40,14 @@ import { createRedactingLog } from './redact';
 // Electron import: main injects `net.fetch`, the secret store, the entitlement check, the loopback,
 // the browser opener and the gesture check.
 //
-// - Gated on `search-console` (`entitled()`): every read answers `not-entitled`, and `connect` too,
-//   before anything is sent. `disconnect` always works.
+// - Not gated in main (2026-10-29; `UNGATED_FEATURES`): main passes `GSC_UNGATED_ACCESS`. The
+//   `entitled()` seam stays (tested): when false, every read answers `not-entitled`, and `connect`
+//   too, before anything is sent. `disconnect` always works.
 // - Never throws: every answer is `ok` or `unavailable` with a reason, in the order the spec gives.
 // - Ranges end `GSC_DATA_LAG_DAYS` before today's UTC date (`gscDateRange`).
-// - The connection belongs to the frost account that made it (`userId()`): another account's is never
-//   read with, and is disconnected (revoked, deleted) when a different account signs in.
+// - The connection belongs to its owner (`userId()`; in main, this frost profile: `GSC_PROFILE_OWNER`):
+//   another owner's is never read with, and is disconnected (revoked, deleted) when a different owner
+//   is current.
 // - The property list and each `ok` answer are kept `GSC_CACHE_TTL_MS` per key; a new connection or a
 //   disconnect clears them, and a read whose connection changed while it waited answers
 //   `not-connected` (never the old connection's data) and keeps nothing.
@@ -56,11 +59,11 @@ export interface GscServiceDeps {
   readonly config: GscConfig | null;
   readonly fetch: FetchLike;
   readonly store: Pick<SecretStore, 'persistent' | 'read' | 'write' | 'delete'>;
-  /** Whether the plan includes `search-console` now (main: `account.entitlements.has('search-console')`). */
+  /** Whether reads and connect may run (main: always, `GSC_UNGATED_ACCESS`; never the account's entitlements). */
   readonly entitled: () => boolean;
   /** Subscribes to entitlement changes (so watchers learn `entitled` changed); answers the unsubscribe. */
   readonly onEntitlementsChange?: (listener: () => void) => () => void;
-  /** The signed-in frost account's user ID, or `null` (main: the account service's `userId()`). */
+  /** Who the connection belongs to now, or `null` (main: this frost profile, `GSC_PROFILE_OWNER`). */
   readonly userId: () => string | null;
   /** Subscribes to account changes (sign-in, sign-out); answers the unsubscribe. */
   readonly onAccountChange?: (listener: () => void) => () => void;
@@ -74,6 +77,16 @@ export interface GscServiceDeps {
   /** Epoch ms; defaults to `Date.now`. */
   readonly now?: () => number;
 }
+
+/**
+ * What main passes (2026-10-29: Search Console is free and needs no frost account; `gsc.feature.md`):
+ * never gated, and the connection is this frost profile's whoever is signed in to frost (or nobody).
+ * Main must not wire `entitled` to the account's entitlements, nor `userId` to the frost account.
+ */
+export const GSC_UNGATED_ACCESS: Pick<GscServiceDeps, 'entitled' | 'userId'> = Object.freeze({
+  entitled: () => true,
+  userId: () => GSC_PROFILE_OWNER,
+});
 
 /** Main's Search Console service: the IPC `GscIpcService` plus what main and tests drive. */
 export interface GscMainService extends GscIpcService {
@@ -224,8 +237,8 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
   }
 
   /**
-   * The signed-in frost account changed: another account's connection (or connect) is dropped, revoked
-   * and deleted; signed out, it is kept (unused) for when the same account signs in again.
+   * The owner changed: another owner's connection (or connect) is dropped, revoked and deleted; with no
+   * owner, it is kept (unused) for when the same owner is back. Main's owner never changes (the profile).
    */
   const followAccount = (): void => {
     if (!auth) return;
@@ -233,7 +246,7 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
     if (user === null) return;
     if (auth.connecting() && auth.pendingOwner() !== user) void auth.cancelConnect();
     if (auth.held() && auth.owner() !== user) {
-      log('gsc: another frost account signed in; the old connection is revoked');
+      log('gsc: the connection belongs to another owner; it is revoked');
       void auth.disconnect().catch(() => undefined);
     }
   };
@@ -457,7 +470,7 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
       if (!isEntitled()) return 'not-entitled';
       try {
         const result = await auth.connect(windowId);
-        // No signed-in frost account: nothing to connect for (the plan is what the chrome can act on).
+        // No owner: nothing to connect for (never in main, whose owner is the profile).
         return result === 'no-account' ? 'not-entitled' : result;
       } catch {
         log('gsc: connect failed unexpectedly');

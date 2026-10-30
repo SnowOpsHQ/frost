@@ -69,21 +69,6 @@ const gscStatus = async (): Promise<GscStatus> => GscStatusSchema.parse(await ca
 /** A real click in the chrome (a trusted input: a user gesture in the app window). */
 const realClick = (): Promise<void> => page.getByTestId('address').click();
 
-/** Signs in to the fake backend (`pro`) through the whole flow. */
-async function signIn(): Promise<void> {
-  const before = (await openedUrls()).length;
-  await realClick();
-  expect(await call('mutation', 'account.signIn')).toBe('started');
-  await expect.poll(async () => (await openedUrls()).length).toBe(before + 1);
-  const toLoopback = await fetch((await openedUrls())[before]!, { redirect: 'manual' });
-  await fetch(toLoopback.headers.get('location')!, { redirect: 'manual' });
-  await expect.poll(async () => AccountStateSchema.parse(await call('query', 'account.state')).status).toBe('confirming');
-  const { requestId } = AccountStateSchema.parse(await call('query', 'account.state'));
-  await realClick();
-  expect(await call('mutation', 'account.confirmSignIn', { requestId })).toBe(true);
-  await expect.poll(async () => AccountStateSchema.parse(await call('query', 'account.state')).entitlements.plan).toBe('pro');
-}
-
 test.beforeAll(async () => {
   backend = await startFakeBackend();
   google = await startFakeGoogle();
@@ -114,16 +99,13 @@ test.afterAll(async () => {
 });
 
 test('gsc-connect-needs-gesture', async () => {
-  // Before signing in: not entitled, nothing to connect.
+  // Never signed in to frost: Search Console is not gated and needs no account (2026-10-29).
   await expect.poll(async () => (await gscStatus()).configured).toBe(true);
-  expect(await gscStatus()).toMatchObject({ entitled: false, connected: false, connecting: false });
-  expect(await call('query', 'gsc.performance', { url: `${site.origin}/page`, scope: 'page', days: 28 })).toEqual({ status: 'unavailable', reason: 'not-entitled' });
-  await realClick();
-  expect(await call('mutation', 'gsc.connect')).toBe('not-entitled');
-  await signIn();
-  await expect.poll(async () => (await gscStatus()).entitled).toBe(true);
+  expect(AccountStateSchema.parse(await call('query', 'account.state')).status).toBe('signed-out');
+  expect(await gscStatus()).toMatchObject({ entitled: true, connected: false, connecting: false });
+  expect(await call('query', 'gsc.performance', { url: `${site.origin}/page`, scope: 'page', days: 28 })).toEqual({ status: 'unavailable', reason: 'not-connected' });
   const opened = (await openedUrls()).length;
-  // Signed in as pro, but no click since: nothing opens.
+  // No click: nothing opens.
   expect(await call('mutation', 'gsc.connect')).toBe('needs-gesture');
   expect(await openedUrls()).toHaveLength(opened);
   expect(google.authRequests).toEqual([]);

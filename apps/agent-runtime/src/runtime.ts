@@ -73,7 +73,7 @@ export function startRuntime(port: RuntimePort, options: RuntimeOptions = {}): R
       turn.run = runChat({ start, model, post, signal: controller.signal });
       void turn.run.done.then(end);
     } catch (error) {
-      post({ type: 'chat.error', chatId: start.chatId, message: chatErrorMessage(error) });
+      post({ type: 'chat.error', chatId: start.chatId, message: chatErrorMessage(error, start.route) });
       end();
     }
   };

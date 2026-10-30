@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { cleanSlotValue, createBuiltinSkillRegistry, renderSkill, type Skill, type SkillRegistry } from '@app/ai-skills/skills';
 import type { AgentService } from '@app/ipc-contract';
 import { isApprovalDecision, type ApprovalDecision, type ToolActivityStatus } from '@app/specs/agent-approvals.spec';
+import { CHATGPT_SETUP_MESSAGES, chatgptFailureMessage, chatgptSetupReason, type ChatgptFailure } from '@app/specs/agent-chatgpt.spec';
 import { AGENT_PROTOCOL_LIMITS, CHAT_BUSY_MESSAGE, type ChatMessage, type LockdownTarget, type ToolCall, type ToolResult } from '@app/specs/agent-protocol.schema';
-import { ROUTE_CREDENTIAL_SLOT, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
+import { routeCredentialSlot, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
 import {
   AGENT_DELTA_COALESCE_MS,
   AGENT_NOTICE_MESSAGES,
@@ -20,13 +21,14 @@ import {
   OMITTED_TOOL_OUTPUT,
   MAX_PENDING_AGENT_WATCHES,
   MAX_TOOL_CARDS_PER_TURN,
-  MODEL_CONTEXT_WINDOWS,
+  modelContextWindow,
   STOP_DEADLINE_MESSAGE,
   STOP_DEADLINE_MS,
   TOOL_CARD_INPUT_PREVIEW_CHARS,
   TOOL_CARD_OUTPUT_PREVIEW_CHARS,
   type AgentAnswerResult,
   type AgentApprovalView,
+  type AgentChatgptView,
   type AgentChatSummary,
   type AgentIsolationView,
   type AgentMessageView,
@@ -39,9 +41,11 @@ import {
   type AgentToolCardView,
   type AgentUsageView,
 } from '@app/specs/agent-session.spec';
-import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, isMcpToolName, MAX_TOOL_STEPS, routeModelId, type AgentToolName, type ModelId, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, isMcpToolName, MAX_TOOL_STEPS, routeModelId, type AgentModelId, type AgentToolName, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import { MCP_LIMITS, type AgentMcpView } from '@app/specs/agent-mcp.spec';
 import type { McpToolDefinition } from '@app/specs/agent-mcp.schema';
+import type { ChatgptRoute } from './chatgpt/route';
+import type { ChatgptAuth } from './chatgpt/service';
 import { BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, skillPageUrl as skillPageUrlOf, type SkillInputSlot } from '@app/specs/skills.spec';
 import {
   DEFAULT_CHAT_RETENTION,
@@ -131,6 +135,19 @@ export interface AgentSessionDeps {
    * labels, the settings' view and the server procedures. Default: none.
    */
   readonly mcp?: Pick<McpManager, 'toolsForChat' | 'labelOf' | 'view' | 'onChange' | 'save' | 'remove' | 'setEnabled' | 'start' | 'stop' | 'setToken'>;
+  /**
+   * The ChatGPT plan route (`./chatgpt/route.ts`, plan `agent-chatgpt-plan.md` Task 3): the account's
+   * view and models for the setup, whether a turn may start on it, and the plan failures main's
+   * proxy reports (shown on the running turn instead of the runtime's words). Default: none (the
+   * route reads as signed out and is never ready).
+   */
+  readonly chatgpt?: Pick<ChatgptRoute, 'view' | 'ready' | 'onChange' | 'onFailure'> & { readonly auth?: Pick<ChatgptAuth, 'signIn' | 'cancel' | 'signOut' | 'acknowledge'> };
+  /**
+   * Spends app window `windowId`'s live user gesture (the account's per-window tracker, as Search
+   * Console's connect): a ChatGPT sign-in opens the browser only after it. Default: none (every
+   * sign-in answers `needs-gesture`).
+   */
+  readonly consumeGesture?: (windowId: number) => boolean;
 }
 
 export interface AgentSession extends AgentService {
@@ -200,9 +217,11 @@ interface Chat {
   /** Whether earlier entries (or history messages) were dropped from memory. */
   truncated: boolean;
   error: string | null;
+  /** When `error` is the ChatGPT plan's failure (main's reading, `AgentActiveChatView.chatgptError`); absent otherwise. */
+  chatgptError?: ChatgptFailure;
   usage: AgentUsageView | null;
   contextTokens: number | null;
-  modelId: ModelId | null;
+  modelId: AgentModelId | null;
   /** Whether its messages are in memory (`false` for a restored chat until it is opened). */
   loaded: boolean;
   loading: Promise<void> | null;
@@ -231,7 +250,18 @@ interface Turn {
   /** Ends the turn locally if the runtime ignores Stop (`STOP_DEADLINE_MS`). */
   stopTimer: unknown;
   /** The chat as it was before the user's message (a refused send changes nothing). */
-  before: { readonly error: string | null; readonly modelId: ModelId | null; readonly updatedAt: number; readonly selected: string | null; readonly created: boolean } | null;
+  before: {
+    readonly error: string | null;
+    readonly chatgptError: ChatgptFailure | undefined;
+    readonly modelId: AgentModelId | null;
+    readonly updatedAt: number;
+    readonly selected: string | null;
+    readonly created: boolean;
+  } | null;
+  /** The route the turn runs on (set when `chat.start` is posted). */
+  route?: ModelRoute;
+  /** The first ChatGPT plan failure main's proxy reported during the turn (shown if the turn fails). */
+  chatgptFailure?: ChatgptFailure;
   /** Whether the runtime said anything for this turn (a busy reply comes before anything else). */
   sawOutput: boolean;
   /** The history's and entries' lengths before the user's message (to take it back). */
@@ -538,9 +568,10 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     }, AGENT_DELTA_COALESCE_MS);
   };
 
-  const raise = (kind: AgentNoticeView['kind']) => {
+  /** `message`: in place of the kind's fixed sentence (the `chatgpt` route's `setup-needed`). */
+  const raise = (kind: AgentNoticeView['kind'], message: string = AGENT_NOTICE_MESSAGES[kind]) => {
     noticeSeq += 1;
-    notice = { kind, message: AGENT_NOTICE_MESSAGES[kind], seq: noticeSeq };
+    notice = { kind, message, seq: noticeSeq };
     bump();
   };
 
@@ -559,6 +590,32 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       ? { kind: 'user', id: entry.id, text: entry.text, ...(entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}) }
       : { kind: 'assistant', id: entry.id, text: entry.text, tools: entry.tools.map(cardView), streaming: entry.streaming };
 
+  /** Whether the route's key slot holds a usable key (`false` for the `chatgpt` route, which has none). */
+  const keySet = (route: ModelRoute): boolean => {
+    const slot = routeCredentialSlot(route);
+    return slot !== null && keys[slot];
+  };
+  const chatgpt = deps.chatgpt ?? null;
+  /** The ChatGPT sign-in's view (never a token) and the account's last model list. */
+  const chatgptView = (): AgentChatgptView => {
+    try {
+      if (chatgpt !== null) return chatgpt.view();
+    } catch {
+      // Read as signed out.
+    }
+    return { account: { state: 'signed-out', acknowledged: false }, models: [] };
+  };
+  /** Whether a turn may start on the `chatgpt` route: signed in, plan usage on, the chosen model listed. */
+  const chatgptReady = (): boolean => {
+    try {
+      return chatgpt !== null && chatgpt.ready() === true;
+    } catch {
+      return false;
+    }
+  };
+  /** Whether the route's credential is there: a stored key, or on `chatgpt` the sign-in. */
+  const routeReady = (route: ModelRoute): boolean => (route === 'chatgpt' ? chatgptReady() : keySet(route));
+
   const state = (): AgentState => {
     if (cached !== null) return cached;
     const settings = deps.settings.current();
@@ -573,9 +630,11 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       setup: {
         route: settings.route,
         modelId: settings.modelId,
-        allowedModels: ALLOWED_MODEL_IDS.filter((id) => routeModelId(settings.route, id) !== null),
+        // On the `chatgpt` route, the account's last listed models (in the server's order).
+        allowedModels: settings.route === 'chatgpt' ? chatgptView().models.map((model) => model.id) : ALLOWED_MODEL_IDS.filter((id) => routeModelId(settings.route, id) !== null),
         keys: { ...keys },
-        ready: scripted || keys[ROUTE_CREDENTIAL_SLOT[settings.route]],
+        chatgpt: chatgptView(),
+        ready: scripted || routeReady(settings.route),
         protection,
         runtime: { status: deps.host.status(), lastFailure: deps.host.lastFailure() },
         isolation: isolationView(deps.host.lockdown()),
@@ -594,9 +653,10 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
               truncated: active.truncated || active.entries.length > shown.length,
               running: turn?.chat === active,
               error: active.error,
+              chatgptError: active.chatgptError ?? null,
               usage: active.usage === null ? null : { ...active.usage },
               contextTokens: active.contextTokens,
-              contextWindow: active.modelId === null ? MODEL_CONTEXT_WINDOWS[settings.modelId] : MODEL_CONTEXT_WINDOWS[active.modelId],
+              contextWindow: modelContextWindow(active.modelId ?? settings.modelId),
               modelId: active.modelId,
             },
       running: turn !== null,
@@ -863,6 +923,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     chat.history = chat.history.slice(0, current.historyBefore);
     chat.entries = chat.entries.slice(0, current.entriesBefore);
     chat.error = before.error;
+    if (before.chatgptError === undefined) delete chat.chatgptError;
+    else chat.chatgptError = before.chatgptError;
     chat.modelId = before.modelId;
     chat.updatedAt = before.updatedAt;
     selected = before.selected;
@@ -942,10 +1004,21 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
           raise('busy');
           return;
         }
-        chat.error = event.message;
+        // A plan failure main's proxy reported for this turn is what the chat says (never the runtime's words for it).
+        if (current.chatgptFailure !== undefined) {
+          chat.error = chatgptFailureMessage(current.chatgptFailure);
+          chat.chatgptError = current.chatgptFailure;
+        } else chat.error = event.message;
         endTurn(current);
         return;
     }
+  };
+
+  /** A plan failure from main's proxy: kept on the running turn on the `chatgpt` route (the first one). */
+  const onChatgptFailure = (failure: ChatgptFailure) => {
+    const current = turn;
+    if (current === null || current.phase !== 'running' || current.route !== 'chatgpt' || current.chatgptFailure !== undefined) return;
+    current.chatgptFailure = failure.param === undefined ? { reason: failure.reason } : { reason: failure.reason, param: failure.param };
   };
 
   const onActivity = () => {
@@ -996,6 +1069,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     }),
     ...(userSkills !== null ? [userSkills.onChange(() => bump())] : []),
     ...(mcp !== null ? [mcp.onChange(() => bump())] : []),
+    ...(chatgpt !== null ? [chatgpt.onChange(() => bump()), chatgpt.onFailure(onChatgptFailure)] : []),
   ];
 
   // ---- Sending ----
@@ -1083,10 +1157,16 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     turn = current;
     notice = null;
     bump();
-    const refuse = (kind: Exclude<AgentSendResult, 'started'>): AgentSendResult => {
+    const refuse = (kind: Exclude<AgentSendResult, 'started'>, message?: string): AgentSendResult => {
       if (turn === current) turn = null;
-      raise(kind);
+      raise(kind, message);
       return kind;
+    };
+    /** Not ready: on the `chatgpt` route the notice says what the plan needs (sign in, plan usage, models), not "add a key". */
+    const setupNeeded = (route: ModelRoute): AgentSendResult => {
+      if (route !== 'chatgpt') return refuse('setup-needed');
+      const { account, models } = chatgptView();
+      return refuse('setup-needed', CHATGPT_SETUP_MESSAGES[chatgptSetupReason(account, models)]);
     };
     // A restored chat's messages are read before the turn uses them.
     const target = chatId === null ? undefined : chats.get(chatId);
@@ -1095,13 +1175,15 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     const settings = deps.settings.current();
     if (!scripted) {
       let hasKey = false;
+      const slot = routeCredentialSlot(settings.route);
       try {
-        hasKey = (await deps.credentials.hasKey(ROUTE_CREDENTIAL_SLOT[settings.route])) === true;
+        // The `chatgpt` route needs a sign-in with plan usage on and a listed model, not a key.
+        hasKey = slot === null ? chatgptReady() : (await deps.credentials.hasKey(slot)) === true;
       } catch {
         hasKey = false;
       }
       void refreshSetup();
-      if (!hasKey) return refuse('setup-needed');
+      if (!hasKey) return setupNeeded(settings.route);
     }
     let started = false;
     try {
@@ -1117,7 +1199,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
 
     // The runtime is ready: from here everything is synchronous until `chat.start` is posted.
     const { route, modelId } = deps.settings.current();
-    if (routeModelId(route, modelId) === null) return refuse('setup-needed');
+    if (routeModelId(route, modelId) === null) return setupNeeded(route);
     let chat = chatId === null ? undefined : chats.get(chatId);
     if (chatId !== null && chat === undefined) return refuse('unknown-chat');
     const created = chat === undefined;
@@ -1171,12 +1253,13 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     }
     current.chat = chat;
     chat.tabId = tabId;
-    current.before = { error: chat.error, modelId: chat.modelId, updatedAt: chat.updatedAt, selected, created };
+    current.before = { error: chat.error, chatgptError: chat.chatgptError, modelId: chat.modelId, updatedAt: chat.updatedAt, selected, created };
     current.historyBefore = chat.history.length;
     current.entriesBefore = chat.entries.length;
     chat.history.push({ role: 'user', content });
     chat.entries.push(run !== null ? { ...newEntry('user', skillEntryText(run.inputs, skillPageUrl)), skill: { id: run.skill.id, name: run.skill.name } } : newEntry('user', text));
     chat.error = null;
+    delete chat.chatgptError;
     chat.modelId = modelId;
     selected = chat.id;
     touch(chat);
@@ -1202,6 +1285,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       return refuse('unavailable');
     }
     current.phase = 'running';
+    current.route = route;
     bump();
     return 'started';
   };
@@ -1328,7 +1412,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         return 'unknown';
       }
     },
-    async setModel(route: ModelRoute, modelId: ModelId) {
+    async setModel(route: ModelRoute, modelId: AgentModelId) {
       let stored = false;
       try {
         stored = (await deps.settings.set({ route, modelId })) === true;
@@ -1595,6 +1679,48 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         return await mcp.setToken(id, token);
       } catch {
         return 'failed';
+      }
+    },
+    // ChatGPT plan (`agent-chatgpt.feature.md`, Router): the sign-in's procedures; never a token back.
+    async chatgptSignIn(windowId, options) {
+      // The sender window's live gesture is spent first: without one, nothing opens.
+      let gesture = false;
+      try {
+        gesture = deps.consumeGesture?.(windowId) === true;
+      } catch {
+        gesture = false;
+      }
+      if (!gesture) return 'needs-gesture';
+      const auth = chatgpt?.auth;
+      if (auth === undefined) return 'failed';
+      try {
+        // The sender's window comes to the front once the sign-in succeeds.
+        return await auth.signIn({ ...(options.reconsent === true ? { reconsent: true } : {}), ...(options.differentAccount === true ? { differentAccount: true } : {}), userGesture: true, windowId });
+      } catch {
+        return 'failed';
+      }
+    },
+    chatgptCancel() {
+      try {
+        return chatgpt?.auth?.cancel() === true;
+      } catch {
+        return false;
+      }
+    },
+    async chatgptSignOut() {
+      const auth = chatgpt?.auth;
+      if (auth === undefined) return 'signed-out';
+      try {
+        return await auth.signOut();
+      } catch {
+        return 'not-revoked';
+      }
+    },
+    async chatgptAcknowledge() {
+      try {
+        return (await chatgpt?.auth?.acknowledge()) === true;
+      } catch {
+        return false;
       }
     },
     dispose() {

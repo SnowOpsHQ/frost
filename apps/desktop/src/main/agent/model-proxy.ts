@@ -1,15 +1,20 @@
+import { chatgptAnswerFailure, type ChatgptFailure, type ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import { AGENT_PROTOCOL_LIMITS, type MainToRuntimeMessage } from '@app/specs/agent-protocol.schema';
 import {
   AGENT_PROXY_LIMITS,
   checkModelRequestBody,
   filterRequestHeaders,
   filterResponseHeaders,
+  isUsableModelSettings,
   mainRequestHeaders,
-  ROUTE_CREDENTIAL_SLOT,
+  routeCredentialSlot,
   sanitizeStatusText,
+  type AgentModelSettings,
   type ProxyRefusal,
 } from '@app/specs/agent-proxy.spec';
 import { isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES } from '@app/specs/agent-tools.spec';
+import type { ChatgptAuth, ChatgptTokenFailure } from './chatgpt/service';
+import { createStreamScanner, readErrorAnswer } from './chatgpt/responses';
 import type { CredentialStore } from './credentials';
 import type { AgentFetchEvent, AgentHost } from './host';
 import { coalescedLog } from './log';
@@ -29,6 +34,20 @@ import type { AgentSettings } from './settings';
 // body is withheld (it may quote the key, masked, or account details). A refusal answers
 // `fetch.error` `refused` with no detail; main logs one line with the reason code, never the URL,
 // a header or the body.
+//
+// The ChatGPT plan route (`agent-chatgpt.feature.md`, Through the proxy; plan Task 3): the credential
+// is the sign-in's access token, handed out by `chatgpt.withAccessToken` (refreshed as needed) and
+// sent as `Authorization: Bearer` only (no organisation or project header). A `401` refreshes once
+// with the refused token and retries once (a single 401 is not proof of revocation). Main reads an
+// error answer's body (capped) and watches the event stream for `response.failed`, only to find a
+// documented failure code; it reports the failure (`ChatgptFailure`) to the session, never passes
+// the body on, and after a failure that repeating can't fix (`usage-limit`, `not-eligible`,
+// `plan-usage-off`, `unsupported`, `signed-out`) sends nothing more on the plan until the turn ends
+// (`plan-paused`). The model must be in the account's last model list.
+//
+// A route switch while a turn runs: a request that fits the route the turn began on (and not the
+// new one) is refused as `model` (no strike), so a request shaped for the user's OpenAI key never
+// goes out with the plan's token, or the reverse, even though both routes share one URL.
 
 /** What the proxy hands `fetch` (Electron's `session.fetch` on the in-memory `agent-model` partition). */
 export interface ProxyRequestInit {
@@ -45,10 +64,31 @@ export interface ProxyRequestInit {
 
 export type ProxyFetchFunction = (url: string, init: ProxyRequestInit) => Promise<Response>;
 
+/** What the proxy uses of the ChatGPT sign-in (main's `chatgpt/` service) and where it reports a plan failure. */
+export interface ModelProxyChatgpt {
+  readonly withAccessToken: ChatgptAuth['withAccessToken'];
+  /** A failure the panel should show for the running turn (`AgentActiveChatView.chatgptError`). */
+  report(failure: ChatgptFailure): void;
+  /**
+   * The signed-in ChatGPT account (or its plan usage) changed: a pause from the previous one
+   * (`plan-paused`) no longer holds, so the plan is asked again.
+   */
+  onAccountChange?(listener: () => void): () => void;
+}
+
 export interface ModelProxyDeps {
   readonly host: Pick<AgentHost, 'send' | 'onFetch' | 'onStatus' | 'onChat' | 'activeChats' | 'strike'>;
   readonly credentials: Pick<CredentialStore, 'withKey'>;
-  readonly settings: Pick<AgentSettings, 'current' | 'load'>;
+  /** `onChange` lets a request made for the route a turn began on be told from the runtime's fault; `chatgptModels` is the account's last list. */
+  readonly settings: Pick<AgentSettings, 'current' | 'load'> & Partial<Pick<AgentSettings, 'onChange' | 'chatgptModels'>>;
+  /** The ChatGPT plan route's credential (absent: the route has none, every request is `no-key`). */
+  readonly chatgpt?: ModelProxyChatgpt;
+  /**
+   * Where a plan request that passed every check is sent (default: the allowlisted URL it was
+   * checked against). Only the unpackaged e2e seam sets it (`agent-chatgpt-e2e.schema.ts`), to a
+   * loopback fake; what the runtime may ask for is unchanged.
+   */
+  readonly chatgptResponsesUrl?: string;
   readonly fetch: ProxyFetchFunction;
   readonly setTimeout?: (callback: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
@@ -96,7 +136,19 @@ interface Live {
 }
 
 /** Refusals that are not the runtime's doing (no strike; see `refuse`). */
-const NOT_THE_RUNTIMES_FAULT: ReadonlySet<ProxyRefusal> = new Set(['no-key', 'key-unavailable', 'redirect', 'model']);
+const NOT_THE_RUNTIMES_FAULT: ReadonlySet<ProxyRefusal> = new Set(['no-key', 'key-unavailable', 'redirect', 'model', 'plan-paused']);
+
+/** Plan failures that the same request can't get past: nothing more goes out on the plan this turn. */
+const PAUSING_FAILURES: ReadonlySet<ChatgptFailure['reason']> = new Set(['usage-limit', 'not-eligible', 'plan-usage-off', 'unsupported', 'signed-out']);
+
+/** A token the sign-in couldn't hand out, as a refusal and the failure the panel shows (if any). */
+const TOKEN_FAILURES: Readonly<Record<ChatgptTokenFailure, { readonly refusal: ProxyRefusal | 'network'; readonly failure: ChatgptFailure | null }>> = {
+  'signed-out': { refusal: 'no-key', failure: { reason: 'signed-out' } },
+  expired: { refusal: 'no-key', failure: { reason: 'signed-out' } },
+  'plan-usage-off': { refusal: 'no-key', failure: { reason: 'plan-usage-off' } },
+  network: { refusal: 'network', failure: null },
+  failed: { refusal: 'key-unavailable', failure: null },
+};
 
 /** A `fetch` rejection from a redirect (Electron 45's `redirect: 'error'` message), told apart from a network failure. */
 const isRedirectError = (error: unknown): boolean => error instanceof Error && /redirect/i.test(error.message);
@@ -113,6 +165,31 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
   let key: ModelProxyState['key'] = 'unknown';
   let lastRefusal: ProxyRefusal | null = null;
   let disposed = false;
+  /**
+   * The settings a running turn began on, when they changed since (until no turn runs). Taken from
+   * the settings' own change (the value before it), so it is the loaded settings, never the
+   * defaults the proxy saw before the file was read.
+   */
+  let previous: AgentModelSettings | null = null;
+  /** A plan failure that pauses the plan until the turn ends. */
+  let paused: ChatgptFailure | null = null;
+  const chatgptModels = (): readonly ChatgptModelView[] => {
+    try {
+      return deps.settings.chatgptModels?.() ?? [];
+    } catch {
+      return [];
+    }
+  };
+  /** Reports a plan failure once per request (the first), logged with its reason only. */
+  const reportFailure = (failure: ChatgptFailure) => {
+    log(`plan:${failure.reason}`, `agent proxy: the ChatGPT plan refused a request (${failure.reason})`);
+    if (PAUSING_FAILURES.has(failure.reason)) paused = failure;
+    try {
+      deps.chatgpt?.report(failure);
+    } catch {
+      // The session's listener failing doesn't change the answer.
+    }
+  };
 
   const send = (message: MainToRuntimeMessage) => {
     deps.host.send(message);
@@ -168,7 +245,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     return Buffer.byteLength(text, 'utf8') > AGENT_PROTOCOL_LIMITS.maxRequestBodyBytes ? 'body-size' : text;
   };
 
-  const stream = async (requestId: string, entry: Live, response: Response) => {
+  const stream = async (requestId: string, entry: Live, response: Response, chatgpt = false) => {
     if (entry.settled) {
       void response.body?.cancel().catch(() => undefined);
       return;
@@ -176,6 +253,12 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     if (!Number.isInteger(response.status) || response.status < 100 || response.status > 599) {
       fail(requestId, entry, 'network');
       return;
+    }
+    if (chatgpt && response.status >= 400) {
+      // The plan's failure code, read in main (capped) under the idle timer; the body goes no further.
+      const failure = chatgptAnswerFailure(response.status, await readErrorAnswer(response));
+      if (entry.settled) return;
+      if (failure !== null) reportFailure(failure);
     }
     send({ type: 'fetch.response-start', requestId, status: response.status, statusText: sanitizeStatusText(response.statusText), headers: filterResponseHeaders(response.headers) });
     resetIdle(requestId, entry);
@@ -193,11 +276,14 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     }
     const reader = response.body.getReader();
     entry.reader = reader;
+    // A usage limit can arrive as a `response.failed` after streaming began.
+    const scanner = chatgpt ? createStreamScanner(reportFailure) : null;
     let received = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (entry.settled) return;
       if (done) break;
+      scanner?.push(value);
       received += value.byteLength;
       if (received > AGENT_PROTOCOL_LIMITS.maxResponseBytes) {
         fail(requestId, entry, 'too-large');
@@ -231,7 +317,14 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       refuse(requestId, 'busy');
       return;
     }
-    const { route, modelId } = deps.settings.current();
+    const settings = deps.settings.current();
+    const { route, modelId } = settings;
+    /** Whether the request fits the route the running turn began on (a switch since): not the runtime's fault. */
+    const madeForPrevious = (body: string): boolean =>
+      previous !== null &&
+      (previous.route !== route || previous.modelId !== modelId) &&
+      isAllowedModelRequest(previous.route, request.method, request.url) &&
+      checkModelRequestBody(previous.route, previous.modelId, body, filterRequestHeaders(previous.route, request.headers)).ok;
     if (!isAllowedModelRequest(route, request.method, request.url)) {
       // Another route's endpoint: the turn began before the user switched routes.
       refuse(requestId, 'endpoint', !MODEL_ROUTES.some((other) => isAllowedModelRequest(other, request.method, request.url)));
@@ -247,11 +340,23 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     const headers = filterRequestHeaders(route, request.headers);
     const check = checkModelRequestBody(route, modelId, body, headers);
     if (!check.ok) {
-      refuse(requestId, check.reason);
+      // Shaped for the route the turn began on (the user switched since): the model changed, not the runtime's doing.
+      if (madeForPrevious(body)) refuse(requestId, 'model', false);
+      else refuse(requestId, check.reason);
       return;
     }
     // The bytes sent are the object checked (a repeated key in the runtime's text can't differ).
     const checkedBody = check.body;
+    if (madeForPrevious(body)) {
+      // It fits both: sent under the new route's credential it would go where the user didn't ask.
+      refuse(requestId, 'model', false);
+      return;
+    }
+    const slot = routeCredentialSlot(route);
+    if (slot === null) {
+      handleChatgpt(requestId, deps.chatgptResponsesUrl ?? target.url, headers, checkedBody, settings);
+      return;
+    }
 
     const entry: Live = { controller: new AbortController(), settled: false, idle: null, total: null, reader: null };
     live.set(requestId, entry);
@@ -264,7 +369,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     };
 
     try {
-      const sent = await deps.credentials.withKey(ROUTE_CREDENTIAL_SLOT[route], (secret) =>
+      const sent = await deps.credentials.withKey(slot, (secret) =>
         deps.fetch(target.url, {
           method: target.method,
           headers: [...headers, ...mainRequestHeaders(route, secret)],
@@ -290,6 +395,80 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     }
   };
 
+  /** The ChatGPT plan route: the sign-in's access token as the credential, a 401 refreshed and retried once. */
+  const handleChatgpt = (requestId: string, url: string, headers: [string, string][], checkedBody: string, settings: AgentModelSettings) => {
+    const chatgpt = deps.chatgpt;
+    if (chatgpt === undefined) {
+      key = 'no-key';
+      refuse(requestId, 'no-key');
+      return;
+    }
+    // Only a model the account's last list has.
+    if (!isUsableModelSettings(settings, chatgptModels())) {
+      refuse(requestId, 'model');
+      return;
+    }
+    if (paused !== null) {
+      refuse(requestId, 'plan-paused');
+      return;
+    }
+    const entry: Live = { controller: new AbortController(), settled: false, idle: null, total: null, reader: null };
+    live.set(requestId, entry);
+    resetIdle(requestId, entry);
+    entry.total = setTimer(() => fail(requestId, entry, 'timeout'), limits.maxRequestMs);
+    const refuseEntry = (reason: ProxyRefusal) => {
+      if (entry.settled) return;
+      finish(requestId, entry, null);
+      refuse(requestId, reason);
+    };
+    // The token stays in this closure: it goes into the header and, after a 401, back to the service as the refused one.
+    const attempt = (rejected?: string) =>
+      chatgpt.withAccessToken(
+        async (token) => ({
+          token,
+          response: await deps.fetch(url, {
+            method: 'POST',
+            headers: [...headers, ...mainRequestHeaders('chatgpt', token)],
+            body: checkedBody,
+            redirect: 'error',
+            credentials: 'omit',
+            cache: 'no-store',
+            signal: entry.controller.signal,
+          }),
+        }),
+        rejected === undefined ? {} : { rejected },
+      );
+    void (async () => {
+      try {
+        let sent = await attempt();
+        if (sent.ok && sent.value.response.status === 401 && !entry.settled) {
+          // Not proof of revocation: refreshed once with the refused token, and asked once more.
+          void sent.value.response.body?.cancel().catch(() => undefined);
+          sent = await attempt(sent.value.token);
+        }
+        // The request ended meanwhile (aborted, timed out, its turn over): a late token failure is not
+        // reported, so it can't pause the plan for the next turn.
+        if (entry.settled) return;
+        if (!sent.ok) {
+          const outcome = TOKEN_FAILURES[sent.reason];
+          if (outcome.failure !== null) reportFailure(outcome.failure);
+          if (outcome.refusal === 'network') fail(requestId, entry, 'network');
+          else {
+            if (outcome.refusal === 'no-key') key = 'no-key';
+            refuseEntry(outcome.refusal);
+          }
+          return;
+        }
+        key = 'set';
+        await stream(requestId, entry, sent.value.response, true);
+      } catch (error) {
+        if (entry.settled) return;
+        if (isRedirectError(error)) refuseEntry('redirect');
+        else fail(requestId, entry, 'network');
+      }
+    })();
+  };
+
   const onFetch = (event: AgentFetchEvent) => {
     if (event.type === 'fetch.abort') {
       const entry = live.get(event.requestId);
@@ -310,8 +489,24 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
   });
   // No turn running, no request is wanted: whatever is still in flight is stopped.
   const unsubscribeChat = deps.host.onChat((event) => {
-    if ((event.type === 'chat.finish' || event.type === 'chat.error') && deps.host.activeChats().length === 0) abortAll();
+    if ((event.type === 'chat.finish' || event.type === 'chat.error') && deps.host.activeChats().length === 0) {
+      abortAll();
+      // The next turn starts on the settings in effect, with the plan no longer paused.
+      previous = null;
+      paused = null;
+    }
   });
+  // A route or model change while a turn runs: what the turn began on (the settings before the
+  // first change) is kept until no turn runs.
+  const unsubscribeSettings =
+    deps.settings.onChange?.((_next, before) => {
+      if (deps.host.activeChats().length > 0 && previous === null) previous = before;
+    }) ?? (() => undefined);
+  // Another account, or plan usage turned on: a pause from before no longer holds.
+  const unsubscribeAccount =
+    deps.chatgpt?.onAccountChange?.(() => {
+      paused = null;
+    }) ?? (() => undefined);
 
   return {
     state: () => ({ key, active: live.size, lastRefusal }),
@@ -321,6 +516,8 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       unsubscribeFetch();
       unsubscribeStatus();
       unsubscribeChat();
+      unsubscribeSettings();
+      unsubscribeAccount();
       abortAll();
     },
   };
