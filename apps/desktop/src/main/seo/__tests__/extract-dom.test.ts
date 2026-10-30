@@ -605,7 +605,8 @@ describe('extractor on a DOM', () => {
 
 /**
  * A page that runs scripts as the isolated world does (`window.eval` of the stringified overlay
- * script), `Range.getClientRects` stubbed (jsdom has no layout): one line fragment per range.
+ * script), `Range.getClientRects` stubbed (jsdom has no layout): one line fragment per range (the
+ * overlay makes one range per text node a sentence covers).
  */
 function scriptedPage(body: string) {
   const dom = new JSDOM(`<!doctype html><html lang="en"><head><title>t</title></head><body>${body}</body></html>`, { url: PAGE, pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
@@ -638,13 +639,14 @@ describe('text highlight on a DOM', () => {
     const observer = new dom.window.MutationObserver((list) => records.push(...list));
     observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true, attributeOldValue: true, characterDataOldValue: true });
 
-    await expect(run(highlightScript('sentences', [], targets))).resolves.toEqual({ mode: 'sentences', boxes: 2, unmatched: 0 });
+    // The first sentence covers three text nodes ("Short. ", the `<b>`'s, the rest), the second one.
+    await expect(run(highlightScript('sentences', [], targets))).resolves.toEqual({ mode: 'sentences', boxes: 4, unmatched: 0 });
     records.push(...observer.takeRecords());
     // One host of its own, last in <html>, its shadow root closed (unreachable from the page).
     const host = document.documentElement.lastElementChild as HTMLElement;
     expect(document.documentElement.children).toHaveLength(3);
     expect(host.shadowRoot).toBeNull();
-    expect((dom.window as unknown as Record<string, OverlayState>)[OVERLAY_KEY]!.boxes()).toBe(2);
+    expect((dom.window as unknown as Record<string, OverlayState>)[OVERLAY_KEY]!.boxes()).toBe(4);
     // The only change: that host appended to <html>. No attribute, style, text or other node changed.
     expect(records.map((r) => [r.type, r.target, r.addedNodes.length, r.removedNodes.length])).toEqual([['childList', document.documentElement, 1, 0]]);
     expect(records[0]!.addedNodes[0]).toBe(host);

@@ -363,7 +363,8 @@ describe('text highlight plan (pure)', () => {
 
 /**
  * A jsdom page that runs scripts as the isolated world does (`window.eval`), `Range.getClientRects`
- * stubbed (jsdom has no layout): each range is `lines` line fragments, the first at its start offset.
+ * stubbed (jsdom has no layout): each range is `lines` line fragments, the first at its start offset
+ * (the overlay makes one range per text node a sentence covers: "This sentence" and its rest are two).
  */
 function textPage(body: string, lines = 2) {
   const dom = new JSDOM(`<!doctype html><html lang="en"><head><title>t</title></head><body>${body}</body></html>`, { url: 'https://example.com/article', pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
@@ -403,7 +404,7 @@ describe('text highlight overlay', () => {
   test('text-highlight-says-what-it-did-not-find', async () => {
     const page = textPage(ARTICLE);
     const targets = [long('This sentence runs on and on.'), { text: 'Gone from the page.', kind: 'complex-sentence' as const }, long('Also gone.'), { text: 'Another long sentence here.', kind: 'complex-sentence' as const }];
-    await expect(paintHighlight(page.document as unknown as OverlayDocument, 'sentences', OVERLAY_CONFIG, planHighlight, page.store, [], targets, planTextHighlight)).resolves.toEqual({ mode: 'sentences', boxes: 4, unmatched: 2 });
+    await expect(paintHighlight(page.document as unknown as OverlayDocument, 'sentences', OVERLAY_CONFIG, planHighlight, page.store, [], targets, planTextHighlight)).resolves.toEqual({ mode: 'sentences', boxes: 6, unmatched: 2 });
     const texts = page.children().map((el) => el.textContent);
     expect(texts).toContain(TEXT_HIGHLIGHT_UNMATCHED_NOTE.many.replace('{n}', '2'));
     expect(texts.filter((t) => t === 'long' || t === 'complex')).toEqual(['long', 'complex']);
@@ -411,6 +412,32 @@ describe('text highlight overlay', () => {
     expect(page.children().map((el) => el.textContent)).toEqual([TEXT_HIGHLIGHT_UNMATCHED_NOTE.one]);
     await paintHighlight(page.document as unknown as OverlayDocument, 'off', OVERLAY_CONFIG, planHighlight, page.store);
     expect(page.state()).toBeUndefined();
+  });
+
+  test('text-highlight-boxes-inline-elements-once', async () => {
+    // As Chromium does: a range's client rects are its text's line boxes plus the border box of every
+    // element wholly inside it (here an `<em>` and a link, each the size of its own words).
+    const page = textPage('<p>Short one. <em>This sentence</em> runs <a href="/x">on</a> and on.</p>');
+    const textNodes: Node[] = [];
+    const walk = page.document.createTreeWalker(page.document.body, 0x4);
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) textNodes.push(node);
+    const lineBox = (node: Node) => domRect(10 + 40 * textNodes.indexOf(node), 100, 40, 16);
+    (page.dom.window.Range.prototype as unknown as { getClientRects: () => DOMRect[] }).getClientRects = function (this: Range) {
+      const rects: DOMRect[] = [];
+      for (const node of textNodes) if (this.intersectsNode(node)) rects.push(lineBox(node));
+      for (const el of page.document.body.querySelectorAll('*')) {
+        const whole = page.document.createRange();
+        whole.selectNode(el);
+        if (this.compareBoundaryPoints(page.dom.window.Range.START_TO_START, whole) <= 0 && this.compareBoundaryPoints(page.dom.window.Range.END_TO_END, whole) >= 0) rects.push(lineBox(el.firstChild!));
+      }
+      return rects;
+    };
+    const answer = await paintHighlight(page.document as unknown as OverlayDocument, 'sentences', OVERLAY_CONFIG, planHighlight, page.store, [], [long('This sentence runs on and on.')], planTextHighlight);
+    // One box per text node the sentence covers ("This sentence", " runs ", "on", " and on."), none twice.
+    expect(answer).toEqual({ mode: 'sentences', boxes: 4, unmatched: 0 });
+    const geometry = page.geometry();
+    expect(new Set(geometry.map((g) => g.replace(/ \S*$/, ''))).size).toBe(geometry.length);
+    await paintHighlight(page.document as unknown as OverlayDocument, 'off', OVERLAY_CONFIG, planHighlight, page.store);
   });
 
   test('text-highlight-script-is-self-contained', async () => {
@@ -427,7 +454,7 @@ describe('text highlight overlay', () => {
     // Evaluated as the isolated world runs it: in a page's own context, no module scope.
     const evaluated = textPage(ARTICLE);
     const answer = await (evaluated.dom.window.eval(script) as Promise<unknown>);
-    expect(answer).toEqual({ mode: 'sentences', boxes: 4, unmatched: 3 });
+    expect(answer).toEqual({ mode: 'sentences', boxes: 6, unmatched: 3 });
     expect((evaluated.dom.window as unknown as { pwned?: unknown }).pwned).toBeUndefined();
     expect(evaluated.document.querySelector('img')).toBeNull();
     // The same boxes as the imported painter and plan draw on the same page.

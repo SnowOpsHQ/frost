@@ -28,7 +28,8 @@ import type { ExtractTarget } from './extract';
 // in the page: the overlay reads the body's text nodes once (the extractor's skipped subtrees left
 // out; at most `maxTextNodes` nodes and `maxTextScanChars` characters, within `budgetMs`, `frameMs`
 // per frame), `planTextHighlight` finds each text in them, and each drawing pass boxes the matches'
-// `Range.getClientRects()`. A `Range` only points at page nodes: creating one changes nothing in the
+// `Range.getClientRects()`, one range per text node a match covers (so an inline element inside it
+// is not boxed again). A `Range` only points at page nodes: creating one changes nothing in the
 // page. The texts reach the script as JSON data, never as code, and are only compared, never
 // inserted. Texts not found are counted and said in the overlay (`unmatchedNote`).
 
@@ -401,20 +402,26 @@ export function paintHighlight(
   };
   const nextFrame = (run: () => void): number => (typeof view.requestAnimationFrame === 'function' ? view.requestAnimationFrame(run) : (setTimeout(run, 16) as unknown as number));
 
-  // A text mode: the texts found, as live ranges over the page's own text nodes (nothing is changed).
+  // A text mode: the texts found, each as live ranges over the page's own text nodes, one range per
+  // text node (nothing is changed). One range across nodes would also give, among its client rects,
+  // the border box of every element wholly inside it (an `<em>`, a link): a second box over the same words.
   const textMode = config.textModes.includes(mode);
-  const found: { readonly kind: HighlightKind; readonly range: PageRange }[] = [];
+  const found: { readonly kind: HighlightKind; readonly ranges: readonly PageRange[] }[] = [];
   let unmatched = 0;
   const result = (boxes: number): OverlayResult => (textMode ? { mode, boxes, unmatched } : { mode, boxes });
   /** A found text's boxes: its line fragments (at most `maxRectsPerTarget`), labelled on the first shown one. */
   const measureText = (text: (typeof found)[number], items: HighlightItem[]): void => {
-    const rects = text.range.getClientRects();
     let labelled = false;
-    for (let i = 0; i < rects.length && i < config.maxRectsPerTarget; i++) {
-      const r = rects[i]!;
-      const shownRect = r.width >= 1 && r.height >= 1;
-      items.push({ kind: text.kind, rect: { left: r.left + view.scrollX, top: r.top + view.scrollY, width: r.width, height: r.height }, unlabelled: !shownRect || labelled });
-      if (shownRect) labelled = true;
+    let taken = 0;
+    for (const range of text.ranges) {
+      const rects = range.getClientRects();
+      for (let i = 0; i < rects.length && taken < config.maxRectsPerTarget; i++, taken++) {
+        const r = rects[i]!;
+        const shownRect = r.width >= 1 && r.height >= 1;
+        items.push({ kind: text.kind, rect: { left: r.left + view.scrollX, top: r.top + view.scrollY, width: r.width, height: r.height }, unlabelled: !shownRect || labelled });
+        if (shownRect) labelled = true;
+      }
+      if (taken >= config.maxRectsPerTarget) break;
     }
   };
   /** Says, pinned in the viewport's corner, how many texts were not found. */
@@ -501,10 +508,15 @@ export function paintHighlight(
         continue;
       }
       try {
-        const range = document.createRange();
-        range.setStart(nodes[span.start[0]]!, span.start[1]);
-        range.setEnd(nodes[span.end[0]]!, span.end[1]);
-        found.push({ kind: span.kind, range });
+        const ranges: PageRange[] = [];
+        for (let n = span.start[0]; n <= span.end[0]; n++) {
+          const node = nodes[n]!;
+          const range = document.createRange();
+          range.setStart(node, n === span.start[0] ? span.start[1] : 0);
+          range.setEnd(node, n === span.end[0] ? span.end[1] : (node.data ?? '').length);
+          ranges.push(range);
+        }
+        found.push({ kind: span.kind, ranges });
       } catch {
         // The page changed that text while it was read: not found.
         unmatched += 1;

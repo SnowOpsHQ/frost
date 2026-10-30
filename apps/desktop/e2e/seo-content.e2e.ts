@@ -484,9 +484,11 @@ test('content-highlight-sentences-leaves-no-residue', async () => {
   expect(state.draws).toBe(1);
   expect(state.drawn).toHaveLength(state.boxes);
   // Real boxes where the sentences are: each sentence labelled once (on its first line), every box a
-  // line-sized rectangle inside the article, the last one below the fold (document coordinates).
-  // The total is not pinned: a range's client rects also hold the border box of an inline element
-  // inside it (the `<em>`, the link), drawn as a second box over the same words (a known, deferred issue).
+  // line-sized rectangle inside the article, the last one below the fold (document coordinates). An
+  // inline element inside a sentence (the `<em>`, the link) is not boxed a second time over its words.
+  expect(state.drawn).toHaveLength(11);
+  const rects = state.drawn.map((box) => `${box.x} ${box.y} ${box.width} ${box.height}`);
+  expect(new Set(rects).size, rects.join(' | ')).toBe(rects.length);
   const label = HIGHLIGHT_STYLES['long-sentence'].label;
   const labelled = state.drawn.filter((box) => box.label !== '');
   expect(labelled.map((box) => box.label)).toEqual([label, label, label]);
