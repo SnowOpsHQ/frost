@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 // Spec: specs/agent-panel.spec.ts (AGENT_APPROVAL_BUTTONS, AGENT_SET_KEY_MESSAGES), specs/agent-session.spec.ts
 // (APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE)
-// Acceptance: specs/agent-panel.feature.md (Components), specs/skills.feature.md (composer-skill-picker)
+// Acceptance: specs/agent-panel.feature.md (Components: reasoning-select-sends-set-reasoning-effort, reasoning-auto-only-explained), specs/skills.feature.md (composer-skill-picker)
 import { act, createElement, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { AGENT_APPROVAL_BUTTONS, AGENT_SET_KEY_MESSAGES } from '@app/specs/agent-panel.spec';
+import { AGENT_APPROVAL_BUTTONS, AGENT_REASONING_HINT, AGENT_REASONING_LABELS, AGENT_REASONING_UNAVAILABLE, AGENT_SET_KEY_MESSAGES } from '@app/specs/agent-panel.spec';
 import { APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
+import { modelOptionGroups } from '../agent-view';
 import { approval, card, jsApproval, setup, SKILLS } from './agent-fixtures';
 
 const calls = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const calls = vi.hoisted(() => ({
   setKey: vi.fn(async (..._args: unknown[]) => 'no-keychain' as const),
   clearKey: vi.fn(async (..._args: unknown[]) => true),
   setModel: vi.fn(async (..._args: unknown[]) => true),
+  setReasoningEffort: vi.fn(async (..._args: unknown[]) => true),
   send: vi.fn(async (..._args: unknown[]) => 'started' as const),
   stop: vi.fn(async (..._args: unknown[]) => true),
 }));
@@ -143,6 +145,68 @@ describe('agent panel components', () => {
     // The model list is exactly the route's.
     const models = [...host.querySelectorAll<HTMLOptionElement>('[data-testid="agent-model"] option')].map((o) => o.value);
     expect(models).toEqual(setup().allowedModels);
+    // Grouped by provider (Phase 8 Task 7, model-options-grouped-by-provider).
+    const groups = [...host.querySelectorAll<HTMLOptGroupElement>('[data-testid="agent-model"] optgroup')].map((group) => [group.label, [...group.querySelectorAll('option')].map((option) => option.value)]);
+    expect(groups).toEqual(modelOptionGroups(setup()).map((group) => [group.label, group.options.map((option) => option.value)]));
+  });
+
+  test('reasoning-select-sends-set-reasoning-effort', async () => {
+    const props = (changes: Parameters<typeof setup>[0]) => ({ setup: setup(changes), grantsCount: 0, readToolsAllowed: true, chatRetention: '30d' as const, onOpen: () => undefined });
+    render(createElement(AgentSettings, props({ modelId: 'openai/gpt-5', reasoning: { effort: 'auto', levels: ['auto', 'off', 'low', 'medium', 'high'] } })));
+    const select = byTestId('agent-reasoning') as HTMLSelectElement;
+    // Under the Model select, named by a label, with the cost hint.
+    expect(host.querySelector<HTMLLabelElement>('label[for="agent-reasoning"]')!.control).toBe(select);
+    expect(byTestId('agent-model')!.compareDocumentPosition(select) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(byTestId('agent-reasoning-hint')!.textContent).toBe(AGENT_REASONING_HINT);
+    expect([...select.options].map((option) => [option.value, option.textContent])).toEqual([
+      ['auto', AGENT_REASONING_LABELS.auto],
+      ['off', 'Minimal'],
+      ['low', 'Low'],
+      ['medium', 'Medium'],
+      ['high', 'High'],
+    ]);
+    expect(select.value).toBe('auto');
+    expect(select.disabled).toBe(false);
+    expect(byTestId('agent-reasoning-unavailable')).toBeNull();
+    // Choosing a level sends that level and nothing else; the select keeps main's level until state changes.
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'off');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    expect(calls.setReasoningEffort).toHaveBeenCalledExactlyOnceWith('off');
+    expect(calls.setModel).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain('That choice could not be saved.');
+    expect((byTestId('agent-reasoning') as HTMLSelectElement).value).toBe('auto');
+    // Main refusing the level is said.
+    calls.setReasoningEffort.mockResolvedValueOnce(false);
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'high');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    expect(calls.setReasoningEffort).toHaveBeenLastCalledWith('high');
+    expect(host.textContent).toContain('That choice could not be saved.');
+    // Switching the model changes the offered levels at once; a stored level the model lacks reads Auto.
+    render(createElement(AgentSettings, props({ modelId: 'anthropic/claude-sonnet-5-5', reasoning: { effort: 'auto', levels: ['auto', 'low', 'medium', 'high'] } })));
+    expect([...(byTestId('agent-reasoning') as HTMLSelectElement).options].map((option) => option.value)).toEqual(['auto', 'low', 'medium', 'high']);
+    expect((byTestId('agent-reasoning') as HTMLSelectElement).value).toBe('auto');
+    render(createElement(AgentSettings, props({ modelId: 'anthropic/claude-sonnet-5-5', reasoning: { effort: 'medium', levels: ['auto', 'low', 'medium', 'high'] } })));
+    expect((byTestId('agent-reasoning') as HTMLSelectElement).value).toBe('medium');
+  });
+
+  test('reasoning-auto-only-explained', () => {
+    const props = { grantsCount: 0, readToolsAllowed: true, chatRetention: '30d' as const, onOpen: () => undefined };
+    render(createElement(AgentSettings, { ...props, setup: setup({ modelId: 'spacexai/grok-4.7', reasoning: { effort: 'auto', levels: ['auto'] } }) }));
+    const select = byTestId('agent-reasoning') as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(select.value).toBe('auto');
+    expect([...select.options].map((option) => option.value)).toEqual(['auto']);
+    expect(byTestId('agent-reasoning-unavailable')!.textContent).toBe(AGENT_REASONING_UNAVAILABLE);
+    // The reason is tied to the select for assistive tech.
+    expect(select.getAttribute('aria-describedby')!.split(' ')).toContain(byTestId('agent-reasoning-unavailable')!.id);
+    expect(byTestId('agent-reasoning-hint')!.textContent).toBe(AGENT_REASONING_HINT);
+    expect(calls.setReasoningEffort).not.toHaveBeenCalled();
   });
 
   test('composer-enter-sends-shift-enter-does-not', async () => {
@@ -171,6 +235,42 @@ describe('agent panel components', () => {
     expect(calls.stop).toHaveBeenCalledExactlyOnceWith('c');
   });
 
+  test('skill-picker-lists-enabled-only-and-searches', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    const typeInto = (el: HTMLInputElement | HTMLSelectElement, value: string) =>
+      act(() => {
+        const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value);
+        el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+      });
+    const options = () => [...(byTestId('agent-skill-picker') as HTMLSelectElement).options].map((option) => option.value);
+    const skills = [SKILLS[0]!, { ...SKILLS[1]!, enabled: false }, SKILLS[2]!];
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills }));
+    // The switched-off skill is not offered.
+    expect(options()).toEqual(['', 'audit-this-page', 'plain-skill']);
+    // The search narrows the choices (name, description or id) and says when none match.
+    const search = byTestId('agent-skill-search') as HTMLInputElement;
+    expect(search.placeholder).toBe('Search skills');
+    typeInto(search, 'PLAIN');
+    expect(options()).toEqual(['', 'plain-skill']);
+    typeInto(search, 'zzz');
+    expect(options()).toEqual(['']);
+    expect(byTestId('agent-skill-no-match')!.textContent).toBe('No skills match');
+    typeInto(search, '');
+    expect(byTestId('agent-skill-no-match')).toBeNull();
+    // A skill picked, then switched off in the library: the composer falls back to a typed message.
+    typeInto(byTestId('agent-skill-picker') as HTMLSelectElement, 'audit-this-page');
+    expect(byTestId('agent-skill-description')).not.toBeNull();
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills: [{ ...SKILLS[0]!, enabled: false }, SKILLS[2]!] }));
+    expect(byTestId('agent-skill-description')).toBeNull();
+    expect(byTestId('agent-input')).not.toBeNull();
+    expect(options()).toEqual(['', 'plain-skill']);
+    // Every skill switched off: no picker.
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills: SKILLS.map((skill) => ({ ...skill, enabled: false })) }));
+    expect(byTestId('agent-skill-picker')).toBeNull();
+    expect(byTestId('agent-skill-search')).toBeNull();
+  });
+
   test('composer-skill-picker', async () => {
     const inputRef = createRef<HTMLTextAreaElement>();
     const typeInto = (el: HTMLInputElement | HTMLSelectElement, value: string) =>
@@ -186,6 +286,12 @@ describe('agent panel components', () => {
     render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills: SKILLS }));
     const picker = byTestId('agent-skill-picker') as HTMLSelectElement;
     expect([...picker.options].map((option) => option.textContent)).toEqual(['Write a message', ...SKILLS.map((skill) => (skill.builtin ? skill.name : `${skill.name} (Your skill)`))]);
+    // Grouped under category headings, the user's own skills last.
+    expect([...picker.querySelectorAll('optgroup')].map((group) => [group.label, [...group.querySelectorAll('option')].map((option) => option.value)])).toEqual([
+      ['This page', ['audit-this-page']],
+      ['Content', ['rewrite-title-meta']],
+      ['Your skills', ['plain-skill']],
+    ]);
     expect(byTestId('agent-input')).not.toBeNull();
     typeInto(picker, 'rewrite-title-meta');
     // The message field gives way to the skill's description and its inputs; Send to Run.

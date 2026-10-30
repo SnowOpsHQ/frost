@@ -1,6 +1,7 @@
 /**
  * The agent's data the user governs (Phase 5 Task 9; acceptance `agent-data.feature.md`): the
- * grants page, stored chats and their retention, chat export, and the user's own skills. Plain
+ * grants page, stored chats and their retention, chat export, the user's own skills, and (Phase 8
+ * Task 6) skills files to export and import them. Plain
  * values and types with no Zod, so the chrome renderer imports them as they are (strict Trusted
  * Types), and `@app/db` reads the bounds and preference keys. The procedures' inputs are in
  * `agent-ipc.schema.ts`; a skill's schema is `skills-schema.ts` (main validates every skill with it).
@@ -114,6 +115,8 @@ export const STORED_CHAT_TITLE_MAX_CHARS = 200;
 /** The `@app/db` tables of this task (migrations `0031_agent_chats`, `0032_agent_skills`). */
 export const AGENT_CHAT_TABLES = ['agent_chat_entries', 'agent_chat_messages', 'agent_chats'] as const;
 export const AGENT_SKILL_TABLES = ['agent_skills'] as const;
+/** Phase 8 Task 5's table (migration `0200_agent_skill_prefs`): one row per skill the user switched on or off. */
+export const AGENT_SKILL_PREF_TABLES = ['agent_skill_prefs'] as const;
 
 /** "Delete all chats" asks first, in a native message box main shows. Only `confirmIndex` confirms. */
 export const DELETE_ALL_CHATS = {
@@ -356,3 +359,192 @@ export function duplicateSkillId(id: string, taken: (candidate: string) => boole
 export function duplicateSkillName(name: string): string {
   return `${name.slice(0, SKILL_LIMITS.maxNameChars - SKILL_DUPLICATE_NAME_SUFFIX.length).trimEnd()}${SKILL_DUPLICATE_NAME_SUFFIX}`;
 }
+
+// ---- The skills library: search and switches (Phase 8 Task 5; `agent-data.feature.md`, Skills library) ----
+
+/**
+ * What the skills library says around its search box and each skill's switch. A skill with no row
+ * in `agent_skill_prefs` is on; a switched-off skill stays listed (switch "Off"), but is left out of
+ * the composer's picker and the palette, and `agent.send` refuses it (`unknown-skill`).
+ */
+export const SKILL_LIBRARY_WORDS = {
+  searchPlaceholder: 'Search skills',
+  on: 'On',
+  off: 'Off',
+  noMatch: 'No skills match',
+} as const;
+
+/** The text a search compares: NFKC (width and compatibility forms folded), lower-cased, spaces collapsed. */
+function foldSkillText(text: string): string {
+  return text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The skills whose name, description or id contain every word of `query` (NFKC-folded, case-folded;
+ * order kept). A blank query keeps them all. Pure: the library and the composer's picker filter in
+ * the renderer, with no IPC.
+ */
+export function filterSkills<T extends { readonly id: string; readonly name: string; readonly description: string }>(skills: readonly T[], query: string): T[] {
+  const words = foldSkillText(typeof query === 'string' ? query : '')
+    .split(' ')
+    .filter((word) => word !== '');
+  if (words.length === 0) return [...skills];
+  return skills.filter((skill) => {
+    const haystack = foldSkillText(`${skill.name} ${skill.description} ${skill.id}`);
+    return words.every((word) => haystack.includes(word));
+  });
+}
+
+// ---- Skill files: export and import (Phase 8 Task 6; `agent-data.feature.md`, Import and export) ----
+
+/**
+ * A skills file (`SkillFileSchema` in `skills-schema.ts`): `{ format: SKILL_FILE_FORMAT, version:
+ * SKILL_FILE_VERSION, exportedAt, skills }`, 1 to `MAX_USER_SKILLS` of the user's skills. Main writes it
+ * only where the user chose in its own save dialog, owner-only (mode `0600`, as a chat export), as a
+ * new file renamed into place; and reads one only from the file the user chose in its own open
+ * dialog: at most `SKILL_FILE_MAX_BYTES`, strict UTF-8, JSON, frost's format and version, each skill
+ * checked on its own with `SkillSchema` (an invalid one is listed, never stored).
+ */
+export const SKILL_FILE_FORMAT = 'frost-skills';
+export const SKILL_FILE_VERSION = 1;
+/** The largest skills file import reads (bytes): 2 MiB, well past 50 skills at their caps. */
+export const SKILL_FILE_MAX_BYTES = 2 * 1024 * 1024;
+export const SKILL_FILE_EXTENSION = 'json';
+export const SKILL_FILE_FILTER_NAME = 'frost skills (JSON)';
+
+/** The save dialog's default file name: `frost-skills-<YYYY-MM-DD>.json`, in local time. */
+export function skillExportFileName(at: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `frost-skills-${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}.${SKILL_FILE_EXTENSION}`;
+}
+
+/**
+ * How long an import's review stays open (milliseconds): `agent.previewSkillImport`'s token can be
+ * spent once (`agent.importSkills`) within 10 minutes, then it is gone; a new preview replaces it.
+ */
+export const SKILL_IMPORT_TOKEN_TTL_MS = 10 * 60_000;
+
+/**
+ * Why an entry would not keep its id or name: `none`; `builtin-id` (a built-in has the id);
+ * `exists` (one of the user's skills, or an earlier valid entry of the same file, has the id); `builtin-name` (a built-in has the name, ignoring
+ * case and spacing). An entry with a conflict is imported as a copy: a clashing id becomes a free
+ * `duplicateSkillId`, and its name `duplicateSkillName`. Nothing stored is ever replaced.
+ */
+export const SKILL_IMPORT_CONFLICTS = ['none', 'builtin-id', 'exists', 'builtin-name'] as const;
+export type SkillImportConflict = (typeof SKILL_IMPORT_CONFLICTS)[number];
+
+export const SKILL_IMPORT_CONFLICT_MESSAGES: Readonly<Record<SkillImportConflict, string | null>> = {
+  none: null,
+  'builtin-id': 'A built-in skill has this id: it is imported as a copy, with a new id and name.',
+  exists: 'You already have a skill with this id: it is imported as a copy, with a new id and name. Yours is kept.',
+  'builtin-name': 'A built-in skill has this name: it is imported with "(copy)" added to its name.',
+};
+
+/**
+ * `agent.previewSkillImport` and `agent.importSkills`' answers:
+ * - `ready`: the file was read; the review lists its entries (`AgentSkillImportPreview`);
+ * - `imported`: the selected skills were stored (`count` of them);
+ * - `cancelled`: the open dialog was dismissed (nothing read), or one was already open;
+ * - `too-large`: over `SKILL_FILE_MAX_BYTES`; `not-utf8`: not UTF-8 text; `not-json`: not JSON;
+ *   `wrong-format`: not a frost skills file of `SKILL_FILE_VERSION` (or no skill, or too many);
+ * - `expired`: the review's token was spent, cancelled, replaced or older than `SKILL_IMPORT_TOKEN_TTL_MS`;
+ * - `invalid-selection`: an index names no importable entry (nothing stored);
+ * - `limit`: storing them all would pass `MAX_USER_SKILLS` (nothing stored);
+ * - `failed`: the file could not be read, or a skill could not be stored.
+ */
+export const SKILL_IMPORT_RESULTS = ['ready', 'imported', 'cancelled', 'too-large', 'not-utf8', 'not-json', 'wrong-format', 'expired', 'invalid-selection', 'limit', 'failed'] as const;
+export type SkillImportResultKind = (typeof SKILL_IMPORT_RESULTS)[number];
+
+export const SKILL_IMPORT_MESSAGES: Readonly<Record<SkillImportResultKind, string>> = {
+  ready: 'Review the skills below before importing them.',
+  imported: 'Skills imported.',
+  cancelled: 'Import cancelled.',
+  'too-large': 'That file is too large to be a frost skills file.',
+  'not-utf8': 'That file is not text frost can read.',
+  'not-json': 'That file is not a frost skills file (it is not JSON).',
+  'wrong-format': 'That file is not a frost skills file, or it is from a newer version of frost.',
+  expired: 'This review has expired. Choose the file again.',
+  'invalid-selection': 'Choose only skills that can be imported.',
+  limit: `You can keep up to ${MAX_USER_SKILLS} skills. Select fewer, or delete some first.`,
+  failed: 'The skills could not be imported. Try again.',
+};
+
+/** What an entry that is not a skill at all (or holds fields a skill has not) is listed with. */
+export const SKILL_IMPORT_ENTRY_INVALID = 'This entry is not a skill frost can read.';
+
+/** One entry of a skills file, as the review lists it. */
+export type AgentSkillImportItem =
+  | {
+      /** The entry's position in the file (what `agent.importSkills` selects). */
+      readonly index: number;
+      readonly valid: true;
+      readonly id: string;
+      readonly name: string;
+      readonly description: string;
+      /** The catalogue tools it may use. */
+      readonly tools: readonly AgentToolName[];
+      /** It lists one of `SKILL_ACTING_TOOLS`: the review shows `SKILL_WARNINGS.actingTools`. */
+      readonly actingTools: boolean;
+      readonly conflict: SkillImportConflict;
+      /** The instructions in full, as they will be stored (shown as text, never run, before import). */
+      readonly instructions: string;
+      readonly inputs: readonly { readonly slot: SkillInputSlot; readonly label: string; readonly placeholder: string | null }[];
+      readonly error: null;
+    }
+  | {
+      readonly index: number;
+      readonly valid: false;
+      /** The entry's id and name only when each is well-formed on its own (else `null`: never echoed). */
+      readonly id: string | null;
+      readonly name: string | null;
+      /** frost's own sentence (`SKILL_FIELD_MESSAGES`, a schema refinement's, or `SKILL_IMPORT_ENTRY_INVALID`). */
+      readonly error: string;
+    };
+
+/** `agent.previewSkillImport`'s review: a single-use token, the file's entries in order, and how many more skills fit. */
+export interface AgentSkillImportPreview {
+  readonly token: string;
+  readonly items: readonly AgentSkillImportItem[];
+  /** `MAX_USER_SKILLS` less the user's skills now. */
+  readonly room: number;
+}
+
+export type AgentSkillImportPreviewResult =
+  | { readonly result: 'ready'; readonly preview: AgentSkillImportPreview }
+  | { readonly result: Exclude<SkillImportResultKind, 'ready' | 'imported'> };
+
+export type AgentSkillImportResult = { readonly result: 'imported'; readonly count: number } | { readonly result: Exclude<SkillImportResultKind, 'ready' | 'imported'> };
+
+/**
+ * `agent.exportSkills`' answer: `saved` (written where the user chose), `cancelled` (the dialog was
+ * dismissed, or one was already open: nothing written), `nothing-to-export` (the user has no skills),
+ * `failed` (an id is not one of the user's skills, or the file could not be written).
+ */
+export const SKILL_EXPORT_RESULTS = ['saved', 'cancelled', 'nothing-to-export', 'failed'] as const;
+export type SkillExportResult = (typeof SKILL_EXPORT_RESULTS)[number];
+
+export const SKILL_EXPORT_MESSAGES: Readonly<Record<SkillExportResult, string>> = {
+  saved: 'Skills exported.',
+  cancelled: 'Export cancelled.',
+  'nothing-to-export': 'You have no skills of your own to export.',
+  failed: 'The skills could not be exported. Try again.',
+};
+
+/** The skills library's import and export words, and the review sheet's. */
+export const SKILL_FILE_WORDS = {
+  export: 'Export',
+  exportAll: 'Export all',
+  import: 'Import…',
+  reviewTitle: 'Review skills to import',
+  reviewExplainer:
+    "When you run an imported skill, its instructions are sent as your own message, and it may use the tools listed. Read each skill's instructions before you import it.",
+  showInstructions: 'Show instructions',
+  hideInstructions: 'Hide instructions',
+  confirm: 'Import selected',
+  cancel: 'Cancel',
+  openEveryFirst: 'Open the instructions of every selected skill to import them.',
+  overRoom: `Select fewer skills: you can keep up to ${MAX_USER_SKILLS}.`,
+  invalidLabel: 'Cannot be imported',
+  toolsLabel: 'Tools it may use',
+  inputsLabel: 'Asks you for',
+} as const;

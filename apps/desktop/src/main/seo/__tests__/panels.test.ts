@@ -1,11 +1,12 @@
-// Spec: specs/seo-sidebar.spec.ts (HIGHLIGHT_MODES, LINKS_CSV_COLUMNS), specs/browser.spec.ts (TabState.highlight,
+// Spec: specs/seo-sidebar.spec.ts (HIGHLIGHT_MODES, LINKS_CSV_COLUMNS, TextHighlightTarget), specs/browser.spec.ts (TabState.highlight,
 // OpenBackgroundTabInputSchema), specs/seo-snapshot.spec.ts (LinkFilterSchema)
-// Acceptance: specs/seo-panels.feature.md (Controller), specs/seo-schema.feature.md (Controller and router)
+// Acceptance: specs/seo-panels.feature.md (Controller), specs/seo-schema.feature.md (Controller and router),
+// specs/seo-content.feature.md (Highlight, Phase 8)
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { formatJson, linksCsv } from '@app/seo-core';
 import { AUDIT_DEBOUNCE_MS } from '@app/specs/seo-limits.spec';
 import { MAX_TABS } from '@app/specs/tabs.spec';
-import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { HighlightMode, TextHighlightTarget } from '@app/specs/seo-sidebar.spec';
 import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../test/controller-fakes';
 import { fakeEvent } from '../../../test/electron-fake';
 import { rawSnapshot } from '../../../test/seo-fakes';
@@ -19,6 +20,8 @@ const B = 'https://example.com/b';
 interface Paint {
   readonly contents: FakeTabContents;
   readonly mode: HighlightMode;
+  /** The texts main handed the painter (`sentences`: the ready audit's difficult sentences). */
+  readonly textTargets: readonly TextHighlightTarget[];
   resolve(answer?: unknown): void;
   reject(error: unknown): void;
 }
@@ -56,9 +59,9 @@ beforeEach(() => {
     // Every extraction answers at once with a snapshot of the tab's URL.
     seo: { extract: async (contents) => snapshotOf((contents as unknown as FakeTabContents).url), analyse: async (raw) => analyseSnapshot(raw) },
     highlight: {
-      paint: (contents, mode) =>
+      paint: (contents, mode, textTargets) =>
         new Promise<unknown>((resolve, reject) => {
-          paints.push({ contents: contents as unknown as FakeTabContents, mode, resolve: (answer = { mode, boxes: 1 }) => resolve(answer), reject });
+          paints.push({ contents: contents as unknown as FakeTabContents, mode, textTargets, resolve: (answer = { mode, boxes: 1 }) => resolve(answer), reject });
         }),
       ended: (contents) =>
         new Promise<unknown>((resolve) => {
@@ -241,6 +244,66 @@ describe('highlight', () => {
     expect(tabState().highlight).toBe('off');
     // A closed tab's state goes with it.
     expect(controller.seo.setHighlight(activeId(), 'links')).toBe(false);
+  });
+});
+
+describe('sentences highlight', () => {
+  // A sentence starts with a capital letter (Intl.Segmenter does not break before a lowercase word).
+  const LONG = `Then ${Array.from({ length: 30 }, (_, i) => `word${i}`).join(' ')}.`;
+  const withText = (text: string) => (url: string) => rawSnapshot(url, { visibleText: { text, truncated: false } });
+
+  test('sentences-highlight-takes-targets-from-the-audit', async () => {
+    snapshotOf = withText(`A short one. ${LONG}`);
+    // No ready audit yet: refused, nothing painted.
+    const contents = load(A);
+    expect(controller.seo.setHighlight(activeId(), 'sentences')).toBe(false);
+    expect(paints).toHaveLength(0);
+    expect(tabState().highlight).toBe('off');
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    await flush();
+    // The ready audit's difficult sentences, read by main itself.
+    expect(controller.seo.setHighlight(activeId(), 'sentences')).toBe(true);
+    expect(paints.at(-1)).toMatchObject({ contents, mode: 'sentences', textTargets: [{ text: LONG, kind: 'long-sentence' }] });
+    paints.at(-1)!.resolve({ mode: 'sentences', boxes: 2, unmatched: 0 });
+    await flush();
+    expect(tabState().highlight).toBe('sentences');
+    // Other modes carry no text.
+    expect(controller.seo.setHighlight(activeId(), 'links')).toBe(true);
+    expect(paints.at(-1)).toMatchObject({ mode: 'links', textTargets: [] });
+
+    // A page without a difficult sentence: refused, nothing painted.
+    snapshotOf = withText('A short one. Another short one.');
+    await audited(B, contents);
+    const count = paints.length;
+    expect(controller.seo.setHighlight(activeId(), 'sentences')).toBe(false);
+    expect(paints).toHaveLength(count);
+    expect(tabState().highlight).toBe('off');
+    // Off is always allowed.
+    expect(controller.seo.setHighlight(activeId(), 'off')).toBe(true);
+  });
+
+  test('sentences-highlight-resets-on-navigation', async () => {
+    snapshotOf = withText(LONG);
+    const contents = await audited(A);
+    controller.seo.setHighlight(activeId(), 'sentences');
+    paints[0]!.resolve();
+    await flush();
+    expect(tabState().highlight).toBe('sentences');
+    // A fragment change keeps it.
+    pushState(contents, `${A}#part`);
+    expect(tabState().highlight).toBe('sentences');
+    // An in-page navigation to another URL: off, and the overlay is removed from the page.
+    pushState(contents, `${A}/route`);
+    expect(tabState().highlight).toBe('off');
+    expect(paints.at(-1)).toMatchObject({ contents, mode: 'off' });
+    // A new document: off (nothing to remove).
+    await audited(B, contents);
+    controller.seo.setHighlight(activeId(), 'sentences');
+    expect(tabState().highlight).toBe('sentences');
+    const count = paints.length;
+    commit(contents, A, 'A');
+    expect(tabState().highlight).toBe('off');
+    expect(paints).toHaveLength(count);
   });
 });
 

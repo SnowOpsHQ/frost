@@ -1,6 +1,6 @@
 // Spec: specs/agent-data.spec.ts (AGENT_SKILL_TABLES, MAX_USER_SKILLS, STORED_SKILL_MAX_CHARS),
 // specs/skills.spec.ts (isSkillId)
-// Acceptance: specs/agent-data.feature.md (Skills editor)
+// Acceptance: specs/agent-data.feature.md (Skills editor), specs/skills.feature.md (Re-key)
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import { beforeEach, describe, expect, test } from 'vitest';
@@ -68,5 +68,42 @@ describe('agent skills (db)', () => {
     // An existing one can still be updated.
     expect(await repo.saveSkill('skill-0', '{"v":2}', 1)).toBe(true);
     expect((await repo.skills()).length).toBe(MAX_USER_SKILLS);
+  });
+
+  test('rekey-skill-is-one-statement', async () => {
+    // At the cap: the row changes in place, so the table is never one over the cap, and the order
+    // (creation time) and creation time stay.
+    for (let i = 0; i < MAX_USER_SKILLS; i += 1) expect(await repo.saveSkill(`skill-${i}`, `{"id":"skill-${i}"}`, 10 + i)).toBe(true);
+    // Record every insert and update the table sees from here on: a re-key must be updates only.
+    raw.exec('CREATE TABLE writes (kind TEXT NOT NULL, id TEXT NOT NULL)');
+    raw.exec("CREATE TRIGGER log_insert AFTER INSERT ON agent_skills BEGIN INSERT INTO writes VALUES ('insert', new.id); END");
+    raw.exec("CREATE TRIGGER log_update AFTER UPDATE ON agent_skills BEGIN INSERT INTO writes VALUES ('update', new.id); END");
+    const writes = () => raw.prepare('SELECT kind, id FROM writes').all().map((row) => `${String(row['kind'])} ${String(row['id'])}`);
+    expect(await repo.rekeySkill('skill-3', 'skill-3-copy', '{"id":"skill-3-copy"}', 500)).toBe(true);
+    expect(count()).toBe(MAX_USER_SKILLS);
+    const rows = await repo.skills();
+    expect(rows).toHaveLength(MAX_USER_SKILLS);
+    expect(rows.find((row) => row.id === 'skill-3')).toBeUndefined();
+    expect(rows.find((row) => row.id === 'skill-3-copy')).toEqual({ id: 'skill-3-copy', skill: '{"id":"skill-3-copy"}', createdAt: 13, updatedAt: 500 });
+    // Several in a row at the cap, each still one row.
+    expect(await repo.rekeySkill('skill-4', 'skill-4-copy', '{"id":"skill-4-copy"}', 501)).toBe(true);
+    expect(count()).toBe(MAX_USER_SKILLS);
+    // It is never an insert: a missing old id writes nothing.
+    expect(await repo.rekeySkill('no-such-skill', 'brand-new', '{"id":"brand-new"}', 502)).toBe(false);
+    expect((await repo.skills()).some((row) => row.id === 'brand-new')).toBe(false);
+    // A taken new id writes nothing, and the old row is untouched.
+    expect(await repo.rekeySkill('skill-5', 'skill-6', '{"id":"skill-6","clobbered":true}', 503)).toBe(false);
+    expect(await repo.skills()).toContainEqual({ id: 'skill-5', skill: '{"id":"skill-5"}', createdAt: 15, updatedAt: 15 });
+    expect(await repo.skills()).toContainEqual({ id: 'skill-6', skill: '{"id":"skill-6"}', createdAt: 16, updatedAt: 16 });
+    // The same id on both sides, a malformed id, out-of-bounds text and a bad time are refused.
+    expect(await repo.rekeySkill('skill-7', 'skill-7', '{}', 504)).toBe(false);
+    expect(await repo.rekeySkill('skill-7', 'Not An Id', '{}', 504)).toBe(false);
+    expect(await repo.rekeySkill('Not An Id', 'skill-7-copy', '{}', 504)).toBe(false);
+    expect(await repo.rekeySkill('skill-7', 'skill-7-copy', 'x'.repeat(STORED_SKILL_MAX_CHARS + 1), 504)).toBe(false);
+    expect(await repo.rekeySkill('skill-7', 'skill-7-copy', '{}', Number.NaN)).toBe(false);
+    expect(count()).toBe(MAX_USER_SKILLS);
+    expect((await repo.skills()).find((row) => row.id === 'skill-7')).toMatchObject({ updatedAt: 17 });
+    // Only the two successful re-keys wrote anything, each as one update of the existing row.
+    expect(writes()).toEqual(['update skill-3-copy', 'update skill-4-copy']);
   });
 });

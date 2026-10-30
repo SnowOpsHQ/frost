@@ -1,13 +1,16 @@
-import { asc, count, eq, sql } from 'drizzle-orm';
+import { and, asc, count, eq, exists, notExists, sql } from 'drizzle-orm';
 import { MAX_USER_SKILLS, STORED_SKILL_MAX_CHARS } from '@app/specs/agent-data.spec';
 import { isSkillId, SKILL_LIMITS } from '@app/specs/skills.spec';
 import type { SessionDatabase } from './client';
 import { agentSkills } from './agent-skills-schema';
+import { agentSkillPrefs } from './agent-skill-prefs-schema';
 
 // The user's own agent skills (Phase 5 Task 9; spec `specs/agent-data.spec.ts`; acceptance
 // `specs/agent-data.feature.md`, Skills editor). Each row is a skill's JSON as main validated it
 // with `SkillSchema`; main validates it again when it reads it (the database never parses it). At
-// most `MAX_USER_SKILLS`. Whether an id is a built-in's is main's check (`@app/ai-skills`).
+// most `MAX_USER_SKILLS`. Whether an id is a built-in's is main's check (`@app/ai-skills`). A
+// skill's switch (`agent-skill-prefs.ts`, Phase 8 Task 5) follows it: `deleteSkill` deletes its row
+// and `rekeySkill` moves it, each in the same batch as the skill's own row.
 
 export interface StoredAgentSkill {
   readonly id: string;
@@ -26,7 +29,17 @@ export interface AgentSkillsRepository {
    * when `MAX_USER_SKILLS` are stored.
    */
   saveSkill(id: string, skill: string, at: number): Promise<boolean>;
+  /** Deletes the skill and its `agent_skill_prefs` row, in one batch. */
   deleteSkill(id: string): Promise<boolean>;
+  /**
+   * Moves the stored skill `oldId` to `newId`, with `skill` (JSON text) and `at` as its new text and
+   * update time (Phase 8 Task 4: a built-in has since taken `oldId`). One `UPDATE` of the existing
+   * row in one `db.batch`, never an insert: the table is never one over `MAX_USER_SKILLS`, and a
+   * crash leaves the old row or the new one, never both or neither. The skill's `agent_skill_prefs`
+   * row, if any, moves to `newId` in that batch (replacing a stale row there). `false` (nothing
+   * written) for a malformed id or text, the same id twice, a missing `oldId` or a `newId` already stored.
+   */
+  rekeySkill(oldId: string, newId: string, skill: string, at: number): Promise<boolean>;
 }
 
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -66,9 +79,33 @@ export function createAgentSkillsRepository(db: SessionDatabase): AgentSkillsRep
       return true;
     },
 
+    async rekeySkill(oldId, newId, skill, at) {
+      if (!isSkillId(oldId) || !isSkillId(newId) || oldId === newId) return false;
+      if (typeof skill !== 'string' || skill.length < 2 || skill.length > STORED_SKILL_MAX_CHARS || !isTime(at)) return false;
+      // The statements of the move, built here and run as one batch (the pattern of `agent-chats.ts`).
+      // The guard in the WHERE keeps the UPDATE from colliding with a row stored since a caller looked;
+      // the pref statements carry the same guard (the table they read is not yet changed when they run),
+      // so a refused move leaves the switch where it was.
+      const moves = and(
+        exists(db.select({ id: agentSkills.id }).from(agentSkills).where(eq(agentSkills.id, oldId))),
+        notExists(db.select({ id: agentSkills.id }).from(agentSkills).where(eq(agentSkills.id, newId))),
+      );
+      const statements = [
+        db.delete(agentSkillPrefs).where(and(eq(agentSkillPrefs.id, newId), moves)),
+        db.update(agentSkillPrefs).set({ id: newId }).where(and(eq(agentSkillPrefs.id, oldId), moves)),
+        db
+          .update(agentSkills)
+          .set({ id: newId, skill, updatedAt: at })
+          .where(and(eq(agentSkills.id, oldId), notExists(db.select({ id: agentSkills.id }).from(agentSkills).where(eq(agentSkills.id, newId)))))
+          .returning({ id: agentSkills.id }),
+      ] as const;
+      const [, , moved] = await db.batch(statements);
+      return (moved?.length ?? 0) === 1;
+    },
+
     async deleteSkill(id) {
       if (!isSkillId(id)) return false;
-      await db.delete(agentSkills).where(eq(agentSkills.id, id));
+      await db.batch([db.delete(agentSkillPrefs).where(eq(agentSkillPrefs.id, id)), db.delete(agentSkills).where(eq(agentSkills.id, id))]);
       return true;
     },
   };

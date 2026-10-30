@@ -1,7 +1,8 @@
-import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { HighlightMode, TextHighlightTarget } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { aliveContents, showsPage, type Tab, type TabView } from '../browser/tab-model';
 import { withoutFragment } from './auditor';
+import { TEXT_HIGHLIGHT_MODES } from './highlight';
 
 // Per-tab highlight mode, a part of the browser controller (spec `seo-sidebar.spec.ts`,
 // `HIGHLIGHT_MODES`; acceptance `seo-panels.feature.md`, Highlight). `Tab.highlight` is reported in
@@ -10,13 +11,15 @@ import { withoutFragment } from './auditor';
 // nothing to remove, the overlay went with the document), when an in-page navigation leaves the
 // URL it was drawn on, when another tab becomes active (then the overlay is removed), and when the
 // page itself removes the overlay's host (the overlay reports it: `ended` settles with `removed`).
+// A text mode (`sentences`) boxes the texts the context hands in for the tab (main's own ready
+// audit, `textTargets`); with none to box it is refused like an inactive tab.
 
 export type TabContents = TabView['webContents'];
 
 export interface TabHighlights {
   /**
    * Sets `tab`'s overlay to `mode`: only for the active tab of an attached window, showing a web
-   * page; `false` (a no-op) otherwise, or without a painter.
+   * page, and for a text mode only with texts to box; `false` (a no-op) otherwise, or without a painter.
    */
   set(tab: Tab, mode: HighlightMode): boolean;
   /** `tab`'s document went (did-navigate, load error, crash, view released): back to `off`. */
@@ -29,8 +32,11 @@ export interface TabHighlights {
 
 /** Draws the overlay in a page and waits for it to end (`runHighlight`, `watchHighlight`). Their answers are page data: checked, never trusted. */
 export interface HighlightPainter {
-  /** Draws (or removes, for `off`) the overlay; resolves `{ mode, boxes }` once drawn (`mode` `off`: nothing is). */
-  paint(contents: TabContents, mode: HighlightMode): Promise<unknown>;
+  /**
+   * Draws (or removes, for `off`) the overlay; resolves `{ mode, boxes }` once drawn (`mode` `off`:
+   * nothing is). `textTargets`: the texts a text mode boxes (`[]` for the others).
+   */
+  paint(contents: TabContents, mode: HighlightMode, textTargets: readonly TextHighlightTarget[]): Promise<unknown>;
   /** Resolves why the current overlay ended (`removed`: the page took it out). */
   ended(contents: TabContents): Promise<unknown>;
 }
@@ -40,6 +46,8 @@ export interface TabHighlightsContext {
   readonly painter: HighlightPainter | undefined;
   /** Whether `tab` is the active tab of an attached window. */
   isActive(tab: Tab): boolean;
+  /** The texts `mode` boxes in `tab`'s page, from main's own data (`sentences`: its ready audit's difficult sentences; `[]` for other modes). */
+  textTargets(tab: Tab, mode: HighlightMode): readonly TextHighlightTarget[];
   /** The browser state changed (bump and wake `watch`). */
   changed(): void;
 }
@@ -58,7 +66,7 @@ export function createTabHighlights(ctx: TabHighlightsContext): TabHighlights {
     tab.highlight = 'off';
     tab.highlightKey = '';
     const contents = remove ? contentsOf(tab) : undefined;
-    if (contents && ctx.painter) ctx.painter.paint(contents, 'off').catch(ignore);
+    if (contents && ctx.painter) ctx.painter.paint(contents, 'off', []).catch(ignore);
     ctx.changed();
   };
 
@@ -69,6 +77,8 @@ export function createTabHighlights(ctx: TabHighlightsContext): TabHighlights {
       if (!painter || !contents || !ctx.isActive(tab) || !showsPage(tab)) return false;
       const url = contents.getURL();
       if (!isWebUrl(url)) return false;
+      const textTargets = TEXT_HIGHLIGHT_MODES.includes(mode) ? ctx.textTargets(tab, mode) : [];
+      if (TEXT_HIGHLIGHT_MODES.includes(mode) && textTargets.length === 0) return false;
       const key = withoutFragment(url);
       const changed = tab.highlight !== mode;
       const run = ++seq;
@@ -82,7 +92,7 @@ export function createTabHighlights(ctx: TabHighlightsContext): TabHighlights {
         const current = isCurrent();
         // The page moved on (or was reset) while it ran: whatever it drew goes.
         if (!current && contentsOf(tab) === contents) {
-          painter.paint(contents, 'off').catch(ignore);
+          painter.paint(contents, 'off', []).catch(ignore);
           return;
         }
         if (!current) return;
@@ -97,7 +107,7 @@ export function createTabHighlights(ctx: TabHighlightsContext): TabHighlights {
           if (reason === 'removed' && isCurrent()) reset(tab, false);
         }, ignore);
       };
-      painter.paint(contents, mode).then(
+      painter.paint(contents, mode, textTargets).then(
         (answer) => settle(answer, true),
         () => settle(undefined, false),
       );

@@ -1,14 +1,18 @@
 // Spec: specs/seo-limits.spec.ts (SNAPSHOT_LIMITS, EXTRACT_BUDGET_MS, ROBOTS_META_NAMES),
 // specs/seo-snapshot.spec.ts (PageSnapshotSchema, hidden elements, wordCount, ImageSchema, SocialSchema)
 // Acceptance: specs/seo-sidebar.feature.md (Extraction, Against a DOM), specs/seo-panels.feature.md (Extraction),
-// specs/seo-content.feature.md (Visible text; spec specs/seo-content.spec.ts VISIBLE_TEXT_LIMITS, VISIBLE_TEXT_BLOCKS)
-import { JSDOM } from 'jsdom';
+// specs/seo-content.feature.md (Visible text; spec specs/seo-content.spec.ts VISIBLE_TEXT_LIMITS, VISIBLE_TEXT_BLOCKS;
+// Highlight, Phase 8: spec specs/seo-sidebar.spec.ts TextHighlightTarget, specs/seo-limits.spec.ts HIGHLIGHT_BUDGET_MS)
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, test } from 'vitest';
-import { EXTRACT_BUDGET_MS, ROBOTS_META_NAMES, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
+import { sentenceReport, type SeoAudit } from '@app/seo-core';
+import { EXTRACT_BUDGET_MS, HIGHLIGHT_BUDGET_MS, ROBOTS_META_NAMES, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { PageSnapshotSchema, type PageSnapshot } from '@app/specs/seo-snapshot.spec';
 import { SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { VISIBLE_TEXT_BLOCKS, VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
 import { extractPage, type PageDocument } from '../extract';
+import { highlightScript, OVERLAY_KEY, type OverlayState } from '../highlight';
+import { sentenceHighlightTargets } from '../highlight-targets';
 import { extractSecurity, RESOURCE_SELECTOR, type SecurityDocument } from '../security-extract';
 
 const PAGE = 'https://example.com/guides/page';
@@ -598,3 +602,82 @@ describe('extractor on a DOM', () => {
   });
 });
 
+
+/**
+ * A page that runs scripts as the isolated world does (`window.eval` of the stringified overlay
+ * script), `Range.getClientRects` stubbed (jsdom has no layout): one line fragment per range (the
+ * overlay makes one range per text node a sentence covers).
+ */
+function scriptedPage(body: string) {
+  const dom = new JSDOM(`<!doctype html><html lang="en"><head><title>t</title></head><body>${body}</body></html>`, { url: PAGE, pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
+  (dom.window.Range.prototype as unknown as { getClientRects: () => DOMRect[] }).getClientRects = function (this: Range) {
+    return [{ left: 10 + this.startOffset, top: 50, width: 300, height: 18, right: 310, bottom: 68, x: 10, y: 50, toJSON: () => ({}) } as DOMRect];
+  };
+  const run = (script: string) => dom.window.eval(script) as Promise<unknown>;
+  return { dom, document: dom.window.document, run };
+}
+
+/** The `sentences` targets main would hand the painter for `body`: its visible text as the extractor keeps it, analysed as the worker does. */
+function auditTargets(body: string) {
+  const text = visible({ body }).visibleText!.text;
+  return sentenceHighlightTargets({ content: { sentences: sentenceReport(text, 'en') } } as unknown as SeoAudit);
+}
+
+const WORDS = (n: number) => times(n, (i) => `word${i} `);
+const LONG = (n: number) => `${WORDS(n)}end.`;
+
+describe('text highlight on a DOM', () => {
+  test('text-highlight-leaves-the-page-untouched', async () => {
+    // Long sentences split across inline elements, white space runs, bidi and zero-width characters.
+    const body = `<article style="color: red" data-x="1"><h1>Heading</h1><p class="lead">Short. <b>${WORDS(10)}</b>   ${LONG(20)}</p>
+      <p>Price\u200b list \u202e${LONG(30)}\u202c</p><p hidden>${LONG(30)} hidden.</p><script>var x = 1;</script></article>`;
+    const targets = auditTargets(body);
+    expect(targets.map((t) => t.kind)).toEqual(['long-sentence', 'long-sentence']);
+    const { dom, document, run } = scriptedPage(body);
+    const before = document.documentElement.outerHTML;
+    const records: MutationRecord[] = [];
+    const observer = new dom.window.MutationObserver((list) => records.push(...list));
+    observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true, attributeOldValue: true, characterDataOldValue: true });
+
+    // The first sentence covers three text nodes ("Short. ", the `<b>`'s, the rest), the second one.
+    await expect(run(highlightScript('sentences', [], targets))).resolves.toEqual({ mode: 'sentences', boxes: 4, unmatched: 0 });
+    records.push(...observer.takeRecords());
+    // One host of its own, last in <html>, its shadow root closed (unreachable from the page).
+    const host = document.documentElement.lastElementChild as HTMLElement;
+    expect(document.documentElement.children).toHaveLength(3);
+    expect(host.shadowRoot).toBeNull();
+    expect((dom.window as unknown as Record<string, OverlayState>)[OVERLAY_KEY]!.boxes()).toBe(4);
+    // The only change: that host appended to <html>. No attribute, style, text or other node changed.
+    expect(records.map((r) => [r.type, r.target, r.addedNodes.length, r.removedNodes.length])).toEqual([['childList', document.documentElement, 1, 0]]);
+    expect(records[0]!.addedNodes[0]).toBe(host);
+    expect(document.body.outerHTML).toBe(new JSDOM(before).window.document.body.outerHTML);
+
+    await expect(run(highlightScript('off'))).resolves.toEqual({ mode: 'off', boxes: 0 });
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+    expect(records.map((r) => [r.type, r.target, r.addedNodes.length, r.removedNodes.length])).toEqual([
+      ['childList', document.documentElement, 1, 0],
+      ['childList', document.documentElement, 0, 1],
+    ]);
+    expect(document.documentElement.outerHTML).toBe(before);
+    expect((dom.window as unknown as Record<string, unknown>)[OVERLAY_KEY]).toBeUndefined();
+  });
+
+  test('text-highlight-walk-budgeted', { timeout: 60_000 }, async () => {
+    // More text nodes than the walk reads: a sentence at the start is found, one past the cap is not.
+    const first = LONG(30);
+    const last = `${LONG(40)} last.`;
+    const body = `<p>${first}</p><div>${times(SNAPSHOT_LIMITS.maxTextNodes + 10, () => '<span>x</span>')}</div><p>${last}</p>`;
+    const { run } = scriptedPage(body);
+    const targets = [
+      { text: first, kind: 'long-sentence' as const },
+      { text: last, kind: 'long-sentence' as const },
+    ];
+    const started = performance.now();
+    const answer = await run(highlightScript('sentences', [], targets));
+    const took = performance.now() - started;
+    expect(answer).toEqual({ mode: 'sentences', boxes: 1, unmatched: 1 });
+    // The walk's work stays within HIGHLIGHT_BUDGET_MS; frames between its slices add their waits.
+    expect(took).toBeLessThan(HIGHLIGHT_BUDGET_MS * 4);
+  });
+});

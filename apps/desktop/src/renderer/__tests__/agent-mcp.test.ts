@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-// Spec: specs/agent-mcp.spec.ts (MCP_UNTRUSTED_LABEL, MCP_NO_SANDBOX_SENTENCE, MCP_STATUS_LABELS, MCP_TOKEN_MESSAGES)
-// Acceptance: specs/agent-mcp.feature.md (Settings)
+// Spec: specs/agent-mcp.spec.ts (MCP_UNTRUSTED_LABEL, MCP_NO_SANDBOX_SENTENCE, MCP_STATUS_LABELS, MCP_TOKEN_MESSAGES),
+// specs/agent-mcp-presets.spec.ts (MCP_PRESETS, MCP_PRESET_CATEGORIES, MCP_PRESET_WORDS, filterPresets, presetDraft, mcpPresetCategoriesInUse)
+// Acceptance: specs/agent-mcp.feature.md (Settings), specs/agent-mcp-presets.feature.md (Settings)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MCP_NO_SANDBOX_SENTENCE, MCP_SETTINGS_WORDS, MCP_TOKEN_MESSAGES, mcpSandboxSentence, type AgentMcpServerView } from '@app/specs/agent-mcp.spec';
+import { filterPresets, MCP_PRESET_CATEGORIES, MCP_PRESET_WORDS, MCP_PRESETS, mcpPresetCategoriesInUse, presetDraft, type McpCommandPreset } from '@app/specs/agent-mcp-presets.spec';
 import { card } from './agent-fixtures';
 
 const calls = vi.hoisted(() => ({
@@ -20,6 +22,7 @@ vi.mock('../agent-actions', () => ({ agentActions: calls }));
 const { AgentMcp } = await import('../components/agent/AgentMcp');
 const { AgentToolCard } = await import('../components/agent/AgentToolCard');
 const { mcpDraftToInput, emptyMcpDraft, mcpServerItems } = await import('../agent-view');
+const { presetFormDraft } = await import('../agent-mcp-presets');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -137,5 +140,111 @@ describe('MCP settings', () => {
     expect(host.querySelector('[data-testid="agent-tool-untrusted"]')!.textContent).toBe('Untrusted');
     render(createElement(AgentToolCard, { card: card() }));
     expect(host.querySelector('[data-testid="agent-tool-untrusted"]')).toBeNull();
+  });
+
+  test('mcp-catalogue-search-and-categories', async () => {
+    render(createElement(AgentMcp, { mcp: { available: true, servers: [] } }));
+    // Closed until asked for.
+    expect(host.querySelector('[data-testid="agent-mcp-catalogue"]')).toBeNull();
+    const open = host.querySelector<HTMLButtonElement>('[data-testid="agent-mcp-catalogue-open"]')!;
+    expect(open.textContent).toBe(MCP_PRESET_WORDS.open);
+    click(open);
+    expect(host.querySelector('[data-testid="agent-mcp-catalogue"]')).not.toBeNull();
+    // An "All" chip, then one per category.
+    const chips = all('agent-mcp-catalogue-chip');
+    // Only categories holding a shipped preset get a chip (SEO data is all deferred for now).
+    expect(chips.map((el) => el.textContent)).toEqual([MCP_PRESET_WORDS.all, ...mcpPresetCategoriesInUse().map((category) => category.label)]);
+    expect(chips.map((el) => el.dataset['category'])).not.toContain('seo-data');
+    expect(host.querySelector('[data-testid="agent-mcp-catalogue"] [role="group"]')!.getAttribute('aria-label')).toBe(MCP_PRESET_WORDS.categories);
+    expect(chips[0]!.getAttribute('aria-pressed')).toBe('true');
+    let rows = all('agent-mcp-preset');
+    expect(rows.map((el) => el.dataset['preset'])).toEqual(MCP_PRESETS.map((preset) => preset.id));
+    // Each row: name, category, description, token hint, and a setup-guide link the window's open handler takes.
+    for (const [index, preset] of MCP_PRESETS.entries()) {
+      const row = rows[index]!;
+      expect(row.textContent).toContain(preset.name);
+      expect(row.textContent).toContain(preset.description);
+      expect(row.textContent).toContain(preset.tokenHint);
+      expect(row.textContent).toContain(MCP_PRESET_CATEGORIES.find((category) => category.id === preset.category)!.label);
+      const link = row.querySelector<HTMLAnchorElement>('[data-testid="agent-mcp-preset-docs"]')!;
+      expect(link.getAttribute('href')).toBe(preset.docsUrl);
+      expect(link.target).toBe('_blank');
+      expect(link.rel).toBe('noreferrer');
+    }
+    // Search narrows the rows.
+    type(host.querySelector('[data-testid="agent-mcp-catalogue-search"]')!, 'linear');
+    rows = all('agent-mcp-preset');
+    expect(rows.map((el) => el.dataset['preset'])).toEqual(['linear']);
+    // A chip keeps one category (with the query still applied).
+    const analytics = all('agent-mcp-catalogue-chip').find((el) => el.dataset['category'] === 'analytics')!;
+    click(analytics);
+    expect(analytics.getAttribute('aria-pressed')).toBe('true');
+    expect(all('agent-mcp-preset')).toEqual([]);
+    expect(host.querySelector('[data-testid="agent-mcp-catalogue-empty"]')!.textContent).toBe(MCP_PRESET_WORDS.noMatch);
+    type(host.querySelector('[data-testid="agent-mcp-catalogue-search"]')!, '');
+    expect(all('agent-mcp-preset').map((el) => el.dataset['preset'])).toEqual(filterPresets('', 'analytics').map((preset) => preset.id));
+    // Nothing was saved or contacted by browsing.
+    for (const fn of Object.values(calls)) expect(fn).not.toHaveBeenCalled();
+    // Closing hides it again.
+    click(host.querySelector('[data-testid="agent-mcp-catalogue-open"]'));
+    expect(host.querySelector('[data-testid="agent-mcp-catalogue"]')).toBeNull();
+  });
+
+  test('mcp-preset-fills-the-form', async () => {
+    render(createElement(AgentMcp, { mcp: { available: true, servers: [] } }));
+    expect(host.querySelector('[data-testid="agent-mcp-preset-note"]')).toBeNull();
+    click(host.querySelector('[data-testid="agent-mcp-catalogue-open"]'));
+    const preset = MCP_PRESETS.find((item) => item.id === 'linear')!;
+    const row = all('agent-mcp-preset').find((el) => el.dataset['preset'] === preset.id)!;
+    click(row.querySelector('[data-testid="agent-mcp-preset-use"]'));
+    // The sheet closes; the form holds the preset's values; nothing is saved yet.
+    expect(host.querySelector('[data-testid="agent-mcp-catalogue"]')).toBeNull();
+    expect(host.querySelector<HTMLInputElement>('[data-testid="agent-mcp-field-name"]')!.value).toBe(preset.name);
+    expect(host.querySelector<HTMLSelectElement>('[data-testid="agent-mcp-field-transport"]')!.value).toBe('http');
+    expect(host.querySelector<HTMLInputElement>('[data-testid="agent-mcp-field-url"]')!.value).toBe(preset.transport === 'http' ? preset.url : '');
+    await flush();
+    for (const fn of Object.values(calls)) expect(fn).not.toHaveBeenCalled();
+    // The form says it is untrusted, and how to get the token (set after saving, never here).
+    const note = host.querySelector<HTMLElement>('[data-testid="agent-mcp-preset-note"]')!;
+    expect(note.querySelector('[data-testid="agent-mcp-untrusted"]')!.textContent).toBe('Untrusted');
+    expect(note.textContent).toContain(MCP_PRESET_WORDS.untrusted);
+    expect(note.textContent).toContain(MCP_PRESET_WORDS.filled);
+    expect(note.textContent).toContain(preset.tokenHint);
+    expect(host.querySelectorAll('input[type="password"]')).toHaveLength(0);
+    // "Add server" sends the preset's draft, exactly; no token is set.
+    click(host.querySelector('[data-testid="agent-mcp-save"]'));
+    await flush();
+    expect(calls.saveMcpServer).toHaveBeenCalledExactlyOnceWith(presetDraft(preset));
+    expect(calls.setMcpToken).not.toHaveBeenCalled();
+    expect(calls.startMcpServer).not.toHaveBeenCalled();
+    // Saved: the form and the note clear.
+    expect(host.querySelector<HTMLInputElement>('[data-testid="agent-mcp-field-name"]')!.value).toBe('');
+    expect(host.querySelector('[data-testid="agent-mcp-preset-note"]')).toBeNull();
+    // Editing the address or switching the kind clears the note: the form is no longer the preset's.
+    const presetNote = () => host.querySelector('[data-testid="agent-mcp-preset-note"]');
+    const choosePreset = () => {
+      click(host.querySelector('[data-testid="agent-mcp-catalogue-open"]'));
+      click(all('agent-mcp-preset').find((el) => el.dataset['preset'] === preset.id)!.querySelector('[data-testid="agent-mcp-preset-use"]'));
+      expect(presetNote()).not.toBeNull();
+    };
+    choosePreset();
+    // Renaming keeps it (the same server under another name).
+    type(host.querySelector('[data-testid="agent-mcp-field-name"]')!, 'My Linear');
+    expect(presetNote()).not.toBeNull();
+    type(host.querySelector('[data-testid="agent-mcp-field-url"]')!, 'https://mcp.example.com/mcp');
+    expect(presetNote()).toBeNull();
+    choosePreset();
+    const kind = host.querySelector<HTMLSelectElement>('[data-testid="agent-mcp-field-transport"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(kind, 'stdio');
+      kind.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(presetNote()).toBeNull();
+    // A command-shaped preset fills the command fields, names with empty values, and the network box.
+    const command: McpCommandPreset = { id: 'example', name: 'Example', category: 'work', description: 'Example. Its own dependencies are not pinned.', transport: 'stdio', command: 'npx', args: ['-y', 'example@1.0.0'], needsNetwork: true, envNames: ['EXAMPLE_TOKEN'], auth: 'env', tokenHint: 'From your account.', docsUrl: 'https://example.com/' };
+    const form = presetFormDraft(command);
+    expect(form).toEqual({ ...emptyMcpDraft(), name: 'Example', transport: 'stdio', command: 'npx', args: '-y\nexample@1.0.0', allowNetwork: true, env: [{ name: 'EXAMPLE_TOKEN', value: '' }] });
+    expect(mcpDraftToInput(form)).toEqual(presetDraft(command));
+    for (const item of MCP_PRESETS) expect(mcpDraftToInput(presetFormDraft(item)), item.id).toEqual(presetDraft(item));
   });
 });

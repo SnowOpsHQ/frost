@@ -3,7 +3,7 @@
 Spec: `specs/agent-page-tools.spec.ts` (`AGENT_PAGE_WORLD_ID`, `AGENT_JS_WORLD_ID`,
 `NON_AGENT_WORLD_IDS`, `PAGE_SCRIPT_TIMEOUT_MS`, `NAVIGATE_SETTLE_TIMEOUT_MS`, `CLICK_LIMITS`,
 `CLICKABLE_SELECTOR`, `PAGE_TEXT_DEFAULT_CHARS`, `EXECUTE_JS_LIMITS`, `EXECUTE_JS_VAULT_KEY`, `executeMarkKey`,
-`PAGE_AUDIT_LIMITS`, `PAGE_TITLE_MAX_CHARS`, `pageKeyOf`, `pageSource`), `specs/agent-tools.spec.ts`
+`PAGE_AUDIT_LIMITS` (with `maxSocialFields`, `maxDifficultSentencesForModel`), `PAGE_DATA_TRIM_ORDER`, `PAGE_TITLE_MAX_CHARS`, `pageKeyOf`, `pageSource`), `specs/agent-tools.spec.ts`
 (`EXECUTE_JS_TIMEOUT_MS`, `EXECUTE_JS_MAX_RESULT_BYTES`, `TOOL_RESULT_MAX_CHARS`,
 `AGENT_TOOL_INPUT_LIMITS`), `specs/agent-approvals.spec.ts` (`runTargetFor`, `pageUrlOf`,
 `TOOL_RUN_VIAS`). Phase 5 Task 5 (`docs/plans/phase-5-ai-agent.md`, with the requirements Task 4's
@@ -87,6 +87,17 @@ named test.
 - A pending or unavailable audit is a plain data answer; no tab is `unavailable` → `page-audit-pending-and-unavailable`
 - `page_data` answers the page's facts (title, meta, canonical, robots, outline, link counts, images
   without alt, schema types, hreflang, indexability, render profile) → `page-data-facts`
+- `page_data` also lists `social` (every social sharing tag, each cut to `maxFactChars`, `null` when
+  absent) → `page-data-social-tags`; `content` (language and where it came from, words, readability
+  formula, score and band or why it is not available, sentence statistics, and at most
+  `maxDifficultSentencesForModel` difficult-sentence excerpts) → `page-data-content-summary`; and
+  `javascript` (the served-versus-rendered status and verdict and how many fields differ; `pending` and
+  `unavailable` said plainly) → `page-data-javascript-verdict`. The three stay within
+  `PAGE_AUDIT_LIMITS.budgetChars` → `page-data-still-within-budget`
+- `page_data` fits `budgetChars` for any page, JSON escapes counted: it cuts the lowest-value list
+  first (`PAGE_DATA_TRIM_ORDER`: the heading outline, hreflang entries, difficult-sentence excerpts,
+  social fields from the end, internal links, schema types, indexability reasons), each until the
+  output fits or it is empty, and says what it left out → `page-data-trim-order`
 - The audit tools refuse an audit or a tab of another origin, another page when approved, and a
   `null` expectation (`expired`) → `audit-tools-refuse-other-page`
 - `page_text` runs its script in the agent page world, answers the text cut at `maxChars` (default

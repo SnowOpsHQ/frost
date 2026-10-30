@@ -16,8 +16,9 @@ import { createMcpManager, createMcpSecrets, createMemoryMcpStore, nodeMcpDeps, 
 import { resolveAgentPorts, type AgentPorts } from './ports';
 import { createAgent, type AgentElectron } from './index';
 import { createAgentSession, type AgentSession } from './session';
+import { createSkillFiles, type SkillFileDialogs, type SkillFilesFs } from './skill-files';
 import { createBrowserPageToolRunner, type PageToolsBrowser, type PageToolsWebContents } from './tools';
-import { createMemorySkillsStore, createUserSkills, type AgentSkillsStore } from './user-skills';
+import { createMemorySkillsStore, createUserSkills, type AgentSkillPrefsStore, type AgentSkillsStore } from './user-skills';
 
 // The agent's main-side composition for the IPC (Phase 5 Task 6a; acceptance
 // `specs/agent-session.feature.md`, Wiring): `createAgent` (host, key store, proxy, settings,
@@ -32,10 +33,11 @@ import { createMemorySkillsStore, createUserSkills, type AgentSkillsStore } from
 // Task 9 (acceptance `specs/agent-data.feature.md`, Wiring): the stored chats (`sessionStore.agentChats`;
 // loaded and pruned at startup, pruned daily), the user's skills (`sessionStore.agentSkills`, composed
 // after the built-ins), and main's own dialogs: "Delete all chats" asks first, and an export is
-// written only to the file the user chose in the save dialog.
+// written only to the file the user chose in the save dialog. Phase 8 Task 6: skills files
+// (`./skill-files`), exported and imported through main's own save and open dialogs.
 
-/** main's own dialogs for the agent's data (`dialogs.ts` with Electron; fakes in tests). */
-export interface AgentDialogs {
+/** main's own dialogs for the agent's data (`dialogs.ts` with Electron; fakes in tests), and the skills files' (`SkillFileDialogs`). */
+export interface AgentDialogs extends SkillFileDialogs {
   /** Asks before every chat is deleted: `true` only when the user confirmed. */
   confirmDeleteAllChats(): Promise<boolean>;
   /** Asks before a retention change deletes `chats` saved chats: `true` only when the user confirmed. */
@@ -66,9 +68,9 @@ export interface AgentServiceDeps {
   readonly webContents: PageToolsWebContents;
   /**
    * The browser-session database: `agentGrants` (the standing grants' table), and Task 9's
-   * `agentChats` and `agentSkills` (each in memory when absent: nothing persists).
+   * `agentChats`, `agentSkills` and `agentSkillPrefs` (each in memory when absent: nothing persists).
    */
-  readonly sessionStore: { readonly agentGrants: AgentGrantsStore; readonly agentChats?: AgentChatsStore; readonly agentSkills?: AgentSkillsStore; readonly agentMcp?: McpServersStore };
+  readonly sessionStore: { readonly agentGrants: AgentGrantsStore; readonly agentChats?: AgentChatsStore; readonly agentSkills?: AgentSkillsStore; readonly agentSkillPrefs?: AgentSkillPrefsStore; readonly agentMcp?: McpServersStore };
   /** Main's build directory (`__dirname`): the runtime's bundle is beside main's. */
   readonly buildDir: string;
   /** frost's own skills (default: the built-ins); the user's are composed after them (Task 9). */
@@ -77,6 +79,8 @@ export interface AgentServiceDeps {
   readonly dialogs?: AgentDialogs;
   /** Writes an export's text to the file the user chose (default: `fs.writeFile`, owner-only). */
   readonly writeExport?: (file: string, text: string) => Promise<void>;
+  /** The skills files' reads and writes (Phase 8 Task 6; default: `node:fs/promises`). */
+  readonly skillFilesFs?: SkillFilesFs;
   readonly now?: () => number;
   /** The daily prune's timer (default: the global `setInterval`, unref'd). */
   readonly setInterval?: (callback: () => void, ms: number) => unknown;
@@ -103,7 +107,14 @@ export interface AgentServiceDeps {
   readonly log?: (line: string) => void;
 }
 
-const NO_DIALOGS: AgentDialogs = { confirmDeleteAllChats: async () => false, confirmRetentionChange: async () => false, chooseExportPath: async () => null, confirmMcpStart: async () => false };
+const NO_DIALOGS: AgentDialogs = {
+  confirmDeleteAllChats: async () => false,
+  confirmRetentionChange: async () => false,
+  chooseExportPath: async () => null,
+  confirmMcpStart: async () => false,
+  chooseSkillExportPath: async () => null,
+  chooseSkillImportFile: async () => null,
+};
 
 export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
   const log = deps.log ?? (() => undefined);
@@ -111,7 +122,17 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
   const dialogs = deps.dialogs ?? NO_DIALOGS;
   const writeExport = deps.writeExport ?? ((file: string, text: string) => fs.writeFile(file, text, { encoding: 'utf8', mode: 0o600 }));
   const history = createChatHistory({ store: deps.sessionStore.agentChats ?? createMemoryChatsStore(), now, log });
-  const userSkills = createUserSkills({ store: deps.sessionStore.agentSkills ?? createMemorySkillsStore(), builtins: deps.skills ?? createBuiltinSkillRegistry(), now, log });
+  // Each in memory when the database is absent (nothing persists); one memory store holds both, so a re-key moves the switch.
+  const memorySkills = createMemorySkillsStore();
+  const userSkills = createUserSkills({ store: deps.sessionStore.agentSkills ?? memorySkills, prefs: deps.sessionStore.agentSkillPrefs ?? memorySkills, builtins: deps.skills ?? createBuiltinSkillRegistry(), now, log });
+  // Skills files go only to and from the file the user chose in main's own dialogs.
+  const skillFiles = createSkillFiles({
+    skills: userSkills,
+    dialogs: { chooseSkillExportPath: (name) => dialogs.chooseSkillExportPath(name), chooseSkillImportFile: () => dialogs.chooseSkillImportFile() },
+    fs: deps.skillFilesFs ?? fs,
+    now,
+    log,
+  });
   /** An export: main's save dialog first; the text is built and written only to the file chosen there. */
   const exportChat = async (chat: ChatSnapshot, format: ChatExportFormat): Promise<ChatExportResult> => {
     let file: string | null = null;
@@ -199,6 +220,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     confirmDeleteAllChats: () => dialogs.confirmDeleteAllChats(),
     confirmRetentionChange: (retention, chats) => dialogs.confirmRetentionChange(retention, chats),
     exportChat,
+    skillFiles,
     scripted: e2eAgentScript !== null,
     mcp,
     chatgpt: agent.chatgpt,

@@ -6,11 +6,17 @@ import {
   AGENT_KEY_UNSET_LABEL,
   AGENT_MCP_APPROVAL_NOTE,
   AGENT_MODEL_LABELS,
+  AGENT_MODEL_PROVIDER_LABELS,
   AGENT_PANEL_STORAGE_KEY,
+  AGENT_REASONING_HINT,
+  AGENT_REASONING_LABELS,
+  AGENT_REASONING_OPENAI_OFF_LABEL,
+  AGENT_REASONING_UNAVAILABLE,
   AGENT_ROUTE_LABELS,
   AGENT_SET_KEY_MESSAGES,
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
+import { isReasoningEffort, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
 import { CREDENTIAL_SLOTS, routeCredentialSlot, type CredentialSlot } from '@app/specs/agent-proxy.spec';
 import {
   CHATGPT_SIGN_IN_ERROR_MESSAGES,
@@ -53,15 +59,17 @@ import type {
   AgentState,
   AgentToolCardView,
 } from '@app/specs/agent-session.spec';
-import { SKILL_ACTING_TOOLS, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_NAMES, SKILL_USER_MARK, SKILL_WARNINGS, templateSlots, type SkillInputSlot, type SkillSlotName } from '@app/specs/skills.spec';
+import { SKILL_ACTING_TOOLS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_NAMES, SKILL_USER_GROUP_LABEL, SKILL_USER_MARK, SKILL_WARNINGS, templateSlots, type SkillInputSlot, type SkillSlotName } from '@app/specs/skills.spec';
 import {
   AGENT_TOOL_NAMES,
   AGENT_TOOLS,
   ALLOWED_MODEL_IDS,
+  MODEL_PROVIDERS,
   MODEL_ROUTES,
   UNSAFE_INPUT_CHARS,
   isAllowedModelId,
   isMcpToolName,
+  modelProvider,
   routeModelId,
   type AgentModelId,
   type AgentToolName,
@@ -75,6 +83,7 @@ import {
   CHAT_RETENTION_LABELS,
   CHAT_RETENTIONS,
   DEFAULT_CHAT_RETENTION,
+  filterSkills,
   SKILL_BUILTIN_LABEL,
   SKILL_USER_LABEL,
   type AgentDeleteAllChatsResult,
@@ -315,6 +324,66 @@ export function modelOptions(setup: Pick<AgentSetupView, 'allowedModels'> & Part
   const listed = setup.chatgpt?.models ?? [];
   return setup.allowedModels.map((value) => ({ value, label: modelLabel(value, listed) }));
 }
+
+/** One model select group: a provider's heading (`null` for a ChatGPT account's list) and its models. */
+export interface ModelOptionGroup {
+  readonly label: string | null;
+  readonly options: readonly { readonly value: AgentModelId; readonly label: string }[];
+}
+
+/**
+ * The model choices grouped by provider (Phase 8 Task 7): exactly `modelOptions`, one group per
+ * provider that has a model, in `MODEL_PROVIDERS` order under `AGENT_MODEL_PROVIDER_LABELS`, each in
+ * the setup's order; a ChatGPT account's models (no catalogue provider) as one unlabelled group.
+ */
+export function modelOptionGroups(setup: Pick<AgentSetupView, 'allowedModels'> & Partial<Pick<AgentSetupView, 'chatgpt'>>): readonly ModelOptionGroup[] {
+  const options = modelOptions(setup);
+  const groups: ModelOptionGroup[] = [];
+  for (const provider of MODEL_PROVIDERS) {
+    const members = options.filter((option) => modelProvider(option.value) === provider);
+    if (members.length > 0) groups.push({ label: AGENT_MODEL_PROVIDER_LABELS[provider], options: members });
+  }
+  const other = options.filter((option) => modelProvider(option.value) === null);
+  if (other.length > 0) groups.push({ label: null, options: other });
+  return groups;
+}
+
+/** A level's name in the reasoning select: on an OpenAI model `off` reads "Minimal" (what it is sent as). */
+export function reasoningLabel(level: ReasoningEffort, modelId: AgentModelId): string {
+  return level === 'off' && modelProvider(modelId) === 'openai' ? AGENT_REASONING_OPENAI_OFF_LABEL : AGENT_REASONING_LABELS[level];
+}
+
+/** The reasoning select as the settings paint it (Phase 8 Task 9). */
+export interface ReasoningSelectModel {
+  /** The level in effect (main reduced a stored level the model lacks to `auto`). */
+  readonly value: ReasoningEffort;
+  readonly options: readonly { readonly value: ReasoningEffort; readonly label: string }[];
+  /** Only `auto` to choose: the select is shown but cannot be changed. */
+  readonly disabled: boolean;
+  /** Why only `auto` is offered, when that is so. */
+  readonly unavailable: string | null;
+  readonly hint: string;
+}
+
+/**
+ * The reasoning select for the setup's model: exactly the levels main offers it
+ * (`setup.reasoning.levels`, `auto` first), showing the level in effect. Read from the setup on every
+ * render, so switching the model changes the choices at once. A level the list lacks reads `auto`.
+ */
+export function reasoningSelect(setup: Pick<AgentSetupView, 'modelId' | 'reasoning'>): ReasoningSelectModel {
+  const levels: readonly ReasoningEffort[] = setup.reasoning.levels.length > 0 ? setup.reasoning.levels : ['auto'];
+  const onlyAuto = levels.every((level) => level === 'auto');
+  return {
+    value: levels.includes(setup.reasoning.effort) ? setup.reasoning.effort : 'auto',
+    options: levels.map((value) => ({ value, label: reasoningLabel(value, setup.modelId) })),
+    disabled: onlyAuto,
+    unavailable: onlyAuto ? AGENT_REASONING_UNAVAILABLE : null,
+    hint: AGENT_REASONING_HINT,
+  };
+}
+
+/** What a reasoning select value is: one of the levels, else `null` (a label or a provider's value is no choice). */
+export const reasoningChoice = (value: string): ReasoningEffort | null => (isReasoningEffort(value) ? value : null);
 
 /**
  * The model to keep when switching to `route`: the current one if it serves it, else its first. On
@@ -614,9 +683,25 @@ export function skillDisplayName(skill: Pick<AgentSkillView, 'name' | 'builtin'>
   return skill.builtin ? skill.name : `${skill.name} (${SKILL_USER_MARK})`;
 }
 
-/** The picker's choices: "no skill" (a typed message), then main's skills in order. */
-export function skillOptions(skills: readonly AgentSkillView[]): readonly { readonly value: string; readonly label: string }[] {
-  return [{ value: '', label: 'Write a message' }, ...skills.map((skill) => ({ value: skill.id, label: skillDisplayName(skill) }))];
+/** One picker group: a heading (`null` for the leading, unlabelled choice) and its options. */
+export interface SkillOptionGroup {
+  readonly label: string | null;
+  readonly options: readonly { readonly value: string; readonly label: string }[];
+}
+
+/**
+ * The picker's choices (Phase 8 Task 4): "no skill" (a typed message) on its own, then one group per
+ * category that has a skill, in `SKILL_CATEGORIES` order, then the user's own skills under "Your
+ * skills". Within a group, main's order; a group with no skill is not shown.
+ */
+export function skillOptionGroups(skills: readonly AgentSkillView[]): readonly SkillOptionGroup[] {
+  const groups: SkillOptionGroup[] = [{ label: null, options: [{ value: '', label: 'Write a message' }] }];
+  const headings: readonly (readonly [AgentSkillView['category'], string])[] = [...SKILL_CATEGORIES.map((category) => [category, SKILL_CATEGORY_LABELS[category]] as const), ['yours', SKILL_USER_GROUP_LABEL]];
+  for (const [category, label] of headings) {
+    const members = skills.filter((skill) => skill.category === category);
+    if (members.length > 0) groups.push({ label, options: members.map((skill) => ({ value: skill.id, label: skillDisplayName(skill) })) });
+  }
+  return groups;
 }
 
 const UNSAFE_ALL = new RegExp(UNSAFE_INPUT_CHARS.source, 'gu');
@@ -626,6 +711,22 @@ function cutText(text: string, max: number): string {
   if (text.length <= max) return text;
   const last = text.charCodeAt(max - 1);
   return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
+}
+
+/** The skills the user has switched on (Phase 8 Task 5): all the picker, the palette and a run may use, in main's order. */
+export function enabledSkills<T extends Pick<AgentSkillView, 'enabled'>>(skills: readonly T[]): T[] {
+  return skills.filter((skill) => skill.enabled);
+}
+
+/**
+ * The skills the composer's picker offers: the enabled ones that match the search (`filterSkills`),
+ * in main's order. The skill already picked stays offered while the search moves on, so the picker
+ * keeps showing it; a switched-off one never does.
+ */
+export function pickerSkills(skills: readonly AgentSkillView[], query: string, pickedId: string): AgentSkillView[] {
+  const enabled = enabledSkills(skills);
+  const matching = new Set(filterSkills(enabled, query).map((skill) => skill.id));
+  return enabled.filter((skill) => matching.has(skill.id) || skill.id === pickedId);
 }
 
 /** The skill picked (`''`: none), or `null` when main no longer lists it. */
@@ -698,10 +799,12 @@ export interface SkillListItem {
   readonly description: string;
   readonly builtin: boolean;
   readonly badge: string;
+  /** The switch's position (Phase 8 Task 5). */
+  readonly enabled: boolean;
 }
 
 export function skillListItems(skills: readonly AgentSkillView[]): readonly SkillListItem[] {
-  return skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, builtin: skill.builtin, badge: skill.builtin ? SKILL_BUILTIN_LABEL : SKILL_USER_LABEL }));
+  return skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, builtin: skill.builtin, badge: skill.builtin ? SKILL_BUILTIN_LABEL : SKILL_USER_LABEL, enabled: skill.enabled }));
 }
 
 /** The editor's working copy (`AgentSkillDraft`, mutable by replacing it). */

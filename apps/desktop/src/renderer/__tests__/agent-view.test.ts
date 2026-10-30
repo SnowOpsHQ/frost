@@ -1,24 +1,33 @@
-// Spec: specs/agent-panel.spec.ts (AGENT_* words and layout), specs/agent-session.spec.ts (AgentState views,
-// MODEL_CONTEXT_WINDOWS, EXECUTE_JS_APPROVAL_NOTE)
-// Acceptance: specs/agent-panel.feature.md (View model), specs/skills.feature.md (skill-view-helpers)
+// Spec: specs/agent-panel.spec.ts (AGENT_* words and layout, AGENT_MODEL_PROVIDER_LABELS, AGENT_REASONING_*), specs/agent-reasoning.spec.ts
+// (MODEL_REASONING_SUPPORT, REASONING_EFFORTS), specs/agent-session.spec.ts
+// (AgentState views, MODEL_CONTEXT_WINDOWS, EXECUTE_JS_APPROVAL_NOTE), specs/agent-tools.spec.ts (MODEL_PROVIDERS, byProvider)
+// Acceptance: specs/agent-panel.feature.md (View model: reasoning-options-follow-the-model, reasoning-auto-only-explained), specs/skills.feature.md (skill-view-helpers)
 import { describe, expect, test } from 'vitest';
 import {
   AGENT_ANSWER_MESSAGES,
   AGENT_KEY_PROTECTION_MESSAGES,
   AGENT_MCP_APPROVAL_NOTE,
+  AGENT_MODEL_LABELS,
+  AGENT_MODEL_PROVIDER_LABELS,
+  AGENT_REASONING_HINT,
+  AGENT_REASONING_LABELS,
+  AGENT_REASONING_OPENAI_OFF_LABEL,
+  AGENT_REASONING_UNAVAILABLE,
   AGENT_SET_KEY_MESSAGES,
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
-import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS } from '@app/specs/agent-session.spec';
-import { ALLOWED_MODEL_IDS } from '@app/specs/agent-tools.spec';
-import { SKILL_SLOT_MAX_CHARS, SKILL_WARNINGS } from '@app/specs/skills.spec';
+import { MODEL_REASONING_SUPPORT, REASONING_EFFORTS, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
+import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS, type AgentSkillView } from '@app/specs/agent-session.spec';
+import { ALLOWED_MODEL_IDS, byProvider, GATEWAY_ONLY_PROVIDERS, MODEL_PROVIDERS, routeModelId } from '@app/specs/agent-tools.spec';
+import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_SLOT_MAX_CHARS, SKILL_USER_GROUP_LABEL, SKILL_WARNINGS } from '@app/specs/skills.spec';
 import { SKILLS } from './agent-fixtures';
 import {
   approvalTitle,
   pickedSkill,
+  pickerSkills,
   skillDisplayName,
   skillDraftWarnings,
-  skillOptions,
+  skillOptionGroups,
   skillRequest,
   skillRunChatId,
   userMessageSkillLabel,
@@ -35,9 +44,12 @@ import {
   isolationLine,
   keySlotsFor,
   modelForRoute,
+  modelOptionGroups,
   modelOptions,
   protectionMessage,
   railBadge,
+  reasoningChoice,
+  reasoningSelect,
   runningChatId,
   setKeyMessage,
   setupChecklist,
@@ -177,6 +189,100 @@ describe('agent panel view model', () => {
     expect(keySlotsFor('byok-openai')).toEqual(['openai', 'anthropic', 'gateway']);
   });
 
+  test('model-options-grouped-by-provider', () => {
+    // The gateway serves every catalogue model: one group per provider, in `MODEL_PROVIDERS` order.
+    const gateway = setup({ allowedModels: [...ALLOWED_MODEL_IDS] });
+    const groups = modelOptionGroups(gateway);
+    expect(groups.map((group) => group.label)).toEqual(MODEL_PROVIDERS.map((provider) => AGENT_MODEL_PROVIDER_LABELS[provider]));
+    MODEL_PROVIDERS.forEach((provider, i) => {
+      expect(groups[i]!.options).toEqual(ALLOWED_MODEL_IDS.filter(byProvider(provider)).map((id) => ({ value: id, label: AGENT_MODEL_LABELS[id] })));
+    });
+    // The same choices as the flat list, each once.
+    expect(groups.flatMap((group) => group.options)).toEqual(modelOptions(gateway));
+    // A key route: only its provider's group, so no Gemini or Grok model is offered there.
+    for (const route of ['byok-anthropic', 'byok-openai'] as const) {
+      const keyRoute = modelOptionGroups(setup({ route, allowedModels: ALLOWED_MODEL_IDS.filter((id) => routeModelId(route, id) !== null) }));
+      expect(keyRoute.map((group) => group.label), route).toEqual([AGENT_MODEL_PROVIDER_LABELS[route === 'byok-anthropic' ? 'anthropic' : 'openai']]);
+      for (const provider of GATEWAY_ONLY_PROVIDERS) {
+        for (const id of ALLOWED_MODEL_IDS.filter(byProvider(provider))) {
+          expect(keyRoute.flatMap((group) => group.options).some((option) => option.value === id), `${route} ${id}`).toBe(false);
+          // Switching to a key route from a Gemini or Grok model picks the route's first model.
+          expect(modelForRoute(route, id)).toBe(ALLOWED_MODEL_IDS.find((other) => routeModelId(route, other) !== null));
+        }
+      }
+    }
+    // A gateway-only model stays chosen on the gateway.
+    for (const provider of GATEWAY_ONLY_PROVIDERS) for (const id of ALLOWED_MODEL_IDS.filter(byProvider(provider))) expect(modelForRoute('gateway', id)).toBe(id);
+    // The ChatGPT plan's models: one unlabelled group, by the account's names, in its order.
+    const models = [
+      { id: 'chatgpt/gpt-5.5' as const, label: 'GPT-5.5' },
+      { id: 'chatgpt/gpt-5.5-mini' as const, label: 'GPT-5.5 mini' },
+    ];
+    const plan = setup({ route: 'chatgpt', modelId: models[0]!.id, allowedModels: models.map((model) => model.id), chatgpt: { ...setup().chatgpt, models } });
+    expect(modelOptionGroups(plan)).toEqual([{ label: null, options: [{ value: 'chatgpt/gpt-5.5', label: 'GPT-5.5' }, { value: 'chatgpt/gpt-5.5-mini', label: 'GPT-5.5 mini' }] }]);
+    // Nothing to choose: no group at all.
+    expect(modelOptionGroups(setup({ allowedModels: [] }))).toEqual([]);
+  });
+
+  test('reasoning-options-follow-the-model', () => {
+    const view = (modelId: (typeof ALLOWED_MODEL_IDS)[number], effort: ReasoningEffort = 'auto') =>
+      reasoningSelect(setup({ modelId, reasoning: { effort, levels: MODEL_REASONING_SUPPORT[modelId] } }));
+    // Exactly the levels main offers for the model, in its order, by the spec's words.
+    expect(view('anthropic/claude-sonnet-5-5').options).toEqual([
+      { value: 'auto', label: AGENT_REASONING_LABELS.auto },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+    ]);
+    expect(AGENT_REASONING_LABELS.auto).toBe("Auto (the model's default)");
+    // Gemini 3.8 Flash has no Medium; Gemini 4 Argon does.
+    expect(view('google/gemini-3.8-flash').options.map((option) => option.value)).toEqual(['auto', 'low', 'high']);
+    expect(view('google/gemini-4-argon').options.map((option) => option.value)).toEqual(['auto', 'low', 'medium', 'high']);
+    // On OpenAI models Off reads "Minimal"; on every other provider that offers it, "Off".
+    expect(AGENT_REASONING_OPENAI_OFF_LABEL).toBe('Minimal');
+    expect(view('openai/gpt-5').options.map((option) => option.label)).toEqual([AGENT_REASONING_LABELS.auto, 'Minimal', 'Low', 'Medium', 'High']);
+    expect(view('openai/gpt-5-mini').options.find((option) => option.value === 'off')!.label).toBe('Minimal');
+    expect(reasoningSelect(setup({ modelId: 'google/gemini-4-argon', reasoning: { effort: 'off', levels: ['auto', 'off', 'low'] } })).options.find((option) => option.value === 'off')!.label).toBe('Off');
+    // The select shows the level in effect, which main has already reduced to Auto where the stored one does not apply.
+    expect(view('anthropic/claude-opus-5-5', 'high').value).toBe('high');
+    expect(view('spacexai/grok-4.7').value).toBe('auto');
+    // Switching the model changes the offered levels at once: they are read from the new setup.
+    const before = reasoningSelect(setup({ modelId: 'openai/gpt-5', reasoning: { effort: 'off', levels: MODEL_REASONING_SUPPORT['openai/gpt-5'] } }));
+    const after = reasoningSelect(setup({ modelId: 'anthropic/claude-sonnet-5-5', reasoning: { effort: 'auto', levels: MODEL_REASONING_SUPPORT['anthropic/claude-sonnet-5-5'] } }));
+    expect(before.options.map((option) => option.value)).toContain('off');
+    expect(after.options.map((option) => option.value)).not.toContain('off');
+    expect(after.value).toBe('auto');
+    // A level the setup lists the select does not hold reads Auto; a setup with no levels offers Auto alone.
+    expect(reasoningSelect(setup({ reasoning: { effort: 'high', levels: ['auto', 'low'] } })).value).toBe('auto');
+    expect(reasoningSelect(setup({ reasoning: { effort: 'auto', levels: [] } })).options).toEqual([{ value: 'auto', label: AGENT_REASONING_LABELS.auto }]);
+    // The hint is one line about cost, always the same.
+    expect(AGENT_REASONING_HINT).toBe("Higher levels are slower and use more of your key's or plan's allowance.");
+    expect(AGENT_REASONING_HINT).not.toContain('\n');
+    expect(view('anthropic/claude-sonnet-5-5').hint).toBe(AGENT_REASONING_HINT);
+    // A choice is one of the levels and nothing else: not a label, a provider's value or another case.
+    for (const level of REASONING_EFFORTS) expect(reasoningChoice(level)).toBe(level);
+    for (const value of ['', 'Auto', 'minimal', 'Minimal', 'max', 'xhigh', 'Low ', "Auto (the model's default)"]) expect(reasoningChoice(value), value).toBeNull();
+  });
+
+  test('reasoning-auto-only-explained', () => {
+    // A model that offers only Auto (a Grok model; a ChatGPT model with no advertised levels): disabled, with the reason.
+    for (const modelId of ['spacexai/grok-4.7', 'spacexai/grok-4.20-non-reasoning'] as const) {
+      const only = reasoningSelect(setup({ modelId, reasoning: { effort: 'auto', levels: MODEL_REASONING_SUPPORT[modelId] } }));
+      expect(only.disabled, modelId).toBe(true);
+      expect(only.value).toBe('auto');
+      expect(only.options).toEqual([{ value: 'auto', label: AGENT_REASONING_LABELS.auto }]);
+      expect(only.unavailable).toBe(AGENT_REASONING_UNAVAILABLE);
+    }
+    const plan = reasoningSelect(setup({ route: 'chatgpt', modelId: 'chatgpt/gpt-5.5', reasoning: { effort: 'auto', levels: ['auto'] } }));
+    expect(plan.disabled).toBe(true);
+    expect(plan.unavailable).toBe(AGENT_REASONING_UNAVAILABLE);
+    // Any model with a level to choose: enabled, and no reason said.
+    const choosable = reasoningSelect(setup());
+    expect(choosable.disabled).toBe(false);
+    expect(choosable.unavailable).toBeNull();
+    expect(AGENT_REASONING_UNAVAILABLE).toMatch(/\.$/);
+  });
+
   test('composer-keys', () => {
     expect(composerKey({ key: 'Enter', shiftKey: false })).toBe('send');
     expect(composerKey({ key: 'Enter', shiftKey: true })).toBeNull();
@@ -209,9 +315,45 @@ describe('agent panel view model', () => {
     expect(railBadge(state({ running: true, approval: { request: approval(), queued: 0 } }))).toBe('approval');
   });
 
+  test('skill-picker-grouped-by-category', () => {
+    const view = (id: string, category: AgentSkillView['category']): AgentSkillView => ({ id, name: id, description: '', inputs: [], builtin: category !== 'yours', category, enabled: true });
+    // Listed in main's order, which is not the picker's: the picker regroups.
+    const listed = [view('mine-one', 'yours'), view('find-queries', 'search'), view('check-tags', 'technical'), view('audit', 'page'), view('brief', 'content'), view('check-links', 'technical'), view('mine-two', 'yours')];
+    const groups = skillOptionGroups(listed);
+    expect(groups.map((group) => group.label)).toEqual([null, ...SKILL_CATEGORIES.map((category) => SKILL_CATEGORY_LABELS[category]), SKILL_USER_GROUP_LABEL]);
+    expect(groups.map((group) => group.options.map((option) => option.value))).toEqual([[''], ['audit'], ['brief'], ['check-tags', 'check-links'], ['find-queries'], ['mine-one', 'mine-two']]);
+    // The user's own skills come last and keep their mark; the first choice is never grouped.
+    expect(groups.at(-1)!.options.map((option) => option.label)).toEqual(['mine-one (Your skill)', 'mine-two (Your skill)']);
+    expect(groups[0]).toEqual({ label: null, options: [{ value: '', label: 'Write a message' }] });
+    // A category with no skill, and "Your skills" with none, are left out.
+    expect(skillOptionGroups([view('audit', 'page')]).map((group) => group.label)).toEqual([null, SKILL_CATEGORY_LABELS.page]);
+    // Every built-in lands in a labelled group of its category.
+    const pack = BUILTIN_SKILL_IDS.map((id) => view(id, BUILTIN_SKILL_CATEGORY[id]));
+    const packGroups = skillOptionGroups(pack);
+    expect(packGroups.flatMap((group) => group.options.map((option) => option.value)).filter((value) => value !== '')).toHaveLength(BUILTIN_SKILL_IDS.length);
+    expect(packGroups.map((group) => group.label)).toEqual([null, ...SKILL_CATEGORIES.map((category) => SKILL_CATEGORY_LABELS[category])]);
+  });
+
+  test('skill-picker-lists-enabled-only-and-searches', () => {
+    const off = { ...SKILLS[1]!, enabled: false };
+    const listed = [SKILLS[0]!, off, SKILLS[2]!];
+    // A switched-off skill is not offered; main's order is kept.
+    expect(pickerSkills(listed, '', '').map((skill) => skill.id)).toEqual(['audit-this-page', 'plain-skill']);
+    expect(skillOptionGroups(pickerSkills(listed, '', '')).flatMap((group) => group.options.map((option) => option.value))).toEqual(['', 'audit-this-page', 'plain-skill']);
+    // The search filters what is offered (name, description or id; folded).
+    expect(pickerSkills(listed, '  PLAIN ', '').map((skill) => skill.id)).toEqual(['plain-skill']);
+    expect(pickerSkills(listed, 'summarise', '').map((skill) => skill.id)).toEqual(['audit-this-page']);
+    expect(pickerSkills(listed, 'nothing like it', '')).toEqual([]);
+    // The skill picked stays offered while the search moves on, but a switched-off one does not.
+    expect(pickerSkills(listed, 'plain', 'audit-this-page').map((skill) => skill.id)).toEqual(['audit-this-page', 'plain-skill']);
+    expect(pickerSkills(listed, '', 'rewrite-title-meta').map((skill) => skill.id)).toEqual(['audit-this-page', 'plain-skill']);
+    // The picked skill is looked up among the offered ones only.
+    expect(pickedSkill(pickerSkills(listed, '', ''), 'rewrite-title-meta')).toBeNull();
+  });
+
   test('skill-view-helpers', () => {
-    expect(skillOptions([])).toEqual([{ value: '', label: 'Write a message' }]);
-    expect(skillOptions(SKILLS).map((option) => option.value)).toEqual(['', 'audit-this-page', 'rewrite-title-meta', 'plain-skill']);
+    expect(skillOptionGroups([])).toEqual([{ label: null, options: [{ value: '', label: 'Write a message' }] }]);
+    expect(skillOptionGroups(SKILLS).flatMap((group) => group.options.map((option) => option.value))).toEqual(['', 'audit-this-page', 'rewrite-title-meta', 'plain-skill']);
     expect(pickedSkill(SKILLS, '')).toBeNull();
     expect(pickedSkill(SKILLS, 'gone')).toBeNull();
     expect(pickedSkill(SKILLS, 'plain-skill')?.name).toBe('Plain skill');

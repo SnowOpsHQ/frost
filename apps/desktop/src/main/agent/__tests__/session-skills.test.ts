@@ -1,13 +1,14 @@
-// Spec: specs/skills.spec.ts (BUILTIN_SKILL_IDS, SKILL_DATA_OPEN, SKILL_DATA_CLOSE, SKILL_SLOT_MISSING),
+// Spec: specs/skills.spec.ts (BUILTIN_SKILL_IDS, BUILTIN_SKILL_CATEGORY, SKILL_DATA_OPEN, SKILL_DATA_CLOSE, SKILL_SLOT_MISSING),
 // specs/skills-schema.ts (SkillSchema), specs/agent-session.spec.ts (AgentState.skills, AgentSkillRequest,
 // AGENT_NOTICE_MESSAGES), specs/agent-protocol.schema.ts (chat.start allowedTools, tool.invoke)
-// Acceptance: specs/skills.feature.md (Running)
+// Acceptance: specs/skills.feature.md (Running), specs/agent-data.feature.md (Skills library)
 import { afterEach, describe, expect, test } from 'vitest';
-import { auditThisPageSkill, createStaticSkillRegistry, rewriteTitleMetaSkill } from '@app/ai-skills/skills';
+import { auditThisPageSkill, createBuiltinSkillRegistry, createStaticSkillRegistry, rewriteTitleMetaSkill } from '@app/ai-skills/skills';
 import type { ChatMessage } from '@app/specs/agent-protocol.schema';
 import { AGENT_NOTICE_MESSAGES, type AgentSkillRequest } from '@app/specs/agent-session.spec';
 import { AGENT_TOOL_NAMES } from '@app/specs/agent-tools.spec';
-import { BUILTIN_SKILL_IDS, SKILL_DATA_CLOSE, SKILL_DATA_OPEN, SKILL_SLOT_MISSING } from '@app/specs/skills.spec';
+import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_DATA_CLOSE, SKILL_DATA_OPEN, SKILL_SLOT_MISSING } from '@app/specs/skills.spec';
+import { createMemorySkillsStore, createUserSkills } from '../user-skills';
 import { setupSession } from './session-fakes';
 
 let current: Awaited<ReturnType<typeof setupSession>> | null = null;
@@ -151,7 +152,10 @@ describe('skill runs', () => {
       description: rewriteTitleMetaSkill.description,
       inputs: rewriteTitleMetaSkill.inputs!.map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? null })),
       builtin: true,
+      category: 'content',
+      enabled: true,
     });
+    expect(s.session.getState().skills.map((skill) => [skill.id, skill.category])).toEqual(BUILTIN_SKILL_IDS.map((id) => [id, BUILTIN_SKILL_CATEGORY[id]]));
     // The view never carries the template or the tool list.
     expect(JSON.stringify(s.session.getState().skills)).not.toMatch(/instructions|allowedTools|\{\{/);
 
@@ -160,10 +164,58 @@ describe('skill runs', () => {
       skills: createStaticSkillRegistry([{ id: 'headings', name: 'Headings', description: 'Check headings.', allowedTools: ['page_data'], instructions: 'Check {{pageUrl}}.', version: 1 }]),
       steps: [{ text: ['Fine.'] }],
     });
-    expect(custom.session.getState().skills).toEqual([{ id: 'headings', name: 'Headings', description: 'Check headings.', inputs: [], builtin: false }]);
+    expect(custom.session.getState().skills).toEqual([{ id: 'headings', name: 'Headings', description: 'Check headings.', inputs: [], builtin: false, category: 'yours', enabled: true }]);
     expect(await custom.session.send(null, { skillId: 'audit-this-page' })).toBe('unknown-skill');
     expect(await custom.session.send(null, { skillId: 'headings' })).toBe('started');
     await custom.until((state) => !state.running);
     expect(custom.starts()[0]!.allowedTools).toEqual(['page_data']);
+  });
+
+  // ---- Switched-off skills (Phase 8 Task 5; agent-data.feature.md, Skills library) -------------
+
+  const withSwitches = async (steps: unknown[]) => {
+    const store = createMemorySkillsStore();
+    const userSkills = createUserSkills({ store, prefs: store, builtins: createBuiltinSkillRegistry() });
+    await userSkills.load();
+    const s = await setup({ skills: userSkills.registry, data: { userSkills }, steps });
+    return { s, userSkills };
+  };
+
+  test('skill-run-refuses-a-disabled-skill', async () => {
+    const { s } = await withSwitches([{ text: ['Fine.'] }]);
+    expect(await s.session.setSkillEnabled('audit-this-page', false)).toBe(true);
+    // Refused like an unknown skill, and nothing changes: no chat, no turn, a notice.
+    expect(await s.session.send(null, { skillId: 'audit-this-page' })).toBe('unknown-skill');
+    expect(s.session.getState().notice).toMatchObject({ kind: 'unknown-skill' });
+    expect(s.session.getState().chats).toEqual([]);
+    expect(s.starts()).toEqual([]);
+    // Even with an input the skill does not declare, it is `unknown-skill` first; other skills still run.
+    expect(await s.session.send(null, { skillId: 'audit-this-page', userNote: 'x'.repeat(5000) })).toBe('unknown-skill');
+    // Switched on again it runs.
+    expect(await s.session.setSkillEnabled('audit-this-page', true)).toBe(true);
+    expect(await s.session.send(null, { skillId: 'audit-this-page' })).toBe('started');
+    await s.until((state) => !state.running);
+    expect(s.starts()).toHaveLength(1);
+  });
+
+  test('skill-disabled-mid-turn-finishes-the-turn', async () => {
+    const { s } = await withSwitches([{ toolCalls: [{ toolName: 'page_audit', input: {} }] }, { text: ['Score 72.'] }]);
+    s.runner.hold('page_audit');
+    expect(await s.session.send(null, { skillId: 'audit-this-page' })).toBe('started');
+    await s.until(() => s.runner.calls.length === 1);
+    const chatId = s.starts()[0]!.chatId;
+    // Switched off while the turn runs: the turn is not stopped or narrowed.
+    expect(await s.session.setSkillEnabled('audit-this-page', false)).toBe(true);
+    expect(s.session.getState().running).toBe(true);
+    s.runner.release('page_audit', { ok: true, data: { score: 72 }, source: 'page:https://shop.example.com/tea' });
+    const done = await s.until((state) => !state.running);
+    expect(s.runner.calls.map((call) => call.toolName)).toEqual(['page_audit']);
+    expect(s.starts()[0]!.allowedTools).toEqual(['page_audit', 'page_data', 'page_text']);
+    expect(done.active!.messages.at(-1)).toMatchObject({ kind: 'assistant', text: 'Score 72.' });
+    // The next send of it is refused; a typed message in the same chat still goes.
+    expect(await s.session.send(chatId, { skillId: 'audit-this-page' })).toBe('unknown-skill');
+    expect(s.starts()).toHaveLength(1);
+    expect(await s.session.send(chatId, 'Thanks.')).toBe('started');
+    await s.until((state) => !state.running);
   });
 });

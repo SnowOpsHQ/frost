@@ -8,6 +8,7 @@ export function setup(changes: Partial<AgentSetupView> = {}): AgentSetupView {
     allowedModels: ['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5', 'openai/gpt-5', 'openai/gpt-5-mini'],
     keys: { anthropic: false, openai: false, gateway: false },
     chatgpt: { account: { state: 'signed-out', acknowledged: false }, models: [] },
+    reasoning: { effort: 'auto', levels: ['auto', 'low', 'medium', 'high'] },
     ready: false,
     protection: 'os',
     runtime: { status: 'ready', lastFailure: null },
@@ -50,7 +51,7 @@ export function state(changes: Partial<AgentState> = {}): AgentState {
 
 /** Skills as main lists them (`AgentState.skills`). */
 export const SKILLS: readonly AgentSkillView[] = [
-  { id: 'audit-this-page', name: 'Audit this page', description: 'Summarise the audit.', inputs: [{ slot: 'userNote', label: 'Focus on (optional)', placeholder: 'For example: mobile' }], builtin: true },
+  { id: 'audit-this-page', name: 'Audit this page', description: 'Summarise the audit.', inputs: [{ slot: 'userNote', label: 'Focus on (optional)', placeholder: 'For example: mobile' }], builtin: true, category: 'page', enabled: true },
   {
     id: 'rewrite-title-meta',
     name: 'Rewrite title and meta description',
@@ -60,6 +61,8 @@ export const SKILLS: readonly AgentSkillView[] = [
       { slot: 'userNote', label: 'Note (optional)', placeholder: null },
     ],
     builtin: true,
+    category: 'content',
+    enabled: true,
   },
-  { id: 'plain-skill', name: 'Plain skill', description: 'No inputs.', inputs: [], builtin: false },
+  { id: 'plain-skill', name: 'Plain skill', description: 'No inputs.', inputs: [], builtin: false, category: 'yours', enabled: true },
 ];

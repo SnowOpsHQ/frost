@@ -6,14 +6,19 @@ import {
   AgentSendInputSchema,
   AgentSetKeyInputSchema,
   AgentSetModelInputSchema,
+  AgentSetReasoningEffortInputSchema,
   AgentWatchInputSchema,
   AgentExportChatInputSchema,
   AgentRevokeGrantInputSchema,
   AgentSaveSkillInputSchema,
   AgentSetChatRetentionInputSchema,
   AgentSetReadToolsAllowedInputSchema,
+  AgentSetSkillEnabledInputSchema,
   AgentSkillIdInputSchema,
   AgentChatgptSignInInputSchema,
+  AgentCancelSkillImportInputSchema,
+  AgentExportSkillsInputSchema,
+  AgentImportSkillsInputSchema,
 } from '@app/specs/agent-ipc.schema';
 import { CHATGPT_SIGN_IN_RESULTS, CHATGPT_SIGN_OUT_RESULTS, type ChatgptSignInResult, type ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import {
@@ -22,14 +27,25 @@ import {
   AGENT_SET_RETENTION_RESULTS,
   CHAT_EXPORT_RESULTS,
   MAX_SKILL_ERRORS,
+  MAX_USER_SKILLS,
   SKILL_EDITOR_FIELDS,
+  SKILL_EXPORT_RESULTS,
+  SKILL_FILE_MAX_BYTES,
+  SKILL_IMPORT_CONFLICTS,
+  SKILL_IMPORT_RESULTS,
   type AgentDeleteAllChatsResult,
   type AgentGrantView,
   type AgentSaveSkillResult,
   type AgentSetRetentionResult,
   type AgentSkillDetail,
+  type AgentSkillImportItem,
+  type AgentSkillImportPreviewResult,
+  type AgentSkillImportResult,
   type ChatExportResult,
+  type SkillExportResult,
 } from '@app/specs/agent-data.spec';
+import { AGENT_TOOL_NAMES, isSafeInputText, type AgentToolName } from '@app/specs/agent-tools.spec';
+import { isSkillId, SKILL_ACTING_TOOLS, SKILL_INPUT_SLOTS, SKILL_LIMITS, type SkillInputSlot } from '@app/specs/skills.spec';
 import { AGENT_ANSWER_RESULTS, AGENT_SEND_RESULTS, AGENT_SET_KEY_RESULTS, AGENT_WATCH_TIMEOUT_MS, type AgentAnswerResult, type AgentSendResult, type AgentSetKeyResult, type AgentSkillRequest, type AgentState } from '@app/specs/agent-session.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { isMcpServerId, MCP_SAVE_RESULTS, MCP_START_RESULTS, MCP_TOKEN_RESULTS, type McpSaveResult, type McpStartResult, type McpTokenResult } from '@app/specs/agent-mcp.spec';
@@ -72,6 +88,95 @@ function checkedSaveSkillResult(value: unknown): AgentSaveSkillResult {
   return { result };
 }
 
+/** A review's refusals and an import's (every kind but `ready` and `imported`). */
+type SkillImportRefusal = Exclude<(typeof SKILL_IMPORT_RESULTS)[number], 'ready' | 'imported'>;
+const refusalOf = (value: unknown): SkillImportRefusal => {
+  const result = oneOf(SKILL_IMPORT_RESULTS, value, 'failed');
+  return result === 'ready' || result === 'imported' ? 'failed' : result;
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A string of at most `max` characters, else `null` (never cut: what the review shows is what is stored). */
+const bounded = (value: unknown, max: number): string | null => (typeof value === 'string' && value.length <= max ? value : null);
+const isIndex = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0 && (value as number) < MAX_USER_SKILLS;
+
+/** One review entry, rebuilt field by field; `null` if a valid entry is malformed (it fails the whole answer). */
+function checkedImportItem(value: unknown): AgentSkillImportItem | null {
+  const item = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
+  if (!isIndex(item['index'])) return null;
+  const index = item['index'];
+  if (item['valid'] === false) {
+    const name = bounded(item['name'], SKILL_LIMITS.maxNameChars);
+    const error = bounded(item['error'], 500);
+    if (error === null) return null;
+    return { index, valid: false, id: isSkillId(item['id']) ? item['id'] : null, name: name !== null && isSafeInputText(name) ? name : null, error };
+  }
+  if (item['valid'] !== true || !isSkillId(item['id'])) return null;
+  const name = bounded(item['name'], SKILL_LIMITS.maxNameChars);
+  const description = bounded(item['description'], SKILL_LIMITS.maxDescriptionChars);
+  const instructions = bounded(item['instructions'], SKILL_LIMITS.maxInstructionChars);
+  if (name === null || description === null || instructions === null || !Array.isArray(item['tools']) || !Array.isArray(item['inputs'])) return null;
+  // Catalogue tools only, each once, never cut: an unknown or repeated tool refuses the entry. The
+  // acting-tools flag is recomputed here, so it can't be dropped.
+  const tools = [...new Set(item['tools'].filter((tool): tool is AgentToolName => (AGENT_TOOL_NAMES as readonly unknown[]).includes(tool)))];
+  if (tools.length === 0 || tools.length !== item['tools'].length) return null;
+  if (item['inputs'].length > SKILL_INPUT_SLOTS.length) return null;
+  const inputs: { slot: SkillInputSlot; label: string; placeholder: string | null }[] = [];
+  for (const raw of item['inputs'] as unknown[]) {
+    const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+    const label = bounded(input['label'], SKILL_LIMITS.maxInputLabelChars);
+    const placeholder = input['placeholder'] === null ? null : bounded(input['placeholder'], SKILL_LIMITS.maxInputPlaceholderChars);
+    if (!(SKILL_INPUT_SLOTS as readonly unknown[]).includes(input['slot']) || label === null || (placeholder === null && input['placeholder'] !== null)) return null;
+    inputs.push({ slot: input['slot'] as SkillInputSlot, label, placeholder });
+  }
+  if (!(SKILL_IMPORT_CONFLICTS as readonly unknown[]).includes(item['conflict'])) return null;
+  return {
+    index,
+    valid: true,
+    id: item['id'],
+    name,
+    description,
+    tools,
+    actingTools: tools.some((tool) => (SKILL_ACTING_TOOLS as readonly string[]).includes(tool)),
+    conflict: item['conflict'] as (typeof SKILL_IMPORT_CONFLICTS)[number],
+    instructions,
+    inputs,
+    error: null,
+  };
+}
+
+/**
+ * `previewSkillImport`'s answer, rebuilt field by field and re-bounded (as `checkedSaveSkillResult`):
+ * a refusal as its fixed value alone; a review with a well-formed token, room and at most
+ * `MAX_USER_SKILLS` entries, each rebuilt (`checkedImportItem`), within `SKILL_FILE_MAX_BYTES` in
+ * all. Anything malformed answers `failed`: a review is never shown partly.
+ */
+function checkedSkillImportPreview(value: unknown): AgentSkillImportPreviewResult {
+  const answer = (typeof value === 'object' && value !== null ? value : {}) as { result?: unknown; preview?: unknown };
+  if (answer.result !== 'ready') return { result: refusalOf(answer.result) };
+  const preview = (typeof answer.preview === 'object' && answer.preview !== null ? answer.preview : {}) as { token?: unknown; items?: unknown; room?: unknown };
+  const { token, room } = preview;
+  if (typeof token !== 'string' || !UUID.test(token) || !Number.isInteger(room) || (room as number) < 0 || (room as number) > MAX_USER_SKILLS) return { result: 'failed' };
+  if (!Array.isArray(preview.items) || preview.items.length > MAX_USER_SKILLS) return { result: 'failed' };
+  const items: AgentSkillImportItem[] = [];
+  for (const raw of preview.items as unknown[]) {
+    const item = checkedImportItem(raw);
+    if (item === null) return { result: 'failed' };
+    items.push(item);
+  }
+  const checked: AgentSkillImportPreviewResult = { result: 'ready', preview: { token, items, room: room as number } };
+  return new TextEncoder().encode(JSON.stringify(checked)).length > SKILL_FILE_MAX_BYTES ? { result: 'failed' } : checked;
+}
+
+/** `importSkills`' answer: `imported` with a whole count within `MAX_USER_SKILLS`, or a refusal's fixed value. */
+function checkedSkillImportResult(value: unknown): AgentSkillImportResult {
+  const answer = (typeof value === 'object' && value !== null ? value : {}) as { result?: unknown; count?: unknown };
+  if (answer.result === 'imported') {
+    return Number.isInteger(answer.count) && (answer.count as number) >= 0 && (answer.count as number) <= MAX_USER_SKILLS ? { result: 'imported', count: answer.count as number } : { result: 'failed' };
+  }
+  return { result: refusalOf(answer.result) };
+}
+
 /** A grant as the page lists it, field by field. */
 const grantView = (grant: AgentGrantView): AgentGrantView => ({ tool: text(grant.tool, 64), label: text(grant.label, 200), origin: text(grant.origin, 2048), createdAt: Number.isFinite(grant.createdAt) ? grant.createdAt : 0 });
 
@@ -102,7 +207,7 @@ async function watchAgentState(agent: AgentService, sinceVersion: number): Promi
 
 /**
  * `watch` answers the panel's `AgentState`; `send` how the message (or skill run) went (`AGENT_SEND_RESULTS`);
- * `stop`, `selectChat`, `deleteChat`, `setModel`, `clearKey` whether they did it; `newChat` `null`;
+ * `stop`, `selectChat`, `deleteChat`, `setModel`, `setReasoningEffort`, `clearKey` whether they did it; `newChat` `null`;
  * `answerApproval` `AGENT_ANSWER_RESULTS`; `setKey` `AGENT_SET_KEY_RESULTS` (never the key).
  */
 export const agentRouter = router({
@@ -155,6 +260,11 @@ export const agentRouter = router({
     .use(requireAgent)
     .input(AgentSetModelInputSchema)
     .mutation(async ({ ctx, input }) => (await ctx.agent.setModel(input.route, input.modelId)) === true),
+  setReasoningEffort: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentSetReasoningEffortInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.agent.setReasoningEffort(input.effort)) === true),
   setKey: publicProcedure
     .use(enforceSender)
     .use(requireAgent)
@@ -234,6 +344,33 @@ export const agentRouter = router({
     .use(requireAgent)
     .input(AgentSkillIdInputSchema)
     .mutation(async ({ ctx, input }): Promise<AgentSaveSkillResult> => checkedSaveSkillResult(await ctx.agent.duplicateSkill(input.id))),
+  setSkillEnabled: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentSetSkillEnabledInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.agent.setSkillEnabled(input.id, input.enabled)) === true),
+
+  // ---- Phase 8 Task 6 (`agent-data.spec.ts`, Skill files; acceptance `agent-data.feature.md`, Import and export) ----
+  // No path crosses: main asks in its own save and open dialogs.
+  exportSkills: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentExportSkillsInputSchema)
+    .mutation(async ({ ctx, input }): Promise<SkillExportResult> => oneOf(SKILL_EXPORT_RESULTS, await ctx.agent.exportSkills(input.ids === 'all-mine' ? 'all-mine' : [...input.ids]), 'failed')),
+  previewSkillImport: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .mutation(async ({ ctx }): Promise<AgentSkillImportPreviewResult> => checkedSkillImportPreview(await ctx.agent.previewSkillImport())),
+  importSkills: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentImportSkillsInputSchema)
+    .mutation(async ({ ctx, input }): Promise<AgentSkillImportResult> => checkedSkillImportResult(await ctx.agent.importSkills(input.token, [...input.indices]))),
+  cancelSkillImport: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentCancelSkillImportInputSchema)
+    .mutation(({ ctx, input }) => ctx.agent.cancelSkillImport(input.token) === true),
 
   // ---- Task 10 (`agent-mcp.spec.ts`; acceptance `agent-mcp.feature.md`, Router) ----
   saveMcpServer: publicProcedure

@@ -4,9 +4,16 @@
 // ChatgptTokenAnswerSchema, earliestRefreshAtMs), specs/agent-tools.spec.ts (MODEL_ROUTES, routeModelId,
 // MODEL_REQUESTS), specs/agent-proxy.spec.ts (REQUEST_HEADER_ALLOWLIST, BODY_FIELDS,
 // checkModelRequestBody, mainRequestHeaders, routeCredentialSlot), specs/agent-ipc.schema.ts
+// · specs/agent-chatgpt.spec.ts (CHATGPT_ADVERTISED_EFFORTS, CHATGPT_ADVERTISED_EFFORTS_FIELD,
+// CHATGPT_EFFORTS_ENTRY_MAX_BYTES, advertisedEfforts, isChatgptModelView), specs/agent-chatgpt.schema.ts
+// (ChatgptModelEntrySchema), specs/agent-reasoning.spec.ts (REASONING_EFFORTS): Phase 8 Task 8a
 // Acceptance: specs/agent-chatgpt.feature.md (Route) · plan docs/plans/agent-chatgpt-plan.md, Task 1
 import { describe, expect, test } from 'vitest';
 import {
+  advertisedEfforts,
+  CHATGPT_ADVERTISED_EFFORTS,
+  CHATGPT_ADVERTISED_EFFORTS_FIELD,
+  CHATGPT_EFFORTS_ENTRY_MAX_BYTES,
   CHATGPT_ENDPOINTS,
   CHATGPT_ERROR_CODE_REASONS,
   CHATGPT_FORBIDDEN_BODY_FIELDS,
@@ -29,7 +36,8 @@ import {
   isRefreshFailureCode,
   planUsageOf,
 } from '@app/specs/agent-chatgpt.spec';
-import { ChatgptStoredStateSchema, ChatgptTokenAnswerSchema, EMPTY_CHATGPT_STATE, earliestRefreshAtMs } from '@app/specs/agent-chatgpt.schema';
+import { ChatgptModelEntrySchema, ChatgptStoredStateSchema, ChatgptTokenAnswerSchema, EMPTY_CHATGPT_STATE, earliestRefreshAtMs } from '@app/specs/agent-chatgpt.schema';
+import { REASONING_EFFORTS } from '@app/specs/agent-reasoning.spec';
 import { AgentChatgptSignInInputSchema, AgentSetModelInputSchema } from '@app/specs/agent-ipc.schema';
 import { AGENT_ROUTE_LABELS } from '@app/specs/agent-panel.spec';
 import { BODY_FIELDS, checkModelRequestBody, filterRequestHeaders, isUsableModelSettings, isValidModelSettings, mainRequestHeaders, REQUEST_HEADER_ALLOWLIST, routeCredentialSlot } from '@app/specs/agent-proxy.spec';
@@ -316,10 +324,57 @@ describe('chatgpt spec', () => {
     expect(AgentSetModelInputSchema.safeParse({ route: 'chatgpt', modelId: 'openai/gpt-5' }).success).toBe(false);
     expect(AgentSetModelInputSchema.safeParse({ route: 'gateway', modelId: MODEL }).success).toBe(false);
     expect(AgentSetModelInputSchema.safeParse({ route: 'chatgpt', modelId: `chatgpt/${'a'.repeat(200)}` }).success).toBe(false);
-    const start = { type: 'chat.start', chatId: 'c1', messages: [{ role: 'user', content: 'hi' }], systemPrompt: 's', modelId: MODEL, route: 'chatgpt', allowedTools: [], mcpTools: [] };
+    const start = { type: 'chat.start', chatId: 'c1', messages: [{ role: 'user', content: 'hi' }], systemPrompt: 's', modelId: MODEL, route: 'chatgpt', allowedTools: [], mcpTools: [], reasoningEffort: 'auto' };
     const parsed = ChatStartMessageSchema.safeParse(start);
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
-    // `chat.start` accepts the `chatgpt` route and `chatgpt/<slug>` ids: a runtime from before them is refused.
-    expect(AGENT_PROTOCOL_VERSION).toBe(7);
+    // `chat.start` accepts the `chatgpt` route and `chatgpt/<slug>` ids since version 7 (8 added the
+    // reasoning level, Phase 8 Task 8b): a runtime from before them is refused.
+    expect(AGENT_PROTOCOL_VERSION).toBeGreaterThanOrEqual(7);
+  });
+
+  test('chatgpt-model-entry-efforts-parsed', () => {
+    // The levels the route may advertise, in order: not `auto` (always implied, never stored) and not
+    // `off` (its wire value, `minimal`, is dropped by the installed OpenAI provider for GPT-6 slugs,
+    // so the request would carry no level and be refused every time; Task 8a fix round 1).
+    expect(CHATGPT_ADVERTISED_EFFORTS).toEqual(REASONING_EFFORTS.filter((effort) => effort !== 'auto' && effort !== 'off'));
+    expect(CHATGPT_ADVERTISED_EFFORTS).toEqual(['low', 'medium', 'high']);
+    expect(CHATGPT_ADVERTISED_EFFORTS_FIELD).toBe('supported_reasoning_levels');
+    const entry = { slug: 'gpt-6.1-sol', display_name: 'GPT-6.1 Sol', visibility: 'list' };
+    const parse = (value: unknown) => {
+      const parsed = ChatgptModelEntrySchema.safeParse({ ...entry, [CHATGPT_ADVERTISED_EFFORTS_FIELD]: value });
+      expect(parsed.success, JSON.stringify(value)).toBe(true);
+      return parsed.data!;
+    };
+    // Known values kept, in `REASONING_EFFORTS` order; duplicates, `auto` and unknown values dropped.
+    expect(parse(['high', 'low', 'high', 'auto', 'xhigh', 'medium', 'off', 'minimal', 'none', 'LOW'])).toEqual({ ...entry, efforts: ['low', 'medium', 'high'] });
+    // An entry advertising `off` keeps no `off`.
+    expect(parse(['off', { effort: 'off' }])).toEqual(entry);
+    expect(parse(['off', 'low']).efforts).toEqual(['low']);
+    // Entries as objects with an `effort` string are read too; anything else is skipped.
+    expect(parse([{ effort: 'medium', description: 'Balanced' }, { effort: 'low' }, { effort: 3 }, { level: 'off' }, 'high', null, 7, ['off']]).efforts).toEqual(['low', 'medium', 'high']);
+    // At most 3, however long the list.
+    expect(parse(Array.from({ length: 1000 }, (_, i) => REASONING_EFFORTS[i % REASONING_EFFORTS.length])).efforts).toEqual(['low', 'medium', 'high']);
+    // Empty, absent, only unknown or malformed: no `efforts` key (Auto only), and the entry is still kept.
+    for (const value of [[], ['auto'], ['xhigh', 'none'], 'high', { low: true }, null, 42]) expect(parse(value), JSON.stringify(value)).toEqual(entry);
+    const absent = ChatgptModelEntrySchema.safeParse(entry);
+    expect(absent.success).toBe(true);
+    expect(absent.data).toEqual(entry);
+    expect(advertisedEfforts(undefined)).toEqual([]);
+    expect(advertisedEfforts(['medium', 'off', 'low'])).toEqual(['low', 'medium']);
+
+    // The view: 2 keys, or 3 when `efforts` is a non-empty list of distinct advertised levels in order.
+    const id = MODEL;
+    expect(isChatgptModelView({ id, label: 'Sol' })).toBe(true);
+    expect(isChatgptModelView({ id, label: 'Sol', efforts: ['low', 'high'] })).toBe(true);
+    expect(isChatgptModelView({ id, label: 'Sol', efforts: [...CHATGPT_ADVERTISED_EFFORTS] })).toBe(true);
+    for (const efforts of [['low', 'low'], ['low', 'xhigh'], ['auto', 'low'], ['off'], ['off', 'low', 'medium', 'high'], ['low', 'medium', 'high', 'high'], [], ['high', 'low'], 'low', [1], null, { 0: 'low' }]) {
+      expect(isChatgptModelView({ id, label: 'Sol', efforts }), JSON.stringify(efforts)).toBe(false);
+    }
+    expect(isChatgptModelView({ id, label: 'Sol', efforts: ['low'], extra: 1 })).toBe(false);
+    expect(isChatgptModelView({ id, efforts: ['low'] })).toBe(false);
+    // The worst case fits the per-entry room the settings file keeps for it.
+    const worst = JSON.stringify({ id, label: 'Sol', efforts: CHATGPT_ADVERTISED_EFFORTS }).length - JSON.stringify({ id, label: 'Sol' }).length;
+    expect(worst).toBe(',"efforts":["low","medium","high"]'.length);
+    expect(worst).toBeLessThanOrEqual(CHATGPT_EFFORTS_ENTRY_MAX_BYTES);
   });
 });

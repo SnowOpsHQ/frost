@@ -1,7 +1,8 @@
 /**
  * The agent's ChatGPT plan route: Sign in with ChatGPT, open-source token sharing (plan
  * `docs/plans/agent-chatgpt-plan.md`, Task 1; acceptance `agent-chatgpt.feature.md`). Plain values,
- * types and pure functions with **no imports** and no Zod, so the chrome renderer imports them as
+ * types and pure functions with no Zod and **no imports** but `agent-reasoning.spec.ts`'s plain
+ * values (itself import-free at runtime: types only), so the chrome renderer imports them as
  * they are (strict Trusted Types) and `agent-tools.spec.ts` can use `isChatgptModelId` without a
  * cycle. The Zod schemas (the stored state, the token endpoint's answers, the redirect's parameters,
  * the ID token's claims, the model list) are in `agent-chatgpt.schema.ts`, for main only.
@@ -15,6 +16,7 @@
  * Written clean-room from OpenAI's published protocol (Sign in with ChatGPT, token sharing for
  * open-source tools; the OpenID discovery document); no code from any SDK or devkit.
  */
+import { REASONING_EFFORTS, type ReasoningEffort } from './agent-reasoning.spec';
 
 // ---- Endpoints -------------------------------------------------------------------------------
 
@@ -305,22 +307,83 @@ export function chatgptSlugOf(modelId: ChatgptModelId): string {
   return modelId.slice(CHATGPT_MODEL_PREFIX.length);
 }
 
+/**
+ * The reasoning levels a ChatGPT model entry may advertise (Phase 8 Task 8a, Decision 8): `low`,
+ * `medium` and `high`. Not `auto`, which is always offered and never stored. Not `off` either (Task
+ * 8a fix round 1, lead ruling): its wire value elsewhere is `minimal`, and the installed OpenAI
+ * provider (`@ai-sdk/openai` 4.0.104) gives GPT-6 and later slugs, the plan's models, the efforts
+ * `low`…`max` (`none` on three), drops `minimal` with a warning and then sends no `reasoning` at
+ * all, so a ChatGPT `off` would be refused (`reasoning`) on every request. The ChatGPT route offers
+ * `auto`, `low`, `medium`, `high`.
+ */
+export const CHATGPT_ADVERTISED_EFFORTS = ['low', 'medium', 'high'] as const satisfies readonly ReasoningEffort[];
+export type ChatgptAdvertisedEffort = (typeof CHATGPT_ADVERTISED_EFFORTS)[number];
+
+/**
+ * The `GET /v1/models` entry field read for a model's supported reasoning levels (Open question 1,
+ * lead ruling): optional; its items are level strings or objects with an `effort` string (Codex's
+ * `supported_reasoning_levels` shape). Named once here, so a live check can rename it.
+ */
+export const CHATGPT_ADVERTISED_EFFORTS_FIELD = 'supported_reasoning_levels';
+
+/**
+ * The room a model entry's `efforts` takes in the settings file, at most (bytes): the worst case,
+ * `,"efforts":["low","medium","high"]`, is 34 bytes, so 64 leaves room.
+ */
+export const CHATGPT_EFFORTS_ENTRY_MAX_BYTES = 64;
+
+/**
+ * The levels an entry's `CHATGPT_ADVERTISED_EFFORTS_FIELD` value advertises, bounded: only
+ * `CHATGPT_ADVERTISED_EFFORTS` values (from strings, or objects' `effort` strings), each once, in
+ * `REASONING_EFFORTS` order, so at most 3. Anything else (absent, not a list, `auto`, `off`, an
+ * unknown level such as `minimal` or `xhigh`) is dropped; `[]` means Auto only.
+ */
+export function advertisedEfforts(value: unknown): ChatgptAdvertisedEffort[] {
+  if (!Array.isArray(value)) return [];
+  const found = new Set<string>();
+  for (const item of value) {
+    const effort = typeof item === 'string' ? item : typeof item === 'object' && item !== null && !Array.isArray(item) ? (item as { effort?: unknown }).effort : undefined;
+    if (typeof effort === 'string') found.add(effort);
+  }
+  return REASONING_EFFORTS.filter((effort): effort is ChatgptAdvertisedEffort => (CHATGPT_ADVERTISED_EFFORTS as readonly string[]).includes(effort) && found.has(effort));
+}
+
 /** A model the account lists (`visibility: 'list'`), in the server's order. */
 export interface ChatgptModelView {
   readonly id: ChatgptModelId;
   /** The list's `display_name`. */
   readonly label: string;
+  /**
+   * The reasoning levels the entry advertised (`advertisedEfforts`), when any: absent means the
+   * model offers Auto only (Phase 8 Task 8a).
+   */
+  readonly efforts?: readonly ReasoningEffort[];
+}
+
+/** Whether `value` is a non-empty list of distinct `CHATGPT_ADVERTISED_EFFORTS`, in that order (so at most 3). */
+function isAdvertisedEffortList(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length === 0 || value.length > CHATGPT_ADVERTISED_EFFORTS.length) return false;
+  let last = -1;
+  for (const effort of value) {
+    const at = (CHATGPT_ADVERTISED_EFFORTS as readonly unknown[]).indexOf(effort);
+    if (at <= last) return false;
+    last = at;
+  }
+  return true;
 }
 
 /**
  * Whether `value` is a model-list entry as main keeps it (the settings file persists the last list,
- * so a restart without network keeps the choice): exactly `{ id, label }`, a well-formed ChatGPT id
- * and a trimmed, non-empty label within `maxDisplayNameChars` with no control or format character.
+ * so a restart without network keeps the choice): exactly `{ id, label }`, or `{ id, label,
+ * efforts }` with `efforts` a non-empty list of distinct `CHATGPT_ADVERTISED_EFFORTS` in that order
+ * (a file of the build before the levels has 2-key entries and still reads); a well-formed ChatGPT
+ * id and a trimmed, non-empty label within `maxDisplayNameChars` with no control or format character.
  */
 export function isChatgptModelView(value: unknown): value is ChatgptModelView {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const keys = Object.keys(value);
-  if (keys.length !== 2 || !keys.includes('id') || !keys.includes('label')) return false;
+  if (!keys.includes('id') || !keys.includes('label')) return false;
+  if (keys.length === 3 ? !keys.includes('efforts') || !isAdvertisedEffortList((value as { efforts: unknown }).efforts) : keys.length !== 2) return false;
   const { id, label } = value as { id: unknown; label: unknown };
   return (
     isChatgptModelId(id) &&

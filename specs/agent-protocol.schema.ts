@@ -24,12 +24,14 @@ import {
 } from './agent-tools.spec';
 import { MCP_LIMITS } from './agent-mcp.spec';
 import { McpToolDefinitionSchema } from './agent-mcp.schema';
+import { REASONING_EFFORTS } from './agent-reasoning.spec';
 
 /**
  * Bumped when a message changes shape; the runtime reports it in `ready` and main refuses another.
  * 7: `chat.start` takes the `chatgpt` route and `chatgpt/<slug>` model ids (`agent-chatgpt.spec.ts`).
+ * 8: `chat.start` carries the turn's reasoning level (`reasoningEffort`, `agent-reasoning.spec.ts`).
  */
-export const AGENT_PROTOCOL_VERSION = 7;
+export const AGENT_PROTOCOL_VERSION = 8;
 
 /**
  * The runtime's `chat.error` for a `chat.start` whose chat already has a turn running (that turn
@@ -253,6 +255,12 @@ export const ChatStartMessageSchema = z.strictObject({
    * (`agent-mcp.schema.ts`), one for each MCP name in `allowedTools` and no other.
    */
   mcpTools: z.array(McpToolDefinitionSchema).max(MCP_LIMITS.maxToolsPerChat),
+  /**
+   * The turn's reasoning level (Phase 8 Task 8b, protocol version 8): main's `effectiveEffort` of
+   * the settings, never the raw stored level. The runtime sends `reasoningWire(route, modelId,
+   * reasoningEffort)` (`auto`: nothing), and main's proxy refuses any other reasoning field.
+   */
+  reasoningEffort: z.enum(REASONING_EFFORTS),
 }).refine(
   (start) => {
     const defined = start.mcpTools.map((tool) => tool.name);

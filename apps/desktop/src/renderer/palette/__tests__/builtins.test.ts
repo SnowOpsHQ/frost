@@ -110,6 +110,7 @@ describe('built-in palette actions', () => {
       'sidebar.show',
       'highlight.links',
       'highlight.headings',
+      'highlight.sentences',
       'audit.rerun',
       'audit.accessibility',
       'tab.new',
@@ -265,6 +266,25 @@ describe('built-in palette actions', () => {
     expect(on.api.setHighlight).toHaveBeenLastCalledWith(1, 'off');
     on.api.setHighlight.mockResolvedValueOnce(false);
     expect(await on.get('highlight.links').run(on.ctx)).toMatch(/couldn/i);
+  });
+
+  test('highlight-sentences-action', async () => {
+    const { api, get, ctx, chrome, ids } = setup();
+    const action = get('highlight.sentences');
+    expect(action.label).toBe('Highlight difficult sentences');
+    expect(action.group).toBe('audit');
+    // Opens the Content panel (its toggle owns the mode), then asks main.
+    expect(await action.run(ctx)).toBeNull();
+    expect(chrome.openPanel).toHaveBeenLastCalledWith('content', { focus: false });
+    expect(api.setHighlight).toHaveBeenLastCalledWith(1, 'sentences');
+    // Main says no (no difficult sentence): a status line.
+    api.setHighlight.mockResolvedValueOnce(false);
+    expect(await action.run(ctx)).toMatch(/couldn/i);
+    expect(ids()).toContain('highlight.sentences');
+    // Only with a ready audit, and not while it is already on.
+    expect(setup({ audit: { status: 'pending', url: URL_A } }).ids()).not.toContain('highlight.sentences');
+    expect(setup({ tab: tab({ highlight: 'sentences' }) }).ids()).not.toContain('highlight.sentences');
+    expect(setup({ tab: tab({ highlight: 'sentences' }) }).ids()).toContain('highlight.off');
   });
 
   test('open-in-asks-once-per-host', () => {

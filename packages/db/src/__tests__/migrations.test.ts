@@ -103,9 +103,9 @@ describe('migrations', () => {
     expect(runMigrations(db, rewritten)).toEqual([]);
     // An id recorded by a newer build is left alone; a new one is applied after the known ones.
     db.prepare(`INSERT INTO ${MIGRATIONS_TABLE} (id, applied_at) VALUES ('9999_from_the_future', 1)`).run();
-    const next: Migration = { id: '0100_test_extra', sql: 'CREATE TABLE extra (x INTEGER)' };
-    expect(runMigrations(db, [...MIGRATIONS, next])).toEqual(['0100_test_extra']);
-    expect(recordedIds(db)).toEqual([...ids, '0100_test_extra', '9999_from_the_future']);
+    const next: Migration = { id: '9000_test_extra', sql: 'CREATE TABLE extra (x INTEGER)' };
+    expect(runMigrations(db, [...MIGRATIONS, next])).toEqual(['9000_test_extra']);
+    expect(recordedIds(db)).toEqual([...ids, '9000_test_extra', '9999_from_the_future']);
   });
 
   test('migration-0002-drops-stored-allows', () => {
@@ -130,11 +130,11 @@ describe('migrations', () => {
   test('failed-migration-rolls-back', () => {
     const db = memory();
     runMigrations(db);
-    const broken: Migration = { id: '0100_broken', sql: 'CREATE TABLE half (x INTEGER); CREATE TABLE half (y INTEGER);' };
+    const broken: Migration = { id: '9000_broken', sql: 'CREATE TABLE half (x INTEGER); CREATE TABLE half (y INTEGER);' };
     expect(() => runMigrations(db, [...MIGRATIONS, broken])).toThrow();
     expect(tableNames(db)).not.toContain('half');
     expect(recordedIds(db)).toEqual(MIGRATIONS.map((m) => m.id));
     // The database is still usable and the migration can be retried once fixed.
-    expect(runMigrations(db, [...MIGRATIONS, { id: '0100_broken', sql: 'CREATE TABLE half (x INTEGER)' }])).toEqual(['0100_broken']);
+    expect(runMigrations(db, [...MIGRATIONS, { id: '9000_broken', sql: 'CREATE TABLE half (x INTEGER)' }])).toEqual(['9000_broken']);
   });
 });

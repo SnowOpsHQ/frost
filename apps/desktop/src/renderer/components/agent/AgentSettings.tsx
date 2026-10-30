@@ -13,9 +13,11 @@ import {
   isolationLine,
   keySlotsFor,
   keyStateLabel,
-  modelOptions,
+  modelOptionGroups,
   previewModel,
   protectionMessage,
+  reasoningChoice,
+  reasoningSelect,
   retentionHint,
   retentionOptions,
   routeChoice,
@@ -27,7 +29,7 @@ import {
 } from '../../agent-view';
 
 // The agent's settings (`agent-panel.feature.md`, Settings): the model route, the model (only the
-// ones the route serves), a key field per slot, and plainly what protects a key and isolates the
+// ones the route serves, grouped by provider: Phase 8 Task 7), a key field per slot, and plainly what protects a key and isolates the
 // agent process. A stored key is never shown, nor any part of it: a slot says only "Key saved".
 // The key field is a password input the panel never keeps in state: Save reads it, empties it at
 // once, and shows main's answer (`AGENT_SET_KEY_MESSAGES`). Task 9 (`agent-data.feature.md`): how
@@ -36,7 +38,8 @@ import {
 // The ChatGPT plan (`agent-chatgpt.feature.md`, Panel): a route with a sign-in instead of a key
 // (`ChatgptAccountSection`) and the account's own models. Picked before the account listed a model,
 // the route is only previewed (its sign-in shown, nothing stored: main refuses that pair); once the
-// list arrives its first model is stored with the route.
+// list arrives its first model is stored with the route. Phase 8 Task 9: a Reasoning select under the
+// model (`ReasoningSetting`), with the levels main offers that model.
 
 function KeyRow({ slot, set, primary }: { readonly slot: CredentialSlot; readonly set: boolean; readonly primary: boolean }) {
   const field = useRef<HTMLInputElement>(null);
@@ -169,6 +172,50 @@ function ChatHistorySection({ chatRetention }: { readonly chatRetention: ChatRet
   );
 }
 
+/**
+ * The reasoning level (`agent-panel.feature.md`, reasoning-select-sends-set-reasoning-effort): the
+ * levels main offers the selected model, the one in effect shown, one line on what a higher level
+ * costs, and, with only Auto to choose, the select disabled and the reason said. The select shows
+ * main's state, so a click is sent and the panel changes when the state comes back.
+ */
+function ReasoningSetting({ setup, onFailed }: { readonly setup: AgentSetupView; readonly onFailed: (failed: boolean) => void }) {
+  const model = reasoningSelect(setup);
+  const described = [model.unavailable !== null ? 'agent-reasoning-unavailable' : null, 'agent-reasoning-hint'].filter((id) => id !== null).join(' ');
+  return (
+    <>
+      <label className="agent-field-label" htmlFor="agent-reasoning">
+        Reasoning
+      </label>
+      <select
+        id="agent-reasoning"
+        className="agent-select"
+        data-testid="agent-reasoning"
+        value={model.value}
+        disabled={model.disabled}
+        aria-describedby={described}
+        onChange={(event) => {
+          const effort = reasoningChoice(event.target.value);
+          if (effort !== null) void agentActions.setReasoningEffort(effort).then((stored) => onFailed(!stored));
+        }}
+      >
+        {model.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      {model.unavailable !== null ? (
+        <p id="agent-reasoning-unavailable" className="agent-section-text agent-muted" data-testid="agent-reasoning-unavailable">
+          {model.unavailable}
+        </p>
+      ) : null}
+      <p id="agent-reasoning-hint" className="agent-section-text agent-muted" data-testid="agent-reasoning-hint">
+        {model.hint}
+      </p>
+    </>
+  );
+}
+
 export function AgentSettings({
   setup,
   grantsCount,
@@ -236,12 +283,22 @@ export function AgentSettings({
               Model
             </label>
             <select id="agent-model" className="agent-select" data-testid="agent-model" value={setup.modelId} onChange={(event) => store(setup.route, event.target.value as AgentModelId)}>
-              {modelOptions(setup).map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
+              {modelOptionGroups(setup).map((group) => {
+                const options = group.options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ));
+                return group.label === null ? (
+                  options
+                ) : (
+                  <optgroup key={group.label} label={group.label}>
+                    {options}
+                  </optgroup>
+                );
+              })}
             </select>
+            <ReasoningSetting setup={setup} onFailed={setSaveFailed} />
           </>
         )}
         {saveFailed ? (

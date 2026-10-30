@@ -48,7 +48,8 @@
   (`SavedSearchInput`, `searchUrlFor`), `specs/capture-db.spec.ts` (`RETENTION_MODES`),
   `specs/changes.spec.ts` (`CAPTURE_REFUSALS`), `specs/screenshot.spec.ts` (`SCREENSHOT_REFUSALS`).
 - Sibling plans: Phase 8 (`docs/plans/phase-8-ai-complete.md`: MCP presets for keyword volume,
-  backlinks and vendor rank tracking; **referenced, not re-planned here**), Phase 9
+  backlinks and vendor rank tracking, none reachable yet (Decision 5); **referenced, not re-planned
+  here**), Phase 9
   (`phase-9-gsc-ai-readiness.md`: the AI-readiness score), Phase 10
   (`phase-10-projects-rank-tracking.md`: `ci_serp_readings`, `SERP_READING_SOURCES`, the
   `appendReading` writer in `packages/db/src/change-intel/readings.ts`, the source-independent read
@@ -142,12 +143,18 @@ K-C2, K-C3 (signed-in tabs) and K-E (`uule`) moved with their bets to "Deferred 
   SERP product is reached through its proxy network, which belongs with Decision 11's proxy rules,
   not the API client (open question Q3). Bing via APIs is deferred.
 
-### 5. Keyword volume, backlinks and vendor rank tracking stay in Phase 8
-Through MCP presets (Phase 8 backlog #9) on the user's Semrush/Ahrefs/SE Ranking subscription. This
-plan adds nothing for them. **Rejected:** a native DataForSEO keywords client here — it duplicates
-Phase 8's preset with a second, reviewed HTTP path; and the Google Ads Keyword Planner API (gap
-analysis §4 Keyword (c)), cut and deferred: it needs a Google Ads account and a developer token, and
-Phase 8's MCP presets already cover keyword data. Backlinks: Phase 11 ships the vendor "Open in"
+### 5. Keyword volume, backlinks and vendor rank tracking stay out of this plan
+Phase 8 meant to reach them through MCP presets (backlog #9) on the user's Semrush/Ahrefs/SE Ranking
+subscription, but no SEO-data vendor is reachable through frost's bearer-only MCP client today (gap
+analysis §4): Ahrefs's terms forbid standalone JSON-RPC clients; Semrush, SE Ranking and DataForSEO
+take their keys in non-Bearer headers (`Apikey`, `X-Api-Key`, Basic); SISTRIX signs in with OAuth
+only. Phase 8 lists them as deferred catalogue rows (`MCP_DEFERRED_PRESETS`), not presets. A custom
+API-key header field for MCP servers would unlock Semrush and SE Ranking: a follow-up, outside this
+plan. Until then frost has no keyword, competitor or vendor backlink data, and this plan adds nothing
+for them. **Rejected:** a native DataForSEO keywords client here — a second, reviewed HTTP path for
+one vendor, when the MCP route is the one meant to carry vendor data; and the Google Ads Keyword
+Planner API (gap analysis §4 Keyword (c)), cut and deferred: it needs a Google Ads account and a
+developer token. Backlinks: Phase 11 ships the vendor "Open in"
 shortcuts (§4 Backlinks (a)); Bing Webmaster Tools and Common Crawl are in Decision 12.
 
 ### 6. The crawler fetches served HTML, not rendered pages
@@ -427,7 +434,7 @@ phase's modules** (cross-plan ruling; a test in Task 9 keeps it so).
   - **Common Crawl's web graph** (§4 Backlinks (d)): cut. It is a large offline dataset with coarse,
     domain-level data: a download and processing pipeline out of proportion to a desktop browser.
   - **Google Ads Keyword Planner** (§4 Keyword (c)): cut and deferred. It needs a Google Ads account
-    and a developer token; Phase 8's MCP presets already cover keyword data (Decision 5).
+    and a developer token; keyword data waits on the MCP header follow-up (Decision 5).
 
 ---
 
