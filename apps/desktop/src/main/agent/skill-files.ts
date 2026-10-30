@@ -174,11 +174,15 @@ export function createSkillFiles(deps: SkillFilesDeps): SkillFiles {
   /** One of main's dialogs at a time. */
   let dialogOpen = false;
 
-  const itemOf = (entry: unknown, index: number, valid: Map<number, Skill>): AgentSkillImportItem => {
+  /** An entry's review item; `earlier` holds the ids of the file's earlier valid entries (a repeat is `exists`). */
+  const itemOf = (entry: unknown, index: number, valid: Map<number, Skill>, earlier: Set<string>): AgentSkillImportItem => {
     const parsed = SkillSchema.safeParse(entry);
     if (parsed.success) {
       const skill = parsed.data;
       valid.set(index, skill);
+      const conflict = deps.skills.importConflict(skill);
+      const repeated = earlier.has(skill.id);
+      earlier.add(skill.id);
       return {
         index,
         valid: true,
@@ -187,7 +191,7 @@ export function createSkillFiles(deps: SkillFilesDeps): SkillFiles {
         description: skill.description,
         tools: [...skill.allowedTools],
         actingTools: skill.allowedTools.some((tool) => (SKILL_ACTING_TOOLS as readonly string[]).includes(tool)),
-        conflict: deps.skills.importConflict(skill),
+        conflict: repeated && (conflict === 'none' || conflict === 'builtin-name') ? 'exists' : conflict,
         instructions: skill.instructions,
         inputs: (skill.inputs ?? []).map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? null })),
         error: null,
@@ -253,10 +257,11 @@ export function createSkillFiles(deps: SkillFilesDeps): SkillFiles {
       const parsed = parseSkillFile(bytes);
       if ('refused' in parsed) return { result: parsed.refused };
       const valid = new Map<number, Skill>();
+      const earlier = new Set<string>();
       let items: AgentSkillImportItem[];
       let room: number;
       try {
-        items = parsed.entries.map((entry, index) => itemOf(entry, index, valid));
+        items = parsed.entries.map((entry, index) => itemOf(entry, index, valid, earlier));
         room = Math.max(0, MAX_USER_SKILLS - deps.skills.mine().length);
       } catch {
         return { result: 'failed' };

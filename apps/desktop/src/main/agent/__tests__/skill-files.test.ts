@@ -359,6 +359,8 @@ describe('skill files', () => {
     // Two entries with one id in one file: the second becomes a copy too.
     const twice = await setup();
     const both = ready(await preview(twice, JSON.stringify(envelope([OTHER, OTHER]))));
+    // The review says so: the second entry's id is already taken (by the first).
+    expect(both.items.map((item) => (item.valid ? item.conflict : null))).toEqual(['none', 'exists']);
     expect(await twice.files.importSkills(both.token, [0, 1])).toEqual({ result: 'imported', count: 2 });
     expect([...twice.store.rows.keys()]).toEqual(['link-check', duplicateSkillId('link-check', (id) => id === 'link-check')]);
   });

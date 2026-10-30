@@ -206,9 +206,10 @@ Decisions (`docs/plans/phase-8-ai-complete.md`, Task 6; spec `agent-data.spec.ts
   opened on screen.
 - **The review's token is single-use and expires** (`SKILL_IMPORT_TOKEN_TTL_MS`): `agent.importSkills`
   spends it whatever the answer; a cancelled, replaced or old token is `expired`.
-- **Conflicts become copies, never replacements.** A built-in's id or one of the user's ids gives a
-  free `duplicateSkillId` and the name `duplicateSkillName`; a built-in's name gives
-  `duplicateSkillName`. The import is refused whole (`limit`) if it would pass `MAX_USER_SKILLS`.
+- **Conflicts become copies, never replacements.** A built-in's id, one of the user's ids, or the id
+  of an earlier valid entry in the same file gives a free `duplicateSkillId` and the name
+  `duplicateSkillName`; a built-in's name gives `duplicateSkillName`. The import is refused whole
+  (`limit`) if it would pass `MAX_USER_SKILLS`.
 - **The router rebuilds the review field by field** (as `checkedSaveSkillResult`): fixed values,
   bounded text, catalogue tools only, the acting-tools flag recomputed from the tools; a malformed
   entry fails the whole answer.
@@ -223,7 +224,8 @@ Scenarios (`apps/desktop/src/main/agent/__tests__/skill-files.test.ts` unless no
   message and can't be selected or stored.
 - **Scenario: skill-import-preview-carries-full-instructions** — each valid entry's instructions and
   inputs equal the file's (up to `maxInstructionChars`); the whole review within `SKILL_FILE_MAX_BYTES`.
-- **Scenario: skill-import-conflicts-become-copies** — built-in id, existing id, built-in name.
+- **Scenario: skill-import-conflicts-become-copies** — built-in id, existing id, built-in name; an id
+  repeated within one file is listed `exists` from its second entry on, and imported as a copy.
 - **Scenario: skill-import-token-single-use-and-expires** — spent once; expired after the TTL;
   cancelled or replaced tokens are refused.
 - **Scenario: skill-import-respects-max-user-skills** — over the cap nothing is stored.

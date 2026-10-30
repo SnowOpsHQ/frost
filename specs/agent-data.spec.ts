@@ -426,7 +426,7 @@ export const SKILL_IMPORT_TOKEN_TTL_MS = 10 * 60_000;
 
 /**
  * Why an entry would not keep its id or name: `none`; `builtin-id` (a built-in has the id);
- * `exists` (one of the user's skills has the id); `builtin-name` (a built-in has the name, ignoring
+ * `exists` (one of the user's skills, or an earlier valid entry of the same file, has the id); `builtin-name` (a built-in has the name, ignoring
  * case and spacing). An entry with a conflict is imported as a copy: a clashing id becomes a free
  * `duplicateSkillId`, and its name `duplicateSkillName`. Nothing stored is ever replaced.
  */
