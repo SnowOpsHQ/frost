@@ -11,8 +11,10 @@ import {
   type AgentSaveSkillResult,
   type AgentSkillDetail,
   type AgentSkillDraft,
+  type AgentSkillImportResult,
   type AgentSkillSaveMode,
   type SkillEditorField,
+  type SkillImportConflict,
 } from '@app/specs/agent-data.spec';
 import { SkillSchema } from '@app/specs/skills-schema';
 import { isSkillId, SKILL_LIMITS } from '@app/specs/skills.spec';
@@ -31,6 +33,11 @@ import { isSkillId, SKILL_LIMITS } from '@app/specs/skills.spec';
 // after the re-keying above has finished (a moved skill's row moved with it, in the repository's
 // batch), and rows no skill has are pruned then. A switched-off skill stays in `registry` (the
 // library lists it); the session leaves it out of runs, and the renderer out of the picker and palette.
+//
+// Imported skills (Phase 8 Task 6; `skill-files.ts` reads and reviews the file, acceptance
+// `agent-data.feature.md`, Import and export) are stored here, in the same queue as the editor's
+// saves: never over a stored skill or a built-in (a clashing id or name becomes a copy), and all or
+// nothing against `MAX_USER_SKILLS`.
 
 /** The database side (`SessionStore.agentSkills` from `@app/db`, or `createMemorySkillsStore`). */
 export interface AgentSkillsStore {
@@ -80,6 +87,17 @@ export interface UserSkills {
   setEnabled(id: string, enabled: boolean): Promise<boolean>;
   /** Called after each change (the session publishes the new skill list). */
   onChange(listener: () => void): () => void;
+  /** The user's own skills, in stored order (what an export holds). */
+  mine(): readonly Skill[];
+  /** Why `skill` would be imported as a copy (`SKILL_IMPORT_CONFLICTS`), against what is stored now. */
+  importConflict(skill: Skill): SkillImportConflict;
+  /**
+   * Stores skills from a reviewed file, in order. A clashing id (a built-in's, a stored one's or an
+   * earlier entry's) becomes a free `duplicateSkillId` and its name `duplicateSkillName`; a built-in's
+   * name becomes `duplicateSkillName`. `limit` (nothing stored) if they would pass `MAX_USER_SKILLS`;
+   * `failed` (the ones stored by this call are deleted again) if one can't be stored.
+   */
+  importSkills(skills: readonly Skill[]): Promise<AgentSkillImportResult>;
 }
 
 const isField = (value: unknown): value is SkillEditorField => typeof value === 'string' && (SKILL_EDITOR_FIELDS as readonly string[]).includes(value);
@@ -362,6 +380,46 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
     onChange(listener) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
+    },
+    mine: () => [...mine.values()],
+    importConflict(skill) {
+      if (isBuiltin(skill.id)) return 'builtin-id';
+      if (mine.has(skill.id)) return 'exists';
+      return builtinNames().has(nameKey(skill.name)) ? 'builtin-name' : 'none';
+    },
+    importSkills(skills) {
+      return serial(async (): Promise<AgentSkillImportResult> => {
+        if (!Array.isArray(skills) || skills.length === 0) return { result: 'invalid-selection' };
+        if (mine.size + skills.length > MAX_USER_SKILLS) return { result: 'limit' };
+        const names = builtinNames();
+        const stored: Skill[] = [];
+        const taken = (id: string) => isBuiltin(id) || mine.has(id) || stored.some((skill) => skill.id === id);
+        const undo = async () => {
+          for (const skill of stored) {
+            try {
+              await deps.store.deleteSkill(skill.id);
+            } catch {
+              log('agent skills: an imported skill could not be removed after a failed import');
+            }
+          }
+        };
+        for (const source of skills) {
+          const idClash = taken(source.id);
+          const id = idClash ? duplicateSkillId(source.id, taken) : source.id;
+          const name = idClash || names.has(nameKey(source.name)) ? duplicateSkillName(source.name) : source.name;
+          const parsed = id === null ? null : SkillSchema.safeParse({ ...source, id, name });
+          // A copy's name must not be a built-in's either (as the editor refuses).
+          if (parsed === null || !parsed.success || names.has(nameKey(parsed.data.name)) || !(await store(parsed.data))) {
+            log('agent skills: an imported skill could not be stored');
+            await undo();
+            return { result: 'failed' };
+          }
+          stored.push(parsed.data);
+        }
+        for (const skill of stored) mine.set(skill.id, skill);
+        rebuild();
+        return { result: 'imported', count: stored.length };
+      });
     },
   };
 }

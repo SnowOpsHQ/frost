@@ -1,7 +1,8 @@
 // Specs: specs/agent-panel.spec.ts (AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS, AGENT_APPROVAL_BUTTONS),
 // specs/agent-session.spec.ts (AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE),
 // specs/agent-e2e-script.schema.ts (the script format)
-// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL, SKILL_LIBRARY_WORDS),
+// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL, SKILL_LIBRARY_WORDS,
+// SKILL_FILE_FORMAT, SKILL_FILE_VERSION, SKILL_EXPORT_MESSAGES, SKILL_IMPORT_MESSAGES, SKILL_FILE_WORDS, SKILL_IMPORT_CONFLICT_MESSAGES),
 // specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
 // Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
 // specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end)
@@ -14,7 +15,19 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
-import { AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_LIBRARY_WORDS, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
+import {
+  AGENT_GRANTS_EXPLAINER,
+  CHAT_EXPORT_MESSAGES,
+  CHAT_EXPORT_UNTRUSTED_NOTE,
+  SKILL_EXPORT_MESSAGES,
+  SKILL_FILE_FORMAT,
+  SKILL_FILE_VERSION,
+  SKILL_FILE_WORDS,
+  SKILL_IMPORT_CONFLICT_MESSAGES,
+  SKILL_IMPORT_MESSAGES,
+  SKILL_LIBRARY_WORDS,
+  SKILL_USER_LABEL,
+} from '@app/specs/agent-data.spec';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_USER_MARK } from '@app/specs/skills.spec';
 import { MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
@@ -564,6 +577,91 @@ test('agent-skill-library-search-and-disable', async () => {
     await closeApp(app);
     app = undefined;
     await rm(profile, { recursive: true, force: true });
+  }
+});
+
+// Phase 8 Task 6 (specs/agent-data.feature.md, Import and export): main's save and open dialogs are
+// answered here by replacing `dialog.showSaveDialog` / `dialog.showOpenDialog` in main, test-only, so
+// main's own code path runs; the renderer never names the file.
+test('agent-skill-export-import', async () => {
+  const first = await mkdtemp(path.join(tmpdir(), 'frost-e2e-agent-export-'));
+  const second = await mkdtemp(path.join(tmpdir(), 'frost-e2e-agent-import-'));
+  const file = path.join(scripts, `skills-${Date.now()}.json`);
+  const answerSave = (target: string) =>
+    app!.evaluate(({ dialog }, chosen) => {
+      const holder = dialog as unknown as { showSaveDialog: (...args: unknown[]) => Promise<{ canceled: boolean; filePath?: string }> };
+      holder.showSaveDialog = async () => (chosen === '' ? { canceled: true } : { canceled: false, filePath: chosen });
+    }, target);
+  const answerOpen = (target: string) =>
+    app!.evaluate(({ dialog }, chosen) => {
+      const holder = dialog as unknown as { showOpenDialog: (...args: unknown[]) => Promise<{ canceled: boolean; filePaths: string[] }> };
+      holder.showOpenDialog = async () => (chosen === '' ? { canceled: true, filePaths: [] } : { canceled: false, filePaths: [chosen] });
+    }, target);
+  const row = (id: string) => page.locator(`[data-testid="agent-skill-item"][data-skill-id="${id}"]`);
+  const message = () => page.getByTestId('agent-skills-message');
+  try {
+    // A skill of the user's own: a renamed copy of a built-in.
+    await launchWith([{ text: ['unused'] }], '/start', { userDataDir: first });
+    await openFromSettings('agent-open-skills');
+    await row('audit-this-page').getByTestId('agent-skill-duplicate').click();
+    await page.getByTestId('agent-skill-field-name').fill('My page audit');
+    await page.getByTestId('agent-skill-save').click();
+    await expect(page.getByTestId('agent-skill-editor')).toHaveCount(0);
+    await expect(row('audit-this-page-copy').getByTestId('agent-skill-name')).toHaveText('My page audit');
+
+    // Export all: a cancelled dialog writes nothing; then the chosen file gets the user's skills.
+    await answerSave('');
+    await page.getByTestId('agent-skills-export-all').click();
+    await expect(message()).toHaveText(SKILL_EXPORT_MESSAGES.cancelled);
+    await answerSave(file);
+    await page.getByTestId('agent-skills-export-all').click();
+    await expect(message()).toHaveText(SKILL_EXPORT_MESSAGES.saved);
+    const written = JSON.parse(await readFile(file, 'utf8')) as { format: string; version: number; skills: { id: string; name: string; instructions: string }[] };
+    expect(written.format).toBe(SKILL_FILE_FORMAT);
+    expect(written.version).toBe(SKILL_FILE_VERSION);
+    expect(written.skills.map((skill) => [skill.id, skill.name])).toEqual([['audit-this-page-copy', 'My page audit']]);
+    await closeApp(app);
+    app = undefined;
+
+    // A fresh profile: a cancelled open dialog changes nothing.
+    await launchWith([{ text: ['unused'] }], '/start', { userDataDir: second });
+    await openFromSettings('agent-open-skills');
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(BUILTIN_SKILL_IDS.length);
+    await answerOpen('');
+    await page.getByTestId('agent-skills-import').click();
+    await expect(message()).toHaveText(SKILL_IMPORT_MESSAGES.cancelled);
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(BUILTIN_SKILL_IDS.length);
+
+    // The review: Import waits until the instructions have been on screen.
+    await answerOpen(file);
+    await page.getByTestId('agent-skills-import').click();
+    await expect(page.getByTestId('agent-skill-import')).toBeVisible();
+    await expect(page.getByTestId('agent-skill-import-item')).toHaveCount(1);
+    const confirm = page.getByTestId('agent-skill-import-confirm');
+    await expect(confirm).toBeDisabled();
+    await expect(page.getByTestId('agent-skill-import-hint')).toHaveText(SKILL_FILE_WORDS.openEveryFirst);
+    await page.getByTestId('agent-skill-import-show').click();
+    expect(await page.getByTestId('agent-skill-import-instructions').textContent()).toBe(written.skills[0]!.instructions);
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect(message()).toHaveText(SKILL_IMPORT_MESSAGES.imported);
+    await expect(row('audit-this-page-copy').getByTestId('agent-skill-name')).toHaveText('My page audit');
+    await expect(row('audit-this-page-copy').getByTestId('agent-skill-badge')).toHaveText(SKILL_USER_LABEL);
+
+    // Imported again: the id clashes, so it comes in as a copy and the first is kept.
+    await page.getByTestId('agent-skills-import').click();
+    await expect(page.getByTestId('agent-skill-import-conflict')).toHaveText(SKILL_IMPORT_CONFLICT_MESSAGES.exists!);
+    await page.getByTestId('agent-skill-import-show').click();
+    await confirm.click();
+    await expect(message()).toHaveText(SKILL_IMPORT_MESSAGES.imported);
+    await expect(row('audit-this-page-copy-copy').getByTestId('agent-skill-name')).toHaveText('My page audit (copy)');
+    await expect(row('audit-this-page-copy').getByTestId('agent-skill-name')).toHaveText('My page audit');
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(BUILTIN_SKILL_IDS.length + 2);
+  } finally {
+    await closeApp(app);
+    app = undefined;
+    await rm(first, { recursive: true, force: true });
+    await rm(second, { recursive: true, force: true });
   }
 });
 

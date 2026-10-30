@@ -182,6 +182,63 @@ Scenarios:
   "Off", the composer's picker no longer has it; switch it on and it comes back; after a restart on
   the same profile a switched-off skill is still off.
 
+## Import and export (Phase 8 Task 6: skill files)
+Decisions (`docs/plans/phase-8-ai-complete.md`, Task 6; spec `agent-data.spec.ts`, Skill files;
+`skills-schema.ts`, `SkillFileSchema`):
+- **Files go through main's dialogs only.** `agent.exportSkills({ ids | 'all-mine' })` opens main's
+  save dialog (JSON filter, `skillExportFileName`) and `agent.previewSkillImport()` main's open dialog
+  (JSON filter); the renderer never names a path. A dismissed dialog writes, reads and changes nothing
+  (`cancelled`), and only one of these dialogs is open at a time.
+- **An export is the user's skills, validated, owner-only.** The envelope `{ format: 'frost-skills',
+  version: 1, exportedAt, skills }` is checked with `SkillFileSchema` first; it is written as a new
+  file beside the chosen one (mode `0600`, flushed) and renamed over it, as the agent's settings file
+  is, so a failed write leaves no half file. Built-ins are not exported; an id that is not one of the
+  user's skills fails before any dialog opens.
+- **Import reads at most `SKILL_FILE_MAX_BYTES` of strict UTF-8 JSON** (a regular file only) with
+  frost's format and version: anything else is a plain refusal (`too-large`, `not-utf8`, `not-json`,
+  `wrong-format`). Each entry is checked on its own with `SkillSchema`: an invalid one is listed
+  `valid: false` with frost's sentence (never Zod's text, never the entry's own instructions) and can
+  never be stored.
+- **The review is the control.** An imported skill's instructions are sent as the user's own turn when
+  it runs, so the review lists each entry's tools, `SKILL_WARNINGS.actingTools` when it lists an acting
+  tool, any conflict, and its full instructions and inputs, as inert text. Nothing is stored or run
+  until the user confirms; Import stays disabled until every selected entry's instructions have been
+  opened on screen.
+- **The review's token is single-use and expires** (`SKILL_IMPORT_TOKEN_TTL_MS`): `agent.importSkills`
+  spends it whatever the answer; a cancelled, replaced or old token is `expired`.
+- **Conflicts become copies, never replacements.** A built-in's id or one of the user's ids gives a
+  free `duplicateSkillId` and the name `duplicateSkillName`; a built-in's name gives
+  `duplicateSkillName`. The import is refused whole (`limit`) if it would pass `MAX_USER_SKILLS`.
+- **The router rebuilds the review field by field** (as `checkedSaveSkillResult`): fixed values,
+  bounded text, catalogue tools only, the acting-tools flag recomputed from the tools; a malformed
+  entry fails the whole answer.
+
+Scenarios (`apps/desktop/src/main/agent/__tests__/skill-files.test.ts` unless noted):
+- **Scenario: skill-export-writes-validated-envelope** — the chosen path only, a temporary file
+  renamed into place, mode `0600`, a `SkillFileSchema` envelope of the user's skills; cancelled writes
+  nothing; an unknown id never opens the dialog; a failed write leaves no file.
+- **Scenario: skill-import-reads-bounded-utf8** — over-size, invalid UTF-8, not JSON, wrong `format`
+  or `version` are plain refusals; a file of exactly `SKILL_FILE_MAX_BYTES` is read.
+- **Scenario: skill-import-validates-each-skill** — an invalid entry is `valid: false` with frost's
+  message and can't be selected or stored.
+- **Scenario: skill-import-preview-carries-full-instructions** — each valid entry's instructions and
+  inputs equal the file's (up to `maxInstructionChars`); the whole review within `SKILL_FILE_MAX_BYTES`.
+- **Scenario: skill-import-conflicts-become-copies** — built-in id, existing id, built-in name.
+- **Scenario: skill-import-token-single-use-and-expires** — spent once; expired after the TTL;
+  cancelled or replaced tokens are refused.
+- **Scenario: skill-import-respects-max-user-skills** — over the cap nothing is stored.
+- **Scenario: skill-import-hostile-text-stays-data** — a name with bidi controls or instructions with
+  a stray `}}` are refused by `SkillSchema`; instructions are previewed, never run, before confirmation.
+- **Scenario: agent-skill-file-procedures-enforce-sender-and-bounds** (`agent-router.test.ts`) — every
+  procedure sender-guarded, strict inputs, the review rebuilt and re-bounded.
+- **Scenario: skill-import-review-sheet** (`agent-data-components.test.ts`) — each entry's tools, the
+  acting-tools warning and its instructions as inert text; invalid entries not selectable; Import stays
+  disabled until every selected entry's instructions have been opened.
+- **Scenario: agent-skill-export-import** (`apps/desktop/e2e/agent.e2e.ts`, End to end) — export the
+  user's skills (main's save dialog stubbed), import the file on a fresh profile (main's open dialog
+  stubbed): the review shows the instructions, Import waits for them to be opened, and the same skills
+  are listed; importing it again adds copies; a cancelled dialog changes nothing.
+
 ## Wiring (`apps/desktop/src/main/agent/__tests__/service.test.ts`)
 - **Scenario: service-restores-prunes-and-composes-skills** — startup prunes under the default
   retention and restores the rest; the user's skill comes after the built-ins; a daily prune timer,
@@ -208,6 +265,7 @@ Scenarios:
 
 ## End to end (`apps/desktop/e2e/agent.e2e.ts`)
 - **Scenario: agent-skill-library-search-and-disable** — see Skills library above.
+- **Scenario: agent-skill-export-import** — see Import and export above.
 - **Scenario: agent-grants-revoke** — "Always allow" on an https site; the next navigate there runs
   without asking; the grants page lists it and revokes it; the next navigate asks again.
 - **Scenario: agent-skill-editor-saves** — duplicate a built-in, an invalid placeholder refused

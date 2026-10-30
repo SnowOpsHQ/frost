@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 // Spec: specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, AGENT_GRANTS_REVOKE_ALL_CONFIRM, CHAT_RETENTION_HINTS,
-// CHAT_EXPORT_MESSAGES, SKILL_BUILTIN_LABEL, SKILL_USER_LABEL, SKILL_DUPLICATE_LABEL, AGENT_SAVE_SKILL_MESSAGES)
-// Acceptance: specs/agent-data.feature.md (Panel, Skills library)
+// CHAT_EXPORT_MESSAGES, SKILL_BUILTIN_LABEL, SKILL_USER_LABEL, SKILL_DUPLICATE_LABEL, AGENT_SAVE_SKILL_MESSAGES,
+// SKILL_FILE_WORDS, SKILL_IMPORT_MESSAGES, SKILL_EXPORT_MESSAGES, SKILL_IMPORT_CONFLICT_MESSAGES, AgentSkillImportPreview)
+// Acceptance: specs/agent-data.feature.md (Panel, Skills library, Import and export)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { AGENT_TOOLS } from '@app/specs/agent-tools.spec';
 import { SKILL_WARNINGS } from '@app/specs/skills.spec';
 import {
   AGENT_GRANTS_EMPTY,
@@ -14,8 +16,13 @@ import {
   CHAT_RETENTION_HINTS,
   SKILL_BUILTIN_LABEL,
   SKILL_DUPLICATE_LABEL,
+  SKILL_EXPORT_MESSAGES,
+  SKILL_FILE_WORDS,
+  SKILL_IMPORT_CONFLICT_MESSAGES,
+  SKILL_IMPORT_MESSAGES,
   SKILL_LIBRARY_WORDS,
   SKILL_USER_LABEL,
+  type AgentSkillImportPreviewResult,
 } from '@app/specs/agent-data.spec';
 import { setup, SKILLS } from './agent-fixtures';
 
@@ -43,6 +50,10 @@ const calls = vi.hoisted(() => ({
   deleteSkill: vi.fn(async (..._args: unknown[]) => true),
   duplicateSkill: vi.fn(async (..._args: unknown[]) => ({ result: 'saved', id: 'audit-this-page-copy' }) as unknown),
   setSkillEnabled: vi.fn(async (..._args: unknown[]) => true),
+  exportSkills: vi.fn(async (..._args: unknown[]) => 'saved' as string),
+  previewSkillImport: vi.fn(async () => ({ result: 'cancelled' }) as unknown),
+  importSkills: vi.fn(async (..._args: unknown[]) => ({ result: 'imported', count: 1 }) as unknown),
+  cancelSkillImport: vi.fn(async (..._args: unknown[]) => true),
   selectChat: vi.fn(async () => true),
   deleteChat: vi.fn(async () => true),
   setModel: vi.fn(async () => true),
@@ -304,5 +315,154 @@ describe('agent data components', () => {
     expect(warnings()).toEqual([SKILL_WARNINGS.builtinName]);
     click(byTestId('agent-skill-tool-navigate'));
     expect(warnings()).toEqual([SKILL_WARNINGS.builtinName, SKILL_WARNINGS.actingTools]);
+  });
+
+  test('skill-import-review-sheet', async () => {
+    const hostile = 'Read {{pageUrl}}. <img src=x onerror="alert(1)"> **bold** [link](https://evil.example)';
+    const review: AgentSkillImportPreviewResult = {
+      result: 'ready',
+      preview: {
+        token: '3b241101-e2bb-4255-8caf-4136c566a962',
+        room: 2,
+        items: [
+          {
+            index: 0,
+            valid: true,
+            id: 'heading-check',
+            name: 'Heading check',
+            description: 'Check the headings.',
+            tools: ['page_data', 'page_text'],
+            actingTools: false,
+            conflict: 'none',
+            instructions: 'Check the headings of {{pageUrl}}.\nThen {{userNote}}',
+            inputs: [{ slot: 'userNote', label: 'Focus on', placeholder: null }],
+            error: null,
+          },
+          { index: 1, valid: false, id: null, name: null, error: 'This entry is not a skill frost can read.' },
+          {
+            index: 2,
+            valid: true,
+            id: 'audit-this-page',
+            name: 'Click <b>around</b>',
+            description: 'Clicks the menu.',
+            tools: ['page_text', 'click'],
+            actingTools: true,
+            conflict: 'builtin-id',
+            instructions: hostile,
+            inputs: [],
+            error: null,
+          },
+        ],
+      },
+    };
+    render(createElement(AgentSkills, { skills: SKILLS }));
+    // Export all, and one of the user's skills (built-ins have no Export).
+    click(byTestId('agent-skills-export-all'));
+    await flush();
+    expect(calls.exportSkills).toHaveBeenLastCalledWith('all-mine');
+    expect(byTestId('agent-skills-message')!.textContent).toBe(SKILL_EXPORT_MESSAGES.saved);
+    const rows = allByTestId('agent-skill-item');
+    expect(rows[0]!.querySelector('[data-testid="agent-skill-export"]')).toBeNull();
+    calls.exportSkills.mockResolvedValueOnce('cancelled');
+    click(rows[2]!.querySelector<HTMLElement>('[data-testid="agent-skill-export"]'));
+    await flush();
+    expect(calls.exportSkills).toHaveBeenLastCalledWith(['plain-skill']);
+    expect(byTestId('agent-skills-message')!.textContent).toBe(SKILL_EXPORT_MESSAGES.cancelled);
+    // Import…: a refusal is said plainly, and no review opens.
+    calls.previewSkillImport.mockResolvedValueOnce({ result: 'not-json' });
+    click(byTestId('agent-skills-import'));
+    await flush();
+    expect(calls.previewSkillImport).toHaveBeenCalledWith();
+    expect(byTestId('agent-skill-import')).toBeNull();
+    expect(byTestId('agent-skills-message')!.textContent).toBe(SKILL_IMPORT_MESSAGES['not-json']);
+
+    // A review: each entry's tools, the acting-tools warning, conflicts; invalid entries can't be chosen.
+    calls.previewSkillImport.mockResolvedValueOnce(review);
+    click(byTestId('agent-skills-import'));
+    await flush();
+    const sheet = byTestId('agent-skill-import')!;
+    expect(sheet.querySelector('h3')!.textContent).toBe(SKILL_FILE_WORDS.reviewTitle);
+    expect(byTestId('agent-skill-import-explainer')!.textContent).toBe(SKILL_FILE_WORDS.reviewExplainer);
+    const items = allByTestId('agent-skill-import-item');
+    expect(items.map((item) => [item.dataset['index'], item.dataset['valid']])).toEqual([
+      ['0', 'true'],
+      ['1', 'false'],
+      ['2', 'true'],
+    ]);
+    const tools = (item: HTMLElement) => [...item.querySelectorAll('[data-testid="agent-skill-import-tool"]')].map((el) => el.textContent);
+    expect(tools(items[0]!)).toEqual([AGENT_TOOLS.page_data.label, AGENT_TOOLS.page_text.label]);
+    expect(tools(items[2]!)).toEqual([AGENT_TOOLS.page_text.label, AGENT_TOOLS.click.label]);
+    expect(items[0]!.querySelector('[data-testid="agent-skill-import-acting"]')).toBeNull();
+    expect(items[2]!.querySelector('[data-testid="agent-skill-import-acting"]')!.textContent).toBe(SKILL_WARNINGS.actingTools);
+    expect(items[2]!.querySelector('[data-testid="agent-skill-import-conflict"]')!.textContent).toBe(SKILL_IMPORT_CONFLICT_MESSAGES['builtin-id']);
+    expect(items[1]!.querySelector('[data-testid="agent-skill-import-error"]')!.textContent).toBe('This entry is not a skill frost can read.');
+    expect(items[1]!.querySelector('[data-testid="agent-skill-import-show"]')).toBeNull();
+    const boxes = () => allByTestId('agent-skill-import-select') as HTMLInputElement[];
+    expect(boxes().map((box) => [box.checked, box.disabled])).toEqual([
+      [true, false],
+      [false, true],
+      [true, false],
+    ]);
+    // A name is text, never markup.
+    expect(items[2]!.querySelector('b')).toBeNull();
+    expect(items[2]!.textContent).toContain('Click <b>around</b>');
+
+    // Import stays disabled until every selected entry's instructions have been opened.
+    const confirm = () => byTestId('agent-skill-import-confirm') as HTMLButtonElement;
+    expect(confirm().disabled).toBe(true);
+    expect(byTestId('agent-skill-import-hint')!.textContent).toBe(SKILL_FILE_WORDS.openEveryFirst);
+    expect(byTestId('agent-skill-import-instructions')).toBeNull();
+    click(items[0]!.querySelector<HTMLElement>('[data-testid="agent-skill-import-show"]'));
+    expect(items[0]!.querySelector('[data-testid="agent-skill-import-instructions"]')!.textContent).toBe('Check the headings of {{pageUrl}}.\nThen {{userNote}}');
+    expect(items[0]!.querySelector('[data-testid="agent-skill-import-inputs"]')!.textContent).toContain('Focus on');
+    expect(confirm().disabled).toBe(true);
+    // Hiding them again does not undo having read them; the other is still unread.
+    click(items[0]!.querySelector<HTMLElement>('[data-testid="agent-skill-import-show"]'));
+    expect(items[0]!.querySelector('[data-testid="agent-skill-import-instructions"]')).toBeNull();
+    expect(confirm().disabled).toBe(true);
+    // Unselecting the unread one allows the import of the read one alone.
+    click(boxes()[2]!);
+    expect(confirm().disabled).toBe(false);
+    expect(byTestId('agent-skill-import-hint')).toBeNull();
+    click(boxes()[2]!);
+    expect(confirm().disabled).toBe(true);
+    // The hostile instructions are inert text: no element, no link, no image.
+    click(items[2]!.querySelector<HTMLElement>('[data-testid="agent-skill-import-show"]'));
+    const shown = items[2]!.querySelector<HTMLElement>('[data-testid="agent-skill-import-instructions"]')!;
+    expect(shown.textContent).toBe(hostile);
+    expect(shown.children).toHaveLength(0);
+    expect(sheet.querySelector('img, a')).toBeNull();
+    expect(confirm().disabled).toBe(false);
+    // Confirmed: main gets the token and the selected entries, in file order.
+    click(confirm());
+    await flush();
+    expect(calls.importSkills).toHaveBeenLastCalledWith('3b241101-e2bb-4255-8caf-4136c566a962', [0, 2]);
+    expect(byTestId('agent-skill-import')).toBeNull();
+    expect(byTestId('agent-skills-message')!.textContent).toBe(SKILL_IMPORT_MESSAGES.imported);
+
+    // More selected than fit: disabled with the reason. Cancel tells main to drop the token.
+    calls.previewSkillImport.mockResolvedValueOnce({ result: 'ready', preview: { ...review.preview, room: 1 } });
+    click(byTestId('agent-skills-import'));
+    await flush();
+    for (const show of allByTestId('agent-skill-import-show')) click(show);
+    expect(confirm().disabled).toBe(true);
+    expect(byTestId('agent-skill-import-hint')!.textContent).toBe(SKILL_FILE_WORDS.overRoom);
+    click(byTestId('agent-skill-import-cancel'));
+    await flush();
+    expect(calls.cancelSkillImport).toHaveBeenLastCalledWith('3b241101-e2bb-4255-8caf-4136c566a962');
+    expect(byTestId('agent-skill-import')).toBeNull();
+    expect(byTestId('agent-skills-message')!.textContent).toBe(SKILL_IMPORT_MESSAGES.cancelled);
+    expect(calls.importSkills).toHaveBeenCalledTimes(1);
+
+    // A refused import keeps nothing open and says why.
+    calls.previewSkillImport.mockResolvedValueOnce(review);
+    click(byTestId('agent-skills-import'));
+    await flush();
+    for (const show of allByTestId('agent-skill-import-show')) click(show);
+    calls.importSkills.mockResolvedValueOnce({ result: 'expired' });
+    click(confirm());
+    await flush();
+    expect(byTestId('agent-skill-import')).toBeNull();
+    expect(byTestId('agent-skills-message')!.textContent).toBe(SKILL_IMPORT_MESSAGES.expired);
   });
 });

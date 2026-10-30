@@ -56,9 +56,12 @@ import {
   type AgentGrantView,
   type AgentSaveSkillResult,
   type AgentSkillDetail,
+  type AgentSkillImportPreviewResult,
+  type AgentSkillImportResult,
   type ChatExportFormat,
   type ChatExportResult,
   type ChatRetention,
+  type SkillExportResult,
 } from '@app/specs/agent-data.spec';
 import { toolLabel, type ApprovalBroker, type ApprovalRequestView } from './approvals';
 import type { ChatHistory } from './chat-history';
@@ -68,6 +71,7 @@ import type { AgentEntitlements } from './entitlements';
 import type { AgentGrants } from './grants';
 import { AGENT_CRASHED_MESSAGE, type AgentChatEvent, type AgentHost } from './host';
 import type { AgentSettings } from './settings';
+import type { SkillFiles } from './skill-files';
 import { AGENT_SYSTEM_PROMPT } from './system-prompt';
 import { skillDetail, type UserSkills } from './user-skills';
 import type { McpManager } from './mcp';
@@ -94,7 +98,8 @@ import type { McpManager } from './mcp';
 // stored chats are restored at startup (`restore`, without a tab: the next message binds the active
 // one) and pruned with the retention. The grants page's revokes, the read-tools switch, the
 // retention, "Delete all chats" (after main's own confirmation), export (`exportChat`, through
-// main's save dialog) and the skills editor (`UserSkills`) all go through here.
+// main's save dialog) and the skills editor (`UserSkills`) all go through here, as do skills files
+// (Phase 8 Task 6, `SkillFiles`: export, and import after the user reviewed the file).
 
 export interface AgentSessionDeps {
   readonly host: Pick<AgentHost, 'send' | 'onChat' | 'onStatus' | 'status' | 'lastFailure' | 'lockdown' | 'activeChats' | 'strike' | 'restart'>;
@@ -123,6 +128,8 @@ export interface AgentSessionDeps {
   readonly confirmRetentionChange?: (retention: ChatRetention, chats: number) => Promise<boolean>;
   /** Writes a chat's export where the user chooses, in main's own save dialog; default: `failed`. */
   readonly exportChat?: (chat: ChatSnapshot, format: ChatExportFormat) => Promise<ChatExportResult>;
+  /** Skills files (Phase 8 Task 6, `./skill-files`): export and the reviewed import, through main's dialogs; default: none (`failed`). */
+  readonly skillFiles?: SkillFiles;
   readonly now?: () => number;
   readonly setTimeout?: (callback: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
@@ -1649,6 +1656,39 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       if (userSkills === null) return false;
       try {
         return (await userSkills.setEnabled(id, enabled)) === true;
+      } catch {
+        return false;
+      }
+    },
+
+    // ---- Phase 8 Task 6: skill files (`agent-data.spec.ts`, Skill files) ----
+    async exportSkills(ids): Promise<SkillExportResult> {
+      if (deps.skillFiles === undefined) return 'failed';
+      try {
+        return await deps.skillFiles.exportSkills(ids);
+      } catch {
+        return 'failed';
+      }
+    },
+    async previewSkillImport(): Promise<AgentSkillImportPreviewResult> {
+      if (deps.skillFiles === undefined) return { result: 'failed' };
+      try {
+        return await deps.skillFiles.previewImport();
+      } catch {
+        return { result: 'failed' };
+      }
+    },
+    async importSkills(token, indices): Promise<AgentSkillImportResult> {
+      if (deps.skillFiles === undefined) return { result: 'failed' };
+      try {
+        return await deps.skillFiles.importSkills(token, indices);
+      } catch {
+        return { result: 'failed' };
+      }
+    },
+    cancelSkillImport(token) {
+      try {
+        return deps.skillFiles?.cancelImport(token) === true;
       } catch {
         return false;
       }

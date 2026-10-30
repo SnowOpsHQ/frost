@@ -28,8 +28,8 @@ export async function setupSession(
     tabUrl?: string | null;
     tabTitle?: string | null;
     skills?: SkillRegistry;
-    /** Task 9's stored chats, skills editor and dialogs. */
-    data?: Pick<AgentSessionDeps, 'history' | 'userSkills' | 'confirmDeleteAllChats' | 'confirmRetentionChange' | 'exportChat'>;
+    /** Task 9's stored chats, skills editor and dialogs; Phase 8 Task 6's skill files. */
+    data?: Pick<AgentSessionDeps, 'history' | 'userSkills' | 'confirmDeleteAllChats' | 'confirmRetentionChange' | 'exportChat' | 'skillFiles'>;
     now?: () => number;
     /** Task 10's MCP servers (the real manager over the fake server, in `mcp-session.test.ts`). */
     mcp?: McpManager;

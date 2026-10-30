@@ -1,7 +1,19 @@
 import { useState } from 'react';
-import { filterSkills, SKILL_DUPLICATE_LABEL, SKILL_LIBRARY_WORDS, type AgentSaveSkillResult, type AgentSkillSaveMode } from '@app/specs/agent-data.spec';
+import {
+  filterSkills,
+  SKILL_DUPLICATE_LABEL,
+  SKILL_EXPORT_MESSAGES,
+  SKILL_FILE_WORDS,
+  SKILL_IMPORT_CONFLICT_MESSAGES,
+  SKILL_IMPORT_MESSAGES,
+  SKILL_LIBRARY_WORDS,
+  type AgentSaveSkillResult,
+  type AgentSkillImportPreview,
+  type AgentSkillSaveMode,
+} from '@app/specs/agent-data.spec';
 import type { AgentSkillView } from '@app/specs/agent-session.spec';
-import { SKILL_INPUT_SLOTS, SKILL_LIMITS } from '@app/specs/skills.spec';
+import { AGENT_TOOLS } from '@app/specs/agent-tools.spec';
+import { SKILL_INPUT_SLOTS, SKILL_LIMITS, SKILL_WARNINGS } from '@app/specs/skills.spec';
 import { agentActions } from '../../agent-actions';
 import {
   draftFromDetail,
@@ -27,6 +39,13 @@ import {
 // every save with the skill schema and answers inline errors, shown beside their fields. A search box
 // filters the list (Phase 8 Task 5, `filterSkills`: name, description or id) and each skill has a
 // switch: a skill switched off stays listed but is left out of the composer's picker and the palette.
+//
+// Skills files (Phase 8 Task 6; `agent-data.feature.md`, Import and export): Export (one of the
+// user's skills) and Export all ask main, which asks where in its own save dialog. Import… asks main,
+// which asks which file in its own open dialog and answers a review: the sheet lists each entry's
+// tools, the acting-tools warning, any conflict, and its instructions as plain text (never markup).
+// An imported skill's instructions become the user's own turn when it runs, so Import stays disabled
+// until every selected entry's instructions have been opened on screen.
 
 interface Editing {
   readonly mode: AgentSkillSaveMode;
@@ -201,12 +220,133 @@ function SkillEditor({ editing, onDone, builtinNames }: { readonly editing: Edit
   );
 }
 
+function SkillImportReview({ preview, onDone }: { readonly preview: AgentSkillImportPreview; readonly onDone: (message: string) => void }) {
+  const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set(preview.items.filter((item) => item.valid).map((item) => item.index)));
+  const [opened, setOpened] = useState<ReadonlySet<number>>(() => new Set());
+  const [shown, setShown] = useState<ReadonlySet<number>>(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const toggled = (set: ReadonlySet<number>, index: number, on: boolean) => {
+    const next = new Set(set);
+    if (on) next.add(index);
+    else next.delete(index);
+    return next;
+  };
+  const chosen = preview.items.filter((item) => item.valid && selected.has(item.index)).map((item) => item.index);
+  const unread = chosen.some((index) => !opened.has(index));
+  const overRoom = chosen.length > preview.room;
+  const hint = unread ? SKILL_FILE_WORDS.openEveryFirst : overRoom ? SKILL_FILE_WORDS.overRoom : null;
+  const confirm = () => {
+    if (busy || chosen.length === 0 || unread || overRoom) return;
+    setBusy(true);
+    void agentActions.importSkills(preview.token, chosen).then((answer) => {
+      setBusy(false);
+      onDone(SKILL_IMPORT_MESSAGES[answer.result] ?? SKILL_IMPORT_MESSAGES.failed);
+    });
+  };
+  const cancel = () => {
+    void agentActions.cancelSkillImport(preview.token);
+    onDone(SKILL_IMPORT_MESSAGES.cancelled);
+  };
+
+  return (
+    <section className="agent-section agent-skill-import" data-testid="agent-skill-import">
+      <h3 className="agent-section-title">{SKILL_FILE_WORDS.reviewTitle}</h3>
+      <p className="agent-section-text" role="note" data-testid="agent-skill-import-explainer">
+        {SKILL_FILE_WORDS.reviewExplainer}
+      </p>
+      <ul className="agent-list">
+        {preview.items.map((item) => (
+          <li key={item.index} className="agent-list-item agent-skill-item" data-testid="agent-skill-import-item" data-index={item.index} data-valid={item.valid}>
+            <label className="agent-toggle">
+              <input
+                type="checkbox"
+                data-testid="agent-skill-import-select"
+                aria-label={item.name ?? item.id ?? `Entry ${item.index + 1}`}
+                checked={item.valid && selected.has(item.index)}
+                disabled={!item.valid || busy}
+                onChange={(event) => setSelected(toggled(selected, item.index, event.target.checked))}
+              />
+              <span className="agent-list-text">
+                <span className="agent-list-title">{item.name ?? item.id ?? `Entry ${item.index + 1}`}</span>
+                {item.id !== null ? <code className="agent-slot">{item.id}</code> : null}
+                {item.valid ? <span className="agent-list-sub">{item.description}</span> : null}
+              </span>
+            </label>
+            {item.valid ? (
+              <div className="agent-list-text">
+                {SKILL_IMPORT_CONFLICT_MESSAGES[item.conflict] !== null ? (
+                  <p className="agent-field-warning" role="note" data-testid="agent-skill-import-conflict">
+                    {SKILL_IMPORT_CONFLICT_MESSAGES[item.conflict]}
+                  </p>
+                ) : null}
+                <span className="agent-field-label">{SKILL_FILE_WORDS.toolsLabel}</span>
+                <ul className="agent-slot-list" aria-label={SKILL_FILE_WORDS.toolsLabel}>
+                  {item.tools.map((tool) => (
+                    <li key={tool} data-testid="agent-skill-import-tool">
+                      {AGENT_TOOLS[tool]?.label ?? tool}
+                    </li>
+                  ))}
+                </ul>
+                {item.actingTools ? (
+                  <p className="agent-field-warning" role="note" data-testid="agent-skill-import-acting">
+                    {SKILL_WARNINGS.actingTools}
+                  </p>
+                ) : null}
+                {item.inputs.length > 0 ? (
+                  <p className="agent-list-sub" data-testid="agent-skill-import-inputs">
+                    {SKILL_FILE_WORDS.inputsLabel}: {item.inputs.map((input) => input.label).join(', ')}
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  className="agent-button"
+                  data-testid="agent-skill-import-show"
+                  aria-expanded={shown.has(item.index)}
+                  onClick={() => {
+                    setShown(toggled(shown, item.index, !shown.has(item.index)));
+                    setOpened(toggled(opened, item.index, true));
+                  }}
+                >
+                  {shown.has(item.index) ? SKILL_FILE_WORDS.hideInstructions : SKILL_FILE_WORDS.showInstructions}
+                </button>
+                {shown.has(item.index) ? (
+                  <pre className="agent-input agent-skill-instructions" data-testid="agent-skill-import-instructions">
+                    {item.instructions}
+                  </pre>
+                ) : null}
+              </div>
+            ) : (
+              <p className="agent-field-error" role="note">
+                {SKILL_FILE_WORDS.invalidLabel}: <span data-testid="agent-skill-import-error">{item.error}</span>
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {hint !== null && chosen.length > 0 ? (
+        <p className="agent-section-text agent-muted" role="status" data-testid="agent-skill-import-hint">
+          {hint}
+        </p>
+      ) : null}
+      <div className="agent-key-row">
+        <button type="button" className="agent-button agent-button-primary" data-testid="agent-skill-import-confirm" disabled={busy || chosen.length === 0 || unread || overRoom} onClick={confirm}>
+          {SKILL_FILE_WORDS.confirm}
+        </button>
+        <button type="button" className="agent-button" data-testid="agent-skill-import-cancel" disabled={busy} onClick={cancel}>
+          {SKILL_FILE_WORDS.cancel}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillView[] }) {
   const [editing, setEditing] = useState<Editing | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
+  const [review, setReview] = useState<AgentSkillImportPreview | null>(null);
 
   const open = (id: string) => {
     setBusy(true);
@@ -229,6 +369,23 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
     setMessage(null);
     void agentActions.setSkillEnabled(id, enabled).then((ok) => {
       if (!ok) setMessage('That switch could not be saved. Try again.');
+    });
+  };
+  const exportSkills = (ids: readonly string[] | 'all-mine') => {
+    setBusy(true);
+    setMessage(null);
+    void agentActions.exportSkills(ids).then((answer) => {
+      setBusy(false);
+      setMessage(SKILL_EXPORT_MESSAGES[answer] ?? SKILL_EXPORT_MESSAGES.failed);
+    });
+  };
+  const startImport = () => {
+    setBusy(true);
+    setMessage(null);
+    void agentActions.previewSkillImport().then((answer) => {
+      setBusy(false);
+      if (answer.result === 'ready') setReview(answer.preview);
+      else setMessage(SKILL_IMPORT_MESSAGES[answer.result] ?? SKILL_IMPORT_MESSAGES.failed);
     });
   };
   const remove = (id: string) => {
@@ -256,7 +413,23 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
     );
   }
 
+  if (review !== null) {
+    return (
+      <div className="agent-settings" data-testid="agent-skills">
+        <SkillImportReview
+          key={review.token}
+          preview={review}
+          onDone={(next) => {
+            setReview(null);
+            setMessage(next);
+          }}
+        />
+      </div>
+    );
+  }
+
   const shown = filterSkills(skills, query);
+  const hasOwn = skills.some((skill) => !skill.builtin);
 
   return (
     <div className="agent-settings" data-testid="agent-skills">
@@ -274,6 +447,12 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
             }}
           >
             New skill
+          </button>
+          <button type="button" className="agent-button" data-testid="agent-skills-import" disabled={busy} onClick={startImport}>
+            {SKILL_FILE_WORDS.import}
+          </button>
+          <button type="button" className="agent-button" data-testid="agent-skills-export-all" disabled={busy || !hasOwn} onClick={() => exportSkills('all-mine')}>
+            {SKILL_FILE_WORDS.exportAll}
           </button>
         </div>
         {message !== null ? (
@@ -332,6 +511,9 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
                     </button>
                     <button type="button" className="agent-button" data-testid="agent-skill-duplicate" disabled={busy} onClick={() => duplicate(item.id)}>
                       Duplicate
+                    </button>
+                    <button type="button" className="agent-button" data-testid="agent-skill-export" disabled={busy} onClick={() => exportSkills([item.id])}>
+                      {SKILL_FILE_WORDS.export}
                     </button>
                     <button type="button" className="agent-button" data-testid="agent-skill-delete" disabled={busy} onClick={() => setConfirmDelete(item.id)}>
                       Delete

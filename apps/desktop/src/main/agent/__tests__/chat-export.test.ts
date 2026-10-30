@@ -216,6 +216,8 @@ hidden
       confirmDeleteAllChats: async () => false,
       confirmRetentionChange: async () => false,
       confirmMcpStart: async () => false,
+      chooseSkillExportPath: async () => null,
+      chooseSkillImportFile: async () => null,
       chooseExportPath: async (name, format) => {
         asked.push([name, format]);
         return answer;

@@ -7,10 +7,13 @@ import type {
   AgentSetRetentionResult,
   AgentSkillDetail,
   AgentSkillDraft,
+  AgentSkillImportPreviewResult,
+  AgentSkillImportResult,
   AgentSkillSaveMode,
   ChatExportFormat,
   ChatExportResult,
   ChatRetention,
+  SkillExportResult,
 } from '@app/specs/agent-data.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
@@ -86,6 +89,16 @@ export interface AgentService {
   duplicateSkill(id: string): Promise<AgentSaveSkillResult>;
   /** Switches a skill on or off in the library (Phase 8 Task 5); `false` for an unknown id or a failed write. */
   setSkillEnabled(id: string, enabled: boolean): Promise<boolean>;
+
+  // ---- Phase 8 Task 6: skill files (`agent-data.spec.ts`, Skill files; acceptance `agent-data.feature.md`, Import and export) ----
+  /** Exports the user's skills (`ids`, or all of them) to the file the user chooses in main's save dialog. */
+  exportSkills(ids: readonly string[] | 'all-mine'): Promise<SkillExportResult>;
+  /** Reads the file the user chooses in main's open dialog and answers its review (a single-use token; nothing stored). */
+  previewSkillImport(): Promise<AgentSkillImportPreviewResult>;
+  /** Spends the review's token: stores its valid entries at `indices` (copies where an id or name clashes). */
+  importSkills(token: string, indices: readonly number[]): Promise<AgentSkillImportResult>;
+  /** Drops the review's token; `false` if it is not the open review's. */
+  cancelSkillImport(token: string): boolean;
 
   // ---- Task 10 (`agent-mcp.spec.ts`; acceptance `agent-mcp.feature.md`) ----
   /** Adds a server (no `id`) or changes one; environment values go to main's credential store. */

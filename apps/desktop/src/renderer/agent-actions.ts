@@ -6,10 +6,13 @@ import type {
   AgentSetRetentionResult,
   AgentSkillDetail,
   AgentSkillDraft,
+  AgentSkillImportPreviewResult,
+  AgentSkillImportResult,
   AgentSkillSaveMode,
   ChatExportFormat,
   ChatExportResult,
   ChatRetention,
+  SkillExportResult,
 } from '@app/specs/agent-data.spec';
 import type { ChatgptSignInResult, ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
@@ -25,7 +28,8 @@ import { ipc } from './ipc';
 // only renderer → main: its answer is one of `AGENT_SET_KEY_RESULTS`, never the key. `send` takes the
 // typed text or a skill run (Task 7: the skill's id and its inputs; main resolves and renders it).
 // Task 9 (`agent-data.spec.ts`): the grants page, the chat retention, "Delete all chats" and export
-// (main asks in its own dialogs: the renderer never names a file), and the skills editor.
+// (main asks in its own dialogs: the renderer never names a file), and the skills editor. Phase 8
+// Task 6: skills files, exported and imported through main's own dialogs (an import is reviewed first).
 
 export const agentActions = {
   send: (chatId: string | null, message: string | AgentSkillRequest): Promise<AgentSendResult> =>
@@ -54,6 +58,12 @@ export const agentActions = {
   deleteSkill: (id: string): Promise<boolean> => ipc.agent.deleteSkill.mutate({ id }).catch(() => false),
   duplicateSkill: (id: string): Promise<AgentSaveSkillResult> => ipc.agent.duplicateSkill.mutate({ id }).catch((): AgentSaveSkillResult => ({ result: 'failed' })),
   setSkillEnabled: (id: string, enabled: boolean): Promise<boolean> => ipc.agent.setSkillEnabled.mutate({ id, enabled }).catch(() => false),
+  exportSkills: (ids: readonly string[] | 'all-mine'): Promise<SkillExportResult> =>
+    ipc.agent.exportSkills.mutate({ ids: ids === 'all-mine' ? 'all-mine' : [...ids] }).catch((): SkillExportResult => 'failed'),
+  previewSkillImport: (): Promise<AgentSkillImportPreviewResult> => ipc.agent.previewSkillImport.mutate().catch((): AgentSkillImportPreviewResult => ({ result: 'failed' })),
+  importSkills: (token: string, indices: readonly number[]): Promise<AgentSkillImportResult> =>
+    ipc.agent.importSkills.mutate({ token, indices: [...indices] }).catch((): AgentSkillImportResult => ({ result: 'failed' })),
+  cancelSkillImport: (token: string): Promise<boolean> => ipc.agent.cancelSkillImport.mutate({ token }).catch(() => false),
   // Task 10 (`agent-mcp.spec.ts`): MCP servers. A command server's Start opens main's own dialog.
   saveMcpServer: (server: AgentSaveMcpServerRequest): Promise<{ readonly result: McpSaveResult; readonly id?: string }> =>
     ipc.agent.saveMcpServer
