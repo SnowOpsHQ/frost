@@ -124,7 +124,10 @@ named test.
   still running then is waited for: if it ends `not-revoked` keeping the new tokens, the sign-in
   owns the state again and is rolled back as if cancelled (the previous account restored, its
   refresh token not revoked; only the new refresh token revoked; a failed write ends
-  `store-failed`), so no unstored tokens are left in memory.
+  `store-failed`), so no unstored tokens are left in memory. Sign-outs and switches run one at a
+  time: one asked for while another runs waits for it to end, then revokes and clears the tokens
+  held then, and the sign-in waits until none is running; so a sign-out that answers `signed-out`
+  leaves no token usable.
 
 ## Tokens (`service.test.ts`)
 - **Scenario: chatgpt-refresh-margin-and-earliest** — an access token is used as is until

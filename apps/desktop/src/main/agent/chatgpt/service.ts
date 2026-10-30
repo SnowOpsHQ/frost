@@ -367,11 +367,10 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
     const before = state;
     state = { ...state, clientId, account: { sub, email: email !== undefined && EMAIL_PATTERN.test(email) ? email : null }, tokens, expired: false };
     // While it was being stored, a sign-out or an account switch may have taken the state over. One
-    // still running is waited for: a switch that ends `not-revoked` keeps the tokens, handing them back.
-    const owned = async (): Promise<boolean> => {
-      if (signingOut && state.tokens === tokens) await signOutSettled;
-      return !signingOut && state.tokens === tokens;
-    };
+    // still running (and any queued behind it) is waited for: a switch that ends `not-revoked` keeps
+    // the tokens, handing them back. The wait is inline, not in a helper, so the check and what follows
+    // run in one step, before a sign-out queued behind the one waited for can start.
+    const owned = (): boolean => !signingOut && state.tokens === tokens;
     // Not owned any more: nothing is put back, and the new grant and the refresh token it displaced are revoked.
     const endUnowned = (): void => {
       discard(clientId, answer);
@@ -381,7 +380,8 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
       changed();
     };
     if (!(await persist())) {
-      if (!(await owned())) {
+      while (signingOut && state.tokens === tokens) await signOutSettled;
+      if (!owned()) {
         endUnowned();
         return;
       }
@@ -392,7 +392,8 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
       return;
     }
     if (pending !== p) {
-      if (!(await owned())) {
+      while (signingOut && state.tokens === tokens) await signOutSettled;
+      if (!owned()) {
         endUnowned();
         return;
       }
@@ -648,6 +649,9 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
    */
   const revokeAndForget = async (keepUnrevoked: boolean): Promise<ChatgptSignOutResult> => {
     await load();
+    // One at a time: a sign-out or switch already running ends first, so `signingOut` and
+    // `signOutSettled` always describe this run alone.
+    while (signOutSettled !== null) await signOutSettled;
     if (pending) dropPending(pending, null);
     signingOut = true;
     let settle!: () => void;

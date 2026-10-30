@@ -465,7 +465,7 @@ describe('chatgpt sign-in', () => {
     const switching = h.auth.signIn({ differentAccount: true });
     await h.until(() => revokedTokens(h).has('refresh-token-2'), 'the switch to revoke the new refresh token');
     hold.release();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     answerRevokes();
     expect(await switching).toBe('not-revoked');
     await h.auth.dispose();
@@ -473,6 +473,46 @@ describe('chatgpt sign-in', () => {
     expect(await h.auth.withAccessToken((token) => token)).toEqual({ ok: true, value: 'access-token-1' });
     expect((await h.realStore.read()) as object).toMatchObject({ clientId: CLIENT_ID, account: { sub: SUB }, tokens: { refreshToken: 'refresh-token-1' } });
     expect(revokedTokens(h)).toEqual(new Set(['refresh-token-2']));
+  });
+
+  test('chatgpt-cancel (signed out while a not-revoked "Use a different account" is still running: stays signed out, every refresh token revoked)', async () => {
+    const h = await signedIn();
+    const hold = holdWriteOf(h, 'refresh-token-2', { fails: true });
+    expect(await h.auth.signIn({ reconsent: true })).toBe('started');
+    expect(await h.redirect({ client_id: null })).toBe(303);
+    await h.until(hold.held, 'the sign-in to be stored');
+    // The new refresh token's first `revokeAttempts` revocations are refused (the switch's), later
+    // ones confirmed. The switch's last attempt is held on one gate, every revocation after it on another.
+    const answer = h.fetch.getMockImplementation()!;
+    let newTokenRevokes = 0;
+    let answerSwitch!: () => void;
+    const switchHeld = new Promise<void>((resolve) => (answerSwitch = resolve));
+    let answerLater!: () => void;
+    const laterHeld = new Promise<void>((resolve) => (answerLater = resolve));
+    h.fetch.mockImplementation(async (url, init) => {
+      const response = await answer(url, init);
+      if (url !== CHATGPT_ENDPOINTS.revoke || new URLSearchParams(init.body as string).get('token') !== 'refresh-token-2') return response;
+      const n = ++newTokenRevokes;
+      if (n === CHATGPT_LIMITS.revokeAttempts) await switchHeld;
+      if (n > CHATGPT_LIMITS.revokeAttempts) await laterHeld;
+      return new Response('', { status: n > CHATGPT_LIMITS.revokeAttempts ? 200 : 503 });
+    });
+    const switching = h.auth.signIn({ differentAccount: true });
+    await h.until(() => newTokenRevokes === CHATGPT_LIMITS.revokeAttempts, 'the switch to make its last revocation attempt');
+    hold.release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const out = h.auth.signOut();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    answerSwitch();
+    expect(await switching).toBe('not-revoked');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    answerLater();
+    expect(await out).toBe('signed-out');
+    await h.auth.dispose();
+    expect(h.auth.view()).toMatchObject({ state: 'signed-out' });
+    expect(await h.auth.withAccessToken((token) => token)).toEqual({ ok: false, reason: 'signed-out' });
+    expect((await h.realStore.read()) as object).toMatchObject({ tokens: null });
+    expect(revokedTokens(h)).toEqual(new Set(['refresh-token-1', 'refresh-token-2']));
   });
 
   test('chatgpt-exchange-refused', async () => {
