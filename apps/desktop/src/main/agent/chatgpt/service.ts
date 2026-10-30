@@ -200,6 +200,8 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
   /** After a refresh failed without ending the sign-in: no refresh before this (epoch ms), and why it failed. */
   let refreshBlocked: { readonly until: number; readonly reason: ChatgptTokenFailure } | null = null;
   let signingOut = false;
+  /** While a sign-out or account switch runs: settles once it has ended. */
+  let signOutSettled: Promise<void> | null = null;
   /** The stored record exists but couldn't be read: nothing may be written over it. */
   let storeFailed = false;
   let disposed = false;
@@ -364,8 +366,12 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
     };
     const before = state;
     state = { ...state, clientId, account: { sub, email: email !== undefined && EMAIL_PATTERN.test(email) ? email : null }, tokens, expired: false };
-    // While it was being stored, a sign-out or an account switch may have taken the state over.
-    const owned = (): boolean => !signingOut && state.tokens === tokens;
+    // While it was being stored, a sign-out or an account switch may have taken the state over. One
+    // still running is waited for: a switch that ends `not-revoked` keeps the tokens, handing them back.
+    const owned = async (): Promise<boolean> => {
+      if (signingOut && state.tokens === tokens) await signOutSettled;
+      return !signingOut && state.tokens === tokens;
+    };
     // Not owned any more: nothing is put back, and the new grant and the refresh token it displaced are revoked.
     const endUnowned = (): void => {
       discard(clientId, answer);
@@ -375,17 +381,18 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
       changed();
     };
     if (!(await persist())) {
-      if (!owned()) {
+      if (!(await owned())) {
         endUnowned();
         return;
       }
       state = before;
       discard(clientId, answer);
-      failAfterRedirect('store-failed', 'the sign-in could not be stored');
+      if (pending === p) failAfterRedirect('store-failed', 'the sign-in could not be stored');
+      else changed();
       return;
     }
     if (pending !== p) {
-      if (!owned()) {
+      if (!(await owned())) {
         endUnowned();
         return;
       }
@@ -643,6 +650,8 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
     await load();
     if (pending) dropPending(pending, null);
     signingOut = true;
+    let settle!: () => void;
+    signOutSettled = new Promise<void>((resolve) => (settle = resolve));
     try {
       // A refresh in flight finishes first, so the token revoked is the live one.
       if (refreshing !== null) await refreshing.catch(() => undefined);
@@ -679,6 +688,8 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
       return result;
     } finally {
       signingOut = false;
+      signOutSettled = null;
+      settle();
       changed();
     }
   };

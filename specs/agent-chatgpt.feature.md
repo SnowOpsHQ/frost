@@ -120,7 +120,11 @@ named test.
   put back: the user ends signed out (or switching), the new refresh token and the refresh token it
   displaced are both revoked, and the previous account is not restored. The same holds when that
   write then fails: a sign-in that no longer owns the state reports no `store-failed` and puts
-  nothing back, so a sign-out that answered `signed-out` stays signed out.
+  nothing back, so a sign-out that answered `signed-out` stays signed out. A sign-out or switch
+  still running then is waited for: if it ends `not-revoked` keeping the new tokens, the sign-in
+  owns the state again and is rolled back as if cancelled (the previous account restored, its
+  refresh token not revoked; only the new refresh token revoked; a failed write ends
+  `store-failed`), so no unstored tokens are left in memory.
 
 ## Tokens (`service.test.ts`)
 - **Scenario: chatgpt-refresh-margin-and-earliest** — an access token is used as is until

@@ -445,6 +445,36 @@ describe('chatgpt sign-in', () => {
     expect(revokedTokens(h)).toEqual(new Set(['refresh-token-1', 'refresh-token-2']));
   });
 
+  test('chatgpt-cancel ("Use a different account" not revoked while a re-consent write fails: the previous account is restored)', async () => {
+    const h = await signedIn();
+    const hold = holdWriteOf(h, 'refresh-token-2', { fails: true });
+    expect(await h.auth.signIn({ reconsent: true })).toBe('started');
+    expect(await h.redirect({ client_id: null })).toBe(303);
+    await h.until(hold.held, 'the sign-in to be stored');
+    // ChatGPT confirms no revocation (its answers held until the write has failed): the switch keeps
+    // the tokens it holds, the new unstored ones.
+    h.server.revokeStatus = [503];
+    const answer = h.fetch.getMockImplementation()!;
+    let answerRevokes!: () => void;
+    const revokesHeld = new Promise<void>((resolve) => (answerRevokes = resolve));
+    h.fetch.mockImplementation(async (url, init) => {
+      const response = await answer(url, init);
+      if (url === CHATGPT_ENDPOINTS.revoke) await revokesHeld;
+      return response;
+    });
+    const switching = h.auth.signIn({ differentAccount: true });
+    await h.until(() => revokedTokens(h).has('refresh-token-2'), 'the switch to revoke the new refresh token');
+    hold.release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    answerRevokes();
+    expect(await switching).toBe('not-revoked');
+    await h.auth.dispose();
+    expect(h.auth.view()).toMatchObject({ state: 'signed-in', email: EMAIL });
+    expect(await h.auth.withAccessToken((token) => token)).toEqual({ ok: true, value: 'access-token-1' });
+    expect((await h.realStore.read()) as object).toMatchObject({ clientId: CLIENT_ID, account: { sub: SUB }, tokens: { refreshToken: 'refresh-token-1' } });
+    expect(revokedTokens(h)).toEqual(new Set(['refresh-token-2']));
+  });
+
   test('chatgpt-exchange-refused', async () => {
     const h = setup();
     h.server.token = () => h.json(400, { error: 'invalid_grant' });
