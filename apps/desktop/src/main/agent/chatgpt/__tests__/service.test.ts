@@ -365,8 +365,11 @@ describe('chatgpt sign-in', () => {
     expect(h.focused).toEqual([]);
   });
 
-  /** Holds the write storing `refreshToken` until released; writes stay in call order, like the real store's queue. */
-  function holdWriteOf(h: Harness, refreshToken: string) {
+  /**
+   * Holds the write storing `refreshToken` until released (then it answers false when `fails`);
+   * writes stay in call order, like the real store's queue.
+   */
+  function holdWriteOf(h: Harness, refreshToken: string, { fails = false } = {}) {
     const write = h.store.write;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
@@ -377,6 +380,7 @@ describe('chatgpt sign-in', () => {
         if (!held && state.tokens?.refreshToken === refreshToken) {
           held = true;
           await gate;
+          if (fails) return false;
         }
         return write(state);
       });
@@ -391,6 +395,24 @@ describe('chatgpt sign-in', () => {
   test('chatgpt-cancel (signed out while the sign-in is being stored: stays signed out, both refresh tokens revoked)', async () => {
     const h = await signedIn();
     const hold = holdWriteOf(h, 'refresh-token-2');
+    expect(await h.auth.signIn({ windowId: 7 })).toBe('started');
+    expect(await h.redirect({ client_id: null })).toBe(303);
+    await h.until(hold.held, 'the sign-in to be stored');
+    const out = h.auth.signOut();
+    await h.until(() => revokedTokens(h).has('refresh-token-2'), 'the sign-out to revoke the new refresh token');
+    hold.release();
+    expect(await out).toBe('signed-out');
+    await h.auth.dispose();
+    expect(h.auth.view()).toEqual({ state: 'signed-out', acknowledged: false });
+    expect(await h.auth.withAccessToken((token) => token)).toEqual({ ok: false, reason: 'signed-out' });
+    expect((await h.realStore.read()) as object).toMatchObject({ tokens: null });
+    expect(revokedTokens(h)).toEqual(new Set(['refresh-token-1', 'refresh-token-2']));
+    expect(h.focused).toEqual([]);
+  });
+
+  test('chatgpt-cancel (signed out while the sign-in is being stored, then that write fails: stays signed out, both refresh tokens revoked)', async () => {
+    const h = await signedIn();
+    const hold = holdWriteOf(h, 'refresh-token-2', { fails: true });
     expect(await h.auth.signIn({ windowId: 7 })).toBe('started');
     expect(await h.redirect({ client_id: null })).toBe(303);
     await h.until(hold.held, 'the sign-in to be stored');

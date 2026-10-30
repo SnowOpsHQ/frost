@@ -118,7 +118,9 @@ named test.
   stored again, the new refresh token is revoked, nothing is signed in and no window is focused.
   Ended instead by a sign-out or "Use a different account" while it is being stored, nothing is
   put back: the user ends signed out (or switching), the new refresh token and the refresh token it
-  displaced are both revoked, and the previous account is not restored.
+  displaced are both revoked, and the previous account is not restored. The same holds when that
+  write then fails: a sign-in that no longer owns the state reports no `store-failed` and puts
+  nothing back, so a sign-out that answered `signed-out` stays signed out.
 
 ## Tokens (`service.test.ts`)
 - **Scenario: chatgpt-refresh-margin-and-earliest** — an access token is used as is until

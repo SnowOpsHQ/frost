@@ -364,28 +364,36 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
     };
     const before = state;
     state = { ...state, clientId, account: { sub, email: email !== undefined && EMAIL_PATTERN.test(email) ? email : null }, tokens, expired: false };
+    // While it was being stored, a sign-out or an account switch may have taken the state over.
+    const owned = (): boolean => !signingOut && state.tokens === tokens;
+    // Not owned any more: nothing is put back, and the new grant and the refresh token it displaced are revoked.
+    const endUnowned = (): void => {
+      discard(clientId, answer);
+      const displaced = before.tokens;
+      if (displaced !== null && displaced.refreshToken !== tokens.refreshToken) discard(before.clientId ?? clientId, { refresh_token: displaced.refreshToken });
+      log('agent chatgpt: a sign-in ended while being stored was not kept');
+      changed();
+    };
     if (!(await persist())) {
+      if (!owned()) {
+        endUnowned();
+        return;
+      }
       state = before;
       discard(clientId, answer);
       failAfterRedirect('store-failed', 'the sign-in could not be stored');
       return;
     }
     if (pending !== p) {
-      if (!signingOut && state.tokens === tokens) {
-        // Cancelled while it was being stored: the previous record goes back and the new grant is revoked.
-        state = before;
-        if (!(await persist())) await deps.store.clear().catch(() => false);
-        discard(clientId, answer);
-        log('agent chatgpt: a sign-in cancelled while being stored was not kept');
-        changed();
+      if (!owned()) {
+        endUnowned();
         return;
       }
-      // Ended by a sign-out or an account switch, which owns the state now: nothing is put back, and
-      // the new grant and the refresh token it displaced are revoked.
+      // Cancelled while it was being stored: the previous record goes back and the new grant is revoked.
+      state = before;
+      if (!(await persist())) await deps.store.clear().catch(() => false);
       discard(clientId, answer);
-      const displaced = before.tokens;
-      if (displaced !== null && displaced.refreshToken !== tokens.refreshToken) discard(before.clientId ?? clientId, { refresh_token: displaced.refreshToken });
-      log('agent chatgpt: a sign-in ended while being stored was not kept');
+      log('agent chatgpt: a sign-in cancelled while being stored was not kept');
       changed();
       return;
     }
