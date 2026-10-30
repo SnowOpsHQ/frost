@@ -14,7 +14,7 @@ import type { ChatgptAccountView, ChatgptFailure, ChatgptModelView } from './age
 import type { AgentMcpView } from './agent-mcp.spec';
 import { MAX_OUTPUT_TOKENS, type KeyProtection } from './agent-proxy.spec';
 import { isAllowedModelId, type AgentModelId, type AgentToolRisk, type ModelId, type ModelRoute, type ToolErrorCode } from './agent-tools.spec';
-import type { SkillInputSlot } from './skills.spec';
+import type { SkillCategory, SkillInputSlot } from './skills.spec';
 import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
 
 // ---- Bounds ----------------------------------------------------------------------------------
@@ -331,6 +331,8 @@ export interface AgentSkillView {
   readonly inputs: readonly { readonly slot: SkillInputSlot; readonly label: string; readonly placeholder: string | null }[];
   /** frost's own (read-only) skill, or the user's (Task 9's editor). */
   readonly builtin: boolean;
+  /** The picker group (Phase 8 Task 4): a built-in's category, or `'yours'` for the user's own skills. */
+  readonly category: SkillCategory | 'yours';
 }
 
 /**

@@ -46,7 +46,7 @@ import { MCP_LIMITS, type AgentMcpView } from '@app/specs/agent-mcp.spec';
 import type { McpToolDefinition } from '@app/specs/agent-mcp.schema';
 import type { ChatgptRoute } from './chatgpt/route';
 import type { ChatgptAuth } from './chatgpt/service';
-import { BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, skillPageUrl as skillPageUrlOf, type SkillInputSlot } from '@app/specs/skills.spec';
+import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, skillPageUrl as skillPageUrlOf, type BuiltinSkillId, type SkillInputSlot } from '@app/specs/skills.spec';
 import {
   DEFAULT_CHAT_RETENTION,
   isChatRetention,
@@ -404,6 +404,7 @@ function skillView(skill: Skill, builtin: boolean): AgentSkillView {
     description: skill.description,
     inputs: (skill.inputs ?? []).map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? null })),
     builtin,
+    category: builtin && Object.hasOwn(BUILTIN_SKILL_CATEGORY, skill.id) ? BUILTIN_SKILL_CATEGORY[skill.id as BuiltinSkillId] : 'yours',
   };
 }
 

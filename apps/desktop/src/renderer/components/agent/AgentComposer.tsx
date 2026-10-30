@@ -3,7 +3,7 @@ import type { AgentSkillView } from '@app/specs/agent-session.spec';
 import { CHAT_TEXT_MAX_CHARS } from '@app/specs/agent-session.spec';
 import { SKILL_SLOT_MAX_CHARS } from '@app/specs/skills.spec';
 import { agentActions } from '../../agent-actions';
-import { canSend, composerKey, pickedSkill, skillOptions, skillRequest, type SkillFieldValues } from '../../agent-view';
+import { canSend, composerKey, pickedSkill, skillOptionGroups, skillRequest, type SkillFieldValues } from '../../agent-view';
 import { SendIcon, StopSquareIcon } from './agent-icons';
 
 // The composer (`agent-panel.feature.md`, Composer): Enter sends, Shift+Enter is a new line. While a
@@ -98,11 +98,20 @@ export function AgentComposer({
               setFields({});
             }}
           >
-            {skillOptions(skills).map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
+            {skillOptionGroups(skills).map((group) => {
+              const options = group.options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ));
+              return group.label === null ? (
+                options
+              ) : (
+                <optgroup key={group.label} label={group.label}>
+                  {options}
+                </optgroup>
+              );
+            })}
           </select>
         </label>
       ) : null}

@@ -22,6 +22,8 @@ import { isSkillId, SKILL_LIMITS } from '@app/specs/skills.spec';
 // as the JSON `SkillSchema` accepted, validated again when read, and cached here so the session
 // resolves skills synchronously. `registry` is the built-ins composed with the user's, built-ins
 // first, so a user skill can never take a built-in's id (and saving one with such an id is refused).
+// A stored skill whose id a built-in has since taken (the pack grows) is re-keyed on load to a free
+// `duplicateSkillId` by the repository's single-row `rekeySkill`, never dropped (Phase 8 Task 4).
 // Only main's sender-guarded IPC changes them; the runtime has no way to.
 
 /** The database side (`SessionStore.agentSkills` from `@app/db`, or `createMemorySkillsStore`). */
@@ -29,6 +31,8 @@ export interface AgentSkillsStore {
   skills(): Promise<readonly { readonly id: string; readonly skill: string; readonly createdAt: number; readonly updatedAt: number }[]>;
   saveSkill(id: string, skill: string, at: number): Promise<boolean>;
   deleteSkill(id: string): Promise<boolean>;
+  /** Moves a stored skill to a new id in place (`AgentSkillsRepository.rekeySkill`): `false` writes nothing. */
+  rekeySkill(oldId: string, newId: string, skill: string, at: number): Promise<boolean>;
 }
 
 export interface UserSkillsDeps {
@@ -147,12 +151,40 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
     return run;
   };
 
+  /**
+   * Gives a stored skill whose id a built-in has since taken a free id (`duplicateSkillId`), through
+   * the repository's single-row re-key (never an insert, so a full library stays full). When the
+   * store answers `false` because the candidate is taken (a row `taken` did not know), the next
+   * candidate is tried. `null` when none works or a write fails: the row is left as it is.
+   */
+  const rekey = async (skill: Skill, taken: (id: string) => boolean): Promise<Skill | null> => {
+    // A name a built-in has (ignoring case and spacing) would make the two indistinguishable in the picker.
+    const name = builtinNames().has(nameKey(skill.name)) ? duplicateSkillName(skill.name) : skill.name;
+    const refused = new Set<string>();
+    for (;;) {
+      const candidate = duplicateSkillId(skill.id, (id) => taken(id) || refused.has(id));
+      if (candidate === null) return null;
+      const moved = SkillSchema.safeParse({ ...skill, id: candidate, name });
+      if (!moved.success) return null;
+      const text = JSON.stringify(moved.data);
+      if (text.length > STORED_SKILL_MAX_CHARS) return null;
+      try {
+        if ((await deps.store.rekeySkill(skill.id, candidate, text, now())) === true) return moved.data;
+      } catch {
+        return null;
+      }
+      refused.add(candidate);
+    }
+  };
+
   const load = () => {
     loading ??= (async () => {
       try {
-        const rows = await deps.store.skills();
+        const rows = (await deps.store.skills()).slice(0, MAX_USER_SKILLS);
+        // Every stored id, so a re-key never lands on a row of the library (kept current as skills move).
+        const stored = new Set(rows.map((row) => row.id));
         const next = new Map<string, Skill>();
-        for (const row of rows.slice(0, MAX_USER_SKILLS)) {
+        for (const row of rows) {
           let value: unknown;
           try {
             value = JSON.parse(row.skill);
@@ -160,9 +192,21 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
             continue;
           }
           const parsed = SkillSchema.safeParse(value);
-          // A tampered row, or one whose id a built-in has since taken, is not a skill.
-          if (!parsed.success || parsed.data.id !== row.id || isBuiltin(parsed.data.id) || next.has(parsed.data.id)) continue;
-          next.set(parsed.data.id, parsed.data);
+          // A tampered row (its id is not its key's) is not a skill.
+          if (!parsed.success || parsed.data.id !== row.id || next.has(parsed.data.id)) continue;
+          let skill = parsed.data;
+          if (isBuiltin(skill.id)) {
+            // A built-in has since taken this id: the user's skill moves to a free one instead of being hidden.
+            const moved = await rekey(skill, (id) => isBuiltin(id) || stored.has(id) || next.has(id));
+            if (moved === null) {
+              log('agent skills: a skill whose id a built-in has taken could not be re-keyed');
+              continue;
+            }
+            stored.delete(skill.id);
+            stored.add(moved.id);
+            skill = moved;
+          }
+          next.set(skill.id, skill);
         }
         mine = next;
       } catch {
@@ -270,6 +314,16 @@ export function createMemorySkillsStore(): AgentSkillsStore & { rows: Map<string
     },
     async deleteSkill(id) {
       rows.delete(id);
+      return true;
+    },
+    async rekeySkill(oldId, newId, skill, at) {
+      const row = rows.get(oldId);
+      if (row === undefined || oldId === newId || rows.has(newId)) return false;
+      // In place: the same position and creation time, never a second row.
+      const moved = new Map<string, { id: string; skill: string; createdAt: number; updatedAt: number }>();
+      for (const [id, existing] of rows) moved.set(id === oldId ? newId : id, id === oldId ? { id: newId, skill, createdAt: row.createdAt, updatedAt: at } : existing);
+      rows.clear();
+      for (const [id, existing] of moved) rows.set(id, existing);
       return true;
     },
   };

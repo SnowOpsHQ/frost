@@ -53,7 +53,7 @@ import type {
   AgentState,
   AgentToolCardView,
 } from '@app/specs/agent-session.spec';
-import { SKILL_ACTING_TOOLS, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_NAMES, SKILL_USER_MARK, SKILL_WARNINGS, templateSlots, type SkillInputSlot, type SkillSlotName } from '@app/specs/skills.spec';
+import { SKILL_ACTING_TOOLS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_NAMES, SKILL_USER_GROUP_LABEL, SKILL_USER_MARK, SKILL_WARNINGS, templateSlots, type SkillInputSlot, type SkillSlotName } from '@app/specs/skills.spec';
 import {
   AGENT_TOOL_NAMES,
   AGENT_TOOLS,
@@ -614,9 +614,25 @@ export function skillDisplayName(skill: Pick<AgentSkillView, 'name' | 'builtin'>
   return skill.builtin ? skill.name : `${skill.name} (${SKILL_USER_MARK})`;
 }
 
-/** The picker's choices: "no skill" (a typed message), then main's skills in order. */
-export function skillOptions(skills: readonly AgentSkillView[]): readonly { readonly value: string; readonly label: string }[] {
-  return [{ value: '', label: 'Write a message' }, ...skills.map((skill) => ({ value: skill.id, label: skillDisplayName(skill) }))];
+/** One picker group: a heading (`null` for the leading, unlabelled choice) and its options. */
+export interface SkillOptionGroup {
+  readonly label: string | null;
+  readonly options: readonly { readonly value: string; readonly label: string }[];
+}
+
+/**
+ * The picker's choices (Phase 8 Task 4): "no skill" (a typed message) on its own, then one group per
+ * category that has a skill, in `SKILL_CATEGORIES` order, then the user's own skills under "Your
+ * skills". Within a group, main's order; a group with no skill is not shown.
+ */
+export function skillOptionGroups(skills: readonly AgentSkillView[]): readonly SkillOptionGroup[] {
+  const groups: SkillOptionGroup[] = [{ label: null, options: [{ value: '', label: 'Write a message' }] }];
+  const headings: readonly (readonly [AgentSkillView['category'], string])[] = [...SKILL_CATEGORIES.map((category) => [category, SKILL_CATEGORY_LABELS[category]] as const), ['yours', SKILL_USER_GROUP_LABEL]];
+  for (const [category, label] of headings) {
+    const members = skills.filter((skill) => skill.category === category);
+    if (members.length > 0) groups.push({ label, options: members.map((skill) => ({ value: skill.id, label: skillDisplayName(skill) })) });
+  }
+  return groups;
 }
 
 const UNSAFE_ALL = new RegExp(UNSAFE_INPUT_CHARS.source, 'gu');

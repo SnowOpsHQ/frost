@@ -1,4 +1,4 @@
-// Spec: specs/skills.spec.ts (BUILTIN_SKILL_IDS, SKILL_DATA_OPEN, SKILL_DATA_CLOSE, SKILL_SLOT_MISSING),
+// Spec: specs/skills.spec.ts (BUILTIN_SKILL_IDS, BUILTIN_SKILL_CATEGORY, SKILL_DATA_OPEN, SKILL_DATA_CLOSE, SKILL_SLOT_MISSING),
 // specs/skills-schema.ts (SkillSchema), specs/agent-session.spec.ts (AgentState.skills, AgentSkillRequest,
 // AGENT_NOTICE_MESSAGES), specs/agent-protocol.schema.ts (chat.start allowedTools, tool.invoke)
 // Acceptance: specs/skills.feature.md (Running)
@@ -7,7 +7,7 @@ import { auditThisPageSkill, createStaticSkillRegistry, rewriteTitleMetaSkill } 
 import type { ChatMessage } from '@app/specs/agent-protocol.schema';
 import { AGENT_NOTICE_MESSAGES, type AgentSkillRequest } from '@app/specs/agent-session.spec';
 import { AGENT_TOOL_NAMES } from '@app/specs/agent-tools.spec';
-import { BUILTIN_SKILL_IDS, SKILL_DATA_CLOSE, SKILL_DATA_OPEN, SKILL_SLOT_MISSING } from '@app/specs/skills.spec';
+import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_DATA_CLOSE, SKILL_DATA_OPEN, SKILL_SLOT_MISSING } from '@app/specs/skills.spec';
 import { setupSession } from './session-fakes';
 
 let current: Awaited<ReturnType<typeof setupSession>> | null = null;
@@ -151,7 +151,9 @@ describe('skill runs', () => {
       description: rewriteTitleMetaSkill.description,
       inputs: rewriteTitleMetaSkill.inputs!.map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? null })),
       builtin: true,
+      category: 'content',
     });
+    expect(s.session.getState().skills.map((skill) => [skill.id, skill.category])).toEqual(BUILTIN_SKILL_IDS.map((id) => [id, BUILTIN_SKILL_CATEGORY[id]]));
     // The view never carries the template or the tool list.
     expect(JSON.stringify(s.session.getState().skills)).not.toMatch(/instructions|allowedTools|\{\{/);
 
@@ -160,7 +162,7 @@ describe('skill runs', () => {
       skills: createStaticSkillRegistry([{ id: 'headings', name: 'Headings', description: 'Check headings.', allowedTools: ['page_data'], instructions: 'Check {{pageUrl}}.', version: 1 }]),
       steps: [{ text: ['Fine.'] }],
     });
-    expect(custom.session.getState().skills).toEqual([{ id: 'headings', name: 'Headings', description: 'Check headings.', inputs: [], builtin: false }]);
+    expect(custom.session.getState().skills).toEqual([{ id: 'headings', name: 'Headings', description: 'Check headings.', inputs: [], builtin: false, category: 'yours' }]);
     expect(await custom.session.send(null, { skillId: 'audit-this-page' })).toBe('unknown-skill');
     expect(await custom.session.send(null, { skillId: 'headings' })).toBe('started');
     await custom.until((state) => !state.running);

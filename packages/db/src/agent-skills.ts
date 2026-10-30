@@ -1,4 +1,4 @@
-import { asc, count, eq, sql } from 'drizzle-orm';
+import { and, asc, count, eq, notExists, sql } from 'drizzle-orm';
 import { MAX_USER_SKILLS, STORED_SKILL_MAX_CHARS } from '@app/specs/agent-data.spec';
 import { isSkillId, SKILL_LIMITS } from '@app/specs/skills.spec';
 import type { SessionDatabase } from './client';
@@ -27,6 +27,14 @@ export interface AgentSkillsRepository {
    */
   saveSkill(id: string, skill: string, at: number): Promise<boolean>;
   deleteSkill(id: string): Promise<boolean>;
+  /**
+   * Moves the stored skill `oldId` to `newId`, with `skill` (JSON text) and `at` as its new text and
+   * update time (Phase 8 Task 4: a built-in has since taken `oldId`). One `UPDATE` of the existing
+   * row in one `db.batch`, never an insert: the table is never one over `MAX_USER_SKILLS`, and a
+   * crash leaves the old row or the new one, never both or neither. `false` (nothing written) for a
+   * malformed id or text, the same id twice, a missing `oldId` or a `newId` already stored.
+   */
+  rekeySkill(oldId: string, newId: string, skill: string, at: number): Promise<boolean>;
 }
 
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -64,6 +72,22 @@ export function createAgentSkillsRepository(db: SessionDatabase): AgentSkillsRep
         .values({ id, skill, createdAt: at, updatedAt: at })
         .onConflictDoUpdate({ target: agentSkills.id, set: { skill, updatedAt: at } });
       return true;
+    },
+
+    async rekeySkill(oldId, newId, skill, at) {
+      if (!isSkillId(oldId) || !isSkillId(newId) || oldId === newId) return false;
+      if (typeof skill !== 'string' || skill.length < 2 || skill.length > STORED_SKILL_MAX_CHARS || !isTime(at)) return false;
+      // The statements of the move, built here and run as one batch (the pattern of `agent-chats.ts`).
+      // The guard in the WHERE keeps the UPDATE from colliding with a row stored since a caller looked.
+      const statements = [
+        db
+          .update(agentSkills)
+          .set({ id: newId, skill, updatedAt: at })
+          .where(and(eq(agentSkills.id, oldId), notExists(db.select({ id: agentSkills.id }).from(agentSkills).where(eq(agentSkills.id, newId)))))
+          .returning({ id: agentSkills.id }),
+      ] as const;
+      const [moved] = await db.batch(statements);
+      return (moved?.length ?? 0) === 1;
     },
 
     async deleteSkill(id) {

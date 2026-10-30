@@ -9,16 +9,16 @@ import {
   AGENT_SET_KEY_MESSAGES,
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
-import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS } from '@app/specs/agent-session.spec';
+import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS, type AgentSkillView } from '@app/specs/agent-session.spec';
 import { ALLOWED_MODEL_IDS } from '@app/specs/agent-tools.spec';
-import { SKILL_SLOT_MAX_CHARS, SKILL_WARNINGS } from '@app/specs/skills.spec';
+import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_SLOT_MAX_CHARS, SKILL_USER_GROUP_LABEL, SKILL_WARNINGS } from '@app/specs/skills.spec';
 import { SKILLS } from './agent-fixtures';
 import {
   approvalTitle,
   pickedSkill,
   skillDisplayName,
   skillDraftWarnings,
-  skillOptions,
+  skillOptionGroups,
   skillRequest,
   skillRunChatId,
   userMessageSkillLabel,
@@ -209,9 +209,28 @@ describe('agent panel view model', () => {
     expect(railBadge(state({ running: true, approval: { request: approval(), queued: 0 } }))).toBe('approval');
   });
 
+  test('skill-picker-grouped-by-category', () => {
+    const view = (id: string, category: AgentSkillView['category']): AgentSkillView => ({ id, name: id, description: '', inputs: [], builtin: category !== 'yours', category });
+    // Listed in main's order, which is not the picker's: the picker regroups.
+    const listed = [view('mine-one', 'yours'), view('find-queries', 'search'), view('check-tags', 'technical'), view('audit', 'page'), view('brief', 'content'), view('check-links', 'technical'), view('mine-two', 'yours')];
+    const groups = skillOptionGroups(listed);
+    expect(groups.map((group) => group.label)).toEqual([null, ...SKILL_CATEGORIES.map((category) => SKILL_CATEGORY_LABELS[category]), SKILL_USER_GROUP_LABEL]);
+    expect(groups.map((group) => group.options.map((option) => option.value))).toEqual([[''], ['audit'], ['brief'], ['check-tags', 'check-links'], ['find-queries'], ['mine-one', 'mine-two']]);
+    // The user's own skills come last and keep their mark; the first choice is never grouped.
+    expect(groups.at(-1)!.options.map((option) => option.label)).toEqual(['mine-one (Your skill)', 'mine-two (Your skill)']);
+    expect(groups[0]).toEqual({ label: null, options: [{ value: '', label: 'Write a message' }] });
+    // A category with no skill, and "Your skills" with none, are left out.
+    expect(skillOptionGroups([view('audit', 'page')]).map((group) => group.label)).toEqual([null, SKILL_CATEGORY_LABELS.page]);
+    // Every built-in lands in a labelled group of its category.
+    const pack = BUILTIN_SKILL_IDS.map((id) => view(id, BUILTIN_SKILL_CATEGORY[id]));
+    const packGroups = skillOptionGroups(pack);
+    expect(packGroups.flatMap((group) => group.options.map((option) => option.value)).filter((value) => value !== '')).toHaveLength(BUILTIN_SKILL_IDS.length);
+    expect(packGroups.map((group) => group.label)).toEqual([null, ...SKILL_CATEGORIES.map((category) => SKILL_CATEGORY_LABELS[category])]);
+  });
+
   test('skill-view-helpers', () => {
-    expect(skillOptions([])).toEqual([{ value: '', label: 'Write a message' }]);
-    expect(skillOptions(SKILLS).map((option) => option.value)).toEqual(['', 'audit-this-page', 'rewrite-title-meta', 'plain-skill']);
+    expect(skillOptionGroups([])).toEqual([{ label: null, options: [{ value: '', label: 'Write a message' }] }]);
+    expect(skillOptionGroups(SKILLS).flatMap((group) => group.options.map((option) => option.value))).toEqual(['', 'audit-this-page', 'rewrite-title-meta', 'plain-skill']);
     expect(pickedSkill(SKILLS, '')).toBeNull();
     expect(pickedSkill(SKILLS, 'gone')).toBeNull();
     expect(pickedSkill(SKILLS, 'plain-skill')?.name).toBe('Plain skill');

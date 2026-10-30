@@ -50,7 +50,7 @@ export function state(changes: Partial<AgentState> = {}): AgentState {
 
 /** Skills as main lists them (`AgentState.skills`). */
 export const SKILLS: readonly AgentSkillView[] = [
-  { id: 'audit-this-page', name: 'Audit this page', description: 'Summarise the audit.', inputs: [{ slot: 'userNote', label: 'Focus on (optional)', placeholder: 'For example: mobile' }], builtin: true },
+  { id: 'audit-this-page', name: 'Audit this page', description: 'Summarise the audit.', inputs: [{ slot: 'userNote', label: 'Focus on (optional)', placeholder: 'For example: mobile' }], builtin: true, category: 'page' },
   {
     id: 'rewrite-title-meta',
     name: 'Rewrite title and meta description',
@@ -60,6 +60,7 @@ export const SKILLS: readonly AgentSkillView[] = [
       { slot: 'userNote', label: 'Note (optional)', placeholder: null },
     ],
     builtin: true,
+    category: 'content',
   },
-  { id: 'plain-skill', name: 'Plain skill', description: 'No inputs.', inputs: [], builtin: false },
+  { id: 'plain-skill', name: 'Plain skill', description: 'No inputs.', inputs: [], builtin: false, category: 'yours' },
 ];

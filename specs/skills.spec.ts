@@ -16,9 +16,80 @@ import { parseWebUrl } from './web-url.spec';
 
 // ---- Ids -------------------------------------------------------------------------------------
 
-/** The skills frost ships (`@app/ai-skills`, `src/skills/`). */
-export const BUILTIN_SKILL_IDS = ['audit-this-page', 'rewrite-title-meta', 'internal-link-suggestions'] as const;
+/**
+ * The skills frost ships (`@app/ai-skills`, `src/skills/`), in the order the picker lists them
+ * within a category. Appending an id is a release-note event: a user's own skill that already has
+ * it is re-keyed on load (`main/agent/user-skills.ts`), never hidden.
+ */
+export const BUILTIN_SKILL_IDS = [
+  'audit-this-page',
+  'rewrite-title-meta',
+  'internal-link-suggestions',
+  'content-brief',
+  'rewrite-page-content',
+  'content-quality-review',
+  'match-page-to-queries',
+  'check-structured-data',
+  'check-hreflang',
+  'diagnose-rendering',
+  'check-crawl-and-indexing',
+  'diagnose-search-performance',
+  'analyse-serp',
+  'write-social-tags',
+] as const;
 export type BuiltinSkillId = (typeof BUILTIN_SKILL_IDS)[number];
+
+/** The groups the skill picker puts the built-ins under, in the order it shows them. */
+export const SKILL_CATEGORIES = ['page', 'content', 'technical', 'search'] as const;
+export type SkillCategory = (typeof SKILL_CATEGORIES)[number];
+
+/** The picker's heading for each category, and for the user's own skills (listed last). */
+export const SKILL_CATEGORY_LABELS: Readonly<Record<SkillCategory, string>> = {
+  page: 'This page',
+  content: 'Content',
+  technical: 'Technical',
+  search: 'Search',
+};
+export const SKILL_USER_GROUP_LABEL = 'Your skills';
+
+/** The category each built-in is listed under. */
+export const BUILTIN_SKILL_CATEGORY: Readonly<Record<BuiltinSkillId, SkillCategory>> = {
+  'audit-this-page': 'page',
+  'rewrite-title-meta': 'content',
+  'internal-link-suggestions': 'page',
+  'content-brief': 'content',
+  'rewrite-page-content': 'content',
+  'content-quality-review': 'content',
+  'match-page-to-queries': 'search',
+  'check-structured-data': 'technical',
+  'check-hreflang': 'technical',
+  'diagnose-rendering': 'technical',
+  'check-crawl-and-indexing': 'technical',
+  'diagnose-search-performance': 'search',
+  'analyse-serp': 'search',
+  'write-social-tags': 'content',
+};
+
+/**
+ * The gap-analysis rows (`docs/research/serplens-gap-analysis.md`) each built-in answers, for the
+ * record: nothing reads this at run time.
+ */
+export const BUILTIN_SKILL_SOURCES: Readonly<Record<BuiltinSkillId, readonly string[]>> = {
+  'audit-this-page': ['SL-070'],
+  'rewrite-title-meta': ['SL-071'],
+  'internal-link-suggestions': ['SL-077'],
+  'content-brief': ['SL-072'],
+  'rewrite-page-content': ['SL-073'],
+  'content-quality-review': ['SL-074', 'SL-019'],
+  'match-page-to-queries': ['SL-076'],
+  'check-structured-data': ['SL-078'],
+  'check-hreflang': ['SL-079'],
+  'diagnose-rendering': ['SL-080', 'SL-037'],
+  'check-crawl-and-indexing': ['SL-081'],
+  'diagnose-search-performance': ['SL-082'],
+  'analyse-serp': ['SL-083'],
+  'write-social-tags': ['SL-026'],
+};
 
 /**
  * A skill id: lower-case words of letters and digits joined by single hyphens (kebab-case). It also

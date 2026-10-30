@@ -3,7 +3,7 @@
 // specs/agent-e2e-script.schema.ts (the script format)
 // specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL),
 // specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
-// Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools),
+// Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
 // specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end)
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -15,7 +15,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
 import { AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
-import { SKILL_USER_MARK } from '@app/specs/skills.spec';
+import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_USER_MARK } from '@app/specs/skills.spec';
 import { MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -411,6 +411,16 @@ test('agent-skill-narrows-tools', async () => {
   expect(await urlOf(id!)).toBe(`${site.origin}/start`);
   // Back to a message field once the run started.
   await expect(page.getByTestId('agent-input')).toBeVisible();
+});
+
+test('agent-skill-pack-listed', async () => {
+  await launchWith([{ text: ['unused'] }]);
+  // The fourteen built-ins, under their category headings in the picker's order.
+  const groups = page.getByTestId('agent-skill-picker').locator('optgroup');
+  const listed = await groups.evaluateAll((nodes) => nodes.map((node) => [(node as HTMLOptGroupElement).label, [...node.querySelectorAll('option')].map((option) => option.value)] as const));
+  const expected = SKILL_CATEGORIES.map((category) => [SKILL_CATEGORY_LABELS[category], BUILTIN_SKILL_IDS.filter((id) => BUILTIN_SKILL_CATEGORY[id] === category)] as const);
+  expect(listed).toEqual(expected);
+  expect(listed.flatMap(([, ids]) => ids)).toHaveLength(14);
 });
 
 /** Opens a view reached from the settings (`agent-open-grants`, `agent-open-skills`). */
