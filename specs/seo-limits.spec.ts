@@ -95,6 +95,18 @@ export const HIGHLIGHT_BUDGET_MS = 500;
 export const HIGHLIGHT_FRAME_MS = 8;
 
 /**
+ * The text highlight (Phase 8 Task 2; `seo-sidebar.spec.ts`, `TextHighlightTarget`): at most
+ * `MAX_TEXT_HIGHLIGHT_TARGETS` texts (the Content panel's difficult-sentence list,
+ * `SENTENCE_LIMITS.maxDifficultSentences`), each boxed with at most
+ * `MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET` rects (one per line fragment). The text walk that finds them
+ * reads at most `SNAPSHOT_LIMITS.maxTextNodes` text nodes (visiting at most four times as many nodes
+ * in all, as the extractor's walk) within `HIGHLIGHT_BUDGET_MS`, `HIGHLIGHT_FRAME_MS` per animation
+ * frame, once per overlay; past either it plans with the text it read and draws what it found.
+ */
+export const MAX_TEXT_HIGHLIGHT_TARGETS = 20;
+export const MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET = 16;
+
+/**
  * Caps on the snapshot. Lists keep their **first** `max…` entries in document order and report the
  * page's full count beside them (`…Total`); strings keep their first `max…Chars` characters and,
  * where a rule measures the value, its full length too (`CappedText.length`).

@@ -205,8 +205,10 @@ export const SOCIAL_REMOTE_IMAGES = false;
  * an in-page navigation to another URL, a load error, a crash) and when another tab becomes active.
  * Only the active tab showing a web page can be highlighted. `broken` (Phase 2.5 Task 7,
  * `seo-checks.feature.md`) outlines only the links the tab's link check found broken.
+ * `sentences` (Phase 8 Task 2, `seo-content.feature.md`, Highlight) boxes the difficult sentences
+ * of the tab's ready audit where they are in the page's text (`TextHighlightTarget`).
  */
-export const HIGHLIGHT_MODES = ['off', 'links', 'headings', 'broken'] as const;
+export const HIGHLIGHT_MODES = ['off', 'links', 'headings', 'broken', 'sentences'] as const;
 export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
 
 /**
@@ -215,11 +217,13 @@ export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
  * toggle that removes it in view. If the page removes the overlay's host itself, the overlay stops
  * and the tab's mode goes back to `off` too.
  */
-export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = { links: 'links', headings: 'on-page', broken: 'links' };
+export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = { links: 'links', headings: 'on-page', broken: 'links', sentences: 'content' };
 
 /**
  * What the overlay draws (frost's own palette): a link's box by kind (a link whose `rel` has
  * `nofollow` is `nofollow` whatever its kind), a heading's by level, each with a small label.
+ * A difficult sentence (Phase 8) is boxed line by line by its reason (`DIFFICULT_SENTENCE_REASONS`
+ * in `seo-content.spec.ts`), the label on its first line only.
  */
 export const HIGHLIGHT_STYLES = {
   internal: { color: '#1f6feb', label: 'int' },
@@ -233,5 +237,29 @@ export const HIGHLIGHT_STYLES = {
   h5: { color: '#ca8a04', label: 'H5' },
   h6: { color: '#9a3412', label: 'H6' },
   broken: { color: '#dc2626', label: 'broken' },
+  'long-sentence': { color: '#b45309', label: 'long' },
+  'complex-sentence': { color: '#be185d', label: 'complex' },
 } as const;
 export type HighlightKind = keyof typeof HIGHLIGHT_STYLES;
+
+/**
+ * A text to box in the page (Phase 8 Decision 12, the reuse contract): its text as the audit read it
+ * (white space runs count as one space, the ends trimmed) and the `HIGHLIGHT_STYLES` kind it is
+ * drawn as. Main builds the list from its own ready audit (`sentences`: the audit's difficult
+ * sentences); the chrome never sends page text to paint. The painter finds each text's first
+ * occurrence (after the previous one's, in page order) across the page's text nodes and boxes its
+ * `Range.getClientRects()`; a text no longer on the page is counted and said, never guessed at
+ * (`TEXT_HIGHLIGHT_UNMATCHED_NOTE`). Phase 11's keyphrase highlight adds a mode and a style and
+ * passes its targets to the same painter.
+ */
+export interface TextHighlightTarget {
+  readonly text: string;
+  readonly kind: HighlightKind;
+}
+
+/**
+ * What the overlay says, pinned in the viewport's corner inside its own shadow root, when some
+ * texts were not found (`{n}`: how many). The audit's text and the page's can differ when the page
+ * changed its text after the audit.
+ */
+export const TEXT_HIGHLIGHT_UNMATCHED_NOTE = { one: '1 sentence is no longer on the page', many: '{n} sentences are no longer on the page' } as const;

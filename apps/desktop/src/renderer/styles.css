@@ -6377,6 +6377,84 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+.seo-readability-formula {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Sentences (Phase 8): statistics, the difficult sentences and the page highlight's toggle. */
+.seo-sentences {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.seo-difficult-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.seo-difficult-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.seo-difficult-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-difficult-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+
+.seo-difficult-text {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.seo-difficult-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seo-difficult-chip {
+  padding: 0 6px;
+  border-radius: 5px;
+  font-weight: 600;
+}
+
+.seo-difficult-chip[data-reason='long'] {
+  background: color-mix(in srgb, #b45309 16%, transparent);
+  color: #b45309;
+}
+
+.seo-difficult-chip[data-reason='complex'] {
+  background: color-mix(in srgb, #be185d 16%, transparent);
+  color: #be185d;
+}
+
 .seo-notes-line {
   margin-top: 0;
 }

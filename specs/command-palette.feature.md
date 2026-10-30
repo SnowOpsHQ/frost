@@ -203,6 +203,10 @@ named test.
   with a URL, and says `OPEN_TOOL_REFUSAL_MESSAGES[reason]` for a refusal.
 - **Scenario: highlight-opens-the-owning-panel** — a highlight action opens `HIGHLIGHT_PANELS[mode]`
   first, so the chrome does not turn the overlay off again.
+- **Scenario: highlight-sentences-action** (Phase 8) — "Highlight difficult sentences"
+  (`highlight.sentences`) is offered for a web page with a ready audit, not while it is already on;
+  it opens the Content panel, then asks main, which says no (a status line) when the audit has no
+  difficult sentence.
 - **Scenario: palette-keys** (`keys.test.ts`) — ↑/↓, Tab/Shift+Tab wrap; PageUp/PageDown jump and
   clamp; Enter runs the active option; Esc closes; other keys are the search box's.
 - **Scenario: shortcut-labels-per-platform** — `Mod+Shift+R` reads `⇧⌘R` on macOS and

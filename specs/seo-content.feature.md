@@ -5,8 +5,10 @@ Spec: `specs/seo-content.spec.ts` (`VISIBLE_TEXT_LIMITS`, `VISIBLE_TEXT_BLOCKS`,
 `READABILITY_FORMULAS` (Phase 8), `SENTENCE_LIMITS` (Phase 8), the target query,
 `SNIPPET_BUDGETS_PX`, `SNIPPET_FONT`, the width rules, the drafts, `CONTENT_TABLES`, Copy as HTML),
 `specs/seo-content.schema.ts` (the `content.*` inputs), `specs/seo-snapshot.spec.ts` (`VisibleTextSchema`),
-`specs/seo-rules.spec.ts` (the catalog) and `specs/seo-sidebar.spec.ts` (`SEO_PANELS`). Phase 2.5
-Task 3. Each line maps to one named test.
+`specs/seo-rules.spec.ts` (the catalog) and `specs/seo-sidebar.spec.ts` (`SEO_PANELS`;
+`HIGHLIGHT_MODES` `sentences`, `HIGHLIGHT_STYLES`, `TextHighlightTarget`, Phase 8), `specs/seo-limits.spec.ts`
+(`MAX_TEXT_HIGHLIGHT_TARGETS`, `MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET`, Phase 8). Phase 2.5 Task 3.
+Each line maps to one named test.
 
 ## Decisions
 - **A rail panel of its own, "Content"** (after On-Page), not an On-Page sub-section: On-Page is
@@ -206,6 +208,53 @@ heuristic does, not what a linguist would count. No rule, finding or score depen
   splitting a surrogate pair.
 - **Scenario: breadcrumb-and-labels** — the preview's address line (host › decoded path segments) and
   the counts' wording.
+- **Scenario: readability-view-formula-and-band** (Phase 8) — the readability section names the
+  formula that scored the page (`READABILITY_FORMULAS`' `name`: Flesch reading ease, Szigriszt-Pazos,
+  Kandel-Moles, Flesch-Amstad) with its band, never "Flesch, for English text" for another language.
+- **Scenario: sentence-stats-view** — the sentence count, words per sentence, the longest sentence
+  and how many are long (over `longSentenceWords`), and the complex-word share as a percentage in a
+  formula language (none in another); "not available" without text.
+- **Scenario: difficult-sentence-items** — each difficult sentence is a row of its excerpt (inert
+  text), a reason chip ("Long" / "Complex") and its word count; the heading counts every difficult
+  sentence ("Difficult sentences (n)"), and "and N more" says how many the list leaves out.
+
+## Highlight (Phase 8 Task 2)
+The Content panel owns the `sentences` mode (`HIGHLIGHT_PANELS`): its "Highlight on page" toggle,
+shown when the audit has difficult sentences, boxes them on the page, each line fragment of a
+sentence boxed in its reason's colour (`long-sentence`, `complex-sentence`), labelled on its first
+line. It goes off as every overlay does: leaving the Content panel, collapsing the sidebar, the page
+changing. Main hands the painter the excerpts of the tab's own ready audit
+(`sentenceHighlightTargets`, at most `MAX_TEXT_HIGHLIGHT_TARGETS`); the chrome never sends page text
+to paint (`seo.setHighlight` takes the mode only). The painter runs in the isolated SEO world, finds
+each excerpt across the page's text nodes (white space runs as one space, as the extractor reads
+them; bidi and zero-width characters matched as they are), and draws boxes from the match's
+`Range.getClientRects()` in its closed shadow root: no page node, attribute or style changes. The
+texts travel into the script as JSON data, never as code. Excerpts no longer on the page are counted
+and said in the overlay (`TEXT_HIGHLIGHT_UNMATCHED_NOTE`).
+- **Scenario: plan-text-highlight-finds-excerpts** (`highlight.test.ts`) — an excerpt is found across
+  text nodes (split mid-word and at inline elements), with the page's white space runs (and the
+  excerpt's) read as one space, at its first occurrence; a second, equal excerpt takes the next one.
+- **Scenario: plan-text-highlight-unmatched-counted** — excerpts not in the page's text (rewritten,
+  or empty) are counted, never matched elsewhere; bidi and zero-width characters must match exactly.
+- **Scenario: text-highlight-capped** — at most `MAX_TEXT_HIGHLIGHT_TARGETS` texts are planned and
+  carried by the script, each boxed with at most `MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET` rects.
+- **Scenario: text-highlight-script-is-self-contained** — `highlightScript('sentences', …)` evaluates
+  in a fresh context with no module scope and draws; the stringified `planTextHighlight` gives the
+  same plan as the imported one; hostile excerpts (quotes, `</script>`, U+2028, bidi controls) are
+  JSON data in the script; no markup, stylesheet, `eval` or Node API.
+- **Scenario: text-highlight-leaves-the-page-untouched** (`extract-dom.test.ts`, the stringified
+  script) — while drawn and after `off`: no attribute, style, text or node change in the page outside
+  the overlay's one host, whose shadow root is closed; the page's DOM is as before after `off`.
+- **Scenario: text-highlight-walk-budgeted** — a page with more than `maxTextNodes` text nodes: the
+  walk stops at the cap (or the budget), the overlay settles within the budget and draws what it found.
+- **Scenario: sentences-highlight-takes-targets-from-the-audit** (`panels.test.ts`) — the controller
+  paints with the targets of the tab's ready audit (`sentenceHighlightTargets`); without a ready audit,
+  or with no difficult sentence, `seo.setHighlight(tab, 'sentences')` is `false` and nothing is painted.
+- **Scenario: sentences-highlight-resets-on-navigation** — an in-page navigation to another URL turns
+  it off and removes it; a new document turns it off.
+- **Scenario: sentence-highlight-targets** (`highlight.test.ts`) — the audit's difficult
+  sentences become targets of kind `long-sentence` / `complex-sentence`, in order, capped; none
+  for an audit without sentence statistics.
 
 ## Command palette (`apps/desktop/src/renderer/__tests__/content-palette.test.ts`)
 Registered with `registerPaletteActions` (`command-palette.spec.ts`); the Content panel's jump is
@@ -236,4 +285,10 @@ this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second one.
   and a draft (and an edit not yet saved), Clear Browsing Data with its box ticked empties the open
   panel at once; the pending edit is not saved, and a later edit stores only itself.
 - **Scenario: content-page-text-is-inert** — markup and bidi overrides in the page's text and title
-  render as text in the panel; nothing runs, no element is created from them.
+  render as text in the panel; nothing runs, no element is created from them. (Phase 8) A difficult
+  sentence holding markup shows as text in the difficult-sentence list.
+- **Scenario: content-readability-depth** (Phase 8) — a Spanish article: the Szigriszt-Pazos score and
+  its band, the sentence statistics and the difficult-sentence list.
+- **Scenario: content-highlight-sentences-leaves-no-residue** (Phase 8) — a long English article served
+  with a strict CSP: the toggle draws boxes; leaving the panel and navigating remove them; the page's
+  DOM is as before (the checks of `seo-panels.e2e.ts`'s `highlight-links-leaves-no-residue`).

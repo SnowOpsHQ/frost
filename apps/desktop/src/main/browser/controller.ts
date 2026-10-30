@@ -19,6 +19,7 @@ import { createTabA11y, type A11yRunner } from '../seo/a11y-runs';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
 import { withKnown } from '../seo/context-source';
 import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
+import { sentenceHighlightTargets } from '../seo/highlight-targets';
 import { createTabSpeed, type TabSpeedOptions } from '../seo/vitals-tabs';
 import { matchDevtoolsShortcut, matchFindStepShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
@@ -344,9 +345,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   });
 
   // The SEO highlight overlay, on the active tab only (it goes when the page changes or the tab is left).
+  // `sentences` boxes the difficult sentences of the tab's own ready audit (never text from the chrome).
   const highlights = createTabHighlights({
     painter: options.highlight,
     isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
+    textTargets: (tab, mode) => {
+      if (mode !== 'sentences') return [];
+      const response = audits.response(tab);
+      return response.status === 'ready' ? sentenceHighlightTargets(response.audit) : [];
+    },
     changed,
   });
 

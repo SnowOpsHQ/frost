@@ -6,6 +6,7 @@ import {
   NGRAM_PLACES,
   NGRAM_SIZES,
   READABILITY_UNAVAILABLE_MESSAGES,
+  SENTENCE_LIMITS,
   STOP_WORD_LANGUAGES,
   TARGET_QUERY_MAX_CHARS,
   TARGET_QUERY_PLACE_LABELS,
@@ -14,19 +15,21 @@ import {
   type QueryPresence,
 } from '@app/specs/seo-content.spec';
 import { contentPaletteSources, onTargetQueryFocus, takeTargetQueryFocus } from '../../content-palette';
-import { capQuery, countLabel, ngramBar, ratio } from '../../content-view';
+import { capQuery, countLabel, difficultSentenceItems, ngramBar, ratio, readabilityView, sentenceStatsView } from '../../content-view';
 import { clearAllContentNotes, copySnippetHtml, useContentNotes } from '../../hooks/useContentNotes';
 import { registerPaletteActions } from '../../palette/registry';
 import { CloseIcon } from '../../icons';
-import { Flash, useFlash } from './actions';
+import { Flash, HighlightToggle, useFlash } from './actions';
 import { AbsentGlyph, BarsIcon, BookIcon, PartialGlyph, PresentGlyph, TargetIcon, TrashIcon } from './content-icons';
 import { PageText, Section } from './parts';
 import { SnippetEditor } from './SnippetEditor';
 
 // Content (spec `seo-content.spec.ts`; acceptance `seo-content.feature.md`, Panel): the snippet
-// preview and drafts, the target query checklist, the page's n-grams and its readability. All of
-// it is information: nothing here is scored, and counts are never pass or fail. Page-derived text
-// is React text only (`PageText`, `<bdi>`); bars are SVG attributes, never `style`.
+// preview and drafts, the target query checklist, the page's n-grams and its readability (the
+// language's formula, sentence statistics and the difficult sentences, which the page highlight
+// can box: main reads them from its own audit). All of it is information: nothing here is scored,
+// and counts are never pass or fail. Page-derived text is React text only (`PageText`, `<bdi>`);
+// bars are SVG attributes, never `style`.
 
 // The command palette's Content actions (`content-palette.ts`), once per module instance.
 const unregisterPaletteActions = registerPaletteActions(...contentPaletteSources({ copySnippetHtml, clearAllNotes: clearAllContentNotes }));
@@ -194,15 +197,19 @@ function Readability({ audit }: { readonly audit: SeoAudit }) {
       </p>
     );
   }
+  const view = readabilityView(r);
   const shown = Math.max(0, Math.min(100, r.score));
   return (
-    <div className="seo-readability" data-testid="seo-readability" data-status="ok">
+    <div className="seo-readability" data-testid="seo-readability" data-status="ok" data-formula={r.formula}>
       <div className="seo-readability-score">
         <span className="seo-readability-value" data-testid="seo-readability-score">
-          {r.score.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+          {view.score}
         </span>
         <span className="seo-readability-band" data-testid="seo-readability-band">
-          {r.band}
+          {view.band}
+        </span>
+        <span className="seo-readability-formula" data-testid="seo-readability-formula">
+          {view.formula}
         </span>
       </div>
       <svg className="seo-readability-scale" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true" focusable="false">
@@ -227,7 +234,60 @@ function Readability({ audit }: { readonly audit: SeoAudit }) {
           <dd>{ratio(r.syllables, r.words)}</dd>
         </div>
       </dl>
-      <p className="seo-note">Flesch reading ease, for English text. Syllables are estimated by rule, so treat the score as a guide.</p>
+      <p className="seo-note">{view.formula}, the published formula for the page’s language. Syllables are estimated by rule, so treat the score as a guide.</p>
+    </div>
+  );
+}
+
+/** Sentence statistics and the difficult sentences (excerpts are page text: inert `PageText`), with the page highlight's toggle. */
+function Sentences({ audit, tab }: { readonly audit: SeoAudit; readonly tab: TabState }) {
+  const report = audit.content.sentences;
+  const stats = sentenceStatsView(report);
+  if (stats === null) return null;
+  const difficult = difficultSentenceItems(report);
+  return (
+    <div className="seo-sentences" data-testid="seo-sentences">
+      <dl className="seo-readability-stats" data-testid="seo-sentence-stats">
+        {stats.map((row) => (
+          <div key={row.label}>
+            <dt>{row.label}</dt>
+            <dd>{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {difficult === null ? (
+        <p className="seo-note" data-testid="seo-difficult-none">
+          No difficult sentences.
+        </p>
+      ) : (
+        <div className="seo-difficult" data-testid="seo-difficult-sentences">
+          <div className="seo-difficult-head">
+            <h4 className="seo-difficult-title" data-testid="seo-difficult-heading">
+              {difficult.heading}
+            </h4>
+            <HighlightToggle tab={tab} mode="sentences" label="Highlight on page" testId="seo-highlight-sentences" />
+          </div>
+          <ol className="seo-difficult-list">
+            {difficult.items.map((item, index) => (
+              <li key={index} className="seo-difficult-row" data-testid="seo-difficult-sentence" data-reason={item.reason}>
+                <PageText value={item.text} className="seo-difficult-text" testId="seo-difficult-text" lines={3} />
+                <span className="seo-difficult-meta">
+                  <span className="seo-difficult-chip" data-reason={item.reason}>
+                    {item.chip}
+                  </span>
+                  <span className="seo-difficult-words">{item.words}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+          {difficult.more !== null ? (
+            <p className="seo-note" data-testid="seo-difficult-more">
+              {difficult.more}
+            </p>
+          ) : null}
+        </div>
+      )}
+      <p className="seo-note">Long sentences have more than {SENTENCE_LIMITS.longSentenceWords} words; complex ones score below {SENTENCE_LIMITS.difficultSentenceScore} on their own. Information, not a rule.</p>
     </div>
   );
 }
@@ -248,8 +308,9 @@ export function Content({ audit, tab, notesGeneration }: { readonly audit: SeoAu
       <Section title="Frequent words and phrases" badge={<SectionTitle icon={BarsIcon} text="info only" />} testId="seo-content-ngrams">
         {audit.content.available ? <Ngrams audit={audit} /> : <p className="seo-empty-line">frost could not read this page’s text.</p>}
       </Section>
-      <Section title="Readability" badge={<SectionTitle icon={BookIcon} text="Flesch" />} testId="seo-content-readability">
+      <Section title="Readability" badge={<SectionTitle icon={BookIcon} text="info only" />} testId="seo-content-readability">
         <Readability audit={audit} />
+        <Sentences audit={audit} tab={tab} />
       </Section>
       <Section title="Your notes" testId="seo-content-notes">
         <p className="seo-note seo-notes-line">Target queries and drafts are kept on this computer, for every page you wrote them for. Clear Browsing Data keeps them unless you tick its box.</p>
