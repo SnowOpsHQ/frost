@@ -28,9 +28,12 @@ const count = () => Number(raw.prepare('SELECT count(*) AS n FROM agent_skill_pr
 describe('agent skill prefs (db)', () => {
   test('agent-skill-prefs-migrate', () => {
     expect(AGENT_SKILL_PREF_TABLES).toEqual(['agent_skill_prefs']);
-    // Spread after every other phase's migrations (its own file), so ids stay strictly increasing.
+    // Spread after every earlier phase's migrations (its own file), so ids stay strictly increasing; a
+    // later migration may follow it.
     const ids = MIGRATIONS.map((m) => m.id);
-    expect(ids.at(-1)).toBe('0200_agent_skill_prefs');
+    const at = ids.indexOf('0200_agent_skill_prefs');
+    expect(at).toBeGreaterThan(0);
+    expect(ids.filter((id) => id.startsWith('00')).every((id) => ids.indexOf(id) < at)).toBe(true);
     expect(ids.every((id, i) => i === 0 || id > ids[i - 1]!)).toBe(true);
     const sqlite = raw
       .prepare('PRAGMA table_info(agent_skill_prefs)')

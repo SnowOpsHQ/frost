@@ -49,10 +49,13 @@ describe('change-intelligence migrations', () => {
   test('change-intel-migrations-create-schema', () => {
     const db = new DatabaseSync(':memory:');
     runMigrations(db);
-    // Registered in the session migrations, numbered in Phase 6's range, directly before the later
-    // phases' (Phase 8's skill prefs are spread after them, last).
+    // Registered in the session migrations, numbered in Phase 6's range, together, and before the later
+    // phases' (Phase 8's skill prefs are spread after them).
     expect(CHANGE_INTEL_MIGRATIONS.map((m) => m.id)).toEqual(['0040_change_intelligence', '0041_change_intelligence_guards']);
-    expect(MIGRATIONS.slice(-CHANGE_INTEL_MIGRATIONS.length - AGENT_SKILL_PREFS_MIGRATIONS.length, -AGENT_SKILL_PREFS_MIGRATIONS.length)).toEqual(CHANGE_INTEL_MIGRATIONS);
+    const start = MIGRATIONS.indexOf(CHANGE_INTEL_MIGRATIONS[0]!);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(MIGRATIONS.slice(start, start + CHANGE_INTEL_MIGRATIONS.length)).toEqual(CHANGE_INTEL_MIGRATIONS);
+    expect(start + CHANGE_INTEL_MIGRATIONS.length).toBeLessThanOrEqual(MIGRATIONS.indexOf(AGENT_SKILL_PREFS_MIGRATIONS[0]!));
 
     // Tables, in creation order, column for column with the Drizzle schema.
     expect(named(db, 'table')).toEqual([...CHANGE_INTEL_TABLES]);
