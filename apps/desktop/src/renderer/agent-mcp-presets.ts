@@ -1,4 +1,4 @@
-import { filterPresets, MCP_PRESET_CATEGORIES, mcpPresetCategoryLabel, presetDraft, type McpPreset, type McpPresetCategory } from '@app/specs/agent-mcp-presets.spec';
+import { filterPresets, mcpPresetCategoriesInUse, mcpPresetCategoryLabel, presetDraft, type McpPreset, type McpPresetCategory } from '@app/specs/agent-mcp-presets.spec';
 import { emptyMcpDraft, type McpServerDraft } from './agent-view';
 
 // The MCP server catalogue's view helpers (`agent-mcp-presets.feature.md`, Settings). Presets are
@@ -12,8 +12,9 @@ export interface McpPresetChip {
   readonly selected: boolean;
 }
 
+/** "All", then one chip per category that holds a shipped preset (a category with none shows no chip). */
 export function mcpPresetChips(selected: McpPresetCategory | null, allLabel: string): McpPresetChip[] {
-  return [{ category: null, label: allLabel, selected: selected === null }, ...MCP_PRESET_CATEGORIES.map((item) => ({ category: item.id, label: item.label, selected: selected === item.id }))];
+  return [{ category: null, label: allLabel, selected: selected === null }, ...mcpPresetCategoriesInUse().map((item) => ({ category: item.id, label: item.label, selected: selected === item.id }))];
 }
 
 /** A catalogue row, as the sheet shows it. */

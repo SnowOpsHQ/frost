@@ -168,7 +168,7 @@ function Catalogue({ onChoose }: { readonly onChoose: (preset: McpPreset) => voi
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
-      <div className="agent-key-row agent-mcp-chips" role="group" aria-label="Categories">
+      <div className="agent-key-row agent-mcp-chips" role="group" aria-label={MCP_PRESET_WORDS.categories}>
         {mcpPresetChips(category, MCP_PRESET_WORDS.all).map((chip) => (
           <button
             key={chip.category ?? 'all'}
@@ -223,6 +223,11 @@ function AddServer() {
   // The preset the form was filled from: its note (untrusted, the token hint) stays until the form is saved.
   const [fromPreset, setFromPreset] = useState<McpPreset | null>(null);
   const set = (changes: Partial<McpServerDraft>) => setDraft({ ...draft, ...changes });
+  // A changed address, kind or command makes it another server than the preset's: its note goes.
+  const setConnection = (changes: Partial<McpServerDraft>) => {
+    set(changes);
+    setFromPreset(null);
+  };
   const choose = (preset: McpPreset) => {
     // Only the form changes: nothing is saved, started or sent to main here.
     setDraft(presetFormDraft(preset));
@@ -280,7 +285,7 @@ function AddServer() {
       <label className="agent-field-label" htmlFor="agent-mcp-transport">
         Kind
       </label>
-      <select id="agent-mcp-transport" className="agent-select" data-testid="agent-mcp-field-transport" value={draft.transport} onChange={(event) => set({ transport: event.target.value === 'http' ? 'http' : 'stdio' })}>
+      <select id="agent-mcp-transport" className="agent-select" data-testid="agent-mcp-field-transport" value={draft.transport} onChange={(event) => setConnection({ transport: event.target.value === 'http' ? 'http' : 'stdio' })}>
         <option value="stdio">A command on this computer</option>
         <option value="http">An HTTPS address</option>
       </select>
@@ -289,14 +294,14 @@ function AddServer() {
           <label className="agent-field-label" htmlFor="agent-mcp-url">
             Address (https only)
           </label>
-          <input id="agent-mcp-url" className="agent-text-field" data-testid="agent-mcp-field-url" value={draft.url} spellCheck={false} placeholder="https://" onChange={(event) => set({ url: event.target.value })} />
+          <input id="agent-mcp-url" className="agent-text-field" data-testid="agent-mcp-field-url" value={draft.url} spellCheck={false} placeholder="https://" onChange={(event) => setConnection({ url: event.target.value })} />
         </>
       ) : (
         <>
           <label className="agent-field-label" htmlFor="agent-mcp-command">
             Command (a program name or an absolute path; no shell)
           </label>
-          <input id="agent-mcp-command" className="agent-text-field" data-testid="agent-mcp-field-command" value={draft.command} spellCheck={false} onChange={(event) => set({ command: event.target.value })} />
+          <input id="agent-mcp-command" className="agent-text-field" data-testid="agent-mcp-field-command" value={draft.command} spellCheck={false} onChange={(event) => setConnection({ command: event.target.value })} />
           <label className="agent-field-label" htmlFor="agent-mcp-args">
             Arguments (one per line, exactly as given)
           </label>

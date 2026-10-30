@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 // Spec: specs/agent-mcp.spec.ts (MCP_UNTRUSTED_LABEL, MCP_NO_SANDBOX_SENTENCE, MCP_STATUS_LABELS, MCP_TOKEN_MESSAGES),
-// specs/agent-mcp-presets.spec.ts (MCP_PRESETS, MCP_PRESET_CATEGORIES, MCP_PRESET_WORDS, filterPresets, presetDraft)
+// specs/agent-mcp-presets.spec.ts (MCP_PRESETS, MCP_PRESET_CATEGORIES, MCP_PRESET_WORDS, filterPresets, presetDraft, mcpPresetCategoriesInUse)
 // Acceptance: specs/agent-mcp.feature.md (Settings), specs/agent-mcp-presets.feature.md (Settings)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MCP_NO_SANDBOX_SENTENCE, MCP_SETTINGS_WORDS, MCP_TOKEN_MESSAGES, mcpSandboxSentence, type AgentMcpServerView } from '@app/specs/agent-mcp.spec';
-import { filterPresets, MCP_PRESET_CATEGORIES, MCP_PRESET_WORDS, MCP_PRESETS, presetDraft, type McpCommandPreset } from '@app/specs/agent-mcp-presets.spec';
+import { filterPresets, MCP_PRESET_CATEGORIES, MCP_PRESET_WORDS, MCP_PRESETS, mcpPresetCategoriesInUse, presetDraft, type McpCommandPreset } from '@app/specs/agent-mcp-presets.spec';
 import { card } from './agent-fixtures';
 
 const calls = vi.hoisted(() => ({
@@ -152,7 +152,10 @@ describe('MCP settings', () => {
     expect(host.querySelector('[data-testid="agent-mcp-catalogue"]')).not.toBeNull();
     // An "All" chip, then one per category.
     const chips = all('agent-mcp-catalogue-chip');
-    expect(chips.map((el) => el.textContent)).toEqual([MCP_PRESET_WORDS.all, ...MCP_PRESET_CATEGORIES.map((category) => category.label)]);
+    // Only categories holding a shipped preset get a chip (SEO data is all deferred for now).
+    expect(chips.map((el) => el.textContent)).toEqual([MCP_PRESET_WORDS.all, ...mcpPresetCategoriesInUse().map((category) => category.label)]);
+    expect(chips.map((el) => el.dataset['category'])).not.toContain('seo-data');
+    expect(host.querySelector('[data-testid="agent-mcp-catalogue"] [role="group"]')!.getAttribute('aria-label')).toBe(MCP_PRESET_WORDS.categories);
     expect(chips[0]!.getAttribute('aria-pressed')).toBe('true');
     let rows = all('agent-mcp-preset');
     expect(rows.map((el) => el.dataset['preset'])).toEqual(MCP_PRESETS.map((preset) => preset.id));
@@ -217,6 +220,26 @@ describe('MCP settings', () => {
     // Saved: the form and the note clear.
     expect(host.querySelector<HTMLInputElement>('[data-testid="agent-mcp-field-name"]')!.value).toBe('');
     expect(host.querySelector('[data-testid="agent-mcp-preset-note"]')).toBeNull();
+    // Editing the address or switching the kind clears the note: the form is no longer the preset's.
+    const presetNote = () => host.querySelector('[data-testid="agent-mcp-preset-note"]');
+    const choosePreset = () => {
+      click(host.querySelector('[data-testid="agent-mcp-catalogue-open"]'));
+      click(all('agent-mcp-preset').find((el) => el.dataset['preset'] === preset.id)!.querySelector('[data-testid="agent-mcp-preset-use"]'));
+      expect(presetNote()).not.toBeNull();
+    };
+    choosePreset();
+    // Renaming keeps it (the same server under another name).
+    type(host.querySelector('[data-testid="agent-mcp-field-name"]')!, 'My Linear');
+    expect(presetNote()).not.toBeNull();
+    type(host.querySelector('[data-testid="agent-mcp-field-url"]')!, 'https://mcp.example.com/mcp');
+    expect(presetNote()).toBeNull();
+    choosePreset();
+    const kind = host.querySelector<HTMLSelectElement>('[data-testid="agent-mcp-field-transport"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(kind, 'stdio');
+      kind.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(presetNote()).toBeNull();
     // A command-shaped preset fills the command fields, names with empty values, and the network box.
     const command: McpCommandPreset = { id: 'example', name: 'Example', category: 'work', description: 'Example. Its own dependencies are not pinned.', transport: 'stdio', command: 'npx', args: ['-y', 'example@1.0.0'], needsNetwork: true, envNames: ['EXAMPLE_TOKEN'], auth: 'env', tokenHint: 'From your account.', docsUrl: 'https://example.com/' };
     const form = presetFormDraft(command);

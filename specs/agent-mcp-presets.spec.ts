@@ -13,14 +13,15 @@
  * `docsUrl` opens only through the app window's open handler (`resolveExternalOpen`, on a gesture).
  *
  * Verification (Open question 6): each shipped preset was checked on 2026-10-30 against the
- * vendor's own documentation (the `docsUrl` row below): transport (Streamable HTTP), URL, and an
+ * vendor's own documentation (the row's doc below): transport (Streamable HTTP), URL, and an
  * `Authorization: Bearer <token>` path that works without OAuth (frost's client has no MCP OAuth
- * sign-in and sends no other header). Each vendor's page documents the token path for MCP clients
- * in general (custom or headless clients included).
+ * sign-in and sends no other header). Every vendor's MCP page offers its token path to MCP clients
+ * in general (custom or headless clients included), without restricting which client; where the
+ * MCP page names the accepted token but not the header (GitLab), the vendor's API authentication
+ * page gives the `Bearer` form, and both are cited.
  *
  * | Preset     | URL                                  | Token                                    | Vendor doc (checked 2026-10-30) |
  * |------------|--------------------------------------|------------------------------------------|---------------------------------|
- * | Ahrefs     | https://api.ahrefs.com/mcp/mcp       | MCP key (Lite plan or higher)            | https://docs.ahrefs.com/mcp/docs/introduction (+ its n8n and OpenClaw guides: Bearer). Terms: "for interactive use with MCP-compatible clients"; scripts, bridges and standalone JSON-RPC clients are not permitted. frost is an interactive MCP client whose every call the user approves. |
  * | Profound   | https://mcp.tryprofound.com/mcp      | API key as a long-lived Bearer token     | https://docs.tryprofound.com/mcp/authentication |
  * | Peec AI    | https://api.peec.ai/mcp              | Personal Access Token                    | https://docs.peec.ai/mcp/setup ("any AI tool that supports the MCP standard") |
  * | Sanity     | https://mcp.sanity.io/               | API token or personal token              | https://www.sanity.io/docs/ai/mcp-server ("works with any MCP-compatible client") |
@@ -38,7 +39,10 @@
  * Linux and Windows. None does yet, so the catalogue ships HTTP presets only; the command shape and
  * its checks (`mcpPresetProblems`: an exact top-level version, the unpinned-dependencies sentence)
  * stay so a future one is held to them. Candidates that need OAuth, another header, or that could
- * not be verified are listed in `MCP_DEFERRED_PRESETS` with the reason.
+ * not be verified, or whose terms don't clearly allow a client like frost's (Ahrefs: "standalone
+ * HTTP/JSON-RPC clients" are not permitted on its endpoint, checked 2026-10-30), are listed in
+ * `MCP_DEFERRED_PRESETS` with the reason. A category with no shipped preset (SEO data, for now)
+ * shows no chip in the catalogue (`mcpPresetCategoriesInUse`).
  */
 import type { AgentSaveMcpServerInput } from './agent-mcp.schema';
 import { isMcpArg, isMcpCommand, isMcpEnvName, MCP_LIMITS, normalizeMcpServerName, parseMcpServerUrl } from './agent-mcp.spec';
@@ -62,6 +66,11 @@ export function isMcpPresetCategory(value: unknown): value is McpPresetCategory 
 
 export function mcpPresetCategoryLabel(category: McpPresetCategory): string {
   return MCP_PRESET_CATEGORIES.find((item) => item.id === category)?.label ?? category;
+}
+
+/** The categories (in `MCP_PRESET_CATEGORIES` order) that hold at least one of `presets`: the catalogue's chips. */
+export function mcpPresetCategoriesInUse(presets: readonly McpPreset[] = MCP_PRESETS): (typeof MCP_PRESET_CATEGORIES)[number][] {
+  return MCP_PRESET_CATEGORIES.filter((category) => presets.some((preset) => preset.category === category.id));
 }
 
 // ---- Presets ---------------------------------------------------------------------------------
@@ -126,18 +135,6 @@ export const MCP_PRESET_UNPINNED_SENTENCE = 'Its own dependencies are not pinned
 
 /** The catalogue (verified 2026-10-30; see the table above). HTTP presets only (Decision 9). */
 export const MCP_PRESETS: readonly McpPreset[] = [
-  {
-    id: 'ahrefs',
-    name: 'Ahrefs',
-    category: 'seo-data',
-    description: 'Backlinks, keywords and site metrics from your Ahrefs account.',
-    transport: 'http',
-    url: 'https://api.ahrefs.com/mcp/mcp',
-    envNames: [],
-    auth: 'bearer',
-    tokenHint: 'An Ahrefs MCP key: Account settings, API keys, Generate MCP key (Lite plan or higher).',
-    docsUrl: 'https://docs.ahrefs.com/mcp/docs/introduction',
-  },
   {
     id: 'profound',
     name: 'Profound',
@@ -279,9 +276,10 @@ export const MCP_PRESETS: readonly McpPreset[] = [
  * - `oauth-only`: its server signs in with OAuth only (frost has no MCP OAuth sign-in);
  * - `auth-scheme`: its token path needs a header frost doesn't send (frost sends only `Authorization: Bearer`);
  * - `command`: a command server, deferred until Open question 10 holds on every OS (Decision 9);
- * - `unverified`: no vendor-documented server or token path could be confirmed.
+ * - `unverified`: no vendor-documented server or token path could be confirmed;
+ * - `terms`: the vendor's terms don't clearly allow a third-party client like frost's.
  */
-export const MCP_PRESET_DEFER_REASONS = ['oauth-only', 'auth-scheme', 'command', 'unverified'] as const;
+export const MCP_PRESET_DEFER_REASONS = ['oauth-only', 'auth-scheme', 'command', 'unverified', 'terms'] as const;
 export type McpPresetDeferReason = (typeof MCP_PRESET_DEFER_REASONS)[number];
 
 export interface McpDeferredPreset {
@@ -296,6 +294,13 @@ export interface McpDeferredPreset {
 
 /** Candidates from the audit and §4 that are not presets (checked 2026-10-30). */
 export const MCP_DEFERRED_PRESETS: readonly McpDeferredPreset[] = [
+  {
+    name: 'Ahrefs',
+    category: 'seo-data',
+    reason: 'terms',
+    detail: 'Its token path works (an MCP key as Bearer), but its docs say the endpoint is for interactive use with MCP-compatible clients and that "standalone HTTP/JSON-RPC clients" are not permitted.',
+    source: 'https://docs.ahrefs.com/mcp/docs/introduction',
+  },
   {
     name: 'Semrush',
     category: 'seo-data',
@@ -527,6 +532,7 @@ export const MCP_PRESET_WORDS = {
   all: 'All',
   choose: 'Use',
   docs: 'Setup guide',
+  categories: 'Categories',
   noMatch: 'No server in the catalogue matches.',
   filled: 'Filled in from the catalogue. Check it, then add the server, and set its token once saved.',
   untrusted: 'Like any server, it is untrusted: every tool call asks you first.',

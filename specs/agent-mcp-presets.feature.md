@@ -20,8 +20,12 @@ scenario names the test that checks it.
 - **Verified, and only what frost's client can use.** Each preset was checked on 2026-10-30 against
   the vendor's own documentation (the table in the spec's header): Streamable HTTP, an `https:`
   URL on a public host, and an `Authorization: Bearer` token path that needs no OAuth. Candidates
-  that sign in with OAuth only, need another header, or could not be verified are listed in
+  that sign in with OAuth only, need another header, could not be verified, or whose terms don't
+  clearly allow a third-party client like frost's (`terms`: Ahrefs) are listed in
   `MCP_DEFERRED_PRESETS` with the reason.
+- **Chips only for categories with a preset.** A category every candidate of which is deferred
+  (SEO data, for now) stays a valid category for the deferred list but shows no chip
+  (`mcpPresetCategoriesInUse`).
 - **Command presets are deferred** until Open question 10 shows a pinned `npx -y pkg@x.y.z` starting
   under frost's command-server rules on macOS, Linux and Windows. The rules for one stay checked:
   an exact top-level version (no range, tag, URL or integrity form), and a description that says
@@ -34,8 +38,9 @@ scenario names the test that checks it.
   fields; id, name, category, words); every `url` passes `parseMcpServerUrl` unchanged and has no
   query; every command `isMcpCommand`, every argument `isMcpArg`, every environment name
   `isMcpEnvName` (not reserved); every `docsUrl` is allowed by main's `resolveExternalOpen` on a
-  gesture (and refused without one); every category has a label; the deferred list names a reason
-  for each candidate and none of them is also a preset.
+  gesture (and refused without one); every category has a label, and every chip category holds a
+  shipped preset; the deferred list names a reason for each candidate (Ahrefs: `terms`) and none
+  of them is also a preset.
 - **Scenario: mcp-presets-pin-versions** — a command preset's package argument is `name@x.y.z` or
   `@scope/name@x.y.z`; no version, a range, a tag such as `@latest`, a URL, a path, a git or `file:`
   spec and an integrity form are refused.
@@ -52,11 +57,13 @@ scenario names the test that checks it.
 - **Scenario: mcp-presets-unique-ids-and-names** — ids and names are unique, and differ from every
   deferred candidate's name.
 - **Scenario: mcp-presets-filter** — `filterPresets` matches every word of the query in the name,
-  description, category label or id (case and width folded), within one category or all.
+  description, category label or id (case and width folded), within one category or all; a
+  category with no shipped preset keeps nothing.
 
 ## Settings (`apps/desktop/src/renderer/__tests__/agent-mcp.test.ts`)
 - **Scenario: mcp-catalogue-search-and-categories** — "Add from catalogue" opens the sheet: a
-  search field, an "All" chip and one chip per category, and one row per preset with its category,
+  search field, an "All" chip and one chip per category that holds a shipped preset, and one row
+  per preset with its category,
   description, token hint and a "Setup guide" link (`href` the preset's `docsUrl`,
   `target="_blank"`, `rel="noreferrer"`); typing narrows the rows, a chip keeps one category, and no
   match says so.
@@ -64,6 +71,8 @@ scenario names the test that checks it.
   form (name, kind, address; or command, arguments, network, variable names with empty values);
   nothing is saved and no token is set until the user presses "Add server", which sends
   `presetDraft(preset)` exactly; the form says the server is untrusted and shows the token hint.
+  Editing the address or the command, or switching the kind, clears that note (the form is no
+  longer the preset's).
 
 ## End to end (`apps/desktop/e2e/agent.e2e.ts`, Phase 8 Task 11)
 - **Scenario: agent-mcp-preset-fills-form** — choose an HTTP preset: the form is filled, the

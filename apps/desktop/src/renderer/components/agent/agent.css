@@ -1096,12 +1096,12 @@
   flex-wrap: wrap;
 }
 
-button.agent-chip {
+.agent-mcp-chips button.agent-chip {
   border: 1px solid transparent;
   cursor: pointer;
 }
 
-button.agent-chip[aria-pressed='true'] {
+.agent-mcp-chips button.agent-chip[aria-pressed='true'] {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   border-color: var(--accent);

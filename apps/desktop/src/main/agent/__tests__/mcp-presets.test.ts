@@ -1,5 +1,5 @@
 // Spec: specs/agent-mcp-presets.spec.ts (MCP_PRESETS, MCP_DEFERRED_PRESETS, mcpPresetProblems, isPinnedMcpPackage,
-// looksLikeMcpSecret, filterPresets, presetDraft), specs/agent-mcp.spec.ts (parseMcpServerUrl, isMcpCommand, isMcpArg,
+// looksLikeMcpSecret, filterPresets, presetDraft, mcpPresetCategoriesInUse), specs/agent-mcp.spec.ts (parseMcpServerUrl, isMcpCommand, isMcpArg,
 // isMcpEnvName), specs/agent-mcp.schema.ts (AgentSaveMcpServerInputSchema), specs/agent-tools.spec.ts (MCP_TOOL_GRANTABLE),
 // specs/security-policy.spec.ts (resolveExternalOpen)
 // Acceptance: specs/agent-mcp-presets.feature.md (Catalogue data)
@@ -23,6 +23,7 @@ import {
   MCP_PRESET_FIELDS,
   MCP_PRESET_UNPINNED_SENTENCE,
   MCP_PRESETS,
+  mcpPresetCategoriesInUse,
   mcpPresetCategoryLabel,
   mcpPresetProblems,
   presetDraft,
@@ -139,11 +140,20 @@ describe('MCP presets catalogue', () => {
       expect(names.has(deferred.name.toLowerCase()), deferred.name).toBe(false);
       if (deferred.source !== null) expect(resolveExternalOpen(deferred.source, { userGesture: true }), deferred.source).toBe('allow');
     }
-    // Every category has a label and at least one shipped preset.
-    for (const category of MCP_PRESET_CATEGORIES) {
-      expect(category.label).not.toBe('');
-      expect(MCP_PRESETS.some((preset) => preset.category === category.id), category.id).toBe(true);
-    }
+    // Every category has a label; the chip categories are exactly those with a shipped preset.
+    for (const category of MCP_PRESET_CATEGORIES) expect(category.label).not.toBe('');
+    const inUse = mcpPresetCategoriesInUse().map((category) => category.id);
+    for (const category of inUse) expect(MCP_PRESETS.some((preset) => preset.category === category), category).toBe(true);
+    for (const preset of MCP_PRESETS) expect(inUse).toContain(preset.category);
+    expect(inUse).toEqual(MCP_PRESET_CATEGORIES.map((category) => category.id).filter((id) => inUse.includes(id)));
+    // SEO data is all deferred for now (Ahrefs: its terms), so it shows no chip.
+    expect(inUse).not.toContain('seo-data');
+    expect(mcpPresetCategoriesInUse([])).toEqual([]);
+    // Ahrefs is deferred for its terms, not shipped.
+    expect(MCP_PRESETS.some((preset) => preset.id === 'ahrefs')).toBe(false);
+    const ahrefs = MCP_DEFERRED_PRESETS.find((item) => item.name === 'Ahrefs');
+    expect(ahrefs).toMatchObject({ reason: 'terms', category: 'seo-data', source: 'https://docs.ahrefs.com/mcp/docs/introduction' });
+    expect(ahrefs!.detail).toContain('standalone HTTP/JSON-RPC clients');
     // The checks catch a bad row.
     const http = MCP_PRESETS[0]!;
     expect(mcpPresetProblems({ ...http, url: 'http://mcp.example.com/' } as McpPreset)).toContain('url');
@@ -319,11 +329,13 @@ describe('MCP presets catalogue', () => {
     // Every word must match, anywhere in the name, description, category label or id.
     expect(filterPresets('work github', null).map((preset) => preset.id)).toEqual(['github']);
     expect(filterPresets('ａｉｒｔａｂｌｅ', null).map((preset) => preset.id)).toEqual(['airtable']);
-    for (const category of MCP_PRESET_CATEGORIES) {
+    for (const category of mcpPresetCategoriesInUse()) {
       const kept = filterPresets('', category.id);
       expect(kept.length).toBeGreaterThan(0);
       expect(kept.every((preset) => preset.category === category.id)).toBe(true);
     }
+    // A category with no shipped preset keeps nothing.
+    expect(filterPresets('', 'seo-data')).toEqual([]);
     expect(filterPresets('linear', 'analytics')).toEqual([]);
     expect(filterPresets('no such server anywhere', null)).toEqual([]);
   });
