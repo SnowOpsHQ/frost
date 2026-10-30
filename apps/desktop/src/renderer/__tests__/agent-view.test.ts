@@ -1,16 +1,18 @@
-// Spec: specs/agent-panel.spec.ts (AGENT_* words and layout), specs/agent-session.spec.ts (AgentState views,
-// MODEL_CONTEXT_WINDOWS, EXECUTE_JS_APPROVAL_NOTE)
+// Spec: specs/agent-panel.spec.ts (AGENT_* words and layout, AGENT_MODEL_PROVIDER_LABELS), specs/agent-session.spec.ts
+// (AgentState views, MODEL_CONTEXT_WINDOWS, EXECUTE_JS_APPROVAL_NOTE), specs/agent-tools.spec.ts (MODEL_PROVIDERS, byProvider)
 // Acceptance: specs/agent-panel.feature.md (View model), specs/skills.feature.md (skill-view-helpers)
 import { describe, expect, test } from 'vitest';
 import {
   AGENT_ANSWER_MESSAGES,
   AGENT_KEY_PROTECTION_MESSAGES,
   AGENT_MCP_APPROVAL_NOTE,
+  AGENT_MODEL_LABELS,
+  AGENT_MODEL_PROVIDER_LABELS,
   AGENT_SET_KEY_MESSAGES,
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
 import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS, type AgentSkillView } from '@app/specs/agent-session.spec';
-import { ALLOWED_MODEL_IDS } from '@app/specs/agent-tools.spec';
+import { ALLOWED_MODEL_IDS, byProvider, GATEWAY_ONLY_PROVIDERS, MODEL_PROVIDERS, routeModelId } from '@app/specs/agent-tools.spec';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_SLOT_MAX_CHARS, SKILL_USER_GROUP_LABEL, SKILL_WARNINGS } from '@app/specs/skills.spec';
 import { SKILLS } from './agent-fixtures';
 import {
@@ -36,6 +38,7 @@ import {
   isolationLine,
   keySlotsFor,
   modelForRoute,
+  modelOptionGroups,
   modelOptions,
   protectionMessage,
   railBadge,
@@ -176,6 +179,41 @@ describe('agent panel view model', () => {
     expect(modelForRoute('gateway', 'openai/gpt-5-mini')).toBe('openai/gpt-5-mini');
     expect(modelForRoute('byok-anthropic', 'anthropic/claude-opus-5-5')).toBe('anthropic/claude-opus-5-5');
     expect(keySlotsFor('byok-openai')).toEqual(['openai', 'anthropic', 'gateway']);
+  });
+
+  test('model-options-grouped-by-provider', () => {
+    // The gateway serves every catalogue model: one group per provider, in `MODEL_PROVIDERS` order.
+    const gateway = setup({ allowedModels: [...ALLOWED_MODEL_IDS] });
+    const groups = modelOptionGroups(gateway);
+    expect(groups.map((group) => group.label)).toEqual(MODEL_PROVIDERS.map((provider) => AGENT_MODEL_PROVIDER_LABELS[provider]));
+    MODEL_PROVIDERS.forEach((provider, i) => {
+      expect(groups[i]!.options).toEqual(ALLOWED_MODEL_IDS.filter(byProvider(provider)).map((id) => ({ value: id, label: AGENT_MODEL_LABELS[id] })));
+    });
+    // The same choices as the flat list, each once.
+    expect(groups.flatMap((group) => group.options)).toEqual(modelOptions(gateway));
+    // A key route: only its provider's group, so no Gemini or Grok model is offered there.
+    for (const route of ['byok-anthropic', 'byok-openai'] as const) {
+      const keyRoute = modelOptionGroups(setup({ route, allowedModels: ALLOWED_MODEL_IDS.filter((id) => routeModelId(route, id) !== null) }));
+      expect(keyRoute.map((group) => group.label), route).toEqual([AGENT_MODEL_PROVIDER_LABELS[route === 'byok-anthropic' ? 'anthropic' : 'openai']]);
+      for (const provider of GATEWAY_ONLY_PROVIDERS) {
+        for (const id of ALLOWED_MODEL_IDS.filter(byProvider(provider))) {
+          expect(keyRoute.flatMap((group) => group.options).some((option) => option.value === id), `${route} ${id}`).toBe(false);
+          // Switching to a key route from a Gemini or Grok model picks the route's first model.
+          expect(modelForRoute(route, id)).toBe(ALLOWED_MODEL_IDS.find((other) => routeModelId(route, other) !== null));
+        }
+      }
+    }
+    // A gateway-only model stays chosen on the gateway.
+    for (const provider of GATEWAY_ONLY_PROVIDERS) for (const id of ALLOWED_MODEL_IDS.filter(byProvider(provider))) expect(modelForRoute('gateway', id)).toBe(id);
+    // The ChatGPT plan's models: one unlabelled group, by the account's names, in its order.
+    const models = [
+      { id: 'chatgpt/gpt-5.5' as const, label: 'GPT-5.5' },
+      { id: 'chatgpt/gpt-5.5-mini' as const, label: 'GPT-5.5 mini' },
+    ];
+    const plan = setup({ route: 'chatgpt', modelId: models[0]!.id, allowedModels: models.map((model) => model.id), chatgpt: { ...setup().chatgpt, models } });
+    expect(modelOptionGroups(plan)).toEqual([{ label: null, options: [{ value: 'chatgpt/gpt-5.5', label: 'GPT-5.5' }, { value: 'chatgpt/gpt-5.5-mini', label: 'GPT-5.5 mini' }] }]);
+    // Nothing to choose: no group at all.
+    expect(modelOptionGroups(setup({ allowedModels: [] }))).toEqual([]);
   });
 
   test('composer-keys', () => {

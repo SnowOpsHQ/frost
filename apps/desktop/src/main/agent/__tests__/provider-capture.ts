@@ -2,7 +2,11 @@
 // ports (no network): a turn's first request, or the second request of a turn whose first step
 // answered with reasoning (thinking, a signature, a redacted block, encrypted reasoning) and two tool
 // calls (one with Anthropic's `caller: { type: 'direct' }`, which the provider sends back), so the
-// history carries every shape a multi-step turn sends.
+// history carries every shape a multi-step turn sends. The Gemini and Grok steps (Phase 8 Task 7)
+// are derived from the installed SDK (the gateway's stream parts are the language model's own, and
+// `ai` sends a part's `providerMetadata` back as its `providerOptions`), with Gemini's thought
+// signature where the AI SDK's Google provider attaches it (reasoning and function-call parts, under
+// `google`); a live capture must confirm them before release (Open question 3).
 import { vi } from 'vitest';
 import { createMemoryPortPair, createModel, startRuntime } from '@app/agent-runtime';
 import type { MainToRuntimeMessage, RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
@@ -54,6 +58,37 @@ const openaiStep = (namespace?: string) => sse([
   [null, { type: 'response.completed', response: { incomplete_details: null, usage: { input_tokens: 10, output_tokens: 20 } } }],
 ]);
 
+/** Gemini's thought signature in the scripted step (base64 of "thought-signature"). */
+export const GEMINI_THOUGHT_SIGNATURE = 'dGhvdWdodC1zaWduYXR1cmU=';
+
+/** A Gemini step through the gateway: a thought and the first call carry the thought signature (`google`). */
+const GEMINI_GATEWAY_STEP = sse([
+  [null, { type: 'stream-start', warnings: [] }],
+  [null, { type: 'reasoning-start', id: 'r1' }],
+  [null, { type: 'reasoning-delta', id: 'r1', delta: 'The audit comes first.', providerMetadata: { google: { thoughtSignature: GEMINI_THOUGHT_SIGNATURE } } }],
+  [null, { type: 'reasoning-end', id: 'r1' }],
+  [null, { type: 'text-start', id: 't1' }],
+  [null, { type: 'text-delta', id: 't1', delta: 'Reading the page.' }],
+  [null, { type: 'text-end', id: 't1' }],
+  [null, { type: 'tool-call', toolCallId: 'call_1', toolName: 'page_audit', input: '{}', providerMetadata: { google: { thoughtSignature: GEMINI_THOUGHT_SIGNATURE } } }],
+  [null, { type: 'tool-call', toolCallId: 'call_2', toolName: 'page_text', input: '{"maxChars":100}' }],
+  [null, { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'STOP' }, usage: { inputTokens: { total: 10, noCache: 10 }, outputTokens: { total: 20, text: 20 } } }],
+]);
+
+/** A Grok step through the gateway: reasoning, text and two calls, with no part metadata (none is allowed until a capture shows one). */
+const GROK_GATEWAY_STEP = sse([
+  [null, { type: 'stream-start', warnings: [] }],
+  [null, { type: 'reasoning-start', id: 'r1' }],
+  [null, { type: 'reasoning-delta', id: 'r1', delta: 'The audit comes first.' }],
+  [null, { type: 'reasoning-end', id: 'r1' }],
+  [null, { type: 'text-start', id: 't1' }],
+  [null, { type: 'text-delta', id: 't1', delta: 'Reading the page.' }],
+  [null, { type: 'text-end', id: 't1' }],
+  [null, { type: 'tool-call', toolCallId: 'call_1', toolName: 'page_audit', input: '{}' }],
+  [null, { type: 'tool-call', toolCallId: 'call_2', toolName: 'page_text', input: '{"maxChars":100}' }],
+  [null, { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage: { inputTokens: { total: 10, noCache: 10 }, outputTokens: { total: 20, text: 20 } } }],
+]);
+
 /** The gateway: the language model stream parts, with the provider metadata each provider attaches. */
 const gatewayStep = (provider: 'anthropic' | 'openai') =>
   sse([
@@ -79,6 +114,8 @@ function firstStep(route: ModelRoute, modelId: AgentModelId): string {
   if (route === 'byok-anthropic') return ANTHROPIC_STEP;
   if (route === 'byok-openai') return openaiStep();
   if (route === 'chatgpt') return openaiStep('frost');
+  if (modelId.startsWith('google/')) return GEMINI_GATEWAY_STEP;
+  if (modelId.startsWith('spacexai/')) return GROK_GATEWAY_STEP;
   return gatewayStep(modelId.startsWith('openai/') ? 'openai' : 'anthropic');
 }
 

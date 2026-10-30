@@ -2,7 +2,8 @@
 
 Spec: `specs/agent-proxy.spec.ts` (`AGENT_HOST_LIMITS`, `CREDENTIAL_SLOTS`, `normalizeKey`,
 `AGENT_PROXY_LIMITS`, `REQUEST_HEADER_ALLOWLIST`, `filterRequestHeaders`, `mainRequestHeaders`,
-`RESPONSE_HEADER_ALLOWLIST`, `filterResponseHeaders`, `BODY_FIELDS`, `checkModelRequestBody`),
+`RESPONSE_HEADER_ALLOWLIST`, `filterResponseHeaders`, `BODY_FIELDS`, `checkModelRequestBody`,
+`GATEWAY_PROVIDER_OPTIONS`, `GEMINI_THINKING_LEVELS`),
 `specs/agent-protocol.schema.ts`, `specs/agent-tools.spec.ts` (`MODEL_REQUESTS`,
 `isAllowedModelRequest`, `routeModelId`). Phase 5 Task 3 (`docs/plans/phase-5-ai-agent.md`,
 decisions 1, 3, 5 and 6; threat model rows "A key leaks" and "The agent reaches arbitrary hosts").
@@ -26,6 +27,16 @@ one named test.
   Anthropic `thinking` is allowed only when its budget fits beside the output cap (the provider asks
   for `maxOutputTokens + budgetTokens`). A tool call's caller is passed back only as
   `{ type: 'direct' }` (the Anthropic provider returns a response's `caller` on the next step).
+- **Gemini and Grok on the gateway (Phase 8 Task 7, security review).** Their options are added by
+  name and value, never as "any object": a part may carry `google.thoughtSignature` (a string; the
+  AI SDK's Google provider returns it on thoughts, text and function calls, and Gemini refuses a
+  function-call turn without it); the request may carry `google.thinkingConfig` with only
+  `thinkingLevel` (`GEMINI_THINKING_LEVELS`: `low`, `medium`, `high`) and `includeThoughts` (a
+  boolean): no `thinkingBudget`, `cachedContent`, safety settings, search grounding or retrieval,
+  or any other Google option, and no `vertex` key. Grok gets `xai: {}` at most and no part
+  metadata. These allowlists are derived from the installed SDK (no real stream could be captured);
+  a live capture of one Gemini and one Grok tool turn must confirm them before release (Open
+  question 3). `checkModelRequestBody` stays the one structural check.
 - **Requests only for turns.** The host hands a `fetch.request` to the proxy only while a chat main
   started is running, and at most `MAX_MODEL_REQUESTS_PER_TURN` per running turn; it refuses any
   other itself. The budget is shared by the turns running at once, on purpose: a `fetch.request`
@@ -128,8 +139,8 @@ one named test.
 
 ## Settings (`settings.test.ts`)
 - **Scenario: settings-defaults** — no file: `gateway` and `DEFAULT_MODEL_ID`.
-- **Scenario: settings-validated** — a model the route doesn't serve, or an unknown route or model,
-  is refused; a valid pair is written and read back.
+- **Scenario: settings-validated** — a model the route doesn't serve (a Gemini or Grok model with a
+  key route included), or an unknown route or model, is refused; a valid pair is written and read back.
 - **Scenario: settings-tampered** — an invalid stored pair reads as the defaults.
 
 ## Proxy rules (`proxy-rules.test.ts`, pure)
@@ -159,6 +170,23 @@ one named test.
 - **Scenario: proxy-gateway-option-values** — gateway provider options outside their value shapes
   are refused; an Anthropic `thinking` budget that, added to `maxOutputTokens`, passes
   `MAX_OUTPUT_TOKENS` (1024 when none is given) is refused (`output-cap`).
+- **Scenario: proxy-gemini-thought-signature-accepted** — on a Gemini model, an assistant
+  thought, text and tool call carrying `providerOptions.google.thoughtSignature` (a string) pass;
+  a signature that isn't a string, any other key beside it or alone (`groundingMetadata`,
+  `cachedContent`, `functionCall`), the same under `vertex` or `gateway`, or on a message's own
+  options, is refused (`provider-options`).
+- **Scenario: proxy-google-options-allowlisted** — on a Gemini model `google.thinkingConfig`
+  passes with `thinkingLevel` `low`, `medium` or `high` and a boolean `includeThoughts`; another
+  level (`minimal`, `xhigh`, `max`, upper case), a non-boolean `includeThoughts`, an unknown key,
+  any `thinkingBudget` (over the cap, dynamic `-1`, or within the cap), `cachedContent`, safety
+  settings and thresholds, search grounding (`useSearchGrounding`, `dynamicRetrievalConfig`,
+  `retrievalConfig`), response modalities, structured outputs, labels, media resolution, any other
+  Google option, and Google's options under `vertex` are refused (`provider-options`); a Google
+  search provider tool is refused (`tool`).
+- **Scenario: proxy-xai-options-refused** — on a Grok model only `xai: {}` passes; any key under
+  `xai` (`reasoningEffort`, `searchParameters`, `parallel_function_calling`, `store`), a
+  non-object, any `spacexai` options, and any `xai` or `spacexai` part metadata are refused
+  (`provider-options`).
 - **Scenario: proxy-output-cap** — on every route the output cap must be an integer from 1 to
   `MAX_OUTPUT_TOKENS`; absent, larger or not an integer is refused (`output-cap`).
 - **Scenario: proxy-openai-store-required** — an OpenAI body without `store: false` (and an
@@ -167,7 +195,8 @@ one named test.
   through the runtime (each route and allowed model, a history with tool calls and results, and a
   turn's second request carrying the first step's thinking and signature, redacted thinking,
   encrypted reasoning, item ids and two tool calls, one with Anthropic's `caller: { type: 'direct' }`,
-  sent back on both Anthropic paths) pass the header filter and the body check, and the body
+  sent back on both Anthropic paths; on Gemini, the thought signature on the thought and the first
+  call; on Grok, no part metadata) pass the header filter and the body check, and the body
   answered is byte for byte the one the provider wrote.
 
 ## Model proxy (`model-proxy.test.ts`)

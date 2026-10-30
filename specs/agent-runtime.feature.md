@@ -109,7 +109,8 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
 - **Scenario: provider-endpoints-match-allowlist** — for each route, a model's streamed request
   goes to exactly the route's `MODEL_REQUESTS` URL with its method, passes `isAllowedModelRequest`,
   and carries no credential header.
-- **Scenario: provider-refuses-other-models** — a model not allowed on the route is refused.
+- **Scenario: provider-refuses-other-models** — a model not allowed on the route is refused; a
+  Gemini or Grok model on a key route or the ChatGPT plan before any request is posted.
 - **Scenario: provider-proxy-errors-not-retried** — a refused proxied request (on every route,
   the gateway included) is sent once.
 - **Scenario: provider-output-capped** — every route's request asks for at most `MAX_OUTPUT_TOKENS`
@@ -117,6 +118,13 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
   a provider's default can be its model's maximum and main's proxy refuses an uncapped request.
 - **Scenario: provider-openai-store-off** — the OpenAI request (bring-your-own-key, and an OpenAI
   model on the gateway) carries `store: false`.
+- **Scenario: gateway-gemini-tool-turn-round-trips** (Phase 8 Task 7) — for each Gemini model on
+  the gateway (the gateway provider takes any allowed id: `provider.ts` unchanged), a scripted
+  gateway stream whose tool call carries `providerMetadata.google.thoughtSignature` runs the tool,
+  and the turn's second request sends the call back with `providerOptions.google.thoughtSignature`
+  followed by its result; both requests go to the gateway's one URL with the model's id header and
+  pass `checkModelRequestBody` as sent. The stream is SDK-derived (Open question 3): a live
+  capture must confirm it before release.
 
 ## Chat loop (`chat.test.ts`, scripted `MockLanguageModelV4`)
 - **Scenario: chat-streams-text** — text deltas arrive as `chat.delta`, then `chat.finish` with

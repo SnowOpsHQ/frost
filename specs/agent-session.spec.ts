@@ -76,13 +76,19 @@ export const RUN_PROBES_APPROVAL_NOTE = `frost will fetch this page as search an
  * Each allowed model's context window (tokens), for the context meter; `null` where frost has no
  * published figure to rely on (the meter then shows tokens without a percentage). The Anthropic
  * figures are the provider's documented ones; the OpenAI ones are left `null` because the installed
- * provider package publishes none, and frost doesn't guess.
+ * provider package publishes none, and frost doesn't guess. The Gemini and Grok figures are the
+ * gateway's published `context_window` for each id (its public model list, 2026-10-30; Phase 8
+ * Task 7, Open question 2).
  */
 export const MODEL_CONTEXT_WINDOWS: Readonly<Record<ModelId, number | null>> = {
   'anthropic/claude-sonnet-5-5': 1_000_000,
   'anthropic/claude-opus-5-5': 1_000_000,
   'openai/gpt-5': null,
   'openai/gpt-5-mini': null,
+  'google/gemini-4-argon': 1_000_000,
+  'google/gemini-3.8-flash': 1_000_000,
+  'spacexai/grok-4.7': 500_000,
+  'spacexai/grok-4.20-non-reasoning': 2_000_000,
 };
 
 /** A model's context window: the catalogue's figure, `null` for a ChatGPT model (no published figure frost relies on). */

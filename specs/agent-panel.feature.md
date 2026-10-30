@@ -1,7 +1,7 @@
 # Feature: The agent panel (renderer)
 
 Spec: `specs/agent-panel.spec.ts` (`AGENT_PANEL_WIDTH`, `AGENT_RAIL_WIDTH`, `AGENT_PANEL_STORAGE_KEY`,
-`AGENT_PALETTE_*_ID`, the words: routes, models, key slots, `AGENT_KEY_PROTECTION_MESSAGES`,
+`AGENT_PALETTE_*_ID`, the words: routes, models, model providers (`AGENT_MODEL_PROVIDER_LABELS`), key slots, `AGENT_KEY_PROTECTION_MESSAGES`,
 `AGENT_SET_KEY_MESSAGES`, `AGENT_TOOL_STATUS_LABELS`, `AGENT_APPROVAL_BUTTONS`,
 `AGENT_ANSWER_MESSAGES`), `specs/agent-session.spec.ts` (`AgentState`, `APPROVAL_ENABLE_DELAY_MS`,
 `EXECUTE_JS_APPROVAL_NOTE`, `MODEL_CONTEXT_WINDOWS`, the seam's switch). Phase 5 Task 6b
@@ -52,6 +52,12 @@ to one named test.
 - **Scenario: context-meter** — tokens against the window with a percentage; tokens only without one.
 - **Scenario: setup-checklist-and-protection-wording**, **isolation-wording-is-honest**.
 - **Scenario: model-and-route-options**, **composer-keys**, **chat-helpers**.
+- **Scenario: model-options-grouped-by-provider** (Phase 8 Task 7) — the model select groups the
+  catalogue's models by provider (`MODEL_PROVIDERS` order, `AGENT_MODEL_PROVIDER_LABELS`), the
+  same choices as `modelOptions`; a key route shows only its provider's group (no Gemini or Grok
+  model), and switching to one from a Gemini or Grok model picks its first model; on the gateway a
+  Gemini or Grok model is kept; a ChatGPT account's models are one unlabelled group; no models, no
+  group.
 
 ## Components (`renderer/__tests__/agent-components.test.ts`, jsdom)
 - **Scenario: tool-output-renders-as-text** — markup in the output stays text; no element is made.

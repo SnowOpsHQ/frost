@@ -454,11 +454,24 @@ const chatgptNamespace = (value: unknown) =>
 
 // The gateway: the language model call options. Parts per role, each with its keys; part and message
 // provider options only the ones the providers attach to their own output (Anthropic's thinking
-// signature and redacted data, OpenAI's item ids and encrypted reasoning) and cache control.
+// signature and redacted data, OpenAI's item ids and encrypted reasoning, Gemini's thought
+// signature) and cache control.
+//
+// Gemini (Phase 8 Task 7, Open question 3): the AI SDK's Google provider returns a part's thought
+// signature as `providerMetadata.google.thoughtSignature` (a string) on thoughts, text and function
+// calls, and Gemini refuses a function-call turn sent back without it; `ai` sends the metadata back
+// as the part's `providerOptions`. Only that key, only a string, only under `google` (not `vertex`:
+// no evidence the gateway uses that key). Grok: no part metadata at all. This allowlist is derived
+// from the installed SDK, not from a captured stream: `@ai-sdk/gateway` 4.0.128 passes the stream
+// parts' `providerMetadata` through unchanged and `ai` 7.0.155 sends it back (its changelog:
+// "preserve thoughtSignature through tool execution"); `@ai-sdk/google` is not installed, so the
+// key and name are that provider's published ones. A live capture of one Gemini and one Grok tool
+// turn must confirm them before release.
 const partOptions = (value: unknown) =>
   shaped(value, {
     anthropic: (options) => shaped(options, { signature: isString, redactedData: isString, cacheControl, caller: directCaller }),
     openai: (options) => shaped(options, { itemId: isString, reasoningEncryptedContent: (content) => content === null || isString(content) }),
+    google: (options) => shaped(options, { thoughtSignature: isString }),
   });
 const toolOutput = (value: unknown) =>
   isObject(value) &&
@@ -476,10 +489,29 @@ const GATEWAY_PARTS: Readonly<Record<'user' | 'assistant' | 'tool', Readonly<Rec
 /** Gateway prompt part types allowed, any role (for the record; `GATEWAY_PARTS` is the rule). */
 export const GATEWAY_PART_TYPES: readonly string[] = ['text', 'reasoning', 'tool-call', 'tool-result'];
 /**
+ * The Gemini thinking levels the gateway route may ask for: the levels its public model list
+ * advertises for the catalogue's Gemini models (2026-10-30: `low`, `medium`, `high` for Gemini 4
+ * Argon; `low`, `high` for Gemini 3.8 Flash), sent as `providerOptions.google.thinkingConfig.thinkingLevel`
+ * (the AI SDK's documented shape). `minimal` and any budget are not allowed.
+ */
+export const GEMINI_THINKING_LEVELS = ['low', 'medium', 'high'] as const;
+
+/**
+ * Gemini's `thinkingConfig`: only `thinkingLevel` (`GEMINI_THINKING_LEVELS`) and `includeThoughts`
+ * (a boolean). No `thinkingBudget` of any size (the runtime maps reasoning to levels only, Task 8a),
+ * so a budget past the output cap can never be asked for.
+ */
+const geminiThinkingConfig = (value: unknown) => shaped(value, { thinkingLevel: oneOf(...GEMINI_THINKING_LEVELS), includeThoughts: oneOf(true, false) });
+
+/**
  * Provider options the gateway route may carry, per provider, each with the values it may take:
  * OpenAI's `store` (only `false`) and reasoning, summary, verbosity and parallel-call knobs;
  * Anthropic's reasoning and parallel-call knobs, and `thinking` only as `checkGatewayThinking`
- * allows. Anything else (MCP servers, containers, gateway routing, BYOK credentials) is refused.
+ * allows; Gemini's `thinkingConfig` only (`google`, the provider's own key, as the gateway's docs
+ * say); for Grok, `xai` as an empty object at most (no option verified yet; Phase 8 Task 7, Open
+ * question 3). Anything else is refused: MCP servers, containers, gateway routing, BYOK
+ * credentials, and for Gemini `cachedContent`, safety settings, search grounding and retrieval,
+ * response modalities, labels and every other Google option.
  */
 export const GATEWAY_PROVIDER_OPTIONS: Readonly<Record<string, Readonly<Record<string, (value: unknown) => boolean>>>> = {
   openai: {
@@ -495,6 +527,10 @@ export const GATEWAY_PROVIDER_OPTIONS: Readonly<Record<string, Readonly<Record<s
     effort: oneOf('low', 'medium', 'high'),
     disableParallelToolUse: oneOf(true, false),
   },
+  google: {
+    thinkingConfig: geminiThinkingConfig,
+  },
+  xai: {},
 };
 
 /**

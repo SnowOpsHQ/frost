@@ -13,7 +13,7 @@ import {
   isolationLine,
   keySlotsFor,
   keyStateLabel,
-  modelOptions,
+  modelOptionGroups,
   previewModel,
   protectionMessage,
   retentionHint,
@@ -27,7 +27,7 @@ import {
 } from '../../agent-view';
 
 // The agent's settings (`agent-panel.feature.md`, Settings): the model route, the model (only the
-// ones the route serves), a key field per slot, and plainly what protects a key and isolates the
+// ones the route serves, grouped by provider: Phase 8 Task 7), a key field per slot, and plainly what protects a key and isolates the
 // agent process. A stored key is never shown, nor any part of it: a slot says only "Key saved".
 // The key field is a password input the panel never keeps in state: Save reads it, empties it at
 // once, and shows main's answer (`AGENT_SET_KEY_MESSAGES`). Task 9 (`agent-data.feature.md`): how
@@ -236,11 +236,20 @@ export function AgentSettings({
               Model
             </label>
             <select id="agent-model" className="agent-select" data-testid="agent-model" value={setup.modelId} onChange={(event) => store(setup.route, event.target.value as AgentModelId)}>
-              {modelOptions(setup).map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
+              {modelOptionGroups(setup).map((group) => {
+                const options = group.options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ));
+                return group.label === null ? (
+                  options
+                ) : (
+                  <optgroup key={group.label} label={group.label}>
+                    {options}
+                  </optgroup>
+                );
+              })}
             </select>
           </>
         )}

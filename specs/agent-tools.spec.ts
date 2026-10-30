@@ -194,11 +194,24 @@ export function isKeyRoute(route: unknown): route is KeyRoute {
   return typeof route === 'string' && (KEY_ROUTES as readonly string[]).includes(route);
 }
 
-export const MODEL_PROVIDERS = ['anthropic', 'openai'] as const;
+/**
+ * The catalogue's model providers, each the prefix of its `provider/model` ids (the gateway's own
+ * provider slugs). `google` is Gemini; `spacexai` is Grok (the gateway lists xAI's models under
+ * `spacexai/`, Phase 8 Task 7, Open question 2).
+ */
+export const MODEL_PROVIDERS = ['anthropic', 'openai', 'google', 'spacexai'] as const;
 export type ModelProvider = (typeof MODEL_PROVIDERS)[number];
 
-/** The provider each bring-your-own-key route serves. */
-export const BYOK_ROUTE_PROVIDER: Readonly<Record<Exclude<KeyRoute, 'gateway'>, ModelProvider>> = {
+/**
+ * Providers reached only through the gateway (Phase 8 Decision 7): no bring-your-own-key route
+ * serves them, so `routeModelId` refuses their ids on `byok-anthropic` and `byok-openai` before
+ * any request is made. frost holds no Google or xAI key slot, route or endpoint.
+ */
+export const GATEWAY_ONLY_PROVIDERS = ['google', 'spacexai'] as const satisfies readonly ModelProvider[];
+export type GatewayOnlyProvider = (typeof GATEWAY_ONLY_PROVIDERS)[number];
+
+/** The provider each bring-your-own-key route serves (never a gateway-only one). */
+export const BYOK_ROUTE_PROVIDER: Readonly<Record<Exclude<KeyRoute, 'gateway'>, Exclude<ModelProvider, GatewayOnlyProvider>>> = {
   'byok-anthropic': 'anthropic',
   'byok-openai': 'openai',
 };
@@ -206,12 +219,26 @@ export const BYOK_ROUTE_PROVIDER: Readonly<Record<Exclude<KeyRoute, 'gateway'>, 
 /** The model a new install uses. */
 export const DEFAULT_MODEL_ID = 'anthropic/claude-sonnet-5-5';
 
-/** Models the user may choose, as `provider/model` ids. */
+/**
+ * Models the user may choose, as `provider/model` ids, grouped by provider in `MODEL_PROVIDERS`
+ * order. The Gemini and Grok ids (a flagship and a fast model each, gateway route only) are the
+ * gateway's current ones, read from its public model list (`GET https://ai-gateway.vercel.sh/v1/models`,
+ * no key) on 2026-10-30 (Phase 8 Task 7, Open question 2): `google/gemini-4-argon` (released
+ * 2026-10-12) and `google/gemini-3.8-flash` (2026-09-01); `spacexai/grok-4.7` (2026-09-20) and
+ * `spacexai/grok-4.20-non-reasoning` (the list's fast Grok, "industry-leading speed"). Tests name
+ * them only through this constant (`ALLOWED_MODEL_IDS.filter(byProvider('google'))`), so a newer
+ * id changes this list alone (with its label and context window). Whether these models accept the
+ * runtime's tool choice through the gateway is Open question 11 (a hand-run turn before release).
+ */
 export const ALLOWED_MODEL_IDS = [
   'anthropic/claude-sonnet-5-5',
   'anthropic/claude-opus-5-5',
   'openai/gpt-5',
   'openai/gpt-5-mini',
+  'google/gemini-4-argon',
+  'google/gemini-3.8-flash',
+  'spacexai/grok-4.7',
+  'spacexai/grok-4.20-non-reasoning',
 ] as const;
 export type ModelId = (typeof ALLOWED_MODEL_IDS)[number];
 
@@ -239,11 +266,22 @@ export function modelProvider(modelId: unknown): ModelProvider | null {
   return (MODEL_PROVIDERS as readonly string[]).includes(prefix) ? (prefix as ModelProvider) : null;
 }
 
+/** A filter for `ALLOWED_MODEL_IDS`: the ids of `provider` (`ALLOWED_MODEL_IDS.filter(byProvider('google'))`). */
+export function byProvider(provider: ModelProvider): (modelId: ModelId) => boolean {
+  return (modelId) => modelProvider(modelId) === provider;
+}
+
+/** Whether `provider` is reached only through the gateway (`GATEWAY_ONLY_PROVIDERS`). */
+export function isGatewayOnlyProvider(provider: unknown): provider is GatewayOnlyProvider {
+  return typeof provider === 'string' && (GATEWAY_ONLY_PROVIDERS as readonly string[]).includes(provider);
+}
+
 /**
  * The id the route's provider expects for `modelId`: the gateway takes the `provider/model` id as
  * is; a bring-your-own-key route drops the prefix (`claude-sonnet-5-5`); the `chatgpt` route takes
  * only a ChatGPT id and sends its slug. `null` (refused) for an id not in `ALLOWED_MODEL_IDS` on a
- * key route, one whose provider isn't the bring-your-own-key route's, or any but a well-formed
+ * key route, one whose provider isn't the bring-your-own-key route's (a `GATEWAY_ONLY_PROVIDERS`
+ * id on any bring-your-own-key route), or any but a well-formed
  * `chatgpt/<slug>` on the `chatgpt` route. (Whether the slug is in the account's list is main's
  * check, not this format check.)
  */
@@ -252,7 +290,7 @@ export function routeModelId(route: ModelRoute, modelId: string): string | null 
   const provider = modelProvider(modelId);
   if (provider === null) return null;
   if (route === 'gateway') return modelId;
-  if (!Object.hasOwn(BYOK_ROUTE_PROVIDER, route) || BYOK_ROUTE_PROVIDER[route] !== provider) return null;
+  if (isGatewayOnlyProvider(provider) || !Object.hasOwn(BYOK_ROUTE_PROVIDER, route) || BYOK_ROUTE_PROVIDER[route] !== provider) return null;
   return modelId.slice(provider.length + 1);
 }
 

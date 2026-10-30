@@ -6,6 +6,7 @@ import {
   AGENT_KEY_UNSET_LABEL,
   AGENT_MCP_APPROVAL_NOTE,
   AGENT_MODEL_LABELS,
+  AGENT_MODEL_PROVIDER_LABELS,
   AGENT_PANEL_STORAGE_KEY,
   AGENT_ROUTE_LABELS,
   AGENT_SET_KEY_MESSAGES,
@@ -58,10 +59,12 @@ import {
   AGENT_TOOL_NAMES,
   AGENT_TOOLS,
   ALLOWED_MODEL_IDS,
+  MODEL_PROVIDERS,
   MODEL_ROUTES,
   UNSAFE_INPUT_CHARS,
   isAllowedModelId,
   isMcpToolName,
+  modelProvider,
   routeModelId,
   type AgentModelId,
   type AgentToolName,
@@ -315,6 +318,29 @@ export function routeOptions(): readonly { readonly value: ModelRoute; readonly 
 export function modelOptions(setup: Pick<AgentSetupView, 'allowedModels'> & Partial<Pick<AgentSetupView, 'chatgpt'>>): readonly { readonly value: AgentModelId; readonly label: string }[] {
   const listed = setup.chatgpt?.models ?? [];
   return setup.allowedModels.map((value) => ({ value, label: modelLabel(value, listed) }));
+}
+
+/** One model select group: a provider's heading (`null` for a ChatGPT account's list) and its models. */
+export interface ModelOptionGroup {
+  readonly label: string | null;
+  readonly options: readonly { readonly value: AgentModelId; readonly label: string }[];
+}
+
+/**
+ * The model choices grouped by provider (Phase 8 Task 7): exactly `modelOptions`, one group per
+ * provider that has a model, in `MODEL_PROVIDERS` order under `AGENT_MODEL_PROVIDER_LABELS`, each in
+ * the setup's order; a ChatGPT account's models (no catalogue provider) as one unlabelled group.
+ */
+export function modelOptionGroups(setup: Pick<AgentSetupView, 'allowedModels'> & Partial<Pick<AgentSetupView, 'chatgpt'>>): readonly ModelOptionGroup[] {
+  const options = modelOptions(setup);
+  const groups: ModelOptionGroup[] = [];
+  for (const provider of MODEL_PROVIDERS) {
+    const members = options.filter((option) => modelProvider(option.value) === provider);
+    if (members.length > 0) groups.push({ label: AGENT_MODEL_PROVIDER_LABELS[provider], options: members });
+  }
+  const other = options.filter((option) => modelProvider(option.value) === null);
+  if (other.length > 0) groups.push({ label: null, options: other });
+  return groups;
 }
 
 /**

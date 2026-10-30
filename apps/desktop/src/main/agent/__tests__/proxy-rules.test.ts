@@ -1,15 +1,21 @@
 // Spec: specs/agent-proxy.spec.ts (REQUEST_HEADER_ALLOWLIST, filterRequestHeaders, mainRequestHeaders,
-// RESPONSE_HEADER_ALLOWLIST, filterResponseHeaders, sanitizeStatusText, BODY_FIELDS, checkModelRequestBody)
+// RESPONSE_HEADER_ALLOWLIST, filterResponseHeaders, sanitizeStatusText, BODY_FIELDS, checkModelRequestBody,
+// GATEWAY_PROVIDER_OPTIONS and the gateway's part options: Gemini's `google` thought signature and
+// `thinkingConfig`, Grok's `xai: {}`) · specs/agent-tools.spec.ts (ALLOWED_MODEL_IDS, byProvider)
 // Acceptance: specs/agent-host.feature.md (Proxy rules)
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { checkModelRequestBody, filterRequestHeaders, filterResponseHeaders, mainRequestHeaders, MAX_OUTPUT_TOKENS, sanitizeStatusText } from '@app/specs/agent-proxy.spec';
-import { ALLOWED_MODEL_IDS, MODEL_ROUTES, routeModelId, type ModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
-import { captureProviderRequest } from './provider-capture';
+import { ALLOWED_MODEL_IDS, byProvider, MODEL_ROUTES, modelProvider, routeModelId, type ModelId, type ModelProvider, type ModelRoute } from '@app/specs/agent-tools.spec';
+import { captureProviderRequest, GEMINI_THOUGHT_SIGNATURE } from './provider-capture';
 
 const ANTHROPIC = { model: 'claude-sonnet-5-5', max_tokens: 1024, messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }], stream: true };
 const OPENAI = { model: 'gpt-5', max_output_tokens: 1024, input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hi' }] }], store: false, stream: true };
 const GATEWAY = { maxOutputTokens: 1024, prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }], providerOptions: { openai: { store: false } } };
 const GATEWAY_HEADERS: [string, string][] = [['ai-language-model-id', 'anthropic/claude-sonnet-5-5']];
+
+const GEMINI = ALLOWED_MODEL_IDS.filter(byProvider('google'));
+const GROK = ALLOWED_MODEL_IDS.filter(byProvider('spacexai'));
+const gatewayHeaders = (modelId: string): [string, string][] => [['ai-language-model-id', modelId]];
 
 const body = (value: object) => JSON.stringify(value);
 const reason = (route: ModelRoute, modelId: string, value: object, headers: [string, string][] = route === 'gateway' ? GATEWAY_HEADERS : []) => {
@@ -264,6 +270,101 @@ describe('proxy rules', () => {
     expect(options({ anthropic: { thinking: { type: 'enabled', budgetTokens: 0 } } })).toBe('output-cap');
   });
 
+  test('proxy-gemini-thought-signature-accepted', () => {
+    const signature = { google: { thoughtSignature: GEMINI_THOUGHT_SIGNATURE } };
+    const call = (providerOptions: object) => ({ type: 'tool-call', toolCallId: 'c', toolName: 'page_audit', input: {}, providerOptions });
+    const result = { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c', toolName: 'page_audit', output: { type: 'json', value: {} } }] };
+    for (const modelId of GEMINI) {
+      const turn = (assistant: object[]) => reason('gateway', modelId, { ...GATEWAY, prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }, { role: 'assistant', content: assistant }, result] }, gatewayHeaders(modelId));
+      // The signature goes back on the thought, the text and the call it came with.
+      expect(turn([{ type: 'reasoning', text: 'x', providerOptions: signature }, { type: 'text', text: 'x', providerOptions: signature }, call(signature)]), modelId).toBe('ok');
+      expect(turn([call(signature), call({})]), modelId).toBe('ok');
+      // Only a string, only that key, only under `google`.
+      for (const bad of [
+        { google: { thoughtSignature: 1 } },
+        { google: { thoughtSignature: { value: 's' } } },
+        { google: { thoughtSignature: null } },
+        { google: { thoughtSignature: 's', groundingMetadata: { webSearchQueries: ['x'] } } },
+        { google: { thoughtSignature: 's', cachedContent: 'cachedContents/abc' } },
+        { google: { functionCall: { name: 'x' } } },
+        { google: 's' },
+        { vertex: { thoughtSignature: 's' } },
+        { gateway: { thoughtSignature: 's' } },
+      ]) {
+        expect(turn([call(bad)]), `${modelId} ${JSON.stringify(bad)}`).toBe('provider-options');
+      }
+      // The same rule on a message's own options.
+      expect(reason('gateway', modelId, { ...GATEWAY, prompt: [{ role: 'user', content: [{ type: 'text', text: 'x' }], providerOptions: { google: { cachedContent: 'cachedContents/abc' } } }] }, gatewayHeaders(modelId))).toBe('provider-options');
+    }
+  });
+
+  test('proxy-google-options-allowlisted', () => {
+    for (const modelId of GEMINI) {
+      const options = (google: unknown, maxOutputTokens = 1024) => reason('gateway', modelId, { ...GATEWAY, maxOutputTokens, providerOptions: { openai: { store: false }, google } }, gatewayHeaders(modelId));
+      for (const thinkingLevel of ['low', 'medium', 'high']) expect(options({ thinkingConfig: { thinkingLevel } }), thinkingLevel).toBe('ok');
+      expect(options({ thinkingConfig: { includeThoughts: true } })).toBe('ok');
+      expect(options({ thinkingConfig: { thinkingLevel: 'high', includeThoughts: false } })).toBe('ok');
+      const refused: [string, unknown][] = [
+        ['not an object', 'high'],
+        ['thinkingConfig not an object', { thinkingConfig: 'high' }],
+        ['thinkingConfig null', { thinkingConfig: null }],
+        ['an unknown thinkingLevel', { thinkingConfig: { thinkingLevel: 'max' } }],
+        ['minimal (no listed model offers it)', { thinkingConfig: { thinkingLevel: 'minimal' } }],
+        ['xhigh', { thinkingConfig: { thinkingLevel: 'xhigh' } }],
+        ['an upper-case level', { thinkingConfig: { thinkingLevel: 'HIGH' } }],
+        ['includeThoughts not a boolean', { thinkingConfig: { includeThoughts: 'true' } }],
+        ['an unknown thinkingConfig key', { thinkingConfig: { thinkingLevel: 'low', display: 'full' } }],
+        ['a budget over the cap', { thinkingConfig: { thinkingBudget: MAX_OUTPUT_TOKENS + 1 } }],
+        ['a far larger budget', { thinkingConfig: { thinkingBudget: 200_000 } }],
+        ['a dynamic budget', { thinkingConfig: { thinkingBudget: -1 } }],
+        // No budget is allowed at all: the runtime maps reasoning to levels only.
+        ['a budget within the cap', { thinkingConfig: { thinkingBudget: 1024 } }],
+        ['cachedContent', { cachedContent: 'cachedContents/abc' }],
+        ['safety settings', { safetySettings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }] }],
+        ['a safety threshold', { threshold: 'BLOCK_NONE' }],
+        ['search grounding', { useSearchGrounding: true }],
+        ['dynamic retrieval', { dynamicRetrievalConfig: { mode: 'MODE_DYNAMIC', dynamicThreshold: 0 } }],
+        ['retrieval config', { retrievalConfig: { latLng: { latitude: 0, longitude: 0 } } }],
+        ['response modalities', { responseModalities: ['TEXT', 'IMAGE'] }],
+        ['structured outputs', { structuredOutputs: false }],
+        ['labels', { labels: { team: 'x' } }],
+        ['media resolution', { mediaResolution: 'MEDIA_RESOLUTION_HIGH' }],
+        ['an unknown key', { audioTimestamp: true }],
+      ];
+      for (const [what, google] of refused) expect(options(google), `${modelId} ${what}`).toBe('provider-options');
+      // Google's options under another provider's key are refused too.
+      expect(reason('gateway', modelId, { ...GATEWAY, providerOptions: { openai: { store: false }, vertex: { thinkingConfig: { thinkingLevel: 'low' } } } }, gatewayHeaders(modelId))).toBe('provider-options');
+      // Search grounding as a provider tool is refused as a tool.
+      expect(reason('gateway', modelId, { ...GATEWAY, tools: [{ type: 'provider', id: 'google.google_search', name: 'google_search', args: {} }] }, gatewayHeaders(modelId))).toBe('tool');
+    }
+  });
+
+  test('proxy-xai-options-refused', () => {
+    for (const modelId of GROK) {
+      const options = (providerOptions: object) => reason('gateway', modelId, { ...GATEWAY, providerOptions: { openai: { store: false }, ...providerOptions } }, gatewayHeaders(modelId));
+      // Nothing is allowed under `xai` until a capture shows a need: an empty object at most.
+      expect(options({})).toBe('ok');
+      expect(options({ xai: {} })).toBe('ok');
+      for (const bad of [
+        { xai: { reasoningEffort: 'high' } },
+        { xai: { reasoningEffort: 'low' } },
+        { xai: { searchParameters: { mode: 'on' } } },
+        { xai: { parallel_function_calling: false } },
+        { xai: { store: false } },
+        { xai: 'high' },
+        { xai: null },
+        { spacexai: {} },
+        { spacexai: { reasoningEffort: 'high' } },
+      ]) {
+        expect(options(bad), `${modelId} ${JSON.stringify(bad)}`).toBe('provider-options');
+      }
+      // And no part metadata under either key.
+      const part = (providerOptions: object) => reason('gateway', modelId, { ...GATEWAY, prompt: [{ role: 'assistant', content: [{ type: 'reasoning', text: 'x', providerOptions }] }] }, gatewayHeaders(modelId));
+      expect(part({})).toBe('ok');
+      for (const bad of [{ xai: { reasoningEncryptedContent: 'e' } }, { xai: { itemId: 'rs_1' } }, { spacexai: { itemId: 'rs_1' } }]) expect(part(bad), JSON.stringify(bad)).toBe('provider-options');
+    }
+  });
+
   test('proxy-output-cap', () => {
     const cases: [ModelRoute, string, object, string][] = [
       ['byok-anthropic', 'anthropic/claude-sonnet-5-5', ANTHROPIC, 'max_tokens'],
@@ -277,6 +378,15 @@ describe('proxy rules', () => {
       }
     }
   });
+
+  /** What a turn's second request carries back from the scripted first step, per provider. */
+  const SECOND_STEP_MARK: Readonly<Record<ModelProvider, string>> = {
+    anthropic: 'c2lnbmF0dXJl',
+    openai: 'ZW5jcnlwdGVk',
+    google: `"providerOptions":{"google":{"thoughtSignature":"${GEMINI_THOUGHT_SIGNATURE}"}}`,
+    // Grok's step attaches no metadata: the reasoning text comes back as a part.
+    spacexai: '{"type":"reasoning","text":"The audit comes first."}',
+  };
 
   describe('real provider requests', () => {
     beforeEach(() => {
@@ -338,7 +448,7 @@ describe('proxy rules', () => {
             expect(headers.map(([name]) => name).sort(), `${route} ${modelId}`).toEqual([...sentNames].sort());
             expect(typeof request.body).toBe('string');
             const text = request.body as string;
-            if (which === 2) expect(text).toMatch(route === 'byok-openai' || modelId.startsWith('openai/') ? /ZW5jcnlwdGVk/ : /c2lnbmF0dXJl/);
+            if (which === 2) expect(text).toContain(SECOND_STEP_MARK[route === 'byok-openai' ? 'openai' : modelProvider(modelId)!]);
             // The Anthropic provider passes a response's `caller` back on the next step.
             if (which === 2 && modelId.startsWith('anthropic/')) expect(text).toContain('"caller":{"type":"direct"}');
             // Accepted, and sent exactly as the provider wrote it (it writes no repeated key).

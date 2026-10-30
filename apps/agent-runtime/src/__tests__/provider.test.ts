@@ -1,13 +1,14 @@
-// Spec: specs/agent-tools.spec.ts (MODEL_REQUESTS, isAllowedModelRequest, routeModelId) ·
-// specs/agent-chatgpt.spec.ts (CHATGPT_TOOL_NAMESPACE, CHATGPT_FORBIDDEN_BODY_FIELDS) · specs/agent-proxy.spec.ts
-// (checkModelRequestBody) · Acceptance: specs/agent-runtime.feature.md (Providers), specs/agent-chatgpt.feature.md
+// Spec: specs/agent-tools.spec.ts (MODEL_REQUESTS, isAllowedModelRequest, routeModelId, ALLOWED_MODEL_IDS,
+// byProvider) · specs/agent-chatgpt.spec.ts (CHATGPT_TOOL_NAMESPACE, CHATGPT_FORBIDDEN_BODY_FIELDS) ·
+// specs/agent-proxy.spec.ts (checkModelRequestBody, filterRequestHeaders, the gateway's `google` part
+// options) · Acceptance: specs/agent-runtime.feature.md (Providers), specs/agent-chatgpt.feature.md
 // (Runtime). Proves the installed providers' endpoint paths are the ones main's proxy allows: each
 // model's request is captured by the proxied fetch, never sent.
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
 import { CHATGPT_FORBIDDEN_BODY_FIELDS, CHATGPT_TOOL_NAMESPACE } from '@app/specs/agent-chatgpt.spec';
-import { checkModelRequestBody, MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
-import { ALLOWED_MODEL_IDS, isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES, routeModelId, type AgentModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
+import { checkModelRequestBody, filterRequestHeaders, MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
+import { ALLOWED_MODEL_IDS, byProvider, GATEWAY_ONLY_PROVIDERS, isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES, routeModelId, type AgentModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
 import { createModel, ModelNotAllowedError, PLACEHOLDER_API_KEY } from '../provider';
 import { CREDENTIAL_HEADERS, createProxyFetch } from '../proxy-fetch';
 import { chatStart, startHarness, stubNetworkGlobals } from './harness';
@@ -133,6 +134,16 @@ describe('providers', () => {
     // The ChatGPT route serves only `chatgpt/<slug>` ids, and a ChatGPT id no other route.
     expect(() => createModel('chatgpt', 'openai/gpt-5', fetch)).toThrow(ModelNotAllowedError);
     expect(() => createModel('byok-openai', 'chatgpt/gpt-5', fetch)).toThrow(ModelNotAllowedError);
+    // Gemini and Grok (gateway only): refused on the key routes before any request is made.
+    const posted: unknown[] = [];
+    const counting = createProxyFetch((message) => posted.push(message) > 0).fetch;
+    for (const provider of GATEWAY_ONLY_PROVIDERS) {
+      for (const modelId of ALLOWED_MODEL_IDS.filter(byProvider(provider))) {
+        for (const route of ['byok-anthropic', 'byok-openai', 'chatgpt'] as const) expect(() => createModel(route, modelId, counting), `${route} ${modelId}`).toThrow(ModelNotAllowedError);
+        expect(() => createModel('gateway', modelId, counting)).not.toThrow();
+      }
+    }
+    expect(posted).toEqual([]);
   });
 
   test('provider-chatgpt-request (namespaced tools, store off, streaming, no output cap, no system item)', async () => {
@@ -230,6 +241,60 @@ describe('providers', () => {
     expect(checkModelRequestBody('chatgpt', CHATGPT_MODEL, text)).toEqual({ ok: true, body: text });
     expect(second.url).toBe(MODEL_REQUESTS.chatgpt[0]!.url);
     await h.next('chat.error');
+  });
+
+  test('gateway-gemini-tool-turn-round-trips', async () => {
+    // A Gemini step through the gateway, as its stream parts arrive (SDK-derived, Open question 3:
+    // the AI SDK's Google provider puts the thought signature in the call's `providerMetadata.google`).
+    const signature = 'Z2VtaW5pLXRob3VnaHQtc2lnbmF0dXJl';
+    const sse = (events: readonly unknown[]) => new TextEncoder().encode(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''));
+    for (const modelId of ALLOWED_MODEL_IDS.filter(byProvider('google'))) {
+      const h = startHarness({ modelFactory: createModel });
+      let requests = 0;
+      h.onMessage((message) => {
+        if (message.type === 'tool.invoke') {
+          h.send({ type: 'tool.result', chatId: message.chatId, callId: message.callId, result: { ok: true, output: { untrusted: true, source: message.toolName, data: { score: 80 } } } });
+          return;
+        }
+        if (message.type !== 'fetch.request') return;
+        requests += 1;
+        if (requests > 1) {
+          h.send({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' });
+          return;
+        }
+        h.send({ type: 'fetch.response-start', requestId: message.requestId, status: 200, statusText: 'OK', headers: [['content-type', 'text/event-stream']] });
+        h.send({
+          type: 'fetch.chunk',
+          requestId: message.requestId,
+          bytes: sse([
+            { type: 'stream-start', warnings: [] },
+            { type: 'tool-call', toolCallId: 'call_g1', toolName: 'page_audit', input: '{}', providerMetadata: { google: { thoughtSignature: signature } } },
+            { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'STOP' }, usage: { inputTokens: { total: 10, noCache: 10 }, outputTokens: { total: 5, text: 5 } } },
+          ]),
+        });
+        h.send({ type: 'fetch.end', requestId: message.requestId });
+      });
+      h.send(chatStart({ route: 'gateway', modelId, allowedTools: ['page_audit'] }));
+      expect(await h.next('tool.invoke')).toMatchObject({ callId: 'call_g1', toolName: 'page_audit' });
+      await h.next('fetch.request', () => requests >= 2);
+      const [first, second] = h.of('fetch.request');
+      for (const request of [first!, second!]) {
+        expect({ method: request.method, url: request.url }).toEqual(MODEL_REQUESTS.gateway[0]);
+        expect(request.headers).toContainEqual(['ai-language-model-id', modelId]);
+      }
+      const text = second!.body as string;
+      const body = JSON.parse(text) as { prompt: { role: string; content: Record<string, unknown>[] | string }[] };
+      // The call goes back with its signature, followed by its result.
+      const assistant = body.prompt.findLast((message) => message.role === 'assistant')!;
+      expect(assistant.content).toContainEqual({ type: 'tool-call', toolCallId: 'call_g1', toolName: 'page_audit', input: {}, providerOptions: { google: { thoughtSignature: signature } } });
+      expect(body.prompt.at(-1)).toMatchObject({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_g1', toolName: 'page_audit' }] });
+      // And main's rules for the gateway accept both requests as sent.
+      for (const request of [first!, second!]) {
+        const sent = request.body as string;
+        expect(checkModelRequestBody('gateway', modelId, sent, filterRequestHeaders('gateway', request.headers)), modelId).toEqual({ ok: true, body: sent });
+      }
+      await h.next('chat.error');
+    }
   });
 
   test('provider-chatgpt-request (a refused request speaks of the sign-in, not a key)', async () => {

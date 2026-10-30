@@ -1,9 +1,9 @@
-// Spec: specs/agent-proxy.spec.ts (DEFAULT_AGENT_MODEL_SETTINGS, isValidModelSettings, isUsableModelSettings) · specs/agent-tools.spec.ts (DEFAULT_MODEL_ID)
+// Spec: specs/agent-proxy.spec.ts (DEFAULT_AGENT_MODEL_SETTINGS, isValidModelSettings, isUsableModelSettings) · specs/agent-tools.spec.ts (DEFAULT_MODEL_ID, GATEWAY_ONLY_PROVIDERS)
 // · specs/agent-chatgpt.spec.ts (isChatgptModelView, CHATGPT_LIMITS.maxModels)
 // Acceptance: specs/agent-host.feature.md (Settings) · specs/agent-chatgpt.feature.md (chatgpt-settings-model-list)
 import { describe, expect, test, vi } from 'vitest';
 import { CHATGPT_LIMITS, isChatgptModelView } from '@app/specs/agent-chatgpt.spec';
-import { DEFAULT_MODEL_ID } from '@app/specs/agent-tools.spec';
+import { ALLOWED_MODEL_IDS, byProvider, DEFAULT_MODEL_ID, GATEWAY_ONLY_PROVIDERS } from '@app/specs/agent-tools.spec';
 import { createAgentSettings } from '../settings';
 import { createMemoryFs } from './fakes';
 
@@ -27,6 +27,12 @@ describe('agent settings', () => {
     expect(await settings.set({ route: 'byok-openai', modelId: 'anthropic/claude-opus-5-5' })).toBe(false);
     expect(await settings.set({ route: 'other' as 'gateway' })).toBe(false);
     expect(await settings.set({ modelId: 'openai/gpt-6' as 'openai/gpt-5' })).toBe(false);
+    // Gemini and Grok are the gateway's only (Phase 8 Task 7): never stored with a key route.
+    for (const provider of GATEWAY_ONLY_PROVIDERS) {
+      for (const modelId of ALLOWED_MODEL_IDS.filter(byProvider(provider))) {
+        for (const route of ['byok-anthropic', 'byok-openai'] as const) expect(await settings.set({ route, modelId }), `${route} ${modelId}`).toBe(false);
+      }
+    }
     expect(memory.files.size).toBe(0);
     expect(await settings.set({ route: 'byok-openai', modelId: 'openai/gpt-5-mini' })).toBe(true);
     expect(settings.current()).toEqual({ route: 'byok-openai', modelId: 'openai/gpt-5-mini' });

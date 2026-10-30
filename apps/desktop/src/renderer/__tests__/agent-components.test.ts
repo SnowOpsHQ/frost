@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { AGENT_APPROVAL_BUTTONS, AGENT_SET_KEY_MESSAGES } from '@app/specs/agent-panel.spec';
 import { APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
+import { modelOptionGroups } from '../agent-view';
 import { approval, card, jsApproval, setup, SKILLS } from './agent-fixtures';
 
 const calls = vi.hoisted(() => ({
@@ -143,6 +144,9 @@ describe('agent panel components', () => {
     // The model list is exactly the route's.
     const models = [...host.querySelectorAll<HTMLOptionElement>('[data-testid="agent-model"] option')].map((o) => o.value);
     expect(models).toEqual(setup().allowedModels);
+    // Grouped by provider (Phase 8 Task 7, model-options-grouped-by-provider).
+    const groups = [...host.querySelectorAll<HTMLOptGroupElement>('[data-testid="agent-model"] optgroup')].map((group) => [group.label, [...group.querySelectorAll('option')].map((option) => option.value)]);
+    expect(groups).toEqual(modelOptionGroups(setup()).map((group) => [group.label, group.options.map((option) => option.value)]));
   });
 
   test('composer-enter-sends-shift-enter-does-not', async () => {

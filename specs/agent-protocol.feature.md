@@ -2,8 +2,9 @@
 
 Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeToMainMessageSchema`,
 `AGENT_PROTOCOL_LIMITS`, `RUNTIME_TO_MAIN_MESSAGE_TYPES`, `ToolResultSchema`, `ChatMessageSchema`),
-`specs/agent-tools.spec.ts` (`AGENT_TOOLS`, the caps, `ALLOWED_MODEL_IDS`, `routeModelId`,
-`MODEL_REQUESTS`, `isAllowedModelRequest`, `isCanonicalUrl`). Phase 5 Task 1 (`docs/plans/phase-5-ai-agent.md`,
+`specs/agent-tools.spec.ts` (`AGENT_TOOLS`, the caps, `ALLOWED_MODEL_IDS`, `MODEL_PROVIDERS`,
+`GATEWAY_ONLY_PROVIDERS`, `byProvider`, `routeModelId`, `MODEL_REQUESTS`, `isAllowedModelRequest`,
+`isCanonicalUrl`). Phase 5 Task 1 (`docs/plans/phase-5-ai-agent.md`,
 decisions 5, 7 and 9). Package: `packages/ai-skills` (tool definitions and ports). Each line maps to
 one named test.
 
@@ -74,9 +75,18 @@ one named test.
 - **Scenario: chat-start-mcp-tools-match-allowed-names** (protocol version 6, Task 10;
   `agent-mcp.feature.md`) — `chat.start.mcpTools` holds exactly one sanitised definition per MCP
   name in `allowedTools`; a missing, extra, repeated or unsanitised one refuses the message.
-- **Scenario: caps-are-sane** — the caps are positive integers and the default model is allowed.
+- **Scenario: caps-are-sane** — the caps are positive integers and the default model is allowed;
+  every `ALLOWED_MODEL_IDS` entry is `<provider>/<model>` for a `MODEL_PROVIDERS` provider, each
+  provider has models, and the list is grouped by provider in `MODEL_PROVIDERS` order.
 - **Scenario: route-model-id** — the gateway keeps `provider/model`; a bring-your-own-key route drops
   the prefix; a model of the other provider, or one not allowed, is refused (`null`).
+- **Scenario: route-model-id-gateway-only-providers** (Phase 8 Task 7, Decision 7) — Gemini
+  (`google`) and Grok (`spacexai`) are `GATEWAY_ONLY_PROVIDERS`, two models each in
+  `ALLOWED_MODEL_IDS` (the gateway's current ids, read from its public model list; tests name them
+  only through `byProvider`): passed through as is on `gateway`, refused (`null`) on
+  `byok-anthropic`, `byok-openai` and `chatgpt`, so no request is ever made for them there; no
+  bring-your-own-key route serves a gateway-only provider; an unlisted prefix (`xai/`, `vertex/`)
+  is refused everywhere.
 - **Scenario: model-request-allowlist** — each route's one `POST` URL is allowed; another method,
   another route's URL, another path of the same provider (models list, files, batches), a query, a
   fragment, `http:`, a port, user info, a look-alike host and a non-URL are refused.
