@@ -87,6 +87,9 @@ named test.
   keychain refused it) is never written over or removed: the view says `store-unreadable`, sign-in
   answers `failed` and opens no browser, the notice can't be dismissed, and sign-out writes nothing;
   once a later read succeeds (each sign-in reads again), the sign-in goes on from the stored record.
+  A stored sign-in that can't be read because no OS keychain is available yet counts the same: once
+  the keychain is back, the sign-in goes on from the stored record (its client id; the replaced
+  refresh token revoked), never registering afresh over it. With no stored sign-in, nothing changes.
 - **Scenario: chatgpt-account-mismatch** — a returning sign-in whose verified `sub` differs from the
   stored one ends `account-mismatch`; the stored sign-in is not replaced.
 - **Scenario: chatgpt-use-different-account** — "Use a different account" (`signIn({ differentAccount })`;
@@ -111,6 +114,8 @@ named test.
 - **Scenario: chatgpt-no-keychain** — without OS keychain protection a sign-in answers
   `no-keychain` and opens no browser.
 - **Scenario: chatgpt-cancel** — Cancel closes the listener and ends the sign-in `cancelled`.
+  Cancelled while the new sign-in is being stored, it is still not kept: the previous record is
+  stored again, the new refresh token is revoked, nothing is signed in and no window is focused.
 
 ## Tokens (`service.test.ts`)
 - **Scenario: chatgpt-refresh-margin-and-earliest** — an access token is used as is until

@@ -7,7 +7,8 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { CHATGPT_AGENT_NAME, CHATGPT_DYNAMIC_CLIENT_ID, CHATGPT_ENDPOINTS, CHATGPT_REFRESH_FAILURE_CODES, CHATGPT_REFRESH_MARGIN_MS, CHATGPT_RESOURCE, CHATGPT_SCOPE } from '@app/specs/agent-chatgpt.spec';
 import { challengeOf } from '../../../account/pkce';
 import { CHATGPT_LIMITS } from '@app/specs/agent-chatgpt.spec';
-import { CLIENT_ID, createHarness, EMAIL, HOST_UUID, KEY, OTHER_KEY, SUB, T0 } from './harness';
+import { createChatgptStore } from '../store';
+import { CLIENT_ID, createHarness, CREDENTIALS_FILE, EMAIL, HOST_UUID, KEY, OTHER_KEY, SUB, T0 } from './harness';
 
 type Harness = ReturnType<typeof createHarness>;
 const harnesses: Harness[] = [];
@@ -332,6 +333,36 @@ describe('chatgpt sign-in', () => {
     expect(h.auth.cancel()).toBe(false);
     await expect(h.redirect()).rejects.toThrow();
     expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  test('chatgpt-cancel (cancelled while the sign-in is being stored: not kept, the new refresh token revoked)', async () => {
+    const h = await signedIn();
+    await h.auth.signOut();
+    const previous = await h.realStore.read();
+    expect(previous).toMatchObject({ clientId: CLIENT_ID, account: { sub: SUB }, tokens: null });
+    // The new sign-in's write is held until the cancel has gone through.
+    const write = h.store.write;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let held = false;
+    h.store.write = async (state) => {
+      if (!held && state.tokens?.refreshToken === 'refresh-token-2') {
+        held = true;
+        await gate;
+      }
+      return write(state);
+    };
+    expect(await h.auth.signIn({ windowId: 7 })).toBe('started');
+    expect(await h.redirect({ client_id: null })).toBe(303);
+    await h.until(() => held, 'the sign-in to be stored');
+    expect(h.auth.cancel()).toBe(true);
+    release();
+    await h.auth.dispose();
+    expect(h.auth.view()).toEqual({ state: 'signed-out', acknowledged: false, error: 'cancelled' });
+    expect(await h.auth.withAccessToken((token) => token)).toEqual({ ok: false, reason: 'signed-out' });
+    expect(await h.realStore.read()).toEqual(previous);
+    expect(h.recorded.filter((r) => r.url === CHATGPT_ENDPOINTS.revoke).map((r) => r.form!.get('token'))).toEqual(['refresh-token-1', 'refresh-token-2']);
+    expect(h.focused).toEqual([]);
   });
 
   test('chatgpt-exchange-refused', async () => {
@@ -682,6 +713,36 @@ describe('chatgpt security review (Tasks 1–2)', () => {
     expect(await h.auth.signIn()).toBe('started');
     expect(new URL(h.opened[0]!).searchParams.get('client_id')).toBe(CLIENT_ID);
     expect(h.auth.view()).toEqual({ state: 'pending', acknowledged: true });
+  });
+
+  test("chatgpt-store-unreadable (a saved sign-in the keychain can't open yet is never registered over)", async () => {
+    const h = await signedIn();
+    const saved = h.memory.text(CREDENTIALS_FILE);
+    // A restart with no OS keychain available yet (the record is on disk).
+    h.safe.state.available = false;
+    const { createChatgptAuth } = await import('../service');
+    const store = createChatgptStore({ safeStorage: h.safe.storage, fs: h.memory.fs, file: CREDENTIALS_FILE, platform: 'linux', tempSuffix: () => 'restart' });
+    const again = createChatgptAuth({ ...h.deps, store });
+    await again.load();
+    expect(again.view()).toEqual({ state: 'signed-out', acknowledged: false, error: 'store-unreadable' });
+    const opened = h.opened.length;
+    expect(await again.signIn()).toBe('failed');
+    expect(await again.acknowledge()).toBe(false);
+    expect(h.opened).toHaveLength(opened);
+    expect(h.memory.text(CREDENTIALS_FILE)).toBe(saved);
+    // The keychain is back: the sign-in reads the record first and goes on from it.
+    h.safe.state.available = true;
+    expect(await again.signIn()).toBe('started');
+    const url = new URL(h.opened.at(-1)!);
+    expect(url.searchParams.get('client_id')).toBe(CLIENT_ID);
+    expect(url.searchParams.has('agent_name_hint')).toBe(false);
+    expect(await h.redirect({ client_id: null })).toBe(303);
+    await h.until(() => again.view().state !== 'pending', 'the sign-in to finish');
+    await again.dispose();
+    expect(again.view()).toEqual({ state: 'signed-in', email: EMAIL, planUsage: 'on', acknowledged: false });
+    expect(await store.read()).toMatchObject({ clientId: CLIENT_ID, account: { sub: SUB }, tokens: { refreshToken: 'refresh-token-2' } });
+    // The replaced refresh token is not left alive.
+    expect(h.recorded.filter((r) => r.url === CHATGPT_ENDPOINTS.revoke).map((r) => r.form!.get('token'))).toEqual(['refresh-token-1']);
   });
 
   test('chatgpt-refresh-backoff (a failed refresh is not retried on every request)', async () => {

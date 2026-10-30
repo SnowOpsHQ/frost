@@ -42,6 +42,12 @@
       "file": "apps/desktop/src/main/update/service.ts",
       "source": "if (UPDATE_TEST_CERT_PATTERN.test(pin)) updateSession.setCertificateVerifyProc(pinnedCertificateVerifier(pin));",
       "rationale": "Reviewed (Phase 7 Task 5): the update e2e's pin, unpackaged only (the switch is in PACKAGED_FORBIDDEN_SWITCHES and never read packaged), on the update session only; it accepts exactly one certificate by DER SHA-256 and defers every other to Chromium (-3). Tests switches-unpackaged-only, test-cert-pins-one-certificate."
+    },
+    {
+      "id": "OPEN_EXTERNAL_JS_CHECK",
+      "file": "apps/desktop/src/main/agent/chatgpt/service.ts",
+      "source": "opened = deps.openExternal(url, options.userGesture === true) === true;",
+      "rationale": "Reviewed: deps.openExternal is chatgptBrowserOpener (agent/chatgpt/opener.ts), which opens only when agent.chatgptSignIn spent the sender window's live user gesture and the URL is the Sign in with ChatGPT authorize endpoint (isChatgptAuthorizeUrl, a literal prefix check), then delegates to main's scheme-allowlisted openExternalIfAllowed; tests chatgpt-browser-opener, chatgpt-sign-in-gesture and the agent-chatgpt e2e (no gesture: nothing opens)."
     }
   ]
 }

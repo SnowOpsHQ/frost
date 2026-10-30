@@ -225,7 +225,8 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
   const load = (): Promise<void> => {
     loading ??= (async () => {
       const read = await deps.store.read().catch(() => 'failed' as const);
-      storeFailed = read === 'failed';
+      // `unavailable`: a record is stored but no OS keychain can open it yet; it counts as unreadable.
+      storeFailed = read === 'failed' || read === 'unavailable';
       if (typeof read === 'object' && read !== null) state = read;
       else if (storeFailed) {
         lastError = 'store-unreadable';
@@ -367,6 +368,15 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
       state = before;
       discard(clientId, answer);
       failAfterRedirect('store-failed', 'the sign-in could not be stored');
+      return;
+    }
+    if (pending !== p) {
+      // Cancelled while it was being stored: the previous record goes back and the new grant is revoked.
+      state = before;
+      if (!(await persist())) await deps.store.clear().catch(() => false);
+      discard(clientId, answer);
+      log('agent chatgpt: a sign-in cancelled while being stored was not kept');
+      changed();
       return;
     }
     pending = null;
