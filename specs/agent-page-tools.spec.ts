@@ -184,6 +184,17 @@ export const PAGE_AUDIT_LIMITS = {
   maxDifficultSentencesForModel: 5,
 } as const;
 
+/**
+ * How `page_data` trims itself to `PAGE_AUDIT_LIMITS.budgetChars` of JSON text (Phase 8 Task 3
+ * review): the lowest-value list first, each one cut from its end until the output fits or the list
+ * is empty, then the next. The guarantee holds for any page (every string counted as JSON, escapes
+ * included). The heading outline reports what it dropped in `headings.omitted`, the internal links
+ * in `internalLinks.omitted`; the others in `trimmed` (name: entries left out; absent when nothing
+ * was cut). Social fields go from the end of `SOCIAL_TAGS`.
+ */
+export const PAGE_DATA_TRIM_ORDER = ['outline', 'hreflang', 'difficultSentences', 'social', 'internalLinks', 'schemaTypes', 'reasons'] as const;
+export type PageDataTrimStep = (typeof PAGE_DATA_TRIM_ORDER)[number];
+
 /** Characters of a page title any tool reports. */
 export const PAGE_TITLE_MAX_CHARS = 300;
 

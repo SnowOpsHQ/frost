@@ -49,19 +49,30 @@ function profileName(profile: AuditRenderProfile | null | undefined): string | n
   return profile ? renderProfileSummary(profile.profile) : null;
 }
 
-/** Drops entries from the end of `list` (keeping at least none) until `build(list)`'s JSON fits `budget`. */
-function trimToBudget<T, R>(list: readonly T[], build: (kept: readonly T[], omitted: number) => R, budget: number): R {
-  let kept = list.length;
-  let built = build(list, 0);
+/**
+ * Shortens lists until `build(kept)`'s JSON fits `budget`. `kept[i]` is how many entries list `i`
+ * keeps (a list is cut from its end); the lists are cut in order, each until the output fits or it
+ * is empty, then the next, so the lowest-value list goes first.
+ */
+function fitToBudget<R>(sizes: readonly number[], build: (kept: readonly number[]) => R, budget: number): R {
+  const kept = [...sizes];
+  let built = build(kept);
   let length = JSON.stringify(built).length;
-  while (length > budget && kept > 0) {
-    // Step by the overshoot's share of the list, at least one.
-    const share = Math.max(1, Math.ceil(((length - budget) / length) * kept));
-    kept = Math.max(0, kept - share);
-    built = build(list.slice(0, kept), list.length - kept);
-    length = JSON.stringify(built).length;
+  for (let i = 0; i < kept.length; i += 1) {
+    while (length > budget && kept[i]! > 0) {
+      // Step by the overshoot's share of the list, at least one.
+      const share = Math.max(1, Math.ceil(((length - budget) / length) * kept[i]!));
+      kept[i] = Math.max(0, kept[i]! - share);
+      built = build(kept);
+      length = JSON.stringify(built).length;
+    }
   }
   return built;
+}
+
+/** Drops entries from the end of `list` (keeping at least none) until `build(list)`'s JSON fits `budget`. */
+function trimToBudget<T, R>(list: readonly T[], build: (kept: readonly T[], omitted: number) => R, budget: number): R {
+  return fitToBudget([list.length], ([kept]) => build(list.slice(0, kept), list.length - kept!), budget);
 }
 
 /**
@@ -98,9 +109,9 @@ export function summariseAudit(audit: SeoAudit, renderProfile?: AuditRenderProfi
   return trimToBudget(findings, (kept, omitted) => ({ ...base, findings: kept, findingsTotal: audit.findings.length, findingsOmitted: omitted + cappedOut }), L.budgetChars);
 }
 
-/** Every social sharing tag the snapshot holds (`null`: the page has none), each value cut to `maxFactChars`. */
-function socialOf(social: SeoAudit['page']['social']): Record<string, string | null> {
-  return Object.fromEntries(SOCIAL_TAGS.slice(0, L.maxSocialFields).map((tag) => [tag, clipOrNull(social[tag], L.maxFactChars)]));
+/** The first `keep` social sharing tags of `SOCIAL_TAGS` (`null`: the page has none), each value cut to `maxFactChars`. */
+function socialOf(social: SeoAudit['page']['social'], keep: number): Record<string, string | null> {
+  return Object.fromEntries(SOCIAL_TAGS.slice(0, keep).map((tag) => [tag, clipOrNull(social[tag], L.maxFactChars)]));
 }
 
 /**
@@ -108,7 +119,7 @@ function socialOf(social: SeoAudit['page']['social']): Record<string, string | n
  * formula's name, score and band (or why there is none), the sentence statistics and at most
  * `maxDifficultSentencesForModel` difficult-sentence excerpts (the page's own text: untrusted).
  */
-function contentSummary(content: SeoAudit['content']): Record<string, unknown> {
+function contentSummary(content: SeoAudit['content'], keepDifficult: number): Record<string, unknown> {
   const { readability, sentences } = content;
   return {
     available: content.available,
@@ -129,7 +140,7 @@ function contentSummary(content: SeoAudit['content']): Record<string, unknown> {
             longCount: sentences.longCount,
             complexWordShare: sentences.complexWordShare,
             difficultTotal: sentences.difficult.total,
-            difficult: sentences.difficult.items.slice(0, L.maxDifficultSentencesForModel).map((item) => ({ text: clip(item.text, L.maxFactChars), words: item.words, reason: item.reason })),
+            difficult: sentences.difficult.items.slice(0, keepDifficult).map((item) => ({ text: clip(item.text, L.maxFactChars), words: item.words, reason: item.reason })),
           }
         : { status: 'not-available', reason: sentences.reason },
   };
@@ -160,43 +171,56 @@ export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderPr
     }
   }
   const hreflang = audit.indexability.hreflang;
-  const base = {
-    url: clip(modelPageUrl(page.url) ?? page.url, L.maxUrlChars),
-    title: page.title ? { text: clip(page.title.text, PAGE_TITLE_MAX_CHARS), length: page.title.length } : null,
-    titleCount: page.titleTotal,
-    metaDescription: page.description ? { text: clip(page.description.text, L.maxFactChars), length: page.description.length } : null,
-    metaDescriptionCount: page.descriptionTotal,
-    canonical: clipOrNull(page.canonical, L.maxUrlChars),
-    canonicalCount: page.canonicalTotal,
-    robots: clipOrNull(page.robots, L.maxFactChars),
-    noindexFor: page.noindexFor.slice(0, 10).map((name) => clip(name, 64)),
-    lang: clipOrNull(page.lang, 64),
-    viewport: clipOrNull(page.viewport, 200),
-    wordCount: page.wordCount,
-    links: { ...page.links },
-    images: { ...page.images },
-    structuredData: { types, entityCount: audit.schema.entityCount, issueCount: audit.schema.issues.length },
-    hreflang: {
-      total: hreflang.total,
-      hasXDefault: hreflang.hasXDefault,
-      hasSelf: hreflang.hasSelf,
-      entries: hreflang.entries.slice(0, L.maxHreflang).map((entry) => ({ value: clip(entry.value, 64), href: clip(entry.resolved ?? entry.href, L.maxUrlChars), valid: entry.valid })),
-    },
-    indexability: {
-      verdict: audit.indexability.verdict,
-      indexable: audit.indexable,
-      reasons: audit.indexability.reasons.slice(0, L.maxReasons).map((reason) => clip(reason, L.maxFactChars)),
-      httpStatus: audit.indexability.http?.status ?? null,
-    },
-    social: socialOf(page.social),
-    content: contentSummary(audit.content),
-    javascript: javascriptSummary(audit.javascript),
-    renderProfile: profileName(renderProfile),
-    partial: page.partial,
-  };
+  const entries = hreflang.entries.slice(0, L.maxHreflang).map((entry) => ({ value: clip(entry.value, 64), href: clip(entry.resolved ?? entry.href, L.maxUrlChars), valid: entry.valid }));
+  const reasons = audit.indexability.reasons.slice(0, L.maxReasons).map((reason) => clip(reason, L.maxFactChars));
   const outline = page.headings.slice(0, L.maxHeadings).map((heading) => ({ level: heading.level, text: clip(heading.text, L.maxHeadingChars) }));
-  const withLinks = { ...base, internalLinks: internalLinksOf(audit) };
-  return trimToBudget(outline, (kept, omitted) => ({ ...withLinks, headings: { total: page.headingTotal, outline: kept, omitted: omitted + (page.headings.length - outline.length) } }), L.budgetChars);
+  const links = internalLinksOf(audit);
+  const difficultSentences = audit.content.sentences.status === 'ok' ? Math.min(audit.content.sentences.difficult.items.length, L.maxDifficultSentencesForModel) : 0;
+  // One entry per `PAGE_DATA_TRIM_ORDER` step, in that order: how many entries each list starts with.
+  const sizes = [outline.length, entries.length, difficultSentences, L.maxSocialFields, links.list.length, types.length, reasons.length];
+  return fitToBudget(
+    sizes,
+    ([keepOutline, keepHreflang, keepDifficult, keepSocial, keepLinks, keepTypes, keepReasons]) => {
+      const cut = { hreflang: entries.length - keepHreflang!, difficultSentences: difficultSentences - keepDifficult!, social: L.maxSocialFields - keepSocial!, schemaTypes: types.length - keepTypes!, reasons: reasons.length - keepReasons! };
+      const trimmed = Object.fromEntries(Object.entries(cut).filter(([, count]) => count > 0));
+      return {
+        url: clip(modelPageUrl(page.url) ?? page.url, L.maxUrlChars),
+        title: page.title ? { text: clip(page.title.text, PAGE_TITLE_MAX_CHARS), length: page.title.length } : null,
+        titleCount: page.titleTotal,
+        metaDescription: page.description ? { text: clip(page.description.text, L.maxFactChars), length: page.description.length } : null,
+        metaDescriptionCount: page.descriptionTotal,
+        canonical: clipOrNull(page.canonical, L.maxUrlChars),
+        canonicalCount: page.canonicalTotal,
+        robots: clipOrNull(page.robots, L.maxFactChars),
+        noindexFor: page.noindexFor.slice(0, 10).map((name) => clip(name, 64)),
+        lang: clipOrNull(page.lang, 64),
+        viewport: clipOrNull(page.viewport, 200),
+        wordCount: page.wordCount,
+        links: { ...page.links },
+        images: { ...page.images },
+        structuredData: { types: types.slice(0, keepTypes), entityCount: audit.schema.entityCount, issueCount: audit.schema.issues.length },
+        hreflang: { total: hreflang.total, hasXDefault: hreflang.hasXDefault, hasSelf: hreflang.hasSelf, entries: entries.slice(0, keepHreflang) },
+        indexability: { verdict: audit.indexability.verdict, indexable: audit.indexable, reasons: reasons.slice(0, keepReasons), httpStatus: audit.indexability.http?.status ?? null },
+        social: socialOf(page.social, keepSocial!),
+        content: contentSummary(audit.content, keepDifficult!),
+        javascript: javascriptSummary(audit.javascript),
+        renderProfile: profileName(renderProfile),
+        partial: page.partial,
+        internalLinks: { ...links, list: links.list.slice(0, keepLinks), omitted: links.omitted + (links.list.length - keepLinks!) },
+        headings: { total: page.headingTotal, outline: outline.slice(0, keepOutline), omitted: outline.length - keepOutline! + (page.headings.length - outline.length) },
+        ...(Object.keys(trimmed).length > 0 ? { trimmed } : {}),
+      };
+    },
+    L.budgetChars,
+  );
+}
+
+interface InternalLinks {
+  readonly analysed: number;
+  readonly internal: number;
+  readonly distinct: number;
+  readonly list: readonly { text: string; href: string }[];
+  readonly omitted: number;
 }
 
 /**
@@ -205,7 +229,7 @@ export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderPr
  * `internalLinksBudgetChars`. Read from the audit's link list (the first `links.analysed` links), so
  * `analysed` and `distinct` say what the list covers.
  */
-export function internalLinksOf(audit: SeoAudit): Record<string, unknown> {
+export function internalLinksOf(audit: SeoAudit): InternalLinks {
   const seen = new Set<string>();
   const links: { text: string; href: string }[] = [];
   for (const link of audit.page.linkList) {
