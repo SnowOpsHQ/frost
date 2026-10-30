@@ -23,8 +23,10 @@
  *   carries the provider options as given. Adaptive thinking spends within `max_tokens`, so the
  *   output cap stays the only budget (Open question 4).
  * - OpenAI (`byok-openai`, gateway `openai/*`) and the ChatGPT plan: `{ openai: { reasoningEffort } }`
- *   with `off` sent as `minimal`. The Responses body carries `reasoning.effort` (the provider adds a
- *   `reasoning.summary` beside it, not compared); the gateway's carries the provider option.
+ *   with `off` sent as `minimal` (GPT-5 only: the ChatGPT route never offers `off`, because the
+ *   provider drops `minimal` for the plan's GPT-6 slugs and would send no level). The Responses
+ *   body carries `reasoning.effort` (the provider adds a `reasoning.summary` beside it, not
+ *   compared); the gateway's carries the provider option.
  * - Gemini (gateway `google/*`): `{ google: { thinkingConfig: { thinkingLevel } } }`, levels only
  *   (no budget; `GEMINI_THINKING_LEVELS` in `agent-proxy.spec.ts`).
  * - Grok (gateway `spacexai/*`): nothing (Auto only, no option verified; Open question 3).
@@ -67,15 +69,22 @@ const AUTO_ONLY: readonly ReasoningEffort[] = ['auto'];
 const isCatalogueModel = (modelId: string): modelId is ModelId => Object.hasOwn(MODEL_REASONING_SUPPORT, modelId);
 
 /**
+ * The levels the ChatGPT route can offer: never `off` (Task 8a fix round 1; see
+ * `CHATGPT_ADVERTISED_EFFORTS`: the OpenAI provider drops `minimal` for the plan's GPT-6 slugs and
+ * would send no level).
+ */
+const CHATGPT_LEVELS: readonly ReasoningEffort[] = ['auto', 'low', 'medium', 'high'];
+
+/**
  * The levels `modelId` offers: a catalogue model's `MODEL_REASONING_SUPPORT`; a ChatGPT model's
- * `auto` plus the levels its entry in `chatgptModels` (the account's last list) advertises, so
- * `auto` only when it advertises none or is not listed; any other id, `auto` only.
+ * `auto` plus the levels its entry in `chatgptModels` (the account's last list) advertises, never
+ * `off`, so `auto` only when it advertises none or is not listed; any other id, `auto` only.
  */
 export function reasoningLevels(modelId: string, chatgptModels: readonly ChatgptModelView[]): readonly ReasoningEffort[] {
   if (isCatalogueModel(modelId)) return MODEL_REASONING_SUPPORT[modelId];
   const efforts = chatgptModels.find((model) => model.id === modelId)?.efforts;
   if (efforts === undefined) return AUTO_ONLY;
-  return REASONING_EFFORTS.filter((effort) => effort === 'auto' || efforts.includes(effort));
+  return CHATGPT_LEVELS.filter((effort) => effort === 'auto' || efforts.includes(effort));
 }
 
 /**
@@ -111,12 +120,12 @@ function reasoningFamily(route: ModelRoute, modelId: string): ReasoningFamily | 
  * The provider options the runtime sends for `effort` on `route` with `modelId` (module comment):
  * `{}` for `auto`, for a catalogue model's level it doesn't offer (it acts as `auto`), and for a
  * model with no mapping. On the `chatgpt` route the account's list decides the levels
- * (`effectiveEffort`); every non-`auto` level maps there.
+ * (`effectiveEffort`); `low`, `medium` and `high` map there, `off` (never offered) to nothing.
  */
 export function reasoningWire(route: ModelRoute, modelId: string, effort: ReasoningEffort): ReasoningWire {
   if (effort === 'auto') return {};
   const family = reasoningFamily(route, modelId);
-  if (family === null || (isCatalogueModel(modelId) && !MODEL_REASONING_SUPPORT[modelId].includes(effort))) return {};
+  if (family === null || (isCatalogueModel(modelId) && !MODEL_REASONING_SUPPORT[modelId].includes(effort)) || (route === 'chatgpt' && !CHATGPT_LEVELS.includes(effort))) return {};
   switch (family) {
     case 'anthropic':
       return effort === 'off' ? {} : { anthropic: { thinking: { type: 'adaptive' }, effort } };

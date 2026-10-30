@@ -308,11 +308,15 @@ export function chatgptSlugOf(modelId: ChatgptModelId): string {
 }
 
 /**
- * The reasoning levels a ChatGPT model entry may advertise (Phase 8 Task 8a, Decision 8): every
- * level but `auto`, which is always offered and never stored. `off` is sent as `minimal`
- * (`reasoningWire`).
+ * The reasoning levels a ChatGPT model entry may advertise (Phase 8 Task 8a, Decision 8): `low`,
+ * `medium` and `high`. Not `auto`, which is always offered and never stored. Not `off` either (Task
+ * 8a fix round 1, lead ruling): its wire value elsewhere is `minimal`, and the installed OpenAI
+ * provider (`@ai-sdk/openai` 4.0.104) gives GPT-6 and later slugs, the plan's models, the efforts
+ * `low`…`max` (`none` on three), drops `minimal` with a warning and then sends no `reasoning` at
+ * all, so a ChatGPT `off` would be refused (`reasoning`) on every request. The ChatGPT route offers
+ * `auto`, `low`, `medium`, `high`.
  */
-export const CHATGPT_ADVERTISED_EFFORTS = ['off', 'low', 'medium', 'high'] as const satisfies readonly ReasoningEffort[];
+export const CHATGPT_ADVERTISED_EFFORTS = ['low', 'medium', 'high'] as const satisfies readonly ReasoningEffort[];
 export type ChatgptAdvertisedEffort = (typeof CHATGPT_ADVERTISED_EFFORTS)[number];
 
 /**
@@ -324,15 +328,15 @@ export const CHATGPT_ADVERTISED_EFFORTS_FIELD = 'supported_reasoning_levels';
 
 /**
  * The room a model entry's `efforts` takes in the settings file, at most (bytes): the worst case,
- * `,"efforts":["off","low","medium","high"]`, is 40 bytes.
+ * `,"efforts":["low","medium","high"]`, is 34 bytes, so 64 leaves room.
  */
 export const CHATGPT_EFFORTS_ENTRY_MAX_BYTES = 64;
 
 /**
  * The levels an entry's `CHATGPT_ADVERTISED_EFFORTS_FIELD` value advertises, bounded: only
  * `CHATGPT_ADVERTISED_EFFORTS` values (from strings, or objects' `effort` strings), each once, in
- * `REASONING_EFFORTS` order, so at most 4. Anything else (absent, not a list, `auto`, an unknown
- * level such as `minimal` or `xhigh`) is dropped; `[]` means Auto only.
+ * `REASONING_EFFORTS` order, so at most 3. Anything else (absent, not a list, `auto`, `off`, an
+ * unknown level such as `minimal` or `xhigh`) is dropped; `[]` means Auto only.
  */
 export function advertisedEfforts(value: unknown): ChatgptAdvertisedEffort[] {
   if (!Array.isArray(value)) return [];
@@ -341,7 +345,7 @@ export function advertisedEfforts(value: unknown): ChatgptAdvertisedEffort[] {
     const effort = typeof item === 'string' ? item : typeof item === 'object' && item !== null && !Array.isArray(item) ? (item as { effort?: unknown }).effort : undefined;
     if (typeof effort === 'string') found.add(effort);
   }
-  return REASONING_EFFORTS.filter((effort): effort is ChatgptAdvertisedEffort => effort !== 'auto' && found.has(effort));
+  return REASONING_EFFORTS.filter((effort): effort is ChatgptAdvertisedEffort => (CHATGPT_ADVERTISED_EFFORTS as readonly string[]).includes(effort) && found.has(effort));
 }
 
 /** A model the account lists (`visibility: 'list'`), in the server's order. */
@@ -356,7 +360,7 @@ export interface ChatgptModelView {
   readonly efforts?: readonly ReasoningEffort[];
 }
 
-/** Whether `value` is a non-empty list of distinct `CHATGPT_ADVERTISED_EFFORTS`, in that order. */
+/** Whether `value` is a non-empty list of distinct `CHATGPT_ADVERTISED_EFFORTS`, in that order (so at most 3). */
 function isAdvertisedEffortList(value: unknown): boolean {
   if (!Array.isArray(value) || value.length === 0 || value.length > CHATGPT_ADVERTISED_EFFORTS.length) return false;
   let last = -1;

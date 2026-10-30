@@ -42,7 +42,9 @@ one named test.
 - **Reasoning effort is one setting, mapped per model, checked by main (Phase 8 Task 8a, Decision
   8, security review).** `REASONING_EFFORTS` (`auto`, `off`, `low`, `medium`, `high`) is stored in
   `agent-settings.json` beside the route and model; each model offers the levels in
-  `MODEL_REASONING_SUPPORT` (on the `chatgpt` route `auto` plus what the account's list advertises),
+  `MODEL_REASONING_SUPPORT` (on the `chatgpt` route `auto` plus what the account's list advertises
+  of `low`, `medium`, `high`: never `off`, whose wire value `minimal` the installed OpenAI provider
+  drops for the plan's GPT-6 slugs, sending no level, so it would be refused on every request),
   and a stored level the model lacks acts as `auto` (`effectiveEffort`). The proxy refuses a body
   whose reasoning fields (`REASONING_FIELDS`: Anthropic `thinking` and `output_config.effort`,
   OpenAI and ChatGPT `reasoning.effort`, the gateway's `providerOptions.anthropic.thinking`,
@@ -184,7 +186,7 @@ one named test.
   round-trips; an entry with a malformed `efforts` is dropped; a file of the previous build
   (`{ id, label }` entries) still reads.
 - **Scenario: settings-largest-model-list-with-efforts-fits** — `maxModels` entries, each with the
-  longest slug, a label of `maxDisplayNameChars` 3-byte characters and all four levels, with the
+  longest slug, a label of `maxDisplayNameChars` 3-byte characters and every advertisable level (three), with the
   longest level stored, are written (under `MAX_SETTINGS_FILE_BYTES`, which adds
   `CHATGPT_EFFORTS_ENTRY_MAX_BYTES` per entry and room for `"reasoningEffort"`) and read back.
 
@@ -244,14 +246,17 @@ one named test.
   `medium`; Grok `auto` only); a level the model lacks maps to nothing, and a body carrying it is
   refused under every level. Gemini's whole `thinkingConfig` is compared (`thinkingLevel` bound to
   the level, no `includeThoughts` the mapping doesn't send). On the `chatgpt` route the levels are
-  `auto` plus the account's advertised ones, `auto` only when none. `reasoning.summary` and
+  `auto` plus the account's advertised ones (never `off`), `auto` only when none. `reasoning.summary` and
   `include` are not compared; the structural check's reason wins; the body answered is the
   structural check's. The captured real requests (today's runtime sends no reasoning field) pass at
   `auto` only.
-- **Scenario: proxy-reasoning-off-maps-to-minimal-on-openai** — on `byok-openai`, gateway OpenAI
-  models and the `chatgpt` route, `off` maps to `reasoning.effort` / `reasoningEffort` `minimal`:
-  accepted under `off` only, and under `off` a body without it is refused; `off` itself as a wire
-  value is refused structurally; no other provider offers `off`.
+- **Scenario: proxy-reasoning-off-maps-to-minimal-on-openai** — on `byok-openai` and gateway
+  OpenAI models (GPT-5, for which the installed provider keeps `minimal`), `off` maps to
+  `reasoning.effort` / `reasoningEffort` `minimal`: accepted under `off` only, and under `off` a
+  body without it is refused; `off` itself as a wire value is refused structurally; no other
+  provider offers `off`. The `chatgpt` route never offers it (the provider drops `minimal` for the
+  plan's GPT-6 slugs and sends no level): even a list naming it gives no `off` level, a stored `off`
+  acts as `auto`, and a body with `minimal` is refused there.
 - **Scenario: proxy-anthropic-adaptive-thinking-within-cap** — on both Anthropic paths each of
   `low`, `medium`, `high` maps to adaptive thinking plus that effort, accepted with the output cap
   at `MAX_OUTPUT_TOKENS` and refused past it (`output-cap`, structural first); `enabled` (a

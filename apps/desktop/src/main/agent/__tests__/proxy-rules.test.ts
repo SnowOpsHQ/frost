@@ -553,10 +553,8 @@ describe('proxy rules', () => {
   });
 
   test('proxy-reasoning-off-maps-to-minimal-on-openai', () => {
-    const openaiModels: [ModelRoute, string][] = [
-      ...ALLOWED_MODEL_IDS.filter(byProvider('openai')).flatMap((modelId) => [['byok-openai', modelId] as [ModelRoute, string], ['gateway', modelId] as [ModelRoute, string]]),
-      ['chatgpt', CHATGPT_MODEL],
-    ];
+    // The key route and the gateway (the installed OpenAI provider keeps `minimal` for GPT-5 there).
+    const openaiModels: [ModelRoute, string][] = ALLOWED_MODEL_IDS.filter(byProvider('openai')).flatMap((modelId) => [['byok-openai', modelId] as [ModelRoute, string], ['gateway', modelId] as [ModelRoute, string]]);
     for (const [route, modelId] of openaiModels) {
       expect(levelsOf(route, modelId), `${route} ${modelId}`).toContain('off');
       expect(reasoningWire(route, modelId, 'off'), `${route} ${modelId}`).toEqual({ openai: { reasoningEffort: 'minimal' } });
@@ -569,6 +567,17 @@ describe('proxy rules', () => {
     // `off` itself is never a wire value: the structural allowlist refuses it.
     expect(composite('byok-openai', 'openai/gpt-5', 'off', { ...OPENAI, reasoning: { effort: 'off' } })).toBe('body-field');
     expect(composite('chatgpt', CHATGPT_MODEL, 'off', { ...CHATGPT, reasoning: { effort: 'none' } })).toBe('body-field');
+    // The ChatGPT route never offers `off` (fix round 1): the provider drops `minimal` for GPT-6
+    // slugs and sends no level, so the request would be refused every time. Even a list naming it
+    // (bypassing `isChatgptModelView`) doesn't make it a level; a stored `off` acts as `auto`, and its
+    // mapping there is nothing.
+    expect(levelsOf('chatgpt', CHATGPT_MODEL)).toEqual(['auto', 'low', 'medium', 'high']);
+    const namingOff: readonly ChatgptModelView[] = [{ id: CHATGPT_MODEL, label: 'x', efforts: ['off', 'low'] }];
+    expect(reasoningLevels(CHATGPT_MODEL, namingOff)).toEqual(['auto', 'low']);
+    expect(effectiveEffort({ modelId: CHATGPT_MODEL, reasoningEffort: 'off' }, namingOff)).toBe('auto');
+    expect(reasoningWire('chatgpt', CHATGPT_MODEL, 'off')).toEqual({});
+    expect(composite('chatgpt', CHATGPT_MODEL, 'off', CHATGPT)).toBe('ok');
+    expect(composite('chatgpt', CHATGPT_MODEL, 'off', { ...CHATGPT, reasoning: { effort: 'minimal', summary: 'detailed' } })).toBe('reasoning');
     expect(composite('gateway', 'openai/gpt-5', 'off', gatewayWith({ openai: { store: false, reasoningEffort: 'off' } }))).toBe('provider-options');
     // No other provider offers `off`; its mapping there is nothing.
     for (const modelId of ALLOWED_MODEL_IDS.filter((id) => modelProvider(id) !== 'openai')) {

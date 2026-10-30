@@ -199,13 +199,15 @@ named test.
 - **Scenario: chatgpt-model-entry-efforts-parsed** (Phase 8 Task 8a) — a model-list entry's
   optional `CHATGPT_ADVERTISED_EFFORTS_FIELD` (`supported_reasoning_levels`, Open question 1's lead
   ruling; items are level strings or objects with an `effort` string) is read leniently: only
-  `CHATGPT_ADVERTISED_EFFORTS` (`off`, `low`, `medium`, `high`) are kept, each once, in
-  `REASONING_EFFORTS` order (so at most 4); `auto`, unknown levels (`minimal`, `xhigh`, `none`),
-  duplicates and malformed items are dropped; none left (or the field absent or malformed) gives no
+  `CHATGPT_ADVERTISED_EFFORTS` (`low`, `medium`, `high`) are kept, each once, in
+  `REASONING_EFFORTS` order (so at most 3); `auto`, `off`, unknown levels (`minimal`, `xhigh`,
+  `none`), duplicates and malformed items are dropped (an entry advertising `off` keeps no `off`:
+  the route never offers it, because the installed OpenAI provider drops `minimal` for the plan's
+  GPT-6 slugs and would send no level, so every such request would be refused); none left (or the field absent or malformed) gives no
   `efforts` key (Auto only) and the entry is still kept. `isChatgptModelView` takes `{ id, label }`,
   or `{ id, label, efforts }` with a non-empty list of distinct advertised levels in that order (a
-  duplicate, an unknown value, `auto`, 5 items, an empty list or another order rejects the entry);
-  the worst case `,"efforts":["off","low","medium","high"]` fits `CHATGPT_EFFORTS_ENTRY_MAX_BYTES`.
+  duplicate, an unknown value, `auto`, `off`, 4 items, an empty list or another order rejects the
+  entry); the worst case `,"efforts":["low","medium","high"]` fits `CHATGPT_EFFORTS_ENTRY_MAX_BYTES`.
 - **Scenario: chatgpt-error-codes** — each documented code maps to its reason; any other code is
   `null`; the refresh-failure codes are exactly the documented six. `error.param` is kept only as a
   field path (`CHATGPT_ERROR_PARAM_PATTERN`: letters, digits, `_`, `.`, `[`, `]`, 128 at most).

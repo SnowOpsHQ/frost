@@ -217,7 +217,7 @@ describe('agent settings', () => {
     const settings = createAgentSettings({ file: FILE, fs: memory.fs });
     await settings.load();
     // `maxModels` entries, each with the longest slug, a label of `maxDisplayNameChars` 3-byte
-    // characters (two of them escaped quotes) and all four levels; the longest level stored.
+    // characters (two of them escaped quotes) and every advertisable level; the longest level stored.
     const slug = (i: number) => `m${String(i).padStart(2, '0')}${'x'.repeat(61)}`;
     const largest = Array.from({ length: CHATGPT_LIMITS.maxModels }, (_, i) => ({
       id: `chatgpt/${slug(i)}` as const,
