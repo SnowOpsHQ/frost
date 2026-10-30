@@ -1,11 +1,12 @@
 # Feature: Content analysis and the snippet editor
 
 Spec: `specs/seo-content.spec.ts` (`VISIBLE_TEXT_LIMITS`, `VISIBLE_TEXT_BLOCKS`, `NGRAM_*`,
-`CONTENT_LIMITS`, `STOP_WORD_LANGUAGES`, the language detection, `FLESCH`, `FLESCH_BANDS`, the
-target query, `SNIPPET_BUDGETS_PX`, `SNIPPET_FONT`, the width rules, the drafts, `CONTENT_TABLES`,
-Copy as HTML), `specs/seo-content.schema.ts` (the `content.*` inputs), `specs/seo-snapshot.spec.ts`
-(`VisibleTextSchema`), `specs/seo-rules.spec.ts` (the catalog) and `specs/seo-sidebar.spec.ts`
-(`SEO_PANELS`). Phase 2.5 Task 3. Each line maps to one named test.
+`CONTENT_LIMITS`, `STOP_WORD_LANGUAGES`, the language detection, `FLESCH`, `FLESCH_BANDS`,
+`READABILITY_FORMULAS` (Phase 8), `SENTENCE_LIMITS` (Phase 8), the target query,
+`SNIPPET_BUDGETS_PX`, `SNIPPET_FONT`, the width rules, the drafts, `CONTENT_TABLES`, Copy as HTML),
+`specs/seo-content.schema.ts` (the `content.*` inputs), `specs/seo-snapshot.spec.ts` (`VisibleTextSchema`),
+`specs/seo-rules.spec.ts` (the catalog) and `specs/seo-sidebar.spec.ts` (`SEO_PANELS`). Phase 2.5
+Task 3. Each line maps to one named test.
 
 ## Decisions
 - **A rail panel of its own, "Content"** (after On-Page), not an On-Page sub-section: On-Page is
@@ -84,9 +85,35 @@ Copy as HTML), `specs/seo-content.schema.ts` (the `content.*` inputs), `specs/se
   has empty tables and `no-text` readability; its snippet widths are still measured.
 
 ## Readability (`content.test.ts`)
-- **Scenario: syllable-heuristic** — the heuristic's counts for a fixed word list.
+Phase 8 Task 1 added Spanish, French and German formulas, and the sentence statistics. Syllable
+counts are heuristic and approximate in every language (see the spec); the scenarios pin what the
+heuristic does, not what a linguist would count. No rule, finding or score depends on any of it.
+- **Scenario: syllable-heuristic** — the English heuristic's counts for a fixed word list.
+- **Scenario: syllable-heuristic-es** — Spanish: diphthongs, hiatus, silent `u` after `q` / `g`, final `y`.
+- **Scenario: syllable-heuristic-fr** — French: mute final `e` / `es`, silent `u`, a new syllable at `é` / `ï` after a vowel.
+- **Scenario: syllable-heuristic-de** — German: diphthongs and doubled vowels are one, other vowel pairs two, a final `e` counts.
 - **Scenario: flesch-reading-ease** — the formula on a known text, its band; `FLESCH_BANDS` edges.
-- **Scenario: readability-not-available** — another language, too few words or no text say why.
+- **Scenario: readability-formulas-per-language** — a known text in each of English, Spanish, French
+  and German: the formula id, the score and the band (INFLESZ for Spanish); the formula table's
+  coefficients and band edges are the published ones.
+- **Scenario: readability-not-available** — another language (Italian: no score, but the sentence
+  statistics are still given), too few words or no text say why.
+
+## Sentences (`content.test.ts`)
+- **Scenario: sentence-stats** — over a fixture: the sentence count, the average (one decimal) and
+  longest length in words, and how many sentences are longer than 25 words.
+- **Scenario: difficult-sentences-long-and-complex** — a sentence over 25 words is difficult
+  (`long`); in a formula language so is one of 12 or more words whose own formula score is below 30
+  (`complex`); short plain sentences and short dense ones (under 12 words) are not.
+- **Scenario: difficult-sentences-capped-and-in-page-order** — the total counts them all; the list
+  holds the first 20 in page order; an excerpt is at most 300 UTF-16 code units and never splits a
+  surrogate pair; its word count is the sentence's.
+- **Scenario: complex-word-share** — the share of words with three or more syllables in a formula
+  language; `null` in any other.
+- **Scenario: sentence-stats-cjk** — Japanese text is counted in segmenter words and sentences, with
+  no score and no complex-word share.
+- **Scenario: sentences-are-information** — however long and dense the sentences, the audit's
+  findings and score are unchanged.
 
 ## Target query (`content.test.ts`)
 - **Scenario: query-terms** — stop-words dropped (unless only stop-words), duplicates dropped, capped.

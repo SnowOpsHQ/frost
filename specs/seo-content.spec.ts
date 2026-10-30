@@ -5,7 +5,7 @@
  * part are in `seo-content.schema.ts`.
  *
  * Clean-room: the thresholds, wording, stop-word lists and budgets are frost's own, written from
- * SEO practice and public sources (the Flesch formula is a published, public-domain formula).
+ * SEO practice and public sources (the readability formulas are published, public formulas, cited where they are defined).
  */
 import type { SeoRuleSpec } from './seo-rules.spec';
 
@@ -94,21 +94,70 @@ export type ContentLanguageSource = (typeof CONTENT_LANGUAGE_SOURCES)[number];
 // ---- Readability ------------------------------------------------------------------------------
 
 /**
- * Flesch reading ease, for English only (the formula and its bands were made for English text):
+ * Readability is scored for the languages frost has a stop-word list for (`READABILITY_LANGUAGES`),
+ * each with the published formula made for it. Every formula has one shape:
  *
- *     206.835 − 1.015 × (words / sentences) − 84.6 × (syllables / words)
+ *     base − wordsPerSentence × (words / sentences) − syllablesPerWord × (syllables / words)
  *
- * Words are the word-like segments above (digits-only words left out); sentences are
- * `Intl.Segmenter` sentence segments (block boundaries end one) holding at least one word.
- * Syllables come from frost's heuristic (`syllables` in seo-core), not a dictionary: per word,
- * words of three letters or fewer are one; else the groups of vowels (`a e i o u y`, a leading `y` not counted), less a silent final `e` (not in
- * `-le` after a consonant), less a final `-es` / `-ed` after a letter that does not voice it (`-es`
- * after anything but `s x z c g ch sh`, `-ed` after anything but `t d`); at least one. The score is
- * shown rounded to one decimal, with the band it falls in (first match, `min` inclusive). Any other
- * language, or fewer than `readabilityMinWords` words, is "not available".
+ * so `READABILITY_FORMULAS` holds the coefficients, a name and the bands of each language, and one
+ * function scores them all. Words are the word-like segments (`Intl.Segmenter`; digits-only words
+ * left out); sentences are `Intl.Segmenter` sentence segments (block boundaries end one) holding at
+ * least one word. The score is shown rounded to one decimal, with the band it falls in (first
+ * match, `min` inclusive). A language outside the list, or fewer than `readabilityMinWords` words,
+ * has no score ("not available"); its sentence statistics (below) are still given.
+ *
+ * Syllables come from frost's heuristic for the language (`syllables` in seo-core), not a
+ * dictionary, so they are **approximate**: the score is a guide and two similar texts can differ by a
+ * point or two. Tests pin the heuristic's behaviour, not the languages' linguistics. Per word (the
+ * letters only; at least one syllable for a word with any):
+ *
+ * - **English:** words of three letters or fewer are one; else the groups of vowels (`a e i o u y`,
+ *   a leading `y` not counted), less a silent final `e` (not in `-le` after a consonant), less a
+ *   final `-es` / `-ed` after a letter that does not voice it (`-es` after anything but
+ *   `s x z c g ch sh`, `-ed` after anything but `t d`).
+ * - **Spanish:** the vowels are `a e i o u á é í ó ú ü`, and `y` only at the end of a word (`muy`,
+ *   `hoy`); the `u` of `qu` / `gu` before `e i é í` is silent. A group of vowels is one syllable
+ *   (a diphthong or triphthong: a weak `i u ü y` beside any vowel) unless two strong vowels meet
+ *   (`a e o`, or an accented `í ú`), which are a hiatus and start a new syllable (`país`, `leer`).
+ * - **French:** the vowels are `a e i o u y` and their accented forms; the `u` of `qu` / `gu` before
+ *   `e i é è ê y` is silent. A group of vowels is one syllable, except that an `é è ë ï ü ö ä â`
+ *   after another vowel starts a new one (`aérer`, `haïr`). A final `e` or `es` after a consonant
+ *   is mute and not counted (`table`, `femme`), unless it is the word's only vowel.
+ * - **German:** the vowels are `a e i o u ä ö ü y`; the `u` of `qu` is silent. A diphthong or a long
+ *   vowel written twice is one syllable (`ei ai ey ay au eu äu oi ie aa ee oo`); any other two vowels
+ *   side by side are two (`Theater`). A final `e` is counted (`Schule`). Compounds are one word.
+ *
+ * Formula sources (published formulas; coefficients as printed in the sources named):
+ *
+ * - English, Flesch 1948: R. Flesch, "A new readability yardstick", Journal of Applied Psychology
+ *   32(3), 221–233; 206.835 − 1.015·ASL − 84.6·ASW.
+ * - Spanish, Szigriszt-Pazos 1993: F. Szigriszt Pazos, "Sistemas predictivos de legibilidad del
+ *   mensaje escrito: fórmula de perspicuidad", doctoral thesis, Universidad Complutense de Madrid;
+ *   206.835 − 62.3·(syllables/words) − (words/sentences). Bands: the INFLESZ scale, I. M.
+ *   Barrio-Cantalejo et al., "Validación de la Escala INFLESZ para evaluar la legibilidad de los
+ *   textos dirigidos a pacientes", Anales del Sistema Sanitario de Navarra 31(2), 2008, 135–152.
+ * - French, Kandel & Moles 1958: L. Kandel and A. Moles, "Application de l'indice de Flesch à la
+ *   langue française", Cahiers Études de Radio-Télévision 19, 253–274; 207 − 1.015·ASL − 0.736 per
+ *   100 words' syllables (73.6·ASW), as printed in T. François and C. Fairon, EMNLP 2012. Bands:
+ *   Flesch's published interpretation table (`FLESCH_SCALE_BANDS`).
+ * - German, Amstad 1978: T. Amstad, "Wie verständlich sind unsere Zeitungen?", doctoral thesis,
+ *   Universität Zürich; 180 − ASL − 58.5·ASW ("Flesch-Amstad"). Bands: Flesch's table
+ *   (`FLESCH_SCALE_BANDS`).
+ *
+ * All four coefficient sets were confirmed against a published source, so every language in the list
+ * has a score. The band names are frost's own wording of each published scale.
  */
 export const FLESCH = { base: 206.835, wordsPerSentence: 1.015, syllablesPerWord: 84.6 } as const;
-export const READABILITY_LANGUAGES = ['en'] as const;
+export const READABILITY_LANGUAGES = ['en', 'es', 'fr', 'de'] as const;
+export type ReadabilityLanguage = (typeof READABILITY_LANGUAGES)[number];
+export const READABILITY_FORMULA_IDS = ['flesch', 'szigriszt-pazos', 'kandel-moles', 'amstad'] as const;
+export type ReadabilityFormulaId = (typeof READABILITY_FORMULA_IDS)[number];
+export interface ReadabilityBand {
+  /** The band holds scores from here up to the next band's `min`. */
+  readonly min: number;
+  readonly label: string;
+}
+/** Flesch's interpretation table, as worded for English text. */
 export const FLESCH_BANDS = [
   { min: 90, label: 'Very easy' },
   { min: 80, label: 'Easy' },
@@ -117,14 +166,76 @@ export const FLESCH_BANDS = [
   { min: 50, label: 'Fairly difficult' },
   { min: 30, label: 'Difficult' },
   { min: Number.NEGATIVE_INFINITY, label: 'Very difficult' },
-] as const;
+] as const satisfies readonly ReadabilityBand[];
+/** The same table (same edges) without the English wording, for the French and German formulas. */
+export const FLESCH_SCALE_BANDS = [
+  { min: 90, label: 'Very easy' },
+  { min: 80, label: 'Easy' },
+  { min: 70, label: 'Fairly easy' },
+  { min: 60, label: 'Standard' },
+  { min: 50, label: 'Fairly difficult' },
+  { min: 30, label: 'Difficult' },
+  { min: Number.NEGATIVE_INFINITY, label: 'Very difficult' },
+] as const satisfies readonly ReadabilityBand[];
+/** The INFLESZ scale (Barrio-Cantalejo 2008) for the Szigriszt-Pazos score: five bands. */
+export const INFLESZ_BANDS = [
+  { min: 80, label: 'Very easy' },
+  { min: 65, label: 'Quite easy' },
+  { min: 55, label: 'Normal' },
+  { min: 40, label: 'Somewhat difficult' },
+  { min: Number.NEGATIVE_INFINITY, label: 'Very difficult' },
+] as const satisfies readonly ReadabilityBand[];
+export interface ReadabilityFormula {
+  readonly id: ReadabilityFormulaId;
+  readonly name: string;
+  readonly base: number;
+  readonly wordsPerSentence: number;
+  readonly syllablesPerWord: number;
+  readonly bands: readonly ReadabilityBand[];
+}
+export const READABILITY_FORMULAS: Readonly<Record<ReadabilityLanguage, ReadabilityFormula>> = {
+  en: { id: 'flesch', name: 'Flesch reading ease', ...FLESCH, bands: FLESCH_BANDS },
+  es: { id: 'szigriszt-pazos', name: 'Szigriszt-Pazos', base: 206.835, wordsPerSentence: 1, syllablesPerWord: 62.3, bands: INFLESZ_BANDS },
+  fr: { id: 'kandel-moles', name: 'Kandel-Moles', base: 207, wordsPerSentence: 1.015, syllablesPerWord: 73.6, bands: FLESCH_SCALE_BANDS },
+  de: { id: 'amstad', name: 'Flesch-Amstad', base: 180, wordsPerSentence: 1, syllablesPerWord: 58.5, bands: FLESCH_SCALE_BANDS },
+};
 export const READABILITY_UNAVAILABLE = ['language', 'too-short', 'no-text'] as const;
 export type ReadabilityUnavailable = (typeof READABILITY_UNAVAILABLE)[number];
 export const READABILITY_UNAVAILABLE_MESSAGES: Readonly<Record<ReadabilityUnavailable, string>> = {
-  language: 'Not available: frost only has a readability formula for English.',
+  language: 'Not available: frost has a readability formula for English, Spanish, French and German.',
   'too-short': 'Not available: too little text to score.',
   'no-text': 'Not available: frost could not read this page’s text.',
 };
+
+// ---- Sentences --------------------------------------------------------------------------------
+
+/**
+ * Sentence statistics, for any language (information, never a rule: no finding and no score depends
+ * on them, as for n-grams). Sentences and words are read as for readability (a sentence counts when
+ * it holds a word with a letter, so CJK text is counted in `Intl.Segmenter` words). The report has
+ * the number of sentences, the average and longest length in words (average to one decimal), how many
+ * are longer than `longSentenceWords`, and, in a `READABILITY_LANGUAGES` language only, the share of
+ * words with at least `complexWordSyllables` syllables (0 to 1, three decimals; `null` in any other
+ * language, which has no syllable heuristic). A text with no word is "not available" (`no-text`).
+ *
+ * A sentence is **difficult** when it has more than `longSentenceWords` words (reason `long`) or,
+ * in a `READABILITY_LANGUAGES` language, at least `difficultSentenceMinWords` words and its own
+ * formula score (the language's formula on that sentence alone, unrounded) is below
+ * `difficultSentenceScore` (reason `complex`; `long` wins when both hold). `difficult.total` counts
+ * them all; `difficult.items` lists the first `maxDifficultSentences` in page order, each the
+ * sentence trimmed and cut to `maxSentenceExcerptChars` UTF-16 code units (never splitting a
+ * surrogate pair) with the sentence's full word count.
+ */
+export const SENTENCE_LIMITS = {
+  longSentenceWords: 25,
+  difficultSentenceMinWords: 12,
+  difficultSentenceScore: 30,
+  maxDifficultSentences: 20,
+  maxSentenceExcerptChars: 300,
+  complexWordSyllables: 3,
+} as const;
+export const DIFFICULT_SENTENCE_REASONS = ['long', 'complex'] as const;
+export type DifficultSentenceReason = (typeof DIFFICULT_SENTENCE_REASONS)[number];
 
 // ---- Target query -----------------------------------------------------------------------------
 

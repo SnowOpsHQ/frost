@@ -4,6 +4,7 @@ import { described } from '../rules/head';
 import { parseUrl } from '../util';
 import { ngramTables, type NgramTables } from './ngrams';
 import { readability, type Readability } from './readability';
+import { sentenceReport, type SentenceReport } from './sentences';
 import { measureSnippet, snippetText, type SnippetCut } from './widths';
 import { contentLanguage, fieldRuns, primaryLanguage, stopWordsFor, wordRuns, type ContentLanguage } from './words';
 
@@ -26,6 +27,8 @@ export interface ContentReport {
   readonly words: number;
   readonly ngrams: NgramTables;
   readonly readability: Readability;
+  /** Sentence statistics and difficult sentences (information; for every language). */
+  readonly sentences: SentenceReport;
   /** The page's title and description cut at the budgets; `null` when it has none. */
   readonly snippet: {
     readonly title: SnippetCut | null;
@@ -77,6 +80,7 @@ export function contentReport(s: PageSnapshot): ContentReport {
     words: runs.reduce((sum, run) => sum + run.length, 0),
     ngrams: ngramTables(runs, fields),
     readability: readability(text, lang),
+    sentences: sentenceReport(text, lang),
     snippet: {
       title: snippetText(title) === '' ? null : measured.title,
       descriptionDesktop: snippetText(description) === '' ? null : measured.descriptionDesktop,
