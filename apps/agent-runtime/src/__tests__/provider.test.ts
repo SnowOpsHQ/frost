@@ -1,13 +1,14 @@
 // Spec: specs/agent-tools.spec.ts (MODEL_REQUESTS, isAllowedModelRequest, routeModelId, ALLOWED_MODEL_IDS,
 // byProvider) · specs/agent-chatgpt.spec.ts (CHATGPT_TOOL_NAMESPACE, CHATGPT_FORBIDDEN_BODY_FIELDS) ·
-// specs/agent-proxy.spec.ts (checkModelRequestBody, filterRequestHeaders, the gateway's `google` part
+// specs/agent-proxy.spec.ts (checkModelRequest: the structural check and the reasoning check at `auto`,
+// today's runtime sending no reasoning field; filterRequestHeaders, the gateway's `google` part
 // options) · Acceptance: specs/agent-runtime.feature.md (Providers), specs/agent-chatgpt.feature.md
 // (Runtime). Proves the installed providers' endpoint paths are the ones main's proxy allows: each
 // model's request is captured by the proxied fetch, never sent.
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RuntimeToMainMessage } from '@app/specs/agent-protocol.schema';
 import { CHATGPT_FORBIDDEN_BODY_FIELDS, CHATGPT_TOOL_NAMESPACE } from '@app/specs/agent-chatgpt.spec';
-import { checkModelRequestBody, filterRequestHeaders, MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
+import { checkModelRequest, filterRequestHeaders, MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
 import { ALLOWED_MODEL_IDS, byProvider, GATEWAY_ONLY_PROVIDERS, isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES, routeModelId, type AgentModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
 import { createModel, ModelNotAllowedError, PLACEHOLDER_API_KEY } from '../provider';
 import { CREDENTIAL_HEADERS, createProxyFetch } from '../proxy-fetch';
@@ -189,7 +190,7 @@ describe('providers', () => {
     // A function call from the history names the namespace its tool is in.
     expect(body.input.find((item) => item.type === 'function_call')).toMatchObject({ call_id: 'call-1', name: 'page_audit', namespace: 'frost' });
     // And main's rules for the route accept it as sent.
-    expect(checkModelRequestBody('chatgpt', CHATGPT_MODEL, text)).toEqual({ ok: true, body: text });
+    expect(checkModelRequest('chatgpt', CHATGPT_MODEL, 'auto', text)).toEqual({ ok: true, body: text });
     // No credential, and the placeholder key nowhere.
     for (const [name, value] of request.headers) {
       expect(CREDENTIAL_HEADERS.has(name.toLowerCase())).toBe(false);
@@ -238,7 +239,7 @@ describe('providers', () => {
     const call = body.input.findIndex((item) => item.type === 'function_call');
     expect(body.input[call]).toMatchObject({ type: 'function_call', call_id: 'call_ns', name: 'page_audit', namespace: 'frost', arguments: '{}' });
     expect(body.input[call + 1]).toMatchObject({ type: 'function_call_output', call_id: 'call_ns' });
-    expect(checkModelRequestBody('chatgpt', CHATGPT_MODEL, text)).toEqual({ ok: true, body: text });
+    expect(checkModelRequest('chatgpt', CHATGPT_MODEL, 'auto', text)).toEqual({ ok: true, body: text });
     expect(second.url).toBe(MODEL_REQUESTS.chatgpt[0]!.url);
     await h.next('chat.error');
   });
@@ -291,7 +292,7 @@ describe('providers', () => {
       // And main's rules for the gateway accept both requests as sent.
       for (const request of [first!, second!]) {
         const sent = request.body as string;
-        expect(checkModelRequestBody('gateway', modelId, sent, filterRequestHeaders('gateway', request.headers)), modelId).toEqual({ ok: true, body: sent });
+        expect(checkModelRequest('gateway', modelId, 'auto', sent, filterRequestHeaders('gateway', request.headers)), modelId).toEqual({ ok: true, body: sent });
       }
       await h.next('chat.error');
     }

@@ -316,8 +316,8 @@ describe('key isolation', () => {
       expect(leaks(mainPorts.flatMap((port) => port.posted))).toEqual([]);
       expect(leaks(runtimePorts.flatMap((port) => port.posted))).toEqual([]);
       expect(leaks([logLines, h.logs, consoleCalls])).toEqual([]);
-      // The stored settings hold the route, the model and the list only.
-      expect(Object.keys(JSON.parse(memory.text(path.join(USER_DATA, 'agent-settings.json')) ?? 'null') as object).sort()).toEqual(['chatgptModels', 'modelId', 'route']);
+      // The stored settings hold the route, the model, the reasoning level and the list only.
+      expect(Object.keys(JSON.parse(memory.text(path.join(USER_DATA, 'agent-settings.json')) ?? 'null') as object).sort()).toEqual(['chatgptModels', 'modelId', 'reasoningEffort', 'route']);
       // The sign-in's own file holds them, encrypted (the fake safe storage's sealed blob).
       expect(leaks([...h.memory.files.values()].map((file) => file.data))).toEqual([]);
 

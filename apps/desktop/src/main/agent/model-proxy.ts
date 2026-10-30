@@ -2,6 +2,7 @@ import { chatgptAnswerFailure, type ChatgptFailure, type ChatgptModelView } from
 import { AGENT_PROTOCOL_LIMITS, type MainToRuntimeMessage } from '@app/specs/agent-protocol.schema';
 import {
   AGENT_PROXY_LIMITS,
+  checkModelRequest,
   checkModelRequestBody,
   filterRequestHeaders,
   filterResponseHeaders,
@@ -12,6 +13,7 @@ import {
   type AgentModelSettings,
   type ProxyRefusal,
 } from '@app/specs/agent-proxy.spec';
+import { effectiveEffort } from '@app/specs/agent-reasoning.spec';
 import { isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES } from '@app/specs/agent-tools.spec';
 import type { ChatgptAuth, ChatgptTokenFailure } from './chatgpt/service';
 import { createStreamScanner, readErrorAnswer } from './chatgpt/responses';
@@ -25,8 +27,11 @@ import type { AgentSettings } from './settings';
 // its providers' requests arrive here as `fetch.request`. Each is checked against the route main's
 // settings name (never one the runtime names): the exact method and canonical URL
 // (`isAllowedModelRequest`), the request headers it keeps (an allowlist; credential headers are
-// dropped), and the body (`checkModelRequestBody`: the configured model, no server-side tool, MCP
-// server, file or stored-state reference; OpenAI `store: false`). Main then adds the real key
+// dropped), and the body (`checkModelRequest`: first the structural `checkModelRequestBody`, the
+// configured model, no server-side tool, MCP server, file or stored-state reference, OpenAI
+// `store: false`; then the reasoning fields, which must be the mapping of the settings' effective
+// reasoning level, Phase 8 Task 8a; then, on the gateway, provider options of the model's own
+// provider only). Main then adds the real key
 // (inside `credentials.withKey`, the only place it is read) and sends the request on an in-memory
 // session with no cookies, never following a redirect, under an idle timeout, a total time cap and
 // a response size cap, at most `maxConcurrentRequests` at once. The response streams back as
@@ -48,6 +53,12 @@ import type { AgentSettings } from './settings';
 // A route switch while a turn runs: a request that fits the route the turn began on (and not the
 // new one) is refused as `model` (no strike), so a request shaped for the user's OpenAI key never
 // goes out with the plan's token, or the reverse, even though both routes share one URL.
+//
+// A reasoning level change while a turn runs (Decision 8): the user's, not the runtime's fault. A
+// body refused `reasoning` that is the mapping of the level the turn began on (same route and
+// model) is sent, uncounted, so the turn finishes on its level; the next turn must carry the new
+// one. A body matching neither is refused `reasoning` and counted. The level compared is always
+// the effective one (`effectiveEffort`: a stored level the model lacks acts as `auto`).
 
 /** What the proxy hands `fetch` (Electron's `session.fetch` on the in-memory `agent-model` partition). */
 export interface ProxyRequestInit {
@@ -338,19 +349,34 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       return;
     }
     const headers = filterRequestHeaders(route, request.headers);
-    const check = checkModelRequestBody(route, modelId, body, headers);
-    if (!check.ok) {
+    // The effective levels (never the raw stored ones): the settings', and the turn's if they changed since.
+    const models = chatgptModels();
+    const effort = effectiveEffort(settings, models);
+    const previousEffort = previous === null ? null : effectiveEffort(previous, models);
+    const check = checkModelRequest(route, modelId, effort, body, headers);
+    // The bytes sent are the object checked (a repeated key in the runtime's text can't differ).
+    let checkedBody: string;
+    if (!check.ok && check.reason === 'reasoning') {
+      // The level changed while the turn runs (same route and model): a body made for the turn's level is sent, uncounted.
+      const priorCheck =
+        previous !== null && previousEffort !== null && previous.route === route && previous.modelId === modelId && previousEffort !== effort ? checkModelRequest(route, modelId, previousEffort, body, headers) : null;
+      if (priorCheck === null || !priorCheck.ok) {
+        refuse(requestId, 'reasoning');
+        return;
+      }
+      checkedBody = priorCheck.body;
+    } else if (!check.ok) {
       // Shaped for the route the turn began on (the user switched since): the model changed, not the runtime's doing.
       if (madeForPrevious(body)) refuse(requestId, 'model', false);
       else refuse(requestId, check.reason);
       return;
-    }
-    // The bytes sent are the object checked (a repeated key in the runtime's text can't differ).
-    const checkedBody = check.body;
-    if (madeForPrevious(body)) {
-      // It fits both: sent under the new route's credential it would go where the user didn't ask.
-      refuse(requestId, 'model', false);
-      return;
+    } else {
+      if (madeForPrevious(body)) {
+        // It fits both: sent under the new route's credential it would go where the user didn't ask.
+        refuse(requestId, 'model', false);
+        return;
+      }
+      checkedBody = check.body;
     }
     const slot = routeCredentialSlot(route);
     if (slot === null) {
@@ -496,8 +522,8 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       paused = null;
     }
   });
-  // A route or model change while a turn runs: what the turn began on (the settings before the
-  // first change) is kept until no turn runs.
+  // A route, model or reasoning level change while a turn runs: what the turn began on (the
+  // settings before the first change) is kept until no turn runs.
   const unsubscribeSettings =
     deps.settings.onChange?.((_next, before) => {
       if (deps.host.activeChats().length > 0 && previous === null) previous = before;

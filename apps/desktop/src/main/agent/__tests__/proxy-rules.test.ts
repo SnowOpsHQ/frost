@@ -1,11 +1,16 @@
 // Spec: specs/agent-proxy.spec.ts (REQUEST_HEADER_ALLOWLIST, filterRequestHeaders, mainRequestHeaders,
 // RESPONSE_HEADER_ALLOWLIST, filterResponseHeaders, sanitizeStatusText, BODY_FIELDS, checkModelRequestBody,
 // GATEWAY_PROVIDER_OPTIONS and the gateway's part options: Gemini's `google` thought signature and
-// `thinkingConfig`, Grok's `xai: {}`) · specs/agent-tools.spec.ts (ALLOWED_MODEL_IDS, byProvider)
-// Acceptance: specs/agent-host.feature.md (Proxy rules)
+// `thinkingConfig`, Grok's `xai: {}`; checkModelRequest, GATEWAY_OPTIONS_KEY, PROXY_REFUSALS 'reasoning')
+// · specs/agent-reasoning.spec.ts (REASONING_EFFORTS, MODEL_REASONING_SUPPORT, reasoningLevels,
+// effectiveEffort, reasoningWire, reasoningFieldsOf, checkReasoning) · specs/agent-chatgpt.spec.ts
+// (CHATGPT_ADVERTISED_EFFORTS) · specs/agent-tools.spec.ts (ALLOWED_MODEL_IDS, byProvider)
+// Acceptance: specs/agent-host.feature.md (Proxy rules, Reasoning) · plan docs/plans/phase-8-ai-complete.md, Task 8a
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { checkModelRequestBody, filterRequestHeaders, filterResponseHeaders, mainRequestHeaders, MAX_OUTPUT_TOKENS, sanitizeStatusText } from '@app/specs/agent-proxy.spec';
-import { ALLOWED_MODEL_IDS, byProvider, MODEL_ROUTES, modelProvider, routeModelId, type ModelId, type ModelProvider, type ModelRoute } from '@app/specs/agent-tools.spec';
+import { CHATGPT_ADVERTISED_EFFORTS, type ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
+import { checkModelRequest, checkModelRequestBody, filterRequestHeaders, filterResponseHeaders, GATEWAY_OPTIONS_KEY, GEMINI_THINKING_LEVELS, mainRequestHeaders, MAX_OUTPUT_TOKENS, PROXY_REFUSALS, sanitizeStatusText } from '@app/specs/agent-proxy.spec';
+import { checkReasoning, effectiveEffort, MODEL_REASONING_SUPPORT, REASONING_EFFORTS, reasoningFieldsOf, reasoningLevels, reasoningWire, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
+import { ALLOWED_MODEL_IDS, byProvider, MODEL_PROVIDERS, MODEL_ROUTES, modelProvider, routeModelId, type AgentModelId, type ModelId, type ModelProvider, type ModelRoute } from '@app/specs/agent-tools.spec';
 import { captureProviderRequest, GEMINI_THOUGHT_SIGNATURE } from './provider-capture';
 
 const ANTHROPIC = { model: 'claude-sonnet-5-5', max_tokens: 1024, messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }], stream: true };
@@ -22,6 +27,51 @@ const reason = (route: ModelRoute, modelId: string, value: object, headers: [str
   const check = checkModelRequestBody(route, modelId, body(value), headers);
   return check.ok ? 'ok' : check.reason;
 };
+
+// ---- Reasoning (Task 8a) -----------------------------------------------------------------------
+
+const CHATGPT_MODEL = 'chatgpt/gpt-6.1-sol' as const;
+const CHATGPT = { model: 'gpt-6.1-sol', input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hi' }] }], store: false, stream: true };
+/** The account's list with every level the route may advertise for the model. */
+const CHATGPT_LISTED: readonly ChatgptModelView[] = [{ id: CHATGPT_MODEL, label: 'GPT-6.1 Sol', efforts: [...CHATGPT_ADVERTISED_EFFORTS] }];
+
+/** The whole request check (structural, then reasoning) under `effort`, as the proxy runs it. */
+const composite = (route: ModelRoute, modelId: string, effort: ReasoningEffort, value: object, headers: [string, string][] = route === 'gateway' ? gatewayHeaders(modelId) : []) => {
+  const check = checkModelRequest(route, modelId, effort, body(value), headers);
+  return check.ok ? 'ok' : check.reason;
+};
+/** The models each route serves (the ChatGPT route: one listed model). */
+const modelsOf = (route: ModelRoute): readonly AgentModelId[] => (route === 'chatgpt' ? [CHATGPT_MODEL] : ALLOWED_MODEL_IDS.filter((id) => routeModelId(route, id) !== null));
+const levelsOf = (route: ModelRoute, modelId: string) => (route === 'chatgpt' ? reasoningLevels(modelId, CHATGPT_LISTED) : MODEL_REASONING_SUPPORT[modelId as ModelId]);
+/** A request with no reasoning field, as today's runtime sends it on `route`. */
+const plainFor = (route: ModelRoute, modelId: string): Record<string, unknown> => {
+  if (route === 'byok-anthropic') return { ...ANTHROPIC, model: routeModelId(route, modelId) };
+  if (route === 'byok-openai') return { ...OPENAI, model: routeModelId(route, modelId) };
+  if (route === 'chatgpt') return CHATGPT;
+  return GATEWAY;
+};
+/**
+ * What each provider writes for an effort (Decision 8's table, written out here from the installed
+ * providers' request builders, not from the spec's mapping): Anthropic adaptive thinking with the
+ * effort; OpenAI and the ChatGPT plan `reasoning.effort` (`off` → `minimal`, a summary beside it);
+ * the gateway the provider options as given (with the runtime's `openai.store: false`).
+ */
+const sentFor = (route: ModelRoute, modelId: string, effort: ReasoningEffort): Record<string, unknown> => {
+  const openai = effort === 'off' ? 'minimal' : effort;
+  if (route === 'byok-anthropic') return { ...plainFor(route, modelId), thinking: { type: 'adaptive' }, output_config: { effort } };
+  if (route === 'byok-openai' || route === 'chatgpt') return { ...plainFor(route, modelId), reasoning: { effort: openai, summary: 'detailed' } };
+  const provider = modelProvider(modelId);
+  const options =
+    provider === 'anthropic'
+      ? { anthropic: { thinking: { type: 'adaptive' }, effort } }
+      : provider === 'openai'
+        ? { openai: { store: false, reasoningEffort: openai } }
+        : provider === 'google'
+          ? { google: { thinkingConfig: { thinkingLevel: effort } } }
+          : {};
+  return { ...GATEWAY, providerOptions: { openai: { store: false }, ...options } };
+};
+const gatewayWith = (providerOptions: object) => ({ ...GATEWAY, providerOptions });
 
 describe('proxy rules', () => {
   test('proxy-request-headers-allowlist', () => {
@@ -268,6 +318,34 @@ describe('proxy rules', () => {
     expect(options({ anthropic: { thinking: { type: 'disabled' } } })).toBe('ok');
     expect(options({ anthropic: { thinking: { type: 'adaptive', display: 'full' } } })).toBe('output-cap');
     expect(options({ anthropic: { thinking: { type: 'enabled', budgetTokens: 0 } } })).toBe('output-cap');
+
+    // Through the whole request check (Task 8a): the shapes above are allowed, but no effort's
+    // mapping produces them on an Anthropic model (OpenAI's `reasoningEffort`, `effort` without
+    // `thinking`, `enabled` or `disabled` thinking), so they are refused `reasoning` under every effort.
+    const sonnet = 'anthropic/claude-sonnet-5-5';
+    const shapedOnly: [object, number][] = [
+      [{ openai: { store: false, reasoningEffort: 'low', reasoningSummary: 'auto', textVerbosity: 'low', parallelToolCalls: false } }, 1024],
+      [{ anthropic: { sendReasoning: true, effort: 'medium', disableParallelToolUse: true } }, 1024],
+      [{ anthropic: { thinking: { type: 'enabled', budgetTokens: MAX_OUTPUT_TOKENS - 1024 } } }, 1024],
+      [{ anthropic: { thinking: { type: 'enabled' } } }, MAX_OUTPUT_TOKENS - 1024],
+      [{ anthropic: { thinking: { type: 'disabled' } } }, 1024],
+    ];
+    for (const [providerOptions, maxOutputTokens] of shapedOnly) {
+      expect(options(providerOptions, maxOutputTokens), JSON.stringify(providerOptions)).toBe('ok');
+      for (const effort of REASONING_EFFORTS) expect(composite('gateway', sonnet, effort, { ...GATEWAY, maxOutputTokens, providerOptions }), `${effort} ${JSON.stringify(providerOptions)}`).toBe('reasoning');
+    }
+    // A shape an effort does map to is accepted under that effort only.
+    for (const effort of ['low', 'medium', 'high'] as const) {
+      const adaptive = gatewayWith({ openai: { store: false }, anthropic: { thinking: { type: 'adaptive' }, effort } });
+      expect(options({ openai: { store: false }, anthropic: { thinking: { type: 'adaptive' }, effort } })).toBe('ok');
+      for (const other of REASONING_EFFORTS) expect(composite('gateway', sonnet, other, adaptive), `${effort} under ${other}`).toBe(other === effort ? 'ok' : 'reasoning');
+    }
+    // OpenAI's `reasoningEffort: 'low'` on an OpenAI model: only under `low`, never under `auto`.
+    for (const modelId of ALLOWED_MODEL_IDS.filter(byProvider('openai'))) {
+      const low = gatewayWith({ openai: { store: false, reasoningEffort: 'low' } });
+      expect(reason('gateway', modelId, low, gatewayHeaders(modelId))).toBe('ok');
+      for (const effort of REASONING_EFFORTS) expect(composite('gateway', modelId, effort, low), `${modelId} ${effort}`).toBe(effort === 'low' ? 'ok' : 'reasoning');
+    }
   });
 
   test('proxy-gemini-thought-signature-accepted', () => {
@@ -379,6 +457,187 @@ describe('proxy rules', () => {
     }
   });
 
+  test('proxy-reasoning-must-match-settings', () => {
+    expect(PROXY_REFUSALS).toContain('reasoning');
+    for (const route of MODEL_ROUTES) {
+      for (const modelId of modelsOf(route)) {
+        const levels = levelsOf(route, modelId);
+        const at = `${route} ${modelId}`;
+        // `auto` sends nothing: a request with no reasoning field passes, and only under `auto`.
+        expect(composite(route, modelId, 'auto', plainFor(route, modelId)), at).toBe('ok');
+        expect(reasoningWire(route, modelId, 'auto'), at).toEqual({});
+        for (const effort of levels.filter((level) => level !== 'auto')) {
+          // The mapping of the settings' effort passes...
+          expect(composite(route, modelId, effort, sentFor(route, modelId, effort)), `${at} ${effort}`).toBe('ok');
+          // ...and under any other effort the settings could hold (`auto` included) it is refused.
+          for (const other of levels.filter((level) => level !== effort)) {
+            expect(composite(route, modelId, other, sentFor(route, modelId, effort)), `${at} ${effort} under ${other}`).toBe('reasoning');
+          }
+          // An effort the settings hold must be sent: nothing in its place is refused too.
+          expect(composite(route, modelId, effort, plainFor(route, modelId)), `${at} nothing under ${effort}`).toBe('reasoning');
+        }
+      }
+    }
+    // Decision 8's table: every model offers `auto` first, its levels in `REASONING_EFFORTS` order.
+    const offered: Readonly<Record<ModelProvider, readonly ReasoningEffort[]>> = {
+      anthropic: ['auto', 'low', 'medium', 'high'],
+      openai: REASONING_EFFORTS,
+      google: ['auto', ...GEMINI_THINKING_LEVELS],
+      spacexai: ['auto'],
+    };
+    for (const modelId of ALLOWED_MODEL_IDS) {
+      const levels = MODEL_REASONING_SUPPORT[modelId];
+      expect(levels[0], modelId).toBe('auto');
+      expect(levels, modelId).toEqual(REASONING_EFFORTS.filter((level) => levels.includes(level)));
+      expect(levels.every((level) => offered[modelProvider(modelId)!].includes(level)), modelId).toBe(true);
+      expect(reasoningLevels(modelId, CHATGPT_LISTED), modelId).toBe(levels);
+    }
+    for (const provider of ['anthropic', 'openai', 'spacexai'] as const) {
+      for (const modelId of ALLOWED_MODEL_IDS.filter(byProvider(provider))) expect(MODEL_REASONING_SUPPORT[modelId], modelId).toEqual(offered[provider]);
+    }
+    // Each Gemini model offers the levels the gateway lists for it: `low` and `high` always; the
+    // flash model has no `medium` (GEMINI_THINKING_LEVELS' doc comment).
+    for (const modelId of GEMINI) expect(MODEL_REASONING_SUPPORT[modelId], modelId).toEqual(expect.arrayContaining(['auto', 'low', 'high']));
+    const withoutMedium = GEMINI.filter((modelId) => !MODEL_REASONING_SUPPORT[modelId].includes('medium'));
+    expect(withoutMedium.length).toBeGreaterThan(0);
+    for (const modelId of withoutMedium) {
+      // A stored `medium` acts as `auto` there (nothing sent), and a body carrying it is refused under every effort.
+      expect(effectiveEffort({ modelId, reasoningEffort: 'medium' }, [])).toBe('auto');
+      expect(reasoningWire('gateway', modelId, 'medium')).toEqual({});
+      const medium = gatewayWith({ openai: { store: false }, google: { thinkingConfig: { thinkingLevel: 'medium' } } });
+      expect(reason('gateway', modelId, medium, gatewayHeaders(modelId))).toBe('ok');
+      for (const effort of REASONING_EFFORTS) expect(composite('gateway', modelId, effort, medium), `${modelId} ${effort}`).toBe('reasoning');
+    }
+    // `thinkingLevel` is bound to the effort, and the whole `thinkingConfig` is compared: no
+    // `includeThoughts` the mapping doesn't send.
+    for (const modelId of GEMINI) {
+      expect(composite('gateway', modelId, 'high', gatewayWith({ openai: { store: false }, google: { thinkingConfig: { thinkingLevel: 'low' } } }))).toBe('reasoning');
+      expect(composite('gateway', modelId, 'high', gatewayWith({ openai: { store: false }, google: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } } }))).toBe('reasoning');
+      expect(composite('gateway', modelId, 'auto', gatewayWith({ openai: { store: false }, google: { thinkingConfig: { includeThoughts: true } } }))).toBe('reasoning');
+    }
+    // Grok offers `auto` only: any reasoning field is refused, whatever the settings hold.
+    for (const modelId of GROK) {
+      for (const effort of REASONING_EFFORTS) {
+        expect(effectiveEffort({ modelId, reasoningEffort: effort }, [])).toBe('auto');
+        expect(composite('gateway', modelId, effort, GATEWAY), `${modelId} ${effort}`).toBe('ok');
+        expect(composite('gateway', modelId, effort, gatewayWith({ openai: { store: false, reasoningEffort: 'high' } })), `${modelId} ${effort}`).toBe('reasoning');
+      }
+    }
+    // The ChatGPT route: `auto` plus the levels the account's list advertises for the model; none → `auto` only.
+    expect(reasoningLevels(CHATGPT_MODEL, [{ id: CHATGPT_MODEL, label: 'x' }])).toEqual(['auto']);
+    expect(reasoningLevels(CHATGPT_MODEL, [{ id: CHATGPT_MODEL, label: 'x', efforts: ['low', 'high'] }])).toEqual(['auto', 'low', 'high']);
+    expect(reasoningLevels(CHATGPT_MODEL, [])).toEqual(['auto']);
+    expect(effectiveEffort({ modelId: CHATGPT_MODEL, reasoningEffort: 'high' }, [{ id: CHATGPT_MODEL, label: 'x' }])).toBe('auto');
+    expect(effectiveEffort({ modelId: CHATGPT_MODEL, reasoningEffort: 'high' }, [{ id: CHATGPT_MODEL, label: 'x', efforts: ['high'] }])).toBe('high');
+    expect(effectiveEffort({ modelId: CHATGPT_MODEL }, CHATGPT_LISTED)).toBe('auto');
+    expect(effectiveEffort({ modelId: CHATGPT_MODEL, reasoningEffort: 'ultra' as 'high' }, CHATGPT_LISTED)).toBe('auto');
+    // `reasoning.summary` and `include` are not reasoning-bearing: not compared.
+    expect(composite('byok-openai', 'openai/gpt-5', 'auto', { ...OPENAI, reasoning: { summary: 'auto' }, include: ['reasoning.encrypted_content'] })).toBe('ok');
+    expect(composite('chatgpt', CHATGPT_MODEL, 'high', { ...CHATGPT, reasoning: { effort: 'high', summary: 'concise' }, include: ['reasoning.encrypted_content'] })).toBe('ok');
+    // The fields each route's body carries, as compared.
+    expect(reasoningFieldsOf('byok-anthropic', sentFor('byok-anthropic', 'anthropic/claude-sonnet-5-5', 'low'))).toEqual({ thinking: { type: 'adaptive' }, 'output_config.effort': 'low' });
+    expect(reasoningFieldsOf('byok-openai', sentFor('byok-openai', 'openai/gpt-5', 'off'))).toEqual({ 'reasoning.effort': 'minimal' });
+    expect(reasoningFieldsOf('gateway', { providerOptions: { openai: { store: false }, google: { thinkingConfig: { thinkingLevel: 'low' } } } })).toEqual({ 'providerOptions.google.thinkingConfig': { thinkingLevel: 'low' } });
+    expect(reasoningFieldsOf('gateway', GATEWAY)).toEqual({});
+    expect(reasoningFieldsOf('gateway', null)).toEqual({});
+    expect(checkReasoning('byok-openai', 'openai/gpt-5', 'auto', 'not json')).toBe(false);
+    // The structural check comes first: its reason wins.
+    expect(composite('byok-openai', 'openai/gpt-5', 'low', { ...sentFor('byok-openai', 'openai/gpt-5', 'low'), store: true })).toBe('store');
+    expect(composite('byok-openai', 'openai/gpt-5', 'low', { ...sentFor('byok-openai', 'openai/gpt-5', 'low'), max_output_tokens: MAX_OUTPUT_TOKENS + 1 })).toBe('output-cap');
+    expect(composite('byok-openai', 'openai/gpt-5-mini', 'low', sentFor('byok-openai', 'openai/gpt-5', 'low'))).toBe('model');
+    // The bytes answered are the structural check's (the parsed object written back out).
+    expect(checkModelRequest('byok-openai', 'openai/gpt-5', 'low', '{"model":"gpt-5","max_output_tokens":64,"input":"Hi","store":false,"reasoning":{"effort":"high"},"reasoning":{"effort":"low"}}', [])).toEqual({
+      ok: true,
+      body: '{"model":"gpt-5","max_output_tokens":64,"input":"Hi","store":false,"reasoning":{"effort":"low"}}',
+    });
+  });
+
+  test('proxy-reasoning-off-maps-to-minimal-on-openai', () => {
+    const openaiModels: [ModelRoute, string][] = [
+      ...ALLOWED_MODEL_IDS.filter(byProvider('openai')).flatMap((modelId) => [['byok-openai', modelId] as [ModelRoute, string], ['gateway', modelId] as [ModelRoute, string]]),
+      ['chatgpt', CHATGPT_MODEL],
+    ];
+    for (const [route, modelId] of openaiModels) {
+      expect(levelsOf(route, modelId), `${route} ${modelId}`).toContain('off');
+      expect(reasoningWire(route, modelId, 'off'), `${route} ${modelId}`).toEqual({ openai: { reasoningEffort: 'minimal' } });
+      const minimal = sentFor(route, modelId, 'off');
+      expect(JSON.stringify(minimal)).toContain('"minimal"');
+      for (const effort of REASONING_EFFORTS) expect(composite(route, modelId, effort, minimal), `${route} ${modelId} ${effort}`).toBe(effort === 'off' ? 'ok' : 'reasoning');
+      // `off` is a level the request carries, not the provider's default: nothing in its place is refused.
+      expect(composite(route, modelId, 'off', plainFor(route, modelId))).toBe('reasoning');
+    }
+    // `off` itself is never a wire value: the structural allowlist refuses it.
+    expect(composite('byok-openai', 'openai/gpt-5', 'off', { ...OPENAI, reasoning: { effort: 'off' } })).toBe('body-field');
+    expect(composite('chatgpt', CHATGPT_MODEL, 'off', { ...CHATGPT, reasoning: { effort: 'none' } })).toBe('body-field');
+    expect(composite('gateway', 'openai/gpt-5', 'off', gatewayWith({ openai: { store: false, reasoningEffort: 'off' } }))).toBe('provider-options');
+    // No other provider offers `off`; its mapping there is nothing.
+    for (const modelId of ALLOWED_MODEL_IDS.filter((id) => modelProvider(id) !== 'openai')) {
+      expect(MODEL_REASONING_SUPPORT[modelId], modelId).not.toContain('off');
+      expect(reasoningWire('gateway', modelId, 'off'), modelId).toEqual({});
+    }
+  });
+
+  test('proxy-anthropic-adaptive-thinking-within-cap', () => {
+    for (const modelId of ALLOWED_MODEL_IDS.filter(byProvider('anthropic'))) {
+      for (const effort of ['low', 'medium', 'high'] as const) {
+        // Adaptive thinking (thinking within the output) plus the effort: the output cap is the only budget.
+        expect(reasoningWire('byok-anthropic', modelId, effort)).toEqual({ anthropic: { thinking: { type: 'adaptive' }, effort } });
+        expect(reasoningWire('gateway', modelId, effort)).toEqual({ anthropic: { thinking: { type: 'adaptive' }, effort } });
+        const byok = sentFor('byok-anthropic', modelId, effort);
+        const gateway = sentFor('gateway', modelId, effort);
+        expect(composite('byok-anthropic', modelId, effort, { ...byok, max_tokens: MAX_OUTPUT_TOKENS }), `${modelId} ${effort}`).toBe('ok');
+        expect(composite('gateway', modelId, effort, { ...gateway, maxOutputTokens: MAX_OUTPUT_TOKENS }), `${modelId} ${effort}`).toBe('ok');
+        // Past the cap: the structural check refuses first.
+        expect(composite('byok-anthropic', modelId, effort, { ...byok, max_tokens: MAX_OUTPUT_TOKENS + 1 })).toBe('output-cap');
+        expect(composite('gateway', modelId, effort, { ...gateway, maxOutputTokens: MAX_OUTPUT_TOKENS + 1 })).toBe('output-cap');
+        // A budget instead (`enabled`), the lowest setting (`between_tools`) or no thinking at all: not the mapping.
+        expect(composite('byok-anthropic', modelId, effort, { ...byok, thinking: { type: 'enabled', budget_tokens: 1024 } })).toBe('reasoning');
+        expect(composite('byok-anthropic', modelId, effort, { ...byok, thinking: { type: 'between_tools' } })).toBe('reasoning');
+        expect(composite('byok-anthropic', modelId, effort, { ...byok, thinking: undefined })).toBe('reasoning');
+        expect(composite('gateway', modelId, effort, gatewayWith({ openai: { store: false }, anthropic: { thinking: { type: 'enabled', budgetTokens: 1024 }, effort } }))).toBe('reasoning');
+        expect(composite('gateway', modelId, effort, gatewayWith({ openai: { store: false }, anthropic: { effort } }))).toBe('reasoning');
+        // Extra thinking keys stay refused by the structural check.
+        expect(composite('byok-anthropic', modelId, effort, { ...byok, thinking: { type: 'adaptive', display: 'summarized' } })).toBe('body-field');
+        expect(composite('gateway', modelId, effort, gatewayWith({ openai: { store: false }, anthropic: { thinking: { type: 'adaptive', display: 'summarized' }, effort } }))).toBe('output-cap');
+      }
+    }
+  });
+
+  test('proxy-gateway-options-follow-the-model', () => {
+    // Each gateway model's request carries its own provider's options and part metadata only, plus
+    // the runtime's `openai: { store: false }` (sent on every turn, a no-op for other providers).
+    const own: Readonly<Record<ModelProvider, { readonly request: object; readonly part: object | null }>> = {
+      anthropic: { request: { anthropic: { sendReasoning: true } }, part: { anthropic: { signature: 's' } } },
+      openai: { request: { openai: { store: false, parallelToolCalls: false } }, part: { openai: { itemId: 'rs_1' } } },
+      google: { request: { google: {} }, part: { google: { thoughtSignature: 's' } } },
+      spacexai: { request: { xai: {} }, part: null },
+    };
+    expect(Object.keys(GATEWAY_OPTIONS_KEY).sort()).toEqual([...MODEL_PROVIDERS].sort());
+    for (const modelId of ALLOWED_MODEL_IDS) {
+      const provider = modelProvider(modelId)!;
+      const withPart = (providerOptions: object) => ({ ...GATEWAY, prompt: [{ role: 'assistant', content: [{ type: 'reasoning', text: 'x', providerOptions }] }] });
+      const onMessage = (providerOptions: object) => ({ ...GATEWAY, prompt: [{ role: 'user', content: [{ type: 'text', text: 'x' }], providerOptions }] });
+      expect(composite('gateway', modelId, 'auto', GATEWAY), modelId).toBe('ok');
+      expect(composite('gateway', modelId, 'auto', { prompt: GATEWAY.prompt, maxOutputTokens: 1024 }), modelId).toBe(provider === 'openai' ? 'store' : 'ok');
+      for (const other of MODEL_PROVIDERS) {
+        const expected = other === provider ? 'ok' : 'provider-options';
+        const { request, part } = own[other];
+        expect(reason('gateway', modelId, gatewayWith({ openai: { store: false }, ...request }), gatewayHeaders(modelId)), `${modelId} ${other} structural`).toBe('ok');
+        expect(composite('gateway', modelId, 'auto', gatewayWith({ ...request, openai: { store: false, ...('openai' in request ? (request.openai as object) : {}) } })), `${modelId} ${other} options`).toBe(expected);
+        if (part !== null) {
+          expect(reason('gateway', modelId, withPart(part), gatewayHeaders(modelId)), `${modelId} ${other} part structural`).toBe('ok');
+          expect(composite('gateway', modelId, 'auto', withPart(part)), `${modelId} ${other} part`).toBe(expected);
+          expect(composite('gateway', modelId, 'auto', onMessage(part)), `${modelId} ${other} message`).toBe(expected);
+        }
+      }
+      // An empty options object under another provider's key is still another provider's key.
+      for (const key of ['anthropic', 'google', 'xai'].filter((key) => key !== GATEWAY_OPTIONS_KEY[provider])) {
+        expect(composite('gateway', modelId, 'auto', gatewayWith({ openai: { store: false }, [key]: {} })), `${modelId} ${key}`).toBe('provider-options');
+        expect(composite('gateway', modelId, 'auto', withPart({ [key]: {} })), `${modelId} part ${key}`).toBe('provider-options');
+      }
+    }
+  });
+
   /** What a turn's second request carries back from the scripted first step, per provider. */
   const SECOND_STEP_MARK: Readonly<Record<ModelProvider, string>> = {
     anthropic: 'c2lnbmF0dXJl',
@@ -456,6 +715,21 @@ describe('proxy rules', () => {
             // The same request is refused under another configured model.
             const other = ALLOWED_MODEL_IDS.find((id) => id !== modelId && routeModelId(route, id) !== null)!;
             expect(checkModelRequestBody(route, other, text, headers)).toEqual({ ok: false, reason: 'model' });
+          }
+        }
+      }
+    });
+
+    test('proxy-reasoning-must-match-settings (real requests: today\'s runtime sends no reasoning, so they pass at auto only)', async () => {
+      const targets: [ModelRoute, AgentModelId][] = MODEL_ROUTES.flatMap((route) => modelsOf(route).map((modelId) => [route, modelId] as [ModelRoute, AgentModelId]));
+      for (const [route, modelId] of targets) {
+        for (const which of [1, 2] as const) {
+          const request = await captureProviderRequest(route, modelId, which);
+          const headers = filterRequestHeaders(route, request.headers);
+          const text = request.body as string;
+          expect(checkModelRequest(route, modelId, 'auto', text, headers), `${route} ${modelId} request ${which}`).toEqual({ ok: true, body: text });
+          for (const effort of levelsOf(route, modelId).filter((level) => level !== 'auto')) {
+            expect(checkModelRequest(route, modelId, effort, text, headers), `${route} ${modelId} ${effort}`).toEqual({ ok: false, reason: 'reasoning' });
           }
         }
       }
