@@ -605,6 +605,11 @@ test('agent-skill-export-import', async () => {
     await openFromSettings('agent-open-skills');
     await row('audit-this-page').getByTestId('agent-skill-duplicate').click();
     await page.getByTestId('agent-skill-field-name').fill('My page audit');
+    // A long unbroken line and many short ones: the review must wrap and scroll them, not overflow.
+    const field = page.getByTestId('agent-skill-field-instructions');
+    const longLine = 'Check-every-heading-and-every-link-on-the-page-'.repeat(30);
+    const manyLines = Array.from({ length: 40 }, (_, n) => `Step ${n + 1}: read it again.`).join('\n');
+    await field.fill(`${await field.inputValue()}\n${longLine}\n${manyLines}`);
     await page.getByTestId('agent-skill-save').click();
     await expect(page.getByTestId('agent-skill-editor')).toHaveCount(0);
     await expect(row('audit-this-page-copy').getByTestId('agent-skill-name')).toHaveText('My page audit');
@@ -641,7 +646,35 @@ test('agent-skill-export-import', async () => {
     await expect(confirm).toBeDisabled();
     await expect(page.getByTestId('agent-skill-import-hint')).toHaveText(SKILL_FILE_WORDS.openEveryFirst);
     await page.getByTestId('agent-skill-import-show').click();
-    expect(await page.getByTestId('agent-skill-import-instructions').textContent()).toBe(written.skills[0]!.instructions);
+    const shown = page.getByTestId('agent-skill-import-instructions');
+    expect(await shown.textContent()).toBe(written.skills[0]!.instructions);
+    expect(written.skills[0]!.instructions).toContain(longLine);
+    // Readable inside the sheet: the long line wraps (nothing wider than the box), the box scrolls
+    // its own overflow, and it paints nothing over what follows it (the Import button).
+    const layout = await shown.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      const sheet = el.closest('[data-testid="agent-skill-import"]')!.getBoundingClientRect();
+      const button = document.querySelector('[data-testid="agent-skill-import-confirm"]')!.getBoundingClientRect();
+      return {
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+        overflowY: style.overflowY,
+        whiteSpace: style.whiteSpace,
+        right: box.right,
+        bottom: box.bottom,
+        sheetRight: sheet.right,
+        buttonTop: button.top,
+      };
+    });
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
+    expect(layout.whiteSpace).toBe('pre-wrap');
+    expect(layout.overflowY).toBe('auto');
+    expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight);
+    expect(layout.right).toBeLessThanOrEqual(layout.sheetRight + 0.5);
+    expect(layout.bottom).toBeLessThanOrEqual(layout.buttonTop);
     await expect(confirm).toBeEnabled();
     await confirm.click();
     await expect(message()).toHaveText(SKILL_IMPORT_MESSAGES.imported);

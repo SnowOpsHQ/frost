@@ -310,7 +310,7 @@ function SkillImportReview({ preview, onDone }: { readonly preview: AgentSkillIm
                   {shown.has(item.index) ? SKILL_FILE_WORDS.hideInstructions : SKILL_FILE_WORDS.showInstructions}
                 </button>
                 {shown.has(item.index) ? (
-                  <pre className="agent-input agent-skill-instructions" data-testid="agent-skill-import-instructions">
+                  <pre className="agent-skill-import-instructions" data-testid="agent-skill-import-instructions" tabIndex={0}>
                     {item.instructions}
                   </pre>
                 ) : null}
