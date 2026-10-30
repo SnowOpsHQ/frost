@@ -84,6 +84,8 @@ export interface AgentService {
   deleteSkill(id: string): Promise<boolean>;
   /** Stores a copy of a skill (to start from a built-in) under a free id. */
   duplicateSkill(id: string): Promise<AgentSaveSkillResult>;
+  /** Switches a skill on or off in the library (Phase 8 Task 5); `false` for an unknown id or a failed write. */
+  setSkillEnabled(id: string, enabled: boolean): Promise<boolean>;
 
   // ---- Task 10 (`agent-mcp.spec.ts`; acceptance `agent-mcp.feature.md`) ----
   /** Adds a server (no `id`) or changes one; environment values go to main's credential store. */

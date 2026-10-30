@@ -2,14 +2,14 @@
 
 Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT_CHAT_RETENTION`,
 `retentionCutoff`, `CHAT_PRUNE_INTERVAL_MS`, `MAX_STORED_CHATS`, `AGENT_CHAT_TABLES`,
-`AGENT_SKILL_TABLES`, `DELETE_ALL_CHATS`, `CHAT_EXPORT_FORMATS`, `CHAT_EXPORT_FORMAT_VERSION`,
+`AGENT_SKILL_TABLES`, `AGENT_SKILL_PREF_TABLES`, `filterSkills`, `SKILL_LIBRARY_WORDS`, `DELETE_ALL_CHATS`, `CHAT_EXPORT_FORMATS`, `CHAT_EXPORT_FORMAT_VERSION`,
 `ChatExportV1`, `chatExportFileName`, `CHAT_EXPORT_RESULTS`, `AgentSkillDraft`, `AgentSkillDetail`,
 `AGENT_SAVE_SKILL_RESULTS`, `SKILL_FIELD_MESSAGES`, `MAX_USER_SKILLS`, `duplicateSkillId`),
 `specs/agent-ipc.schema.ts` (the Task 9 inputs), `specs/agent-session.spec.ts`
-(`AgentState.grantsVersion`, `chatRetention`, `AgentSkillView.builtin`), `specs/skills-schema.ts`
+(`AgentState.grantsVersion`, `chatRetention`, `AgentSkillView.builtin`, `AgentSkillView.enabled`), `specs/skills-schema.ts`
 (`SkillSchema`: every user skill is validated with it). Phase 5 Task 9
 (`docs/plans/phase-5-ai-agent.md`). Code: `packages/db/src/agent-chats*.ts`,
-`packages/db/src/agent-skills*.ts`; `apps/desktop/src/main/agent/` `chat-record.ts`,
+`packages/db/src/agent-skills*.ts`, `packages/db/src/agent-skill-prefs*.ts`; `apps/desktop/src/main/agent/` `chat-record.ts`,
 `chat-history.ts`, `chat-export.ts`, `user-skills.ts`, `dialogs.ts`, `session.ts`, `service.ts`;
 `packages/ipc-contract/src/agent-router.ts`, `agent-service.ts`; renderer `agent-view.ts`,
 `agent-actions.ts`, `components/agent/AgentGrants.tsx`, `AgentSkills.tsx`, `AgentSettings.tsx`,
@@ -135,6 +135,53 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 - **Scenario: skill-editor-through-the-session** — the state's skills (built-in flag) change at
   once; a saved skill runs with its own tools; a deleted one is `unknown-skill`.
 
+## Skills library (Phase 8 Task 5: search and switches)
+Decisions (`docs/plans/phase-8-ai-complete.md`, 4 and 5):
+- **A skill is on unless the user switched it off.** `agent_skill_prefs` (migration
+  `0200_agent_skill_prefs`: `id`, `enabled` 0 or 1, `updated_at`) holds one row per skill the user
+  switched, for built-ins and the user's own alike; no row means on. At most `SKILL_LIMITS.maxSkills`
+  rows; a row for an id no skill has is pruned on load.
+- **A disabled skill stays in the library** (its switch reads "Off") and leaves the composer's
+  picker and the palette. `agent.send` refuses it `unknown-skill` and changes nothing.
+- **A running turn finishes as it began.** The skill was rendered into the user turn and its tools
+  fixed at `chat.start`, so switching it off mid-turn does not stop or narrow that turn; only the
+  next send is refused.
+- **A pref follows its skill.** Deleting a user skill deletes its row. Re-keying a user skill whose
+  id a built-in has taken (`rekeySkill`) moves its row in the same `db.batch`; on load the re-keying
+  finishes before the rows are read or pruned, so the old id's row is moved, never pruned as unknown
+  first. The built-in that took the id starts on.
+- **Search is the renderer's.** `filterSkills` keeps the skills whose name, description or id hold
+  every word of the query, NFKC- and case-folded; the library and the composer's picker use it (no
+  IPC). `agent.setSkillEnabled` takes a well-formed id and a boolean (strict), behind `enforceSender`.
+
+Scenarios:
+- **Scenario: agent-skill-prefs-migrate** (`packages/db/src/__tests__/agent-skill-prefs.test.ts`) —
+  `0200` creates exactly the schema's table; `migrations-are-forward-only` holds with the prefs
+  migrations spread last (the test-only fixture ids moved to `9000_` and `9001_`).
+- **Scenario: agent-skill-prefs-round-trip** — set, read back, switch again (it keeps one row),
+  delete; a deleted or re-keyed skill takes its row along.
+- **Scenario: agent-skill-prefs-capped-and-tamper-safe** — a new id past the cap is refused and an
+  existing one still switches; a malformed id or flag is refused; a tampered row is skipped on read.
+- **Scenario: skill-disable-hides-from-picker-not-library** (`user-skills.test.ts`) — the library
+  lists it off, the registry still resolves it, and a restart keeps it off.
+- **Scenario: skill-delete-removes-its-pref** · **skill-prefs-unknown-ids-pruned-on-load** ·
+  **rekeyed-disabled-skill-stays-disabled** — the row follows delete and re-key (even when the first
+  candidate id is taken); unknown rows are pruned after re-keying.
+- **Scenario: skill-run-refuses-a-disabled-skill** (`session-skills.test.ts`) — `unknown-skill`,
+  nothing changes; switched on again, it runs. **skill-disabled-mid-turn-finishes-the-turn** — the
+  running turn completes with its tools; the next send is refused.
+- **Scenario: agent-set-skill-enabled-bounds** (`agent-router.test.ts`) — strict input, sender-guarded.
+- **Scenario: filter-skills** (`agent-data-view.test.ts`) — folding, every word, order kept, blank keeps all.
+- **Scenario: skills-library-search-and-switches** (`agent-data-components.test.ts`) — the search
+  box filters the list ("No skills match" when none), each row's switch reads On or Off and sends
+  `agent.setSkillEnabled`.
+- **Scenario: skill-palette-lists-enabled-only** (`agent-palette.test.ts`) · **skill-picker-lists-enabled-only-and-searches**
+  (`agent-view.test.ts`, `agent-components.test.ts`) — the palette and the picker leave out a switched-off skill.
+- **Scenario: agent-skill-library-search-and-disable** (`apps/desktop/e2e/agent.e2e.ts`, End to end) —
+  in the skills library, search for a built-in and switch it off: it stays listed with its switch
+  "Off", the composer's picker no longer has it; switch it on and it comes back; after a restart on
+  the same profile a switched-off skill is still off.
+
 ## Wiring (`apps/desktop/src/main/agent/__tests__/service.test.ts`)
 - **Scenario: service-restores-prunes-and-composes-skills** — startup prunes under the default
   retention and restores the rest; the user's skill comes after the built-ins; a daily prune timer,
@@ -160,6 +207,7 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 - **Scenario: skill-editor-new-and-delete** — a new skill's answer; delete asks first.
 
 ## End to end (`apps/desktop/e2e/agent.e2e.ts`)
+- **Scenario: agent-skill-library-search-and-disable** — see Skills library above.
 - **Scenario: agent-grants-revoke** — "Always allow" on an https site; the next navigate there runs
   without asking; the grants page lists it and revokes it; the next navigate asks again.
 - **Scenario: agent-skill-editor-saves** — duplicate a built-in, an invalid placeholder refused

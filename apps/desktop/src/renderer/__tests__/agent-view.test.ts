@@ -16,6 +16,7 @@ import { SKILLS } from './agent-fixtures';
 import {
   approvalTitle,
   pickedSkill,
+  pickerSkills,
   skillDisplayName,
   skillDraftWarnings,
   skillOptionGroups,
@@ -210,7 +211,7 @@ describe('agent panel view model', () => {
   });
 
   test('skill-picker-grouped-by-category', () => {
-    const view = (id: string, category: AgentSkillView['category']): AgentSkillView => ({ id, name: id, description: '', inputs: [], builtin: category !== 'yours', category });
+    const view = (id: string, category: AgentSkillView['category']): AgentSkillView => ({ id, name: id, description: '', inputs: [], builtin: category !== 'yours', category, enabled: true });
     // Listed in main's order, which is not the picker's: the picker regroups.
     const listed = [view('mine-one', 'yours'), view('find-queries', 'search'), view('check-tags', 'technical'), view('audit', 'page'), view('brief', 'content'), view('check-links', 'technical'), view('mine-two', 'yours')];
     const groups = skillOptionGroups(listed);
@@ -226,6 +227,23 @@ describe('agent panel view model', () => {
     const packGroups = skillOptionGroups(pack);
     expect(packGroups.flatMap((group) => group.options.map((option) => option.value)).filter((value) => value !== '')).toHaveLength(BUILTIN_SKILL_IDS.length);
     expect(packGroups.map((group) => group.label)).toEqual([null, ...SKILL_CATEGORIES.map((category) => SKILL_CATEGORY_LABELS[category])]);
+  });
+
+  test('skill-picker-lists-enabled-only-and-searches', () => {
+    const off = { ...SKILLS[1]!, enabled: false };
+    const listed = [SKILLS[0]!, off, SKILLS[2]!];
+    // A switched-off skill is not offered; main's order is kept.
+    expect(pickerSkills(listed, '', '').map((skill) => skill.id)).toEqual(['audit-this-page', 'plain-skill']);
+    expect(skillOptionGroups(pickerSkills(listed, '', '')).flatMap((group) => group.options.map((option) => option.value))).toEqual(['', 'audit-this-page', 'plain-skill']);
+    // The search filters what is offered (name, description or id; folded).
+    expect(pickerSkills(listed, '  PLAIN ', '').map((skill) => skill.id)).toEqual(['plain-skill']);
+    expect(pickerSkills(listed, 'summarise', '').map((skill) => skill.id)).toEqual(['audit-this-page']);
+    expect(pickerSkills(listed, 'nothing like it', '')).toEqual([]);
+    // The skill picked stays offered while the search moves on, but a switched-off one does not.
+    expect(pickerSkills(listed, 'plain', 'audit-this-page').map((skill) => skill.id)).toEqual(['audit-this-page', 'plain-skill']);
+    expect(pickerSkills(listed, '', 'rewrite-title-meta').map((skill) => skill.id)).toEqual(['audit-this-page', 'plain-skill']);
+    // The picked skill is looked up among the offered ones only.
+    expect(pickedSkill(pickerSkills(listed, '', ''), 'rewrite-title-meta')).toBeNull();
   });
 
   test('skill-view-helpers', () => {

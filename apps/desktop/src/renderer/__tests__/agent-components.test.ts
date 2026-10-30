@@ -171,6 +171,42 @@ describe('agent panel components', () => {
     expect(calls.stop).toHaveBeenCalledExactlyOnceWith('c');
   });
 
+  test('skill-picker-lists-enabled-only-and-searches', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    const typeInto = (el: HTMLInputElement | HTMLSelectElement, value: string) =>
+      act(() => {
+        const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value);
+        el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+      });
+    const options = () => [...(byTestId('agent-skill-picker') as HTMLSelectElement).options].map((option) => option.value);
+    const skills = [SKILLS[0]!, { ...SKILLS[1]!, enabled: false }, SKILLS[2]!];
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills }));
+    // The switched-off skill is not offered.
+    expect(options()).toEqual(['', 'audit-this-page', 'plain-skill']);
+    // The search narrows the choices (name, description or id) and says when none match.
+    const search = byTestId('agent-skill-search') as HTMLInputElement;
+    expect(search.placeholder).toBe('Search skills');
+    typeInto(search, 'PLAIN');
+    expect(options()).toEqual(['', 'plain-skill']);
+    typeInto(search, 'zzz');
+    expect(options()).toEqual(['']);
+    expect(byTestId('agent-skill-no-match')!.textContent).toBe('No skills match');
+    typeInto(search, '');
+    expect(byTestId('agent-skill-no-match')).toBeNull();
+    // A skill picked, then switched off in the library: the composer falls back to a typed message.
+    typeInto(byTestId('agent-skill-picker') as HTMLSelectElement, 'audit-this-page');
+    expect(byTestId('agent-skill-description')).not.toBeNull();
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills: [{ ...SKILLS[0]!, enabled: false }, SKILLS[2]!] }));
+    expect(byTestId('agent-skill-description')).toBeNull();
+    expect(byTestId('agent-input')).not.toBeNull();
+    expect(options()).toEqual(['', 'plain-skill']);
+    // Every skill switched off: no picker.
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, skills: SKILLS.map((skill) => ({ ...skill, enabled: false })) }));
+    expect(byTestId('agent-skill-picker')).toBeNull();
+    expect(byTestId('agent-skill-search')).toBeNull();
+  });
+
   test('composer-skill-picker', async () => {
     const inputRef = createRef<HTMLTextAreaElement>();
     const typeInto = (el: HTMLInputElement | HTMLSelectElement, value: string) =>

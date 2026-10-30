@@ -114,6 +114,8 @@ export const STORED_CHAT_TITLE_MAX_CHARS = 200;
 /** The `@app/db` tables of this task (migrations `0031_agent_chats`, `0032_agent_skills`). */
 export const AGENT_CHAT_TABLES = ['agent_chat_entries', 'agent_chat_messages', 'agent_chats'] as const;
 export const AGENT_SKILL_TABLES = ['agent_skills'] as const;
+/** Phase 8 Task 5's table (migration `0200_agent_skill_prefs`): one row per skill the user switched on or off. */
+export const AGENT_SKILL_PREF_TABLES = ['agent_skill_prefs'] as const;
 
 /** "Delete all chats" asks first, in a native message box main shows. Only `confirmIndex` confirms. */
 export const DELETE_ALL_CHATS = {
@@ -355,4 +357,39 @@ export function duplicateSkillId(id: string, taken: (candidate: string) => boole
 /** A copy's name: `<name> (copy)`, the name cut so the whole fits `SKILL_LIMITS.maxNameChars`. */
 export function duplicateSkillName(name: string): string {
   return `${name.slice(0, SKILL_LIMITS.maxNameChars - SKILL_DUPLICATE_NAME_SUFFIX.length).trimEnd()}${SKILL_DUPLICATE_NAME_SUFFIX}`;
+}
+
+// ---- The skills library: search and switches (Phase 8 Task 5; `agent-data.feature.md`, Skills library) ----
+
+/**
+ * What the skills library says around its search box and each skill's switch. A skill with no row
+ * in `agent_skill_prefs` is on; a switched-off skill stays listed (switch "Off"), but is left out of
+ * the composer's picker and the palette, and `agent.send` refuses it (`unknown-skill`).
+ */
+export const SKILL_LIBRARY_WORDS = {
+  searchPlaceholder: 'Search skills',
+  on: 'On',
+  off: 'Off',
+  noMatch: 'No skills match',
+} as const;
+
+/** The text a search compares: NFKC (width and compatibility forms folded), lower-cased, spaces collapsed. */
+function foldSkillText(text: string): string {
+  return text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The skills whose name, description or id contain every word of `query` (NFKC-folded, case-folded;
+ * order kept). A blank query keeps them all. Pure: the library and the composer's picker filter in
+ * the renderer, with no IPC.
+ */
+export function filterSkills<T extends { readonly id: string; readonly name: string; readonly description: string }>(skills: readonly T[], query: string): T[] {
+  const words = foldSkillText(typeof query === 'string' ? query : '')
+    .split(' ')
+    .filter((word) => word !== '');
+  if (words.length === 0) return [...skills];
+  return skills.filter((skill) => {
+    const haystack = foldSkillText(`${skill.name} ${skill.description} ${skill.id}`);
+    return words.every((word) => haystack.includes(word));
+  });
 }

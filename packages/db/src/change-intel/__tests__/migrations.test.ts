@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, test } from 'vitest';
 import { AUDIT_TABLES, CAPTURED_TABLES, CHANGE_INTEL_TABLES, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME } from '@app/specs/capture-db.spec';
+import { AGENT_SKILL_PREFS_MIGRATIONS } from '../../agent-skill-prefs-migrations';
 import { MIGRATIONS, runMigrations } from '../../migrations';
 import { CHANGE_INTEL_MIGRATIONS } from '../migrations';
 import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions } from '../schema';
@@ -48,9 +49,10 @@ describe('change-intelligence migrations', () => {
   test('change-intel-migrations-create-schema', () => {
     const db = new DatabaseSync(':memory:');
     runMigrations(db);
-    // Registered in the session migrations, numbered in Phase 6's range.
+    // Registered in the session migrations, numbered in Phase 6's range, directly before the later
+    // phases' (Phase 8's skill prefs are spread after them, last).
     expect(CHANGE_INTEL_MIGRATIONS.map((m) => m.id)).toEqual(['0040_change_intelligence', '0041_change_intelligence_guards']);
-    expect(MIGRATIONS.slice(-CHANGE_INTEL_MIGRATIONS.length)).toEqual(CHANGE_INTEL_MIGRATIONS);
+    expect(MIGRATIONS.slice(-CHANGE_INTEL_MIGRATIONS.length - AGENT_SKILL_PREFS_MIGRATIONS.length, -AGENT_SKILL_PREFS_MIGRATIONS.length)).toEqual(CHANGE_INTEL_MIGRATIONS);
 
     // Tables, in creation order, column for column with the Drizzle schema.
     expect(named(db, 'table')).toEqual([...CHANGE_INTEL_TABLES]);

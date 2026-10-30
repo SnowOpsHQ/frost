@@ -1,7 +1,7 @@
 // Specs: specs/agent-panel.spec.ts (AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS, AGENT_APPROVAL_BUTTONS),
 // specs/agent-session.spec.ts (AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE),
 // specs/agent-e2e-script.schema.ts (the script format)
-// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL),
+// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL, SKILL_LIBRARY_WORDS),
 // specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
 // Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
 // specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end)
@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
-import { AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
+import { AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_LIBRARY_WORDS, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_USER_MARK } from '@app/specs/skills.spec';
 import { MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
@@ -516,6 +516,55 @@ test('agent-skill-editor-saves', async () => {
   await backToChat();
   const option = page.getByTestId('agent-skill-picker').locator('option[value="audit-this-page-copy"]');
   await expect(option).toHaveText(`My page audit (${SKILL_USER_MARK})`);
+});
+
+test('agent-skill-library-search-and-disable', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-agent-skills-'));
+  const option = () => page.getByTestId('agent-skill-picker').locator('option[value="check-hreflang"]');
+  const row = () => page.locator('[data-testid="agent-skill-item"][data-skill-id="check-hreflang"]');
+  try {
+    await launchWith([{ text: ['unused'] }], '/start', { userDataDir: profile });
+    await expect(option()).toHaveCount(1);
+    // The library lists every built-in; a search narrows it by name, description or id.
+    await openFromSettings('agent-open-skills');
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(BUILTIN_SKILL_IDS.length);
+    const search = page.getByTestId('agent-skills-search');
+    await search.fill('HREFLANG');
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(1);
+    await expect(row()).toBeVisible();
+    // Switched off, it stays in the library with its switch off ...
+    const toggle = row().getByTestId('agent-skill-switch');
+    await expect(toggle).toBeChecked();
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+    await expect(row().locator('label.agent-toggle')).toHaveText(SKILL_LIBRARY_WORDS.off);
+    await search.fill('no such skill anywhere');
+    await expect(page.getByTestId('agent-skills-no-match')).toHaveText(SKILL_LIBRARY_WORDS.noMatch);
+    await search.fill('');
+    await expect(row()).toBeVisible();
+    // ... and is gone from the composer's picker.
+    await backToChat();
+    await expect(page.getByTestId('agent-skill-picker').locator('option')).toHaveCount(BUILTIN_SKILL_IDS.length);
+    await expect(option()).toHaveCount(0);
+
+    // Restarted on the same profile: still off.
+    await closeApp(app);
+    app = undefined;
+    await launchWith([{ text: ['unused'] }], '/start', { userDataDir: profile });
+    await expect(option()).toHaveCount(0);
+    await openFromSettings('agent-open-skills');
+    await expect(row().getByTestId('agent-skill-switch')).not.toBeChecked();
+    // Switched on again, it comes back.
+    await row().getByTestId('agent-skill-switch').click();
+    await expect(row().getByTestId('agent-skill-switch')).toBeChecked();
+    await expect(row().locator('label.agent-toggle')).toHaveText(SKILL_LIBRARY_WORDS.on);
+    await backToChat();
+    await expect(option()).toHaveCount(1);
+  } finally {
+    await closeApp(app);
+    app = undefined;
+    await rm(profile, { recursive: true, force: true });
+  }
 });
 
 test('agent-chat-export-and-restore', async () => {

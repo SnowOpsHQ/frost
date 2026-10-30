@@ -25,6 +25,12 @@ import { isSkillId, SKILL_LIMITS } from '@app/specs/skills.spec';
 // A stored skill whose id a built-in has since taken (the pack grows) is re-keyed on load to a free
 // `duplicateSkillId` by the repository's single-row `rekeySkill`, never dropped (Phase 8 Task 4).
 // Only main's sender-guarded IPC changes them; the runtime has no way to.
+//
+// The skills library's switches (Phase 8 Task 5; `agent_skill_prefs`, acceptance `agent-data.feature.md`,
+// Skills library): a skill is on unless a row says off, a built-in's or the user's. They are read
+// after the re-keying above has finished (a moved skill's row moved with it, in the repository's
+// batch), and rows no skill has are pruned then. A switched-off skill stays in `registry` (the
+// library lists it); the session leaves it out of runs, and the renderer out of the picker and palette.
 
 /** The database side (`SessionStore.agentSkills` from `@app/db`, or `createMemorySkillsStore`). */
 export interface AgentSkillsStore {
@@ -35,8 +41,18 @@ export interface AgentSkillsStore {
   rekeySkill(oldId: string, newId: string, skill: string, at: number): Promise<boolean>;
 }
 
+/** The switches' side of the database (`SessionStore.agentSkillPrefs` from `@app/db`, or `createMemorySkillsStore`). */
+export interface AgentSkillPrefsStore {
+  prefs(): Promise<readonly { readonly id: string; readonly enabled: boolean; readonly updatedAt: number }[]>;
+  setEnabled(id: string, enabled: boolean, at: number): Promise<boolean>;
+  /** Deletes the rows of `ids` (the ones no skill has). */
+  deletePrefs(ids: readonly string[]): Promise<boolean>;
+}
+
 export interface UserSkillsDeps {
   readonly store: AgentSkillsStore;
+  /** The switches (default: none stored, so every skill is on and none can be switched). */
+  readonly prefs?: AgentSkillPrefsStore;
   /** frost's built-in skills (read-only). */
   readonly builtins: SkillRegistry;
   readonly now?: () => number;
@@ -58,6 +74,10 @@ export interface UserSkills {
   remove(id: string): Promise<boolean>;
   /** Stores a copy of any skill (a built-in to start from) under a free id; answers its id. */
   duplicate(id: string): Promise<AgentSaveSkillResult>;
+  /** Whether `id` is switched on (every skill is, unless a row says off). */
+  enabled(id: string): boolean;
+  /** Switches a skill (a built-in or the user's) on or off; `false` for an unknown id or a failed write. */
+  setEnabled(id: string, enabled: boolean): Promise<boolean>;
   /** Called after each change (the session publishes the new skill list). */
   onChange(listener: () => void): () => void;
 }
@@ -116,6 +136,8 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
   let mine = new Map<string, Skill>();
   let own: SkillRegistry = createStaticSkillRegistry([]);
   const registry = composeSkillRegistries(deps.builtins, { list: () => own.list(), get: (id) => own.get(id) });
+  /** The ids switched off. */
+  let off = new Set<string>();
   const listeners = new Set<() => void>();
   let loading: Promise<void> | null = null;
   let queue: Promise<unknown> = Promise.resolve();
@@ -179,6 +201,7 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
 
   const load = () => {
     loading ??= (async () => {
+      let read = false;
       try {
         const rows = (await deps.store.skills()).slice(0, MAX_USER_SKILLS);
         // Every stored id, so a re-key never lands on a row of the library (kept current as skills move).
@@ -209,12 +232,30 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
           next.set(skill.id, skill);
         }
         mine = next;
+        read = true;
       } catch {
         log('agent skills: the stored skills could not be read');
       }
+      // Only now, with every re-key done: the switches are read, and the ones no skill has pruned
+      // (not after a failed read of the skills: their switches would look like strays).
+      await loadPrefs(read);
       rebuild();
     })();
     return loading;
+  };
+
+  const loadPrefs = async (prune: boolean): Promise<void> => {
+    const prefs = deps.prefs;
+    if (prefs === undefined) return;
+    try {
+      const rows = await prefs.prefs();
+      const unknown = rows.filter((row) => !isBuiltin(row.id) && !mine.has(row.id)).map((row) => row.id);
+      off = new Set(rows.filter((row) => !row.enabled && !unknown.includes(row.id)).map((row) => row.id));
+      if (prune && unknown.length > 0 && (await prefs.deletePrefs(unknown)) !== true) log('agent skills: switches of skills that are gone could not be pruned');
+    } catch {
+      off = new Set();
+      log('agent skills: the skill switches could not be read');
+    }
   };
 
   const store = async (skill: Skill): Promise<boolean> => {
@@ -274,6 +315,8 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
           return false;
         }
         mine.delete(id);
+        // The store deleted the skill's switch with it.
+        off.delete(id);
         rebuild();
         return true;
       });
@@ -294,6 +337,28 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
         return { result: 'saved', id: parsed.data.id };
       });
     },
+    enabled: (id) => !off.has(id),
+    setEnabled(id, enabled) {
+      if (!isSkillId(id) || typeof enabled !== 'boolean') return Promise.resolve(false);
+      return serial(async () => {
+        const prefs = deps.prefs;
+        if (prefs === undefined || registry.get(id) === null) return false;
+        let ok = false;
+        try {
+          ok = (await prefs.setEnabled(id, enabled, now())) === true;
+        } catch {
+          ok = false;
+        }
+        if (!ok) {
+          log('agent skills: a skill switch could not be stored');
+          return false;
+        }
+        if (enabled) off.delete(id);
+        else off.add(id);
+        rebuild();
+        return true;
+      });
+    },
     onChange(listener) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
@@ -301,11 +366,14 @@ export function createUserSkills(deps: UserSkillsDeps): UserSkills {
   };
 }
 
-/** A store kept in memory (nothing persists): tests, and an agent built without the database. */
-export function createMemorySkillsStore(): AgentSkillsStore & { rows: Map<string, { id: string; skill: string; createdAt: number; updatedAt: number }> } {
+/** A store kept in memory (nothing persists): tests, and an agent built without the database. It holds the switches too, as the database does. */
+export function createMemorySkillsStore(): AgentSkillsStore &
+  AgentSkillPrefsStore & { rows: Map<string, { id: string; skill: string; createdAt: number; updatedAt: number }>; prefRows: Map<string, { id: string; enabled: boolean; updatedAt: number }> } {
   const rows = new Map<string, { id: string; skill: string; createdAt: number; updatedAt: number }>();
+  const prefRows = new Map<string, { id: string; enabled: boolean; updatedAt: number }>();
   return {
     rows,
+    prefRows,
     skills: async () => [...rows.values()].sort((a, b) => a.createdAt - b.createdAt),
     async saveSkill(id, skill, at) {
       if (!rows.has(id) && rows.size >= MAX_USER_SKILLS) return false;
@@ -314,6 +382,7 @@ export function createMemorySkillsStore(): AgentSkillsStore & { rows: Map<string
     },
     async deleteSkill(id) {
       rows.delete(id);
+      prefRows.delete(id);
       return true;
     },
     async rekeySkill(oldId, newId, skill, at) {
@@ -324,6 +393,23 @@ export function createMemorySkillsStore(): AgentSkillsStore & { rows: Map<string
       for (const [id, existing] of rows) moved.set(id === oldId ? newId : id, id === oldId ? { id: newId, skill, createdAt: row.createdAt, updatedAt: at } : existing);
       rows.clear();
       for (const [id, existing] of moved) rows.set(id, existing);
+      // The skill's switch moves with it, replacing a stale one at the new id.
+      prefRows.delete(newId);
+      const pref = prefRows.get(oldId);
+      if (pref !== undefined) {
+        prefRows.delete(oldId);
+        prefRows.set(newId, { ...pref, id: newId });
+      }
+      return true;
+    },
+    prefs: async () => [...prefRows.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, SKILL_LIMITS.maxSkills),
+    async setEnabled(id, enabled, at) {
+      if (!prefRows.has(id) && prefRows.size >= SKILL_LIMITS.maxSkills) return false;
+      prefRows.set(id, { id, enabled, updatedAt: at });
+      return true;
+    },
+    async deletePrefs(ids) {
+      for (const id of ids) prefRows.delete(id);
       return true;
     },
   };

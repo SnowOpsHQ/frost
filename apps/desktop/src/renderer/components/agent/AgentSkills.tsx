@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { SKILL_DUPLICATE_LABEL, type AgentSaveSkillResult, type AgentSkillSaveMode } from '@app/specs/agent-data.spec';
+import { filterSkills, SKILL_DUPLICATE_LABEL, SKILL_LIBRARY_WORDS, type AgentSaveSkillResult, type AgentSkillSaveMode } from '@app/specs/agent-data.spec';
 import type { AgentSkillView } from '@app/specs/agent-session.spec';
 import { SKILL_INPUT_SLOTS, SKILL_LIMITS } from '@app/specs/skills.spec';
 import { agentActions } from '../../agent-actions';
@@ -24,7 +24,9 @@ import {
 // marked read-only with "Duplicate to edit", the user's own labelled "Your skill" with Edit,
 // Duplicate and Delete; and a form for a skill (name, description, the catalogue's tools with their
 // risk, the instructions with the allowed `{{slot}}` list, the inputs it asks for). Main validates
-// every save with the skill schema and answers inline errors, shown beside their fields.
+// every save with the skill schema and answers inline errors, shown beside their fields. A search box
+// filters the list (Phase 8 Task 5, `filterSkills`: name, description or id) and each skill has a
+// switch: a skill switched off stays listed but is left out of the composer's picker and the palette.
 
 interface Editing {
   readonly mode: AgentSkillSaveMode;
@@ -204,6 +206,7 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
   const [message, setMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState('');
 
   const open = (id: string) => {
     setBusy(true);
@@ -220,6 +223,12 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
       setBusy(false);
       if (answer.result === 'saved') open(answer.id);
       else setMessage(saveSkillMessage(answer));
+    });
+  };
+  const toggle = (id: string, enabled: boolean) => {
+    setMessage(null);
+    void agentActions.setSkillEnabled(id, enabled).then((ok) => {
+      if (!ok) setMessage('That switch could not be saved. Try again.');
     });
   };
   const remove = (id: string) => {
@@ -247,6 +256,8 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
     );
   }
 
+  const shown = filterSkills(skills, query);
+
   return (
     <div className="agent-settings" data-testid="agent-skills">
       <section className="agent-section">
@@ -270,8 +281,22 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
             {message}
           </p>
         ) : null}
+        <input
+          type="search"
+          className="agent-text-field"
+          data-testid="agent-skills-search"
+          aria-label={SKILL_LIBRARY_WORDS.searchPlaceholder}
+          placeholder={SKILL_LIBRARY_WORDS.searchPlaceholder}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        {shown.length === 0 && query.trim() !== '' ? (
+          <p className="agent-section-text agent-muted" role="status" data-testid="agent-skills-no-match">
+            {SKILL_LIBRARY_WORDS.noMatch}
+          </p>
+        ) : null}
         <ul className="agent-list" data-testid="agent-skill-list">
-          {skillListItems(skills).map((item) => (
+          {skillListItems(shown).map((item) => (
             <li key={item.id} className="agent-list-item agent-skill-item" data-testid="agent-skill-item" data-skill-id={item.id} data-builtin={item.builtin}>
               <div className="agent-list-text">
                 <span className="agent-list-title" data-testid="agent-skill-name">
@@ -283,6 +308,10 @@ export function AgentSkills({ skills }: { readonly skills: readonly AgentSkillVi
                 <span className="agent-list-sub">{item.description}</span>
               </div>
               <div className="agent-list-actions">
+                <label className="agent-toggle">
+                  <input type="checkbox" role="switch" data-testid="agent-skill-switch" aria-label={item.name} checked={item.enabled} disabled={busy} onChange={(event) => toggle(item.id, event.target.checked)} />
+                  <span>{item.enabled ? SKILL_LIBRARY_WORDS.on : SKILL_LIBRARY_WORDS.off}</span>
+                </label>
                 {item.builtin ? (
                   <button type="button" className="agent-button" data-testid="agent-skill-duplicate" disabled={busy} onClick={() => duplicate(item.id)}>
                     {SKILL_DUPLICATE_LABEL}

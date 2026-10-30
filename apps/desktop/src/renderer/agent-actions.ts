@@ -53,6 +53,7 @@ export const agentActions = {
       .catch((): AgentSaveSkillResult => ({ result: 'failed' })),
   deleteSkill: (id: string): Promise<boolean> => ipc.agent.deleteSkill.mutate({ id }).catch(() => false),
   duplicateSkill: (id: string): Promise<AgentSaveSkillResult> => ipc.agent.duplicateSkill.mutate({ id }).catch((): AgentSaveSkillResult => ({ result: 'failed' })),
+  setSkillEnabled: (id: string, enabled: boolean): Promise<boolean> => ipc.agent.setSkillEnabled.mutate({ id, enabled }).catch(() => false),
   // Task 10 (`agent-mcp.spec.ts`): MCP servers. A command server's Start opens main's own dialog.
   saveMcpServer: (server: AgentSaveMcpServerRequest): Promise<{ readonly result: McpSaveResult; readonly id?: string }> =>
     ipc.agent.saveMcpServer

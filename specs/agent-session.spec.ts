@@ -333,6 +333,12 @@ export interface AgentSkillView {
   readonly builtin: boolean;
   /** The picker group (Phase 8 Task 4): a built-in's category, or `'yours'` for the user's own skills. */
   readonly category: SkillCategory | 'yours';
+  /**
+   * Whether the user has it switched on (Phase 8 Task 5; absent from `agent_skill_prefs` = on). A
+   * switched-off skill is still listed here (the library shows it), but the picker and the palette
+   * leave it out and `agent.send` refuses it (`unknown-skill`).
+   */
+  readonly enabled: boolean;
 }
 
 /**

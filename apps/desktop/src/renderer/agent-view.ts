@@ -75,6 +75,7 @@ import {
   CHAT_RETENTION_LABELS,
   CHAT_RETENTIONS,
   DEFAULT_CHAT_RETENTION,
+  filterSkills,
   SKILL_BUILTIN_LABEL,
   SKILL_USER_LABEL,
   type AgentDeleteAllChatsResult,
@@ -644,6 +645,22 @@ function cutText(text: string, max: number): string {
   return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
 }
 
+/** The skills the user has switched on (Phase 8 Task 5): all the picker, the palette and a run may use, in main's order. */
+export function enabledSkills<T extends Pick<AgentSkillView, 'enabled'>>(skills: readonly T[]): T[] {
+  return skills.filter((skill) => skill.enabled);
+}
+
+/**
+ * The skills the composer's picker offers: the enabled ones that match the search (`filterSkills`),
+ * in main's order. The skill already picked stays offered while the search moves on, so the picker
+ * keeps showing it; a switched-off one never does.
+ */
+export function pickerSkills(skills: readonly AgentSkillView[], query: string, pickedId: string): AgentSkillView[] {
+  const enabled = enabledSkills(skills);
+  const matching = new Set(filterSkills(enabled, query).map((skill) => skill.id));
+  return enabled.filter((skill) => matching.has(skill.id) || skill.id === pickedId);
+}
+
 /** The skill picked (`''`: none), or `null` when main no longer lists it. */
 export function pickedSkill(skills: readonly AgentSkillView[], id: string): AgentSkillView | null {
   return id === '' ? null : (skills.find((skill) => skill.id === id) ?? null);
@@ -714,10 +731,12 @@ export interface SkillListItem {
   readonly description: string;
   readonly builtin: boolean;
   readonly badge: string;
+  /** The switch's position (Phase 8 Task 5). */
+  readonly enabled: boolean;
 }
 
 export function skillListItems(skills: readonly AgentSkillView[]): readonly SkillListItem[] {
-  return skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, builtin: skill.builtin, badge: skill.builtin ? SKILL_BUILTIN_LABEL : SKILL_USER_LABEL }));
+  return skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, builtin: skill.builtin, badge: skill.builtin ? SKILL_BUILTIN_LABEL : SKILL_USER_LABEL, enabled: skill.enabled }));
 }
 
 /** The editor's working copy (`AgentSkillDraft`, mutable by replacing it). */

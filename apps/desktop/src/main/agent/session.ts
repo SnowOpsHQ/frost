@@ -116,7 +116,7 @@ export interface AgentSessionDeps {
   /** Where chats are stored (Task 9); default: nowhere (chats live in memory, retention reads the default). */
   readonly history?: ChatHistory;
   /** The skills editor (Task 9); default: none (the built-ins only, read-only). */
-  readonly userSkills?: Pick<UserSkills, 'detail' | 'save' | 'remove' | 'duplicate' | 'onChange' | 'isBuiltin'>;
+  readonly userSkills?: Pick<UserSkills, 'detail' | 'save' | 'remove' | 'duplicate' | 'onChange' | 'isBuiltin' | 'enabled' | 'setEnabled'>;
   /** Asks the user, in main's own dialog, before every chat is deleted; default: never confirmed. */
   readonly confirmDeleteAllChats?: () => Promise<boolean>;
   /** Asks, in main's own dialog, before a retention change deletes `chats` stored chats; default: never confirmed. */
@@ -397,7 +397,7 @@ function approvalView(request: ApprovalRequestView): AgentApprovalView {
 }
 
 /** A skill as the panel's picker shows it (field by field: never its template). */
-function skillView(skill: Skill, builtin: boolean): AgentSkillView {
+function skillView(skill: Skill, builtin: boolean, enabled: boolean): AgentSkillView {
   return {
     id: skill.id,
     name: skill.name,
@@ -405,6 +405,7 @@ function skillView(skill: Skill, builtin: boolean): AgentSkillView {
     inputs: (skill.inputs ?? []).map((input) => ({ slot: input.slot, label: input.label, placeholder: input.placeholder ?? null })),
     builtin,
     category: builtin && Object.hasOwn(BUILTIN_SKILL_CATEGORY, skill.id) ? BUILTIN_SKILL_CATEGORY[skill.id as BuiltinSkillId] : 'yours',
+    enabled,
   };
 }
 
@@ -510,6 +511,14 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     }
   };
 
+  /** Whether the user has `id` switched on (Phase 8 Task 5; every skill is, without the library's store). */
+  const isSkillEnabled = (id: string): boolean => {
+    try {
+      return userSkills === null || userSkills.enabled(id) !== false;
+    } catch {
+      return true;
+    }
+  };
   /** The registry's skills (a registry that throws lists none). */
   const listSkills = (): readonly Skill[] => {
     try {
@@ -641,7 +650,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         isolation: isolationView(deps.host.lockdown()),
       },
       // Without the `agent.skills` entitlement the panel offers none.
-      skills: skillsEntitled() ? listSkills().map((skill) => skillView(skill, isBuiltinSkill(skill.id))) : [],
+      skills: skillsEntitled() ? listSkills().map((skill) => skillView(skill, isBuiltinSkill(skill.id), isSkillEnabled(skill.id))) : [],
       chats: summaries,
       active:
         active === undefined
@@ -1099,7 +1108,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     if (typeof request !== 'object' || request === null || !isSkillId(request.skillId)) return 'invalid';
     if (Object.keys(request).some((key) => key !== 'skillId' && !(SKILL_INPUT_SLOTS as readonly string[]).includes(key))) return 'invalid';
     const skill = findSkill(request.skillId);
-    if (skill === null) return 'unknown-skill';
+    // A switched-off skill is as good as gone for a new run (one already running finishes as it began).
+    if (skill === null || !isSkillEnabled(skill.id)) return 'unknown-skill';
     const inputs = skillInputs(skill, request);
     return inputs === null ? 'invalid' : { skill, inputs };
   };
@@ -1633,6 +1643,14 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         return await userSkills.duplicate(id);
       } catch {
         return { result: 'failed' };
+      }
+    },
+    async setSkillEnabled(id, enabled) {
+      if (userSkills === null) return false;
+      try {
+        return (await userSkills.setEnabled(id, enabled)) === true;
+      } catch {
+        return false;
       }
     },
 

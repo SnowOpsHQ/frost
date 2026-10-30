@@ -12,6 +12,7 @@ import {
   AgentSaveSkillInputSchema,
   AgentSetChatRetentionInputSchema,
   AgentSetReadToolsAllowedInputSchema,
+  AgentSetSkillEnabledInputSchema,
   AgentSkillIdInputSchema,
   AgentChatgptSignInInputSchema,
 } from '@app/specs/agent-ipc.schema';
@@ -234,6 +235,11 @@ export const agentRouter = router({
     .use(requireAgent)
     .input(AgentSkillIdInputSchema)
     .mutation(async ({ ctx, input }): Promise<AgentSaveSkillResult> => checkedSaveSkillResult(await ctx.agent.duplicateSkill(input.id))),
+  setSkillEnabled: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentSetSkillEnabledInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.agent.setSkillEnabled(input.id, input.enabled)) === true),
 
   // ---- Task 10 (`agent-mcp.spec.ts`; acceptance `agent-mcp.feature.md`, Router) ----
   saveMcpServer: publicProcedure

@@ -17,7 +17,7 @@ import { resolveAgentPorts, type AgentPorts } from './ports';
 import { createAgent, type AgentElectron } from './index';
 import { createAgentSession, type AgentSession } from './session';
 import { createBrowserPageToolRunner, type PageToolsBrowser, type PageToolsWebContents } from './tools';
-import { createMemorySkillsStore, createUserSkills, type AgentSkillsStore } from './user-skills';
+import { createMemorySkillsStore, createUserSkills, type AgentSkillPrefsStore, type AgentSkillsStore } from './user-skills';
 
 // The agent's main-side composition for the IPC (Phase 5 Task 6a; acceptance
 // `specs/agent-session.feature.md`, Wiring): `createAgent` (host, key store, proxy, settings,
@@ -66,9 +66,9 @@ export interface AgentServiceDeps {
   readonly webContents: PageToolsWebContents;
   /**
    * The browser-session database: `agentGrants` (the standing grants' table), and Task 9's
-   * `agentChats` and `agentSkills` (each in memory when absent: nothing persists).
+   * `agentChats`, `agentSkills` and `agentSkillPrefs` (each in memory when absent: nothing persists).
    */
-  readonly sessionStore: { readonly agentGrants: AgentGrantsStore; readonly agentChats?: AgentChatsStore; readonly agentSkills?: AgentSkillsStore; readonly agentMcp?: McpServersStore };
+  readonly sessionStore: { readonly agentGrants: AgentGrantsStore; readonly agentChats?: AgentChatsStore; readonly agentSkills?: AgentSkillsStore; readonly agentSkillPrefs?: AgentSkillPrefsStore; readonly agentMcp?: McpServersStore };
   /** Main's build directory (`__dirname`): the runtime's bundle is beside main's. */
   readonly buildDir: string;
   /** frost's own skills (default: the built-ins); the user's are composed after them (Task 9). */
@@ -111,7 +111,9 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
   const dialogs = deps.dialogs ?? NO_DIALOGS;
   const writeExport = deps.writeExport ?? ((file: string, text: string) => fs.writeFile(file, text, { encoding: 'utf8', mode: 0o600 }));
   const history = createChatHistory({ store: deps.sessionStore.agentChats ?? createMemoryChatsStore(), now, log });
-  const userSkills = createUserSkills({ store: deps.sessionStore.agentSkills ?? createMemorySkillsStore(), builtins: deps.skills ?? createBuiltinSkillRegistry(), now, log });
+  // Each in memory when the database is absent (nothing persists); one memory store holds both, so a re-key moves the switch.
+  const memorySkills = createMemorySkillsStore();
+  const userSkills = createUserSkills({ store: deps.sessionStore.agentSkills ?? memorySkills, prefs: deps.sessionStore.agentSkillPrefs ?? memorySkills, builtins: deps.skills ?? createBuiltinSkillRegistry(), now, log });
   /** An export: main's save dialog first; the text is built and written only to the file chosen there. */
   const exportChat = async (chat: ChatSnapshot, format: ChatExportFormat): Promise<ChatExportResult> => {
     let file: string | null = null;

@@ -1,6 +1,7 @@
 // Spec: specs/agent-data.spec.ts (AgentSkillDraft, AGENT_SAVE_SKILL_RESULTS, SKILL_FIELD_MESSAGES,
-// MAX_USER_SKILLS, duplicateSkillId, duplicateSkillName) · specs/skills-schema.ts (SkillSchema)
-// Acceptance: specs/agent-data.feature.md (Skills editor), specs/skills.feature.md (Re-key)
+// MAX_USER_SKILLS, duplicateSkillId, duplicateSkillName) · specs/skills-schema.ts (SkillSchema) ·
+// specs/agent-session.spec.ts (AgentSkillView.enabled)
+// Acceptance: specs/agent-data.feature.md (Skills editor, Skills library), specs/skills.feature.md (Re-key)
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { auditThisPageSkill, createBuiltinSkillRegistry } from '@app/ai-skills/skills';
 import { duplicateSkillId, duplicateSkillName, MAX_USER_SKILLS, SKILL_FIELD_MESSAGES, SKILL_NAME_TAKEN_MESSAGE, type AgentSkillDraft } from '@app/specs/agent-data.spec';
@@ -19,7 +20,7 @@ const DRAFT: AgentSkillDraft = {
   inputs: [{ slot: 'userNote', label: 'Focus on', placeholder: '' }],
 };
 
-const make = (store = createMemorySkillsStore()) => ({ store, skills: createUserSkills({ store, builtins: createBuiltinSkillRegistry(), now: () => 100 }) });
+const make = (store = createMemorySkillsStore()) => ({ store, skills: createUserSkills({ store, prefs: store, builtins: createBuiltinSkillRegistry(), now: () => 100 }) });
 
 let sessions: Awaited<ReturnType<typeof setupSession>>[] = [];
 afterEach(() => {
@@ -285,5 +286,144 @@ describe('user skills', () => {
     expect(active.messages[0]).toMatchObject({ kind: 'user', skill: { id: 'content-brief', name: 'My brief' } });
     expect(s.session.getState().skills.find((skill) => skill.id === 'content-brief')).toMatchObject({ name: 'Write a content brief', builtin: true, category: 'content' });
     expect(s.session.getState().skills.find((skill) => skill.id === 'content-brief-copy')).toMatchObject({ name: 'My brief', builtin: false, category: 'yours' });
+  });
+
+  // ---- Skills library: switches (Phase 8 Task 5) ---------------------------------------------
+
+  test('skill-disable-hides-from-picker-not-library', async () => {
+    const { store, skills } = make();
+    await skills.load();
+    await skills.save(DRAFT, 'create');
+    expect(skills.enabled('audit-this-page')).toBe(true);
+    const s = await setupSession({ skills: skills.registry, data: { userSkills: skills }, steps: [{ text: ['Fine.'] }] });
+    sessions.push(s);
+    const version = s.session.getState().version;
+    expect(await s.session.setSkillEnabled('audit-this-page', false)).toBe(true);
+    expect(await s.session.setSkillEnabled(DRAFT.id, false)).toBe(true);
+    // Still in the library (the state lists it, switched off) and still resolvable; the state changed at once.
+    expect(s.session.getState().version).toBeGreaterThan(version);
+    expect(s.session.getState().skills.map((skill) => [skill.id, skill.enabled])).toEqual([...BUILTIN_SKILL_IDS.map((id) => [id, id !== 'audit-this-page']), [DRAFT.id, false]]);
+    expect(skills.registry.get('audit-this-page')).not.toBeNull();
+    expect(skills.detail('audit-this-page')).toMatchObject({ builtin: true });
+    expect(skills.enabled('audit-this-page')).toBe(false);
+    expect(store.prefRows.get('audit-this-page')).toEqual({ id: 'audit-this-page', enabled: false, updatedAt: 100 });
+    // A restart keeps it off, and switching on brings it back.
+    const again = make(store).skills;
+    await again.load();
+    expect([again.enabled('audit-this-page'), again.enabled(DRAFT.id), again.enabled('rewrite-title-meta')]).toEqual([false, false, true]);
+    expect(await again.setEnabled('audit-this-page', true)).toBe(true);
+    expect(again.enabled('audit-this-page')).toBe(true);
+    expect(store.prefRows.get('audit-this-page')).toMatchObject({ enabled: true });
+    // An unknown or malformed id, or a failed write, changes nothing.
+    expect(await again.setEnabled('no-such-skill', false)).toBe(false);
+    expect(await again.setEnabled('Not An Id', false)).toBe(false);
+    expect(await again.setEnabled('audit-this-page', 'no' as unknown as boolean)).toBe(false);
+    store.setEnabled = async () => {
+      throw new Error('disk');
+    };
+    expect(await again.setEnabled('check-hreflang', false)).toBe(false);
+    expect(again.enabled('check-hreflang')).toBe(true);
+    // Without a prefs store (an agent built without the database) nothing can be switched.
+    const bare = createUserSkills({ store: createMemorySkillsStore(), builtins: createBuiltinSkillRegistry() });
+    await bare.load();
+    expect(await bare.setEnabled('audit-this-page', false)).toBe(false);
+    expect(bare.enabled('audit-this-page')).toBe(true);
+  });
+
+  test('skill-delete-removes-its-pref', async () => {
+    const { store, skills } = make();
+    await skills.load();
+    await skills.save(DRAFT, 'create');
+    await skills.setEnabled(DRAFT.id, false);
+    await skills.setEnabled('audit-this-page', false);
+    expect([...store.prefRows.keys()].sort()).toEqual(['audit-this-page', DRAFT.id]);
+    expect(await skills.remove(DRAFT.id)).toBe(true);
+    expect([...store.prefRows.keys()]).toEqual(['audit-this-page']);
+    // A skill created again under that id starts on.
+    expect(skills.enabled(DRAFT.id)).toBe(true);
+    await skills.save(DRAFT, 'create');
+    expect(skills.enabled(DRAFT.id)).toBe(true);
+    const again = make(store).skills;
+    await again.load();
+    expect(again.enabled(DRAFT.id)).toBe(true);
+  });
+
+  test('skill-prefs-unknown-ids-pruned-on-load', async () => {
+    const store = createMemorySkillsStore();
+    put(store, 'my-skill', 'Mine', 1);
+    for (const id of ['ghost-skill', 'audit-this-page', 'my-skill', 'another-ghost']) store.prefRows.set(id, { id, enabled: false, updatedAt: 5 });
+    const { skills } = make(store);
+    await skills.load();
+    // The rows no skill has are gone; the others stay and apply.
+    expect([...store.prefRows.keys()].sort()).toEqual(['audit-this-page', 'my-skill']);
+    expect([skills.enabled('audit-this-page'), skills.enabled('my-skill'), skills.enabled('ghost-skill')]).toEqual([false, false, true]);
+    // A failing read or prune leaves every skill on (and load still finishes).
+    const broken = createMemorySkillsStore();
+    broken.prefs = async () => {
+      throw new Error('disk');
+    };
+    const logs: string[] = [];
+    const quiet = createUserSkills({ store: broken, prefs: broken, builtins: createBuiltinSkillRegistry(), log: (line) => logs.push(line) });
+    await quiet.load();
+    expect(quiet.enabled('audit-this-page')).toBe(true);
+    expect(logs.length).toBeGreaterThan(0);
+    // The stored skills could not be read: their switches are not mistaken for strays and pruned.
+    const unread = createMemorySkillsStore();
+    put(unread, 'my-skill', 'Mine', 1);
+    unread.prefRows.set('my-skill', { id: 'my-skill', enabled: false, updatedAt: 5 });
+    unread.skills = async () => {
+      throw new Error('disk');
+    };
+    const blind = createUserSkills({ store: unread, prefs: unread, builtins: createBuiltinSkillRegistry(), log: () => undefined });
+    await blind.load();
+    expect([...unread.prefRows.keys()]).toEqual(['my-skill']);
+  });
+
+  test('rekeyed-disabled-skill-stays-disabled', async () => {
+    const store = createMemorySkillsStore();
+    put(store, 'content-brief', 'My brief', 1);
+    put(store, 'unrelated-skill', 'Unrelated', 2);
+    store.prefRows.set('content-brief', { id: 'content-brief', enabled: false, updatedAt: 5 });
+    // The order of the store's calls: the re-key finishes before the rows are read, and no row is pruned.
+    const calls: string[] = [];
+    for (const method of ['rekeySkill', 'prefs', 'deletePrefs'] as const) {
+      const original = (store[method] as (...args: never[]) => Promise<unknown>).bind(store);
+      (store as unknown as Record<string, unknown>)[method] = async (...args: never[]) => {
+        calls.push(method);
+        return original(...args);
+      };
+    }
+    const { skills } = make(store);
+    await skills.load();
+    expect(calls).toEqual(['rekeySkill', 'prefs']);
+    // The row moved with the skill: the user's skill is still off under its new id, the built-in that took the id is on.
+    expect([...store.prefRows.keys()]).toEqual(['content-brief-copy']);
+    expect(skills.enabled('content-brief-copy')).toBe(false);
+    expect(skills.enabled('content-brief')).toBe(true);
+    expect(skills.enabled('unrelated-skill')).toBe(true);
+    // After a restart it is still off, under its new id, and nothing is re-keyed again.
+    calls.length = 0;
+    const again = make(store).skills;
+    await again.load();
+    expect(calls).toEqual(['prefs']);
+    expect([again.enabled('content-brief-copy'), again.enabled('content-brief')]).toEqual([false, true]);
+  });
+
+  test('rekeyed-disabled-skill-follows-the-next-candidate', async () => {
+    // The first candidate is taken (the store answers `false`): the loader tries the next one, and the row moves there.
+    const store = createMemorySkillsStore();
+    put(store, 'content-brief', 'My brief', 1);
+    store.prefRows.set('content-brief', { id: 'content-brief', enabled: false, updatedAt: 5 });
+    const rekey = store.rekeySkill.bind(store);
+    store.rekeySkill = async (oldId, newId, skill, at) => (newId === 'content-brief-copy' ? false : rekey(oldId, newId, skill, at));
+    const { skills } = make(store);
+    await skills.load();
+    expect([...store.rows.keys()]).toEqual(['content-brief-copy-2']);
+    expect([...store.prefRows.keys()]).toEqual(['content-brief-copy-2']);
+    expect(skills.enabled('content-brief-copy-2')).toBe(false);
+    expect(skills.enabled('content-brief')).toBe(true);
+    const again = make(store).skills;
+    await again.load();
+    expect(again.enabled('content-brief-copy-2')).toBe(false);
   });
 });

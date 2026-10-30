@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Spec: specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, AGENT_GRANTS_REVOKE_ALL_CONFIRM, CHAT_RETENTION_HINTS,
 // CHAT_EXPORT_MESSAGES, SKILL_BUILTIN_LABEL, SKILL_USER_LABEL, SKILL_DUPLICATE_LABEL, AGENT_SAVE_SKILL_MESSAGES)
-// Acceptance: specs/agent-data.feature.md (Panel)
+// Acceptance: specs/agent-data.feature.md (Panel, Skills library)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -14,6 +14,7 @@ import {
   CHAT_RETENTION_HINTS,
   SKILL_BUILTIN_LABEL,
   SKILL_DUPLICATE_LABEL,
+  SKILL_LIBRARY_WORDS,
   SKILL_USER_LABEL,
 } from '@app/specs/agent-data.spec';
 import { setup, SKILLS } from './agent-fixtures';
@@ -41,6 +42,7 @@ const calls = vi.hoisted(() => ({
   saveSkill: vi.fn(async (..._args: unknown[]) => ({ result: 'saved', id: 'x' }) as unknown),
   deleteSkill: vi.fn(async (..._args: unknown[]) => true),
   duplicateSkill: vi.fn(async (..._args: unknown[]) => ({ result: 'saved', id: 'audit-this-page-copy' }) as unknown),
+  setSkillEnabled: vi.fn(async (..._args: unknown[]) => true),
   selectChat: vi.fn(async () => true),
   deleteChat: vi.fn(async () => true),
   setModel: vi.fn(async () => true),
@@ -192,6 +194,47 @@ describe('agent data components', () => {
     expect(items[0]!.querySelector('[data-testid="agent-skill-edit"], [data-testid="agent-skill-delete"]')).toBeNull();
     expect(items[2]!.querySelector('[data-testid="agent-skill-edit"]')).not.toBeNull();
     expect(items[2]!.querySelector('[data-testid="agent-skill-delete"]')).not.toBeNull();
+  });
+
+  test('skills-library-search-and-switches', async () => {
+    const library = [SKILLS[0]!, { ...SKILLS[1]!, enabled: false }, SKILLS[2]!];
+    render(createElement(AgentSkills, { skills: library }));
+    const ids = () => allByTestId('agent-skill-item').map((item) => item.dataset['skillId']);
+    const search = byTestId('agent-skills-search') as HTMLInputElement;
+    expect(search.placeholder).toBe(SKILL_LIBRARY_WORDS.searchPlaceholder);
+    // A switched-off skill stays in the list, with its switch off (and says Off); the others say On.
+    expect(ids()).toEqual(['audit-this-page', 'rewrite-title-meta', 'plain-skill']);
+    const switches = () => allByTestId('agent-skill-switch') as HTMLInputElement[];
+    expect(switches().map((box) => [box.checked, box.getAttribute('role'), box.closest('label')!.textContent])).toEqual([
+      [true, 'switch', SKILL_LIBRARY_WORDS.on],
+      [false, 'switch', SKILL_LIBRARY_WORDS.off],
+      [true, 'switch', SKILL_LIBRARY_WORDS.on],
+    ]);
+    expect(switches().map((box) => box.getAttribute('aria-label'))).toEqual(['Audit this page', 'Rewrite title and meta description', 'Plain skill']);
+    // Switching sends the new position for that skill; main's push then redraws the list.
+    click(switches()[1]!);
+    await flush();
+    expect(calls.setSkillEnabled).toHaveBeenLastCalledWith('rewrite-title-meta', true);
+    click(switches()[0]!);
+    await flush();
+    expect(calls.setSkillEnabled).toHaveBeenLastCalledWith('audit-this-page', false);
+    expect(byTestId('agent-skills-message')).toBeNull();
+    // A write that fails says so.
+    calls.setSkillEnabled.mockResolvedValueOnce(false);
+    click(switches()[2]!);
+    await flush();
+    expect(byTestId('agent-skills-message')!.textContent).toBe('That switch could not be saved. Try again.');
+    // The search filters by name, description or id, and says when nothing matches.
+    type(search, 'TITLE');
+    expect(ids()).toEqual(['rewrite-title-meta']);
+    type(search, 'plain-skill');
+    expect(ids()).toEqual(['plain-skill']);
+    type(search, 'no such thing');
+    expect(ids()).toEqual([]);
+    expect(byTestId('agent-skills-no-match')!.textContent).toBe(SKILL_LIBRARY_WORDS.noMatch);
+    type(search, '');
+    expect(ids()).toHaveLength(3);
+    expect(byTestId('agent-skills-no-match')).toBeNull();
   });
 
   test('skill-editor-duplicates-edits-and-shows-errors', async () => {

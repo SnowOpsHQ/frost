@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { AgentSkillView } from '@app/specs/agent-session.spec';
+import { SKILL_LIBRARY_WORDS } from '@app/specs/agent-data.spec';
 import { CHAT_TEXT_MAX_CHARS } from '@app/specs/agent-session.spec';
 import { SKILL_SLOT_MAX_CHARS } from '@app/specs/skills.spec';
 import { agentActions } from '../../agent-actions';
-import { canSend, composerKey, pickedSkill, skillOptionGroups, skillRequest, type SkillFieldValues } from '../../agent-view';
+import { canSend, composerKey, enabledSkills, pickedSkill, pickerSkills, skillOptionGroups, skillRequest, type SkillFieldValues } from '../../agent-view';
 import { SendIcon, StopSquareIcon } from './agent-icons';
 
 // The composer (`agent-panel.feature.md`, Composer): Enter sends, Shift+Enter is a new line. While a
@@ -13,7 +14,9 @@ import { SendIcon, StopSquareIcon } from './agent-icons';
 // Skills (Task 7, `skills.feature.md`, composer-skill-picker): a compact picker above the field lists
 // main's skills. Picking one swaps the message field for the skill's description and the inputs it
 // declares (each optional; Enter in one runs it), and Send for Run. The picker is disabled while a
-// turn runs. Run sends only the skill's id and its inputs: main renders the skill.
+// turn runs. Run sends only the skill's id and its inputs: main renders the skill. The picker lists
+// the skills switched on (Phase 8 Task 5, `agent-data.feature.md`, Skills library) and a search box
+// narrows them; a skill picked and then switched off drops back to the message field.
 
 export function AgentComposer({
   chatId,
@@ -36,8 +39,11 @@ export function AgentComposer({
   const [stopping, setStopping] = useState(false);
   const [skillId, setSkillId] = useState('');
   const [fields, setFields] = useState<SkillFieldValues>({});
+  const [query, setQuery] = useState('');
   const wasRunning = useRef(running);
-  const skill = pickedSkill(skills, skillId);
+  const offered = enabledSkills(skills);
+  const skill = pickedSkill(offered, skillId);
+  const matching = pickerSkills(skills, query, skillId);
 
   // Back from a turn: focus returns to the field if disabling it had dropped focus.
   useEffect(() => {
@@ -84,7 +90,24 @@ export function AgentComposer({
 
   return (
     <div className="agent-composer-area">
-      {skills.length > 0 ? (
+      {offered.length > 0 ? (
+        <input
+          type="search"
+          className="agent-text-field agent-skill-search"
+          data-testid="agent-skill-search"
+          aria-label={SKILL_LIBRARY_WORDS.searchPlaceholder}
+          placeholder={SKILL_LIBRARY_WORDS.searchPlaceholder}
+          value={query}
+          disabled={running || sending}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      ) : null}
+      {offered.length > 0 && query.trim() !== '' && matching.length === 0 ? (
+        <p className="agent-section-text agent-muted" role="status" data-testid="agent-skill-no-match">
+          {SKILL_LIBRARY_WORDS.noMatch}
+        </p>
+      ) : null}
+      {offered.length > 0 ? (
         <label className="agent-skill-bar">
           <span className="agent-skill-bar-label">Skill</span>
           <select
@@ -98,7 +121,7 @@ export function AgentComposer({
               setFields({});
             }}
           >
-            {skillOptionGroups(skills).map((group) => {
+            {skillOptionGroups(matching).map((group) => {
               const options = group.options.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}

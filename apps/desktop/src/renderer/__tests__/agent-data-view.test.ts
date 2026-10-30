@@ -1,9 +1,9 @@
 // Spec: specs/agent-data.spec.ts (CHAT_RETENTIONS, CHAT_RETENTION_LABELS, CHAT_RETENTION_HINTS,
 // CHAT_EXPORT_MESSAGES, AGENT_SAVE_SKILL_MESSAGES, SKILL_BUILTIN_LABEL, SKILL_USER_LABEL),
 // specs/agent-tools.spec.ts (AGENT_TOOLS), specs/skills.spec.ts (SKILL_SLOT_NAMES, SKILL_INPUT_SLOTS)
-// Acceptance: specs/agent-data.feature.md (Panel)
+// Acceptance: specs/agent-data.feature.md (Panel, Skills library)
 import { describe, expect, test } from 'vitest';
-import { AGENT_SAVE_SKILL_MESSAGES, CHAT_EXPORT_MESSAGES, CHAT_RETENTION_HINTS, CHAT_RETENTIONS, SKILL_BUILTIN_LABEL, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
+import { AGENT_SAVE_SKILL_MESSAGES, CHAT_EXPORT_MESSAGES, CHAT_RETENTION_HINTS, CHAT_RETENTIONS, filterSkills, SKILL_BUILTIN_LABEL, SKILL_LIBRARY_WORDS, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
 import { AGENT_TOOL_NAMES } from '@app/specs/agent-tools.spec';
 import { SKILL_SLOT_NAMES } from '@app/specs/skills.spec';
 import { SKILLS } from './agent-fixtures';
@@ -49,6 +49,40 @@ describe('agent data view model', () => {
       ['audit-this-page', SKILL_BUILTIN_LABEL],
       ['rewrite-title-meta', SKILL_BUILTIN_LABEL],
       ['plain-skill', SKILL_USER_LABEL],
+    ]);
+  });
+
+  test('filter-skills', () => {
+    const skills = [
+      { id: 'audit-this-page', name: 'Audit this page', description: 'Summarise the audit.' },
+      { id: 'check-hreflang', name: 'Check hreflang', description: 'Find language and region mistakes.' },
+      { id: 'my-ｓｋｉｌｌ', name: 'Straße ÉCOLE', description: 'Fullwidth ＡＢＣ in the description.' },
+    ];
+    const ids = (query: string) => filterSkills(skills, query).map((skill) => skill.id);
+    // A blank query keeps every skill, in order; the input is not changed or returned as it is.
+    expect(ids('')).toEqual(['audit-this-page', 'check-hreflang', 'my-ｓｋｉｌｌ']);
+    expect(ids('   ')).toEqual(['audit-this-page', 'check-hreflang', 'my-ｓｋｉｌｌ']);
+    expect(filterSkills(skills, '')).not.toBe(skills);
+    // Name, description and id; case-folded.
+    expect(ids('AUDIT')).toEqual(['audit-this-page']);
+    expect(ids('region')).toEqual(['check-hreflang']);
+    expect(ids('hreflang')).toEqual(['check-hreflang']);
+    // NFKC: width and compatibility forms fold ("ＡＢＣ" matches "abc", "skill" matches the fullwidth id).
+    expect(ids('abc')).toEqual(['my-ｓｋｉｌｌ']);
+    expect(ids('my-skill')).toEqual(['my-ｓｋｉｌｌ']);
+    expect(ids('ＡＵＤＩＴ')).toEqual(['audit-this-page']);
+    expect(ids('école')).toEqual(['my-ｓｋｉｌｌ']);
+    // Every word must be found, in any order, across the three fields.
+    expect(ids('page summarise')).toEqual(['audit-this-page']);
+    expect(ids('page region')).toEqual([]);
+    expect(ids('zzz')).toEqual([]);
+    // Not a string: nothing is filtered out.
+    expect(filterSkills(skills, undefined as unknown as string)).toHaveLength(3);
+    expect(SKILL_LIBRARY_WORDS).toEqual({ searchPlaceholder: 'Search skills', on: 'On', off: 'Off', noMatch: 'No skills match' });
+    // The list rows carry the switch's position.
+    expect(skillListItems([{ ...SKILLS[0]!, enabled: false }, SKILLS[2]!]).map((item) => [item.id, item.enabled])).toEqual([
+      ['audit-this-page', false],
+      ['plain-skill', true],
     ]);
   });
 

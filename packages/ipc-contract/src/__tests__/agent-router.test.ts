@@ -1,6 +1,6 @@
 // Spec: specs/agent-ipc.schema.ts (the agent.* inputs), specs/agent-session.spec.ts (answers,
 // AGENT_WATCH_TIMEOUT_MS), specs/ipc-sender.spec.ts, specs/skills.spec.ts (SKILL_LIMITS, SKILL_SLOT_MAX_CHARS)
-// Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router)
+// Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router), specs/agent-data.feature.md (Skills library)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { AgentDeleteAllChatsResult, AgentGrantView, AgentSaveSkillResult, AgentSetRetentionResult, AgentSkillDetail, ChatExportResult } from '@app/specs/agent-data.spec';
@@ -80,6 +80,7 @@ function fakeAgent(version = 3) {
     saveSkill: vi.fn(async (_draft: unknown, _mode: string): Promise<AgentSaveSkillResult> => ({ result: 'saved', id: 'my-skill' })),
     deleteSkill: vi.fn(async (_id: string) => true),
     duplicateSkill: vi.fn(async (_id: string): Promise<AgentSaveSkillResult> => ({ result: 'saved', id: 'audit-this-page-copy' })),
+    setSkillEnabled: vi.fn(async (_id: string, _enabled: boolean) => true),
     saveMcpServer: vi.fn(async (_input: unknown): Promise<{ result: McpSaveResult; id?: string }> => ({ result: 'saved', id: 'docs' })),
     deleteMcpServer: vi.fn(async (_id: string) => true),
     setMcpServerEnabled: vi.fn(async (_id: string, _enabled: boolean) => true),
@@ -149,6 +150,7 @@ const VALID_INPUT: Record<string, unknown> = {
   saveSkill: { skill: { id: 'my-skill', name: 'Mine', description: 'D', allowedTools: ['page_text'], instructions: 'Read {{pageUrl}}', inputs: [] }, mode: 'create' },
   deleteSkill: { id: 'my-skill' },
   duplicateSkill: { id: 'audit-this-page' },
+  setSkillEnabled: { id: 'audit-this-page', enabled: false },
   saveMcpServer: { name: 'Docs', transport: 'http', url: 'https://mcp.example.com/mcp' },
   deleteMcpServer: { id: 'docs' },
   setMcpServerEnabled: { id: 'docs', enabled: true },
@@ -253,6 +255,7 @@ describe('agent router', () => {
       ],
       deleteSkill: [undefined, { id: 'Bad Id' }],
       duplicateSkill: [undefined, { id: 5 }],
+      setSkillEnabled: [undefined, { id: 'audit-this-page' }, { enabled: true }, { id: 'No', enabled: true }, { id: 'audit-this-page', enabled: 'off' }, { id: 'audit-this-page', enabled: 0 }, { id: 'audit-this-page', enabled: true, extra: 1 }],
       saveMcpServer: [undefined, { name: '', transport: 'http', url: 'https://mcp.example.com/' }, { name: 'Docs', transport: 'ftp', url: 'https://mcp.example.com/' }],
       deleteMcpServer: [undefined, { id: '' }],
       setMcpServerEnabled: [undefined, { id: 'docs' }, { id: 'docs', enabled: 'yes' }],
@@ -374,6 +377,39 @@ describe('agent router', () => {
     await expect(procedure(ctx, 'duplicateSkill')({ id: 'audit-this-page' })).resolves.toStrictEqual({ result: 'failed' });
     service.listGrants.mockReturnValueOnce([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1, approvalId: 'leak' } as never]);
     await expect(procedure(ctx, 'listGrants')()).resolves.toStrictEqual([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1 }]);
+  });
+
+  test('agent-set-skill-enabled-bounds', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'setSkillEnabled')({ id: 'audit-this-page', enabled: false })).resolves.toBe(true);
+    expect(service.setSkillEnabled).toHaveBeenLastCalledWith('audit-this-page', false);
+    await expect(procedure(ctx, 'setSkillEnabled')({ id: 'my-skill', enabled: true })).resolves.toBe(true);
+    expect(service.setSkillEnabled).toHaveBeenLastCalledWith('my-skill', true);
+    // The answer is a boolean, whatever the service says.
+    service.setSkillEnabled.mockResolvedValueOnce('maybe' as never);
+    await expect(procedure(ctx, 'setSkillEnabled')({ id: 'my-skill', enabled: true })).resolves.toBe(false);
+    service.setSkillEnabled.mockClear();
+    // A malformed or over-long id, a non-boolean, a missing or extra field never reach the service.
+    for (const input of [
+      undefined,
+      {},
+      { id: 'audit-this-page' },
+      { enabled: true },
+      { id: '', enabled: true },
+      { id: 'Audit_This', enabled: true },
+      { id: 'a'.repeat(SKILL_LIMITS.maxIdChars + 1), enabled: true },
+      { id: 'audit-this-page', enabled: 'true' },
+      { id: 'audit-this-page', enabled: 1 },
+      { id: 'audit-this-page', enabled: null },
+      { id: 'audit-this-page', enabled: true, builtin: true },
+    ]) {
+      expect((await errorOf(procedure(ctx, 'setSkillEnabled')(input))).code, JSON.stringify(input)).toBe('BAD_REQUEST');
+    }
+    // A foreign sender is refused before the input is read.
+    const foreign = ctxFor(service, 'https://evil.example');
+    expect((await errorOf(procedure(foreign, 'setSkillEnabled')({ id: 'audit-this-page', enabled: false }))).code).toBe('FORBIDDEN');
+    expect(service.setSkillEnabled).not.toHaveBeenCalled();
   });
 
   test('agent-chatgpt-procedures (the sender\'s window for the gesture; fixed answers only)', async () => {

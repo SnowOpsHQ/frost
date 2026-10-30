@@ -108,6 +108,12 @@ export const AgentExportChatInputSchema = z.strictObject({ chatId: AgentChatIdSc
 /** A skill id to look up, delete or duplicate (well-formed; main resolves it). */
 export const AgentSkillIdInputSchema = z.strictObject({ id: z.string().min(SKILL_LIMITS.minIdChars).max(SKILL_LIMITS.maxIdChars).regex(SKILL_ID_PATTERN) });
 
+/** `agent.setSkillEnabled` (Phase 8 Task 5): a well-formed skill id and the switch's new position; main resolves the id. */
+export const AgentSetSkillEnabledInputSchema = z.strictObject({
+  id: z.string().min(SKILL_LIMITS.minIdChars).max(SKILL_LIMITS.maxIdChars).regex(SKILL_ID_PATTERN),
+  enabled: z.boolean(),
+});
+
 /**
  * A skill draft from the editor (`AgentSkillDraft`): only its shape is bounded here, loosely, so a
  * mistake comes back from main as inline errors (`agent.saveSkill` validates it with `SkillSchema`)
