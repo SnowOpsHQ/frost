@@ -5,7 +5,7 @@
 // SKILL_FILE_FORMAT, SKILL_FILE_VERSION, SKILL_EXPORT_MESSAGES, SKILL_IMPORT_MESSAGES, SKILL_FILE_WORDS, SKILL_IMPORT_CONFLICT_MESSAGES),
 // specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
 // Acceptance: specs/agent-panel.feature.md (End to end, agent-model-and-reasoning-settings), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
-// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end)
+// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end), specs/agent-mcp-presets.feature.md (End to end)
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -29,7 +29,8 @@ import {
   SKILL_USER_LABEL,
 } from '@app/specs/agent-data.spec';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_USER_MARK } from '@app/specs/skills.spec';
-import { MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
+import { AGENT_MCP_PARTITION, MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
+import { MCP_PRESET_WORDS, MCP_PRESETS } from '@app/specs/agent-mcp-presets.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
@@ -852,6 +853,44 @@ test('agent-mcp-tool-asks', async () => {
   await expect(toolCards().last().getByTestId('agent-tool-untrusted')).toHaveText('Untrusted');
   await expect(toolCards().last().getByTestId('agent-tool-output')).toContainText('echo: from e2e');
   await expect(assistantTexts().last()).toHaveText('Echo done.');
+});
+
+test('agent-mcp-preset-fills-form', async () => {
+  await launchWith([{ text: ['unused'] }], null);
+  // Every request on main's MCP session is recorded (and refused): a preset must contact nothing.
+  await app!.evaluate(({ session }, partition) => {
+    const seen: string[] = [];
+    (globalThis as { __frostMcpRequests?: string[] }).__frostMcpRequests = seen;
+    session.fromPartition(partition).webRequest.onBeforeRequest((details, callback) => {
+      seen.push(details.url);
+      callback({ cancel: true });
+    });
+  }, AGENT_MCP_PARTITION);
+  const preset = MCP_PRESETS.find((item) => item.id === 'linear')!;
+  await page.getByTestId('agent-settings-toggle').click();
+  await expect(page.getByTestId('agent-mcp')).toBeVisible();
+  await page.getByTestId('agent-mcp-catalogue-open').click();
+  await page.getByTestId('agent-mcp-catalogue-search').fill('linear');
+  await expect(page.getByTestId('agent-mcp-preset')).toHaveCount(1);
+  await page.locator(`[data-testid="agent-mcp-preset"][data-preset="${preset.id}"]`).getByTestId('agent-mcp-preset-use').click();
+  // The form is filled; nothing is saved yet.
+  await expect(page.getByTestId('agent-mcp-field-name')).toHaveValue(preset.name);
+  await expect(page.getByTestId('agent-mcp-field-transport')).toHaveValue('http');
+  await expect(page.getByTestId('agent-mcp-field-url')).toHaveValue(preset.transport === 'http' ? preset.url : '');
+  await expect(page.getByTestId('agent-mcp-preset-note')).toContainText(MCP_PRESET_WORDS.untrusted);
+  await expect(page.getByTestId('agent-mcp-server')).toHaveCount(0);
+  await page.getByTestId('agent-mcp-save').click();
+  // Saved like a typed server: stopped, off, untrusted, no token.
+  const row = page.locator('[data-testid="agent-mcp-server"][data-server="linear"]');
+  await expect(row).toBeVisible();
+  await expect(row.getByTestId('agent-mcp-untrusted')).toHaveText('Untrusted');
+  await expect(row.getByTestId('agent-mcp-status')).toHaveText('Stopped');
+  await expect(row.getByTestId('agent-mcp-enabled')).not.toBeChecked();
+  await expect(row.getByTestId('agent-mcp-start')).toBeDisabled();
+  await expect(row.getByTestId('agent-mcp-target')).toHaveText(preset.transport === 'http' ? preset.url : '');
+  await expect(row.getByTestId('agent-mcp-token-input')).toHaveValue('');
+  // Nothing was contacted.
+  expect(await app!.evaluate(() => (globalThis as { __frostMcpRequests?: string[] }).__frostMcpRequests ?? null)).toEqual([]);
 });
 
 test('agent-serp-tools-read-the-serp-service', async () => {

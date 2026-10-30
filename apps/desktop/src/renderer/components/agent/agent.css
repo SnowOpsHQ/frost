@@ -1082,6 +1082,37 @@
   font-size: 12px;
 }
 
+/* The server catalogue (Phase 8 Task 10): a sheet inside the add form; category chips are toggles. */
+.agent-mcp-catalogue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-field);
+  border-radius: 8px;
+}
+
+.agent-mcp-chips {
+  flex-wrap: wrap;
+}
+
+button.agent-chip {
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+button.agent-chip[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.agent-mcp-preset-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 /* The ChatGPT plan (specs/agent-chatgpt.spec.ts, CHATGPT_UI): the settings' actions wrap, the
    composer's "Using ChatGPT plan · Manage usage" line, the one-time notice and a plan failure. */
 .agent-chatgpt-actions {

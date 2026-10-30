@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import type { AgentMcpView } from '@app/specs/agent-mcp.spec';
+import { MCP_PRESET_WORDS, type McpPreset, type McpPresetCategory } from '@app/specs/agent-mcp-presets.spec';
 import { agentActions } from '../../agent-actions';
+import { mcpPresetChips, mcpPresetRows, presetFormDraft } from '../../agent-mcp-presets';
 import { emptyMcpDraft, mcpDraftToInput, mcpSaveMessage, mcpServerItems, mcpStartMessage, mcpTokenMessage, MCP_SETTINGS_WORDS, MCP_UNTRUSTED_LABEL, type McpServerDraft, type McpServerItem } from '../../agent-view';
 
 // The MCP servers section of the agent settings (`agent-mcp.feature.md`, Settings): every server is
@@ -11,6 +13,11 @@ import { emptyMcpDraft, mcpDraftToInput, mcpSaveMessage, mcpServerItems, mcpStar
 // an HTTP URL, or a command with one argument per line (no shell: each line is one argument), the
 // folders a sandbox may read, whether it may use the network, and environment variables (their
 // values are password fields, sent once and never shown again).
+// "Add from catalogue" (`agent-mcp-presets.feature.md`) opens a sheet of known servers (spec data,
+// never contacted): search, category chips, and rows with a "Setup guide" link, a plain
+// `target="_blank"` link the app window's open handler sends to the system browser through the
+// scheme allowlist, on the click's own gesture. "Use" only fills the add form below; nothing is
+// saved until "Add server", and the token is set afterwards in the saved server's token field.
 
 function TokenRow({ server }: { readonly server: McpServerItem }) {
   const field = useRef<HTMLInputElement>(null);
@@ -143,11 +150,86 @@ function ServerRow({ server }: { readonly server: McpServerItem }) {
   );
 }
 
+function Catalogue({ onChoose }: { readonly onChoose: (preset: McpPreset) => void }) {
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<McpPresetCategory | null>(null);
+  const rows = mcpPresetRows(query, category);
+  return (
+    <div className="agent-mcp-catalogue" data-testid="agent-mcp-catalogue" role="region" aria-label={MCP_PRESET_WORDS.title}>
+      <h4 className="agent-field-label">{MCP_PRESET_WORDS.title}</h4>
+      <p className="agent-section-text agent-muted">{MCP_PRESET_WORDS.intro}</p>
+      <input
+        className="agent-text-field"
+        type="search"
+        data-testid="agent-mcp-catalogue-search"
+        aria-label={MCP_PRESET_WORDS.search}
+        placeholder={MCP_PRESET_WORDS.search}
+        spellCheck={false}
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <div className="agent-key-row agent-mcp-chips" role="group" aria-label="Categories">
+        {mcpPresetChips(category, MCP_PRESET_WORDS.all).map((chip) => (
+          <button
+            key={chip.category ?? 'all'}
+            type="button"
+            className="agent-chip"
+            data-testid="agent-mcp-catalogue-chip"
+            data-category={chip.category ?? 'all'}
+            aria-pressed={chip.selected}
+            onClick={() => setCategory(chip.category)}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+      {rows.length === 0 ? (
+        <p className="agent-section-text agent-muted" data-testid="agent-mcp-catalogue-empty">
+          {MCP_PRESET_WORDS.noMatch}
+        </p>
+      ) : (
+        <ul className="agent-mcp-list">
+          {rows.map((row) => (
+            <li key={row.id} className="agent-mcp-server" data-testid="agent-mcp-preset" data-preset={row.id}>
+              <div className="agent-mcp-head">
+                <span className="agent-mcp-name">{row.name}</span>
+                <span className="agent-chip">{row.categoryLabel}</span>
+              </div>
+              <p className="agent-section-text">{row.description}</p>
+              <p className="agent-section-text agent-muted">
+                {MCP_PRESET_WORDS.tokenHint}: {row.tokenHint}
+              </p>
+              <div className="agent-key-row">
+                <button type="button" className="agent-button agent-button-primary" data-testid="agent-mcp-preset-use" onClick={() => onChoose(row.preset)}>
+                  {MCP_PRESET_WORDS.choose}
+                </button>
+                <a className="agent-link" data-testid="agent-mcp-preset-docs" href={row.docsUrl} target="_blank" rel="noreferrer">
+                  {MCP_PRESET_WORDS.docs}
+                </a>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function AddServer() {
   const [draft, setDraft] = useState<McpServerDraft>(emptyMcpDraft);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [catalogueOpen, setCatalogueOpen] = useState(false);
+  // The preset the form was filled from: its note (untrusted, the token hint) stays until the form is saved.
+  const [fromPreset, setFromPreset] = useState<McpPreset | null>(null);
   const set = (changes: Partial<McpServerDraft>) => setDraft({ ...draft, ...changes });
+  const choose = (preset: McpPreset) => {
+    // Only the form changes: nothing is saved, started or sent to main here.
+    setDraft(presetFormDraft(preset));
+    setFromPreset(preset);
+    setMessage(null);
+    setCatalogueOpen(false);
+  };
   const save = () => {
     const input = mcpDraftToInput(draft);
     if (input === null) {
@@ -160,12 +242,37 @@ function AddServer() {
       setBusy(false);
       setMessage(mcpSaveMessage(result));
       // Values typed into the form leave it once saved.
-      if (result === 'saved') setDraft(emptyMcpDraft());
+      if (result === 'saved') {
+        setDraft(emptyMcpDraft());
+        setFromPreset(null);
+      }
     });
   };
   return (
     <div className="agent-mcp-add" data-testid="agent-mcp-add">
       <h4 className="agent-field-label">Add a server</h4>
+      <div className="agent-key-row">
+        <button type="button" className="agent-button" data-testid="agent-mcp-catalogue-open" aria-expanded={catalogueOpen} onClick={() => setCatalogueOpen(!catalogueOpen)}>
+          {catalogueOpen ? MCP_PRESET_WORDS.close : MCP_PRESET_WORDS.open}
+        </button>
+      </div>
+      {catalogueOpen ? <Catalogue onChoose={choose} /> : null}
+      {fromPreset !== null ? (
+        <div className="agent-mcp-preset-note" data-testid="agent-mcp-preset-note" role="status">
+          <p className="agent-section-text">
+            <span className="agent-chip agent-untrusted" data-testid="agent-mcp-untrusted">
+              {MCP_UNTRUSTED_LABEL}
+            </span>{' '}
+            {MCP_PRESET_WORDS.untrusted}
+          </p>
+          <p className="agent-section-text">{MCP_PRESET_WORDS.filled}</p>
+          {fromPreset.tokenHint !== '' ? (
+            <p className="agent-section-text agent-muted">
+              {MCP_PRESET_WORDS.tokenHint}: {fromPreset.tokenHint}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <label className="agent-field-label" htmlFor="agent-mcp-name">
         Name
       </label>
