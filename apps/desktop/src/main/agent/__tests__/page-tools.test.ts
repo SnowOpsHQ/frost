@@ -4,13 +4,13 @@
 // Acceptance: specs/agent-page-tools.feature.md (Scenarios: reads, click, execute_javascript, the page check, navigate, every tool)
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { runAudit, type Finding, type SeoAudit, type SeoAuditResponse } from '@app/seo-core';
+import { runAudit, type Finding, type PageSocial, type SeoAudit, type SeoAuditResponse } from '@app/seo-core';
 import { runTargetFor, type ToolRunVia } from '@app/specs/agent-approvals.spec';
 import { AGENT_JS_WORLD_ID, AGENT_PAGE_WORLD_ID, NON_AGENT_WORLD_IDS, PAGE_AUDIT_LIMITS, PAGE_SCRIPT_TIMEOUT_MS, PAGE_TEXT_DEFAULT_CHARS, pageSource } from '@app/specs/agent-page-tools.spec';
 import type { JsonValue } from '@app/specs/agent-protocol.schema';
 import { EXECUTE_JS_TIMEOUT_MS, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
 import { DEFAULT_RENDER_PROFILE } from '@app/specs/render-profile.spec';
-import { NO_PAGE_CONTEXT, PageSnapshotSchema } from '@app/specs/seo-snapshot.spec';
+import { NO_PAGE_CONTEXT, PageSnapshotSchema, SOCIAL_TAGS } from '@app/specs/seo-snapshot.spec';
 import { rawSnapshot } from '../../../test/seo-fakes';
 import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 import { createBrowserPageToolRunner, createPageToolRunner, type PageContents, type PageToolDeps, type TabNavigation } from '../tools';
@@ -195,6 +195,83 @@ describe('page reads', () => {
     expect(links.list[1].text).toHaveLength(PAGE_AUDIT_LIMITS.maxLinkTextChars);
     expect(links.list[1].href).toHaveLength(PAGE_AUDIT_LIMITS.maxUrlChars);
     expect(JSON.stringify(links).length).toBeLessThanOrEqual(PAGE_AUDIT_LIMITS.internalLinksBudgetChars);
+  });
+
+  test('page-data-social-tags', async () => {
+    const long = 'z'.repeat(PAGE_AUDIT_LIMITS.maxFactChars + 200);
+    const social = { ...(Object.fromEntries(SOCIAL_TAGS.map((tag) => [tag, null])) as PageSocial), 'og:title': 'Shared title', 'og:description': long, 'twitter:card': 'summary_large_image', 'twitter:site': '@example' };
+    const audit = readyAudit('https://example.com/guides/page?x=1', { social });
+    const { tools } = runner({ audit: () => ({ status: 'ready', url: PAGE, audit, renderProfile: null }) });
+    const data = dataOf(await run(tools, 'page_data', {}, 'read'));
+    // Every field of the snapshot's social tags is there (absent ones as null), each cut to maxFactChars.
+    expect(Object.keys(data.social).sort()).toEqual([...SOCIAL_TAGS].sort());
+    expect(Object.keys(data.social)).toHaveLength(PAGE_AUDIT_LIMITS.maxSocialFields);
+    expect(data.social['og:title']).toBe('Shared title');
+    expect(data.social['twitter:card']).toBe('summary_large_image');
+    expect(data.social['og:image']).toBeNull();
+    expect(data.social['og:description']).toHaveLength(PAGE_AUDIT_LIMITS.maxFactChars);
+  });
+
+  test('page-data-content-summary', async () => {
+    const sentences = Array.from({ length: 8 }, (_, i) => `Sentence ${i} ${'wandering '.repeat(30)}ends here.`);
+    const visibleText = { text: `${sentences.join(' ')} Short one.`, truncated: false };
+    const audit = readyAudit('https://example.com/guides/page?x=1', { visibleText });
+    expect(audit.content.sentences.status).toBe('ok');
+    if (audit.content.sentences.status !== 'ok') return;
+    expect(audit.content.sentences.difficult.items.length).toBeGreaterThan(PAGE_AUDIT_LIMITS.maxDifficultSentencesForModel);
+    const { tools } = runner({ audit: () => ({ status: 'ready', url: PAGE, audit, renderProfile: null }) });
+    const content = dataOf(await run(tools, 'page_data', {}, 'read')).content;
+    expect(content).toMatchObject({ available: true, truncated: false, language: { code: 'en', source: 'declared' }, words: audit.content.words });
+    expect(audit.content.readability.status).toBe('ok');
+    if (audit.content.readability.status === 'ok') {
+      expect(content.readability).toEqual({ status: 'ok', formula: 'Flesch reading ease', score: audit.content.readability.score, band: audit.content.readability.band });
+    }
+    expect(content.sentences).toMatchObject({ status: 'ok', sentences: audit.content.sentences.sentences, averageWords: audit.content.sentences.averageWords, longestWords: audit.content.sentences.longestWords, longCount: audit.content.sentences.longCount, complexWordShare: audit.content.sentences.complexWordShare, difficultTotal: audit.content.sentences.difficult.total });
+    expect(content.sentences.difficult).toHaveLength(PAGE_AUDIT_LIMITS.maxDifficultSentencesForModel);
+    expect(content.sentences.difficult[0]).toEqual({ text: audit.content.sentences.difficult.items[0]!.text.slice(0, PAGE_AUDIT_LIMITS.maxFactChars), words: audit.content.sentences.difficult.items[0]!.words, reason: audit.content.sentences.difficult.items[0]!.reason });
+    expect(content.sentences.difficult.every((item: { text: string }) => item.text.length <= PAGE_AUDIT_LIMITS.maxFactChars)).toBe(true);
+  });
+
+  test('page-data-content-summary: not available says why', async () => {
+    // The fixture's snapshot carries no visible text: readability and sentences say so, plainly.
+    const audit = readyAudit();
+    const { tools } = runner({ audit: () => ({ status: 'ready', url: PAGE, audit, renderProfile: null }) });
+    const content = dataOf(await run(tools, 'page_data', {}, 'read')).content;
+    expect(content.available).toBe(false);
+    expect(content.readability).toEqual({ status: 'not-available', reason: expect.stringContaining('Not available') });
+    expect(content.sentences).toEqual({ status: 'not-available', reason: 'no-text' });
+  });
+
+  test('page-data-javascript-verdict', async () => {
+    const withJavascript = (javascript: SeoAudit['javascript']) => runner({ audit: () => ({ status: 'ready', url: PAGE, audit: { ...readyAudit(), javascript }, renderProfile: null }) }).tools;
+    const javascriptOf = async (javascript: SeoAudit['javascript']) => dataOf(await run(withJavascript(javascript), 'page_data', {}, 'read')).javascript;
+    expect(await javascriptOf({ status: 'pending' })).toMatchObject({ status: 'pending', note: expect.stringContaining('still') });
+    expect(await javascriptOf({ status: 'unavailable', reason: 'timeout', httpStatus: null, finalUrl: null })).toMatchObject({ status: 'unavailable', reason: 'timeout', note: expect.any(String) });
+    const ready = { status: 'ready', verdict: 'partly', changed: 3, partial: false } as unknown as SeoAudit['javascript'];
+    expect(await javascriptOf(ready)).toEqual({ status: 'ready', verdict: 'partly', verdictLabel: 'Partly JS-dependent', changedFields: 3, partial: false });
+    const identical = { status: 'identical', verdict: 'independent', changed: 0, partial: true } as unknown as SeoAudit['javascript'];
+    expect(await javascriptOf(identical)).toMatchObject({ status: 'identical', verdict: 'independent', changedFields: 0, partial: true });
+  });
+
+  test('page-data-still-within-budget', async () => {
+    const long = 'q'.repeat(2_000);
+    const social = Object.fromEntries(SOCIAL_TAGS.map((tag) => [tag, long.slice(0, 1_000)])) as PageSocial;
+    const audit = readyAudit('https://example.com/guides/page?x=1', {
+      social,
+      headings: Array.from({ length: 80 }, (_, i) => ({ level: (i % 3) + 1, text: `${i} ${long.slice(0, 280)}` })),
+      headingTotal: 90,
+      hreflang: Array.from({ length: 40 }, (_, i) => ({ hreflang: `x-${i}`, href: `https://example.com/${i}/${'h'.repeat(480)}`, resolved: `https://example.com/${i}/${'h'.repeat(480)}` })),
+      hreflangTotal: 40,
+      visibleText: { text: Array.from({ length: 30 }, (_, i) => `Sentence ${i} ${'wandering '.repeat(40)}ends.`).join(' '), truncated: true },
+    });
+    const { tools } = runner({ audit: () => ({ status: 'ready', url: PAGE, audit: { ...audit, javascript: { status: 'unavailable', reason: 'timeout', httpStatus: null, finalUrl: null } }, renderProfile: null }) });
+    const data = dataOf(await run(tools, 'page_data', {}, 'read'));
+    expect(JSON.stringify(data).length).toBeLessThanOrEqual(PAGE_AUDIT_LIMITS.budgetChars);
+    expect(data.social['og:title']).toHaveLength(PAGE_AUDIT_LIMITS.maxFactChars);
+    expect(data.content.sentences.difficult).toHaveLength(PAGE_AUDIT_LIMITS.maxDifficultSentencesForModel);
+    // The outline gave way (it is what trims), the new facts did not.
+    expect(data.headings.outline.length + data.headings.omitted).toBe(80);
+    expect(data.headings.omitted).toBeGreaterThan(0);
   });
 
   test('audit-tools-refuse-other-page', async () => {

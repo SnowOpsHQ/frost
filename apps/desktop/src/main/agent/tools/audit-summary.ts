@@ -1,6 +1,9 @@
 import type { Finding, SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { modelPageUrl, PAGE_AUDIT_LIMITS as L, PAGE_TITLE_MAX_CHARS } from '@app/specs/agent-page-tools.spec';
 import { renderProfileSummary, type AuditRenderProfile } from '@app/specs/render-profile.spec';
+import { READABILITY_FORMULAS, READABILITY_UNAVAILABLE_MESSAGES } from '@app/specs/seo-content.spec';
+import { JS_VERDICT_LABELS, SERVED_UNAVAILABLE_MESSAGES } from '@app/specs/seo-javascript.spec';
+import { SOCIAL_TAGS } from '@app/specs/seo-limits.spec';
 
 // `page_audit` and `page_data` (Phase 5 Task 5; acceptance `specs/agent-page-tools.feature.md`):
 // what the model reads of main's audit of the chat tab's page. They summarise the ready audit (the
@@ -95,10 +98,55 @@ export function summariseAudit(audit: SeoAudit, renderProfile?: AuditRenderProfi
   return trimToBudget(findings, (kept, omitted) => ({ ...base, findings: kept, findingsTotal: audit.findings.length, findingsOmitted: omitted + cappedOut }), L.budgetChars);
 }
 
+/** Every social sharing tag the snapshot holds (`null`: the page has none), each value cut to `maxFactChars`. */
+function socialOf(social: SeoAudit['page']['social']): Record<string, string | null> {
+  return Object.fromEntries(SOCIAL_TAGS.slice(0, L.maxSocialFields).map((tag) => [tag, clipOrNull(social[tag], L.maxFactChars)]));
+}
+
+/**
+ * The Content panel's facts: the language and where it came from, the words read, the readability
+ * formula's name, score and band (or why there is none), the sentence statistics and at most
+ * `maxDifficultSentencesForModel` difficult-sentence excerpts (the page's own text: untrusted).
+ */
+function contentSummary(content: SeoAudit['content']): Record<string, unknown> {
+  const { readability, sentences } = content;
+  return {
+    available: content.available,
+    truncated: content.truncated,
+    language: { code: content.language.code, source: content.language.source },
+    words: content.words,
+    readability:
+      readability.status === 'ok'
+        ? { status: 'ok', formula: Object.values(READABILITY_FORMULAS).find((formula) => formula.id === readability.formula)?.name ?? readability.formula, score: readability.score, band: readability.band }
+        : { status: 'not-available', reason: READABILITY_UNAVAILABLE_MESSAGES[readability.reason] },
+    sentences:
+      sentences.status === 'ok'
+        ? {
+            status: 'ok',
+            sentences: sentences.sentences,
+            averageWords: sentences.averageWords,
+            longestWords: sentences.longestWords,
+            longCount: sentences.longCount,
+            complexWordShare: sentences.complexWordShare,
+            difficultTotal: sentences.difficult.total,
+            difficult: sentences.difficult.items.slice(0, L.maxDifficultSentencesForModel).map((item) => ({ text: clip(item.text, L.maxFactChars), words: item.words, reason: item.reason })),
+          }
+        : { status: 'not-available', reason: sentences.reason },
+  };
+}
+
+/** The served-versus-rendered verdict: `pending` and `unavailable` said plainly, else the verdict and how many fields differ. */
+function javascriptSummary(report: SeoAudit['javascript']): Record<string, unknown> {
+  if (report.status === 'pending') return { status: 'pending', note: 'frost is still comparing the served HTML with the rendered page; ask again in a few seconds.' };
+  if (report.status === 'unavailable') return { status: 'unavailable', reason: report.reason, note: SERVED_UNAVAILABLE_MESSAGES[report.reason].replace('{status}', String(report.httpStatus ?? 'an error')) };
+  return { status: report.status, verdict: report.verdict, verdictLabel: JS_VERDICT_LABELS[report.verdict], changedFields: report.changed, partial: report.partial };
+}
+
 /**
  * `page_data`'s data for a ready audit: the page's facts (title, meta description, canonical,
  * robots, language, headings outline, link and image counts, its internal links with their anchor
- * text, structured-data types, hreflang),
+ * text, structured-data types, hreflang, social sharing tags, a content summary and the
+ * served-versus-rendered JavaScript verdict),
  * the indexability verdict and its reasons, and the render profile the audit ran under.
  */
 export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderProfile | null): Record<string, unknown> {
@@ -140,6 +188,9 @@ export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderPr
       reasons: audit.indexability.reasons.slice(0, L.maxReasons).map((reason) => clip(reason, L.maxFactChars)),
       httpStatus: audit.indexability.http?.status ?? null,
     },
+    social: socialOf(page.social),
+    content: contentSummary(audit.content),
+    javascript: javascriptSummary(audit.javascript),
     renderProfile: profileName(renderProfile),
     partial: page.partial,
   };

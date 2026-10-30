@@ -10,6 +10,7 @@
  * it reads or acts.
  */
 import { AGENT_TOOL_INPUT_LIMITS, EXECUTE_JS_MAX_RESULT_BYTES, TOOL_RESULT_MAX_CHARS } from './agent-tools.spec';
+import { SOCIAL_TAGS } from './seo-limits.spec';
 import { parseWebUrl } from './web-url.spec';
 
 // ---- Isolated worlds -------------------------------------------------------------------------
@@ -171,6 +172,16 @@ export const PAGE_AUDIT_LIMITS = {
   maxInternalLinks: 40,
   maxLinkTextChars: 100,
   internalLinksBudgetChars: 8_000,
+  /**
+   * `page_data`'s social tags (Phase 8 Task 3): every social sharing tag the snapshot holds
+   * (`SOCIAL_TAGS`, one entry each, `null` when the page has none), each value cut to `maxFactChars`.
+   */
+  maxSocialFields: SOCIAL_TAGS.length,
+  /**
+   * `page_data`'s content summary lists at most this many of the Content panel's difficult sentences
+   * (the report holds up to `SENTENCE_LIMITS.maxDifficultSentences`), each excerpt cut to `maxFactChars`.
+   */
+  maxDifficultSentencesForModel: 5,
 } as const;
 
 /** Characters of a page title any tool reports. */
