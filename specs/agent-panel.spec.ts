@@ -9,6 +9,7 @@
  */
 import { CHATGPT_UI } from './agent-chatgpt.spec';
 import type { CredentialSlot, KeyProtection } from './agent-proxy.spec';
+import type { ReasoningEffort } from './agent-reasoning.spec';
 import type { AgentAnswerResult, AgentSetKeyResult, AgentToolCardView } from './agent-session.spec';
 import type { ModelId, ModelProvider, ModelRoute } from './agent-tools.spec';
 
@@ -73,6 +74,31 @@ export const AGENT_MODEL_PROVIDER_LABELS: Readonly<Record<ModelProvider, string>
   google: 'Google',
   spacexai: 'xAI',
 };
+
+/**
+ * The reasoning select's level names (Phase 8 Task 9, Decision 8), one per `REASONING_EFFORTS` value.
+ * `auto` sends nothing, so the model uses its own default. A model offers only some of the levels
+ * (`AgentSetupView.reasoning.levels`); the panel names none it does not offer.
+ */
+export const AGENT_REASONING_LABELS: Readonly<Record<ReasoningEffort, string>> = {
+  auto: "Auto (the model's default)",
+  off: 'Off',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+};
+
+/** On an OpenAI model `off` is sent as OpenAI's lowest level, so the select calls it that (`modelProvider` is `openai`). */
+export const AGENT_REASONING_OPENAI_OFF_LABEL = 'Minimal';
+
+/** One line under the reasoning select: what a higher level costs. */
+export const AGENT_REASONING_HINT = "Higher levels are slower and use more of your key's or plan's allowance.";
+
+/**
+ * Said, with the select disabled and showing Auto, when the selected model offers no level to choose
+ * (a Grok model; a ChatGPT model the account's list advertises no levels for, or before it has).
+ */
+export const AGENT_REASONING_UNAVAILABLE = 'This model offers no reasoning levels to choose from, so it always uses its own default.';
 
 export const AGENT_KEY_SLOT_LABELS: Readonly<Record<CredentialSlot, string>> = {
   gateway: 'AI Gateway key',

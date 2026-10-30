@@ -4,7 +4,7 @@
 // specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL, SKILL_LIBRARY_WORDS,
 // SKILL_FILE_FORMAT, SKILL_FILE_VERSION, SKILL_EXPORT_MESSAGES, SKILL_IMPORT_MESSAGES, SKILL_FILE_WORDS, SKILL_IMPORT_CONFLICT_MESSAGES),
 // specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
-// Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
+// Acceptance: specs/agent-panel.feature.md (End to end, agent-model-and-reasoning-settings), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
 // specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end)
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
+import { AGENT_MODEL_PROVIDER_LABELS, AGENT_REASONING_HINT, AGENT_REASONING_UNAVAILABLE, AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
 import {
   AGENT_GRANTS_EXPLAINER,
   CHAT_EXPORT_MESSAGES,
@@ -379,6 +379,44 @@ test('agent-settings-never-shows-key', async () => {
     await row.getByTestId('agent-key-clear').click();
     await expect(message).toHaveText('Key removed.');
   }
+});
+
+test('agent-model-and-reasoning-settings', async () => {
+  await launchWith([{ text: ['unused'] }], null);
+  await page.getByTestId('agent-settings-toggle').click();
+  await expect(page.getByTestId('agent-settings')).toBeVisible();
+  // The gateway route serves the Gemini and Grok models, grouped under their providers.
+  await expect(page.getByTestId('agent-route')).toHaveValue('gateway');
+  const model = page.getByTestId('agent-model');
+  const groups = await model.locator('optgroup').evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptGroupElement).label));
+  expect(groups).toEqual(expect.arrayContaining([AGENT_MODEL_PROVIDER_LABELS.google, AGENT_MODEL_PROVIDER_LABELS.spacexai]));
+  const reasoning = page.getByTestId('agent-reasoning');
+  const levels = () => reasoning.locator('option').evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value));
+  await expect(page.getByTestId('agent-reasoning-hint')).toHaveText(AGENT_REASONING_HINT);
+  // Gemini 4 Argon: Auto, Low, Medium, High; the level chosen is stored (the select shows main's state coming back).
+  await model.selectOption('google/gemini-4-argon');
+  await expect(model).toHaveValue('google/gemini-4-argon');
+  await expect.poll(levels).toEqual(['auto', 'low', 'medium', 'high']);
+  await expect(reasoning).toBeEnabled();
+  await reasoning.selectOption('medium');
+  await expect(reasoning).toHaveValue('medium');
+  // Gemini 3.8 Flash has no Medium: the stored level does not apply, so the select reads Auto.
+  await model.selectOption('google/gemini-3.8-flash');
+  await expect.poll(levels).toEqual(['auto', 'low', 'high']);
+  await expect(reasoning).toHaveValue('auto');
+  // A Grok model offers Auto only, and says why.
+  await model.selectOption('spacexai/grok-4.7');
+  await expect.poll(levels).toEqual(['auto']);
+  await expect(reasoning).toBeDisabled();
+  await expect(reasoning).toHaveValue('auto');
+  await expect(page.getByTestId('agent-reasoning-unavailable')).toHaveText(AGENT_REASONING_UNAVAILABLE);
+  // Back on a model that offers it, the stored level returns.
+  await model.selectOption('google/gemini-4-argon');
+  await expect(reasoning).toHaveValue('medium');
+  await expect(page.getByTestId('agent-reasoning-unavailable')).toHaveCount(0);
+  // The OpenAI models call Off "Minimal".
+  await model.selectOption('openai/gpt-5');
+  await expect(reasoning.locator('option[value="off"]')).toHaveText('Minimal');
 });
 
 test('agent-renders-tool-output-as-text', async () => {

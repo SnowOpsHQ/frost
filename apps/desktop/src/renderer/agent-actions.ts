@@ -16,6 +16,7 @@ import type {
 } from '@app/specs/agent-data.spec';
 import type { ChatgptSignInResult, ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
+import type { ReasoningEffort } from '@app/specs/agent-reasoning.spec';
 import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest } from '@app/specs/agent-session.spec';
 import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
@@ -27,6 +28,7 @@ import { ipc } from './ipc';
 // answer, or a safe fallback on an IPC failure. `setKey` is the only call that carries a key, and
 // only renderer → main: its answer is one of `AGENT_SET_KEY_RESULTS`, never the key. `send` takes the
 // typed text or a skill run (Task 7: the skill's id and its inputs; main resolves and renders it).
+// Phase 8 Task 9: the reasoning level (`agent-reasoning.spec.ts`), stored beside the route and model.
 // Task 9 (`agent-data.spec.ts`): the grants page, the chat retention, "Delete all chats" and export
 // (main asks in its own dialogs: the renderer never names a file), and the skills editor. Phase 8
 // Task 6: skills files, exported and imported through main's own dialogs (an import is reviewed first).
@@ -41,6 +43,7 @@ export const agentActions = {
   answerApproval: (approvalId: string, decision: ApprovalDecision): Promise<AgentAnswerResult> =>
     ipc.agent.answerApproval.mutate({ approvalId, decision }).catch((): AgentAnswerResult => 'unknown'),
   setModel: (route: ModelRoute, modelId: AgentModelId): Promise<boolean> => ipc.agent.setModel.mutate({ route, modelId }).catch(() => false),
+  setReasoningEffort: (effort: ReasoningEffort): Promise<boolean> => ipc.agent.setReasoningEffort.mutate({ effort }).catch(() => false),
   setKey: (slot: CredentialSlot, key: string): Promise<AgentSetKeyResult> => ipc.agent.setKey.mutate({ slot, key }).catch((): AgentSetKeyResult => 'failed'),
   clearKey: (slot: CredentialSlot): Promise<boolean> => ipc.agent.clearKey.mutate({ slot }).catch(() => false),
   listGrants: (): Promise<readonly AgentGrantView[] | null> => ipc.agent.listGrants.query().catch(() => null),

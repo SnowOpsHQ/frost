@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 // Spec: specs/agent-chatgpt.spec.ts (CHATGPT_UI, CHATGPT_USAGE_URL, CHATGPT_ERROR_MESSAGES, CHATGPT_SIGN_IN_ERROR_MESSAGES)
-// Acceptance: specs/agent-chatgpt.feature.md (Panel)
+// Acceptance: specs/agent-chatgpt.feature.md (Panel, chatgpt-reasoning-from-account-list)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { AGENT_REASONING_LABELS, AGENT_REASONING_UNAVAILABLE } from '@app/specs/agent-panel.spec';
 import { CHATGPT_ERROR_MESSAGES, CHATGPT_SIGN_IN_ERROR_MESSAGES, CHATGPT_UI, CHATGPT_USAGE_URL, type ChatgptAccountView, type ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import type { AgentActiveChatView } from '@app/specs/agent-session.spec';
 import { setup } from './agent-fixtures';
 
 const calls = vi.hoisted(() => ({
   setModel: vi.fn(async (..._args: unknown[]) => true),
+  setReasoningEffort: vi.fn(async (..._args: unknown[]) => true),
   setKey: vi.fn(async (..._args: unknown[]) => 'stored' as const),
   clearKey: vi.fn(async (..._args: unknown[]) => true),
   setChatRetention: vi.fn(async (..._args: unknown[]) => 'saved' as const),
@@ -108,6 +110,33 @@ describe('ChatGPT plan in the settings', () => {
     ]);
     expect(byTestId('agent-chatgpt-account')!.textContent).toBe('Signed in as ada@example.com');
     expect(byTestId('agent-chatgpt-status')!.textContent).toBe(CHATGPT_UI.planUsageOn);
+  });
+
+  test('chatgpt-reasoning-from-account-list', async () => {
+    const levels = () => [...(byTestId('agent-reasoning') as HTMLSelectElement).options].map((option) => [option.value, option.textContent]);
+    // The levels are the ones main took from the account's list: Auto plus exactly those, never Off or Minimal.
+    render(settings({ ...onPlan(), reasoning: { effort: 'high', levels: ['auto', 'low', 'high'] } }));
+    expect(levels()).toEqual([
+      ['auto', AGENT_REASONING_LABELS.auto],
+      ['low', 'Low'],
+      ['high', 'High'],
+    ]);
+    expect((byTestId('agent-reasoning') as HTMLSelectElement).value).toBe('high');
+    expect((byTestId('agent-reasoning') as HTMLSelectElement).disabled).toBe(false);
+    expect(byTestId('agent-reasoning-unavailable')).toBeNull();
+    expect(host.textContent).not.toContain('Minimal');
+    pick(byTestId('agent-reasoning'), 'low');
+    await flush();
+    expect(calls.setReasoningEffort).toHaveBeenCalledExactlyOnceWith('low');
+    // Another account model advertising none (Auto only until the live check confirms the field): disabled, with the reason.
+    render(settings({ ...onPlan(), modelId: 'chatgpt/gpt-5.5-mini', reasoning: { effort: 'auto', levels: ['auto'] } }));
+    expect(levels()).toEqual([['auto', AGENT_REASONING_LABELS.auto]]);
+    expect((byTestId('agent-reasoning') as HTMLSelectElement).disabled).toBe(true);
+    expect(byTestId('agent-reasoning-unavailable')!.textContent).toBe(AGENT_REASONING_UNAVAILABLE);
+    // Before the account lists a model there is no model to set a level for.
+    render(settings(setup({ route: 'chatgpt', modelId: 'chatgpt/gpt-5.5', allowedModels: [], chatgpt: { account: SIGNED_IN, models: [] } })));
+    expect(byTestId('agent-model-none')).not.toBeNull();
+    expect(byTestId('agent-reasoning')).toBeNull();
   });
 
   test('chatgpt-settings-pending-cancel', async () => {

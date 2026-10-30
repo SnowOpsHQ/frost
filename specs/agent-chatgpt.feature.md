@@ -375,6 +375,12 @@ word is `CHATGPT_UI` / the messages. A sign-in is a click: main spends that clic
   section's first action ("Manage usage" by the composer once the notice is gone).
 - **Scenario: chatgpt-settings-model-label** — the "Model" label names the model select; when the
   account has listed no model (a sentence instead of a select), it is a plain heading, not a label.
+- **Scenario: chatgpt-reasoning-from-account-list** (Phase 8 Task 9; `agent-chatgpt-components.test.ts`)
+  — on the plan the Reasoning select offers `auto` plus exactly the levels main put in
+  `setup.reasoning.levels` from the account's list (a model advertising Low and High: Auto, Low,
+  High; never Off or Minimal); a model whose entry advertises none (Auto only until the live check
+  confirms the field) shows Auto, disabled, with `AGENT_REASONING_UNAVAILABLE`; switching the account's
+  model changes the offered levels at once.
 
 ## Known limitations
 - **One click can back two opens.** The ChatGPT sign-in spends the sender window's gesture from

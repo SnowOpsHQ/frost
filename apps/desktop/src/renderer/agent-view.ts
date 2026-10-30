@@ -8,10 +8,15 @@ import {
   AGENT_MODEL_LABELS,
   AGENT_MODEL_PROVIDER_LABELS,
   AGENT_PANEL_STORAGE_KEY,
+  AGENT_REASONING_HINT,
+  AGENT_REASONING_LABELS,
+  AGENT_REASONING_OPENAI_OFF_LABEL,
+  AGENT_REASONING_UNAVAILABLE,
   AGENT_ROUTE_LABELS,
   AGENT_SET_KEY_MESSAGES,
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
+import { isReasoningEffort, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
 import { CREDENTIAL_SLOTS, routeCredentialSlot, type CredentialSlot } from '@app/specs/agent-proxy.spec';
 import {
   CHATGPT_SIGN_IN_ERROR_MESSAGES,
@@ -342,6 +347,43 @@ export function modelOptionGroups(setup: Pick<AgentSetupView, 'allowedModels'> &
   if (other.length > 0) groups.push({ label: null, options: other });
   return groups;
 }
+
+/** A level's name in the reasoning select: on an OpenAI model `off` reads "Minimal" (what it is sent as). */
+export function reasoningLabel(level: ReasoningEffort, modelId: AgentModelId): string {
+  return level === 'off' && modelProvider(modelId) === 'openai' ? AGENT_REASONING_OPENAI_OFF_LABEL : AGENT_REASONING_LABELS[level];
+}
+
+/** The reasoning select as the settings paint it (Phase 8 Task 9). */
+export interface ReasoningSelectModel {
+  /** The level in effect (main reduced a stored level the model lacks to `auto`). */
+  readonly value: ReasoningEffort;
+  readonly options: readonly { readonly value: ReasoningEffort; readonly label: string }[];
+  /** Only `auto` to choose: the select is shown but cannot be changed. */
+  readonly disabled: boolean;
+  /** Why only `auto` is offered, when that is so. */
+  readonly unavailable: string | null;
+  readonly hint: string;
+}
+
+/**
+ * The reasoning select for the setup's model: exactly the levels main offers it
+ * (`setup.reasoning.levels`, `auto` first), showing the level in effect. Read from the setup on every
+ * render, so switching the model changes the choices at once. A level the list lacks reads `auto`.
+ */
+export function reasoningSelect(setup: Pick<AgentSetupView, 'modelId' | 'reasoning'>): ReasoningSelectModel {
+  const levels: readonly ReasoningEffort[] = setup.reasoning.levels.length > 0 ? setup.reasoning.levels : ['auto'];
+  const onlyAuto = levels.every((level) => level === 'auto');
+  return {
+    value: levels.includes(setup.reasoning.effort) ? setup.reasoning.effort : 'auto',
+    options: levels.map((value) => ({ value, label: reasoningLabel(value, setup.modelId) })),
+    disabled: onlyAuto,
+    unavailable: onlyAuto ? AGENT_REASONING_UNAVAILABLE : null,
+    hint: AGENT_REASONING_HINT,
+  };
+}
+
+/** What a reasoning select value is: one of the levels, else `null` (a label or a provider's value is no choice). */
+export const reasoningChoice = (value: string): ReasoningEffort | null => (isReasoningEffort(value) ? value : null);
 
 /**
  * The model to keep when switching to `route`: the current one if it serves it, else its first. On

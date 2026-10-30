@@ -1,6 +1,7 @@
-// Spec: specs/agent-panel.spec.ts (AGENT_* words and layout, AGENT_MODEL_PROVIDER_LABELS), specs/agent-session.spec.ts
+// Spec: specs/agent-panel.spec.ts (AGENT_* words and layout, AGENT_MODEL_PROVIDER_LABELS, AGENT_REASONING_*), specs/agent-reasoning.spec.ts
+// (MODEL_REASONING_SUPPORT, REASONING_EFFORTS), specs/agent-session.spec.ts
 // (AgentState views, MODEL_CONTEXT_WINDOWS, EXECUTE_JS_APPROVAL_NOTE), specs/agent-tools.spec.ts (MODEL_PROVIDERS, byProvider)
-// Acceptance: specs/agent-panel.feature.md (View model), specs/skills.feature.md (skill-view-helpers)
+// Acceptance: specs/agent-panel.feature.md (View model: reasoning-options-follow-the-model, reasoning-auto-only-explained), specs/skills.feature.md (skill-view-helpers)
 import { describe, expect, test } from 'vitest';
 import {
   AGENT_ANSWER_MESSAGES,
@@ -8,9 +9,14 @@ import {
   AGENT_MCP_APPROVAL_NOTE,
   AGENT_MODEL_LABELS,
   AGENT_MODEL_PROVIDER_LABELS,
+  AGENT_REASONING_HINT,
+  AGENT_REASONING_LABELS,
+  AGENT_REASONING_OPENAI_OFF_LABEL,
+  AGENT_REASONING_UNAVAILABLE,
   AGENT_SET_KEY_MESSAGES,
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
+import { MODEL_REASONING_SUPPORT, REASONING_EFFORTS, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
 import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS, type AgentSkillView } from '@app/specs/agent-session.spec';
 import { ALLOWED_MODEL_IDS, byProvider, GATEWAY_ONLY_PROVIDERS, MODEL_PROVIDERS, routeModelId } from '@app/specs/agent-tools.spec';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_SLOT_MAX_CHARS, SKILL_USER_GROUP_LABEL, SKILL_WARNINGS } from '@app/specs/skills.spec';
@@ -42,6 +48,8 @@ import {
   modelOptions,
   protectionMessage,
   railBadge,
+  reasoningChoice,
+  reasoningSelect,
   runningChatId,
   setKeyMessage,
   setupChecklist,
@@ -214,6 +222,65 @@ describe('agent panel view model', () => {
     expect(modelOptionGroups(plan)).toEqual([{ label: null, options: [{ value: 'chatgpt/gpt-5.5', label: 'GPT-5.5' }, { value: 'chatgpt/gpt-5.5-mini', label: 'GPT-5.5 mini' }] }]);
     // Nothing to choose: no group at all.
     expect(modelOptionGroups(setup({ allowedModels: [] }))).toEqual([]);
+  });
+
+  test('reasoning-options-follow-the-model', () => {
+    const view = (modelId: (typeof ALLOWED_MODEL_IDS)[number], effort: ReasoningEffort = 'auto') =>
+      reasoningSelect(setup({ modelId, reasoning: { effort, levels: MODEL_REASONING_SUPPORT[modelId] } }));
+    // Exactly the levels main offers for the model, in its order, by the spec's words.
+    expect(view('anthropic/claude-sonnet-5-5').options).toEqual([
+      { value: 'auto', label: AGENT_REASONING_LABELS.auto },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+    ]);
+    expect(AGENT_REASONING_LABELS.auto).toBe("Auto (the model's default)");
+    // Gemini 3.8 Flash has no Medium; Gemini 4 Argon does.
+    expect(view('google/gemini-3.8-flash').options.map((option) => option.value)).toEqual(['auto', 'low', 'high']);
+    expect(view('google/gemini-4-argon').options.map((option) => option.value)).toEqual(['auto', 'low', 'medium', 'high']);
+    // On OpenAI models Off reads "Minimal"; on every other provider that offers it, "Off".
+    expect(AGENT_REASONING_OPENAI_OFF_LABEL).toBe('Minimal');
+    expect(view('openai/gpt-5').options.map((option) => option.label)).toEqual([AGENT_REASONING_LABELS.auto, 'Minimal', 'Low', 'Medium', 'High']);
+    expect(view('openai/gpt-5-mini').options.find((option) => option.value === 'off')!.label).toBe('Minimal');
+    expect(reasoningSelect(setup({ modelId: 'google/gemini-4-argon', reasoning: { effort: 'off', levels: ['auto', 'off', 'low'] } })).options.find((option) => option.value === 'off')!.label).toBe('Off');
+    // The select shows the level in effect, which main has already reduced to Auto where the stored one does not apply.
+    expect(view('anthropic/claude-opus-5-5', 'high').value).toBe('high');
+    expect(view('spacexai/grok-4.7').value).toBe('auto');
+    // Switching the model changes the offered levels at once: they are read from the new setup.
+    const before = reasoningSelect(setup({ modelId: 'openai/gpt-5', reasoning: { effort: 'off', levels: MODEL_REASONING_SUPPORT['openai/gpt-5'] } }));
+    const after = reasoningSelect(setup({ modelId: 'anthropic/claude-sonnet-5-5', reasoning: { effort: 'auto', levels: MODEL_REASONING_SUPPORT['anthropic/claude-sonnet-5-5'] } }));
+    expect(before.options.map((option) => option.value)).toContain('off');
+    expect(after.options.map((option) => option.value)).not.toContain('off');
+    expect(after.value).toBe('auto');
+    // A level the setup lists the select does not hold reads Auto; a setup with no levels offers Auto alone.
+    expect(reasoningSelect(setup({ reasoning: { effort: 'high', levels: ['auto', 'low'] } })).value).toBe('auto');
+    expect(reasoningSelect(setup({ reasoning: { effort: 'auto', levels: [] } })).options).toEqual([{ value: 'auto', label: AGENT_REASONING_LABELS.auto }]);
+    // The hint is one line about cost, always the same.
+    expect(AGENT_REASONING_HINT).toBe("Higher levels are slower and use more of your key's or plan's allowance.");
+    expect(AGENT_REASONING_HINT).not.toContain('\n');
+    expect(view('anthropic/claude-sonnet-5-5').hint).toBe(AGENT_REASONING_HINT);
+    // A choice is one of the levels and nothing else: not a label, a provider's value or another case.
+    for (const level of REASONING_EFFORTS) expect(reasoningChoice(level)).toBe(level);
+    for (const value of ['', 'Auto', 'minimal', 'Minimal', 'max', 'xhigh', 'Low ', "Auto (the model's default)"]) expect(reasoningChoice(value), value).toBeNull();
+  });
+
+  test('reasoning-auto-only-explained', () => {
+    // A model that offers only Auto (a Grok model; a ChatGPT model with no advertised levels): disabled, with the reason.
+    for (const modelId of ['spacexai/grok-4.7', 'spacexai/grok-4.20-non-reasoning'] as const) {
+      const only = reasoningSelect(setup({ modelId, reasoning: { effort: 'auto', levels: MODEL_REASONING_SUPPORT[modelId] } }));
+      expect(only.disabled, modelId).toBe(true);
+      expect(only.value).toBe('auto');
+      expect(only.options).toEqual([{ value: 'auto', label: AGENT_REASONING_LABELS.auto }]);
+      expect(only.unavailable).toBe(AGENT_REASONING_UNAVAILABLE);
+    }
+    const plan = reasoningSelect(setup({ route: 'chatgpt', modelId: 'chatgpt/gpt-5.5', reasoning: { effort: 'auto', levels: ['auto'] } }));
+    expect(plan.disabled).toBe(true);
+    expect(plan.unavailable).toBe(AGENT_REASONING_UNAVAILABLE);
+    // Any model with a level to choose: enabled, and no reason said.
+    const choosable = reasoningSelect(setup());
+    expect(choosable.disabled).toBe(false);
+    expect(choosable.unavailable).toBeNull();
+    expect(AGENT_REASONING_UNAVAILABLE).toMatch(/\.$/);
   });
 
   test('composer-keys', () => {

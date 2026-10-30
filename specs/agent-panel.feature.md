@@ -58,6 +58,19 @@ to one named test.
   model), and switching to one from a Gemini or Grok model picks its first model; on the gateway a
   Gemini or Grok model is kept; a ChatGPT account's models are one unlabelled group; no models, no
   group.
+- **Scenario: reasoning-options-follow-the-model** (Phase 8 Task 9, Decision 8; `agent-view.test.ts`)
+  — the reasoning select offers exactly `setup.reasoning.levels` (main's list for the selected
+  model, `auto` first) under `AGENT_REASONING_LABELS`, and shows `setup.reasoning.effort`, the level
+  the next turn sends (a stored level the model lacks already reads `auto`: the panel shows "Auto"
+  where the stored one does not apply, and the stored one returns on a model that offers it). On an
+  OpenAI model (`openai/*`) `off` reads "Minimal" (`AGENT_REASONING_OPENAI_OFF_LABEL`); on a Claude,
+  Gemini or Grok model it reads "Off" where offered. Switching the model changes the offered levels
+  at once, because they are read from the new setup. A value that is not a level is no choice.
+- **Scenario: reasoning-auto-only-explained** (`agent-view.test.ts`, `agent-components.test.ts`) —
+  when the model offers only `auto` (a Grok model; a ChatGPT model with no advertised levels) the
+  select is disabled, shows Auto, and `AGENT_REASONING_UNAVAILABLE` is said beside it; with more
+  levels the select is enabled and that sentence is absent. `AGENT_REASONING_HINT` is always one
+  line under the select.
 
 ## Components (`renderer/__tests__/agent-components.test.ts`, jsdom)
 - **Scenario: tool-output-renders-as-text** — markup in the output stays text; no element is made.
@@ -68,6 +81,11 @@ to one named test.
   request's card is disarmed for a whole delay.
 - **Scenario: agent-panel-approval-opens-without-changing-the-preference** (`agent-panel.test.ts`).
 - **Scenario: settings-key-field-never-keeps-the-key** — password input, emptied, never in the DOM.
+- **Scenario: reasoning-select-sends-set-reasoning-effort** (Phase 8 Task 9; `agent-components.test.ts`)
+  — choosing a level in the Reasoning select (under Model, labelled "Reasoning") calls
+  `agentActions.setReasoningEffort(level)` once with that `REASONING_EFFORTS` value (never a label or
+  a provider's value) and nothing else; a refused store shows "That choice could not be saved."; the
+  select reflects main's state, not the click.
 - **Scenario: composer-enter-sends-shift-enter-does-not** — and Stop replaces Send while running.
 
 ## Wiring
@@ -94,3 +112,10 @@ to one named test.
   the key is in no text, markup or value.
 - **Scenario: agent-renders-tool-output-as-text** — page text that looks like markup shows
   literally; no element is made and nothing runs.
+- **Scenario: agent-model-and-reasoning-settings** (Phase 8 Task 9, end to end: `agent.e2e.ts`)
+  — in the settings the model select lists the Gemini and Grok models under their provider
+  headings on the gateway route; choosing a Gemini model offers Auto, Low, Medium and High (Gemini
+  3.8 Flash: Auto, Low and High); choosing a Grok model leaves Auto, disabled, with the reason
+  said; choosing Medium on a Gemini model is stored (the select still reads Medium after the state
+  comes back) and, on switching to a Grok model, reads Auto while the stored level returns on a
+  model that offers it.
