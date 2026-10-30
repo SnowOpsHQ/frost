@@ -71,6 +71,7 @@ export function App() {
       {/* The workspace and, under it, the devtools drawer's band: the drawer is clamped against their height. */}
       <div className="workspace-stack">
         <div className="workspace">
+          <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} notesGeneration={state?.contentNotesGeneration} />
           {/* The palette's sheet and the History sheet sit above the page area, never under the tab's view (`command-palette.spec.ts`). */}
           <div className="page-column" data-history={historyOpen ? 'open' : undefined}>
             <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
@@ -80,7 +81,6 @@ export function App() {
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>
           <AgentPanel tab={tab} />
-          <SeoSidebar tab={tab} open={sidebarOpen} response={empty ? null : audit} onOpenChange={setSidebarOpen} jump={panelJump} notesGeneration={state?.contentNotesGeneration} />
         </div>
         {/* The SEO devtools drawer (`devtools.feature.md`): a band under the workspace, which shrinks above it. */}
         <DevtoolsDrawer state={state} tab={tab} audit={empty ? null : audit} onOpenPanel={(panel) => setPanelJump((last) => ({ panel, focus: true, seq: (last?.seq ?? 0) + 1 }))} />
