@@ -1,9 +1,10 @@
-// Spec: specs/seo-content.spec.ts (MAX_SNIPPET_VARIANTS, input caps, SNIPPET_BUDGETS_PX)
+// Spec: specs/seo-content.spec.ts (MAX_SNIPPET_VARIANTS, input caps, SNIPPET_BUDGETS_PX; READABILITY_FORMULAS,
+// SENTENCE_LIMITS, DIFFICULT_SENTENCE_REASONS, Phase 8)
 // Acceptance: specs/seo-content.feature.md (Panel)
 import { describe, expect, test } from 'vitest';
-import { truncateToWidth } from '@app/seo-core';
-import { MAX_SNIPPET_VARIANTS, SNIPPET_BUDGETS_PX, TARGET_QUERY_MAX_CHARS } from '@app/specs/seo-content.spec';
-import { breadcrumb, capInput, capQuery, countLabel, firstFreeSlot, ngramBar, ratio, snippetIndicator, widthMeter } from '../content-view';
+import { truncateToWidth, type Readability, type SentenceReport } from '@app/seo-core';
+import { MAX_SNIPPET_VARIANTS, READABILITY_FORMULAS, SENTENCE_LIMITS, SNIPPET_BUDGETS_PX, TARGET_QUERY_MAX_CHARS } from '@app/specs/seo-content.spec';
+import { breadcrumb, capInput, capQuery, countLabel, difficultSentenceItems, firstFreeSlot, ngramBar, ratio, readabilityView, sentenceStatsView, snippetIndicator, widthMeter } from '../content-view';
 
 describe('content view', () => {
   test('ngram-bar-classes', () => {
@@ -66,5 +67,58 @@ describe('content view', () => {
     expect(countLabel(1200, 'word', 'words')).toBe('1,200 words');
     expect(ratio(120, 20)).toBe('6');
     expect(ratio(1, 0)).toBe('0');
+  });
+
+  test('readability-view-formula-and-band', () => {
+    const scored = (formula: Extract<Readability, { status: 'ok' }>['formula'], score: number, band: string): Extract<Readability, { status: 'ok' }> => ({ status: 'ok', formula, score, band, words: 120, sentences: 8, syllables: 190 });
+    expect(readabilityView(scored('szigriszt-pazos', 58.24, 'Normal'))).toEqual({ formula: 'Szigriszt-Pazos', score: '58.2', band: 'Normal' });
+    expect(readabilityView(scored('flesch', 64, 'Plain English'))).toEqual({ formula: 'Flesch reading ease', score: '64.0', band: 'Plain English' });
+    expect(readabilityView(scored('amstad', -12.5, 'Very difficult')).score).toBe('-12.5');
+    // Every formula is named by its own spec entry.
+    for (const formula of Object.values(READABILITY_FORMULAS)) expect(readabilityView(scored(formula.id, 50, 'x')).formula).toBe(formula.name);
+  });
+
+  test('sentence-stats-view', () => {
+    const report = (changes: Partial<Extract<SentenceReport, { status: 'ok' }>> = {}): SentenceReport => ({
+      status: 'ok',
+      sentences: 1234,
+      averageWords: 14.25,
+      longestWords: 41,
+      longCount: 3,
+      complexWordShare: 0.125,
+      difficult: { total: 0, items: [] },
+      ...changes,
+    });
+    expect(sentenceStatsView(report())).toEqual([
+      { label: 'Sentences', value: '1,234' },
+      { label: 'Words per sentence', value: '14.3' },
+      { label: 'Longest sentence', value: '41 words' },
+      { label: `Over ${SENTENCE_LIMITS.longSentenceWords} words`, value: '3' },
+      { label: 'Complex words', value: '12.5%' },
+    ]);
+    // No syllable heuristic for the language: no complex-word share.
+    expect(sentenceStatsView(report({ complexWordShare: null }))!.map((row) => row.label)).not.toContain('Complex words');
+    expect(sentenceStatsView(report({ longestWords: 1, longCount: 0 }))).toContainEqual({ label: 'Longest sentence', value: '1 word' });
+    expect(sentenceStatsView({ status: 'not-available', reason: 'no-text' })).toBeNull();
+  });
+
+  test('difficult-sentence-items', () => {
+    const items = [
+      { text: 'A <b>long</b> one, as the page wrote it.', words: 31, reason: 'long' as const },
+      { text: 'A dense one.', words: 12, reason: 'complex' as const },
+    ];
+    const view = difficultSentenceItems({ status: 'ok', sentences: 40, averageWords: 12, longestWords: 31, longCount: 1, complexWordShare: 0.2, difficult: { total: 25, items } });
+    expect(view).toEqual({
+      heading: 'Difficult sentences (25)',
+      items: [
+        { text: 'A <b>long</b> one, as the page wrote it.', reason: 'long', chip: 'Long', words: '31 words' },
+        { text: 'A dense one.', reason: 'complex', chip: 'Complex', words: '12 words' },
+      ],
+      more: 'and 23 more',
+    });
+    // Every difficult sentence listed: nothing more to say; none at all: no list.
+    expect(difficultSentenceItems({ status: 'ok', sentences: 2, averageWords: 12, longestWords: 31, longCount: 1, complexWordShare: 0.2, difficult: { total: 2, items } })!.more).toBeNull();
+    expect(difficultSentenceItems({ status: 'ok', sentences: 2, averageWords: 5, longestWords: 6, longCount: 0, complexWordShare: 0.1, difficult: { total: 0, items: [] } })).toBeNull();
+    expect(difficultSentenceItems({ status: 'not-available', reason: 'no-text' })).toBeNull();
   });
 });

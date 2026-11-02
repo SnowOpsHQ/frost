@@ -295,16 +295,16 @@ describe('migrations-over-both-drivers', () => {
 
       // A newer build's id is left alone; a new one is applied after the known ones.
       await driver.execute(`INSERT INTO ${MIGRATIONS_TABLE} (id, applied_at) VALUES ('9999_from_the_future', 1)`, [], 'run');
-      const next: Migration = { id: '0100_test_extra', sql: 'CREATE TABLE extra (x INTEGER)' };
-      expect(await runMigrationsOver(driver, [...MIGRATIONS, next])).toEqual(['0100_test_extra']);
-      expect(await recordedIds(driver)).toEqual([...ids, '0100_test_extra', '9999_from_the_future']);
+      const next: Migration = { id: '9000_test_extra', sql: 'CREATE TABLE extra (x INTEGER)' };
+      expect(await runMigrationsOver(driver, [...MIGRATIONS, next])).toEqual(['9000_test_extra']);
+      expect(await recordedIds(driver)).toEqual([...ids, '9000_test_extra', '9999_from_the_future']);
 
       // A failing migration is rolled back whole (no table, no id), and can be retried once fixed.
-      const broken: Migration = { id: '0101_broken', sql: 'CREATE TABLE half (x INTEGER); CREATE TABLE half (y INTEGER);' };
+      const broken: Migration = { id: '9001_broken', sql: 'CREATE TABLE half (x INTEGER); CREATE TABLE half (y INTEGER);' };
       await expect(runMigrationsOver(driver, [...MIGRATIONS, next, broken])).rejects.toThrow();
       expect((await schemaOf(driver)).map((row) => row[1])).not.toContain('half');
-      expect(await recordedIds(driver)).not.toContain('0101_broken');
-      expect(await runMigrationsOver(driver, [...MIGRATIONS, next, { id: '0101_broken', sql: 'CREATE TABLE half (x INTEGER)' }])).toEqual(['0101_broken']);
+      expect(await recordedIds(driver)).not.toContain('9001_broken');
+      expect(await runMigrationsOver(driver, [...MIGRATIONS, next, { id: '9001_broken', sql: 'CREATE TABLE half (x INTEGER)' }])).toEqual(['9001_broken']);
     }
     expect(schemas[0]).toEqual(expected);
     expect(schemas[1]).toEqual(expected);

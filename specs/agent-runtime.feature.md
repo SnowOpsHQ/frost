@@ -109,7 +109,8 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
 - **Scenario: provider-endpoints-match-allowlist** — for each route, a model's streamed request
   goes to exactly the route's `MODEL_REQUESTS` URL with its method, passes `isAllowedModelRequest`,
   and carries no credential header.
-- **Scenario: provider-refuses-other-models** — a model not allowed on the route is refused.
+- **Scenario: provider-refuses-other-models** — a model not allowed on the route is refused; a
+  Gemini or Grok model on a key route or the ChatGPT plan before any request is posted.
 - **Scenario: provider-proxy-errors-not-retried** — a refused proxied request (on every route,
   the gateway included) is sent once.
 - **Scenario: provider-output-capped** — every route's request asks for at most `MAX_OUTPUT_TOKENS`
@@ -117,6 +118,25 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
   a provider's default can be its model's maximum and main's proxy refuses an uncapped request.
 - **Scenario: provider-openai-store-off** — the OpenAI request (bring-your-own-key, and an OpenAI
   model on the gateway) carries `store: false`.
+- **Scenario: gateway-gemini-tool-turn-round-trips** (Phase 8 Task 7) — for each Gemini model on
+  the gateway (the gateway provider takes any allowed id: `provider.ts` unchanged), a scripted
+  gateway stream whose tool call carries `providerMetadata.google.thoughtSignature` runs the tool,
+  and the turn's second request sends the call back with `providerOptions.google.thoughtSignature`
+  followed by its result; both requests go to the gateway's one URL with the model's id header and
+  pass `checkModelRequestBody` as sent. The stream is SDK-derived (Open question 3): a live
+  capture must confirm it before release.
+
+- **Scenario: reasoning-body-per-route** (Phase 8 Task 8b, Decision 8) — for every route, every
+  model it serves and every level that model offers (`reasoningLevels`; on `chatgpt` a GPT-6.x slug
+  and one the installed OpenAI provider doesn't take for a reasoning model, each advertising Low,
+  Medium and High), a real turn's captured request passes main's whole check
+  (`checkModelRequest(route, modelId, effort, body, headers)`) as sent at the same level and is
+  refused `reasoning` at every other offered level whose mapping differs; `auto` carries no
+  reasoning field. Spelled out: Claude with its key sends `thinking: { type: 'adaptive' }` and
+  `output_config.effort` within `max_tokens`; GPT-5's `off` is `reasoning.effort: 'minimal'`; the
+  gateway carries `providerOptions.{anthropic,google,openai}` as given; both ChatGPT slugs carry
+  `reasoning.effort` and no `max_output_tokens`. Without `forceReasoning` the provider drops the
+  level for the unrecognised slug, which is why the runtime sends it there.
 
 ## Chat loop (`chat.test.ts`, scripted `MockLanguageModelV4`)
 - **Scenario: chat-streams-text** — text deltas arrive as `chat.delta`, then `chat.finish` with
@@ -146,6 +166,15 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
   tool results) reaches the model as messages, with the system prompt.
 - **Scenario: chat-error-bounded** — a provider failure answers `chat.error` with a short message
   holding no request or response detail.
+- **Scenario: chat-call-options-carry-reasoning** (Phase 8 Task 8b) — `chatCallOptions(route,
+  modelId, effort)` merges `reasoningWire(route, modelId, effort)` into the route's provider options:
+  Claude `anthropic.{thinking: adaptive, effort}`, GPT-5 `openai.reasoningEffort` (`off` →
+  `minimal`), Gemini `google.thinkingConfig.thinkingLevel`, Grok nothing; on `chatgpt` the level
+  also sends `openai.forceReasoning: true` (the installed provider writes `reasoning` only for slugs
+  it classifies as reasoning models) and still no output cap. `auto`, or a level with no mapping
+  (Grok, `off` on `chatgpt`), sends exactly the route's options. For every route, served model and
+  stored level, the turn's model call carries that merge for the effective level, the output cap on
+  the key routes and the gateway only, and no sampling option.
 
 ## Runtime (`runtime.test.ts`)
 - **Scenario: runtime-ready** — starting the runtime posts `ready` with `AGENT_PROTOCOL_VERSION`

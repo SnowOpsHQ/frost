@@ -91,6 +91,14 @@ Each line maps to one named test.
 - **Scenario: session-delete-running-chat-stops-it** — deleting a running chat stops its turn.
 - **Scenario: session-model-change** — `setModel` stores a valid pair and refuses another; the
   allowed models follow the route.
+- **Scenario: session-sends-effective-effort** (Phase 8 Task 8b, Decision 8) — `setReasoningEffort`
+  stores any `REASONING_EFFORTS` level (anything else is refused, nothing stored); each `chat.start`
+  carries `effectiveEffort(settings, chatgptModels)`, the list main's proxy reads: a level the model
+  offers as chosen, one it lacks (Off on Claude, Medium on Gemini 3.8 Flash, anything on Grok) as
+  `auto`; the stored level is kept, so it is sent again on a model that offers it. On `chatgpt`
+  only the levels the account's list advertises for the model count (Off never), and a model that
+  advertises none sends `auto`. `setup.reasoning` is `{ effort, levels }`: the effective level and
+  the model's `reasoningLevels`.
 
 ## State and watch (`session-state.test.ts`: fake deps)
 - **Scenario: watch-coalesces-deltas** — three deltas within `AGENT_DELTA_COALESCE_MS` publish once;
@@ -138,6 +146,10 @@ Each line maps to one named test.
   `BAD_REQUEST` and never reach the service.
 - **Scenario: agent-procedures-call-service** — each procedure calls the service with its input; an
   answer outside its fixed set is replaced.
+- **Scenario: agent-set-reasoning-effort-bounds** (Phase 8 Task 8b) — `agent.setReasoningEffort`
+  (`AgentSetReasoningEffortInputSchema`: `{ effort }`, one of `REASONING_EFFORTS`, strict) passes
+  `enforceSender` before its input is read; a provider's wire value, another case, a non-string, a
+  missing or extra field is `BAD_REQUEST` and never reaches the service; the answer is a boolean.
 - **Scenario: agent-set-key-answer-has-no-key** — `setKey` answers only a fixed result; a refused
   input's error over the transport holds no part of the key (its message is `BAD_REQUEST`, even for
   an unrecognized key named after the key).

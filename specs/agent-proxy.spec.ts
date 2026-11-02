@@ -12,7 +12,8 @@
  * `proxy-accepts-real-provider-requests` keeps them honest).
  */
 import { CHATGPT_TOOL_NAMESPACE, type ChatgptModelView } from './agent-chatgpt.spec';
-import { DEFAULT_MODEL_ID, isAgentModelId, MAX_TOOL_STEPS, MODEL_ROUTES, modelProvider, routeModelId, type AgentModelId, type KeyRoute, type ModelRoute } from './agent-tools.spec';
+import { checkReasoning, DEFAULT_REASONING_EFFORT, isReasoningEffort, type ReasoningEffort } from './agent-reasoning.spec';
+import { DEFAULT_MODEL_ID, isAgentModelId, MAX_TOOL_STEPS, MODEL_ROUTES, modelProvider, routeModelId, type AgentModelId, type KeyRoute, type ModelProvider, type ModelRoute } from './agent-tools.spec';
 
 // ---- Host ------------------------------------------------------------------------------------
 
@@ -57,18 +58,31 @@ export interface AgentModelSettings {
   readonly route: ModelRoute;
   /** A catalogue id, or a `chatgpt/<slug>` on the `chatgpt` route (`AgentModelId`). */
   readonly modelId: AgentModelId;
+  /**
+   * The reasoning level chosen (Phase 8 Task 8a, Decision 8; `agent-reasoning.spec.ts`), stored as
+   * chosen even where the model lacks it (it then acts as `auto`: `effectiveEffort`). Optional on
+   * read: a file from before the setting, or one holding no valid level, reads as `auto`. Main's
+   * settings always carry it.
+   */
+  readonly reasoningEffort?: ReasoningEffort;
 }
 
-/** A new install: the gateway route and `DEFAULT_MODEL_ID`. */
-export const DEFAULT_AGENT_MODEL_SETTINGS: AgentModelSettings = { route: 'gateway', modelId: DEFAULT_MODEL_ID };
+/** A new install: the gateway route, `DEFAULT_MODEL_ID` and `auto` reasoning. */
+export const DEFAULT_AGENT_MODEL_SETTINGS: AgentModelSettings = { route: 'gateway', modelId: DEFAULT_MODEL_ID, reasoningEffort: DEFAULT_REASONING_EFFORT };
 
 /**
  * Whether `route` may serve `modelId`, as a format check: an allowed model whose provider the route
  * serves, or a well-formed `chatgpt/<slug>` on the `chatgpt` route (main also requires the slug to
- * be in the account's last model list).
+ * be in the account's last model list); and a `reasoningEffort`, when given, one of
+ * `REASONING_EFFORTS` (any of them: whether the model offers it is `effectiveEffort`'s question).
  */
-export function isValidModelSettings(value: { readonly route: unknown; readonly modelId: unknown }): value is AgentModelSettings {
-  return (MODEL_ROUTES as readonly unknown[]).includes(value.route) && isAgentModelId(value.modelId) && routeModelId(value.route as ModelRoute, value.modelId) !== null;
+export function isValidModelSettings(value: { readonly route: unknown; readonly modelId: unknown; readonly reasoningEffort?: unknown }): value is AgentModelSettings {
+  return (
+    (MODEL_ROUTES as readonly unknown[]).includes(value.route) &&
+    isAgentModelId(value.modelId) &&
+    routeModelId(value.route as ModelRoute, value.modelId) !== null &&
+    (value.reasoningEffort === undefined || isReasoningEffort(value.reasoningEffort))
+  );
 }
 
 /**
@@ -76,7 +90,7 @@ export function isValidModelSettings(value: { readonly route: unknown; readonly 
  * in `chatgptModels`, the account's last model list (persisted with the settings, so a restart
  * without network keeps the choice). A ChatGPT id the list no longer has is not usable.
  */
-export function isUsableModelSettings(value: { readonly route: unknown; readonly modelId: unknown }, chatgptModels: readonly ChatgptModelView[]): value is AgentModelSettings {
+export function isUsableModelSettings(value: { readonly route: unknown; readonly modelId: unknown; readonly reasoningEffort?: unknown }, chatgptModels: readonly ChatgptModelView[]): value is AgentModelSettings {
   if (!isValidModelSettings(value)) return false;
   return value.route !== 'chatgpt' || chatgptModels.some((model) => model.id === value.modelId);
 }
@@ -182,6 +196,12 @@ export const PROXY_REFUSALS = [
    * would repeat it). Not the runtime's fault.
    */
   'plan-paused',
+  /**
+   * The body's reasoning fields are not the mapping of the settings' effective effort (Phase 8
+   * Task 8a, Decision 8: `checkModelRequest`), nor, while a turn runs, of the settings it began on.
+   * The runtime's fault (counted).
+   */
+  'reasoning',
 ] as const;
 export type ProxyRefusal = (typeof PROXY_REFUSALS)[number];
 
@@ -454,11 +474,24 @@ const chatgptNamespace = (value: unknown) =>
 
 // The gateway: the language model call options. Parts per role, each with its keys; part and message
 // provider options only the ones the providers attach to their own output (Anthropic's thinking
-// signature and redacted data, OpenAI's item ids and encrypted reasoning) and cache control.
+// signature and redacted data, OpenAI's item ids and encrypted reasoning, Gemini's thought
+// signature) and cache control.
+//
+// Gemini (Phase 8 Task 7, Open question 3): the AI SDK's Google provider returns a part's thought
+// signature as `providerMetadata.google.thoughtSignature` (a string) on thoughts, text and function
+// calls, and Gemini refuses a function-call turn sent back without it; `ai` sends the metadata back
+// as the part's `providerOptions`. Only that key, only a string, only under `google` (not `vertex`:
+// no evidence the gateway uses that key). Grok: no part metadata at all. This allowlist is derived
+// from the installed SDK, not from a captured stream: `@ai-sdk/gateway` 4.0.128 passes the stream
+// parts' `providerMetadata` through unchanged and `ai` 7.0.155 sends it back (its changelog:
+// "preserve thoughtSignature through tool execution"); `@ai-sdk/google` is not installed, so the
+// key and name are that provider's published ones. A live capture of one Gemini and one Grok tool
+// turn must confirm them before release.
 const partOptions = (value: unknown) =>
   shaped(value, {
     anthropic: (options) => shaped(options, { signature: isString, redactedData: isString, cacheControl, caller: directCaller }),
     openai: (options) => shaped(options, { itemId: isString, reasoningEncryptedContent: (content) => content === null || isString(content) }),
+    google: (options) => shaped(options, { thoughtSignature: isString }),
   });
 const toolOutput = (value: unknown) =>
   isObject(value) &&
@@ -476,10 +509,29 @@ const GATEWAY_PARTS: Readonly<Record<'user' | 'assistant' | 'tool', Readonly<Rec
 /** Gateway prompt part types allowed, any role (for the record; `GATEWAY_PARTS` is the rule). */
 export const GATEWAY_PART_TYPES: readonly string[] = ['text', 'reasoning', 'tool-call', 'tool-result'];
 /**
+ * The Gemini thinking levels the gateway route may ask for: the levels its public model list
+ * advertises for the catalogue's Gemini models (2026-10-30: `low`, `medium`, `high` for Gemini 4
+ * Argon; `low`, `high` for Gemini 3.8 Flash), sent as `providerOptions.google.thinkingConfig.thinkingLevel`
+ * (the AI SDK's documented shape). `minimal` and any budget are not allowed.
+ */
+export const GEMINI_THINKING_LEVELS = ['low', 'medium', 'high'] as const;
+
+/**
+ * Gemini's `thinkingConfig`: only `thinkingLevel` (`GEMINI_THINKING_LEVELS`) and `includeThoughts`
+ * (a boolean). No `thinkingBudget` of any size (the runtime maps reasoning to levels only, Task 8a),
+ * so a budget past the output cap can never be asked for.
+ */
+const geminiThinkingConfig = (value: unknown) => shaped(value, { thinkingLevel: oneOf(...GEMINI_THINKING_LEVELS), includeThoughts: oneOf(true, false) });
+
+/**
  * Provider options the gateway route may carry, per provider, each with the values it may take:
  * OpenAI's `store` (only `false`) and reasoning, summary, verbosity and parallel-call knobs;
  * Anthropic's reasoning and parallel-call knobs, and `thinking` only as `checkGatewayThinking`
- * allows. Anything else (MCP servers, containers, gateway routing, BYOK credentials) is refused.
+ * allows; Gemini's `thinkingConfig` only (`google`, the provider's own key, as the gateway's docs
+ * say); for Grok, `xai` as an empty object at most (no option verified yet; Phase 8 Task 7, Open
+ * question 3). Anything else is refused: MCP servers, containers, gateway routing, BYOK
+ * credentials, and for Gemini `cachedContent`, safety settings, search grounding and retrieval,
+ * response modalities, labels and every other Google option.
  */
 export const GATEWAY_PROVIDER_OPTIONS: Readonly<Record<string, Readonly<Record<string, (value: unknown) => boolean>>>> = {
   openai: {
@@ -495,6 +547,10 @@ export const GATEWAY_PROVIDER_OPTIONS: Readonly<Record<string, Readonly<Record<s
     effort: oneOf('low', 'medium', 'high'),
     disableParallelToolUse: oneOf(true, false),
   },
+  google: {
+    thinkingConfig: geminiThinkingConfig,
+  },
+  xai: {},
 };
 
 /**
@@ -672,4 +728,76 @@ function checkGateway(body: Json, openAiModel: boolean): BodyCheck {
     if (isObject(anthropic) && anthropic.thinking !== undefined && !checkGatewayThinking(anthropic.thinking, body.maxOutputTokens as number)) return refuse('output-cap');
   }
   return OK;
+}
+
+// ---- Model proxy: the whole request (Phase 8 Task 8a) -----------------------------------------
+
+/**
+ * The provider-options key each gateway model's own provider uses: Grok's options and metadata are
+ * `xai` (the AI SDK's key), though its ids are `spacexai/…`.
+ */
+export const GATEWAY_OPTIONS_KEY: Readonly<Record<ModelProvider, string>> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  google: 'google',
+  spacexai: 'xai',
+};
+
+/**
+ * Whether a gateway body's provider options and part metadata (request, message and part level)
+ * are all under the model's own provider's key (`GATEWAY_OPTIONS_KEY`): `google.*` only for
+ * `google/…` models, `anthropic.*` only for `anthropic/…`, OpenAI's options and item metadata only
+ * for `openai/…`. One exception is kept: the request's `openai: { store: false }` on every model,
+ * because the runtime sends it on every turn (`CHAT_PROVIDER_OPTIONS`, a no-op for other providers)
+ * and the structural tests and captured requests carry it; on a non-OpenAI model `openai` may hold
+ * nothing else. The body has passed `checkModelRequestBody` (shapes and values); this only narrows
+ * which keys may appear. Never throws.
+ */
+function checkGatewayOptionsOwner(modelId: string, body: string): boolean {
+  const provider = modelProvider(modelId);
+  if (provider === null) return false;
+  const own = GATEWAY_OPTIONS_KEY[provider];
+  const ownOnly = (options: unknown) => options === undefined || (isObject(options) && Object.keys(options).every((key) => key === own));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  if (!isObject(parsed)) return false;
+  const { providerOptions, prompt } = parsed;
+  if (providerOptions !== undefined) {
+    if (!isObject(providerOptions)) return false;
+    for (const [key, options] of Object.entries(providerOptions)) {
+      if (key === own) continue;
+      if (key !== 'openai' || !isObject(options) || !onlyKeys(options, ['store'])) return false;
+    }
+  }
+  if (!Array.isArray(prompt)) return false;
+  for (const message of prompt) {
+    if (!isObject(message) || !ownOnly(message.providerOptions)) return false;
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) if (!isObject(part) || !ownOnly(part.providerOptions)) return false;
+  }
+  return true;
+}
+
+/**
+ * The whole request check the proxy runs (Decision 8: two layers, kept apart):
+ * 1. `checkModelRequestBody(route, modelId, body, headers)`, the structural allowlist, unchanged
+ *    (which shapes and values may appear at all); its refusal reasons win;
+ * 2. `checkReasoning(route, modelId, effort, body)`: the reasoning fields equal the mapping of
+ *    `effort` (`reasoningWire`), else `reasoning`;
+ * 3. on the gateway, every provider option and part metadata under the model's own provider's key
+ *    (`GATEWAY_OPTIONS_KEY`, `openai: { store: false }` excepted), else `provider-options`.
+ * `effort` is the effective level (`effectiveEffort`) of the settings, or of the settings a running
+ * turn began on (`model-proxy.ts` decides which). The text answered is the structural check's (the
+ * parsed body written back out), so the bytes sent are the object checked. Never throws.
+ */
+export function checkModelRequest(route: ModelRoute, modelId: string, effort: ReasoningEffort, body: string, headers: HeaderPairs = []): BodyCheck {
+  const check = checkModelRequestBody(route, modelId, body, headers);
+  if (!check.ok) return check;
+  if (!checkReasoning(route, modelId, effort, check.body)) return refuse('reasoning');
+  if (route === 'gateway' && !checkGatewayOptionsOwner(modelId, check.body)) return refuse('provider-options');
+  return check;
 }

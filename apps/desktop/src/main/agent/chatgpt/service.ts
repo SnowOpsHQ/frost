@@ -144,7 +144,7 @@ export interface ChatgptAuth {
   acknowledge(): Promise<boolean>;
   /** Runs `fn` with a live access token (the model proxy only); `fn` must not keep or return it. */
   withAccessToken<T>(fn: (token: string) => T | Promise<T>, options?: WithAccessTokenOptions): Promise<WithAccessTokenResult<T>>;
-  /** The account's listed models (`visibility === 'list'`), in the server's order. */
+  /** The account's listed models (`visibility === 'list'`), in the server's order, each with the reasoning levels it advertises. */
   listModels(): Promise<ListModelsResult>;
   /** Ends a pending sign-in and resolves once nothing started here is still running. */
   dispose(): Promise<void>;
@@ -732,7 +732,8 @@ export function createChatgptAuth(deps: ChatgptAuthDeps): ChatgptAuth {
       const id = chatgptModelId(parsed.data.slug);
       if (id === null) continue;
       seen.add(parsed.data.slug);
-      models.push({ id, label: parsed.data.display_name.trim() });
+      // The levels the entry advertises (Phase 8 Task 8b; already filtered by the schema), when any.
+      models.push({ id, label: parsed.data.display_name.trim(), ...(parsed.data.efforts !== undefined ? { efforts: parsed.data.efforts } : {}) });
     }
     if (models.length === 0 && entries.length > 0) {
       const first = entries[0];

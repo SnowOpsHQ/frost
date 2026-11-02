@@ -2,6 +2,7 @@ import { createDrizzle } from './client';
 import { createAgentGrantsRepository, type AgentGrantsRepository } from './agent-grants';
 import { createAgentChatsRepository, type AgentChatsRepository } from './agent-chats';
 import { createAgentSkillsRepository, type AgentSkillsRepository } from './agent-skills';
+import { createAgentSkillPrefsRepository, type AgentSkillPrefsRepository } from './agent-skill-prefs';
 import { createAgentMcpRepository, type AgentMcpRepository } from './agent-mcp';
 import { createChangeIntelRepository, type ChangeIntelRepository } from './change-intel/repository';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
@@ -31,6 +32,8 @@ export interface SessionStore {
   readonly agentChats: AgentChatsRepository;
   /** The user's agent skills (Phase 5 Task 9), written at once. */
   readonly agentSkills: AgentSkillsRepository;
+  /** Which skills the user switched off or on (Phase 8 Task 5), written at once. */
+  readonly agentSkillPrefs: AgentSkillPrefsRepository;
   /** The agent's MCP servers (Phase 5 Task 10), written at once. */
   readonly agentMcp: AgentMcpRepository;
   /** Change intelligence (Phase 6): captures, versions, diffs, screenshots, projects and audited purges. */
@@ -59,6 +62,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     agentGrants: createAgentGrantsRepository(drizzle),
     agentChats: createAgentChatsRepository(drizzle),
     agentSkills: createAgentSkillsRepository(drizzle),
+    agentSkillPrefs: createAgentSkillPrefsRepository(drizzle),
     agentMcp: createAgentMcpRepository(drizzle),
     changeIntel: createChangeIntelRepository(drizzle),
     get isOpen() {

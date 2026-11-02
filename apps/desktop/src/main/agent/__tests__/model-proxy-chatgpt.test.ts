@@ -1,6 +1,6 @@
 // Spec: specs/agent-chatgpt.spec.ts (CHATGPT_ENDPOINTS, CHATGPT_ERROR_CODE_REASONS, chatgptAnswerFailure,
 // chatgptStreamFailure, CHATGPT_DETAIL_STATUS_REASONS, CHATGPT_LIMITS.maxErrorBodyBytes), specs/agent-proxy.spec.ts
-// (REQUEST_HEADER_ALLOWLIST.chatgpt, mainRequestHeaders, checkModelRequestBody, PROXY_REFUSALS 'plan-paused'),
+// (REQUEST_HEADER_ALLOWLIST.chatgpt, mainRequestHeaders, checkModelRequest at the settings' effective effort, PROXY_REFUSALS 'plan-paused'),
 // specs/agent-tools.spec.ts (MODEL_REQUESTS.chatgpt)
 // Acceptance: specs/agent-chatgpt.feature.md (Through the proxy) · plan docs/plans/agent-chatgpt-plan.md, Task 3
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -356,7 +356,7 @@ describe('model proxy: the ChatGPT plan route', () => {
       chatgpt: { withAccessToken: (fn, opts) => h.auth.withAccessToken(fn, opts), report: () => undefined },
     });
     await settings.load();
-    expect(settings.current()).toEqual({ route: 'byok-openai', modelId: 'openai/gpt-5' });
+    expect(settings.current()).toEqual({ route: 'byok-openai', modelId: 'openai/gpt-5', reasoningEffort: 'auto' });
     expect(await settings.set({ route: 'chatgpt', modelId: MODEL })).toBe(true);
     onFetch!(request({ body: byokBody }));
     await vi.waitFor(() => expect(sent).toHaveLength(1));

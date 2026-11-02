@@ -2,7 +2,8 @@
 export { contentReport, urlTerms, type ContentFields, type ContentReport } from './report';
 export { ngramTables, type NgramFields, type NgramRow, type NgramTables } from './ngrams';
 export { queryChecklist, queryTerms, type QueryPlaceCheck, type QueryTerms } from './query';
-export { fleschBand, fleschReadingEase, readability, syllables, type Readability } from './readability';
+export { fleschBand, fleschReadingEase, readability, readabilityBand, syllables, type Readability } from './readability';
+export { sentenceReport, type DifficultSentence, type SentenceReport } from './sentences';
 export { SNIPPET_FONT_TABLE } from './snippet-font';
 export { STOP_WORDS } from './stop-words';
 export { escapeHtml, formatPx, measureSnippet, minSnippetWidth, snippetHtml, snippetText, textWidth, truncateToWidth, type SnippetCut, type SnippetMeasure } from './widths';

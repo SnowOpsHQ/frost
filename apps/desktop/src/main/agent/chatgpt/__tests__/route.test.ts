@@ -63,7 +63,7 @@ describe('chatgpt route', () => {
     expect(await settings.set({ route: 'chatgpt', modelId: 'chatgpt/gpt-6.1-mini' })).toBe(true);
     const again = createAgentSettings({ file: '/user-data/agent-settings.json', fs: memory.fs });
     await again.load();
-    expect(again.current()).toEqual({ route: 'chatgpt', modelId: 'chatgpt/gpt-6.1-mini' });
+    expect(again.current()).toEqual({ route: 'chatgpt', modelId: 'chatgpt/gpt-6.1-mini', reasoningEffort: 'auto' });
     // A token refresh (same account, still on) does not ask again.
     const asked = modelRequests(h);
     h.clock.now += 3600_000;
@@ -151,7 +151,7 @@ describe('chatgpt route', () => {
       h.server.models = answer;
       expect(await route.refreshModels()).toBe(false);
       expect(settings.chatgptModels()).toEqual([{ id: 'chatgpt/old', label: 'Old' }]);
-      expect(settings.current()).toEqual({ route: 'chatgpt', modelId: 'chatgpt/old' });
+      expect(settings.current()).toEqual({ route: 'chatgpt', modelId: 'chatgpt/old', reasoningEffort: 'auto' });
     }
     await route.dispose();
   });

@@ -97,5 +97,7 @@ export const chatStart = (overrides: Partial<Extract<MainToRuntimeMessage, { typ
   route: 'byok-anthropic',
   allowedTools: ['page_audit', 'page_text'],
   mcpTools: [],
+  // Protocol version 8: main's effective level (`auto` sends no reasoning field).
+  reasoningEffort: 'auto',
   ...overrides,
 });

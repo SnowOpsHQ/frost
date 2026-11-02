@@ -1,6 +1,7 @@
 // Spec: specs/agent-protocol.schema.ts (MainToRuntimeMessageSchema, RuntimeToMainMessageSchema,
 // AGENT_PROTOCOL_LIMITS, MAIN_TO_RUNTIME_MESSAGE_TYPES, RUNTIME_TO_MAIN_MESSAGE_TYPES, isBoundedJson),
-// specs/agent-tools.spec.ts (CHAT_MAX_MESSAGES, TOOL_RESULT_MAX_CHARS)
+// specs/agent-tools.spec.ts (CHAT_MAX_MESSAGES, TOOL_RESULT_MAX_CHARS), specs/agent-reasoning.spec.ts
+// (REASONING_EFFORTS: chat.start.reasoningEffort, protocol version 8)
 // Acceptance: specs/agent-protocol.feature.md (Protocol)
 import { describe, expect, test } from 'vitest';
 import type { z } from 'zod';
@@ -15,6 +16,7 @@ import {
   RuntimeToMainMessageSchema,
   ToolResultSchema,
 } from '@app/specs/agent-protocol.schema';
+import { REASONING_EFFORTS } from '@app/specs/agent-reasoning.spec';
 import { CHAT_MAX_MESSAGES, MAX_TOOL_STEPS, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
 
 const L = AGENT_PROTOCOL_LIMITS;
@@ -37,6 +39,7 @@ const mainToRuntime = [
     route: 'gateway',
     allowedTools: ['page_audit', 'click', 'mcp__docs__search'],
     mcpTools: [{ name: 'mcp__docs__search', description: 'Untrusted tool from Docs: Searches.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } }],
+    reasoningEffort: 'high',
   },
   { type: 'chat.stop', chatId: CHAT },
   { type: 'tool.result', chatId: CHAT, callId: 'call_1', result: okResult },
@@ -303,6 +306,25 @@ describe('chat.start MCP tools (protocol version 6, Task 10)', () => {
     expect(mainOk(withTool({ description: '' }))).toBe(false);
     expect(mainOk(withTool({ description: 'x'.repeat(5000) }))).toBe(false);
     expect(mainOk(withTool({ extra: true }))).toBe(false);
+  });
+});
+
+// Acceptance: specs/agent-protocol.feature.md (Protocol: chat-start-reasoning-effort)
+describe('chat.start reasoning level (protocol version 8, Phase 8 Task 8b)', () => {
+  const start = mainToRuntime[0];
+  test('chat-start-reasoning-effort', () => {
+    // Version 8 added `reasoningEffort`: a runtime from before it is refused at `ready`.
+    expect(AGENT_PROTOCOL_VERSION).toBe(8);
+    // Every level the user may choose, `auto` included (it sends nothing).
+    for (const reasoningEffort of REASONING_EFFORTS) expect(mainOk({ ...start, reasoningEffort }), reasoningEffort).toBe(true);
+    expect(MainToRuntimeMessageSchema.parse({ ...start, reasoningEffort: 'off' })).toMatchObject({ reasoningEffort: 'off' });
+    // Required: a `chat.start` without it (an older main) is refused.
+    const { reasoningEffort: _omit, ...withoutField } = start;
+    expect(mainOk(withoutField)).toBe(false);
+    // Only the catalogue's names: never a provider's wire value or anything else.
+    for (const reasoningEffort of ['minimal', 'none', 'xhigh', 'max', 'High', ' high', '', null, 3, true, { effort: 'high' }, ['high']]) {
+      expect(mainOk({ ...start, reasoningEffort }), JSON.stringify(reasoningEffort)).toBe(false);
+    }
   });
 });
 

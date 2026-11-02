@@ -14,7 +14,7 @@
  * strictly (anything else is discarded).
  */
 import { z } from 'zod';
-import { CHATGPT_ID_TOKEN_ALG, CHATGPT_LIMITS, isChatgptHostId, isChatgptSlug, isIssuedClientId } from './agent-chatgpt.spec';
+import { advertisedEfforts, CHATGPT_ADVERTISED_EFFORTS_FIELD, CHATGPT_ID_TOKEN_ALG, CHATGPT_LIMITS, isChatgptHostId, isChatgptSlug, isIssuedClientId } from './agent-chatgpt.spec';
 
 const L = CHATGPT_LIMITS;
 
@@ -93,15 +93,26 @@ export const ChatgptJwkSchema = z.object({
 });
 export type ChatgptJwk = z.infer<typeof ChatgptJwkSchema>;
 
-/** One entry of `GET /v1/models` (`{ models: [...] }`): kept only when it parses and `visibility === 'list'`. */
-export const ChatgptModelEntrySchema = z.object({
-  slug: z.string().refine(isChatgptSlug),
-  display_name: z
-    .string()
-    .max(L.maxDisplayNameChars)
-    .refine((name) => name.trim() !== '' && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/u.test(name)),
-  visibility: z.string().max(64),
-});
+/**
+ * One entry of `GET /v1/models` (`{ models: [...] }`): kept only when it parses and `visibility === 'list'`.
+ * Its advertised reasoning levels (`CHATGPT_ADVERTISED_EFFORTS_FIELD`, optional; Phase 8 Task 8a)
+ * are read leniently, never failing the entry: `advertisedEfforts` keeps at most the four known
+ * levels, and none (absent, empty, unknown or malformed) leaves no `efforts` key (Auto only).
+ */
+export const ChatgptModelEntrySchema = z
+  .object({
+    slug: z.string().refine(isChatgptSlug),
+    display_name: z
+      .string()
+      .max(L.maxDisplayNameChars)
+      .refine((name) => name.trim() !== '' && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/u.test(name)),
+    visibility: z.string().max(64),
+    [CHATGPT_ADVERTISED_EFFORTS_FIELD]: z.unknown().optional(),
+  })
+  .transform(({ slug, display_name, visibility, [CHATGPT_ADVERTISED_EFFORTS_FIELD]: advertised }) => {
+    const efforts = advertisedEfforts(advertised);
+    return { slug, display_name, visibility, ...(efforts.length > 0 ? { efforts } : {}) };
+  });
 
 // ---- Stored --------------------------------------------------------------------------------
 

@@ -1,5 +1,14 @@
-import type { SnippetCut } from '@app/seo-core';
-import { MAX_SNIPPET_VARIANTS, SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS, SNIPPET_VARIANT_TITLE_MAX_CHARS, TARGET_QUERY_MAX_CHARS } from '@app/specs/seo-content.spec';
+import type { Readability, SentenceReport, SnippetCut } from '@app/seo-core';
+import {
+  MAX_SNIPPET_VARIANTS,
+  READABILITY_FORMULAS,
+  SENTENCE_LIMITS,
+  SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS,
+  SNIPPET_VARIANT_TITLE_MAX_CHARS,
+  TARGET_QUERY_MAX_CHARS,
+  type DifficultSentenceReason,
+  type ReadabilityFormulaId,
+} from '@app/specs/seo-content.spec';
 
 // Pure helpers behind the Content panel (spec `seo-content.spec.ts`; acceptance
 // `seo-content.feature.md`, Panel). No styles are computed here: bar and meter lengths are SVG
@@ -94,4 +103,49 @@ export function snippetIndicator(length: number | null | undefined, cut: { reado
 /** A ratio with one decimal (`0` for nothing to divide by). */
 export function ratio(a: number, b: number): string {
   return b > 0 ? (Math.round((a / b) * 10) / 10).toLocaleString('en-US') : '0';
+}
+
+/** A scored readability as the panel shows it: the formula's name, the score (one decimal) and its band. */
+export function readabilityView(r: Extract<Readability, { status: 'ok' }>): { readonly formula: string; readonly score: string; readonly band: string } {
+  return { formula: formulaName(r.formula), score: r.score.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }), band: r.band };
+}
+
+/** The name of a readability formula (`READABILITY_FORMULAS`). */
+export function formulaName(id: ReadabilityFormulaId): string {
+  return Object.values(READABILITY_FORMULAS).find((formula) => formula.id === id)?.name ?? id;
+}
+
+/** The sentence statistics as label / value rows; `null` when not available. The complex-word share only where the language has a syllable heuristic. */
+export function sentenceStatsView(report: SentenceReport): { readonly label: string; readonly value: string }[] | null {
+  if (report.status !== 'ok') return null;
+  const rows = [
+    { label: 'Sentences', value: report.sentences.toLocaleString('en-US') },
+    { label: 'Words per sentence', value: report.averageWords.toLocaleString('en-US', { maximumFractionDigits: 1 }) },
+    { label: 'Longest sentence', value: countLabel(report.longestWords, 'word', 'words') },
+    { label: `Over ${SENTENCE_LIMITS.longSentenceWords} words`, value: report.longCount.toLocaleString('en-US') },
+  ];
+  if (report.complexWordShare !== null) rows.push({ label: 'Complex words', value: `${(Math.round(report.complexWordShare * 1000) / 10).toLocaleString('en-US')}%` });
+  return rows;
+}
+
+const REASON_CHIP: Readonly<Record<DifficultSentenceReason, string>> = { long: 'Long', complex: 'Complex' };
+
+/** One difficult sentence as a row: its excerpt (page text: render as inert text), its reason chip and word count. */
+export interface DifficultSentenceRow {
+  readonly text: string;
+  readonly reason: DifficultSentenceReason;
+  readonly chip: string;
+  readonly words: string;
+}
+
+/** The difficult-sentence list: a heading counting them all, the listed rows, and how many it leaves out (`null`: none); `null` without any. */
+export function difficultSentenceItems(report: SentenceReport): { readonly heading: string; readonly items: DifficultSentenceRow[]; readonly more: string | null } | null {
+  if (report.status !== 'ok' || report.difficult.total === 0) return null;
+  const { total, items } = report.difficult;
+  const rest = total - items.length;
+  return {
+    heading: `Difficult sentences (${total.toLocaleString('en-US')})`,
+    items: items.map((item) => ({ text: item.text, reason: item.reason, chip: REASON_CHIP[item.reason], words: countLabel(item.words, 'word', 'words') })),
+    more: rest > 0 ? `and ${rest.toLocaleString('en-US')} more` : null,
+  };
 }

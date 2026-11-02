@@ -1,11 +1,24 @@
 // Spec: specs/skills-schema.ts (SkillSchema, parseSkill), specs/skills.spec.ts (BUILTIN_SKILL_IDS,
 // SKILL_SLOT_NAMES, SKILL_INPUT_SLOTS, templateSlots, SKILL_LIMITS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_MISSING,
-// SKILL_DATA_OPEN, SKILL_DATA_CLOSE)
+// SKILL_DATA_OPEN, SKILL_DATA_CLOSE, SKILL_CATEGORIES, BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_SOURCES, SKILL_ACTING_TOOLS)
 // Acceptance: specs/skills.feature.md (Schema, Rendering, Registry)
 import { describe, expect, test } from 'vitest';
+import { MAX_USER_SKILLS } from '@app/specs/agent-data.spec';
 import { AGENT_TOOLS } from '@app/specs/agent-tools.spec';
 import { parseSkill, SkillSchema, type Skill } from '@app/specs/skills-schema';
-import { BUILTIN_SKILL_IDS, SKILL_DATA_CLOSE, SKILL_DATA_OPEN, SKILL_LIMITS, SKILL_SLOT_MAX_CHARS, SKILL_SLOT_MISSING, templateSlots } from '@app/specs/skills.spec';
+import {
+  BUILTIN_SKILL_CATEGORY,
+  BUILTIN_SKILL_IDS,
+  BUILTIN_SKILL_SOURCES,
+  SKILL_ACTING_TOOLS,
+  SKILL_CATEGORIES,
+  SKILL_DATA_CLOSE,
+  SKILL_DATA_OPEN,
+  SKILL_LIMITS,
+  SKILL_SLOT_MAX_CHARS,
+  SKILL_SLOT_MISSING,
+  templateSlots,
+} from '@app/specs/skills.spec';
 import { BUILTIN_SKILLS, composeSkillRegistries, createBuiltinSkillRegistry, createStaticSkillRegistry, renderSkill } from '../skills';
 
 const VALID: Skill = {
@@ -82,7 +95,10 @@ describe('skill schema', () => {
     for (const skill of BUILTIN_SKILLS) {
       expect(parseSkill(skill), skill.id).toEqual(skill);
       // Read-only: no built-in may act on the page or run code.
-      for (const tool of skill.allowedTools) expect(AGENT_TOOLS[tool].risk, `${skill.id} ${tool}`).toBe('read');
+      for (const tool of skill.allowedTools) {
+        expect(AGENT_TOOLS[tool].risk, `${skill.id} ${tool}`).toBe('read');
+        expect(SKILL_ACTING_TOOLS as readonly string[], `${skill.id} ${tool}`).not.toContain(tool);
+      }
       expect(renderSkill(skill, { pageUrl: 'https://example.com/', pageTitle: 'Example' })).not.toBeNull();
     }
     expect(BUILTIN_SKILLS.find((skill) => skill.id === 'audit-this-page')!.allowedTools).toEqual(['page_audit', 'page_data', 'page_text']);
@@ -93,6 +109,52 @@ describe('skill schema', () => {
     expect(BUILTIN_SKILLS.find((skill) => skill.id === 'internal-link-suggestions')!.allowedTools).toEqual(['page_data', 'page_text']);
     // The rewrite skill never claims to have applied anything.
     expect(BUILTIN_SKILLS.find((skill) => skill.id === 'rewrite-title-meta')!.instructions).toMatch(/never say or imply that a change was made/);
+  });
+});
+
+describe('built-in skill pack', () => {
+  test('builtin-skills-have-categories', () => {
+    expect(SKILL_CATEGORIES).toEqual(['page', 'content', 'technical', 'search']);
+    expect(Object.keys(BUILTIN_SKILL_CATEGORY).sort()).toEqual([...BUILTIN_SKILL_IDS].sort());
+    expect(Object.keys(BUILTIN_SKILL_SOURCES).sort()).toEqual([...BUILTIN_SKILL_IDS].sort());
+    for (const id of BUILTIN_SKILL_IDS) {
+      expect(SKILL_CATEGORIES as readonly string[], id).toContain(BUILTIN_SKILL_CATEGORY[id]);
+      expect(BUILTIN_SKILL_SOURCES[id].length, id).toBeGreaterThan(0);
+      for (const source of BUILTIN_SKILL_SOURCES[id]) expect(source, id).toMatch(/^SL-\d{3}$/);
+    }
+    // Every category holds a built-in, and the pack fits the registry beside a full user library.
+    for (const category of SKILL_CATEGORIES) expect(BUILTIN_SKILL_IDS.some((id) => BUILTIN_SKILL_CATEGORY[id] === category), category).toBe(true);
+    expect(BUILTIN_SKILL_IDS).toHaveLength(14);
+    expect(SKILL_LIMITS.maxSkills).toBeGreaterThanOrEqual(BUILTIN_SKILL_IDS.length + MAX_USER_SKILLS);
+  });
+
+  test('builtin-names-unique', () => {
+    const fold = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+    const names = BUILTIN_SKILLS.map((skill) => fold(skill.name));
+    expect(new Set(names).size).toBe(names.length);
+    expect(new Set(BUILTIN_SKILLS.map((skill) => skill.id)).size).toBe(BUILTIN_SKILLS.length);
+  });
+
+  // The golden text of each built-in, rendered with fixed inputs, is stored under `./goldens/`. It
+  // guards drift (a changed prompt shows up in review), not the prompt's quality.
+  test.each(BUILTIN_SKILL_IDS)('builtin-skills-render-golden: %s', async (id) => {
+    const skill = BUILTIN_SKILLS.find((candidate) => candidate.id === id)!;
+    const rendered = renderSkill(skill, { pageUrl: 'https://example.com/guide', pageTitle: 'Example guide', targetQuery: 'example query', userNote: 'Example note' });
+    expect(rendered).not.toBeNull();
+    await expect(`${rendered}\n`).toMatchFileSnapshot(`./goldens/${id}.txt`);
+  });
+
+  test('builtin-skills-are-honest-about-what-they-cannot-do', () => {
+    const skill = (id: string) => BUILTIN_SKILLS.find((candidate) => candidate.id === id)!;
+    // Skills that suggest changes never claim to have made one.
+    for (const id of ['rewrite-page-content', 'check-structured-data', 'write-social-tags', 'content-brief']) expect(skill(id).instructions, id).toMatch(/never (?:say or imply|claim)[^.]*(?:made|applied|added)/);
+    // The SERP skills only read a result page that is open in the tab.
+    for (const id of ['content-brief', 'analyse-serp']) expect(skill(id).instructions, id).toMatch(/result page/);
+    // The crawl skill sends the user to the Visibility panel instead of running probes itself.
+    expect(skill('check-crawl-and-indexing').allowedTools).not.toContain('run_visibility_probes');
+    expect(skill('check-crawl-and-indexing').instructions).toMatch(/Visibility panel/);
+    expect(skill('diagnose-search-performance').instructions).toMatch(/Search Console/);
+    expect(skill('match-page-to-queries').instructions).toMatch(/one page only/i);
   });
 });
 

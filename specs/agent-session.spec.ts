@@ -13,8 +13,9 @@ import type { ChatRetention } from './agent-data.spec';
 import type { ChatgptAccountView, ChatgptFailure, ChatgptModelView } from './agent-chatgpt.spec';
 import type { AgentMcpView } from './agent-mcp.spec';
 import { MAX_OUTPUT_TOKENS, type KeyProtection } from './agent-proxy.spec';
+import type { ReasoningEffort } from './agent-reasoning.spec';
 import { isAllowedModelId, type AgentModelId, type AgentToolRisk, type ModelId, type ModelRoute, type ToolErrorCode } from './agent-tools.spec';
-import type { SkillInputSlot } from './skills.spec';
+import type { SkillCategory, SkillInputSlot } from './skills.spec';
 import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
 
 // ---- Bounds ----------------------------------------------------------------------------------
@@ -76,13 +77,19 @@ export const RUN_PROBES_APPROVAL_NOTE = `frost will fetch this page as search an
  * Each allowed model's context window (tokens), for the context meter; `null` where frost has no
  * published figure to rely on (the meter then shows tokens without a percentage). The Anthropic
  * figures are the provider's documented ones; the OpenAI ones are left `null` because the installed
- * provider package publishes none, and frost doesn't guess.
+ * provider package publishes none, and frost doesn't guess. The Gemini and Grok figures are the
+ * gateway's published `context_window` for each id (its public model list, 2026-10-30; Phase 8
+ * Task 7, Open question 2).
  */
 export const MODEL_CONTEXT_WINDOWS: Readonly<Record<ModelId, number | null>> = {
   'anthropic/claude-sonnet-5-5': 1_000_000,
   'anthropic/claude-opus-5-5': 1_000_000,
   'openai/gpt-5': null,
   'openai/gpt-5-mini': null,
+  'google/gemini-4-argon': 1_000_000,
+  'google/gemini-3.8-flash': 1_000_000,
+  'spacexai/grok-4.7': 500_000,
+  'spacexai/grok-4.20-non-reasoning': 2_000_000,
 };
 
 /** A model's context window: the catalogue's figure, `null` for a ChatGPT model (no published figure frost relies on). */
@@ -196,6 +203,17 @@ export interface AgentChatgptView {
   readonly models: readonly ChatgptModelView[];
 }
 
+/**
+ * The reasoning setting as the panel shows it (Phase 8 Task 8b, Decision 8): the level in effect for
+ * the selected model (`effectiveEffort`: a stored level the model doesn't offer reads `auto`), which
+ * is the one the next turn sends, and the levels the model offers (`reasoningLevels`, `auto` first;
+ * on the `chatgpt` route `auto` plus what the account's list advertises for it).
+ */
+export interface AgentReasoningView {
+  readonly effort: ReasoningEffort;
+  readonly levels: readonly ReasoningEffort[];
+}
+
 export interface AgentSetupView {
   readonly route: ModelRoute;
   /** A catalogue id, or a `chatgpt/<slug>` on the `chatgpt` route. */
@@ -206,6 +224,8 @@ export interface AgentSetupView {
   readonly keys: { readonly anthropic: boolean; readonly openai: boolean; readonly gateway: boolean };
   /** The ChatGPT sign-in and its models. */
   readonly chatgpt: AgentChatgptView;
+  /** The reasoning level in effect for the selected model, and the levels it offers. */
+  readonly reasoning: AgentReasoningView;
   /**
    * Whether a turn can start: the route's key is set, or on `chatgpt` signed in with plan usage on
    * and the model in the account's last list (or the e2e seam is on).
@@ -331,6 +351,14 @@ export interface AgentSkillView {
   readonly inputs: readonly { readonly slot: SkillInputSlot; readonly label: string; readonly placeholder: string | null }[];
   /** frost's own (read-only) skill, or the user's (Task 9's editor). */
   readonly builtin: boolean;
+  /** The picker group (Phase 8 Task 4): a built-in's category, or `'yours'` for the user's own skills. */
+  readonly category: SkillCategory | 'yours';
+  /**
+   * Whether the user has it switched on (Phase 8 Task 5; absent from `agent_skill_prefs` = on). A
+   * switched-off skill is still listed here (the library shows it), but the picker and the palette
+   * leave it out and `agent.send` refuses it (`unknown-skill`).
+   */
+  readonly enabled: boolean;
 }
 
 /**

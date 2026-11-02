@@ -1,10 +1,24 @@
-// Spec: specs/agent-ipc.schema.ts (the agent.* inputs), specs/agent-session.spec.ts (answers,
-// AGENT_WATCH_TIMEOUT_MS), specs/ipc-sender.spec.ts, specs/skills.spec.ts (SKILL_LIMITS, SKILL_SLOT_MAX_CHARS)
-// Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router)
+// Spec: specs/agent-ipc.schema.ts (the agent.* inputs; AgentSetReasoningEffortInputSchema, Phase 8 Task 8b),
+// specs/agent-session.spec.ts (answers, AGENT_WATCH_TIMEOUT_MS, AgentSetupView.reasoning), specs/agent-reasoning.spec.ts
+// (REASONING_EFFORTS), specs/ipc-sender.spec.ts, specs/skills.spec.ts (SKILL_LIMITS, SKILL_SLOT_MAX_CHARS)
+// Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router), specs/agent-data.feature.md (Skills library)
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { AgentDeleteAllChatsResult, AgentGrantView, AgentSaveSkillResult, AgentSetRetentionResult, AgentSkillDetail, ChatExportResult } from '@app/specs/agent-data.spec';
+import {
+  MAX_USER_SKILLS,
+  SKILL_FILE_MAX_BYTES,
+  type AgentDeleteAllChatsResult,
+  type AgentGrantView,
+  type AgentSaveSkillResult,
+  type AgentSetRetentionResult,
+  type AgentSkillDetail,
+  type AgentSkillImportPreviewResult,
+  type AgentSkillImportResult,
+  type ChatExportResult,
+  type SkillExportResult,
+} from '@app/specs/agent-data.spec';
 import { CREDENTIAL_LIMITS } from '@app/specs/agent-proxy.spec';
+import { REASONING_EFFORTS } from '@app/specs/agent-reasoning.spec';
 import { AGENT_WATCH_TIMEOUT_MS, CHAT_TEXT_MAX_CHARS, type AgentSetKeyResult, type AgentState } from '@app/specs/agent-session.spec';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
@@ -20,6 +34,30 @@ const WINDOW_ID = 7;
 const CHAT = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const KEY = 'sk-ant-secret-key-0123456789abcdef';
 const TOKEN = 'mcp-bearer-token-0123456789abcdef';
+const IMPORT_TOKEN = '3b241101-e2bb-4255-8caf-4136c566a962';
+const IMPORT_PREVIEW: AgentSkillImportPreviewResult = {
+  result: 'ready',
+  preview: {
+    token: IMPORT_TOKEN,
+    room: 49,
+    items: [
+      {
+        index: 0,
+        valid: true,
+        id: 'heading-check',
+        name: 'Heading check',
+        description: 'Check the headings.',
+        tools: ['page_data', 'click'],
+        actingTools: true,
+        conflict: 'none',
+        instructions: 'Check {{pageUrl}}. Note: {{userNote}}',
+        inputs: [{ slot: 'userNote', label: 'Focus on', placeholder: null }],
+        error: null,
+      },
+      { index: 1, valid: false, id: null, name: null, error: 'This entry is not a skill frost can read.' },
+    ],
+  },
+};
 
 function stateAt(version: number): AgentState {
   return {
@@ -30,6 +68,7 @@ function stateAt(version: number): AgentState {
       allowedModels: ['anthropic/claude-sonnet-5-5'],
       keys: { anthropic: false, openai: false, gateway: true },
       chatgpt: { account: { state: 'signed-out', acknowledged: false }, models: [] },
+      reasoning: { effort: 'auto', levels: ['auto', 'low', 'medium', 'high'] },
       ready: true,
       protection: 'os',
       runtime: { status: 'ready', lastFailure: null },
@@ -67,6 +106,7 @@ function fakeAgent(version = 3) {
     deleteChat: vi.fn((chatId: string) => chatId === CHAT),
     answerApproval: vi.fn(async (_id: string, decision: string) => (decision === 'allow-always' ? ('granted' as const) : ('answered' as const))),
     setModel: vi.fn(async () => true),
+    setReasoningEffort: vi.fn(async (_effort: string) => true),
     setKey: vi.fn(async (_slot: string, _key: string): Promise<AgentSetKeyResult> => 'stored'),
     clearKey: vi.fn(async () => true),
     listGrants: vi.fn((): AgentGrantView[] => [{ tool: 'navigate', label: 'Open a web address in this tab', origin: 'https://example.com', createdAt: 5 }]),
@@ -80,6 +120,11 @@ function fakeAgent(version = 3) {
     saveSkill: vi.fn(async (_draft: unknown, _mode: string): Promise<AgentSaveSkillResult> => ({ result: 'saved', id: 'my-skill' })),
     deleteSkill: vi.fn(async (_id: string) => true),
     duplicateSkill: vi.fn(async (_id: string): Promise<AgentSaveSkillResult> => ({ result: 'saved', id: 'audit-this-page-copy' })),
+    setSkillEnabled: vi.fn(async (_id: string, _enabled: boolean) => true),
+    exportSkills: vi.fn(async (_ids: readonly string[] | 'all-mine'): Promise<SkillExportResult> => 'saved'),
+    previewSkillImport: vi.fn(async (): Promise<AgentSkillImportPreviewResult> => IMPORT_PREVIEW),
+    importSkills: vi.fn(async (_token: string, _indices: readonly number[]): Promise<AgentSkillImportResult> => ({ result: 'imported', count: 1 })),
+    cancelSkillImport: vi.fn((_token: string) => true),
     saveMcpServer: vi.fn(async (_input: unknown): Promise<{ result: McpSaveResult; id?: string }> => ({ result: 'saved', id: 'docs' })),
     deleteMcpServer: vi.fn(async (_id: string) => true),
     setMcpServerEnabled: vi.fn(async (_id: string, _enabled: boolean) => true),
@@ -136,6 +181,7 @@ const VALID_INPUT: Record<string, unknown> = {
   deleteChat: { chatId: CHAT },
   answerApproval: { approvalId: 'b1c2d3e4-0000-4000-8000-000000000001', decision: 'allow-once' },
   setModel: { route: 'byok-anthropic', modelId: 'anthropic/claude-opus-5-5' },
+  setReasoningEffort: { effort: 'high' },
   setKey: { slot: 'anthropic', key: KEY },
   clearKey: { slot: 'anthropic' },
   listGrants: undefined,
@@ -149,6 +195,11 @@ const VALID_INPUT: Record<string, unknown> = {
   saveSkill: { skill: { id: 'my-skill', name: 'Mine', description: 'D', allowedTools: ['page_text'], instructions: 'Read {{pageUrl}}', inputs: [] }, mode: 'create' },
   deleteSkill: { id: 'my-skill' },
   duplicateSkill: { id: 'audit-this-page' },
+  setSkillEnabled: { id: 'audit-this-page', enabled: false },
+  exportSkills: { ids: 'all-mine' },
+  previewSkillImport: undefined,
+  importSkills: { token: IMPORT_TOKEN, indices: [0] },
+  cancelSkillImport: { token: IMPORT_TOKEN },
   saveMcpServer: { name: 'Docs', transport: 'http', url: 'https://mcp.example.com/mcp' },
   deleteMcpServer: { id: 'docs' },
   setMcpServerEnabled: { id: 'docs', enabled: true },
@@ -226,6 +277,7 @@ describe('agent router', () => {
         { route: 'gateway', modelId: 'anthropic/claude-haiku' },
         { route: 'gateway', modelId: 'anthropic/claude-sonnet-5-5', extra: 1 },
       ],
+      setReasoningEffort: [undefined, {}, { effort: 'minimal' }, { effort: 'high', modelId: 'openai/gpt-5' }],
       setKey: [
         undefined,
         { slot: 'anthropic' },
@@ -253,6 +305,11 @@ describe('agent router', () => {
       ],
       deleteSkill: [undefined, { id: 'Bad Id' }],
       duplicateSkill: [undefined, { id: 5 }],
+      setSkillEnabled: [undefined, { id: 'audit-this-page' }, { enabled: true }, { id: 'No', enabled: true }, { id: 'audit-this-page', enabled: 'off' }, { id: 'audit-this-page', enabled: 0 }, { id: 'audit-this-page', enabled: true, extra: 1 }],
+      exportSkills: [undefined, {}, { ids: 'all' }, { ids: [] }, { ids: ['Bad Id'] }, { ids: 'all-mine', path: '/tmp/x.json' }],
+      previewSkillImport: [],
+      importSkills: [undefined, { token: IMPORT_TOKEN }, { token: 'nope', indices: [0] }, { token: IMPORT_TOKEN, indices: [] }],
+      cancelSkillImport: [undefined, {}, { token: 'x' }],
       saveMcpServer: [undefined, { name: '', transport: 'http', url: 'https://mcp.example.com/' }, { name: 'Docs', transport: 'ftp', url: 'https://mcp.example.com/' }],
       deleteMcpServer: [undefined, { id: '' }],
       setMcpServerEnabled: [undefined, { id: 'docs' }, { id: 'docs', enabled: 'yes' }],
@@ -374,6 +431,214 @@ describe('agent router', () => {
     await expect(procedure(ctx, 'duplicateSkill')({ id: 'audit-this-page' })).resolves.toStrictEqual({ result: 'failed' });
     service.listGrants.mockReturnValueOnce([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1, approvalId: 'leak' } as never]);
     await expect(procedure(ctx, 'listGrants')()).resolves.toStrictEqual([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1 }]);
+  });
+
+  test('agent-set-skill-enabled-bounds', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'setSkillEnabled')({ id: 'audit-this-page', enabled: false })).resolves.toBe(true);
+    expect(service.setSkillEnabled).toHaveBeenLastCalledWith('audit-this-page', false);
+    await expect(procedure(ctx, 'setSkillEnabled')({ id: 'my-skill', enabled: true })).resolves.toBe(true);
+    expect(service.setSkillEnabled).toHaveBeenLastCalledWith('my-skill', true);
+    // The answer is a boolean, whatever the service says.
+    service.setSkillEnabled.mockResolvedValueOnce('maybe' as never);
+    await expect(procedure(ctx, 'setSkillEnabled')({ id: 'my-skill', enabled: true })).resolves.toBe(false);
+    service.setSkillEnabled.mockClear();
+    // A malformed or over-long id, a non-boolean, a missing or extra field never reach the service.
+    for (const input of [
+      undefined,
+      {},
+      { id: 'audit-this-page' },
+      { enabled: true },
+      { id: '', enabled: true },
+      { id: 'Audit_This', enabled: true },
+      { id: 'a'.repeat(SKILL_LIMITS.maxIdChars + 1), enabled: true },
+      { id: 'audit-this-page', enabled: 'true' },
+      { id: 'audit-this-page', enabled: 1 },
+      { id: 'audit-this-page', enabled: null },
+      { id: 'audit-this-page', enabled: true, builtin: true },
+    ]) {
+      expect((await errorOf(procedure(ctx, 'setSkillEnabled')(input))).code, JSON.stringify(input)).toBe('BAD_REQUEST');
+    }
+    // A foreign sender is refused before the input is read.
+    const foreign = ctxFor(service, 'https://evil.example');
+    expect((await errorOf(procedure(foreign, 'setSkillEnabled')({ id: 'audit-this-page', enabled: false }))).code).toBe('FORBIDDEN');
+    expect(service.setSkillEnabled).not.toHaveBeenCalled();
+  });
+
+  // Acceptance: specs/agent-session.feature.md (Router: agent-set-reasoning-effort-bounds)
+  test('agent-set-reasoning-effort-bounds', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    // Every level the user may choose reaches the service as is.
+    for (const effort of REASONING_EFFORTS) {
+      await expect(procedure(ctx, 'setReasoningEffort')({ effort })).resolves.toBe(true);
+      expect(service.setReasoningEffort).toHaveBeenLastCalledWith(effort);
+    }
+    // The answer is a boolean, whatever the service says.
+    service.setReasoningEffort.mockResolvedValueOnce(false);
+    await expect(procedure(ctx, 'setReasoningEffort')({ effort: 'low' })).resolves.toBe(false);
+    service.setReasoningEffort.mockResolvedValueOnce('stored' as never);
+    await expect(procedure(ctx, 'setReasoningEffort')({ effort: 'low' })).resolves.toBe(false);
+    service.setReasoningEffort.mockClear();
+    // Only the catalogue's names, in a strict object: a provider's wire value, another case, a
+    // missing or extra field (a model, a route) never reach the service.
+    for (const input of [
+      undefined,
+      null,
+      'high',
+      {},
+      { effort: '' },
+      { effort: 'minimal' },
+      { effort: 'none' },
+      { effort: 'xhigh' },
+      { effort: 'High' },
+      { effort: 'x'.repeat(10_000) },
+      { effort: 3 },
+      { effort: null },
+      { effort: ['high'] },
+      { effort: 'high', route: 'gateway' },
+      { reasoningEffort: 'high' },
+    ]) {
+      expect((await errorOf(procedure(ctx, 'setReasoningEffort')(input))).code, JSON.stringify(input)).toBe('BAD_REQUEST');
+    }
+    expect(service.setReasoningEffort).not.toHaveBeenCalled();
+    // A foreign sender, or a tab's page, is refused before the input is read.
+    expect((await errorOf(procedure(ctxFor(service, 'https://evil.example'), 'setReasoningEffort')({ effort: 'high' }))).code).toBe(IPC_SENDER_ERROR_CODE);
+    const tab: IpcContext = { ...ctx, sender: { origin: APP_ORIGIN, live: true, windowId: WINDOW_ID, isWindowContents: false, isMainFrame: true } };
+    expect((await errorOf(procedure(tab, 'setReasoningEffort')({ effort: 'high' }))).code).toBe(IPC_SENDER_ERROR_CODE);
+    expect(service.setReasoningEffort).not.toHaveBeenCalled();
+  });
+
+  test('agent-skill-file-procedures-enforce-sender-and-bounds', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    // Each reaches the service with its input copied one by one (never a path: main asks in its dialogs).
+    await expect(procedure(ctx, 'exportSkills')({ ids: 'all-mine' })).resolves.toBe('saved');
+    expect(service.exportSkills).toHaveBeenLastCalledWith('all-mine');
+    await expect(procedure(ctx, 'exportSkills')({ ids: ['heading-check', 'link-check'] })).resolves.toBe('saved');
+    expect(service.exportSkills).toHaveBeenLastCalledWith(['heading-check', 'link-check']);
+    await expect(procedure(ctx, 'previewSkillImport')()).resolves.toStrictEqual(IMPORT_PREVIEW);
+    expect(service.previewSkillImport).toHaveBeenCalledWith();
+    await expect(procedure(ctx, 'importSkills')({ token: IMPORT_TOKEN, indices: [2, 0] })).resolves.toStrictEqual({ result: 'imported', count: 1 });
+    expect(service.importSkills).toHaveBeenLastCalledWith(IMPORT_TOKEN, [2, 0]);
+    await expect(procedure(ctx, 'cancelSkillImport')({ token: IMPORT_TOKEN })).resolves.toBe(true);
+    expect(service.cancelSkillImport).toHaveBeenLastCalledWith(IMPORT_TOKEN);
+
+    // The review is rebuilt field by field: extra fields dropped, the acting-tools flag recomputed
+    // from the tools, an invalid entry's instructions never carried.
+    const item = (IMPORT_PREVIEW as Extract<AgentSkillImportPreviewResult, { result: 'ready' }>).preview.items[0]!;
+    const noisy = {
+      result: 'ready',
+      path: '/home/me/skills.json',
+      preview: {
+        token: IMPORT_TOKEN,
+        room: 49,
+        file: '/home/me/skills.json',
+        items: [
+          { ...item, actingTools: false, secret: KEY },
+          { index: 1, valid: false, id: 'link-check', name: 'Link check', error: 'This entry is not a skill frost can read.', instructions: 'leak' },
+        ],
+      },
+    };
+    service.previewSkillImport.mockResolvedValueOnce(noisy as never);
+    await expect(procedure(ctx, 'previewSkillImport')()).resolves.toStrictEqual({
+      result: 'ready',
+      preview: {
+        token: IMPORT_TOKEN,
+        room: 49,
+        items: [
+          { ...item, actingTools: true },
+          { index: 1, valid: false, id: 'link-check', name: 'Link check', error: 'This entry is not a skill frost can read.' },
+        ],
+      },
+    });
+    // A malformed entry, token, room or over-long text fails the whole answer.
+    const over = (patch: Record<string, unknown>, preview: Record<string, unknown> = {}) => ({ result: 'ready', preview: { token: IMPORT_TOKEN, room: 49, items: [{ ...item, ...patch }], ...preview } });
+    for (const bad of [
+      over({ instructions: 'x'.repeat(SKILL_LIMITS.maxInstructionChars + 1) }),
+      over({ instructions: 5 }),
+      over({ name: 'n'.repeat(SKILL_LIMITS.maxNameChars + 1) }),
+      over({ description: 'd'.repeat(SKILL_LIMITS.maxDescriptionChars + 1) }),
+      over({ id: 'Bad Id' }),
+      over({ tools: ['shell'] }),
+      // Never cut: an unknown or repeated tool beside catalogue ones refuses the entry, not just the tool.
+      over({ tools: ['page_data', 'click', 'shell'] }),
+      over({ tools: ['page_data', 'click', 'page_data'] }),
+      over({ tools: 'page_data' }),
+      over({ conflict: 'replace' }),
+      over({ inputs: [{ slot: 'pageUrl', label: 'x', placeholder: null }] }),
+      over({ inputs: [{ slot: 'userNote', label: 'l'.repeat(SKILL_LIMITS.maxInputLabelChars + 1), placeholder: null }] }),
+      over({ index: -1 }),
+      over({ index: MAX_USER_SKILLS }),
+      over({ valid: 'yes' }),
+      over({}, { token: 'not-a-uuid' }),
+      over({}, { room: MAX_USER_SKILLS + 1 }),
+      over({}, { room: 1.5 }),
+      over({}, { items: Array.from({ length: MAX_USER_SKILLS + 1 }, () => item) }),
+      over({}, { items: 'none' }),
+      { result: 'ready' },
+      { result: 'imported', count: 1 },
+      { result: 'installed' },
+      null,
+    ]) {
+      service.previewSkillImport.mockResolvedValueOnce(bad as never);
+      await expect(procedure(ctx, 'previewSkillImport')(), JSON.stringify(bad)?.slice(0, 120)).resolves.toStrictEqual({ result: 'failed' });
+    }
+    // The whole review stays within SKILL_FILE_MAX_BYTES.
+    const huge = { ...item, instructions: '\u{1F600}'.repeat(SKILL_LIMITS.maxInstructionChars / 2) };
+    service.previewSkillImport.mockResolvedValueOnce({ result: 'ready', preview: { token: IMPORT_TOKEN, room: 49, items: Array.from({ length: MAX_USER_SKILLS }, (_, index) => ({ ...huge, index })) } } as never);
+    const answer = await procedure(ctx, 'previewSkillImport')();
+    expect(Buffer.byteLength(JSON.stringify(answer), 'utf8')).toBeLessThanOrEqual(SKILL_FILE_MAX_BYTES);
+    // A plain refusal passes as it is, without anything beside it.
+    service.previewSkillImport.mockResolvedValueOnce({ result: 'too-large', size: 9 } as never);
+    await expect(procedure(ctx, 'previewSkillImport')()).resolves.toStrictEqual({ result: 'too-large' });
+    // Import and export answers: fixed values only.
+    service.importSkills.mockResolvedValueOnce({ result: 'imported', count: 1.5 } as never);
+    await expect(procedure(ctx, 'importSkills')({ token: IMPORT_TOKEN, indices: [0] })).resolves.toStrictEqual({ result: 'failed' });
+    service.importSkills.mockResolvedValueOnce({ result: 'limit', ids: ['x'] } as never);
+    await expect(procedure(ctx, 'importSkills')({ token: IMPORT_TOKEN, indices: [0] })).resolves.toStrictEqual({ result: 'limit' });
+    service.importSkills.mockResolvedValueOnce({ result: 'ready', preview: {} } as never);
+    await expect(procedure(ctx, 'importSkills')({ token: IMPORT_TOKEN, indices: [0] })).resolves.toStrictEqual({ result: 'failed' });
+    service.exportSkills.mockResolvedValueOnce('/home/me/skills.json' as never);
+    await expect(procedure(ctx, 'exportSkills')({ ids: 'all-mine' })).resolves.toBe('failed');
+    service.cancelSkillImport.mockReturnValueOnce('yes' as never);
+    await expect(procedure(ctx, 'cancelSkillImport')({ token: IMPORT_TOKEN })).resolves.toBe(false);
+
+    // Strict, bounded inputs never reach the service.
+    service.exportSkills.mockClear();
+    service.importSkills.mockClear();
+    service.cancelSkillImport.mockClear();
+    for (const input of [
+      { ids: Array.from({ length: MAX_USER_SKILLS + 1 }, (_, n) => `skill-${n}`) },
+      { ids: ['heading-check', 'heading-check'] },
+      { ids: ['a'.repeat(SKILL_LIMITS.maxIdChars + 1)] },
+      { ids: 'all-mine', file: '/etc/passwd' },
+    ]) {
+      expect((await errorOf(procedure(ctx, 'exportSkills')(input))).code, JSON.stringify(input).slice(0, 80)).toBe('BAD_REQUEST');
+    }
+    for (const input of [
+      { token: IMPORT_TOKEN, indices: [0, 0] },
+      { token: IMPORT_TOKEN, indices: [-1] },
+      { token: IMPORT_TOKEN, indices: [MAX_USER_SKILLS] },
+      { token: IMPORT_TOKEN, indices: [0.5] },
+      { token: IMPORT_TOKEN, indices: Array.from({ length: MAX_USER_SKILLS + 1 }, (_, n) => n) },
+      { token: IMPORT_TOKEN, indices: [0], skills: [] },
+    ]) {
+      expect((await errorOf(procedure(ctx, 'importSkills')(input))).code, JSON.stringify(input).slice(0, 80)).toBe('BAD_REQUEST');
+    }
+    expect((await errorOf(procedure(ctx, 'cancelSkillImport')({ token: IMPORT_TOKEN, extra: 1 }))).code).toBe('BAD_REQUEST');
+    expect(service.exportSkills).not.toHaveBeenCalled();
+    expect(service.importSkills).not.toHaveBeenCalled();
+    expect(service.cancelSkillImport).not.toHaveBeenCalled();
+    // A foreign sender is refused before anything is read or asked.
+    service.previewSkillImport.mockClear();
+    const foreign = ctxFor(service, 'https://evil.example');
+    for (const name of ['exportSkills', 'previewSkillImport', 'importSkills', 'cancelSkillImport']) {
+      expect((await errorOf(procedure(foreign, name)(VALID_INPUT[name]))).code, name).toBe('FORBIDDEN');
+    }
+    expect(service.previewSkillImport).not.toHaveBeenCalled();
+    expect(service.exportSkills).not.toHaveBeenCalled();
   });
 
   test('agent-chatgpt-procedures (the sender\'s window for the gesture; fixed answers only)', async () => {

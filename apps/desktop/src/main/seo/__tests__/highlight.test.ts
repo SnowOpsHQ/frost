@@ -1,10 +1,14 @@
-// Spec: specs/seo-sidebar.spec.ts (HIGHLIGHT_MODES, HIGHLIGHT_STYLES), specs/seo-limits.spec.ts (SEO_WORLD_ID, HIGHLIGHT_BUDGET_MS)
-// Acceptance: specs/seo-panels.feature.md (Highlight)
-import { JSDOM } from 'jsdom';
+// Spec: specs/seo-sidebar.spec.ts (HIGHLIGHT_MODES, HIGHLIGHT_STYLES, TextHighlightTarget, TEXT_HIGHLIGHT_UNMATCHED_NOTE),
+// specs/seo-limits.spec.ts (SEO_WORLD_ID, HIGHLIGHT_BUDGET_MS, MAX_TEXT_HIGHLIGHT_TARGETS, MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET)
+// Acceptance: specs/seo-panels.feature.md (Highlight), specs/seo-content.feature.md (Highlight, Phase 8)
+import vm from 'node:vm';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, test, vi } from 'vitest';
-import { SEO_WORLD_ID } from '@app/specs/seo-limits.spec';
-import { HIGHLIGHT_STYLES } from '@app/specs/seo-sidebar.spec';
-import { highlightEndedScript, highlightScript, OVERLAY_CONFIG, OVERLAY_KEY, paintHighlight, planHighlight, runHighlight, watchHighlight, type HighlightItem, type OverlayDocument, type OverlayState } from '../highlight';
+import type { SeoAudit } from '@app/seo-core';
+import { MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET, MAX_TEXT_HIGHLIGHT_TARGETS, SEO_WORLD_ID } from '@app/specs/seo-limits.spec';
+import { HIGHLIGHT_STYLES, TEXT_HIGHLIGHT_UNMATCHED_NOTE, type TextHighlightTarget } from '@app/specs/seo-sidebar.spec';
+import { highlightEndedScript, highlightScript, OVERLAY_CONFIG, OVERLAY_KEY, paintHighlight, planHighlight, planTextHighlight, runHighlight, watchHighlight, type HighlightItem, type OverlayDocument, type OverlayState } from '../highlight';
+import { sentenceHighlightTargets } from '../highlight-targets';
 
 const rect = (left: number, top: number, width: number, height: number): HighlightItem['rect'] => ({ left, top, width, height });
 
@@ -296,5 +300,180 @@ describe('highlight script', () => {
     const contents = { executeJavaScriptInIsolatedWorld: vi.fn(async (_world: number, _scripts: { code: string }[]) => ({ mode: 'links', boxes: 3 })) };
     await expect(runHighlight(contents, 'links')).resolves.toEqual({ mode: 'links', boxes: 3 });
     expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledExactlyOnceWith(SEO_WORLD_ID, [{ code: highlightScript('links') }]);
+  });
+});
+
+// ---- Text highlight (Phase 8 Task 2) -------------------------------------------------------------
+
+const long = (text: string): TextHighlightTarget => ({ text, kind: 'long-sentence' });
+
+describe('text highlight plan (pure)', () => {
+  // Text nodes as a page splits them: mid-word, at inline elements, with runs of white space.
+  const TEXTS = ['Intro. ', 'The quick br', 'own fox ', '  jumps\n over', ' the dog.', ' And again: The quick brown fox jumps over the dog.'];
+
+  test('plan-text-highlight-finds-excerpts', () => {
+    const sentence = 'The quick brown fox jumps over the dog.';
+    // Across nodes, the page's white space runs (and the excerpt's) read as one space; the first occurrence.
+    expect(planTextHighlight(TEXTS, [long(sentence)], 20)).toEqual({ spans: [{ kind: 'long-sentence', start: [1, 0], end: [4, 9] }], unmatched: 0 });
+    expect(planTextHighlight(TEXTS, [long('  The quick\tbrown  fox jumps over\nthe dog. ')], 20).spans).toEqual([{ kind: 'long-sentence', start: [1, 0], end: [4, 9] }]);
+    // A start inside a white space run that joined the previous node's: the node's first letter.
+    expect(planTextHighlight(TEXTS, [{ text: 'jumps over the dog.', kind: 'complex-sentence' }], 20).spans).toEqual([{ kind: 'complex-sentence', start: [3, 2], end: [4, 9] }]);
+    // A second, equal excerpt (sentences come in page order) takes the next occurrence.
+    const again = TEXTS[5]!.indexOf('The quick');
+    expect(planTextHighlight(TEXTS, [long(sentence), long(sentence)], 20).spans).toEqual([
+      { kind: 'long-sentence', start: [1, 0], end: [4, 9] },
+      { kind: 'long-sentence', start: [5, again], end: [5, TEXTS[5]!.length] },
+    ]);
+    // A character outside the Basic Multilingual Plane is two code units, mapped as they are.
+    expect(planTextHighlight(['Go 🚀 now', ' then stop.'], [long('🚀 now then stop.')], 20).spans).toEqual([{ kind: 'long-sentence', start: [0, 3], end: [1, 11] }]);
+    // The input is not touched.
+    expect(TEXTS).toHaveLength(6);
+  });
+
+  test('plan-text-highlight-unmatched-counted', () => {
+    // Rewritten after the audit, never on the page, or empty: counted, never matched elsewhere.
+    expect(planTextHighlight(TEXTS, [long('The quick brown fox jumps over the cat.'), long('Not on the page.'), long('   ')], 20)).toEqual({ spans: [], unmatched: 3 });
+    // Bidi and zero-width characters match as the audit read them, and only so.
+    const hostile = 'Price\u200b list \u202eevil\u202c here.';
+    const page = ['Price\u200b list ', '\u202eevil\u202c here.'];
+    expect(planTextHighlight(page, [long(hostile)], 20)).toEqual({ spans: [{ kind: 'long-sentence', start: [0, 0], end: [1, 12] }], unmatched: 0 });
+    expect(planTextHighlight(page, [long('Price list evil here.')], 20)).toEqual({ spans: [], unmatched: 1 });
+    // No text read (an empty page, or the walk read nothing in time): every target unmatched.
+    expect(planTextHighlight([], [long('Anything.')], 20)).toEqual({ spans: [], unmatched: 1 });
+  });
+
+  test('sentence-highlight-targets', () => {
+    const audit = (sentences: unknown) => ({ content: { sentences } }) as unknown as SeoAudit;
+    const items = [
+      { text: 'A very long sentence.', words: 30, reason: 'long' },
+      { text: 'A dense one.', words: 14, reason: 'complex' },
+    ];
+    expect(sentenceHighlightTargets(audit({ status: 'ok', difficult: { total: 2, items } }))).toEqual([
+      { text: 'A very long sentence.', kind: 'long-sentence' },
+      { text: 'A dense one.', kind: 'complex-sentence' },
+    ]);
+    const many = Array.from({ length: MAX_TEXT_HIGHLIGHT_TARGETS + 4 }, (_, i) => ({ text: `Sentence ${i}.`, words: 30, reason: 'long' }));
+    const capped = sentenceHighlightTargets(audit({ status: 'ok', difficult: { total: many.length, items: many } }));
+    expect(capped).toHaveLength(MAX_TEXT_HIGHLIGHT_TARGETS);
+    expect(capped[0]!.text).toBe('Sentence 0.');
+    expect(sentenceHighlightTargets(audit({ status: 'not-available', reason: 'no-text' }))).toEqual([]);
+    expect(sentenceHighlightTargets(audit({ status: 'ok', difficult: { total: 0, items: [] } }))).toEqual([]);
+  });
+});
+
+/**
+ * A jsdom page that runs scripts as the isolated world does (`window.eval`), `Range.getClientRects`
+ * stubbed (jsdom has no layout): each range is `lines` line fragments, the first at its start offset
+ * (the overlay makes one range per text node a sentence covers: "This sentence" and its rest are two).
+ */
+function textPage(body: string, lines = 2) {
+  const dom = new JSDOM(`<!doctype html><html lang="en"><head><title>t</title></head><body>${body}</body></html>`, { url: 'https://example.com/article', pretendToBeVisual: true, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
+  (dom.window.Range.prototype as unknown as { getClientRects: () => DOMRect[] }).getClientRects = function (this: Range) {
+    return Array.from({ length: lines }, (_, i) => domRect(i === 0 ? 10 + this.startOffset : 10, 100 + 20 * i, 200, 16));
+  };
+  const store = dom.window as unknown as Record<string, unknown>;
+  const state = () => store[OVERLAY_KEY] as OverlayState | undefined;
+  const children = () => [...((state()?.root as unknown as ShadowRoot | undefined)?.children ?? [])] as HTMLElement[];
+  const geometry = () => children().map((el) => ['left', 'top', 'width', 'height', 'border-color'].map((name) => el.style.getPropertyValue(name)).join(' ') + ` ${el.textContent}`);
+  return { dom, document: dom.window.document, store, state, children, geometry };
+}
+
+const ARTICLE = '<h1>Title</h1><p>Short one. <em>This sentence</em> runs on   and on.</p><p>Another long sentence here.</p>';
+
+describe('text highlight overlay', () => {
+  test('text-highlight-capped', async () => {
+    // The plan takes at most `max` targets; the script carries at most MAX_TEXT_HIGHLIGHT_TARGETS.
+    const targets = Array.from({ length: MAX_TEXT_HIGHLIGHT_TARGETS + 5 }, (_, i) => long(`Sentence number ${i}.`));
+    const texts = targets.map((t) => `${t.text} `);
+    const plan = planTextHighlight(texts, targets, MAX_TEXT_HIGHLIGHT_TARGETS);
+    expect(plan.spans).toHaveLength(MAX_TEXT_HIGHLIGHT_TARGETS);
+    expect(plan.unmatched).toBe(0);
+    expect(highlightScript('sentences', [], targets)).toContain(JSON.stringify(targets.slice(0, MAX_TEXT_HIGHLIGHT_TARGETS)));
+    // Other modes carry no text at all.
+    expect(highlightScript('links', [], targets)).not.toContain('Sentence number');
+    expect(highlightScript('off', [], targets)).not.toContain('Sentence number');
+    // A sentence on many lines: at most MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET boxes for it.
+    const page = textPage(ARTICLE, MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET + 10);
+    const answer = await paintHighlight(page.document as unknown as OverlayDocument, 'sentences', OVERLAY_CONFIG, planHighlight, page.store, [], [long('This sentence runs on and on.')], planTextHighlight);
+    expect(answer).toEqual({ mode: 'sentences', boxes: MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET, unmatched: 0 });
+    // The label is on the sentence's first line only.
+    expect(page.children().map((el) => el.textContent)).toEqual([HIGHLIGHT_STYLES['long-sentence'].label, ...Array.from({ length: MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET - 1 }, () => '')]);
+    await paintHighlight(page.document as unknown as OverlayDocument, 'off', OVERLAY_CONFIG, planHighlight, page.store);
+  });
+
+  test('text-highlight-says-what-it-did-not-find', async () => {
+    const page = textPage(ARTICLE);
+    const targets = [long('This sentence runs on and on.'), { text: 'Gone from the page.', kind: 'complex-sentence' as const }, long('Also gone.'), { text: 'Another long sentence here.', kind: 'complex-sentence' as const }];
+    await expect(paintHighlight(page.document as unknown as OverlayDocument, 'sentences', OVERLAY_CONFIG, planHighlight, page.store, [], targets, planTextHighlight)).resolves.toEqual({ mode: 'sentences', boxes: 6, unmatched: 2 });
+    const texts = page.children().map((el) => el.textContent);
+    expect(texts).toContain(TEXT_HIGHLIGHT_UNMATCHED_NOTE.many.replace('{n}', '2'));
+    expect(texts.filter((t) => t === 'long' || t === 'complex')).toEqual(['long', 'complex']);
+    await paintHighlight(page.document as unknown as OverlayDocument, 'sentences', OVERLAY_CONFIG, planHighlight, page.store, [], [long('Gone.')], planTextHighlight);
+    expect(page.children().map((el) => el.textContent)).toEqual([TEXT_HIGHLIGHT_UNMATCHED_NOTE.one]);
+    await paintHighlight(page.document as unknown as OverlayDocument, 'off', OVERLAY_CONFIG, planHighlight, page.store);
+    expect(page.state()).toBeUndefined();
+  });
+
+  test('text-highlight-boxes-inline-elements-once', async () => {
+    // As Chromium does: a range's client rects are its text's line boxes plus the border box of every
+    // element wholly inside it (here an `<em>` and a link, each the size of its own words).
+    const page = textPage('<p>Short one. <em>This sentence</em> runs <a href="/x">on</a> and on.</p>');
+    const textNodes: Node[] = [];
+    const walk = page.document.createTreeWalker(page.document.body, 0x4);
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) textNodes.push(node);
+    const lineBox = (node: Node) => domRect(10 + 40 * textNodes.indexOf(node), 100, 40, 16);
+    (page.dom.window.Range.prototype as unknown as { getClientRects: () => DOMRect[] }).getClientRects = function (this: Range) {
+      const rects: DOMRect[] = [];
+      for (const node of textNodes) if (this.intersectsNode(node)) rects.push(lineBox(node));
+      for (const el of page.document.body.querySelectorAll('*')) {
+        const whole = page.document.createRange();
+        whole.selectNode(el);
+        if (this.compareBoundaryPoints(page.dom.window.Range.START_TO_START, whole) <= 0 && this.compareBoundaryPoints(page.dom.window.Range.END_TO_END, whole) >= 0) rects.push(lineBox(el.firstChild!));
+      }
+      return rects;
+    };
+    const answer = await paintHighlight(page.document as unknown as OverlayDocument, 'sentences', OVERLAY_CONFIG, planHighlight, page.store, [], [long('This sentence runs on and on.')], planTextHighlight);
+    // One box per text node the sentence covers ("This sentence", " runs ", "on", " and on."), none twice.
+    expect(answer).toEqual({ mode: 'sentences', boxes: 4, unmatched: 0 });
+    const geometry = page.geometry();
+    expect(new Set(geometry.map((g) => g.replace(/ \S*$/, ''))).size).toBe(geometry.length);
+    await paintHighlight(page.document as unknown as OverlayDocument, 'off', OVERLAY_CONFIG, planHighlight, page.store);
+  });
+
+  test('text-highlight-script-is-self-contained', async () => {
+    // Hostile excerpts travel as JSON data: quotes, a closing script tag, U+2028, bidi controls, markup.
+    const hostile = [long('"); globalThis.pwned = 1; ("'), long('</script><img src=x onerror="globalThis.pwned=2">'), long('Line\u2028separator \u202egnp.exe\u202c and `${globalThis.pwned = 3}`.')];
+    const targets = [long('This sentence runs on and on.'), ...hostile, { text: 'Another long sentence here.', kind: 'complex-sentence' as const }];
+    const script = highlightScript('sentences', [], targets);
+    expect(() => new Function(script)).not.toThrow();
+    expect(script).toContain(`, ${JSON.stringify('sentences')}, ${JSON.stringify(OVERLAY_CONFIG)}, `);
+    for (const forbidden of [/\binnerHTML\b/, /\bouterHTML\b/, /\binsertAdjacentHTML\b/, /document\.write/, /\badoptedStyleSheets\b/, /CSSStyleSheet/, /createElement\(['"]style/, /setAttribute\(['"]style/, /\.cssText\b/, /\beval\s*\(/, /\brequire\s*\(/, /\bprocess\./, /\bipcRenderer\b/]) {
+      expect(script, String(forbidden)).not.toMatch(forbidden);
+    }
+
+    // Evaluated as the isolated world runs it: in a page's own context, no module scope.
+    const evaluated = textPage(ARTICLE);
+    const answer = await (evaluated.dom.window.eval(script) as Promise<unknown>);
+    expect(answer).toEqual({ mode: 'sentences', boxes: 6, unmatched: 3 });
+    expect((evaluated.dom.window as unknown as { pwned?: unknown }).pwned).toBeUndefined();
+    expect(evaluated.document.querySelector('img')).toBeNull();
+    // The same boxes as the imported painter and plan draw on the same page.
+    const imported = textPage(ARTICLE);
+    await paintHighlight(imported.document as unknown as OverlayDocument, 'sentences', OVERLAY_CONFIG, planHighlight, imported.store, [], targets.slice(0, MAX_TEXT_HIGHLIGHT_TARGETS), planTextHighlight);
+    expect(evaluated.geometry()).toEqual(imported.geometry());
+    expect(evaluated.geometry().length).toBeGreaterThan(0);
+
+    // The stringified plan, built in a fresh context with nothing in scope, plans as the imported one.
+    const fresh = vm.runInNewContext(`(${planTextHighlight.toString()})`) as typeof planTextHighlight;
+    const texts = ['Intro. ', 'The quick br', 'own fox ', '  jumps\n over', ' the dog.', ' Price\u200b list \u202eevil\u202c here.'];
+    const planned = [long('The quick brown fox jumps over the dog.'), long('Price\u200b list \u202eevil\u202c here.'), long('Missing.')];
+    expect(JSON.parse(JSON.stringify(fresh(texts, planned, 20)))).toEqual(planTextHighlight(texts, planned, 20));
+  });
+
+  test('text-highlight-runs-in-seo-world', async () => {
+    const contents = { executeJavaScriptInIsolatedWorld: vi.fn(async (_world: number, _scripts: { code: string }[]) => ({ mode: 'sentences', boxes: 2, unmatched: 0 })) };
+    const targets = [long('A sentence.')];
+    await expect(runHighlight(contents, 'sentences', [], targets)).resolves.toEqual({ mode: 'sentences', boxes: 2, unmatched: 0 });
+    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledExactlyOnceWith(SEO_WORLD_ID, [{ code: highlightScript('sentences', [], targets) }]);
   });
 });

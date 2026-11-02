@@ -18,6 +18,7 @@ import { createMemoryChatsStore } from '../chat-history';
 import { encodeChat } from '../chat-record';
 import { createMemorySkillsStore } from '../user-skills';
 import { CHAT_PRUNE_INTERVAL_MS } from '@app/specs/agent-data.spec';
+import { BUILTIN_SKILL_IDS } from '@app/specs/skills.spec';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -169,7 +170,7 @@ describe('agent service wiring', () => {
     expect(agentChats.rows.size).toBe(1);
     expect(service.getState().chats[0]!.tabId).toBeNull();
     // The user's skill comes after the built-ins, labelled theirs.
-    expect(service.getState().skills.map((skill) => [skill.id, skill.builtin])).toEqual([['audit-this-page', true], ['rewrite-title-meta', true], ['internal-link-suggestions', true], ['my-skill', false]]);
+    expect(service.getState().skills.map((skill) => [skill.id, skill.builtin])).toEqual([...BUILTIN_SKILL_IDS.map((id) => [id, true]), ['my-skill', false]]);
     // A daily prune, cleared on quit.
     expect(timers.map((timer) => timer.ms)).toEqual([CHAT_PRUNE_INTERVAL_MS]);
     quit[0]!();

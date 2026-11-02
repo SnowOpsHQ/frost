@@ -313,7 +313,7 @@ function start(): void {
     contextMenu: showContextMenu,
     seo: { extract: runExtractor, analyse: (raw, context) => analyzer.analyse(raw, context), context: collectContext },
     // The `broken` mode outlines the link check's broken targets (specs/seo-checks.feature.md).
-    highlight: { paint: (contents, mode) => runHighlight(contents, mode, mode === 'broken' ? (checks?.brokenFor(contents.id) ?? []) : []), ended: watchHighlight },
+    highlight: { paint: (contents, mode, textTargets) => runHighlight(contents, mode, mode === 'broken' ? (checks?.brokenFor(contents.id) ?? []) : [], textTargets), ended: watchHighlight },
     speed: { measure: collect, analyse: (raw) => analyzer.analyseSpeed(raw), times: shownTimes },
     // The accessibility check (specs/seo-compliance.feature.md): axe-core in the tab's own isolated
     // accessibility world, on request only; its answer is validated in the analysis worker.

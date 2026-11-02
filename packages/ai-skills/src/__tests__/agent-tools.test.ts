@@ -1,5 +1,6 @@
 // Spec: specs/agent-tools.spec.ts (AGENT_TOOLS, isMcpToolName, toolRisk, isGrantable, the caps,
-// ALLOWED_MODEL_IDS, DEFAULT_MODEL_ID, routeModelId, MODEL_REQUESTS, isAllowedModelRequest, isCanonicalUrl)
+// ALLOWED_MODEL_IDS, DEFAULT_MODEL_ID, MODEL_PROVIDERS, GATEWAY_ONLY_PROVIDERS, byProvider, routeModelId,
+// MODEL_REQUESTS, isAllowedModelRequest, isCanonicalUrl)
 // Acceptance: specs/agent-protocol.feature.md (Catalogue)
 import { describe, expect, test } from 'vitest';
 import {
@@ -7,11 +8,14 @@ import {
   AGENT_TOOL_NAMES,
   AGENT_TOOLS,
   ALLOWED_MODEL_IDS,
+  BYOK_ROUTE_PROVIDER,
+  byProvider,
   CHAT_MAX_MESSAGES,
   DEFAULT_MODEL_ID,
   EXECUTE_JS_MAX_RESULT_BYTES,
   EXECUTE_JS_MAX_SOURCE_CHARS,
   EXECUTE_JS_TIMEOUT_MS,
+  GATEWAY_ONLY_PROVIDERS,
   isAgentToolName,
   isAllowedModelId,
   isAllowedModelRequest,
@@ -19,6 +23,7 @@ import {
   isGrantable,
   isMcpToolName,
   MAX_TOOL_STEPS,
+  MODEL_PROVIDERS,
   MODEL_REQUESTS,
   MODEL_ROUTES,
   routeModelId,
@@ -84,7 +89,10 @@ describe('agent tool catalogue', () => {
     expect(isAllowedModelId(DEFAULT_MODEL_ID)).toBe(true);
     expect(DEFAULT_MODEL_ID).toBe('anthropic/claude-sonnet-5-5');
     expect(ALLOWED_MODEL_IDS).toContain('anthropic/claude-opus-5-5');
-    for (const id of ALLOWED_MODEL_IDS) expect(id).toMatch(/^(anthropic|openai)\/[a-z0-9.-]+$/);
+    for (const id of ALLOWED_MODEL_IDS) expect(id).toMatch(new RegExp(`^(${MODEL_PROVIDERS.join('|')})/[a-z0-9.-]+$`));
+    // Every provider has models, and the list is grouped by provider in `MODEL_PROVIDERS` order.
+    expect(MODEL_PROVIDERS.flatMap((provider) => ALLOWED_MODEL_IDS.filter(byProvider(provider)))).toStrictEqual([...ALLOWED_MODEL_IDS]);
+    for (const provider of MODEL_PROVIDERS) expect(ALLOWED_MODEL_IDS.filter(byProvider(provider)).length, provider).toBeGreaterThan(0);
   });
 
   test('route-model-id', () => {
@@ -99,6 +107,30 @@ describe('agent tool catalogue', () => {
     expect(routeModelId('gateway', 'claude-sonnet-5-5')).toBeNull();
     expect(routeModelId('byok-anthropic', 'claude-sonnet-5-5')).toBeNull();
     expect(routeModelId('other' as never, 'anthropic/claude-sonnet-5-5')).toBeNull();
+  });
+
+  test('route-model-id-gateway-only-providers', () => {
+    expect([...GATEWAY_ONLY_PROVIDERS].sort()).toStrictEqual(['google', 'spacexai']);
+    // No bring-your-own-key route serves a gateway-only provider.
+    for (const provider of Object.values(BYOK_ROUTE_PROVIDER)) expect((GATEWAY_ONLY_PROVIDERS as readonly string[]).includes(provider)).toBe(false);
+    for (const provider of GATEWAY_ONLY_PROVIDERS) {
+      const ids = ALLOWED_MODEL_IDS.filter(byProvider(provider));
+      expect(ids.length, provider).toBe(2);
+      for (const id of ids) {
+        // Passed through as is on the gateway, refused on both key routes and the ChatGPT plan.
+        expect(routeModelId('gateway', id)).toBe(id);
+        expect(routeModelId('byok-anthropic', id), id).toBeNull();
+        expect(routeModelId('byok-openai', id), id).toBeNull();
+        expect(routeModelId('chatgpt', id), id).toBeNull();
+        // Without the prefix, it is no id at all.
+        expect(routeModelId('gateway', id.slice(provider.length + 1))).toBeNull();
+      }
+    }
+    // An id of a provider frost doesn't list (xAI's old prefix, a Vertex alias) is refused everywhere.
+    for (const route of MODEL_ROUTES) {
+      for (const id of ALLOWED_MODEL_IDS.filter(byProvider('spacexai'))) expect(routeModelId(route, `xai/${id.slice('spacexai/'.length)}`), route).toBeNull();
+      for (const id of ALLOWED_MODEL_IDS.filter(byProvider('google'))) expect(routeModelId(route, `vertex/${id.slice('google/'.length)}`), route).toBeNull();
+    }
   });
 
   test('model-request-allowlist', () => {

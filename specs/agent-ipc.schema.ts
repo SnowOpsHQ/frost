@@ -8,8 +8,9 @@
  */
 import { z } from 'zod';
 import { APPROVAL_DECISIONS, MAX_GRANT_ORIGIN_CHARS } from './agent-approvals.spec';
-import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_RETENTIONS } from './agent-data.spec';
+import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_RETENTIONS, MAX_USER_SKILLS } from './agent-data.spec';
 import { CREDENTIAL_LIMITS, CREDENTIAL_SLOTS, isValidModelSettings } from './agent-proxy.spec';
+import { REASONING_EFFORTS } from './agent-reasoning.spec';
 import { CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
 import { isAgentModelId, MODEL_ROUTES, type AgentModelId } from './agent-tools.spec';
 import { SKILL_ID_PATTERN, SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from './skills.spec';
@@ -68,6 +69,13 @@ export const AgentSetModelInputSchema = z
   .refine((value) => isValidModelSettings(value), { message: 'the route does not serve this model' });
 
 /**
+ * `agent.setReasoningEffort` (Phase 8 Task 8b, Decision 8): the level to store beside the route and
+ * model, one of `REASONING_EFFORTS` and nothing else (never a provider's wire value). Any level is
+ * stored; one the selected model doesn't offer acts as `auto` (`effectiveEffort`).
+ */
+export const AgentSetReasoningEffortInputSchema = z.strictObject({ effort: z.enum(REASONING_EFFORTS) });
+
+/**
  * A key to store. Bounded loosely (whitespace around a pasted key is trimmed by main's store,
  * `normalizeKey`, which refuses anything that isn't a key with `invalid`). Zod's issues can quote
  * parts of an input (an unrecognized key's name), so the IPC's error formatter replaces every
@@ -108,6 +116,12 @@ export const AgentExportChatInputSchema = z.strictObject({ chatId: AgentChatIdSc
 /** A skill id to look up, delete or duplicate (well-formed; main resolves it). */
 export const AgentSkillIdInputSchema = z.strictObject({ id: z.string().min(SKILL_LIMITS.minIdChars).max(SKILL_LIMITS.maxIdChars).regex(SKILL_ID_PATTERN) });
 
+/** `agent.setSkillEnabled` (Phase 8 Task 5): a well-formed skill id and the switch's new position; main resolves the id. */
+export const AgentSetSkillEnabledInputSchema = z.strictObject({
+  id: z.string().min(SKILL_LIMITS.minIdChars).max(SKILL_LIMITS.maxIdChars).regex(SKILL_ID_PATTERN),
+  enabled: z.boolean(),
+});
+
 /**
  * A skill draft from the editor (`AgentSkillDraft`): only its shape is bounded here, loosely, so a
  * mistake comes back from main as inline errors (`agent.saveSkill` validates it with `SkillSchema`)
@@ -132,3 +146,42 @@ export const AgentSkillDraftSchema = z.strictObject({
 });
 
 export const AgentSaveSkillInputSchema = z.strictObject({ skill: AgentSkillDraftSchema, mode: z.enum(AGENT_SKILL_SAVE_MODES) });
+
+// ---- Phase 8 Task 6: skill files (`agent-data.spec.ts`, Skill files) --------------------------
+// The renderer never names a file: main asks in its own save and open dialogs. `agent.previewSkillImport`
+// takes no input.
+
+const skillIdInput = z.string().min(SKILL_LIMITS.minIdChars).max(SKILL_LIMITS.maxIdChars).regex(SKILL_ID_PATTERN);
+
+/** `agent.exportSkills`: the user's skills to export (well-formed ids, each once), or `'all-mine'`. */
+export const AgentExportSkillsInputSchema = z.strictObject({
+  ids: z.union([
+    z.literal('all-mine'),
+    z
+      .array(skillIdInput)
+      .min(1)
+      .max(MAX_USER_SKILLS)
+      .refine((ids) => new Set(ids).size === ids.length, { message: 'an id is listed twice' }),
+  ]),
+});
+
+/** An import review's token (main's `crypto.randomUUID`). */
+export const AgentSkillImportTokenSchema = z.uuid();
+
+/** `agent.importSkills`: the review's token and the entries to import (their indices in the file, each once). */
+export const AgentImportSkillsInputSchema = z.strictObject({
+  token: AgentSkillImportTokenSchema,
+  indices: z
+    .array(
+      z
+        .int()
+        .min(0)
+        .max(MAX_USER_SKILLS - 1),
+    )
+    .min(1)
+    .max(MAX_USER_SKILLS)
+    .refine((indices) => new Set(indices).size === indices.length, { message: 'an entry is listed twice' }),
+});
+
+/** `agent.cancelSkillImport`: drops the review's token (nothing is imported). */
+export const AgentCancelSkillImportInputSchema = z.strictObject({ token: AgentSkillImportTokenSchema });

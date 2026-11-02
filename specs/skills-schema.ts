@@ -17,6 +17,7 @@
  * ```
  */
 import { z } from 'zod';
+import { MAX_USER_SKILLS, SKILL_FILE_FORMAT, SKILL_FILE_VERSION } from './agent-data.spec';
 import { AGENT_TOOL_NAMES, isSafeInputText } from './agent-tools.spec';
 import { SKILL_ID_PATTERN, SKILL_INPUT_SLOTS, SKILL_LIMITS as L, templateSlots } from './skills.spec';
 
@@ -79,3 +80,28 @@ export function parseSkill(value: unknown): Skill | null {
   const parsed = SkillSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
+
+// ---- Skill files: export and import (Phase 8 Task 6; `agent-data.spec.ts`, Skill files) ----------
+
+/**
+ * A skills file's envelope, as import reads it before any skill is checked: frost's format name and
+ * version, when it was written, and 1 to `MAX_USER_SKILLS` entries (each checked on its own with
+ * `SkillSchema`, so one bad entry is listed as invalid instead of refusing the file).
+ */
+export const SkillFileEnvelopeSchema = z.strictObject({
+  format: z.literal(SKILL_FILE_FORMAT),
+  version: z.literal(SKILL_FILE_VERSION),
+  exportedAt: z.iso.datetime(),
+  skills: z.array(z.unknown()).min(1).max(MAX_USER_SKILLS),
+});
+
+/**
+ * A skills file as export writes it (`SKILL_FILE_FORMAT`, version `SKILL_FILE_VERSION`): every skill
+ * valid. Main checks the whole file with it before writing.
+ *
+ * ```ts
+ * { format: 'frost-skills', version: 1, exportedAt: '2026-10-30T12:00:00.000Z', skills: [Skill, …] }
+ * ```
+ */
+export const SkillFileSchema = SkillFileEnvelopeSchema.extend({ skills: z.array(SkillSchema).min(1).max(MAX_USER_SKILLS) });
+export type SkillFile = z.output<typeof SkillFileSchema>;

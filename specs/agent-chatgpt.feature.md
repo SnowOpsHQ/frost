@@ -196,6 +196,18 @@ named test.
 - **Scenario: chatgpt-route-body (never both)** — a body never passes both `byok-openai`'s and
   `chatgpt`'s checks, even with the same slug: the key route requires `max_output_tokens`, the plan
   forbids it (checked over every combination of the fields that differ).
+- **Scenario: chatgpt-model-entry-efforts-parsed** (Phase 8 Task 8a) — a model-list entry's
+  optional `CHATGPT_ADVERTISED_EFFORTS_FIELD` (`supported_reasoning_levels`, Open question 1's lead
+  ruling; items are level strings or objects with an `effort` string) is read leniently: only
+  `CHATGPT_ADVERTISED_EFFORTS` (`low`, `medium`, `high`) are kept, each once, in
+  `REASONING_EFFORTS` order (so at most 3); `auto`, `off`, unknown levels (`minimal`, `xhigh`,
+  `none`), duplicates and malformed items are dropped (an entry advertising `off` keeps no `off`:
+  the route never offers it, because the installed OpenAI provider drops `minimal` for the plan's
+  GPT-6 slugs and would send no level, so every such request would be refused); none left (or the field absent or malformed) gives no
+  `efforts` key (Auto only) and the entry is still kept. `isChatgptModelView` takes `{ id, label }`,
+  or `{ id, label, efforts }` with a non-empty list of distinct advertised levels in that order (a
+  duplicate, an unknown value, `auto`, `off`, 4 items, an empty list or another order rejects the
+  entry); the worst case `,"efforts":["low","medium","high"]` fits `CHATGPT_EFFORTS_ENTRY_MAX_BYTES`.
 - **Scenario: chatgpt-error-codes** — each documented code maps to its reason; any other code is
   `null`; the refresh-failure codes are exactly the documented six. `error.param` is kept only as a
   field path (`CHATGPT_ERROR_PARAM_PATTERN`: letters, digits, `_`, `.`, `[`, `]`, 128 at most).
@@ -247,6 +259,11 @@ named test.
   the filter). Each list belongs to the account it was asked for: when the usable account changes
   while a list is being read, that list is dropped (never stored for the new account) and the new
   account's list is asked for next.
+- **Scenario: chatgpt-models-keep-advertised-efforts** (Phase 8 Task 8b; `chatgpt/__tests__/models.test.ts`)
+  — `listModels` maps each entry's advertised levels (`ChatgptModelEntrySchema`'s `efforts`) into
+  its `ChatgptModelView` (no `efforts` key when it advertises none); the route stores them with the
+  settings, a restart reads them back, and so the route offers `auto` plus exactly those levels
+  (`reasoningLevels`), `auto` only for a model advertising none. A later list replaces them.
 - **Scenario: chatgpt-account-change** — the route tells its listeners when the account's state,
   email or plan usage changes, not on a token refresh.
 - **Scenario: chatgpt-route-ready** — a turn may start on the route only when signed in, plan usage
@@ -294,6 +311,12 @@ named test.
   A `401`/`403` the turn ends on is worded about the ChatGPT sign-in, not a key.
 - **Scenario: proxy-accepts-real-provider-requests (chatgpt)** — the installed provider's first and
   second requests on the route pass main's rules, and a key route's rules refuse them.
+- **Scenario: reasoning-body-per-route (chatgpt)** (Phase 8 Task 8b; `agent-runtime.feature.md`,
+  Providers) — at a level the account's list advertises, the runtime sends `openai.reasoningEffort`
+  with `forceReasoning: true`, so the request carries `reasoning.effort` (beside the provider's
+  `reasoning.summary` and `include: ['reasoning.encrypted_content']`, both allowed and not compared)
+  for a GPT-6.x slug and for one the provider doesn't recognise alike, still with no output cap; it
+  passes `checkModelRequest('chatgpt', …)` at that level. At `auto` nothing is forced.
 
 ## Panel (Task 5: `apps/desktop/src/renderer/__tests__/agent-chatgpt-view.test.ts`, `agent-chatgpt-components.test.ts`)
 The renderer sees `ChatgptAccountView` and the account's model list only (never a token); every
@@ -352,6 +375,12 @@ word is `CHATGPT_UI` / the messages. A sign-in is a click: main spends that clic
   section's first action ("Manage usage" by the composer once the notice is gone).
 - **Scenario: chatgpt-settings-model-label** — the "Model" label names the model select; when the
   account has listed no model (a sentence instead of a select), it is a plain heading, not a label.
+- **Scenario: chatgpt-reasoning-from-account-list** (Phase 8 Task 9; `agent-chatgpt-components.test.ts`)
+  — on the plan the Reasoning select offers `auto` plus exactly the levels main put in
+  `setup.reasoning.levels` from the account's list (a model advertising Low and High: Auto, Low,
+  High; never Off or Minimal); a model whose entry advertises none (Auto only until the live check
+  confirms the field) shows Auto, disabled, with `AGENT_REASONING_UNAVAILABLE`; switching the account's
+  model changes the offered levels at once.
 
 ## Known limitations
 - **One click can back two opens.** The ChatGPT sign-in spends the sender window's gesture from

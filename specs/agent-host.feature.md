@@ -2,7 +2,10 @@
 
 Spec: `specs/agent-proxy.spec.ts` (`AGENT_HOST_LIMITS`, `CREDENTIAL_SLOTS`, `normalizeKey`,
 `AGENT_PROXY_LIMITS`, `REQUEST_HEADER_ALLOWLIST`, `filterRequestHeaders`, `mainRequestHeaders`,
-`RESPONSE_HEADER_ALLOWLIST`, `filterResponseHeaders`, `BODY_FIELDS`, `checkModelRequestBody`),
+`RESPONSE_HEADER_ALLOWLIST`, `filterResponseHeaders`, `BODY_FIELDS`, `checkModelRequestBody`,
+`GATEWAY_PROVIDER_OPTIONS`, `GEMINI_THINKING_LEVELS`, `checkModelRequest`, `GATEWAY_OPTIONS_KEY`),
+`specs/agent-reasoning.spec.ts` (`REASONING_EFFORTS`, `MODEL_REASONING_SUPPORT`, `reasoningLevels`,
+`effectiveEffort`, `reasoningWire`, `REASONING_FIELDS`, `reasoningFieldsOf`, `checkReasoning`),
 `specs/agent-protocol.schema.ts`, `specs/agent-tools.spec.ts` (`MODEL_REQUESTS`,
 `isAllowedModelRequest`, `routeModelId`). Phase 5 Task 3 (`docs/plans/phase-5-ai-agent.md`,
 decisions 1, 3, 5 and 6; threat model rows "A key leaks" and "The agent reaches arbitrary hosts").
@@ -26,6 +29,42 @@ one named test.
   Anthropic `thinking` is allowed only when its budget fits beside the output cap (the provider asks
   for `maxOutputTokens + budgetTokens`). A tool call's caller is passed back only as
   `{ type: 'direct' }` (the Anthropic provider returns a response's `caller` on the next step).
+- **Gemini and Grok on the gateway (Phase 8 Task 7, security review).** Their options are added by
+  name and value, never as "any object": a part may carry `google.thoughtSignature` (a string; the
+  AI SDK's Google provider returns it on thoughts, text and function calls, and Gemini refuses a
+  function-call turn without it); the request may carry `google.thinkingConfig` with only
+  `thinkingLevel` (`GEMINI_THINKING_LEVELS`: `low`, `medium`, `high`) and `includeThoughts` (a
+  boolean): no `thinkingBudget`, `cachedContent`, safety settings, search grounding or retrieval,
+  or any other Google option, and no `vertex` key. Grok gets `xai: {}` at most and no part
+  metadata. These allowlists are derived from the installed SDK (no real stream could be captured);
+  a live capture of one Gemini and one Grok tool turn must confirm them before release (Open
+  question 3). `checkModelRequestBody` stays the one structural check.
+- **Reasoning effort is one setting, mapped per model, checked by main (Phase 8 Task 8a, Decision
+  8, security review).** `REASONING_EFFORTS` (`auto`, `off`, `low`, `medium`, `high`) is stored in
+  `agent-settings.json` beside the route and model; each model offers the levels in
+  `MODEL_REASONING_SUPPORT` (on the `chatgpt` route `auto` plus what the account's list advertises
+  of `low`, `medium`, `high`: never `off`, whose wire value `minimal` the installed OpenAI provider
+  drops for the plan's GPT-6 slugs, sending no level, so it would be refused on every request),
+  and a stored level the model lacks acts as `auto` (`effectiveEffort`). The proxy refuses a body
+  whose reasoning fields (`REASONING_FIELDS`: Anthropic `thinking` and `output_config.effort`,
+  OpenAI and ChatGPT `reasoning.effort`, the gateway's `providerOptions.anthropic.thinking`,
+  `anthropic.effort`, `openai.reasoningEffort` and `google.thinkingConfig`) are not exactly what the
+  provider writes for `reasoningWire` of the effective level (new refusal `reasoning`, counted), as
+  it already does for the model. Two layers, kept apart: `checkModelRequestBody` (the structural
+  allowlist) is unchanged and runs first, its reasons winning; `checkModelRequest` adds the
+  reasoning check and, on the gateway, that every provider option and part metadata is under the
+  model's own provider's key (`GATEWAY_OPTIONS_KEY`: `google.*` only for Gemini, `anthropic.*` only
+  for Claude, OpenAI's only for GPT, `xai` only for Grok), the request's `openai: { store: false }`
+  excepted (the runtime sends it on every turn; a no-op for other providers). That binding lives in
+  the composite, not the structural check, because the structural tests keep OpenAI's options on a
+  Claude model as an allowed shape.
+- **A level change while a turn runs is the user's, not a runtime fault.** The proxy keeps the
+  settings a running turn began on (`previous`, from the settings' `onChange`, which now also fires
+  on a level-only change). A body refused `reasoning` that passes the whole check at the turn's
+  effective level, on the same route and model, is sent (with that check's body), uncounted: the
+  turn finishes on its level and the next one must carry the new one. A route or model change keeps
+  today's `model` refusal (not counted, structural `madeForPrevious`, effort irrelevant). A body
+  matching neither level is refused `reasoning` and counted.
 - **Requests only for turns.** The host hands a `fetch.request` to the proxy only while a chat main
   started is running, and at most `MAX_MODEL_REQUESTS_PER_TURN` per running turn; it refuses any
   other itself. The budget is shared by the turns running at once, on purpose: a `fetch.request`
@@ -128,9 +167,28 @@ one named test.
 
 ## Settings (`settings.test.ts`)
 - **Scenario: settings-defaults** — no file: `gateway` and `DEFAULT_MODEL_ID`.
-- **Scenario: settings-validated** — a model the route doesn't serve, or an unknown route or model,
-  is refused; a valid pair is written and read back.
+- **Scenario: settings-validated** — a model the route doesn't serve (a Gemini or Grok model with a
+  key route included), or an unknown route or model, is refused; a valid pair is written and read back.
 - **Scenario: settings-tampered** — an invalid stored pair reads as the defaults.
+- **Scenario: settings-reasoning-default-auto-and-persisted** — a new install's level is `auto`;
+  each of `REASONING_EFFORTS` is written (`reasoningEffort` in the file) and read back after a
+  restart; a level the model lacks is stored as chosen (it acts as `auto`) and kept across a model
+  change; a value that isn't a level is refused with nothing changed.
+- **Scenario: settings-old-file-without-reasoning-reads-auto** — a file with only the route and
+  model (the previous build's) reads with `auto`, logging nothing.
+- **Scenario: settings-tampered-reasoning-reads-auto** — a stored level that isn't one of
+  `REASONING_EFFORTS` (another word, another case, a number, `null`, an object, a list) reads as
+  `auto` with the route and model kept, logged once.
+- **Scenario: settings-reasoning-change-notifies** — a level-only change calls `onChange` with the
+  new settings and the previous ones; setting the same level again does not; a model change carries
+  the level on both sides.
+- **Scenario: settings-chatgpt-models-keep-efforts** — a persisted ChatGPT list with `efforts`
+  round-trips; an entry with a malformed `efforts` is dropped; a file of the previous build
+  (`{ id, label }` entries) still reads.
+- **Scenario: settings-largest-model-list-with-efforts-fits** — `maxModels` entries, each with the
+  longest slug, a label of `maxDisplayNameChars` 3-byte characters and every advertisable level (three), with the
+  longest level stored, are written (under `MAX_SETTINGS_FILE_BYTES`, which adds
+  `CHATGPT_EFFORTS_ENTRY_MAX_BYTES` per entry and room for `"reasoningEffort"`) and read back.
 
 ## Proxy rules (`proxy-rules.test.ts`, pure)
 - **Scenario: proxy-request-headers-allowlist** — per route, only allowlisted headers survive
@@ -159,15 +217,66 @@ one named test.
 - **Scenario: proxy-gateway-option-values** — gateway provider options outside their value shapes
   are refused; an Anthropic `thinking` budget that, added to `maxOutputTokens`, passes
   `MAX_OUTPUT_TOKENS` (1024 when none is given) is refused (`output-cap`).
+- **Scenario: proxy-gemini-thought-signature-accepted** — on a Gemini model, an assistant
+  thought, text and tool call carrying `providerOptions.google.thoughtSignature` (a string) pass;
+  a signature that isn't a string, any other key beside it or alone (`groundingMetadata`,
+  `cachedContent`, `functionCall`), the same under `vertex` or `gateway`, or on a message's own
+  options, is refused (`provider-options`).
+- **Scenario: proxy-google-options-allowlisted** — on a Gemini model `google.thinkingConfig`
+  passes with `thinkingLevel` `low`, `medium` or `high` and a boolean `includeThoughts`; another
+  level (`minimal`, `xhigh`, `max`, upper case), a non-boolean `includeThoughts`, an unknown key,
+  any `thinkingBudget` (over the cap, dynamic `-1`, or within the cap), `cachedContent`, safety
+  settings and thresholds, search grounding (`useSearchGrounding`, `dynamicRetrievalConfig`,
+  `retrievalConfig`), response modalities, structured outputs, labels, media resolution, any other
+  Google option, and Google's options under `vertex` are refused (`provider-options`); a Google
+  search provider tool is refused (`tool`).
+- **Scenario: proxy-xai-options-refused** — on a Grok model only `xai: {}` passes; any key under
+  `xai` (`reasoningEffort`, `searchParameters`, `parallel_function_calling`, `store`), a
+  non-object, any `spacexai` options, and any `xai` or `spacexai` part metadata are refused
+  (`provider-options`).
 - **Scenario: proxy-output-cap** — on every route the output cap must be an integer from 1 to
   `MAX_OUTPUT_TOKENS`; absent, larger or not an integer is refused (`output-cap`).
 - **Scenario: proxy-openai-store-required** — an OpenAI body without `store: false` (and an
   OpenAI model on the gateway without `providerOptions.openai.store: false`) is refused.
+- **Scenario: proxy-reasoning-must-match-settings** — on every route and model, the body the
+  provider writes for the settings' effective level passes `checkModelRequest`; under any other
+  level the model offers (`auto` included) it is refused `reasoning`, and a body with no reasoning
+  field passes only under `auto`. `MODEL_REASONING_SUPPORT` is Decision 8's table (Claude `auto`,
+  `low`, `medium`, `high`; GPT-5 all five; Gemini its listed levels, the flash model without
+  `medium`; Grok `auto` only); a level the model lacks maps to nothing, and a body carrying it is
+  refused under every level. Gemini's whole `thinkingConfig` is compared (`thinkingLevel` bound to
+  the level, no `includeThoughts` the mapping doesn't send). On the `chatgpt` route the levels are
+  `auto` plus the account's advertised ones (never `off`), `auto` only when none. `reasoning.summary` and
+  `include` are not compared; the structural check's reason wins; the body answered is the
+  structural check's. The captured real requests at `auto` (no reasoning field) pass at `auto` only;
+  those at each offered level are Task 8b's `reasoning-body-per-route` (`agent-runtime.feature.md`).
+- **Scenario: proxy-reasoning-off-maps-to-minimal-on-openai** — on `byok-openai` and gateway
+  OpenAI models (GPT-5, for which the installed provider keeps `minimal`), `off` maps to
+  `reasoning.effort` / `reasoningEffort` `minimal`: accepted under `off` only, and under `off` a
+  body without it is refused; `off` itself as a wire value is refused structurally; no other
+  provider offers `off`. The `chatgpt` route never offers it (the provider drops `minimal` for the
+  plan's GPT-6 slugs and sends no level): even a list naming it gives no `off` level, a stored `off`
+  acts as `auto`, and a body with `minimal` is refused there.
+- **Scenario: proxy-anthropic-adaptive-thinking-within-cap** — on both Anthropic paths each of
+  `low`, `medium`, `high` maps to adaptive thinking plus that effort, accepted with the output cap
+  at `MAX_OUTPUT_TOKENS` and refused past it (`output-cap`, structural first); `enabled` (a
+  budget), `between_tools`, no thinking, or `effort` alone are refused `reasoning`; extra thinking
+  keys stay refused structurally.
+- **Scenario: proxy-gateway-option-values (through the whole check)** — each provider-options body
+  the structural check allows but no level maps to (OpenAI's options or `effort` without
+  `thinking` on a Claude model, `enabled` or `disabled` thinking) is refused `reasoning` under
+  every level; adaptive thinking with an effort, and GPT's `reasoningEffort: 'low'`, are accepted
+  under the level that maps to them only.
+- **Scenario: proxy-gateway-options-follow-the-model** — on the gateway each model's request,
+  message and part options are accepted under its own provider's key only (`GATEWAY_OPTIONS_KEY`),
+  and refused (`provider-options`) under another's, even empty; `openai: { store: false }` is
+  accepted on every model and nothing else under `openai` on a non-OpenAI model.
 - **Scenario: proxy-accepts-real-provider-requests** — the requests the installed providers send
   through the runtime (each route and allowed model, a history with tool calls and results, and a
   turn's second request carrying the first step's thinking and signature, redacted thinking,
   encrypted reasoning, item ids and two tool calls, one with Anthropic's `caller: { type: 'direct' }`,
-  sent back on both Anthropic paths) pass the header filter and the body check, and the body
+  sent back on both Anthropic paths; on Gemini, the thought signature on the thought and the first
+  call; on Grok, no part metadata) pass the header filter and the body check, and the body
   answered is byte for byte the one the provider wrote.
 
 ## Model proxy (`model-proxy.test.ts`)
@@ -200,6 +309,22 @@ one named test.
   tool does.
 - **Scenario: proxy-refusal-logged-without-detail** — a refusal logs one line with its reason code
   and no URL query, header or body.
+- **Scenario: proxy-reasoning-change-mid-turn-is-not-the-runtimes-fault** — a turn runs on High;
+  the user switches to Low; a body with High is sent (the turn's level, same route and model), with
+  no strike, as is one with Low; after the turn ends, the next turn's body must carry Low: High is
+  refused `reasoning` and counted.
+- **Scenario: proxy-reasoning-matching-neither-refused** — after High → Low mid-turn, a body with
+  Medium or none is refused `reasoning` and counted; with no change, any level but the settings'
+  is refused and counted.
+- **Scenario: proxy-model-change-mid-turn-unchanged** — when the model (or route) changed too, a
+  body made for the turn's model is refused `model` (or `endpoint`), not counted, whatever its
+  level; the new model with the old level is refused `reasoning` and counted.
+- **Scenario: proxy-unsupported-stored-effort-acts-as-auto** — a stored High on a model offering
+  Auto only (Grok), a stored Medium on a Gemini model without it, or a stored High on a ChatGPT
+  model the account advertises no level for: a body with no reasoning field is sent and one with
+  the stored level is refused `reasoning`; the same holds for the turn's settings mid-turn (both
+  effective levels `auto`: nothing to fall back to), and a turn's offered level is still sent
+  after a change to an unoffered one.
 
 ## Key isolation (`key-never-leaves-main.test.ts`)
 - **Scenario: key-never-leaves-main** — the real runtime (in-process, on fake ports) runs a turn

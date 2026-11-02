@@ -156,6 +156,7 @@ function auditActions(api: PaletteApi): PaletteAction[] {
     },
     highlight(api, 'links', 'Highlight links on the page', ['links', 'internal', 'external', 'nofollow']),
     highlight(api, 'headings', 'Highlight headings on the page', ['headings', 'h1', 'outline']),
+    highlight(api, 'sentences', 'Highlight difficult sentences', ['sentences', 'readability', 'long', 'complex', 'content']),
     {
       id: 'highlight.off',
       label: 'Remove the page highlights',

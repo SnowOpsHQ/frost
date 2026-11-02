@@ -19,6 +19,7 @@ const chatStart = (chatId = 'chat-1'): MainToRuntimeMessage => ({
   route: 'gateway',
   allowedTools: [],
   mcpTools: [],
+  reasoningEffort: 'auto',
 });
 
 /** A host whose forks give the test the runtime's end of each port (`runtimes`, in fork order). */

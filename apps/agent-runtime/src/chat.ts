@@ -14,6 +14,11 @@
 // namespace (`CHATGPT_TOOL_NAMESPACE`, `providerOptions.openai.namespace`), and a function call from
 // the history names it too; no output cap or sampling option is sent; `store: false`; and the
 // system prompt goes as a developer message (the route refuses a `system` item).
+//
+// The turn's reasoning level (`chat.start.reasoningEffort`, protocol version 8; Phase 8 Task 8b) is
+// main's effective level: the call carries `reasoningWire` for it (`auto`: nothing), merged into the
+// route's provider options, and main's proxy refuses any other reasoning field.
+import type { SharedV4ProviderOptions } from '@ai-sdk/provider';
 import { APICallError, isStepCount, jsonSchema, streamText, zodSchema, type FinishReason, type LanguageModel, type ModelMessage, type Tool, type ToolSet } from 'ai';
 import type { z } from 'zod';
 import { getToolDefinition } from '@app/ai-skills';
@@ -30,6 +35,7 @@ import {
 } from '@app/specs/agent-protocol.schema';
 import { CHATGPT_TOOL_NAMESPACE } from '@app/specs/agent-chatgpt.spec';
 import { MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
+import { reasoningWire, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
 import { isAgentToolName, isMcpToolName, MAX_TOOL_STEPS, type ModelRoute } from '@app/specs/agent-tools.spec';
 import { ProxyFetchError } from './proxy-fetch';
 import { ModelNotAllowedError } from './provider';
@@ -58,13 +64,24 @@ export const CHATGPT_PROVIDER_OPTIONS = { openai: { store: false, systemMessageM
 /** Each tool's provider options on the ChatGPT plan route: grouped in the `frost` namespace (the route takes function tools only inside one). */
 export const CHATGPT_TOOL_PROVIDER_OPTIONS = { openai: { namespace: { name: CHATGPT_TOOL_NAMESPACE.name, description: CHATGPT_TOOL_NAMESPACE.description } } } as const;
 
+/** The provider options of a turn: the route's (`CHAT_PROVIDER_OPTIONS`, `CHATGPT_PROVIDER_OPTIONS`) and the reasoning level's. */
+export type ChatProviderOptions = SharedV4ProviderOptions;
+
 /**
- * The call options a turn on `route` sends besides the prompt and tools: the output cap
- * (`MAX_OUTPUT_TOKENS`, which main's proxy requires on the key routes and the ChatGPT plan refuses)
- * and the provider options. Nothing else (no temperature, top-p or penalties) on any route.
+ * The call options a turn on `route` with `modelId` at `effort` sends besides the prompt and tools:
+ * the output cap (`MAX_OUTPUT_TOKENS`, which main's proxy requires on the key routes and the ChatGPT
+ * plan refuses) and the provider options, the route's with `reasoningWire(route, modelId, effort)`
+ * merged in (`auto`, or a level with no mapping: the route's alone). On the ChatGPT plan a level also
+ * sends `forceReasoning`: the installed OpenAI provider writes `reasoning` only for slugs it takes
+ * for reasoning models, and the plan's list may name others. Nothing else (no temperature, top-p or
+ * penalties) on any route.
  */
-export function chatCallOptions(route: ModelRoute): { readonly maxOutputTokens?: number; readonly providerOptions: typeof CHAT_PROVIDER_OPTIONS | typeof CHATGPT_PROVIDER_OPTIONS } {
-  return route === 'chatgpt' ? { providerOptions: CHATGPT_PROVIDER_OPTIONS } : { maxOutputTokens: MAX_OUTPUT_TOKENS, providerOptions: CHAT_PROVIDER_OPTIONS };
+export function chatCallOptions(route: ModelRoute, modelId: string, effort: ReasoningEffort): { readonly maxOutputTokens?: number; readonly providerOptions: ChatProviderOptions } {
+  const base: ChatProviderOptions = route === 'chatgpt' ? CHATGPT_PROVIDER_OPTIONS : CHAT_PROVIDER_OPTIONS;
+  const wire = reasoningWire(route, modelId, effort);
+  const providerOptions: ChatProviderOptions =
+    Object.keys(wire).length === 0 ? base : { ...base, ...wire, openai: { ...base.openai, ...wire.openai, ...(route === 'chatgpt' && wire.openai !== undefined ? { forceReasoning: true } : {}) } };
+  return route === 'chatgpt' ? { providerOptions } : { maxOutputTokens: MAX_OUTPUT_TOKENS, providerOptions };
 }
 
 export interface RunChatOptions {
@@ -327,8 +344,9 @@ export function runChat({ start, model, post, signal }: RunChatOptions): ChatRun
         toolCallConcurrency: 1,
         maxRetries: CHAT_MAX_RETRIES,
         // Main's proxy refuses a key route's request without the output cap (a provider's default can
-        // be its model's maximum), and the ChatGPT plan's with one.
-        ...chatCallOptions(start.route),
+        // be its model's maximum), and the ChatGPT plan's with one; and a reasoning field other than
+        // the level main sent.
+        ...chatCallOptions(start.route, start.modelId, start.reasoningEffort),
         abortSignal: signal,
         experimental_download: refuseDownload,
         // The default logs the error (and whatever it carries); the turn's failure is reported below.

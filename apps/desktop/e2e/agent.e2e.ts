@@ -1,10 +1,11 @@
 // Specs: specs/agent-panel.spec.ts (AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS, AGENT_APPROVAL_BUTTONS),
 // specs/agent-session.spec.ts (AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE),
 // specs/agent-e2e-script.schema.ts (the script format)
-// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL),
+// specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL, SKILL_LIBRARY_WORDS,
+// SKILL_FILE_FORMAT, SKILL_FILE_VERSION, SKILL_EXPORT_MESSAGES, SKILL_IMPORT_MESSAGES, SKILL_FILE_WORDS, SKILL_IMPORT_CONFLICT_MESSAGES),
 // specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
-// Acceptance: specs/agent-panel.feature.md (End to end), specs/skills.feature.md (agent-skill-narrows-tools),
-// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end)
+// Acceptance: specs/agent-panel.feature.md (End to end, agent-model-and-reasoning-settings), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
+// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end), specs/agent-mcp-presets.feature.md (End to end)
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -13,10 +14,23 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
-import { AGENT_GRANTS_EXPLAINER, CHAT_EXPORT_MESSAGES, CHAT_EXPORT_UNTRUSTED_NOTE, SKILL_USER_LABEL } from '@app/specs/agent-data.spec';
-import { SKILL_USER_MARK } from '@app/specs/skills.spec';
-import { MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
+import { AGENT_MODEL_PROVIDER_LABELS, AGENT_REASONING_HINT, AGENT_REASONING_UNAVAILABLE, AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
+import {
+  AGENT_GRANTS_EXPLAINER,
+  CHAT_EXPORT_MESSAGES,
+  CHAT_EXPORT_UNTRUSTED_NOTE,
+  SKILL_EXPORT_MESSAGES,
+  SKILL_FILE_FORMAT,
+  SKILL_FILE_VERSION,
+  SKILL_FILE_WORDS,
+  SKILL_IMPORT_CONFLICT_MESSAGES,
+  SKILL_IMPORT_MESSAGES,
+  SKILL_LIBRARY_WORDS,
+  SKILL_USER_LABEL,
+} from '@app/specs/agent-data.spec';
+import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_USER_MARK } from '@app/specs/skills.spec';
+import { AGENT_MCP_PARTITION, MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
+import { MCP_PRESET_WORDS, MCP_PRESETS } from '@app/specs/agent-mcp-presets.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
@@ -368,6 +382,44 @@ test('agent-settings-never-shows-key', async () => {
   }
 });
 
+test('agent-model-and-reasoning-settings', async () => {
+  await launchWith([{ text: ['unused'] }], null);
+  await page.getByTestId('agent-settings-toggle').click();
+  await expect(page.getByTestId('agent-settings')).toBeVisible();
+  // The gateway route serves the Gemini and Grok models, grouped under their providers.
+  await expect(page.getByTestId('agent-route')).toHaveValue('gateway');
+  const model = page.getByTestId('agent-model');
+  const groups = await model.locator('optgroup').evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptGroupElement).label));
+  expect(groups).toEqual(expect.arrayContaining([AGENT_MODEL_PROVIDER_LABELS.google, AGENT_MODEL_PROVIDER_LABELS.spacexai]));
+  const reasoning = page.getByTestId('agent-reasoning');
+  const levels = () => reasoning.locator('option').evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value));
+  await expect(page.getByTestId('agent-reasoning-hint')).toHaveText(AGENT_REASONING_HINT);
+  // Gemini 4 Argon: Auto, Low, Medium, High; the level chosen is stored (the select shows main's state coming back).
+  await model.selectOption('google/gemini-4-argon');
+  await expect(model).toHaveValue('google/gemini-4-argon');
+  await expect.poll(levels).toEqual(['auto', 'low', 'medium', 'high']);
+  await expect(reasoning).toBeEnabled();
+  await reasoning.selectOption('medium');
+  await expect(reasoning).toHaveValue('medium');
+  // Gemini 3.8 Flash has no Medium: the stored level does not apply, so the select reads Auto.
+  await model.selectOption('google/gemini-3.8-flash');
+  await expect.poll(levels).toEqual(['auto', 'low', 'high']);
+  await expect(reasoning).toHaveValue('auto');
+  // A Grok model offers Auto only, and says why.
+  await model.selectOption('spacexai/grok-4.7');
+  await expect.poll(levels).toEqual(['auto']);
+  await expect(reasoning).toBeDisabled();
+  await expect(reasoning).toHaveValue('auto');
+  await expect(page.getByTestId('agent-reasoning-unavailable')).toHaveText(AGENT_REASONING_UNAVAILABLE);
+  // Back on a model that offers it, the stored level returns.
+  await model.selectOption('google/gemini-4-argon');
+  await expect(reasoning).toHaveValue('medium');
+  await expect(page.getByTestId('agent-reasoning-unavailable')).toHaveCount(0);
+  // The OpenAI models call Off "Minimal".
+  await model.selectOption('openai/gpt-5');
+  await expect(reasoning.locator('option[value="off"]')).toHaveText('Minimal');
+});
+
 test('agent-renders-tool-output-as-text', async () => {
   await launchWith([{ toolCalls: [{ toolName: 'page_text', input: {} }] }, { text: ['I read the page.'] }], '/markup');
   await send('What does this page say?');
@@ -411,6 +463,16 @@ test('agent-skill-narrows-tools', async () => {
   expect(await urlOf(id!)).toBe(`${site.origin}/start`);
   // Back to a message field once the run started.
   await expect(page.getByTestId('agent-input')).toBeVisible();
+});
+
+test('agent-skill-pack-listed', async () => {
+  await launchWith([{ text: ['unused'] }]);
+  // The fourteen built-ins, under their category headings in the picker's order.
+  const groups = page.getByTestId('agent-skill-picker').locator('optgroup');
+  const listed = await groups.evaluateAll((nodes) => nodes.map((node) => [(node as HTMLOptGroupElement).label, [...node.querySelectorAll('option')].map((option) => option.value)] as const));
+  const expected = SKILL_CATEGORIES.map((category) => [SKILL_CATEGORY_LABELS[category], BUILTIN_SKILL_IDS.filter((id) => BUILTIN_SKILL_CATEGORY[id] === category)] as const);
+  expect(listed).toEqual(expected);
+  expect(listed.flatMap(([, ids]) => ids)).toHaveLength(14);
 });
 
 /** Opens a view reached from the settings (`agent-open-grants`, `agent-open-skills`). */
@@ -506,6 +568,173 @@ test('agent-skill-editor-saves', async () => {
   await backToChat();
   const option = page.getByTestId('agent-skill-picker').locator('option[value="audit-this-page-copy"]');
   await expect(option).toHaveText(`My page audit (${SKILL_USER_MARK})`);
+});
+
+test('agent-skill-library-search-and-disable', async () => {
+  const profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-agent-skills-'));
+  const option = () => page.getByTestId('agent-skill-picker').locator('option[value="check-hreflang"]');
+  const row = () => page.locator('[data-testid="agent-skill-item"][data-skill-id="check-hreflang"]');
+  try {
+    await launchWith([{ text: ['unused'] }], '/start', { userDataDir: profile });
+    await expect(option()).toHaveCount(1);
+    // The library lists every built-in; a search narrows it by name, description or id.
+    await openFromSettings('agent-open-skills');
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(BUILTIN_SKILL_IDS.length);
+    const search = page.getByTestId('agent-skills-search');
+    await search.fill('HREFLANG');
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(1);
+    await expect(row()).toBeVisible();
+    // Switched off, it stays in the library with its switch off ...
+    const toggle = row().getByTestId('agent-skill-switch');
+    await expect(toggle).toBeChecked();
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+    await expect(row().locator('label.agent-toggle')).toHaveText(SKILL_LIBRARY_WORDS.off);
+    await search.fill('no such skill anywhere');
+    await expect(page.getByTestId('agent-skills-no-match')).toHaveText(SKILL_LIBRARY_WORDS.noMatch);
+    await search.fill('');
+    await expect(row()).toBeVisible();
+    // ... and is gone from the composer's picker.
+    await backToChat();
+    await expect(page.getByTestId('agent-skill-picker').locator('option')).toHaveCount(BUILTIN_SKILL_IDS.length);
+    await expect(option()).toHaveCount(0);
+
+    // Restarted on the same profile: still off.
+    await closeApp(app);
+    app = undefined;
+    await launchWith([{ text: ['unused'] }], '/start', { userDataDir: profile });
+    await expect(option()).toHaveCount(0);
+    await openFromSettings('agent-open-skills');
+    await expect(row().getByTestId('agent-skill-switch')).not.toBeChecked();
+    // Switched on again, it comes back.
+    await row().getByTestId('agent-skill-switch').click();
+    await expect(row().getByTestId('agent-skill-switch')).toBeChecked();
+    await expect(row().locator('label.agent-toggle')).toHaveText(SKILL_LIBRARY_WORDS.on);
+    await backToChat();
+    await expect(option()).toHaveCount(1);
+  } finally {
+    await closeApp(app);
+    app = undefined;
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+// Phase 8 Task 6 (specs/agent-data.feature.md, Import and export): main's save and open dialogs are
+// answered here by replacing `dialog.showSaveDialog` / `dialog.showOpenDialog` in main, test-only, so
+// main's own code path runs; the renderer never names the file.
+test('agent-skill-export-import', async () => {
+  const first = await mkdtemp(path.join(tmpdir(), 'frost-e2e-agent-export-'));
+  const second = await mkdtemp(path.join(tmpdir(), 'frost-e2e-agent-import-'));
+  const file = path.join(scripts, `skills-${Date.now()}.json`);
+  const answerSave = (target: string) =>
+    app!.evaluate(({ dialog }, chosen) => {
+      const holder = dialog as unknown as { showSaveDialog: (...args: unknown[]) => Promise<{ canceled: boolean; filePath?: string }> };
+      holder.showSaveDialog = async () => (chosen === '' ? { canceled: true } : { canceled: false, filePath: chosen });
+    }, target);
+  const answerOpen = (target: string) =>
+    app!.evaluate(({ dialog }, chosen) => {
+      const holder = dialog as unknown as { showOpenDialog: (...args: unknown[]) => Promise<{ canceled: boolean; filePaths: string[] }> };
+      holder.showOpenDialog = async () => (chosen === '' ? { canceled: true, filePaths: [] } : { canceled: false, filePaths: [chosen] });
+    }, target);
+  const row = (id: string) => page.locator(`[data-testid="agent-skill-item"][data-skill-id="${id}"]`);
+  const message = () => page.getByTestId('agent-skills-message');
+  try {
+    // A skill of the user's own: a renamed copy of a built-in.
+    await launchWith([{ text: ['unused'] }], '/start', { userDataDir: first });
+    await openFromSettings('agent-open-skills');
+    await row('audit-this-page').getByTestId('agent-skill-duplicate').click();
+    await page.getByTestId('agent-skill-field-name').fill('My page audit');
+    // A long unbroken line and many short ones: the review must wrap and scroll them, not overflow.
+    const field = page.getByTestId('agent-skill-field-instructions');
+    const longLine = 'Check-every-heading-and-every-link-on-the-page-'.repeat(30);
+    const manyLines = Array.from({ length: 40 }, (_, n) => `Step ${n + 1}: read it again.`).join('\n');
+    await field.fill(`${await field.inputValue()}\n${longLine}\n${manyLines}`);
+    await page.getByTestId('agent-skill-save').click();
+    await expect(page.getByTestId('agent-skill-editor')).toHaveCount(0);
+    await expect(row('audit-this-page-copy').getByTestId('agent-skill-name')).toHaveText('My page audit');
+
+    // Export all: a cancelled dialog writes nothing; then the chosen file gets the user's skills.
+    await answerSave('');
+    await page.getByTestId('agent-skills-export-all').click();
+    await expect(message()).toHaveText(SKILL_EXPORT_MESSAGES.cancelled);
+    await answerSave(file);
+    await page.getByTestId('agent-skills-export-all').click();
+    await expect(message()).toHaveText(SKILL_EXPORT_MESSAGES.saved);
+    const written = JSON.parse(await readFile(file, 'utf8')) as { format: string; version: number; skills: { id: string; name: string; instructions: string }[] };
+    expect(written.format).toBe(SKILL_FILE_FORMAT);
+    expect(written.version).toBe(SKILL_FILE_VERSION);
+    expect(written.skills.map((skill) => [skill.id, skill.name])).toEqual([['audit-this-page-copy', 'My page audit']]);
+    await closeApp(app);
+    app = undefined;
+
+    // A fresh profile: a cancelled open dialog changes nothing.
+    await launchWith([{ text: ['unused'] }], '/start', { userDataDir: second });
+    await openFromSettings('agent-open-skills');
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(BUILTIN_SKILL_IDS.length);
+    await answerOpen('');
+    await page.getByTestId('agent-skills-import').click();
+    await expect(message()).toHaveText(SKILL_IMPORT_MESSAGES.cancelled);
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(BUILTIN_SKILL_IDS.length);
+
+    // The review: Import waits until the instructions have been on screen.
+    await answerOpen(file);
+    await page.getByTestId('agent-skills-import').click();
+    await expect(page.getByTestId('agent-skill-import')).toBeVisible();
+    await expect(page.getByTestId('agent-skill-import-item')).toHaveCount(1);
+    const confirm = page.getByTestId('agent-skill-import-confirm');
+    await expect(confirm).toBeDisabled();
+    await expect(page.getByTestId('agent-skill-import-hint')).toHaveText(SKILL_FILE_WORDS.openEveryFirst);
+    await page.getByTestId('agent-skill-import-show').click();
+    const shown = page.getByTestId('agent-skill-import-instructions');
+    expect(await shown.textContent()).toBe(written.skills[0]!.instructions);
+    expect(written.skills[0]!.instructions).toContain(longLine);
+    // Readable inside the sheet: the long line wraps (nothing wider than the box), the box scrolls
+    // its own overflow, and it paints nothing over what follows it (the Import button).
+    const layout = await shown.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      const sheet = el.closest('[data-testid="agent-skill-import"]')!.getBoundingClientRect();
+      const button = document.querySelector('[data-testid="agent-skill-import-confirm"]')!.getBoundingClientRect();
+      return {
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+        overflowY: style.overflowY,
+        whiteSpace: style.whiteSpace,
+        right: box.right,
+        bottom: box.bottom,
+        sheetRight: sheet.right,
+        buttonTop: button.top,
+      };
+    });
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
+    expect(layout.whiteSpace).toBe('pre-wrap');
+    expect(layout.overflowY).toBe('auto');
+    expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight);
+    expect(layout.right).toBeLessThanOrEqual(layout.sheetRight + 0.5);
+    expect(layout.bottom).toBeLessThanOrEqual(layout.buttonTop);
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect(message()).toHaveText(SKILL_IMPORT_MESSAGES.imported);
+    await expect(row('audit-this-page-copy').getByTestId('agent-skill-name')).toHaveText('My page audit');
+    await expect(row('audit-this-page-copy').getByTestId('agent-skill-badge')).toHaveText(SKILL_USER_LABEL);
+
+    // Imported again: the id clashes, so it comes in as a copy and the first is kept.
+    await page.getByTestId('agent-skills-import').click();
+    await expect(page.getByTestId('agent-skill-import-conflict')).toHaveText(SKILL_IMPORT_CONFLICT_MESSAGES.exists!);
+    await page.getByTestId('agent-skill-import-show').click();
+    await confirm.click();
+    await expect(message()).toHaveText(SKILL_IMPORT_MESSAGES.imported);
+    await expect(row('audit-this-page-copy-copy').getByTestId('agent-skill-name')).toHaveText('My page audit (copy)');
+    await expect(row('audit-this-page-copy').getByTestId('agent-skill-name')).toHaveText('My page audit');
+    await expect(page.getByTestId('agent-skill-item')).toHaveCount(BUILTIN_SKILL_IDS.length + 2);
+  } finally {
+    await closeApp(app);
+    app = undefined;
+    await rm(first, { recursive: true, force: true });
+    await rm(second, { recursive: true, force: true });
+  }
 });
 
 test('agent-chat-export-and-restore', async () => {
@@ -624,6 +853,44 @@ test('agent-mcp-tool-asks', async () => {
   await expect(toolCards().last().getByTestId('agent-tool-untrusted')).toHaveText('Untrusted');
   await expect(toolCards().last().getByTestId('agent-tool-output')).toContainText('echo: from e2e');
   await expect(assistantTexts().last()).toHaveText('Echo done.');
+});
+
+test('agent-mcp-preset-fills-form', async () => {
+  await launchWith([{ text: ['unused'] }], null);
+  // Every request on main's MCP session is recorded (and refused): a preset must contact nothing.
+  await app!.evaluate(({ session }, partition) => {
+    const seen: string[] = [];
+    (globalThis as { __frostMcpRequests?: string[] }).__frostMcpRequests = seen;
+    session.fromPartition(partition).webRequest.onBeforeRequest((details, callback) => {
+      seen.push(details.url);
+      callback({ cancel: true });
+    });
+  }, AGENT_MCP_PARTITION);
+  const preset = MCP_PRESETS.find((item) => item.id === 'linear')!;
+  await page.getByTestId('agent-settings-toggle').click();
+  await expect(page.getByTestId('agent-mcp')).toBeVisible();
+  await page.getByTestId('agent-mcp-catalogue-open').click();
+  await page.getByTestId('agent-mcp-catalogue-search').fill('linear');
+  await expect(page.getByTestId('agent-mcp-preset')).toHaveCount(1);
+  await page.locator(`[data-testid="agent-mcp-preset"][data-preset="${preset.id}"]`).getByTestId('agent-mcp-preset-use').click();
+  // The form is filled; nothing is saved yet.
+  await expect(page.getByTestId('agent-mcp-field-name')).toHaveValue(preset.name);
+  await expect(page.getByTestId('agent-mcp-field-transport')).toHaveValue('http');
+  await expect(page.getByTestId('agent-mcp-field-url')).toHaveValue(preset.transport === 'http' ? preset.url : '');
+  await expect(page.getByTestId('agent-mcp-preset-note')).toContainText(MCP_PRESET_WORDS.untrusted);
+  await expect(page.getByTestId('agent-mcp-server')).toHaveCount(0);
+  await page.getByTestId('agent-mcp-save').click();
+  // Saved like a typed server: stopped, off, untrusted, no token.
+  const row = page.locator('[data-testid="agent-mcp-server"][data-server="linear"]');
+  await expect(row).toBeVisible();
+  await expect(row.getByTestId('agent-mcp-untrusted')).toHaveText('Untrusted');
+  await expect(row.getByTestId('agent-mcp-status')).toHaveText('Stopped');
+  await expect(row.getByTestId('agent-mcp-enabled')).not.toBeChecked();
+  await expect(row.getByTestId('agent-mcp-start')).toBeDisabled();
+  await expect(row.getByTestId('agent-mcp-target')).toHaveText(preset.transport === 'http' ? preset.url : '');
+  await expect(row.getByTestId('agent-mcp-token-input')).toHaveValue('');
+  // Nothing was contacted.
+  expect(await app!.evaluate(() => (globalThis as { __frostMcpRequests?: string[] }).__frostMcpRequests ?? null)).toEqual([]);
 });
 
 test('agent-serp-tools-read-the-serp-service', async () => {

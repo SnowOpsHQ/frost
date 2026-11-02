@@ -1,9 +1,11 @@
-// Spec: specs/agent-session.spec.ts (AgentState, MODEL_CONTEXT_WINDOWS, AGENT_NOTICE_MESSAGES) ·
-// specs/agent-protocol.schema.ts (chat.start, chat.step, ChatMessage) · specs/agent-approvals.spec.ts
+// Spec: specs/agent-session.spec.ts (AgentState, MODEL_CONTEXT_WINDOWS, AGENT_NOTICE_MESSAGES, AgentSetupView.reasoning) ·
+// specs/agent-protocol.schema.ts (chat.start, chat.step, ChatMessage; chat.start.reasoningEffort) ·
+// specs/agent-reasoning.spec.ts (effectiveEffort, reasoningLevels) · specs/agent-approvals.spec.ts
 // Acceptance: specs/agent-session.feature.md (Session) · plan decisions 7–9
 import { afterEach, describe, expect, test } from 'vitest';
 import type { ChatMessage } from '@app/specs/agent-protocol.schema';
 import { AGENT_NOTICE_MESSAGES, MODEL_CONTEXT_WINDOWS } from '@app/specs/agent-session.spec';
+import type { ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import { AGENT_TOOL_NAMES, DEFAULT_MODEL_ID } from '@app/specs/agent-tools.spec';
 import { AGENT_CRASHED_MESSAGE } from '../host';
 import { AGENT_SYSTEM_PROMPT } from '../system-prompt';
@@ -242,5 +244,78 @@ describe('session', () => {
     expect(await s.session.setModel('byok-openai', 'anthropic/claude-opus-5-5')).toBe(false);
     expect(await s.session.setModel('byok-anthropic', 'anthropic/claude-opus-5-5')).toBe(true);
     expect(s.session.getState().setup).toMatchObject({ allowedModels: ['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5'], ready: false });
+  });
+});
+
+// Acceptance: specs/agent-session.feature.md (Session: session-sends-effective-effort)
+describe('session: the reasoning level (Phase 8 Task 8b)', () => {
+  /** Sends one message and waits for its turn to end; answers the level its `chat.start` carried. */
+  const sentLevel = async (s: Awaited<ReturnType<typeof setupSession>>) => {
+    expect(await s.session.send(null, 'How is this page doing?')).toBe('started');
+    await s.until((state) => !state.running);
+    return s.starts().at(-1)!.reasoningEffort;
+  };
+
+  test('session-sends-effective-effort', async () => {
+    const steps = Array.from({ length: 8 }, () => ({ text: ['Done.'] }));
+    const s = await setup({ steps });
+    // A new install: Auto, sent as such, and the default model's levels shown.
+    expect(s.session.getState().setup.reasoning).toEqual({ effort: 'auto', levels: ['auto', 'low', 'medium', 'high'] });
+    expect(await sentLevel(s)).toBe('auto');
+    // A level the model offers is sent as chosen, and shown in effect.
+    expect(await s.session.setReasoningEffort('high')).toBe(true);
+    expect(s.agent.settings.current().reasoningEffort).toBe('high');
+    expect(s.session.getState().setup.reasoning).toEqual({ effort: 'high', levels: ['auto', 'low', 'medium', 'high'] });
+    expect(await sentLevel(s)).toBe('high');
+    // A level the model lacks acts as Auto: Claude has no Off, Gemini 3.8 Flash no Medium, Grok only Auto.
+    expect(await s.session.setReasoningEffort('off')).toBe(true);
+    expect(s.session.getState().setup.reasoning.effort).toBe('auto');
+    expect(await sentLevel(s)).toBe('auto');
+    expect(await s.session.setModel('gateway', 'google/gemini-3.8-flash')).toBe(true);
+    expect(await s.session.setReasoningEffort('medium')).toBe(true);
+    expect(s.session.getState().setup.reasoning).toEqual({ effort: 'auto', levels: ['auto', 'low', 'high'] });
+    expect(await sentLevel(s)).toBe('auto');
+    expect(await s.session.setModel('gateway', 'spacexai/grok-4.7')).toBe(true);
+    expect(await s.session.setReasoningEffort('high')).toBe(true);
+    expect(s.session.getState().setup.reasoning).toEqual({ effort: 'auto', levels: ['auto'] });
+    expect(await sentLevel(s)).toBe('auto');
+    // The stored level is kept: back on a model that offers it, it is sent again.
+    expect(await s.session.setModel('gateway', 'openai/gpt-5')).toBe(true);
+    expect(s.session.getState().setup.reasoning).toEqual({ effort: 'high', levels: ['auto', 'off', 'low', 'medium', 'high'] });
+    expect(await sentLevel(s)).toBe('high');
+    // An invalid level is refused and stores nothing.
+    expect(await s.session.setReasoningEffort('minimal' as never)).toBe(false);
+    expect(s.agent.settings.current().reasoningEffort).toBe('high');
+  });
+
+  test('session-sends-effective-effort (a ChatGPT model: only the levels its list advertises)', async () => {
+    const MODELS: readonly ChatgptModelView[] = [
+      { id: 'chatgpt/gpt-6.1-sol', label: 'GPT-6.1 Sol', efforts: ['low', 'high'] },
+      { id: 'chatgpt/gpt-6.1-mini', label: 'GPT-6.1 mini' },
+    ];
+    // The route as the session sees it: signed in with plan usage on, the account's list.
+    const route = {
+      view: () => ({ account: { state: 'signed-in' as const, email: 'ada@example.com', planUsage: 'on' as const, acknowledged: true }, models: MODELS }),
+      ready: () => true,
+      onChange: () => () => undefined,
+      onFailure: () => () => undefined,
+    };
+    const s = await setup({ key: false, chatgpt: route, steps: Array.from({ length: 4 }, () => ({ text: ['Done.'] })) });
+    expect(await s.agent.settings.setChatgptModels(MODELS)).toBe(true);
+    expect(await s.session.setModel('chatgpt', 'chatgpt/gpt-6.1-sol')).toBe(true);
+    expect(await s.session.setReasoningEffort('high')).toBe(true);
+    expect(s.session.getState().setup.reasoning).toEqual({ effort: 'high', levels: ['auto', 'low', 'high'] });
+    expect(await sentLevel(s)).toBe('high');
+    // Not advertised for this model (Medium), or never offered on the plan (Off): Auto.
+    for (const effort of ['medium', 'off'] as const) {
+      expect(await s.session.setReasoningEffort(effort)).toBe(true);
+      expect(s.session.getState().setup.reasoning.effort, effort).toBe('auto');
+      expect(await sentLevel(s), effort).toBe('auto');
+    }
+    // A model that advertises no levels: Auto only, whatever is stored.
+    expect(await s.session.setReasoningEffort('low')).toBe(true);
+    expect(await s.session.setModel('chatgpt', 'chatgpt/gpt-6.1-mini')).toBe(true);
+    expect(s.session.getState().setup.reasoning).toEqual({ effort: 'auto', levels: ['auto'] });
+    expect(await sentLevel(s)).toBe('auto');
   });
 });

@@ -1,5 +1,6 @@
 // Spec: specs/agent-panel.spec.ts (AGENT_PALETTE_*_ID), specs/command-palette.spec.ts (Registration API)
-// Acceptance: specs/agent-panel.feature.md (agent-palette-actions), specs/skills.feature.md (skill-palette-actions)
+// Acceptance: specs/agent-panel.feature.md (agent-palette-actions), specs/skills.feature.md (skill-palette-actions),
+// specs/agent-data.feature.md (Skills library)
 import { describe, expect, test, vi } from 'vitest';
 import { AGENT_PALETTE_NEW_CHAT_ID, AGENT_PALETTE_SETTINGS_ID, AGENT_PALETTE_SKILL_ID_PREFIX, AGENT_PALETTE_TOGGLE_ID } from '@app/specs/agent-panel.spec';
 import { agentPaletteSources, onAgentPanelRequest, requestAgentPanel, setPaletteSkills, type AgentPanelRequest, type PaletteSkills } from '../agent-palette';
@@ -33,6 +34,24 @@ describe('agent palette actions', () => {
     stop();
     requestAgentPanel({ kind: 'toggle' });
     expect(heard).toHaveBeenCalledOnce();
+  });
+
+  test('skill-palette-lists-enabled-only', async () => {
+    const request = vi.fn((_r: AgentPanelRequest) => undefined);
+    const off = { ...SKILLS[1]!, enabled: false };
+    let current: PaletteSkills = { skills: [SKILLS[0]!, off, SKILLS[2]!], running: false };
+    const registry = createPaletteRegistry();
+    registry.register(...builtinPaletteSources(new Proxy({}, { get: () => vi.fn(async () => true) }) as PaletteApi));
+    registry.register(...agentPaletteSources(request, () => current));
+    const ids = () => registry.resolve(ctx).filter((a) => a.id.startsWith(AGENT_PALETTE_SKILL_ID_PREFIX)).map((a) => a.id);
+    // A switched-off skill has no "Run skill" action; the others do.
+    expect(ids()).toEqual(['agent.skill.audit-this-page', 'agent.skill.plain-skill']);
+    // Switched on again (the panel's next state), it is back.
+    current = { skills: SKILLS, running: false };
+    expect(ids()).toEqual(SKILLS.map((skill) => `agent.skill.${skill.id}`));
+    // Every skill switched off: none.
+    current = { skills: SKILLS.map((skill) => ({ ...skill, enabled: false })), running: false };
+    expect(ids()).toEqual([]);
   });
 
   test('skill-palette-actions', async () => {

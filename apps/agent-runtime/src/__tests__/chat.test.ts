@@ -1,11 +1,15 @@
-// Spec: specs/agent-protocol.schema.ts, specs/agent-tools.spec.ts · Acceptance:
+// Spec: specs/agent-protocol.schema.ts, specs/agent-tools.spec.ts, specs/agent-reasoning.spec.ts
+// (reasoningWire, effectiveEffort: chat.start.reasoningEffort) · Acceptance:
 // specs/agent-runtime.feature.md (Chat loop). Driven by MockLanguageModelV4 with scripted streams.
 import type { LanguageModelV4CallOptions, LanguageModelV4StreamResult } from '@ai-sdk/provider';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { AGENT_PROTOCOL_LIMITS, type ToolResult } from '@app/specs/agent-protocol.schema';
-import { MAX_TOOL_STEPS } from '@app/specs/agent-tools.spec';
-import { refuseDownload } from '../chat';
+import { MAX_OUTPUT_TOKENS } from '@app/specs/agent-proxy.spec';
+import { effectiveEffort, REASONING_EFFORTS, reasoningWire } from '@app/specs/agent-reasoning.spec';
+import type { ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
+import { ALLOWED_MODEL_IDS, MAX_TOOL_STEPS, routeModelId, type AgentModelId, type ModelRoute } from '@app/specs/agent-tools.spec';
+import { CHAT_PROVIDER_OPTIONS, chatCallOptions, CHATGPT_PROVIDER_OPTIONS, refuseDownload } from '../chat';
 import { createModel } from '../provider';
 import { chatStart, settle, startHarness, streamOf, stubNetworkGlobals, textStep, toolStep, usage } from './harness';
 
@@ -371,5 +375,68 @@ describe('MCP tools in the chat loop', () => {
     await settle();
     expect(model.doStreamCalls).toEqual([]);
     expect(h.of('chat.finish')).toEqual([]);
+  });
+});
+
+// Acceptance: specs/agent-runtime.feature.md (Chat loop: chat-call-options-carry-reasoning)
+describe('reasoning level in the call options (Phase 8 Task 8b)', () => {
+  const CHATGPT_MODEL = 'chatgpt/gpt-6.1-sol' as const;
+  /** Every route and the models it serves (each gateway provider's included), and a ChatGPT slug. */
+  const servedModels = (route: ModelRoute): readonly AgentModelId[] => (route === 'chatgpt' ? [CHATGPT_MODEL] : ALLOWED_MODEL_IDS.filter((id) => routeModelId(route, id) !== null));
+  const ROUTES = ['byok-anthropic', 'byok-openai', 'gateway', 'chatgpt'] as const satisfies readonly ModelRoute[];
+
+  test('chat-call-options-carry-reasoning', async () => {
+    // What each route's call carries for a level: written out, not derived.
+    expect(chatCallOptions('byok-anthropic', 'anthropic/claude-opus-5-5', 'high')).toEqual({
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      providerOptions: { openai: { store: false }, anthropic: { thinking: { type: 'adaptive' }, effort: 'high' } },
+    });
+    expect(chatCallOptions('byok-openai', 'openai/gpt-5', 'off')).toEqual({ maxOutputTokens: MAX_OUTPUT_TOKENS, providerOptions: { openai: { store: false, reasoningEffort: 'minimal' } } });
+    expect(chatCallOptions('gateway', 'openai/gpt-5-mini', 'low')).toEqual({ maxOutputTokens: MAX_OUTPUT_TOKENS, providerOptions: { openai: { store: false, reasoningEffort: 'low' } } });
+    expect(chatCallOptions('gateway', 'anthropic/claude-sonnet-5-5', 'medium')).toEqual({
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      providerOptions: { openai: { store: false }, anthropic: { thinking: { type: 'adaptive' }, effort: 'medium' } },
+    });
+    expect(chatCallOptions('gateway', 'google/gemini-4-argon', 'medium')).toEqual({
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      providerOptions: { openai: { store: false }, google: { thinkingConfig: { thinkingLevel: 'medium' } } },
+    });
+    // Grok has no mapping: a level sends nothing, as `auto` does.
+    expect(chatCallOptions('gateway', 'spacexai/grok-4.7', 'high')).toEqual({ maxOutputTokens: MAX_OUTPUT_TOKENS, providerOptions: CHAT_PROVIDER_OPTIONS });
+    // The ChatGPT plan: still no output cap; the level with `forceReasoning`, so the provider writes
+    // `reasoning.effort` for a slug it doesn't take for a reasoning model too.
+    expect(chatCallOptions('chatgpt', CHATGPT_MODEL, 'low')).toEqual({ providerOptions: { openai: { store: false, systemMessageMode: 'developer', reasoningEffort: 'low', forceReasoning: true } } });
+    expect(chatCallOptions('chatgpt', CHATGPT_MODEL, 'high')).not.toHaveProperty('maxOutputTokens');
+    // `off` is never offered there (Task 8a): it maps to nothing, and nothing is forced.
+    expect(chatCallOptions('chatgpt', CHATGPT_MODEL, 'off')).toEqual({ providerOptions: CHATGPT_PROVIDER_OPTIONS });
+
+    // Every route, served model and level, through a turn: the model's call carries the route's
+    // options with `reasoningWire` merged in, `auto` exactly the route's options and nothing else.
+    for (const route of ROUTES) {
+      for (const modelId of servedModels(route)) {
+        const chatgptModels: ChatgptModelView[] = route === 'chatgpt' ? [{ id: CHATGPT_MODEL, label: 'GPT-6.1 Sol', efforts: ['low', 'medium', 'high'] }] : [];
+        for (const stored of REASONING_EFFORTS) {
+          // What main sends: the effective level (a level the model lacks is `auto`).
+          const reasoningEffort = effectiveEffort({ modelId, reasoningEffort: stored }, chatgptModels);
+          const model = new MockLanguageModelV4({ doStream: [textStep(['ok'])] });
+          const h = startHarness({ modelFactory: () => model });
+          h.send(chatStart({ route, modelId, reasoningEffort }));
+          await h.next('chat.finish');
+          const call = model.doStreamCalls[0]!;
+          const label = `${route} ${modelId} ${stored} → ${reasoningEffort}`;
+          const base = route === 'chatgpt' ? CHATGPT_PROVIDER_OPTIONS : CHAT_PROVIDER_OPTIONS;
+          const wire = reasoningWire(route, modelId, reasoningEffort);
+          if (reasoningEffort === 'auto') expect(call.providerOptions, label).toEqual(base);
+          expect(call.providerOptions, label).toEqual({
+            ...base,
+            ...wire,
+            openai: { ...base.openai, ...wire.openai, ...(route === 'chatgpt' && wire.openai !== undefined ? { forceReasoning: true } : {}) },
+          });
+          expect(call.maxOutputTokens, label).toBe(route === 'chatgpt' ? undefined : MAX_OUTPUT_TOKENS);
+          // No sampling option on any route, whatever the level.
+          for (const option of ['temperature', 'topP', 'topK', 'presencePenalty', 'frequencyPenalty'] as const) expect(call[option], `${label} ${option}`).toBeUndefined();
+        }
+      }
+    }
   });
 });
