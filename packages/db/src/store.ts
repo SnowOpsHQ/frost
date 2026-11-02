@@ -4,6 +4,7 @@ import { createAgentChatsRepository, type AgentChatsRepository } from './agent-c
 import { createAgentSkillsRepository, type AgentSkillsRepository } from './agent-skills';
 import { createAgentSkillPrefsRepository, type AgentSkillPrefsRepository } from './agent-skill-prefs';
 import { createAgentMcpRepository, type AgentMcpRepository } from './agent-mcp';
+import { createAiChecksRepository, type AiChecksRepository } from './ai-checks';
 import { createChangeIntelRepository, type ChangeIntelRepository } from './change-intel/repository';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
@@ -38,6 +39,8 @@ export interface SessionStore {
   readonly agentMcp: AgentMcpRepository;
   /** Change intelligence (Phase 6): captures, versions, diffs, screenshots, projects and audited purges. */
   readonly changeIntel: ChangeIntelRepository;
+  /** The AI checks' answers (Phase 9 Task 10), written at once; removed by Clear Browsing Data. */
+  readonly aiChecks: AiChecksRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /** Flushes pending writes, then closes the database (idempotent; never rejects). */
@@ -65,6 +68,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     agentSkillPrefs: createAgentSkillPrefsRepository(drizzle),
     agentMcp: createAgentMcpRepository(drizzle),
     changeIntel: createChangeIntelRepository(drizzle),
+    aiChecks: createAiChecksRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },

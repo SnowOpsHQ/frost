@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
 import { CONTENT_TABLES, MAX_CONTENT_NOTE_URLS, MAX_SNIPPET_VARIANTS, SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS, SNIPPET_VARIANT_TITLE_MAX_CHARS, TARGET_QUERY_MAX_CHARS } from '@app/specs/seo-content.spec';
+import { AI_CHECKS_TABLES } from '@app/specs/ai-checks.spec';
 import { createDrizzle } from '../client';
 import { createContentNotesRepository, EMPTY_NOTES, noteUrl, type ContentNotesRepository } from '../content-notes';
 import { MIGRATIONS, runMigrations } from '../migrations';
@@ -25,7 +26,8 @@ const count = (table: string) => Number(raw.prepare(`SELECT count(*) AS n FROM $
 describe('content notes', () => {
   test('content-tables-migrate', () => {
     const tables = raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'seo_%' ORDER BY name").all().map((row) => String(row['name']));
-    expect(tables).toEqual([...CONTENT_TABLES]);
+    // Phase 9's AI checks table shares the `seo_` prefix (`ai-checks.test.ts`); it is not a notes table.
+    expect(tables.filter((name) => !(AI_CHECKS_TABLES as readonly string[]).includes(name))).toEqual([...CONTENT_TABLES]);
     expect(MIGRATIONS.map((m) => m.id)).toContain('0004_seo_content_notes');
     // The drafts' key is (url, slot): no second draft in a slot.
     const insert = raw.prepare('INSERT INTO seo_snippet_variants (url, slot, title, description, updated_at) VALUES (?, ?, ?, ?, ?)');

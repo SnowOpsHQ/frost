@@ -2,7 +2,7 @@
 // Acceptance: specs/seo-javascript.feature.md (Fetching)
 import { describe, expect, test, vi } from 'vitest';
 import type { BoundedFetcher, BoundedFetchRequest, BoundedFetchResult } from '@app/specs/fetcher.spec';
-import { SERVED_ACCEPT, SERVED_FETCH_LIMITS } from '@app/specs/seo-javascript.spec';
+import { SERVED_ACCEPT, SERVED_FETCH_LIMITS, SERVED_LEAD_TEXT_MAX_CHARS } from '@app/specs/seo-javascript.spec';
 import { ServedStateSchema, type ServedParseInput, type ServedParseResult } from '@app/specs/seo-javascript.schema';
 import { createServedHtml } from '../served';
 import { parseServedHtml } from '../served-parse';
@@ -164,5 +164,18 @@ describe('served HTML', () => {
       expect(off.snapshot.noscript).toEqual({ count: 1, wordCount: 3, linkCount: 1 });
       expect(on.snapshot.noscript).toEqual({ count: 1, wordCount: 3, linkCount: 1 });
     }
+  });
+
+  test('served-snapshot-without-lead-text-still-valid', async () => {
+    // `leadText` is optional (Phase 9 Task 10): a snapshot from before it, or one without it, is
+    // still a valid served state and reads as "no lead text".
+    const { served } = setup();
+    const state = await served.get(1, PAGE, null);
+    if (state.status !== 'ready') throw new Error('not ready');
+    expect(state.snapshot.leadText).toBe('Hello world');
+    const { leadText: _dropped, ...without } = state.snapshot;
+    expect(ServedStateSchema.safeParse({ ...state, snapshot: without }).success).toBe(true);
+    // Over its cap it is not a served snapshot.
+    expect(ServedStateSchema.safeParse({ ...state, snapshot: { ...without, leadText: 'x'.repeat(SERVED_LEAD_TEXT_MAX_CHARS + 1) } }).success).toBe(false);
   });
 });

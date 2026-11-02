@@ -82,6 +82,17 @@ export const SERVED_PARSE_LIMITS = {
   timeoutMs: 1_500,
 } as const;
 
+/**
+ * The served snapshot's `leadText` (Phase 9 Task 10, `ai-checks.spec.ts`): at most this many
+ * characters of the served body's text, read in the same walk and within the same budgets as
+ * `wordCount` (the same subtrees skipped: `script`, `style`, `noscript`, `template`, `svg`, `math`,
+ * `iframe`, `object` and `[hidden]`), each text node's whitespace collapsed and the nodes joined by
+ * one space. It is main-only: the analysis worker produces it, main's served cache holds it, and
+ * only the AI checks' input (`main/ai-checks/input.ts`) reads it; the JavaScript report copies no
+ * snapshot text, so it never reaches the renderer. A snapshot without it reads as "no lead text".
+ */
+export const SERVED_LEAD_TEXT_MAX_CHARS = 4_000;
+
 // ---- The comparison's states ------------------------------------------------------------------------
 
 /**

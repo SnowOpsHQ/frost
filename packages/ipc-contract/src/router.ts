@@ -25,6 +25,7 @@ import { updateRouter } from './update-router';
 import { serpRouter } from './serp-router';
 import { telemetryRouter } from './telemetry-router';
 import { gscRouter } from './gsc-router';
+import { aiChecksRouter } from './ai-checks-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 import { changesRouter, screenshotsRouter } from './changes-router';
@@ -305,6 +306,8 @@ export const appRouter = router({
   telemetry: telemetryRouter,
   // Phase 4 Task 8 (`gsc.feature.md`): the read-only Search Console connection and performance API.
   gsc: gscRouter,
+  // Phase 9 Task 10 (`ai-checks.feature.md`): AI checks' mode (consent in main), state and "Check this page".
+  aiChecks: aiChecksRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -12,6 +12,7 @@ export type { AgentChatRowsUpdate, AgentChatsRepository, StoredAgentChatHead, St
 export type { AgentSkillsRepository, StoredAgentSkill } from './agent-skills';
 export type { AgentSkillPrefsRepository, StoredSkillPref } from './agent-skill-prefs';
 export type { AgentMcpRepository, AgentMcpServerWrite, StoredAgentMcpServer } from './agent-mcp';
+export type { AiChecksRepository } from './ai-checks';
 export {
   isUuidv7,
   uuidv7,

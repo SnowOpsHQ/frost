@@ -75,6 +75,18 @@ describe('javascript report', () => {
     expect(SEO_RULE_SPECS.filter((s) => s.category === 'javascript').map((s) => s.id)).toEqual(JAVASCRIPT_RULE_SPECS.map((s) => s.id));
   });
 
+  test('lead-text-not-in-javascript-report', () => {
+    // The served lead text (Phase 9 Task 10) is main-only: the report, and the audit the renderer
+    // gets, copy none of it.
+    const page = cleanSnapshot();
+    const secret = 'LEAD-TEXT-ONLY-IN-MAIN 7f3a';
+    const snapshot = withServed(page, { leadText: secret, wordCount: page.wordCount + 400 });
+    const report = javascriptReport(snapshot);
+    expect(report.status).toBe('ready');
+    expect(JSON.stringify(report)).not.toContain(secret);
+    expect(JSON.stringify(runAudit(snapshot))).not.toContain(secret);
+  });
+
   test('js-diff-fields', () => {
     const page = cleanSnapshot();
     const report = comparison(

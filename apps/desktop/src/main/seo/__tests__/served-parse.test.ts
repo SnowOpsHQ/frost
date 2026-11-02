@@ -1,7 +1,7 @@
-// Spec: specs/seo-javascript.spec.ts (SERVED_PARSE_LIMITS), specs/seo-javascript.schema.ts (ServedSnapshotSchema)
+// Spec: specs/seo-javascript.spec.ts (SERVED_PARSE_LIMITS, SERVED_LEAD_TEXT_MAX_CHARS), specs/seo-javascript.schema.ts (ServedSnapshotSchema)
 // Acceptance: specs/seo-javascript.feature.md (Parsing); review focus served-html-is-bounded
 import { describe, expect, test } from 'vitest';
-import { SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
+import { SERVED_LEAD_TEXT_MAX_CHARS, SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
 import { ServedSnapshotSchema, type ServedSnapshot } from '@app/specs/seo-javascript.schema';
 import { charsetOf, countWords, decodeServed, parseServedHtml, type ParseLimits } from '../served-parse';
 
@@ -89,6 +89,30 @@ describe('served HTML parse', () => {
     expect(countWords('东京是日本的首都')).toBeGreaterThan(1);
     expect(s.textTruncated).toBe(false);
     expect(s.noscript).toEqual({ count: 2, wordCount: 9, linkCount: 1 });
+  });
+
+  test('lead-text-capped-and-hidden-text-skipped', () => {
+    // The body's text in the word count's walk: skipped subtrees and `[hidden]` are left out,
+    // whitespace collapses, and text nodes join with one space.
+    const s = served(`<html><head><title>Not lead</title></head><body>
+      <h1>Brewing   green
+        tea</h1><p>Use <b>water</b> at 80°C.</p><div hidden>Signed-in secret</div>
+      <script>var secret = 1;</script><style>.secret{}</style><template>secret</template>
+      <svg><text>secret</text></svg><iframe>secret</iframe><noscript>secret</noscript>
+      <p>东京</p>
+    </body></html>`);
+    expect(s.leadText).toBe('Brewing green tea Use water at 80°C. 东京');
+    expect(ServedSnapshotSchema.safeParse(s).success).toBe(true);
+    // Capped at SERVED_LEAD_TEXT_MAX_CHARS, never splitting a surrogate pair.
+    const long = served(`<body><p>${'word '.repeat(2_000)}</p><p>${'😀'.repeat(3_000)}</p></body>`);
+    expect(long.leadText!.length).toBeLessThanOrEqual(SERVED_LEAD_TEXT_MAX_CHARS);
+    expect(long.leadText!.length).toBeGreaterThan(SERVED_LEAD_TEXT_MAX_CHARS - 2);
+    expect(long.leadText!.startsWith('word word')).toBe(true);
+    expect(/[\ud800-\udbff]$/.test(long.leadText!)).toBe(false);
+    // A huge whitespace run costs nothing extra and adds nothing.
+    expect(served(`<body><p>${' \n'.repeat(50_000)}</p><p>After</p></body>`).leadText).toBe('After');
+    // No body text: empty.
+    expect(served('<html><head><title>T</title></head><body></body></html>').leadText).toBe('');
   });
 
   test('served-parse-decodes', () => {
