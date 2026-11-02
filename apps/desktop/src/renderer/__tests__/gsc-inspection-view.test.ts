@@ -222,46 +222,89 @@ describe('Search Console inspection view', () => {
   test('strings-are-inert', async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const RLO = '‮';
-    const markup = '<img src=x onerror="alert(1)"><script>alert(2)</script><a href="javascript:alert(3)">x</a>';
-    const hostile = `${RLO}gpj.exe ${markup}`;
+    const MARKUP = '<img src=x onerror="alert(1)"><script>alert(2)</script><a href="javascript:alert(3)">x</a>';
+    /** A distinct hostile string per field: a bidi override and markup-looking text, tagged by field. */
+    const hostile = (field: string) => `${RLO}${field}.exe ${MARKUP}`;
+    const fields = {
+      coverage: hostile('coverage'),
+      googleCanonical: `https://www.example.com/${hostile('google-canonical')}`,
+      userCanonical: `https://www.example.com/${hostile('user-canonical')}`,
+      type: hostile('rich-type'),
+      itemName: hostile('item-name'),
+      issueMessage: hostile('issue-message'),
+      unknownIssueMessage: hostile('unknown-issue-message'),
+    };
+    // Raw codes are code-shaped by main (`GSC_INSPECTION_CODE_PATTERN`): distinct, and checked the same way.
+    const codes = { fetch: 'NEW_FETCH_CODE', verdict: 'NEW_VERDICT_CODE', severity: 'NEW_SEVERITY_CODE' };
     const answer = ok({
-      index: { coverageState: hostile, googleCanonical: `https://www.example.com/${RLO}b`, pageFetchState: { value: 'unknown', code: 'NEW_CODE' } },
-      richResults: { verdict: { value: 'PASS' }, types: [{ type: hostile, items: [{ name: hostile, issues: [{ message: hostile, severity: { value: 'ERROR' } }] }] }] },
+      index: {
+        coverageState: fields.coverage,
+        googleCanonical: fields.googleCanonical,
+        userCanonical: fields.userCanonical,
+        pageFetchState: { value: 'unknown', code: codes.fetch },
+      },
+      richResults: {
+        verdict: { value: 'unknown', code: codes.verdict },
+        types: [
+          {
+            type: fields.type,
+            items: [
+              {
+                name: fields.itemName,
+                issues: [
+                  { message: fields.issueMessage, severity: { value: 'ERROR' } },
+                  { message: fields.unknownIssueMessage, severity: { value: 'unknown', code: codes.severity } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
     });
     // The view keeps Google's strings as they are (no markup is built from them).
     const shown = view({ entry: entry(answer) })!;
-    expect(shown.index!.coverage).toBe(hostile);
-    expect(shown.rich!.types[0]!.type).toBe(hostile);
+    expect(shown.index!.coverage).toBe(fields.coverage);
+    expect(shown.rich!.types[0]!.type).toBe(fields.type);
+
+    // What each card must show, each as the exact text of its own isolated <bdi>.
+    const expected = {
+      index: [fields.coverage, fields.googleCanonical, fields.userCanonical, codes.fetch],
+      rich: [fields.type, fields.itemName, fields.issueMessage, fields.unknownIssueMessage, codes.verdict, codes.severity],
+    } as const;
 
     const { GscInspectionBody } = await import('../components/seo/GscInspectionCard');
     const host = document.createElement('div');
     document.body.append(host);
     const root = createRoot(host);
+    const isolated = (element: Element | null): element is HTMLElement =>
+      element !== null && element.tagName === 'BDI' && element.hasAttribute('data-google-text') && element.getAttribute('dir') === 'auto';
     for (const kind of ['index', 'rich'] as const) {
       await act(async () => {
         root.render(createElement(GscInspectionBody, { kind, view: shown }));
       });
       // Nothing from Google became an element, a link or a style.
       expect(host.querySelector('img, script, a, iframe, [style], [href], [onerror]'), kind).toBeNull();
-      const texts = [...host.querySelectorAll('[data-google-text]')];
-      expect(texts.length, kind).toBeGreaterThan(0);
-      for (const element of texts) {
-        // Literal, isolated text: a <bdi dir="auto"> with only a text node, its tooltip isolated too.
-        expect(element.tagName).toBe('BDI');
-        expect(element.getAttribute('dir')).toBe('auto');
+      // Every Google field is the whole text of its own isolated <bdi dir="auto">, with only a text
+      // node inside and an isolated tooltip.
+      const texts = [...host.querySelectorAll('bdi[data-google-text][dir="auto"]')];
+      for (const value of expected[kind]) {
+        const matches = texts.filter((element) => element.textContent === value);
+        expect(matches, `${kind}: ${JSON.stringify(value)}`).toHaveLength(1);
+        const element = matches[0]!;
         expect(element.children.length).toBe(0);
-        expect(element.getAttribute('title')!.startsWith('⁨')).toBe(true);
-        expect(element.getAttribute('title')!.endsWith('⁩')).toBe(true);
+        expect(element.getAttribute('title')).toBe(`⁨${value}⁩`);
       }
-      const hostileText = texts.filter((element) => element.textContent === hostile);
-      expect(hostileText.length, kind).toBeGreaterThan(0);
-      expect(host.textContent).toContain(RLO);
+      // And no text node holding a bidi override or markup-looking text sits outside one.
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+      let checked = 0;
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const text = node.textContent ?? '';
+        if (!text.includes(RLO) && !text.includes('<') && !/^NEW_[A-Z_]+$/.test(text)) continue;
+        checked += 1;
+        expect(isolated(node.parentElement), `${kind}: unisolated text ${JSON.stringify(text)}`).toBe(true);
+      }
+      expect(checked, kind).toBe(expected[kind].length);
     }
-    // The unknown code is inert text too.
-    await act(async () => {
-      root.render(createElement(GscInspectionBody, { kind: 'index', view: shown }));
-    });
-    expect([...host.querySelectorAll('[data-google-text]')].some((element) => element.textContent === 'NEW_CODE')).toBe(true);
     act(() => root.unmount());
     host.remove();
   });
