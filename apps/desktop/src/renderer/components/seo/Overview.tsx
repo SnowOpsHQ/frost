@@ -12,6 +12,7 @@ import { CheckCircleIcon, ChevronIcon } from '../../icons';
 import { intentNote, pageTypeView } from '../../page-type-view';
 import { intentChip } from '../../serp-view';
 import { formatCount } from '../../seo-view';
+import { AiChecksCard } from './AiChecksCard';
 import { AiScoreSummary } from './AiReadiness';
 import { PageText, Section, SEVERITY_LABEL, SeverityGlyph } from './parts';
 
@@ -20,6 +21,7 @@ import { PageText, Section, SEVERITY_LABEL, SeverityGlyph } from './parts';
 // the offending values. Phase 9 Task 8 adds the AI-readiness tile (`ai-readiness.feature.md`: the
 // score of the Visibility panel's section, and a button that opens it) and the "Page" card
 // (`page-type.feature.md`: the page type worked out on this device, and the target query's intent).
+// Task 11 adds the "AI judgment" card under it (`ai-checks.feature.md`, UI; one line while AI checks are off).
 
 const RING_RADIUS = 42;
 const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
@@ -310,6 +312,7 @@ export function Overview({
         ) : null}
       </section>
       <PageCard audit={audit} notesGeneration={notesGeneration} />
+      <AiChecksCard audit={audit} tab={tab} />
       <SearchPreview audit={audit} />
       <CategoryGrid audit={audit} />
     </div>

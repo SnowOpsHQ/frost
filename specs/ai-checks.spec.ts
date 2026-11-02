@@ -192,3 +192,73 @@ export const AI_CHECK_SYSTEM_PROMPT = [
   'Answer with one JSON object only, in exactly the shape the task describes: no prose before or after it, no Markdown, no code fences.',
   'If the extract does not let you judge something, say so in the field the task gives for it rather than guessing.',
 ].join('\n');
+
+/**
+ * The chrome's words for AI checks (Phase 9 Task 11; acceptance `ai-checks.feature.md`, UI): the
+ * Settings section (the three modes, the cost note), the Overview's "AI judgment" card, the Content
+ * panel's "Quality" row, "Check this page" / "Check again", and why a page has no judgment. frost's own
+ * words. Everything the model wrote is shown under `label` (Decision 17), as inert, bidi-isolated text,
+ * and never as a link, markup or an action of its own: "Use as target" is the user's click.
+ */
+export const AI_CHECKS_COPY = {
+  /** Above every AI-generated value, wherever one is shown. */
+  label: 'AI judgment — the page’s own text can influence it',
+  cardTitle: 'AI judgment',
+  qualityTitle: 'Quality',
+  settings: {
+    sectionLabel: 'AI checks',
+    intro:
+      'AI checks ask your agent’s model to judge a page: its type, the search intent it serves, how well its content serves it, and a target query it could rank for. The answer is shown only: no rule, score or action depends on it.',
+    modes: {
+      off: { label: 'Off', description: 'No page is ever sent.' },
+      'on-request': { label: 'Only when I ask', description: 'A page is checked when you click “Check this page”.' },
+      automatic: {
+        label: 'Automatically',
+        description: `The page you are on is checked once its audit is ready: at most ${AI_CHECK_LIMITS.maxAutomaticPerHour} pages an hour, one at a time, never while a chat runs.`,
+      },
+    } satisfies Readonly<Record<AiCheckMode, { readonly label: string; readonly description: string }>>,
+    modesLabel: 'When frost checks a page',
+    consentNote: 'Turning AI checks on asks you first, in a frost dialog that says what is sent and where.',
+    stayedOff: 'AI checks stay off.',
+    failed: 'frost could not change the setting. Try again.',
+    loading: 'Loading…',
+    agentSettings: 'Agent model settings',
+  },
+  /** The cost note: `{model}` and `{route}` are the agent settings' (`AGENT_MODEL_LABELS`, `AGENT_ROUTE_LABELS`). */
+  cost: 'Each check is one model request, at your cost: {model} · {route}.',
+  costUnknown: 'Each check is one model request on your agent’s model route, at your cost.',
+  offLine: 'AI checks are off.',
+  openSettings: 'Turn on in Settings',
+  setUpModel: 'Set up the agent’s model',
+  checkNow: 'Check this page',
+  checkAgain: 'Check again',
+  idle: 'Not checked yet.',
+  queued: 'Waiting for another page’s check to finish.',
+  checking: 'Checking this page…',
+  /** Why there is no judgment (`AI_CHECK_UNAVAILABLE`); `off` is the collapsed `offLine`. */
+  reasons: {
+    off: 'AI checks are off.',
+    'no-model': 'AI checks run on your agent’s model, which is not set up yet.',
+    'not-public': 'Only pages on public sites are checked: this one is on a private, local or loopback address.',
+    'not-anonymous':
+      'Not checked: frost judges a page only as anyone signed out gets it, and the page it fetched without your cookies did not look like this one (a sign-in page, an error, a redirect, a page cut short or marked noindex). Nothing was sent.',
+    'served-pending': 'Waiting for the audit’s fetch of the page as served.',
+    'busy-chat': 'Waiting for the agent’s chat to finish.',
+    rate: `Automatic checks are paused: at most ${AI_CHECK_LIMITS.maxAutomaticPerHour} an hour, and a while after one fails. “Check this page” still runs.`,
+    refused: 'The model route refused the check, or the provider answered an error.',
+    'invalid-output': 'The model did not answer in the shape frost asked for, so nothing is shown.',
+    network: 'The model route could not be reached, or it took too long.',
+  } satisfies Readonly<Record<AiCheckUnavailableReason, string>>,
+  fields: { pageType: 'Page type', intent: 'Intent', quality: 'Quality', suggestedTarget: 'Suggested target query' },
+  qualities: { strong: 'Strong', adequate: 'Adequate', weak: 'Weak' } satisfies Readonly<Record<AiQualityRating, string>>,
+  /** A field the model answered `null` for. */
+  couldNotTell: 'The model could not tell',
+  /** Beside the AI's page type when the on-device one (`audit.pageType`) differs. */
+  heuristicPageType: 'On this device: {type}',
+  useAsTarget: 'Use as target',
+  useAsTargetLabel: 'Use “{query}” as the target query',
+  currentTarget: 'Target query',
+  checkedBy: 'Checked by {model} on {time}',
+  cached: 'From an earlier check of the same page.',
+  palette: { check: 'Check this page with AI', mode: 'AI checks: change mode…', started: 'Checking this page with AI', notStarted: 'This page was not checked: see the Overview' },
+} as const;

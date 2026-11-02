@@ -19,6 +19,7 @@ import { serpPaletteSources } from '../serp-palette';
 import { projectsPaletteSources, retentionPaletteSources } from '../projects-palette';
 import { inspectorPaletteSources } from '../inspector-palette';
 import { aiReadinessPaletteSources } from '../ai-readiness-palette';
+import { aiChecksPaletteSources } from '../ai-checks-palette';
 
 const URL_A = 'https://www.example.com/a';
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, schema: { blocks: [] } } as unknown as SeoAudit };
@@ -47,6 +48,7 @@ function everySource(): PaletteSource[] {
     ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn(), filtered: () => true, clearFilters: vi.fn() }),
     ...gscInspectPaletteSources({ status: () => null, inspect: vi.fn() }),
     ...aiReadinessPaletteSources(),
+    ...aiChecksPaletteSources({ checkNow: yes, openSettings: vi.fn() }),
   ];
 }
 

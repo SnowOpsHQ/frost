@@ -7,8 +7,9 @@ Spec: `specs/ai-checks.spec.ts` (`AI_CHECK_MODES`, `AI_CHECKS_SETTING_KEY`, `AI_
 `AiCheckResultSchema`, `AiChecksStateSchema`, the `aiChecks.*` inputs), `specs/seo-javascript.spec.ts`
 (`SERVED_LEAD_TEXT_MAX_CHARS`) and `specs/seo-javascript.schema.ts` (`ServedSnapshotSchema.leadText`).
 Phase 9 Tasks 9–11 (Decisions 15–17); the transport is `agent-host.feature.md` and
-`agent-runtime.feature.md`, Checks. This file is Task 10's main side; Task 11 adds the UI scenarios.
-Each line maps to one named test.
+`agent-runtime.feature.md`, Checks. This file is Task 10's main side; Task 11 adds the UI scenarios
+(`AI_CHECKS_COPY`; `SETTINGS_SECTIONS`' `ai-checks` in `account-settings.spec.ts`). Each line maps to one
+named test.
 
 ## Decisions
 - **Opt-in, off by default.** The mode is `off`, `on-request` or `automatic`, stored under
@@ -97,3 +98,36 @@ Each line maps to one named test.
 ## Router (`packages/ipc-contract/src/__tests__/ai-checks-router.test.ts`)
 - `enforces-sender` — every `aiChecks.*` procedure refuses a foreign sender before its input or service.
 - `outputs-strict` — inputs are strict, and an answer with anything more (a key) is a masked error.
+
+## UI (`apps/desktop/src/renderer/__tests__/ai-checks-view.test.ts`)
+Task 11 (Decision 17). The chrome follows `aiChecks.watch` for the tab and shows what main answers: it
+only asks (`setMode`, `checkNow`), never decides. The Settings sheet's "AI checks" section has the three
+modes and the cost note (the route and model from the agent settings' `agent.watch`, never a key); the
+Overview has the "AI judgment" card (one collapsed line while the mode is `off`); the Content panel has
+the "Quality" row. Every value the model wrote sits under `AI_CHECKS_COPY.label` and is inert,
+bidi-isolated text (`PageText`, `<bdi dir="auto">`): never a link, an `href`, markup or `innerHTML`. It
+never drives an action: "Use as target" saves the suggested query only on the user's click. Palette:
+"Check this page with AI" (offered unless the mode is known `off`) and "AI checks: change mode…" (opens
+the Settings section), registered from `components/seo/AiChecksCard.tsx`.
+- `settings-mode-change-opens-consent` — choosing a mode calls `aiChecks.setMode` once (main shows its
+  consent dialog when leaving `off`); while it runs the modes are `aria-disabled`; the checked mode is
+  main's answer, so a cancelled dialog leaves `Off` checked and says AI checks stay off; the cost note
+  names the agent's route and model.
+- `card-states` — `off`: one line inviting to Settings (opens the `ai-checks` section), nothing else; no
+  model: "Set up the agent's model" (opens the agent's settings); idle: "Check this page" with the cost
+  note; queued; checking; a result; each unavailable reason has its own words (`not-anonymous` explains
+  that nothing was sent). Turning `off` while a check is queued collapses the card to its line as main
+  answers.
+- `labelled-ai-judgment` — the card and the Quality row show the model's answer only under the label,
+  and no model text in any other state.
+- `model-text-inert` — a quality reason or suggested target holding markup, a link, a `javascript:` URL
+  or bidi controls renders as its text: no element, link, `href` or `style` from it, each value in a
+  `<bdi dir="auto">`.
+- `suggested-target-use-as-target` — the suggested target is saved only on a click of "Use as target",
+  through `content.setTarget` with the notes generation, capped to `TARGET_QUERY_MAX_CHARS`; nothing is
+  saved by showing it, and once it is the target it is marked instead.
+- `heuristic-and-ai-page-type-both-shown-when-they-differ` — the on-device page type (`audit.pageType`)
+  is shown beside the AI's only when they differ.
+- `palette-check-and-change-mode` — "Check this page with AI" calls `aiChecks.checkNow` for the active
+  tab and opens the Overview, offered on a web page unless the mode is known `off`; "AI checks: change
+  mode…" opens Settings on the `ai-checks` section.

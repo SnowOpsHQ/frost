@@ -1,0 +1,45 @@
+/* The Settings view's AI checks section (Phase 9 Task 11; specs/ai-checks.feature.md, UI): the three
+   modes as radio rows on the Telemetry section's row style (`settings.css`). Bundled and served from
+   app:// (CSP style-src 'self'): no inline styles. */
+
+.settings-ai-checks .settings-toggle {
+  padding: 0;
+}
+
+.settings-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--radius-field);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+.settings-choice[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.settings-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-choice-mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 2px solid var(--settings-switch-off);
+  border-radius: 50%;
+}
+
+.settings-choice[aria-checked='true'] .settings-choice-mark {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 40%, transparent 45%);
+}

@@ -20,6 +20,7 @@ import { clearAllContentNotes, copySnippetHtml, useContentNotes } from '../../ho
 import { registerPaletteActions } from '../../palette/registry';
 import { CloseIcon } from '../../icons';
 import { Flash, HighlightToggle, useFlash } from './actions';
+import { AiChecksQuality } from './AiChecksCard';
 import { ContentGscTargets } from './ContentGscTargets';
 import { AbsentGlyph, BarsIcon, BookIcon, PartialGlyph, PresentGlyph, TargetIcon, TrashIcon } from './content-icons';
 import { PageText, Section } from './parts';
@@ -29,7 +30,8 @@ import { SnippetEditor } from './SnippetEditor';
 // preview and drafts, the target query checklist, the page's n-grams and its readability (the
 // language's formula, sentence statistics and the difficult sentences, which the page highlight
 // can box: main reads them from its own audit), with Search Console's queries for the page and the
-// target query's pages when connected (`ContentGscTargets`). All of it is information: nothing here is scored,
+// target query's pages when connected (`ContentGscTargets`), and the AI checks' "Quality" row
+// (`AiChecksQuality`, labelled AI judgment). All of it is information: nothing here is scored,
 // and counts are never pass or fail. Page-derived text is React text only (`PageText`, `<bdi>`);
 // bars are SVG attributes, never `style`.
 
@@ -309,6 +311,8 @@ export function Content({ audit, tab, notesGeneration }: { readonly audit: SeoAu
         {/* Search Console's queries and the query→page check: nothing at all unless connected. */}
         <ContentGscTargets url={audit.url} notes={notes} />
       </Section>
+      {/* The AI's quality judgment and suggested target (Phase 9 Task 11): one line while AI checks are off. */}
+      <AiChecksQuality url={audit.url} tab={tab} notes={notes} />
       <Section title="Frequent words and phrases" badge={<SectionTitle icon={BarsIcon} text="info only" />} testId="seo-content-ngrams">
         {audit.content.available ? <Ngrams audit={audit} /> : <p className="seo-empty-line">frost could not read this page’s text.</p>}
       </Section>
