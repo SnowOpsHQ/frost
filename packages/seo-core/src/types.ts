@@ -9,6 +9,7 @@ import type { ComplianceReport } from './compliance/model';
 import type { ContentReport } from './content/report';
 import type { IndexabilityReport } from './indexability/model';
 import type { JavascriptReport } from './javascript/report';
+import type { PageTypeReport } from './page-type';
 import type { SpeedReport } from './performance/model';
 import type { SchemaReport } from './schema/model';
 
@@ -112,6 +113,8 @@ export interface SeoAudit {
   readonly javascript: JavascriptReport;
   /** The AI crawlers' robots.txt verdicts (Phase 9 Task 6); separate from `score`, which never reads it. */
   readonly aiReadiness: AiReadinessReport;
+  /** What kind of page this is, worked out on this device from the snapshot (Phase 9 Task 8, `page-type.spec.ts`); never read by `score`. */
+  readonly pageType: PageTypeReport;
 }
 
 /**

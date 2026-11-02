@@ -5,12 +5,12 @@ Spec: `specs/ai-readiness.spec.ts` (`AI_BOT_ROLES`, `AI_ROBOTS_STANCES`, `AI_BOT
 `AI_STANCE_NOTES`; Task 7: `AI_READINESS_CHECKS`, `AI_READINESS_WEIGHTS`, `AI_CHECK_STATUSES`,
 `AI_CHECK_VALUES`, `AI_SCORE_REQUIRED_CHECKS`, `AI_REACH_AGENTS`, `AI_REACH_FACTS`, `aiReadinessScore`, `aiScoreBasis`,
 `LLMS_TXT_OUTCOMES`, `LLMS_TXT_CACHED_OUTCOMES`, `LLMS_TXT_FINDINGS`, `LLMS_TXT_TEXT_TYPES`,
-`LLMS_TXT_ACCEPT`, `LLMS_TXT_PARSE_LIMITS`, `LLMS_TXT_NOTE`), `specs/ai-readiness.schema.ts`
+`LLMS_TXT_ACCEPT`, `LLMS_TXT_PARSE_LIMITS`, `LLMS_TXT_NOTE`; Task 8: `AI_READINESS_COPY`), `specs/ai-readiness.schema.ts`
 (`LlmsTxtJobSchema`, `LlmsTxtAnswerSchema`, `LlmsTxtStateSchema`), with
 `specs/visibility-probes.spec.ts` (`PROBE_AGENT_IDS`, `PROBE_AGENTS`, `PROBE_LIMITS`,
 `LLMS_TXT_LIMITS`), `specs/visibility-probes.schema.ts` (`ProbeReportSchema.llmsTxt`) and
 `specs/seo-indexability.spec.ts` (`ROBOTS_ALLOW_ALL_OUTCOMES`, `ROBOTS_UNKNOWN_OUTCOMES`). Phase 9
-Task 6 (the robots.txt part) and Task 7 (the score and `llms.txt`; the UI follows in Task 8);
+Task 6 (the robots.txt part), Task 7 (the score and `llms.txt`) and Task 8 (the views);
 security review (Task 7: the `/llms.txt` fetch). Each line maps to one named test.
 
 ## Decisions
@@ -129,3 +129,30 @@ security review (Task 7: the `/llms.txt` fetch). Each line maps to one named tes
 - `stop-and-cancel-abort-llms-txt` — Stop aborts the `/llms.txt` request in flight and marks it
   `stopped` (not kept); a new document, Clear Browsing Data and quitting abort it and the state goes;
   a parse in the worker is ended with the run.
+
+## AI readiness views (`apps/desktop/src/renderer/__tests__/ai-readiness-view.test.ts`; Task 8)
+The AI-readiness section sits at the top of the Visibility panel (`components/seo/AiReadiness.tsx`,
+view model `ai-readiness-view.ts`); the Overview shows its score as a tile. Both call
+`aiReadinessOf(audit, probes)` with the tab's ready audit and its `ProbesState`. The words are
+`AI_READINESS_COPY`. "Open AI readiness" in the command palette opens the Visibility panel
+(`ai-readiness-palette.ts`).
+- `assistants-rows-and-roles` — one list item per `AI_ASSISTANTS` entry, in order, each listing its
+  tokens with their role (AI search, live fetch, training; Search for Googlebot and Bingbot) and
+  robots.txt verdict; Googlebot and Bingbot are read from the Indexability verdicts; Applebot judged
+  by Googlebot's group says so (the `*` fallback goes unsaid); a blocked crawler names the blocking
+  rule's path as inert, bidi-isolated text, an allowed one none.
+- `frost-model-labelled` — Copilot and Google AI carry the `frost-model` label and note; ChatGPT,
+  Claude, Perplexity and Apple do not.
+- `may-ignore-note-on-live-fetch` — the live-fetch check carries the `may-ignore` note, and so do
+  ChatGPT-User and Perplexity-User in the assistants list; Google-Extended and Applebot-Extended carry
+  the `control-token` note.
+- `training-opt-out-neutral` — the training check shows `info` as "For information" with the neutral
+  note, never a pass, warn or fail mark, and is marked as not scored, whether training is blocked or
+  allowed.
+- `score-ring-states` — with no audit (or the static checks not judged) the ring is `pending` with no
+  number; before a probe run it is `partial`, "Based on 3 of 4 checks", with the hint to run the
+  probes; after a finished run for the page it is `full`, "Based on 4 of 4 checks".
+- `llms-txt-findings-inert` — the `/llms.txt` check shows its outcome's and findings' messages and
+  the file's title as inert, bidi-isolated text (a `<bdi dir="auto">`), never as markup or a link.
+- `overview-tile-links-to-visibility` — the Overview's tile shows the same score and basis, and its
+  "Open AI readiness" button opens the Visibility panel, as the sidebar's other panel jumps do.

@@ -403,3 +403,116 @@ export const LLMS_TXT_PARSE_LIMITS = {
 /** Shown with the `llms-txt` check (frost's own words). */
 export const LLMS_TXT_NOTE =
   'llms.txt is a proposal (llmstxt.org) for a short guide to a site written for language models. No search engine or AI assistant documents using it, so frost shows it but never scores it.' as const;
+
+// ---- What the AI-readiness views say (Task 8) -----------------------------------------------------
+
+/**
+ * The words of the AI-readiness section (top of the Visibility panel) and the Overview's tile, frost's
+ * own. The score ring has three states: `pending` (no score yet: the three static checks are not all
+ * judged), `partial` (scored, but not every weighted check is in: "Based on 3 of 4 checks" before a
+ * probe run) and `full` ("Based on 4 of 4 checks"). Each check shows its label, its status
+ * (`statuses`; `info` is neutral, never a pass mark), why it matters and how frost judged it
+ * (`checks`), and whether it counts (`unscored` for weight 0). The assistants are a list: each with
+ * its crawlers' tokens, roles and verdicts, `frost-model` mappings labelled `frostModel`, and the
+ * `may-ignore` and `control-token` stances noted beside their verdicts (`AI_STANCE_NOTES`).
+ */
+/** The catalogue's tokens of one stance, as prose (`A`, `A and B`, `A, B and C`). */
+const tokensOf = (stance: AiRobotsStance): string => {
+  const tokens = AI_BOTS.filter((bot) => bot.stance === stance).map((bot) => bot.token);
+  return tokens.length < 2 ? tokens.join('') : `${tokens.slice(0, -1).join(', ')} and ${tokens.at(-1)!}`;
+};
+
+export const AI_READINESS_COPY = {
+  title: 'AI readiness',
+  scoreLabel: 'Score',
+  tileTitle: 'AI readiness',
+  openLabel: 'Open AI readiness',
+  pendingValue: '—',
+  pendingBasis: 'No score yet: it needs this page’s audit (its indexability, robots.txt and served-HTML checks).',
+  partialHint: 'Run the visibility probes to add how AI agents reach the page.',
+  about:
+    'frost’s own score and weights, separate from the health score. It is built from static checks of this page and the visibility probes, and never from what AI assistants answer. A score invites optimising for it: read each check.',
+  unscored: 'Shown, not scored',
+  checksLabel: 'Checks',
+  statuses: {
+    pass: 'Pass',
+    warn: 'Partly',
+    fail: 'Fail',
+    info: 'For information',
+    'not-checked': 'Not checked',
+  } satisfies Readonly<Record<AiCheckStatus, string>>,
+  checks: {
+    'search-indexable': {
+      label: 'Search engines can index it',
+      explanation:
+        'AI answers in Google and Bing are grounded on their search indexes. From the Indexability panel: indexable passes; a canonical naming another URL is partly; not indexable fails.',
+    },
+    'ai-search-crawlers': {
+      label: 'AI search crawlers allowed',
+      explanation:
+        'robots.txt’s verdict for the crawlers AI search uses to find and cite pages. Every one allowed passes; some blocked is partly; every one blocked fails.',
+    },
+    'served-content': {
+      label: 'Content in the served HTML',
+      explanation:
+        'Whether the HTML the server sends holds the content without running scripts, from the JavaScript panel’s comparison. That fetch used the tab’s render profile or frost’s own user agent, not an AI crawler’s.',
+    },
+    'agent-reachability': {
+      label: 'AI agents reach the page',
+      explanation:
+        'From the visibility probes: each AI search and live-fetch agent should get a 2xx HTML page, without noindex, with the browser’s visible text. Training crawlers are not judged: refusing them is your choice.',
+    },
+    'live-fetch-agents': {
+      label: 'Live fetches for a user',
+      explanation: 'robots.txt’s verdict for agents that fetch a page while a user waits, judged like the AI search crawlers.',
+    },
+    'training-opt-outs': {
+      label: 'Training crawlers',
+      explanation: 'robots.txt’s verdict for crawlers that collect pages for model training, and for the tokens that control AI use.',
+    },
+    'llms-txt': {
+      label: 'llms.txt',
+      explanation: LLMS_TXT_NOTE,
+    },
+  } satisfies Readonly<Record<AiReadinessCheckId, { readonly label: string; readonly explanation: string }>>,
+  /** Beside the live-fetch verdicts (`may-ignore`). */
+  mayIgnoreNote: `${tokensOf('may-ignore')} fetch because a user asked, and their operators say robots.txt may not apply to them: these verdicts may not decide what they read.`,
+  /** Beside the training verdicts: neutral, never good or bad. */
+  trainingNeutral: 'Allowing or blocking training is your choice: frost lists these verdicts and never scores them.',
+  /** Beside the training verdicts (`control-token`). */
+  controlTokenNote: `${tokensOf('control-token')} send no requests: they only tell their operators how pages may be used for AI, and blocking them does not remove the page from search.`,
+  notRun: 'Checked with a probe run.',
+  llmsTitleLabel: 'Title',
+  allowedLabel: 'Allowed',
+  blockedLabel: 'Blocked',
+  assistantsLabel: 'Assistants',
+  assistantsNote: 'What robots.txt tells the crawlers behind each assistant.',
+  frostModel: 'frost’s model',
+  frostModelNote: 'Its operator does not publish which crawlers feed it: this mapping is frost’s model.',
+  searchRole: 'Search',
+  roles: { 'ai-search': 'AI search', 'live-fetch': 'Live fetch', training: 'Training' } satisfies Readonly<Record<AiBotRole, string>>,
+  verdicts: {
+    allowed: 'Allowed',
+    disallowed: 'Blocked',
+    unknown: 'Unknown: robots.txt could not be read',
+    'not-checked': 'Not checked yet',
+  } satisfies Readonly<Record<AiBotVerdictValue, string>>,
+  /**
+   * Why a verdict came from groups other than the token's own. Only Applebot's Googlebot fallback is
+   * said: the `*` fallback is robots.txt's own rule for every crawler, and saying it on each row is noise.
+   */
+  vias: {
+    own: null,
+    googlebot: 'Judged by Googlebot’s rules: robots.txt names no Applebot group, and Apple documents that Applebot then follows Googlebot’s.',
+    '*': null,
+  } satisfies Readonly<Record<AiBotVia, string | null>>,
+  /** Before the robots.txt rule that blocks a crawler (the rule's path is the site's text). */
+  disallowRule: 'Disallow:',
+  reachFacts: {
+    'no-answer': 'No answer about the page',
+    'http-status': 'Not a 2xx answer',
+    'not-html': 'Not an HTML page',
+    noindex: 'Told noindex',
+    text: 'Visible text differs from the browser’s',
+  } satisfies Readonly<Record<AiReachFact, string>>,
+} as const;

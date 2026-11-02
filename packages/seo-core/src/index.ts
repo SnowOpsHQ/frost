@@ -21,6 +21,8 @@ export {
   type AiReadinessReport,
   type LlmsTxtParse,
 } from './ai-readiness';
+// Page type, worked out on this device (Phase 9 Task 8).
+export { pageTypeOf, type PageTypeReport, type PageTypeSignalHit } from './page-type';
 // Link, sitemap and hreflang checks (Phase 2.5 Task 7).
 export * from './checks';
 export {

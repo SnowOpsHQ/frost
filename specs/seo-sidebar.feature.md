@@ -141,6 +141,13 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
 - Overview: the score ring (0–100, coloured by band) with the band's label, error / warning / info
   counts, and the top `OVERVIEW_TOP_ISSUES` ranked issues ("Show all" for the rest). Each issue
   expands to its why, its fix and its facts and samples.
+- Overview, "Page" card (Phase 9 Task 8, `page-type.feature.md`): the page type worked out on this
+  device (`audit.pageType`), its confidence and the signals that decided it; and the intent of the
+  page's target query (the Content panel's), classified on this device only when a target is set
+  and on-device intent is ready.
+- Overview, AI-readiness tile (Phase 9 Task 8, `ai-readiness.feature.md`, AI readiness views): the
+  AI-readiness score (pending, or the score with "Based on k of n checks"), separate from the health
+  score, and "Open AI readiness", which opens the Visibility panel and moves focus to its rail item.
 - On-Page: title (with its length and an indicator against `TITLE_MIN_CHARS`…`TITLE_MAX_CHARS`;
   since Phase 2.5 Task 3 "too long" is the width a result shows, `seo-content.feature.md`),
   meta description (likewise), URL, canonical, meta robots, lang, viewport, the heading outline

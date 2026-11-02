@@ -8,6 +8,7 @@ import { complianceReport } from './compliance';
 import { contentReport } from './content/report';
 import { indexabilityReport } from './indexability';
 import { javascriptReport } from './javascript/report';
+import { pageTypeOf } from './page-type';
 import { speedReport } from './performance';
 import { analyseSchema } from './schema';
 import { tokens } from './util';
@@ -131,5 +132,6 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
     content: contentReport(snapshot),
     javascript: javascriptReport(snapshot),
     aiReadiness: aiReadinessReport(snapshot),
+    pageType: pageTypeOf(snapshot),
   };
 }
