@@ -15,7 +15,8 @@
  *   through `SerpReadApi.runProbes`, behind their approval model.
  * - **Bounded** (`PROBE_LIMITS`): one fetcher call per agent (`PROBE_AGENTS.length` ≤
  *   `maxFetches`), never retried, each following at most `maxRedirects` redirects one hop at a time,
- *   so at most `maxRequests` HTTP requests to the site in all; at most `maxConcurrent` calls at once;
+ *   so at most `maxRequests` HTTP requests to the site for the agents; at most `maxConcurrent` calls
+ *   at once;
  *   `page` the tab's URL (so a private host is requested only when the page itself is on one,
  *   `private-address.spec.ts`), with `maxBytes` and `timeoutMs`. One run per tab: asking again while
  *   one runs changes nothing.
@@ -24,6 +25,15 @@
  *   every rule of `fetcher.spec.ts` holds, with the `checks` lane's per-origin limits and queues of its
  *   own (`fetcher.spec.ts`, Lanes). A link check holding both of the `checks` lane's slots on the site
  *   for minutes never makes a probe wait, and time out, in its queue.
+ * - **`/llms.txt`** (Phase 9, `ai-readiness.spec.ts`) is one more call of the run, never an agent's:
+ *   `<page origin>/llms.txt` only, with frost's own user agent, through the same lane and its
+ *   private-address rules, after the agents' calls (so never more than `maxConcurrent` at once), at
+ *   most `LLMS_TXT_LIMITS.maxRedirects` redirects, `maxBytes` and `timeoutMs`. Its answer is kept per
+ *   origin for `cacheTtlMs` (`ai-readiness.spec.ts`, `LLMS_TXT_CACHED_OUTCOMES`), so a run whose
+ *   origin's file is cached does not ask again; Clear Browsing Data forgets it. A run therefore makes
+ *   at most `maxRunRequests` requests to the site: `maxRequests` for the agents and `llmsTxtRequests`
+ *   for `/llms.txt`. Stop and cancel abort it with the agents' calls. It is never fetched on a page
+ *   load.
  * - **robots.txt** is not one of the calls: it comes from main's cached robots.txt fetcher (the
  *   `audit` lane), once per origin judged (the tab's, and any other origin an agent was redirected
  *   to; so at most `maxFetches` files a run), fetched with frost's own user agent and possibly cached
@@ -32,7 +42,8 @@
  *   `matchRobots` with each agent's token), the headers (`parseXRobotsTag`, `parseLinkHeader`) and
  *   each body (`parseServedHtml`, as the JavaScript panel's served view, and a bounded `parse5` walk
  *   for the visible text and every agent's meta names) are read in a SERP worker of the probes' own
- *   (`serp-analysis.cjs`, `probe` jobs), validated there, with a hard deadline. A stopped or cancelled
+ *   (`serp-analysis.cjs`, `probe` jobs; `/llms.txt` as an `llms-txt` job, `ai-readiness.schema.ts`),
+ *   validated there, with a hard deadline. A stopped or cancelled
  *   run's jobs are dropped from its queue, and one still running is ended.
  * - **Rows stream.** Every agent's row is `pending` from the start and is filled in as its fetch and
  *   parse finish; each change bumps the state's `version` and wakes `serp.watchProbes`.
@@ -97,6 +108,7 @@
  */
 import { FETCH_DISCLOSURE } from './fetcher.spec';
 import { normalChromeVersion, USER_AGENT_TEMPLATES } from './render-profile.spec';
+import { ROBOTS_FETCH_LIMITS } from './seo-indexability.spec';
 
 /** The agents, in the order they are probed and shown (the baseline first). */
 export const PROBE_AGENT_IDS = ['browser', 'googlebot', 'bingbot', 'gptbot', 'claudebot', 'perplexitybot', 'oai-searchbot', 'chatgpt-user'] as const;
@@ -172,11 +184,34 @@ const MAX_FETCHES = 8;
 const MAX_REDIRECTS = 3;
 
 /**
+ * The run's `<page origin>/llms.txt` fetch (Phase 9 Decision 13; read in `ai-readiness.spec.ts`).
+ * This spec owns its numbers, so `PROBE_LIMITS` can count it; `ai-readiness.spec.ts` imports them
+ * from here and this file imports nothing from it.
+ * - `maxBytes`: the body read at most (the rest is never read: `truncated`), as robots.txt's cap;
+ * - `maxRedirects`: redirects followed, one request per hop;
+ * - `timeoutMs`: one deadline for the call (the lane's queue, every hop and the body);
+ * - `cacheTtlMs`, `maxCacheEntries`: an answer is kept per origin this long, for at most this many
+ *   origins (the oldest goes first), as main's robots.txt answers are (`ROBOTS_FETCH_LIMITS`).
+ */
+export const LLMS_TXT_LIMITS = {
+  maxBytes: 512_000,
+  maxRedirects: 3,
+  timeoutMs: 5_000,
+  cacheTtlMs: ROBOTS_FETCH_LIMITS.cacheTtlMs,
+  maxCacheEntries: ROBOTS_FETCH_LIMITS.maxCacheEntries,
+} as const;
+const LLMS_TXT_REQUESTS = 1 + LLMS_TXT_LIMITS.maxRedirects;
+
+/**
  * How a run is bounded (review focus `probes-are-bounded`):
  * - `maxFetches`: fetcher calls per run (one per agent, never retried);
  * - `maxRedirects`: redirects each call follows (one request per hop), so
- * - `maxRequests`: HTTP requests to the site per run at most, `maxFetches × (1 + maxRedirects)`
- *   (robots.txt aside: main's cached fetcher, at most one per origin judged);
+ * - `maxRequests`: HTTP requests to the site for the agents at most, `maxFetches × (1 +
+ *   maxRedirects)` (robots.txt aside: main's cached fetcher, at most one per origin judged);
+ * - `llmsTxtRequests`: requests for `/llms.txt` at most, `1 + LLMS_TXT_LIMITS.maxRedirects` (one
+ *   call, not an agent's: `maxFetches` and `maxRequests` keep meaning "per agent");
+ * - `maxRunRequests`: every HTTP request a run can make to the site, `maxRequests + llmsTxtRequests`
+ *   (robots.txt aside); what the disclosure and the agent's texts state;
  * - `maxConcurrent`: calls in flight at once;
  * - `maxBytes`, `timeoutMs`: each call's caps (`timeoutMs` counts the lane's queue, every hop and the
  *   body), as the served-HTML fetch's;
@@ -190,6 +225,8 @@ export const PROBE_LIMITS = {
   maxFetches: MAX_FETCHES,
   maxRedirects: MAX_REDIRECTS,
   maxRequests: MAX_FETCHES * (1 + MAX_REDIRECTS),
+  llmsTxtRequests: LLMS_TXT_REQUESTS,
+  maxRunRequests: MAX_FETCHES * (1 + MAX_REDIRECTS) + LLMS_TXT_REQUESTS,
   maxConcurrent: 2,
   maxBytes: 5 * 1024 * 1024,
   timeoutMs: 10_000,
@@ -337,4 +374,4 @@ export const PROBE_MODELLED_DIRECTIVES_NOTE =
 
 /** What every surface showing probes says (the request count follows `PROBE_LIMITS`). */
 export const PROBE_DISCLOSURE =
-  `Only the user-agent string changes. These requests come from your computer and network, not the crawler’s, the page is not rendered the way the crawler renders it, and nothing proves the request is the real bot, so sites that verify bots may answer the real crawler differently. A run makes at most ${MAX_FETCHES} requests to the site, one per agent, plus up to ${MAX_REDIRECTS} redirects each, and reads robots.txt from frost’s cache. robots.txt is reported, not obeyed: frost asks once for the page you are viewing, to show what each agent would be told. Sending crawler user agents from an address that is not the crawler’s can trip a site’s bot protection and get your address challenged or blocked for a while. ${FETCH_DISCLOSURE}` as const;
+  `Only the user-agent string changes. These requests come from your computer and network, not the crawler’s, the page is not rendered the way the crawler renders it, and nothing proves the request is the real bot, so sites that verify bots may answer the real crawler differently. A run makes at most ${MAX_FETCHES} requests to the site, one per agent, plus up to ${MAX_REDIRECTS} redirects each, and one request for /llms.txt (plus up to ${LLMS_TXT_LIMITS.maxRedirects} redirects); it reads robots.txt from frost’s cache. robots.txt is reported, not obeyed: frost asks once for the page you are viewing, to show what each agent would be told. Sending crawler user agents from an address that is not the crawler’s can trip a site’s bot protection and get your address challenged or blocked for a while. ${FETCH_DISCLOSURE}` as const;

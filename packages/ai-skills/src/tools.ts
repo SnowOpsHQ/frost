@@ -147,7 +147,7 @@ export const visibilityProbesTool = defineTool(
 
 export const runVisibilityProbesTool = defineTool(
   'run_visibility_probes',
-  `Fetches the page in the user's current tab as search and AI crawlers would (up to ${PROBE_LIMITS.maxRequests} requests: ${PROBE_AGENT_IDS.length} user agents, frost's own browser's and each crawler's, redirects followed, without cookies; robots.txt may come from cache), waits for the run and returns what each was served, as visibility_probes does. The user may be asked to allow it first. It works only while the chat's tab is the tab on screen and only for public pages, runs at most once per page in a turn and not again within a minute (a repeat answers the last results with reused: true). Stopping the chat stops the wait; a run already started finishes. ${UNTRUSTED_OUTPUT_NOTE}`,
+  `Fetches the page in the user's current tab as search and AI crawlers would (up to ${PROBE_LIMITS.maxRunRequests} requests: ${PROBE_AGENT_IDS.length} user agents, frost's own browser's and each crawler's, and one for the site's /llms.txt, redirects followed, without cookies; robots.txt may come from cache), waits for the run and returns what each was served, as visibility_probes does. The user may be asked to allow it first. It works only while the chat's tab is the tab on screen and only for public pages, runs at most once per page in a turn and not again within a minute (a repeat answers the last results with reused: true). Stopping the chat stops the wait; a run already started finishes. ${UNTRUSTED_OUTPUT_NOTE}`,
   z.strictObject({}),
 );
 

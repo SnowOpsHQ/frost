@@ -31,7 +31,7 @@ function serpState(status: 'ready' | 'not-serp' | 'pending', changes: Partial<Se
   return { version: 1, tabId: 3, serp, outlines: false, intent: null, pack: PACK, ...changes } as SerpTabState;
 }
 
-const probes = (status: ProbesState['status']): ProbesState => ({ version: 1, tabId: 3, url: URL_A, status, rows: [], diffs: [], robotsTxt: [], startedAt: null, finishedAt: null });
+const probes = (status: ProbesState['status']): ProbesState => ({ version: 1, tabId: 3, url: URL_A, status, rows: [], diffs: [], robotsTxt: [], llmsTxt: null, startedAt: null, finishedAt: null });
 
 interface Known {
   serp?: SerpTabState;

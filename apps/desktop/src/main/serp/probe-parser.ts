@@ -1,3 +1,4 @@
+import type { LlmsTxtJob, LlmsTxtJobResult } from '@app/specs/ai-readiness.schema';
 import { PROBE_LIMITS } from '@app/specs/visibility-probes.spec';
 import type { ProbeJob, ProbeJobResult } from '@app/specs/visibility-probes.schema';
 import type { AnalysisWorker } from '../seo/analysis';
@@ -11,7 +12,9 @@ import type { AnalysisWorker } from '../seo/analysis';
 // spawns a new one; a worker that errors or exits fails its job. At most `maxQueued` jobs wait; one
 // more fails at once. A job's `signal` (its run's: Stop, a new document, Clear Browsing Data) drops
 // it from the queue, or, while it runs, ends it and terminates the worker, so a stopped run's jobs
-// never fill the queue or hold the worker for the next run. After `dispose()` nothing is spawned again. A late answer from a terminated
+// never fill the queue or hold the worker for the next run. A run's `/llms.txt` (Phase 9) is an
+// `llms-txt` job in the same queue (`{ id, kind: 'llms-txt', job }`), under the same deadline and
+// limits. After `dispose()` nothing is spawned again. A late answer from a terminated
 // worker, or for another job, is dropped; an answer is checked for a job result's shape only (the
 // worker validated it with the answer schemas; Zod stays off main's thread). Never rejects.
 
@@ -23,28 +26,31 @@ export interface ProbeParserOptions {
 }
 
 export interface ProbeParser {
-  /** Runs `job` in the worker (`runProbeJob` there); `parse-failed` at once when `signal` aborts. Never rejects. */
-  run(job: ProbeJob, signal?: AbortSignal): Promise<ProbeJobResult>;
+  /** Runs `job` in the worker (`runProbeJob` / `runLlmsTxtJob` there); `parse-failed` at once when `signal` aborts. Never rejects. */
+  run(job: ProbeJob | LlmsTxtJob, signal?: AbortSignal): Promise<ProbeJobResult | LlmsTxtJobResult>;
   /** Ends every job and terminates the worker (the app is quitting). */
   dispose(): void;
 }
 
+type Job = ProbeJob | LlmsTxtJob;
+type Result = ProbeJobResult | LlmsTxtJobResult;
+
 interface Pending {
   readonly id: number;
-  readonly job: ProbeJob;
-  readonly settle: (result: ProbeJobResult) => void;
+  readonly job: Job;
+  readonly settle: (result: Result) => void;
 }
 
-const FAILED: ProbeJobResult = { ok: false, reason: 'parse-failed' };
+const FAILED: Result = { ok: false, reason: 'parse-failed' };
 
 /** Whether the worker's answer has a job result's shape. */
-function isResult(value: unknown): value is ProbeJobResult {
+function isResult(value: unknown): value is Result {
   if (typeof value !== 'object' || value === null) return false;
   const { ok, answer, reason } = value as { ok?: unknown; answer?: unknown; reason?: unknown };
   if (ok === false) return reason === 'invalid-job' || reason === 'parse-failed';
   if (ok !== true || typeof answer !== 'object' || answer === null) return false;
   const kind = (answer as { kind?: unknown }).kind;
-  return kind === 'robots' || kind === 'page';
+  return kind === 'robots' || kind === 'page' || kind === 'llms-txt';
 }
 
 export function createProbeParser(options: ProbeParserOptions): ProbeParser {
@@ -56,7 +62,7 @@ export function createProbeParser(options: ProbeParserOptions): ProbeParser {
   let nextId = 1;
   let disposed = false;
 
-  const finish = (result: ProbeJobResult, kill: boolean): void => {
+  const finish = (result: Result, kill: boolean): void => {
     if (!current) return;
     const { pending, timer, worker: running } = current;
     clearTimeout(timer);
@@ -93,7 +99,7 @@ export function createProbeParser(options: ProbeParserOptions): ProbeParser {
     try {
       worker ??= spawn();
       running = worker;
-      running.postMessage({ id: pending.id, kind: 'probe', job: pending.job });
+      running.postMessage({ id: pending.id, kind: pending.job.kind === 'llms-txt' ? 'llms-txt' : 'probe', job: pending.job });
     } catch {
       pending.settle(FAILED);
       pump();
@@ -113,7 +119,7 @@ export function createProbeParser(options: ProbeParserOptions): ProbeParser {
 
   return {
     run: (job, signal) =>
-      new Promise<ProbeJobResult>((resolve) => {
+      new Promise<Result>((resolve) => {
         if (disposed || signal?.aborted || queue.length >= maxQueued) {
           resolve(FAILED);
           return;

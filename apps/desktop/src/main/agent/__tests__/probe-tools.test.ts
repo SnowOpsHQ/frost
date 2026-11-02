@@ -159,9 +159,12 @@ describe('visibility probe tools', () => {
       const state = await s.until((next) => next.approval !== null);
       expect(state.approval!.request).toMatchObject({ toolName: 'run_visibility_probes', label: 'Fetch this page as search and AI crawlers would', note: RUN_PROBES_APPROVAL_NOTE, grantable: true });
       expect(RUN_PROBES_APPROVAL_NOTE).toMatch(/^frost will fetch this page as search and AI crawlers would/);
-      // The counts follow the probes' table: eight user agents, at most 32 requests; the tool description says the same.
-      expect(RUN_PROBES_APPROVAL_NOTE).toContain('up to 32 requests (8 user agents,');
-      expect(getToolDefinition('run_visibility_probes').description).toContain('up to 32 requests: 8 user agents,');
+      // The counts follow the probes' table: eight user agents and the site's /llms.txt, at most 36 requests in all
+      // (PROBE_LIMITS.maxRunRequests); the tool description says the same.
+      expect(RUN_PROBES_APPROVAL_NOTE).toContain('up to 36 requests (8 user agents,');
+      expect(RUN_PROBES_APPROVAL_NOTE).toContain('and one request for the site\'s /llms.txt');
+      expect(getToolDefinition('run_visibility_probes').description).toContain('up to 36 requests: 8 user agents,');
+      expect(getToolDefinition('run_visibility_probes').description).toContain('and one for the site\'s /llms.txt');
       await s.session.answerApproval(state.approval!.request.id, 'deny');
       await s.until((next) => !next.running);
     } finally {
@@ -224,7 +227,7 @@ describe('visibility probe tools', () => {
     });
     expect(port.calls).toEqual([]);
     // Reading the last run of a private page is still a read (it asks there, as every read tool does).
-    expect(PROBE_RUN_MAX_REQUESTS).toBe(32);
+    expect(PROBE_RUN_MAX_REQUESTS).toBe(36);
     expect(PROBE_RUN_USER_AGENTS).toBe(8);
   });
 });

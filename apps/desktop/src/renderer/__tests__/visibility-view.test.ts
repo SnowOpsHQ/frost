@@ -50,13 +50,14 @@ function state(changes: Partial<ProbesState> = {}): ProbesState {
     rows: PROBE_AGENT_IDS.map((agent) => row(agent)),
     diffs: PROBE_AGENT_IDS.filter((agent) => agent !== 'browser').map((agent) => diff(agent, [])),
     robotsTxt: [{ url: 'https://tea.example/robots.txt', outcome: 'ok', readAt: 1_700_000_000_000 }],
+    llmsTxt: null,
     startedAt: 1,
     finishedAt: 2,
     ...changes,
   };
 }
 
-const IDLE: ProbesState = { version: 0, tabId: 3, url: URL_A, status: 'idle', rows: [], diffs: [], robotsTxt: [], startedAt: null, finishedAt: null };
+const IDLE: ProbesState = { version: 0, tabId: 3, url: URL_A, status: 'idle', rows: [], diffs: [], robotsTxt: [], llmsTxt: null, startedAt: null, finishedAt: null };
 
 /** The table's cell for `agent` and `fact`. */
 function cell(table: NonNullable<ReturnType<typeof probeTable>>, fact: (typeof PROBE_TABLE_FACTS)[number], agent: ProbeAgentId) {

@@ -74,9 +74,10 @@ and 4 merge), `service.ts` (`ports`, `entitlements`). Each line maps to one name
 - **Scenario: run-visibility-probes-private-page-never-asks** — a page on a local or private host is
   answered `privatePage` as the call arrives, with no approval card and no fetch.
 - **Scenario: probes-integration-fetches-the-approved-page** (`probes-integration.test.ts`) — Phase 3's
-  real `createProbes` behind `probesAdapter`: every fetch is for the approved page, one per agent (8,
-  at most `PROBE_RUN_MAX_REQUESTS`, 32); OAI-SearchBot and ChatGPT-User come back as `ai` rows with no
-  adapter change; an inactive tab fetches nothing.
+  real `createProbes` behind `probesAdapter`: every fetch is for the approved page, one per agent (8),
+  then the origin's `/llms.txt` (at most `PROBE_RUN_MAX_REQUESTS`, `PROBE_LIMITS.maxRunRequests`, 36);
+  OAI-SearchBot and ChatGPT-User come back as `ai` rows with no adapter change; the tool's output says
+  nothing of `/llms.txt`; an inactive tab fetches nothing.
 - **Scenario: run-visibility-probes-approval-card-says-what-it-fetches** — `RUN_PROBES_APPROVAL_NOTE`.
 - **Scenario: intent-adapter-never-downloads** — Phase 3's classifier with no model: `model-missing`
   unchanged, no download, no model load; the adapter can't reach the enabling path.

@@ -1,4 +1,5 @@
 import { parentPort } from 'node:worker_threads';
+import { runLlmsTxtJob } from './llms-parse';
 import { runProbeJob } from './probe-parse';
 import { analyseSerp } from './serp-analyse';
 
@@ -11,7 +12,9 @@ import { analyseSerp } from './serp-analyse';
 //
 // The visibility probes (Phase 3 Task 5, `visibility-probes.spec.ts`) run their own instance of this
 // worker (`probe-parser.ts`): `{ id, kind: 'probe', job }` is answered `{ id, result }` by
-// `runProbeJob`, which validates the job (`ProbeJobSchema`) and its answer.
+// `runProbeJob`, which validates the job (`ProbeJobSchema`) and its answer; a run's `/llms.txt`
+// (Phase 9, `ai-readiness.schema.ts`) comes as `{ id, kind: 'llms-txt', job }`, answered by
+// `runLlmsTxtJob` (`LlmsTxtJobSchema`, `LlmsTxtAnswerSchema`).
 
 parentPort?.on('message', (message: unknown) => {
   if (typeof message !== 'object' || message === null) return;
@@ -19,6 +22,10 @@ parentPort?.on('message', (message: unknown) => {
   if (typeof id !== 'number') return;
   if (kind === 'probe') {
     parentPort?.postMessage({ id, result: runProbeJob(job) });
+    return;
+  }
+  if (kind === 'llms-txt') {
+    parentPort?.postMessage({ id, result: runLlmsTxtJob(job) });
     return;
   }
   parentPort?.postMessage({ id, result: analyseSerp(raw, { params, packVersion, redirects }) });

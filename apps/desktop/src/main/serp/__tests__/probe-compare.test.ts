@@ -1,4 +1,4 @@
-// Spec: specs/visibility-probes.spec.ts (PROBE_AGENTS, PROBE_AGENT_IDS, probeUserAgent, PROBE_LIMITS, PROBE_DIFF_TOLERANCE,
+// Spec: specs/visibility-probes.spec.ts (PROBE_AGENTS, PROBE_AGENT_IDS, probeUserAgent, PROBE_LIMITS, LLMS_TXT_LIMITS, PROBE_DIFF_TOLERANCE,
 // PROBE_TEXT_SIMILARITY, PROBE_DIFF_FACTS, PROBE_DISCLOSURE, PROBE_MODELLED_DIRECTIVES_NOTE, PROBE_CANONICAL_CONFLICTS),
 // specs/visibility-probes.schema.ts (ProbeRowSchema, ProbeDiffSchema, ProbeRobotsAnswerSchema, ProbePageAnswerSchema),
 // specs/render-profile.spec.ts (USER_AGENT_TEMPLATES), specs/fetcher.spec.ts (FETCH_DISCLOSURE)
@@ -7,8 +7,10 @@ import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
 import { FETCH_DISCLOSURE } from '@app/specs/fetcher.spec';
 import { USER_AGENT_TEMPLATES } from '@app/specs/render-profile.spec';
+import { ROBOTS_FETCH_LIMITS } from '@app/specs/seo-indexability.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import {
+  LLMS_TXT_LIMITS,
   PROBE_AGENT_IDS,
   PROBE_AGENTS,
   PROBE_BASELINE,
@@ -90,9 +92,23 @@ describe('probe agents and reading', () => {
     expect(PROBE_DISCLOSURE).toContain(`at most ${PROBE_LIMITS.maxFetches} requests`);
     expect(PROBE_DISCLOSURE).toContain('at most 8 requests to the site, one per agent, plus up to 3 redirects each');
     expect(PROBE_DISCLOSURE).toContain(`up to ${PROBE_LIMITS.maxRedirects} redirects`);
+    expect(PROBE_DISCLOSURE).toContain('and one request for /llms.txt (plus up to 3 redirects)');
     expect(PROBE_DISCLOSURE).toMatch(/reported, not obeyed/);
     expect(PROBE_DISCLOSURE).toMatch(/bot protection/);
     expect(PROBE_DISCLOSURE).toContain(FETCH_DISCLOSURE);
+  });
+
+  test('limits-arithmetic', () => {
+    // Per agent: one call each, every call's redirects counted.
+    expect(PROBE_LIMITS.maxRequests).toBe(PROBE_LIMITS.maxFetches * (1 + PROBE_LIMITS.maxRedirects));
+    // The run's /llms.txt: one call, not an agent's, with its own redirects.
+    expect(PROBE_LIMITS.llmsTxtRequests).toBe(1 + LLMS_TXT_LIMITS.maxRedirects);
+    expect(PROBE_LIMITS.maxRunRequests).toBe(PROBE_LIMITS.maxRequests + PROBE_LIMITS.llmsTxtRequests);
+    expect(PROBE_LIMITS).toMatchObject({ maxFetches: 8, maxRequests: 32, llmsTxtRequests: 4, maxRunRequests: 36 });
+    expect(LLMS_TXT_LIMITS).toMatchObject({ maxBytes: 512_000, maxRedirects: 3, timeoutMs: 5_000, cacheTtlMs: ROBOTS_FETCH_LIMITS.cacheTtlMs });
+    // Every count the disclosure states is PROBE_LIMITS'.
+    expect(PROBE_DISCLOSURE).toContain(`at most ${PROBE_LIMITS.maxFetches} requests to the site, one per agent, plus up to ${PROBE_LIMITS.maxRedirects} redirects each, and one request for /llms.txt (plus up to ${LLMS_TXT_LIMITS.maxRedirects} redirects)`);
+    expect(PROBE_LIMITS.maxFetches * (1 + PROBE_LIMITS.maxRedirects) + 1 + LLMS_TXT_LIMITS.maxRedirects).toBe(PROBE_LIMITS.maxRunRequests);
   });
 
   test('probes-per-agent-robots', () => {

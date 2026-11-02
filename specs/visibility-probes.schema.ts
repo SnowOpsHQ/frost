@@ -10,6 +10,7 @@
  * change is a new field, optional or nullable, never a changed one.
  */
 import { z } from 'zod';
+import { LlmsTxtStateSchema } from './ai-readiness.schema';
 import { ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
 import { SNAPSHOT_LIMITS } from './seo-limits.spec';
 import { isWebUrl } from './web-url.spec';
@@ -121,7 +122,9 @@ export const ProbeRobotsTxtSchema = z.strictObject({ url: urlText, outcome: z.en
 /**
  * A tab's run: the URL probed (the tab's, fragment aside; `''` for a tab with no web page), where it
  * stands, one row per agent (`PROBE_AGENT_IDS` order; none while `idle`), the diffs against the
- * baseline, the robots.txt files read, and when it started and finished (`null` before).
+ * baseline, the robots.txt files read, the run's `/llms.txt` (Phase 9, `ai-readiness.schema.ts`;
+ * `null` while `idle`; a cached answer as soon as the run starts), and when it started and finished
+ * (`null` before).
  */
 export const ProbeReportSchema = z.strictObject({
   tabId,
@@ -130,6 +133,7 @@ export const ProbeReportSchema = z.strictObject({
   rows: z.array(ProbeRowSchema).max(PROBE_AGENT_IDS.length),
   diffs: z.array(ProbeDiffSchema).max(PROBE_AGENT_IDS.length),
   robotsTxt: z.array(ProbeRobotsTxtSchema).max(PROBE_LIMITS.maxFetches),
+  llmsTxt: LlmsTxtStateSchema.nullable(),
   startedAt: time.nullable(),
   finishedAt: time.nullable(),
 });

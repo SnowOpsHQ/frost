@@ -1,9 +1,11 @@
+import { LLMS_TXT_ACCEPT, LLMS_TXT_CACHED_OUTCOMES, LLMS_TXT_TEXT_TYPES, type LlmsTxtOutcome } from '@app/specs/ai-readiness.spec';
+import type { LlmsTxtAnswer, LlmsTxtJob, LlmsTxtJobResult, LlmsTxtState } from '@app/specs/ai-readiness.schema';
 import type { BoundedFetcher, BoundedFetchResult } from '@app/specs/fetcher.spec';
 import { SERVED_ACCEPT, SERVED_HTML_TYPES } from '@app/specs/seo-javascript.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import { isPrivateHost } from '@app/specs/private-address.spec';
-import { MAX_PENDING_PROBE_WATCHES, PROBE_AGENTS, PROBE_KEEP_HEADERS, PROBE_LIMITS, PROBE_SEPARATE_HEADERS, probeUserAgent, type ProbeAgent, type ProbeOutcome, type ProbeStatus } from '@app/specs/visibility-probes.spec';
+import { LLMS_TXT_LIMITS, MAX_PENDING_PROBE_WATCHES, PROBE_AGENTS, PROBE_KEEP_HEADERS, PROBE_LIMITS, PROBE_SEPARATE_HEADERS, probeUserAgent, type ProbeAgent, type ProbeOutcome, type ProbeStatus } from '@app/specs/visibility-probes.spec';
 import type { ProbeJob, ProbeJobResult, ProbePageAnswer, ProbeRobotsAnswer, ProbeRow, ProbesState } from '@app/specs/visibility-probes.schema';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 import { isPrivatePage } from '../seo/fetcher';
@@ -24,6 +26,14 @@ import { diffsOf, pendingRow, robotsVerdictOf } from './probe-compare';
 // origin an agent ended on (never a private host's for a public page), each agent judged on its own
 // final URL; every answer parsed by `parse` (the probes' SERP worker), whose jobs the run's signal
 // ends on Stop or cancel. Rows stream: each one read bumps `version` and wakes `watch`.
+//
+// `/llms.txt` (Phase 9 Task 7, `ai-readiness.spec.ts`): one more call per run, after the agents' in the
+// same lanes (so still at most `maxConcurrent` at once), for `<tab origin>/llms.txt` only, with frost's
+// own user agent and `LLMS_TXT_LIMITS`, through the same `fetcher` (its private-address rules, the tab's
+// URL as the page) and the run's signal; a 2xx text body is read in the worker (an `llms-txt` job). Its
+// answer is kept per origin (`LLMS_TXT_CACHED_OUTCOMES`, `cacheTtlMs`, at most `maxCacheEntries`), so a
+// run whose origin's answer is kept asks nothing and shows it at once; `clearCache()` (Clear Browsing
+// Data) forgets them. A run is `done` once its agents and its `/llms.txt` are in.
 
 /** What the probes need to know about a tab, now. */
 export interface ProbeTab {
@@ -39,8 +49,8 @@ export interface ProbesOptions {
   readonly fetcher: BoundedFetcher;
   /** A page origin's robots.txt (main's cached fetcher), `null` for none. */
   readonly robots: (pageUrl: string) => Promise<RobotsFetch | null>;
-  /** Runs a probe job in the probes' SERP worker (`ProbeParser.run`), ended by the run's `signal`. Never rejects. */
-  readonly parse: (job: ProbeJob, signal?: AbortSignal) => Promise<ProbeJobResult>;
+  /** Runs a probe or `llms-txt` job in the probes' SERP worker (`ProbeParser.run`), ended by the run's `signal`. Never rejects. */
+  readonly parse: (job: ProbeJob | LlmsTxtJob, signal?: AbortSignal) => Promise<ProbeJobResult | LlmsTxtJobResult>;
   /** The tab, or `null` when it names no open tab with a live page. */
   readonly tab: (tabId: number) => ProbeTab | null;
   readonly now?: () => number;
@@ -64,6 +74,8 @@ export interface Probes {
   navigatedInPage(contentsId: number, url: string): void;
   /** Clear Browsing Data: every run is cancelled. */
   cancelAll(): void;
+  /** Clear Browsing Data: the kept `/llms.txt` answers are forgotten. */
+  clearCache(): void;
   /** The app is quitting: runs are cancelled, watchers answer, nothing runs again. */
   dispose(): void;
   /** How many `watch` calls wait. */
@@ -82,6 +94,8 @@ interface Entry {
   robotsTxt: ProbesState['robotsTxt'];
   /** Each origin's robots.txt, asked once per run. */
   readonly robots: Map<string, Promise<RobotsFetch | null>>;
+  /** The tab origin's `/llms.txt`: pending, read by this run, or the answer kept from an earlier one. */
+  llmsTxt: LlmsTxtState;
   readonly startedAt: number;
   finishedAt: number | null;
 }
@@ -99,6 +113,32 @@ const is2xx = (status: number | null): boolean => status !== null && status >= 2
 
 /** A fetch's outcome as a row's (`response` is decided by its status and type). */
 function fetchOutcome(fetched: BoundedFetchResult): ProbeOutcome {
+  switch (fetched.outcome) {
+    case 'response':
+      return 'ok';
+    case 'private-address':
+    case 'private-redirect':
+    case 'too-many-redirects':
+    case 'bad-redirect':
+    case 'no-location':
+    case 'timeout':
+    case 'busy':
+      return fetched.outcome;
+    case 'aborted':
+      return 'stopped';
+    default:
+      return 'unreachable';
+  }
+}
+
+const LLMS_TEXT_TYPES: readonly string[] = LLMS_TXT_TEXT_TYPES;
+const LLMS_CACHED: ReadonlySet<LlmsTxtOutcome> = new Set(LLMS_TXT_CACHED_OUTCOMES);
+
+/** `url`'s `/llms.txt` while it is asked. */
+const pendingLlms = (url: string): LlmsTxtState => ({ url, outcome: 'pending', status: null, bytes: 0, truncated: false, title: null, sections: 0, links: 0, findings: [], partial: false, readAt: null });
+
+/** A fetch's ending as an `/llms.txt` outcome (`response` is decided by its status and type). */
+function llmsFetchOutcome(fetched: BoundedFetchResult): LlmsTxtOutcome {
   switch (fetched.outcome) {
     case 'response':
       return 'ok';
@@ -139,6 +179,8 @@ export function createProbes(options: ProbesOptions): Probes {
   const chromeVersion = options.chromeVersion ?? process.versions.chrome ?? '';
   const agents = PROBE_AGENTS.slice(0, PROBE_LIMITS.maxFetches);
   const entries = new Map<number, Entry>();
+  /** The kept `/llms.txt` answers, by origin (oldest first). */
+  const llmsCache = new Map<string, { readonly state: LlmsTxtState; readonly at: number }>();
   const waiters: { wake: () => void }[] = [];
   let version = 0;
   let disposed = false;
@@ -148,7 +190,7 @@ export function createProbes(options: ProbesOptions): Probes {
     for (const waiter of waiters.splice(0)) waiter.wake();
   };
 
-  const parse = (job: ProbeJob, signal: AbortSignal): Promise<ProbeJobResult> => {
+  const parse = (job: ProbeJob | LlmsTxtJob, signal: AbortSignal): Promise<ProbeJobResult | LlmsTxtJobResult> => {
     try {
       return options.parse(job, signal).catch((): ProbeJobResult => ({ ok: false, reason: 'parse-failed' }));
     } catch {
@@ -283,19 +325,78 @@ export function createProbes(options: ProbesOptions): Probes {
     setRow(entry, { ...row, robots });
   }
 
-  /** Runs every agent, at most `maxConcurrent` at once; `done` when all are in. */
-  async function go(entry: Entry): Promise<void> {
+  /** `origin`'s kept `/llms.txt` answer, if it is still fresh. */
+  const cachedLlms = (origin: string): LlmsTxtState | null => {
+    const kept = llmsCache.get(origin);
+    if (!kept) return null;
+    if (now() - kept.at <= LLMS_TXT_LIMITS.cacheTtlMs) return kept.state;
+    llmsCache.delete(origin);
+    return null;
+  };
+  const keepLlms = (origin: string, state: LlmsTxtState): void => {
+    if (!LLMS_CACHED.has(state.outcome)) return;
+    llmsCache.delete(origin);
+    llmsCache.set(origin, { state, at: now() });
+    while (llmsCache.size > LLMS_TXT_LIMITS.maxCacheEntries) llmsCache.delete(llmsCache.keys().next().value!);
+  };
+
+  /** The tab origin's `/llms.txt`: one GET as frost (never an agent's user agent), a 2xx text body read in the worker. */
+  async function llmsTxt(entry: Entry, origin: string, live: () => boolean): Promise<void> {
+    const url = entry.llmsTxt.url;
+    let fetched: BoundedFetchResult;
+    try {
+      fetched = await options.fetcher.fetch({
+        url,
+        page: entry.key,
+        method: 'GET',
+        userAgent: null,
+        accept: LLMS_TXT_ACCEPT,
+        maxBytes: LLMS_TXT_LIMITS.maxBytes,
+        timeoutMs: LLMS_TXT_LIMITS.timeoutMs,
+        maxRedirects: LLMS_TXT_LIMITS.maxRedirects,
+        readBody: is2xx,
+        keepHeaders: ['content-type'],
+        signal: entry.controller.signal,
+      });
+    } catch (error) {
+      log(`probes: the llms.txt fetch failed: ${error instanceof Error ? error.message : String(error)}`);
+      fetched = { url, outcome: 'unreachable', status: null, finalUrl: null, redirects: 0, chain: [], headers: {}, body: EMPTY as Uint8Array<ArrayBuffer>, truncated: false, durationMs: 0 };
+    }
+    if (!live() || fetched.outcome === 'aborted') return;
+    let state: LlmsTxtState = { ...entry.llmsTxt, outcome: llmsFetchOutcome(fetched), status: fetched.status, bytes: Math.min(fetched.body.byteLength, LLMS_TXT_LIMITS.maxBytes), truncated: fetched.truncated };
+    if (fetched.outcome === 'response') {
+      const type = mediaType(fetched.headers['content-type']);
+      if (!is2xx(fetched.status)) state = { ...state, outcome: fetched.status === 404 || fetched.status === 410 ? 'missing' : 'http-status', bytes: 0 };
+      else if (type !== null && !LLMS_TEXT_TYPES.includes(type)) state = { ...state, outcome: 'not-text' };
+      else {
+        const contentType = fetched.headers['content-type'] ?? null;
+        const answer = await parse({ kind: 'llms-txt', url: cut(fetched.finalUrl ?? url), contentType: contentType === null ? null : contentType.slice(0, PROBE_LIMITS.maxHeaderChars), body: fetched.body }, entry.controller.signal);
+        if (!live()) return;
+        if (answer.ok && answer.answer.kind === 'llms-txt') {
+          const read = answer.answer as LlmsTxtAnswer;
+          state = { ...state, outcome: read.findings.length > 0 ? 'malformed' : 'ok', title: read.title, sections: read.sections, links: read.links, findings: read.findings, partial: read.partial };
+        } else state = { ...state, outcome: 'parse-failed' };
+      }
+    }
+    state = { ...state, readAt: now() };
+    entry.llmsTxt = state;
+    keepLlms(origin, state);
+    bump();
+  }
+
+  /** Runs every agent, then the origin's `/llms.txt` unless its answer is kept, at most `maxConcurrent` at once; `done` when all are in. */
+  async function go(entry: Entry, askLlms: boolean): Promise<void> {
     const live = (): boolean => entries.get(entry.tabId) === entry && !entry.controller.signal.aborted;
+    const origin = parseWebUrl(entry.key)!.origin;
     // The tab's own robots.txt is asked at once (most agents end on its origin).
-    void robotsFor(entry, parseWebUrl(entry.key)!.origin, live);
+    void robotsFor(entry, origin, live);
+    const jobs: (() => Promise<void>)[] = agents.map((agent) => () => probe(entry, agent, live));
+    if (askLlms) jobs.push(() => llmsTxt(entry, origin, live));
     let next = 0;
     const lane = async (): Promise<void> => {
-      while (next < agents.length && live()) {
-        const agent = agents[next++]!;
-        await probe(entry, agent, live);
-      }
+      while (next < jobs.length && live()) await jobs[next++]!();
     };
-    await Promise.all(Array.from({ length: Math.min(PROBE_LIMITS.maxConcurrent, agents.length) }, lane));
+    await Promise.all(Array.from({ length: Math.min(PROBE_LIMITS.maxConcurrent, jobs.length) }, lane));
     if (!live()) return;
     entry.status = 'done';
     entry.finishedAt = now();
@@ -313,8 +414,16 @@ export function createProbes(options: ProbesOptions): Probes {
   const state = (tabId: number): ProbesState => {
     const { tab, entry } = currentEntry(tabId);
     const url = tab && parseWebUrl(tab.url) ? cut(withoutFragment(tab.url)) : '';
-    if (!entry) return { version, tabId, url, status: 'idle', rows: [], diffs: [], robotsTxt: [], startedAt: null, finishedAt: null };
-    return { version, tabId, url: cut(entry.key), status: entry.status, rows: [...entry.rows], diffs: diffsOf(entry.rows), robotsTxt: [...entry.robotsTxt], startedAt: entry.startedAt, finishedAt: entry.finishedAt };
+    if (!entry) return { version, tabId, url, status: 'idle', rows: [], diffs: [], robotsTxt: [], llmsTxt: null, startedAt: null, finishedAt: null };
+    return { version, tabId, url: cut(entry.key), status: entry.status, rows: [...entry.rows], diffs: diffsOf(entry.rows), robotsTxt: [...entry.robotsTxt], llmsTxt: entry.llmsTxt, startedAt: entry.startedAt, finishedAt: entry.finishedAt };
+  };
+
+  /** Marks a stopped run: what was not finished reads `stopped`. */
+  const stopEntry = (entry: Entry): void => {
+    entry.status = 'stopped';
+    entry.finishedAt = now();
+    entry.rows = entry.rows.map((row) => (row.outcome === 'pending' ? { ...row, outcome: 'stopped' } : row));
+    if (entry.llmsTxt.outcome === 'pending') entry.llmsTxt = { ...entry.llmsTxt, outcome: 'stopped' };
   };
 
   const entryOfContents = (contentsId: number): Entry | undefined => [...entries.values()].find((entry) => entry.contentsId === contentsId);
@@ -329,6 +438,8 @@ export function createProbes(options: ProbesOptions): Probes {
       // One run per tab: asking again while it runs changes nothing.
       if (existing && existing.status === 'running' && existing.contentsId === tab.contentsId && existing.key === key) return true;
       existing?.controller.abort();
+      const origin = parseWebUrl(key)!.origin;
+      const kept = cachedLlms(origin);
       const entry: Entry = {
         tabId,
         contentsId: tab.contentsId,
@@ -338,18 +449,17 @@ export function createProbes(options: ProbesOptions): Probes {
         rows: agents.map((agent) => pendingRow(agent.id)),
         robotsTxt: [],
         robots: new Map(),
+        llmsTxt: kept ?? pendingLlms(cut(`${origin}/llms.txt`)),
         startedAt: now(),
         finishedAt: null,
       };
       entries.set(tabId, entry);
       bump();
-      void go(entry).catch((error: unknown) => {
+      void go(entry, kept === null).catch((error: unknown) => {
         log(`probes: a run failed: ${error instanceof Error ? error.message : String(error)}`);
         if (entries.get(tabId) === entry && entry.status === 'running') {
           entry.controller.abort();
-          entry.status = 'stopped';
-          entry.finishedAt = now();
-          entry.rows = entry.rows.map((row) => (row.outcome === 'pending' ? { ...row, outcome: 'stopped' } : row));
+          stopEntry(entry);
           bump();
         }
       });
@@ -360,9 +470,7 @@ export function createProbes(options: ProbesOptions): Probes {
       const { entry } = currentEntry(tabId);
       if (!entry || entry.status !== 'running') return false;
       entry.controller.abort();
-      entry.status = 'stopped';
-      entry.finishedAt = now();
-      entry.rows = entry.rows.map((row) => (row.outcome === 'pending' ? { ...row, outcome: 'stopped' } : row));
+      stopEntry(entry);
       bump();
       return true;
     },
@@ -401,6 +509,10 @@ export function createProbes(options: ProbesOptions): Probes {
 
     cancelAll() {
       for (const tabId of [...entries.keys()]) cancel(tabId);
+    },
+
+    clearCache() {
+      llmsCache.clear();
     },
 
     dispose() {

@@ -155,8 +155,8 @@ export const PROBE_TOOL_LIMITS = {
   maxTracked: 64,
 } as const;
 
-/** The most requests one run makes to the site (Phase 3's `PROBE_LIMITS.maxRequests`), and its user agents. */
-export const PROBE_RUN_MAX_REQUESTS = PROBE_LIMITS.maxRequests;
+/** The most requests one run makes to the site (`PROBE_LIMITS.maxRunRequests`: the agents' and `/llms.txt`'s), and its user agents. */
+export const PROBE_RUN_MAX_REQUESTS = PROBE_LIMITS.maxRunRequests;
 export const PROBE_RUN_USER_AGENTS = PROBE_AGENT_IDS.length;
 
 export const PROBE_TOOL_SOURCE = 'frost:visibility-probes';

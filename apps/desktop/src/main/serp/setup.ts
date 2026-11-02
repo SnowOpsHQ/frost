@@ -217,8 +217,10 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
 
   const onClearBrowsingData = (): void => {
     serp.forget();
-    // Nothing a run fetches afterwards is kept (as the checks, seo-checks.feature.md).
+    // Nothing a run fetches afterwards is kept (as the checks, seo-checks.feature.md), and the kept
+    // `/llms.txt` answers go (ai-readiness.feature.md).
     probes.cancelAll();
+    probes.clearCache();
   };
   return { service, readApi, onClearBrowsingData, watchContents, dispose };
 }

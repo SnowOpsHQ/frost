@@ -298,6 +298,9 @@ Acceptance: `serp-panels.feature.md` and the feature files named below; how it w
     labelled frost's model, as their operators document only their robots.txt tokens.
   - **Stop** keeps what was found. A new document, an in-page move to another URL, closing the tab
     or Clear Browsing Data cancels the run.
+  - A run also reads the site's `/llms.txt` (llmstxt.org's proposal) for the AI-readiness checks: is
+    it there, and does it follow the proposal's format (an H1, then H2 sections of `[name](url)`
+    links).
   - A query box classifies any query you type, on this computer only.
 - **Palette.** Open SERP panel, Open Visibility panel, Outline SERP features / Hide SERP outlines,
   Check for selector updates, Enable on-device intent (with the same prompt, inline), and Run /
@@ -606,9 +609,15 @@ their logs** (each surface says so):
   redirects to Hugging Face's download host. `https:` only, capped at the pinned sizes, frost's own
   user agent.
 - **Visibility probes**, only on "Run visibility probes": one `GET` of the page per agent, at most
-  8 calls and 32 requests with redirects (3 each), 2 at once, 5 MB and 10 s each. Each sends the
-  agent's user agent string from your network. robots.txt comes from frost's cache, asked once per
-  origin an agent ended on.
+  8 calls and 32 requests with redirects (3 each), and one request for `/llms.txt` (up to 3
+  redirects), at most 36 in all; 2 at once, 5 MB and 10 s each. Each sends the agent's user agent
+  string from your network. robots.txt comes from frost's cache, asked once per origin an agent
+  ended on.
+  - `/llms.txt` is `<page origin>/llms.txt` only, asked with frost's own user agent after the
+    agents' calls, capped at 500 KB (512,000 bytes) and 5 s, never on a page load. Its answer is kept
+    per origin for 10 minutes, so a run on a site whose answer is kept does not ask again; Clear
+    Browsing Data forgets it. Its text is read in the probes' worker, and only counts, findings and
+    a capped title are kept.
 - frost never requests a search engine by itself: the SERP panel reads only result pages you
   loaded, and a project's **Capture now** loads its saved searches only when you start it (one
   ordinary tab visit per search, like typing it).

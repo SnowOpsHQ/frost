@@ -7,7 +7,20 @@ export { copyValueOf } from './copy-values';
 export * from './content';
 export * from './javascript';
 // AI readiness: the AI crawlers' robots.txt verdicts (Phase 9 Task 6).
-export { aiBotVerdicts, aiReadinessReport, type AiBotVerdict, type AiReadinessReport } from './ai-readiness';
+export {
+  aiBotVerdicts,
+  aiReadinessChecks,
+  aiReadinessOf,
+  aiReadinessReport,
+  parseLlmsTxt,
+  type AgentReach,
+  type AiBotVerdict,
+  type AiReadiness,
+  type AiReadinessAudit,
+  type AiReadinessCheck,
+  type AiReadinessReport,
+  type LlmsTxtParse,
+} from './ai-readiness';
 // Link, sitemap and hreflang checks (Phase 2.5 Task 7).
 export * from './checks';
 export {

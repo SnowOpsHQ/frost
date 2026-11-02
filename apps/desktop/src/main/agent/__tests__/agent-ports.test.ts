@@ -329,6 +329,7 @@ const PROBES_DONE: ProbesState = {
   ],
   diffs: [{ agent: 'gptbot', facts: ['status', 'robots'], textSimilarity: null, contentTruncated: false }],
   robotsTxt: [],
+  llmsTxt: null,
   startedAt: 1000,
   finishedAt: 2000,
   version: 3,
