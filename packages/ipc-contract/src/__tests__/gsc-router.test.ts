@@ -1,7 +1,7 @@
 // Spec: specs/gsc.schema.ts (GscStatusSchema, GscWatchInputSchema, GscPerformanceQuerySchema, GscConnectResultSchema,
-// GscPerformanceAnswerSchema, GscQueriesAnswerSchema, GscPropertiesAnswerSchema, GSC_CONNECT_RESULTS),
+// GscPerformanceAnswerSchema, GscQueriesAnswerSchema, GscCountriesAnswerSchema, GscPropertiesAnswerSchema, GSC_CONNECT_RESULTS),
 // specs/ipc-sender.spec.ts, specs/ipc-transport.spec.ts (IPC_INTERNAL_ERROR_CODE), specs/browser.spec.ts (WATCH_TIMEOUT_MS)
-// Acceptance: specs/gsc.feature.md (Router) · review focus "The renderer never sees a token"
+// Acceptance: specs/gsc.feature.md (Router; Ranges and filters) · review focus "The renderer never sees a token"
 // · plan Global Constraint "Tokens stay in main"
 import { getTRPCErrorShape, TRPCError } from '@trpc/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -9,6 +9,7 @@ import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import {
   GSC_CONNECT_RESULTS,
   type GscConnectResult,
+  type GscCountriesAnswer,
   type GscPerformanceAnswer,
   type GscPerformanceQuery,
   type GscPropertiesAnswer,
@@ -42,6 +43,7 @@ const PERFORMANCE: GscPerformanceAnswer = {
   totals: { clicks: 3, impressions: 40, ctr: 0.075, position: 4.2 },
 };
 const QUERIES: GscQueriesAnswer = { status: 'ok', property: PROPERTY, scope: 'page', range: RANGE, rows: [{ query: 'frost', clicks: 3, impressions: 40, ctr: 0.075, position: 4.2 }] };
+const COUNTRIES: GscCountriesAnswer = { status: 'ok', property: PROPERTY, range: RANGE, countries: [{ country: 'gbr', clicks: 3, impressions: 40 }] };
 
 const gscStatus = (version: number, overrides: Partial<GscStatus> = {}): GscStatus => ({
   configured: true,
@@ -73,6 +75,7 @@ function fakeGsc() {
     propertyFor: vi.fn(async (_url: string): Promise<GscPropertyForAnswer> => ({ status: 'ok', property: PROPERTY })),
     performance: vi.fn(async (_query: GscPerformanceQuery): Promise<GscPerformanceAnswer> => PERFORMANCE),
     topQueries: vi.fn(async (_query: GscPerformanceQuery): Promise<GscQueriesAnswer> => QUERIES),
+    countries: vi.fn(async (_query: GscPerformanceQuery): Promise<GscCountriesAnswer> => COUNTRIES),
   } satisfies GscIpcService;
   return Object.assign(gsc, { push: (s: GscStatus) => release?.(s) });
 }
@@ -87,6 +90,7 @@ const GSC_PROCEDURES: Record<string, { type: 'query' | 'mutation'; input?: unkno
   properties: { type: 'query' },
   performance: { type: 'query', input: QUERY },
   topQueries: { type: 'query', input: QUERY },
+  countries: { type: 'query', input: QUERY },
 };
 
 function ctxFor(gsc: GscIpcService | undefined, origin: string = APP_ORIGIN): IpcContext {
@@ -130,6 +134,57 @@ describe('gsc router', () => {
     }
     for (const [name, { type }] of Object.entries(GSC_PROCEDURES)) {
       expect((appRouter._def.procedures as unknown as Record<string, { _def: { type: string } }>)[`gsc.${name}`]?._def.type, name).toBe(type);
+    }
+  });
+
+  test('gsc-countries-procedure-enforces-sender', async () => {
+    const proc = (appRouter._def.procedures as unknown as Record<string, { _def: { type: string } }>)['gsc.countries'];
+    expect(proc?._def.type).toBe('query');
+    for (const origin of ['https://evil.com', 'http://127.0.0.1:8080', 'null', 'app://evil']) {
+      const gsc = fakeGsc();
+      expect((await errorOf(call(ctxFor(gsc, origin), 'countries', QUERY))).code, origin).toBe(IPC_SENDER_ERROR_CODE);
+      expect(gsc.countries, origin).not.toHaveBeenCalled();
+    }
+    const gsc = fakeGsc();
+    const input = { url: QUERY.url, scope: 'property', range: RANGE, device: 'MOBILE' } as const;
+    await expect(call(ctxFor(gsc), 'countries', input)).resolves.toEqual(COUNTRIES);
+    expect(gsc.countries).toHaveBeenCalledExactlyOnceWith(input);
+    gsc.countries.mockResolvedValueOnce({ status: 'unavailable', reason: 'no-property' });
+    await expect(call(ctxFor(gsc), 'countries', QUERY)).resolves.toEqual({ status: 'unavailable', reason: 'no-property' });
+    // Its output is strict: a token riding along, or a malformed country, is a masked internal error.
+    for (const bad of [{ ...COUNTRIES, accessToken: FAKE_ACCESS }, { ...COUNTRIES, countries: [{ country: 'GBR', clicks: 1, impressions: 1 }] }, { ...COUNTRIES, scope: 'page' }]) {
+      const leaky = fakeGsc();
+      leaky.countries.mockResolvedValue(bad as GscCountriesAnswer);
+      const error = await errorOf(call(ctxFor(leaky), 'countries', QUERY));
+      expect(error.code).toBe(IPC_INTERNAL_ERROR_CODE);
+      for (const secret of SECRETS) expect(JSON.stringify(shapeOf(error, 'gsc.countries'))).not.toContain(secret);
+    }
+  });
+
+  test('performance-input-strict', async () => {
+    const { days: _days, ...base } = QUERY;
+    for (const name of ['performance', 'topQueries', 'countries'] as const) {
+      for (const input of [
+        { ...QUERY, range: RANGE }, // both `days` and `range`
+        base, // neither
+        { ...base, range: { start: RANGE.end, end: RANGE.start } },
+        { ...base, range: { start: '2026-02-30', end: '2026-03-02' } },
+        { ...base, range: { ...RANGE, days: 28 } },
+        { ...base, range: RANGE, country: 'USA' },
+        { ...base, range: RANGE, country: 'us' },
+        { ...QUERY, device: 'mobile' },
+        { ...QUERY, device: 'TV' },
+        { ...QUERY, country: 'gbr', extra: 1 },
+      ]) {
+        const gsc = fakeGsc();
+        expect((await errorOf(call(ctxFor(gsc), name, input))).code, `${name} ${JSON.stringify(input)}`).toBe('BAD_REQUEST');
+        for (const fn of [gsc.performance, gsc.topQueries, gsc.countries]) expect(fn).not.toHaveBeenCalled();
+      }
+      // A custom range with both filters passes through as is.
+      const gsc = fakeGsc();
+      const input = { ...base, range: RANGE, country: 'gbr', device: 'TABLET' } as const;
+      await call(ctxFor(gsc), name, input);
+      expect(gsc[name]).toHaveBeenCalledExactlyOnceWith(input);
     }
   });
 

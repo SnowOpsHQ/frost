@@ -1,16 +1,22 @@
 import type { GscIpcService } from '@app/ipc-contract';
 import {
   GSC_CACHE_TTL_MS,
+  GSC_COUNTRY_PATTERN,
   GSC_DATE_PATTERN,
   GSC_LIMITS,
   GSC_RATE_LIMIT,
+  GscCountriesAnswerSchema,
   GscPerformanceAnswerSchema,
   GscPerformanceQuerySchema,
   GscQueriesAnswerSchema,
   GscUrlInputSchema,
   GSC_PROFILE_OWNER,
+  gscCustomRange,
   gscDateRange,
+  gscRangeDays,
   type GoogleSearchAnalyticsResponse,
+  type GscCountriesAnswer,
+  type GscCountryRow,
   type GscDateRange,
   type GscPerformanceAnswer,
   type GscPerformanceQuery,
@@ -44,7 +50,9 @@ import { createRedactingLog } from './redact';
 //   `entitled()` seam stays (tested): when false, every read answers `not-entitled`, and `connect`
 //   too, before anything is sent. `disconnect` always works.
 // - Never throws: every answer is `ok` or `unavailable` with a reason, in the order the spec gives.
-// - Ranges end `GSC_DATA_LAG_DAYS` before today's UTC date (`gscDateRange`).
+// - A preset range ends `GSC_DATA_LAG_DAYS` before today's UTC date (`gscDateRange`); a custom range is
+//   checked and clamped by `gscCustomRange` (refused: `invalid`, nothing sent). The range and the
+//   `country` / `device` filters are part of each read's cache and merge key.
 // - The connection belongs to its owner (`userId()`; in main, this frost profile: `GSC_PROFILE_OWNER`):
 //   another owner's is never read with, and is disconnected (revoked, deleted) when a different owner
 //   is current.
@@ -142,6 +150,21 @@ function queryRowsOf(rows: GoogleSearchAnalyticsResponse['rows']): GscQueryRow[]
     if (typeof query !== 'string') continue;
     out.push({ query: cutQuery(query), ...metrics(row) });
     if (out.length >= GSC_LIMITS.maxTopQueries) break;
+  }
+  return out;
+}
+
+/** Google's order (most clicks first), each country once, capped; a row without a lowercase alpha-3 code is dropped. */
+function countryRowsOf(rows: GoogleSearchAnalyticsResponse['rows']): GscCountryRow[] {
+  const out: GscCountryRow[] = [];
+  const seen = new Set<string>();
+  for (const row of rows ?? []) {
+    const country = row.keys?.[0];
+    if (typeof country !== 'string' || !GSC_COUNTRY_PATTERN.test(country) || seen.has(country)) continue;
+    seen.add(country);
+    const { clicks, impressions } = metrics(row);
+    out.push({ country, clicks, impressions });
+    if (out.length >= GSC_LIMITS.maxCountries) break;
   }
   return out;
 }
@@ -388,13 +411,16 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
   const resolveQuery = async (query: unknown): Promise<Read<{ query: GscPerformanceQuery; property: GscProperty; pageUrl: string; range: GscDateRange }>> => {
     const parsed = parseQuery(query);
     if (!parsed.ok) return parsed;
+    // A preset, or a custom range checked against the clock (refused before anything is sent).
+    const range = 'days' in parsed.value ? gscDateRange(parsed.value.days, now()) : gscCustomRange(parsed.value.range.start, parsed.value.range.end, now());
+    if (range === null) return { ok: false, reason: 'invalid' };
     const pageUrl = pageUrlOf(parsed.value.url);
     if (pageUrl === null) return { ok: false, reason: 'not-a-web-page' };
     const properties = await loadProperties();
     if (!properties.ok) return properties;
     const property = propertyFor(pageUrl, properties.value);
     if (!property) return { ok: false, reason: 'no-property' };
-    return { ok: true, value: { query: parsed.value, property, pageUrl, range: gscDateRange(parsed.value.days, now()) } };
+    return { ok: true, value: { query: parsed.value, property, pageUrl, range } };
   };
 
   /** Never throws: anything unexpected is `invalid`. */
@@ -410,8 +436,8 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
   /** A query's 403: no permission for that property any more; the list is read again next time. */
   const dropProperties = (): void => void cache.delete('properties');
 
-  const runQuery = async <T extends GscPerformanceAnswer | GscQueriesAnswer>(
-    kind: 'performance' | 'queries',
+  const runQuery = async <T extends GscPerformanceAnswer | GscQueriesAnswer | GscCountriesAnswer>(
+    kind: 'performance' | 'queries' | 'countries',
     input: unknown,
     build: (resolved: { query: GscPerformanceQuery; property: GscProperty; range: GscDateRange; rows: GoogleSearchAnalyticsResponse['rows'] }) => unknown,
     schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } },
@@ -422,12 +448,20 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
     if (!resolved.ok) return unavailable(resolved.reason);
     const { query, property, pageUrl, range } = resolved.value;
     const filter = query.scope === 'page' ? pageUrl : null;
-    const key = JSON.stringify([kind, property.siteUrl, query.scope, filter, query.days, range.start, range.end]);
+    // A country read ignores a `country` filter: the picker's list would be only that country.
+    const country = kind === 'countries' ? null : (query.country ?? null);
+    const device = query.device ?? null;
+    const key = JSON.stringify([kind, property.siteUrl, query.scope, filter, range.start, range.end, country, device]);
     const known = cached<T>(key);
     if (known) return known;
     const generation = auth?.generation() ?? 0;
     return merged(`${key}|${generation}`, async (): Promise<T | GscUnavailable> => {
-      const body = searchAnalyticsBody({ range, dimension: kind === 'performance' ? 'date' : 'query', pageUrl: filter, rowLimit: kind === 'performance' ? query.days : GSC_LIMITS.maxTopQueries });
+      const body =
+        kind === 'performance'
+          ? searchAnalyticsBody({ range, dimension: 'date', pageUrl: filter, country, device, rowLimit: gscRangeDays(range) })
+          : kind === 'queries'
+            ? searchAnalyticsBody({ range, dimension: 'query', pageUrl: filter, country, device, rowLimit: GSC_LIMITS.maxTopQueries })
+            : searchAnalyticsBody({ range, dimension: 'country', pageUrl: filter, device, rowLimit: GSC_LIMITS.maxCountries });
       const result = await withToken(generation, (token) => api!.query(token, property.siteUrl, body));
       if (!result.ok) {
         if (result.reason === 'no-property') dropProperties();
@@ -531,6 +565,16 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
           query,
           ({ query: q, property, range, rows }) => ({ status: 'ok', property, scope: q.scope, range, rows: queryRowsOf(rows) }),
           GscQueriesAnswerSchema,
+        ),
+      ),
+
+    countries: (query) =>
+      guard(() =>
+        runQuery<GscCountriesAnswer>(
+          'countries',
+          query,
+          ({ property, range, rows }) => ({ status: 'ok', property, range, countries: countryRowsOf(rows) }),
+          GscCountriesAnswerSchema,
         ),
       ),
 

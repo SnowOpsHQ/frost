@@ -7,6 +7,7 @@ import {
   type GoogleSearchAnalyticsResponse,
   type GoogleSitesResponse,
   type GscDateRange,
+  type GscDevice,
 } from '@app/specs/gsc.schema';
 import { parseJson, send, type FetchLike } from './http';
 
@@ -27,31 +28,51 @@ import { parseJson, send, type FetchLike } from './http';
 export type GscApiFailure = 'auth' | 'quota' | 'forbidden' | 'network' | 'invalid';
 export type GscApiResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly failure: GscApiFailure };
 
+/** The dimensions frost asks for: per day, per search query, or per country. */
+export type SearchAnalyticsDimension = 'date' | 'query' | 'country';
+
+/** One `equals` filter (Google's documented members only). */
+export interface SearchAnalyticsFilter {
+  readonly dimension: 'page' | 'country' | 'device';
+  readonly operator: 'equals';
+  readonly expression: string;
+}
+
 /** A `searchAnalytics/query` request body (Google's documented members only). */
 export interface SearchAnalyticsBody {
   readonly startDate: string;
   readonly endDate: string;
-  readonly dimensions: readonly ['date'] | readonly ['query'];
-  readonly dimensionFilterGroups?: readonly [
-    { readonly groupType: 'and'; readonly filters: readonly [{ readonly dimension: 'page'; readonly operator: 'equals'; readonly expression: string }] },
-  ];
+  readonly dimensions: readonly [SearchAnalyticsDimension];
+  readonly dimensionFilterGroups?: readonly [{ readonly groupType: 'and'; readonly filters: readonly SearchAnalyticsFilter[] }];
   readonly rowLimit: number;
   readonly type: 'web';
   readonly dataState: 'final';
 }
 
 /**
- * The body for one range: per day (`date`) or per search query (`query`), for one page (`pageUrl`,
- * already without its fragment: `page equals`) or the whole property (`null`: no filter).
+ * The body for one range (a preset's or a custom one, sent as given): per day (`date`), per search
+ * query (`query`) or per country (`country`), for one page (`pageUrl`, already without its fragment:
+ * `page equals`) or the whole property (`null`: no page filter), optionally only one `country`
+ * (`country equals`, Google's lowercase alpha-3) and one `device` (`device equals`). The filters go,
+ * in that order, in one `and` group; without any there is no group.
  */
-export function searchAnalyticsBody(options: { range: GscDateRange; dimension: 'date' | 'query'; pageUrl: string | null; rowLimit: number }): SearchAnalyticsBody {
+export function searchAnalyticsBody(options: {
+  range: GscDateRange;
+  dimension: SearchAnalyticsDimension;
+  pageUrl: string | null;
+  country?: string | null | undefined;
+  device?: GscDevice | null | undefined;
+  rowLimit: number;
+}): SearchAnalyticsBody {
+  const filters: SearchAnalyticsFilter[] = [];
+  if (options.pageUrl !== null) filters.push({ dimension: 'page', operator: 'equals', expression: options.pageUrl });
+  if (options.country) filters.push({ dimension: 'country', operator: 'equals', expression: options.country });
+  if (options.device) filters.push({ dimension: 'device', operator: 'equals', expression: options.device });
   return {
     startDate: options.range.start,
     endDate: options.range.end,
-    dimensions: options.dimension === 'date' ? ['date'] : ['query'],
-    ...(options.pageUrl === null
-      ? {}
-      : { dimensionFilterGroups: [{ groupType: 'and', filters: [{ dimension: 'page', operator: 'equals', expression: options.pageUrl }] }] as const }),
+    dimensions: [options.dimension],
+    ...(filters.length === 0 ? {} : { dimensionFilterGroups: [{ groupType: 'and', filters }] as const }),
     rowLimit: options.rowLimit,
     type: 'web',
     dataState: 'final',

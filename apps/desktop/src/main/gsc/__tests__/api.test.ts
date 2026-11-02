@@ -1,6 +1,6 @@
-// Spec: specs/gsc.spec.ts (GSC_LIMITS, GSC_ENDPOINTS), specs/gsc.schema.ts (GoogleSitesResponseSchema,
+// Spec: specs/gsc.spec.ts (GSC_LIMITS, GSC_ENDPOINTS, gscRetentionStart, GSC_DEVICES), specs/gsc.schema.ts (GoogleSitesResponseSchema,
 // GoogleSearchAnalyticsResponseSchema, GoogleApiErrorSchema, GOOGLE_QUOTA_REASONS)
-// Acceptance: specs/gsc.feature.md (Google API) · plan Global Constraint "Outbound calls"
+// Acceptance: specs/gsc.feature.md (Google API; Ranges and filters) · plan Global Constraint "Outbound calls"
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { GSC_ENDPOINTS, GSC_LIMITS } from '@app/specs/gsc.schema';
 import { createGscApi, searchAnalyticsBody, siteQueryUrl, type GscApiFailure } from '../api';
@@ -69,6 +69,49 @@ describe('Search Console API client', () => {
       type: 'web',
       dataState: 'final',
     });
+  });
+
+  test('body-custom-range', () => {
+    // A custom range (here "Last 16 months" on 2026-10-28) is sent as given, whatever the dimension.
+    const range = { start: '2025-06-28', end: '2026-10-26' };
+    expect(searchAnalyticsBody({ range, dimension: 'date', pageUrl: null, rowLimit: GSC_LIMITS.maxDateRows })).toEqual({
+      startDate: '2025-06-28',
+      endDate: '2026-10-26',
+      dimensions: ['date'],
+      rowLimit: GSC_LIMITS.maxDateRows,
+      type: 'web',
+      dataState: 'final',
+    });
+    expect(searchAnalyticsBody({ range, dimension: 'country', pageUrl: null, rowLimit: GSC_LIMITS.maxCountries })).toEqual({
+      startDate: '2025-06-28',
+      endDate: '2026-10-26',
+      dimensions: ['country'],
+      rowLimit: GSC_LIMITS.maxCountries,
+      type: 'web',
+      dataState: 'final',
+    });
+  });
+
+  test('body-filters', () => {
+    const page = { dimension: 'page', operator: 'equals', expression: 'https://www.example.com/a?b=1' };
+    const country = { dimension: 'country', operator: 'equals', expression: 'gbr' };
+    const device = { dimension: 'device', operator: 'equals', expression: 'MOBILE' };
+    // Page scope: the page filter, `country equals` and `device equals`, in one `and` group.
+    expect(searchAnalyticsBody({ range: RANGE, dimension: 'date', pageUrl: 'https://www.example.com/a?b=1', country: 'gbr', device: 'MOBILE', rowLimit: 28 })).toEqual({
+      startDate: RANGE.start,
+      endDate: RANGE.end,
+      dimensions: ['date'],
+      dimensionFilterGroups: [{ groupType: 'and', filters: [page, country, device] }],
+      rowLimit: 28,
+      type: 'web',
+      dataState: 'final',
+    });
+    // Property scope: no page filter; the others still apply, alone or together.
+    expect(searchAnalyticsBody({ range: RANGE, dimension: 'query', pageUrl: null, country: 'gbr', device: 'MOBILE', rowLimit: 25 }).dimensionFilterGroups).toEqual([{ groupType: 'and', filters: [country, device] }]);
+    expect(searchAnalyticsBody({ range: RANGE, dimension: 'query', pageUrl: null, device: 'DESKTOP', rowLimit: 25 }).dimensionFilterGroups).toEqual([{ groupType: 'and', filters: [{ ...device, expression: 'DESKTOP' }] }]);
+    expect(searchAnalyticsBody({ range: RANGE, dimension: 'date', pageUrl: 'https://www.example.com/a?b=1', country: 'usa', rowLimit: 28 }).dimensionFilterGroups).toEqual([{ groupType: 'and', filters: [page, { ...country, expression: 'usa' }] }]);
+    // No filter at all: no group.
+    expect(searchAnalyticsBody({ range: RANGE, dimension: 'date', pageUrl: null, country: null, device: null, rowLimit: 28 })).not.toHaveProperty('dimensionFilterGroups');
   });
 
   test('api-maps-failures', async () => {

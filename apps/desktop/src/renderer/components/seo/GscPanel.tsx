@@ -18,8 +18,8 @@ import '../../gsc-panel.css';
 // The Search Console panel (Phase 4 Task 10; spec `gsc-panel.spec.ts`; acceptance `gsc-panel.feature.md`):
 // the active tab's page (or its whole property) over 7, 28 or 90 days — totals, a frost-drawn line
 // chart of one metric, and the top queries. It reads only while it is shown (it is mounted only while
-// the sidebar is open on it), and only once main says Search Console is configured, included in the
-// plan and connected. Sign-in and Connect happen in Settings (they need a click there). The chart is
+// the sidebar is open on it), and only once main says Search Console is configured and connected (it is
+// not gated: no frost account or plan). Connect happens in Settings (it needs a click there). The chart is
 // SVG attributes only (no `style=`: strict CSP); queries and the property are inert `<bdi>` text.
 
 // The command palette's Search Console actions (`gsc-palette.ts`), once per module instance.

@@ -2,7 +2,7 @@
  * The Search Console performance panel (Phase 4 Task 10; acceptance `gsc-panel.feature.md`). Plain
  * values with no Zod, so the chrome renderer can use them (its strict Trusted Types CSP blocks Zod's
  * eval probe). The data comes from the read API of `gsc.spec.ts` / `gsc.schema.ts` (`gsc.performance`,
- * `gsc.topQueries`), gated on `search-console` (a `pro` feature) in main.
+ * `gsc.topQueries`). Search Console is not gated (`UNGATED_FEATURES`): no frost account or plan needed.
  *
  * Clean-room: frost's own names, words and chart.
  */

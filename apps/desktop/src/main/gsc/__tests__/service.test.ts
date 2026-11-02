@@ -1,20 +1,27 @@
-// Spec: specs/gsc.spec.ts (gscDateRange, GSC_CACHE_TTL_MS, GSC_LIMITS, GSC_UNAVAILABLE_REASONS), specs/gsc.schema.ts
-// (GscStatusSchema, GscPerformanceAnswerSchema, GscQueriesAnswerSchema, GscPropertiesAnswerSchema, GscPropertyForAnswerSchema)
+// Spec: specs/gsc.spec.ts (gscDateRange, gscRetentionStart, gscCustomRange, GSC_MAX_RANGE_DAYS, GSC_CACHE_TTL_MS, GSC_LIMITS,
+// GSC_UNAVAILABLE_REASONS), specs/gsc.schema.ts (GscStatusSchema, GscPerformanceAnswerSchema, GscQueriesAnswerSchema,
+// GscCountriesAnswerSchema, GscPropertiesAnswerSchema, GscPropertyForAnswerSchema)
 // specs/entitlements-snapshot.spec.ts (UNGATED_FEATURES: Search Console is not gated, 2026-10-29)
-// Acceptance: specs/gsc.feature.md (Service) · plan "Interfaces for other phases" (the read API never throws)
+// Acceptance: specs/gsc.feature.md (Service; Ranges and filters) · plan "Interfaces for other phases" (the read API never throws)
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   GSC_CACHE_TTL_MS,
   GSC_LIMITS,
+  GSC_MAX_RANGE_DAYS,
   GSC_RATE_LIMIT,
+  GscCountriesAnswerSchema,
   GscPerformanceAnswerSchema,
   GscQueriesAnswerSchema,
   GSC_PROFILE_OWNER,
   GscStatusSchema,
+  gscCustomRange,
   gscDateRange,
+  gscRangeDays,
+  gscRetentionStart,
   type GscPerformanceQuery,
 } from '@app/specs/gsc.schema';
-import { fakeDateRows } from '../../../../e2e/fake-google';
+import { gscAdapter, type GscServiceLike } from '../../agent/ports/gsc-adapter';
+import { fakeDateRows, type FakeRow } from '../../../../e2e/fake-google';
 import { searchAnalyticsBody } from '../api';
 import { GSC_SECRET } from '../oauth';
 import { UNGATED_FEATURES } from '@app/specs/entitlements-snapshot.spec';
@@ -82,6 +89,14 @@ async function connected(overrides: Partial<GscServiceDeps> = {}): Promise<GscMa
 }
 
 const range28 = () => gscDateRange(28, h.clock.now);
+const DAY_MS = 86_400_000;
+const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+/** One fake row per day of the range (Google's answer for a range with data every day). */
+const everyDay = (start: string, end: string): FakeRow[] => {
+  const rows: FakeRow[] = [];
+  for (let at = Date.parse(`${start}T00:00:00Z`); at <= Date.parse(`${end}T00:00:00Z`); at += DAY_MS) rows.push({ keys: [isoDay(at)], clicks: 1, impressions: 10, ctr: 0.1, position: 5 });
+  return rows;
+};
 
 describe('Search Console service', () => {
   test('not-entitled-refused-before-network', async () => {
@@ -541,6 +556,153 @@ describe('Search Console service', () => {
     const more = await Promise.all(Array.from({ length: GSC_RATE_LIMIT.perSecond + 2 }, (_, i) => service.performance({ ...QUERY, url: `${SITE}more-${i}` })));
     expect(more.filter((a) => a.status === 'ok')).toHaveLength(GSC_RATE_LIMIT.perSecond);
     expect(h.google.queries).toHaveLength(GSC_RATE_LIMIT.burst - 1 + GSC_RATE_LIMIT.perSecond);
+  });
+
+  test('custom-range-validated', async () => {
+    const service = await connected();
+    // On 2026-10-28 (UTC): the lag day is 2026-10-26, and Search Console holds data from 2025-06-28.
+    expect(gscRetentionStart(h.clock.now)).toBe('2025-06-28');
+    await service.properties();
+    const before = h.fetched.length;
+    const refused = [
+      { start: '2026-10-01', end: '2026-10-29' }, // the end is in the future
+      { start: '2026-10-01', end: '2027-01-01' },
+      { start: '2025-06-27', end: '2026-10-26' }, // before `gscRetentionStart`
+      { start: '2024-01-01', end: '2025-06-30' },
+      { start: '2025-01-01', end: '2026-10-26' }, // more than `GSC_MAX_RANGE_DAYS` days
+      { start: '2026-10-20', end: '2026-10-10' }, // start after end
+      { start: '2026-10-27', end: '2026-10-28' }, // start after the clamped end (the lag day)
+      { start: '2026-02-30', end: '2026-03-02' }, // not a calendar date
+      { start: '2026-10-01', end: '20261026' },
+    ];
+    for (const range of refused) {
+      for (const read of [service.performance, service.topQueries, service.countries]) {
+        expect(await read({ url: PAGE, scope: 'page', range }), JSON.stringify(range)).toEqual({ status: 'unavailable', reason: 'invalid' });
+      }
+    }
+    expect(gscRangeDays({ start: '2025-01-01', end: '2026-10-26' })).toBeGreaterThan(GSC_MAX_RANGE_DAYS);
+    // Exactly one of `days` and `range`.
+    expect(await service.performance({ url: PAGE, scope: 'page', days: 28, range: range28() } as never)).toEqual({ status: 'unavailable', reason: 'invalid' });
+    expect(await service.performance({ url: PAGE, scope: 'page' } as never)).toEqual({ status: 'unavailable', reason: 'invalid' });
+    expect(h.fetched).toHaveLength(before);
+    expect(h.google.queries).toEqual([]);
+    // An end on today or yesterday (partial days) is clamped to the lag day; the answer says so.
+    const clamped = await service.performance({ url: PAGE, scope: 'page', range: { start: '2026-10-01', end: '2026-10-28' } });
+    expect(clamped).toMatchObject({ status: 'ok', range: { start: '2026-10-01', end: '2026-10-26' } });
+    expect(h.google.queries[0]).toEqual({ siteUrl: SITE, body: searchAnalyticsBody({ range: { start: '2026-10-01', end: '2026-10-26' }, dimension: 'date', pageUrl: PAGE, rowLimit: 26 }) });
+    expect(gscCustomRange('2026-10-01', '2026-10-27', h.clock.now)).toEqual({ start: '2026-10-01', end: '2026-10-26' });
+    // The boundaries themselves are accepted: one day, and the retention start.
+    expect(await service.performance({ url: PAGE, scope: 'page', range: { start: '2026-10-26', end: '2026-10-26' } })).toMatchObject({ status: 'ok', range: { start: '2026-10-26', end: '2026-10-26' } });
+    expect(await service.topQueries({ url: PAGE, scope: 'property', range: { start: '2025-06-28', end: '2026-10-26' } })).toMatchObject({ status: 'ok', range: { start: '2025-06-28', end: '2026-10-26' } });
+  });
+
+  test('range-16m-preset-valid', async () => {
+    const service = await connected();
+    h.google.dateRows = everyDay;
+    let longest = 0;
+    // Every day of 2027 and 2028 (2028 has a 29 February, inside many of the windows).
+    for (let now = Date.UTC(2027, 0, 1, 15); now < Date.UTC(2029, 0, 1); now += DAY_MS) {
+      h.clock.now = now;
+      const lagDay = gscDateRange(1, now).end;
+      const range = { start: gscRetentionStart(now), end: lagDay };
+      expect(gscCustomRange(range.start, range.end, now), isoDay(now)).toEqual(range);
+      const days = gscRangeDays(range);
+      longest = Math.max(longest, days);
+      expect(days, isoDay(now)).toBeLessThanOrEqual(GSC_LIMITS.maxDateRows);
+      const answer = await service.performance({ url: PAGE, scope: 'page', range });
+      if (answer.status !== 'ok') throw new Error(`${isoDay(now)}: ${answer.reason}`);
+      expect(answer.range).toEqual(range);
+      // Every day's row is kept, none cut by `maxDateRows`.
+      expect(answer.rows, isoDay(now)).toHaveLength(days);
+      expect(answer.rows[0]?.date).toBe(range.start);
+      expect(answer.rows.at(-1)?.date).toBe(lagDay);
+    }
+    expect(longest).toBeGreaterThan(480);
+    expect(longest).toBeLessThanOrEqual(GSC_MAX_RANGE_DAYS);
+    expect(GSC_LIMITS.maxDateRows).toBe(GSC_MAX_RANGE_DAYS);
+  });
+
+  test('filters-in-cache-key', async () => {
+    const service = await connected();
+    const reads: GscPerformanceQuery[] = [
+      QUERY,
+      { ...QUERY, country: 'gbr' },
+      { ...QUERY, country: 'usa' },
+      { ...QUERY, device: 'MOBILE' },
+      { ...QUERY, country: 'gbr', device: 'MOBILE' },
+      { url: PAGE, scope: 'page', range: { start: '2026-08-01', end: '2026-08-31' } },
+      { url: PAGE, scope: 'page', range: { start: '2026-08-01', end: '2026-08-31' }, device: 'TABLET' },
+    ];
+    for (const [i, read] of reads.entries()) {
+      expect(await service.performance(read), JSON.stringify(read)).toMatchObject({ status: 'ok' });
+      expect(h.google.queries, JSON.stringify(read)).toHaveLength(i + 1);
+    }
+    // Each filter went to Google in the body.
+    expect(h.google.queries[4]!.body).toEqual(searchAnalyticsBody({ range: range28(), dimension: 'date', pageUrl: PAGE, country: 'gbr', device: 'MOBILE', rowLimit: 28 }));
+    expect(h.google.queries[6]!.body).toEqual(searchAnalyticsBody({ range: { start: '2026-08-01', end: '2026-08-31' }, dimension: 'date', pageUrl: PAGE, device: 'TABLET', rowLimit: 31 }));
+    // The same ones again: answered from the cache, nothing sent.
+    for (const read of reads) await service.performance(read);
+    expect(h.google.queries).toHaveLength(reads.length);
+    // The same filters at once: one read.
+    const [a, b] = await Promise.all([service.topQueries({ ...QUERY, device: 'DESKTOP' }), service.topQueries({ ...QUERY, device: 'DESKTOP' })]);
+    expect(b).toEqual(a);
+    expect(h.google.queries).toHaveLength(reads.length + 1);
+    await service.topQueries({ ...QUERY, device: 'TABLET' });
+    expect(h.google.queries).toHaveLength(reads.length + 2);
+  });
+
+  test('countries-read', async () => {
+    const service = await connected();
+    const answer = await service.countries(QUERY);
+    expect(GscCountriesAnswerSchema.parse(answer)).toEqual(answer);
+    expect(answer).toEqual({
+      status: 'ok',
+      property: { siteUrl: SITE, kind: 'url-prefix', permissionLevel: 'siteOwner' },
+      range: range28(),
+      countries: [
+        { country: 'usa', clicks: 400, impressions: 4000 },
+        { country: 'gbr', clicks: 300, impressions: 3000 },
+        { country: 'deu', clicks: 200, impressions: 2000 },
+        { country: 'ind', clicks: 100, impressions: 1000 },
+      ],
+    });
+    expect(h.google.queries[0]).toEqual({ siteUrl: SITE, body: searchAnalyticsBody({ range: range28(), dimension: 'country', pageUrl: PAGE, rowLimit: GSC_LIMITS.maxCountries }) });
+    // The device filter applies; a country filter does not (the list would be only itself).
+    expect(await service.countries({ ...QUERY, scope: 'property', country: 'gbr', device: 'MOBILE' })).toMatchObject({ status: 'ok' });
+    expect(h.google.queries[1]).toEqual({ siteUrl: SITE, body: searchAnalyticsBody({ range: range28(), dimension: 'country', pageUrl: null, device: 'MOBILE', rowLimit: GSC_LIMITS.maxCountries }) });
+    expect(await service.countries({ ...QUERY, scope: 'property', country: 'usa', device: 'MOBILE' })).toMatchObject({ status: 'ok' });
+    expect(h.google.queries).toHaveLength(2);
+    // Google's order, each country once, malformed codes dropped, capped at `maxCountries`.
+    const codes = Array.from({ length: GSC_LIMITS.maxCountries + 40 }, (_, i) => String.fromCharCode(97 + Math.floor(i / 676), 97 + (Math.floor(i / 26) % 26), 97 + (i % 26)));
+    h.google.countryRows = () => [
+      { keys: ['USA'], clicks: 9_999, impressions: 9_999, ctr: 1, position: 1 },
+      { keys: [], clicks: 9_998, impressions: 9_998, ctr: 1, position: 1 },
+      ...codes.map((code, i) => ({ keys: [code], clicks: 5_000 - i, impressions: 50_000, ctr: 0.1, position: 2 })),
+      { keys: ['aaa'], clicks: 1, impressions: 1, ctr: 1, position: 1 },
+    ];
+    const capped = await service.countries({ ...QUERY, days: 90 });
+    if (capped.status !== 'ok') throw new Error('not ok');
+    expect(capped.countries).toHaveLength(GSC_LIMITS.maxCountries);
+    expect(capped.countries.map((c) => c.country)).toEqual(codes.slice(0, GSC_LIMITS.maxCountries));
+    expect(capped.countries[0]).toEqual({ country: 'aaa', clicks: 5_000, impressions: 50_000 });
+    // A custom range, and the reasons as for the other reads.
+    expect(await service.countries({ url: PAGE, scope: 'page', range: { start: '2026-01-01', end: '2026-06-30' } })).toMatchObject({ status: 'ok', range: { start: '2026-01-01', end: '2026-06-30' } });
+    expect(await service.countries({ ...QUERY, url: 'https://other.example.com/' })).toEqual({ status: 'unavailable', reason: 'no-property' });
+    h.google.mode = 'quota';
+    expect(await service.countries({ ...QUERY, days: 7 })).toEqual({ status: 'unavailable', reason: 'quota' });
+    expect(await (await serviceWith({ config: null })).countries(QUERY)).toEqual({ status: 'unavailable', reason: 'unconfigured' });
+  });
+
+  test('days-shape-still-works', async () => {
+    const service = await connected();
+    // Phase 5's agent adapter sends `{ url, scope, days }`, as before.
+    expect(await service.performance({ url: PAGE, scope: 'page', days: 28 })).toMatchObject({ status: 'ok', range: range28() });
+    expect(h.google.queries[0]).toEqual({ siteUrl: SITE, body: searchAnalyticsBody({ range: range28(), dimension: 'date', pageUrl: PAGE, rowLimit: 28 }) });
+    expect(h.google.queries[0]!.body).not.toHaveProperty('dimensionFilterGroups.0.filters.1');
+    // Type-level: main's service is still what the agent adapter takes (this file fails to compile otherwise).
+    const like: GscServiceLike = service;
+    const port = gscAdapter(like);
+    expect(await port!.performance({ url: PAGE, days: 30 })).toMatchObject({ status: 'ok', data: { url: PAGE, days: 28, clicks: 60, impressions: 600 } });
   });
 
   test('keychain-reports-this-run-only', async () => {

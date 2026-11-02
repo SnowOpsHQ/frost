@@ -3,6 +3,7 @@ import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import {
   GscActionResultSchema,
   GscConnectResultSchema,
+  GscCountriesAnswerSchema,
   GscPerformanceAnswerSchema,
   GscPerformanceQuerySchema,
   GscPropertiesAnswerSchema,
@@ -18,8 +19,8 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 // Search Console ↔ main (Phase 4 Task 8; spec `gsc.schema.ts`; acceptance `gsc.feature.md`, Router).
 // Every procedure starts `publicProcedure.use(enforceSender)`. Every output is validated with a strict
 // schema, so a service answer that carries anything else (a token, a code) is a masked internal error,
-// never forwarded. The reads are gated on `search-console` by the service itself, which answers
-// `{ status: 'unavailable', reason: 'not-entitled' }` (the panel shows why) rather than `FORBIDDEN`.
+// never forwarded. Search Console is not gated (`UNGATED_FEATURES`); a service that answers
+// `{ status: 'unavailable', reason: 'not-entitled' }` (wire compatibility) is forwarded as is, never `FORBIDDEN`.
 
 /** Hands the procedure main's `GscIpcService` (after `enforceSender`; fails closed without it). */
 const requireGsc = middleware(({ ctx, next }) => {
@@ -50,8 +51,10 @@ async function watchGsc(gsc: GscIpcService, sinceVersion: number): Promise<GscSt
  * - `connect`: starts connecting a Google account for the sender's window (`GscConnectResult`;
  *   `needs-gesture` without a live user gesture there).
  * - `cancelConnect`, `disconnect`: a boolean (see `GscIpcService`).
- * - `properties`: the verified properties; `performance` / `topQueries` (`GscPerformanceQuerySchema`):
- *   a page's or its property's performance and top queries. Each `ok` or `unavailable` with a reason.
+ * - `properties`: the verified properties; `performance` / `topQueries` / `countries`
+ *   (`GscPerformanceQuerySchema`: exactly one of `days` and `range`, optional `country` / `device`):
+ *   a page's or its property's performance, top queries and countries with data. Each `ok` or
+ *   `unavailable` with a reason.
  */
 export const gscRouter = router({
   status: publicProcedure
@@ -102,4 +105,10 @@ export const gscRouter = router({
     .input(GscPerformanceQuerySchema)
     .output(GscQueriesAnswerSchema)
     .query(({ ctx, input }) => ctx.gsc.topQueries(input)),
+  countries: publicProcedure
+    .use(enforceSender)
+    .use(requireGsc)
+    .input(GscPerformanceQuerySchema)
+    .output(GscCountriesAnswerSchema)
+    .query(({ ctx, input }) => ctx.gsc.countries(input)),
 });

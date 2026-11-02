@@ -62,6 +62,8 @@ export interface FakeGoogle {
   dateRows: (startDate: string, endDate: string) => FakeRow[];
   /** The rows a `['query']` query answers (default `fakeQueryRows(30)`). */
   queryRows: () => FakeRow[];
+  /** The rows a `['country']` query answers (default `fakeCountryRows()`). */
+  countryRows: () => FakeRow[];
   /** Every consent request's query, token request's form and revoke request's token, in order. */
   readonly authRequests: URLSearchParams[];
   readonly tokenRequests: URLSearchParams[];
@@ -111,6 +113,11 @@ export function fakeDateRows(startDate: string): FakeRow[] {
     ctr: 0.1,
     position: 2 + i,
   }));
+}
+
+/** The rows the fake answers for a country query: a few countries, most clicks first (Google's lowercase alpha-3). */
+export function fakeCountryRows(): FakeRow[] {
+  return ['usa', 'gbr', 'deu', 'ind'].map((country, i) => ({ keys: [country], clicks: 400 - 100 * i, impressions: 4000 - 1000 * i, ctr: 0.1, position: 3 + i }));
 }
 
 /** The rows the fake answers for a query query: `count` queries, most clicks first. */
@@ -250,6 +257,7 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
         const dimensions = body.dimensions as unknown;
         if (Array.isArray(dimensions) && dimensions[0] === 'date') return json(res, 200, { rows: google.dateRows(String(body.startDate), String(body.endDate)), responseAggregationType: 'byProperty' });
         if (Array.isArray(dimensions) && dimensions[0] === 'query') return json(res, 200, { rows: google.queryRows(), responseAggregationType: 'byProperty' });
+        if (Array.isArray(dimensions) && dimensions[0] === 'country') return json(res, 200, { rows: google.countryRows(), responseAggregationType: 'byProperty' });
         return json(res, 200, {});
       }
     }
@@ -285,6 +293,7 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
     sites: [],
     dateRows: (startDate) => fakeDateRows(startDate),
     queryRows: () => fakeQueryRows(30),
+    countryRows: () => fakeCountryRows(),
     authRequests: [],
     tokenRequests: [],
     revoked: [],

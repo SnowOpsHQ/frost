@@ -113,8 +113,10 @@ export const GSC_LIMITS = {
   maxQueryChars: 512,
   /** `topQueries` answers at most this many queries (most clicks first, as Google orders them). */
   maxTopQueries: 25,
-  /** The most date rows an answer holds (the longest range). */
-  maxDateRows: 90,
+  /** The most date rows an answer holds: one per day of the longest range (`GSC_MAX_RANGE_DAYS`). */
+  maxDateRows: 490,
+  /** `countries` answers at most this many countries (most clicks first, as Google orders them). */
+  maxCountries: 250,
   /** At most this many `gsc.watch` calls wait at once; one more answers the oldest early. */
   maxPendingWatches: 4,
   /** Answers kept in the cache at most (the oldest go first). */
@@ -230,7 +232,7 @@ export interface GscProperty {
 export const GSC_QUERY_SCOPES = ['page', 'property'] as const;
 export type GscQueryScope = (typeof GSC_QUERY_SCOPES)[number];
 
-/** The ranges offered, in days (each ends `GSC_DATA_LAG_DAYS` before today, UTC). */
+/** The preset ranges, in days (each ends `GSC_DATA_LAG_DAYS` before today, UTC). A query names one of these or a custom `range`. */
 export const GSC_RANGE_DAYS = [7, 28, 90] as const;
 export type GscRangeDays = (typeof GSC_RANGE_DAYS)[number];
 
@@ -260,6 +262,119 @@ export function gscDateRange(days: number, nowMs: number): GscDateRange {
   const end = today - GSC_DATA_LAG_DAYS * DAY_MS;
   return { start: isoDay(end - (days - 1) * DAY_MS), end: isoDay(end) };
 }
+
+// ---- Custom ranges ------------------------------------------------------------------------------
+
+/**
+ * How far back Search Console keeps data, in calendar months: a custom range starts no earlier than
+ * `gscRetentionStart(nowMs)`.
+ */
+export const GSC_RETENTION_MONTHS = 16;
+
+/**
+ * The longest custom range, in days (both ends inclusive). Any 16 calendar months span at most 489
+ * days (with a leap February), so the "Last 16 months" range (`gscRetentionStart` to the lag day)
+ * always fits, and `GSC_LIMITS.maxDateRows` (one row per day) holds it untruncated.
+ */
+export const GSC_MAX_RANGE_DAYS = 490;
+
+/** `iso` (`YYYY-MM-DD`) as a UTC day's epoch ms, or `null` if it is not a real calendar date. */
+function dayMs(iso: string): number | null {
+  if (!GSC_DATE_PATTERN.test(iso)) return null;
+  const ms = Date.parse(`${iso}T00:00:00Z`);
+  return Number.isFinite(ms) && isoDay(ms) === iso ? ms : null;
+}
+
+/** Whether `iso` is a real calendar date in `YYYY-MM-DD` form (no `2026-02-30`). */
+export const isGscDate = (iso: string): boolean => dayMs(iso) !== null;
+
+/** The days `range` spans, both ends inclusive (`0` if either end is not a real date or start is after end). */
+export function gscRangeDays(range: GscDateRange): number {
+  const start = dayMs(range.start);
+  const end = dayMs(range.end);
+  return start === null || end === null || start > end ? 0 : Math.round((end - start) / DAY_MS) + 1;
+}
+
+/**
+ * The first day Search Console still holds: `nowMs`'s UTC date `GSC_RETENTION_MONTHS` calendar
+ * months earlier, the same day of the month, or that month's last day when it is shorter (today the
+ * 31st, that month has 30 days: the 30th).
+ */
+export function gscRetentionStart(nowMs: number): string {
+  const now = new Date(Math.floor(nowMs / DAY_MS) * DAY_MS);
+  const months = now.getUTCFullYear() * 12 + now.getUTCMonth() - GSC_RETENTION_MONTHS;
+  const year = Math.floor(months / 12);
+  const month = months - year * 12;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return isoDay(Date.UTC(year, month, Math.min(now.getUTCDate(), lastDay)));
+}
+
+/**
+ * A custom range as frost reads it, or `null` when it is refused (the read answers `invalid` and
+ * sends nothing):
+ * - both ends real `YYYY-MM-DD` dates, inclusive;
+ * - an end after today (UTC) is refused; an end after the lag day (today or the last
+ *   `GSC_DATA_LAG_DAYS` days: partial data) is clamped to the lag day, `gscDateRange(1, nowMs).end`;
+ * - the start no earlier than `gscRetentionStart(nowMs)` and no later than the (clamped) end;
+ * - at most `GSC_MAX_RANGE_DAYS` days.
+ */
+export function gscCustomRange(start: string, end: string, nowMs: number): GscDateRange | null {
+  const startMs = dayMs(start);
+  const endMs = dayMs(end);
+  if (startMs === null || endMs === null) return null;
+  const today = Math.floor(nowMs / DAY_MS) * DAY_MS;
+  if (endMs > today) return null;
+  const lagDay = today - GSC_DATA_LAG_DAYS * DAY_MS;
+  const range = { start, end: isoDay(Math.min(endMs, lagDay)) };
+  if (start < gscRetentionStart(nowMs)) return null;
+  const days = gscRangeDays(range);
+  return days >= 1 && days <= GSC_MAX_RANGE_DAYS ? range : null;
+}
+
+// ---- Filters ------------------------------------------------------------------------------------
+
+/** The devices a query may be filtered on (Google's `device` dimension values). */
+export const GSC_DEVICES = ['DESKTOP', 'MOBILE', 'TABLET'] as const;
+export type GscDevice = (typeof GSC_DEVICES)[number];
+
+/**
+ * A country filter's value: Google's ISO 3166-1 alpha-3 code, in lowercase as Google answers it
+ * (`usa`, `gbr`). The picker offers only the countries a `countries` read answered.
+ */
+export const GSC_COUNTRY_PATTERN = /^[a-z]{3}$/;
+
+/**
+ * ISO 3166-1 alpha-3 (lowercase, as Google answers) to alpha-2 (uppercase), so the chrome can name a
+ * country with `Intl.DisplayNames` (`type: 'region'`). Every officially assigned code; a code Google
+ * answers that is not here is shown as is.
+ */
+export const GSC_COUNTRY_ALPHA3: Readonly<Record<string, string>> = Object.freeze({
+  abw: 'AW', afg: 'AF', ago: 'AO', aia: 'AI', ala: 'AX', alb: 'AL', and: 'AD', are: 'AE', arg: 'AR', arm: 'AM',
+  asm: 'AS', ata: 'AQ', atf: 'TF', atg: 'AG', aus: 'AU', aut: 'AT', aze: 'AZ', bdi: 'BI', bel: 'BE', ben: 'BJ',
+  bes: 'BQ', bfa: 'BF', bgd: 'BD', bgr: 'BG', bhr: 'BH', bhs: 'BS', bih: 'BA', blm: 'BL', blr: 'BY', blz: 'BZ',
+  bmu: 'BM', bol: 'BO', bra: 'BR', brb: 'BB', brn: 'BN', btn: 'BT', bvt: 'BV', bwa: 'BW', caf: 'CF', can: 'CA',
+  cck: 'CC', che: 'CH', chl: 'CL', chn: 'CN', civ: 'CI', cmr: 'CM', cod: 'CD', cog: 'CG', cok: 'CK', col: 'CO',
+  com: 'KM', cpv: 'CV', cri: 'CR', cub: 'CU', cuw: 'CW', cxr: 'CX', cym: 'KY', cyp: 'CY', cze: 'CZ', deu: 'DE',
+  dji: 'DJ', dma: 'DM', dnk: 'DK', dom: 'DO', dza: 'DZ', ecu: 'EC', egy: 'EG', eri: 'ER', esh: 'EH', esp: 'ES',
+  est: 'EE', eth: 'ET', fin: 'FI', fji: 'FJ', flk: 'FK', fra: 'FR', fro: 'FO', fsm: 'FM', gab: 'GA', gbr: 'GB',
+  geo: 'GE', ggy: 'GG', gha: 'GH', gib: 'GI', gin: 'GN', glp: 'GP', gmb: 'GM', gnb: 'GW', gnq: 'GQ', grc: 'GR',
+  grd: 'GD', grl: 'GL', gtm: 'GT', guf: 'GF', gum: 'GU', guy: 'GY', hkg: 'HK', hmd: 'HM', hnd: 'HN', hrv: 'HR',
+  hti: 'HT', hun: 'HU', idn: 'ID', imn: 'IM', ind: 'IN', iot: 'IO', irl: 'IE', irn: 'IR', irq: 'IQ', isl: 'IS',
+  isr: 'IL', ita: 'IT', jam: 'JM', jey: 'JE', jor: 'JO', jpn: 'JP', kaz: 'KZ', ken: 'KE', kgz: 'KG', khm: 'KH',
+  kir: 'KI', kna: 'KN', kor: 'KR', kwt: 'KW', lao: 'LA', lbn: 'LB', lbr: 'LR', lby: 'LY', lca: 'LC', lie: 'LI',
+  lka: 'LK', lso: 'LS', ltu: 'LT', lux: 'LU', lva: 'LV', mac: 'MO', maf: 'MF', mar: 'MA', mco: 'MC', mda: 'MD',
+  mdg: 'MG', mdv: 'MV', mex: 'MX', mhl: 'MH', mkd: 'MK', mli: 'ML', mlt: 'MT', mmr: 'MM', mne: 'ME', mng: 'MN',
+  mnp: 'MP', moz: 'MZ', mrt: 'MR', msr: 'MS', mtq: 'MQ', mus: 'MU', mwi: 'MW', mys: 'MY', myt: 'YT', nam: 'NA',
+  ncl: 'NC', ner: 'NE', nfk: 'NF', nga: 'NG', nic: 'NI', niu: 'NU', nld: 'NL', nor: 'NO', npl: 'NP', nru: 'NR',
+  nzl: 'NZ', omn: 'OM', pak: 'PK', pan: 'PA', pcn: 'PN', per: 'PE', phl: 'PH', plw: 'PW', png: 'PG', pol: 'PL',
+  pri: 'PR', prk: 'KP', prt: 'PT', pry: 'PY', pse: 'PS', pyf: 'PF', qat: 'QA', reu: 'RE', rou: 'RO', rus: 'RU',
+  rwa: 'RW', sau: 'SA', sdn: 'SD', sen: 'SN', sgp: 'SG', sgs: 'GS', shn: 'SH', sjm: 'SJ', slb: 'SB', sle: 'SL',
+  slv: 'SV', smr: 'SM', som: 'SO', spm: 'PM', srb: 'RS', ssd: 'SS', stp: 'ST', sur: 'SR', svk: 'SK', svn: 'SI',
+  swe: 'SE', swz: 'SZ', sxm: 'SX', syc: 'SC', syr: 'SY', tca: 'TC', tcd: 'TD', tgo: 'TG', tha: 'TH', tjk: 'TJ',
+  tkl: 'TK', tkm: 'TM', tls: 'TL', ton: 'TO', tto: 'TT', tun: 'TN', tur: 'TR', tuv: 'TV', twn: 'TW', tza: 'TZ',
+  uga: 'UG', ukr: 'UA', umi: 'UM', ury: 'UY', usa: 'US', uzb: 'UZ', vat: 'VA', vct: 'VC', ven: 'VE', vgb: 'VG',
+  vir: 'VI', vnm: 'VN', vut: 'VU', wlf: 'WF', wsm: 'WS', yem: 'YE', zaf: 'ZA', zmb: 'ZM', zwe: 'ZW',
+});
 
 /**
  * Why an answer has no data:

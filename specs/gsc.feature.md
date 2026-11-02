@@ -3,8 +3,10 @@
 Spec: `specs/gsc.spec.ts` (Zod-free: `GSC_SCOPE`, `GSC_CONFIG_ENV`, `GSC_ENDPOINTS`, `GSC_ENDPOINT_ENV`,
 `GSC_AUTH_FIXED_PARAMS`, `GSC_LIMITS`, `GSC_CACHE_TTL_MS`, `GSC_RATE_LIMIT`, `GSC_REFRESH_BACKOFF`, `GSC_ERRORS`, `GSC_CONNECT_RESULTS`,
 `GSC_PROPERTY_KINDS`, `GSC_PERMISSION_LEVELS`, `GSC_QUERY_SCOPES`, `GSC_RANGE_DAYS`, `GSC_DATA_LAG_DAYS`,
-`gscDateRange`, `GSC_UNAVAILABLE_REASONS`) and `specs/gsc.schema.ts` (`GscStatusSchema`,
-`GscPropertySchema`, `GscPerformanceQuerySchema`, `GscPerformanceAnswerSchema`, `GscQueriesAnswerSchema`,
+`gscDateRange`, `GSC_RETENTION_MONTHS`, `GSC_MAX_RANGE_DAYS`, `gscRetentionStart`, `gscCustomRange`,
+`GSC_DEVICES`, `GSC_COUNTRY_PATTERN`, `GSC_COUNTRY_ALPHA3`, `GSC_UNAVAILABLE_REASONS`) and
+`specs/gsc.schema.ts` (`GscStatusSchema`, `GscPropertySchema`, `GscPerformanceQuerySchema`,
+`GscPerformanceAnswerSchema`, `GscQueriesAnswerSchema`, `GscCountriesAnswerSchema`,
 `GscPropertiesAnswerSchema`, `GscPropertyForAnswerSchema`, the inputs, Google's answer schemas), with the
 shared loopback and PKCE of `specs/account-state.schema.ts` / `account-api.schema.ts` and the `gsc` blob of
 `specs/secret-store.spec.ts`. Phase 4 Task 8. Review focus: "Search Console asks for read-only access
@@ -85,6 +87,44 @@ line maps to one named test.
   and every token, code, verifier, `state` and the client secret seen in the run (the client secret and
   refresh tokens are kept outside the recent-values cap, so they are scrubbed for the whole run).
 
+## Ranges and filters (Phase 9 Task 1; SL-040)
+- **A query names exactly one range.** `days` (a preset of `GSC_RANGE_DAYS`, as before) or `range`
+  (a custom `{ start, end }`, `YYYY-MM-DD`, both inclusive). Both, or neither, is refused by the
+  strict schema (`invalid` from the service, `BAD_REQUEST` from the router). `{ url, scope, days }`,
+  which Phase 5's agent adapter sends, is unchanged; the adapter's own 1–480-day input still maps to
+  the nearest preset.
+- **A custom range is checked against the clock** (`gscCustomRange`), and a refused one answers
+  `invalid` with nothing sent: an end after today (UTC) is refused; an end on today or within the
+  last `GSC_DATA_LAG_DAYS` days (a partial day) is clamped to the lag day, so the answer's `range`
+  says what was read; the start is no earlier than `gscRetentionStart(now)` (the same UTC day
+  `GSC_RETENTION_MONTHS` (16) calendar months before today, or that month's last day when it is
+  shorter) and no later than the clamped end; at most `GSC_MAX_RANGE_DAYS` (490) days. Any 16
+  calendar months span at most 489 days, so "Last 16 months" (`gscRetentionStart` to the lag day)
+  always fits, and `GSC_LIMITS.maxDateRows` (490, one row per day) holds it untruncated.
+- **Filters.** Optional `country` (Google's ISO 3166-1 alpha-3 code in lowercase, `GSC_COUNTRY_PATTERN`)
+  and `device` (`GSC_DEVICES`: `DESKTOP`, `MOBILE`, `TABLET`). The body's one `and` filter group holds,
+  in order, `page equals` (page scope only), `country equals` and `device equals`; with none of them
+  there is no `dimensionFilterGroups`. Filters and range are part of the cache and merge key.
+- **Countries.** `countries(query)` reads the `country` dimension for the same page or property,
+  range and `device` filter, with `rowLimit` `GSC_LIMITS.maxCountries` (250): Google's order (most
+  clicks first), each country once, malformed codes dropped. A `country` filter is ignored there (the
+  picker would list only itself). `GSC_COUNTRY_ALPHA3` maps each alpha-3 code to its alpha-2 code so
+  the chrome can name it with `Intl.DisplayNames`.
+- Google's dates are Pacific time and frost's UTC (see `GSC_DATA_LAG_DAYS`); the clamp keeps a custom
+  end off partial days on either clock.
+
+### Tests
+- `country-table-round-trips` (`gsc-spec.test.ts`) — every alpha-3 key is lowercase and matches `GSC_COUNTRY_PATTERN`, every alpha-2 value is unique and names a region in `Intl.DisplayNames`, and alpha-2 back to alpha-3 gives the same key.
+- `body-custom-range` (`api.test.ts`) — a custom range's start and end are sent as given, for the date and country dimensions.
+- `body-filters` (`api.test.ts`) — a page filter, `country equals` and `device equals` go in one `and` group; the property scope sends no page filter.
+- `custom-range-validated` (`service.test.ts`) — a future end, a start before `gscRetentionStart`, more than 490 days, or start after end answers `invalid` with nothing sent; a partial-day end is clamped to the lag day.
+- `range-16m-preset-valid` (`service.test.ts`) — `gscRetentionStart(now)` to the lag day is accepted for every day across two years (a leap February included), and every row is kept (at most `maxDateRows`).
+- `filters-in-cache-key` (`service.test.ts`) — different filters (or ranges) are separate reads; the same ones are one.
+- `countries-read` (`service.test.ts`) — `countries` asks for the `country` dimension with at most `maxCountries` rows and answers them in Google's order, capped.
+- `days-shape-still-works` (`service.test.ts`) — `{ url, scope, days }` reads as before, and main's `GscService` is still assignable to the agent adapter's `GscServiceLike`.
+- `gsc-countries-procedure-enforces-sender` (`gsc-router.test.ts`) — `gsc.countries` refuses a foreign sender before the service is reached and answers the strict countries schema.
+- `performance-input-strict` (`gsc-router.test.ts`) — a query with both `days` and `range`, neither, a malformed range, country or device is `BAD_REQUEST`.
+
 ## Startup (`apps/desktop/src/main/__tests__/startup-fallback.test.ts`, faked Electron)
 - `gsc-start-failure-is-unconfigured` — an exception while Search Console is set up answers an `unconfigured`, not connected service, logged with a fixed message only.
 
@@ -92,7 +132,7 @@ line maps to one named test.
 - `gsc-scope-constant-is-read-only` — `GSC_SCOPE` is exactly the `webmasters.readonly` scope, and the fixed consent parameters ask for it alone (S256, offline, consent).
 - `status-schema-has-no-secret-fields` — a status with a token, code, email or any other member is refused; `connected` and `connecting` are never both set; an unconfigured status is never connected.
 - `answers-are-ok-or-unavailable` — each answer schema takes an `ok` answer or `{ status: 'unavailable', reason }` with a known reason, and refuses an extra member, an unknown reason or rows over the caps.
-- `query-schema-is-strict` — the performance query needs an `http(s)` URL, a known scope and 7, 28 or 90 days; extra members are refused.
+- `query-schema-is-strict` — the performance query needs an `http(s)` URL, a known scope and 7, 28 or 90 days (or a custom `range`, "Ranges and filters"); extra members are refused.
 - `property-schema-ties-kind-to-prefix` — `domain` exactly for `sc-domain:` site URLs; a URL-prefix property is an `http(s)` URL.
 - `date-range-ends-two-days-ago-utc` — `gscDateRange(days, now)` ends on today's UTC date minus two days and spans `days` days inclusive (month and year boundaries, any time of day).
 
