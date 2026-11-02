@@ -68,10 +68,11 @@ export const EXECUTE_JS_APPROVAL_NOTE = 'Runs alongside any code you allowed ear
  * What a `run_visibility_probes` approval card says (Task 8, the SERP wiring and its security
  * review): what frost will actually do, plainly. Phase 3's probes fetch the page once per agent it
  * models (its own browser, then search and AI crawlers, each with that crawler's user agent),
- * following redirects, without cookies, and read the site's robots.txt from main's cache. Its run
+ * following redirects, without cookies, ask once for the site's `/llms.txt` (Phase 9, counted in
+ * `PROBE_LIMITS.maxRunRequests`), and read the site's robots.txt from main's cache. Its run
  * can't be stopped once started.
  */
-export const RUN_PROBES_APPROVAL_NOTE = `frost will fetch this page as search and AI crawlers would: up to ${PROBE_LIMITS.maxRequests} requests (${PROBE_AGENT_IDS.length} user agents, its own browser's and each crawler's it models, redirects followed), without cookies; robots.txt may come from cache. The site sees these requests. Stop stops waiting; a run already started finishes.`;
+export const RUN_PROBES_APPROVAL_NOTE = `frost will fetch this page as search and AI crawlers would: up to ${PROBE_LIMITS.maxRunRequests} requests (${PROBE_AGENT_IDS.length} user agents, its own browser's and each crawler's it models, and one request for the site's /llms.txt, redirects followed), without cookies; robots.txt may come from cache. The site sees these requests. Stop stops waiting; a run already started finishes.`;
 
 /**
  * Each allowed model's context window (tokens), for the context meter; `null` where frost has no

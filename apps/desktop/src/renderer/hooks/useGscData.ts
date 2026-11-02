@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 // Type-only from the Zod specs (their schemas must stay out of this bundle: strict Trusted Types).
-import type { GscPerformanceAnswer, GscQueriesAnswer } from '@app/specs/gsc.schema';
+import type { GscCountriesAnswer, GscPerformanceAnswer, GscQueriesAnswer } from '@app/specs/gsc.schema';
 import { GSC_READ_DEBOUNCE_MS } from '@app/specs/gsc-panel.spec';
-import { requestKey, shownAnswers, withoutFragment, type GscAnswers, type GscHeld, type GscRequest } from '../gsc-view';
+import { countriesKey, gscCountriesQuery, gscQuery, pageKey, requestKey, shownAnswers, type GscAnswers, type GscHeld, type GscRequest } from '../gsc-view';
 import { ipc } from '../ipc';
 
-// The Search Console panel's reads (Phase 4 Task 10; acceptance `gsc-panel.feature.md`, Reading):
-// `gsc.performance` and `gsc.topQueries` together, once per request (URL without fragment, scope,
-// range, connection), `GSC_READ_DEBOUNCE_MS` after it last changed, and at once on Retry. Never on a
-// timer. An answer for an earlier request (the URL changed meanwhile) is dropped; while another scope
-// or range of the same page reads, the last data stays (`pending`). A failed call reads as `invalid`
-// (the panel offers Retry).
+// The Search Console panel's reads (Phase 4 Task 10, Phase 9 Task 3; acceptance `gsc-panel.feature.md`,
+// Reading): `gsc.performance` and `gsc.topQueries` together, once per request (URL without fragment,
+// scope, range, filters, connection), `GSC_READ_DEBOUNCE_MS` after it last changed, and at once on
+// Retry. Never on a timer. An answer for an earlier request (the URL changed meanwhile) is dropped;
+// while another scope, range or filter of the same page reads, the last data stays (`pending`). A
+// failed call reads as `invalid` (the panel offers Retry). The country select's list is a separate
+// `gsc.countries` read of the same request without its country (choosing a country does not read it
+// again); the page's last list stays while a new one reads.
 
 const FAILED = { status: 'unavailable', reason: 'invalid' } as const;
 
@@ -21,20 +23,29 @@ export interface GscData {
   readonly pending: boolean;
   /** A request is waiting for its answers. */
   readonly loading: boolean;
+  /** The countries with data for the page (the current read's, or the page's last while it reads); `null`: none. */
+  readonly countries: GscCountriesAnswer | null;
   /** Reads the current request again, at once. */
   readonly retry: () => void;
 }
 
+interface HeldCountries {
+  readonly page: string;
+  readonly answer: GscCountriesAnswer;
+}
+
 export function useGscData(request: GscRequest | null): GscData {
   const key = request === null ? null : requestKey(request);
+  const listKey = request === null ? null : countriesKey(request);
   const [attempt, setAttempt] = useState(0);
   const [held, setHeld] = useState<GscHeld | null>(null);
+  const [countries, setCountries] = useState<HeldCountries | null>(null);
   // The attempt last read: a new attempt (Retry) reads at once, a new key after the debounce.
   const readAttempt = useRef(attempt);
   useEffect(() => {
     if (request === null || key === null) return;
     let live = true;
-    const query = { url: withoutFragment(request.url), scope: request.scope, days: request.days };
+    const query = gscQuery(request);
     const read = () => {
       readAttempt.current = attempt;
       void Promise.all([
@@ -53,7 +64,31 @@ export function useGscData(request: GscRequest | null): GscData {
     };
     // `key` covers every member of `request` the read uses.
   }, [key, attempt]);
+  useEffect(() => {
+    if (request === null || listKey === null) return;
+    let live = true;
+    const page = pageKey(request);
+    const timer = setTimeout(() => {
+      void ipc.gsc.countries
+        .query(gscCountriesQuery(request))
+        .catch((): GscCountriesAnswer => FAILED)
+        .then((answer) => {
+          if (live) setCountries({ page, answer });
+        });
+    }, GSC_READ_DEBOUNCE_MS);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+    // `listKey` covers every member of `request` the countries read uses.
+  }, [listKey, attempt]);
   const shown = shownAnswers(held, request, attempt);
   const current = shown.answers !== null && !shown.pending;
-  return { answers: shown.answers, pending: shown.pending, loading: key !== null && !current, retry: () => setAttempt((n) => n + 1) };
+  return {
+    answers: shown.answers,
+    pending: shown.pending,
+    loading: key !== null && !current,
+    countries: request !== null && countries !== null && countries.page === pageKey(request) ? countries.answer : null,
+    retry: () => setAttempt((n) => n + 1),
+  };
 }

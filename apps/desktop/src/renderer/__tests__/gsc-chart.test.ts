@@ -1,9 +1,9 @@
-// Spec: specs/gsc-panel.spec.ts (GSC_CHART, GSC_LOWER_IS_BETTER, GSC_METRIC_LABELS), specs/gsc.spec.ts (gscDateRange)
+// Spec: specs/gsc-panel.spec.ts (GSC_CHART, GSC_LOWER_IS_BETTER, GSC_METRIC_LABELS), specs/gsc.spec.ts (gscDateRange, GSC_MAX_RANGE_DAYS)
 // Acceptance: specs/gsc-panel.feature.md (Chart)
 import { describe, expect, test } from 'vitest';
 import type { GscPerformanceRow } from '@app/specs/gsc.schema';
 import { GSC_CHART, GSC_RATE_HIGHLIGHT_MIN_IMPRESSIONS } from '@app/specs/gsc-panel.spec';
-import { gscDateRange } from '@app/specs/gsc.spec';
+import { GSC_MAX_RANGE_DAYS, gscDateRange, gscRangeDays } from '@app/specs/gsc.spec';
 import { chartModel, niceTicks, rangeDays } from '../gsc-chart';
 
 const NOW = Date.parse('2026-10-28T15:00:00Z');
@@ -155,6 +155,39 @@ describe('chart scales, ticks and paths', () => {
     expect(model.xTicks.map((t) => t.label)).toEqual(['Sep 29', 'Oct 12', 'Oct 26']);
     expect(model.xTicks[0]!.pos).toBeCloseTo(plotLeft, 5);
     expect(model.xTicks.at(-1)!.pos).toBeCloseTo(plotRight, 5);
+  });
+
+  test('chart-long-range-ticks', () => {
+    // The longest range there is: 490 days (Jun 25, 2025 to Oct 26, 2026), a row every day.
+    const range = { start: '2025-06-24', end: '2026-10-26' };
+    expect(gscRangeDays(range)).toBe(GSC_MAX_RANGE_DAYS);
+    const days = rangeDays(range);
+    expect(days).toHaveLength(GSC_MAX_RANGE_DAYS);
+    expect([days[0], days.at(-1)]).toEqual([range.start, range.end]);
+    const rows = days.map((date, i) => row(date, 1_000 + (i % 50) * 37, 20_000 + i * 11, 1 + (i % 9)));
+    for (const metric of ['clicks', 'impressions', 'ctr', 'position'] as const) {
+      const model = chartModel(rows, metric, range);
+      expect(model.points).toHaveLength(GSC_MAX_RANGE_DAYS);
+      expect(model.segments).toHaveLength(1);
+      for (const point of model.points) {
+        expect(point.x).toBeGreaterThanOrEqual(plotLeft - 1e-9);
+        expect(point.x).toBeLessThanOrEqual(plotRight + 1e-9);
+        expect(point.y!).toBeGreaterThanOrEqual(plotTop - 1e-9);
+        expect(point.y!).toBeLessThanOrEqual(plotBottom + 1e-9);
+      }
+      for (const tick of model.yTicks) {
+        expect(tick.pos).toBeGreaterThanOrEqual(plotTop - 1e-9);
+        expect(tick.pos).toBeLessThanOrEqual(plotBottom + 1e-9);
+      }
+      // First, middle and last stay, labelled by month over 90 days.
+      expect(model.xTicks.map((t) => t.value)).toEqual([0, 244, 489]);
+      expect(model.xTicks.map((t) => t.label)).toEqual(['Jun 2025', 'Feb 2026', 'Oct 2026']);
+      expect(model.xTicks[0]!.pos).toBeCloseTo(plotLeft, 5);
+      expect(model.xTicks.at(-1)!.pos).toBeCloseTo(plotRight, 5);
+    }
+    // 90 days is still labelled by day; 91 by month.
+    expect(chartModel([], 'clicks', gscDateRange(90, NOW)).xTicks.map((t) => t.label)).toEqual(['Jul 29', 'Sep 11', 'Oct 26']);
+    expect(chartModel([], 'clicks', gscDateRange(91, NOW)).xTicks.map((t) => t.label)).toEqual(['Jul 2026', 'Sep 2026', 'Oct 2026']);
   });
 
   test('chart-summary', () => {

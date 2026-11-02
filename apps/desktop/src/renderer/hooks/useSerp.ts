@@ -4,7 +4,7 @@ import type { SerpTabState } from '@app/specs/serp-service.schema';
 import type { ProbesState } from '@app/specs/visibility-probes.schema';
 import { ipc } from '../ipc';
 import { rememberIntent, rememberSerp } from '../serp-view';
-import { rememberProbes } from '../visibility-view';
+import { forgetProbes, rememberProbes } from '../visibility-view';
 
 // The SERP and Visibility panels' state (acceptance `serp-panels.feature.md`): `useSerp` long-polls
 // `serp.watch` and `useProbes` `serp.watchProbes` for the active tab while a panel is mounted, as
@@ -85,9 +85,21 @@ export function useSerp(tabId: number | undefined): SerpTabState | null {
   return useWatch(tabId, watchSerp, rememberSerp);
 }
 
-/** The tab's visibility probes (`null` until the first answer, or without a tab). */
+/**
+ * The tab's visibility probes (`null` until the first answer, or without a tab). Every watcher (the
+ * Visibility panel, the Overview's AI-readiness tile) forgets the tab's remembered probes when it stops
+ * watching (unmount, or another tab): once nothing watches, the palette must not trust what it last saw
+ * (a run that finished since would still offer "Stop"). Stale is worse than unknown.
+ */
 export function useProbes(tabId: number | undefined): ProbesState | null {
-  return useWatch(tabId, watchProbes, rememberProbes);
+  const state = useWatch(tabId, watchProbes, rememberProbes);
+  useEffect(
+    () => () => {
+      if (tabId !== undefined) forgetProbes(tabId);
+    },
+    [tabId],
+  );
+  return state;
 }
 
 /**

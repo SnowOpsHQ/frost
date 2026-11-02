@@ -1,7 +1,9 @@
 // The agent runtime (Phase 5 Task 2; acceptance `specs/agent-runtime.feature.md`, Runtime): routes
-// main's messages to the chat turns and the proxied fetch, one turn at a time per chat id.
+// main's messages to the chat turns, the AI checks (Phase 9 Task 9, `check.ts`) and the proxied
+// fetch, one turn at a time per chat id and one run per check id.
 import { AGENT_PROTOCOL_VERSION, CHAT_BUSY_MESSAGE, type RuntimeToMainMessage, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { runChat, chatErrorMessage, type ChatRun, type ChatStart } from './chat';
+import { runCheck, type CheckStart } from './check';
 import { createModel, type ModelFactory } from './provider';
 import { createProxyFetch, type ProxyFetch } from './proxy-fetch';
 import { createChannel, type Channel, type ChannelStats, type RuntimePort } from './transport';
@@ -25,12 +27,16 @@ export interface RuntimeStats extends ChannelStats {
   startsDropped: number;
   /** `tool.result`s that matched no waiting call (late, repeated or for another chat). */
   toolResultsUnmatched: number;
+  /** `check.start`s ignored because that check id was already running (the running one goes on). */
+  checkStartsDropped: number;
 }
 
 export interface Runtime {
   readonly stats: Readonly<RuntimeStats>;
   /** Chat ids with a turn running. */
   readonly activeChats: readonly string[];
+  /** Check ids with a check running. */
+  readonly activeChecks: readonly string[];
   /** Settles when the running turn of `chatId` (if any) has posted its end. */
   whenIdle(chatId: string): Promise<void>;
 }
@@ -51,7 +57,9 @@ export function startRuntime(port: RuntimePort, options: RuntimeOptions = {}): R
   const post = channel.send.bind(channel);
   const proxy: ProxyFetch = createProxyFetch(post, options.newRequestId);
   const turns = new Map<string, Turn>();
-  const counts = { startsDropped: 0, toolResultsUnmatched: 0 };
+  /** Each running check's stop and its own proxied fetch (whose requests carry its id). */
+  const checks = new Map<string, { readonly controller: AbortController; readonly proxy: ProxyFetch }>();
+  const counts = { startsDropped: 0, toolResultsUnmatched: 0, checkStartsDropped: 0 };
 
   const startTurn = (start: ChatStart) => {
     if (turns.has(start.chatId)) {
@@ -78,6 +86,33 @@ export function startRuntime(port: RuntimePort, options: RuntimeOptions = {}): R
     }
   };
 
+  const startCheck = (start: CheckStart) => {
+    if (checks.has(start.checkId)) {
+      // Main keeps one run per check id too; the running one goes on and answers.
+      counts.checkStartsDropped += 1;
+      return;
+    }
+    const { checkId } = start;
+    const controller = new AbortController();
+    // The check's own proxied fetch: the same as a turn's, with its one `fetch.request` tagged.
+    const checkProxy = createProxyFetch((message) => post(message.type === 'fetch.request' ? { ...message, checkId } : message), options.newRequestId);
+    checks.set(checkId, { controller, proxy: checkProxy });
+    const end = () => {
+      checks.delete(checkId);
+    };
+    let model;
+    try {
+      model = modelFactory(start.route, start.modelId, checkProxy.fetch);
+    } catch {
+      post({ type: 'check.error', checkId, code: 'failed' });
+      end();
+      return;
+    }
+    void runCheck({ start, model, post, signal: controller.signal })
+      .catch(() => post({ type: 'check.error', checkId, code: 'failed' }))
+      .finally(end);
+  };
+
   const deliver = (chatId: string, callId: string, result: ToolResult) => {
     if (!turns.get(chatId)?.run?.deliverToolResult(callId, result)) counts.toolResultsUnmatched += 1;
   };
@@ -90,6 +125,12 @@ export function startRuntime(port: RuntimePort, options: RuntimeOptions = {}): R
       case 'chat.stop':
         turns.get(message.chatId)?.controller.abort();
         return;
+      case 'check.start':
+        startCheck(message);
+        return;
+      case 'check.stop':
+        checks.get(message.checkId)?.controller.abort();
+        return;
       case 'tool.result':
         deliver(message.chatId, message.callId, message.result);
         return;
@@ -97,7 +138,9 @@ export function startRuntime(port: RuntimePort, options: RuntimeOptions = {}): R
       case 'fetch.chunk':
       case 'fetch.end':
       case 'fetch.error':
+        // Request ids are unique: each proxied fetch takes only the answers to its own requests.
         proxy.handle(message);
+        for (const check of checks.values()) check.proxy.handle(message);
         return;
     }
   });
@@ -110,6 +153,9 @@ export function startRuntime(port: RuntimePort, options: RuntimeOptions = {}): R
     },
     get activeChats() {
       return [...turns.keys()];
+    },
+    get activeChecks() {
+      return [...checks.keys()];
     },
     whenIdle: (chatId) => turns.get(chatId)?.done ?? Promise.resolve(),
   };

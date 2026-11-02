@@ -197,11 +197,21 @@ describe('SERP setup', () => {
     expect(checks.fetch).not.toHaveBeenCalled();
     expect(setup.service.runProbes(1)).toBe(true);
     await vi.waitFor(() => expect(setup.service.probes(1).status).toBe('done'));
-    expect(checks.fetch).toHaveBeenCalledTimes(PROBE_AGENTS.length);
+    // One call per agent and one for the origin's /llms.txt.
+    expect(checks.fetch).toHaveBeenCalledTimes(PROBE_AGENTS.length + 1);
+    expect(requests.filter((request) => request.url === 'https://www.example.com/llms.txt')).toHaveLength(1);
     expect(robots).toHaveBeenCalledWith('https://www.example.com/');
     expect(setup.readApi.probes(1).rows.map((row) => row.outcome)).toEqual(PROBE_AGENTS.map(() => 'ok'));
     expect(setup.readApi.probes(1).rows[0]).toMatchObject({ wordCount: 2, robots: { verdict: 'allowed' } });
     await expect(setup.service.watchProbes(1, -1)).resolves.toMatchObject({ status: 'done' });
+    // Its answer is kept for the next run; Clear Browsing Data forgets it.
+    expect(setup.service.runProbes(1)).toBe(true);
+    await vi.waitFor(() => expect(setup.service.probes(1).status).toBe('done'));
+    expect(requests.filter((request) => request.url.endsWith('/llms.txt'))).toHaveLength(1);
+    setup.onClearBrowsingData();
+    expect(setup.service.runProbes(1)).toBe(true);
+    await vi.waitFor(() => expect(setup.service.probes(1).status).toBe('done'));
+    expect(requests.filter((request) => request.url.endsWith('/llms.txt'))).toHaveLength(2);
     // A new document, an in-page move to another URL, a closed tab and Clear Browsing Data cancel a run.
     hold = true;
     const cancels: [string, () => void][] = [

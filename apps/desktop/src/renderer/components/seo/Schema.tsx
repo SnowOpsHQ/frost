@@ -7,13 +7,16 @@ import { ChevronIcon, CodeIcon, CopyIcon, OpenTabIcon, RefIcon, SchemaArt, TreeI
 import { actions } from '../../ipc';
 import { entityIndex, errorExcerpt, firstShown, formatCount, moreShown, openableUrl, openByDefault, schemaTypeSummary, UNTYPED_LABEL } from '../../seo-view';
 import { auditRef, Flash, PanelIssues, useFlash } from './actions';
+import { GscInspectionCard } from './GscInspectionCard';
 import { PageText, RawText, SEVERITY_LABEL, SeverityGlyph } from './parts';
 
 // Schema (acceptance `seo-schema.feature.md`, Panel): the page's structured data as main read it
 // (`audit.schema`): a summary, the ranked `schema` issues, then one card per JSON-LD block and one per
 // markup syntax, each an expandable entity tree with its issues on its nodes. Everything from the
 // page is React text (`PageText`, `<pre>`); URLs are text with an "Open in new tab" button (main
-// opens http(s) only); "Copy JSON" asks main to copy the block from its own audit.
+// opens http(s) only); "Copy JSON" asks main to copy the block from its own audit. "Detected by
+// Google" (Phase 9) shows the rich results Google's URL Inspection found when the user asks; it feeds
+// no rule or status.
 
 const RULE_TITLES = new Map<string, string>(SEO_RULE_SPECS.map((spec) => [spec.id, spec.title]));
 const URL_PROPERTIES: ReadonlySet<string> = new Set(SCHEMA_URL_PROPERTIES);
@@ -436,6 +439,7 @@ export function Schema({ audit, tab }: { readonly audit: SeoAudit; readonly tab:
           <Summary audit={audit} />
         )}
         <PanelIssues audit={audit} categories={['schema']} clean="No structured data issues found." />
+        <GscInspectionCard kind="rich" url={tab.url} />
         {report.blocks.map((block) => (
           <BlockCard key={`${audit.takenAt}:${block.index}`} block={block} entities={byBlock(block.index)} issues={report.issues} tab={tab} audit={audit} />
         ))}

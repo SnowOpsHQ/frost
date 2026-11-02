@@ -25,13 +25,16 @@ import {
 import { MCP_LIMITS } from './agent-mcp.spec';
 import { McpToolDefinitionSchema } from './agent-mcp.schema';
 import { REASONING_EFFORTS } from './agent-reasoning.spec';
+import { AI_CHECK_ERROR_CODES, AI_CHECK_LIMITS } from './ai-checks.spec';
 
 /**
  * Bumped when a message changes shape; the runtime reports it in `ready` and main refuses another.
  * 7: `chat.start` takes the `chatgpt` route and `chatgpt/<slug>` model ids (`agent-chatgpt.spec.ts`).
  * 8: `chat.start` carries the turn's reasoning level (`reasoningEffort`, `agent-reasoning.spec.ts`).
+ * 9: AI checks (Phase 9 Task 9, `ai-checks.spec.ts`): `check.start` and `check.stop` (main →
+ *    runtime), `check.finish` and `check.error` (runtime → main), and `fetch.request.checkId`.
  */
-export const AGENT_PROTOCOL_VERSION = 8;
+export const AGENT_PROTOCOL_VERSION = 9;
 
 /**
  * The runtime's `chat.error` for a `chat.start` whose chat already has a turn running (that turn
@@ -270,10 +273,29 @@ export const ChatStartMessageSchema = z.strictObject({
   { message: 'MCP tools must match the allowed MCP names' },
 );
 
+/**
+ * Starts an AI check (protocol version 9, Phase 9 Decision 15): one tool-less model request on
+ * `route` with `modelId` (main's settings when it started), with main's system prompt and the
+ * check's input (the task and the page extract, wrapped untrusted). No effort field: a check
+ * always runs at `auto`, so the runtime sends no reasoning option, whatever the agent's Reasoning
+ * setting is. No key or token: the request goes through main's proxy like a turn's.
+ */
+export const CheckStartMessageSchema = z.strictObject({
+  type: z.literal('check.start'),
+  checkId: AgentIdSchema,
+  systemPrompt: z.string().max(L.maxSystemPromptChars),
+  input: z.string().min(1).max(L.maxMessageChars),
+  modelId: z.string().max(L.maxModelIdChars).refine(isAgentModelId, { message: 'not an allowed model' }),
+  route: z.enum(MODEL_ROUTES),
+});
+
 export const MainToRuntimeMessageSchema = z.discriminatedUnion('type', [
   ChatStartMessageSchema,
   /** Stops a turn (the user's Stop): the runtime aborts its stream and finishes with `aborted`. */
   z.strictObject({ type: z.literal('chat.stop'), chatId: AgentIdSchema }),
+  CheckStartMessageSchema,
+  /** Stops a check (main cancels it, as `chat.stop` a turn): the runtime aborts its request and answers `check.error` `aborted`. */
+  z.strictObject({ type: z.literal('check.stop'), checkId: AgentIdSchema }),
   /** Answers a `tool.invoke`. */
   z.strictObject({ type: z.literal('tool.result'), chatId: AgentIdSchema, callId: AgentIdSchema, result: ToolResultSchema }),
   /** A proxied model response's head (main followed no redirect). */
@@ -298,7 +320,7 @@ export const MainToRuntimeMessageSchema = z.discriminatedUnion('type', [
 ]);
 export type MainToRuntimeMessage = z.infer<typeof MainToRuntimeMessageSchema>;
 
-export const MAIN_TO_RUNTIME_MESSAGE_TYPES = ['chat.start', 'chat.stop', 'tool.result', 'fetch.response-start', 'fetch.chunk', 'fetch.end', 'fetch.error'] as const satisfies readonly MainToRuntimeMessage['type'][];
+export const MAIN_TO_RUNTIME_MESSAGE_TYPES = ['chat.start', 'chat.stop', 'check.start', 'check.stop', 'tool.result', 'fetch.response-start', 'fetch.chunk', 'fetch.end', 'fetch.error'] as const satisfies readonly MainToRuntimeMessage['type'][];
 
 // ---- runtime → main --------------------------------------------------------------------------
 
@@ -343,7 +365,12 @@ export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('chat.error'), chatId: AgentIdSchema, message: z.string().min(1).max(L.maxErrorChars) }),
   /** Asks main to run a tool call; main's broker decides and answers `tool.result`. */
   z.strictObject({ type: z.literal('tool.invoke'), chatId: AgentIdSchema, callId: AgentIdSchema, toolName: ToolNameSchema, input: ToolInputSchema }),
-  /** Asks main to send a model request (main checks the URL, drops credential headers, adds the key). */
+  /**
+   * Asks main to send a model request (main checks the URL, drops credential headers, adds the key).
+   * `checkId` (protocol version 9) marks a check's one request: main sends it only for a check it
+   * started that is still live and has not used its request, and refuses (and counts) any other
+   * id. A request without one is a turn's.
+   */
   z.strictObject({
     type: z.literal('fetch.request'),
     requestId: AgentIdSchema,
@@ -351,6 +378,7 @@ export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
     method: z.enum(['GET', 'POST']),
     headers: HeaderListSchema,
     body: z.union([z.string().max(L.maxRequestBodyBytes), bytes(L.maxRequestBodyBytes), z.null()]),
+    checkId: AgentIdSchema.optional(),
   }),
   /** The runtime no longer wants a response (Stop, or the provider gave up). */
   z.strictObject({ type: z.literal('fetch.abort'), requestId: AgentIdSchema }),
@@ -372,6 +400,10 @@ export const RuntimeToMainMessageSchema = z.discriminatedUnion('type', [
     toolCalls: z.array(ToolCallSchema).max(L.maxToolCallsPerMessage),
     usage: z.strictObject({ input: count, output: count }).optional(),
   }),
+  /** A check's answer (protocol version 9): the model's text, at most `AI_CHECK_LIMITS.maxOutputChars` (main parses it). */
+  z.strictObject({ type: z.literal('check.finish'), checkId: AgentIdSchema, text: z.string().max(AI_CHECK_LIMITS.maxOutputChars) }),
+  /** A check ended without an answer (`AI_CHECK_ERROR_CODES`); no message, so no upstream text. */
+  z.strictObject({ type: z.literal('check.error'), checkId: AgentIdSchema, code: z.enum(AI_CHECK_ERROR_CODES) }),
 ]);
 export type RuntimeToMainMessage = z.infer<typeof RuntimeToMainMessageSchema>;
 
@@ -379,4 +411,4 @@ export type RuntimeToMainMessage = z.infer<typeof RuntimeToMainMessageSchema>;
  * Every message type the runtime may send. None approves, grants, changes a setting or carries a
  * key; main drops any other type.
  */
-export const RUNTIME_TO_MAIN_MESSAGE_TYPES = ['ready', 'chat.delta', 'chat.tool-call', 'chat.finish', 'chat.error', 'tool.invoke', 'fetch.request', 'fetch.abort', 'chat.step'] as const satisfies readonly RuntimeToMainMessage['type'][];
+export const RUNTIME_TO_MAIN_MESSAGE_TYPES = ['ready', 'chat.delta', 'chat.tool-call', 'chat.finish', 'chat.error', 'tool.invoke', 'fetch.request', 'fetch.abort', 'chat.step', 'check.finish', 'check.error'] as const satisfies readonly RuntimeToMainMessage['type'][];

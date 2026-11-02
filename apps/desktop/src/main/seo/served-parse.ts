@@ -1,5 +1,5 @@
 import { defaultTreeAdapter, Parser, type DefaultTreeAdapterMap, type ParserOptions, type TreeAdapter } from 'parse5';
-import { SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
+import { SERVED_LEAD_TEXT_MAX_CHARS, SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
 import type { ServedParseInput, ServedParseResult, ServedSnapshot } from '@app/specs/seo-javascript.schema';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
@@ -12,7 +12,8 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 // stops the parse at `maxNodes` / `maxDepth` (what was built is read, `partial`). The snapshot is
 // read from the tree the way the extractor (`extract.ts`) reads the live DOM, with the same caps,
 // minus everything that needs layout: no hidden-element check for headings, and only `[hidden]`
-// subtrees are left out of the word count.
+// subtrees are left out of the word count. The same walk reads `leadText` (Phase 9 Task 10): the
+// first `SERVED_LEAD_TEXT_MAX_CHARS` of the body's text, for the AI checks' input only (main-only).
 
 type Node = DefaultTreeAdapterMap['node'];
 type Element = DefaultTreeAdapterMap['element'];
@@ -424,10 +425,12 @@ function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budge
     }
   }
 
-  // The body's words, as the extractor counts them (with the same node and character budgets).
+  // The body's words, as the extractor counts them (with the same node and character budgets), and
+  // its lead text from the same walk: each text node's whitespace collapsed, joined by one space.
   const skipped = (el: Element): boolean => SKIP.includes(el.tagName) || has(el, 'hidden');
   let wordCount = 0;
   let textTruncated = false;
+  let leadText = '';
   if (body) {
     let textNodes = 0;
     let scanned = 0;
@@ -442,7 +445,12 @@ function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budge
       textNodes += 1;
       const take = Math.min(node.value.length, L.maxTextScanChars - scanned);
       scanned += take;
-      wordCount += countWords(node.value.slice(0, take));
+      const value = node.value.slice(0, take);
+      wordCount += countWords(value);
+      if (leadText.length < SERVED_LEAD_TEXT_MAX_CHARS) {
+        const piece = squash(value);
+        if (piece !== '') leadText = cut(leadText === '' ? piece : `${leadText} ${piece}`, SERVED_LEAD_TEXT_MAX_CHARS + 1);
+      }
     }
   }
 
@@ -496,6 +504,7 @@ function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budge
     hreflangTotal: total(hreflangTotal),
     wordCount: total(wordCount),
     textTruncated,
+    leadText: cut(leadText, SERVED_LEAD_TEXT_MAX_CHARS).trimEnd(),
     noscript: { count: total(noscripts.length), wordCount: total(noscriptWords), linkCount: total(noscriptLinks) },
     nodes: total(budget.nodes),
     partial: budget.hit,

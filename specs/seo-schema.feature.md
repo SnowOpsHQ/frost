@@ -214,6 +214,9 @@ caps in `SNAPSHOT_LIMITS`), `specs/seo-snapshot.spec.ts` (`JsonLdBlockSchema`, `
   text values (clamped, full value in the tooltip), URLs with "Open in new tab", nested entities
   indented (closed), references with their target's type (opening one shows the target, unless it
   is already open above it: "Shown above").
+- **Detected by Google** (Phase 9 Task 4; `gsc-inspection.feature.md`, Card): a card with the rich
+  results Google's URL Inspection detected, read only when the user clicks "Inspect in Search Console"
+  (never on load), hidden when Search Console is unconfigured. It changes no rule, score or status here.
 
 ## End to end (`apps/desktop/e2e/seo-schema.e2e.ts`, loopback pages)
 - **Scenario: schema-valid-page-shows-clean-tree** — Organization, BreadcrumbList and Product

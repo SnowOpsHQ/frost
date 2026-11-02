@@ -19,6 +19,7 @@ import type { ProjectsService } from './projects-router';
 import type { InspectorService } from './inspector-router';
 import type { TelemetryService } from './telemetry-service';
 import type { GscIpcService } from './gsc-service';
+import type { AiChecksService } from './ai-checks-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -199,4 +200,6 @@ export interface IpcServices {
   readonly telemetry?: TelemetryService;
   /** The read-only Search Console connection and read API (Phase 4 Task 8, `gsc-service.ts`). */
   readonly gsc?: GscIpcService;
+  /** AI checks (Phase 9 Task 10, `ai-checks-service.ts`). */
+  readonly aiChecks?: AiChecksService;
 }

@@ -191,6 +191,12 @@ export const PROXY_REFUSALS = [
   'no-chat',
   'turn-budget',
   /**
+   * A model request tagged with a check id main's host did not start, or whose check finished, was
+   * stopped or spent its `MAX_MODEL_REQUESTS_PER_CHECK` (Phase 9 Task 9). The runtime's fault
+   * (counted), so a check id can never be used to get past the strike count.
+   */
+  'check-budget',
+  /**
    * The ChatGPT plan refused this turn already (a usage limit, not eligible, plan usage off, an
    * unsupported request): nothing goes out on the plan again until the turn ends (the SDK's retry
    * would repeat it). Not the runtime's fault.
@@ -370,6 +376,14 @@ export const MAX_OUTPUT_TOKENS = 16_384;
  * `maxRetries` is 1). Main refuses a request past the budget of the turns running.
  */
 export const MAX_MODEL_REQUESTS_PER_TURN = MAX_TOOL_STEPS * 2;
+
+/**
+ * Model requests one AI check may make (Phase 9 Decision 15, `ai-checks.spec.ts`): a check is a
+ * single tool-less request, never retried (the runtime's `maxRetries` is 0 for a check). Main's host
+ * holds it per live check, apart from the turns' budget; a request on a check that is unknown,
+ * finished, stopped or spent is refused (`check-budget`) and counted.
+ */
+export const MAX_MODEL_REQUESTS_PER_CHECK = 1;
 
 export type BodyCheck = { readonly ok: true; readonly body: string } | { readonly ok: false; readonly reason: ProxyRefusal };
 

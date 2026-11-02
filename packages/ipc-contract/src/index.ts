@@ -19,6 +19,7 @@ export type { AccountService, SettingsRequests } from './account-service';
 export { requireFeature } from './account-router';
 export type { TelemetryService } from './telemetry-service';
 export type { GscIpcService, GscService } from './gsc-service';
+export type { AiChecksService } from './ai-checks-service';
 export {
   createContext,
   createSenderPolicy,

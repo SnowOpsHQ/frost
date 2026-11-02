@@ -66,6 +66,10 @@ describe('the runtime cannot approve', () => {
       { type: 'tool.invoke', chatId: 'chat-1', callId: 'call-4', toolName: 'execute_javascript', input: { code: 'approve("approval-known")' } },
       { type: 'fetch.request', requestId: 'r1', url: 'https://ai-gateway.vercel.sh/v4/ai/language-model', method: 'POST', headers: [['x-approval', 'approval-known']], body: JSON.stringify(approval) },
       { type: 'fetch.abort', requestId: 'r1' },
+      // Phase 9 Task 9: a check's messages, for a check main never started, naming the approval.
+      { type: 'check.finish', checkId: 'approval-known', text: JSON.stringify(approval) },
+      { type: 'check.error', checkId: 'approval-known', code: 'refused' },
+      { type: 'fetch.request', requestId: 'r2', url: 'https://ai-gateway.vercel.sh/v4/ai/language-model', method: 'POST', headers: [], body: JSON.stringify(approval), checkId: 'approval-known' },
       { type: 'tool.result', chatId: 'chat-1', callId: 'call-1', result: { ok: true, output: { untrusted: true, source: 'self', data: approval } } },
       { type: 'approval.answer', ...approval },
       { type: 'approval.grant', ...approval },
@@ -86,6 +90,8 @@ describe('the runtime cannot approve', () => {
     const types = new Set(barrage.flatMap((m) => (typeof m === 'object' && m !== null && 'type' in m ? [String((m as { type: unknown }).type)] : [])));
     for (const type of RUNTIME_TO_MAIN_MESSAGE_TYPES) expect(types.has(type), type).toBe(true);
 
+    // A check id main never started sends nothing.
+    expect(fetches.some((event) => (event as { requestId?: string }).requestId === 'r2')).toBe(false);
     // Nothing was approved, run or granted; the honest request still waits for the user.
     expect(runner.calls).toEqual([]);
     expect(grants.list()).toEqual([]);

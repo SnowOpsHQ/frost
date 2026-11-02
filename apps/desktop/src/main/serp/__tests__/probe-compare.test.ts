@@ -1,4 +1,4 @@
-// Spec: specs/visibility-probes.spec.ts (PROBE_AGENTS, PROBE_AGENT_IDS, probeUserAgent, PROBE_LIMITS, PROBE_DIFF_TOLERANCE,
+// Spec: specs/visibility-probes.spec.ts (PROBE_AGENTS, PROBE_AGENT_IDS, probeUserAgent, PROBE_LIMITS, LLMS_TXT_LIMITS, PROBE_DIFF_TOLERANCE,
 // PROBE_TEXT_SIMILARITY, PROBE_DIFF_FACTS, PROBE_DISCLOSURE, PROBE_MODELLED_DIRECTIVES_NOTE, PROBE_CANONICAL_CONFLICTS),
 // specs/visibility-probes.schema.ts (ProbeRowSchema, ProbeDiffSchema, ProbeRobotsAnswerSchema, ProbePageAnswerSchema),
 // specs/render-profile.spec.ts (USER_AGENT_TEMPLATES), specs/fetcher.spec.ts (FETCH_DISCLOSURE)
@@ -7,8 +7,10 @@ import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
 import { FETCH_DISCLOSURE } from '@app/specs/fetcher.spec';
 import { USER_AGENT_TEMPLATES } from '@app/specs/render-profile.spec';
+import { ROBOTS_FETCH_LIMITS } from '@app/specs/seo-indexability.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import {
+  LLMS_TXT_LIMITS,
   PROBE_AGENT_IDS,
   PROBE_AGENTS,
   PROBE_BASELINE,
@@ -45,10 +47,11 @@ const answerOf = (result: ReturnType<typeof runProbeJob>): ProbePageAnswer => {
 describe('probe agents and reading', () => {
   test('probes-agent-table', () => {
     expect(PROBE_AGENTS.map((agent) => agent.id)).toEqual([...PROBE_AGENT_IDS]);
-    expect(PROBE_AGENT_IDS).toEqual(['browser', 'googlebot', 'bingbot', 'gptbot', 'claudebot', 'perplexitybot']);
+    expect(PROBE_AGENT_IDS).toEqual(['browser', 'googlebot', 'bingbot', 'gptbot', 'claudebot', 'perplexitybot', 'oai-searchbot', 'chatgpt-user']);
+    expect(PROBE_AGENTS).toHaveLength(8);
     expect(PROBE_BASELINE).toBe('browser');
     expect(PROBE_AGENTS.length).toBeLessThanOrEqual(PROBE_LIMITS.maxFetches);
-    expect(PROBE_LIMITS).toMatchObject({ maxFetches: 6, maxRedirects: 3, maxRequests: 6 * (1 + 3), maxConcurrent: 2, maxBytes: 5 * 1024 * 1024, timeoutMs: 10_000, maxRunsPerTab: 1 });
+    expect(PROBE_LIMITS).toMatchObject({ maxFetches: 8, maxRedirects: 3, maxRequests: 32, maxConcurrent: 2, maxBytes: 5 * 1024 * 1024, timeoutMs: 10_000, maxRunsPerTab: 1 });
     const browser = probeAgent('browser');
     expect(browser).toMatchObject({ kind: 'browser', userAgent: null, robotsToken: '*', metaNames: ['robots'], directives: 'documented' });
     expect(probeUserAgent(browser, '140.0.7339.80')).toBeNull();
@@ -60,9 +63,13 @@ describe('probe agents and reading', () => {
     );
     expect(probeUserAgent(probeAgent('bingbot'), 'garbage')).toContain('Chrome/0.0.0.0');
     // The AI crawlers' strings, verbatim.
-    expect(probeUserAgent(probeAgent('gptbot'), '1.2.3.4')).toContain('GPTBot/1.1; +https://openai.com/gptbot');
+    expect(probeUserAgent(probeAgent('gptbot'), '1.2.3.4')).toBe('Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.4; +https://openai.com/gptbot');
     expect(probeUserAgent(probeAgent('claudebot'), '1.2.3.4')).toContain('ClaudeBot/1.0; +claudebot@anthropic.com');
-    expect(probeUserAgent(probeAgent('perplexitybot'), '1.2.3.4')).toContain('PerplexityBot/1.0; +https://perplexity.ai/perplexitybot');
+    expect(probeUserAgent(probeAgent('perplexitybot'), '1.2.3.4')).toBe('Mozilla/5.0 (compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)');
+    expect(probeUserAgent(probeAgent('oai-searchbot'), '1.2.3.4')).toBe(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36; compatible; OAI-SearchBot/1.4; +https://openai.com/searchbot',
+    );
+    expect(probeUserAgent(probeAgent('chatgpt-user'), '1.2.3.4')).toBe('Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot');
     for (const agent of PROBE_AGENTS) {
       if (agent.id !== 'browser') {
         expect(agent.userAgent, agent.id).toMatch(/^[\x20-\x7e]+$/);
@@ -73,7 +80,7 @@ describe('probe agents and reading', () => {
       expect(agent.directives, agent.id).toBe(agent.kind === 'ai' ? 'frost-model' : 'documented');
       expect(agent.label.length, agent.id).toBeGreaterThan(0);
     }
-    expect(PROBE_AGENTS.filter((agent) => agent.kind === 'ai').map((agent) => agent.robotsToken)).toEqual(['GPTBot', 'ClaudeBot', 'PerplexityBot']);
+    expect(PROBE_AGENTS.filter((agent) => agent.kind === 'ai').map((agent) => agent.robotsToken)).toEqual(['GPTBot', 'ClaudeBot', 'PerplexityBot', 'OAI-SearchBot', 'ChatGPT-User']);
     expect(PROBE_AGENTS.filter((agent) => agent.kind === 'search').map((agent) => agent.robotsToken)).toEqual(['Googlebot', 'bingbot']);
     expect(PROBE_MODELLED_DIRECTIVES_NOTE).toMatch(/robots\.txt/);
     expect(PROBE_MODELLED_DIRECTIVES_NOTE).toMatch(/model/);
@@ -83,10 +90,25 @@ describe('probe agents and reading', () => {
     expect(PROBE_DISCLOSURE).toMatch(/render/);
     expect(PROBE_DISCLOSURE).toMatch(/verify/);
     expect(PROBE_DISCLOSURE).toContain(`at most ${PROBE_LIMITS.maxFetches} requests`);
+    expect(PROBE_DISCLOSURE).toContain('at most 8 requests to the site, one per agent, plus up to 3 redirects each');
     expect(PROBE_DISCLOSURE).toContain(`up to ${PROBE_LIMITS.maxRedirects} redirects`);
+    expect(PROBE_DISCLOSURE).toContain('and one request for /llms.txt (plus up to 3 redirects)');
     expect(PROBE_DISCLOSURE).toMatch(/reported, not obeyed/);
     expect(PROBE_DISCLOSURE).toMatch(/bot protection/);
     expect(PROBE_DISCLOSURE).toContain(FETCH_DISCLOSURE);
+  });
+
+  test('limits-arithmetic', () => {
+    // Per agent: one call each, every call's redirects counted.
+    expect(PROBE_LIMITS.maxRequests).toBe(PROBE_LIMITS.maxFetches * (1 + PROBE_LIMITS.maxRedirects));
+    // The run's /llms.txt: one call, not an agent's, with its own redirects.
+    expect(PROBE_LIMITS.llmsTxtRequests).toBe(1 + LLMS_TXT_LIMITS.maxRedirects);
+    expect(PROBE_LIMITS.maxRunRequests).toBe(PROBE_LIMITS.maxRequests + PROBE_LIMITS.llmsTxtRequests);
+    expect(PROBE_LIMITS).toMatchObject({ maxFetches: 8, maxRequests: 32, llmsTxtRequests: 4, maxRunRequests: 36 });
+    expect(LLMS_TXT_LIMITS).toMatchObject({ maxBytes: 512_000, maxRedirects: 3, timeoutMs: 5_000, cacheTtlMs: ROBOTS_FETCH_LIMITS.cacheTtlMs });
+    // Every count the disclosure states is PROBE_LIMITS'.
+    expect(PROBE_DISCLOSURE).toContain(`at most ${PROBE_LIMITS.maxFetches} requests to the site, one per agent, plus up to ${PROBE_LIMITS.maxRedirects} redirects each, and one request for /llms.txt (plus up to ${LLMS_TXT_LIMITS.maxRedirects} redirects)`);
+    expect(PROBE_LIMITS.maxFetches * (1 + PROBE_LIMITS.maxRedirects) + 1 + LLMS_TXT_LIMITS.maxRedirects).toBe(PROBE_LIMITS.maxRunRequests);
   });
 
   test('probes-per-agent-robots', () => {

@@ -15,7 +15,8 @@ import { createDefaultAgentEntitlements, type AgentEntitlements } from './entitl
 import { createMcpManager, createMcpSecrets, createMemoryMcpStore, nodeMcpDeps, type McpManagerDeps, type McpServersStore, type McpSessionLike, type McpStartPrompt } from './mcp';
 import { resolveAgentPorts, type AgentPorts } from './ports';
 import { createAgent, type AgentElectron } from './index';
-import { createAgentSession, type AgentSession } from './session';
+import { createAgentSession } from './session';
+import { createAgentCheckPort, type AgentSessionWithChecks } from './check-port';
 import { createSkillFiles, type SkillFileDialogs, type SkillFilesFs } from './skill-files';
 import { createBrowserPageToolRunner, type PageToolsBrowser, type PageToolsWebContents } from './tools';
 import { createMemorySkillsStore, createUserSkills, type AgentSkillPrefsStore, type AgentSkillsStore } from './user-skills';
@@ -116,7 +117,7 @@ const NO_DIALOGS: AgentDialogs = {
   chooseSkillImportFile: async () => null,
 };
 
-export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
+export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWithChecks {
   const log = deps.log ?? (() => undefined);
   const now = deps.now ?? Date.now;
   const dialogs = deps.dialogs ?? NO_DIALOGS;
@@ -197,10 +198,30 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     ...(deps.focusWindow ? { focusWindow: deps.focusWindow } : {}),
     chatgptE2e,
   });
+  // A key set or cleared on the settings page tells the AI checks' port (`onModelChange`).
+  const keyListeners = new Set<() => void>();
+  const keysChanged = (): void => {
+    for (const listener of [...keyListeners]) {
+      try {
+        listener();
+      } catch {
+        log('agent: a key change listener failed');
+      }
+    }
+  };
+  const credentials: typeof agent.credentials = {
+    ...agent.credentials,
+    setKey: (slot, key) => agent.credentials.setKey(slot, key).finally(keysChanged),
+    clearKey: (slot) => agent.credentials.clearKey(slot).finally(keysChanged),
+  };
+  const onKeysChange = (listener: () => void): (() => void) => {
+    keyListeners.add(listener);
+    return () => void keyListeners.delete(listener);
+  };
   const session = createAgentSession({
     host: agent.host,
     approvals: agent.approvals,
-    credentials: agent.credentials,
+    credentials,
     settings: agent.settings,
     entitlements: agent.entitlements,
     grants: agent.grants,
@@ -245,5 +266,6 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSession {
     void mcp.dispose();
     agent.dispose();
   });
-  return session;
+  // The AI checks' port (Phase 9 Task 10, `check-port.ts`): the host's check transport, main's own route and model.
+  return Object.assign(session, { checks: createAgentCheckPort({ host: agent.host, settings: agent.settings, credentials: agent.credentials, chatgpt: agent.chatgpt, onKeysChange, start: () => agent.start() }) });
 }

@@ -57,7 +57,7 @@ const railItem = (panel: string) => page.locator(`[data-testid="seo-rail-item"][
 const panelState = () => page.getByTestId('serp-panel');
 const searchUrl = (query: string, extra = '') => `${engine.origin}/search?q=${encodeURIComponent(query).replace(/%20/g, '+')}${extra}`;
 const packRequests = () => engine.seen.filter((entry) => entry.path === PACK_PATH || entry.path === packSignatureUrl(PACK_PATH));
-const crawlerRequests = () => engine.seen.filter((entry) => /googlebot|bingbot|gptbot|claudebot|perplexitybot/i.test(entry.userAgent));
+const crawlerRequests = () => engine.seen.filter((entry) => /googlebot|bingbot|gptbot|claudebot|perplexitybot|oai-searchbot|chatgpt-user/i.test(entry.userAgent));
 
 /** Opens the sidebar on `panel` (if it is not open on it already). */
 async function openPanel(panel: 'serp' | 'visibility'): Promise<void> {

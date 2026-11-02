@@ -67,6 +67,10 @@ named test.
 - **Scenario: probe-table-shape** — one column per agent in `PROBE_AGENTS` order (the browser first,
   the AI crawlers marked as frost's model) and one row per fact (status, redirects, robots.txt,
   noindex, nofollow, canonical, words, size, visible text); an `idle` run has no table.
+- **Scenario: eight-columns-fit** — a full run of the eight agents (`PROBE_AGENT_IDS`, the two OpenAI
+  agents last, marked as frost's model like the other AI crawlers) gives eight columns and eight cells
+  in every row, each column headed by the agent's short label (at most 20 characters) so the table
+  stays narrow enough to scroll sideways in the panel.
 - **Scenario: probe-table-cells** — a row's status, redirect hops, robots.txt verdict, noindex /
   nofollow, canonical, word count, size (with "cut") and text similarity as short text, the longer
   wording (`PROBE_OUTCOME_MESSAGES`, `PROBE_ROBOTS_VERDICT_LABELS`) as the cell's title; a row still

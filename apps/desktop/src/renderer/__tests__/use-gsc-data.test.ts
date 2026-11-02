@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-// Spec: specs/gsc-panel.spec.ts, specs/gsc.schema.ts (GscPerformanceQuery, GscPerformanceAnswer, GscQueriesAnswer)
+// Spec: specs/gsc-panel.spec.ts, specs/gsc.schema.ts (GscPerformanceQuery, GscPerformanceAnswer, GscQueriesAnswer, GscCountriesAnswer)
 // Acceptance: specs/gsc-panel.feature.md (Reading)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { GscPerformanceAnswer, GscPerformanceQuery, GscQueriesAnswer } from '@app/specs/gsc.schema';
+import type { GscCountriesAnswer, GscPerformanceAnswer, GscPerformanceQuery, GscQueriesAnswer } from '@app/specs/gsc.schema';
 import { GSC_READ_DEBOUNCE_MS } from '@app/specs/gsc-panel.spec';
 import type { GscRequest } from '../gsc-view';
 
@@ -12,12 +12,14 @@ import type { GscRequest } from '../gsc-view';
 const calls = vi.hoisted(() => ({
   performance: [] as { query: GscPerformanceQuery; resolve: (answer: GscPerformanceAnswer) => void }[],
   topQueries: [] as { query: GscPerformanceQuery; resolve: (answer: GscQueriesAnswer) => void }[],
+  countries: [] as { query: GscPerformanceQuery; resolve: (answer: GscCountriesAnswer) => void }[],
 }));
 vi.mock('../ipc', () => ({
   ipc: {
     gsc: {
       performance: { query: (query: GscPerformanceQuery) => new Promise<GscPerformanceAnswer>((resolve) => calls.performance.push({ query, resolve })) },
       topQueries: { query: (query: GscPerformanceQuery) => new Promise<GscQueriesAnswer>((resolve) => calls.topQueries.push({ query, resolve })) },
+      countries: { query: (query: GscPerformanceQuery) => new Promise<GscCountriesAnswer>((resolve) => calls.countries.push({ query, resolve })) },
     },
   },
 }));
@@ -37,7 +39,8 @@ const perf = (clicks: number): GscPerformanceAnswer => ({
   totals: { clicks, impressions: clicks * 10, ctr: 0.1, position: 2 },
 });
 const top: GscQueriesAnswer = { status: 'ok', property: PROPERTY, scope: 'page', range: RANGE, rows: [] };
-const request = (url: string, changes: Partial<GscRequest> = {}): GscRequest => ({ url, scope: 'page', days: 28, connection: 1, ...changes });
+const request = (url: string, changes: Partial<GscRequest> = {}): GscRequest => ({ url, scope: 'page', days: 28, country: null, device: null, connection: 1, ...changes }) as GscRequest;
+const countriesOf = (...codes: string[]): GscCountriesAnswer => ({ status: 'ok', property: PROPERTY, range: RANGE, countries: codes.map((country) => ({ country, clicks: 1, impressions: 10 })) });
 
 let root: Root;
 let latest: ReturnType<typeof useGscData>;
@@ -66,6 +69,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   calls.performance.length = 0;
   calls.topQueries.length = 0;
+  calls.countries.length = 0;
   root = createRoot(document.createElement('div'));
 });
 afterEach(() => {
@@ -132,6 +136,53 @@ describe('useGscData', () => {
     render(request(A));
     expect(latest.answers).toBeNull();
     expect(latest.loading).toBe(true);
+  });
+
+  test('filters-trigger-one-read', async () => {
+    await show(request(A));
+    await settle(0, 5);
+    expect(calls.countries.map((c) => c.query)).toEqual([{ url: A, scope: 'page', days: 28 }]);
+    await act(async () => {
+      calls.countries[0]!.resolve(countriesOf('usa', 'gbr'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(latest.countries).toEqual(countriesOf('usa', 'gbr'));
+
+    // A country: one read of each with the filter, after the debounce; the countries list is not read again.
+    render(request(A, { country: 'gbr' }));
+    render(request(A, { country: 'usa' }));
+    expect(calls.performance).toHaveLength(1);
+    // The last data stays, pending.
+    expect(latest).toMatchObject({ pending: true, loading: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(GSC_READ_DEBOUNCE_MS);
+    });
+    expect(calls.performance.slice(1).map((c) => c.query)).toEqual([{ url: A, scope: 'page', days: 28, country: 'usa' }]);
+    expect(calls.topQueries.slice(1).map((c) => c.query)).toEqual([{ url: A, scope: 'page', days: 28, country: 'usa' }]);
+    expect(calls.countries).toHaveLength(1);
+    await settle(1, 3);
+    expect(latest).toMatchObject({ pending: false, loading: false });
+
+    // A device: one read of each, and the countries again (for that device), never with the country.
+    await show(request(A, { country: 'usa', device: 'MOBILE' }));
+    expect(calls.performance.slice(2).map((c) => c.query)).toEqual([{ url: A, scope: 'page', days: 28, country: 'usa', device: 'MOBILE' }]);
+    expect(calls.countries.slice(1).map((c) => c.query)).toEqual([{ url: A, scope: 'page', days: 28, device: 'MOBILE' }]);
+    // While the new list reads, the page's last list is kept.
+    expect(latest.countries).toEqual(countriesOf('usa', 'gbr'));
+    await act(async () => {
+      calls.countries[1]!.resolve(countriesOf('usa'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(latest.countries).toEqual(countriesOf('usa'));
+    // Another page: no list of the last one.
+    render(request(B));
+    expect(latest.countries).toBeNull();
+    // B reads once: its data and its countries.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(GSC_READ_DEBOUNCE_MS);
+    });
+    expect(calls.performance).toHaveLength(4);
+    expect(calls.countries).toHaveLength(3);
   });
 
   test('use-gsc-data-keeps-data-for-scope-change', async () => {

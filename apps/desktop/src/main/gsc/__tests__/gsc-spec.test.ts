@@ -1,10 +1,13 @@
-// Spec: specs/gsc.spec.ts (GSC_SCOPE, GSC_AUTH_FIXED_PARAMS, gscDateRange, GSC_LIMITS), specs/gsc.schema.ts
+// Spec: specs/gsc.spec.ts (GSC_SCOPE, GSC_AUTH_FIXED_PARAMS, gscDateRange, GSC_LIMITS, GSC_COUNTRY_ALPHA3, GSC_COUNTRY_PATTERN,
+// normalizeGscQuery, GSC_TARGET_PAGES_READ_ROWS), specs/gsc.schema.ts
 // (GscStatusSchema, GscPropertySchema, GscPerformanceQuerySchema, the answer schemas)
 // Acceptance: specs/gsc.feature.md (Spec schema) · plan Global Constraint "Search Console is read-only"
 import { describe, expect, test } from 'vitest';
 import {
   GSC_AUTH_FIXED_PARAMS,
   GSC_AUTH_PARAMS,
+  GSC_COUNTRY_ALPHA3,
+  GSC_COUNTRY_PATTERN,
   GSC_LIMITS,
   GSC_SCOPE,
   GSC_UNAVAILABLE_REASONS,
@@ -15,7 +18,9 @@ import {
   GscPropertySchema,
   GscQueriesAnswerSchema,
   GscStatusSchema,
+  GSC_TARGET_PAGES_READ_ROWS,
   gscDateRange,
+  normalizeGscQuery,
   type GscStatus,
 } from '@app/specs/gsc.schema';
 
@@ -109,5 +114,41 @@ describe('Search Console spec', () => {
     expect(gscDateRange(90, Date.UTC(2027, 0, 1))).toEqual({ start: '2026-10-02', end: '2026-12-30' });
     const { start, end } = gscDateRange(90, Date.UTC(2027, 0, 1));
     expect((Date.parse(end) - Date.parse(start)) / 86_400_000 + 1).toBe(90);
+  });
+
+  test('country-table-round-trips', () => {
+    const entries = Object.entries(GSC_COUNTRY_ALPHA3);
+    // Every officially assigned ISO 3166-1 code.
+    expect(entries).toHaveLength(249);
+    expect(Object.isFrozen(GSC_COUNTRY_ALPHA3)).toBe(true);
+    const names = new Intl.DisplayNames('en', { type: 'region', fallback: 'none' });
+    const back = new Map<string, string>();
+    for (const [alpha3, alpha2] of entries) {
+      expect(alpha3, alpha3).toMatch(GSC_COUNTRY_PATTERN);
+      expect(alpha2, alpha3).toMatch(/^[A-Z]{2}$/);
+      expect(back.has(alpha2), `${alpha2} twice`).toBe(false);
+      back.set(alpha2, alpha3);
+      expect(names.of(alpha2), alpha2).toBeTruthy();
+    }
+    // alpha-2 back to alpha-3 gives the same key, for every entry.
+    for (const [alpha3, alpha2] of entries) expect(back.get(alpha2)).toBe(alpha3);
+    expect(GSC_COUNTRY_ALPHA3.usa).toBe('US');
+    expect(GSC_COUNTRY_ALPHA3.gbr).toBe('GB');
+    expect(GSC_COUNTRY_ALPHA3.deu).toBe('DE');
+    expect(GSC_COUNTRY_ALPHA3.kor).toBe('KR');
+    expect(names.of(GSC_COUNTRY_ALPHA3.jpn!)).toBe('Japan');
+    // Google answers lowercase: an uppercase or two-letter code is not a country value.
+    for (const bad of ['USA', 'us', 'usaa', 'u1a', '']) expect(GSC_COUNTRY_PATTERN.test(bad), bad).toBe(false);
+    expect(Object.hasOwn(GSC_COUNTRY_ALPHA3, 'USA')).toBe(false);
+  });
+
+  test('normalize-gsc-query', () => {
+    // Trimmed, every run of white space one space, lowercased: Google reports queries in lowercase.
+    expect(normalizeGscQuery('  Green \t TEA\n ')).toBe('green tea');
+    expect(normalizeGscQuery('Grüner\u00a0Tee')).toBe('grüner tee');
+    expect(normalizeGscQuery(' \t ')).toBe('');
+    expect(normalizeGscQuery('sencha')).toBe('sencha');
+    expect(GSC_LIMITS.maxTargetPages).toBe(10);
+    expect(GSC_TARGET_PAGES_READ_ROWS).toBe(1_000);
   });
 });

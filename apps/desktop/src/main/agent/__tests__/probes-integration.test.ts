@@ -57,9 +57,20 @@ describe('visibility probes through the agent', () => {
     try {
       const outcome = await s.runner.run('run_visibility_probes', {}, s.approved);
       expect(outcome).toMatchObject({ ok: true, data: { started: true, url: PAGE, status: 'done', agentsTotal: PROBE_AGENTS.length } });
-      // One request per agent, every one for the approved page (fragment aside), within the cap.
-      expect(s.requests.map((request) => request.url)).toEqual(PROBE_AGENTS.map(() => PAGE));
-      expect(s.requests.length).toBeLessThanOrEqual(PROBE_RUN_MAX_REQUESTS);
+      // One request per agent, every one for the approved page (fragment aside), then the origin's /llms.txt, within the cap.
+      expect(s.requests.map((request) => request.url)).toEqual([...PROBE_AGENTS.map(() => PAGE), 'https://www.example.com/llms.txt']);
+      expect(s.requests.reduce((requests, request) => requests + 1 + (request.maxRedirects ?? 0), 0)).toBeLessThanOrEqual(PROBE_RUN_MAX_REQUESTS);
+      expect(s.requests).toHaveLength(9);
+      expect(PROBE_RUN_MAX_REQUESTS).toBe(36);
+      // The tool's output is unchanged: nothing of /llms.txt reaches the agent.
+      expect(JSON.stringify(outcome)).not.toMatch(/llms/i);
+      // The two OpenAI agents come back as AI rows (the adapter's kinds follow PROBE_AGENTS, no code of its own).
+      const agents = (outcome as { data: { agents: { agent: string; kind: string; outcome: string; status: number | null }[] } }).data.agents;
+      expect(agents.map((agent) => [agent.agent, agent.kind])).toEqual(PROBE_AGENTS.map((agent) => [agent.id, agent.kind]));
+      expect(agents.filter((agent) => agent.agent === 'oai-searchbot' || agent.agent === 'chatgpt-user')).toEqual([
+        expect.objectContaining({ agent: 'oai-searchbot', kind: 'ai', outcome: 'ok', status: 200 }),
+        expect.objectContaining({ agent: 'chatgpt-user', kind: 'ai', outcome: 'ok', status: 200 }),
+      ]);
       expect(s.robots.mock.calls.every(([url]) => new URL(url).origin === 'https://www.example.com')).toBe(true);
     } finally {
       s.dispose();

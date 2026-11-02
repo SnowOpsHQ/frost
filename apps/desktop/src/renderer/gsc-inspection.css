@@ -1,0 +1,133 @@
+/* Google's URL Inspection cards (Phase 9 Task 4; specs/gsc-inspection.feature.md, Card): Indexability's
+   "Google's view" and Schema's "Detected by Google". Bundled and served from app:// (CSP style-src
+   'self'): no inline styles. Text from Google is isolated (`unicode-bidi: isolate`) so a bidi override
+   in it cannot reorder frost's own labels. */
+
+.gsc-inspect {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gsc-inspect[data-pending='true'] .gsc-inspect-body {
+  opacity: 0.55;
+}
+
+.gsc-inspect-message {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gsc-inspect-text {
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+
+.gsc-inspect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gsc-inspect-canonicals {
+  padding-top: 6px;
+  border-top: 1px solid var(--border-field);
+}
+
+.gsc-inspect-canonical {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gsc-inspect-canonical .seo-page-text {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.gsc-inspect-unknown {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.gsc-inspect-when {
+  margin: 0;
+}
+
+.gsc-inspect-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.gsc-inspect-types,
+.gsc-inspect-items,
+.gsc-inspect-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gsc-inspect-type-name {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gsc-inspect-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-field);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.gsc-inspect-item-name {
+  font-weight: 500;
+}
+
+.gsc-inspect-none {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.gsc-inspect-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gsc-inspect-group-label {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gsc-inspect-group[data-severity='ERROR'] .gsc-inspect-group-label {
+  color: var(--danger);
+}
+
+.gsc-inspect-group[data-severity='WARNING'] .gsc-inspect-group-label {
+  color: var(--caution);
+}
+
+.gsc-inspect-issues {
+  gap: 2px;
+  padding-left: 10px;
+}

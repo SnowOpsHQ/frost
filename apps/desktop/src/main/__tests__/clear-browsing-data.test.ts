@@ -1,5 +1,6 @@
 // Spec: specs/browser-session-db.spec.ts (CLEAR_BROWSING_DATA), specs/browser.spec.ts (BROWSE_PARTITION)
-// Acceptance: specs/browser-session-db.feature.md (Clear browsing data), specs/browser-polish.feature.md (Reopen closed tab)
+// Acceptance: specs/browser-session-db.feature.md (Clear browsing data), specs/browser-polish.feature.md (Reopen closed tab),
+// specs/ai-checks.feature.md (cleared-by-clear-browsing-data)
 import { dialog, session } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
@@ -69,6 +70,17 @@ describe('clear browsing data', () => {
     await expect(createClearBrowsingData({ ...parts, forgetAgentGrants })()).resolves.toBe(true);
     expect(order).toEqual(['confirm', 'forget', 'agent', 'stored', 'storage', 'seo']);
     expect(forgetAgentGrants).toHaveBeenCalledOnce();
+  });
+
+  test('clear-forgets-ai-checks', async () => {
+    // Phase 9 Task 10 (specs/ai-checks.feature.md): the AI checks' answers go, after the SEO caches.
+    const { parts, order } = fakeParts(true);
+    const forgetAiChecks = vi.fn(async () => {
+      order.push('ai-checks');
+    });
+    await expect(createClearBrowsingData({ ...parts, forgetAiChecks })()).resolves.toBe(true);
+    expect(order).toEqual(['confirm', 'forget', 'stored', 'storage', 'seo', 'ai-checks']);
+    expect(forgetAiChecks).toHaveBeenCalledOnce();
   });
 
   test('clear-goes-on-after-a-failure', async () => {

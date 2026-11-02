@@ -12,7 +12,8 @@ hreflang checks. Phase 3 adds:
 Phase 4 adds a frost account with plans, opt-in telemetry and a read-only Search Console
 panel, set up in a Settings view.
 
-The agent comes in a later phase (`docs/design/IMPLEMENTATION-PLAN.md` §4).
+Phase 5 adds the agent, a chat that works on the page you are on, on the model you set up (your own
+key, a gateway key or your ChatGPT plan). Phase 9 adds opt-in AI checks of a page on that same model.
 
 ## What it does
 
@@ -288,8 +289,8 @@ Acceptance: `serp-panels.feature.md` and the feature files named below; how it w
     and never leave it. The answer is the label nearest frost's own example queries, nudged by plain
     cues ("buy", "near me", "vs", "login", a bare domain), with its probability as the confidence.
 - **Visibility panel** (`visibility-probes.feature.md`). **Run visibility probes** fetches the active
-  tab's URL once as each of six agents: frost's own browser (the baseline), Googlebot smartphone,
-  Bingbot, GPTBot, ClaudeBot and PerplexityBot.
+  tab's URL once as each of eight agents: frost's own browser (the baseline), Googlebot smartphone,
+  Bingbot, GPTBot, ClaudeBot, PerplexityBot, OAI-SearchBot and ChatGPT-User.
   - A table has a column per agent and a row per fact: HTTP status, redirects and final URL, the
     robots.txt verdict for the agent's token, meta robots and `X-Robots-Tag` (general and
     agent-specific), effective `noindex`, canonical, word count, size and visible-text similarity.
@@ -298,6 +299,9 @@ Acceptance: `serp-panels.feature.md` and the feature files named below; how it w
     labelled frost's model, as their operators document only their robots.txt tokens.
   - **Stop** keeps what was found. A new document, an in-page move to another URL, closing the tab
     or Clear Browsing Data cancels the run.
+  - A run also reads the site's `/llms.txt` (llmstxt.org's proposal) for the AI-readiness checks: is
+    it there, and does it follow the proposal's format (an H1, then H2 sections of `[name](url)`
+    links).
   - A query box classifies any query you type, on this computer only.
 - **Palette.** Open SERP panel, Open Visibility panel, Outline SERP features / Hide SERP outlines,
   Check for selector updates, Enable on-device intent (with the same prompt, inline), and Run /
@@ -606,9 +610,15 @@ their logs** (each surface says so):
   redirects to Hugging Face's download host. `https:` only, capped at the pinned sizes, frost's own
   user agent.
 - **Visibility probes**, only on "Run visibility probes": one `GET` of the page per agent, at most
-  6 calls and 24 requests with redirects (3 each), 2 at once, 5 MB and 10 s each. Each sends the
-  agent's user agent string from your network. robots.txt comes from frost's cache, asked once per
-  origin an agent ended on.
+  8 calls and 32 requests with redirects (3 each), and one request for `/llms.txt` (up to 3
+  redirects), at most 36 in all; 2 at once, 5 MB and 10 s each. Each sends the agent's user agent
+  string from your network. robots.txt comes from frost's cache, asked once per origin an agent
+  ended on.
+  - `/llms.txt` is `<page origin>/llms.txt` only, asked with frost's own user agent after the
+    agents' calls, capped at 500 KB (512,000 bytes) and 5 s, never on a page load. Its answer is kept
+    per origin for 10 minutes, so a run on a site whose answer is kept does not ask again; Clear
+    Browsing Data forgets it. Its text is read in the probes' worker, and only counts, findings and
+    a capped title are kept.
 - frost never requests a search engine by itself: the SERP panel reads only result pages you
   loaded, and a project's **Capture now** loads its saved searches only when you start it (one
   ordinary tab visit per search, like typing it).
@@ -618,7 +628,22 @@ their logs** (each surface says so):
   revocation at sign-out. `net.fetch` with no cookies, no cache, no redirects and a timeout.
 - **Google** (only while Search Console is connected): the token
   endpoints, the property list and Search Analytics queries while the panel shows (cached 15
-  minutes), and the revocation at disconnect.
+  minutes), and the revocation at disconnect. **URL Inspection** only on a click ("Inspect in
+  Search Console", "Inspect again", Try again, or the palette's "Inspect this page in Search
+  Console"), never on a page load: `POST https://searchconsole.googleapis.com/v1/urlInspection/index:inspect`
+  with the page and its property only, on the same read-only connection (cached 15 minutes; its own
+  rate, 1 a second, burst 3).
+- **The agent's model** (Phase 5, only once you set it up and use it): the model requests of each
+  chat turn, sent by main's model proxy to the one route your agent settings name, at its exact
+  endpoint only: `api.anthropic.com` or `api.openai.com` with your own key, the gateway
+  (`ai-gateway.vercel.sh`) with its key, or `api.openai.com` on your ChatGPT plan (signing in, and
+  the plan's model list, go to `auth.openai.com` and `api.openai.com`).
+- **AI checks** (Phase 9, opt-in, off by default; turning them on asks first): one model request
+  per check, on "Check this page" or, in automatic mode, for the active tab (at most 20 an hour). It
+  goes to the agent's configured route and model through the same proxy, and carries only the page's
+  address (query string included) and a short extract of the page as frost fetched it signed out
+  (title, description, headings, opening text; 8,000 characters at most in all). Never the page you
+  see while signed in.
 - **Telemetry** (only with its switch on, and only to the endpoint baked into the build): see
   Telemetry above.
 - **Tabs you ask for:** an "Open in" tool (sent the page URL, after you allowed its host once), the
@@ -888,7 +913,7 @@ build" and sends nothing for it.
 | `FROST_PUBLIC_GSC_CLIENT_SECRET` | Search Console | That client's installed-app "secret" (not confidential by Google's own definition; never logged or committed). |
 | `FROST_PUBLIC_SENTRY_DSN` | Telemetry, errors | Sentry DSN for error events. |
 | `FROST_PUBLIC_OTEL_ENDPOINT` | Telemetry, usage | OTLP/HTTP traces endpoint. |
-| `FROST_GSC_AUTH_URL`, `FROST_GSC_TOKEN_URL`, `FROST_GSC_REVOKE_URL`, `FROST_GSC_API_BASE` | e2e only | Fake Google consent, token and revoke endpoints and API base (`https:`, or `http:` on `127.0.0.1` / `localhost`). |
+| `FROST_GSC_AUTH_URL`, `FROST_GSC_TOKEN_URL`, `FROST_GSC_REVOKE_URL`, `FROST_GSC_API_BASE`, `FROST_GSC_INSPECTION_BASE` | e2e only | Fake Google consent, token and revoke endpoints, API base and URL Inspection base (`https:`, or `http:` on `127.0.0.1` / `localhost`). |
 | `FROST_TELEMETRY_EXPORT_DELAY_MS` | e2e only | Span batch delay (holds the startup span in the queue). |
 
 The rule (`specs/build-config.spec.ts`, `runtimeOverridesAllowed`):

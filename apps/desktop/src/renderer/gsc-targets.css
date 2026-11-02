@@ -1,0 +1,86 @@
+/* Search Console targets under the Content panel's target query (Phase 9 Task 5;
+   specs/seo-content.feature.md, Search Console targets). Bundled and served from app:// (CSP style-src
+   'self'): no inline styles. Facts only: nothing here is toned or coloured by rank, and this page is
+   marked with words ("This page"), never a colour. Text from Google is isolated (`unicode-bidi:
+   isolate`, `.seo-page-text`) so a bidi override in it cannot reorder frost's own labels. */
+
+.gsc-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--seo-card-edge);
+}
+
+.gsc-targets-part {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gsc-targets-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.gsc-targets-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gsc-targets-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 3px 0;
+  border-top: 1px solid var(--seo-card-edge);
+  font-size: 12px;
+}
+
+.gsc-targets-row:first-child {
+  border-top: 0;
+}
+
+.gsc-targets-text {
+  flex: 1 1 auto;
+  color: var(--text);
+}
+
+.gsc-targets-rank {
+  flex: none;
+  min-width: 18px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.gsc-targets-metric {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gsc-targets-current {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.gsc-targets-use {
+  flex: none;
+  height: 24px;
+}
+
+.gsc-targets-use:disabled {
+  opacity: 0.5;
+}

@@ -13,13 +13,16 @@ import { IDLE_HREFLANG_RUN, IDLE_SITEMAP_RUN } from '@app/specs/seo-checks.spec'
 import { checksFor } from '../../checks-view';
 import { useChecks } from '../../hooks/useChecks';
 import { HreflangChecks, SitemapChecks } from './SitemapChecks';
+// Phase 9 Task 4 (`gsc-inspection.feature.md`, Card): Google's view, read only on a click.
+import { GscInspectionCard } from './GscInspectionCard';
 
 // Indexability (acceptance `seo-indexability.feature.md`, Panel): the verdict with its reasons and
 // signals, the ranked indexability / hreflang / robots meta issues, then the evidence: the HTTP
 // response (status, redirects, the kept headers), the robots directives, the canonical, robots.txt
 // (how the fetch went, each crawler's verdict with the deciding rule, the sitemaps, the file itself)
 // and the hreflang set. Every server- or page-derived value is React text (`PageText`, `<pre>`); URLs
-// open only through "Open" buttons (`browser.openBackgroundTab`, http(s) only).
+// open only through "Open" buttons (`browser.openBackgroundTab`, http(s) only). "Google's view"
+// (Phase 9) shows Google's URL Inspection of the page when the user asks; it feeds no rule or verdict.
 
 /** The panel's categories (`SEO_PANELS`). */
 const CATEGORIES = ['indexing', 'indexability', 'hreflang'] as const;
@@ -383,6 +386,7 @@ export function Indexability({ audit, tab }: { readonly audit: SeoAudit; readonl
     <div className="seo-index" data-testid="seo-indexability">
       <VerdictCard report={report} />
       <PanelIssues audit={audit} categories={CATEGORIES} clean="Every indexability check passed." testId="seo-index-issues" />
+      <GscInspectionCard kind="index" url={tab?.url ?? audit.url} auditCanonical={report.canonical.effective} />
       <HttpCard http={report.http} />
       <DirectivesCard report={report} />
       <CanonicalCard canonical={report.canonical} />

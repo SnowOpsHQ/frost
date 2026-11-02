@@ -11,7 +11,7 @@
  */
 import { z } from 'zod';
 import { CanonicalSchema, HeadingSchema, HreflangLinkSchema, JsonLdBlockSchema, LinkSchema, RobotsMetaSchema, SNAPSHOT_LIMITS as L } from './seo-snapshot.spec';
-import { SERVED_FETCH_LIMITS, SERVED_UNAVAILABLE_REASONS } from './seo-javascript.spec';
+import { SERVED_FETCH_LIMITS, SERVED_LEAD_TEXT_MAX_CHARS, SERVED_UNAVAILABLE_REASONS } from './seo-javascript.spec';
 import { isWebUrl } from './web-url.spec';
 
 const count = z.int().nonnegative().max(L.maxCount);
@@ -66,6 +66,12 @@ export const ServedSnapshotSchema = z
     hreflangTotal: count,
     wordCount: count,
     textTruncated: z.boolean(),
+    /**
+     * The first `SERVED_LEAD_TEXT_MAX_CHARS` of the body's text (Phase 9 Task 10), from the
+     * `wordCount` walk; optional, so a snapshot without it (an earlier one, a crawl's) is still valid
+     * and reads as no lead text. Main-only: only the AI checks' input reads it.
+     */
+    leadText: z.string().max(SERVED_LEAD_TEXT_MAX_CHARS).optional(),
     noscript: ServedNoscriptSchema,
     nodes: count,
     partial: z.boolean(),

@@ -1,9 +1,9 @@
-// Spec: specs/account-settings.spec.ts (GSC_SETTINGS_TEXT), specs/gsc.spec.ts (GscStatus, GSC_ERRORS, GSC_CONNECT_RESULTS),
-// specs/gsc.schema.ts (GscStatusSchema)
-// Acceptance: specs/account-settings.feature.md (Search Console)
+// Spec: specs/account-settings.spec.ts (GSC_SETTINGS_TEXT), specs/gsc.spec.ts (GscStatus, GSC_ERRORS, GSC_CONNECT_RESULTS,
+// gscPropertyCountText), specs/gsc.schema.ts (GscStatusSchema, GscPropertiesAnswer)
+// Acceptance: specs/account-settings.feature.md (Search Console), specs/gsc.feature.md (Settings: property count)
 import { describe, expect, test } from 'vitest';
 import { GSC_SETTINGS_TEXT } from '@app/specs/account-settings.spec';
-import { GSC_CONNECT_RESULTS, GSC_ERRORS, GscStatusSchema, type GscStatus } from '@app/specs/gsc.schema';
+import { GSC_CONNECT_RESULTS, GSC_ERRORS, GscStatusSchema, type GscPropertiesAnswer, type GscProperty, type GscStatus } from '@app/specs/gsc.schema';
 import { GSC_ERROR_MESSAGES, gscConnectResultMessage, gscSection } from '../settings-gsc-view';
 
 function status(changes: Partial<GscStatus> = {}): GscStatus {
@@ -12,7 +12,7 @@ function status(changes: Partial<GscStatus> = {}): GscStatus {
 
 describe('Search Console view model', () => {
   test('gsc-view-unconfigured', () => {
-    expect(gscSection(status({ configured: false, entitled: false }))).toEqual({ kind: 'unconfigured', headline: null, message: "Search Console isn't configured in this build", buttons: [], error: null, keychain: null });
+    expect(gscSection(status({ configured: false, entitled: false }))).toEqual({ kind: 'unconfigured', headline: null, message: "Search Console isn't configured in this build", buttons: [], error: null, keychain: null, properties: null });
     expect(gscSection(status({ configured: false, keychain: 'memory-only', error: 'network' }))).toMatchObject({ kind: 'unconfigured', error: null, keychain: null });
   });
 
@@ -52,5 +52,25 @@ describe('Search Console view model', () => {
     // Nothing connected: nothing to lose at quit, no notice.
     expect(gscSection(status({ keychain: 'memory-only' })).keychain).toBeNull();
     expect(gscSection(status({ entitled: false, keychain: 'memory-only' })).keychain).toBeNull();
+  });
+
+  test('property-count-shown-when-connected', () => {
+    const property = (n: number): GscProperty => ({ siteUrl: `https://site${n}.example.com/`, kind: 'url-prefix', permissionLevel: 'siteOwner' });
+    const answer = (count: number): GscPropertiesAnswer => ({ status: 'ok', properties: Array.from({ length: count }, (_, i) => property(i)) });
+    const connected = status({ connected: true });
+    expect(gscSection(connected, answer(3)).properties).toBe('3 properties');
+    expect(gscSection(connected, answer(1)).properties).toBe('1 property');
+    expect(gscSection(connected, answer(0)).properties).toBe('No verified properties');
+    expect(gscSection(connected, answer(1_000)).properties).toBe('1,000 properties');
+    // The headline stays "Connected".
+    expect(gscSection(connected, answer(3)).headline).toBe('Connected');
+    // No answer yet, or one that is not `ok`: no count.
+    expect(gscSection(connected).properties).toBeNull();
+    expect(gscSection(connected, null).properties).toBeNull();
+    expect(gscSection(connected, { status: 'unavailable', reason: 'network' }).properties).toBeNull();
+    // Not connected: no count, whatever an earlier answer said.
+    for (const changes of [{}, { connecting: true }, { configured: false }] as Partial<GscStatus>[]) {
+      expect(gscSection(status(changes), answer(3)).properties, JSON.stringify(changes)).toBeNull();
+    }
   });
 });

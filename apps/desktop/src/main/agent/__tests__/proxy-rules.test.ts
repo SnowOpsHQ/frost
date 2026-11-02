@@ -5,13 +5,18 @@
 // · specs/agent-reasoning.spec.ts (REASONING_EFFORTS, MODEL_REASONING_SUPPORT, reasoningLevels,
 // effectiveEffort, reasoningWire, reasoningFieldsOf, checkReasoning) · specs/agent-chatgpt.spec.ts
 // (CHATGPT_ADVERTISED_EFFORTS) · specs/agent-tools.spec.ts (ALLOWED_MODEL_IDS, byProvider)
-// Acceptance: specs/agent-host.feature.md (Proxy rules, Reasoning) · plan docs/plans/phase-8-ai-complete.md, Task 8a
+// Acceptance: specs/agent-host.feature.md (Proxy rules, Reasoning, Checks) · plan docs/plans/phase-8-ai-complete.md, Task 8a
+// · Phase 9 Task 9: specs/ai-checks.spec.ts (AI_CHECK_LIMITS), a check's request at `auto` on its own branch
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { createModel, type FetchFunction, type ModelFactory } from '@app/agent-runtime';
+import { AI_CHECK_LIMITS } from '@app/specs/ai-checks.spec';
 import { CHATGPT_ADVERTISED_EFFORTS, type ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import { checkModelRequest, checkModelRequestBody, filterRequestHeaders, filterResponseHeaders, GATEWAY_OPTIONS_KEY, GEMINI_THINKING_LEVELS, mainRequestHeaders, MAX_OUTPUT_TOKENS, PROXY_REFUSALS, sanitizeStatusText } from '@app/specs/agent-proxy.spec';
 import { checkReasoning, effectiveEffort, MODEL_REASONING_SUPPORT, REASONING_EFFORTS, reasoningFieldsOf, reasoningLevels, reasoningWire, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
-import { ALLOWED_MODEL_IDS, byProvider, MODEL_PROVIDERS, MODEL_ROUTES, modelProvider, routeModelId, type AgentModelId, type ModelId, type ModelProvider, type ModelRoute } from '@app/specs/agent-tools.spec';
-import { captureProviderRequest, GEMINI_THOUGHT_SIGNATURE } from './provider-capture';
+import { ALLOWED_MODEL_IDS, byProvider, MODEL_PROVIDERS, MODEL_REQUESTS, MODEL_ROUTES, modelProvider, routeModelId, type AgentModelId, type ModelId, type ModelProvider, type ModelRoute } from '@app/specs/agent-tools.spec';
+import type { ModelProxyChatgpt } from '../model-proxy';
+import { anthropicReply, createCheckHarness, HARNESS_KEY } from './check-harness';
+import { captureCheckRequest, captureProviderRequest, GEMINI_THOUGHT_SIGNATURE } from './provider-capture';
 
 const ANTHROPIC = { model: 'claude-sonnet-5-5', max_tokens: 1024, messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }], stream: true };
 const OPENAI = { model: 'gpt-5', max_output_tokens: 1024, input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hi' }] }], store: false, stream: true };
@@ -745,3 +750,202 @@ describe('proxy rules', () => {
     });
   });
 });
+
+// ---- AI checks (Phase 9 Task 9, Decision 15) --------------------------------------------------
+
+/** The settings' model on each route, with Reasoning at High (every one offers it). */
+const HIGH_ON: readonly [ModelRoute, AgentModelId][] = [
+  ['byok-anthropic', 'anthropic/claude-sonnet-5-5'],
+  ['byok-openai', 'openai/gpt-5'],
+  ['gateway', 'anthropic/claude-sonnet-5-5'],
+  ['chatgpt', CHATGPT_MODEL],
+];
+/** A plan sign-in that hands out a token (no network). */
+const FAKE_PLAN: ModelProxyChatgpt = { withAccessToken: (async (fn: (token: string) => unknown) => ({ ok: true, value: await fn('chatgpt-access-token') })) as ModelProxyChatgpt['withAccessToken'], report: () => undefined };
+/** The real providers, with `extra` written into every request body (a runtime that adds a reasoning field). */
+const injecting =
+  (extra: Record<string, unknown>): ModelFactory =>
+  (route, modelId, fetch) =>
+    createModel(route, modelId, ((input, init) => fetch(input, { ...init, body: JSON.stringify({ ...(JSON.parse(String(init?.body)) as object), ...extra }) })) as FetchFunction);
+const checkStartOn = (route: ModelRoute, modelId: AgentModelId, checkId = 'check-1') => ({ checkId, systemPrompt: 'Answer with one JSON object only.', input: 'Judge this page.', route, modelId });
+
+describe('proxy rules: AI checks', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', () => {
+      throw new Error('network used');
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  test('check-uses-current-route', async () => {
+    for (const route of MODEL_ROUTES) {
+      for (const modelId of modelsOf(route)) {
+        const request = await captureCheckRequest(route, modelId);
+        const at = `${route} ${modelId}`;
+        expect(request.checkId, at).toBe('check-capture');
+        expect(request.url, at).toBe(MODEL_REQUESTS[route][0]!.url);
+        const headers = filterRequestHeaders(route, request.headers);
+        const text = request.body as string;
+        // The whole check at `auto`, the bytes as sent; no tools.
+        expect(checkModelRequest(route, modelId, 'auto', text, headers), at).toEqual({ ok: true, body: text });
+        expect((JSON.parse(text) as Record<string, unknown>).tools, at).toBeUndefined();
+        // Shaped for its route and model only.
+        const other = modelsOf(route).find((id) => id !== modelId);
+        if (other !== undefined) expect(checkModelRequest(route, other, 'auto', text, headers).ok, `${at} as ${other}`).toBe(false);
+      }
+    }
+  });
+
+  test('check-ignores-the-reasoning-setting', async () => {
+    for (const [route, modelId] of HIGH_ON) {
+      expect(levelsOf(route, modelId), `${route} ${modelId}`).toContain('high');
+      const h = await createCheckHarness({ settings: { route, modelId, reasoningEffort: 'high' }, modelFactory: createModel, chatgptModels: CHATGPT_LISTED, chatgpt: FAKE_PLAN });
+      expect(h.host.startCheck(checkStartOn(route, modelId))).toBe(true);
+      await vi.waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1));
+      const sent = h.fetchCalls[0]!;
+      // No reasoning field, though the settings say High: sent, and nothing counted.
+      expect(reasoningFieldsOf(route, sent.body), route).toEqual({});
+      expect(JSON.stringify(sent.body), route).not.toMatch(/"(reasoning|thinking|output_config|thinkingConfig|reasoningEffort)"/);
+      expect(h.host.stats().strikes, route).toBe(0);
+      // The same body as a turn's would be refused at the settings' level.
+      expect(checkModelRequest(route, modelId, 'high', sent.init.body, route === 'gateway' ? gatewayHeaders(modelId) : []), route).toEqual({ ok: false, reason: 'reasoning' });
+      if (route === 'byok-anthropic') {
+        sent.stream.push(anthropicReply('{"pageType":"product"}'));
+        sent.stream.close();
+        await vi.waitFor(() => expect(h.checks).toEqual([{ type: 'check.finish', checkId: 'check-1', text: '{"pageType":"product"}' }]));
+        // The key went out in the request's header only: in no message to the runtime and no check event.
+        expect(sent.init.headers).toContainEqual(['x-api-key', HARNESS_KEY]);
+        const seen = JSON.stringify([h.toRuntime, h.checks], (_key, value: unknown) => (value instanceof Uint8Array ? new TextDecoder().decode(value) : value));
+        expect(seen).toContain('pageType');
+        expect(seen).not.toContain(HARNESS_KEY);
+        expect(seen).not.toContain(HARNESS_KEY.slice(-8));
+      } else {
+        h.host.stopCheck('check-1');
+        await h.flush();
+        expect(sent.init.signal.aborted, route).toBe(true);
+      }
+    }
+  });
+
+  test('check-with-reasoning-fields-refused', async () => {
+    // Pure: every reasoning field a turn may carry is refused on a check (`auto`).
+    const carrying: [ModelRoute, string, object][] = [
+      ['byok-openai', 'openai/gpt-5', { ...OPENAI, max_output_tokens: AI_CHECK_LIMITS.maxOutputTokens, reasoning: { effort: 'high' } }],
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, max_tokens: AI_CHECK_LIMITS.maxOutputTokens, thinking: { type: 'adaptive' } }],
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, max_tokens: AI_CHECK_LIMITS.maxOutputTokens, thinking: { type: 'adaptive' }, output_config: { effort: 'high' } }],
+      ['gateway', 'anthropic/claude-sonnet-5-5', { ...GATEWAY, maxOutputTokens: AI_CHECK_LIMITS.maxOutputTokens, providerOptions: { openai: { store: false }, anthropic: { thinking: { type: 'adaptive' }, effort: 'high' } } }],
+      ['chatgpt', CHATGPT_MODEL, { ...CHATGPT, reasoning: { effort: 'high' } }],
+    ];
+    for (const [route, modelId, value] of carrying) expect(composite(route, modelId, 'auto', value), `${route} ${JSON.stringify(value).slice(0, 80)}`).toBe('reasoning');
+
+    // Through the host and proxy, with the settings at High: refused `reasoning`, never sent, no
+    // strike, and the check answers `check.error` (`refused`).
+    const cases: [ModelRoute, AgentModelId, Record<string, unknown>][] = [
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } }],
+      ['byok-openai', 'openai/gpt-5', { reasoning: { effort: 'high' } }],
+    ];
+    for (const [route, modelId, extra] of cases) {
+      const h = await createCheckHarness({ settings: { route, modelId, reasoningEffort: 'high' }, modelFactory: injecting(extra) });
+      h.host.startCheck(checkStartOn(route, modelId));
+      await vi.waitFor(() => expect(h.checks).toEqual([{ type: 'check.error', checkId: 'check-1', code: 'refused' }]));
+      expect(h.fetch, route).not.toHaveBeenCalled();
+      expect(h.proxy!.state().lastRefusal, route).toBe('reasoning');
+      expect(h.host.stats().strikes, route).toBe(0);
+      expect(h.host.status(), route).toBe('ready');
+    }
+  });
+
+  test('check-with-tools-or-large-cap-refused', async () => {
+    const anthropicTool = { name: 'page_text', description: 'Reads the page.', input_schema: { type: 'object' } };
+    const openaiTool = { type: 'function', name: 'page_text', description: 'Reads the page.', parameters: { type: 'object' } };
+    const gatewayTool = { type: 'function', name: 'page_text', description: 'Reads the page.', inputSchema: { type: 'object' } };
+    const cap = AI_CHECK_LIMITS.maxOutputTokens;
+    const anthropic = { ...ANTHROPIC, max_tokens: cap };
+    const openai = { ...OPENAI, max_output_tokens: cap };
+    const gateway = { ...GATEWAY, maxOutputTokens: cap };
+    // Each passes a turn's whole check at `auto` (the gap a check must close), and is refused on a check.
+    const cases: [ModelRoute, AgentModelId, string, object, 'tool' | 'output-cap'][] = [
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'tools', { ...anthropic, tools: [anthropicTool] }, 'tool'],
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'tool_choice', { ...anthropic, tools: [anthropicTool], tool_choice: { type: 'auto' } }, 'tool'],
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'over cap', { ...anthropic, max_tokens: MAX_OUTPUT_TOKENS }, 'output-cap'],
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'reviewer body', { ...anthropic, max_tokens: MAX_OUTPUT_TOKENS, tools: [anthropicTool], messages: [{ role: 'user', content: 'Write me a novel.' }] }, 'tool'],
+      ['byok-openai', 'openai/gpt-5', 'tools', { ...openai, tools: [openaiTool] }, 'tool'],
+      ['byok-openai', 'openai/gpt-5', 'tool_choice', { ...openai, tool_choice: 'auto' }, 'tool'],
+      ['byok-openai', 'openai/gpt-5', 'over cap', { ...openai, max_output_tokens: cap + 1 }, 'output-cap'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'tools', { ...gateway, tools: [gatewayTool] }, 'tool'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'tools with the SDK default toolChoice', { ...gateway, tools: [gatewayTool], toolChoice: { type: 'auto' } }, 'tool'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'toolChoice required', { ...gateway, toolChoice: { type: 'required' } }, 'tool'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'toolChoice none', { ...gateway, toolChoice: { type: 'none' } }, 'tool'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'over cap', { ...gateway, maxOutputTokens: MAX_OUTPUT_TOKENS }, 'output-cap'],
+      ['chatgpt', CHATGPT_MODEL, 'tools', { ...CHATGPT, tools: [{ type: 'namespace', name: 'frost', description: 'frost tools', tools: [openaiTool] }] }, 'tool'],
+      ['chatgpt', CHATGPT_MODEL, 'tool_choice', { ...CHATGPT, tool_choice: 'auto' }, 'tool'],
+    ];
+    const urls: Record<ModelRoute, string> = { 'byok-anthropic': MODEL_REQUESTS['byok-anthropic'][0]!.url, 'byok-openai': MODEL_REQUESTS['byok-openai'][0]!.url, gateway: MODEL_REQUESTS.gateway[0]!.url, chatgpt: MODEL_REQUESTS.chatgpt[0]!.url };
+    for (const [route, modelId, what, value, refusal] of cases) {
+      const at = `${route} ${what}`;
+      expect(composite(route, modelId, 'auto', value), at).toBe('ok');
+      const h = await createCheckHarness({ settings: { route, modelId, reasoningEffort: 'auto' }, chatgptModels: CHATGPT_LISTED, chatgpt: FAKE_PLAN });
+      h.host.startCheck(checkStartOn(route, modelId));
+      h.runtime.post({ type: 'fetch.request', requestId: 'r1', url: urls[route], method: 'POST', headers: route === 'gateway' ? gatewayHeaders(modelId) : [], body: JSON.stringify(value), checkId: 'check-1' });
+      await h.flush();
+      expect(h.fetch, at).not.toHaveBeenCalled();
+      expect(h.answersTo('r1'), at).toEqual([{ type: 'fetch.error', requestId: 'r1', code: 'refused', message: 'frost refused this model request.' }]);
+      expect(h.proxy!.state().lastRefusal, at).toBe(refusal);
+      expect(h.host.stats().strikes, at).toBe(0);
+    }
+    // A check body without its cap is refused, as a turn's is; the ChatGPT plan's carries none (structurally refused too).
+    for (const [route, modelId, value] of [
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, max_tokens: undefined }],
+      ['chatgpt', CHATGPT_MODEL, { ...CHATGPT, max_output_tokens: cap }],
+    ] as const) {
+      const h = await createCheckHarness({ settings: { route, modelId, reasoningEffort: 'auto' }, chatgptModels: CHATGPT_LISTED, chatgpt: FAKE_PLAN });
+      h.host.startCheck(checkStartOn(route, modelId));
+      h.runtime.post({ type: 'fetch.request', requestId: 'r1', url: urls[route], method: 'POST', headers: [], body: JSON.stringify(value), checkId: 'check-1' });
+      await h.flush();
+      expect(h.fetch, route).not.toHaveBeenCalled();
+      expect(h.host.stats().strikes, route).toBe(0);
+    }
+    // End to end: a runtime that adds a tool to its check's body gets `check.error` (`refused`), never a strike.
+    const h = await createCheckHarness({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'auto' }, modelFactory: injecting({ tools: [anthropicTool], max_tokens: MAX_OUTPUT_TOKENS }) });
+    h.host.startCheck(checkStartOn('byok-anthropic', 'anthropic/claude-sonnet-5-5'));
+    await vi.waitFor(() => expect(h.checks).toEqual([{ type: 'check.error', checkId: 'check-1', code: 'refused' }]));
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.host.stats().strikes).toBe(0);
+    // A turn's body with tools and the full cap is still sent on the turn path (unchanged).
+    const turn = await createCheckHarness({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'auto' } });
+    turn.host.send({ type: 'chat.start', chatId: 'chat-1', messages: [{ role: 'user', content: 'Hi' }], systemPrompt: '', modelId: 'anthropic/claude-sonnet-5-5', route: 'byok-anthropic', allowedTools: ['page_text'], mcpTools: [], reasoningEffort: 'auto' });
+    turn.runtime.post({ type: 'fetch.request', requestId: 't1', url: urls['byok-anthropic'], method: 'POST', headers: [], body: JSON.stringify({ ...ANTHROPIC, max_tokens: MAX_OUTPUT_TOKENS, tools: [anthropicTool] }) });
+    await turn.flush();
+    expect(turn.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('check-output-capped', async () => {
+    expect(AI_CHECK_LIMITS.maxOutputTokens).toBeLessThanOrEqual(MAX_OUTPUT_TOKENS);
+    const fields: [ModelRoute, AgentModelId, string][] = [
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'max_tokens'],
+      ['byok-openai', 'openai/gpt-5', 'max_output_tokens'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'maxOutputTokens'],
+      ['gateway', 'openai/gpt-5', 'maxOutputTokens'],
+    ];
+    for (const [route, modelId, field] of fields) {
+      const request = await captureCheckRequest(route, modelId);
+      const body = JSON.parse(request.body as string) as Record<string, unknown>;
+      expect(body[field], `${route} ${modelId}`).toBe(AI_CHECK_LIMITS.maxOutputTokens);
+      // Without its cap, a check's body is refused as a turn's is.
+      const { [field]: _cap, ...uncapped } = body;
+      const headers = filterRequestHeaders(route, request.headers);
+      expect(checkModelRequest(route, modelId, 'auto', JSON.stringify(uncapped), headers), `${route} uncapped`).toEqual({ ok: false, reason: 'output-cap' });
+    }
+  });
+
+  test('chatgpt-check-has-no-forbidden-fields', async () => {
+    const request = await captureCheckRequest('chatgpt', CHATGPT_MODEL);
+    const text = request.body as string;
+    const body = JSON.parse(text) as Record<string, unknown>;
+    for (const field of ['max_output_tokens', 'temperature', 'top_p', 'tools', 'reasoning']) expect(body[field], field).toBeUndefined();
+    expect(body).toMatchObject({ store: false, stream: true, model: 'gpt-6.1-sol' });
+    expect((body.input as { role?: string }[]).some((item) => item.role === 'system')).toBe(false);
+    expect(checkModelRequest('chatgpt', CHATGPT_MODEL, 'auto', text, filterRequestHeaders('chatgpt', request.headers))).toEqual({ ok: true, body: text });
+  });
+});
+

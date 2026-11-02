@@ -7,6 +7,7 @@ import { CloseIcon } from './icons';
 import { actions } from './ipc';
 import { registerPaletteActions } from './palette/registry';
 import { AccountSettings } from './settings-account';
+import { AiChecksSettings } from './settings-ai-checks';
 import { GscSettings } from './settings-gsc';
 import { accountStore, settingsActions, useAccountState, useSettingsMenuSeq } from './settings-hooks';
 import { closeCancelsSignIn, holdsSheet, isMenuRequest, onSettingsRequest, opensForConfirmation, requestSettings, SETTINGS_CLOSED, settingsReducer } from './settings-open';
@@ -16,8 +17,9 @@ import './settings.css';
 
 // The Settings view (Phase 4 Task 9; acceptance `account-settings.feature.md`): a sheet that fills the
 // page column while open (the page area below is laid out zero-high by `settings.css`, so the tab's
-// view never covers it), with the Account, Search Console and Telemetry sections. Opened by the
-// palette (`settings-palette.ts`), the menu's Settings… (main's `account.settingsWatch` counter), and a
+// view never covers it), with the Account, Search Console, AI checks (Phase 9 Task 11) and Telemetry
+// sections. Opened by the palette (`settings-palette.ts`), the menu's Settings… (main's
+// `account.settingsWatch` counter), and a
 // sign-in that waits for its confirmation; closed by Close, Esc, History opening, another tab or a new
 // document. While a confirmation waits, History and page changes leave it open and Close / Esc cancel
 // the sign-in first, so a waiting confirmation is never hidden. When it closes and focus was inside it,
@@ -36,10 +38,12 @@ import.meta.hot?.dispose(unregisterPaletteActions);
 
 const headingId = (section: SettingsSectionId) => `settings-section-${section}`;
 
-function SettingsView({ section, focusSeq, account, closeLabel, onClose, onSection }: {
+function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, onSection }: {
   readonly section: SettingsSectionId;
   readonly focusSeq: number;
   readonly account: AccountState | null;
+  /** The active tab (AI checks' state is read per tab; the mode is the app's). */
+  readonly tabId: number | undefined;
   readonly closeLabel: string;
   readonly onClose: () => void;
   readonly onSection: (section: SettingsSectionId) => void;
@@ -92,6 +96,7 @@ function SettingsView({ section, focusSeq, account, closeLabel, onClose, onSecti
                 </h2>
                 {entry.id === 'account' ? <AccountSettings state={account} /> : null}
                 {entry.id === 'search-console' ? <GscSettings /> : null}
+                {entry.id === 'ai-checks' ? <AiChecksSettings tabId={tabId} /> : null}
                 {entry.id === 'telemetry' ? <TelemetrySettings /> : null}
               </section>
             ))}
@@ -166,6 +171,7 @@ export function SettingsSlot({ tab, historySeq, onOpen }: { readonly tab: Pick<T
       section={state.section}
       focusSeq={state.focusSeq}
       account={account}
+      tabId={tab?.id}
       closeLabel={cancels ? ACCOUNT_SETTINGS_TEXT.closeCancels : 'Close settings'}
       onClose={close}
       onSection={(section) => dispatch({ type: 'request', section })}

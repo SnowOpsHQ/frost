@@ -3,14 +3,18 @@ import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import {
   GscActionResultSchema,
   GscConnectResultSchema,
+  GscCountriesAnswerSchema,
   GscPerformanceAnswerSchema,
   GscPerformanceQuerySchema,
   GscPropertiesAnswerSchema,
   GscQueriesAnswerSchema,
   GscStatusSchema,
+  GscTargetPagesAnswerSchema,
+  GscTargetPagesQuerySchema,
   GscWatchInputSchema,
   type GscStatus,
 } from '@app/specs/gsc.schema';
+import { GscInspectInputSchema, GscInspectionAnswerSchema, GscOpenInspectionLinkInputSchema, GscOpenLinkResultSchema } from '@app/specs/gsc-inspection.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import type { GscIpcService } from './gsc-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
@@ -18,8 +22,8 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 // Search Console ↔ main (Phase 4 Task 8; spec `gsc.schema.ts`; acceptance `gsc.feature.md`, Router).
 // Every procedure starts `publicProcedure.use(enforceSender)`. Every output is validated with a strict
 // schema, so a service answer that carries anything else (a token, a code) is a masked internal error,
-// never forwarded. The reads are gated on `search-console` by the service itself, which answers
-// `{ status: 'unavailable', reason: 'not-entitled' }` (the panel shows why) rather than `FORBIDDEN`.
+// never forwarded. Search Console is not gated (`UNGATED_FEATURES`); a service that answers
+// `{ status: 'unavailable', reason: 'not-entitled' }` (wire compatibility) is forwarded as is, never `FORBIDDEN`.
 
 /** Hands the procedure main's `GscIpcService` (after `enforceSender`; fails closed without it). */
 const requireGsc = middleware(({ ctx, next }) => {
@@ -50,8 +54,18 @@ async function watchGsc(gsc: GscIpcService, sinceVersion: number): Promise<GscSt
  * - `connect`: starts connecting a Google account for the sender's window (`GscConnectResult`;
  *   `needs-gesture` without a live user gesture there).
  * - `cancelConnect`, `disconnect`: a boolean (see `GscIpcService`).
- * - `properties`: the verified properties; `performance` / `topQueries` (`GscPerformanceQuerySchema`):
- *   a page's or its property's performance and top queries. Each `ok` or `unavailable` with a reason.
+ * - `properties`: the verified properties; `performance` / `topQueries` / `countries`
+ *   (`GscPerformanceQuerySchema`: exactly one of `days` and `range`, optional `country` / `device`):
+ *   a page's or its property's performance, top queries and countries with data. Each `ok` or
+ *   `unavailable` with a reason.
+ * - `targetPages` (`GscTargetPagesQuerySchema`: the page, a target query, exactly one of `days` and
+ *   `range`): the property's pages Google showed for that query, this page's rank among them
+ *   (`GscTargetPagesAnswerSchema`). Named so the `db-only-in-main` rule never mistakes it for a query.
+ * - `inspect` (`GscInspectInputSchema`): Google's URL Inspection of a page (`GscInspectionAnswerSchema`).
+ *   A mutation: it spends Google's per-site quota, and runs only when the user asks.
+ * - `openInspectionLink` (`GscOpenInspectionLinkInputSchema`: the page, never the link): opens main's
+ *   own cached Search Console link for that page on a live gesture in the sender's window
+ *   (`GscOpenLinkResult`).
  */
 export const gscRouter = router({
   status: publicProcedure
@@ -102,4 +116,33 @@ export const gscRouter = router({
     .input(GscPerformanceQuerySchema)
     .output(GscQueriesAnswerSchema)
     .query(({ ctx, input }) => ctx.gsc.topQueries(input)),
+  countries: publicProcedure
+    .use(enforceSender)
+    .use(requireGsc)
+    .input(GscPerformanceQuerySchema)
+    .output(GscCountriesAnswerSchema)
+    .query(({ ctx, input }) => ctx.gsc.countries(input)),
+  targetPages: publicProcedure
+    .use(enforceSender)
+    .use(requireGsc)
+    .input(GscTargetPagesQuerySchema)
+    .output(GscTargetPagesAnswerSchema)
+    .query(({ ctx, input }) => ctx.gsc.targetPages(input)),
+  inspect: publicProcedure
+    .use(enforceSender)
+    .use(requireGsc)
+    .input(GscInspectInputSchema)
+    .output(GscInspectionAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.gsc.inspect(input)),
+  openInspectionLink: publicProcedure
+    .use(enforceSender)
+    .use(requireGsc)
+    .input(GscOpenInspectionLinkInputSchema)
+    .output(GscOpenLinkResultSchema)
+    .mutation(({ ctx, input }) => {
+      // `enforceSender` admitted only a known app window, so there is a window ID (as `connect`).
+      const windowId = ctx.sender?.windowId;
+      if (typeof windowId !== 'number') throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'no sender window' });
+      return ctx.gsc.openInspectionLink(windowId, input.url);
+    }),
 });

@@ -1,32 +1,203 @@
-import { useSyncExternalStore } from 'react';
+import { useRef, useState, useSyncExternalStore } from 'react';
 import type { TabState } from '@app/specs/browser.spec';
 import type { GscPerformanceRow, GscQueryRow } from '@app/specs/gsc.schema';
-import { GSC_CHART, GSC_METRIC_LABELS, GSC_PANEL_TEXT, GSC_SCOPE_LABELS, type GscPanelAction, type GscPanelMetric } from '@app/specs/gsc-panel.spec';
-import { GSC_QUERY_SCOPES, GSC_RANGE_DAYS, type GscDateRange } from '@app/specs/gsc.spec';
+import {
+  GSC_CHART,
+  GSC_DEVICE_LABELS,
+  GSC_DEVICE_ORDER,
+  GSC_FILTER_TEXT,
+  GSC_METRIC_LABELS,
+  GSC_PANEL_TEXT,
+  GSC_RANGE_MONTHS,
+  GSC_RANGE_PRESET_LABELS,
+  GSC_SCOPE_LABELS,
+  type GscMonthPreset,
+  type GscPanelAction,
+  type GscPanelMetric,
+} from '@app/specs/gsc-panel.spec';
+import { GSC_DEVICES, GSC_QUERY_SCOPES, GSC_RANGE_DAYS, type GscDateRange, type GscDevice } from '@app/specs/gsc.spec';
 import { chartModel } from '../../gsc-chart';
 import { gscPaletteSources } from '../../gsc-palette';
-import { formatDay, formatMetric, gscPanelView, gscPrefs, gscReadRequest, type GscPanelView, type GscPrefs, type GscTile } from '../../gsc-view';
+import {
+  formatDay,
+  formatMetric,
+  gscCalendarBounds,
+  gscPanelView,
+  gscPrefs,
+  gscReadRequest,
+  hasFilters,
+  shortDay,
+  type GscPanelView,
+  type GscPrefs,
+  type GscTile,
+} from '../../gsc-view';
 import { useGscData } from '../../hooks/useGscData';
 import { ReloadIcon } from '../../icons';
 import { registerPaletteActions } from '../../palette/registry';
 import { useGscStatus } from '../../settings-hooks';
 import { requestSettings } from '../../settings-open';
+import { GscCalendar, localeWeekStart } from './GscCalendar';
 import { GscIcon } from './gsc-icons';
 import { PageText, Section } from './parts';
 import '../../gsc-panel.css';
 
 // The Search Console panel (Phase 4 Task 10; spec `gsc-panel.spec.ts`; acceptance `gsc-panel.feature.md`):
-// the active tab's page (or its whole property) over 7, 28 or 90 days — totals, a frost-drawn line
-// chart of one metric, and the top queries. It reads only while it is shown (it is mounted only while
-// the sidebar is open on it), and only once main says Search Console is configured, included in the
-// plan and connected. Sign-in and Connect happen in Settings (they need a click there). The chart is
-// SVG attributes only (no `style=`: strict CSP); queries and the property are inert `<bdi>` text.
+// the active tab's page (or its whole property) over 7, 28 or 90 days, the last 3 to 16 months or a
+// custom range (Phase 9: a calendar, `GscCalendar.tsx`), optionally for one country and one device —
+// totals, a frost-drawn line chart of one metric, and the top queries. It reads only while it is shown
+// (it is mounted only while the sidebar is open on it), and only once main says Search Console is
+// configured and connected (it is not gated: no frost account or plan). Connect happens in Settings (it
+// needs a click there). The chart is SVG attributes only (no `style=`: strict CSP); queries, country
+// names and the property are inert text.
 
 // The command palette's Search Console actions (`gsc-palette.ts`), once per module instance.
-const unregisterPaletteActions = registerPaletteActions(...gscPaletteSources({ scope: () => gscPrefs.get().scope, setScope: (scope) => gscPrefs.set({ scope }) }));
+const unregisterPaletteActions = registerPaletteActions(
+  ...gscPaletteSources({
+    scope: () => gscPrefs.get().scope,
+    setScope: (scope) => gscPrefs.set({ scope }),
+    filtered: () => hasFilters(gscPrefs.get()),
+    clearFilters: () => gscPrefs.clearFilters(),
+  }),
+);
 import.meta.hot?.dispose(unregisterPaletteActions);
 
-const RANGE_LABEL = (days: number) => `${days} days`;
+const MONTH_PRESETS = Object.keys(GSC_RANGE_MONTHS) as GscMonthPreset[];
+const WEEK_START = localeWeekStart();
+const isMonthPreset = (value: string): value is GscMonthPreset => (MONTH_PRESETS as string[]).includes(value);
+const isDevice = (value: string): value is GscDevice => (GSC_DEVICES as readonly string[]).includes(value);
+
+/** "Aug 1 – Sep 15, 2026" (both years when they differ). */
+function datesLabel(range: GscDateRange): string {
+  return range.start.slice(0, 4) === range.end.slice(0, 4) ? `${shortDay(range.start)} – ${formatDay(range.end)}` : `${formatDay(range.start)} – ${formatDay(range.end)}`;
+}
+
+function RangeControls({ prefs, view }: { readonly prefs: GscPrefs; readonly view: GscPanelView }) {
+  const [calendar, setCalendar] = useState(false);
+  // What opened the calendar: focus goes back there when it closes.
+  const opener = useRef<HTMLElement | null>(null);
+  const preset = prefs.range;
+  const custom = preset === 'custom' && prefs.custom !== null;
+  const month = typeof preset === 'string' && isMonthPreset(preset) ? preset : null;
+  return (
+    <div className="gsc-range-wrap">
+      <div className="gsc-range-row">
+        <div className="seo-segmented gsc-range-days" role="group" aria-label="Date range" data-testid="gsc-ranges">
+          {GSC_RANGE_DAYS.map((days) => (
+            <button key={days} type="button" className="seo-segment" data-testid="gsc-range" data-days={days} aria-pressed={preset === days} onClick={() => gscPrefs.set({ range: days })}>
+              {GSC_RANGE_PRESET_LABELS[days]}
+            </button>
+          ))}
+        </div>
+        <select
+          className="seo-select gsc-select"
+          data-testid="gsc-range-select"
+          aria-label={GSC_FILTER_TEXT.rangeLabel}
+          data-active={month === null ? undefined : 'true'}
+          value={month ?? ''}
+          onChange={(event) => {
+            // Month presets only: moving through a closed select with the arrow keys fires `change`
+            // (Chromium on Windows and Linux), so no option may open the calendar (WCAG 3.2.2).
+            const value = event.target.value;
+            if (isMonthPreset(value)) gscPrefs.set({ range: value });
+          }}
+        >
+          <option value="" disabled>
+            {GSC_FILTER_TEXT.rangeMore}
+          </option>
+          {MONTH_PRESETS.map((option) => (
+            <option key={option} value={option}>
+              {GSC_RANGE_PRESET_LABELS[option]}
+            </option>
+          ))}
+        </select>
+      </div>
+      {/* The calendar opens only from this button: "Custom range…", or the picked dates once set. */}
+      <button
+        type="button"
+        className="seo-chip-button gsc-dates"
+        data-testid="gsc-custom-range"
+        aria-haspopup="dialog"
+        aria-expanded={calendar}
+        data-active={custom ? 'true' : undefined}
+        aria-label={custom ? `${GSC_FILTER_TEXT.customButton}: ${formatDay(view.range.start)} – ${formatDay(view.range.end)}` : undefined}
+        onClick={(event) => {
+          opener.current = event.currentTarget;
+          setCalendar((open) => !open);
+        }}
+      >
+        {custom ? datesLabel(view.range) : GSC_FILTER_TEXT.customOption}
+      </button>
+      {calendar ? (
+        <div className="gsc-cal-pop">
+          <GscCalendar
+            bounds={gscCalendarBounds(Date.now())}
+            value={prefs.range === 'custom' ? prefs.custom : null}
+            weekStart={WEEK_START}
+            onPick={(custom) => gscPrefs.set({ range: 'custom', custom })}
+            onClose={() => setCalendar(false)}
+            returnFocus={opener.current}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function FilterControls({ prefs, view }: { readonly prefs: GscPrefs; readonly view: GscPanelView }) {
+  const country = useRef<HTMLSelectElement>(null);
+  return (
+    <div className="gsc-filter-row" role="group" aria-label="Filters" data-testid="gsc-filters">
+      <select
+        ref={country}
+        className="seo-select gsc-select"
+        data-testid="gsc-country"
+        aria-label={GSC_FILTER_TEXT.countryLabel}
+        data-active={prefs.country === null ? undefined : 'true'}
+        value={prefs.country ?? ''}
+        onChange={(event) => gscPrefs.set({ country: event.target.value === '' ? null : event.target.value })}
+      >
+        <option value="">{GSC_FILTER_TEXT.allCountries}</option>
+        {view.countryOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <select
+        className="seo-select gsc-select"
+        data-testid="gsc-device"
+        aria-label={GSC_FILTER_TEXT.deviceLabel}
+        data-active={prefs.device === null ? undefined : 'true'}
+        value={prefs.device ?? ''}
+        onChange={(event) => {
+          const value = event.target.value;
+          gscPrefs.set({ device: isDevice(value) ? value : null });
+        }}
+      >
+        <option value="">{GSC_FILTER_TEXT.allDevices}</option>
+        {GSC_DEVICE_ORDER.map((device) => (
+          <option key={device} value={device}>
+            {GSC_DEVICE_LABELS[device]}
+          </option>
+        ))}
+      </select>
+      {view.filtered ? (
+        <button
+          type="button"
+          className="seo-chip-button gsc-clear"
+          data-testid="gsc-clear-filters"
+          onClick={() => {
+            gscPrefs.clearFilters();
+            // The button goes away: focus stays in the filters.
+            country.current?.focus();
+          }}
+        >
+          {GSC_FILTER_TEXT.clear}
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 function Controls({ prefs, view }: { readonly prefs: GscPrefs; readonly view: GscPanelView }) {
   const site = view.property?.siteUrl ?? null;
@@ -48,13 +219,8 @@ function Controls({ prefs, view }: { readonly prefs: GscPrefs; readonly view: Gs
           </button>
         ))}
       </div>
-      <div className="seo-segmented" role="group" aria-label="Date range" data-testid="gsc-ranges">
-        {GSC_RANGE_DAYS.map((days) => (
-          <button key={days} type="button" className="seo-segment" data-testid="gsc-range" data-days={days} aria-pressed={prefs.days === days} onClick={() => gscPrefs.set({ days })}>
-            {RANGE_LABEL(days)}
-          </button>
-        ))}
-      </div>
+      <RangeControls prefs={prefs} view={view} />
+      <FilterControls prefs={prefs} view={view} />
       {site ? (
         <p className="gsc-property" data-testid="gsc-property" data-kind={view.property!.kind}>
           <span className="gsc-property-label">Property</span>
@@ -229,8 +395,8 @@ export function GscPanel({ tab }: { readonly tab: TabState | undefined }) {
   const gsc = useGscStatus();
   const prefs = useSyncExternalStore(gscPrefs.subscribe, gscPrefs.get);
   const base = { gsc, url: tab?.url ?? '', prefs, answers: null, pending: false, now: Date.now() };
-  const { answers, pending, retry } = useGscData(gscReadRequest(base));
-  const view = gscPanelView({ ...base, answers, pending });
+  const { answers, pending, countries, retry } = useGscData(gscReadRequest(base));
+  const view = gscPanelView({ ...base, answers, pending, countries });
   const act = (action: GscPanelAction) => {
     if (action === 'retry') retry();
     else requestSettings('search-console');

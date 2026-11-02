@@ -3,10 +3,12 @@ import type { PanelStatus } from '@app/specs/seo-sidebar.spec';
 import { RULES } from './rules';
 import type { Finding, PageFacts, PageSnapshot, SeoAudit, SeoRule, SeverityCounts } from './types';
 import { described, robotsWith } from './rules/head';
+import { aiReadinessReport } from './ai-readiness';
 import { complianceReport } from './compliance';
 import { contentReport } from './content/report';
 import { indexabilityReport } from './indexability';
 import { javascriptReport } from './javascript/report';
+import { pageTypeOf } from './page-type';
 import { speedReport } from './performance';
 import { analyseSchema } from './schema';
 import { tokens } from './util';
@@ -129,5 +131,7 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
     compliance,
     content: contentReport(snapshot),
     javascript: javascriptReport(snapshot),
+    aiReadiness: aiReadinessReport(snapshot),
+    pageType: pageTypeOf(snapshot),
   };
 }

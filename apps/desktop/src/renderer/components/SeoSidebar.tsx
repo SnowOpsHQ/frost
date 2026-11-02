@@ -186,10 +186,24 @@ function Hint({ title, message, testId, reason, retry }: { readonly title: strin
   );
 }
 
-function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: TabState | undefined; readonly panel: SeoPanelId; readonly response: SeoAuditResponse | null; readonly notesGeneration?: number }) {
+function PanelBody({
+  tab,
+  panel,
+  response,
+  notesGeneration,
+  onOpenPanel,
+}: {
+  readonly tab: TabState | undefined;
+  readonly panel: SeoPanelId;
+  readonly response: SeoAuditResponse | null;
+  readonly notesGeneration?: number;
+  /** Opens another panel from inside one (the Overview's AI-readiness tile). */
+  readonly onOpenPanel: (panel: SeoPanelId) => void;
+}) {
   // The SERP and Visibility panels render from main's `serp.*` state, never waiting for the audit (serp-panels.feature.md).
   if (tab && panel === 'serp') return <Serp tab={tab} />;
-  if (tab && panel === 'visibility') return <Visibility tab={tab} />;
+  // Visibility's AI-readiness section reads the audit when it is ready, and is pending until then.
+  if (tab && panel === 'visibility') return <Visibility tab={tab} audit={response?.status === 'ready' ? response.audit : null} />;
   if (panel === 'changes') return <Changes tab={tab} response={response} />; // Phase 6: history shows whatever the audit's state.
   if (panel === 'inspector') return <Inspector tab={tab} />; // Phase 6 Task 8: the page's DOM, whatever the audit's state.
   // Search Console has no rules: it does not wait for the audit (`gsc-panel.feature.md`).
@@ -225,7 +239,7 @@ function PanelBody({ tab, panel, response, notesGeneration }: { readonly tab: Ta
       return (
         <>
           <AuditProfileNote renderProfile={response.renderProfile ?? null} />
-          <Overview audit={response.audit} />
+          <Overview audit={response.audit} tab={tab} onOpenPanel={onOpenPanel} notesGeneration={notesGeneration} />
         </>
       );
   }
@@ -278,6 +292,12 @@ export function SeoSidebar({
   const audited = current.categories.length > 0;
   const ready = response?.status === 'ready' ? response : null;
   const host = tab ? hostOf(tab.url) : '';
+  // A jump from inside a panel (the Overview's AI-readiness tile), as the palette's and the DevTools
+  // drawer's jumps do: that panel, with focus on its rail item (the button that asked goes with the old panel).
+  const openFromPanel = (id: SeoPanelId) => {
+    setPanel(id);
+    railItems.get(id)?.focus();
+  };
   const select = (id: SeoPanelId) => {
     // The open panel's rail item collapses the sidebar; any other opens it on that panel.
     if (open && id === panel) onOpenChange(false);
@@ -319,7 +339,7 @@ export function SeoSidebar({
             </button>
           </header>
           <div className="seo-body">
-            <PanelBody tab={tab} panel={panel} response={response} notesGeneration={notesGeneration} />
+            <PanelBody tab={tab} panel={panel} response={response} notesGeneration={notesGeneration} onOpenPanel={openFromPanel} />
           </div>
           {ready && audited ? (
             <footer className="seo-foot" data-testid="seo-duration" data-ms={Math.round(ready.audit.durationMs)}>

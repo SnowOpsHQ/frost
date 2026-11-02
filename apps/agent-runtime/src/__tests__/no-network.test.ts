@@ -36,7 +36,8 @@ const FORBIDDEN = [
   'axios',
 ];
 
-const ALLOWED_PACKAGES = ['ai', '@ai-sdk/anthropic', '@ai-sdk/openai', '@ai-sdk/gateway', '@ai-sdk/provider', 'zod', '@app/ai-skills'];
+// `ai-checks.spec` (Phase 9 Task 9): the AI checks' limits and codes, plain values like the agent specs.
+const ALLOWED_PACKAGES = ['ai', '@ai-sdk/anthropic', '@ai-sdk/openai', '@ai-sdk/gateway', '@ai-sdk/provider', 'zod', '@app/ai-skills', '@app/specs/ai-checks.spec'];
 const ALLOWED_PREFIXES = ['@app/specs/agent-', './'];
 
 function sources(dir: string): string[] {

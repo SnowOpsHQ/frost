@@ -1,7 +1,7 @@
 import type { GscPerformanceRow } from '@app/specs/gsc.schema';
 import { GSC_CHART, GSC_LOWER_IS_BETTER, GSC_METRIC_LABELS, GSC_PANEL_TEXT, GSC_RATE_HIGHLIGHT_MIN_IMPRESSIONS, type GscPanelMetric } from '@app/specs/gsc-panel.spec';
-import type { GscDateRange } from '@app/specs/gsc.spec';
-import { formatCompact, formatCount, formatDay, formatMetric, lastAnsweredDay, shortDay } from './gsc-view';
+import { GSC_MAX_RANGE_DAYS, type GscDateRange } from '@app/specs/gsc.spec';
+import { formatCompact, formatCount, formatDay, formatMetric, lastAnsweredDay, monthOf, shortDay } from './gsc-view';
 
 // The Search Console panel's line chart as numbers (Phase 4 Task 10; acceptance `gsc-panel.feature.md`,
 // Chart). Pure: a performance answer's rows become the points, line segments, dots, ticks and the
@@ -20,6 +20,7 @@ export interface ChartGeometry {
   readonly padLeft: number;
   readonly maxYTicks: number;
   readonly xTicks: number;
+  readonly monthTicksAfterDays: number;
 }
 
 export interface ChartPoint {
@@ -60,12 +61,12 @@ export interface ChartModel {
 const DAY_MS = 86_400_000;
 const NICE_STEPS = [1, 2, 5, 10] as const;
 
-/** Every date of `range`, both ends included (`YYYY-MM-DD`, UTC). */
+/** Every date of `range`, both ends included (`YYYY-MM-DD`, UTC), at most `GSC_MAX_RANGE_DAYS`. */
 export function rangeDays(range: GscDateRange): string[] {
   const start = Date.parse(`${range.start}T00:00:00Z`);
   const end = Date.parse(`${range.end}T00:00:00Z`);
   const days: string[] = [];
-  for (let at = start; at <= end && days.length <= 366; at += DAY_MS) days.push(new Date(at).toISOString().slice(0, 10));
+  for (let at = start; at <= end && days.length < GSC_MAX_RANGE_DAYS; at += DAY_MS) days.push(new Date(at).toISOString().slice(0, 10));
   return days;
 }
 
@@ -237,7 +238,9 @@ export function chartModel(rows: readonly GscPerformanceRow[], metric: GscPanelM
   const yTicks = ticks.map((value) => ({ value, label: tickLabel(metric, value, step), pos: y(value) }));
   const tickCount = Math.min(geometry.xTicks, days.length);
   const xIndexes = tickCount <= 1 ? [0] : [...new Set(Array.from({ length: tickCount }, (_, i) => Math.floor((i * (days.length - 1)) / (tickCount - 1))))];
-  const xTicks = days.length === 0 ? [] : xIndexes.map((i) => ({ value: i, label: shortDay(days[i]!), pos: x(i) }));
+  // Over `monthTicksAfterDays` days a tick's day says little: label it by month.
+  const xLabel = days.length > geometry.monthTicksAfterDays ? monthOf : shortDay;
+  const xTicks = days.length === 0 ? [] : xIndexes.map((i) => ({ value: i, label: xLabel(days[i]!), pos: x(i) }));
 
   return { metric, inverted, empty, lastDate, points, segments, dots, yTicks, xTicks, summary: summaryOf(metric, range, rows, lastDate) };
 }

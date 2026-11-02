@@ -1,85 +1,28 @@
 // Specs: specs/visibility-probes.spec.ts (PROBE_AGENTS, PROBE_DISCLOSURE, PROBE_MODELLED_DIRECTIVES_NOTE,
-// PROBE_ROBOTS_SERVED_NOTE, PROBE_LIMITS), specs/intent-classifier.spec.ts (INTENT_ENABLE_PROMPT, INTENT_MODEL,
+// PROBE_ROBOTS_SERVED_NOTE, PROBE_LIMITS), specs/ai-readiness.spec.ts (AI_READINESS_COPY, aiReadinessScore,
+// aiScoreBasis), specs/intent-classifier.spec.ts (INTENT_ENABLE_PROMPT, INTENT_MODEL,
 // INTENT_DOWNLOAD_MB, INTENT_MODEL_DIR), specs/serp-selector-pack.spec.ts (the e2e pack seams), specs/fetcher.spec.ts (E2E_PUBLIC_HOSTS_SWITCH)
-// Acceptance: specs/serp-panels.feature.md (End to end); review focus probes-are-bounded
+// Acceptance: specs/serp-panels.feature.md (End to end), specs/ai-readiness.feature.md (End to end); review
+// focus probes-are-bounded. The site is `probe-site.ts` (robots.txt, `/llms.txt`, the pages).
 import { readdir } from 'node:fs/promises';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { AI_READINESS_COPY, aiReadinessScore, aiScoreBasis, type AiCheckStatus, type AiReadinessCheckId } from '@app/specs/ai-readiness.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { INTENT_DOWNLOAD_MB, INTENT_ENABLE_PROMPT, INTENT_MODEL, INTENT_MODEL_DIR, INTENT_STATE_MESSAGES } from '@app/specs/intent-classifier.spec';
 import { SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH } from '@app/specs/serp-selector-pack.spec';
 import { PROBE_AGENTS, PROBE_DISCLOSURE, PROBE_LIMITS, PROBE_MODELLED_DIRECTIVES_NOTE, PROBE_ROBOTS_SERVED_NOTE } from '@app/specs/visibility-probes.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
-import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
+import { CRAWLER, LLMS_TXT_TITLE, SECOND_HOST, SITE_HOST, startProbeSite, type ProbeSite } from './probe-site';
+import { PACK_PATH, PACK_VERSION, SEARCH_HOST, signedTestPack } from './serp-fixtures';
 
-/** The probed site's public-looking name (`--host-resolver-rules`, `--frost-e2e-public-hosts`). */
-const SITE_HOST = 'probes.frost-e2e.net';
 const RUN_WAIT = PROBE_LIMITS.timeoutMs * 2 + 10_000;
 /** How long `/slow` keeps a crawler waiting (longer than a probe may wait, so Stop is what ends it). */
 const SLOW_MS = PROBE_LIMITS.timeoutMs + 5_000;
 
-const CRAWLER = /googlebot|bingbot|gptbot|claudebot|perplexitybot/i;
-const words = (n: number) => Array.from({ length: n }, (_, i) => `leaf${i % 60} brew${i % 7}`).join(' ');
-const page = (title: string, body: string) =>
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title><meta name="description" content="A loopback page frost probes as each crawler."><link rel="canonical" href="/page"></head><body><h1>${title}</h1><p>${body}</p></body></html>`;
-
-type Seen = { path: string; userAgent: string };
-
-async function startSite(pack: { readonly bytes: Buffer; readonly signature: string }) {
-  const seen: Seen[] = [];
-  const server = createServer((request: IncomingMessage, response: ServerResponse) => {
-    const host = (request.headers.host ?? '').split(':')[0]!;
-    const url = new URL(request.url ?? '/', 'http://x');
-    const path = url.pathname;
-    const userAgent = request.headers['user-agent'] ?? '';
-    // The synthetic engine (serp-fixtures.ts), for the SERP panel's intent state.
-    if (host === SEARCH_HOST) {
-      const answer = engineAnswer(url, pack);
-      if (answer) response.writeHead(answer.status, { 'Content-Type': answer.type }).end(answer.body);
-      else response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
-      return;
-    }
-    seen.push({ path, userAgent });
-    if (path === '/robots.txt') {
-      response.writeHead(200, { 'Content-Type': 'text/plain' }).end('User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n');
-      return;
-    }
-    if (path === '/page') {
-      // Googlebot alone is told not to index; ClaudeBot gets a much shorter page.
-      const short = /claudebot/i.test(userAgent);
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'googlebot: noindex' }).end(page('Green tea leaves', words(short ? 12 : 300)));
-      return;
-    }
-    if (path === '/slow') {
-      if (!CRAWLER.test(userAgent)) {
-        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('A page slow for crawlers', words(200)));
-        return;
-      }
-      const timer = setTimeout(() => response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Late', words(200))), SLOW_MS);
-      response.on('close', () => clearTimeout(timer));
-      return;
-    }
-    response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  return {
-    origin: `http://${SITE_HOST}:${port}`,
-    searchOrigin: `http://${SEARCH_HOST}:${port}`,
-    seen,
-    close: () =>
-      new Promise<void>((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      }),
-  };
-}
-
 let app: ElectronApplication;
 let chrome: Page;
-let site: Awaited<ReturnType<typeof startSite>>;
+let site: ProbeSite;
 const h = chromeHelpers(
   () => app,
   () => chrome,
@@ -104,11 +47,11 @@ async function load(url: string): Promise<number> {
 
 test.beforeAll(async () => {
   const pack = signedTestPack();
-  site = await startSite(pack);
+  site = await startProbeSite({ pack, slowMs: SLOW_MS });
   // No intent fake here: on-device intent is off (the model is never downloaded by these tests).
   ({ app, page: chrome } = await launchApp([
-    `--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1, MAP ${SEARCH_HOST} 127.0.0.1`,
-    `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST},${SEARCH_HOST}`,
+    `--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1, MAP ${SECOND_HOST} 127.0.0.1, MAP ${SEARCH_HOST} 127.0.0.1`,
+    `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST},${SECOND_HOST},${SEARCH_HOST}`,
     `--${SERP_E2E_PACK_URL_SWITCH}=${site.searchOrigin}${PACK_PATH}`,
     `--${SERP_E2E_PACK_KEY_SWITCH}=${pack.spki}`,
   ]));
@@ -223,4 +166,128 @@ test('serp-panel-intent-model-missing', async () => {
   const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
   const modelFiles = await readdir(`${userData}/${INTENT_MODEL_DIR}/${INTENT_MODEL.id}`).catch(() => [] as string[]);
   expect(modelFiles).toEqual([]);
+});
+
+// AI readiness (ai-readiness.feature.md, End to end) on `/ai/guide`: a plain, indexable article whose
+// robots.txt disallows OAI-SearchBot on `/ai/` and GPTBot everywhere. On the site's second name, so the
+// probe runs above (on `SITE_HOST`) left nothing cached for its origin.
+const AI_PAGE = '/ai/guide';
+const aiSeen = () => site.seen.filter((entry) => entry.host === SECOND_HOST);
+const aiCheck = (id: AiReadinessCheckId) => chrome.locator(`[data-testid="ai-readiness"] [data-testid="ai-check"][data-check="${id}"]`);
+const crawler = (token: string) => chrome.locator(`[data-testid="ai-readiness"] [data-testid="ai-crawler"][data-token="${token}"]`);
+/** What the page's checks are before a probe run: one AI search crawler of several is blocked (warn). */
+const STATIC_CHECKS: Partial<Record<AiReadinessCheckId, AiCheckStatus>> = {
+  'search-indexable': 'pass',
+  'ai-search-crawlers': 'warn',
+  'served-content': 'pass',
+  'live-fetch-agents': 'pass',
+  'training-opt-outs': 'info',
+};
+
+/** Loads the AI page, opens Visibility and waits for its static checks (the served comparison settled). */
+async function openAiReadiness(): Promise<void> {
+  await load(`${site.secondOrigin}${AI_PAGE}`);
+  await openVisibility();
+  await expect(chrome.getByTestId('ai-readiness-ring')).toHaveAttribute('data-state', 'partial', { timeout: RUN_WAIT });
+}
+
+/** Runs the probes from the panel and waits for the run to finish. */
+async function runProbes(): Promise<void> {
+  await chrome.getByTestId('visibility-run').click();
+  await expect(chrome.getByTestId('visibility-summary')).toHaveAttribute('data-status', 'done', { timeout: RUN_WAIT });
+}
+
+test('ai-readiness-static-score-before-probes', async () => {
+  const before = aiSeen().length;
+  await openAiReadiness();
+  // The score from the static checks alone: weighted over the three that judge the page now.
+  const score = aiReadinessScore(STATIC_CHECKS);
+  expect(score).toEqual({ score: 81, checked: 3, total: 4 });
+  await expect(chrome.getByTestId('ai-readiness-score')).toHaveText(String(score.score));
+  await expect(chrome.getByTestId('ai-readiness-basis')).toHaveText(aiScoreBasis(score));
+  await expect(chrome.getByTestId('ai-readiness-hint')).toHaveText(AI_READINESS_COPY.partialHint);
+  for (const [id, status] of Object.entries(STATIC_CHECKS)) await expect(aiCheck(id as AiReadinessCheckId)).toHaveAttribute('data-status', status);
+  await expect(aiCheck('agent-reachability')).toHaveAttribute('data-status', 'not-checked');
+  await expect(aiCheck('llms-txt')).toHaveAttribute('data-status', 'not-checked');
+  // The Overview's tile says the same.
+  await railItem('overview').click();
+  await expect(chrome.getByTestId('ai-readiness-tile').getByTestId('ai-readiness-score')).toHaveText(String(score.score));
+  await expect(chrome.getByTestId('ai-readiness-tile').getByTestId('ai-readiness-basis')).toHaveText(aiScoreBasis(score));
+  // Nothing was asked as a crawler, and no /llms.txt: only the page (the tab's load and its served
+  // copy) and, unless main's cache still holds it, robots.txt.
+  const asked = aiSeen().slice(before);
+  expect(asked.filter((entry) => CRAWLER.test(entry.userAgent))).toEqual([]);
+  expect(asked.filter((entry) => entry.path === '/llms.txt')).toEqual([]);
+  expect(asked.filter((entry) => entry.path === AI_PAGE).length).toBeGreaterThan(0);
+  expect(asked.filter((entry) => entry.path !== AI_PAGE && entry.path !== '/robots.txt')).toEqual([]);
+});
+
+test('ai-readiness-bot-verdicts', async () => {
+  const before = crawlerRequests().length;
+  await openAiReadiness();
+  // From the robots.txt the audit already read, on the page's path, with no request of its own.
+  await expect(crawler('OAI-SearchBot')).toHaveAttribute('data-verdict', 'disallowed');
+  await expect(crawler('OAI-SearchBot').getByTestId('ai-crawler-rule')).toHaveText('/ai/');
+  await expect(crawler('GPTBot')).toHaveAttribute('data-verdict', 'disallowed');
+  await expect(crawler('GPTBot').getByTestId('ai-crawler-rule')).toHaveText('/');
+  for (const token of ['PerplexityBot', 'ChatGPT-User', 'Claude-SearchBot', 'ClaudeBot', 'Googlebot', 'Bingbot']) {
+    await expect(crawler(token), token).toHaveAttribute('data-verdict', 'allowed');
+    await expect(crawler(token).getByTestId('ai-crawler-rule'), token).toHaveCount(0);
+  }
+  // Blocking one AI search crawler warns; the training opt-out (GPTBot) is shown neutral, never scored.
+  await expect(aiCheck('ai-search-crawlers')).toHaveAttribute('data-status', 'warn');
+  await expect(aiCheck('ai-search-crawlers')).toContainText('OAI-SearchBot');
+  const training = aiCheck('training-opt-outs');
+  await expect(training).toHaveAttribute('data-status', 'info');
+  await expect(training).toHaveAttribute('data-scored', 'false');
+  await expect(training.getByTestId('ai-check-status')).toHaveText(AI_READINESS_COPY.statuses.info);
+  await expect(training.locator('.ai-status-glyph')).toHaveCount(1);
+  await expect(training).toContainText(AI_READINESS_COPY.unscored);
+  expect(crawlerRequests().slice(before)).toEqual([]);
+});
+
+test('probes-eight-agents-and-llms-txt', async () => {
+  await openAiReadiness();
+  const before = aiSeen().length;
+  await runProbes();
+  // One column per agent: the browser and seven crawlers, OAI-SearchBot and ChatGPT-User among them.
+  const agents = await chrome.getByTestId('visibility-agent').evaluateAll((items) => items.map((item) => item.getAttribute('data-agent')));
+  expect(agents).toEqual(PROBE_AGENTS.map((agent) => agent.id));
+  expect(agents).toHaveLength(8);
+  expect(agents).toEqual(expect.arrayContaining(['oai-searchbot', 'chatgpt-user']));
+  await expect(cell('robots', 'oai-searchbot')).toContainText('Disallowed');
+  await expect(cell('robots', 'chatgpt-user')).toContainText('Allowed');
+  // /llms.txt once, after the agents, as frost (no crawler's user agent); its outcome and title shown.
+  await expect(aiCheck('llms-txt')).toHaveAttribute('data-status', 'pass');
+  await expect(aiCheck('llms-txt').getByTestId('ai-llms-title')).toHaveText(LLMS_TXT_TITLE);
+  const asked = aiSeen().slice(before);
+  const llms = asked.filter((entry) => entry.path === '/llms.txt');
+  expect(llms).toHaveLength(1);
+  expect(CRAWLER.test(llms[0]!.userAgent)).toBe(false);
+  // After the agents' calls: it starts once one lane is free, so at most `maxConcurrent - 1` agents'
+  // page requests can still reach the site after it (arrival order aside, stray browser requests too).
+  const llmsAt = asked.findIndex((entry) => entry.path === '/llms.txt');
+  const agentPagesBefore = asked.slice(0, llmsAt).filter((entry) => entry.path === AI_PAGE).length;
+  expect(agentPagesBefore).toBeGreaterThanOrEqual(PROBE_AGENTS.length - (PROBE_LIMITS.maxConcurrent - 1));
+  // Bounded: one request per crawler, and the whole run within PROBE_LIMITS.maxRunRequests (36).
+  expect(PROBE_LIMITS.maxRunRequests).toBe(36);
+  expect(asked.filter((entry) => CRAWLER.test(entry.userAgent) && entry.path === AI_PAGE)).toHaveLength(PROBE_AGENTS.length - 1);
+  expect(asked.length).toBeLessThanOrEqual(PROBE_LIMITS.maxRunRequests);
+});
+
+test('score-includes-reachability-after-run', async () => {
+  await openAiReadiness();
+  await runProbes();
+  // The run for this page adds the fourth weighted check: every AI search and live-fetch agent got the page.
+  await expect(aiCheck('agent-reachability')).toHaveAttribute('data-status', 'pass');
+  await expect(aiCheck('agent-reachability').getByTestId('ai-agent')).toHaveCount(3);
+  const score = aiReadinessScore({ ...STATIC_CHECKS, 'agent-reachability': 'pass', 'llms-txt': 'pass' });
+  expect(score).toEqual({ score: 85, checked: 4, total: 4 });
+  await expect(chrome.getByTestId('ai-readiness-ring')).toHaveAttribute('data-state', 'full');
+  await expect(chrome.getByTestId('ai-readiness-score')).toHaveText(String(score.score));
+  await expect(chrome.getByTestId('ai-readiness-basis')).toHaveText(aiScoreBasis(score));
+  await expect(chrome.getByTestId('ai-readiness-hint')).toHaveCount(0);
+  // The Overview's tile follows.
+  await railItem('overview').click();
+  await expect(chrome.getByTestId('ai-readiness-tile').getByTestId('ai-readiness-score')).toHaveText(String(score.score));
 });

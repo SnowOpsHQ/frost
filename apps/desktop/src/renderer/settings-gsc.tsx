@@ -1,20 +1,23 @@
 import { useState } from 'react';
+import { useGscProperties } from './hooks/useGscProperties';
 import { useGscStatus, settingsActions } from './settings-hooks';
 import { gscConnectResultMessage, gscSection, type GscButton } from './settings-gsc-view';
 
 // The Settings view's Search Console section (Phase 4 Task 9; acceptance `account-settings.feature.md`):
 // renders `gscSection(status)` from `gsc.watch` and calls one `gsc.*` procedure per click (Connect from
 // the click itself: main needs a live user gesture in this window). It needs no frost account.
-// A button whose call runs is `aria-disabled` (it keeps focus).
+// A button whose call runs is `aria-disabled` (it keeps focus). While connected it shows how many
+// properties the connection can read (`gsc.properties`, Phase 9 Task 3).
 
 const LABELS: Readonly<Record<GscButton, string>> = { connect: 'Connect', cancel: 'Cancel', disconnect: 'Disconnect' };
 
 export function GscSettings() {
   const status = useGscStatus();
+  const properties = useGscProperties(status);
   const [busy, setBusy] = useState<GscButton | null>(null);
   const [note, setNote] = useState<string | null>(null);
   if (status === null) return <p className="settings-muted">Loading…</p>;
-  const section = gscSection(status);
+  const section = gscSection(status, properties);
 
   const press = (button: GscButton) => {
     if (busy !== null) return;
@@ -30,6 +33,11 @@ export function GscSettings() {
       {section.headline ? (
         <p className="settings-headline" data-testid="gsc-headline" data-connected={section.kind === 'connected' ? 'true' : undefined}>
           {section.headline}
+        </p>
+      ) : null}
+      {section.properties ? (
+        <p className="settings-text" data-testid="gsc-property-count">
+          {section.properties}
         </p>
       ) : null}
       <p className="settings-text">{section.message}</p>

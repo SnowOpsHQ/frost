@@ -17,6 +17,8 @@ export const SETTINGS_TITLE = 'Settings' as const;
 export const SETTINGS_SECTIONS = [
   { id: 'account', label: 'Account' },
   { id: 'search-console', label: 'Search Console' },
+  // Phase 9 Task 11 (`ai-checks.feature.md`, UI): the AI checks mode and its cost note.
+  { id: 'ai-checks', label: 'AI checks' },
   { id: 'telemetry', label: 'Telemetry' },
 ] as const satisfies readonly { id: string; label: string }[];
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];

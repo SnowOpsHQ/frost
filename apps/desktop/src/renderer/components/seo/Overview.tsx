@@ -1,14 +1,27 @@
 import { useState } from 'react';
 import type { Finding, SeoAudit } from '@app/seo-core';
+import { AI_READINESS_COPY } from '@app/specs/ai-readiness.spec';
+import type { TabState } from '@app/specs/browser.spec';
+import { PAGE_TYPE_COPY } from '@app/specs/page-type.spec';
 import { NOT_INDEXABLE_LABEL, SCORE_BANDS, SEO_CATEGORIES, SEO_CATEGORY_LABELS, SEO_RULE_SPECS, SEO_SEVERITIES, type SeoCategory } from '@app/specs/seo-rules.spec';
-import { OVERVIEW_TOP_ISSUES } from '@app/specs/seo-sidebar.spec';
+import { OVERVIEW_TOP_ISSUES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
+import { aiTileView } from '../../ai-readiness-view';
+import { usePageIntent } from '../../hooks/usePageIntent';
+import { useProbes } from '../../hooks/useSerp';
 import { CheckCircleIcon, ChevronIcon } from '../../icons';
+import { intentNote, pageTypeView } from '../../page-type-view';
+import { intentChip } from '../../serp-view';
 import { formatCount } from '../../seo-view';
-import { PageText, SEVERITY_LABEL, SeverityGlyph } from './parts';
+import { AiChecksCard } from './AiChecksCard';
+import { AiScoreSummary } from './AiReadiness';
+import { PageText, Section, SEVERITY_LABEL, SeverityGlyph } from './parts';
 
 // Overview (spec `seo-sidebar.feature.md`, Sidebar): the health score ring with its band, the
 // counts by severity, and the ranked issues, each expandable to why it matters, how to fix it and
-// the offending values.
+// the offending values. Phase 9 Task 8 adds the AI-readiness tile (`ai-readiness.feature.md`: the
+// score of the Visibility panel's section, and a button that opens it) and the "Page" card
+// (`page-type.feature.md`: the page type worked out on this device, and the target query's intent).
+// Task 11 adds the "AI judgment" card under it (`ai-checks.feature.md`, UI; one line while AI checks are off).
 
 const RING_RADIUS = 42;
 const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
@@ -148,7 +161,94 @@ export function Issue({ finding }: { readonly finding: Finding }) {
   );
 }
 
-export function Overview({ audit }: { readonly audit: SeoAudit }) {
+/** The AI-readiness score as a tile: the Visibility panel's ring and basis, and the way there. */
+function AiReadinessTile({ audit, tab, onOpenPanel }: { readonly audit: SeoAudit; readonly tab: TabState; readonly onOpenPanel: (panel: SeoPanelId) => void }) {
+  const probes = useProbes(tab.id);
+  return (
+    <section className="seo-section ai-tile" data-testid="ai-readiness-tile" aria-label={AI_READINESS_COPY.tileTitle}>
+      <AiScoreSummary ring={aiTileView(audit, probes)} eyebrow={AI_READINESS_COPY.tileTitle} />
+      <button type="button" className="seo-link-button ai-tile-open" data-testid="ai-readiness-open" onClick={() => onOpenPanel('visibility')}>
+        {AI_READINESS_COPY.openLabel}
+      </button>
+    </section>
+  );
+}
+
+/** The target query's intent, classified on this device only when one is set and intent is ready. */
+function PageIntentRow({ url, notesGeneration }: { readonly url: string; readonly notesGeneration?: number }) {
+  const { target, intentState, answer } = usePageIntent(url, notesGeneration);
+  const chip = intentChip(answer);
+  const note = intentNote(target, intentState);
+  if (target === null) return null;
+  return (
+    <div className="page-intent" data-testid="page-intent" data-state={chip.kind === 'ready' ? 'ready' : (intentState ?? 'unknown')}>
+      <span className="seo-eyebrow">{PAGE_TYPE_COPY.intentLabel}</span>
+      {chip.kind === 'ready' ? (
+        <p className="page-intent-row serp-intent">
+          <span className="serp-intent-chip" data-testid="page-intent-label" title={chip.definition}>
+            {chip.label}
+          </span>
+          <span className="serp-intent-confidence">
+            <span className="visually-hidden">Confidence </span>
+            {chip.confidence}
+          </span>
+          <PageText value={target} className="serp-intent-query" />
+        </p>
+      ) : note ? (
+        <p className="seo-note">{note}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/** The "Page" card: what kind of page this is, how sure frost is, and the signals that decided. */
+function PageCard({ audit, notesGeneration }: { readonly audit: SeoAudit; readonly notesGeneration?: number }) {
+  const view = pageTypeView(audit.pageType);
+  return (
+    <Section title={PAGE_TYPE_COPY.title} testId="page-card">
+      <div className="page-type-head">
+        <span className="page-type-label" data-testid="page-type" data-type={audit.pageType.type}>
+          {view.label}
+        </span>
+        <span className="page-type-confidence" data-testid="page-type-confidence" data-confidence={view.confidence}>
+          {view.confidenceLabel}
+        </span>
+      </div>
+      {view.note ? (
+        <p className="seo-note" data-testid="page-type-note">
+          {view.note}
+        </p>
+      ) : null}
+      {view.signals.length > 0 ? (
+        <ul className="page-type-signals" aria-label={PAGE_TYPE_COPY.signalsLabel}>
+          {view.signals.map((signal) => (
+            <li key={signal.signal} className="page-type-signal" data-testid="page-type-signal" data-signal={signal.signal} data-agrees={signal.agrees}>
+              <span className="page-type-signal-label">{signal.label}</span>
+              <span className="page-type-signal-type">{signal.type}</span>
+              <span className="seo-mono">{signal.evidence}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="seo-note">{PAGE_TYPE_COPY.note}</p>
+      <PageIntentRow url={audit.url} notesGeneration={notesGeneration} />
+    </Section>
+  );
+}
+
+export function Overview({
+  audit,
+  tab,
+  onOpenPanel,
+  notesGeneration,
+}: {
+  readonly audit: SeoAudit;
+  readonly tab: TabState;
+  /** Opens another panel of the sidebar (the AI-readiness tile opens Visibility). */
+  readonly onOpenPanel: (panel: SeoPanelId) => void;
+  /** Main's content notes generation (`BrowserState.contentNotesGeneration`), for the target query. */
+  readonly notesGeneration?: number;
+}) {
   const [all, setAll] = useState(false);
   const band = SCORE_BANDS.find((b) => b.id === audit.band)!;
   const shown = all ? audit.findings : audit.findings.slice(0, OVERVIEW_TOP_ISSUES);
@@ -173,6 +273,7 @@ export function Overview({ audit }: { readonly audit: SeoAudit }) {
           </span>
         </div>
       </section>
+      <AiReadinessTile audit={audit} tab={tab} onOpenPanel={onOpenPanel} />
       {audit.page.partial ? (
         <p className="seo-partial" data-testid="seo-partial">
           This page is very large: frost read part of it before its time limit, so some lists are incomplete.
@@ -210,6 +311,8 @@ export function Overview({ audit }: { readonly audit: SeoAudit }) {
           </button>
         ) : null}
       </section>
+      <PageCard audit={audit} notesGeneration={notesGeneration} />
+      <AiChecksCard audit={audit} tab={tab} />
       <SearchPreview audit={audit} />
       <CategoryGrid audit={audit} />
     </div>

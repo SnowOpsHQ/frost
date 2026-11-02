@@ -6,7 +6,7 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 // application menu's item asks first, in a native message box main shows, then clears the visits,
 // every permission decision (stored and in memory) with the prompt back-off, the render profiles
 // pinned to sites (stored and in memory), the browse partition's storage and cache, and the SEO
-// auditor's robots.txt answers and recorded responses. It keeps the Content panel's target queries
+// auditor's robots.txt answers and recorded responses, and the AI checks' answers. It keeps the Content panel's target queries
 // and snippet drafts (the user's own work; the dialog says so) unless its checkbox is ticked. It closes no tab and leaves the app
 // UI's session alone. The command palette's Clear Browsing Data runs this same action.
 
@@ -28,6 +28,8 @@ export interface ClearBrowsingDataParts {
   clearContentNotes?(): Promise<void>;
   /** The closed-tab stack: with the stored visits, the history part ("Clear all history" runs it alone; `browser-polish.feature.md`). */
   forgetClosedTabs?(): void;
+  /** The AI checks' answers, stored and in memory, and a running check (Phase 9 Task 10, `ai-checks.feature.md`). */
+  forgetAiChecks?(): Promise<unknown>;
   log(message: string): void;
 }
 
@@ -56,6 +58,7 @@ export function createClearBrowsingData(parts: ClearBrowsingDataParts): () => Pr
     await attempt('stored visits and decisions', () => parts.clearStoredData());
     await attempt('site storage and cache', () => parts.clearBrowseStorage());
     await attempt('robots.txt answers and recorded responses', () => parts.forgetSeoCaches());
+    await attempt('AI check answers', () => parts.forgetAiChecks?.());
     if (confirmed === 'with-content-notes') await attempt('content notes', () => parts.clearContentNotes?.());
     return true;
   };

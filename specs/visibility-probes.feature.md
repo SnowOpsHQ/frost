@@ -5,7 +5,7 @@ Spec: `specs/visibility-probes.spec.ts` (`PROBE_AGENT_IDS`, `PROBE_AGENTS`, `PRO
 `PROBE_DIFF_TOLERANCE`, `PROBE_TEXT_SIMILARITY`, `MAX_PENDING_PROBE_WATCHES`, `PROBE_STATUSES`,
 `PROBE_OUTCOMES`, `PROBE_OUTCOME_MESSAGES`, `PROBE_ROBOTS_VERDICTS`, `PROBE_ROBOTS_SERVED_NOTE`,
 `PROBE_CANONICAL_CONFLICTS`, `PROBE_DIFF_FACTS`, `PROBE_TRUNCATED_NOTE`,
-`PROBE_MODELLED_DIRECTIVES_NOTE`, `PROBE_DISCLOSURE`), `specs/visibility-probes.schema.ts`
+`PROBE_MODELLED_DIRECTIVES_NOTE`, `PROBE_DISCLOSURE`, `LLMS_TXT_LIMITS`), `specs/visibility-probes.schema.ts`
 (`ProbeRowSchema`, `ProbeDiffSchema`, `ProbeReportSchema`, `ProbesStateSchema`, `ProbeJobSchema`,
 `ProbeRobotsAnswerSchema`, `ProbePageAnswerSchema`), `specs/serp-service.spec.ts`
 (`SERP_FETCHER_LIMITS`) and `specs/fetcher.spec.ts` (`BoundedFetchRequest.separateHeaders`). Phase 3
@@ -15,11 +15,17 @@ Task 5; review focus `probes-are-bounded`. Each line maps to one named test.
 - **Only on the user's action.** Nothing is fetched until `serp.runProbes` (or
   `SerpReadApi.runProbes`, which Phase 5 gates behind its approval model) for the active tab showing
   an `http(s)` page. Page loads, navigations, `serp.probes` and `serp.watchProbes` never fetch.
-- **Bounded.** One fetcher call per agent (6), never retried, at most 3 redirects each (at most 24
+- **Bounded.** One fetcher call per agent (8), never retried, at most 3 redirects each (at most 32
   requests), at most 2 calls in flight, `page` the tab's URL (so the fetcher's private-address rule
   applies: a private host only for a private page), `PROBE_LIMITS`' caps and `PROBE_KEEP_HEADERS`.
   robots.txt comes from main's cached robots.txt fetcher, once per origin an agent ended on, and is
   not one of the calls. One run per tab.
+- **One `/llms.txt` call, not an agent's (Phase 9 Decision 13).** After the agents' calls, in the
+  same lanes, a run asks for `<tab origin>/llms.txt` once with frost's own user agent and
+  `LLMS_TXT_LIMITS` (3 redirects: 4 requests, `llmsTxtRequests`), unless the origin's answer is
+  cached. `maxFetches` and `maxRequests` keep meaning "per agent"; a run makes at most
+  `maxRunRequests` (36) requests in all, which the disclosure and the agent's texts state. Its tests
+  are in `ai-readiness.feature.md` (llms.txt).
 - **Their own lane.** The SERP lane (`SERP_FETCHER_LIMITS`): a bounded fetcher over main's hop and
   resolver with the `checks` lane's limits and its own queues, so a link check never makes a probe
   wait or time out; pack updates and the model download use it too (`fetcher.spec.ts`, Lanes).
@@ -36,7 +42,8 @@ Task 5; review focus `probes-are-bounded`. Each line maps to one named test.
   (`PROBE_ROBOTS_SERVED_NOTE`); diffs on cut text say so (`PROBE_TRUNCATED_NOTE`).
 
 ## Agents and reading (`apps/desktop/src/main/serp/__tests__/probe-compare.test.ts`)
-- `probes-agent-table` — six agents in a fixed order, the browser first (kind `browser`, frost's own user agent, token `*`, `robots` only); Googlebot smartphone and Bingbot send the render profiles' strings with the app's Chromium version; GPTBot, ClaudeBot and PerplexityBot their strings verbatim; each has its robots.txt token and `robots` plus its own name, documented for the search crawlers and frost's model for the AI crawlers; `PROBE_LIMITS` allows 6 calls, 3 redirects each, 24 requests; the disclosure says all of it, with `FETCH_DISCLOSURE`.
+- `probes-agent-table` — eight agents in a fixed order, the browser first (kind `browser`, frost's own user agent, token `*`, `robots` only); Googlebot smartphone and Bingbot send the render profiles' strings with the app's Chromium version; GPTBot, ClaudeBot, PerplexityBot, OAI-SearchBot and ChatGPT-User their strings verbatim (GPTBot 1.4, PerplexityBot and the two new OpenAI agents as their operators publish them); each has its robots.txt token and `robots` plus its own name, documented for the search crawlers and frost's model for the AI crawlers; `PROBE_LIMITS` allows 8 calls, 3 redirects each, 32 requests, and `PROBE_AGENTS.length <= maxFetches`; the disclosure says all of it, with the `/llms.txt` request and `FETCH_DISCLOSURE`.
+- `limits-arithmetic` — `maxRequests = maxFetches × (1 + maxRedirects)` (32), `llmsTxtRequests = 1 + LLMS_TXT_LIMITS.maxRedirects` (4), `maxRunRequests = maxRequests + llmsTxtRequests` (36); `LLMS_TXT_LIMITS` is 512,000 bytes, 3 redirects, 5 s and robots.txt's cache lifetime; the disclosure's counts are these.
 - `probes-per-agent-robots` — a robots.txt disallowing a path for GPTBot only is `disallowed` for GPTBot (with its rule, group and file) and `allowed` for the rest (the browser by `*`, others falling back to `*`); each agent is judged on the URL it ended on; another origin's file never judges a URL (`unknown`); a missing file is `allowed`, an unreadable one `unknown`, none asked `unknown`; the worker job validates its input.
 - `probes-agent-scoped-x-robots-tag` — `X-Robots-Tag: googlebot: noindex` is Googlebot's own, ignored by the others; repeated headers kept apart (`googlebot: nofollow` and `noindex`) are Googlebot's `nofollow` and everyone's `noindex`; within one value `noindex, gptbot: nofollow` is general `noindex` and GPTBot's `nofollow`; valued directives (`max-snippet: 20`) are not crawler names; `none` is `noindex` and `nofollow`.
 - `probes-meta-per-agent` — `<meta name="claudebot" content="noindex">` makes ClaudeBot's `noindex` only; `<meta name="robots">` applies to everyone; names compare lowercased; a meta for another crawler is ignored.
@@ -45,7 +52,7 @@ Task 5; review focus `probes-are-bounded`. Each line maps to one named test.
 - `probes-diff-against-browser` — against the baseline: a redirect only for one agent marks `finalUrl` and `redirects`; the same hop count with another status or URL marks `redirects`; robots disallowed for GPTBot only marks `robots`; Googlebot's `noindex` marks `noindex`; a canonical that differs marks `canonical` (a non-HTML answer's header canonical too); content smaller than the baseline beyond the tolerance marks `wordCount`, `bytes` and `text` (similarity below `minSimilarity`), a near-identical text nothing; cut text is still compared and flagged `contentTruncated`; a failed request marks `status` only (no final URL to compare, no content facts); unsettled rows have no diff; the facts follow `PROBE_DIFF_FACTS`.
 
 ## Runs (`apps/desktop/src/main/serp/__tests__/probes.test.ts`, with fakes and the real bounded fetcher)
-- `probes-are-bounded` — one run makes exactly 6 fetcher calls (one per agent's user agent, `GET`, `page` the tab URL, the caps, kept and separate headers of `PROBE_LIMITS`), at most 2 at once, and asks robots.txt once from main's fetcher when every agent stays on the origin; through the real fetcher a public page's redirect to a private address is refused (`private-redirect`), a public name resolving to a private address is never requested (`private-address`), and a private page may be probed.
+- `probes-are-bounded` — one run makes exactly 8 agent calls (at most 32 requests) (one per agent's user agent, `GET`, `page` the tab URL, the caps, kept and separate headers of `PROBE_LIMITS`) and, its origin's answer not cached, one `/llms.txt` call last (its own URL, frost's user agent, `LLMS_TXT_LIMITS`): at most `maxRunRequests` (36) requests in all, at most 2 at once, and asks robots.txt once from main's fetcher when every agent stays on the origin; through the real fetcher a public page's redirect to a private address is refused (`private-redirect`), a public name resolving to a private address is never requested (`private-address`), and a private page may be probed.
 - `probes-only-on-user-action` — loads, navigations, state reads and watches fetch nothing; a background tab, a tab without a web page and an unknown tab do not run; after `dispose()` nothing runs.
 - `probes-one-run-per-tab` — a second `run` while one runs starts nothing; a finished run can be run again.
 - `probes-rows-stream` — every row is `pending` at first and filled in as its answer is read (with robots.txt's verdict for its final URL), each bumping `version`; the robots.txt read is listed with when it was read; the state passes `ProbesStateSchema` throughout; diffs appear once the baseline has settled.

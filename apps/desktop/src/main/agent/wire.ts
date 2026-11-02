@@ -4,7 +4,7 @@ import { focusWindow } from '../window-focus';
 import { chatgptBrowserOpener } from './chatgpt/opener';
 import { electronAgentDialogs } from './dialogs';
 import { createAgentServiceFrom, type AgentServiceDeps } from './service';
-import type { AgentSession } from './session';
+import type { AgentSessionWithChecks } from './check-port';
 
 // The agent panel's service, wired to Electron (Phase 5 Task 6a). Main adds it to the IPC services
 // with one line: `agent: createAgentService({ app, browser, webContents, sessionStore, log: logSession })`.
@@ -13,7 +13,7 @@ import type { AgentSession } from './session';
 // dialogs (`./dialogs`: "Delete all chats" and the export's save dialog); `sessionStore` already
 // carries the chats' and skills' tables.
 
-export function createAgentService(deps: Omit<AgentServiceDeps, 'electron' | 'buildDir' | 'dialogs' | 'openExternal' | 'focusWindow'>): AgentSession {
+export function createAgentService(deps: Omit<AgentServiceDeps, 'electron' | 'buildDir' | 'dialogs' | 'openExternal' | 'focusWindow'>): AgentSessionWithChecks {
   return createAgentServiceFrom({
     ...deps,
     buildDir: __dirname,

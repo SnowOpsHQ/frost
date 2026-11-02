@@ -6,6 +6,23 @@ export { RULES } from './rules';
 export { copyValueOf } from './copy-values';
 export * from './content';
 export * from './javascript';
+// AI readiness: the AI crawlers' robots.txt verdicts (Phase 9 Task 6).
+export {
+  aiBotVerdicts,
+  aiReadinessChecks,
+  aiReadinessOf,
+  aiReadinessReport,
+  parseLlmsTxt,
+  type AgentReach,
+  type AiBotVerdict,
+  type AiReadiness,
+  type AiReadinessAudit,
+  type AiReadinessCheck,
+  type AiReadinessReport,
+  type LlmsTxtParse,
+} from './ai-readiness';
+// Page type, worked out on this device (Phase 9 Task 8).
+export { pageTypeOf, type PageTypeReport, type PageTypeSignalHit } from './page-type';
 // Link, sitemap and hreflang checks (Phase 2.5 Task 7).
 export * from './checks';
 export {

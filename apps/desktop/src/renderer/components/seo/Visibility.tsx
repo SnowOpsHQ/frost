@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
+import type { SeoAudit } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import type { IntentAnswer } from '@app/specs/intent-classifier.spec';
 import { PROBE_DISCLOSURE } from '@app/specs/visibility-probes.spec';
@@ -8,7 +9,8 @@ import { serpActions, useIntentState, useProbes } from '../../hooks/useSerp';
 import { RobotIcon, SearchIcon, StopIcon } from '../../icons';
 import { intentChip } from '../../serp-view';
 import { isolatedTooltip } from '../../seo-view';
-import { CLASSIFY_QUERY_MAX, classifyQueryInput, forgetProbes, probeNotes, probeSummary, probeTable, type ProbeTable } from '../../visibility-view';
+import { CLASSIFY_QUERY_MAX, classifyQueryInput, probeNotes, probeSummary, probeTable, type ProbeTable } from '../../visibility-view';
+import { AiReadiness } from './AiReadiness';
 import { PageText, Section } from './parts';
 import { EnableIntent } from './Serp';
 
@@ -17,7 +19,9 @@ import { EnableIntent } from './Serp';
 // per agent and one row per fact, each cell marked where it differs from the browser; the notes on
 // cut content, the AI crawlers' modelled directives and robots.txt as served to frost. A query box
 // classifies any typed query on this device. It renders from `serp.watchProbes` alone, never waiting
-// for the audit. Server-derived text (URLs, directives) is React text.
+// for the audit. Server-derived text (URLs, directives) is React text. Phase 9 Task 8 mounts the
+// AI-readiness section at the top (`ai-readiness.feature.md`, AI readiness views): it reads the tab's
+// ready audit when there is one (pending until then) and the same probe run as the table.
 
 function ProbeResults({ table }: { readonly table: ProbeTable }) {
   return (
@@ -101,13 +105,10 @@ function Notes({ probes }: { readonly probes: ProbesState }) {
   );
 }
 
-function Probes({ tab }: { readonly tab: TabState }) {
-  const probes = useProbes(tab.id);
+function Probes({ tab, probes }: { readonly tab: TabState; readonly probes: ProbesState | null }) {
   // The tab whose run could not start (so the line resets with the tab).
   const [refusedTab, setRefusedTab] = useState<number | null>(null);
   const refused = refusedTab === tab.id;
-  // Once no panel watches the tab's probes, the palette stops trusting what it last saw.
-  useEffect(() => () => forgetProbes(tab.id), [tab.id]);
   const onWebPage = isWebUrl(tab.url) && tab.error === null && !tab.crashed;
   const running = probes?.status === 'running';
   const table = probes ? probeTable(probes) : null;
@@ -234,10 +235,13 @@ export function QueryIntent() {
   );
 }
 
-export function Visibility({ tab }: { readonly tab: TabState }) {
+/** `audit`: the tab's ready audit as the sidebar shows it (`null`: none yet). */
+export function Visibility({ tab, audit }: { readonly tab: TabState; readonly audit: SeoAudit | null }) {
+  const probes = useProbes(tab.id);
   return (
     <div className="visibility" data-testid="visibility-panel">
-      <Probes tab={tab} />
+      <AiReadiness audit={audit} probes={probes} />
+      <Probes tab={tab} probes={probes} />
       <QueryIntent />
     </div>
   );

@@ -37,7 +37,7 @@ export function memoryStore(persistent = true): MemoryStore {
   };
 }
 
-type Endpoint = 'token' | 'revoke' | 'api';
+type Endpoint = 'token' | 'revoke' | 'api' | 'inspection';
 
 export interface Harness {
   readonly google: FakeGoogle;
@@ -84,6 +84,7 @@ export async function createHarness(): Promise<Harness> {
     if (url.startsWith(google.endpoints.tokenUrl)) return 'token';
     if (url.startsWith(google.endpoints.revokeUrl)) return 'revoke';
     if (url.startsWith(google.endpoints.apiBase)) return 'api';
+    if (url.startsWith(google.endpoints.inspectionBase)) return 'inspection';
     return null;
   };
 

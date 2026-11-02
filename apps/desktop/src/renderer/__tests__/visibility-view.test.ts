@@ -50,13 +50,14 @@ function state(changes: Partial<ProbesState> = {}): ProbesState {
     rows: PROBE_AGENT_IDS.map((agent) => row(agent)),
     diffs: PROBE_AGENT_IDS.filter((agent) => agent !== 'browser').map((agent) => diff(agent, [])),
     robotsTxt: [{ url: 'https://tea.example/robots.txt', outcome: 'ok', readAt: 1_700_000_000_000 }],
+    llmsTxt: null,
     startedAt: 1,
     finishedAt: 2,
     ...changes,
   };
 }
 
-const IDLE: ProbesState = { version: 0, tabId: 3, url: URL_A, status: 'idle', rows: [], diffs: [], robotsTxt: [], startedAt: null, finishedAt: null };
+const IDLE: ProbesState = { version: 0, tabId: 3, url: URL_A, status: 'idle', rows: [], diffs: [], robotsTxt: [], llmsTxt: null, startedAt: null, finishedAt: null };
 
 /** The table's cell for `agent` and `fact`. */
 function cell(table: NonNullable<ReturnType<typeof probeTable>>, fact: (typeof PROBE_TABLE_FACTS)[number], agent: ProbeAgentId) {
@@ -70,11 +71,24 @@ describe('Visibility panel view model', () => {
     const table = probeTable(state())!;
     expect(table.columns.map((column) => column.agent)).toEqual(PROBE_AGENTS.map((agent) => agent.id));
     expect(table.columns[0]).toMatchObject({ agent: 'browser', label: PROBE_AGENTS[0]!.label, baseline: true, modelled: false });
-    expect(table.columns.filter((column) => column.modelled).map((column) => column.agent)).toEqual(['gptbot', 'claudebot', 'perplexitybot']);
+    expect(table.columns.filter((column) => column.modelled).map((column) => column.agent)).toEqual(['gptbot', 'claudebot', 'perplexitybot', 'oai-searchbot', 'chatgpt-user']);
     expect(table.rows.map((r) => r.fact)).toEqual([...PROBE_TABLE_FACTS]);
     expect(PROBE_TABLE_FACTS).toEqual(['status', 'redirects', 'robots', 'noindex', 'nofollow', 'canonical', 'wordCount', 'bytes', 'text']);
     expect(table.rows.map((r) => r.label)).toEqual(['HTTP status', 'Redirects', 'robots.txt', 'noindex', 'nofollow', 'Canonical', 'Word count', 'Size', 'Visible text']);
     for (const r of table.rows) expect(r.cells).toHaveLength(PROBE_AGENTS.length);
+  });
+
+  test('eight-columns-fit', () => {
+    const table = probeTable(state())!;
+    expect(PROBE_AGENT_IDS).toHaveLength(8);
+    expect(table.columns).toHaveLength(8);
+    expect(table.columns.slice(-2)).toEqual([
+      { agent: 'oai-searchbot', label: 'OAI-SearchBot', kind: 'ai', baseline: false, modelled: true, differs: false },
+      { agent: 'chatgpt-user', label: 'ChatGPT-User', kind: 'ai', baseline: false, modelled: true, differs: false },
+    ]);
+    for (const column of table.columns) expect(column.label.length, column.agent).toBeLessThanOrEqual(20);
+    for (const r of table.rows) expect(r.cells, r.fact).toHaveLength(8);
+    expect(cell(table, 'status', 'chatgpt-user').text).toBe('200');
   });
 
   test('probe-table-cells', () => {

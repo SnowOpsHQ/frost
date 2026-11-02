@@ -1,6 +1,7 @@
 // Specs: specs/seo-content.spec.ts (SNIPPET_BUDGETS_PX, SNIPPET_ELLIPSIS, TARGET_QUERY_PLACES, Copy as HTML,
 // READABILITY_FORMULAS, INFLESZ_BANDS, SENTENCE_LIMITS), specs/seo-sidebar.spec.ts (SEO_PANELS, HIGHLIGHT_MODES,
-// HIGHLIGHT_STYLES, TextHighlightTarget), specs/seo-limits.spec.ts (SEO_WORLD_ID)
+// HIGHLIGHT_STYLES, TextHighlightTarget), specs/seo-limits.spec.ts (SEO_WORLD_ID), specs/gsc-targets.spec.ts
+// (GSC_TARGET_SUGGESTIONS, GSC_TARGETS_COPY)
 // Acceptance: specs/seo-content.feature.md (End to end)
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -9,9 +10,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { readability, sentenceReport, textWidth } from '@app/seo-core';
+import { GSC_RANGE_TEXT } from '@app/specs/gsc-panel.spec';
+import { GSC_TARGET_SUGGESTIONS, GSC_TARGETS_COPY } from '@app/specs/gsc-targets.spec';
 import { INFLESZ_BANDS, SENTENCE_LIMITS, SNIPPET_BUDGETS_PX, SNIPPET_ELLIPSIS } from '@app/specs/seo-content.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SEO_WORLD_ID } from '@app/specs/seo-limits.spec';
 import { HIGHLIGHT_STYLES, SEO_PANELS } from '@app/specs/seo-sidebar.spec';
+import { accountHelpers } from './account-helpers';
+import { fakeFiltersOf, startFakeGoogle, type FakeGoogle } from './fake-google';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -104,6 +109,8 @@ let app: ElectronApplication | undefined;
 let page: Page;
 let profile: string;
 let site: Awaited<ReturnType<typeof startSite>>;
+/** The fake Google every launch is configured for (`google.env`); connected only by the Search Console tests at the end. */
+let google: FakeGoogle;
 const { go, contentsIdAt, run } = chromeHelpers(
   () => app!,
   () => page,
@@ -115,7 +122,7 @@ const railItem = (panel: string) => page.locator(`[data-testid="seo-rail-item"][
 const articleUrl = () => `${site.origin}/guides/green-tea`;
 
 async function launch(): Promise<void> {
-  ({ app, page } = await launchApp([], { userDataDir: profile }));
+  ({ app, page } = await launchApp([], { userDataDir: profile, env: google.env }));
   await page.waitForLoadState('domcontentloaded');
 }
 
@@ -178,6 +185,8 @@ const inside = (box: Omit<SentenceBox, 'label'>, area: { x: number; y: number; w
 
 test.beforeAll(async () => {
   site = await startSite();
+  google = await startFakeGoogle();
+  google.sites = [{ siteUrl: `${site.origin}/`, permissionLevel: 'siteOwner' }];
   profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-content-'));
   await launch();
 });
@@ -185,6 +194,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await closeApp(app);
   await site?.close();
+  await google?.close();
   if (profile) await rm(profile, { recursive: true, force: true });
 });
 
@@ -543,4 +553,105 @@ test('content-highlight-sentences-leaves-no-residue', async () => {
   const nextId = await contentsIdAt(next);
   expect(await overlay(nextId)).toBeNull();
   expect((await pageDom(nextId)).html).not.toContain('aria-hidden');
+});
+
+// Search Console under the target query (seo-content.feature.md, Search Console targets): connected at
+// the end of the file, so the tests above see the panel as before (configured, not connected).
+
+/** Opens Settings from the command palette and connects Search Console there (the stand-in browser plays Google's consent). */
+async function connectSearchConsole(): Promise<void> {
+  const { press, chromeCaughtUp } = chromeHelpers(
+    () => app!,
+    () => page,
+  );
+  const { recordOpenExternal, connectInSettings } = accountHelpers(
+    () => app!,
+    () => page,
+  );
+  await recordOpenExternal();
+  await chromeCaughtUp();
+  await press('chrome', 'K', ['mod']);
+  await page.getByTestId('command-palette-input').fill('settings');
+  await page.locator('[data-testid="command-palette-option"][data-action="settings.open"]').click();
+  await expect(page.getByTestId('settings-view')).toBeVisible();
+  await connectInSettings();
+  await page.getByTestId('settings-close').click();
+  await expect(page.getByTestId('settings-view')).toHaveCount(0);
+}
+
+/** The fake Google's reads of one dimension, in order. */
+const readsOf = (dimension: 'query' | 'page') => google.queries.filter((q) => (q.body.dimensions as string[] | undefined)?.[0] === dimension);
+const RANGE = GSC_RANGE_TEXT.lastDays.replace('{n}', '28');
+
+test('content-gsc-suggestion-sets-target', async () => {
+  // Configured but not connected: the target query section is as before, and nothing was read.
+  await openContent(articleUrl());
+  await expect(page.getByTestId('seo-query-input')).toHaveValue('');
+  await expect(page.getByTestId('gsc-targets')).toHaveCount(0);
+  expect(google.queries).toEqual([]);
+
+  await connectSearchConsole();
+  await openContent(articleUrl());
+  const suggestions = page.getByTestId('gsc-target-suggestions');
+  await expect(suggestions).toHaveAttribute('data-state', 'list');
+  // The page's top queries (the fake's, most clicks first), at most five, each with "Use as target".
+  const rows = page.getByTestId('gsc-target-suggestion');
+  await expect(rows).toHaveCount(GSC_TARGET_SUGGESTIONS);
+  await expect(page.getByTestId('gsc-target-suggestion-query')).toHaveText(Array.from({ length: GSC_TARGET_SUGGESTIONS }, (_, i) => `fake query ${i + 1}`));
+  await expect(page.getByTestId('gsc-target-use')).toHaveCount(GSC_TARGET_SUGGESTIONS);
+  await expect(page.getByTestId('gsc-target-suggestions-note')).toHaveText(GSC_TARGETS_COPY.suggestionsNote.replace('{range}', RANGE));
+  // Read for this page, without a country or device; nothing about pages yet (no target query).
+  const read = readsOf('query').at(-1)!;
+  expect(fakeFiltersOf(read.body)).toEqual({ page: articleUrl(), query: null, country: null, device: null });
+  expect(readsOf('page')).toEqual([]);
+
+  // "Use as target" on the second: the field shows it, the row is marked, and main keeps it.
+  const second = rows.nth(1);
+  await expect(second.getByTestId('gsc-target-use')).toHaveAttribute('aria-label', GSC_TARGETS_COPY.useAsTargetLabel.replace('{query}', 'fake query 2'));
+  await second.getByTestId('gsc-target-use').click();
+  await expect(page.getByTestId('seo-query-input')).toHaveValue('fake query 2');
+  await expect(second).toHaveAttribute('data-target', 'true');
+  await expect(second.getByTestId('gsc-target-current')).toHaveText(GSC_TARGETS_COPY.currentTarget);
+  await expect(second.getByTestId('gsc-target-use')).toHaveCount(0);
+  await expect.poll(storedNotes).toEqual({ query: 'fake query 2', drafts: 0 });
+});
+
+test('content-target-pages-marks-this-page', async () => {
+  const other = `${site.origin}/guides/oolong`;
+  const third = `${site.origin}/guides/black-tea`;
+  google.pageRows = (query) =>
+    query === 'fake query 3'
+      ? [
+          { keys: [other], clicks: 40, impressions: 400, ctr: 0.1, position: 2 },
+          { keys: [articleUrl()], clicks: 25, impressions: 300, ctr: 0.08, position: 3 },
+          { keys: [third], clicks: 5, impressions: 90, ctr: 0.05, position: 7 },
+        ]
+      : [];
+  await openContent(articleUrl());
+  await expect(page.getByTestId('gsc-target-suggestions')).toHaveAttribute('data-state', 'list');
+  // A target query of this test's own, set as the user does.
+  await page.getByTestId('gsc-target-suggestion').nth(2).getByTestId('gsc-target-use').click();
+  await expect(page.getByTestId('seo-query-input')).toHaveValue('fake query 3');
+  // The query→page check: the property's pages Google showed for it, this page marked, its place said.
+  const pages = page.getByTestId('gsc-target-pages');
+  await expect(pages).toHaveAttribute('data-state', 'list');
+  const rows = page.getByTestId('gsc-target-page');
+  await expect(rows).toHaveCount(3);
+  await expect(page.getByTestId('gsc-target-page-url')).toHaveText([other, articleUrl(), third]);
+  await expect(rows.nth(1)).toHaveAttribute('data-this-page', 'true');
+  await expect(rows.nth(1).getByTestId('gsc-target-this-page')).toHaveText(GSC_TARGETS_COPY.thisPage);
+  await expect(page.getByTestId('gsc-target-this-page')).toHaveCount(1);
+  await expect(page.getByTestId('gsc-target-pages-summary')).toHaveText(
+    GSC_TARGETS_COPY.thisPageRank.replace('{rank}', '2').replace('{pages}', '3 pages').replace('{query}', 'fake query 3').replace('{range}', RANGE),
+  );
+  await expect(page.getByTestId('gsc-target-pages-facts')).toHaveText(GSC_TARGETS_COPY.facts);
+  // Facts only: another page leading looks like this page leading (no tone), and page URLs are never links.
+  expect(await pages.evaluate((root) => ({ toned: root.querySelectorAll('[data-tone]').length, links: root.querySelectorAll('a, [href]').length }))).toEqual({ toned: 0, links: 0 });
+  // One read of the property's pages for the saved target query (no page, country or device filter).
+  const read = readsOf('page').filter((q) => fakeFiltersOf(q.body).query === 'fake query 3');
+  expect(read).toHaveLength(1);
+  expect(fakeFiltersOf(read[0]!.body)).toEqual({ page: null, query: 'fake query 3', country: null, device: null });
+  // Leaves no note for later runs.
+  await page.getByTestId('seo-query-clear').click();
+  await expect.poll(storedNotes).toEqual({ query: '', drafts: 0 });
 });

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createFakeProbesPort, FAKE_PROBE_REPORT } from '@app/ai-skills/fakes';
 import { canGrant, grantOriginFor } from '@app/specs/agent-approvals.spec';
 import { PROBE_TOOL_LIMITS, PROBE_TOOL_REASONS, PROBE_TOOL_SOURCE, PROBE_RUN_MAX_REQUESTS, PROBE_RUN_USER_AGENTS } from '@app/specs/agent-search-tools.spec';
-import type { ProbeReport, ProbesPort } from '@app/ai-skills';
+import { getToolDefinition, type ProbeReport, type ProbesPort } from '@app/ai-skills';
 import { resolveAgentPorts } from '../ports';
 import { createPageToolRunner, type PageContents } from '../tools';
 import { RUN_PROBES_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
@@ -159,6 +159,12 @@ describe('visibility probe tools', () => {
       const state = await s.until((next) => next.approval !== null);
       expect(state.approval!.request).toMatchObject({ toolName: 'run_visibility_probes', label: 'Fetch this page as search and AI crawlers would', note: RUN_PROBES_APPROVAL_NOTE, grantable: true });
       expect(RUN_PROBES_APPROVAL_NOTE).toMatch(/^frost will fetch this page as search and AI crawlers would/);
+      // The counts follow the probes' table: eight user agents and the site's /llms.txt, at most 36 requests in all
+      // (PROBE_LIMITS.maxRunRequests); the tool description says the same.
+      expect(RUN_PROBES_APPROVAL_NOTE).toContain('up to 36 requests (8 user agents,');
+      expect(RUN_PROBES_APPROVAL_NOTE).toContain('and one request for the site\'s /llms.txt');
+      expect(getToolDefinition('run_visibility_probes').description).toContain('up to 36 requests: 8 user agents,');
+      expect(getToolDefinition('run_visibility_probes').description).toContain('and one for the site\'s /llms.txt');
       await s.session.answerApproval(state.approval!.request.id, 'deny');
       await s.until((next) => !next.running);
     } finally {
@@ -221,7 +227,7 @@ describe('visibility probe tools', () => {
     });
     expect(port.calls).toEqual([]);
     // Reading the last run of a private page is still a read (it asks there, as every read tool does).
-    expect(PROBE_RUN_MAX_REQUESTS).toBe(24);
-    expect(PROBE_RUN_USER_AGENTS).toBe(6);
+    expect(PROBE_RUN_MAX_REQUESTS).toBe(36);
+    expect(PROBE_RUN_USER_AGENTS).toBe(8);
   });
 });

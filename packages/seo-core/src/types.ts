@@ -4,10 +4,12 @@ import type { ScoreBand, SeoCategory, SeoRuleId, SeoRuleSpec, SeoSeverity } from
 import type { SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 // Types only: the snapshot's Zod schema stays in main (it is the untrusted page's data).
 import type { CappedText, PageHeading, PageImage, PageLink, PageSnapshot, PageSocial } from '@app/specs/seo-snapshot.spec';
+import type { AiReadinessReport } from './ai-readiness';
 import type { ComplianceReport } from './compliance/model';
 import type { ContentReport } from './content/report';
 import type { IndexabilityReport } from './indexability/model';
 import type { JavascriptReport } from './javascript/report';
+import type { PageTypeReport } from './page-type';
 import type { SpeedReport } from './performance/model';
 import type { SchemaReport } from './schema/model';
 
@@ -109,6 +111,10 @@ export interface SeoAudit {
   readonly content: ContentReport;
   /** The served HTML compared with the rendered page (the JavaScript panel, Phase 2.5 Task 2). */
   readonly javascript: JavascriptReport;
+  /** The AI crawlers' robots.txt verdicts (Phase 9 Task 6); separate from `score`, which never reads it. */
+  readonly aiReadiness: AiReadinessReport;
+  /** What kind of page this is, worked out on this device from the snapshot (Phase 9 Task 8, `page-type.spec.ts`); never read by `score`. */
+  readonly pageType: PageTypeReport;
 }
 
 /**

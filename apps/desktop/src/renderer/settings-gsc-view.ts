@@ -1,10 +1,13 @@
-import type { GscConnectResult, GscError, GscStatus } from '@app/specs/gsc.spec';
+// Type-only from the Zod specs (their schemas must stay out of this bundle: strict Trusted Types).
+import type { GscPropertiesAnswer } from '@app/specs/gsc.schema';
+import { gscPropertyCountText, type GscConnectResult, type GscError, type GscStatus } from '@app/specs/gsc.spec';
 import { GSC_SETTINGS_TEXT } from '@app/specs/account-settings.spec';
 
 // The Settings view's Search Console section as a view model (Phase 4 Task 9; acceptance
 // `account-settings.feature.md`, Search Console). Pure: every `GscStatus` main answers becomes the
 // words and buttons the section shows. Search Console is free and needs no frost account (2026-10-29),
-// so `entitled` (always true from main) changes nothing here.
+// so `entitled` (always true from main) changes nothing here. While connected it says how many
+// properties the connection can read (Phase 9 Task 3, SL-112; `gsc.feature.md`, Settings: property count).
 
 export type GscButton = 'connect' | 'cancel' | 'disconnect';
 
@@ -17,6 +20,8 @@ export interface GscSection {
   /** Why the last connect failed or the connection ended, or `null`. */
   readonly error: string | null;
   readonly keychain: string | null;
+  /** "3 properties" (`gscPropertyCountText`) while connected with an `ok` `gsc.properties` answer, else `null`. */
+  readonly properties: string | null;
 }
 
 /** What each `GSC_ERRORS` value says. */
@@ -45,13 +50,24 @@ export function gscConnectResultMessage(result: GscConnectResult): string | null
   return result === 'started' ? null : GSC_CONNECT_RESULT_MESSAGES[result];
 }
 
-/** The Search Console section for `status`. */
-export function gscSection(status: GscStatus): GscSection {
+/** The Search Console section for `status` (and, while connected, the `gsc.properties` answer). */
+export function gscSection(status: GscStatus, properties: GscPropertiesAnswer | null = null): GscSection {
   const error = status.error === null ? null : GSC_ERROR_MESSAGES[status.error];
   // Only while there is a connection (or a connect) that the quit would end.
   const keychain = status.configured && status.keychain === 'memory-only' && (status.connected || status.connecting) ? GSC_SETTINGS_TEXT.keychain : null;
-  if (!status.configured) return { kind: 'unconfigured', headline: null, message: GSC_SETTINGS_TEXT.unconfigured, buttons: [], error: null, keychain: null };
-  if (status.connecting) return { kind: 'connecting', headline: 'Waiting for your browser', message: GSC_SETTINGS_TEXT.connecting, buttons: ['cancel'], error, keychain };
-  if (status.connected) return { kind: 'connected', headline: GSC_SETTINGS_TEXT.connected, message: GSC_SETTINGS_TEXT.readOnly, buttons: ['disconnect'], error, keychain };
-  return { kind: 'not-connected', headline: null, message: `Connect a Google account to see clicks, impressions and positions for the pages you visit. ${GSC_SETTINGS_TEXT.readOnly}`, buttons: ['connect'], error, keychain };
+  if (!status.configured) return { kind: 'unconfigured', headline: null, message: GSC_SETTINGS_TEXT.unconfigured, buttons: [], error: null, keychain: null, properties: null };
+  if (status.connecting) return { kind: 'connecting', headline: 'Waiting for your browser', message: GSC_SETTINGS_TEXT.connecting, buttons: ['cancel'], error, keychain, properties: null };
+  if (status.connected) {
+    const count = properties?.status === 'ok' ? gscPropertyCountText(properties.properties.length) : null;
+    return { kind: 'connected', headline: GSC_SETTINGS_TEXT.connected, message: GSC_SETTINGS_TEXT.readOnly, buttons: ['disconnect'], error, keychain, properties: count };
+  }
+  return {
+    kind: 'not-connected',
+    headline: null,
+    message: `Connect a Google account to see clicks, impressions and positions for the pages you visit. ${GSC_SETTINGS_TEXT.readOnly}`,
+    buttons: ['connect'],
+    error,
+    keychain,
+    properties: null,
+  };
 }

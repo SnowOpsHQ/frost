@@ -8,7 +8,7 @@ import { browserPolishPaletteSources } from '../browser-polish-palette';
 import { checksPaletteSources } from '../checks-palette';
 import { contentPaletteSources } from '../content-palette';
 import { devtoolsPaletteSources } from '../devtools-palette';
-import { gscPaletteSources } from '../gsc-palette';
+import { gscInspectPaletteSources, gscPaletteSources } from '../gsc-palette';
 import { javascriptPaletteSources } from '../javascript-palette';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { changesPaletteSources } from '../changes-palette';
@@ -18,6 +18,8 @@ import { updatePaletteSources } from '../update-palette';
 import { serpPaletteSources } from '../serp-palette';
 import { projectsPaletteSources, retentionPaletteSources } from '../projects-palette';
 import { inspectorPaletteSources } from '../inspector-palette';
+import { aiReadinessPaletteSources } from '../ai-readiness-palette';
+import { aiChecksPaletteSources } from '../ai-checks-palette';
 
 const URL_A = 'https://www.example.com/a';
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, schema: { blocks: [] } } as unknown as SeoAudit };
@@ -43,7 +45,10 @@ function everySource(): PaletteSource[] {
     ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }),
     ...retentionPaletteSources({ open: vi.fn(), lastProject: () => 'x', purgeNow: vi.fn(async () => null), compact: vi.fn(async () => null) }),
     ...inspectorPaletteSources({ pick: vi.fn(async () => null) }),
-    ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn() }),
+    ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn(), filtered: () => true, clearFilters: vi.fn() }),
+    ...gscInspectPaletteSources({ status: () => null, inspect: vi.fn() }),
+    ...aiReadinessPaletteSources(),
+    ...aiChecksPaletteSources({ checkNow: yes, openSettings: vi.fn() }),
   ];
 }
 
