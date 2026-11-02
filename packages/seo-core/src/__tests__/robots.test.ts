@@ -233,10 +233,14 @@ describe('robots.txt parser', () => {
     // Overlong forms, surrogates, truncated and stray continuation bytes are bytes, not characters.
     expect(decodeRobotsBytes(Uint8Array.from([0xc0, 0xaf, 0xed, 0xa0, 0x80, 0xe3, 0x83, 0x80, 0xf0, 0x9f, 0x98]))).toBe('%C0%AF%ED%A0%80ダ%F0%9F%98');
     expect(decodeRobotsBytes(Uint8Array.from([0xe3, 0x83, 0x84, 0xf0, 0x9f, 0x98, 0x80]))).toBe('ツ😀');
-    // Linear on 500 KiB of garbage.
-    const started = performance.now();
-    expect(decodeRobotsBytes(new Uint8Array(512_000).fill(0xff))).toHaveLength(512_000 * 3);
-    expect(performance.now() - started).toBeLessThan(2_000);
+    // Linear on 500 KiB of garbage (the fastest of three runs, so a loaded CI runner doesn't fail it).
+    let fastest = Infinity;
+    for (let run = 0; run < 3; run += 1) {
+      const started = performance.now();
+      expect(decodeRobotsBytes(new Uint8Array(512_000).fill(0xff))).toHaveLength(512_000 * 3);
+      fastest = Math.min(fastest, performance.now() - started);
+    }
+    expect(fastest).toBeLessThan(2_000);
   });
 
   test('robots-matches-path-and-query-of-url', () => {

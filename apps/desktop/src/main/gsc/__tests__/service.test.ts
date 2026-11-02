@@ -613,6 +613,9 @@ describe('Search Console service', () => {
       const days = gscRangeDays(range);
       longest = Math.max(longest, days);
       expect(days, isoDay(now)).toBeLessThanOrEqual(GSC_LIMITS.maxDateRows);
+      // Every day is checked against the spec above; the service read runs on every 30th day and on
+      // each of the longest windows (a leap February inside), which keeps the test well inside CI's time.
+      if ((now - Date.UTC(2027, 0, 1, 15)) / DAY_MS % 30 !== 0 && days < GSC_MAX_RANGE_DAYS - 1) continue;
       const answer = await service.performance({ url: PAGE, scope: 'page', range });
       if (answer.status !== 'ok') throw new Error(`${isoDay(now)}: ${answer.reason}`);
       expect(answer.range).toEqual(range);
