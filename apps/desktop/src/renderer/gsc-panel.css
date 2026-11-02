@@ -99,6 +99,7 @@
   font-variant-numeric: tabular-nums;
 }
 
+.gsc-dates[data-active='true'],
 .gsc-dates[aria-expanded='true'] {
   border-color: var(--accent);
   color: var(--accent);

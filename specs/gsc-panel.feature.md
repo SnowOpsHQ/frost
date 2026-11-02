@@ -31,10 +31,12 @@ Phase 4 Task 10; ranges, filters and the calendar Phase 9 Task 3 (SL-040). Each 
   impression-weighted). Scope, range, custom dates, metric and filters hold while the chrome runs
   (`GSC_PANEL_DEFAULTS` at start: no filters) and are shared by every tab.
 - **Ranges (Phase 9).** The day presets (7, 28, 90) stay buttons and read as `days`, as before. "More
-  ranges…" offers "Last 3 months", "Last 6 months", "Last 12 months", "Last 16 months" and "Custom
-  range…". A month preset reads as a `range` from `gscPresetRange`: it ends on the lag day and starts
+  ranges…" (a select) offers "Last 3 months", "Last 6 months", "Last 12 months" and "Last 16 months"
+  only, and a "Custom range…" button (`aria-haspopup="dialog"`, `aria-expanded`; it shows the dates once
+  a custom range is set) opens the calendar. No select option opens a dialog: moving through a closed
+  select with the arrow keys fires `change` in Chromium on Windows and Linux (WCAG 3.2.2). A month preset reads as a `range` from `gscPresetRange`: it ends on the lag day and starts
   that many calendar months before it; "Last 16 months" starts at `gscRetentionStart`, so it always
-  fits `GSC_MAX_RANGE_DAYS`. "Custom range…" opens the calendar; the range applies only once both days
+  fits `GSC_MAX_RANGE_DAYS`. The custom range applies only once both days
   are picked (Cancel or Escape keep the last range). A custom range is clamped to the calendar's days
   (`gscRetentionStart` to the lag day) when it is read, so a chrome left open for days never sends one
   main refuses.
@@ -120,6 +122,7 @@ Phase 4 Task 10; ranges, filters and the calendar Phase 9 Task 3 (SL-040). Each 
 
 ## Panel (`apps/desktop/src/renderer/__tests__/gsc-panel.test.ts`, jsdom, IPC faked)
 - `gsc-panel-reads-only-when-connected` — not connected, the panel shows its notice and never calls `gsc.performance`, `gsc.topQueries` or `gsc.countries` (nor `account.watch`); connected, signed out of frost, it reads once (and its countries once).
+- `custom-range-only-from-its-button` — the range select lists the month presets only, and a `change` to any of them applies it without opening the calendar; the "Custom range…" button (a dialog popup, `aria-expanded`) opens it with focus inside, and Escape closes it with focus back on the button.
 
 ## Palette (`apps/desktop/src/renderer/__tests__/gsc-palette.test.ts`)
 - `gsc-palette-actions` — "Open Search Console panel" (the panel's jump, in `FEATURE_PANEL_JUMPS`: the built-ins leave it out) opens the panel and focuses its rail item; "Search Console: whole property" and "Search Console: this page" set the scope and open the panel, each offered on a web page while the other scope is chosen.

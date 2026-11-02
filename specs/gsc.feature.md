@@ -3,7 +3,7 @@
 Spec: `specs/gsc.spec.ts` (Zod-free: `GSC_SCOPE`, `GSC_CONFIG_ENV`, `GSC_ENDPOINTS`, `GSC_ENDPOINT_ENV`,
 `GSC_AUTH_FIXED_PARAMS`, `GSC_LIMITS`, `GSC_CACHE_TTL_MS`, `GSC_RATE_LIMIT`, `GSC_REFRESH_BACKOFF`, `GSC_ERRORS`, `GSC_CONNECT_RESULTS`,
 `GSC_PROPERTY_KINDS`, `GSC_PERMISSION_LEVELS`, `GSC_QUERY_SCOPES`, `GSC_RANGE_DAYS`, `GSC_DATA_LAG_DAYS`,
-`gscDateRange`, `GSC_RETENTION_MONTHS`, `GSC_MAX_RANGE_DAYS`, `gscRetentionStart`, `gscCustomRange`,
+`gscDateRange`, `DAY_MS`, `isoDay`, `addUtcMonths`, `clampDay` (the shared UTC-day helpers), `GSC_RETENTION_MONTHS`, `GSC_MAX_RANGE_DAYS`, `gscRetentionStart`, `gscCustomRange`,
 `GSC_DEVICES`, `GSC_COUNTRY_PATTERN`, `GSC_COUNTRY_ALPHA3`, `GSC_UNAVAILABLE_REASONS`) and
 `specs/gsc.schema.ts` (`GscStatusSchema`, `GscPropertySchema`, `GscPerformanceQuerySchema`,
 `GscPerformanceAnswerSchema`, `GscQueriesAnswerSchema`, `GscCountriesAnswerSchema`,

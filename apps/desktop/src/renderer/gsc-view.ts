@@ -20,6 +20,7 @@ import {
 } from '@app/specs/gsc-panel.spec';
 import {
   GSC_COUNTRY_ALPHA3,
+  clampDay,
   gscDateRange,
   gscRetentionStart,
   type GscDateRange,
@@ -186,8 +187,6 @@ export function gscCalendarBounds(now: number): { readonly min: string; readonly
 export function orderedRange(a: string, b: string): GscDateRange {
   return a <= b ? { start: a, end: b } : { start: b, end: a };
 }
-
-const clampDay = (iso: string, min: string, max: string): string => (iso < min ? min : iso > max ? max : iso);
 
 /** What a read covers: a day preset's `days` (main computes the dates), or a range. */
 export type GscPeriod = { readonly days: GscRangeDays } | { readonly range: GscDateRange };

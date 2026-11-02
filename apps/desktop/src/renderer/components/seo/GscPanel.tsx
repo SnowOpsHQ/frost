@@ -76,6 +76,8 @@ function RangeControls({ prefs, view }: { readonly prefs: GscPrefs; readonly vie
   // What opened the calendar: focus goes back there when it closes.
   const opener = useRef<HTMLElement | null>(null);
   const preset = prefs.range;
+  const custom = preset === 'custom' && prefs.custom !== null;
+  const month = typeof preset === 'string' && isMonthPreset(preset) ? preset : null;
   return (
     <div className="gsc-range-wrap">
       <div className="gsc-range-row">
@@ -90,43 +92,41 @@ function RangeControls({ prefs, view }: { readonly prefs: GscPrefs; readonly vie
           className="seo-select gsc-select"
           data-testid="gsc-range-select"
           aria-label={GSC_FILTER_TEXT.rangeLabel}
-          data-active={typeof preset === 'number' ? undefined : 'true'}
-          value={typeof preset === 'number' ? '' : preset}
+          data-active={month === null ? undefined : 'true'}
+          value={month ?? ''}
           onChange={(event) => {
+            // Month presets only: moving through a closed select with the arrow keys fires `change`
+            // (Chromium on Windows and Linux), so no option may open the calendar (WCAG 3.2.2).
             const value = event.target.value;
-            if (value === 'custom') {
-              opener.current = event.currentTarget;
-              setCalendar(true);
-            } else if (isMonthPreset(value)) gscPrefs.set({ range: value });
+            if (isMonthPreset(value)) gscPrefs.set({ range: value });
           }}
         >
           <option value="" disabled>
             {GSC_FILTER_TEXT.rangeMore}
           </option>
-          {MONTH_PRESETS.map((month) => (
-            <option key={month} value={month}>
-              {GSC_RANGE_PRESET_LABELS[month]}
+          {MONTH_PRESETS.map((option) => (
+            <option key={option} value={option}>
+              {GSC_RANGE_PRESET_LABELS[option]}
             </option>
           ))}
-          <option value="custom">{preset === 'custom' ? GSC_RANGE_PRESET_LABELS.custom : GSC_FILTER_TEXT.customOption}</option>
         </select>
       </div>
-      {preset === 'custom' && prefs.custom !== null ? (
-        <button
-          type="button"
-          className="seo-chip-button gsc-dates"
-          data-testid="gsc-custom-dates"
-          aria-haspopup="dialog"
-          aria-expanded={calendar}
-          aria-label={`${GSC_FILTER_TEXT.customButton}: ${formatDay(view.range.start)} – ${formatDay(view.range.end)}`}
-          onClick={(event) => {
-            opener.current = event.currentTarget;
-            setCalendar((open) => !open);
-          }}
-        >
-          {datesLabel(view.range)}
-        </button>
-      ) : null}
+      {/* The calendar opens only from this button: "Custom range…", or the picked dates once set. */}
+      <button
+        type="button"
+        className="seo-chip-button gsc-dates"
+        data-testid="gsc-custom-range"
+        aria-haspopup="dialog"
+        aria-expanded={calendar}
+        data-active={custom ? 'true' : undefined}
+        aria-label={custom ? `${GSC_FILTER_TEXT.customButton}: ${formatDay(view.range.start)} – ${formatDay(view.range.end)}` : undefined}
+        onClick={(event) => {
+          opener.current = event.currentTarget;
+          setCalendar((open) => !open);
+        }}
+      >
+        {custom ? datesLabel(view.range) : GSC_FILTER_TEXT.customOption}
+      </button>
       {calendar ? (
         <div className="gsc-cal-pop">
           <GscCalendar

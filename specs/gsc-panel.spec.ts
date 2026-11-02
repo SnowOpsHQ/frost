@@ -10,6 +10,7 @@
 import {
   GSC_DEVICES,
   GSC_RANGE_DAYS,
+  addUtcMonths,
   gscDateRange,
   gscRetentionStart,
   type GscDateRange,
@@ -59,9 +60,6 @@ export const GSC_RANGE_PRESET_LABELS: Readonly<Record<GscRangePreset, string>> =
   custom: 'Custom range',
 });
 
-const DAY_MS = 86_400_000;
-const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
-
 /**
  * A month preset's range: it ends on the lag day (`gscDateRange(1, nowMs).end`) and starts on the
  * same day of the month that many calendar months before it (that month's last day when it is
@@ -71,13 +69,7 @@ const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
  */
 export function gscPresetRange(preset: GscMonthPreset, nowMs: number): GscDateRange {
   const end = gscDateRange(1, nowMs).end;
-  if (preset === '16m') return { start: gscRetentionStart(nowMs), end };
-  const lag = new Date(Date.parse(`${end}T00:00:00Z`));
-  const months = lag.getUTCFullYear() * 12 + lag.getUTCMonth() - GSC_RANGE_MONTHS[preset];
-  const year = Math.floor(months / 12);
-  const month = months - year * 12;
-  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return { start: isoDay(Date.UTC(year, month, Math.min(lag.getUTCDate(), lastDay))), end };
+  return { start: preset === '16m' ? gscRetentionStart(nowMs) : addUtcMonths(end, -GSC_RANGE_MONTHS[preset]), end };
 }
 
 /**
@@ -113,7 +105,9 @@ export const GSC_RANGE_TEXT = Object.freeze({
 export const GSC_FILTER_TEXT = Object.freeze({
   rangeLabel: 'More date ranges',
   rangeMore: 'More ranges…',
+  /** The button that opens the calendar (never a select option: arrowing through a select must not open a dialog). */
   customOption: 'Custom range…',
+  /** That button's name once a custom range is set (it then shows the dates). */
   customButton: 'Change dates',
   countryLabel: 'Country',
   deviceLabel: 'Device',

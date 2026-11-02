@@ -276,8 +276,29 @@ export interface GscDateRange {
 
 export const GSC_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-const DAY_MS = 86_400_000;
-const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+// ---- UTC days (shared by the main read API, the panel spec and the chrome's calendar) -----------
+
+/** One UTC day, in ms. */
+export const DAY_MS = 86_400_000;
+
+/** `ms`'s UTC date as `YYYY-MM-DD`. */
+export const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * `iso` (`YYYY-MM-DD`, a real date) moved by `months` calendar months, on the same day of the month,
+ * or that month's last day when it is shorter (May 31 back three months: Feb 28, or 29 in a leap year).
+ */
+export function addUtcMonths(iso: string, months: number): string {
+  const at = new Date(Date.parse(`${iso}T00:00:00Z`));
+  const total = at.getUTCFullYear() * 12 + at.getUTCMonth() + months;
+  const year = Math.floor(total / 12);
+  const month = total - year * 12;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return isoDay(Date.UTC(year, month, Math.min(at.getUTCDate(), lastDay)));
+}
+
+/** `iso` held within `min` … `max` (all `YYYY-MM-DD`, which order as strings). */
+export const clampDay = (iso: string, min: string, max: string): string => (iso < min ? min : iso > max ? max : iso);
 
 /** The `days`-day range ending `GSC_DATA_LAG_DAYS` before `nowMs`'s UTC date (see `GSC_DATA_LAG_DAYS`). */
 export function gscDateRange(days: number, nowMs: number): GscDateRange {
@@ -324,12 +345,7 @@ export function gscRangeDays(range: GscDateRange): number {
  * 31st, that month has 30 days: the 30th).
  */
 export function gscRetentionStart(nowMs: number): string {
-  const now = new Date(Math.floor(nowMs / DAY_MS) * DAY_MS);
-  const months = now.getUTCFullYear() * 12 + now.getUTCMonth() - GSC_RETENTION_MONTHS;
-  const year = Math.floor(months / 12);
-  const month = months - year * 12;
-  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return isoDay(Date.UTC(year, month, Math.min(now.getUTCDate(), lastDay)));
+  return addUtcMonths(isoDay(Math.floor(nowMs / DAY_MS) * DAY_MS), -GSC_RETENTION_MONTHS);
 }
 
 /**

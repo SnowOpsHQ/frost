@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { GSC_CALENDAR } from '@app/specs/gsc-panel.spec';
-import type { GscDateRange } from '@app/specs/gsc.spec';
+import { DAY_MS, addUtcMonths, clampDay, isoDay, type GscDateRange } from '@app/specs/gsc.spec';
 import { formatDay, orderedRange } from '../../gsc-view';
 import { ChevronIcon } from '../../icons';
 
@@ -14,26 +14,14 @@ import { ChevronIcon } from '../../icons';
 // `aria-disabled`, never focused or picked. Classes only, no `style=` (strict CSP). Dates are UTC days
 // (`YYYY-MM-DD`), as Search Console's.
 
-const DAY_MS = 86_400_000;
 const msOf = (iso: string): number => Date.parse(`${iso}T00:00:00Z`);
-const isoOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
-const addDays = (iso: string, days: number): string => isoOf(msOf(iso) + days * DAY_MS);
-
-/** `iso` moved by `months` calendar months (the day clamped to the month's last). */
-function addMonths(iso: string, months: number): string {
-  const at = new Date(msOf(iso));
-  const total = at.getUTCFullYear() * 12 + at.getUTCMonth() + months;
-  const year = Math.floor(total / 12);
-  const month = total - year * 12;
-  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return isoOf(Date.UTC(year, month, Math.min(at.getUTCDate(), lastDay)));
-}
+const addDays = (iso: string, days: number): string => isoDay(msOf(iso) + days * DAY_MS);
 
 /** ISO weekday: `1` Monday … `7` Sunday. */
 const weekdayOf = (iso: string): number => new Date(msOf(iso)).getUTCDay() || 7;
 /** The first day of `iso`'s week when weeks start on `weekStart`. */
 const weekStartOf = (iso: string, weekStart: number): string => addDays(iso, -((weekdayOf(iso) - weekStart + 7) % 7));
-const clampDay = (iso: string, bounds: CalendarBounds): string => (iso < bounds.min ? bounds.min : iso > bounds.max ? bounds.max : iso);
+const clampTo = (iso: string, bounds: CalendarBounds): string => clampDay(iso, bounds.min, bounds.max);
 const monthOf = (iso: string): string => iso.slice(0, 7);
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
@@ -94,7 +82,7 @@ export interface GscCalendarProps {
 export function GscCalendar({ bounds, value, weekStart, onPick, onClose, returnFocus }: GscCalendarProps) {
   // What opened it (the select or the dates button) gets focus back on close.
   const [opener] = useState(() => returnFocus ?? (typeof document === 'undefined' ? null : document.activeElement));
-  const [focused, setFocused] = useState(() => clampDay(value?.end ?? bounds.max, bounds));
+  const [focused, setFocused] = useState(() => clampTo(value?.end ?? bounds.max, bounds));
   const [start, setStart] = useState<string | null>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const grid = useRef<HTMLTableElement>(null);
@@ -143,7 +131,7 @@ export function GscCalendar({ bounds, value, weekStart, onPick, onClose, returnF
   };
 
   const showMonth = (months: number) => {
-    const next = clampDay(addMonths(focused, months), bounds);
+    const next = clampTo(addUtcMonths(focused, months), bounds);
     // The button is about to be disabled (an end reached): focus goes to the day instead of the body.
     focusDay.current = months < 0 ? monthOf(next) <= monthOf(bounds.min) : monthOf(next) >= monthOf(bounds.max);
     setFocused(next);
@@ -171,10 +159,10 @@ export function GscCalendar({ bounds, value, weekStart, onPick, onClose, returnF
         next = addDays(weekStartOf(focused, weekStart), 6);
         break;
       case 'PageUp':
-        next = addMonths(focused, event.shiftKey ? -12 : -1);
+        next = addUtcMonths(focused, event.shiftKey ? -12 : -1);
         break;
       case 'PageDown':
-        next = addMonths(focused, event.shiftKey ? 12 : 1);
+        next = addUtcMonths(focused, event.shiftKey ? 12 : 1);
         break;
       case 'Enter':
       case ' ':
@@ -186,7 +174,7 @@ export function GscCalendar({ bounds, value, weekStart, onPick, onClose, returnF
     }
     event.preventDefault();
     focusDay.current = true;
-    const clamped = clampDay(next, bounds);
+    const clamped = clampTo(next, bounds);
     if (clamped === focused) grid.current?.querySelector<HTMLElement>(`[data-date="${focused}"]`)?.focus();
     else setFocused(clamped);
   };
