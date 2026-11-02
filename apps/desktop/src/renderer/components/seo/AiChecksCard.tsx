@@ -6,6 +6,7 @@ import { normalizeGscQuery } from '@app/specs/gsc.spec';
 import { requestAgentPanel } from '../../agent-palette';
 import { aiChecksPaletteSources } from '../../ai-checks-palette';
 import { aiChecksCardView, type AiChecksAction, type AiChecksCardView, type AiJudgmentView } from '../../ai-checks-view';
+import { useAgentState } from '../../hooks/useAgentState';
 import { aiChecksActions, useAiChecks } from '../../hooks/useAiChecks';
 import type { ContentNotesApi } from '../../hooks/useContentNotes';
 import { registerPaletteActions } from '../../palette/registry';
@@ -141,7 +142,8 @@ function Judgment({ judgment, children }: { readonly judgment: AiJudgmentView; r
 /** The Overview's "AI judgment" card: the page type (the on-device one beside it when they differ), intent, quality and the suggested target, as text. */
 export function AiChecksCard({ audit, tab }: { readonly audit: SeoAudit; readonly tab: TabState }) {
   const state = useAiChecks(tab.id);
-  const view = aiChecksCardView(state, audit.url, audit.pageType.type);
+  const chatgptModels = useAgentState()?.setup.chatgpt.models;
+  const view = aiChecksCardView(state, audit.url, audit.pageType.type, chatgptModels);
   if (view.kind === 'off') return <OffLine view={view} testId="ai-checks-card" tabId={tab.id} />;
   return (
     <Frame view={view} title={COPY.cardTitle} testId="ai-checks-card">
@@ -187,7 +189,8 @@ export function AiChecksCard({ audit, tab }: { readonly audit: SeoAudit; readonl
  */
 export function AiChecksQuality({ url, tab, notes }: { readonly url: string; readonly tab: TabState; readonly notes: ContentNotesApi }) {
   const state = useAiChecks(tab.id);
-  const view = aiChecksCardView(state, url, null);
+  const chatgptModels = useAgentState()?.setup.chatgpt.models;
+  const view = aiChecksCardView(state, url, null, chatgptModels);
   if (view.kind === 'off') return <OffLine view={view} testId="ai-checks-quality" tabId={tab.id} />;
   if (view.kind !== 'ready') {
     return (

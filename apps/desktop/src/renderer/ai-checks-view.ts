@@ -2,6 +2,7 @@ import type { PageType } from '@app/specs/page-type.spec';
 // Type-only from the Zod specs (their schemas must stay out of this bundle: strict Trusted Types).
 import type { AiChecksState } from '@app/specs/ai-checks.schema';
 import { modelPageUrl } from '@app/specs/agent-page-tools.spec';
+import type { ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import { AI_CHECK_MODES, AI_CHECKS_COPY as COPY, type AiCheckMode, type AiCheckUnavailableReason, type AiQualityRating } from '@app/specs/ai-checks.spec';
 import { INTENT_LABEL_NAMES } from '@app/specs/intent-classifier.spec';
@@ -85,11 +86,13 @@ const pageKey = (url: string): string => modelPageUrl(url) ?? '';
 /**
  * The card for `state` (`null`: not answered yet), for the page the panel shows (`url`) with its
  * on-device page type. A state or answer for another page (the tab moved on) shows as loading.
+ * `chatgptModels`: the ChatGPT account's listed models (`agent.watch`'s `setup.chatgpt.models`), so a
+ * plan model is named as the Settings section names it, not by its id.
  */
-export function aiChecksCardView(state: AiChecksState | null, url: string, heuristic: PageType | null): AiChecksCardView {
+export function aiChecksCardView(state: AiChecksState | null, url: string, heuristic: PageType | null, chatgptModels: readonly ChatgptModelView[] = []): AiChecksCardView {
   if (state !== null && state.mode === 'off') return { kind: 'off', message: COPY.offLine, action: OPEN_SETTINGS };
   if (state === null || state.url === '' || state.url !== pageKey(url)) return { kind: 'loading', message: COPY.settings.loading };
-  const cost = costNote(state.model);
+  const cost = costNote(state.model === null ? null : { ...state.model, modelName: modelLabel(state.model.modelId as AgentModelId, chatgptModels) });
   const check = state.check;
   switch (check.status) {
     case 'idle':
@@ -124,7 +127,7 @@ export function aiChecksCardView(state: AiChecksState | null, url: string, heuri
           suggestedTarget: output.suggestedTarget,
           target,
           useAsTargetLabel: target === null ? null : fill(COPY.useAsTargetLabel, { query: target }),
-          checkedBy: fill(COPY.checkedBy, { model: modelLabel(result.modelId as AgentModelId), time: formatTime(result.checkedAt) }),
+          checkedBy: fill(COPY.checkedBy, { model: modelLabel(result.modelId as AgentModelId, chatgptModels), time: formatTime(result.checkedAt) }),
           cached: check.cached ? COPY.cached : null,
         },
       };

@@ -310,6 +310,19 @@ describe('AI checks: the Overview card and the Quality row', () => {
     }
   });
 
+  // Phase 9 Task 12 (found end to end): a ChatGPT plan model is named as the account lists it, as the
+  // Settings section's cost note names it, never by its raw id.
+  test('chatgpt-plan-model-named-from-the-account-list', async () => {
+    const plan = { route: 'chatgpt', modelId: 'chatgpt/gpt-e2e' } as const;
+    fake.agent = agentState({ setup: agentSetup({ route: 'chatgpt', modelId: plan.modelId, chatgpt: { account: { state: 'signed-in', acknowledged: true }, models: [{ id: plan.modelId, label: 'GPT E2E' }] } as never }) });
+    fake.state = aiState({ status: 'idle' }, { model: plan });
+    await showCard();
+    expect(byTest('ai-checks-cost')!.textContent).toBe(COPY.cost.replace('{model}', 'GPT E2E').replace('{route}', AGENT_ROUTE_LABELS.chatgpt));
+    await push(aiState({ status: 'ready', result: result({}, { modelId: plan.modelId }), cached: false }, { model: plan }));
+    expect(byTest('ai-checked-by')!.textContent).toContain('Checked by GPT E2E on');
+    expect(host.textContent).not.toContain('chatgpt/gpt-e2e');
+  });
+
   test('labelled-ai-judgment', async () => {
     const reason = 'It explains brewing well but is thin on varieties.';
     // No model text in any state but `ready`.
