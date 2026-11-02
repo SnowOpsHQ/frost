@@ -1,7 +1,8 @@
 // Spec: specs/gsc.schema.ts (GscStatusSchema, GscWatchInputSchema, GscPerformanceQuerySchema, GscConnectResultSchema,
 // GscPerformanceAnswerSchema, GscQueriesAnswerSchema, GscCountriesAnswerSchema, GscPropertiesAnswerSchema, GSC_CONNECT_RESULTS),
+// specs/gsc-inspection.schema.ts (GscInspectInputSchema, GscOpenInspectionLinkInputSchema, GscInspectionAnswerSchema, GSC_OPEN_LINK_RESULTS),
 // specs/ipc-sender.spec.ts, specs/ipc-transport.spec.ts (IPC_INTERNAL_ERROR_CODE), specs/browser.spec.ts (WATCH_TIMEOUT_MS)
-// Acceptance: specs/gsc.feature.md (Router; Ranges and filters) · review focus "The renderer never sees a token"
+// Acceptance: specs/gsc.feature.md (Router; Ranges and filters), specs/gsc-inspection.feature.md (Router) · review focus "The renderer never sees a token"
 // · plan Global Constraint "Tokens stay in main"
 import { getTRPCErrorShape, TRPCError } from '@trpc/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -17,6 +18,7 @@ import {
   type GscQueriesAnswer,
   type GscStatus,
 } from '@app/specs/gsc.schema';
+import { GSC_OPEN_LINK_RESULTS, type GscInspectInput, type GscInspectionAnswer, type GscOpenLinkResult } from '@app/specs/gsc-inspection.schema';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
@@ -44,6 +46,27 @@ const PERFORMANCE: GscPerformanceAnswer = {
 };
 const QUERIES: GscQueriesAnswer = { status: 'ok', property: PROPERTY, scope: 'page', range: RANGE, rows: [{ query: 'frost', clicks: 3, impressions: 40, ctr: 0.075, position: 4.2 }] };
 const COUNTRIES: GscCountriesAnswer = { status: 'ok', property: PROPERTY, range: RANGE, countries: [{ country: 'gbr', clicks: 3, impressions: 40 }] };
+const INSPECT: GscInspectInput = { url: 'https://www.example.com/a' };
+const LINK = 'https://search.google.com/search-console/inspect?resource_id=https%3A%2F%2Fwww.example.com%2F&id=https%3A%2F%2Fwww.example.com%2Fa';
+const INSPECTION: GscInspectionAnswer = {
+  status: 'ok',
+  property: PROPERTY,
+  url: INSPECT.url,
+  inspectedAt: '2026-10-28T12:00:00.000Z',
+  index: {
+    verdict: { value: 'PASS' },
+    coverageState: 'Submitted and indexed',
+    robotsTxtState: { value: 'ALLOWED' },
+    indexingState: { value: 'INDEXING_ALLOWED' },
+    pageFetchState: { value: 'unknown', code: 'BRAND_NEW_STATE' },
+    lastCrawlTime: '2026-10-20T08:15:30.000Z',
+    crawledAs: null,
+    googleCanonical: INSPECT.url,
+    userCanonical: null,
+  },
+  richResults: { verdict: { value: 'FAIL' }, types: [{ type: 'FAQ', items: [{ name: 'q', issues: [{ message: 'Missing field', severity: { value: 'ERROR' } }] }] }] },
+  link: LINK,
+};
 
 const gscStatus = (version: number, overrides: Partial<GscStatus> = {}): GscStatus => ({
   configured: true,
@@ -76,6 +99,8 @@ function fakeGsc() {
     performance: vi.fn(async (_query: GscPerformanceQuery): Promise<GscPerformanceAnswer> => PERFORMANCE),
     topQueries: vi.fn(async (_query: GscPerformanceQuery): Promise<GscQueriesAnswer> => QUERIES),
     countries: vi.fn(async (_query: GscPerformanceQuery): Promise<GscCountriesAnswer> => COUNTRIES),
+    inspect: vi.fn(async (_input: GscInspectInput): Promise<GscInspectionAnswer> => INSPECTION),
+    openInspectionLink: vi.fn(async (_windowId: number, _url: string): Promise<GscOpenLinkResult> => 'opened'),
   } satisfies GscIpcService;
   return Object.assign(gsc, { push: (s: GscStatus) => release?.(s) });
 }
@@ -91,6 +116,8 @@ const GSC_PROCEDURES: Record<string, { type: 'query' | 'mutation'; input?: unkno
   performance: { type: 'query', input: QUERY },
   topQueries: { type: 'query', input: QUERY },
   countries: { type: 'query', input: QUERY },
+  inspect: { type: 'mutation', input: INSPECT },
+  openInspectionLink: { type: 'mutation', input: { url: INSPECT.url } },
 };
 
 function ctxFor(gsc: GscIpcService | undefined, origin: string = APP_ORIGIN): IpcContext {
@@ -158,6 +185,84 @@ describe('gsc router', () => {
       const error = await errorOf(call(ctxFor(leaky), 'countries', QUERY));
       expect(error.code).toBe(IPC_INTERNAL_ERROR_CODE);
       for (const secret of SECRETS) expect(JSON.stringify(shapeOf(error, 'gsc.countries'))).not.toContain(secret);
+    }
+  });
+
+  test('gsc-inspect-enforces-sender', async () => {
+    const procedures = appRouter._def.procedures as unknown as Record<string, { _def: { type: string } }>;
+    expect(procedures['gsc.inspect']?._def.type).toBe('mutation');
+    expect(procedures['gsc.openInspectionLink']?._def.type).toBe('mutation');
+    for (const origin of ['https://evil.com', 'http://127.0.0.1:8080', 'null', 'app://evil', 'https://search.google.com']) {
+      const gsc = fakeGsc();
+      expect((await errorOf(call(ctxFor(gsc, origin), 'inspect', INSPECT))).code, origin).toBe(IPC_SENDER_ERROR_CODE);
+      expect((await errorOf(call(ctxFor(gsc, origin), 'openInspectionLink', { url: INSPECT.url }))).code, origin).toBe(IPC_SENDER_ERROR_CODE);
+      expect(gsc.inspect, origin).not.toHaveBeenCalled();
+      expect(gsc.openInspectionLink, origin).not.toHaveBeenCalled();
+    }
+    // `inspect`: the input as is (with `fresh`); strict.
+    const gsc = fakeGsc();
+    await expect(call(ctxFor(gsc), 'inspect', INSPECT)).resolves.toEqual(INSPECTION);
+    await expect(call(ctxFor(gsc), 'inspect', { ...INSPECT, fresh: true })).resolves.toEqual(INSPECTION);
+    expect(gsc.inspect.mock.calls).toEqual([[INSPECT], [{ ...INSPECT, fresh: true }]]);
+    gsc.inspect.mockResolvedValueOnce({ status: 'unavailable', reason: 'quota' });
+    await expect(call(ctxFor(gsc), 'inspect', INSPECT)).resolves.toEqual({ status: 'unavailable', reason: 'quota' });
+    // `openInspectionLink`: the sender's window ID and the page URL, nothing else; every result passes.
+    for (const result of GSC_OPEN_LINK_RESULTS) {
+      const opener = fakeGsc();
+      opener.openInspectionLink.mockResolvedValueOnce(result);
+      await expect(call(ctxFor(opener), 'openInspectionLink', { url: INSPECT.url })).resolves.toBe(result);
+      expect(opener.openInspectionLink).toHaveBeenCalledExactlyOnceWith(WINDOW_ID, INSPECT.url);
+    }
+    for (const [name, input] of [
+      ['inspect', undefined],
+      ['inspect', { url: 'file:///etc/passwd' }],
+      ['inspect', { ...INSPECT, fresh: 'yes' }],
+      ['inspect', { ...INSPECT, token: FAKE_ACCESS }],
+      ['inspect', { url: 'x'.repeat(5_000) }],
+      ['openInspectionLink', undefined],
+      ['openInspectionLink', { url: INSPECT.url, link: LINK }],
+      ['openInspectionLink', { link: LINK }],
+      ['openInspectionLink', { url: 'javascript:alert(1)' }],
+    ] as const) {
+      const strict = fakeGsc();
+      expect((await errorOf(call(ctxFor(strict), name, input))).code, `${name} ${JSON.stringify(input)}`).toBe('BAD_REQUEST');
+      expect(strict.inspect).not.toHaveBeenCalled();
+      expect(strict.openInspectionLink).not.toHaveBeenCalled();
+    }
+  });
+
+  test('gsc-inspect-output-strict', async () => {
+    const ok = INSPECTION as Extract<GscInspectionAnswer, { status: 'ok' }>;
+    const bad: unknown[] = [
+      { ...ok, accessToken: FAKE_ACCESS },
+      { ...ok, index: { ...ok.index, sitemap: ['https://www.example.com/sitemap.xml'] } },
+      { ...ok, index: { ...ok.index, coverageState: 'x'.repeat(501) } },
+      { ...ok, index: { ...ok.index, verdict: { value: 'PARTIAL' } } },
+      { ...ok, index: { ...ok.index, verdict: { value: 'unknown', code: 'lower case' } } },
+      { ...ok, index: { ...ok.index, googleCanonical: 'javascript:alert(1)' } },
+      { ...ok, index: { ...ok.index, lastCrawlTime: 'yesterday' } },
+      { ...ok, link: 'https://evil.example/phish' },
+      { ...ok, link: 'http://search.google.com/x' },
+      { ...ok, mobileUsabilityResult: { verdict: 'PASS' } },
+      { ...ok, richResults: { ...ok.richResults, types: [{ type: 'FAQ', items: Array.from({ length: 51 }, () => ({ name: 'q', issues: [] })) }] } },
+      { status: 'unavailable', reason: 'busy' },
+      { status: 'unavailable', reason: 'quota', refreshToken: FAKE_REFRESH },
+    ];
+    for (const answer of bad) {
+      const leaky = fakeGsc();
+      leaky.inspect.mockResolvedValue(answer as GscInspectionAnswer);
+      const error = await errorOf(call(ctxFor(leaky), 'inspect', INSPECT));
+      expect(error.code, JSON.stringify(answer).slice(0, 120)).toBe(IPC_INTERNAL_ERROR_CODE);
+      const shape = shapeOf(error, 'gsc.inspect');
+      expect(shape.message).toBe(IPC_INTERNAL_ERROR_CODE);
+      for (const secret of [...SECRETS, 'evil.example']) expect(JSON.stringify(shape)).not.toContain(secret);
+    }
+    for (const result of ['opened-elsewhere', LINK, true, { opened: true }]) {
+      const leaky = fakeGsc();
+      leaky.openInspectionLink.mockResolvedValue(result as GscOpenLinkResult);
+      const error = await errorOf(call(ctxFor(leaky), 'openInspectionLink', { url: INSPECT.url }));
+      expect(error.code, String(result)).toBe(IPC_INTERNAL_ERROR_CODE);
+      expect(JSON.stringify(shapeOf(error, 'gsc.openInspectionLink'))).not.toContain('search.google.com');
     }
   });
 

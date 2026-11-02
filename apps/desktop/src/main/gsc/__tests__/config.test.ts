@@ -1,6 +1,6 @@
 // Spec: specs/gsc.spec.ts (GSC_CONFIG_ENV, GSC_ENDPOINTS, GSC_ENDPOINT_ENV, UNPACKAGED_HTTP_GSC_HOSTS,
 // GSC_CLIENT_ID_PATTERN, GSC_CLIENT_SECRET_PATTERN), specs/build-config.spec.ts (runtimeOverridesAllowed)
-// Acceptance: specs/gsc.feature.md (Configuration) · plan "Configuration"
+// Acceptance: specs/gsc.feature.md (Configuration), specs/gsc-inspection.feature.md (Configuration) · plan "Configuration"
 import { describe, expect, test } from 'vitest';
 import { ACCOUNT_CONFIG_ENV } from '@app/specs/account-state.schema';
 import { GSC_CONFIG_ENV, GSC_ENDPOINT_ENV, GSC_ENDPOINTS } from '@app/specs/gsc.spec';
@@ -49,7 +49,13 @@ describe('Search Console configuration', () => {
     expect(resolve(false, {}, { ...client(), ...FAKES })).toEqual({
       clientId: 'test-client-id',
       clientSecret: 'test-client-secret',
-      endpoints: { authUrl: FAKES.FROST_GSC_AUTH_URL, tokenUrl: FAKES.FROST_GSC_TOKEN_URL, revokeUrl: FAKES.FROST_GSC_REVOKE_URL, apiBase: FAKES.FROST_GSC_API_BASE },
+      endpoints: {
+        authUrl: FAKES.FROST_GSC_AUTH_URL,
+        tokenUrl: FAKES.FROST_GSC_TOKEN_URL,
+        revokeUrl: FAKES.FROST_GSC_REVOKE_URL,
+        apiBase: FAKES.FROST_GSC_API_BASE,
+        inspectionBase: GSC_ENDPOINTS.inspectionBase,
+      },
     });
     // One override: the others stay Google's.
     expect(resolve(false, {}, { ...client(), [GSC_ENDPOINT_ENV.tokenUrl]: FAKES.FROST_GSC_TOKEN_URL })?.endpoints).toEqual({ ...GSC_ENDPOINTS, tokenUrl: FAKES.FROST_GSC_TOKEN_URL });
@@ -73,6 +79,29 @@ describe('Search Console configuration', () => {
     }
     // An API base with a trailing slash is used without it.
     expect(resolve(false, {}, { ...client(), [GSC_ENDPOINT_ENV.apiBase]: 'http://127.0.0.1:4100/webmasters/v3/' })?.endpoints.apiBase).toBe('http://127.0.0.1:4100/webmasters/v3');
+  });
+
+  test('inspection-base-override-unpackaged-only', () => {
+    expect(GSC_ENDPOINTS.inspectionBase).toBe('https://searchconsole.googleapis.com/v1');
+    expect(GSC_ENDPOINT_ENV.inspectionBase).toBe('FROST_GSC_INSPECTION_BASE');
+    const fake = 'http://127.0.0.1:4100/v1';
+    const override = { [GSC_ENDPOINT_ENV.inspectionBase]: fake };
+    // Unpackaged with nothing baked in: the fake replaces the inspection base only (a trailing slash dropped).
+    expect(resolve(false, {}, { ...client(), ...override })?.endpoints).toEqual({ ...GSC_ENDPOINTS, inspectionBase: fake });
+    expect(resolve(false, {}, { ...client(), [GSC_ENDPOINT_ENV.inspectionBase]: `${fake}/` })?.endpoints.inspectionBase).toBe(fake);
+    expect(resolve(false, {}, { ...client(), ...FAKES, ...override })?.endpoints).toMatchObject({ apiBase: FAKES.FROST_GSC_API_BASE, inspectionBase: fake });
+    // Packaged, or anything baked in: never read; Google's inspection base (or unconfigured).
+    expect(resolve(true, {}, { ...client(), ...override })).toBeNull();
+    for (const isPackaged of [true, false]) {
+      expect(resolve(isPackaged, client(), override)?.endpoints.inspectionBase, String(isPackaged)).toBe(GSC_ENDPOINTS.inspectionBase);
+      expect(resolve(isPackaged, { ...client(), [ACCOUNT_CONFIG_ENV.apiBaseUrl]: 'https://api.example.test' }, override)?.endpoints.inspectionBase).toBe(GSC_ENDPOINTS.inspectionBase);
+    }
+    // Validated like every other override: a refused one is unconfigured, never a silent fall-back to Google.
+    for (const bad of ['http://gsc.test.example/v1', 'http://10.0.0.1/v1', 'https://user:pass@gsc.test.example/v1', 'https://gsc.test.example/v1?key=x', 'https://gsc.test.example/v1#x', 'ftp://127.0.0.1/v1', 'not a url']) {
+      expect(resolve(false, {}, { ...client(), [GSC_ENDPOINT_ENV.inspectionBase]: bad }), bad).toBeNull();
+    }
+    // Empty: Google's.
+    expect(resolve(false, {}, { ...client(), [GSC_ENDPOINT_ENV.inspectionBase]: '' })?.endpoints.inspectionBase).toBe(GSC_ENDPOINTS.inspectionBase);
   });
 
   test('gsc-config-malformed-client-refused', () => {

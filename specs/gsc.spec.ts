@@ -65,6 +65,11 @@ export const GSC_ENDPOINTS = {
   revokeUrl: 'https://oauth2.googleapis.com/revoke',
   /** The Search Console API v3 base (`/sites`, `/sites/{siteUrl}/searchAnalytics/query`). */
   apiBase: 'https://www.googleapis.com/webmasters/v3',
+  /**
+   * The Search Console API v1 base, a second host (`/urlInspection/index:inspect`; Phase 9 Decision 2,
+   * `gsc-inspection.spec.ts`). Same read-only scope (`GSC_SCOPE`).
+   */
+  inspectionBase: 'https://searchconsole.googleapis.com/v1',
 } as const;
 export type GscEndpoints = { readonly [K in keyof typeof GSC_ENDPOINTS]: string };
 
@@ -81,6 +86,7 @@ export const GSC_ENDPOINT_ENV = {
   tokenUrl: 'FROST_GSC_TOKEN_URL',
   revokeUrl: 'FROST_GSC_REVOKE_URL',
   apiBase: 'FROST_GSC_API_BASE',
+  inspectionBase: 'FROST_GSC_INSPECTION_BASE',
 } as const;
 export const UNPACKAGED_HTTP_GSC_HOSTS: readonly string[] = Object.freeze(['127.0.0.1', 'localhost']);
 

@@ -12,6 +12,7 @@ import {
   GscWatchInputSchema,
   type GscStatus,
 } from '@app/specs/gsc.schema';
+import { GscInspectInputSchema, GscInspectionAnswerSchema, GscOpenInspectionLinkInputSchema, GscOpenLinkResultSchema } from '@app/specs/gsc-inspection.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import type { GscIpcService } from './gsc-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
@@ -55,6 +56,11 @@ async function watchGsc(gsc: GscIpcService, sinceVersion: number): Promise<GscSt
  *   (`GscPerformanceQuerySchema`: exactly one of `days` and `range`, optional `country` / `device`):
  *   a page's or its property's performance, top queries and countries with data. Each `ok` or
  *   `unavailable` with a reason.
+ * - `inspect` (`GscInspectInputSchema`): Google's URL Inspection of a page (`GscInspectionAnswerSchema`).
+ *   A mutation: it spends Google's per-site quota, and runs only when the user asks.
+ * - `openInspectionLink` (`GscOpenInspectionLinkInputSchema`: the page, never the link): opens main's
+ *   own cached Search Console link for that page on a live gesture in the sender's window
+ *   (`GscOpenLinkResult`).
  */
 export const gscRouter = router({
   status: publicProcedure
@@ -111,4 +117,21 @@ export const gscRouter = router({
     .input(GscPerformanceQuerySchema)
     .output(GscCountriesAnswerSchema)
     .query(({ ctx, input }) => ctx.gsc.countries(input)),
+  inspect: publicProcedure
+    .use(enforceSender)
+    .use(requireGsc)
+    .input(GscInspectInputSchema)
+    .output(GscInspectionAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.gsc.inspect(input)),
+  openInspectionLink: publicProcedure
+    .use(enforceSender)
+    .use(requireGsc)
+    .input(GscOpenInspectionLinkInputSchema)
+    .output(GscOpenLinkResultSchema)
+    .mutation(({ ctx, input }) => {
+      // `enforceSender` admitted only a known app window, so there is a window ID (as `connect`).
+      const windowId = ctx.sender?.windowId;
+      if (typeof windowId !== 'number') throw new TRPCError({ code: IPC_INTERNAL_ERROR_CODE, message: 'no sender window' });
+      return ctx.gsc.openInspectionLink(windowId, input.url);
+    }),
 });

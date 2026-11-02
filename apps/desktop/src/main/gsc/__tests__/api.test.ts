@@ -13,7 +13,7 @@ const jsonResponse = (status: number, body: unknown, headers: Record<string, str
 
 function apiWith(answer: () => Promise<Response> | Response, timeoutMs?: number) {
   const fetch = vi.fn(async (_url: string, _init: RequestInit) => answer());
-  return { fetch, api: createGscApi({ apiBase: GSC_ENDPOINTS.apiBase, fetch, ...(timeoutMs === undefined ? {} : { timeoutMs }) }) };
+  return { fetch, api: createGscApi({ apiBase: GSC_ENDPOINTS.apiBase, inspectionBase: GSC_ENDPOINTS.inspectionBase, fetch, ...(timeoutMs === undefined ? {} : { timeoutMs }) }) };
 }
 
 const failureOf = async (answer: () => Promise<Response> | Response, timeoutMs?: number): Promise<GscApiFailure | 'ok'> => {

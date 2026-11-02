@@ -1,5 +1,5 @@
-// Test-only: an in-process stand-in for Google's OAuth 2.0 endpoints and the Search Console API v3
-// (`specs/gsc.spec.ts`, `GSC_ENDPOINTS`), on 127.0.0.1, used by the unit tests
+// Test-only: an in-process stand-in for Google's OAuth 2.0 endpoints, the Search Console API v3 and
+// v1's URL Inspection (`specs/gsc.spec.ts`, `GSC_ENDPOINTS`), on 127.0.0.1, used by the unit tests
 // (`src/main/gsc/__tests__`) and `gsc.e2e.ts`. Written from Google's public API shapes; every token,
 // code and client value is fake and made per run. The consent page signs nobody in: it answers 302 to
 // the loopback at once with a fresh code (the browser and Google's pages are not what these tests are
@@ -42,6 +42,11 @@ export interface FakeQuery {
   readonly body: Record<string, unknown>;
 }
 
+/** A URL Inspection request: its JSON body. */
+export interface FakeInspection {
+  readonly body: Record<string, unknown>;
+}
+
 export interface FakeGoogle {
   readonly origin: string;
   readonly endpoints: GscEndpoints;
@@ -64,6 +69,10 @@ export interface FakeGoogle {
   queryRows: () => FakeRow[];
   /** The rows a `['country']` query answers (default `fakeCountryRows()`). */
   countryRows: () => FakeRow[];
+  /** The body a URL Inspection answers for the request's `inspectionUrl` and `siteUrl` (default `fakeInspection(...)`). */
+  inspection: (inspectionUrl: string, siteUrl: string) => unknown;
+  /** Every URL Inspection request, in order. */
+  readonly inspections: FakeInspection[];
   /** Every consent request's query, token request's form and revoke request's token, in order. */
   readonly authRequests: URLSearchParams[];
   readonly tokenRequests: URLSearchParams[];
@@ -99,6 +108,8 @@ const TOKEN_PATH = '/token';
 const REVOKE_PATH = '/revoke';
 const API_PATH = '/webmasters/v3';
 const QUERY_PATH = /^\/webmasters\/v3\/sites\/([^/]+)\/searchAnalytics\/query$/;
+const INSPECTION_BASE_PATH = '/v1';
+const INSPECT_PATH = `${INSPECTION_BASE_PATH}/urlInspection/index:inspect`;
 const DAY_MS = 86_400_000;
 
 const random = (prefix: string): string => `${prefix}${randomBytes(24).toString('base64url')}`;
@@ -123,6 +134,37 @@ export function fakeCountryRows(): FakeRow[] {
 /** The rows the fake answers for a query query: `count` queries, most clicks first. */
 export function fakeQueryRows(count: number): FakeRow[] {
   return Array.from({ length: count }, (_, i) => ({ keys: [`fake query ${i + 1}`], clicks: 1000 - i, impressions: 10_000, ctr: (1000 - i) / 10_000, position: 1 + i / 10 }));
+}
+
+/**
+ * What the fake answers for a URL Inspection by default: Google's documented shape for an indexed page
+ * (with members frost drops: `sitemap`, `referringUrls`, `mobileUsabilityResult`).
+ */
+export function fakeInspection(inspectionUrl: string, siteUrl: string): unknown {
+  const link = `https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent(siteUrl)}&id=${encodeURIComponent(inspectionUrl)}`;
+  return {
+    inspectionResult: {
+      inspectionResultLink: link,
+      indexStatusResult: {
+        sitemap: [`${siteUrl}sitemap.xml`],
+        referringUrls: [`${siteUrl}referrer`],
+        verdict: 'PASS',
+        coverageState: 'Submitted and indexed',
+        robotsTxtState: 'ALLOWED',
+        indexingState: 'INDEXING_ALLOWED',
+        lastCrawlTime: '2026-10-20T08:15:30Z',
+        pageFetchState: 'SUCCESSFUL',
+        googleCanonical: inspectionUrl,
+        userCanonical: inspectionUrl,
+        crawledAs: 'MOBILE',
+      },
+      mobileUsabilityResult: { verdict: 'PASS', issues: [] },
+      richResultsResult: {
+        verdict: 'PASS',
+        detectedItems: [{ richResultType: 'Breadcrumbs', items: [{ name: 'Unnamed item', issues: [{ issueMessage: 'Missing field "item"', severity: 'WARNING' }] }] }],
+      },
+    },
+  };
 }
 
 export async function startFakeGoogle(): Promise<FakeGoogle> {
@@ -229,7 +271,7 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
       return json(res, 200, {});
     }
 
-    if (url.pathname === `${API_PATH}/sites` || QUERY_PATH.test(url.pathname)) {
+    if (url.pathname === `${API_PATH}/sites` || QUERY_PATH.test(url.pathname) || url.pathname === INSPECT_PATH) {
       const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1] ?? null;
       google.apiTokens.push(bearer);
       if (bearer === null || !liveAccess.has(bearer) || google.mode === 'unauthorized') return apiError(res, 401, 'UNAUTHENTICATED', 'authError');
@@ -238,6 +280,18 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
       if (google.mode === 'quota-403') return apiError(res, 403, 'PERMISSION_DENIED', 'quotaExceeded');
       if (google.mode === 'forbidden') return apiError(res, 403, 'PERMISSION_DENIED', 'forbidden');
       if (google.mode === 'garbage') return void res.writeHead(200, { 'Content-Type': 'application/json' }).end('<html>not json');
+      if (req.method === 'POST' && url.pathname === INSPECT_PATH) {
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+        } catch {
+          return apiError(res, 400, 'INVALID_ARGUMENT', 'badRequest');
+        }
+        google.inspections.push({ body });
+        const siteUrl = String(body.siteUrl);
+        if (!google.sites.some((site) => site.siteUrl === siteUrl && site.permissionLevel !== 'siteUnverifiedUser')) return apiError(res, 403, 'PERMISSION_DENIED', 'forbidden');
+        return json(res, 200, google.inspection(String(body.inspectionUrl), siteUrl));
+      }
       if (req.method === 'GET' && url.pathname === `${API_PATH}/sites`) {
         google.sitesCalls++;
         return json(res, 200, google.sites.length === 0 ? {} : { siteEntry: google.sites });
@@ -272,7 +326,13 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   const origin = `http://127.0.0.1:${port}`;
-  const endpoints: GscEndpoints = { authUrl: `${origin}${AUTH_PATH}`, tokenUrl: `${origin}${TOKEN_PATH}`, revokeUrl: `${origin}${REVOKE_PATH}`, apiBase: `${origin}${API_PATH}` };
+  const endpoints: GscEndpoints = {
+    authUrl: `${origin}${AUTH_PATH}`,
+    tokenUrl: `${origin}${TOKEN_PATH}`,
+    revokeUrl: `${origin}${REVOKE_PATH}`,
+    apiBase: `${origin}${API_PATH}`,
+    inspectionBase: `${origin}${INSPECTION_BASE_PATH}`,
+  };
 
   const google: FakeGoogle = {
     origin,
@@ -284,6 +344,7 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
       [GSC_ENDPOINT_ENV.tokenUrl]: endpoints.tokenUrl,
       [GSC_ENDPOINT_ENV.revokeUrl]: endpoints.revokeUrl,
       [GSC_ENDPOINT_ENV.apiBase]: endpoints.apiBase,
+      [GSC_ENDPOINT_ENV.inspectionBase]: endpoints.inspectionBase,
     },
     mode: 'ok',
     grantScope: GSC_SCOPE,
@@ -294,6 +355,8 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
     dateRows: (startDate) => fakeDateRows(startDate),
     queryRows: () => fakeQueryRows(30),
     countryRows: () => fakeCountryRows(),
+    inspection: (inspectionUrl, siteUrl) => fakeInspection(inspectionUrl, siteUrl),
+    inspections: [],
     authRequests: [],
     tokenRequests: [],
     revoked: [],

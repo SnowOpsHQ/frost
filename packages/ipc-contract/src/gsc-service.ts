@@ -1,3 +1,4 @@
+import type { GscInspectInput, GscInspectionAnswer, GscOpenLinkResult } from '@app/specs/gsc-inspection.schema';
 import type {
   GscConnectResult,
   GscCountriesAnswer,
@@ -54,6 +55,14 @@ export interface GscService {
    * list. A `country` filter is ignored here (the list would be only itself). Added in Phase 9.
    */
   countries(query: GscPerformanceQuery): Promise<GscCountriesAnswer>;
+  /**
+   * Google's URL Inspection of `input.url` (without its fragment) in the property that covers it
+   * (`GscInspectionAnswerSchema`, spec `gsc-inspection.schema.ts`): index status, rich results and the
+   * Search Console link, every string capped. Sends one request to Google's per-site quota, so it runs
+   * only when the user asks (never on a page load), through its own rate (`GSC_INSPECTION_RATE`). An
+   * `ok` answer is reused for `GSC_CACHE_TTL_MS`; `input.fresh` skips that. Added in Phase 9.
+   */
+  inspect(input: GscInspectInput): Promise<GscInspectionAnswer>;
 }
 
 /** What the `gsc.*` procedures also need: the long-poll and the connection's actions (the chrome's Settings). */
@@ -73,4 +82,12 @@ export interface GscIpcService extends GscService {
   cancelConnect(): Promise<boolean>;
   /** Forgets the connection (the refresh token deleted, then revoked at Google): `true` if connected. Works without `search-console`. */
   disconnect(): Promise<boolean>;
+  /**
+   * Opens the Search Console page of the inspection of `url` (the **page**, never a link) for app
+   * window `windowId` (the IPC sender's): spends a live user gesture there (else `needs-gesture`),
+   * takes the link from main's own cached `ok` answer for that page, checks its host again
+   * (`GSC_INSPECTION_LINK_HOST`) and opens it with `openExternalIfAllowed`; else `no-link`. Never
+   * calls Google, never opens anything else, never throws.
+   */
+  openInspectionLink(windowId: number, url: string): Promise<GscOpenLinkResult>;
 }

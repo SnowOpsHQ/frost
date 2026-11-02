@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { GoogleInspectionResponseSchema, type GoogleInspectionResponse } from '@app/specs/gsc-inspection.schema';
 import {
   GOOGLE_QUOTA_REASONS,
   GoogleApiErrorSchema,
@@ -11,9 +12,11 @@ import {
 } from '@app/specs/gsc.schema';
 import { parseJson, send, type FetchLike } from './http';
 
-// The Search Console API v3 as main calls it (spec `gsc.schema.ts`, Google's answers; acceptance
-// `gsc.feature.md`, Google API; plan Global Constraint "Outbound calls"). Read-only: `GET /sites` and
-// `POST /sites/{siteUrl}/searchAnalytics/query` (a query, not a write). No Electron import: main
+// The Search Console API as main calls it (spec `gsc.schema.ts`, `gsc-inspection.schema.ts`, Google's
+// answers; acceptance `gsc.feature.md`, Google API, and `gsc-inspection.feature.md`; plan Global
+// Constraint "Outbound calls"). Read-only: v3's `GET /sites` and `POST
+// /sites/{siteUrl}/searchAnalytics/query` (a query, not a write), and v1's `POST
+// /urlInspection/index:inspect` on a second host (`inspectionBase`; a read of Google's index). No Electron import: main
 // injects `net.fetch` (through `send`: `credentials: 'omit'`, `cache: 'no-store'`, `redirect: 'error'`,
 // a timeout, a capped body). The access token goes only in `Authorization: Bearer`. Failures are
 // reported by kind only, never with a body, a URL or a token.
@@ -79,6 +82,15 @@ export function searchAnalyticsBody(options: {
   };
 }
 
+/** A URL Inspection request body: exactly the page and its property (no `languageCode`: Google's default). */
+export interface UrlInspectionBody {
+  readonly inspectionUrl: string;
+  readonly siteUrl: string;
+}
+
+/** `<inspectionBase>/urlInspection/index:inspect`. */
+export const urlInspectionUrl = (inspectionBase: string): string => `${inspectionBase}/urlInspection/index:inspect`;
+
 /** `<apiBase>/sites/<siteUrl as one encoded path segment>/searchAnalytics/query`. */
 export function siteQueryUrl(apiBase: string, siteUrl: string): string {
   return `${apiBase}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
@@ -89,11 +101,15 @@ export interface GscApi {
   sites(accessToken: string): Promise<GscApiResult<GoogleSitesResponse>>;
   /** `POST /sites/{siteUrl}/searchAnalytics/query`. */
   query(accessToken: string, siteUrl: string, body: SearchAnalyticsBody): Promise<GscApiResult<GoogleSearchAnalyticsResponse>>;
+  /** `POST <inspectionBase>/urlInspection/index:inspect`. */
+  inspect(accessToken: string, body: UrlInspectionBody): Promise<GscApiResult<GoogleInspectionResponse>>;
 }
 
 export interface CreateGscApiOptions {
   /** `GscConfig.endpoints.apiBase` (no trailing slash). */
   readonly apiBase: string;
+  /** `GscConfig.endpoints.inspectionBase` (no trailing slash). */
+  readonly inspectionBase: string;
   readonly fetch: FetchLike;
   /** Defaults to `GSC_LIMITS.timeoutMs`. */
   readonly timeoutMs?: number;
@@ -110,7 +126,7 @@ function forbiddenKind(text: string | null): GscApiFailure {
 }
 
 export function createGscApi(options: CreateGscApiOptions): GscApi {
-  const { apiBase, fetch, timeoutMs } = options;
+  const { apiBase, inspectionBase, fetch, timeoutMs } = options;
 
   async function call<S extends z.ZodType>(url: string, accessToken: string, json: unknown, schema: S): Promise<GscApiResult<z.infer<S>>> {
     const headers = new Headers({ Accept: 'application/json', Authorization: `Bearer ${accessToken}` });
@@ -130,5 +146,7 @@ export function createGscApi(options: CreateGscApiOptions): GscApi {
   return {
     sites: (accessToken) => call(`${apiBase}/sites`, accessToken, undefined, GoogleSitesResponseSchema),
     query: (accessToken, siteUrl, body) => call(siteQueryUrl(apiBase, siteUrl), accessToken, body, GoogleSearchAnalyticsResponseSchema),
+    // Exactly the two documented members, whatever the caller's object carries.
+    inspect: (accessToken, body) => call(urlInspectionUrl(inspectionBase), accessToken, { inspectionUrl: body.inspectionUrl, siteUrl: body.siteUrl }, GoogleInspectionResponseSchema),
   };
 }
