@@ -355,16 +355,29 @@ or `check.error`). Its lifecycle is the host's, apart from chats:
   (resolved here, never the runtime's word). Any other `checkId` (unknown, finished, stopped or
   spent) is refused `check-budget` and counted; a request without one takes the turn path unchanged;
 - `stopCheck` withdraws the budget at once, posts `check.stop`, and answers the check `check.error`
-  (`aborted`); the runtime's own late answer for it is let through silently, once;
+  (`aborted`); the runtime's own late answer for it is swallowed, once: not passed on to listeners
+  and not counted as a strike (a second answer for it is dropped and counted);
 - a runtime failure (crash, restart, protocol mismatch) fails every pending chat as before and
   answers every live check `check.error` (`crashed`); nothing of either budget survives.
 
 The proxy checks a live check's request on its own branch: `checkModelRequest(route, modelId,
 'auto', body, headers)` against the route and model the check began on (never the settings'
-effort, never a turn's mid-turn `previous` steps), and a refusal of it is never a strike (the
-runtime answers the check `check.error` `refused`). The last chat ending aborts only turn requests;
+effort, never a turn's mid-turn `previous` steps), then a check's own shape, narrower than a
+turn's: no `tools` and no tool choice (`tool_choice`, `toolChoice`, `parallel_tool_calls`; only the
+gateway's `toolChoice: { type: 'auto' }`, which the AI SDK writes on every gateway call and which
+has no tool to choose without `tools`), and the route's own output cap (`max_tokens`,
+`max_output_tokens`, `maxOutputTokens`) present and at most `AI_CHECK_LIMITS.maxOutputTokens`; on
+the ChatGPT plan no cap field at all. A refusal of it is never a strike (the runtime answers the
+check `check.error` `refused`). The last chat ending aborts only turn requests;
 a check's request is aborted only by its own stop or end, or a runtime failure. A check's plan
 failure (ChatGPT) is logged, but neither shown on a chat nor pauses the plan for a turn.
+
+**Residual risk.** Main checks a check's request's shape (route, model, no tools, no reasoning, its
+output cap), not its content: it cannot verify that the prompt the runtime sends is the system
+prompt and input main put in `check.start`. A compromised runtime can therefore send one request
+per check main started with a prompt of its own, within those bounds (tool-less, at most
+`AI_CHECK_LIMITS.maxOutputTokens` of output, on the user's route and key), and its answer is only
+ever parsed and displayed as untrusted data (Decision 17).
 
 - **Scenario: check-request-budget-one** — a live check's budget admits exactly one `fetch.request`;
   a second on its id is refused here and never reaches the proxy.
@@ -396,6 +409,13 @@ failure (ChatGPT) is logged, but neither shown on a chat nor pauses the plan for
 - **Scenario: check-with-reasoning-fields-refused** — a check body carrying a reasoning field
   (`reasoning.effort: 'high'`, Anthropic `thinking`) is refused `reasoning`, the check answers
   `check.error` (`refused`), and the runtime gets no strike.
+- **Scenario: check-with-tools-or-large-cap-refused** — a check body that passes a turn's whole
+  check at `auto` but carries `tools`, a tool choice (other than the gateway's SDK default), or an
+  output cap over `AI_CHECK_LIMITS.maxOutputTokens` (`max_tokens` 16,384 with tools and unrelated
+  messages included) is refused on every route that has the field, never sent and not counted;
+  a missing cap on a key route, or any cap field on the ChatGPT plan, is refused too; through the
+  real runtime the check answers `check.error` (`refused`); a turn's body with tools and the full
+  cap is still sent on the turn path.
 - **Scenario: check-output-capped** — the key routes' and the gateway's check bodies carry
   `AI_CHECK_LIMITS.maxOutputTokens` (at most `MAX_OUTPUT_TOKENS`); a body without a cap is refused
   `output-cap`, as a turn's is.

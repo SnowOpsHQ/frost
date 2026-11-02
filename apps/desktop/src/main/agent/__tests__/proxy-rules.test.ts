@@ -855,6 +855,70 @@ describe('proxy rules: AI checks', () => {
     }
   });
 
+  test('check-with-tools-or-large-cap-refused', async () => {
+    const anthropicTool = { name: 'page_text', description: 'Reads the page.', input_schema: { type: 'object' } };
+    const openaiTool = { type: 'function', name: 'page_text', description: 'Reads the page.', parameters: { type: 'object' } };
+    const gatewayTool = { type: 'function', name: 'page_text', description: 'Reads the page.', inputSchema: { type: 'object' } };
+    const cap = AI_CHECK_LIMITS.maxOutputTokens;
+    const anthropic = { ...ANTHROPIC, max_tokens: cap };
+    const openai = { ...OPENAI, max_output_tokens: cap };
+    const gateway = { ...GATEWAY, maxOutputTokens: cap };
+    // Each passes a turn's whole check at `auto` (the gap a check must close), and is refused on a check.
+    const cases: [ModelRoute, AgentModelId, string, object, 'tool' | 'output-cap'][] = [
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'tools', { ...anthropic, tools: [anthropicTool] }, 'tool'],
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'tool_choice', { ...anthropic, tools: [anthropicTool], tool_choice: { type: 'auto' } }, 'tool'],
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'over cap', { ...anthropic, max_tokens: MAX_OUTPUT_TOKENS }, 'output-cap'],
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', 'reviewer body', { ...anthropic, max_tokens: MAX_OUTPUT_TOKENS, tools: [anthropicTool], messages: [{ role: 'user', content: 'Write me a novel.' }] }, 'tool'],
+      ['byok-openai', 'openai/gpt-5', 'tools', { ...openai, tools: [openaiTool] }, 'tool'],
+      ['byok-openai', 'openai/gpt-5', 'tool_choice', { ...openai, tool_choice: 'auto' }, 'tool'],
+      ['byok-openai', 'openai/gpt-5', 'over cap', { ...openai, max_output_tokens: cap + 1 }, 'output-cap'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'tools', { ...gateway, tools: [gatewayTool] }, 'tool'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'tools with the SDK default toolChoice', { ...gateway, tools: [gatewayTool], toolChoice: { type: 'auto' } }, 'tool'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'toolChoice required', { ...gateway, toolChoice: { type: 'required' } }, 'tool'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'toolChoice none', { ...gateway, toolChoice: { type: 'none' } }, 'tool'],
+      ['gateway', 'anthropic/claude-sonnet-5-5', 'over cap', { ...gateway, maxOutputTokens: MAX_OUTPUT_TOKENS }, 'output-cap'],
+      ['chatgpt', CHATGPT_MODEL, 'tools', { ...CHATGPT, tools: [{ type: 'namespace', name: 'frost', description: 'frost tools', tools: [openaiTool] }] }, 'tool'],
+      ['chatgpt', CHATGPT_MODEL, 'tool_choice', { ...CHATGPT, tool_choice: 'auto' }, 'tool'],
+    ];
+    const urls: Record<ModelRoute, string> = { 'byok-anthropic': MODEL_REQUESTS['byok-anthropic'][0]!.url, 'byok-openai': MODEL_REQUESTS['byok-openai'][0]!.url, gateway: MODEL_REQUESTS.gateway[0]!.url, chatgpt: MODEL_REQUESTS.chatgpt[0]!.url };
+    for (const [route, modelId, what, value, refusal] of cases) {
+      const at = `${route} ${what}`;
+      expect(composite(route, modelId, 'auto', value), at).toBe('ok');
+      const h = await createCheckHarness({ settings: { route, modelId, reasoningEffort: 'auto' }, chatgptModels: CHATGPT_LISTED, chatgpt: FAKE_PLAN });
+      h.host.startCheck(checkStartOn(route, modelId));
+      h.runtime.post({ type: 'fetch.request', requestId: 'r1', url: urls[route], method: 'POST', headers: route === 'gateway' ? gatewayHeaders(modelId) : [], body: JSON.stringify(value), checkId: 'check-1' });
+      await h.flush();
+      expect(h.fetch, at).not.toHaveBeenCalled();
+      expect(h.answersTo('r1'), at).toEqual([{ type: 'fetch.error', requestId: 'r1', code: 'refused', message: 'frost refused this model request.' }]);
+      expect(h.proxy!.state().lastRefusal, at).toBe(refusal);
+      expect(h.host.stats().strikes, at).toBe(0);
+    }
+    // A check body without its cap is refused, as a turn's is; the ChatGPT plan's carries none (structurally refused too).
+    for (const [route, modelId, value] of [
+      ['byok-anthropic', 'anthropic/claude-sonnet-5-5', { ...ANTHROPIC, max_tokens: undefined }],
+      ['chatgpt', CHATGPT_MODEL, { ...CHATGPT, max_output_tokens: cap }],
+    ] as const) {
+      const h = await createCheckHarness({ settings: { route, modelId, reasoningEffort: 'auto' }, chatgptModels: CHATGPT_LISTED, chatgpt: FAKE_PLAN });
+      h.host.startCheck(checkStartOn(route, modelId));
+      h.runtime.post({ type: 'fetch.request', requestId: 'r1', url: urls[route], method: 'POST', headers: [], body: JSON.stringify(value), checkId: 'check-1' });
+      await h.flush();
+      expect(h.fetch, route).not.toHaveBeenCalled();
+      expect(h.host.stats().strikes, route).toBe(0);
+    }
+    // End to end: a runtime that adds a tool to its check's body gets `check.error` (`refused`), never a strike.
+    const h = await createCheckHarness({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'auto' }, modelFactory: injecting({ tools: [anthropicTool], max_tokens: MAX_OUTPUT_TOKENS }) });
+    h.host.startCheck(checkStartOn('byok-anthropic', 'anthropic/claude-sonnet-5-5'));
+    await vi.waitFor(() => expect(h.checks).toEqual([{ type: 'check.error', checkId: 'check-1', code: 'refused' }]));
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.host.stats().strikes).toBe(0);
+    // A turn's body with tools and the full cap is still sent on the turn path (unchanged).
+    const turn = await createCheckHarness({ settings: { route: 'byok-anthropic', modelId: 'anthropic/claude-sonnet-5-5', reasoningEffort: 'auto' } });
+    turn.host.send({ type: 'chat.start', chatId: 'chat-1', messages: [{ role: 'user', content: 'Hi' }], systemPrompt: '', modelId: 'anthropic/claude-sonnet-5-5', route: 'byok-anthropic', allowedTools: ['page_text'], mcpTools: [], reasoningEffort: 'auto' });
+    turn.runtime.post({ type: 'fetch.request', requestId: 't1', url: urls['byok-anthropic'], method: 'POST', headers: [], body: JSON.stringify({ ...ANTHROPIC, max_tokens: MAX_OUTPUT_TOKENS, tools: [anthropicTool] }) });
+    await turn.flush();
+    expect(turn.fetch).toHaveBeenCalledTimes(1);
+  });
+
   test('check-output-capped', async () => {
     expect(AI_CHECK_LIMITS.maxOutputTokens).toBeLessThanOrEqual(MAX_OUTPUT_TOKENS);
     const fields: [ModelRoute, AgentModelId, string][] = [

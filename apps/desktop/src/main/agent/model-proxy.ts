@@ -14,6 +14,7 @@ import {
   type ProxyRefusal,
 } from '@app/specs/agent-proxy.spec';
 import { effectiveEffort } from '@app/specs/agent-reasoning.spec';
+import { AI_CHECK_LIMITS } from '@app/specs/ai-checks.spec';
 import { isAllowedModelRequest, MODEL_REQUESTS, MODEL_ROUTES } from '@app/specs/agent-tools.spec';
 import type { ChatgptAuth, ChatgptTokenFailure } from './chatgpt/service';
 import { createStreamScanner, readErrorAnswer } from './chatgpt/responses';
@@ -63,8 +64,10 @@ import type { AgentSettings } from './settings';
 // An AI check's request (Phase 9 Task 9, Decision 15; `agent-host.feature.md`, Checks) takes its own
 // branch: the host resolved its `checkId` against the checks main started (live, unspent) and handed
 // over the route and model the check began on. It is checked with `checkModelRequest(route, modelId,
-// 'auto', …)` against those (never the settings' effort, never a turn's `previous` steps) and sent
-// with that route's credential. A refusal of it is never counted as the runtime's fault (lead
+// 'auto', …)` against those (never the settings' effort, never a turn's `previous` steps), then held
+// to a check's own shape (no tool or tool-choice field; its route's output cap at most
+// `AI_CHECK_LIMITS.maxOutputTokens`, and none on the ChatGPT plan), and sent with that route's
+// credential. A refusal of it is never counted as the runtime's fault (lead
 // ruling): the runtime answers the check `check.error` (`refused`), so automatic checks can't trip
 // the strike window or degrade chat (the host already bounds them to one request per check main
 // started). The last chat ending aborts only turn requests; a check's request is aborted by its own
@@ -175,6 +178,47 @@ const TOKEN_FAILURES: Readonly<Record<ChatgptTokenFailure, { readonly refusal: P
   network: { refusal: 'network', failure: null },
   failed: { refusal: 'key-unavailable', failure: null },
 };
+
+/** Each route's tool fields, and its output-cap field (`null`: the route sends none, the ChatGPT plan). */
+const CHECK_TOOL_FIELDS: Readonly<Record<AgentModelSettings['route'], readonly string[]>> = {
+  'byok-anthropic': ['tools', 'tool_choice'],
+  'byok-openai': ['tools', 'tool_choice', 'parallel_tool_calls'],
+  gateway: ['tools', 'toolChoice'],
+  chatgpt: ['tools', 'tool_choice', 'parallel_tool_calls'],
+};
+const CHECK_OUTPUT_CAP_FIELD: Readonly<Record<AgentModelSettings['route'], string | null>> = {
+  'byok-anthropic': 'max_tokens',
+  'byok-openai': 'max_output_tokens',
+  gateway: 'maxOutputTokens',
+  chatgpt: null,
+};
+/** Every output-cap field any route's wire uses (none may appear on the ChatGPT plan). */
+const OUTPUT_CAP_FIELDS: readonly string[] = ['max_tokens', 'max_output_tokens', 'maxOutputTokens'];
+
+/**
+ * What a check's body may be beyond a turn's rules (`checkModelRequest` at `auto` has passed): a
+ * check is tool-less (no tool or tool-choice field at all, except the gateway's `toolChoice:
+ * { type: 'auto' }`, which the AI SDK writes on every gateway call; with no `tools` it has nothing
+ * to choose from) and asks for at most
+ * `AI_CHECK_LIMITS.maxOutputTokens` in its route's own cap field (required on the key routes and
+ * the gateway, as for a turn); on the ChatGPT plan no cap field at all. `null`: it may go out.
+ */
+function checkRequestShape(route: AgentModelSettings['route'], checkedBody: string): ProxyRefusal | null {
+  let body: unknown;
+  try {
+    body = JSON.parse(checkedBody);
+  } catch {
+    return 'body-json';
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return 'body-json';
+  const fields = body as Record<string, unknown>;
+  const sdkDefault = (field: string) => route === 'gateway' && field === 'toolChoice' && JSON.stringify(fields.toolChoice) === '{"type":"auto"}';
+  if (CHECK_TOOL_FIELDS[route].some((field) => Object.hasOwn(fields, field) && !sdkDefault(field))) return 'tool';
+  const capField = CHECK_OUTPUT_CAP_FIELD[route];
+  if (capField === null) return OUTPUT_CAP_FIELDS.some((field) => Object.hasOwn(fields, field)) ? 'output-cap' : null;
+  const cap = fields[capField];
+  return Number.isInteger(cap) && (cap as number) >= 1 && (cap as number) <= AI_CHECK_LIMITS.maxOutputTokens ? null : 'output-cap';
+}
 
 /** A `fetch` rejection from a redirect (Electron 45's `redirect: 'error'` message), told apart from a network failure. */
 const isRedirectError = (error: unknown): boolean => error instanceof Error && /redirect/i.test(error.message);
@@ -420,7 +464,8 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
 
   /**
    * A live check's request (the host resolved `check`): checked at `auto` against the route and model
-   * the check began on, sent with that route's credential. No refusal here is a strike.
+   * the check began on, then held to a check's shape (`checkRequestShape`: tool-less, its own output
+   * cap), and sent with that route's credential. No refusal here is a strike.
    */
   const handleCheckRequest = (request: FetchRequest, check: CheckTarget) => {
     const { requestId } = request;
@@ -440,6 +485,12 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     const verdict = checkModelRequest(route, modelId, 'auto', body, headers);
     if (!verdict.ok) {
       refuse(requestId, verdict.reason, false);
+      return;
+    }
+    // Narrower than a turn's: no tools, and the check's own output cap (never `MAX_OUTPUT_TOKENS`).
+    const shape = checkRequestShape(route, verdict.body);
+    if (shape !== null) {
+      refuse(requestId, shape, false);
       return;
     }
     const slot = routeCredentialSlot(route);
