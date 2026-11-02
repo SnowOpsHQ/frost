@@ -16,6 +16,7 @@ import {
   AI_BOTS,
   AI_CHECK_STATUSES,
   AI_CHECK_VALUES,
+  AI_REACH_AGENTS,
   AI_READINESS_CHECKS,
   AI_READINESS_WEIGHTS,
   AI_RENDERING_NOTE,
@@ -316,7 +317,7 @@ describe('AI-readiness score', () => {
   test('score-weights-and-partial', () => {
     expect([...AI_READINESS_CHECKS]).toEqual(['search-indexable', 'ai-search-crawlers', 'served-content', 'agent-reachability', 'live-fetch-agents', 'training-opt-outs', 'llms-txt']);
     expect(AI_READINESS_WEIGHTS).toEqual({ 'search-indexable': 25, 'ai-search-crawlers': 30, 'served-content': 25, 'agent-reachability': 20, 'live-fetch-agents': 0, 'training-opt-outs': 0, 'llms-txt': 0 });
-    expect([...AI_CHECK_STATUSES]).toEqual(['pass', 'warn', 'fail', 'not-checked']);
+    expect([...AI_CHECK_STATUSES]).toEqual(['pass', 'warn', 'fail', 'info', 'not-checked']);
     expect(AI_CHECK_VALUES).toEqual({ pass: 1, warn: 0.5, fail: 0 });
     expect([...AI_SCORE_REQUIRED_CHECKS]).toEqual(['search-indexable', 'ai-search-crawlers', 'served-content']);
     // Every check passes: 100, on all four weighted checks.
@@ -381,9 +382,20 @@ describe('AI-readiness score', () => {
     const training = AI_BOTS.filter((bot) => bot.role === 'training');
     const blockAll = aiReadinessOf(auditWith('independent', { robots: okRobots(`${training.map((bot) => `User-agent: ${bot.token}`).join('\n')}\nDisallow: /\n`) }), null);
     const allowAll = aiReadinessOf(auditWith('independent'), null);
-    expect(blockAll.checks.find((check) => check.id === 'training-opt-outs')).toMatchObject({ status: 'pass', weight: 0, allowed: [], disallowed: training.map((bot) => bot.id) });
-    expect(allowAll.checks.find((check) => check.id === 'training-opt-outs')).toMatchObject({ status: 'pass', disallowed: [] });
+    // Neither good nor bad: the neutral `info` status, whatever the file allows, and `not-checked` before it is read.
+    expect(blockAll.checks.find((check) => check.id === 'training-opt-outs')).toMatchObject({ status: 'info', weight: 0, allowed: [], disallowed: training.map((bot) => bot.id) });
+    expect(allowAll.checks.find((check) => check.id === 'training-opt-outs')).toMatchObject({ status: 'info', disallowed: [] });
+    const someBlocked = aiReadinessOf(auditWith('independent', { robots: okRobots('User-agent: GPTBot\nDisallow: /\n') }), null);
+    expect(statusOf(someBlocked.checks, 'training-opt-outs')).toBe('info');
+    expect(statusOf(aiReadinessChecks(auditWith('independent', { robots: okRobots('', { outcome: 'pending', status: null, finalUrl: null }) }), null), 'training-opt-outs')).toBe('not-checked');
+    expect(statusOf(aiReadinessChecks(auditWith('independent', { robots: okRobots('', { outcome: 'server-error', status: 503 }) }), null), 'training-opt-outs')).toBe('not-checked');
     expect(blockAll.score).toEqual(allowAll.score);
+    expect(someBlocked.score).toEqual(allowAll.score);
+    // `info` has no value: never scored, never counted in "k of n", even on a weighted check.
+    expect(Object.keys(AI_CHECK_VALUES)).not.toContain('info');
+    expect(aiReadinessScore({ ...base, 'agent-reachability': 'info' })).toEqual(aiReadinessScore(base));
+    expect(aiReadinessScore({ ...base, 'agent-reachability': 'info' }).checked).toBe(3);
+    expect(aiReadinessScore({ 'search-indexable': 'info', 'ai-search-crawlers': 'pass', 'served-content': 'pass' }).score).toBeNull();
     // Live-fetch agents: judged like the AI search crawlers, never scored.
     const liveBlocked = aiReadinessOf(auditWith('independent', { robots: okRobots('User-agent: ChatGPT-User\nDisallow: /\n') }), null);
     expect(statusOf(liveBlocked.checks, 'live-fetch-agents')).toBe('warn');
@@ -416,8 +428,11 @@ describe('AI-readiness score', () => {
   test('agent-reachability-from-probes', () => {
     const audit = auditWith('independent');
     const reach = (probes: ProbesState | null) => aiReadinessChecks(audit, probes).find((check) => check.id === 'agent-reachability') as Extract<AiReadinessCheck, { id: 'agent-reachability' }>;
-    const ai = PROBE_AGENTS.filter((agent) => agent.kind === 'ai').map((agent) => agent.id);
-    // Every AI agent served the page as the browser was: pass, each agent listed.
+    // The judged agents: the AI search and live-fetch bots' probe agents (from AI_BOTS), never a training crawler's.
+    const ai = AI_BOTS.filter((bot) => (bot.role === 'ai-search' || bot.role === 'live-fetch') && bot.probeAgent !== null).map((bot) => bot.probeAgent!);
+    expect([...AI_REACH_AGENTS]).toEqual(ai);
+    expect([...AI_REACH_AGENTS]).toEqual(['oai-searchbot', 'chatgpt-user', 'perplexitybot']);
+    // Every judged agent served the page as the browser was: pass, each agent listed.
     const clean = reach(probesDone());
     expect(clean.status).toBe('pass');
     expect(clean.agents.map((agent) => agent.agent)).toEqual(ai);
@@ -427,21 +442,21 @@ describe('AI-readiness score', () => {
     expect(refused.status).toBe('fail');
     expect(refused.agents.find((agent) => agent.agent === 'chatgpt-user')).toEqual({ agent: 'chatgpt-user', status: 'fail', facts: ['http-status'] });
     // Visible text that differs from the browser's: warn.
-    const text = reach(probesDone({}, { gptbot: ['wordCount', 'text'] }));
+    const text = reach(probesDone({}, { 'oai-searchbot': ['wordCount', 'text'] }));
     expect(text.status).toBe('warn');
-    expect(text.agents.find((agent) => agent.agent === 'gptbot')).toEqual({ agent: 'gptbot', status: 'warn', facts: ['text'] });
+    expect(text.agents.find((agent) => agent.agent === 'oai-searchbot')).toEqual({ agent: 'oai-searchbot', status: 'warn', facts: ['text'] });
     // noindex for an AI agent: fail, even with the text alike.
     expect(reach(probesDone({ perplexitybot: { noindex: true } })).status).toBe('fail');
     // The worst agent decides: a warn and a fail make a fail.
-    expect(reach(probesDone({ claudebot: { noindex: true } }, { gptbot: ['text'] })).status).toBe('fail');
+    expect(reach(probesDone({ 'chatgpt-user': { noindex: true } }, { 'oai-searchbot': ['text'] })).status).toBe('fail');
     // A 2xx that is not HTML, a refused redirect, a timeout: fail.
-    expect(reach(probesDone({ gptbot: { outcome: 'not-html' } })).agents.find((agent) => agent.agent === 'gptbot')?.facts).toEqual(['not-html']);
-    expect(reach(probesDone({ gptbot: { outcome: 'private-redirect', status: 302 } })).status).toBe('fail');
-    expect(reach(probesDone({ gptbot: { outcome: 'timeout', status: null } })).agents.find((agent) => agent.agent === 'gptbot')).toEqual({ agent: 'gptbot', status: 'fail', facts: ['no-answer'] });
+    expect(reach(probesDone({ perplexitybot: { outcome: 'not-html' } })).agents.find((agent) => agent.agent === 'perplexitybot')?.facts).toEqual(['not-html']);
+    expect(reach(probesDone({ perplexitybot: { outcome: 'private-redirect', status: 302 } })).status).toBe('fail');
+    expect(reach(probesDone({ perplexitybot: { outcome: 'timeout', status: null } })).agents.find((agent) => agent.agent === 'perplexitybot')).toEqual({ agent: 'perplexitybot', status: 'fail', facts: ['no-answer'] });
     // frost's own limits leave an agent out; the rest decide.
-    const busy = reach(probesDone({ gptbot: { outcome: 'busy', status: null } }));
+    const busy = reach(probesDone({ perplexitybot: { outcome: 'busy', status: null } }));
     expect(busy.status).toBe('pass');
-    expect(busy.agents.find((agent) => agent.agent === 'gptbot')).toEqual({ agent: 'gptbot', status: 'not-checked', facts: [] });
+    expect(busy.agents.find((agent) => agent.agent === 'perplexitybot')).toEqual({ agent: 'perplexitybot', status: 'not-checked', facts: [] });
     expect(reach(probesDone(Object.fromEntries(ai.map((agent) => [agent, { outcome: 'parse-failed' }])))).status).toBe('not-checked');
     // A search crawler's answer is not this check's (its own panels show it).
     expect(reach(probesDone({ googlebot: { outcome: 'http-status', status: 403 } })).status).toBe('pass');
@@ -453,6 +468,28 @@ describe('AI-readiness score', () => {
     expect(reach(probesDone({ browser: { outcome: 'http-status', status: 500 } })).status).toBe('not-checked');
     // In the score: the fourth check.
     expect(aiReadinessOf(audit, probesDone({ 'chatgpt-user': { outcome: 'http-status', status: 403 } })).score).toEqual({ score: 80, checked: 4, total: 4 });
+  });
+
+  test('training-crawlers-refused-still-reachable', () => {
+    const audit = auditWith('independent');
+    const training = PROBE_AGENTS.filter((agent) => AI_BOTS.some((bot) => bot.probeAgent === agent.id && bot.role === 'training')).map((agent) => agent.id);
+    expect(training).toEqual(['gptbot', 'claudebot']);
+    // A CDN answering 403 to GPTBot and ClaudeBot, and a crawler-scoped noindex for them, with every other agent fine:
+    // the owner's training opt-out, not a reachability fault.
+    const optedOut = probesDone(
+      { gptbot: { outcome: 'http-status', status: 403, wordCount: null, noindex: false }, claudebot: { noindex: true, xRobotsTag: { general: [], agent: ['noindex'] } } },
+      { gptbot: ['status', 'text'], claudebot: ['noindex', 'text'] },
+    );
+    const report = aiReadinessOf(audit, optedOut);
+    const reach = report.checks.find((check) => check.id === 'agent-reachability') as Extract<AiReadinessCheck, { id: 'agent-reachability' }>;
+    expect(reach.status).toBe('pass');
+    expect(reach.agents.map((agent) => agent.agent)).not.toContain('gptbot');
+    expect(reach.agents.map((agent) => agent.agent)).not.toContain('claudebot');
+    // No points lost: the same score as a run where every agent was served alike.
+    expect(report.score).toEqual(aiReadinessOf(audit, probesDone()).score);
+    expect(report.score).toEqual({ score: 100, checked: 4, total: 4 });
+    // Even every training crawler timing out leaves the check to the others.
+    expect(statusOf(aiReadinessChecks(audit, probesDone({ gptbot: { outcome: 'timeout', status: null }, claudebot: { outcome: 'unreachable', status: null } })), 'agent-reachability')).toBe('pass');
   });
 
   test('score-imports-no-capture-module', () => {

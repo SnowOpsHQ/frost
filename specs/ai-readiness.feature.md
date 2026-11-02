@@ -3,7 +3,7 @@
 Spec: `specs/ai-readiness.spec.ts` (`AI_BOT_ROLES`, `AI_ROBOTS_STANCES`, `AI_BOT_IDS`, `AI_BOTS`,
 `AI_BOT_VERDICTS`, `AI_ASSISTANT_SOURCES`, `AI_ASSISTANT_IDS`, `AI_ASSISTANTS`, `AI_RENDERING_NOTE`,
 `AI_STANCE_NOTES`; Task 7: `AI_READINESS_CHECKS`, `AI_READINESS_WEIGHTS`, `AI_CHECK_STATUSES`,
-`AI_CHECK_VALUES`, `AI_SCORE_REQUIRED_CHECKS`, `AI_REACH_FACTS`, `aiReadinessScore`, `aiScoreBasis`,
+`AI_CHECK_VALUES`, `AI_SCORE_REQUIRED_CHECKS`, `AI_REACH_AGENTS`, `AI_REACH_FACTS`, `aiReadinessScore`, `aiScoreBasis`,
 `LLMS_TXT_OUTCOMES`, `LLMS_TXT_CACHED_OUTCOMES`, `LLMS_TXT_FINDINGS`, `LLMS_TXT_TEXT_TYPES`,
 `LLMS_TXT_ACCEPT`, `LLMS_TXT_PARSE_LIMITS`, `LLMS_TXT_NOTE`), `specs/ai-readiness.schema.ts`
 (`LlmsTxtJobSchema`, `LlmsTxtAnswerSchema`, `LlmsTxtStateSchema`), with
@@ -32,12 +32,16 @@ security review (Task 7: the `/llms.txt` fetch). Each line maps to one named tes
   name Googlebot (Apple's documented rule, `followsGooglebot`); each verdict says which groups decided
   (`via`: `own`, `googlebot`, `*`).
 - **The score is frost's, static and probe-based only.** Seven checks (`AI_READINESS_CHECKS`), each
-  `pass` (1), `warn` (0.5), `fail` (0) or `not-checked`; the score is `round(100 × Σ w·v / Σ w)` over
+  `pass` (1), `warn` (0.5), `fail` (0), `info` (a neutral fact, never scored or counted) or
+  `not-checked`; the score is `round(100 × Σ w·v / Σ w)` over
   the checked ones with a weight (search-indexable 25, ai-search-crawlers 30, served-content 25,
   agent-reachability 20), "based on k of 4", and `null` until the three static ones are checked.
   Live-fetch agents, training opt-outs and `llms.txt` are shown with weight 0: a training opt-out is
-  the owner's choice (it always passes once robots.txt is read), and `llms.txt` is a proposal no
-  engine documents using. It never reads AI engines' answers (Phase 12). seo-core's
+  the owner's choice (it reads `info` once robots.txt is read, neither good nor bad), and `llms.txt`
+  is a proposal no engine documents using (it keeps pass / warn / fail: whether the file is there and
+  well-formed is a real fact about it). `agent-reachability` judges only the probe agents of the
+  `ai-search` and `live-fetch` bots (`AI_REACH_AGENTS`); refusing a training crawler (GPTBot,
+  ClaudeBot) is an opt-out, never a reachability fault. It never reads AI engines' answers (Phase 12). seo-core's
   `aiReadinessOf(audit, probes)` (`ai-readiness/score.ts`) is pure and reads only the audit and
   `ProbesState`; the Visibility panel and the Overview tile (Task 8) call it with both.
 - **`llms.txt` only with a probe run.** `<page origin>/llms.txt` only (no subpaths), once per run
@@ -80,16 +84,21 @@ security review (Task 7: the `/llms.txt` fetch). Each line maps to one named tes
   served-content not checked the score is `null`, whatever else is checked; a pending served
   comparison or a pending robots.txt keeps it `null`.
 - `training-and-llms-unscored` — live-fetch agents, training opt-outs and `llms.txt` weigh 0, so no
-  status of theirs moves the score; a training opt-out passes whether every training token is
-  blocked or none; live-fetch tokens are judged like the AI search crawlers; `llms.txt` `ok` passes,
+  status of theirs moves the score; training opt-outs read the neutral `info` whether every training
+  token is blocked, some or none, and `not-checked` before robots.txt is read (pending or
+  unreadable); `info` has no value, so even on a weighted check it is never scored or counted; live-fetch tokens are judged like the AI search crawlers; `llms.txt` `ok` passes,
   `malformed` warns, `missing` and `not-text` fail, any other outcome (or no run) is not checked.
 - `served-content-from-js-verdict` — `independent` passes, `partly` warns, `heavily` fails (an
   `identical` comparison carries its verdict too); pending or unavailable is not checked.
-- `agent-reachability-from-probes` — over the AI agents of a finished run for the page: a non-2xx
+- `agent-reachability-from-probes` — over `AI_REACH_AGENTS` (derived from `AI_BOTS`: OAI-SearchBot,
+  ChatGPT-User, PerplexityBot) of a finished run for the page: a non-2xx
   answer fails, as do a 2xx that is not HTML, a refused redirect, a timeout and a `noindex`; a
   visible-text diff warns; the worst agent decides; frost's own limits (`busy`, `parse-failed`)
   leave an agent out; a search crawler's answer is not this check's; no run, a running or stopped
   run, a run for another URL and a browser without a page are not checked.
+- `training-crawlers-refused-still-reachable` — GPTBot and ClaudeBot answered 403 and told
+  `noindex` (or timing out), every other agent fine: `agent-reachability` passes, lists neither, and
+  the score is the same as a clean run's.
 - `score-imports-no-capture-module` — `score.ts` imports only the audit's types and `ProbesState`'s
   (type-only) and the Zod-free specs: nothing of answer capture, and no clock or I/O.
 - `no-spec-import-cycle` — `visibility-probes.spec.ts` imports nothing of AI readiness and owns

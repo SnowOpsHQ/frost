@@ -1,4 +1,5 @@
 import {
+  AI_REACH_AGENTS,
   AI_READINESS_CHECKS,
   AI_READINESS_WEIGHTS,
   aiReadinessScore,
@@ -11,7 +12,7 @@ import {
   type LlmsTxtFinding,
   type LlmsTxtOutcome,
 } from '@app/specs/ai-readiness.spec';
-import { PROBE_AGENTS, PROBE_BASELINE, type ProbeAgentId, type ProbeOutcome } from '@app/specs/visibility-probes.spec';
+import { PROBE_BASELINE, type ProbeAgentId, type ProbeOutcome } from '@app/specs/visibility-probes.spec';
 import type { ProbeRow, ProbesState } from '@app/specs/visibility-probes.schema';
 import type { SeoAudit } from '../types';
 
@@ -51,8 +52,8 @@ export interface AiReadiness {
   readonly score: AiReadinessScore;
 }
 
-const RANK: Readonly<Record<AiCheckStatus, number>> = { 'not-checked': 0, pass: 1, warn: 2, fail: 3 };
-const AI_AGENTS: readonly ProbeAgentId[] = PROBE_AGENTS.filter((agent) => agent.kind === 'ai').map((agent) => agent.id);
+/** Worst last (an agent is never `info`). */
+const RANK: Readonly<Record<AiCheckStatus, number>> = { 'not-checked': 0, info: 0, pass: 1, warn: 2, fail: 3 };
 /** Rows frost's own limits left without an answer to judge. */
 const LEFT_OUT: ReadonlySet<ProbeOutcome> = new Set(['busy', 'parse-failed', 'private-address', 'pending', 'stopped']);
 
@@ -67,14 +68,14 @@ function searchIndexable(audit: AiReadinessAudit): AiReadinessCheck {
   return { id: 'search-indexable', status, weight: AI_READINESS_WEIGHTS['search-indexable'], verdict };
 }
 
-/** robots.txt's verdicts for the tokens of `role`: every one allowed pass, some disallowed warn, all disallowed fail (training: any read file passes). */
+/** robots.txt's verdicts for the tokens of `role`: every one allowed pass, some disallowed warn, all disallowed fail (training: `info` either way). */
 function robotsCheck(audit: AiReadinessAudit, id: 'ai-search-crawlers' | 'live-fetch-agents' | 'training-opt-outs', role: AiBotRole): AiReadinessCheck {
   const bots = audit.aiReadiness.bots.filter((bot) => bot.role === role);
   const allowed = bots.filter((bot) => bot.verdict === 'allowed').map((bot) => bot.bot);
   const disallowed = bots.filter((bot) => bot.verdict === 'disallowed').map((bot) => bot.bot);
   const judged = bots.length > 0 && allowed.length + disallowed.length === bots.length;
   let status: AiCheckStatus = 'not-checked';
-  if (judged) status = id === 'training-opt-outs' || disallowed.length === 0 ? 'pass' : allowed.length === 0 ? 'fail' : 'warn';
+  if (judged) status = id === 'training-opt-outs' ? 'info' : disallowed.length === 0 ? 'pass' : allowed.length === 0 ? 'fail' : 'warn';
   return { id, status, weight: AI_READINESS_WEIGHTS[id], allowed, disallowed };
 }
 
@@ -108,9 +109,11 @@ function agentReachability(audit: AiReadinessAudit, probes: ProbesState | null):
   const run = finishedRun(audit, probes);
   const baseline = run?.rows.find((row) => row.agent === PROBE_BASELINE);
   if (!run || !baseline || baseline.outcome !== 'ok') return { id: 'agent-reachability', status: 'not-checked', weight, agents: [] };
-  const agents = run.rows
-    .filter((row) => AI_AGENTS.includes(row.agent))
-    .map((row) => reachOf(row, run.diffs.find((diff) => diff.agent === row.agent)?.facts.includes('text') ?? false));
+  // Only `AI_REACH_AGENTS`, in their order: the training crawlers' rows are information only (refusing them is the owner's opt-out).
+  const agents = AI_REACH_AGENTS.flatMap((agent) => {
+    const row = run.rows.find((candidate) => candidate.agent === agent);
+    return row ? [reachOf(row, run.diffs.find((diff) => diff.agent === agent)?.facts.includes('text') ?? false)] : [];
+  });
   const worst = agents.reduce<AiCheckStatus>((status, agent) => (RANK[agent.status] > RANK[status] ? agent.status : status), 'not-checked');
   return { id: 'agent-reachability', status: worst, weight, agents };
 }

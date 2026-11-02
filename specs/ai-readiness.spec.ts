@@ -208,8 +208,12 @@ export const AI_STANCE_NOTES: Readonly<Record<AiRobotsStance, string>> = {
  *   `partly` warns, `heavily` fails; with no comparison (pending, or the served fetch unavailable) it is
  *   not checked. The served fetch used the tab's render profile or frost's user agent, not an AI
  *   crawler's, and frost assumes AI crawlers read served HTML only (`AI_RENDERING_NOTE`).
- * - `agent-reachability`, from the tab's finished probe run for this page: each AI agent
- *   (`PROBE_AGENTS` of kind `ai`) is judged on its own row (`AI_REACH_FACTS`): no answer about the
+ * - `agent-reachability`, from the tab's finished probe run for this page: each probed agent that
+ *   searches or fetches for a user (`AI_REACH_AGENTS`: the probe agents of the `ai-search` and
+ *   `live-fetch` bots in `AI_BOTS`) is judged on its own row (`AI_REACH_FACTS`). The training crawlers'
+ *   rows (GPTBot, ClaudeBot) are never judged: refusing them, at the server or with a `noindex` of
+ *   their own, is the owner's training opt-out, not a reachability fault, so they stay information in
+ *   the probe table only. No answer about the
  *   page (a redirect refused or not followed, unreachable, out of time) fails, as does a final answer
  *   that is not a 2xx HTML page (`http-status`, `not-html`), or a `noindex` it obeys; visible text that
  *   differs from the browser's (the `text` diff fact) warns; otherwise it passes. The check is its
@@ -219,10 +223,12 @@ export const AI_STANCE_NOTES: Readonly<Record<AiRobotsStance, string>> = {
  * - `live-fetch-agents`, from the `live-fetch` tokens, as `ai-search-crawlers`; shown with the
  *   `may-ignore` note (their operators say robots.txt may not apply to them).
  * - `training-opt-outs`, from the `training` tokens: allowing training or not is the owner's choice,
- *   never good or bad, so a robots.txt that was read always passes whatever it allows (the check lists
- *   each token's verdict); not checked as above.
+ *   never good or bad, so once robots.txt is read the check is `info` whatever it allows (it lists
+ *   each token's verdict): neither pass nor fail. Not checked as above.
  * - `llms-txt`, from the run's `/llms.txt` answer: `ok` passes, `malformed` warns, `missing` and
- *   `not-text` fail; anything else (no run yet, or no answer about the file) is not checked.
+ *   `not-text` fail; anything else (no run yet, or no answer about the file) is not checked. It keeps
+ *   pass / warn / fail although it weighs 0: whether the file is there and well-formed is a real
+ *   quality fact about it, only not one any engine documents using, so it is shown and never scored.
  */
 export const AI_READINESS_CHECKS = ['search-indexable', 'ai-search-crawlers', 'served-content', 'agent-reachability', 'live-fetch-agents', 'training-opt-outs', 'llms-txt'] as const;
 export type AiReadinessCheckId = (typeof AI_READINESS_CHECKS)[number];
@@ -241,24 +247,37 @@ export const AI_READINESS_WEIGHTS: Readonly<Record<AiReadinessCheckId, number>> 
   'llms-txt': 0,
 };
 
-/** How a check came out. */
-export const AI_CHECK_STATUSES = ['pass', 'warn', 'fail', 'not-checked'] as const;
+/**
+ * How a check came out. `info`: checked, and reported as a fact that is neither good nor bad
+ * (`training-opt-outs`); it has no value in `AI_CHECK_VALUES`, so it is never scored and never
+ * counted in "k of n".
+ */
+export const AI_CHECK_STATUSES = ['pass', 'warn', 'fail', 'info', 'not-checked'] as const;
 export type AiCheckStatus = (typeof AI_CHECK_STATUSES)[number];
 
-/** What a judged check counts for. */
-export const AI_CHECK_VALUES: Readonly<Record<Exclude<AiCheckStatus, 'not-checked'>, number>> = { pass: 1, warn: 0.5, fail: 0 };
+/** The statuses that judge a page, and what each counts for (`info` and `not-checked` have none). */
+export const AI_CHECK_VALUES: Readonly<Record<Exclude<AiCheckStatus, 'info' | 'not-checked'>, number>> = { pass: 1, warn: 0.5, fail: 0 };
+type ScoredStatus = keyof typeof AI_CHECK_VALUES;
+const isScored = (status: AiCheckStatus): status is ScoredStatus => status === 'pass' || status === 'warn' || status === 'fail';
 
 /** The static scored checks: the score is `null` (pending) until all three are checked. */
 export const AI_SCORE_REQUIRED_CHECKS = ['search-indexable', 'ai-search-crawlers', 'served-content'] as const satisfies readonly AiReadinessCheckId[];
+
+/**
+ * The probe agents `agent-reachability` judges: those of the `ai-search` and `live-fetch` bots of
+ * `AI_BOTS` (in its order), never a `training` bot's.
+ */
+export const AI_REACH_AGENTS: readonly ProbeAgentId[] = AI_BOTS.filter((bot) => bot.role !== 'training' && bot.probeAgent !== null).map((bot) => bot.probeAgent!);
 
 /** Why an AI agent's probe row is not a clean pass (`agent-reachability`). */
 export const AI_REACH_FACTS = ['no-answer', 'http-status', 'not-html', 'noindex', 'text'] as const;
 export type AiReachFact = (typeof AI_REACH_FACTS)[number];
 
 /**
- * The score: `round(100 × Σ w·v / Σ w)` over the checked checks of weight above 0 (`v` from
- * `AI_CHECK_VALUES`), `null` until every `AI_SCORE_REQUIRED_CHECKS` is checked; `checked` of `total`
- * weighted checks were counted ("based on 3 of 4" before a probe run).
+ * The score: `round(100 × Σ w·v / Σ w)` over the checks of weight above 0 judged `pass`, `warn` or
+ * `fail` (`v` from `AI_CHECK_VALUES`), `null` until every `AI_SCORE_REQUIRED_CHECKS` is judged;
+ * `checked` of `total` weighted checks were counted ("based on 3 of 4" before a probe run). `info`
+ * and `not-checked` are never counted.
  */
 export interface AiReadinessScore {
   readonly score: number | null;
@@ -270,13 +289,14 @@ export interface AiReadinessScore {
 export function aiReadinessScore(checks: Readonly<Partial<Record<AiReadinessCheckId, AiCheckStatus>>>): AiReadinessScore {
   const weighted = AI_READINESS_CHECKS.filter((id) => AI_READINESS_WEIGHTS[id] > 0);
   const status = (id: AiReadinessCheckId): AiCheckStatus => checks[id] ?? 'not-checked';
-  const counted = weighted.filter((id) => status(id) !== 'not-checked');
-  const ready = AI_SCORE_REQUIRED_CHECKS.every((id) => status(id) !== 'not-checked');
+  const counted = weighted.filter((id) => isScored(status(id)));
+  const ready = AI_SCORE_REQUIRED_CHECKS.every((id) => isScored(status(id)));
   let weights = 0;
   let points = 0;
   for (const id of counted) {
+    const value = status(id);
     weights += AI_READINESS_WEIGHTS[id];
-    points += AI_READINESS_WEIGHTS[id] * AI_CHECK_VALUES[status(id) as Exclude<AiCheckStatus, 'not-checked'>];
+    if (isScored(value)) points += AI_READINESS_WEIGHTS[id] * AI_CHECK_VALUES[value];
   }
   return { score: ready && weights > 0 ? Math.round((100 * points) / weights) : null, checked: counted.length, total: weighted.length };
 }
