@@ -20,7 +20,7 @@ const RUN_WAIT = PROBE_LIMITS.timeoutMs * 2 + 10_000;
 /** How long `/slow` keeps a crawler waiting (longer than a probe may wait, so Stop is what ends it). */
 const SLOW_MS = PROBE_LIMITS.timeoutMs + 5_000;
 
-const CRAWLER = /googlebot|bingbot|gptbot|claudebot|perplexitybot/i;
+const CRAWLER = /googlebot|bingbot|gptbot|claudebot|perplexitybot|oai-searchbot|chatgpt-user/i;
 const words = (n: number) => Array.from({ length: n }, (_, i) => `leaf${i % 60} brew${i % 7}`).join(' ');
 const page = (title: string, body: string) =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title><meta name="description" content="A loopback page frost probes as each crawler."><link rel="canonical" href="/page"></head><body><h1>${title}</h1><p>${body}</p></body></html>`;

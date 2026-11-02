@@ -288,8 +288,8 @@ Acceptance: `serp-panels.feature.md` and the feature files named below; how it w
     and never leave it. The answer is the label nearest frost's own example queries, nudged by plain
     cues ("buy", "near me", "vs", "login", a bare domain), with its probability as the confidence.
 - **Visibility panel** (`visibility-probes.feature.md`). **Run visibility probes** fetches the active
-  tab's URL once as each of six agents: frost's own browser (the baseline), Googlebot smartphone,
-  Bingbot, GPTBot, ClaudeBot and PerplexityBot.
+  tab's URL once as each of eight agents: frost's own browser (the baseline), Googlebot smartphone,
+  Bingbot, GPTBot, ClaudeBot, PerplexityBot, OAI-SearchBot and ChatGPT-User.
   - A table has a column per agent and a row per fact: HTTP status, redirects and final URL, the
     robots.txt verdict for the agent's token, meta robots and `X-Robots-Tag` (general and
     agent-specific), effective `noindex`, canonical, word count, size and visible-text similarity.
@@ -606,7 +606,7 @@ their logs** (each surface says so):
   redirects to Hugging Face's download host. `https:` only, capped at the pinned sizes, frost's own
   user agent.
 - **Visibility probes**, only on "Run visibility probes": one `GET` of the page per agent, at most
-  6 calls and 24 requests with redirects (3 each), 2 at once, 5 MB and 10 s each. Each sends the
+  8 calls and 32 requests with redirects (3 each), 2 at once, 5 MB and 10 s each. Each sends the
   agent's user agent string from your network. robots.txt comes from frost's cache, asked once per
   origin an agent ended on.
 - frost never requests a search engine by itself: the SERP panel reads only result pages you

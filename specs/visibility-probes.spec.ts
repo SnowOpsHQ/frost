@@ -99,7 +99,7 @@ import { FETCH_DISCLOSURE } from './fetcher.spec';
 import { normalChromeVersion, USER_AGENT_TEMPLATES } from './render-profile.spec';
 
 /** The agents, in the order they are probed and shown (the baseline first). */
-export const PROBE_AGENT_IDS = ['browser', 'googlebot', 'bingbot', 'gptbot', 'claudebot', 'perplexitybot'] as const;
+export const PROBE_AGENT_IDS = ['browser', 'googlebot', 'bingbot', 'gptbot', 'claudebot', 'perplexitybot', 'oai-searchbot', 'chatgpt-user'] as const;
 export type ProbeAgentId = (typeof PROBE_AGENT_IDS)[number];
 
 /** What an agent is: frost's own browser (the baseline), a search crawler, or an AI crawler. */
@@ -124,9 +124,10 @@ export interface ProbeAgent {
   /**
    * The `User-Agent` sent: `null` for frost's own (the browse session's). Googlebot's and Bingbot's
    * are the render profiles' strings (`USER_AGENT_TEMPLATES`), whose `{version}` is the evergreen
-   * Chromium version their operators fill in (`probeUserAgent`). GPTBot's and PerplexityBot's are
-   * their operators' published strings; ClaudeBot's is the string as observed in server logs (its
-   * operator publishes the robots.txt token, not the full user agent).
+   * Chromium version their operators fill in (`probeUserAgent`). GPTBot's, PerplexityBot's,
+   * OAI-SearchBot's and ChatGPT-User's are their operators' published strings (each with the page and
+   * date it was read beside it in `PROBE_AGENTS`); ClaudeBot's is the string as observed in server
+   * logs (its operator publishes the robots.txt token, not the full user agent).
    */
   readonly userAgent: string | null;
   /** The robots.txt product token it obeys (`*`: the baseline, which has none of its own). */
@@ -142,10 +143,16 @@ export const PROBE_AGENTS: readonly ProbeAgent[] = [
   { id: 'browser', label: 'Browser (frost)', kind: 'browser', userAgent: null, robotsToken: '*', metaNames: ['robots'], directives: 'documented' },
   { id: 'googlebot', label: 'Googlebot smartphone', kind: 'search', userAgent: USER_AGENT_TEMPLATES['googlebot-smartphone'], robotsToken: 'Googlebot', metaNames: ['robots', 'googlebot'], directives: 'documented' },
   { id: 'bingbot', label: 'Bingbot', kind: 'search', userAgent: USER_AGENT_TEMPLATES.bingbot, robotsToken: 'bingbot', metaNames: ['robots', 'bingbot'], directives: 'documented' },
-  { id: 'gptbot', label: 'GPTBot', kind: 'ai', userAgent: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.1; +https://openai.com/gptbot', robotsToken: 'GPTBot', metaNames: ['robots', 'gptbot'], directives: 'frost-model' },
+  // Published at https://developers.openai.com/api/docs/bots (read 2026-11-02; "the version number may change").
+  { id: 'gptbot', label: 'GPTBot', kind: 'ai', userAgent: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.4; +https://openai.com/gptbot', robotsToken: 'GPTBot', metaNames: ['robots', 'gptbot'], directives: 'frost-model' },
   // As observed, not operator-published (see `userAgent`).
   { id: 'claudebot', label: 'ClaudeBot', kind: 'ai', userAgent: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0; +claudebot@anthropic.com)', robotsToken: 'ClaudeBot', metaNames: ['robots', 'claudebot'], directives: 'frost-model' },
-  { id: 'perplexitybot', label: 'PerplexityBot', kind: 'ai', userAgent: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)', robotsToken: 'PerplexityBot', metaNames: ['robots', 'perplexitybot'], directives: 'frost-model' },
+  // Published at https://docs.perplexity.ai/guides/bots (read 2026-11-02; "the version number may change").
+  { id: 'perplexitybot', label: 'PerplexityBot', kind: 'ai', userAgent: 'Mozilla/5.0 (compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)', robotsToken: 'PerplexityBot', metaNames: ['robots', 'perplexitybot'], directives: 'frost-model' },
+  // Published at https://developers.openai.com/api/docs/bots (read 2026-11-02; the page-fetch form, not the one with the `robots.txt;` marker).
+  { id: 'oai-searchbot', label: 'OAI-SearchBot', kind: 'ai', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36; compatible; OAI-SearchBot/1.4; +https://openai.com/searchbot', robotsToken: 'OAI-SearchBot', metaNames: ['robots', 'oai-searchbot'], directives: 'frost-model' },
+  // Published at https://developers.openai.com/api/docs/bots (read 2026-11-02; "Full user-agent string").
+  { id: 'chatgpt-user', label: 'ChatGPT-User', kind: 'ai', userAgent: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot', robotsToken: 'ChatGPT-User', metaNames: ['robots', 'chatgpt-user'], directives: 'frost-model' },
 ];
 
 /** The agent `id` names. */
@@ -161,7 +168,7 @@ export function probeUserAgent(agent: ProbeAgent, chromeVersion: string): string
 }
 
 /** Probe fetcher calls per run, and redirects each may follow. */
-const MAX_FETCHES = 6;
+const MAX_FETCHES = 8;
 const MAX_REDIRECTS = 3;
 
 /**

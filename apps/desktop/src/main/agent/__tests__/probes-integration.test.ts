@@ -60,6 +60,15 @@ describe('visibility probes through the agent', () => {
       // One request per agent, every one for the approved page (fragment aside), within the cap.
       expect(s.requests.map((request) => request.url)).toEqual(PROBE_AGENTS.map(() => PAGE));
       expect(s.requests.length).toBeLessThanOrEqual(PROBE_RUN_MAX_REQUESTS);
+      expect(s.requests).toHaveLength(8);
+      expect(PROBE_RUN_MAX_REQUESTS).toBe(32);
+      // The two OpenAI agents come back as AI rows (the adapter's kinds follow PROBE_AGENTS, no code of its own).
+      const agents = (outcome as { data: { agents: { agent: string; kind: string; outcome: string; status: number | null }[] } }).data.agents;
+      expect(agents.map((agent) => [agent.agent, agent.kind])).toEqual(PROBE_AGENTS.map((agent) => [agent.id, agent.kind]));
+      expect(agents.filter((agent) => agent.agent === 'oai-searchbot' || agent.agent === 'chatgpt-user')).toEqual([
+        expect.objectContaining({ agent: 'oai-searchbot', kind: 'ai', outcome: 'ok', status: 200 }),
+        expect.objectContaining({ agent: 'chatgpt-user', kind: 'ai', outcome: 'ok', status: 200 }),
+      ]);
       expect(s.robots.mock.calls.every(([url]) => new URL(url).origin === 'https://www.example.com')).toBe(true);
     } finally {
       s.dispose();

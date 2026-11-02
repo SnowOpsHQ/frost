@@ -10,7 +10,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { BoundedFetchRequest, BoundedFetchResult, BoundedFetcher } from '@app/specs/fetcher.spec';
 import { SERVED_ACCEPT } from '@app/specs/seo-javascript.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
-import { MAX_PENDING_PROBE_WATCHES, PROBE_AGENTS, PROBE_KEEP_HEADERS, PROBE_LIMITS, PROBE_SEPARATE_HEADERS, probeUserAgent } from '@app/specs/visibility-probes.spec';
+import { MAX_PENDING_PROBE_WATCHES, PROBE_AGENT_IDS, PROBE_AGENTS, PROBE_KEEP_HEADERS, PROBE_LIMITS, PROBE_SEPARATE_HEADERS, probeUserAgent } from '@app/specs/visibility-probes.spec';
 import { ProbesStateSchema, type ProbeJob, type ProbeJobResult, type ProbesState } from '@app/specs/visibility-probes.schema';
 import type { AnalysisWorker } from '../../seo/analysis';
 import { createBoundedFetcher, type Hop } from '../../seo/fetcher';
@@ -107,6 +107,11 @@ describe('visibility probes', () => {
     await vi.waitFor(() => expect(h.probes.state(1).status).toBe('done'));
     expect(h.maxInFlight()).toBe(PROBE_LIMITS.maxConcurrent);
     expect(h.fetch).toHaveBeenCalledTimes(PROBE_LIMITS.maxFetches);
+    // Eight calls (one per agent), each following at most 3 redirects: at most 32 requests to the site.
+    expect(h.calls).toHaveLength(8);
+    expect(PROBE_AGENT_IDS).toHaveLength(8);
+    expect(h.calls.reduce((requests, { request }) => requests + 1 + (request.maxRedirects ?? 0), 0)).toBe(32);
+    expect(PROBE_LIMITS.maxRequests).toBe(32);
     // One GET per agent, its user agent, the tab URL (fragment aside) as the page, the caps, the headers.
     expect(h.calls.map((call) => call.request.userAgent ?? null)).toEqual(PROBE_AGENTS.map((agent) => probeUserAgent(agent, CHROME)));
     for (const { request } of h.calls) {
@@ -200,12 +205,12 @@ describe('visibility probes', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     expect(h.probes.state(1).status).toBe('done');
-    expect(h.fetch).toHaveBeenCalledTimes(6);
+    expect(h.fetch).toHaveBeenCalledTimes(PROBE_AGENT_IDS.length);
     // A finished run can be run again (afresh).
     expect(h.probes.run(1)).toBe(true);
     expect(h.probes.state(1)).toMatchObject({ status: 'running' });
     expect(h.probes.state(1).rows.every((row) => row.outcome === 'pending')).toBe(true);
-    await vi.waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(8));
+    await vi.waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(PROBE_AGENT_IDS.length + 2));
     expect(h.robots).toHaveBeenCalledTimes(2);
   });
 
@@ -246,12 +251,19 @@ describe('visibility probes', () => {
     await vi.waitFor(() => expect(h.calls).toHaveLength(6));
     h.calls[4]!.answer();
     h.calls[5]!.answer({ outcome: 'timeout', status: null, finalUrl: null, body: new Uint8Array() as Uint8Array<ArrayBuffer> });
+    // The two OpenAI agents last: OAI-SearchBot as the browser, ChatGPT-User refused.
+    await vi.waitFor(() => expect(h.calls).toHaveLength(PROBE_AGENT_IDS.length));
+    h.calls[6]!.answer();
+    h.calls[7]!.answer({ status: 403, body: new Uint8Array() as Uint8Array<ArrayBuffer>, headers: {} });
     await vi.waitFor(() => expect(h.probes.state(1).status).toBe('done'));
     const done = valid(h.probes.state(1));
     expect(done.finishedAt).toEqual(expect.any(Number));
     expect(rowOf(done, 'perplexitybot')).toMatchObject({ outcome: 'timeout', status: null, noindex: null, robots: { verdict: 'allowed' } });
     expect(rowOf(done, 'gptbot').robots?.verdict).toBe('disallowed');
-    expect(done.diffs.map((diff) => diff.agent)).toEqual(['googlebot', 'bingbot', 'gptbot', 'claudebot', 'perplexitybot']);
+    expect(rowOf(done, 'oai-searchbot')).toMatchObject({ outcome: 'ok', status: 200, robots: { verdict: 'allowed', fallback: true } });
+    expect(rowOf(done, 'chatgpt-user')).toMatchObject({ outcome: 'http-status', status: 403 });
+    expect(done.diffs.map((diff) => diff.agent)).toEqual(['googlebot', 'bingbot', 'gptbot', 'claudebot', 'perplexitybot', 'oai-searchbot', 'chatgpt-user']);
+    expect(done.diffs.find((diff) => diff.agent === 'oai-searchbot')?.facts).toEqual([]);
   });
 
   test('probes-stop-keeps-rows', async () => {
@@ -266,7 +278,7 @@ describe('visibility probes', () => {
     expect(h.calls.slice(1).every((call) => call.request.signal?.aborted)).toBe(true);
     const stopped = valid(h.probes.state(1));
     expect(stopped).toMatchObject({ status: 'stopped', finishedAt: expect.any(Number) });
-    expect(stopped.rows.map((row) => row.outcome)).toEqual(['ok', 'stopped', 'stopped', 'stopped', 'stopped', 'stopped']);
+    expect(stopped.rows.map((row) => row.outcome)).toEqual(PROBE_AGENT_IDS.map((agent) => (agent === 'browser' ? 'ok' : 'stopped')));
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(h.calls).toHaveLength(3);
     expect(h.probes.state(1)).toEqual(stopped);
@@ -426,6 +438,9 @@ describe('visibility probes', () => {
     // A final URL on a private host (the page is public): its robots.txt is never asked.
     h.calls[4]!.answer({ finalUrl: 'http://10.0.0.1/shoes' });
     h.calls[5]!.answer();
+    await vi.waitFor(() => expect(h.calls).toHaveLength(PROBE_AGENT_IDS.length));
+    h.calls[6]!.answer();
+    h.calls[7]!.answer();
     await vi.waitFor(() => expect(h.probes.state(1).status).toBe('done'));
     const done = valid(h.probes.state(1));
     expect(h.robots.mock.calls.map(([url]) => url).sort()).toEqual(['https://m.example.com/', 'https://www.example.com/']);

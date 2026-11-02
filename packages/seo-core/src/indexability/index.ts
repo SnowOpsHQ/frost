@@ -1,12 +1,12 @@
 import { ROBOTS_AGENTS, ROBOTS_PARSE_LIMITS, ROBOTS_UNKNOWN_OUTCOMES, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import { NOT_INDEXABLE_RULES, type SeoRuleId } from '@app/specs/seo-rules.spec';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
-import type { PageSnapshot } from '@app/specs/seo-snapshot.spec';
+import type { PageSnapshot, RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import { parseUrl, withoutFragment } from '../util';
 import { parseLinkHeader, parseXRobotsTag, type LinkValue, type XRobotsTag } from './headers';
 import { isValidHreflang } from './hreflang';
 import type { CanonicalReport, HreflangEntry, HreflangReport, HttpReport, IndexabilityReport, RobotsAgentVerdict, RobotsReport } from './model';
-import { decodeRobotsBytes, matchRobots, parseRobotsTxt, robotsPathOf } from './robots';
+import { decodeRobotsBytes, matchRobots, parseRobotsTxt, robotsPathOf, type RobotsFile } from './robots';
 import { inScope, type NoindexScope } from './scope';
 
 // The page's indexability facts, read once per snapshot (memoised, like `analyseSchema`) so the
@@ -88,13 +88,32 @@ function canonicalReport(s: PageSnapshot, links: readonly LinkValue[]): Canonica
   };
 }
 
+const parsedRobots = new WeakMap<RobotsFetch, { readonly text: string; readonly file: RobotsFile | null }>();
+
+/**
+ * A robots.txt fetch decoded and parsed (`file`: `null` unless it is `ok`), once per fetch: the
+ * Indexability panel and the AI crawlers' verdicts (`ai-readiness`) share it.
+ */
+export function parsedRobotsOf(fetched: RobotsFetch): { readonly text: string; readonly file: RobotsFile | null } {
+  const cached = parsedRobots.get(fetched);
+  if (cached) return cached;
+  const text = fetched.outcome === 'ok' ? decodeRobotsBytes(fetched.body) : '';
+  const parsed = { text, file: fetched.outcome === 'ok' ? parseRobotsTxt(text) : null };
+  parsedRobots.set(fetched, parsed);
+  return parsed;
+}
+
+/** The page's path and query as robots.txt rules see it (`/` for a URL that does not parse). */
+export function pageRobotsPath(s: PageSnapshot): string {
+  const page = parseUrl(s.url);
+  return page ? robotsPathOf(page) : '/';
+}
+
 function robotsReport(s: PageSnapshot): RobotsReport | null {
   const fetched = s.robots;
   if (!fetched) return null;
-  const page = parseUrl(s.url);
-  const path = page ? robotsPathOf(page) : '/';
-  const text = fetched.outcome === 'ok' ? decodeRobotsBytes(fetched.body) : '';
-  const file = fetched.outcome === 'ok' ? parseRobotsTxt(text) : null;
+  const path = pageRobotsPath(s);
+  const { text, file } = parsedRobotsOf(fetched);
   // Unknown until it can be read: an unreadable file, or one still being fetched.
   const unknown = UNKNOWN.has(fetched.outcome) || fetched.outcome === 'pending';
   const agents: RobotsAgentVerdict[] = ROBOTS_AGENTS.map((agent) => {
