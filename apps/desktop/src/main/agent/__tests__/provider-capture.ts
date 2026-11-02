@@ -160,3 +160,28 @@ export async function captureProviderRequest(route: ModelRoute, modelId: AgentMo
   await runtime.whenIdle('chat-1');
   return requests[request - 1]!;
 }
+
+/**
+ * The one `fetch.request` of an AI check (Phase 9 Task 9) on `route` with `modelId`, as the real
+ * runtime sends it through the installed provider (refused afterwards, so the check ends).
+ */
+export async function captureCheckRequest(route: ModelRoute, modelId: AgentModelId): Promise<CapturedRequest> {
+  const [main, runtimeEnd] = createMemoryPortPair();
+  const requests: CapturedRequest[] = [];
+  let ended = false;
+  main.onMessage((data) => {
+    const message = data as RuntimeToMainMessage;
+    if (message.type === 'check.finish' || message.type === 'check.error') ended = true;
+    if (message.type !== 'fetch.request') return;
+    requests.push(message);
+    main.post({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' } satisfies MainToRuntimeMessage);
+  });
+  startRuntime(runtimeEnd, { modelFactory: createModel });
+  main.post({ type: 'check.start', checkId: 'check-capture', systemPrompt: 'Answer with one JSON object only.', input: 'Task: judge the page type. Untrusted page data: {"title":"Running shoes"}', modelId, route } satisfies MainToRuntimeMessage);
+  await vi.waitFor(() => {
+    if (!ended) throw new Error('waiting for the check to end');
+  });
+  if (requests.length !== 1) throw new Error(`a check made ${requests.length} requests`);
+  return requests[0]!;
+}
+

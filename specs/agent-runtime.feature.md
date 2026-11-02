@@ -203,3 +203,26 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
   the scripted model; anything else: every turn fails (never a provider fallback).
 - **Scenario: scripted-script-bounded** — a script longer than `AGENT_E2E_SCRIPT_MAX_CHARS`, with no
   steps, an empty step or chunk, or a forbidden key in a tool input is refused.
+
+## Checks (`check.test.ts`, scripted `MockLanguageModelV4`; Phase 9 Task 9, Decision 15)
+`check.ts` runs one check per `check.start`: the AI SDK's `streamText` with main's system prompt and
+the check's input as the one user message, **no tools**, `maxRetries: 0` (a retry could never become
+a second request), no reasoning provider option (a check always runs at `auto`), and per route the
+output options of Decision 15: the key routes and the gateway send `maxOutputTokens =
+AI_CHECK_LIMITS.maxOutputTokens`; the ChatGPT plan sends no output cap and no sampling field (and,
+as a turn, `store: false` and the system prompt as a developer message). It streams, as a turn
+does, because the ChatGPT plan takes streamed requests only and the e2e seam's scripted model only
+streams; it is still one request. The model comes from the same factory and proxied fetch as a
+turn's, and its one `fetch.request` carries the `checkId`. `check.stop` aborts it (as `chat.stop`
+does a turn's); `requestTimeoutMs` ends it `timeout`; an answer over `maxOutputChars` is
+`too-large`. It answers `check.finish` (the text) or `check.error` (a code, never the error's text).
+A second `check.start` for a running check id is ignored (the running one goes on).
+
+- **Scenario: check-is-toolless-single-request** — a check makes exactly one model call with no
+  tools, the system prompt and input as given, no reasoning option, and answers `check.finish`
+  with the model's text; its `fetch.request` carries its `checkId`.
+- **Scenario: check-sets-maxRetries-0** — a request that fails with a retryable error is not retried
+  and the check answers `check.error`; a refused proxied request answers `refused`.
+- **Scenario: check-stop-aborts** — `check.stop` aborts the check's model call and it answers
+  `check.error` (`aborted`); a stop for an unknown id is ignored.
+

@@ -1,7 +1,9 @@
 // Spec: specs/agent-protocol.schema.ts (MainToRuntimeMessageSchema, RuntimeToMainMessageSchema,
 // AGENT_PROTOCOL_LIMITS, MAIN_TO_RUNTIME_MESSAGE_TYPES, RUNTIME_TO_MAIN_MESSAGE_TYPES, isBoundedJson),
 // specs/agent-tools.spec.ts (CHAT_MAX_MESSAGES, TOOL_RESULT_MAX_CHARS), specs/agent-reasoning.spec.ts
-// (REASONING_EFFORTS: chat.start.reasoningEffort, protocol version 8)
+// (REASONING_EFFORTS: chat.start.reasoningEffort, protocol version 8), specs/ai-checks.spec.ts
+// (AI_CHECK_LIMITS, AI_CHECK_ERROR_CODES: check.start / check.stop / check.finish / check.error and
+// fetch.request.checkId, protocol version 9)
 // Acceptance: specs/agent-protocol.feature.md (Protocol)
 import { describe, expect, test } from 'vitest';
 import type { z } from 'zod';
@@ -17,6 +19,7 @@ import {
   ToolResultSchema,
 } from '@app/specs/agent-protocol.schema';
 import { REASONING_EFFORTS } from '@app/specs/agent-reasoning.spec';
+import { AI_CHECK_ERROR_CODES, AI_CHECK_LIMITS } from '@app/specs/ai-checks.spec';
 import { CHAT_MAX_MESSAGES, MAX_TOOL_STEPS, TOOL_RESULT_MAX_CHARS } from '@app/specs/agent-tools.spec';
 
 const L = AGENT_PROTOCOL_LIMITS;
@@ -48,6 +51,8 @@ const mainToRuntime = [
   { type: 'fetch.chunk', requestId: 'r1', bytes: new Uint8Array([1, 2, 3]) },
   { type: 'fetch.end', requestId: 'r1' },
   { type: 'fetch.error', requestId: 'r1', code: 'refused', message: 'Not an allowed model endpoint.' },
+  { type: 'check.start', checkId: 'check-1', systemPrompt: 'Answer with JSON only.', input: 'Untrusted page data: {"title":"Shoes"}', modelId: 'anthropic/claude-sonnet-5-5', route: 'byok-anthropic' },
+  { type: 'check.stop', checkId: 'check-1' },
 ] as const;
 
 const runtimeToMain = [
@@ -69,6 +74,9 @@ const runtimeToMain = [
   { type: 'fetch.request', requestId: 'r3', url: 'https://ai-gateway.vercel.sh/v4/ai/config', method: 'GET', headers: [], body: null },
   { type: 'fetch.abort', requestId: 'r1' },
   { type: 'chat.step', chatId: CHAT, step: 1, text: 'Let me read it.', toolCalls: [{ callId: 'call_1', toolName: 'page_text', input: { maxChars: 500 } }] },
+  { type: 'fetch.request', requestId: 'r4', url: 'https://api.anthropic.com/v1/messages', method: 'POST', headers: [], body: '{"stream":true}', checkId: 'check-1' },
+  { type: 'check.finish', checkId: 'check-1', text: '{"pageType":"product"}' },
+  { type: 'check.error', checkId: 'check-1', code: 'refused' },
 ] as const;
 
 const mainOk = (message: unknown) => MainToRuntimeMessageSchema.safeParse(message).success;
@@ -313,8 +321,8 @@ describe('chat.start MCP tools (protocol version 6, Task 10)', () => {
 describe('chat.start reasoning level (protocol version 8, Phase 8 Task 8b)', () => {
   const start = mainToRuntime[0];
   test('chat-start-reasoning-effort', () => {
-    // Version 8 added `reasoningEffort`: a runtime from before it is refused at `ready`.
-    expect(AGENT_PROTOCOL_VERSION).toBe(8);
+    // Version 8 added `reasoningEffort` (9 keeps it): a runtime from before it is refused at `ready`.
+    expect(AGENT_PROTOCOL_VERSION).toBeGreaterThanOrEqual(8);
     // Every level the user may choose, `auto` included (it sends nothing).
     for (const reasoningEffort of REASONING_EFFORTS) expect(mainOk({ ...start, reasoningEffort }), reasoningEffort).toBe(true);
     expect(MainToRuntimeMessageSchema.parse({ ...start, reasoningEffort: 'off' })).toMatchObject({ reasoningEffort: 'off' });
@@ -382,3 +390,70 @@ describe('chat.step usage (protocol version 5, Task 6a)', () => {
     }
   });
 });
+
+// Acceptance: specs/agent-protocol.feature.md (Checks)
+describe('AI checks (protocol version 9, Phase 9 Task 9)', () => {
+  const start = mainToRuntime[8];
+  const stop = mainToRuntime[9];
+  const tagged = runtimeToMain[11];
+  const finish = runtimeToMain[12];
+  const error = runtimeToMain[13];
+
+  test('unknown-check-message-dropped', () => {
+    expect(AGENT_PROTOCOL_VERSION).toBe(9);
+    for (const message of [start, stop]) expect(MainToRuntimeMessageSchema.parse(structuredClone(message))).toStrictEqual(message);
+    for (const message of [tagged, finish, error]) expect(RuntimeToMainMessageSchema.parse(structuredClone(message))).toStrictEqual(message);
+    // No effort field (a check always runs at `auto`), no key, no token, nothing else.
+    for (const extra of [{ reasoningEffort: 'auto' }, { reasoningEffort: 'high' }, { effort: 'high' }, { key: 'sk-x' }, { token: 't' }, { allowedTools: ['page_text'] }, { messages: [] }]) {
+      expect(mainOk({ ...start, ...extra }), JSON.stringify(extra)).toBe(false);
+    }
+    expect(mainOk({ ...stop, force: true })).toBe(false);
+    expect(runtimeOk({ ...finish, usage: { input: 1, output: 1 } })).toBe(false);
+    expect(runtimeOk({ ...error, message: 'upstream text' })).toBe(false);
+    // Ids and bounds.
+    for (const checkId of ['', 'has space', 'x'.repeat(L.maxIdChars + 1), 7, null, undefined]) {
+      expect(mainOk({ ...start, checkId }), String(checkId)).toBe(false);
+      expect(mainOk({ ...stop, checkId }), String(checkId)).toBe(false);
+      expect(runtimeOk({ ...finish, checkId }), String(checkId)).toBe(false);
+      expect(runtimeOk({ ...error, checkId }), String(checkId)).toBe(false);
+    }
+    expect(runtimeOk({ ...tagged, checkId: 'has space' })).toBe(false);
+    expect(runtimeOk({ ...tagged, checkId: '' })).toBe(false);
+    expect(mainOk({ ...start, input: '' })).toBe(false);
+    expect(mainOk({ ...start, input: 'x'.repeat(L.maxMessageChars + 1) })).toBe(false);
+    expect(mainOk({ ...start, systemPrompt: 'x'.repeat(L.maxSystemPromptChars + 1) })).toBe(false);
+    expect(mainOk({ ...start, modelId: 'anthropic/claude-unknown' })).toBe(false);
+    expect(mainOk({ ...start, route: 'byok-other' })).toBe(false);
+    expect(mainOk({ ...start, route: 'chatgpt', modelId: 'chatgpt/gpt-6.1-sol' })).toBe(true);
+    const { input: _input, ...withoutInput } = start;
+    expect(mainOk(withoutInput)).toBe(false);
+    expect(runtimeOk({ ...finish, text: 'x'.repeat(AI_CHECK_LIMITS.maxOutputChars) })).toBe(true);
+    expect(runtimeOk({ ...finish, text: 'x'.repeat(AI_CHECK_LIMITS.maxOutputChars + 1) })).toBe(false);
+    for (const code of AI_CHECK_ERROR_CODES) expect(runtimeOk({ ...error, code }), code).toBe(true);
+    for (const code of ['approved', 'ok', '', null, 'Refused']) expect(runtimeOk({ ...error, code }), String(code)).toBe(false);
+    // `check.*` types the protocol doesn't have.
+    for (const type of ['check.result', 'check.delta', 'check.retry', 'check.budget', 'check.allow']) {
+      expect(mainOk({ type, checkId: 'check-1' }), type).toBe(false);
+      expect(runtimeOk({ type, checkId: 'check-1' }), type).toBe(false);
+    }
+  });
+
+  test('runtime-cannot-start-a-check', () => {
+    // Starting and stopping are main's: the runtime → main union has neither.
+    expect(runtimeOk(start)).toBe(false);
+    expect(runtimeOk(stop)).toBe(false);
+    expect(RUNTIME_TO_MAIN_MESSAGE_TYPES).not.toContain('check.start');
+    expect(RUNTIME_TO_MAIN_MESSAGE_TYPES).not.toContain('check.stop');
+    expect(MAIN_TO_RUNTIME_MESSAGE_TYPES).toEqual(expect.arrayContaining(['check.start', 'check.stop']));
+    // And the answers are the runtime's: main never sends them.
+    expect(mainOk(finish)).toBe(false);
+    expect(mainOk(error)).toBe(false);
+    expect(mainOk({ ...mainToRuntime[4], checkId: 'check-1' })).toBe(false);
+    // No check type or field the runtime sends reads as an approval, a setting or a credential.
+    const forbidden = /approv|grant|setting|key|credential|allow|confirm|consent|permit|accept|token|secret|auth/i;
+    for (const type of ['check.finish', 'check.error'] as const) expect(RUNTIME_TO_MAIN_MESSAGE_TYPES).toContain(type);
+    for (const field of fieldNames(RuntimeToMainMessageSchema)) expect(field).not.toMatch(forbidden);
+    for (const field of fieldNames(MainToRuntimeMessageSchema)) expect(field).not.toMatch(/key|credential|token|secret|auth/i);
+  });
+});
+

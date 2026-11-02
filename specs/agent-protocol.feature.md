@@ -133,3 +133,20 @@ one named test.
 - **`maxResponseBytes`**: the most body bytes the runtime reads from one proxied response.
 - Covered by **protocol-round-trip**, **protocol-types-listed**, **malformed-messages-rejected** and
   **agent-cannot-approve** (the new fields match none of its words).
+
+## Checks (Phase 9 Task 9, protocol version 9; `packages/ai-skills/src/__tests__/agent-protocol.test.ts`)
+- **`check.start`** (main → runtime): `checkId`, main's `systemPrompt` (at most
+  `maxSystemPromptChars`), the check's `input` (1 to `maxMessageChars`), `modelId` and `route` (as
+  `chat.start`'s). No effort field: a check always runs at `auto` (Decision 15).
+- **`check.stop`** (main → runtime, beside `chat.stop`): `checkId`; main cancels the check.
+- **`check.finish`** (runtime → main): `checkId` and `text`, at most `AI_CHECK_LIMITS.maxOutputChars`.
+- **`check.error`** (runtime → main): `checkId` and a `code` of `AI_CHECK_ERROR_CODES`; no message.
+- **`fetch.request.checkId`** (optional): marks a check's one model request.
+- **Scenario: unknown-check-message-dropped** — a check message with an extra field (an effort, a
+  key or token), a missing or malformed `checkId`, a `check.finish` over `maxOutputChars`, a
+  `check.error` with an unknown code or a message, and a `check.*` type the protocol doesn't have are
+  refused by both unions; a structured clone of each valid check message parses to an equal value.
+- **Scenario: runtime-cannot-start-a-check** — `check.start` and `check.stop` are main → runtime
+  only: the runtime → main union refuses both, and the main → runtime union refuses `check.finish`
+  and `check.error`; no check message or field name matches the `agent-cannot-approve` words.
+

@@ -6,8 +6,9 @@ import {
   type MainToRuntimeMessage,
   type RuntimeToMainMessage,
 } from '@app/specs/agent-protocol.schema';
-import { AGENT_HOST_LIMITS, AGENT_PROXY_LIMITS, AGENT_RUNTIME_FILE, AGENT_SERVICE_NAME, MAX_MODEL_REQUESTS_PER_TURN, restartDelayMs } from '@app/specs/agent-proxy.spec';
+import { AGENT_HOST_LIMITS, AGENT_PROXY_LIMITS, AGENT_RUNTIME_FILE, AGENT_SERVICE_NAME, MAX_MODEL_REQUESTS_PER_CHECK, MAX_MODEL_REQUESTS_PER_TURN, restartDelayMs } from '@app/specs/agent-proxy.spec';
 import { AGENT_E2E_SCRIPT_ENV } from '@app/specs/agent-session.spec';
+import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import { coalescedLog } from './log';
 
 // The agent host (Phase 5 Task 3, plan decision 6; acceptance `specs/agent-host.feature.md`, Host):
@@ -19,6 +20,13 @@ import { coalescedLog } from './log';
 // proxy as `fetch.request`). Node's permission flags are passed, but Electron 45 does not enforce
 // them in a utility process: the runtime reports that in `ready.lockdown.permissionModel`, and
 // `lockdown()` hands it on so the settings page never claims a file sandbox that isn't there.
+//
+// AI checks (Phase 9 Task 9, Decision 15; `agent-host.feature.md`, Checks) have their own lifecycle
+// beside the chats: each live check holds `MAX_MODEL_REQUESTS_PER_CHECK`, apart from the turns'
+// shared budget. A `fetch.request` tagged with a check id is resolved here against the checks main
+// started (live, unspent) and handed to the proxy with the check's route and model; any other check
+// id is refused and counted. `stopCheck` withdraws a check at once; a runtime failure fails every
+// live check as it fails every pending chat.
 
 /** The part of Electron's `MessagePortMain` the host uses. */
 export interface HostPort {
@@ -85,12 +93,28 @@ export type AgentLockdown = Extract<RuntimeToMainMessage, { type: 'ready' }>['lo
 
 export type AgentChatEvent = Extract<RuntimeToMainMessage, { type: 'chat.delta' | 'chat.tool-call' | 'chat.step' | 'chat.finish' | 'chat.error' }>;
 export type AgentToolInvoke = Extract<RuntimeToMainMessage, { type: 'tool.invoke' }>;
-export type AgentFetchEvent = Extract<RuntimeToMainMessage, { type: 'fetch.request' | 'fetch.abort' }>;
+/**
+ * A check's end: the runtime's `check.finish` / `check.error`, or main's own `check.error` when it
+ * stopped the check (`aborted`) or the runtime went away (`crashed`). Exactly one per check started.
+ */
+export type AgentCheckEvent = Extract<RuntimeToMainMessage, { type: 'check.finish' | 'check.error' }>;
+export type AgentCheckStart = Omit<Extract<MainToRuntimeMessage, { type: 'check.start' }>, 'type'>;
+/** The check a request belongs to, as main started it (resolved by the host, never the runtime's word). */
+export interface AgentCheckTarget {
+  readonly checkId: string;
+  readonly route: ModelRoute;
+  readonly modelId: AgentModelId;
+}
+/**
+ * Proxied model requests and their aborts. A check's request carries `check` (the host resolved its
+ * `checkId` against the live checks); a turn's has none.
+ */
+export type AgentFetchEvent = Extract<RuntimeToMainMessage, { type: 'fetch.abort' }> | (Extract<RuntimeToMainMessage, { type: 'fetch.request' }> & { readonly check?: AgentCheckTarget });
 
 export interface AgentHostStats {
   /** Inbound messages dropped: invalid, before `ready`, a second `ready`, or for a chat main didn't start. */
   inboundDropped: number;
-  /** Model requests refused here: no turn running, or past the running turns' budget. */
+  /** Model requests refused here: no turn running, past the running turns' budget, or a check id not live and unspent. */
   fetchesRefused: number;
   /** Strikes counted (dropped messages, refusals here and the proxy's). */
   strikes: number;
@@ -115,11 +139,27 @@ export interface AgentHost {
   /** Tool calls the runtime asks main to run (for chats main started). */
   onToolInvoke(listener: (invoke: AgentToolInvoke) => void): () => void;
   /**
-   * Proxied model requests and their aborts (the model proxy). A request reaches it only while a
-   * chat main started is running and within the running turns' budget (`MAX_MODEL_REQUESTS_PER_TURN`
-   * each); the host refuses any other (`fetch.error` `refused`).
+   * Proxied model requests and their aborts (the model proxy). A turn's request (no `checkId`)
+   * reaches it only while a chat main started is running and within the running turns' budget
+   * (`MAX_MODEL_REQUESTS_PER_TURN` each); a check's (its `checkId`) only for a check main started
+   * that is live and unspent (`MAX_MODEL_REQUESTS_PER_CHECK`), with `check` set. The host refuses
+   * any other (`fetch.error` `refused`, a strike).
    */
   onFetch(listener: (event: AgentFetchEvent) => void): () => void;
+  /**
+   * Starts an AI check (posts `check.start`): `false` when not ready, the message is invalid, or the
+   * id is already live. The check holds `MAX_MODEL_REQUESTS_PER_CHECK` until it ends.
+   */
+  startCheck(start: AgentCheckStart): boolean;
+  /**
+   * Stops a live check: its unspent request is withdrawn at once, `check.stop` is posted, and the
+   * check ends with `check.error` (`aborted`). `false` when it is not live.
+   */
+  stopCheck(checkId: string): boolean;
+  /** Each check's end (`AgentCheckEvent`), for checks main started. */
+  onCheck(listener: (event: AgentCheckEvent) => void): () => void;
+  /** Check ids live (started, not yet ended). */
+  activeChecks(): readonly string[];
   /**
    * Counts one misbehaviour against the running runtime (the proxy calls it for each refusal; the
    * host for each message it drops). Past `maxStrikesPerWindow` in a window, the runtime is killed
@@ -197,6 +237,7 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
   };
   const chat = listenerSet<AgentChatEvent>(countListenerError);
   const tools = listenerSet<AgentToolInvoke>(countListenerError);
+  const checkEnds = listenerSet<AgentCheckEvent>(countListenerError);
   const fetches = listenerSet<AgentFetchEvent>(countListenerError);
   const statuses = listenerSet<AgentHostStatus>(countListenerError);
 
@@ -217,6 +258,17 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
    * make more requests than the running turns' budgets add up to, and none with no turn running.
    */
   let fetchBudget = 0;
+  /**
+   * Live checks, apart from the chats and the turns' budget: each one's route and model as main
+   * started it, and the requests it may still make (`MAX_MODEL_REQUESTS_PER_CHECK`, spent by its
+   * one tagged `fetch.request`). A chat ending never touches them, nor a check ending the chats.
+   */
+  const liveChecks = new Map<string, { readonly route: ModelRoute; readonly modelId: AgentModelId; budget: number }>();
+  /**
+   * Checks main stopped whose runtime answer is still due: that one answer is taken quietly (not a
+   * strike, not passed on: main already answered `aborted`). Cleared with the runtime.
+   */
+  const stoppedChecks = new Set<string>();
   /** The current flood window: when it started, and what it has counted. */
   let flood = { start: 0, strikes: 0, inbound: 0 };
   let waiters: ((ready: boolean) => void)[] = [];
@@ -239,12 +291,16 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
     if (pendingChats.size === 0) fetchBudget = 0;
   };
 
-  /** Fails every running chat (the runtime that ran them is gone). */
+  /** Fails every running chat and every live check (the runtime that ran them is gone). */
   const failPendingChats = () => {
     const chatIds = [...pendingChats];
     pendingChats.clear();
     fetchBudget = 0;
+    const checkIds = [...liveChecks.keys()];
+    liveChecks.clear();
+    stoppedChecks.clear();
     for (const chatId of chatIds) chat.emit({ type: 'chat.error', chatId, message: AGENT_CRASHED_MESSAGE });
+    for (const checkId of checkIds) checkEnds.emit({ type: 'check.error', checkId, code: 'crashed' });
   };
 
   /** Drops `instance` for good: kills its process and closes its port. */
@@ -314,8 +370,8 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
     withinLimits(instance, 1, 0);
   };
 
-  /** Answers a model request the host refuses (no turn running, or the turns' budget spent). */
-  const refuseFetch = (instance: Instance, requestId: string, reason: 'no-chat' | 'turn-budget') => {
+  /** Answers a model request the host refuses (no turn running, the turns' budget spent, or a check id not live and unspent). */
+  const refuseFetch = (instance: Instance, requestId: string, reason: 'no-chat' | 'turn-budget' | 'check-budget') => {
     stats.fetchesRefused += 1;
     logOnce(`refused:${reason}`, `agent proxy: refused a model request (${reason})`);
     if (!withinLimits(instance, 1, 0)) return;
@@ -378,7 +434,29 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
         }
         tools.emit(message);
         return;
+      case 'check.finish':
+      case 'check.error':
+        if (liveChecks.delete(message.checkId)) {
+          checkEnds.emit(message);
+          return;
+        }
+        // The one answer due for a check main stopped: already answered, taken quietly.
+        if (stoppedChecks.delete(message.checkId)) return;
+        drop(instance);
+        return;
       case 'fetch.request':
+        if (message.checkId !== undefined) {
+          // A check's request: only for a check main started, live, with its request unspent.
+          const check = liveChecks.get(message.checkId);
+          if (check === undefined || check.budget <= 0) {
+            refuseFetch(instance, message.requestId, 'check-budget');
+            return;
+          }
+          check.budget -= 1;
+          fetches.emit({ ...message, check: { checkId: message.checkId, route: check.route, modelId: check.modelId } });
+          return;
+        }
+        // A turn's request (unchanged by checks).
         if (pendingChats.size === 0) {
           refuseFetch(instance, message.requestId, 'no-chat');
           return;
@@ -436,6 +514,54 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
     }
   };
 
+  const send = (message: MainToRuntimeMessage): boolean => {
+    const parsed = MainToRuntimeMessageSchema.safeParse(message);
+    if (!parsed.success || status !== 'ready' || current === null || !current.ready) {
+      stats.outboundRefused += 1;
+      return false;
+    }
+    const outbound = parsed.data;
+    if (outbound.type === 'chat.start') {
+      if (pendingChats.has(outbound.chatId)) {
+        // The runtime would answer "busy"; main keeps one turn per chat too.
+        stats.outboundRefused += 1;
+        return false;
+      }
+      pendingChats.add(outbound.chatId);
+      fetchBudget += MAX_MODEL_REQUESTS_PER_TURN;
+    }
+    if (outbound.type === 'check.start') {
+      if (liveChecks.has(outbound.checkId) || stoppedChecks.has(outbound.checkId)) {
+        // One run per check id (a stopped one's answer is still due).
+        stats.outboundRefused += 1;
+        return false;
+      }
+      liveChecks.set(outbound.checkId, { route: outbound.route, modelId: outbound.modelId as AgentModelId, budget: MAX_MODEL_REQUESTS_PER_CHECK });
+    }
+    if (outbound.type === 'check.stop' && !liveChecks.has(outbound.checkId)) {
+      stats.outboundRefused += 1;
+      return false;
+    }
+    try {
+      current.port.postMessage(outbound);
+    } catch {
+      if (outbound.type === 'chat.start') {
+        fetchBudget = Math.max(0, fetchBudget - MAX_MODEL_REQUESTS_PER_TURN);
+        endChat(outbound.chatId);
+      }
+      if (outbound.type === 'check.start') liveChecks.delete(outbound.checkId);
+      stats.outboundRefused += 1;
+      return false;
+    }
+    if (outbound.type === 'check.stop') {
+      // Withdrawn at once: no request on it from here on, and main answers it now.
+      liveChecks.delete(outbound.checkId);
+      stoppedChecks.add(outbound.checkId);
+      checkEnds.emit({ type: 'check.error', checkId: outbound.checkId, code: 'aborted' });
+    }
+    return true;
+  };
+
   return {
     start() {
       if (disposed) return Promise.resolve(false);
@@ -448,33 +574,11 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
       }
       return ready;
     },
-    send(message) {
-      const parsed = MainToRuntimeMessageSchema.safeParse(message);
-      if (!parsed.success || status !== 'ready' || current === null || !current.ready) {
-        stats.outboundRefused += 1;
-        return false;
-      }
-      if (parsed.data.type === 'chat.start') {
-        if (pendingChats.has(parsed.data.chatId)) {
-          // The runtime would answer "busy"; main keeps one turn per chat too.
-          stats.outboundRefused += 1;
-          return false;
-        }
-        pendingChats.add(parsed.data.chatId);
-        fetchBudget += MAX_MODEL_REQUESTS_PER_TURN;
-      }
-      try {
-        current.port.postMessage(parsed.data);
-      } catch {
-        if (parsed.data.type === 'chat.start') {
-          fetchBudget = Math.max(0, fetchBudget - MAX_MODEL_REQUESTS_PER_TURN);
-          endChat(parsed.data.chatId);
-        }
-        stats.outboundRefused += 1;
-        return false;
-      }
-      return true;
-    },
+    send,
+    startCheck: (start) => send({ type: 'check.start', ...start }),
+    stopCheck: (checkId) => liveChecks.has(checkId) && send({ type: 'check.stop', checkId }),
+    onCheck: (listener) => checkEnds.add(listener),
+    activeChecks: () => [...liveChecks.keys()],
     onChat: (listener) => chat.add(listener),
     onToolInvoke: (listener) => tools.add(listener),
     onFetch: (listener) => fetches.add(listener),
@@ -498,6 +602,8 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
       if (current !== null) abandon(current);
       pendingChats.clear();
       fetchBudget = 0;
+      liveChecks.clear();
+      stoppedChecks.clear();
       setStatus('stopped');
       settleWaiters(false);
     },

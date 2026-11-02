@@ -59,6 +59,17 @@ import type { AgentSettings } from './settings';
 // model) is sent, uncounted, so the turn finishes on its level; the next turn must carry the new
 // one. A body matching neither is refused `reasoning` and counted. The level compared is always
 // the effective one (`effectiveEffort`: a stored level the model lacks acts as `auto`).
+//
+// An AI check's request (Phase 9 Task 9, Decision 15; `agent-host.feature.md`, Checks) takes its own
+// branch: the host resolved its `checkId` against the checks main started (live, unspent) and handed
+// over the route and model the check began on. It is checked with `checkModelRequest(route, modelId,
+// 'auto', …)` against those (never the settings' effort, never a turn's `previous` steps) and sent
+// with that route's credential. A refusal of it is never counted as the runtime's fault (lead
+// ruling): the runtime answers the check `check.error` (`refused`), so automatic checks can't trip
+// the strike window or degrade chat (the host already bounds them to one request per check main
+// started). The last chat ending aborts only turn requests; a check's request is aborted by its own
+// stop or end, or a runtime failure. A check's plan failure is logged, but not reported to the
+// running turn's panel nor allowed to pause the plan for chats.
 
 /** What the proxy hands `fetch` (Electron's `session.fetch` on the in-memory `agent-model` partition). */
 export interface ProxyRequestInit {
@@ -88,7 +99,8 @@ export interface ModelProxyChatgpt {
 }
 
 export interface ModelProxyDeps {
-  readonly host: Pick<AgentHost, 'send' | 'onFetch' | 'onStatus' | 'onChat' | 'activeChats' | 'strike'>;
+  /** `onCheck` (each check's end) lets a check's request in flight be aborted when its check ends. */
+  readonly host: Pick<AgentHost, 'send' | 'onFetch' | 'onStatus' | 'onChat' | 'activeChats' | 'strike'> & Partial<Pick<AgentHost, 'onCheck'>>;
   readonly credentials: Pick<CredentialStore, 'withKey'>;
   /** `onChange` lets a request made for the route a turn began on be told from the runtime's fault; `chatgptModels` is the account's last list. */
   readonly settings: Pick<AgentSettings, 'current' | 'load'> & Partial<Pick<AgentSettings, 'onChange' | 'chatgptModels'>>;
@@ -127,6 +139,7 @@ export interface ModelProxy {
 }
 
 type FetchRequest = Extract<AgentFetchEvent, { type: 'fetch.request' }>;
+type CheckTarget = NonNullable<FetchRequest['check']>;
 type FetchErrorCode = Extract<MainToRuntimeMessage, { type: 'fetch.error' }>['code'];
 
 /** Short, fixed texts for `fetch.error` (never a URL, header, body or upstream message). */
@@ -139,6 +152,8 @@ const ERROR_TEXT: Readonly<Record<FetchErrorCode, string>> = {
 };
 
 interface Live {
+  /** The check it was made for (`null`: a turn's). */
+  readonly checkId: string | null;
   readonly controller: AbortController;
   settled: boolean;
   idle: unknown;
@@ -191,9 +206,13 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       return [];
     }
   };
-  /** Reports a plan failure once per request (the first), logged with its reason only. */
-  const reportFailure = (failure: ChatgptFailure) => {
+  /**
+   * Reports a plan failure once per request (the first), logged with its reason only. A check's
+   * (`forCheck`) is only logged: it is not the running turn's, and a check never pauses the plan for chats.
+   */
+  const reportFailure = (failure: ChatgptFailure, forCheck = false) => {
     log(`plan:${failure.reason}`, `agent proxy: the ChatGPT plan refused a request (${failure.reason})`);
+    if (forCheck) return;
     if (PAUSING_FAILURES.has(failure.reason)) paused = failure;
     try {
       deps.chatgpt?.report(failure);
@@ -265,11 +284,12 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       fail(requestId, entry, 'network');
       return;
     }
+    const forCheck = entry.checkId !== null;
     if (chatgpt && response.status >= 400) {
       // The plan's failure code, read in main (capped) under the idle timer; the body goes no further.
       const failure = chatgptAnswerFailure(response.status, await readErrorAnswer(response));
       if (entry.settled) return;
-      if (failure !== null) reportFailure(failure);
+      if (failure !== null) reportFailure(failure, forCheck);
     }
     send({ type: 'fetch.response-start', requestId, status: response.status, statusText: sanitizeStatusText(response.statusText), headers: filterResponseHeaders(response.headers) });
     resetIdle(requestId, entry);
@@ -288,7 +308,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     const reader = response.body.getReader();
     entry.reader = reader;
     // A usage limit can arrive as a `response.failed` after streaming began.
-    const scanner = chatgpt ? createStreamScanner(reportFailure) : null;
+    const scanner = chatgpt ? createStreamScanner((failure) => reportFailure(failure, forCheck)) : null;
     let received = 0;
     for (;;) {
       const { done, value } = await reader.read();
@@ -317,15 +337,27 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     await deps.settings.load();
     starting.delete(requestId);
     if (abortedEarly.delete(requestId) || disposed) return;
+    // A check's refusals are never strikes (the host bounds them to one per check main started).
+    const forCheck = request.check;
+    const strike = forCheck === undefined ? undefined : false;
     const prior = live.get(requestId);
     if (prior !== undefined) {
       // Two requests under one id: neither can be answered unambiguously.
       finish(requestId, prior, null);
-      refuse(requestId, 'duplicate-id');
+      refuse(requestId, 'duplicate-id', strike);
       return;
     }
     if (live.size >= limits.maxConcurrentRequests) {
-      refuse(requestId, 'busy');
+      refuse(requestId, 'busy', strike);
+      return;
+    }
+    if (forCheck !== undefined) {
+      handleCheckRequest(request, forCheck);
+      return;
+    }
+    if (request.checkId !== undefined) {
+      // Tagged, but not resolved by the host: never sent, and the runtime's fault.
+      refuse(requestId, 'check-budget');
       return;
     }
     const settings = deps.settings.current();
@@ -380,18 +412,62 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     }
     const slot = routeCredentialSlot(route);
     if (slot === null) {
-      handleChatgpt(requestId, deps.chatgptResponsesUrl ?? target.url, headers, checkedBody, settings);
+      handleChatgpt(requestId, deps.chatgptResponsesUrl ?? target.url, headers, checkedBody, settings, null);
       return;
     }
+    await sendWithKey(requestId, route, slot, target, headers, checkedBody, null);
+  };
 
-    const entry: Live = { controller: new AbortController(), settled: false, idle: null, total: null, reader: null };
+  /**
+   * A live check's request (the host resolved `check`): checked at `auto` against the route and model
+   * the check began on, sent with that route's credential. No refusal here is a strike.
+   */
+  const handleCheckRequest = (request: FetchRequest, check: CheckTarget) => {
+    const { requestId } = request;
+    const { route, modelId, checkId } = check;
+    if (!isAllowedModelRequest(route, request.method, request.url)) {
+      refuse(requestId, 'endpoint', false);
+      return;
+    }
+    const target = MODEL_REQUESTS[route].find((candidate) => candidate.method === request.method && candidate.url === request.url)!;
+    const body = bodyText(request.body);
+    if (body === 'body-missing' || body === 'body-encoding' || body === 'body-size') {
+      refuse(requestId, body, false);
+      return;
+    }
+    const headers = filterRequestHeaders(route, request.headers);
+    // Always `auto`: the agent's Reasoning setting never changes a check's request.
+    const verdict = checkModelRequest(route, modelId, 'auto', body, headers);
+    if (!verdict.ok) {
+      refuse(requestId, verdict.reason, false);
+      return;
+    }
+    const slot = routeCredentialSlot(route);
+    if (slot === null) {
+      handleChatgpt(requestId, deps.chatgptResponsesUrl ?? target.url, headers, verdict.body, { route, modelId, reasoningEffort: 'auto' }, checkId);
+      return;
+    }
+    void sendWithKey(requestId, route, slot, target, headers, verdict.body, checkId);
+  };
+
+  /** A key route's request, checked: main adds the key (inside `withKey`) and streams the answer back. */
+  const sendWithKey = async (
+    requestId: string,
+    route: AgentModelSettings['route'],
+    slot: NonNullable<ReturnType<typeof routeCredentialSlot>>,
+    target: (typeof MODEL_REQUESTS)[AgentModelSettings['route']][number],
+    headers: [string, string][],
+    checkedBody: string,
+    checkId: string | null,
+  ) => {
+    const entry: Live = { checkId, controller: new AbortController(), settled: false, idle: null, total: null, reader: null };
     live.set(requestId, entry);
     resetIdle(requestId, entry);
     entry.total = setTimer(() => fail(requestId, entry, 'timeout'), limits.maxRequestMs);
     const refuseEntry = (reason: ProxyRefusal) => {
       if (entry.settled) return;
       finish(requestId, entry, null);
-      refuse(requestId, reason);
+      refuse(requestId, reason, checkId === null ? undefined : false);
     };
 
     try {
@@ -422,7 +498,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
   };
 
   /** The ChatGPT plan route: the sign-in's access token as the credential, a 401 refreshed and retried once. */
-  const handleChatgpt = (requestId: string, url: string, headers: [string, string][], checkedBody: string, settings: AgentModelSettings) => {
+  const handleChatgpt = (requestId: string, url: string, headers: [string, string][], checkedBody: string, settings: AgentModelSettings, checkId: string | null) => {
     const chatgpt = deps.chatgpt;
     if (chatgpt === undefined) {
       key = 'no-key';
@@ -438,14 +514,14 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       refuse(requestId, 'plan-paused');
       return;
     }
-    const entry: Live = { controller: new AbortController(), settled: false, idle: null, total: null, reader: null };
+    const entry: Live = { checkId, controller: new AbortController(), settled: false, idle: null, total: null, reader: null };
     live.set(requestId, entry);
     resetIdle(requestId, entry);
     entry.total = setTimer(() => fail(requestId, entry, 'timeout'), limits.maxRequestMs);
     const refuseEntry = (reason: ProxyRefusal) => {
       if (entry.settled) return;
       finish(requestId, entry, null);
-      refuse(requestId, reason);
+      refuse(requestId, reason, checkId === null ? undefined : false);
     };
     // The token stays in this closure: it goes into the header and, after a 401, back to the service as the refused one.
     const attempt = (rejected?: string) =>
@@ -477,7 +553,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
         if (entry.settled) return;
         if (!sent.ok) {
           const outcome = TOKEN_FAILURES[sent.reason];
-          if (outcome.failure !== null) reportFailure(outcome.failure);
+          if (outcome.failure !== null) reportFailure(outcome.failure, checkId !== null);
           if (outcome.refusal === 'network') fail(requestId, entry, 'network');
           else {
             if (outcome.refusal === 'no-key') key = 'no-key';
@@ -505,23 +581,28 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
     void handleRequest(event);
   };
 
-  const abortAll = () => {
-    for (const [requestId, entry] of [...live]) finish(requestId, entry, null);
+  /** Aborts the requests in flight that `which` selects, without answering. */
+  const abortWhere = (which: (entry: Live) => boolean) => {
+    for (const [requestId, entry] of [...live]) if (which(entry)) finish(requestId, entry, null);
   };
+  const abortAll = () => abortWhere(() => true);
 
   const unsubscribeFetch = deps.host.onFetch(onFetch);
+  // The runtime went away (crash, restart, protocol mismatch): turns' and checks' requests alike.
   const unsubscribeStatus = deps.host.onStatus((status) => {
     if (status !== 'ready') abortAll();
   });
-  // No turn running, no request is wanted: whatever is still in flight is stopped.
+  // No turn running, no turn request is wanted: whatever of theirs is still in flight is stopped (a check's goes on).
   const unsubscribeChat = deps.host.onChat((event) => {
     if ((event.type === 'chat.finish' || event.type === 'chat.error') && deps.host.activeChats().length === 0) {
-      abortAll();
+      abortWhere((entry) => entry.checkId === null);
       // The next turn starts on the settings in effect, with the plan no longer paused.
       previous = null;
       paused = null;
     }
   });
+  // A check ended (its answer, main's stop, a crash): its request, if still in flight, is stopped.
+  const unsubscribeCheck = deps.host.onCheck?.((event) => abortWhere((entry) => entry.checkId === event.checkId)) ?? (() => undefined);
   // A route, model or reasoning level change while a turn runs: what the turn began on (the
   // settings before the first change) is kept until no turn runs.
   const unsubscribeSettings =
@@ -542,6 +623,7 @@ export function createModelProxy(deps: ModelProxyDeps): ModelProxy {
       unsubscribeFetch();
       unsubscribeStatus();
       unsubscribeChat();
+      unsubscribeCheck();
       unsubscribeSettings();
       unsubscribeAccount();
       abortAll();
