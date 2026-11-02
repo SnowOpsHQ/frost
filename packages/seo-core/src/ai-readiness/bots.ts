@@ -1,7 +1,7 @@
-import { AI_BOTS, type AiBotId, type AiBotRole, type AiBotVerdictValue, type AiRobotsStance } from '@app/specs/ai-readiness.spec';
+import { AI_BOTS, type AiBot, type AiBotId, type AiBotRole, type AiBotVerdictValue, type AiBotVia, type AiRobotsStance } from '@app/specs/ai-readiness.spec';
 import { ROBOTS_UNKNOWN_OUTCOMES, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import type { PageSnapshot } from '@app/specs/seo-snapshot.spec';
-import { matchRobots, pageRobotsPath, parsedRobotsOf, type RobotsRuleRef } from '../indexability';
+import { groupsFor, matchRobots, pageRobotsPath, parsedRobotsOf, type RobotsFile, type RobotsMatch, type RobotsRuleRef } from '../indexability';
 
 // The AI crawlers' robots.txt verdicts (spec `ai-readiness.spec.ts`, Verdicts; acceptance
 // `ai-readiness.feature.md`). Read from the robots.txt the audit already has (`PageContext.robots`),
@@ -15,8 +15,11 @@ export interface AiBotVerdict {
   readonly role: AiBotRole;
   readonly stance: AiRobotsStance;
   readonly verdict: AiBotVerdictValue;
-  /** Judged by the `*` groups (the token has none of its own). */
-  readonly fallback: boolean;
+  /**
+   * Which groups decided (`AI_BOT_VIAS`): its own, Googlebot's (Applebot's documented fallback) or
+   * `*`; `null` when no file was judged (`not-checked`, `unknown`, or none to obey).
+   */
+  readonly via: AiBotVia | null;
   /** The line of the first group it follows; `null`: no group, or no file. */
   readonly groupLine: number | null;
   /** The deciding rule; `null`: none matched, or no file. */
@@ -24,6 +27,14 @@ export interface AiBotVerdict {
 }
 
 const UNKNOWN: ReadonlySet<RobotsFetchOutcome> = new Set(ROBOTS_UNKNOWN_OUTCOMES);
+
+/** The groups `bot` follows and why: its own; else Googlebot's when its operator says so and there are some; else `*`. */
+function judge(file: RobotsFile, bot: AiBot, path: string): { match: RobotsMatch; via: AiBotVia } {
+  const match = matchRobots(file, bot.token, path);
+  if (!match.fallback) return { match, via: 'own' };
+  if (bot.followsGooglebot && !groupsFor(file, 'Googlebot').fallback) return { match: matchRobots(file, 'Googlebot', path), via: 'googlebot' };
+  return { match, via: '*' };
+}
 
 /** Every `AI_BOTS` token's verdict (`AI_BOTS` order). Pure; one parse of the file per fetch. */
 export function aiBotVerdicts(s: PageSnapshot): AiBotVerdict[] {
@@ -35,13 +46,13 @@ export function aiBotVerdicts(s: PageSnapshot): AiBotVerdict[] {
     if (file === null) {
       // No answer yet (none fetched, or still pending): not checked; unreadable: unknown; no file to obey: allowed.
       const verdict: AiBotVerdictValue = !fetched || fetched.outcome === 'pending' ? 'not-checked' : UNKNOWN.has(fetched.outcome) ? 'unknown' : 'allowed';
-      return { ...base, verdict, fallback: false, groupLine: null, rule: null };
+      return { ...base, verdict, via: null, groupLine: null, rule: null };
     }
-    const match = matchRobots(file, bot.token, path);
+    const { match, via } = judge(file, bot, path);
     return {
       ...base,
       verdict: match.allowed ? 'allowed' : 'disallowed',
-      fallback: match.fallback,
+      via,
       groupLine: match.groups[0]?.line ?? null,
       rule: match.rule && { allow: match.rule.allow, raw: match.rule.raw, line: match.rule.line },
     };

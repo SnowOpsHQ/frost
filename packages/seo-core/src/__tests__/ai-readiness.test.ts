@@ -120,22 +120,23 @@ describe('AI bot catalogue and robots.txt verdicts', () => {
     const verdicts = audit.aiReadiness.bots;
     expect(verdicts.map((verdict) => verdict.bot)).toEqual([...AI_BOT_IDS]);
     for (const verdict of verdicts) expect(AI_BOT_VERDICTS).toContain(verdict.verdict);
-    const short = Object.fromEntries(verdicts.map((verdict) => [verdict.token, [verdict.verdict, verdict.fallback]]));
+    const short = Object.fromEntries(verdicts.map((verdict) => [verdict.token, [verdict.verdict, verdict.via]]));
     expect(short).toEqual({
-      'OAI-SearchBot': ['allowed', false],
-      'ChatGPT-User': ['disallowed', true],
-      GPTBot: ['disallowed', false],
-      'Claude-SearchBot': ['allowed', false],
-      'Claude-User': ['disallowed', false],
-      ClaudeBot: ['disallowed', false],
-      PerplexityBot: ['allowed', false],
-      'Perplexity-User': ['disallowed', true],
-      Applebot: ['disallowed', true],
-      'Applebot-Extended': ['disallowed', true],
-      'Google-Extended': ['disallowed', false],
-      CCBot: ['disallowed', false],
-      Bytespider: ['disallowed', true],
-      'Meta-ExternalAgent': ['disallowed', true],
+      'OAI-SearchBot': ['allowed', 'own'],
+      'ChatGPT-User': ['disallowed', '*'],
+      GPTBot: ['disallowed', 'own'],
+      'Claude-SearchBot': ['allowed', 'own'],
+      'Claude-User': ['disallowed', 'own'],
+      ClaudeBot: ['disallowed', 'own'],
+      PerplexityBot: ['allowed', 'own'],
+      'Perplexity-User': ['disallowed', '*'],
+      // No Googlebot group here: Applebot falls back to `*` like the rest.
+      Applebot: ['disallowed', '*'],
+      'Applebot-Extended': ['disallowed', '*'],
+      'Google-Extended': ['disallowed', 'own'],
+      CCBot: ['disallowed', 'own'],
+      Bytespider: ['disallowed', '*'],
+      'Meta-ExternalAgent': ['disallowed', '*'],
     });
     // Each verdict names its deciding rule and group: Claude-SearchBot by its own group, not Claude-User's.
     expect(of(verdicts, 'claude-searchbot')).toMatchObject({ role: 'ai-search', stance: 'documented', groupLine: 10, rule: { allow: true, raw: '/guides/', line: 11 } });
@@ -146,7 +147,7 @@ describe('AI bot catalogue and robots.txt verdicts', () => {
     // The same verdicts straight from the snapshot.
     expect(aiBotVerdicts(page({ robots: okRobots(file) }))).toEqual(verdicts);
     // Another path on the page's origin: the `*` group no longer blocks it.
-    expect(of(aiBotVerdicts(page({ url: 'https://example.com/about', robots: okRobots(file) })), 'bytespider')).toMatchObject({ verdict: 'allowed', fallback: true, rule: null });
+    expect(of(aiBotVerdicts(page({ url: 'https://example.com/about', robots: okRobots(file) })), 'bytespider')).toMatchObject({ verdict: 'allowed', via: '*', rule: null });
     // No file to obey allows every token; one that could not be read leaves every verdict unknown.
     for (const outcome of ['unavailable', 'forbidden', 'too-many-redirects', 'private-redirect'] as const) {
       expect(aiBotVerdicts(page({ robots: okRobots('', { outcome, status: null }) })).every((verdict) => verdict.verdict === 'allowed' && verdict.rule === null), outcome).toBe(true);
@@ -154,6 +155,22 @@ describe('AI bot catalogue and robots.txt verdicts', () => {
     for (const outcome of ['server-error', 'unreachable', 'timeout', 'bad-redirect', 'no-location'] as const) {
       expect(aiBotVerdicts(page({ robots: okRobots('', { outcome, status: null }) })).every((verdict) => verdict.verdict === 'unknown'), outcome).toBe(true);
     }
+  });
+
+  test('applebot-follows-googlebot-when-not-named', () => {
+    expect(AI_BOTS.filter((bot) => bot.followsGooglebot).map((bot) => bot.id)).toEqual(['applebot']);
+    const judge = (text: string) => aiBotVerdicts(page({ robots: okRobots(text) }));
+    // No Applebot group, a Googlebot one: Applebot follows Googlebot's (Apple's documented rule); Applebot-Extended and the rest use `*`.
+    const viaGooglebot = judge('User-agent: *\nDisallow: /\n\nUser-agent: Googlebot\nAllow: /\n\nUser-agent: Googlebot-News\nDisallow: /\n');
+    expect(of(viaGooglebot, 'applebot')).toMatchObject({ verdict: 'allowed', via: 'googlebot', groupLine: 4, rule: { allow: true, raw: '/', line: 5 } });
+    expect(of(viaGooglebot, 'applebot-extended')).toMatchObject({ verdict: 'disallowed', via: '*', groupLine: 1 });
+    expect(of(viaGooglebot, 'bytespider')).toMatchObject({ verdict: 'disallowed', via: '*' });
+    // No Googlebot group either (Googlebot-News is another crawler): `*`.
+    const viaStar = judge('User-agent: *\nDisallow: /\n\nUser-agent: Googlebot-News\nAllow: /\n');
+    expect(of(viaStar, 'applebot')).toMatchObject({ verdict: 'disallowed', via: '*', groupLine: 1, rule: { allow: false, raw: '/', line: 2 } });
+    // Its own group wins over Googlebot's and `*`.
+    const own = judge('User-agent: Googlebot\nAllow: /\n\nUser-agent: Applebot\nDisallow: /guides/\n\nUser-agent: *\nAllow: /\n');
+    expect(of(own, 'applebot')).toMatchObject({ verdict: 'disallowed', via: 'own', groupLine: 4, rule: { allow: false, raw: '/guides/', line: 5 } });
   });
 
   test('control-tokens-never-requested', () => {
@@ -167,15 +184,15 @@ describe('AI bot catalogue and robots.txt verdicts', () => {
     }
     // Their verdicts come from the audit's robots.txt alone: the snapshot is all `aiBotVerdicts` reads.
     const verdicts = aiBotVerdicts(page({ robots: okRobots('User-agent: Google-Extended\nUser-agent: Applebot-Extended\nDisallow: /\n') }));
-    expect(of(verdicts, 'google-extended')).toMatchObject({ verdict: 'disallowed', fallback: false, stance: 'control-token' });
-    expect(of(verdicts, 'applebot-extended')).toMatchObject({ verdict: 'disallowed', fallback: false, stance: 'control-token' });
-    expect(of(verdicts, 'applebot')).toMatchObject({ verdict: 'allowed', fallback: true });
+    expect(of(verdicts, 'google-extended')).toMatchObject({ verdict: 'disallowed', via: 'own', stance: 'control-token' });
+    expect(of(verdicts, 'applebot-extended')).toMatchObject({ verdict: 'disallowed', via: 'own', stance: 'control-token' });
+    expect(of(verdicts, 'applebot')).toMatchObject({ verdict: 'allowed', via: '*' });
   });
 
   test('robots-pending-is-not-checked', () => {
     const pending = runAudit(page({ robots: okRobots('', { outcome: 'pending', status: null, finalUrl: null }) }));
     expect(pending.aiReadiness.bots).toHaveLength(14);
-    for (const verdict of pending.aiReadiness.bots) expect(verdict, verdict.bot).toMatchObject({ verdict: 'not-checked', fallback: false, groupLine: null, rule: null });
+    for (const verdict of pending.aiReadiness.bots) expect(verdict, verdict.bot).toMatchObject({ verdict: 'not-checked', via: null, groupLine: null, rule: null });
     // Not fetched at all: not checked either.
     expect(aiBotVerdicts(page({ robots: null })).every((verdict) => verdict.verdict === 'not-checked')).toBe(true);
   });
@@ -187,8 +204,8 @@ describe('AI bot catalogue and robots.txt verdicts', () => {
     const blocked = `${CLEAN_ROBOTS_TXT}\n${AI_BOTS.map((bot) => `User-agent: ${bot.token}`).join('\n')}\nDisallow: /\n`;
     const clean = runAudit(page());
     const blocking = runAudit(page({ robots: okRobots(blocked) }));
-    expect(blocking.aiReadiness.bots.every((verdict) => verdict.verdict === 'disallowed' && !verdict.fallback)).toBe(true);
-    expect(clean.aiReadiness.bots.every((verdict) => verdict.verdict === 'allowed' && verdict.fallback)).toBe(true);
+    expect(blocking.aiReadiness.bots.every((verdict) => verdict.verdict === 'disallowed' && verdict.via === 'own')).toBe(true);
+    expect(clean.aiReadiness.bots.every((verdict) => verdict.verdict === 'allowed' && verdict.via === '*')).toBe(true);
     expect(blocking.findings.map((finding) => finding.ruleId)).toEqual(clean.findings.map((finding) => finding.ruleId));
     expect(blocking.score).toBe(clean.score);
     expect(blocking.band).toBe(clean.band);

@@ -14,14 +14,17 @@ follow in Tasks 7 and 8); security review. Each line maps to one named test.
   operator, role and stance. seo-core judges each against the robots.txt the audit already has
   (`PageContext.robots`) with the Indexability panel's parser and `matchRobots`, on the page's path
   (`audit.aiReadiness.bots`).
-- **Only agents with a published user agent are fetched.** The visibility probes add OAI-SearchBot and
-  ChatGPT-User (8 agents, so `PROBE_LIMITS.maxFetches` is 8 and `maxRequests` 32). Control tokens
-  (Google-Extended, Applebot-Extended) send no requests and are never probed; Claude's tokens have
-  no published user agent.
+- **Two more probed agents, because their operators publish user agents.** The visibility probes add
+  OAI-SearchBot and ChatGPT-User (8 agents, so `PROBE_LIMITS.maxFetches` is 8 and `maxRequests` 32).
+  ClaudeBot keeps the observed user agent it was probed with before this phase; Claude-SearchBot and
+  Claude-User are not probed (Anthropic publishes their tokens, not user agents). Control tokens
+  (Google-Extended, Applebot-Extended) send no requests and are never probed.
 - **Roles and stances from operator documentation.** `ai-search`, `live-fetch`, `training`;
   `documented`, `may-ignore` (ChatGPT-User, Perplexity-User), `control-token`, `not-documented`
   (Bytespider). Applebot is `ai-search`. Copilot → Bingbot and Google AI → Googlebot plus
-  Google-Extended are frost's model.
+  Google-Extended are frost's model. Applebot follows Googlebot's groups when none names it and some
+  name Googlebot (Apple's documented rule, `followsGooglebot`); each verdict says which groups decided
+  (`via`: `own`, `googlebot`, `*`).
 
 ## Catalogue and verdicts (`packages/seo-core/src/__tests__/ai-readiness.test.ts`)
 - `ai-bots-catalogue-has-14-tokens-and-known-roles` — exactly 14 entries in `AI_BOT_IDS` order, one per
@@ -31,8 +34,12 @@ follow in Tasks 7 and 8); security review. Each line maps to one named test.
   Google AI as frost's model.
 - `ai-bots-judged-from-audit-robots` — one fixture robots.txt gives each of the 14 tokens its verdict
   on the page's path, with the deciding rule and its line; a token with no group of its own falls
-  back to `*` (`fallback`); `Claude-SearchBot` is judged by its own group, not `Claude-User`'s; a
+  back to `*` (`via: '*'`); `Claude-SearchBot` is judged by its own group, not `Claude-User`'s; a
   missing file allows every token, an unreadable one is `unknown`.
+- `applebot-follows-googlebot-when-not-named` — only Applebot has `followsGooglebot`; with no
+  Applebot group and a Googlebot one, Applebot is judged by Googlebot's group (`via: 'googlebot'`)
+  while Applebot-Extended and the rest use `*`; with no Googlebot group (a `Googlebot-News` one is
+  another crawler) Applebot uses `*`; its own group wins over both.
 - `control-tokens-never-requested` — Google-Extended and Applebot-Extended are `control-token`
   `training` tokens with no probe agent, and no probe agent sends either token; the verdicts come
   from the audit's robots.txt alone.

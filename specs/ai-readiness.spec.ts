@@ -28,7 +28,8 @@
  * Each token is judged by the robots.txt the audit already has (`PageContext.robots`, main's cached
  * fetch of the page's origin), with the Indexability panel's parser and matcher (`parseRobotsTxt`,
  * `matchRobots`, RFC 9309: the token's own groups, else `*`), on the page's path. **No request is
- * made for it.**
+ * made for it.** Applebot alone, as Apple documents, follows Googlebot's groups when it has none of
+ * its own and Googlebot has some. Which groups decided is the verdict's `via` (`AI_BOT_VIAS`).
  * - `allowed` / `disallowed`: the file's rules say so (no file to obey, `ROBOTS_ALLOW_ALL_OUTCOMES`,
  *   is `allowed`);
  * - `unknown`: the file could not be read (`ROBOTS_UNKNOWN_OUTCOMES`; crawlers then assume
@@ -90,6 +91,11 @@ export interface AiBot {
   readonly probeAgent: ProbeAgentId | null;
   /** The operator's documentation page frost read; `null`: none found. */
   readonly docsUrl: string | null;
+  /**
+   * With no group of its own, it follows Googlebot's groups before `*` (its operator's documented
+   * rule; Applebot only).
+   */
+  readonly followsGooglebot: boolean;
 }
 
 // The operators' pages (fetched 2026-11-02).
@@ -109,8 +115,8 @@ const META_DOCS = 'https://developers.facebook.com/docs/sharing/webmasters/web-c
  * - Perplexity: PerplexityBot is managed with robots.txt; Perplexity-User "generally ignores" it.
  * - Apple: Applebot follows robots.txt (Spotlight, Siri and Safari's suggestions: `ai-search`,
  *   Decision 10); Applebot-Extended "does not crawl webpages" and does not affect search inclusion.
- *   Apple also says Applebot follows Googlebot's rules when no group names Applebot; frost judges
- *   every token as RFC 9309 does (its own groups, else `*`), so that case is not modelled.
+ *   Apple also documents that when no group names Applebot but one names Googlebot, Applebot
+ *   follows Googlebot's (`followsGooglebot`); Applebot-Extended, a control token, has no such rule.
  * - Google: Google-Extended has no user agent of its own and does not affect Search inclusion or
  *   ranking.
  * - Common Crawl and Meta name robots.txt as the way to block CCBot and Meta-ExternalAgent (Meta lists
@@ -118,25 +124,32 @@ const META_DOCS = 'https://developers.facebook.com/docs/sharing/webmasters/web-c
  * - ByteDance: no operator page found for Bytespider.
  */
 export const AI_BOTS: readonly AiBot[] = [
-  { id: 'oai-searchbot', token: 'OAI-SearchBot', operator: 'OpenAI', role: 'ai-search', stance: 'documented', probeAgent: 'oai-searchbot', docsUrl: OPENAI_DOCS },
-  { id: 'chatgpt-user', token: 'ChatGPT-User', operator: 'OpenAI', role: 'live-fetch', stance: 'may-ignore', probeAgent: 'chatgpt-user', docsUrl: OPENAI_DOCS },
-  { id: 'gptbot', token: 'GPTBot', operator: 'OpenAI', role: 'training', stance: 'documented', probeAgent: 'gptbot', docsUrl: OPENAI_DOCS },
-  { id: 'claude-searchbot', token: 'Claude-SearchBot', operator: 'Anthropic', role: 'ai-search', stance: 'documented', probeAgent: null, docsUrl: ANTHROPIC_DOCS },
-  { id: 'claude-user', token: 'Claude-User', operator: 'Anthropic', role: 'live-fetch', stance: 'documented', probeAgent: null, docsUrl: ANTHROPIC_DOCS },
-  { id: 'claudebot', token: 'ClaudeBot', operator: 'Anthropic', role: 'training', stance: 'documented', probeAgent: 'claudebot', docsUrl: ANTHROPIC_DOCS },
-  { id: 'perplexitybot', token: 'PerplexityBot', operator: 'Perplexity', role: 'ai-search', stance: 'documented', probeAgent: 'perplexitybot', docsUrl: PERPLEXITY_DOCS },
-  { id: 'perplexity-user', token: 'Perplexity-User', operator: 'Perplexity', role: 'live-fetch', stance: 'may-ignore', probeAgent: null, docsUrl: PERPLEXITY_DOCS },
-  { id: 'applebot', token: 'Applebot', operator: 'Apple', role: 'ai-search', stance: 'documented', probeAgent: null, docsUrl: APPLE_DOCS },
-  { id: 'applebot-extended', token: 'Applebot-Extended', operator: 'Apple', role: 'training', stance: 'control-token', probeAgent: null, docsUrl: APPLE_DOCS },
-  { id: 'google-extended', token: 'Google-Extended', operator: 'Google', role: 'training', stance: 'control-token', probeAgent: null, docsUrl: GOOGLE_DOCS },
-  { id: 'ccbot', token: 'CCBot', operator: 'Common Crawl', role: 'training', stance: 'documented', probeAgent: null, docsUrl: COMMON_CRAWL_DOCS },
-  { id: 'bytespider', token: 'Bytespider', operator: 'ByteDance', role: 'training', stance: 'not-documented', probeAgent: null, docsUrl: null },
-  { id: 'meta-externalagent', token: 'Meta-ExternalAgent', operator: 'Meta', role: 'training', stance: 'documented', probeAgent: null, docsUrl: META_DOCS },
+  { id: 'oai-searchbot', token: 'OAI-SearchBot', operator: 'OpenAI', role: 'ai-search', stance: 'documented', probeAgent: 'oai-searchbot', docsUrl: OPENAI_DOCS, followsGooglebot: false },
+  { id: 'chatgpt-user', token: 'ChatGPT-User', operator: 'OpenAI', role: 'live-fetch', stance: 'may-ignore', probeAgent: 'chatgpt-user', docsUrl: OPENAI_DOCS, followsGooglebot: false },
+  { id: 'gptbot', token: 'GPTBot', operator: 'OpenAI', role: 'training', stance: 'documented', probeAgent: 'gptbot', docsUrl: OPENAI_DOCS, followsGooglebot: false },
+  { id: 'claude-searchbot', token: 'Claude-SearchBot', operator: 'Anthropic', role: 'ai-search', stance: 'documented', probeAgent: null, docsUrl: ANTHROPIC_DOCS, followsGooglebot: false },
+  { id: 'claude-user', token: 'Claude-User', operator: 'Anthropic', role: 'live-fetch', stance: 'documented', probeAgent: null, docsUrl: ANTHROPIC_DOCS, followsGooglebot: false },
+  { id: 'claudebot', token: 'ClaudeBot', operator: 'Anthropic', role: 'training', stance: 'documented', probeAgent: 'claudebot', docsUrl: ANTHROPIC_DOCS, followsGooglebot: false },
+  { id: 'perplexitybot', token: 'PerplexityBot', operator: 'Perplexity', role: 'ai-search', stance: 'documented', probeAgent: 'perplexitybot', docsUrl: PERPLEXITY_DOCS, followsGooglebot: false },
+  { id: 'perplexity-user', token: 'Perplexity-User', operator: 'Perplexity', role: 'live-fetch', stance: 'may-ignore', probeAgent: null, docsUrl: PERPLEXITY_DOCS, followsGooglebot: false },
+  { id: 'applebot', token: 'Applebot', operator: 'Apple', role: 'ai-search', stance: 'documented', probeAgent: null, docsUrl: APPLE_DOCS, followsGooglebot: true },
+  { id: 'applebot-extended', token: 'Applebot-Extended', operator: 'Apple', role: 'training', stance: 'control-token', probeAgent: null, docsUrl: APPLE_DOCS, followsGooglebot: false },
+  { id: 'google-extended', token: 'Google-Extended', operator: 'Google', role: 'training', stance: 'control-token', probeAgent: null, docsUrl: GOOGLE_DOCS, followsGooglebot: false },
+  { id: 'ccbot', token: 'CCBot', operator: 'Common Crawl', role: 'training', stance: 'documented', probeAgent: null, docsUrl: COMMON_CRAWL_DOCS, followsGooglebot: false },
+  { id: 'bytespider', token: 'Bytespider', operator: 'ByteDance', role: 'training', stance: 'not-documented', probeAgent: null, docsUrl: null, followsGooglebot: false },
+  { id: 'meta-externalagent', token: 'Meta-ExternalAgent', operator: 'Meta', role: 'training', stance: 'documented', probeAgent: null, docsUrl: META_DOCS, followsGooglebot: false },
 ];
 
 /** robots.txt's verdict for one token on the page's path (see the top of this file). */
 export const AI_BOT_VERDICTS = ['allowed', 'disallowed', 'unknown', 'not-checked'] as const;
 export type AiBotVerdictValue = (typeof AI_BOT_VERDICTS)[number];
+
+/**
+ * Which groups decided a verdict: the token's own; Googlebot's (Applebot's documented fallback,
+ * `followsGooglebot`); or the `*` groups (or none, when the file has no `*` group: allowed).
+ */
+export const AI_BOT_VIAS = ['own', 'googlebot', '*'] as const;
+export type AiBotVia = (typeof AI_BOT_VIAS)[number];
 
 /** Where an assistant's crawler mapping comes from: its operator's documentation, or frost's model. */
 export const AI_ASSISTANT_SOURCES = ['operator', 'frost-model'] as const;
