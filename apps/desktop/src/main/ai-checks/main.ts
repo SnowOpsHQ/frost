@@ -5,6 +5,7 @@ import type { SeoAuditResponse } from '@app/seo-core';
 import type { AgentCheckPort } from '../agent/check-port';
 import type { ServedHtml } from '../seo/served';
 import { createAiChecksService, type AiChecksMainService } from './service';
+import { aiChecksWatchKey } from './watch-key';
 
 // The AI checks in the main process (Phase 9 Task 10; acceptance `specs/ai-checks.feature.md`): the
 // one Electron-facing wiring of `service.ts`. Main creates it with one line, after the agent (its
@@ -14,9 +15,10 @@ import { createAiChecksService, type AiChecksMainService } from './service';
 //   `tabUserAgent` / `tabScripting` main's `servedInput` passes to `served.get` / `served.peek`) and
 //   whether its audit is ready.
 // - The served HTML: main's audit cache, read only with `peek` (the service never fetches).
-// - While the mode is not `off`, the active tab's URL and audit version are looked at every
-//   `WATCH_INTERVAL_MS`; a change asks the service to look again (a ready audit, the served HTML
-//   settling, another tab). Nothing is polled while checks are off.
+// - While the mode is not `off`, every tab's URL and audit version (and the active tab) are looked at
+//   every `WATCH_INTERVAL_MS` (`watch-key.ts`); a change asks the service to look again (a ready audit,
+//   the served HTML settling, another tab, a page asked for in a tab the user has left). Nothing is
+//   polled while checks are off.
 // - The consent dialog: a native message box main shows (`AI_CHECKS_ENABLE_PROMPT`), parented to
 //   the focused window (else the app's); Cancel is the default.
 
@@ -81,9 +83,7 @@ export function createAiChecksMain(deps: AiChecksMainDeps): AiChecksMainService 
       seen = '';
       return;
     }
-    const state = browser.getState();
-    const active = state.tabs.find((tab) => tab.id === state.activeTabId);
-    const key = active === undefined ? '' : `${active.id}\n${active.auditVersion}\n${active.url}`;
+    const key = aiChecksWatchKey(browser.getState());
     if (key === seen) return;
     seen = key;
     service.refresh();

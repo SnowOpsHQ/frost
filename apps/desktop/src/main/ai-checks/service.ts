@@ -319,6 +319,7 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
       const output = parseAiCheckOutput(event.text);
       if (output === null) {
         failures.set(done.url, { inputHash: done.inputHash, reason: 'invalid-output' });
+        if (done.automatic) backoffUntil = now() + AI_CHECK_LIMITS.automaticBackoffMs;
         noteAll(done.url, unavailable('invalid-output'));
       } else {
         const result: AiCheckResult = { url: done.url, inputHash: done.inputHash, modelId: done.modelId, checkedAt: now(), output };

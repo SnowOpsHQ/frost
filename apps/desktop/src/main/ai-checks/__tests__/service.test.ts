@@ -622,6 +622,23 @@ describe('ai checks service', () => {
     expect(h.agent.starts).toHaveLength(3);
   });
 
+  test('invalid-automatic-output-backs-off', async () => {
+    const h = harness();
+    h.setServed(1, readyState(PAGE));
+    await h.service.setMode('automatic');
+    await h.look();
+    expect(h.agent.starts).toHaveLength(1);
+    // An automatic check whose text is not an answer is a failed check: the next one waits too.
+    h.agent.finish('not json');
+    await h.settle();
+    expect(h.view()).toEqual({ status: 'unavailable', reason: 'invalid-output' });
+    h.navigate(1, 'https://www.example.com/next');
+    h.setServed(1, readyState('https://www.example.com/next'));
+    await h.look();
+    expect(h.view()).toEqual({ status: 'unavailable', reason: 'rate' });
+    expect(h.agent.starts).toHaveLength(1);
+  });
+
   test('cleared-by-clear-browsing-data', async () => {
     const h = harness();
     h.setServed(1, readyState(PAGE));
