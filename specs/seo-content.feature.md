@@ -328,3 +328,12 @@ this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second one.
 - **Scenario: content-highlight-sentences-leaves-no-residue** (Phase 8) — a long English article served
   with a strict CSP: the toggle draws boxes; leaving the panel and navigating remove them; the page's
   DOM is as before (the checks of `seo-panels.e2e.ts`'s `highlight-links-leaves-no-residue`).
+- **Scenario: content-gsc-suggestion-sets-target** (Phase 9; fake Google, configured for every launch
+  and connected only here, at the end) — configured but not connected, no Search Console part and no
+  read; connected, the page's top five queries with "Use as target" and the range note, read for this
+  page with no country or device and no page read yet; "Use as target" fills the field, marks the row
+  "Target" and is saved in main.
+- **Scenario: content-target-pages-marks-this-page** (Phase 9) — for a target query set with "Use as
+  target", the pages Google showed for it in the fake's order, this page alone marked "This page",
+  its rank among them stated, the facts line; no tone and no link in the part; one page read for the
+  query, with no page, country or device filter.

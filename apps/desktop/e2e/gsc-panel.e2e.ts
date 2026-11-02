@@ -5,11 +5,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { GSC_PANEL_COPY } from '@app/specs/gsc-panel.spec';
-import { GSC_LIMITS, gscDateRange, type GscQueryScope, type GscRangeDays } from '@app/specs/gsc.spec';
+import { GSC_DEVICE_LABELS, GSC_FILTER_TEXT, GSC_PANEL_COPY, GSC_RANGE_PRESET_LABELS, gscPresetRange } from '@app/specs/gsc-panel.spec';
+import { GSC_LIMITS, gscDateRange, gscRetentionStart, type GscQueryScope, type GscRangeDays } from '@app/specs/gsc.spec';
 import { accountHelpers, fakeAccountEnv } from './account-helpers';
 import { startFakeBackend, type FakeBackend } from './fake-backend';
-import { fakeDateRows, startFakeGoogle, type FakeGoogle } from './fake-google';
+import { fakeDateRows, fakeFilterEcho, fakeFiltersOf, startFakeGoogle, type FakeGoogle, type FakeQuery } from './fake-google';
 import { closeApp, launchApp, startLoopbackServer } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -48,8 +48,15 @@ const tile = (metric: string) => page.locator(`[data-testid="gsc-tile"][data-met
  * probe on the test machine is not Google traffic and not frost's).
  */
 const googleCalls = () => google.requests.filter((request) => / \/(o\/oauth2\/|token|revoke|webmasters\/)/.test(request));
+/** The fake Google's reads of one dimension, in order. */
+const readsOf = (dimension: 'date' | 'query' | 'country') => google.queries.filter((q) => (q.body.dimensions as string[] | undefined)?.[0] === dimension);
 /** The fake Google's date-dimension reads, in order. */
-const dateQueries = () => google.queries.filter((q) => (q.body.dimensions as string[] | undefined)?.[0] === 'date');
+const dateQueries = () => readsOf('date');
+/** A read's country and device filters. */
+const filtersOf = (q: FakeQuery) => {
+  const { country, device } = fakeFiltersOf(q.body);
+  return { country, device };
+};
 /** The page's rows (the fake's default): the range's first three days. */
 const PAGE_ROWS: FakeGoogle['dateRows'] = (start) => fakeDateRows(start);
 /** The property's rows: ten times the page's clicks and impressions. */
@@ -68,8 +75,8 @@ async function openPanel(): Promise<void> {
  * property reads.
  */
 async function showData(scope: GscQueryScope, days: GscRangeDays): Promise<void> {
-  // The fake records a query before it answers it: the last one says which scope is being read.
-  google.dateRows = (start, end) => (google.queries.at(-1)?.body.dimensionFilterGroups === undefined ? PROPERTY_ROWS(start, end) : PAGE_ROWS(start, end));
+  // A read with a page filter is this page's; one without, the property's (both echo a country or device filter).
+  google.dateRows = (start, end, filters) => fakeFilterEcho(filters.page === null ? PROPERTY_ROWS(start, end, filters) : PAGE_ROWS(start, end, filters), filters);
   await openPanel();
   if (!(await page.getByTestId('address').inputValue()).includes(`${new URL(site.origin).host}${PAGE_PATH}`)) await go(pageUrl());
   await scopeButton(scope).click();
@@ -287,5 +294,140 @@ test.describe.serial('the Search Console panel', () => {
     await page.locator('[data-testid="command-palette-option"][data-action="panel.search-console"]').click();
     await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'search-console');
     await expect(railItem('search-console')).toBeFocused();
+  });
+  test('gsc-panel-custom-range', async () => {
+    await showData('page', 28);
+    const before = dateQueries().length;
+    // The calendar opens only from its button (a dialog popup), with focus inside it.
+    const opener = page.getByTestId('gsc-custom-range');
+    await expect(opener).toHaveText(GSC_FILTER_TEXT.customOption);
+    await expect(opener).toHaveAttribute('aria-expanded', 'false');
+    await opener.click();
+    const calendar = page.getByTestId('gsc-calendar');
+    await expect(calendar).toBeVisible();
+    await expect(opener).toHaveAttribute('aria-expanded', 'true');
+    await expect(calendar.locator('td:focus')).toHaveCount(1);
+    // Opening it reads nothing.
+    expect(dateQueries().length).toBe(before);
+    // The month before the lag day's is wholly within reach: pick its 5th, then its 20th.
+    await page.getByTestId('gsc-calendar-previous').click();
+    const start = (await calendar.locator('td.gsc-cal-day[data-date$="-05"]').getAttribute('data-date'))!;
+    const end = (await calendar.locator('td.gsc-cal-day[data-date$="-20"]').getAttribute('data-date'))!;
+    await calendar.locator(`td[data-date="${start}"]`).click();
+    await expect(calendar.locator(`td[data-date="${start}"]`)).toHaveAttribute('aria-selected', 'true');
+    await expect(calendar).toBeVisible();
+    await calendar.locator(`td[data-date="${end}"]`).click();
+    // The second pick applies the range and closes the calendar; focus goes back to its button.
+    await expect(calendar).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await expect(opener).toHaveAttribute('aria-expanded', 'false');
+    await expect(opener).toHaveAttribute('data-active', 'true');
+    await expect(opener).toHaveAttribute('aria-label', `${GSC_FILTER_TEXT.customButton}: ${day(start)} – ${day(end)}`);
+    // No day preset is chosen any more.
+    await expect(page.locator('[data-testid="gsc-range"][aria-pressed="true"]')).toHaveCount(0);
+    // One read over exactly the picked days, and the panel says so.
+    await expect.poll(() => dateQueries().length).toBe(before + 1);
+    expect(dateQueries().at(-1)!.body).toMatchObject({ startDate: start, endDate: end });
+    await expect(panel()).toHaveAttribute('data-pending', 'false');
+    await expect(page.getByTestId('gsc-freshness')).toContainText(`range ${day(start)} – ${day(end)}`);
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
+  });
+
+  test('gsc-panel-16m-preset', async () => {
+    await showData('page', 28);
+    const before = dateQueries().length;
+    const select = page.getByTestId('gsc-range-select');
+    await expect(select).not.toHaveAttribute('data-active', 'true');
+    await expect(select.locator('option[value="16m"]')).toHaveText(GSC_RANGE_PRESET_LABELS['16m']);
+    await select.selectOption('16m');
+    // A month preset applies at once: no calendar.
+    await expect(select).toHaveAttribute('data-active', 'true');
+    await expect(page.getByTestId('gsc-calendar')).toHaveCount(0);
+    await expect(rangeButton(28)).toHaveAttribute('aria-pressed', 'false');
+    // One read, from the first day Search Console still holds to the lag day.
+    const range = gscPresetRange('16m', Date.now());
+    expect(range.start).toBe(gscRetentionStart(Date.now()));
+    expect(range.end).toBe(gscDateRange(1, Date.now()).end);
+    await expect.poll(() => dateQueries().length).toBe(before + 1);
+    expect(dateQueries().at(-1)!.body).toMatchObject({ startDate: range.start, endDate: range.end });
+    await expect(panel()).toHaveAttribute('data-pending', 'false');
+    await expect(page.getByTestId('gsc-freshness')).toContainText(`range ${day(range.start)} – ${day(range.end)}`);
+    // The fake answers the range's first three days: the chart's table has them.
+    await expect(page.getByTestId('gsc-chart-row').first()).toHaveAttribute('data-date', range.start);
+  });
+
+  test('gsc-panel-country-device-filters', async () => {
+    await showData('page', 28);
+    const country = page.getByTestId('gsc-country');
+    const device = page.getByTestId('gsc-device');
+    // The countries the fake answered for this page and range, named (in name order); no filter yet.
+    await expect(country.locator('option')).toHaveText([GSC_FILTER_TEXT.allCountries, 'Germany', 'India', 'United Kingdom', 'United States']);
+    await expect(device.locator('option')).toHaveText([GSC_FILTER_TEXT.allDevices, ...Object.values(GSC_DEVICE_LABELS)]);
+    await expect(page.getByTestId('gsc-clear-filters')).toHaveCount(0);
+    expect(filtersOf(readsOf('country').at(-1)!)).toEqual({ country: null, device: null });
+
+    // A country: one performance read and one top-queries read with it; the countries are not read again.
+    let counts = { date: readsOf('date').length, query: readsOf('query').length, country: readsOf('country').length };
+    await country.selectOption('gbr');
+    await expect(country).toHaveAttribute('data-active', 'true');
+    // The fake's echo: a country halves the clicks and names itself in the queries.
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('30');
+    await expect(page.getByTestId('gsc-total-impressions')).toHaveText('300');
+    await expect(page.getByTestId('gsc-query-text').first()).toHaveText('fake query 1 (gbr)');
+    expect(readsOf('date').length - counts.date).toBe(1);
+    expect(readsOf('query').length - counts.query).toBe(1);
+    expect(readsOf('country').length - counts.country).toBe(0);
+    expect(filtersOf(readsOf('date').at(-1)!)).toEqual({ country: 'gbr', device: null });
+    expect(filtersOf(readsOf('query').at(-1)!)).toEqual({ country: 'gbr', device: null });
+    // Still this page's read.
+    expect(fakeFiltersOf(readsOf('date').at(-1)!.body).page).toBe(pageUrl());
+
+    // A device too: one more of each, and the countries again (for the device).
+    counts = { date: readsOf('date').length, query: readsOf('query').length, country: readsOf('country').length };
+    await device.selectOption('MOBILE');
+    await expect(device).toHaveAttribute('data-active', 'true');
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('6');
+    await expect(page.getByTestId('gsc-query-text').first()).toHaveText('fake query 1 (gbr, MOBILE)');
+    await expect.poll(() => readsOf('country').length - counts.country).toBe(1);
+    expect(readsOf('date').length - counts.date).toBe(1);
+    expect(readsOf('query').length - counts.query).toBe(1);
+    expect(filtersOf(readsOf('date').at(-1)!)).toEqual({ country: 'gbr', device: 'MOBILE' });
+    expect(filtersOf(readsOf('country').at(-1)!)).toEqual({ country: null, device: 'MOBILE' });
+    // The chosen country stays chosen while the countries are read again.
+    await expect(country).toHaveValue('gbr');
+    await expect(page.getByTestId('gsc-clear-filters')).toHaveText(GSC_FILTER_TEXT.clear);
+
+    // Leaves no filter for the other tests.
+    await page.getByTestId('gsc-clear-filters').click();
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
+  });
+
+  test('gsc-panel-clear-filters', async () => {
+    await showData('property', 28);
+    await page.getByTestId('gsc-country').selectOption('usa');
+    await page.getByTestId('gsc-device').selectOption('DESKTOP');
+    // The property's rows, with both filters echoed: 600 clicks / 10.
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
+    const counts = { date: readsOf('date').length, query: readsOf('query').length, country: readsOf('country').length };
+    const clear = page.getByTestId('gsc-clear-filters');
+    await clear.click();
+    // Both filters reset (not the scope or the range), the button goes, focus stays in the filters.
+    await expect(clear).toHaveCount(0);
+    await expect(page.getByTestId('gsc-country')).toBeFocused();
+    await expect(page.getByTestId('gsc-country')).toHaveValue('');
+    await expect(page.getByTestId('gsc-device')).toHaveValue('');
+    await expect(page.getByTestId('gsc-country')).not.toHaveAttribute('data-active', 'true');
+    await expect(scopeButton('property')).toHaveAttribute('aria-pressed', 'true');
+    await expect(rangeButton(28)).toHaveAttribute('aria-pressed', 'true');
+    // The unfiltered property again: at most one read of each (none where main still holds the
+    // unfiltered answer from before), each without a country or device.
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('600');
+    await expect(page.getByTestId('gsc-query-text').first()).toHaveText('fake query 1');
+    await expect(page.getByTestId('gsc-country').locator('option')).toHaveCount(5);
+    for (const dimension of ['date', 'query', 'country'] as const) {
+      const reads = readsOf(dimension).slice(counts[dimension]);
+      expect(reads.length, dimension).toBeLessThanOrEqual(1);
+      for (const read of reads) expect(filtersOf(read), dimension).toEqual({ country: null, device: null });
+    }
   });
 });

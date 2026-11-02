@@ -627,7 +627,11 @@ their logs** (each surface says so):
   revocation at sign-out. `net.fetch` with no cookies, no cache, no redirects and a timeout.
 - **Google** (only while Search Console is connected): the token
   endpoints, the property list and Search Analytics queries while the panel shows (cached 15
-  minutes), and the revocation at disconnect.
+  minutes), and the revocation at disconnect. **URL Inspection** only on a click ("Inspect in
+  Search Console", "Inspect again", Try again, or the palette's "Inspect this page in Search
+  Console"), never on a page load: `POST https://searchconsole.googleapis.com/v1/urlInspection/index:inspect`
+  with the page and its property only, on the same read-only connection (cached 15 minutes; its own
+  rate, 1 a second, burst 3).
 - **Telemetry** (only with its switch on, and only to the endpoint baked into the build): see
   Telemetry above.
 - **Tabs you ask for:** an "Open in" tool (sent the page URL, after you allowed its host once), the
@@ -897,7 +901,7 @@ build" and sends nothing for it.
 | `FROST_PUBLIC_GSC_CLIENT_SECRET` | Search Console | That client's installed-app "secret" (not confidential by Google's own definition; never logged or committed). |
 | `FROST_PUBLIC_SENTRY_DSN` | Telemetry, errors | Sentry DSN for error events. |
 | `FROST_PUBLIC_OTEL_ENDPOINT` | Telemetry, usage | OTLP/HTTP traces endpoint. |
-| `FROST_GSC_AUTH_URL`, `FROST_GSC_TOKEN_URL`, `FROST_GSC_REVOKE_URL`, `FROST_GSC_API_BASE` | e2e only | Fake Google consent, token and revoke endpoints and API base (`https:`, or `http:` on `127.0.0.1` / `localhost`). |
+| `FROST_GSC_AUTH_URL`, `FROST_GSC_TOKEN_URL`, `FROST_GSC_REVOKE_URL`, `FROST_GSC_API_BASE`, `FROST_GSC_INSPECTION_BASE` | e2e only | Fake Google consent, token and revoke endpoints, API base and URL Inspection base (`https:`, or `http:` on `127.0.0.1` / `localhost`). |
 | `FROST_TELEMETRY_EXPORT_DELAY_MS` | e2e only | Span batch delay (holds the startup span in the queue). |
 
 The rule (`specs/build-config.spec.ts`, `runtimeOverridesAllowed`):

@@ -117,3 +117,11 @@ The renderer imports only these plain values and the schema module's types.
 ### Palette (`apps/desktop/src/renderer/__tests__/gsc-palette.test.ts`)
 - `gsc-palette-inspect` — "Inspect this page in Search Console" is offered on a web page unless main
   answered unconfigured or not connected; it asks for the page and opens Indexability.
+
+## End to end (`apps/desktop/e2e/gsc-inspection.e2e.ts`; fake Google `e2e/fake-google.ts`, `FROST_GSC_INSPECTION_BASE` through its `env`)
+One app, connected once in Settings (never signed in to frost); each test inspects a page of its own on a
+loopback site whose URL-prefix property the fake lists, so none reads another's cached answer.
+- `inspection-only-on-click` — loading the page (with a fragment), showing both cards and loading it again send no request; one click sends exactly `{ inspectionUrl, siteUrl }` (the fragment dropped), both cards show the answer from that one request, and "Inspect again" sends one more.
+- `inspection-index-and-canonical-card` — Google's view in frost's words (verdict, coverage, indexing, robots.txt, page fetch, crawled as, last crawl relative and absolute); Google's canonical next to the page's (as Google read it) and frost's, both `google-differs`, with the fact line; the Indexability status is unchanged; Google's strings are childless `<bdi dir="auto">`; "Open in Search Console" makes main open its cached link on `GSC_INSPECTION_LINK_HOST` (recorded, nothing opens), calls Google for nothing, and the link appears nowhere in the chrome.
+- `inspection-rich-results-in-schema` — "Detected by Google" in Schema: the verdict, each type with its items, each item's issues grouped errors first then warnings (Google's order within a group), "No issues" for a clean item; the Indexability card shows the same answer unasked.
+- `inspection-quota-message` — with the fake's `inspectionMode` (the Search Analytics reads unaffected): Google's 429 shows the quota message and Try again; an unreadable answer (`garbage`) its own message; Google answering again, Try again shows the answer; each click sent exactly one request (frost's own bucket, `GSC_INSPECTION_RATE`, refilled first).

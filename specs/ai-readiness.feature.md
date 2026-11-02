@@ -156,3 +156,12 @@ view model `ai-readiness-view.ts`); the Overview shows its score as a tile. Both
   the file's title as inert, bidi-isolated text (a `<bdi dir="auto">`), never as markup or a link.
 - `overview-tile-links-to-visibility` — the Overview's tile shows the same score and basis, and its
   "Open AI readiness" button opens the Visibility panel, as the sidebar's other panel jumps do.
+
+## End to end (`apps/desktop/e2e/visibility.e2e.ts`; the loopback site `e2e/probe-site.ts`)
+`/ai/guide`, a plain indexable article, on the site's second public-looking name (its own origin, so
+nothing the other probe runs cached applies), whose robots.txt disallows OAI-SearchBot on `/ai/` and
+GPTBot everywhere and which serves an `/llms.txt` in the proposal's shape.
+- `ai-readiness-static-score-before-probes` — before any run the ring is `partial` with the static score (`aiReadinessScore`: search-indexable pass, ai-search-crawlers warn, served-content pass → 81), "Based on 3 of 4 checks" and the hint; agent reachability and `llms.txt` are not checked; the Overview tile says the same; no crawler request and no `/llms.txt` was made (only the page and, unless cached, robots.txt).
+- `ai-readiness-bot-verdicts` — OAI-SearchBot and GPTBot read `disallowed` with their rules (`/ai/`, `/`), the other crawlers `allowed` with none; the AI-search check warns naming OAI-SearchBot; the training opt-out reads `info` ("For information"), not scored; no crawler was asked.
+- `probes-eight-agents-and-llms-txt` — a run shows the eight agents' columns (OAI-SearchBot and ChatGPT-User among them, OAI-SearchBot's robots.txt disallowed); `/llms.txt` is asked once, last, with frost's own user agent, and its check passes with the file's title; one request per crawler, and the fixture server counts at most `PROBE_LIMITS.maxRunRequests` (36) requests for the run.
+- `score-includes-reachability-after-run` — after a run for the page agent reachability passes over its three agents and the ring is `full`, 85, "Based on 4 of 4 checks", without the hint; the Overview tile follows.

@@ -128,6 +128,21 @@ the Settings section), registered from `components/seo/AiChecksCard.tsx`.
   saved by showing it, and once it is the target it is marked instead.
 - `heuristic-and-ai-page-type-both-shown-when-they-differ` — the on-device page type (`audit.pageType`)
   is shown beside the AI's only when they differ.
+- `chatgpt-plan-model-named-from-the-account-list` (Task 12, found end to end) — on the ChatGPT plan
+  route the card's cost note and "Checked by" name the model as the account lists it (`agent.watch`'s
+  `setup.chatgpt.models`), as the Settings section does, never by its id.
 - `palette-check-and-change-mode` — "Check this page with AI" calls `aiChecks.checkNow` for the active
   tab and opens the Overview, offered on a web page unless the mode is known `off`; "AI checks: change
   mode…" opens Settings on the `ai-checks` section.
+
+## End to end (`apps/desktop/e2e/ai-checks.e2e.ts`; the ChatGPT route's fake `e2e/fake-chatgpt.ts`)
+Task 12. Not the scripted agent model: a check is a real request of the runtime's OpenAI provider
+through main's model proxy to the fake (the unpackaged seam `--frost-e2e-chatgpt=<file>`,
+`agent-chatgpt-e2e.schema.ts`), which answers fixture JSON as a stream and records every request body.
+The page is `e2e/probe-site.ts`'s `/club` under a public-looking name (`--frost-e2e-public-hosts`): a
+member's page with its cookie (set by `/club/login`), the public one without. Main's message boxes
+(consent, Clear Browsing Data) are answered by a stub. One app, serial.
+- `ai-checks-off-sends-nothing` — signed in to the plan (a model set up), browsing a plain page and the club signed in shows the card and the Quality row off, the palette offers no check, and the fake records zero Responses requests.
+- `enable-via-consent-then-check-runs` — the card's Settings button opens the section; "Only when I ask" shows main's dialog (`AI_CHECKS_ENABLE_PROMPT`) once and, confirmed, is checked; the ready audit sends nothing by itself; "Check this page" sends exactly one request (tool-less, streamed, `store: false`, none of `CHATGPT_FORBIDDEN_BODY_FIELDS`) whose body holds the served (signed-out) title and text and none of the member's; the site saw the cookieless fetch beside the tab's; the ready card renders under the chrome's real CSP (no CSP or Trusted Types report, no `style` or link) with the answer under its label; the Quality row's "Use as target" fills the field, marks it, and main keeps it.
+- `check-again` — the page in a new tab shows the stored answer ("From an earlier check") with no request; "Check again" sends one and its answer replaces the first in the card and the Quality row.
+- `clear-browsing-data-removes-results` — Clear Browsing Data (its dialog names the AI checks' results) drops the open card's answer at once; the page loaded again shows none and sends nothing; the mode stays on request.
