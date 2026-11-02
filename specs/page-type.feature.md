@@ -16,7 +16,7 @@ Task 8 (Decision 14). Each line maps to one named test.
   total. Nothing new runs in the page; no extractor or snapshot-schema change.
 - **A fact, not a rule.** No rule is added to `SEO_RULE_SPECS`, and the health score never reads it.
 - **Honest about doubt.** Structured data wins a conflict, but then the confidence is `unsure`; no
-  signal is `other`, `unsure`. A site's root is its home page.
+  signal is `other`, `unsure`. The root path (`/` → `home`) is a signal like any other.
 - **Intent of the target query.** The Overview's "Page" card shows the intent of the page's stored
   target query (`content.getNotes`), classified by the existing on-device classifier
   (`serp.classify`), only when a target is set and on-device intent is `ready`. Otherwise it
@@ -31,8 +31,10 @@ Task 8 (Decision 14). Each line maps to one named test.
   `/docs/…` is `documentation`, `/products/…` `product`, `/contact` `contact`, `/pricing` `landing`;
   the deepest matching segment decides (`/blog/tag/seo` is a `listing`).
 - `conflict-is-unsure` — signals naming two types are `unsure`; no signal is `other`, `unsure`.
-- `home-by-root-path` — the root path (no query) is `home` at `high`, whatever the other signals;
-  `/?p=1` is not the root.
+- `home-by-root-path` — the root path (no query) alone is `home` at `low`, an ordinary `url-path`
+  signal; on `/`, a `CollectionPage` conflicts: `listing` (structured data wins), `unsure`, with
+  both signals shown; a listing structure on `/` conflicts too (`home`, `unsure`); `/?p=1` is not
+  the root.
 - `listing-by-repeated-headings-and-links` — from snapshot counts only: six or more headings of one
   level below H1, at least 30 internal links and few words per heading make a `structure` signal for
   `listing`; prose (many words per heading), few links or mixed heading levels do not.

@@ -105,8 +105,6 @@ export function pageTypeOf(s: PageSnapshot): PageTypeReport {
     structure: structureSignal(s),
   };
   const signals = PAGE_TYPE_SIGNALS.flatMap((signal) => (read[signal] ? [read[signal]] : []));
-  // A site's root is its home page, whatever it lists.
-  if (read['url-path']?.type === 'home') return { type: 'home', confidence: 'high', signals };
   const first = signals[0];
   if (!first) return { type: 'other', confidence: 'unsure', signals };
   const agree = signals.every((hit) => hit.type === first.type);

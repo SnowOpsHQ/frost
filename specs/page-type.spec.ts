@@ -19,12 +19,15 @@
  *   not tell an article from documentation.
  *
  * ## The type and its confidence (`PAGE_TYPE_CONFIDENCE`)
- * - The root path decides `home` (a site's root is its home page, whatever it lists): `high`, and
- *   the other signals are still shown.
- * - Otherwise the highest-priority signal decides the type (structured data wins), and:
- *   - `high`: two or more signals, all naming the same type;
- *   - `low`: one signal;
- *   - `unsure`: no signal (the type is `other`) or signals naming different types (a conflict).
+The highest-priority signal decides the type (structured data wins), and:
+- `high`: two or more signals, all naming the same type;
+- `low`: one signal;
+- `unsure`: no signal (the type is `other`) or signals naming different types (a conflict).
+
+The root path (`/` → `home`) is an ordinary `url-path` signal under the same rule. No structured
+data type or Open Graph type names a home page today, so the root alone is `home` at `low`, and a
+root whose structured data or structure names another type (a front page marked `CollectionPage`,
+say) is a conflict: that type, `unsure`, with both signals shown.
  *
  * It is frost's heuristic: landing pages in particular are often mislabelled, so `unsure` is said
  * plainly rather than hidden. Every label, map and threshold here is frost's own.

@@ -92,15 +92,26 @@ describe('page type heuristic', () => {
   });
 
   test('home-by-root-path', () => {
-    const home = pageTypeOf(plain('/'));
-    expect(home.type).toBe('home');
-    expect(home.confidence).toBe('high');
-    expect(home.signals).toEqual([{ signal: 'url-path', type: 'home', evidence: '/' }]);
-    // Whatever else it shows (a front page listing posts), the root is the home page; the other signals are still listed.
-    const listing = pageTypeOf(plain('/', { jsonLd: graph('CollectionPage'), headings: grid(8), headingTotal: 9, links: internalLinks(40), linkTotal: 40, wordCount: 300 }));
-    expect(listing.type).toBe('home');
-    expect(listing.confidence).toBe('high');
-    expect(listing.signals.map((s) => s.signal)).toEqual(['schema-type', 'url-path', 'structure']);
+    // The root path is an ordinary url-path signal: alone, `home` at `low`.
+    expect(pageTypeOf(plain('/'))).toEqual({ type: 'home', confidence: 'low', signals: [{ signal: 'url-path', type: 'home', evidence: '/' }] });
+    // A front page marked CollectionPage conflicts with the root: structured data names the type, unsure, both shown.
+    const marked = pageTypeOf(plain('/', { jsonLd: graph('WebSite', 'CollectionPage') }));
+    expect(marked).toEqual({
+      type: 'listing',
+      confidence: 'unsure',
+      signals: [
+        { signal: 'schema-type', type: 'listing', evidence: 'CollectionPage' },
+        { signal: 'url-path', type: 'home', evidence: '/' },
+      ],
+    });
+    // A listing structure on the root conflicts too (path before structure: home, unsure).
+    const grid8 = pageTypeOf(plain('/', { headings: grid(8), headingTotal: 9, links: internalLinks(40), linkTotal: 40, wordCount: 300 }));
+    expect(grid8.type).toBe('home');
+    expect(grid8.confidence).toBe('unsure');
+    expect(grid8.signals.map((s) => [s.signal, s.type])).toEqual([
+      ['url-path', 'home'],
+      ['structure', 'listing'],
+    ]);
     // A query on the root is not the home page (`/?p=1` is a post, `/?s=tea` a search).
     expect(pageTypeOf(plain('/?p=1')).signals).toEqual([]);
   });

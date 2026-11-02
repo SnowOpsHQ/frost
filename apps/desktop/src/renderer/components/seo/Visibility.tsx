@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { SeoAudit } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import type { IntentAnswer } from '@app/specs/intent-classifier.spec';
@@ -9,7 +9,7 @@ import { serpActions, useIntentState, useProbes } from '../../hooks/useSerp';
 import { RobotIcon, SearchIcon, StopIcon } from '../../icons';
 import { intentChip } from '../../serp-view';
 import { isolatedTooltip } from '../../seo-view';
-import { CLASSIFY_QUERY_MAX, classifyQueryInput, forgetProbes, probeNotes, probeSummary, probeTable, type ProbeTable } from '../../visibility-view';
+import { CLASSIFY_QUERY_MAX, classifyQueryInput, probeNotes, probeSummary, probeTable, type ProbeTable } from '../../visibility-view';
 import { AiReadiness } from './AiReadiness';
 import { PageText, Section } from './parts';
 import { EnableIntent } from './Serp';
@@ -109,8 +109,6 @@ function Probes({ tab, probes }: { readonly tab: TabState; readonly probes: Prob
   // The tab whose run could not start (so the line resets with the tab).
   const [refusedTab, setRefusedTab] = useState<number | null>(null);
   const refused = refusedTab === tab.id;
-  // Once no panel watches the tab's probes, the palette stops trusting what it last saw.
-  useEffect(() => () => forgetProbes(tab.id), [tab.id]);
   const onWebPage = isWebUrl(tab.url) && tab.error === null && !tab.crashed;
   const running = probes?.status === 'running';
   const table = probes ? probeTable(probes) : null;
