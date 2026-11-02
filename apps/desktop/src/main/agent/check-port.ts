@@ -39,13 +39,17 @@ export interface AgentCheckPort {
   chatRunning(): boolean;
   /** The last running chat turn ended (finished or failed). */
   onChatsIdle(listener: () => void): () => void;
+  /** The route or model was set, the ChatGPT sign-in or its models changed, or a key was set or cleared: `model()` may answer otherwise. */
+  onModelChange(listener: () => void): () => void;
 }
 
 export interface AgentCheckPortDeps {
   readonly host: Pick<AgentHost, 'startCheck' | 'stopCheck' | 'onCheck' | 'onChat' | 'activeChats'>;
-  readonly settings: Pick<AgentSettings, 'load' | 'current'>;
+  readonly settings: Pick<AgentSettings, 'load' | 'current' | 'onChange'>;
   readonly credentials: Pick<CredentialSettings, 'hasKey'>;
-  readonly chatgpt: Pick<ChatgptRoute, 'ready'>;
+  readonly chatgpt: Pick<ChatgptRoute, 'ready' | 'onChange'>;
+  /** A key was set or cleared (the settings page's `setKey` / `clearKey`). */
+  readonly onKeysChange: (listener: () => void) => () => void;
   /** Loads the agent's settings and grants, then forks the runtime (`Agent.start`). */
   start(): Promise<boolean>;
 }
@@ -87,5 +91,11 @@ export function createAgentCheckPort(deps: AgentCheckPortDeps): AgentCheckPort {
       deps.host.onChat((event) => {
         if ((event.type === 'chat.finish' || event.type === 'chat.error') && deps.host.activeChats().length === 0) listener();
       }),
+    onModelChange(listener) {
+      const unsubscribe = [deps.settings.onChange(() => listener()), deps.chatgpt.onChange(listener), deps.onKeysChange(listener)];
+      return () => {
+        for (const off of unsubscribe) off();
+      };
+    },
   };
 }

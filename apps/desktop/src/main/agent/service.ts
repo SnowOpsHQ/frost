@@ -198,10 +198,30 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
     ...(deps.focusWindow ? { focusWindow: deps.focusWindow } : {}),
     chatgptE2e,
   });
+  // A key set or cleared on the settings page tells the AI checks' port (`onModelChange`).
+  const keyListeners = new Set<() => void>();
+  const keysChanged = (): void => {
+    for (const listener of [...keyListeners]) {
+      try {
+        listener();
+      } catch {
+        log('agent: a key change listener failed');
+      }
+    }
+  };
+  const credentials: typeof agent.credentials = {
+    ...agent.credentials,
+    setKey: (slot, key) => agent.credentials.setKey(slot, key).finally(keysChanged),
+    clearKey: (slot) => agent.credentials.clearKey(slot).finally(keysChanged),
+  };
+  const onKeysChange = (listener: () => void): (() => void) => {
+    keyListeners.add(listener);
+    return () => void keyListeners.delete(listener);
+  };
   const session = createAgentSession({
     host: agent.host,
     approvals: agent.approvals,
-    credentials: agent.credentials,
+    credentials,
     settings: agent.settings,
     entitlements: agent.entitlements,
     grants: agent.grants,
@@ -247,5 +267,5 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
     agent.dispose();
   });
   // The AI checks' port (Phase 9 Task 10, `check-port.ts`): the host's check transport, main's own route and model.
-  return Object.assign(session, { checks: createAgentCheckPort({ host: agent.host, settings: agent.settings, credentials: agent.credentials, chatgpt: agent.chatgpt, start: () => agent.start() }) });
+  return Object.assign(session, { checks: createAgentCheckPort({ host: agent.host, settings: agent.settings, credentials: agent.credentials, chatgpt: agent.chatgpt, onKeysChange, start: () => agent.start() }) });
 }

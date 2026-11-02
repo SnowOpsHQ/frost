@@ -129,6 +129,8 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
   /** The last failure per page and input: an automatic check never asks the same input again. */
   const failures = boundedMap<{ readonly inputHash: string; readonly reason: AiCheckUnavailableReason }>(AI_CHECK_LIMITS.maxStoredUrls);
   let consenting = false;
+  /** Bumped by Clear Browsing Data: a look that waited across one stops (its input was read before it). */
+  let clears = 0;
   let modeChain: Promise<unknown> = Promise.resolve();
 
   const bump = (): void => {
@@ -182,9 +184,10 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
   const storedAnswer = async (url: string): Promise<AiCheckResult | null> => {
     const kept = answers.get(url);
     if (kept) return kept;
+    const generation = clears;
     try {
       const stored = await deps.store.get(url);
-      if (stored) answers.set(url, stored);
+      if (stored && clears === generation) answers.set(url, stored);
       return stored;
     } catch {
       log('ai checks: reading a stored answer failed');
@@ -202,6 +205,8 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
 
   /** Looks at `tabId`'s page: shows what is known, and starts its check when one is wanted and may run. */
   const consider = async (tabId: number): Promise<void> => {
+    const generation = clears;
+    const cleared = (): boolean => clears !== generation;
     const page = pageOf(tabId);
     if (page === null) {
       wanted.delete(tabId);
@@ -233,7 +238,7 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
     }
     if (manual?.again !== true) {
       const stored = await storedAnswer(read.url);
-      if (!stillOn(tabId, url) || checksOff()) return void schedule();
+      if (cleared() || !stillOn(tabId, url) || checksOff()) return void schedule();
       if (stored && stored.inputHash === read.inputHash) {
         wanted.delete(tabId);
         const before = notes.get(tabId);
@@ -248,7 +253,7 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
     // An automatic check never asks the same input again after it failed ("Check again" does).
     if (manual === null && failedHere !== null) return setNote(tabId, url, failedHere);
     const model = await deps.agent.model().catch(() => null);
-    if (!stillOn(tabId, url) || checksOff()) return void schedule();
+    if (cleared() || !stillOn(tabId, url) || checksOff()) return void schedule();
     if (model === null) {
       wanted.delete(tabId);
       return setNote(tabId, url, unavailable('no-model'));
@@ -257,10 +262,10 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
     if (running !== null) return setNote(tabId, url, manual !== null ? QUEUED : IDLE);
     if (manual === null && (now() < backoffUntil || !withinCap(now()))) return setNote(tabId, url, unavailable('rate'));
     const started = await deps.agent.start();
-    // Everything is checked again after the wait: the mode, the page, the queue, the chat, the model;
-    // an automatic check also needs the mode still `automatic` and its tab still the active one.
+    // Everything is checked again after the wait: Clear Browsing Data, the mode, the page, the queue,
+    // the chat, the model; an automatic check also needs the mode still `automatic` and its tab still the active one.
     const current = deps.agent.current();
-    if (disposed || checksOff() || !stillOn(tabId, url) || running !== null || current.route !== model.route || current.modelId !== model.modelId) return void schedule();
+    if (disposed || cleared() || checksOff() || !stillOn(tabId, url) || running !== null || current.route !== model.route || current.modelId !== model.modelId) return void schedule();
     if (manual === null && (mode !== 'automatic' || deps.tabs.activeTabId() !== tabId)) return void schedule();
     if (deps.agent.chatRunning()) return setNote(tabId, url, unavailable('busy-chat'));
     wanted.delete(tabId);
@@ -338,6 +343,10 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
     void schedule();
   });
   const unsubscribeChats = deps.agent.onChatsIdle(() => void schedule());
+  // A key, the sign-in or the model set up (or changed): a `no-model` page is looked at again.
+  const unsubscribeModel = deps.agent.onModelChange(() => {
+    if (!disposed) void schedule();
+  });
 
   const load = (): Promise<void> => {
     loading ??= (async () => {
@@ -461,6 +470,7 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
     },
 
     async clear() {
+      clears += 1;
       wanted.clear();
       stopRunning();
       answers.clear();
@@ -481,6 +491,7 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
       disposed = true;
       unsubscribeCheck();
       unsubscribeChats();
+      unsubscribeModel();
       for (const waiter of waiters.splice(0)) waiter.wake();
     },
   };

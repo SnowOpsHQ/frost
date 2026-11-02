@@ -39,6 +39,7 @@ function readyState(url: string, html = HTML, fetch: Partial<ServedFetch> = {}, 
 function fakeAgent() {
   const checkListeners = new Set<(event: AgentCheckEvent) => void>();
   const idleListeners = new Set<() => void>();
+  const modelListeners = new Set<() => void>();
   const starts: AgentCheckStart[] = [];
   const live = new Set<string>();
   let chat = false;
@@ -72,12 +73,20 @@ function fakeAgent() {
       idleListeners.add(listener);
       return () => void idleListeners.delete(listener);
     },
+    onModelChange: (listener: () => void) => {
+      modelListeners.add(listener);
+      return () => void modelListeners.delete(listener);
+    },
   } satisfies AgentCheckPort;
   return {
     port,
     starts,
     live,
     setModel: (next: AgentCheckModel | null) => (model = next),
+    /** The settings, the sign-in or a key changed: `model()` may answer otherwise. */
+    modelChanged() {
+      for (const listener of [...modelListeners]) listener();
+    },
     setChat(on: boolean) {
       chat = on;
       if (!on) for (const listener of [...idleListeners]) listener();
@@ -636,5 +645,38 @@ describe('ai checks service', () => {
     await h.service.checkNow(1, false);
     expect(h.agent.starts).toHaveLength(3);
     expect(new Set(h.agent.starts.map((s) => s.checkId)).size).toBe(3);
+  });
+
+  test('clear-during-start-sends-nothing', async () => {
+    const h = harness();
+    h.setServed(1, readyState(PAGE));
+    await h.service.setMode('on-request');
+    let release!: (ok: boolean) => void;
+    h.agent.port.start.mockImplementationOnce(() => new Promise<boolean>((resolve) => (release = resolve)));
+    const asked = h.service.checkNow(1, false);
+    await h.settle();
+    expect(h.agent.port.start).toHaveBeenCalledTimes(1);
+    // Clear Browsing Data while the runtime starts: the input read before it is never sent.
+    await h.service.clear();
+    release(true);
+    await asked;
+    await h.look();
+    expect(h.agent.port.startCheck).not.toHaveBeenCalled();
+    expect(h.view()).toEqual({ status: 'idle' });
+  });
+
+  test('model-setup-refreshes-no-model', async () => {
+    const h = harness();
+    h.setServed(1, readyState(PAGE));
+    h.agent.setModel(null);
+    await h.service.setMode('automatic');
+    await h.look();
+    expect(h.view()).toEqual({ status: 'unavailable', reason: 'no-model' });
+    // A key is stored (or the plan signed in, or the model set): the port says so, and the page is looked at again.
+    h.agent.setModel(MODEL);
+    h.agent.modelChanged();
+    await h.settle();
+    expect(h.agent.starts).toHaveLength(1);
+    expect(h.view()).toEqual({ status: 'checking' });
   });
 });
