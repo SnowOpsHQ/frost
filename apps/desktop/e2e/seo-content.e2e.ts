@@ -485,10 +485,16 @@ test('content-highlight-sentences-leaves-no-residue', async () => {
   expect(state.drawn).toHaveLength(state.boxes);
   // Real boxes where the sentences are: each sentence labelled once (on its first line), every box a
   // line-sized rectangle inside the article, the last one below the fold (document coordinates). An
-  // inline element inside a sentence (the `<em>`, the link) is not boxed a second time over its words.
-  expect(state.drawn).toHaveLength(11);
+  // inline element inside a sentence (the `<em>`, the link) is not boxed a second time over its words:
+  // no two boxes overlap. (The number of boxes follows the line wrapping, so it differs between fonts.)
   const rects = state.drawn.map((box) => `${box.x} ${box.y} ${box.width} ${box.height}`);
-  expect(new Set(rects).size, rects.join(' | ')).toBe(rects.length);
+  for (const [i, a] of state.drawn.entries()) {
+    for (const b of state.drawn.slice(i + 1)) {
+      const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+      const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+      expect(overlapX > 1 && overlapY > 1, rects.join(' | ')).toBe(false);
+    }
+  }
   const label = HIGHLIGHT_STYLES['long-sentence'].label;
   const labelled = state.drawn.filter((box) => box.label !== '');
   expect(labelled.map((box) => box.label)).toEqual([label, label, label]);
