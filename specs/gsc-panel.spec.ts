@@ -1,12 +1,22 @@
 /**
- * The Search Console performance panel (Phase 4 Task 10; acceptance `gsc-panel.feature.md`). Plain
- * values with no Zod, so the chrome renderer can use them (its strict Trusted Types CSP blocks Zod's
- * eval probe). The data comes from the read API of `gsc.spec.ts` / `gsc.schema.ts` (`gsc.performance`,
- * `gsc.topQueries`). Search Console is not gated (`UNGATED_FEATURES`): no frost account or plan needed.
+ * The Search Console performance panel (Phase 4 Task 10, Phase 9 Task 3; acceptance
+ * `gsc-panel.feature.md`). Plain values with no Zod, so the chrome renderer can use them (its strict
+ * Trusted Types CSP blocks Zod's eval probe). The data comes from the read API of `gsc.spec.ts` /
+ * `gsc.schema.ts` (`gsc.performance`, `gsc.topQueries`, `gsc.countries`). Search Console is not gated
+ * (`UNGATED_FEATURES`): no frost account or plan needed.
  *
- * Clean-room: frost's own names, words and chart.
+ * Clean-room: frost's own names, words, chart and calendar.
  */
-import type { GscQueryScope, GscRangeDays, GscUnavailableReason } from './gsc.spec';
+import {
+  GSC_DEVICES,
+  GSC_RANGE_DAYS,
+  gscDateRange,
+  gscRetentionStart,
+  type GscDateRange,
+  type GscDevice,
+  type GscQueryScope,
+  type GscUnavailableReason,
+} from './gsc.spec';
 
 /** The metrics a performance answer carries per day, in tile order. */
 export const GSC_PANEL_METRICS = ['clicks', 'impressions', 'ctr', 'position'] as const;
@@ -24,14 +34,136 @@ export const GSC_LOWER_IS_BETTER: readonly GscPanelMetric[] = Object.freeze(['po
 
 export const GSC_SCOPE_LABELS: Readonly<Record<GscQueryScope, string>> = Object.freeze({ page: 'This page', property: 'Whole property' });
 
-/** What the panel shows first: this page, 28 days, clicks. The choice holds while the chrome runs (not persisted). */
-export const GSC_PANEL_DEFAULTS: Readonly<{ scope: GscQueryScope; days: GscRangeDays; metric: GscPanelMetric }> = Object.freeze({ scope: 'page', days: 28, metric: 'clicks' });
+// ---- Ranges (Phase 9 Task 3; Decision 5) ---------------------------------------------------------
+
+/** The months of the month presets. */
+export const GSC_RANGE_MONTHS = Object.freeze({ '3m': 3, '6m': 6, '12m': 12, '16m': 16 } as const);
+export type GscMonthPreset = keyof typeof GSC_RANGE_MONTHS;
+
+/**
+ * The panel's range choices: the day presets (`GSC_RANGE_DAYS`, read as `days`, as before), the month
+ * presets (read as a `range`, see `gscPresetRange`) and `custom` (a range picked on the calendar).
+ */
+export const GSC_RANGE_PRESETS = [...GSC_RANGE_DAYS, '3m', '6m', '12m', '16m', 'custom'] as const;
+export type GscRangePreset = (typeof GSC_RANGE_PRESETS)[number];
+
+/** Each preset's words (the day presets' buttons say "7 days"; the others are offered in a select). */
+export const GSC_RANGE_PRESET_LABELS: Readonly<Record<GscRangePreset, string>> = Object.freeze({
+  7: '7 days',
+  28: '28 days',
+  90: '90 days',
+  '3m': 'Last 3 months',
+  '6m': 'Last 6 months',
+  '12m': 'Last 12 months',
+  '16m': 'Last 16 months',
+  custom: 'Custom range',
+});
+
+const DAY_MS = 86_400_000;
+const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * A month preset's range: it ends on the lag day (`gscDateRange(1, nowMs).end`) and starts on the
+ * same day of the month that many calendar months before it (that month's last day when it is
+ * shorter: from May 31, three months back is Feb 28 or 29), both inclusive. `16m` starts at
+ * `gscRetentionStart(nowMs)` instead (the first day Search Console still holds, counted from today),
+ * so it always fits `GSC_MAX_RANGE_DAYS`.
+ */
+export function gscPresetRange(preset: GscMonthPreset, nowMs: number): GscDateRange {
+  const end = gscDateRange(1, nowMs).end;
+  if (preset === '16m') return { start: gscRetentionStart(nowMs), end };
+  const lag = new Date(Date.parse(`${end}T00:00:00Z`));
+  const months = lag.getUTCFullYear() * 12 + lag.getUTCMonth() - GSC_RANGE_MONTHS[preset];
+  const year = Math.floor(months / 12);
+  const month = months - year * 12;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return { start: isoDay(Date.UTC(year, month, Math.min(lag.getUTCDate(), lastDay))), end };
+}
+
+/**
+ * What the panel shows first: this page, 28 days, clicks, no filters. The choices (scope, range,
+ * custom dates, metric, country, device) hold while the chrome runs and are shared by every tab (not
+ * persisted). `custom` is the picked range, set only while `range` is `custom`.
+ */
+export const GSC_PANEL_DEFAULTS: Readonly<{
+  scope: GscQueryScope;
+  range: GscRangePreset;
+  custom: GscDateRange | null;
+  metric: GscPanelMetric;
+  country: string | null;
+  device: GscDevice | null;
+}> = Object.freeze({ scope: 'page', range: 28, custom: null, metric: 'clicks', country: null, device: null });
+
+/** How a range reads in a sentence (`{n}`, `{start}`, `{end}` filled in by the chrome). */
+export const GSC_RANGE_TEXT = Object.freeze({
+  lastDays: 'in the last {n} days',
+  lastMonths: 'in the last {n} months',
+  custom: 'from {start} to {end}',
+} as const);
+
+// ---- Filters (Phase 9 Task 3; Decision 5) ---------------------------------------------------------
+
+/**
+ * The country and device filters' words. The country select lists only the countries a
+ * `gsc.countries` read answered for the page (or property), range and device, named with
+ * `Intl.DisplayNames` through `GSC_COUNTRY_ALPHA3`; a code without a name there is shown as is, in
+ * capitals (inert text). "Clear filters" shows only while a filter is set and resets both (not the
+ * scope or range).
+ */
+export const GSC_FILTER_TEXT = Object.freeze({
+  rangeLabel: 'More date ranges',
+  rangeMore: 'More ranges…',
+  customOption: 'Custom range…',
+  customButton: 'Change dates',
+  countryLabel: 'Country',
+  deviceLabel: 'Device',
+  allCountries: 'All countries',
+  allDevices: 'All devices',
+  clear: 'Clear filters',
+  /** The `no-data` notice while a filter is set (`{range}` from `GSC_RANGE_TEXT`). */
+  noDataFiltered: 'No search impressions {range} with these filters.',
+} as const);
+
+export const GSC_DEVICE_LABELS: Readonly<Record<GscDevice, string>> = Object.freeze({ DESKTOP: 'Desktop', MOBILE: 'Mobile', TABLET: 'Tablet' });
+/** The device select's order. */
+export const GSC_DEVICE_ORDER: readonly GscDevice[] = Object.freeze([...GSC_DEVICES]);
+
+// ---- Calendar (Phase 9 Task 3) --------------------------------------------------------------------
+
+/**
+ * The custom range's calendar: a dialog popover (WAI-ARIA date picker dialog) with one month's grid.
+ * - **Week start** from the locale (`Intl.Locale` week info, `1` Monday … `7` Sunday), else
+ *   `fallbackWeekStart` (Monday, ISO 8601).
+ * - **Days that can be picked** are `gscRetentionStart(now)` to the lag day (`gscDateRange(1, now).end`);
+ *   every other day is shown `aria-disabled` and cannot be picked, and focus stays within them.
+ * - **Month navigation**: the previous and next month buttons (disabled past either end), PageUp /
+ *   PageDown (a month), Shift+PageUp / Shift+PageDown (a year).
+ * - **Keys in the grid** (roving tabindex: one day is tabbable): arrows move a day or a week, Home /
+ *   End to the week's first or last day, Enter or Space picks. The first pick is the start, the second
+ *   the end (picked before the start: the two swap), which applies the range and closes. Escape
+ *   closes without a change. Closing returns focus to what opened it.
+ * - Picked days are `aria-selected`.
+ */
+export const GSC_CALENDAR = Object.freeze({
+  fallbackWeekStart: 1,
+  /** Weeks a month's grid can need (a 31-day month starting on the week's last day). */
+  maxWeeks: 6,
+  text: {
+    dialogLabel: 'Choose a date range',
+    previousMonth: 'Previous month',
+    nextMonth: 'Next month',
+    pickStart: 'Choose the first day.',
+    pickEnd: 'Choose the last day.',
+    cancel: 'Cancel',
+  },
+} as const);
 
 /**
  * The chart, in SVG user units (scaled to the panel's width by styles; drawn with attributes only,
  * never `style=`). The y axis has at most `maxYTicks` evenly spaced "nice" ticks (1, 2 or 5 × 10ⁿ
  * apart; positions from 1 up), labelled with as many decimals as their step needs (never two alike);
- * the x axis `xTicks` dates (first, middle, last).
+ * the x axis `xTicks` dates (first, middle, last; up to `GSC_MAX_RANGE_DAYS` days, every point inside
+ * the plot), labelled by day (`Sep 29`), or by month (`Jul 2025`) for a range over `monthTicksAfterDays`.
  *
  * Which days have a value: Google omits a day without impressions, so for clicks and impressions a
  * day **up to the last answered day** without a row is 0. Days **after** the last answered day have
@@ -48,6 +180,8 @@ export const GSC_CHART = Object.freeze({
   padLeft: 38,
   maxYTicks: 4,
   xTicks: 3,
+  /** A range longer than this many days labels its x ticks with the month (`Jul 2025`), not the day. */
+  monthTicksAfterDays: 90,
 });
 
 /**
@@ -57,7 +191,7 @@ export const GSC_CHART = Object.freeze({
 export const GSC_RATE_HIGHLIGHT_MIN_IMPRESSIONS = 10;
 
 /**
- * The read waits this long after the URL, scope or range last changed before it is sent (a page that
+ * The read waits this long after the URL, scope, range or a filter last changed before it is sent (a page that
  * changes its URL with `pushState` while it loads reads once). Retry is sent at once.
  */
 export const GSC_READ_DEBOUNCE_MS = 300;
@@ -100,7 +234,7 @@ export type GscPanelAction = (typeof GSC_PANEL_ACTIONS)[number];
 /** A state's notice: a title, words, and at most one button (`GSC_PANEL_ACTIONS`) with its label. */
 export interface GscPanelCopy {
   readonly title: string;
-  /** `{host}` and `{days}` are filled in by the chrome. */
+  /** `{host}` and `{range}` (`GSC_RANGE_TEXT`) are filled in by the chrome. */
   readonly message: string;
   readonly action: GscPanelAction | null;
   readonly actionLabel: string | null;
@@ -118,7 +252,7 @@ export const GSC_PANEL_COPY: Readonly<Record<Exclude<GscPanelState, 'loading' | 
   connecting: { title: 'Connect Search Console', message: 'Finish connecting in your browser.', action: 'open-gsc-settings', actionLabel: 'Open Settings' },
   'not-a-web-page': { title: 'No web page', message: 'Search Console has data for web pages (http and https) only.', action: null, actionLabel: null },
   'no-property': { title: 'No matching property', message: 'None of your Search Console properties covers {host}.', action: null, actionLabel: null },
-  'no-data': { title: 'No data in this range', message: 'No search impressions in the last {days} days.', action: null, actionLabel: null },
+  'no-data': { title: 'No data in this range', message: 'No search impressions {range}.', action: null, actionLabel: null },
   'auth-expired': {
     title: 'Reconnect Search Console',
     message: 'Google no longer accepts this connection. Reconnect in Settings.',
@@ -143,7 +277,7 @@ export const GSC_PANEL_TEXT = Object.freeze({
   lowerIsBetter: 'lower is better',
 } as const);
 
-/** The states that read (or show what was read): only these show the scope and range controls. */
+/** The states that read (or show what was read): only these show the scope, range and filter controls. */
 export const GSC_READING_STATES: readonly GscPanelState[] = Object.freeze(['loading', 'data', 'no-data', 'quota', 'network', 'invalid']);
 
 /** Each `gsc.performance` unavailable reason as a panel state (`not-entitled`, never sent by main: unconfigured). */

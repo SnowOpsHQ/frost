@@ -43,7 +43,7 @@ function everySource(): PaletteSource[] {
     ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }),
     ...retentionPaletteSources({ open: vi.fn(), lastProject: () => 'x', purgeNow: vi.fn(async () => null), compact: vi.fn(async () => null) }),
     ...inspectorPaletteSources({ pick: vi.fn(async () => null) }),
-    ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn() }),
+    ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn(), filtered: () => true, clearFilters: vi.fn() }),
   ];
 }
 

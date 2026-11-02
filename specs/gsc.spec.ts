@@ -232,6 +232,23 @@ export interface GscProperty {
   permissionLevel: GscPermissionLevel;
 }
 
+/**
+ * Settings' count of the properties this connection can read (Phase 9 Task 3, SL-112): the verified
+ * properties `gsc.properties` answers, shown only while connected and only from an `ok` answer.
+ */
+export const GSC_PROPERTY_COUNT_TEXT = {
+  none: 'No verified properties',
+  one: '1 property',
+  many: '{n} properties',
+} as const;
+
+/** "No verified properties", "1 property", "12 properties" (thousands separated). */
+export function gscPropertyCountText(count: number): string {
+  if (count === 0) return GSC_PROPERTY_COUNT_TEXT.none;
+  if (count === 1) return GSC_PROPERTY_COUNT_TEXT.one;
+  return GSC_PROPERTY_COUNT_TEXT.many.replace('{n}', count.toLocaleString('en-US'));
+}
+
 // ---- Performance --------------------------------------------------------------------------------
 
 /** `page`: the one URL (its fragment dropped; `page equals` filter). `property`: the whole property. */

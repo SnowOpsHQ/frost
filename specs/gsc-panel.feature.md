@@ -1,11 +1,14 @@
 # Feature: the Search Console performance panel
 
 Spec: `specs/gsc-panel.spec.ts` (Zod-free: `GSC_PANEL_METRICS`, `GSC_METRIC_LABELS`, `GSC_LOWER_IS_BETTER`,
-`GSC_SCOPE_LABELS`, `GSC_PANEL_DEFAULTS`, `GSC_CHART`, `GSC_PANEL_STATES`, `GSC_PANEL_ACTIONS`,
-`GSC_PANEL_COPY`, `GSC_PANEL_TEXT`, `GSC_READING_STATES`, `GSC_REASON_STATES`), reading the API of `specs/gsc.spec.ts`
-/ `specs/gsc.schema.ts` (`gsc.watch`, `gsc.performance`, `gsc.topQueries`, `gscDateRange`). The rail entry is `SEO_PANELS`' `search-console`
+`GSC_SCOPE_LABELS`, `GSC_RANGE_MONTHS`, `GSC_RANGE_PRESETS`, `GSC_RANGE_PRESET_LABELS`, `gscPresetRange`,
+`GSC_PANEL_DEFAULTS`, `GSC_RANGE_TEXT`, `GSC_FILTER_TEXT`, `GSC_DEVICE_LABELS`, `GSC_DEVICE_ORDER`,
+`GSC_CALENDAR`, `GSC_CHART`, `GSC_PANEL_STATES`, `GSC_PANEL_ACTIONS`, `GSC_PANEL_COPY`, `GSC_PANEL_TEXT`,
+`GSC_READING_STATES`, `GSC_REASON_STATES`), reading the API of `specs/gsc.spec.ts` / `specs/gsc.schema.ts`
+(`gsc.watch`, `gsc.performance`, `gsc.topQueries`, `gsc.countries`, `gscDateRange`, `gscRetentionStart`,
+`gscCustomRange`, `GSC_COUNTRY_ALPHA3`, `GSC_DEVICES`). The rail entry is `SEO_PANELS`' `search-console`
 (`specs/seo-sidebar.spec.ts`); its palette jump is in `FEATURE_PANEL_JUMPS` (`specs/command-palette.spec.ts`).
-Phase 4 Task 10. Each line maps to one named test.
+Phase 4 Task 10; ranges, filters and the calendar Phase 9 Task 3 (SL-040). Each line maps to one named test.
 
 ## Decisions
 - **A rail panel without rules.** `search-console` has no audit categories, so its rail item has no
@@ -23,18 +26,43 @@ Phase 4 Task 10. Each line maps to one named test.
   a connection itself: that needs the click in Settings.
 - **What it reads.** For the active tab's URL (its fragment dropped) and the chosen scope — **This page**
   (`page`) or **Whole property** (`property`, naming the matched property's `siteUrl`) — and range (7, 28 or
-  90 days): `gsc.performance` (per-day rows and totals) and `gsc.topQueries`, both at once. Totals are
-  main's (CTR clicks / impressions, position impression-weighted). Scope, range and metric hold while the
-  chrome runs (`GSC_PANEL_DEFAULTS` at start) and are shared by every tab.
+  90 days, or a longer range below): `gsc.performance` (per-day rows and totals) and `gsc.topQueries`, both
+  at once, with the country and device filters. Totals are main's (CTR clicks / impressions, position
+  impression-weighted). Scope, range, custom dates, metric and filters hold while the chrome runs
+  (`GSC_PANEL_DEFAULTS` at start: no filters) and are shared by every tab.
+- **Ranges (Phase 9).** The day presets (7, 28, 90) stay buttons and read as `days`, as before. "More
+  ranges…" offers "Last 3 months", "Last 6 months", "Last 12 months", "Last 16 months" and "Custom
+  range…". A month preset reads as a `range` from `gscPresetRange`: it ends on the lag day and starts
+  that many calendar months before it; "Last 16 months" starts at `gscRetentionStart`, so it always
+  fits `GSC_MAX_RANGE_DAYS`. "Custom range…" opens the calendar; the range applies only once both days
+  are picked (Cancel or Escape keep the last range). A custom range is clamped to the calendar's days
+  (`gscRetentionStart` to the lag day) when it is read, so a chrome left open for days never sends one
+  main refuses.
+- **Filters (Phase 9).** A country select (only the countries `gsc.countries` answered for the page or
+  property, range and device; "All countries" first, then by name) and a device select ("All
+  devices", Desktop, Mobile, Tablet). A country is named with `Intl.DisplayNames` through
+  `GSC_COUNTRY_ALPHA3`; a code Google answers without a name there (`zzz`, `xkk`) is shown as is, in
+  capitals. The chosen country stays listed even when a new list lacks it. "Clear filters" shows only
+  while a filter is set and resets both, keeping the scope and range; so does the palette's "Search
+  Console: clear filters". The `gsc.countries` read uses the same page, scope, range and device but no
+  country (main ignores it there), so choosing a country does not read the list again. With a filter
+  set, the `no-data` notice says "with these filters".
+- **The calendar (Phase 9)** is `GSC_CALENDAR`: a modal dialog popover with the WAI-ARIA date picker
+  dialog's keyboard model (roving tabindex in a `grid`, arrows, Home/End, PageUp/PageDown and their
+  Shift years, Enter/Space picks, Escape closes and returns focus to what opened it; Tab stays inside
+  the dialog). The week starts on the locale's first day. Days before `gscRetentionStart` and after the
+  lag day are `aria-disabled` and cannot be picked or focused; picked days are `aria-selected`. Drawn
+  with classes only (no `style=`).
 - **When it reads.** Only while the panel is open (the sidebar shows it); again when the URL (without
-  fragment), the scope, the range or the connection changes — `GSC_READ_DEBOUNCE_MS` after the last
+  fragment), the scope, the range, a filter or the connection changes — `GSC_READ_DEBOUNCE_MS` after the last
   change, so a page that rewrites its URL while it loads reads once — and at once on Retry. Never on a
   timer: main's 15-minute cache makes going back cheap. An answer for an earlier request (the URL
   changed meanwhile) is dropped, never shown. While a new scope or range of the same page reads, the
   last data stays shown, dimmed (`aria-busy`); another page or connection shows the loading state.
 - **The chart is frost's own SVG**, drawn with attributes (no `style=`): one line for the chosen metric
   over every day of the range, a few "nice" y ticks (1, 2 or 5 × 10ⁿ apart; compact labels such as 1.5M),
-  the first, middle and last dates on the x axis. Ticks are evenly spaced (position's from 1 up) and
+  the first, middle and last dates on the x axis (by month, `Jul 2025`, when the range is over
+  `GSC_CHART.monthTicksAfterDays` days; up to 490 days, every point inside the plot). Ticks are evenly spaced (position's from 1 up) and
   labelled with the decimals their step needs, so no two read alike (CTR below 1% has two decimals).
   Google omits a day without impressions, so clicks and impressions count a missing day up to the last
   answered day as 0; days after the last answered day have no data yet (final data can lag more than two
@@ -62,6 +90,7 @@ Phase 4 Task 10. Each line maps to one named test.
 - `chart-large-numbers` — values in the millions get compact tick labels and stay inside the plot.
 - `chart-ctr-percent-ticks` — CTR ticks are percentages, with two decimals below 1%.
 - `chart-x-ticks` — the first, middle and last dates of the range, as short UTC dates.
+- `chart-long-range-ticks` — a 490-day range keeps every point and tick inside the plot, its x ticks are still the first, middle and last days, and over 90 days they are labelled by month (`Jul 2025`); at 90 days, by day.
 - `chart-summary` — the label names the metric, the range, the total (counts) or average (CTR, position), the last answered day when it ends early, and the best day (CTR and position: only a day with enough impressions; else none).
 
 ## View model (`apps/desktop/src/renderer/__tests__/gsc-view.test.ts`)
@@ -71,23 +100,34 @@ Phase 4 Task 10. Each line maps to one named test.
 - `answer-states` — each unavailable reason gives its state, words and button (`not-entitled` the unconfigured words; `no-property` names the host); `ok` without impressions is `no-data`; with data, the four tiles.
 - `controls-only-when-reading` — the scope and range controls show in the reading states only (loading, data, no data, quota, network, invalid).
 - `property-scope-names-site` — the whole-property choice names the answered property's `siteUrl`.
-- `request-key` — the request ignores the fragment; the URL, scope, range or connection give a new one.
+- `request-key` — the request ignores the fragment; the URL, scope, range or connection give a new one (filters: `filters-in-request-key`).
 - `stale-answer-ignored` — an answer for an earlier request is dropped; a retry asks again for the same one; the last `ok` data of the same page and connection is kept (as pending) while another scope or range reads.
 - `pending-keeps-data` — while a scope or range read runs, the last data shows (state `data`, pending) with the new choices; tiles say "Through <last>" when the rows end early.
-- `prefs-store` — scope, range and metric start at `GSC_PANEL_DEFAULTS` and notify subscribers when they change.
+- `prefs-store` — scope, range, custom dates, metric and filters start at `GSC_PANEL_DEFAULTS` (no filters) and notify subscribers when they change; custom dates are kept only with the `custom` range, which needs them.
+- `presets-to-ranges` — 7, 28 and 90 read as `days`; each month preset reads as a range that ends on the lag day and starts that many calendar months earlier (`16m` at `gscRetentionStart`); every one is accepted by `gscCustomRange` and fits `GSC_MAX_RANGE_DAYS` on every day across two years (a leap February included).
+- `custom-range-bounds` — the calendar's days run from `gscRetentionStart` to the lag day; a picked range out of order swaps; a stored range that the clock moved past is clamped into the bounds when read (accepted by `gscCustomRange`); the `no-data` words name the range.
+- `filters-in-request-key` — a country or device gives a new request key and goes into the query (none: no key sent); the countries read carries the device but never the country; the store keeps them.
+- `clear-filters` — clearing resets the country and device only (scope, range and metric stay), notifies once, and the view says whether a filter is set (the button's condition).
+- `country-names-from-alpha3` — `usa` is "United States" (through `GSC_COUNTRY_ALPHA3` and `Intl.DisplayNames`); a code without a name (`zzz`, `xkk`) or without `Intl.DisplayNames` is the code in capitals; options are sorted by name, each once, and the chosen country stays listed.
 - `rail-has-no-dot-without-rules` — the Search Console rail item has no status dot, even with failing findings.
 
 ## Reading (`apps/desktop/src/renderer/__tests__/use-gsc-data.test.ts`, jsdom)
 - `use-gsc-data-reads-on-change` — one performance and one top-queries read per request, `GSC_READ_DEBOUNCE_MS` after the last change (quick changes read once); again on URL, scope or range change; never on a timer; nothing without a request.
 - `use-gsc-data-drops-stale-answers` — an answer that lands after the URL changed is not shown; the current one is.
 - `use-gsc-data-retry` — Retry reads the same request again, at once.
+- `filters-trigger-one-read` — a country or device change sends one performance and one top-queries read with the filter (after the debounce); a device change reads the countries again (with the device), a country change does not; the countries answer is kept for the page while a new one reads.
 - `use-gsc-data-keeps-data-for-scope-change` — a scope or range change keeps the last data as pending; another URL does not.
 
 ## Panel (`apps/desktop/src/renderer/__tests__/gsc-panel.test.ts`, jsdom, IPC faked)
-- `gsc-panel-reads-only-when-connected` — not connected, the panel shows its notice and never calls `gsc.performance` or `gsc.topQueries` (nor `account.watch`); connected, signed out of frost, it reads once.
+- `gsc-panel-reads-only-when-connected` — not connected, the panel shows its notice and never calls `gsc.performance`, `gsc.topQueries` or `gsc.countries` (nor `account.watch`); connected, signed out of frost, it reads once (and its countries once).
 
 ## Palette (`apps/desktop/src/renderer/__tests__/gsc-palette.test.ts`)
 - `gsc-palette-actions` — "Open Search Console panel" (the panel's jump, in `FEATURE_PANEL_JUMPS`: the built-ins leave it out) opens the panel and focuses its rail item; "Search Console: whole property" and "Search Console: this page" set the scope and open the panel, each offered on a web page while the other scope is chosen.
+- `gsc-palette-clear-filters` — "Search Console: clear filters" is offered on a web page only while a filter is set; it clears both and opens the panel.
+
+## Calendar (`apps/desktop/src/renderer/__tests__/gsc-calendar.test.ts`, jsdom)
+- `calendar-keyboard` — a modal dialog with a grid; one day is tabbable (roving tabindex) and focused on open; arrows move a day and a week, Home/End to the week's ends (the locale's week start), PageUp/PageDown a month, Shift a year; Enter picks the start (`aria-selected`), Space the end, which applies the range (swapped when picked backwards) and closes; Escape closes without a change and returns focus to the opener; the month buttons keep focus unless they disable (then the day takes it); Tab wraps inside the dialog.
+- `calendar-disables-unavailable-days` — days before `gscRetentionStart` and after the lag day are `aria-disabled`, never tabbable, not picked by a click, and keys stop at the bounds; the month buttons are disabled at either end.
 
 ## End to end (`apps/desktop/e2e/gsc-panel.e2e.ts`; fake `fake-google.ts`; never signed in to frost)
 One documented serial sequence (not connected, then connected); each test after connecting sets the

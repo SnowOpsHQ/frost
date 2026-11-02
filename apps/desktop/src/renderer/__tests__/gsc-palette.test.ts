@@ -14,9 +14,15 @@ function tab(changes: Partial<TabState> = {}): TabState {
   return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
 }
 
-function setup(context: Partial<PaletteContext> = {}, scope: GscQueryScope = 'page') {
+function setup(context: Partial<PaletteContext> = {}, scope: GscQueryScope = 'page', filtered = false) {
   let current = scope;
-  const api = { scope: () => current, setScope: vi.fn((next: GscQueryScope) => void (current = next)) };
+  let filters = filtered;
+  const api = {
+    scope: () => current,
+    setScope: vi.fn((next: GscQueryScope) => void (current = next)),
+    filtered: () => filters,
+    clearFilters: vi.fn(() => void (filters = false)),
+  };
   const registry = createPaletteRegistry();
   registry.register(...gscPaletteSources(api));
   const active = 'tab' in context ? context.tab : tab();
@@ -55,5 +61,19 @@ describe('Search Console palette actions', () => {
     const builtins = createPaletteRegistry();
     builtins.register(...builtinPaletteSources({} as PaletteApi), ...gscPaletteSources(api));
     expect(builtins.ids().filter((id) => id === 'panel.search-console')).toHaveLength(1);
+  });
+
+  test('gsc-palette-clear-filters', async () => {
+    // No filter set: not offered.
+    expect(setup().ids()).not.toContain('search-console.clear-filters');
+    const { api, ids, run, chrome, registry, ctx } = setup({}, 'page', true);
+    expect(ids()).toEqual(['panel.search-console', 'search-console.whole-property', 'search-console.clear-filters']);
+    expect(registry.resolve(ctx).find((a) => a.id === 'search-console.clear-filters')).toMatchObject({ label: 'Search Console: clear filters', group: 'panels' });
+    await run('search-console.clear-filters');
+    expect(api.clearFilters).toHaveBeenCalledTimes(1);
+    expect(chrome.openPanel).toHaveBeenLastCalledWith('search-console', { focus: false });
+    expect(ids()).not.toContain('search-console.clear-filters');
+    // Only on a web page.
+    expect(setup({ tab: tab({ url: 'about:blank' }) }, 'page', true).ids()).toEqual(['panel.search-console']);
   });
 });

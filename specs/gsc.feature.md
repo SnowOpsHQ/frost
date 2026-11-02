@@ -125,6 +125,14 @@ line maps to one named test.
 - `gsc-countries-procedure-enforces-sender` (`gsc-router.test.ts`) — `gsc.countries` refuses a foreign sender before the service is reached and answers the strict countries schema.
 - `performance-input-strict` (`gsc-router.test.ts`) — a query with both `days` and `range`, neither, a malformed range, country or device is `BAD_REQUEST`.
 
+## Settings: property count (Phase 9 Task 3; SL-112; `apps/desktop/src/renderer/__tests__/settings-gsc-view.test.ts`)
+- While connected, Settings' Search Console section says how many properties this connection can
+  read: "N properties" (`gscPropertyCountText`: "1 property", "No verified properties"), from the
+  existing `gsc.properties` (verified properties only), read again when the connection changes. Not
+  connected, or the read did not answer `ok`: no count. One Google account per profile (more is
+  deferred, Decision 1).
+- `property-count-shown-when-connected` — connected with an `ok` answer, the section shows "3 properties" (1: "1 property"; 0: "No verified properties"); not connected, connecting, unconfigured, or an unavailable or missing answer: no count; the headline stays "Connected".
+
 ## Startup (`apps/desktop/src/main/__tests__/startup-fallback.test.ts`, faked Electron)
 - `gsc-start-failure-is-unconfigured` — an exception while Search Console is set up answers an `unconfigured`, not connected service, logged with a fixed message only.
 

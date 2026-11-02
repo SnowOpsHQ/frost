@@ -17,6 +17,7 @@ const fake = vi.hoisted(() => ({
   accountWatches: 0,
   performance: [] as unknown[],
   topQueries: [] as unknown[],
+  countries: [] as unknown[],
 }));
 vi.mock('../ipc', () => {
   const never = () => new Promise<never>(() => undefined);
@@ -36,6 +37,7 @@ vi.mock('../ipc', () => {
         watch: { query: once(() => fake.gsc) },
         performance: { query: (input: unknown) => (fake.performance.push(input), never()) },
         topQueries: { query: (input: unknown) => (fake.topQueries.push(input), never()) },
+        countries: { query: (input: unknown) => (fake.countries.push(input), never()) },
       },
     },
   };
@@ -69,6 +71,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   fake.performance.length = 0;
   fake.topQueries.length = 0;
+  fake.countries.length = 0;
   fake.accountWatches = 0;
   host = document.createElement('div');
   root = createRoot(host);
@@ -83,6 +86,7 @@ describe('GscPanel', () => {
     expect(await mount(gsc({ connected: false }))).toBe('not-connected');
     expect(fake.performance).toEqual([]);
     expect(fake.topQueries).toEqual([]);
+    expect(fake.countries).toEqual([]);
     act(() => root.unmount());
     root = createRoot(host);
 
@@ -90,6 +94,8 @@ describe('GscPanel', () => {
     expect(await mount(gsc({}))).toBe('loading');
     expect(fake.performance).toEqual([{ url: URL_A, scope: 'page', days: 28 }]);
     expect(fake.topQueries).toEqual([{ url: URL_A, scope: 'page', days: 28 }]);
+    // The country list of the same page and range (no filter by default).
+    expect(fake.countries).toEqual([{ url: URL_A, scope: 'page', days: 28 }]);
     expect(fake.accountWatches).toBe(0);
     // Two fresh module graphs: give a loaded CI runner room beyond the 5 s default.
   }, 30_000);

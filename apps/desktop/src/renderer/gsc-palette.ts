@@ -6,12 +6,16 @@ import type { PaletteAction, PaletteSource } from './palette/registry';
 // The Search Console panel in the command palette (Phase 4 Task 10; acceptance `gsc-panel.feature.md`,
 // Palette; `command-palette.spec.ts`, Registration API, `FEATURE_PANEL_JUMPS`): "Open Search Console
 // panel" (the panel's jump, owned here), and "Search Console: whole property" / "Search Console: this
-// page", which set the panel's scope and open it. Registered from `components/seo/GscPanel.tsx`; pure
-// (the scope store is injected) so availability is unit tested.
+// page", which set the panel's scope and open it; "Search Console: clear filters" (Phase 9 Task 3),
+// offered while a country or device filter is set. Registered from `components/seo/GscPanel.tsx`;
+// pure (the prefs store is injected) so availability is unit tested.
 
 export interface GscPaletteApi {
   scope(): GscQueryScope;
   setScope(scope: GscQueryScope): void;
+  /** A country or device filter is set. */
+  filtered(): boolean;
+  clearFilters(): void;
 }
 
 const KEYWORDS = ['search console', 'gsc', 'google', 'clicks', 'impressions', 'ctr', 'position', 'performance', 'traffic', 'seo'];
@@ -48,5 +52,17 @@ export function gscPaletteSources(api: GscPaletteApi): PaletteSource[] {
     },
     scopeAction(api, 'property'),
     scopeAction(api, 'page'),
+    {
+      id: 'search-console.clear-filters',
+      label: 'Search Console: clear filters',
+      group: 'panels',
+      keywords: [...KEYWORDS, 'filter', 'country', 'device', 'reset'],
+      icon: 'panel-search-console',
+      available: (ctx) => onWebPage(ctx.tab) && api.filtered(),
+      run: (ctx) => {
+        api.clearFilters();
+        ctx.chrome.openPanel('search-console', { focus: false });
+      },
+    },
   ];
 }
