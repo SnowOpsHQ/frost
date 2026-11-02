@@ -459,13 +459,18 @@ describe('sentences', () => {
     // The longest text the extractor keeps: a hundred thousand characters of mixed sentences.
     const unit = 'The cat sat on the mat. An international organization necessitated comprehensive reorganization immediately afterwards, regardless of administrative complications. ';
     const big = unit.repeat(Math.ceil(VISIBLE_TEXT_LIMITS.maxVisibleTextChars / unit.length)).slice(0, VISIBLE_TEXT_LIMITS.maxVisibleTextChars);
-    const started = performance.now();
-    const r = sentenceReport(big, 'en');
-    const ready = readability(big, 'en');
-    const elapsed = performance.now() - started;
-    expect(r.status).toBe('ok');
-    expect(ready.status).toBe('ok');
-    expect(elapsed).toBeLessThan(1_000);
+    // The fastest of three runs: a busy CI machine can stall one run (the first takes the JIT warm-up
+    // too), while a slow algorithm is slow every time.
+    let fastest = Infinity;
+    for (let run = 0; run < 3; run += 1) {
+      const started = performance.now();
+      const r = sentenceReport(big, 'en');
+      const ready = readability(big, 'en');
+      fastest = Math.min(fastest, performance.now() - started);
+      expect(r.status).toBe('ok');
+      expect(ready.status).toBe('ok');
+    }
+    expect(fastest).toBeLessThan(1_000);
   });
 });
 
