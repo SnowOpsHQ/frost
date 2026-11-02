@@ -8,6 +8,8 @@ import type {
   GscPropertyForAnswer,
   GscQueriesAnswer,
   GscStatus,
+  GscTargetPagesAnswer,
+  GscTargetPagesQuery,
 } from '@app/specs/gsc.schema';
 
 // Search Console as main serves it (Phase 4 Task 8; spec `specs/gsc.schema.ts`; acceptance
@@ -56,6 +58,16 @@ export interface GscService {
    */
   countries(query: GscPerformanceQuery): Promise<GscCountriesAnswer>;
   /**
+   * Which pages of the property that covers `query.url` Google showed for the search `query.query`
+   * (`GscTargetPagesAnswerSchema`; Phase 9 Task 5, Decision 7): the `page` dimension over the whole
+   * property, filtered by `query equals` the query normalised by `normalizeGscQuery`, at most
+   * `GSC_TARGET_PAGES_READ_ROWS` rows, over `days` or a custom `range` as for `performance`. Answers
+   * the top `GSC_LIMITS.maxTargetPages` by clicks, `pagesRead`, and this page's `thisPageRank` among
+   * all the pages read (`null`: Google reported pages but not this one; no pages at all is `ok` with
+   * `pagesRead: 0`). Added in Phase 9.
+   */
+  targetPages(query: GscTargetPagesQuery): Promise<GscTargetPagesAnswer>;
+  /**
    * Google's URL Inspection of `input.url` (without its fragment) in the property that covers it
    * (`GscInspectionAnswerSchema`, spec `gsc-inspection.schema.ts`): index status, rich results and the
    * Search Console link, every string capped. Sends one request to Google's per-site quota, so it runs
@@ -74,13 +86,13 @@ export interface GscIpcService extends GscService {
   watch(sinceVersion: number, signal?: AbortSignal): Promise<GscStatus>;
   /**
    * Starts connecting a Google account for app window `windowId` (the IPC sender's): needs a live user
-   * gesture there (else `needs-gesture`, nothing opened) and `search-console`; opens Google's consent
-   * page (read-only scope only) in the system browser.
+   * gesture there (else `needs-gesture`, nothing opened; Search Console is not gated); opens Google's
+   * consent page (read-only scope only) in the system browser.
    */
   connect(windowId: number): Promise<GscConnectResult>;
   /** Drops the pending connect: `true` if there was one. */
   cancelConnect(): Promise<boolean>;
-  /** Forgets the connection (the refresh token deleted, then revoked at Google): `true` if connected. Works without `search-console`. */
+  /** Forgets the connection (the refresh token deleted, then revoked at Google): `true` if connected. */
   disconnect(): Promise<boolean>;
   /**
    * Opens the Search Console page of the inspection of `url` (the **page**, never a link) for app

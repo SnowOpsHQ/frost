@@ -14,15 +14,19 @@ import {
   GSC_DATE_PATTERN,
   GSC_LIMITS,
   GSC_RATE_LIMIT,
+  GSC_TARGET_PAGES_READ_ROWS,
   GscCountriesAnswerSchema,
   GscPerformanceAnswerSchema,
   GscPerformanceQuerySchema,
   GscQueriesAnswerSchema,
+  GscTargetPagesAnswerSchema,
+  GscTargetPagesQuerySchema,
   GscUrlInputSchema,
   GSC_PROFILE_OWNER,
   gscCustomRange,
   gscDateRange,
   gscRangeDays,
+  normalizeGscQuery,
   type GoogleSearchAnalyticsResponse,
   type GscCountriesAnswer,
   type GscCountryRow,
@@ -35,7 +39,11 @@ import {
   type GscPropertyForAnswer,
   type GscQueriesAnswer,
   type GscQueryRow,
+  type GscRangeDays,
   type GscStatus,
+  type GscTargetPageRow,
+  type GscTargetPagesAnswer,
+  type GscTargetPagesQuery,
   type GscTotals,
   type GscUnavailable,
   type GscUnavailableReason,
@@ -77,6 +85,10 @@ import { createRedactingLog } from './redact';
 //   asking window's live gesture and opens only the link of main's own cached answer for that page,
 //   checked again against `GSC_INSPECTION_LINK_HOST`; it never calls Google and never opens what the
 //   renderer named.
+// - `targetPages` (Phase 9 Task 5, Decision 7) reads the `page` dimension over the whole property for one
+//   normalised `query equals` (`normalizeGscQuery`), at most `GSC_TARGET_PAGES_READ_ROWS` rows, through
+//   the read bucket like every Search Analytics read; it answers the top `maxTargetPages` and this page's
+//   rank among all the rows read (a fact for the Content panel; nothing scores it).
 // - `watch` long-polls the status (the chrome's Settings and panel).
 
 export interface GscServiceDeps {
@@ -192,6 +204,28 @@ function countryRowsOf(rows: GoogleSearchAnalyticsResponse['rows']): GscCountryR
     if (out.length >= GSC_LIMITS.maxCountries) break;
   }
   return out;
+}
+
+/** A page Google reported: an `http(s)` URL within `GSC_LIMITS.maxUrlChars` (anything else is dropped). */
+const isReportedPage = (page: unknown): page is string => typeof page === 'string' && page.length <= GSC_LIMITS.maxUrlChars && isWebUrl(page);
+
+/**
+ * The pages read (at most `GSC_TARGET_PAGES_READ_ROWS`, malformed ones dropped) ordered by clicks, ties
+ * in Google's order; the top `maxTargetPages`, how many were read, and `pageUrl`'s place among all of
+ * them (a row matching when its URL without the fragment is `pageUrl`; `null`: not among them).
+ */
+export function targetPagesOf(rows: GoogleSearchAnalyticsResponse['rows'], pageUrl: string): { rows: GscTargetPageRow[]; pagesRead: number; thisPageRank: number | null } {
+  const read: GscTargetPageRow[] = [];
+  for (const row of rows ?? []) {
+    const page = row.keys?.[0];
+    if (!isReportedPage(page)) continue;
+    read.push({ page, ...metrics(row) });
+    if (read.length >= GSC_TARGET_PAGES_READ_ROWS) break;
+  }
+  // `sort` is stable: equal clicks keep Google's order.
+  read.sort((a, b) => b.clicks - a.clicks);
+  const at = read.findIndex((row) => pageUrlOf(row.page) === pageUrl);
+  return { rows: read.slice(0, GSC_LIMITS.maxTargetPages), pagesRead: read.length, thisPageRank: at < 0 ? null : at + 1 };
 }
 
 /** Sums, `ctr = clicks / impressions` (`0` without any), and the impression-weighted position (`null` without any). */
@@ -435,16 +469,20 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
     });
   };
 
-  const parseQuery = (query: unknown): Read<GscPerformanceQuery> => {
-    const parsed = GscPerformanceQuerySchema.safeParse(query);
+  /** `input` checked against `schema`; a refused one is `not-a-web-page` when its `url` is not `http(s)`, else `invalid`. */
+  const parseInput = <T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, input: unknown): Read<T> => {
+    const parsed = schema.safeParse(input);
     if (parsed.success) return { ok: true, value: parsed.data };
-    const url = typeof query === 'object' && query !== null ? (query as { url?: unknown }).url : undefined;
+    const url = typeof input === 'object' && input !== null ? (input as { url?: unknown }).url : undefined;
     return { ok: false, reason: typeof url === 'string' && !isWebUrl(url) ? 'not-a-web-page' : 'invalid' };
   };
 
   /** The property for the query's URL, and what to filter on. */
-  const resolveQuery = async (query: unknown): Promise<Read<{ query: GscPerformanceQuery; property: GscProperty; pageUrl: string; range: GscDateRange }>> => {
-    const parsed = parseQuery(query);
+  const resolveQuery = async <Q extends { url: string } & ({ days: GscRangeDays } | { range: GscDateRange })>(
+    schema: { safeParse(value: unknown): { success: true; data: Q } | { success: false } },
+    input: unknown,
+  ): Promise<Read<{ query: Q; property: GscProperty; pageUrl: string; range: GscDateRange }>> => {
+    const parsed = parseInput(schema, input);
     if (!parsed.ok) return parsed;
     // A preset, or a custom range checked against the clock (refused before anything is sent).
     const range = 'days' in parsed.value ? gscDateRange(parsed.value.days, now()) : gscCustomRange(parsed.value.range.start, parsed.value.range.end, now());
@@ -479,7 +517,7 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
   ): Promise<T | GscUnavailable> => {
     const closed = gate();
     if (closed) return unavailable(closed);
-    const resolved = await resolveQuery(input);
+    const resolved = await resolveQuery<GscPerformanceQuery>(GscPerformanceQuerySchema, input);
     if (!resolved.ok) return unavailable(resolved.reason);
     const { query, property, pageUrl, range } = resolved.value;
     const filter = query.scope === 'page' ? pageUrl : null;
@@ -503,6 +541,39 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
         return unavailable(result.reason);
       }
       const checked = schema.safeParse(build({ query, property, range, rows: result.value.rows }));
+      if (!checked.success) {
+        log('gsc: an answer did not match its schema');
+        return unavailable('invalid');
+      }
+      keep(key, checked.data, generation);
+      return checked.data;
+    });
+  };
+
+  /**
+   * The property's pages Google showed for one search query (Decision 7): the `page` dimension, no page
+   * filter, `query equals` the normalised query, `GSC_TARGET_PAGES_READ_ROWS` rows. Cached and merged
+   * per property, page (its rank is in the answer), query and range.
+   */
+  const runTargetPages = async (input: unknown): Promise<GscTargetPagesAnswer> => {
+    const closed = gate();
+    if (closed) return unavailable(closed);
+    const resolved = await resolveQuery<GscTargetPagesQuery>(GscTargetPagesQuerySchema, input);
+    if (!resolved.ok) return unavailable(resolved.reason);
+    const { property, pageUrl, range } = resolved.value;
+    const query = normalizeGscQuery(resolved.value.query.query);
+    const key = JSON.stringify(['target-pages', property.siteUrl, pageUrl, query, range.start, range.end]);
+    const known = cached<GscTargetPagesAnswer>(key);
+    if (known) return known;
+    const generation = auth?.generation() ?? 0;
+    return merged(`${key}|${generation}`, async (): Promise<GscTargetPagesAnswer> => {
+      const body = searchAnalyticsBody({ range, dimension: 'page', pageUrl: null, query, rowLimit: GSC_TARGET_PAGES_READ_ROWS });
+      const result = await withToken(generation, readBucket, (token) => api!.query(token, property.siteUrl, body));
+      if (!result.ok) {
+        if (result.reason === 'no-property') dropProperties();
+        return unavailable(result.reason);
+      }
+      const checked = GscTargetPagesAnswerSchema.safeParse({ status: 'ok', property, range, query, ...targetPagesOf(result.value.rows, pageUrl) });
       if (!checked.success) {
         log('gsc: an answer did not match its schema');
         return unavailable('invalid');
@@ -698,6 +769,8 @@ export async function createGscService(deps: GscServiceDeps): Promise<GscMainSer
           GscCountriesAnswerSchema,
         ),
       ),
+
+    targetPages: (query) => guard(() => runTargetPages(query)),
 
     inspect: (input) => guard(() => runInspect(input)),
 

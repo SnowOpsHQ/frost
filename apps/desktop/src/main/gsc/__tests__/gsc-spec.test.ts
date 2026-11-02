@@ -1,4 +1,5 @@
-// Spec: specs/gsc.spec.ts (GSC_SCOPE, GSC_AUTH_FIXED_PARAMS, gscDateRange, GSC_LIMITS, GSC_COUNTRY_ALPHA3, GSC_COUNTRY_PATTERN), specs/gsc.schema.ts
+// Spec: specs/gsc.spec.ts (GSC_SCOPE, GSC_AUTH_FIXED_PARAMS, gscDateRange, GSC_LIMITS, GSC_COUNTRY_ALPHA3, GSC_COUNTRY_PATTERN,
+// normalizeGscQuery, GSC_TARGET_PAGES_READ_ROWS), specs/gsc.schema.ts
 // (GscStatusSchema, GscPropertySchema, GscPerformanceQuerySchema, the answer schemas)
 // Acceptance: specs/gsc.feature.md (Spec schema) · plan Global Constraint "Search Console is read-only"
 import { describe, expect, test } from 'vitest';
@@ -17,7 +18,9 @@ import {
   GscPropertySchema,
   GscQueriesAnswerSchema,
   GscStatusSchema,
+  GSC_TARGET_PAGES_READ_ROWS,
   gscDateRange,
+  normalizeGscQuery,
   type GscStatus,
 } from '@app/specs/gsc.schema';
 
@@ -137,5 +140,15 @@ describe('Search Console spec', () => {
     // Google answers lowercase: an uppercase or two-letter code is not a country value.
     for (const bad of ['USA', 'us', 'usaa', 'u1a', '']) expect(GSC_COUNTRY_PATTERN.test(bad), bad).toBe(false);
     expect(Object.hasOwn(GSC_COUNTRY_ALPHA3, 'USA')).toBe(false);
+  });
+
+  test('normalize-gsc-query', () => {
+    // Trimmed, every run of white space one space, lowercased: Google reports queries in lowercase.
+    expect(normalizeGscQuery('  Green \t TEA\n ')).toBe('green tea');
+    expect(normalizeGscQuery('Grüner\u00a0Tee')).toBe('grüner tee');
+    expect(normalizeGscQuery(' \t ')).toBe('');
+    expect(normalizeGscQuery('sencha')).toBe('sencha');
+    expect(GSC_LIMITS.maxTargetPages).toBe(10);
+    expect(GSC_TARGET_PAGES_READ_ROWS).toBe(1_000);
   });
 });

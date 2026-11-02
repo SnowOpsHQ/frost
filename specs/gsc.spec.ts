@@ -123,6 +123,8 @@ export const GSC_LIMITS = {
   maxDateRows: 490,
   /** `countries` answers at most this many countries (most clicks first, as Google orders them). */
   maxCountries: 250,
+  /** `targetPages` answers at most this many pages (most clicks first) of the `GSC_TARGET_PAGES_READ_ROWS` it read. */
+  maxTargetPages: 10,
   /** At most this many `gsc.watch` calls wait at once; one more answers the oldest early. */
   maxPendingWatches: 4,
   /** Answers kept in the cache at most (the oldest go first). */
@@ -414,6 +416,23 @@ export const GSC_COUNTRY_ALPHA3: Readonly<Record<string, string>> = Object.freez
   uga: 'UG', ukr: 'UA', umi: 'UM', ury: 'UY', usa: 'US', uzb: 'UZ', vat: 'VA', vct: 'VC', ven: 'VE', vgb: 'VG',
   vir: 'VI', vnm: 'VN', vut: 'VU', wlf: 'WF', wsm: 'WS', yem: 'YE', zaf: 'ZA', zmb: 'ZM', zwe: 'ZW',
 });
+
+// ---- Search targets (Phase 9 Task 5; SL-020) ----------------------------------------------------
+
+/**
+ * How many pages a `targetPages` read asks Google for (`rowLimit`): this page's rank is counted among
+ * all of them, though the answer lists only the top `GSC_LIMITS.maxTargetPages`.
+ */
+export const GSC_TARGET_PAGES_READ_ROWS = 1_000;
+
+/**
+ * A search query as Google reports it (Decision 7): trimmed, every run of white space one space, and
+ * lowercased, since Search Console reports queries in lowercase. `targetPages` filters on this form
+ * (`query equals`), so "  Green   TEA " finds the rows of "green tea".
+ */
+export function normalizeGscQuery(query: string): string {
+  return query.trim().replace(/\s+/g, ' ').toLowerCase();
+}
 
 /**
  * Why an answer has no data:

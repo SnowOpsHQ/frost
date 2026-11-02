@@ -218,6 +218,42 @@ heuristic does, not what a linguist would count. No rule, finding or score depen
   text), a reason chip ("Long" / "Complex") and its word count; the heading counts every difficult
   sentence ("Difficult sentences (n)"), and "and N more" says how many the list leaves out.
 
+## Search Console targets (Phase 9 Task 5; SL-020; `content-gsc-targets.test.ts`, jsdom)
+Spec: `specs/gsc-targets.spec.ts` (`GSC_TARGET_SUGGESTIONS`, `GSC_TARGET_CHECK_DELAY_MS`,
+`GSC_TARGETS_COPY`), `specs/gsc.spec.ts` (`GSC_LIMITS.maxTargetPages`, `GSC_TARGET_PAGES_READ_ROWS`,
+`normalizeGscQuery`) and `specs/gsc.schema.ts` (`GscTargetPagesQuerySchema`,
+`GscTargetPagesAnswerSchema`); main's read is in `gsc.feature.md` (Search targets).
+- **Under the target query, only when connected.** With Search Console unconfigured, not connected
+  (or `gsc.watch` not answered yet), or a page that is not `http(s)`, nothing is added and nothing is
+  read: the panel is as before. Connected, the target query section gains two parts.
+- **Suggestions** are the page's top queries: the existing `gsc.topQueries` (page scope, the Search
+  Console panel's range from its shared store, no country or device filter), at most
+  `GSC_TARGET_SUGGESTIONS` (5), each with its clicks and "Use as target". "Use as target" puts the
+  query in the field and saves it at once through `content.setTarget`, carrying the generation the
+  notes were read in (the notes-generation rule above). The current target is marked instead.
+  No queries: "Google hides rare queries".
+- **The query→page check** runs for the saved target query (`GSC_TARGET_CHECK_DELAY_MS` after it last
+  changed), when connected: `gsc.targetPages` over the same range lists the top
+  `GSC_LIMITS.maxTargetPages` (10) pages of the property Google showed for it, this page marked, and
+  says this page's place among all the pages read ("#37 of the 120") or that it is not among them.
+  No pages: `no-data`, "Google hides rare queries".
+- **Both are information only.** No rule, score or colour depends on them: another page leading for
+  the target query is stated as a fact, in the same neutral style as this page leading.
+- Queries and page URLs from Google are inert, bidi-isolated text (`<bdi dir="auto">`); a page URL is
+  never a link.
+- **Scenario: suggestions-only-when-connected** — unconfigured, not connected or not yet answered:
+  no section and no `gsc.topQueries` / `gsc.targetPages` call; connected: the page's top queries (at
+  most 5) with "Use as target", read with the panel's range.
+- **Scenario: use-as-target-calls-setTargetQuery-with-generation** — "Use as target" fills the field
+  and calls `content.setTarget` with the page, the query and the notes' generation (the one they were
+  read in), at once; the suggestion is then marked as the target.
+- **Scenario: target-pages-list-marks-this-page** — for the saved target query, `gsc.targetPages` is
+  read with the page, the query and the panel's range; its pages are listed with this page marked and
+  its place stated; outside the top 10, the place is still stated; not among them, that is said; no
+  pages: "Google hides rare queries".
+- **Scenario: another-page-leads-is-a-fact-not-a-rule** — whether this page or another leads, the list
+  has the same classes and no tone or colour attribute; the words say it is information, not a target.
+
 ## Highlight (Phase 8 Task 2)
 The Content panel owns the `sentences` mode (`HIGHLIGHT_PANELS`): its "Highlight on page" toggle,
 shown when the audit has difficult sentences, boxes them on the page, each line fragment of a

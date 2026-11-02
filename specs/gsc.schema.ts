@@ -25,8 +25,10 @@ import {
   GSC_PROPERTY_KINDS,
   GSC_QUERY_SCOPES,
   GSC_RANGE_DAYS,
+  GSC_TARGET_PAGES_READ_ROWS,
   GSC_UNAVAILABLE_REASONS,
   isGscDate,
+  normalizeGscQuery,
   type GscConnectResult,
   type GscDateRange,
   type GscDevice,
@@ -38,6 +40,7 @@ import {
   type GscStatus,
   type GscUnavailableReason,
 } from './gsc.spec';
+import { TARGET_QUERY_MAX_CHARS } from './seo-content.spec';
 import { isWebUrl } from './web-url.spec';
 
 export * from './gsc.spec';
@@ -87,6 +90,9 @@ const queryShape = {
   device: z.enum(GSC_DEVICES).optional(),
 };
 
+/** A preset range (`GSC_RANGE_DAYS`). */
+const presetDays = z.union(GSC_RANGE_DAYS.map((days) => z.literal(days)) as [z.ZodLiteral<GscRangeDays>, ...z.ZodLiteral<GscRangeDays>[]]);
+
 /**
  * `gsc.performance`, `gsc.topQueries` and `gsc.countries` (and the `GscService` methods): the page
  * `url` (`http(s)`; main drops its fragment), whether to read that page or its whole property, the
@@ -94,15 +100,30 @@ const queryShape = {
  * `GSC_RANGE_DAYS`) and `range` (a custom `{ start, end }`): both, or neither, is refused (each
  * variant is strict). `{ url, scope, days }` (Phase 5's agent adapter) is unchanged.
  */
-export const GscPerformanceQuerySchema = z.union([
-  z.strictObject({
-    ...queryShape,
-    days: z.union(GSC_RANGE_DAYS.map((days) => z.literal(days)) as [z.ZodLiteral<GscRangeDays>, ...z.ZodLiteral<GscRangeDays>[]]),
-  }),
-  z.strictObject({ ...queryShape, range: GscRangeInputSchema }),
-]);
+export const GscPerformanceQuerySchema = z.union([z.strictObject({ ...queryShape, days: presetDays }), z.strictObject({ ...queryShape, range: GscRangeInputSchema })]);
 export type GscPerformanceQuery = z.infer<typeof GscPerformanceQuerySchema>;
 export type { GscDevice };
+
+/**
+ * A target query as the Content panel stores it (`TARGET_QUERY_MAX_CHARS`), with something left once
+ * normalised (`normalizeGscQuery`): an empty or all-space query is refused.
+ */
+const targetQuery = z
+  .string()
+  .max(TARGET_QUERY_MAX_CHARS)
+  .refine((query) => normalizeGscQuery(query) !== '', { message: 'an empty query' });
+
+/**
+ * `gsc.targetPages` (and `GscService.targetPages`; Phase 9 Task 5, Decision 7): which pages of the
+ * property that covers `url` Google showed for the search `query` (normalised by main), over the range:
+ * **exactly one** of `days` (a preset) and `range` (a custom `{ start, end }`, checked as for
+ * `gsc.performance`). No scope (the whole property is read) and no country or device filter.
+ */
+export const GscTargetPagesQuerySchema = z.union([
+  z.strictObject({ url: webUrl, query: targetQuery, days: presetDays }),
+  z.strictObject({ url: webUrl, query: targetQuery, range: GscRangeInputSchema }),
+]);
+export type GscTargetPagesQuery = z.infer<typeof GscTargetPagesQuerySchema>;
 
 /** `GscService.propertyFor`'s argument, as a schema (main validates what Phase 5 passes). */
 export const GscUrlInputSchema = z.strictObject({ url: webUrl });
@@ -212,6 +233,45 @@ export const GscCountriesAnswerSchema = z.discriminatedUnion('status', [
   GscUnavailableSchema,
 ]);
 export type GscCountriesAnswer = z.infer<typeof GscCountriesAnswerSchema>;
+
+/** One page of a `targetPages` answer: Google's page URL (as Google reports it, fragment and all) and its metrics. */
+export const GscTargetPageRowSchema = z.strictObject({
+  page: z.string().min(1).max(GSC_LIMITS.maxUrlChars).refine(isWebUrl, { message: 'not an http(s) URL' }),
+  clicks: count,
+  impressions: count,
+  ctr,
+  position,
+});
+export type GscTargetPageRow = z.infer<typeof GscTargetPageRowSchema>;
+
+/**
+ * `gsc.targetPages` (Decision 7): the pages of the property Google showed for `query` (normalised,
+ * `normalizeGscQuery`) over the range, read up to `GSC_TARGET_PAGES_READ_ROWS` and ordered by clicks
+ * (Google's order for ties):
+ * - `rows`: the top `GSC_LIMITS.maxTargetPages` of them;
+ * - `pagesRead`: how many pages were read (`0`: Google reported no page for the query, the `no-data`
+ *   state: it hides rare queries);
+ * - `thisPageRank`: the asked page's place (1 = most clicks) among **all** the pages read, matched
+ *   without either fragment; `null` when Google reported pages but not this one ("not among the pages
+ *   Google returned", never "no data").
+ */
+export const GscTargetPagesAnswerSchema = z.discriminatedUnion('status', [
+  z
+    .strictObject({
+      status: z.literal('ok'),
+      property: GscPropertySchema,
+      range: GscDateRangeSchema,
+      // Lowercasing can lengthen a query (`İ` is two code units lowercased): Google's own cap applies.
+      query: z.string().min(1).max(GSC_LIMITS.maxQueryChars),
+      rows: z.array(GscTargetPageRowSchema).max(GSC_LIMITS.maxTargetPages),
+      pagesRead: z.int().nonnegative().max(GSC_TARGET_PAGES_READ_ROWS),
+      thisPageRank: z.int().min(1).max(GSC_TARGET_PAGES_READ_ROWS).nullable(),
+    })
+    .refine((a) => a.rows.length === Math.min(a.pagesRead, GSC_LIMITS.maxTargetPages), { error: 'rows are the top pages read', path: ['rows'] })
+    .refine((a) => a.thisPageRank === null || a.thisPageRank <= a.pagesRead, { error: 'the rank is among the pages read', path: ['thisPageRank'] }),
+  GscUnavailableSchema,
+]);
+export type GscTargetPagesAnswer = z.infer<typeof GscTargetPagesAnswerSchema>;
 
 // ---- Google's answers (main only; parsed leniently, never forwarded) ------------------------------
 

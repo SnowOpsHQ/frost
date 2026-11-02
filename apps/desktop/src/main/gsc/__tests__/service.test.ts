@@ -1,24 +1,28 @@
 // Spec: specs/gsc.spec.ts (gscDateRange, gscRetentionStart, gscCustomRange, GSC_MAX_RANGE_DAYS, GSC_CACHE_TTL_MS, GSC_LIMITS,
-// GSC_UNAVAILABLE_REASONS), specs/gsc.schema.ts (GscStatusSchema, GscPerformanceAnswerSchema, GscQueriesAnswerSchema,
-// GscCountriesAnswerSchema, GscPropertiesAnswerSchema, GscPropertyForAnswerSchema)
+// GSC_TARGET_PAGES_READ_ROWS, normalizeGscQuery, GSC_UNAVAILABLE_REASONS), specs/gsc.schema.ts (GscStatusSchema,
+// GscPerformanceAnswerSchema, GscQueriesAnswerSchema, GscCountriesAnswerSchema, GscTargetPagesAnswerSchema,
+// GscPropertiesAnswerSchema, GscPropertyForAnswerSchema)
 // specs/entitlements-snapshot.spec.ts (UNGATED_FEATURES: Search Console is not gated, 2026-10-29)
-// Acceptance: specs/gsc.feature.md (Service; Ranges and filters) · plan "Interfaces for other phases" (the read API never throws)
+// Acceptance: specs/gsc.feature.md (Service; Ranges and filters; Search targets) · plan "Interfaces for other phases" (the read API never throws)
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   GSC_CACHE_TTL_MS,
   GSC_LIMITS,
   GSC_MAX_RANGE_DAYS,
   GSC_RATE_LIMIT,
+  GSC_TARGET_PAGES_READ_ROWS,
   GscCountriesAnswerSchema,
   GscPerformanceAnswerSchema,
   GscQueriesAnswerSchema,
   GSC_PROFILE_OWNER,
   GscStatusSchema,
+  GscTargetPagesAnswerSchema,
   gscCustomRange,
   gscDateRange,
   gscRangeDays,
   gscRetentionStart,
   type GscPerformanceQuery,
+  type GscTargetPagesQuery,
 } from '@app/specs/gsc.schema';
 import { gscAdapter, type GscServiceLike } from '../../agent/ports/gsc-adapter';
 import { fakeDateRows, type FakeRow } from '../../../../e2e/fake-google';
@@ -703,6 +707,118 @@ describe('Search Console service', () => {
     const like: GscServiceLike = service;
     const port = gscAdapter(like);
     expect(await port!.performance({ url: PAGE, days: 30 })).toMatchObject({ status: 'ok', data: { url: PAGE, days: 28, clicks: 60, impressions: 600 } });
+  });
+
+  test('target-pages-body', async () => {
+    const service = await connected();
+    h.google.pageRows = (query) => (query === 'green tea' ? [{ keys: [`${SITE}tea`], clicks: 5, impressions: 50, ctr: 0.1, position: 2 }] : []);
+    const target: GscTargetPagesQuery = { url: `${PAGE}#comments`, query: '  Green \t  TEA ', days: 28 };
+    const answer = await service.targetPages(target);
+    expect(GscTargetPagesAnswerSchema.parse(answer)).toEqual(answer);
+    expect(answer).toMatchObject({ status: 'ok', property: { siteUrl: SITE }, range: range28(), query: 'green tea', pagesRead: 1 });
+    // The `page` dimension over the whole property: no page filter, `query equals` the normalised query.
+    const { start, end } = range28();
+    expect(h.google.queries).toEqual([
+      {
+        siteUrl: SITE,
+        body: {
+          startDate: start,
+          endDate: end,
+          dimensions: ['page'],
+          dimensionFilterGroups: [{ groupType: 'and', filters: [{ dimension: 'query', operator: 'equals', expression: 'green tea' }] }],
+          rowLimit: GSC_TARGET_PAGES_READ_ROWS,
+          type: 'web',
+          dataState: 'final',
+        },
+      },
+    ]);
+    expect(h.google.queries[0]!.body).toEqual(searchAnalyticsBody({ range: range28(), dimension: 'page', pageUrl: null, query: 'green tea', rowLimit: GSC_TARGET_PAGES_READ_ROWS }));
+    // The same page (fragment aside), the same normalised query and range: cached.
+    expect(await service.targetPages({ url: PAGE, query: 'green tea', days: 28 })).toEqual(answer);
+    expect(h.google.queries).toHaveLength(1);
+    // A custom range is sent as given; a domain property's page reads that property.
+    expect(await service.targetPages({ url: PAGE, query: 'green tea', range: { start: '2026-01-01', end: '2026-06-30' } })).toMatchObject({ status: 'ok', range: { start: '2026-01-01', end: '2026-06-30' } });
+    expect(h.google.queries[1]!.body).toMatchObject({ startDate: '2026-01-01', endDate: '2026-06-30', dimensions: ['page'], rowLimit: GSC_TARGET_PAGES_READ_ROWS });
+    expect(await service.targetPages({ url: 'http://shop.example.org/a', query: 'green tea', days: 7 })).toMatchObject({ status: 'ok', property: { siteUrl: 'sc-domain:example.org' } });
+    expect(h.google.queries[2]?.siteUrl).toBe('sc-domain:example.org');
+    // Lowercasing may lengthen the longest target query: still answered (`İ` lowercases to two code units).
+    expect(await service.targetPages({ url: PAGE, query: 'İ'.repeat(200), days: 7 })).toMatchObject({ status: 'ok', query: 'i\u0307'.repeat(200) });
+    // Refused before anything is sent: an empty query, an over-long one, both or neither range, an unknown key.
+    const before = h.google.queries.length;
+    for (const bad of [
+      { url: PAGE, query: '', days: 28 },
+      { url: PAGE, query: ' \t ', days: 28 },
+      { url: PAGE, query: 'q'.repeat(201), days: 28 },
+      { url: PAGE, query: 'tea', days: 28, range: { start: '2026-01-01', end: '2026-01-02' } },
+      { url: PAGE, query: 'tea' },
+      { url: PAGE, query: 'tea', days: 30 },
+      { url: PAGE, query: 'tea', days: 28, scope: 'page' },
+      { url: PAGE, query: 'tea', range: { start: '2020-01-01', end: '2020-01-31' } },
+      null,
+    ]) {
+      expect(await service.targetPages(bad as never), JSON.stringify(bad)).toEqual({ status: 'unavailable', reason: 'invalid' });
+    }
+    expect(await service.targetPages({ url: 'file:///etc/hosts', query: 'tea', days: 28 })).toEqual({ status: 'unavailable', reason: 'not-a-web-page' });
+    expect(h.google.queries).toHaveLength(before);
+  });
+
+  test('target-pages-this-page-rank', async () => {
+    const service = await connected();
+    // 120 pages, most clicks first; this page is the 37th, reported with a fragment (a jump link).
+    const pages = Array.from({ length: 120 }, (_, i) => (i === 36 ? `${PAGE}#section-2` : `${SITE}page-${i + 1}`));
+    h.google.pageRows = (query) => (query === 'green tea' ? pages.map((page, i) => ({ keys: [page], clicks: 1_000 - i, impressions: 10_000 - i, ctr: 0.1, position: 1 + i / 10 })) : []);
+    const answer = await service.targetPages({ url: PAGE, query: 'green tea', days: 28 });
+    expect(GscTargetPagesAnswerSchema.parse(answer)).toEqual(answer);
+    if (answer.status !== 'ok') throw new Error('not ok');
+    expect(answer.pagesRead).toBe(120);
+    expect(answer.thisPageRank).toBe(37);
+    expect(answer.rows).toHaveLength(GSC_LIMITS.maxTargetPages);
+    expect(answer.rows.map((row) => row.page)).toEqual(pages.slice(0, GSC_LIMITS.maxTargetPages));
+    expect(answer.rows[0]).toEqual({ page: `${SITE}page-1`, clicks: 1_000, impressions: 10_000, ctr: 0.1, position: 1 });
+    // Ranked by clicks (Google's order for ties); rows that are not an http(s) page are dropped, not counted.
+    h.google.pageRows = () => [
+      { keys: [`${SITE}few`], clicks: 1, impressions: 10, ctr: 0.1, position: 9 },
+      { keys: [], clicks: 99, impressions: 99, ctr: 1, position: 1 },
+      { keys: ['not a url'], clicks: 98, impressions: 98, ctr: 1, position: 1 },
+      { keys: ['ftp://www.example.com/file'], clicks: 97, impressions: 97, ctr: 1, position: 1 },
+      { keys: [`${SITE}${'x'.repeat(GSC_LIMITS.maxUrlChars)}`], clicks: 96, impressions: 96, ctr: 1, position: 1 },
+      { keys: [`${SITE}first`], clicks: 9, impressions: 90, ctr: 0.1, position: 3 },
+      { keys: [PAGE], clicks: 9, impressions: 80, ctr: 0.1125, position: 4 },
+    ];
+    const reordered = await service.targetPages({ url: `${PAGE}#top`, query: 'oolong', days: 7 });
+    expect(reordered).toMatchObject({ status: 'ok', pagesRead: 3, thisPageRank: 2, rows: [{ page: `${SITE}first` }, { page: PAGE }, { page: `${SITE}few` }] });
+    // `null` only when Google returned pages for the query but not this one (a longer URL is another page).
+    h.google.pageRows = () => [
+      { keys: [`${PAGE}&y=2`], clicks: 4, impressions: 40, ctr: 0.1, position: 2 },
+      { keys: [`${SITE}blog/`], clicks: 2, impressions: 20, ctr: 0.1, position: 5 },
+    ];
+    expect(await service.targetPages({ url: PAGE, query: 'sencha', days: 7 })).toMatchObject({ status: 'ok', pagesRead: 2, thisPageRank: null, rows: [{ page: `${PAGE}&y=2` }, { page: `${SITE}blog/` }] });
+    // Google answering more than it was asked for: only the first `GSC_TARGET_PAGES_READ_ROWS` are read.
+    h.google.pageRows = () => Array.from({ length: GSC_TARGET_PAGES_READ_ROWS + 5 }, (_, i) => ({ keys: [i === GSC_TARGET_PAGES_READ_ROWS + 2 ? PAGE : `${SITE}p${i}`], clicks: 5_000 - i, impressions: 50_000, ctr: 0.1, position: 2 }));
+    expect(await service.targetPages({ url: PAGE, query: 'matcha', days: 7 })).toMatchObject({ status: 'ok', pagesRead: GSC_TARGET_PAGES_READ_ROWS, thisPageRank: null });
+  });
+
+  test('target-pages-empty-is-no-data', async () => {
+    const service = await connected();
+    h.google.pageRows = () => [];
+    const answer = await service.targetPages({ url: PAGE, query: 'a rare query', days: 28 });
+    expect(GscTargetPagesAnswerSchema.parse(answer)).toEqual(answer);
+    expect(answer).toEqual({ status: 'ok', property: { siteUrl: SITE, kind: 'url-prefix', permissionLevel: 'siteOwner' }, range: range28(), query: 'a rare query', rows: [], pagesRead: 0, thisPageRank: null });
+    // The reasons are those of the other reads.
+    const target: GscTargetPagesQuery = { url: PAGE, query: 'tea', days: 28 };
+    expect(await service.targetPages({ ...target, url: 'https://other.example.com/' })).toEqual({ status: 'unavailable', reason: 'no-property' });
+    h.google.mode = 'quota';
+    expect(await service.targetPages(target)).toEqual({ status: 'unavailable', reason: 'quota' });
+    h.google.mode = 'down';
+    expect(await service.targetPages({ ...target, days: 7 })).toEqual({ status: 'unavailable', reason: 'network' });
+    h.google.mode = 'ok';
+    const sent = h.fetched.length;
+    expect(await (await serviceWith({ config: null })).targetPages(target)).toEqual({ status: 'unavailable', reason: 'unconfigured' });
+    expect(await (await serviceWith({ store: memoryStore() })).targetPages(target)).toEqual({ status: 'unavailable', reason: 'not-connected' });
+    expect(h.fetched).toHaveLength(sent);
+    for (const input of [undefined, 42, [], { url: PAGE, query: 7, days: 28 }]) {
+      await expect(service.targetPages(input as never)).resolves.toMatchObject({ status: 'unavailable' });
+    }
   });
 
   test('keychain-reports-this-run-only', async () => {

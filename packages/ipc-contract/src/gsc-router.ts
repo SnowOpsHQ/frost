@@ -9,6 +9,8 @@ import {
   GscPropertiesAnswerSchema,
   GscQueriesAnswerSchema,
   GscStatusSchema,
+  GscTargetPagesAnswerSchema,
+  GscTargetPagesQuerySchema,
   GscWatchInputSchema,
   type GscStatus,
 } from '@app/specs/gsc.schema';
@@ -56,6 +58,9 @@ async function watchGsc(gsc: GscIpcService, sinceVersion: number): Promise<GscSt
  *   (`GscPerformanceQuerySchema`: exactly one of `days` and `range`, optional `country` / `device`):
  *   a page's or its property's performance, top queries and countries with data. Each `ok` or
  *   `unavailable` with a reason.
+ * - `targetPages` (`GscTargetPagesQuerySchema`: the page, a target query, exactly one of `days` and
+ *   `range`): the property's pages Google showed for that query, this page's rank among them
+ *   (`GscTargetPagesAnswerSchema`). Named so the `db-only-in-main` rule never mistakes it for a query.
  * - `inspect` (`GscInspectInputSchema`): Google's URL Inspection of a page (`GscInspectionAnswerSchema`).
  *   A mutation: it spends Google's per-site quota, and runs only when the user asks.
  * - `openInspectionLink` (`GscOpenInspectionLinkInputSchema`: the page, never the link): opens main's
@@ -117,6 +122,12 @@ export const gscRouter = router({
     .input(GscPerformanceQuerySchema)
     .output(GscCountriesAnswerSchema)
     .query(({ ctx, input }) => ctx.gsc.countries(input)),
+  targetPages: publicProcedure
+    .use(enforceSender)
+    .use(requireGsc)
+    .input(GscTargetPagesQuerySchema)
+    .output(GscTargetPagesAnswerSchema)
+    .query(({ ctx, input }) => ctx.gsc.targetPages(input)),
   inspect: publicProcedure
     .use(enforceSender)
     .use(requireGsc)

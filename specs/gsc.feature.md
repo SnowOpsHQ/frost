@@ -4,9 +4,11 @@ Spec: `specs/gsc.spec.ts` (Zod-free: `GSC_SCOPE`, `GSC_CONFIG_ENV`, `GSC_ENDPOIN
 `GSC_AUTH_FIXED_PARAMS`, `GSC_LIMITS`, `GSC_CACHE_TTL_MS`, `GSC_RATE_LIMIT`, `GSC_REFRESH_BACKOFF`, `GSC_ERRORS`, `GSC_CONNECT_RESULTS`,
 `GSC_PROPERTY_KINDS`, `GSC_PERMISSION_LEVELS`, `GSC_QUERY_SCOPES`, `GSC_RANGE_DAYS`, `GSC_DATA_LAG_DAYS`,
 `gscDateRange`, `DAY_MS`, `isoDay`, `addUtcMonths`, `clampDay` (the shared UTC-day helpers), `GSC_RETENTION_MONTHS`, `GSC_MAX_RANGE_DAYS`, `gscRetentionStart`, `gscCustomRange`,
-`GSC_DEVICES`, `GSC_COUNTRY_PATTERN`, `GSC_COUNTRY_ALPHA3`, `GSC_UNAVAILABLE_REASONS`) and
+`GSC_DEVICES`, `GSC_COUNTRY_PATTERN`, `GSC_COUNTRY_ALPHA3`, `GSC_TARGET_PAGES_READ_ROWS`, `normalizeGscQuery`,
+`GSC_UNAVAILABLE_REASONS`) and
 `specs/gsc.schema.ts` (`GscStatusSchema`, `GscPropertySchema`, `GscPerformanceQuerySchema`,
-`GscPerformanceAnswerSchema`, `GscQueriesAnswerSchema`, `GscCountriesAnswerSchema`,
+`GscPerformanceAnswerSchema`, `GscQueriesAnswerSchema`, `GscCountriesAnswerSchema`, `GscTargetPagesQuerySchema`,
+`GscTargetPagesAnswerSchema`,
 `GscPropertiesAnswerSchema`, `GscPropertyForAnswerSchema`, the inputs, Google's answer schemas), with the
 shared loopback and PKCE of `specs/account-state.schema.ts` / `account-api.schema.ts` and the `gsc` blob of
 `specs/secret-store.spec.ts`. Phase 4 Task 8. Review focus: "Search Console asks for read-only access
@@ -124,6 +126,29 @@ line maps to one named test.
 - `days-shape-still-works` (`service.test.ts`) — `{ url, scope, days }` reads as before, and main's `GscService` is still assignable to the agent adapter's `GscServiceLike`.
 - `gsc-countries-procedure-enforces-sender` (`gsc-router.test.ts`) — `gsc.countries` refuses a foreign sender before the service is reached and answers the strict countries schema.
 - `performance-input-strict` (`gsc-router.test.ts`) — a query with both `days` and `range`, neither, a malformed range, country or device is `BAD_REQUEST`.
+
+## Search targets (Phase 9 Task 5; SL-020; Decision 7)
+- **`targetPages(query)`** (`GscTargetPagesQuerySchema`: the page `url`, the target `query` of at most
+  `TARGET_QUERY_MAX_CHARS`, exactly one of `days` and `range`) reads Search Analytics with the `page`
+  dimension over the **whole property** that covers the page: no page filter, one `query equals`
+  filter on the query normalised by `normalizeGscQuery` (trimmed, white space collapsed, lowercased:
+  Google reports queries in lowercase), `rowLimit` `GSC_TARGET_PAGES_READ_ROWS` (1,000). It is a
+  performance-style read: the read bucket (`GSC_RATE_LIMIT`), the same gate, range checks and reasons,
+  cached and merged per property, page, query and range.
+- **The answer** (`GscTargetPagesAnswerSchema`) lists the top `GSC_LIMITS.maxTargetPages` (10) pages by
+  clicks (Google's order for ties), `pagesRead` (how many pages were read) and `thisPageRank`: this
+  page's place among **all** the pages read, a row matching when its URL without the fragment is the
+  page's. `null` means Google reported pages for the query but not this one, never "no data". Google
+  reporting no page at all is `ok` with `pagesRead: 0` and no rows: the `no-data` state (Google hides
+  rare queries). Rows without an `http(s)` page within `GSC_LIMITS.maxUrlChars` are dropped.
+- No rule, score or colour depends on it (`seo-content.feature.md`, "Information, not targets").
+
+### Tests
+- `target-pages-body` (`service.test.ts`) — dimension `page`, `query equals` the normalised query, no page filter, `rowLimit` `GSC_TARGET_PAGES_READ_ROWS`, over the preset or custom range; an empty query or both `days` and `range` is `invalid` with nothing sent.
+- `target-pages-this-page-rank` (`service.test.ts`) — the page matched without its fragment, ranked among all rows read (rank 37 of 120 is reported with only the top 10 rows); `null` only when Google returned the query but not this page.
+- `target-pages-empty-is-no-data` (`service.test.ts`) — no rows is `ok` with `pagesRead: 0`, no rows and `thisPageRank: null`; the reasons are those of the other reads.
+- `normalize-gsc-query` (`gsc-spec.test.ts`) — `normalizeGscQuery` trims, collapses every run of white space (a no-break space too) to one space and lowercases; `maxTargetPages` is 10 and `GSC_TARGET_PAGES_READ_ROWS` 1,000.
+- `gsc-target-pages-enforces-sender` (`gsc-router.test.ts`) — `gsc.targetPages` (a query) refuses a foreign sender before the service is reached, validates its strict input and answers the strict target-pages schema.
 
 ## Settings: property count (Phase 9 Task 3; SL-112; `apps/desktop/src/renderer/__tests__/settings-gsc-view.test.ts`)
 - While connected, Settings' Search Console section says how many properties this connection can

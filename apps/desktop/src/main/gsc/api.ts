@@ -31,12 +31,12 @@ import { parseJson, send, type FetchLike } from './http';
 export type GscApiFailure = 'auth' | 'quota' | 'forbidden' | 'network' | 'invalid';
 export type GscApiResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly failure: GscApiFailure };
 
-/** The dimensions frost asks for: per day, per search query, or per country. */
-export type SearchAnalyticsDimension = 'date' | 'query' | 'country';
+/** The dimensions frost asks for: per day, per search query, per country, or per page (`targetPages`). */
+export type SearchAnalyticsDimension = 'date' | 'query' | 'country' | 'page';
 
 /** One `equals` filter (Google's documented members only). */
 export interface SearchAnalyticsFilter {
-  readonly dimension: 'page' | 'country' | 'device';
+  readonly dimension: 'page' | 'query' | 'country' | 'device';
   readonly operator: 'equals';
   readonly expression: string;
 }
@@ -54,8 +54,9 @@ export interface SearchAnalyticsBody {
 
 /**
  * The body for one range (a preset's or a custom one, sent as given): per day (`date`), per search
- * query (`query`) or per country (`country`), for one page (`pageUrl`, already without its fragment:
- * `page equals`) or the whole property (`null`: no page filter), optionally only one `country`
+ * query (`query`), per country (`country`) or per page (`page`), for one page (`pageUrl`, already
+ * without its fragment: `page equals`) or the whole property (`null`: no page filter), optionally only
+ * one search `query` (`query equals`, already normalised: `normalizeGscQuery`), one `country`
  * (`country equals`, Google's lowercase alpha-3) and one `device` (`device equals`). The filters go,
  * in that order, in one `and` group; without any there is no group.
  */
@@ -63,12 +64,14 @@ export function searchAnalyticsBody(options: {
   range: GscDateRange;
   dimension: SearchAnalyticsDimension;
   pageUrl: string | null;
+  query?: string | null | undefined;
   country?: string | null | undefined;
   device?: GscDevice | null | undefined;
   rowLimit: number;
 }): SearchAnalyticsBody {
   const filters: SearchAnalyticsFilter[] = [];
   if (options.pageUrl !== null) filters.push({ dimension: 'page', operator: 'equals', expression: options.pageUrl });
+  if (options.query) filters.push({ dimension: 'query', operator: 'equals', expression: options.query });
   if (options.country) filters.push({ dimension: 'country', operator: 'equals', expression: options.country });
   if (options.device) filters.push({ dimension: 'device', operator: 'equals', expression: options.device });
   return {

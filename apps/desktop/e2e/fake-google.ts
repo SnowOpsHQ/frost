@@ -69,6 +69,8 @@ export interface FakeGoogle {
   queryRows: () => FakeRow[];
   /** The rows a `['country']` query answers (default `fakeCountryRows()`). */
   countryRows: () => FakeRow[];
+  /** The rows a `['page']` query answers for its `query equals` expression (`null`: no query filter); default none. */
+  pageRows: (query: string | null) => FakeRow[];
   /** The body a URL Inspection answers for the request's `inspectionUrl` and `siteUrl` (default `fakeInspection(...)`). */
   inspection: (inspectionUrl: string, siteUrl: string) => unknown;
   /** Every URL Inspection request, in order. */
@@ -134,6 +136,19 @@ export function fakeCountryRows(): FakeRow[] {
 /** The rows the fake answers for a query query: `count` queries, most clicks first. */
 export function fakeQueryRows(count: number): FakeRow[] {
   return Array.from({ length: count }, (_, i) => ({ keys: [`fake query ${i + 1}`], clicks: 1000 - i, impressions: 10_000, ctr: (1000 - i) / 10_000, position: 1 + i / 10 }));
+}
+
+/** A Search Analytics body's `query equals` expression, or `null` without one. */
+function queryFilterOf(body: Record<string, unknown>): string | null {
+  const groups = body.dimensionFilterGroups;
+  if (!Array.isArray(groups)) return null;
+  for (const group of groups as { filters?: unknown }[]) {
+    if (!Array.isArray(group?.filters)) continue;
+    for (const filter of group.filters as { dimension?: unknown; operator?: unknown; expression?: unknown }[]) {
+      if (filter?.dimension === 'query' && filter.operator === 'equals' && typeof filter.expression === 'string') return filter.expression;
+    }
+  }
+  return null;
 }
 
 /**
@@ -312,6 +327,10 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
         if (Array.isArray(dimensions) && dimensions[0] === 'date') return json(res, 200, { rows: google.dateRows(String(body.startDate), String(body.endDate)), responseAggregationType: 'byProperty' });
         if (Array.isArray(dimensions) && dimensions[0] === 'query') return json(res, 200, { rows: google.queryRows(), responseAggregationType: 'byProperty' });
         if (Array.isArray(dimensions) && dimensions[0] === 'country') return json(res, 200, { rows: google.countryRows(), responseAggregationType: 'byProperty' });
+        if (Array.isArray(dimensions) && dimensions[0] === 'page') {
+          const rows = google.pageRows(queryFilterOf(body));
+          return json(res, 200, rows.length === 0 ? { responseAggregationType: 'byPage' } : { rows, responseAggregationType: 'byPage' });
+        }
         return json(res, 200, {});
       }
     }
@@ -355,6 +374,7 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
     dateRows: (startDate) => fakeDateRows(startDate),
     queryRows: () => fakeQueryRows(30),
     countryRows: () => fakeCountryRows(),
+    pageRows: () => [],
     inspection: (inspectionUrl, siteUrl) => fakeInspection(inspectionUrl, siteUrl),
     inspections: [],
     authRequests: [],
