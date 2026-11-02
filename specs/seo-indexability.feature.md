@@ -190,6 +190,9 @@ Indexability panel). Phase 2 Task 4. Each line maps to one named test.
 ## Renderer helpers (`apps/desktop/src/renderer/__tests__/indexability-view.test.ts`)
 - **Scenario: status-labels-and-tones**, **source-notes**, **robots-labels**, **hreflang-flag-labels**,
   **verdict-signals**.
+- **Google's view** (Phase 9 Task 4; `gsc-inspection.feature.md`, Card): a card with Google's URL
+  Inspection of the page, read only when the user clicks "Inspect in Search Console" (never on load),
+  hidden when Search Console is unconfigured. It changes no rule, score or verdict here.
 
 ## End to end (`apps/desktop/e2e/seo-indexability.e2e.ts`, loopback servers)
 - **Scenario: indexable-page-e2e** — 200, robots.txt allows, a sitemap listed; the verdict is Indexable.

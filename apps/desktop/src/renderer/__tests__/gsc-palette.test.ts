@@ -1,10 +1,11 @@
-// Spec: specs/command-palette.spec.ts (FEATURE_PANEL_JUMPS, Registration API), specs/gsc-panel.spec.ts (GSC_SCOPE_LABELS)
-// Acceptance: specs/gsc-panel.feature.md (Palette)
+// Spec: specs/command-palette.spec.ts (FEATURE_PANEL_JUMPS, Registration API), specs/gsc-panel.spec.ts (GSC_SCOPE_LABELS),
+// specs/gsc.spec.ts (GscStatus)
+// Acceptance: specs/gsc-panel.feature.md (Palette), specs/gsc-inspection.feature.md (Palette)
 import { describe, expect, test, vi } from 'vitest';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import { FEATURE_PANEL_JUMPS } from '@app/specs/command-palette.spec';
-import type { GscQueryScope } from '@app/specs/gsc.spec';
-import { gscPaletteSources } from '../gsc-palette';
+import type { GscQueryScope, GscStatus } from '@app/specs/gsc.spec';
+import { gscInspectPaletteSources, gscPaletteSources } from '../gsc-palette';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
 
@@ -75,5 +76,32 @@ describe('Search Console palette actions', () => {
     expect(ids()).not.toContain('search-console.clear-filters');
     // Only on a web page.
     expect(setup({ tab: tab({ url: 'about:blank' }) }, 'page', true).ids()).toEqual(['panel.search-console']);
+  });
+
+  test('gsc-palette-inspect', async () => {
+    const status = (changes: Partial<GscStatus> = {}): GscStatus => ({ configured: true, entitled: true, connected: true, connecting: false, keychain: 'persistent', error: null, version: 1, ...changes });
+    function inspectSetup(current: GscStatus | null, context: Partial<PaletteContext> = {}) {
+      const api = { status: () => current, inspect: vi.fn() };
+      const registry = createPaletteRegistry();
+      registry.register(...gscInspectPaletteSources(api));
+      const active = 'tab' in context ? context.tab : tab();
+      const chrome = { openPanel: vi.fn(), setSidebarOpen: vi.fn() };
+      const ctx: PaletteContext = { state: null, tab: active, audit: null, sidebarOpen: false, chrome, ...context };
+      return { api, chrome, ctx, ids: () => registry.resolve(ctx).map((a) => a.id), action: () => registry.resolve(ctx).find((a) => a.id === 'search-console.inspect-page') };
+    }
+    const { api, chrome, ctx, action } = inspectSetup(status());
+    expect(action()).toMatchObject({ label: 'Inspect this page in Search Console', group: 'panels', icon: 'panel-search-console' });
+    // Nothing is sent until it runs.
+    expect(api.inspect).not.toHaveBeenCalled();
+    await action()!.run(ctx);
+    expect(api.inspect).toHaveBeenCalledWith(URL_A);
+    expect(chrome.openPanel).toHaveBeenCalledWith('indexability', { focus: false });
+    // Offered before main answered (the card then shows what main says).
+    expect(inspectSetup(null).ids()).toEqual(['search-console.inspect-page']);
+    // Not offered: unconfigured, not connected, not a web page.
+    expect(inspectSetup(status({ configured: false, connected: false })).ids()).toEqual([]);
+    expect(inspectSetup(status({ connected: false })).ids()).toEqual([]);
+    expect(inspectSetup(status(), { tab: tab({ url: 'about:blank' }) }).ids()).toEqual([]);
+    expect(inspectSetup(status(), { tab: undefined }).ids()).toEqual([]);
   });
 });

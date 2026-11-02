@@ -62,3 +62,58 @@ phase plan. Each line maps to one named test. Task 4 builds the card on it.
 ## Router (`packages/ipc-contract/src/__tests__/gsc-router.test.ts`)
 - `gsc-inspect-enforces-sender` — `gsc.inspect` and `gsc.openInspectionLink` are mutations that refuse a foreign sender before the service is reached; strict inputs; `openInspectionLink` hands the service the sender's window ID and the page URL.
 - `gsc-inspect-output-strict` — an inspection answer or open result with an extra member (a token) or an invalid shape (an off-host link) is a masked internal error.
+
+## Card (Phase 9 Task 4; security lens: inert text, the external open)
+Spec: `GSC_INSPECTION_STATES`, `GSC_INSPECTION_ACTIONS`, `GSC_INSPECTION_COPY`, `GSC_CANONICAL_MATCH`
+(`gscCanonicalMatch`), `GSC_RICH_SEVERITY_ORDER`, `GSC_INSPECTION_HELD_PAGES` in `gsc-inspection.spec.ts`.
+The renderer imports only these plain values and the schema module's types.
+
+- **Where.** Indexability gets "Google's view" (verdict, coverage, indexing state, robots.txt state,
+  page fetch state, last crawl, crawled as, and Google's canonical next to the one the page declares as
+  Google read it and next to the canonical frost read); Schema gets "Detected by Google" (the rich
+  results verdict, the types, their items and each item's issues by severity). Both show the same
+  answer: one shared request per page (the tab's URL without its fragment).
+- **Only on a click.** Mounting either card, or switching tabs, sends nothing. "Inspect in Search
+  Console" (or the palette's "Inspect this page in Search Console") sends `gsc.inspect({ url })`;
+  "Inspect again" sends `{ url, fresh: true }`; Try again (after `quota`, `network`, `invalid`) sends
+  `{ url }`. While a request for the page runs, no second one is sent.
+- **Configured, connected.** The card follows the Search Console panel's reading of `gsc.watch`: hidden
+  until main answers and when this build is unconfigured; `not-connected` (also while connecting) and
+  `auth-expired` offer Settings' Search Console. A new connection drops every held answer.
+- **Indexed, not live.** The `ok` copy says the answer is Google's indexed version from its last crawl,
+  not a live test, and the last crawl shows relative and absolute (`3 days ago (Oct 30, 2026, 10:05 AM)`).
+- **Inert text.** Coverage, rich result types, item names, issue messages, canonical URLs and Google's
+  raw codes for unknown values are React text in `<bdi dir="auto">` with `unicode-bidi: isolate`; no
+  `style=`, never markup, never a link.
+- **The link stays in main.** "Open in Search Console" (only when the answer has a link) calls
+  `gsc.openInspectionLink({ url })` with the page; the chrome never renders the link as an `href`, never
+  passes it, and never opens it. Main's answer (`opened`, `needs-gesture`, `no-link`) is a status line.
+- **A fact, not a rule.** A canonical mismatch (`google-differs`) is marked on the card only; no rule,
+  score or panel status reads the inspection.
+
+### View model (`apps/desktop/src/renderer/__tests__/gsc-inspection-view.test.ts`)
+- `states-and-copy` — hidden before `gsc.watch` answers and when unconfigured (or an `unconfigured` answer);
+  `not-connected` while not connected or connecting; `auth-expired` from the connection's error or an answer;
+  `not-a-web-page` for a non-`http(s)` tab; `idle`, `inspecting`, `ok`; each unavailable reason as its state,
+  each with `GSC_INSPECTION_COPY`'s words and button (`{host}` filled in).
+- `canonical-three-way-compare` — Google's canonical against the one the page declares (as Google read it)
+  and the one frost read: resolved against the page and without fragments; `same`, `google-differs`,
+  `user-missing`; nothing to compare when Google reported none.
+- `last-crawl-relative-and-absolute` — the last crawl reads `<relative> (<absolute>)`; none reads
+  "Not crawled yet"; a time ahead of the clock reads "just now".
+- `rich-issues-grouped-by-severity` — each item's issues in `GSC_RICH_SEVERITY_ORDER` groups (errors,
+  warnings, then unknown codes), with counts; no rich results reads `noRichResults`.
+- `strings-are-inert` — a U+202E override and markup-looking text from Google stay literal and isolated
+  (`<bdi dir="auto">`, the full value in an isolated tooltip): no element, `href` or `style` comes from them.
+
+### Card (`apps/desktop/src/renderer/__tests__/gsc-inspection-card.test.ts`, jsdom, IPC faked)
+- `inspect-only-on-click` — mounting both cards calls nothing; one click sends one `gsc.inspect({ url })`
+  (the fragment dropped) and both cards show the answer.
+- `inspect-again-sends-fresh` — "Inspect again" sends `{ url, fresh: true }`.
+- `open-in-search-console-uses-main` — "Open in Search Console" calls `gsc.openInspectionLink({ url })`
+  with the page URL; the link never appears in the DOM (no `href`, no text, no attribute) and the chrome
+  never opens it (`window.open` untouched); main's answer is shown as a status line.
+
+### Palette (`apps/desktop/src/renderer/__tests__/gsc-palette.test.ts`)
+- `gsc-palette-inspect` — "Inspect this page in Search Console" is offered on a web page unless main
+  answered unconfigured or not connected; it asks for the page and opens Indexability.

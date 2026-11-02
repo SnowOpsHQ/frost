@@ -1,5 +1,5 @@
 import type { TabState } from '@app/specs/browser.spec';
-import type { GscQueryScope } from '@app/specs/gsc.spec';
+import type { GscQueryScope, GscStatus } from '@app/specs/gsc.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import type { PaletteAction, PaletteSource } from './palette/registry';
 
@@ -8,7 +8,10 @@ import type { PaletteAction, PaletteSource } from './palette/registry';
 // panel" (the panel's jump, owned here), and "Search Console: whole property" / "Search Console: this
 // page", which set the panel's scope and open it; "Search Console: clear filters" (Phase 9 Task 3),
 // offered while a country or device filter is set. Registered from `components/seo/GscPanel.tsx`;
-// pure (the prefs store is injected) so availability is unit tested.
+// pure (the prefs store is injected) so availability is unit tested. "Inspect this page in Search
+// Console" (Phase 9 Task 4; `gsc-inspection.feature.md`, Palette) asks Google's URL Inspection for the
+// page and opens Indexability, where "Google's view" shows the answer; registered from
+// `components/seo/GscInspectionCard.tsx`.
 
 export interface GscPaletteApi {
   scope(): GscQueryScope;
@@ -62,6 +65,38 @@ export function gscPaletteSources(api: GscPaletteApi): PaletteSource[] {
       run: (ctx) => {
         api.clearFilters();
         ctx.chrome.openPanel('search-console', { focus: false });
+      },
+    },
+  ];
+}
+
+export interface GscInspectPaletteApi {
+  /** `gsc.watch` as last answered (`null`: not yet). */
+  status(): GscStatus | null;
+  /** Asks main about the page (`gsc.inspect({ url })`, the shared entry the cards show). */
+  inspect(url: string): void;
+}
+
+/**
+ * "Inspect this page in Search Console": on a web page, unless main answered that Search Console is
+ * unconfigured or not connected (before it answered, it is offered and the card shows what main says).
+ */
+export function gscInspectPaletteSources(api: GscInspectPaletteApi): PaletteSource[] {
+  return [
+    {
+      id: 'search-console.inspect-page',
+      label: 'Inspect this page in Search Console',
+      group: 'panels',
+      keywords: [...KEYWORDS, 'url inspection', 'inspect', 'indexed', 'index', 'canonical', 'rich results', 'crawl'],
+      icon: 'panel-search-console',
+      available: (ctx) => {
+        if (!onWebPage(ctx.tab)) return false;
+        const status = api.status();
+        return status === null || (status.configured && status.connected);
+      },
+      run: (ctx) => {
+        api.inspect(ctx.tab!.url);
+        ctx.chrome.openPanel('indexability', { focus: false });
       },
     },
   ];
