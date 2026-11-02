@@ -104,6 +104,10 @@ describe('aiChecks router', () => {
   });
 
   test('outputs-strict', async () => {
+    // Every procedure answers through an output schema of its own (`checkNow` too: a boolean).
+    for (const name of Object.keys(PROCEDURES)) {
+      expect((appRouter._def.procedures as unknown as Record<string, { _def: { output?: unknown } }>)[`aiChecks.${name}`]?._def.output, name).toBeDefined();
+    }
     // Strict inputs: nothing more, nothing malformed reaches the service.
     const bad: Record<string, unknown[]> = {
       state: [{}, { tabId: 0 }, { tabId: 1.5 }, { tabId: '1' }, { tabId: 1, url: URL_A }],

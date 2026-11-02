@@ -239,6 +239,47 @@ describe('ai checks service', () => {
     expect(h.agent.starts).toHaveLength(1);
   });
 
+  test('automatic-rechecked-after-start', async () => {
+    /** Holds the next `agent.start()` (a cold runtime start) until the test lets it go. */
+    const holdStart = (h: ReturnType<typeof harness>) => {
+      let release!: (ok: boolean) => void;
+      h.agent.port.start.mockImplementationOnce(() => new Promise<boolean>((resolve) => (release = resolve)));
+      return (ok = true) => release(ok);
+    };
+
+    // The mode moves to on-request while the runtime starts: nothing is posted.
+    const h = harness();
+    h.setServed(1, readyState(PAGE));
+    const release = holdStart(h);
+    await h.service.setMode('automatic');
+    await h.settle();
+    expect(h.agent.port.start).toHaveBeenCalledTimes(1);
+    expect(await h.service.setMode('on-request')).toBe('on-request');
+    release();
+    await h.settle();
+    await h.look();
+    expect(h.agent.port.startCheck).not.toHaveBeenCalled();
+    expect(h.view()).toEqual({ status: 'idle' });
+
+    // Another tab becomes active while the runtime starts: nothing is posted for the first one.
+    const t = harness();
+    t.setServed(1, readyState(PAGE));
+    t.tabs.set(2, { contentsId: 22, url: 'https://www.example.com/two', userAgent: null, scripting: true, auditReady: true });
+    const releaseTab = holdStart(t);
+    await t.service.setMode('automatic');
+    await t.settle();
+    expect(t.agent.port.start).toHaveBeenCalledTimes(1);
+    t.setActive(2);
+    releaseTab();
+    await t.settle();
+    await t.look();
+    expect(t.agent.port.startCheck).not.toHaveBeenCalled();
+    // Dropped quietly, not failed: back on the tab, its automatic check runs.
+    t.setActive(1);
+    await t.look();
+    expect(t.agent.starts).toHaveLength(1);
+  });
+
   test('input-only-from-served-fetch', async () => {
     const h = harness();
     // The rendered page (what the user sees, signed in) and the on-device page type sit beside the

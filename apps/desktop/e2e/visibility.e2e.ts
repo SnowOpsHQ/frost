@@ -264,7 +264,11 @@ test('probes-eight-agents-and-llms-txt', async () => {
   const llms = asked.filter((entry) => entry.path === '/llms.txt');
   expect(llms).toHaveLength(1);
   expect(CRAWLER.test(llms[0]!.userAgent)).toBe(false);
-  expect(asked.findIndex((entry) => entry.path === '/llms.txt')).toBe(asked.length - 1);
+  // After the agents' calls: it starts once one lane is free, so at most `maxConcurrent - 1` agents'
+  // page requests can still reach the site after it (arrival order aside, stray browser requests too).
+  const llmsAt = asked.findIndex((entry) => entry.path === '/llms.txt');
+  const agentPagesBefore = asked.slice(0, llmsAt).filter((entry) => entry.path === AI_PAGE).length;
+  expect(agentPagesBefore).toBeGreaterThanOrEqual(PROBE_AGENTS.length - (PROBE_LIMITS.maxConcurrent - 1));
   // Bounded: one request per crawler, and the whole run within PROBE_LIMITS.maxRunRequests (36).
   expect(PROBE_LIMITS.maxRunRequests).toBe(36);
   expect(asked.filter((entry) => CRAWLER.test(entry.userAgent) && entry.path === AI_PAGE)).toHaveLength(PROBE_AGENTS.length - 1);

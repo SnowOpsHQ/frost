@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { z } from 'zod';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import { AiChecksCheckNowInputSchema, AiChecksModeSchema, AiChecksSetModeInputSchema, AiChecksStateSchema, AiChecksTabInputSchema, AiChecksWatchInputSchema, type AiChecksState } from '@app/specs/ai-checks.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
@@ -62,5 +63,6 @@ export const aiChecksRouter = router({
     .use(enforceSender)
     .use(requireAiChecks)
     .input(AiChecksCheckNowInputSchema)
+    .output(z.boolean())
     .mutation(async ({ ctx, input }) => (await ctx.aiChecks.checkNow(input.tabId, input.again === true)) === true),
 });

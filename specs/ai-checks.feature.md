@@ -15,6 +15,8 @@ named test.
 - **Opt-in, off by default.** The mode is `off`, `on-request` or `automatic`, stored under
   `AI_CHECKS_SETTING_KEY` in `app_settings`. Leaving `off` needs main's consent dialog
   (`AI_CHECKS_ENABLE_PROMPT`); the renderer asks, main decides. Turning off stops a running check.
+  The dialog names what is sent: the page's address, including any query string, with the short
+  signed-out extract (title, description, headings, opening text), at most `maxInputChars` in all.
 - **Only the cookieless served fetch.** A check's input is the served HTML the JavaScript panel's
   audit already fetched (no cookies or credentials), read with `served.peek` under the audit's own key
   (the tab's user agent and scripting). An AI check never fetches: a page whose served state is not
@@ -44,6 +46,9 @@ named test.
   main's dialog; cancelled, the mode stays `off` and nothing is stored; confirmed, the mode is stored.
   Moving between the two on modes and back to `off` asks nothing.
 - `on-request-never-automatic` — in `on-request`, ready audits post nothing; "Check this page" posts one.
+- `automatic-rechecked-after-start` — an automatic check is decided again once the runtime has
+  started: if the mode moved to `on-request`, or another tab became active, while `agent.start()` was
+  pending, it is dropped quietly and no `check.start` is posted.
 - `input-only-from-served-fetch` — with a rendered page holding signed-in text that the served HTML
   lacks, the input holds the served title and lead text and none of the rendered text.
 - `logged-in-looking-page-not-sent` — a served 401 or 403, a redirect to another path, a `partial`
@@ -97,7 +102,8 @@ named test.
 
 ## Router (`packages/ipc-contract/src/__tests__/ai-checks-router.test.ts`)
 - `enforces-sender` — every `aiChecks.*` procedure refuses a foreign sender before its input or service.
-- `outputs-strict` — inputs are strict, and an answer with anything more (a key) is a masked error.
+- `outputs-strict` — inputs are strict, every procedure has an output schema (`checkNow` a boolean),
+  and an answer with anything more (a key) is a masked error.
 
 ## UI (`apps/desktop/src/renderer/__tests__/ai-checks-view.test.ts`)
 Task 11 (Decision 17). The chrome follows `aiChecks.watch` for the tab and shows what main answers: it

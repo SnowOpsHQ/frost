@@ -131,7 +131,7 @@ export const AI_CHECKS_ENABLE_PROMPT = {
     type: 'question',
     message: 'Turn on AI checks?',
     detail: [
-      `frost sends a short extract of the page: its title, description, headings and opening text, at most ${AI_CHECK_LIMITS.maxInputChars.toLocaleString('en-US')} characters, as frost fetched it without your cookies, the way anyone signed out would get it. Never what you see while signed in. A site that sends everyone the same page, signed in or not, is sent as it is served.`,
+      `frost sends the page's address, including any query string, with a short extract of the page: its title, description, headings and opening text, at most ${AI_CHECK_LIMITS.maxInputChars.toLocaleString('en-US')} characters in all, as frost fetched it without your cookies, the way anyone signed out would get it. Never what you see while signed in. A site that sends everyone the same page, signed in or not, is sent as it is served.`,
       'It goes to the model provider of your agent settings, on your own key or ChatGPT plan, at your cost (a plan\'s usage limits apply). Each check is one model request.',
       `In automatic mode, frost checks at most ${AI_CHECK_LIMITS.maxAutomaticPerHour} pages an hour, one at a time, and waits while a chat runs.`,
       'Results stay on this computer. Clear Browsing Data removes them.',

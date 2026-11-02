@@ -12,7 +12,8 @@ hreflang checks. Phase 3 adds:
 Phase 4 adds a frost account with plans, opt-in telemetry and a read-only Search Console
 panel, set up in a Settings view.
 
-The agent comes in a later phase (`docs/design/IMPLEMENTATION-PLAN.md` §4).
+Phase 5 adds the agent, a chat that works on the page you are on, on the model you set up (your own
+key, a gateway key or your ChatGPT plan). Phase 9 adds opt-in AI checks of a page on that same model.
 
 ## What it does
 
@@ -632,6 +633,17 @@ their logs** (each surface says so):
   Console"), never on a page load: `POST https://searchconsole.googleapis.com/v1/urlInspection/index:inspect`
   with the page and its property only, on the same read-only connection (cached 15 minutes; its own
   rate, 1 a second, burst 3).
+- **The agent's model** (Phase 5, only once you set it up and use it): the model requests of each
+  chat turn, sent by main's model proxy to the one route your agent settings name, at its exact
+  endpoint only: `api.anthropic.com` or `api.openai.com` with your own key, the gateway
+  (`ai-gateway.vercel.sh`) with its key, or `api.openai.com` on your ChatGPT plan (signing in, and
+  the plan's model list, go to `auth.openai.com` and `api.openai.com`).
+- **AI checks** (Phase 9, opt-in, off by default; turning them on asks first): one model request
+  per check, on "Check this page" or, in automatic mode, for the active tab (at most 20 an hour). It
+  goes to the agent's configured route and model through the same proxy, and carries only the page's
+  address (query string included) and a short extract of the page as frost fetched it signed out
+  (title, description, headings, opening text; 8,000 characters at most in all). Never the page you
+  see while signed in.
 - **Telemetry** (only with its switch on, and only to the endpoint baked into the build): see
   Telemetry above.
 - **Tabs you ask for:** an "Open in" tool (sent the page URL, after you allowed its host once), the

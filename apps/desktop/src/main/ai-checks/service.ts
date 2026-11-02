@@ -257,9 +257,11 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
     if (running !== null) return setNote(tabId, url, manual !== null ? QUEUED : IDLE);
     if (manual === null && (now() < backoffUntil || !withinCap(now()))) return setNote(tabId, url, unavailable('rate'));
     const started = await deps.agent.start();
-    // Everything is checked again after the wait: the mode, the page, the queue, the chat, the model.
+    // Everything is checked again after the wait: the mode, the page, the queue, the chat, the model;
+    // an automatic check also needs the mode still `automatic` and its tab still the active one.
     const current = deps.agent.current();
     if (disposed || checksOff() || !stillOn(tabId, url) || running !== null || current.route !== model.route || current.modelId !== model.modelId) return void schedule();
+    if (manual === null && (mode !== 'automatic' || deps.tabs.activeTabId() !== tabId)) return void schedule();
     if (deps.agent.chatRunning()) return setNote(tabId, url, unavailable('busy-chat'));
     wanted.delete(tabId);
     if (!started) return setNote(tabId, url, unavailable('network'));
