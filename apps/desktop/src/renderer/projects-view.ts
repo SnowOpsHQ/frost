@@ -1,7 +1,8 @@
 import { SEARCH_ENGINES } from '@app/specs/browser-polish.spec';
 import { MAX_PROJECT_QUERIES, UNFILED_PROJECT_ID, type RetentionMode } from '@app/specs/capture-db.spec';
-import { AUTO_CAPTURE_AVAILABLE, CADENCE_TEXT, CAPTURE_CADENCE_LABELS } from '@app/specs/capture-schedule.spec';
+import { AUTO_CAPTURE_AVAILABLE, CADENCE_TEXT, CAPTURE_CADENCE_LABELS, RANK_CHECK_AVAILABLE } from '@app/specs/capture-schedule.spec';
 import {
+  BULK_ADD_TEXT,
   BULK_LINE_OUTCOME_LABELS,
   BULK_SEARCH_LIMITS,
   CHECK_RANKINGS_TEXT,
@@ -215,6 +216,16 @@ export function cadenceOf(value: string): CaptureCadence | null {
 
 /** Whether Settings shows the "Start automatically" switch: only when automatic starts are offered (never in this phase). */
 export const showAutoCaptureSwitch = (): boolean => AUTO_CAPTURE_AVAILABLE;
+
+/**
+ * Whether the sheet shows "Check rankings", the list's "Due" and the Settings view's cadence section
+ * (`RANK_CHECK_AVAILABLE`: `false` until the owner's L1 note, plan Decision 10). The components ask
+ * this, never the flag, so their tests can inject it.
+ */
+export const rankCheckShown = (): boolean => RANK_CHECK_AVAILABLE;
+
+/** The Bulk add note: names Check rankings and the cadence only when they are offered (`shown`: `rankCheckShown()`), else Capture now alone. */
+export const bulkAddNote = (shown: boolean): string => (shown ? BULK_ADD_TEXT.note : BULK_ADD_TEXT.noteWithoutRankCheck);
 
 /** What setting the cadence said (the disclosure answered Cancel: nothing changed). */
 export function cadenceText(answer: ProjectChangeAnswer | null): string {

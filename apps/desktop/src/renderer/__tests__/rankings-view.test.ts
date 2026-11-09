@@ -31,6 +31,7 @@ import {
   emptyStates,
   formatWhen,
   historyNote,
+  noReadingsText,
   rangeOptions,
   rankRowView,
   rankTableInput,
@@ -220,6 +221,11 @@ describe('rankings view', () => {
     expect(emptyStates({ site: null, rows: [row({ latest: null, previous: null })] })).toEqual(['no-site', 'no-readings']);
     expect(RANK_VIEW_TEXT.noSite).toBe("Set your site's domain to see its position");
     expect(RANK_VIEW_TEXT.noReadings).toBe('No readings yet: capture a search or run Check rankings');
+    // Check rankings is named only once it is offered (RANK_CHECK_AVAILABLE, L1); else Capture now.
+    expect(noReadingsText(true)).toBe(RANK_VIEW_TEXT.noReadings);
+    expect(noReadingsText(false)).toBe(RANK_VIEW_TEXT.noReadingsWithoutRankCheck);
+    expect(RANK_VIEW_TEXT.noReadingsWithoutRankCheck).toBe('No readings yet: capture a search, or capture the project with Capture now');
+    expect(noReadingsText(false)).not.toContain('Check rankings');
     // The series: newest first, date, position, URL.
     const series = seriesRows([point({ readingId: 'r1', at: 1_000, position: 5 }), point({ readingId: 'r2', at: 2_000, outcome: 'not-found', position: null, url: null, alsoIn: ['video'] })]);
     expect(series).toEqual([

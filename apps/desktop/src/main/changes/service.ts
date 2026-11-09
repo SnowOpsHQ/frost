@@ -4,8 +4,7 @@ import type { ChangesReadService, ChangesService } from '@app/ipc-contract';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { MAX_DIFF_JSON_BYTES, MAX_SNAPSHOT_JSON_BYTES, UNFILED_PROJECT_ID, type CaptureSource } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS, CAPTURE_SNAPSHOT_VERSION, PAGE_REGIONS, CaptureSnapshotSchema, DIFF_ENGINE_VERSION, SnapshotDiffSchema, type CaptureSnapshot, type SnapshotDiff } from '@app/specs/capture-snapshot.schema';
-import { searchIdentityJson } from '@app/specs/rankings.spec';
-import { searchHostOf, serpFiltersOf } from '@app/specs/rankings-url.spec';
+import { serpFiltersOf } from '@app/specs/rankings-url.spec';
 import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
 import { SerpSnapshotSchema, type SerpSnapshot } from '@app/specs/serp-snapshot.schema';
 import { MAX_SERP_FILTERS_JSON_BYTES, MAX_SERP_READING_JSON_BYTES, SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
@@ -15,6 +14,7 @@ import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import type { z } from 'zod';
 import type { LoadTimes } from './loads';
 import { recordedProfile } from './profile-in-effect';
+import { searchKeyOf } from './search-key';
 import { parseRegionAnswer, type RegionTarget } from './regions';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex, storedPageUrl } from './snapshot';
 import { readScreenshots } from '../screenshots/service';
@@ -198,17 +198,18 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     const searchParamsJson = canonicalJson(searchParams);
     // A reading that lags a reload (or a run target captured with its own parameters) is another search's.
     if (reading.params === null || canonicalJson(reading.params) !== searchParamsJson) return { skipped: 'its reading is of another search' };
-    const host = searchHostOf(searchParams.url);
-    if (host === null) return { skipped: 'its search has no engine host' };
     // Filters past their cap are never cut to fit (that would file the page under another series).
     const filters = serpFiltersOf(page, searchParams.engine);
     if (filters === null) return { skipped: 'its filters are too large to store' };
+    // The key every rankings read looks it up by (`search-key.ts`: one function for both).
+    const searchKey = searchKeyOf(searchParams, filters);
+    if (searchKey === null) return { skipped: 'its search has no engine host' };
     const filtersJson = canonicalJson(filters);
     const readingJson = canonicalJson(reading);
     if (utf8Bytes(readingJson) > MAX_SERP_READING_JSON_BYTES || utf8Bytes(filtersJson) > MAX_SERP_FILTERS_JSON_BYTES) return { skipped: 'its reading is too large to store' };
     return {
       row: {
-        searchKey: sha256Hex(searchIdentityJson(searchParams, filters, host)),
+        searchKey,
         searchKeyVersion: SEARCH_KEY_VERSION,
         searchParamsJson,
         filtersJson,

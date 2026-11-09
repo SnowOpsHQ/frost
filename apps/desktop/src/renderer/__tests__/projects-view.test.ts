@@ -40,6 +40,7 @@ import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, formatByt
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
 import { projectsPaletteSources, retentionPaletteSources } from '../projects-palette';
 import {
+  bulkAddNote,
   EMPTY_QUERY_FORM,
   PROJECT_PROFILE_CHOICES,
   EMPTY_BULK_FORM,
@@ -204,7 +205,9 @@ describe('projects view', () => {
   test('projects-palette-actions', async () => {
     const api = { open: vi.fn(), lastProject: vi.fn((): string | undefined => undefined), startRun: vi.fn(async () => ({ status: 'started' as const, runId: P1 })) };
     const registry = createPaletteRegistry();
-    registry.register(...projectsPaletteSources(api));
+    // "Check rankings now" as it ships once L1 is cleared (`RANK_CHECK_AVAILABLE` injected; the shipped
+    // flag hides it: `rankings-components.test.ts` `rank-check-hidden-until-cleared`).
+    registry.register(...projectsPaletteSources(api, { rankCheckAvailable: true }));
     const ctx = (active: TabState | undefined): PaletteContext => ({ state: null, tab: active, audit: null, sidebarOpen: false, chrome: { openPanel: vi.fn(), setSidebarOpen: vi.fn() } });
     const ids = (active: TabState | undefined) => registry.resolve(ctx(active)).map((action) => action.id);
     // Open projects, rankings and compare always; add this page with a web page; capture now once a project was opened.
@@ -282,8 +285,11 @@ describe('projects view', () => {
     expect(cadenceText({ status: 'refused', reason: 'unavailable' })).toBe(PROJECT_REFUSAL_MESSAGES.unavailable);
     expect(cadenceText(null)).toMatch(/went wrong/);
     expect(PROJECT_REFUSAL_MESSAGES.unfiled).toContain('cadence');
-    // Bulk add stays true: a cadence never sends anything by itself.
-    expect(BULK_ADD_TEXT.note).toContain('a cadence only marks the project due');
+    // Bulk add stays true: a cadence never sends anything by itself (said only once a cadence is offered, L1).
+    expect(bulkAddNote(true)).toBe(BULK_ADD_TEXT.note);
+    expect(bulkAddNote(true)).toContain('a cadence only marks the project due');
+    expect(bulkAddNote(false)).toBe(BULK_ADD_TEXT.noteWithoutRankCheck);
+    expect(bulkAddNote(false)).not.toContain('cadence');
   });
 
   // spec: specs/projects.feature.md — Searches in a run (a blocked run); The sheet (a blocked run)
@@ -434,9 +440,12 @@ describe('projects view', () => {
     expect(bulkSummaryText({ lines: 2, locales: 2, devices: 2, searches: 8 }, MAX_PROJECT_QUERIES - 10)).toBe('2 queries × 2 locales × 2 devices: 8 searches. The project can hold 10 more.');
     expect(bulkSummaryText({ lines: 1, locales: 1, devices: 1, searches: 1 }, 0)).toBe(`1 query × 1 locale × 1 device: 1 search. The project can hold ${MAX_PROJECT_QUERIES} more.`);
     expect(bulkSummaryText({ lines: 1, locales: 1, devices: 1, searches: 1 }, MAX_PROJECT_QUERIES)).toBe('1 query × 1 locale × 1 device: 1 search. The project is full.');
-    // The note: frost's own words, nothing sent.
-    expect(BULK_ADD_TEXT.note).toContain('only saves searches');
-    expect(BULK_ADD_TEXT.note).toContain('Nothing is sent to a search engine until you run Check rankings');
+    // The note: frost's own words, nothing sent; Check rankings named only once it is offered (L1), else Capture now alone.
+    expect(bulkAddNote(true)).toContain('only saves searches');
+    expect(bulkAddNote(true)).toContain('Nothing is sent to a search engine until you run Check rankings');
+    expect(bulkAddNote(false)).toContain('only saves searches');
+    expect(bulkAddNote(false)).toContain('Nothing is sent to a search engine until you run Capture now');
+    expect(bulkAddNote(false)).not.toContain('Check rankings');
     // Per-line outcomes, in order, the query as text.
     const answer = {
       status: 'done' as const,

@@ -130,8 +130,8 @@ const TABLES = `
     VALUES ('${UNFILED_PROJECT_ID}', '${UNFILED_PROJECT_NAME}', NULL, 'forever', NULL, 0, 0, NULL);
 `;
 
-// The guard helpers below are exported for Phase 10's own migrations (`workspace-migrations.ts`),
-// which reuse them on their tables; the SQL they produce here is unchanged.
+// The `noReplace` and `mutable` guard helpers below are exported for Phase 10's own migrations
+// (`workspace-migrations.ts`), which reuse them on their tables; the SQL they produce here is unchanged.
 
 // Every table: an insert never lands on an existing row. SQLite's REPLACE (and `INSERT OR REPLACE`,
 // `UPDATE OR REPLACE`) deletes the conflicting row without firing any DELETE trigger, so the
@@ -147,7 +147,7 @@ const liveKey = (table: string, columns: readonly string[]) => columns.map((colu
 
 // Captured rows: never updated; deleted only once a tombstone of a recorded purge names them; a
 // purged id never comes back.
-export const captured = (table: string) => `
+const captured = (table: string) => `
   CREATE TRIGGER ${table}_no_update BEFORE UPDATE ON ${table}
   BEGIN SELECT RAISE(ABORT, '${table} is append-only'); END;
   CREATE TRIGGER ${table}_purge_only BEFORE DELETE ON ${table}

@@ -42,7 +42,8 @@ function everySource(): PaletteSource[] {
     ...updatePaletteSources({ check: vi.fn(async () => null), setChecks: vi.fn(async () => null), known: () => undefined }),
     ...serpPaletteSources({ setOutlines: yes, checkPackUpdate: vi.fn(async () => 'not-newer' as const), enableIntent: vi.fn(async () => 'ready' as const), refreshIntent: yes, runProbes: yes, stopProbes: yes, openEditor: vi.fn(), openDestination: vi.fn(async () => null), knownSerp: () => undefined, knownProbes: () => undefined, knownIntent: () => undefined }),
     ...changesPaletteSources({ capture: vi.fn(async () => null), screenshot: vi.fn(async () => null) }),
-    ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }),
+    // With "Check rankings now" (`rankCheckAvailable` injected), so its id is checked against every other too.
+    ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }, { rankCheckAvailable: true }),
     ...retentionPaletteSources({ open: vi.fn(), lastProject: () => 'x', purgeNow: vi.fn(async () => null), compact: vi.fn(async () => null) }),
     ...inspectorPaletteSources({ pick: vi.fn(async () => null) }),
     ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn(), filtered: () => true, clearFilters: vi.fn() }),

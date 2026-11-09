@@ -150,7 +150,7 @@ export interface ProjectsService extends RetentionService {
   /** Bulk add: each line's searches (locales × devices) through the saved-search path; per-line outcomes. */
   addSearches(projectId: string, searches: BulkSearchesInput): Promise<BulkAddAnswer>;
   // ---- The cadence (Phase 10 Task 8; main's `apps/desktop/src/main/changes/projects.ts`) ----
-  /** Sets the project's cadence (a due notice only; never on Unfiled); main asks the disclosure before one is first set. */
+  /** Sets the project's cadence (a due notice only; never on Unfiled; `unavailable` while `RANK_CHECK_AVAILABLE` is `false`); main asks the disclosure before one is first set. */
   setCadence(projectId: string, cadence: CaptureCadence): Promise<ProjectChangeAnswer>;
   /** Whether its due runs start by themselves: `unavailable` while `AUTO_CAPTURE_AVAILABLE` is `false`. */
   setAutoCapture(projectId: string, on: boolean): Promise<ProjectChangeAnswer>;

@@ -5,7 +5,7 @@ Spec: `specs/projects.spec.ts` (`PROJECT_RUN_LIMITS`, `RUN_STATES`, `RUN_TARGET_
 `PROJECT_SORTS`, `sortProjects`, Task 8's `RANK_RUN_DISCLOSURE`, `RANK_RUN_DISCLOSURE_SETTING_KEY`,
 `RANK_RUN_QUERY_SPACING_MS`, `RUN_BLOCK_REASONS`, `RUN_BLOCK_REASON_LABELS`, `RUN_BLOCKED_NOTE`,
 `CHECK_RANKINGS_TEXT`, `DUE_TEXT`),
-`specs/capture-schedule.spec.ts` (Task 8: `AUTO_CAPTURE_AVAILABLE`, `CAPTURE_CADENCE_MS`, `isDue`,
+`specs/capture-schedule.spec.ts` (Task 8: `AUTO_CAPTURE_AVAILABLE`, `RANK_CHECK_AVAILABLE`, `CAPTURE_CADENCE_MS`, `isDue`,
 `SCHEDULE_TICK_MS`, `AUTO_CAPTURE_IDLE_S`, `AUTO_CAPTURE_RETRY_MS`, `AUTO_START_SUSPENDED_REASONS`,
 `CAPTURE_SCHEDULE_NOTE`, `CADENCE_TEXT`), `specs/projects.spec.ts` (also
 `RUN_RETRY_REFUSALS`, `QUERY_DEVICE_PROFILES`, `SavedSearchInput`, `SEARCH_PARAM_URL_RULES`,
@@ -126,6 +126,12 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `no-targets`. The caps are unchanged.
 
 ## Searches in a run (Phase 10 Task 8; plan Decision 10)
+- **Legal gate (L1, plan Decision 10).** "Check rankings" (the Overview button and the palette's "Check
+  rankings now") is offered only when `RANK_CHECK_AVAILABLE` (`capture-schedule.spec.ts`) is `true`,
+  and it is `false` until the owner's written L1 note is under `docs/research/` (flipped in the same
+  change that adds it). While it is `false` neither is shown. Everything else in this section holds
+  regardless: Capture now on a project with saved searches still asks the disclosure, paces its
+  searches and stops at the first challenge (Phase 6's run made safer, not an L1 surface).
 - **Disclosure first.** Before the first run with search targets (Capture now on a project whose run
   would visit a saved search, Check rankings) main shows `RANK_RUN_DISCLOSURE` in its own message box,
   parented as `DELETE_PROJECT` is (the focused window, else the app's), Cancel the default: frost loads
@@ -140,7 +146,10 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   never asks. *Lead rulings of the Task 8 security review (amending plan Decision 10):* a **page
   target whose URL is an engine's result page** (`runSearchOf`: `searchParamsForUrl` reads it) counts
   as a search for the disclosure, the pacing and the stop below (its own parameters are what
-  `sameRunSearch` compares); after a Continue, `startRun` **reads the project and its targets again**
+  `sameRunSearch` compares); so does a **page target on an engine's host** (`queriesAnEngine`: its
+  host is one of the bundled pack's engine hosts, whatever its path or the pack's `reject` rules, e.g.
+  Google `udm=50` or `tbm=isch`, DuckDuckGo `ia=images`): it is disclosed and paced, and the stop
+  below blocks it (`not-a-result-page`: no result page of the search it is not); after a Continue, `startRun` **reads the project and its targets again**
   (a project deleted meanwhile is `not-found`; the run is of what it holds then); an **automatic
   start** (`startAutomaticRun`, the schedule's) never opens the dialog and is `declined` without a
   Continue already given.
@@ -169,7 +178,11 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   loop: it never landed) stops the run (`load-failed`); the landed document (`documentSeq`) is
   recorded, and any other document before the capture or the screenshot (another URL, or a same-URL
   reload) stops it (`not-a-result-page`) without a new check — a capture already made of the checked
-  document stays, without its screenshot.
+  document stays, without its screenshot. *Whole-branch review ruling:* a URL change **within the same
+  document** (`pushState` / `replaceState`, `documentSeq` unchanged) stops it only when the new URL is
+  not a result page of the target's search (`searchParamsForUrl` reads none, or `sameRunSearch` with
+  the target is false); one that keeps the search goes on at the new URL (not captured yet: its verdict
+  and the tab's parameters are read again for it).
   A blocked run ends `blocked` (`RUN_STATES`, `RUN_END_STATES`) with `RunState.blockedReason`
   (`RUN_BLOCK_REASONS`); that target is `blocked`, every later one `cancelled`. `changes.capture` and
   the screenshot are never called for it: nothing of a challenge or consent page (no capture,
@@ -180,6 +193,12 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   page is a search target (ruling above). Manual captures and screenshots are unchanged.
 
 ## Cadence (Phase 10 Task 8; plan Decision 10)
+- **Legal gate (L1).** The cadence and its Due notice ship only with the owner's written L1 note
+  (`RANK_CHECK_AVAILABLE`, `false` until then). While it is `false`: `projects.setCadence` answers
+  `unavailable` in main whatever is asked (nothing stored, no disclosure asked; the renderer cannot
+  get past it), `setAutoCapture` answers `unavailable` too, every `ProjectSummary.due` is `false` (so
+  the scheduler never sees a due project), and the Settings view has no cadence section and the list
+  no "Due". The rest of this section describes the cadence once the flag is `true` (tests inject it).
 - A project has a capture cadence (`CAPTURE_CADENCES`: `off`, the default, `daily`, `weekly`), set by
   `projects.setCadence`; device-local, never the project's `updated_at`. **Unfiled refuses a cadence**
   (`unfiled`).
@@ -344,12 +363,14 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
     (`projects-cadence`, `CAPTURE_CADENCE_LABELS`) that calls `setCadence` (main may ask the
     disclosure first; `declined` says `CADENCE_TEXT.declined` and the menu shows the stored cadence),
     and the note `CAPTURE_SCHEDULE_NOTE` (`projects-cadence-note`). The "Start automatically" switch
-    (`projects-auto-capture`) shows only when `AUTO_CAPTURE_AVAILABLE` (never in this phase).
+    (`projects-auto-capture`) shows only when `AUTO_CAPTURE_AVAILABLE` (never in this phase). The
+    whole section shows only when `RANK_CHECK_AVAILABLE` (L1; not while it is `false`).
 
   For Unfiled the view says `PROJECT_SETTINGS_TEXT.unfiled` and offers nothing to set. The Rankings
   view's "Set your site's domain to see its position" notice carries a button
   (`rankings-open-settings`) that switches to Settings.
-- **Due, Check rankings and a blocked run (Phase 10 Task 8).** A project whose summary is `due` shows
+- **Due, Check rankings and a blocked run (Phase 10 Task 8).** "Due" and Check rankings show only
+  when `RANK_CHECK_AVAILABLE` (L1; neither while it is `false`). A project whose summary is `due` shows
   `DUE_TEXT.label` beside its name in the list (`projects-due`, described by `DUE_TEXT.note`).
   Overview's capture row has **Check rankings** (`projects-check-rankings`, `CHECK_RANKINGS_TEXT`):
   `startRun` with `scope: 'searches'`, without screenshots, disabled with no saved search or while a run
@@ -381,7 +402,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   - a summary of how many searches it makes (`projects-bulk-summary`) and how many more the project
     can hold;
   - the note `BULK_ADD_TEXT.note` (`projects-bulk-note`): it only saves searches, and nothing is sent
-    until you run Check rankings (or Capture now);
+    until you run Check rankings (or Capture now); while `RANK_CHECK_AVAILABLE` is `false` (L1) it is
+    `BULK_ADD_TEXT.noteWithoutRankCheck` instead, naming Capture now only and no cadence;
   - Add searches (`projects-bulk-submit`), then the per-line outcomes (`projects-bulk-outcomes`, each
     `projects-bulk-outcome` with `data-outcome`, `BULK_LINE_OUTCOME_LABELS`, the query as text). The
     text is cleared once lines were added.
@@ -407,8 +429,9 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   sheet on it and starts its run (no screenshots). Deleting that project withdraws the action.
 - "Open rankings" and "Compare searches" (Phase 10 Task 6) open the sheet on the Rankings or Compare
   view of the project last opened in the sheet (else the first project, Unfiled).
-- "Check rankings now" (Phase 10 Task 8; once a project was opened in the sheet this session) opens the
-  sheet on it and starts a `searches` run (main asks the disclosure first when it must).
+- "Check rankings now" (Phase 10 Task 8; once a project was opened in the sheet this session, and only
+  when `RANK_CHECK_AVAILABLE`: not registered while it is `false`) opens the sheet on it and starts a
+  `searches` run (main asks the disclosure first when it must).
 
 ## Known limits
 - A search target that lands on a consent page on another URL stops the run (`not-a-result-page`):
@@ -482,12 +505,20 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `capture-run-after-blocked-starts-normally`, `capture-run-no-wait-after-a-failed-load` (a
   navigation the guard refused), `capture-run-ready-needs-tab-params`; the review rulings'
   `capture-run-stops-after-a-failed-search-load`, `capture-run-result-page-target-is-gated`,
-  `capture-run-blocks-a-reload-after-the-check`, `capture-run-spacing-holds-across-runs`;
+  `capture-run-blocks-a-reload-after-the-check`, `capture-run-spacing-holds-across-runs`; the
+  whole-branch review's `capture-run-engine-host-page-is-gated` (a page target on an engine's host
+  that the pack refuses, e.g. Google `udm=50`: spaced and blocked `not-a-result-page`, nothing captured)
+  and `capture-run-same-document-url-change` (a `pushState` keeping the search captures; one changing
+  the query blocks);
   `readings-spec.test.ts` `run-search-matches-built-urls`;
   `projects.test.ts` `rank-run-asks-once-before-first-search-run` (Cancel starts nothing; Continue
   remembered; a pages-only run never asks), `rank-run-disclosure-review-rulings` (a result-page page
   asks; targets read again after Continue; an automatic start never asks),
-  `cadence-asks-the-disclosure-first`.
+  `rank-run-asks-for-an-engine-host-page` (whole-branch review: a page on an engine's host that the
+  pack refuses, e.g. Google `udm=50`, asks too; a page on another host never does), `cadence-asks-the-disclosure-first` (with `RANK_CHECK_AVAILABLE`
+  injected `true`), `set-cadence-unavailable-until-cleared` (the shipped flag: `setCadence` is
+  `unavailable` for every cadence, nothing stored, no disclosure asked; `setAutoCapture` `unavailable`;
+  no summary `due`; Capture now with searches still asks and starts).
 - **Scenario: cadence** (Task 8) — Tests in `apps/desktop/src/main/changes/__tests__/capture-schedule.test.ts`:
   `due-after-cadence`, `off-is-never-due`, `no-backfill-after-sleep`, `defaults-never-start-a-run` (the
   real `AUTO_CAPTURE_AVAILABLE`: due shows, nothing starts, `setAutoCapture` is `unavailable`); with the
@@ -495,7 +526,11 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `auto-run-yields-to-the-user`, `auto-start-suspended-after-blocked`,
   `auto-start-needs-the-disclosure-accepted`, `schedule-stops-on-quit`; the
   chrome: `projects-view.test.ts` `projects-view-due-label`, `projects-view-cadence-settings`,
-  `projects-view-blocked-run`, and "Check rankings now" in `projects-palette-actions`.
+  `projects-view-blocked-run`, and "Check rankings now" in `projects-palette-actions` (with
+  `rankCheckAvailable: true` injected); `rankings-components.test.ts`
+  `projects-due-check-rankings-and-cadence` (the flag injected `true`) and
+  `rank-check-hidden-until-cleared` (the shipped flag: no Check rankings button, no "Due", no cadence
+  section in Settings, no "Check rankings now" in the palette; Capture now still there).
 - **Scenario: project workspace** — Tests in `apps/desktop/src/main/changes/__tests__/workspace.test.ts`:
   `site-domain-normalized` (scheme, path, case, IDN, private hosts refused),
   `competitors-capped-and-unique`, `tags-normalized-and-capped`, `bulk-add-lines-and-combinations`

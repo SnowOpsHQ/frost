@@ -19,6 +19,9 @@
  * Decision 10): the suspension is heard as each run ends (manual or automatic), not sampled at a tick;
  * and an automatic start happens only with the rank run disclosure already accepted on this install,
  * never opening it. No login item, no background process, no server.
+ *
+ * The cadence itself and "Check rankings" ship only with the owner's written L1 note (plan Decision
+ * 10, legal gate): until then `RANK_CHECK_AVAILABLE` is `false` and none of it is offered (below).
  */
 import type { CaptureCadence } from './workspace-db.spec';
 
@@ -26,6 +29,17 @@ export type { CaptureCadence } from './workspace-db.spec';
 
 /** Whether frost may ever start a run by itself. A lead decision after open question 1; `false`. */
 export const AUTO_CAPTURE_AVAILABLE = false as boolean;
+
+/**
+ * Whether "Check rankings" and the cadence / Due notice are offered (plan Decision 10, legal gate L1).
+ * While `false`: the Overview's "Check rankings" button, the palette's "Check rankings now", the
+ * Settings view's cadence section and the list's "Due" label are not shown; `projects.setCadence`
+ * answers `unavailable` in main (nothing stored, whatever the renderer sends); and every
+ * `ProjectSummary.due` is `false`, so the scheduler never sees a due project. Capture now on a project
+ * with saved searches is unaffected (still disclosed, paced and stopped at a challenge).
+ * Flip to `true` only in the same change that adds the owner's written L1 note under `docs/research/`.
+ */
+export const RANK_CHECK_AVAILABLE = false as boolean;
 
 /** How long after a project's last run its cadence makes it due again (`off`: never). */
 export const CAPTURE_CADENCE_MS: Readonly<Record<Exclude<CaptureCadence, 'off'>, number>> = {

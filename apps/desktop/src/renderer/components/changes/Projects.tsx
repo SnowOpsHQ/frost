@@ -46,6 +46,7 @@ import {
   profileOfChoice,
   projectSortOf,
   queryFromForm,
+  rankCheckShown,
   refusalText,
   runActive,
   runProgressText,
@@ -78,7 +79,8 @@ import { Retention } from './Retention';
 // and sort menu (view state, not kept), the tags of pages and saved searches (an inline editor on each
 // row) and Bulk add (`BulkAdd.tsx`, in place of the query form). Task 8 adds "Due" in the list, Check
 // rankings beside Capture now (a run of the saved searches; main asks the disclosure first when it
-// must), a blocked run's note under its progress, and the cadence in Settings.
+// must), a blocked run's note under its progress, and the cadence in Settings; "Due" and Check rankings
+// show only when `rankCheckShown()` (`RANK_CHECK_AVAILABLE`, legal gate L1: not until the owner's note).
 
 // The palette's Projects and retention actions (`projects-palette.ts`), once per module instance.
 const unregisterPaletteActions = registerPaletteActions(
@@ -161,7 +163,7 @@ function ProjectItem({
   readonly onFavorite: (favorite: boolean) => void;
 }) {
   const star = favoriteButton(project);
-  const due = dueLabel(project);
+  const due = rankCheckShown() ? dueLabel(project) : null;
   const dueId = useId();
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(project.name);
@@ -584,9 +586,11 @@ function ProjectView({
                 <button type="button" className="panel-button panel-button-primary" data-testid="projects-capture" disabled={busy || pages.length + queries.length === 0} onClick={() => void capture()}>
                   <span>{mine && busy ? 'Capturing…' : 'Capture now'}</span>
                 </button>
-                <button type="button" className="panel-button" data-testid="projects-check-rankings" disabled={check.disabled} title={check.title} onClick={() => void checkRankings()}>
-                  <span>{check.label}</span>
-                </button>
+                {rankCheckShown() ? (
+                  <button type="button" className="panel-button" data-testid="projects-check-rankings" disabled={check.disabled} title={check.title} onClick={() => void checkRankings()}>
+                    <span>{check.label}</span>
+                  </button>
+                ) : null}
                 <label className="projects-check">
                   <input type="checkbox" data-testid="projects-capture-screenshots" checked={screenshots} onChange={(event) => setScreenshots(event.target.checked)} />
                   <span>with viewport screenshots</span>

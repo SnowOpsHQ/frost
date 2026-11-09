@@ -2,7 +2,7 @@ import { canonicalJson } from '@app/change-intel';
 import type { ChangeIntelRepository, EntryTag, HistoryEntry, Project, ProjectWorkspace, SettingsRepository } from '@app/db';
 import type { ProjectsService, RetentionService } from '@app/ipc-contract';
 import { PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import { AUTO_CAPTURE_AVAILABLE, isDue } from '@app/specs/capture-schedule.spec';
+import { AUTO_CAPTURE_AVAILABLE, RANK_CHECK_AVAILABLE, isDue } from '@app/specs/capture-schedule.spec';
 import { CAPTURE_CADENCES, MAX_TAGS_PER_ENTRY, type CaptureCadence } from '@app/specs/workspace-db.spec';
 import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
 import { SavedSearchInputSchema } from '@app/specs/projects.schema';
@@ -24,7 +24,7 @@ import {
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { ScreenshotFiles } from '../screenshots/store';
-import { inRunScope, runSearchOf, type CaptureRuns, type RunPlanTarget } from './capture-run';
+import { inRunScope, queriesAnEngine, type CaptureRuns, type RunPlanTarget } from './capture-run';
 import { createPurgeFiles, type PurgeFiles } from './purge-files';
 import { searchParamsForUrl } from './serp-params';
 import type { WorkspaceMethod } from './workspace';
@@ -45,8 +45,11 @@ import { storedPageUrl } from './snapshot';
 // and before a cadence is first set, main asks `RANK_RUN_DISCLOSURE` in its own dialog
 // (`confirmRankRun`) unless the settings repository remembers a Continue on this install; Cancel starts
 // or stores nothing (`declined`). The renderer has no way past it. Task 8 security review rulings: a page
-// that is an engine's result page counts as a search (`runSearchOf`); after a Continue the project and
-// its targets are read again; `startAutomaticRun` (the schedule's) never opens the dialog. Every method
+// that is an engine's result page counts as a search (`runSearchOf`), and (whole-branch review) so does
+// any page on an engine's host (`queriesAnEngine`); after a Continue the project and its targets are
+// read again; `startAutomaticRun` (the schedule's) never opens the dialog. Legal gate L1 (plan Decision
+// 10): while `RANK_CHECK_AVAILABLE` is `false`, `setCadence` (and `setAutoCapture`) answer
+// `unavailable` here in main, whatever the renderer sends, and no summary is `due`. Every method
 // answers: a refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`), a database failure is
 // `store-failed` and one log line (its code, never its message: that may hold URLs).
 
@@ -68,6 +71,8 @@ export interface ProjectsServiceDeps {
   readonly settings: Pick<SettingsRepository, 'rankRunDisclosureAccepted' | 'setRankRunDisclosureAccepted'>;
   /** Whether automatic starts are offered (`AUTO_CAPTURE_AVAILABLE`; tests may inject `true`). */
   readonly autoCaptureAvailable?: boolean;
+  /** Whether the cadence and its Due notice are offered (`RANK_CHECK_AVAILABLE`, L1; tests may inject `true`). */
+  readonly rankCheckAvailable?: boolean;
   readonly now?: () => number;
   readonly log?: (message: string) => void;
 }
@@ -185,6 +190,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
   const log = (message: string): void => deps.log?.(`projects: ${message}`);
   const purges = deps.purges ?? createPurgeFiles({ store, files: deps.files, log });
   const autoCaptureAvailable = deps.autoCaptureAvailable ?? AUTO_CAPTURE_AVAILABLE;
+  const rankCheckAvailable = deps.rankCheckAvailable ?? RANK_CHECK_AVAILABLE;
 
   /** Whether a Continue is remembered on this install; a setting that cannot be read is not one. */
   const disclosureAccepted = async (): Promise<boolean> => {
@@ -282,7 +288,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
 
   /**
    * Summaries of `projects`, with their workspace flags and last capture (two reads, whatever the
-   * count), and whether each with a cadence is due (one more read per such project: its last run).
+   * count), and whether each with a cadence is due (one more read per such project: its last run;
+   * none, and never due, while the Due notice is not offered: `RANK_CHECK_AVAILABLE`).
    */
   const summaries = async (projects: readonly Project[]): Promise<ProjectSummary[]> => {
     if (projects.length === 0) return [];
@@ -293,7 +300,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
     for (const project of projects) {
       const workspace = flags.get(project.id) ?? null;
       const cadence = cadenceOf(project, workspace);
-      const due = cadence !== 'off' && isDue(await store.lastProjectRunAt(project.id), cadence, at);
+      const due = rankCheckAvailable && cadence !== 'off' && isDue(await store.lastProjectRunAt(project.id), cadence, at);
       out.push(summaryOf(project, workspace, captured.get(project.id) ?? null, due));
     }
     return out;
@@ -336,8 +343,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
   };
 
   /**
-   * Starts a run of the project's targets in `scope`. One that would load a search (a saved search, or
-   * a page that is an engine's result page: `runSearchOf`) needs the disclosure: asked (`ask`) or only
+   * Starts a run of the project's targets in `scope`. One that would load a search (a saved search, a
+   * page that is an engine's result page, or any page on an engine's host: `queriesAnEngine`) needs the disclosure: asked (`ask`) or only
    * read (an automatic start never opens it); Cancel starts nothing. After a Continue the project and
    * its targets are read again: the run is of what the project holds then (Task 8 review ruling).
    */
@@ -355,7 +362,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
           // The run visits only the targets in its scope (`capture-run.ts`); none there is `no-targets`.
           const inScope = plan.targets.filter((target) => inRunScope(target, scope));
           if (inScope.length === 0) return refused<RunRefusal>('no-targets');
-          return { ...plan, searches: inScope.some((target) => runSearchOf(target) !== null) };
+          return { ...plan, searches: inScope.some(queriesAnEngine) };
         };
         let plan = await planned();
         if ('status' in plan) return plan;
@@ -498,6 +505,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
       guarded(
         'set cadence',
         async () => {
+          // Legal gate L1: no cadence until the owner's note (nothing stored, nothing asked).
+          if (!rankCheckAvailable) return refused<ProjectRefusal>('unavailable');
           if (!(CAPTURE_CADENCES as readonly string[]).includes(cadence)) return refused<ProjectRefusal>('not-found');
           const project = await missing(projectId, true);
           if (typeof project === 'string') return refused(project);
@@ -512,8 +521,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
       guarded(
         'set automatic start',
         async () => {
-          // Not offered in this phase: nothing is stored, whatever is asked.
-          if (!autoCaptureAvailable) return refused<ProjectRefusal>('unavailable');
+          // Not offered in this phase (nor without the cadence, L1): nothing is stored, whatever is asked.
+          if (!autoCaptureAvailable || !rankCheckAvailable) return refused<ProjectRefusal>('unavailable');
           const project = await missing(projectId, true);
           if (typeof project === 'string') return refused(project);
           if (on && !(await rankRunsAgreed())) return refused<ProjectRefusal>('declined');

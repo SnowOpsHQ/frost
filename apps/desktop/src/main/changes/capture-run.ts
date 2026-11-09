@@ -22,7 +22,7 @@ import { sameRunSearch } from '@app/specs/rankings-url.spec';
 import type { SerpRunVerdict } from '@app/specs/rankings.spec';
 import { isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
-import { searchParamsForUrl, type SearchParamsOf, type SerpVerdictOf } from './serp-params';
+import { isEngineHost, searchParamsForUrl, type SearchParamsOf, type SerpVerdictOf } from './serp-params';
 import { storedPageUrl } from './snapshot';
 
 // A project's capture run (Phase 6 Task 6; spec `projects.spec.ts`, `PROJECT_RUN_LIMITS`; acceptance
@@ -66,6 +66,12 @@ import { storedPageUrl } from './snapshot';
 // - the landed document (`documentSeq`) is recorded when a search target lands: any other document
 //   before its capture or screenshot (a same-URL reload too) stops the run (`not-a-result-page`); the
 //   check is not made again.
+// Whole-branch review rulings: a **page target on an engine's host** that is not a result page (the
+// pack's `reject` rules: Google `udm=50`, `tbm=isch`, DuckDuckGo `ia=images`) still queries the engine
+// (`queriesAnEngine`): disclosed, paced and gated, so it blocks as it lands (`not-a-result-page`); and a
+// URL change **within the landed document** (`pushState` / `replaceState`) stops the run only when the
+// new URL is not a result page of the target's search (`searchParamsForUrl` + `sameRunSearch`), else
+// the target goes on at the new URL (its reading and parameters read again before a capture).
 // Page targets that are not result pages keep Phase 6's behaviour: no verdict, no wait, and one that
 // times out is `timed-out` while the run goes on.
 //
@@ -169,6 +175,23 @@ export function runSearchOf(target: Pick<RunPlanTarget, 'kind' | 'url' | 'search
     return searchParamsForUrl(target.url, 'desktop');
   } catch {
     return null;
+  }
+}
+
+/**
+ * Whether a run loading `target` queries a search engine (whole-branch review ruling): a target with a
+ * search (`runSearchOf`), or a page target on one of the bundled pack's engine hosts whatever the pack
+ * makes of its path or parameters (`isEngineHost`: e.g. Google `udm=50` or `tbm=isch`, DuckDuckGo
+ * `ia=images`, which the pack's `reject` rules refuse as result pages). Such a target is disclosed
+ * (`projects.ts`), paced and gated; one without a search is then blocked at once (`not-a-result-page`).
+ * Never throws.
+ */
+export function queriesAnEngine(target: Pick<RunPlanTarget, 'kind' | 'url' | 'searchParams'>): boolean {
+  if (runSearchOf(target) !== null) return true;
+  try {
+    return target.kind === 'page' && isEngineHost(target.url);
+  } catch {
+    return false;
   }
 }
 
@@ -388,9 +411,10 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     /** The page of the first commit after the navigation (a redirect allowed): the capture must be of it. */
     let landed: string | null = null;
     let sawLoading = false;
-    /** The target's search (a query's, or a result page's own): `null` for a page that is not one (never gated). */
+    /** The target's search (a query's, or a result page's own): `null` for a page that is not one. */
     const search = runSearchOf(target);
-    const gated = target.kind === 'query' || search !== null;
+    /** Gated: a query, a result page, or any page on an engine's host (one without a search blocks as it lands). */
+    const gated = target.kind === 'query' || queriesAnEngine(target);
     /** A search target's document when it landed: another one before its capture or screenshot stops the run. */
     let landedSeq: number | null = null;
     /** A search target's wait for its reading: the active time it started at (`null`: not yet). */
@@ -414,6 +438,16 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       if (captured === null) return blocked('not-a-result-page');
       log(`target ${index + 1}: the run stopped at this search (not-a-result-page)`);
       return { result: { outcome: 'captured', changeCount: captured.changeCount, screenshot: 'failed' }, end: 'blocked', blockedReason: 'not-a-result-page' };
+    };
+    /** Whether `page` (the landed document's URL after a same-document change) is still a result page of the target's search. */
+    const sameSearchAt = (page: string | null, wanted: SearchParams | null): boolean => {
+      if (page === null || wanted === null) return false;
+      try {
+        const at = searchParamsForUrl(page, wanted.device);
+        return at !== null && sameRunSearch(at, wanted);
+      } catch {
+        return false;
+      }
     };
     /** Whether the run's tab still shows the search target's landed document, looked at now (just before a capture or screenshot). */
     const stillLanded = (): boolean => !gated || tabOf(tabId).tab?.documentSeq === landedSeq;
@@ -471,9 +505,16 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       if (gated && tab.documentSeq !== landedSeq) return movedOn();
       // Moved on since it landed (the user navigated the run's tab, or a page did by script).
       if (page !== landed) {
-        if (gated) return movedOn();
-        log(`target ${index + 1}: its tab moved to another page`);
-        return captured ? done('failed') : failed;
+        if (!gated) {
+          log(`target ${index + 1}: its tab moved to another page`);
+          return captured ? done('failed') : failed;
+        }
+        // The same document under another URL (`pushState` / `replaceState`, whole-branch review ruling):
+        // still the target's search goes on at the new URL, else the run stops.
+        if (!sameSearchAt(page, search)) return movedOn();
+        landed = page;
+        // Not captured yet: the reading and the tab's parameters are read again for the new URL.
+        passed = null;
       }
 
       if (captured === null && gated && passed === null) {
@@ -551,7 +592,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
      * cancelled meanwhile.
      */
     const spaceBefore = async (target: RunPlanTarget): Promise<boolean> => {
-      if (runSearchOf(target) !== null && lastSearchAt !== null) {
+      if (queriesAnEngine(target) && lastSearchAt !== null) {
         const wait = lastSearchAt + limits.querySpacingMs - now();
         if (wait > 0) await pause(run, wait);
       }
@@ -600,7 +641,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
           if (visited.result !== null) setTarget(index, visited.result);
           index += 1;
           // Every search navigation sent spaces the next one, landed or not (one the guard refused does not).
-          if (trace.sent && runSearchOf(target) !== null) lastSearchAt = now();
+          if (trace.sent && queriesAnEngine(target)) lastSearchAt = now();
           // Cancelled meanwhile (a `stop` also closed its tab): the run was cancelled, whatever the visit met.
           const ended = run.cancelled ? 'cancelled' : visited.end;
           if (ended !== null) {

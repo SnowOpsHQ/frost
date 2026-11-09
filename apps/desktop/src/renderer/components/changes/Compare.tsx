@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { RANK_VIEW_TEXT, rankLabel, type CompareAnswer, type RankTableRow, type ReadingDate } from '@app/specs/rankings.spec';
 import { rankingsActions } from '../../ipc';
-import { compareFeatureRows, compareProblem, compareSideLabel, compareViewRows, defaultComparePicks, rankingsRefusalText, readingDateOptions, searchSummary } from '../../rankings-view';
+import { rankCheckShown } from '../../projects-view';
+import { compareFeatureRows, compareProblem, compareSideLabel, compareViewRows, defaultComparePicks, noReadingsText, rankingsRefusalText, readingDateOptions, searchSummary } from '../../rankings-view';
 import '../../rankings.css';
 
 // A project's Compare view (Phase 10 Task 6; acceptance `rankings.feature.md`, The views): two pickers,
@@ -272,7 +273,7 @@ export function Compare({ projectId, refreshKey }: { readonly projectId: string;
           {tableProblem}
         </p>
       ) : null}
-      {tableProblem === null && searches !== undefined && searches.length === 0 ? <p className="rankings-notice">{RANK_VIEW_TEXT.noReadings}</p> : null}
+      {tableProblem === null && searches !== undefined && searches.length === 0 ? <p className="rankings-notice">{noReadingsText(rankCheckShown())}</p> : null}
       <div className="compare-pickers">
         <Picker side="a" searches={searches ?? []} searchKey={searchA} dates={datesA} readingId={pickA} onSearch={(key) => choose('a', key)} onDate={setPickA} />
         <Picker side="b" searches={searches ?? []} searchKey={searchB} dates={datesB} readingId={pickB} onSearch={(key) => choose('b', key)} onDate={setPickB} />

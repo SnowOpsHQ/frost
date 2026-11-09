@@ -440,8 +440,10 @@ export function sortProjects<T extends Pick<ProjectSummary, 'id' | 'name' | 'unf
  * - `declined`: the confirmation was answered Cancel (a delete, or `RANK_RUN_DISCLOSURE` before a
  *   cadence is first set);
  * - `store-failed`: the database failed;
- * - `unavailable`: starting runs automatically is not offered (`AUTO_CAPTURE_AVAILABLE` is `false`:
- *   `setAutoCapture` answers this, whatever it is asked).
+ * - `unavailable`: not offered in this build: starting runs automatically (`AUTO_CAPTURE_AVAILABLE`
+ *   is `false`: `setAutoCapture` answers this, whatever it is asked), or a cadence
+ *   (`RANK_CHECK_AVAILABLE` is `false`, until the owner's L1 note: `setCadence` answers this, and
+ *   `setAutoCapture` too).
  */
 export const PROJECT_REFUSALS = ['not-found', 'unfiled', 'invalid-name', 'invalid-url', 'invalid-query', 'invalid-profile', 'invalid-domain', 'invalid-tag', 'no-page', 'limit', 'running', 'declined', 'store-failed', 'unavailable'] as const;
 export type ProjectRefusal = (typeof PROJECT_REFUSALS)[number];
@@ -460,7 +462,7 @@ export const PROJECT_REFUSAL_MESSAGES: Readonly<Record<ProjectRefusal, string>> 
   running: 'A capture run of this project is under way. Cancel it first.',
   declined: 'Nothing was deleted.',
   'store-failed': 'The change could not be saved.',
-  unavailable: 'Starting runs automatically is not available.',
+  unavailable: 'That is not available in this version of frost.',
 };
 
 /**
@@ -513,7 +515,10 @@ export interface ProjectSummary {
   cadence: CaptureCadence;
   /** Whether its due runs start by themselves: stored, but never acted on while `AUTO_CAPTURE_AVAILABLE` is `false`. */
   autoCapture: boolean;
-  /** Its cadence is on and its last run (newest `project` capture) is a cadence old, or there is none (`isDue`). */
+  /**
+   * Its cadence is on and its last run (newest `project` capture) is a cadence old, or there is none
+   * (`isDue`). Always `false` while `RANK_CHECK_AVAILABLE` is `false` (L1: the Due notice is not offered).
+   */
   due: boolean;
 }
 
@@ -636,8 +641,10 @@ export const TAG_EDITOR_TEXT = {
 export const BULK_ADD_TEXT = {
   title: 'Bulk add searches',
   textLabel: 'Queries, one per line or separated by commas',
-  /** What Bulk add does and does not do: it never contacts a search engine (and a cadence never starts a run by itself). */
+  /** What Bulk add does and does not do, once "Check rankings" and the cadence are offered (`RANK_CHECK_AVAILABLE`): it never contacts a search engine (and a cadence never starts a run by itself). */
   note: 'Bulk add only saves searches. Nothing is sent to a search engine until you run Check rankings (or Capture now); a cadence only marks the project due.',
+  /** The same while they are not offered (`RANK_CHECK_AVAILABLE` `false`, L1): Capture now is the only way a search is sent; no cadence to speak of. */
+  noteWithoutRankCheck: 'Bulk add only saves searches. Nothing is sent to a search engine until you run Capture now.',
 } as const;
 
 /** A Bulk add line's outcome in words (`BULK_LINE_OUTCOMES`). */
@@ -652,7 +659,7 @@ export const BULK_LINE_OUTCOME_LABELS: Readonly<Record<BulkLineOutcome, string>>
 export const CAPTURE_RUN_NOTE =
   `frost visits each page and saved search in a tab of its own. Saved searches go out one every ${RANK_RUN_QUERY_SPACING_MS / 1_000} seconds; if a search engine answers with a consent page or a challenge, the run stops there and captures nothing of it.` as const;
 
-/** "Check rankings" (plan Decision 11: a run of the saved searches only, `scope: 'searches'`). */
+/** "Check rankings" (plan Decision 11: a run of the saved searches only, `scope: 'searches'`); shown only when `RANK_CHECK_AVAILABLE`. */
 export const CHECK_RANKINGS_TEXT = {
   button: 'Check rankings',
   palette: 'Check rankings now',
@@ -660,7 +667,7 @@ export const CHECK_RANKINGS_TEXT = {
   none: 'Add a saved search to check its ranking.',
 } as const;
 
-/** The project list's notice for a project whose cadence says a run is due (`ProjectSummary.due`). */
+/** The project list's notice for a project whose cadence says a run is due (`ProjectSummary.due`); shown only when `RANK_CHECK_AVAILABLE`. */
 export const DUE_TEXT = {
   label: 'Due',
   /** Its tooltip and accessible description. */

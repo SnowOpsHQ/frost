@@ -4,14 +4,12 @@ import type { RankingsService } from '@app/ipc-contract';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { normalizeTag } from '@app/specs/projects.spec';
 import { SerpFiltersSchema, StoredReadingSchema } from '@app/specs/rankings.schema';
-import { searchHostOf } from '@app/specs/rankings-url.spec';
 import {
   MAX_RANK_TABLE_READ_BYTES,
   MAX_READING_DATES,
   RANK_LIMITS,
   rangeStart,
   rankCsvFileName,
-  searchIdentityJson,
   type RankCsvKind,
   type RankingsRefusal,
   type RankPoint,
@@ -20,7 +18,6 @@ import {
   type RankTableRow,
   type ReadingDate,
   type SavedSearchRef,
-  type SearchKeyOf,
   type SerpObservation,
   type SiteMatch,
 } from '@app/specs/rankings.spec';
@@ -29,7 +26,7 @@ import { MAX_PROJECT_COMPETITORS, MAX_PROJECT_TAGS, MAX_READINGS_PER_READ, SEARC
 import path from 'node:path';
 import { paramsOf, storedDomain, tagsOf } from './projects';
 import { rankCsvText, writeOwnerOnly } from './rank-csv';
-import { sha256Hex } from './snapshot';
+import { searchKeyOf } from './search-key';
 import { siteMatchOf } from './workspace';
 
 // The rankings service (Phase 10 Task 5; spec `rankings.spec.ts`, `rankings.schema.ts`; acceptance
@@ -77,14 +74,10 @@ export interface RankingsServiceDeps {
 }
 
 /**
- * The current-version search key of a search (Decision 4): SHA-256 hex of `searchIdentityJson(params,
- * filters, searchHostOf(params.url))`, as captures store it (`service.ts`); `null` when its URL has no
- * host. Injected into the read model for readings of an older key version.
+ * The current-version search key of a search (Decision 4), the one function captures store it with
+ * (`search-key.ts`); injected into the read model for readings of an older key version.
  */
-export const searchKeyOf: SearchKeyOf = (params, filters) => {
-  const host = searchHostOf(params.url);
-  return host === null ? null : sha256Hex(searchIdentityJson(params, filters, host));
-};
+export { searchKeyOf };
 
 /** An error's code or name: never its message (it may hold URLs, paths or SQL). */
 const codeOf = (error: unknown): string => {

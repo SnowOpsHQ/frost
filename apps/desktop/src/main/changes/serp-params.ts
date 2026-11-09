@@ -142,3 +142,22 @@ export function searchParamsForUrl(url: string, device: SerpDevice, pack: Select
   const parsed = SearchParamsSchema.safeParse(params);
   return parsed.success ? parsed.data : null;
 }
+
+/**
+ * Whether `url` is an `http(s)` URL on one of the bundled pack's engine hosts, whatever its path or
+ * parameters (the pack's `reject` rules are not applied: Google `udm=50` or `tbm=isch`, DuckDuckGo
+ * `ia=images` are still the engine's). A run treats such a page target as a search (`capture-run.ts`,
+ * `queriesAnEngine`): disclosed, paced and gated. Never throws.
+ */
+export function isEngineHost(url: string, pack: SelectorPack | null = bundledPack()): boolean {
+  if (pack === null || typeof url !== 'string') return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  return pack.engines.some((engine) => engine.hosts.includes(host));
+}

@@ -10,6 +10,7 @@ import {
   cadenceText,
   competitorFromInput,
   competitorRoom,
+  rankCheckShown,
   refusalText,
   removeCompetitorText,
   settingsAvailable,
@@ -20,6 +21,7 @@ import {
   siteText,
   type SiteForm,
 } from '../../projects-view';
+import '../../rankings.css';
 
 // A project's Settings view (Phase 10 Task 7; acceptance `projects.feature.md`, The sheet): its site
 // (a domain or address, and "Include subdomains") and its competitors (plan Decision 7). The chrome
@@ -28,7 +30,8 @@ import {
 // `<bdi>`; no inline styles (strict CSP). Task 8 adds the cadence section after the competitors: a
 // due notice only (main asks the rank run disclosure before one is first set); the "Start
 // automatically" switch shows only when automatic starts are offered (`AUTO_CAPTURE_AVAILABLE`, never
-// in this phase).
+// in this phase). The whole cadence section shows only when `rankCheckShown()` (`RANK_CHECK_AVAILABLE`,
+// legal gate L1: not until the owner's note; main refuses `setCadence` `unavailable` meanwhile).
 
 function Text({ value, className, testId }: { readonly value: string; readonly className?: string; readonly testId?: string }) {
   return (
@@ -258,7 +261,7 @@ export function ProjectSettings({
       {/* Keyed by the stored site: a save elsewhere (or a refresh) shows what main holds. */}
       <SiteSection key={`${project.id} ${project.site?.domain ?? ''} ${String(project.site?.subdomains ?? '')}`} project={project} onChanged={onChanged} say={say} />
       <CompetitorsSection projectId={project.id} competitors={competitors} onChanged={onChanged} say={say} />
-      <CadenceSection project={project} onChanged={onChanged} say={say} />
+      {rankCheckShown() ? <CadenceSection project={project} onChanged={onChanged} say={say} /> : null}
     </section>
   );
 }

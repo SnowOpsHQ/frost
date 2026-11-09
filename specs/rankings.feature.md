@@ -85,6 +85,12 @@ or `compare.test.ts`.
   `searchIdentityJson(params, filters, searchHostOf(params.url))`; hashing and `URL` stay in main). With
   no `SearchKeyOf`, or when it answers `null`, throws or answers no string, the reading keeps its stored
   key (its own series). The stored key is never rewritten (readings are append-only).
+- **One key function** (whole-branch review ruling): main computes a search key in one place,
+  `apps/desktop/src/main/changes/search-key.ts` (`searchKeyOf`), used by the capture that writes a
+  reading (`service.ts`) and by every rankings read (`rankings.ts`), so the two can never drift.
+  **Scenario: capture-then-rank-shares-the-key** (`service.test.ts`) — a capture of a ready result page
+  of a project's saved search, then `rankings.table`: the saved search's row shows that reading as its
+  latest point.
 - A row takes its `params` and `filters` from its newest reading (a saved search with no reading: its
   own).
 
@@ -246,7 +252,9 @@ unchanged). Pure view model: `apps/desktop/src/renderer/rankings-view.ts`; compo
   tag and no row: `RANK_VIEW_TEXT.noTagged`.
 - **Empty states.** No site set (`site` `null`): "Set your site's domain to see its position", with a
   button (`rankings-open-settings`, Phase 10 Task 7) that opens the project's Settings view. No row
-  with a reading: "No readings yet: capture a search or run Check rankings". Both may show.
+  with a reading: "No readings yet: capture a search or run Check rankings" (`RANK_VIEW_TEXT.noReadings`;
+  while `RANK_CHECK_AVAILABLE` is `false`, L1, `noReadingsWithoutRankCheck`: "No readings yet: capture a
+  search, or capture the project with Capture now"; Compare's empty state alike). Both may show.
 - **History note.** When the project keeps limited history (retention `versions` or `days`) the view
   shows `rankHistoryNote(retention)`; with `forever` only `RANK_HISTORY_NOTE.profile` (positions are as
   the signed-in browser profile sees them), always.

@@ -2,7 +2,7 @@
 // specs/serp-search-params.schema.ts (SearchParamsSchema: a saved search is Phase 3's parameters of its URL),
 // specs/projects.schema.ts (answers), specs/capture-db.spec.ts (UNFILED_PROJECT_ID, MAX_PROJECT_PAGES)
 // Phase 10 Task 8: RANK_RUN_DISCLOSURE, RANK_RUN_DISCLOSURE_SETTING_KEY (through the settings repository), CAPTURE_CADENCES,
-// specs/capture-schedule.spec.ts (isDue, AUTO_CAPTURE_AVAILABLE)
+// specs/capture-schedule.spec.ts (isDue, AUTO_CAPTURE_AVAILABLE, RANK_CHECK_AVAILABLE)
 // Acceptance: specs/projects.feature.md (The service; Deleting a project; Searches in a run; Cadence; Scenarios: service)
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -13,6 +13,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { canonicalJson } from '@app/change-intel';
 import { openSessionStore, uuidv7, type ChangeIntelRepository } from '@app/db';
 import { MAX_PROJECT_PAGES, PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME } from '@app/specs/capture-db.spec';
+import { RANK_CHECK_AVAILABLE } from '@app/specs/capture-schedule.spec';
+import { CAPTURE_CADENCES } from '@app/specs/workspace-db.spec';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { CreateProjectAnswerSchema, ProjectDetailSchema, ProjectsAnswerSchema, type RunState, type SavedSearchInput, type StartRunAnswer } from '@app/specs/projects.schema';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
@@ -77,7 +79,9 @@ function setup(deps: Partial<ProjectsServiceDeps> = {}) {
   // Main's disclosure (Phase 10 Task 8) answers Continue unless a test says otherwise.
   const confirmRankRun = vi.fn(async () => true);
   const settings = fakeSettings();
-  const service = createProjectsService({ store: opened.changeIntel, files, confirmDelete, activeUrl: () => state.activeUrl, runs, now: tick, log, confirmRankRun, settings, ...deps });
+  // The cadence and Due notice are tested as they will ship once L1 is cleared (`RANK_CHECK_AVAILABLE`
+  // injected `true`); `set-cadence-unavailable-until-cleared` passes the shipped flag.
+  const service = createProjectsService({ store: opened.changeIntel, files, confirmDelete, activeUrl: () => state.activeUrl, runs, now: tick, log, confirmRankRun, settings, rankCheckAvailable: true, ...deps });
   const count = (sql: string, ...args: string[]) => (raw.prepare(sql).get(...args) as { n: number }).n;
   return { service, repo: opened.changeIntel, files, unlinked, confirmDelete, state, runs, log, count, raw, confirmRankRun, settings };
 }
@@ -475,6 +479,25 @@ describe('projects service', () => {
     expect(auto.confirmRankRun).not.toHaveBeenCalled();
   });
 
+  // spec: specs/projects.feature.md — Searches in a run (whole-branch review ruling: a page on an engine's host is a search)
+  test('rank-run-asks-for-an-engine-host-page', async () => {
+    const { service, runs, confirmRankRun } = setup();
+    // Pages on an engine's host that the pack refuses as a result page (another vertical): still disclosed.
+    for (const url of ['https://www.google.com/search?q=green+tea&udm=50', 'https://www.google.com/search?q=green+tea&tbm=isch', 'https://duckduckgo.com/?q=green+tea&ia=images', 'https://www.bing.com/images/search?q=tea']) {
+      const id = await created(service, url.slice(8, 30));
+      await service.addPage(id, url);
+      confirmRankRun.mockResolvedValueOnce(false);
+      expect(await service.startRun(id, false), url).toEqual({ status: 'refused', reason: 'declined' });
+    }
+    expect(confirmRankRun).toHaveBeenCalledTimes(4);
+    expect(runs.start).not.toHaveBeenCalled();
+    // A page on another host never asks.
+    const own = await created(service, 'Own site');
+    await service.addPage(own, 'https://example.com/search?q=green+tea&udm=50');
+    expect(await service.startRun(own, false)).toMatchObject({ status: 'started' });
+    expect(confirmRankRun).toHaveBeenCalledTimes(4);
+  });
+
   // spec: specs/projects.feature.md — Cadence (the disclosure before a cadence is first set; Unfiled refuses one)
   test('cadence-asks-the-disclosure-first', async () => {
     const { service, confirmRankRun, settings } = setup();
@@ -507,6 +530,32 @@ describe('projects service', () => {
     expect(await service.setAutoCapture(id, true)).toEqual({ status: 'refused', reason: 'unavailable' });
     expect(await summary()).toMatchObject({ cadence: 'weekly', autoCapture: false });
     expect(confirmRankRun).toHaveBeenCalledTimes(2);
+  });
+
+  // spec: specs/projects.feature.md — Cadence (Legal gate L1); capture-schedule.spec.ts RANK_CHECK_AVAILABLE
+  test('set-cadence-unavailable-until-cleared', async () => {
+    // The shipped flag: no cadence until the owner's L1 note is under docs/research/.
+    expect(RANK_CHECK_AVAILABLE).toBe(false);
+    const { service, repo, confirmRankRun, settings, runs } = setup({ rankCheckAvailable: RANK_CHECK_AVAILABLE });
+    const id = await created(service, 'Guides');
+    const summary = async () => (await service.list()).projects.find((project) => project.id === id)!;
+    // Every cadence is refused in main, whatever the renderer sends: nothing stored, no disclosure asked.
+    for (const cadence of CAPTURE_CADENCES) expect(await service.setCadence(id, cadence), cadence).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(await service.setCadence(UNFILED_PROJECT_ID, 'daily')).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(confirmRankRun).not.toHaveBeenCalled();
+    expect(settings.setRankRunDisclosureAccepted).not.toHaveBeenCalled();
+    expect((await repo.projectWorkspaces()).find((workspace) => workspace.projectId === id)?.cadence ?? 'off').toBe('off');
+    expect(await service.setAutoCapture(id, true)).toEqual({ status: 'refused', reason: 'unavailable' });
+    // A cadence stored earlier (another build, sync) is never due: the Due notice is not offered.
+    expect(await repo.setProjectCadence(id, 'daily')).toBe(true);
+    expect(await summary()).toMatchObject({ cadence: 'daily', due: false });
+    expect(ProjectsAnswerSchema.parse(await service.list()).projects.every((project) => !project.due)).toBe(true);
+    expect((await service.get(id))!.project.due).toBe(false);
+    // Capture now on a project with saved searches still asks the disclosure first and starts.
+    await service.addQuery(id, SEARCH);
+    expect(await service.startRun(id, false)).toMatchObject({ status: 'started' });
+    expect(confirmRankRun).toHaveBeenCalledOnce();
+    expect(runs.start).toHaveBeenCalledOnce();
   });
 
   test('projects-never-reject', async () => {

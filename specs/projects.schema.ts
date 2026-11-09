@@ -144,8 +144,9 @@ export const BulkSearchesInputSchema = z.strictObject({
 }) satisfies z.ZodType<BulkSearchesInput>;
 export const BulkAddSearchesInputSchema = z.strictObject({ projectId: id, searches: BulkSearchesInputSchema });
 
-// Phase 10 Task 8: the cadence (a due notice only) and the automatic start (refused `unavailable`
-// while `AUTO_CAPTURE_AVAILABLE` is `false`). Main asks `RANK_RUN_DISCLOSURE` before a cadence is first set.
+// Phase 10 Task 8: the cadence (a due notice only; refused `unavailable` while `RANK_CHECK_AVAILABLE`
+// is `false`) and the automatic start (refused `unavailable` while `AUTO_CAPTURE_AVAILABLE` is `false`).
+// Main asks `RANK_RUN_DISCLOSURE` before a cadence is first set.
 /** `setCadence`: one of `CAPTURE_CADENCES`. */
 export const SetCadenceInputSchema = z.strictObject({ projectId: id, cadence: z.enum(CAPTURE_CADENCES) });
 /** `setAutoCapture`: whether its due runs start by themselves. */

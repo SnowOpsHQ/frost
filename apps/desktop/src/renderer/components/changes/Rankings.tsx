@@ -16,6 +16,7 @@ import {
   copyCsvText,
   emptyStates,
   historyNote,
+  noReadingsText,
   rangeOptions,
   rankRowView,
   rankTableInput,
@@ -29,6 +30,7 @@ import {
   type RankFilter,
   type RankRowView,
 } from '../../rankings-view';
+import { rankCheckShown } from '../../projects-view';
 import { isolatedTooltip } from '../../seo-view';
 import '../../rankings.css';
 
@@ -353,7 +355,7 @@ export function Rankings({
         </p>
       ) : states.includes('no-readings') ? (
         <p className="rankings-notice" data-testid="rankings-no-readings">
-          {RANK_VIEW_TEXT.noReadings}
+          {noReadingsText(rankCheckShown())}
         </p>
       ) : null}
 

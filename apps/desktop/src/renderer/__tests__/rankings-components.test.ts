@@ -4,14 +4,16 @@
 // Acceptance: specs/rankings.feature.md (The views: compare-keeps-picks-on-refresh,
 // compare-shares-one-dates-read, compare-drops-a-stale-answer, compare-says-refusals,
 // series-close-returns-focus); specs/projects.feature.md (The sheet: projects-run-progress-on-every-view;
-// Phase 10 Task 7's star and sort, Settings, tags and Bulk add; Task 8's Due, Check rankings, cadence and blocked run)
+// Phase 10 Task 7's star and sort, Settings, tags and Bulk add; Task 8's Due, Check rankings, cadence and blocked run;
+// the L1 gate: rank-check-hidden-until-cleared), specs/capture-schedule.spec.ts (RANK_CHECK_AVAILABLE)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import { CADENCE_TEXT, CAPTURE_SCHEDULE_NOTE } from '@app/specs/capture-schedule.spec';
-import { BULK_ADD_TEXT, DUE_TEXT, PROJECT_REFUSAL_MESSAGES, PROJECT_SETTINGS_TEXT, PROJECT_VIEWS, RUN_BLOCKED_NOTE, RUN_BLOCK_REASON_LABELS, RUN_REFUSAL_MESSAGES, type ProjectSummary } from '@app/specs/projects.spec';
-import { RANKINGS_REFUSAL_MESSAGES, type RankPoint, type RankTableRow, type ReadingDate, type SearchParamsShape } from '@app/specs/rankings.spec';
+import { CADENCE_TEXT, CAPTURE_SCHEDULE_NOTE, RANK_CHECK_AVAILABLE } from '@app/specs/capture-schedule.spec';
+import type { TabState } from '@app/specs/browser.spec';
+import { BULK_ADD_TEXT, CHECK_RANKINGS_TEXT, DUE_TEXT, PROJECT_REFUSAL_MESSAGES, PROJECT_SETTINGS_TEXT, PROJECT_VIEWS, RUN_BLOCKED_NOTE, RUN_BLOCK_REASON_LABELS, RUN_REFUSAL_MESSAGES, type ProjectSummary } from '@app/specs/projects.spec';
+import { RANKINGS_REFUSAL_MESSAGES, RANK_VIEW_TEXT, type RankPoint, type RankTableRow, type ReadingDate, type SearchParamsShape } from '@app/specs/rankings.spec';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,6 +46,13 @@ const fakes = vi.hoisted(() => ({
   projects: { list: vi.fn(), get: vi.fn(), runState: vi.fn() },
   workspace: { setFavorite: vi.fn(), setSite: vi.fn(), addCompetitor: vi.fn(), removeCompetitor: vi.fn(), setTags: vi.fn(), addSearches: vi.fn(), setCadence: vi.fn(), setAutoCapture: vi.fn(), checkRankings: vi.fn() },
 }));
+
+/** `rankCheck`: the L1 flag as the sheet reads it (`undefined`: the shipped `RANK_CHECK_AVAILABLE`). */
+const flags = vi.hoisted(() => ({ rankCheck: undefined as boolean | undefined }));
+vi.mock('../projects-view', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../projects-view')>();
+  return { ...actual, rankCheckShown: () => flags.rankCheck ?? actual.rankCheckShown() };
+});
 
 vi.mock('../ipc', () => ({
   rankingsActions: fakes.rankings,
@@ -103,6 +112,7 @@ async function openSheet(project: ProjectSummary, detail: Record<string, unknown
 }
 
 beforeEach(() => {
+  flags.rankCheck = undefined;
   for (const fake of [...Object.values(fakes.rankings), ...Object.values(fakes.projects), ...Object.values(fakes.workspace)]) fake.mockReset();
   host = document.createElement('div');
   document.body.append(host);
@@ -273,7 +283,8 @@ describe('rankings components', () => {
     await click('projects-bulk-open');
     expect($('projects-bulk')!.getAttribute('role')).toBe('dialog');
     expect(document.activeElement).toBe($('projects-bulk-text'));
-    expect($('projects-bulk-note')!.textContent).toBe(BULK_ADD_TEXT.note);
+    // The shipped flag (L1 not cleared): the note names Capture now only (`rank-check-wording-follows-the-flag` has both).
+    expect($('projects-bulk-note')!.textContent).toBe(BULK_ADD_TEXT.noteWithoutRankCheck);
     await type($<HTMLTextAreaElement>('projects-bulk-text')!, 'green tea, black tea\n<b>tea</b>');
     await select('projects-bulk-engine', 'duckduckgo');
     await type(all<HTMLInputElement>('projects-bulk-country')[0]!, 'DE');
@@ -407,6 +418,8 @@ describe('rankings components', () => {
 
   // spec: specs/projects.feature.md — The sheet (Due, Check rankings and a blocked run; Settings: the cadence)
   test('projects-due-check-rankings-and-cadence', async () => {
+    // As it ships once L1 is cleared (the flag injected); `rank-check-hidden-until-cleared` has the shipped flag.
+    flags.rankCheck = true;
     const SEARCH_ID = '01920000-0000-7000-8000-0000000000d1';
     const project = summary(P1, 'Shop', { cadence: 'daily', due: true });
     await openSheet(project, { queries: [{ id: SEARCH_ID, params: params('tea'), url: params('tea').url, lastCapturedAt: null, changeCount: null, tags: [] }] }, [project, summary(P2, 'Other')]);
@@ -435,6 +448,66 @@ describe('rankings components', () => {
     expect(fakes.workspace.setCadence).toHaveBeenLastCalledWith(P1, 'off');
     expect($('projects-status')!.textContent).toBe(CADENCE_TEXT.saved);
     expect(fakes.workspace.setAutoCapture).not.toHaveBeenCalled();
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Legal gate L1); Cadence (Legal gate L1); Command palette
+  test('rank-check-hidden-until-cleared', async () => {
+    // The shipped flag: nothing of "Check rankings" or the cadence / Due notice until the owner's L1 note.
+    expect(RANK_CHECK_AVAILABLE).toBe(false);
+    const SEARCH_ID = '01920000-0000-7000-8000-0000000000d1';
+    // Even a summary that says due (main never sends one while the flag is off) shows no "Due".
+    const project = summary(P1, 'Shop', { cadence: 'daily', due: true });
+    await openSheet(project, { queries: [{ id: SEARCH_ID, params: params('tea'), url: params('tea').url, lastCapturedAt: null, changeCount: null, tags: [] }] }, [project, summary(P2, 'Other', { due: true })]);
+    expect(all('projects-item')).toHaveLength(2);
+    expect(all('projects-due')).toEqual([]);
+    // Overview: Capture now, no Check rankings.
+    expect($('projects-capture')).not.toBeNull();
+    expect($('projects-check-rankings')).toBeNull();
+    expect(host.textContent).not.toContain(CHECK_RANKINGS_TEXT.button);
+    // Settings: the site and competitors, no cadence section.
+    await click('projects-view-settings');
+    expect($('projects-settings')).not.toBeNull();
+    expect($('projects-site-input')).not.toBeNull();
+    expect($('projects-cadence')).toBeNull();
+    expect($('projects-cadence-note')).toBeNull();
+    expect($('projects-auto-capture')).toBeNull();
+    expect(host.textContent).not.toContain(CADENCE_TEXT.title);
+    expect(fakes.workspace.setCadence).not.toHaveBeenCalled();
+    expect(fakes.workspace.checkRankings).not.toHaveBeenCalled();
+    // The palette: no "Check rankings now", even with a project opened; "Capture project now" stays.
+    const { projectsPaletteSources } = await import('../projects-palette');
+    const { createPaletteRegistry } = await import('../palette/registry');
+    const registry = createPaletteRegistry();
+    registry.register(...projectsPaletteSources({ open: vi.fn(), lastProject: () => P1, startRun: vi.fn(async () => null) }));
+    const active = { id: 1, url: 'https://www.example.com/a' } as TabState;
+    const ids = registry.resolve({ state: null, tab: active, audit: null, sidebarOpen: false, chrome: { openPanel: vi.fn(), setSidebarOpen: vi.fn() } }).map((action) => action.id);
+    expect(ids).toContain('projects.capture-now');
+    expect(ids).not.toContain('projects.check-rankings');
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Bulk add note); rankings.feature.md — Empty states (L1 variants)
+  test('rank-check-wording-follows-the-flag', async () => {
+    for (const [flag, note, empty] of [
+      [undefined, BULK_ADD_TEXT.noteWithoutRankCheck, RANK_VIEW_TEXT.noReadingsWithoutRankCheck],
+      [true, BULK_ADD_TEXT.note, RANK_VIEW_TEXT.noReadings],
+    ] as const) {
+      flags.rankCheck = flag;
+      // Rankings and Compare with no readings yet.
+      fakes.rankings.table.mockResolvedValue(tableAnswer([]));
+      await act(async () => root.render(createElement(Rankings, { projectId: P1, refreshKey: 1, busy: false, onOpenUrl: vi.fn(), say: vi.fn() })));
+      await flush();
+      expect($('rankings-no-readings')!.textContent, String(flag)).toBe(empty);
+      await act(async () => root.render(createElement(Compare, { projectId: P1, refreshKey: 1 })));
+      await flush();
+      expect(host.querySelector('.rankings-notice')!.textContent, String(flag)).toBe(empty);
+      await act(async () => root.render(createElement('div')));
+      // The Bulk add note.
+      await openSheet(summary(P1, 'Shop'));
+      await click('projects-bulk-open');
+      expect($('projects-bulk-note')!.textContent, String(flag)).toBe(note);
+      await act(async () => root.render(createElement('div')));
+    }
+    expect(RANK_CHECK_AVAILABLE).toBe(false);
   });
 
   // spec: specs/projects.feature.md — Searches in a run (a blocked run); The sheet (its note)

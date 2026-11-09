@@ -165,6 +165,9 @@ describe('cadence: a due notice only', () => {
       settings: { rankRunDisclosureAccepted: async () => true, setRankRunDisclosureAccepted: async () => true },
       activeUrl: () => null,
       runs: { ...fakeRuns().runs, start: vi.fn(), stop: vi.fn() } as unknown as CaptureRuns,
+      // The Due notice as it ships once L1 is cleared (`RANK_CHECK_AVAILABLE`; `projects.test.ts`
+      // `set-cadence-unavailable-until-cleared` covers the shipped flag): only automatic starts are at their default here.
+      rankCheckAvailable: true,
     });
     const listed = (await service.list()).projects;
     expect(listed.find((p) => p.id === P1)).toMatchObject({ cadence: 'daily', autoCapture: false, due: true });

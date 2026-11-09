@@ -3,7 +3,8 @@ import { BULK_ADD_TEXT, BULK_SEARCH_LIMITS, QUERY_FIELD_MAX_CHARS } from '@app/s
 import { SERP_DEVICE_LABELS, SERP_DEVICES } from '@app/specs/serp.spec';
 import { CloseIcon, PlusIcon } from '../../icons';
 import { projectsActions } from '../../ipc';
-import { EMPTY_BULK_FORM, QUERY_ENGINES, TAGS_TEXT_MAX_CHARS, bulkFromForm, bulkOutcomeRows, bulkResultText, bulkSummaryText, canAddLocale, type BulkForm, type BulkOutcomeRow } from '../../projects-view';
+import { EMPTY_BULK_FORM, QUERY_ENGINES, TAGS_TEXT_MAX_CHARS, bulkAddNote, bulkFromForm, bulkOutcomeRows, bulkResultText, bulkSummaryText, canAddLocale, rankCheckShown, type BulkForm, type BulkOutcomeRow } from '../../projects-view';
+import '../../rankings.css';
 
 // The Bulk add dialog (Phase 10 Task 7; acceptance `projects.feature.md`, The sheet; plan Decision 8):
 // queries one per line or comma-separated, one engine, up to `BULK_SEARCH_LIMITS.maxLocales`
@@ -76,7 +77,7 @@ export function BulkAdd({
         </button>
       </div>
       <p className="projects-note" id={`${id}-note`} data-testid="projects-bulk-note">
-        {BULK_ADD_TEXT.note}
+        {bulkAddNote(rankCheckShown())}
       </p>
       <form className="projects-bulk-form" onSubmit={(event) => void submit(event)}>
         <label className="projects-field projects-bulk-text">

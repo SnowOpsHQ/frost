@@ -12,7 +12,7 @@ import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, RANK_RUN_QUERY_SPACING_MS, SE
 import type { SerpRunVerdict } from '@app/specs/rankings.spec';
 import { DEFAULT_RENDER_PROFILE, isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
-import { createCaptureRuns, runSearchOf, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
+import { createCaptureRuns, queriesAnEngine, runSearchOf, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
 import { storedPageUrl } from '../snapshot';
 import { readySerpFor } from './fakes';
 
@@ -1068,6 +1068,84 @@ describe('searches in a run', () => {
     await run(SPACING);
     expect(sent).toHaveLength(2);
     expect(sent[1]![1] - sent[0]![1]).toBeGreaterThanOrEqual(SPACING);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (whole-branch review ruling: a page on an engine's host is a search)
+  test('capture-run-engine-host-page-is-gated', async () => {
+    // Pages on an engine's host that the pack refuses (another vertical): no search parameters, but they query an engine.
+    const UDM = 'https://www.google.com/search?q=green+tea&udm=50';
+    const page = (url: string) => ({ kind: 'page' as const, url, searchParams: null });
+    for (const url of [UDM, 'https://www.google.com/search?q=green+tea&tbm=isch', 'https://duckduckgo.com/?q=green+tea&ia=images', 'https://www.bing.com/images/search?q=tea', 'https://WWW.GOOGLE.COM./maps']) {
+      expect(runSearchOf(page(url)), url).toBeNull();
+      expect(queriesAnEngine(page(url)), url).toBe(true);
+    }
+    expect(queriesAnEngine(page(SEARCH))).toBe(true);
+    expect(queriesAnEngine({ kind: 'query', url: SEARCH, searchParams: DESKTOP })).toBe(true);
+    for (const url of [A, 'https://google.com.example.net/search?q=x', 'ftp://www.google.com/search?q=x', 'not a url']) expect(queriesAnEngine(page(url)), url).toBe(false);
+
+    // In a run: spaced after the search before it, then blocked at once (no result page), nothing of it captured.
+    const targets = [query(DESKTOP), ...pages(UDM), ...pages(A)];
+    const fake = setup(readySerpFor(targets));
+    const at = timedNavigations(fake);
+    await fake.runs.start(plan(targets));
+    await run(RETRY * 4);
+    expect(at.map(([url]) => url)).toEqual([SEARCH]);
+    await run(SPACING + RETRY * 4);
+    expect(at.map(([url]) => url)).toEqual([SEARCH, UDM]);
+    expect(at[1]![1] - at[0]![1]).toBeGreaterThanOrEqual(SPACING);
+    expect(fake.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'not-a-result-page' });
+    expect(outcomes(fake.runs.state())).toEqual(['captured', 'blocked', 'cancelled']);
+    expect(fake.seen.map((seen) => seen.url)).toEqual([SEARCH]);
+    // Its navigation was sent: the next search, in the next run, waits its spacing after it.
+    await fake.runs.start(plan([query(BLACK, BLACK_SEARCH, 'black')]));
+    await run(RETRY * 4);
+    expect(at).toHaveLength(2);
+    await run(SPACING);
+    expect(at.map(([url]) => url)).toEqual([SEARCH, UDM, BLACK_SEARCH]);
+    expect(at[2]![1] - at[1]![1]).toBeGreaterThanOrEqual(SPACING);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (whole-branch review ruling: a same-document URL change)
+  test('capture-run-same-document-url-change', async () => {
+    /** The run's tab changes its URL by `pushState` (the same document) while the reading is pending. */
+    const pushed = async (url: string) => {
+      let verdict: SerpRunVerdict = 'pending';
+      const searchParamsOf = vi.fn((_tabId: number, _pageUrl: string): SearchParams | null => DESKTOP);
+      const fake = setup({ serpVerdictOf: () => verdict, searchParamsOf });
+      await fake.runs.start(plan([query(DESKTOP), ...pages(A)]));
+      await run(RETRY * 2);
+      expect(fake.capture).not.toHaveBeenCalled();
+      // Only the URL changes: no new document (`documentSeq` as it was).
+      fake.tab(10)!.url = url;
+      verdict = 'ready';
+      await run(RETRY * 4);
+      return { ...fake, searchParamsOf };
+    };
+    // The same search (an engine's own parameter added): it goes on, captured at the new URL, read again for it.
+    const SAME = 'https://www.google.com/search?q=green+tea&gl=de&hl=de&ei=abc';
+    const same = await pushed(SAME);
+    expect(same.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    expect(outcomes(same.runs.state())).toEqual(['captured', 'captured']);
+    expect(same.capture.mock.calls[0]![1]).toMatchObject({ pageUrl: storedPageUrl(SAME), searchParams: DESKTOP });
+    expect(same.searchParamsOf).toHaveBeenCalledWith(10, storedPageUrl(SAME));
+    // Another query, or no result page at all: the run stops there, nothing captured.
+    for (const url of [BLACK_SEARCH, 'https://www.google.com/search?q=green+tea&gl=fr&hl=de', 'https://www.google.com/sorry/index?continue=x', 'https://consent.google.com/ml?continue=x']) {
+      const other = await pushed(url);
+      expect(other.runs.state(), url).toMatchObject({ state: 'blocked', blockedReason: 'not-a-result-page' });
+      expect(outcomes(other.runs.state()), url).toEqual(['blocked', 'cancelled']);
+      expect(other.capture, url).not.toHaveBeenCalled();
+    }
+    // After the capture, before its screenshot: the same search keeps its screenshot.
+    const shot = setup(readySerpFor([query(DESKTOP)]));
+    shot.capture.mockImplementationOnce(async () => {
+      shot.tab(10)!.url = SAME;
+      return CAPTURED;
+    });
+    await shot.runs.start(plan([query(DESKTOP)], { screenshot: true }));
+    await run();
+    expect(shot.runs.state()).toMatchObject({ state: 'done' });
+    expect(shot.runs.state().targets.map((t) => [t.outcome, t.screenshot])).toEqual([['captured', 'saved']]);
+    expect(shot.screenshot).toHaveBeenCalledOnce();
   });
 
   // spec: specs/projects.feature.md — Searches in a run (`ready` with no tab parameters is `no-reading`)

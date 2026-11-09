@@ -1,3 +1,4 @@
+import { RANK_CHECK_AVAILABLE } from '@app/specs/capture-schedule.spec';
 import { CHECK_RANKINGS_TEXT, type ProjectViewId, type RunScope, type StartRunAnswer } from '@app/specs/projects.spec';
 import type { CompactAnswer, PurgeNowAnswer } from '@app/specs/retention.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
@@ -9,7 +10,8 @@ import { compactText, purgeNowText, startRunText } from './projects-view';
 // "Open rankings" and "Compare searches" (the sheet on that view of the project last opened, Phase 10
 // Task 6), "Add this page to a project" (the sheet, asking which project), "Capture project now"
 // (the project last opened in the sheet: main's `projects.startRun`) and, Task 8, "Check rankings now"
-// (the same, its saved searches only; main asks the disclosure first when it must). Registered from
+// (the same, its saved searches only; main asks the disclosure first when it must; registered only when
+// `RANK_CHECK_AVAILABLE`, legal gate L1, plan Decision 10). Registered from
 // `components/changes/Projects.tsx`; pure (the sheet and the procedure are injected) so availability
 // is unit tested.
 
@@ -30,9 +32,15 @@ function openView(api: ProjectsPaletteApi, view: ProjectViewId): void {
   api.open(projectId === undefined ? { view } : { projectId, view });
 }
 
+export interface ProjectsPaletteOptions {
+  /** Whether "Check rankings now" is offered (default `RANK_CHECK_AVAILABLE`, `false` until L1; tests inject `true`). */
+  readonly rankCheckAvailable?: boolean;
+}
+
 /** The palette's Projects actions, calling `api`. */
-export function projectsPaletteSources(api: ProjectsPaletteApi): PaletteSource[] {
-  return [
+export function projectsPaletteSources(api: ProjectsPaletteApi, options: ProjectsPaletteOptions = {}): PaletteSource[] {
+  const rankCheckAvailable = options.rankCheckAvailable ?? RANK_CHECK_AVAILABLE;
+  const sources: PaletteSource[] = [
     {
       id: 'projects.open',
       label: 'Open projects',
@@ -85,6 +93,10 @@ export function projectsPaletteSources(api: ProjectsPaletteApi): PaletteSource[]
         return startRunText(await api.startRun(projectId)) ?? 'Capturing the project…';
       },
     },
+  ];
+  // Legal gate L1: not registered at all until the owner's note.
+  if (!rankCheckAvailable) return sources;
+  sources.push(
     {
       id: 'projects.check-rankings',
       label: CHECK_RANKINGS_TEXT.palette,
@@ -100,7 +112,8 @@ export function projectsPaletteSources(api: ProjectsPaletteApi): PaletteSource[]
         return startRunText(await api.startRun(projectId, 'searches')) ?? 'Checking rankings…';
       },
     },
-  ];
+  );
+  return sources;
 }
 
 export interface RetentionPaletteApi {

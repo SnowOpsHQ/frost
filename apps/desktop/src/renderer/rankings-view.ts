@@ -44,6 +44,9 @@ const featureLabel = (type: unknown): string => (typeof type === 'string' && Obj
 
 const WHEN = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
+/** The "no readings yet" notice: names Check rankings only when it is offered (`shown`: `rankCheckShown()`, L1), else Capture now. */
+export const noReadingsText = (shown: boolean): string => (shown ? RANK_VIEW_TEXT.noReadings : RANK_VIEW_TEXT.noReadingsWithoutRankCheck);
+
 /** A reading's time as the views show it (`—` for a time that is not a date). */
 export function formatWhen(at: number): string {
   return typeof at === 'number' && Number.isFinite(at) && !Number.isNaN(new Date(at).getTime()) ? WHEN.format(at) : RANK_VIEW_TEXT.none;

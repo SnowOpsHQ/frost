@@ -2,6 +2,8 @@
 // (RegionAnswerSchema, CHANGES_READ_API), specs/capture-db.spec.ts (UNFILED_PROJECT_ID), specs/capture.spec.ts (DIFF_ENGINE_VERSION),
 // specs/rankings.spec.ts (searchIdentityJson), specs/rankings-url.spec.ts (serpFiltersOf), specs/rankings.schema.ts (StoredReadingSchema),
 // specs/workspace-db.spec.ts (SEARCH_KEY_VERSION, MAX_SERP_READING_JSON_BYTES)
+// Acceptance: specs/rankings.feature.md (The search key and its version: one key function; Scenario:
+// capture-then-rank-shares-the-key)
 // Acceptance: specs/changes-capture.feature.md (The service; SERP reading; Scenarios: Service)
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,7 +15,6 @@ import { openSessionStore, uuidv7, type AppendCaptureInput, type SessionStore } 
 import type { SeoAuditResponse } from '@app/seo-core';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS, DIFF_ENGINE_VERSION, type CaptureSnapshot } from '@app/specs/capture-snapshot.schema';
-import { searchIdentityJson } from '@app/specs/rankings.spec';
 import { StoredReadingSchema } from '@app/specs/rankings.schema';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { SerpSnapshotSchema, type SerpSnapshot } from '@app/specs/serp-snapshot.schema';
@@ -23,6 +24,9 @@ import { CAPTURE_BUSY, CHANGES_READ_API, type CaptureAnswer, type RegionAnswer }
 import { DEFAULT_RENDER_PROFILE, type AuditRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import { auditOf, readyReading, regionAnswer, regionText } from './fakes';
 import { createChangesService, type ChangesServiceDeps } from '../service';
+import { savedSearchParams } from '../projects';
+import { createRankingsService } from '../rankings';
+import { searchKeyOf } from '../search-key';
 import { lateSearchParams } from '../serp-params';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex } from '../snapshot';
 
@@ -307,8 +311,8 @@ describe('changes service', () => {
     return { ...setup({ readingOf, ...deps }), reading, readingOf };
   };
   const SERP = 'https://www.google.com/search?q=green+tea&gl=de&hl=de&tbs=QDR:w&ei=abc';
-  /** The search key main stores (SHA-256 of the identity). */
-  const keyOf = (params: SearchParams, filters: Record<string, string>) => sha256Hex(searchIdentityJson(params, filters, new URL(params.url).host));
+  /** The search key main stores: the one function the capture and the rankings share (`search-key.ts`). */
+  const keyOf = (params: SearchParams, filters: Record<string, string>) => searchKeyOf(params, filters)!;
 
   test('capture-records-serp-reading', async () => {
     const t = serpSetup();
@@ -378,6 +382,32 @@ describe('changes service', () => {
     // Exactly one reading per capture.
     expect(t.rows('ci_serp_readings')).toHaveLength(t.rows('ci_captures').length);
     expect(t.log).not.toHaveBeenCalled();
+  });
+
+  // spec: specs/rankings.feature.md — The search key and its version (one key function; capture-then-rank-shares-the-key)
+  test('capture-then-rank-shares-the-key', async () => {
+    // A project's saved search, through the one saved-search path.
+    const saved = savedSearchParams({ engine: 'google', query: 'green tea', country: 'de', language: 'de', device: 'desktop' })!;
+    const t = serpSetup();
+    const project = (await t.repo.createProject('Teas', tick()))!;
+    const query = (await t.repo.addQuery(project.id, saved.query, canonicalJson(saved), tick()))!;
+    // The tab shows that search's result page, read ready: a capture into the project stores its reading.
+    onSerp(t.state, saved.url);
+    t.state.params = saved;
+    t.reading.current = readyReading(saved);
+    const answer = captured(await t.service.capture(1, { projectId: project.id }));
+    const [reading] = t.rows('ci_serp_readings', 'capture_id = ?', answer.captureId);
+    expect(reading).toMatchObject({ project_id: project.id, search_key: searchKeyOf(saved, {}) });
+    // The rankings read files it under the saved search's own row: that row's latest point is this reading.
+    const rankings = createRankingsService({ store: t.repo, now: tick });
+    const table = await rankings.table(project.id, 'all', null);
+    if (table.status !== 'ok') throw new Error(`refused: ${table.reason}`);
+    expect(table.rows).toHaveLength(1);
+    const [row] = table.rows;
+    expect(row!.saved).toMatchObject({ id: query.id });
+    expect(row!.searchKey).toBe(reading!.search_key);
+    expect(row!.latest?.readingId).toBe(reading!.id);
+    expect(row!.points.map((point) => point.readingId)).toEqual([reading!.id]);
   });
 
   test('capture-without-reading-still-captures', async () => {

@@ -528,7 +528,10 @@ export const COMPARE_MOVEMENT_LABELS: Readonly<Record<CompareMovement, string>> 
 /** The Rankings and Compare views' own wording. */
 export const RANK_VIEW_TEXT = {
   noSite: "Set your site's domain to see its position",
+  /** No readings yet, once "Check rankings" is offered (`RANK_CHECK_AVAILABLE`). */
   noReadings: 'No readings yet: capture a search or run Check rankings',
+  /** No readings yet, while "Check rankings" is not offered (`RANK_CHECK_AVAILABLE` `false`, L1): names Capture now instead. */
+  noReadingsWithoutRankCheck: 'No readings yet: capture a search, or capture the project with Capture now',
   noTagged: 'No saved search carries this tag.',
   truncated: `Showing the first ${RANK_LIMITS.maxRows} searches.`,
   capped: 'Trend and best cover only the newest readings of this search.',
