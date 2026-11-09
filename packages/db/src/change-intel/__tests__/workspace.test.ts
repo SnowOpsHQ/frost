@@ -593,6 +593,26 @@ describe('workspace storage', () => {
     expect(await t.repo.lastProjectRunAt(other.id)).toBe(4_000);
     expect(await t.repo.lastProjectRunAt('nope')).toBeNull();
   });
+
+  // spec: specs/workspace-db.feature.md — Repository: `projectsLastCapturedAt` (every source, one grouped read, live projects only).
+  test('last-captured-at-per-project', async () => {
+    const site = (await t.repo.createProject('Tea', 500))!;
+    const other = (await t.repo.createProject('Other', 500))!;
+    const empty = (await t.repo.createProject('Empty', 500))!;
+    const gone = (await t.repo.createProject('Gone', 500))!;
+    expect(await t.repo.projectsLastCapturedAt()).toEqual(new Map());
+    await captureWithReading(1_000, '{"v":1}', { projectId: site.id, source: 'project' });
+    // A manual capture counts as much as a run's.
+    await captureWithReading(3_000, '{"v":2}', { projectId: site.id, source: 'manual' });
+    appended(await t.repo.appendCapture(captureInput({ url: 'https://example.com/', snapshot: '{"p":1}', at: 2_000, projectId: site.id, source: 'project' })));
+    appended(await t.repo.appendCapture(captureInput({ url: 'https://example.com/o', snapshot: '{"p":2}', at: 4_000, projectId: other.id, source: 'project' })));
+    appended(await t.repo.appendCapture(captureInput({ url: 'https://example.com/g', snapshot: '{"p":3}', at: 5_000, projectId: gone.id, source: 'manual' })));
+    expect(await t.repo.tombstoneProject(gone.id, 6_000)).toBe(true);
+    const last = await t.repo.projectsLastCapturedAt();
+    expect(last).toEqual(new Map([[site.id, 3_000], [other.id, 4_000]]));
+    expect(last.has(empty.id)).toBe(false);
+    expect(last.has(gone.id)).toBe(false);
+  });
 });
 
 // ---- On both drivers ---------------------------------------------------------------------------

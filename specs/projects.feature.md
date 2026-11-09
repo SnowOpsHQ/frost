@@ -1,6 +1,8 @@
 # Feature: projects
 
-Spec: `specs/projects.spec.ts` (`PROJECT_RUN_LIMITS`, `RUN_STATES`, `RUN_TARGET_OUTCOMES`,
+Spec: `specs/projects.spec.ts` (`PROJECT_RUN_LIMITS`, `RUN_STATES`, `RUN_TARGET_OUTCOMES`, Phase 10's
+`RUN_SCOPES`, `normalizeSiteDomain`, `normalizeTag`, `BULK_SEARCH_LIMITS`, `splitBulkSearches`,
+`PROJECT_SORTS`, `sortProjects`,
 `RUN_RETRY_REFUSALS`, `QUERY_DEVICE_PROFILES`, `SavedSearchInput`, `SEARCH_PARAM_URL_RULES`,
 `searchLocaleFor`, `searchUrlFor`, `queryLabel`, `PROJECT_REFUSALS`, `RUN_REFUSALS` and their messages,
 `CAPTURE_RUN_NOTE`, `QUERY_FIELD_MAX_CHARS`, `DELETE_PROJECT`, the answer types) and
@@ -48,6 +50,75 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   tampered row. Saved searches written in Phase 6's earlier shape (`country`, `language`,
   `location`) exist only in development profiles (nothing was released) and are skipped the same way:
   there is no migration (captured rows are append-only by design).
+
+## Site and competitors (Phase 10 Task 4; plan Decision 7)
+- A project has an optional **site domain** and an "include subdomains" switch (on by default), set by
+  `projects.setSite` (a domain or URL as typed, or `null` to clear it). Main reads it with
+  `normalizeSiteDomain`: a host or an `http(s)` URL becomes its lowercase host (an IDN as punycode, via
+  `URL`; port, path and trailing dots dropped); a non-public host (`isPublicHost` of
+  `specs/private-address.spec.ts`: `localhost`, a single label, `.local`, `.example`, …), an IP literal,
+  a label starting or ending with `-`, another scheme or a host longer than `DOMAIN_MAX_CHARS` is
+  `invalid-domain`; so is a bare public suffix with nothing registrable (`co.uk`, `com.au`: main's
+  `registrableOwner`, Phase 3's `ownerDomain` over `MULTI_PART_SUFFIXES`; an owner suffix such as
+  `medium.com` is its own owner and stays allowed). A leading `www.` is kept (matching drops one `www.`
+  when subdomains are off). The answer is the site as stored.
+- Up to `MAX_PROJECT_COMPETITORS` **competitors** (`addCompetitor`, read the same way). A competitor is
+  stored as its **owner domain** (`ownerDomain`), so `rival.com`, `www.rival.com` and `shop.rival.com`
+  are one competitor: adding another host of an owner the project has answers that competitor (also at
+  the cap); past the cap is `limit`; `removeCompetitor` tombstones it, `not-found` when it is not a live
+  competitor of the project. `get` lists them, oldest first. The rank views match a competitor by its
+  owner domain with subdomains on (Task 5).
+- Whose positions they are is Phase 3's owner rule: main's `siteMatchOf(domain, subdomains)`
+  (`apps/desktop/src/main/changes/workspace.ts`) gives the rank model's `SiteMatch` (`owner` from
+  `ownerDomain`, `main/serp/serp-analyse.ts`).
+- **Unfiled refuses site and competitors** (`unfiled`): it is where captures land when no project was
+  chosen, not a site.
+- These are device-local and never change the project's `updated_at` (`workspace-db.feature.md`,
+  Sync position).
+
+## Tags (plan Decision 8)
+- A page or a saved search carries up to `MAX_TAGS_PER_ENTRY` tags (`projects.setTags`: the entry's
+  kind, `page` or `search`, its id, and its tags afterwards); a project holds at most
+  `MAX_PROJECT_TAGS` distinct tags (`limit`). Main reads each with `normalizeTag` (NFC, white space runs
+  as one space, trimmed, lowercase; 1–`TAG_MAX_CHARS`; no control or bidirectional formatting
+  character) and drops repeats (`normalizeTags`); a refused tag, or more than `MAX_TAGS_PER_ENTRY`, is
+  `invalid-tag`. An entry that is not a live page or saved search of the live project is `not-found`.
+  The answer is the entry's tags, sorted.
+- Tags are a filter, not a hierarchy. `get` lists each page's and search's tags.
+- Removing a page or a saved search tombstones its tags in the same batch; deleting a project
+  tombstones its competitors and tags (`workspace-db.feature.md`, Repository).
+
+## Bulk add (plan Decision 8)
+- `projects.addSearches` takes `BulkSearchesInput`: the typed text, one engine, 1–`maxLocales`
+  distinct country/language pairs and 1–3 distinct devices (`BULK_SEARCH_LIMITS`), and tags for the
+  searches it adds. `splitBulkSearches(text)` makes its lines: one query per line or comma-separated,
+  white space runs as one space, trimmed, blanks and repeats dropped; 1–`maxLines`
+  (`MAX_PROJECT_QUERIES`) lines, else the input is refused.
+- Each line makes one saved search per locale and device (`bulkSearchInputs`), each through **the
+  Phase 6 path** of Saved searches: `searchUrlFor` → `searchParamsForUrl` (local: nothing is sent to
+  any engine), the same check of the country and language read back, stored as `addSearch` stores it.
+- Per-line outcomes (`BULK_LINE_OUTCOMES`): a line any of whose searches is not one frost can make is
+  `invalid` and stores none of them; otherwise its searches are stored in order: `exists` when every
+  one was already saved, `added` (with how many) when at least one was new; when the project reaches
+  `MAX_PROJECT_QUERIES` the line is `limit` (what it added before stays) and **every later line is
+  `limit` without being tried**.
+- The tags (`normalizeTags`, else `invalid-tag` and nothing stored) go on each search the bulk add
+  added; a project that would hold more than `MAX_PROJECT_TAGS` distinct tags is `limit` before
+  anything is stored. Searches already saved keep their tags.
+- Bulk add stores searches only: nothing is sent until a run visits them.
+
+## Favorites and sort
+- `projects.setFavorite` stars a project (Unfiled too); `ProjectSummary.favorite`. The summary also has
+  `site`, `createdAt` and `lastCapturedAt` (the newest capture filed in it, of any source: one grouped
+  read for the whole list, `projectsLastCapturedAt`).
+- The list sorts in the chrome (view state, not persisted): `sortProjects(projects, sort)` with
+  `PROJECT_SORTS` (`name` A–Z; `last-captured` newest `lastCapturedAt` first, never captured last; `created`
+  newest first): Unfiled first, then favorites, then the rest, each part by the sort, ties by name.
+
+## Run scope (plan Decision 11)
+- `projects.startRun` takes `scope` (`RUN_SCOPES`: `all`, the default when left out, or `searches`).
+  With `searches` the run visits only the saved searches ("Check rankings"); a project with none is
+  `no-targets`. The caps are unchanged.
 
 ## The service
 - Every method answers; none rejects. A refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`); a
@@ -136,7 +207,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 ## Router
 - `projects.list`, `get`, `create`, `rename`, `setRenderProfile`, `remove`, `addPage`,
   `addCurrentPage`, `removePage`, `addSearch`, `removeSearch` (a query; no procedure name says
-  "query", by `db-only-in-main`), `forPage`, `startRun`, `cancelRun`, `runState`. Each is `enforceSender` first, then `requireProjects` (fails closed without the
+  "query", by `db-only-in-main`), `forPage`, `startRun`, `cancelRun`, `runState`; Phase 10's
+  `setFavorite`, `setSite`, `addCompetitor`, `removeCompetitor`, `setTags`, `addSearches`. Each is `enforceSender` first, then `requireProjects` (fails closed without the
   service), with a strict input; the answers are checked against their schemas on the way out.
 
 ## The sheet
@@ -216,7 +288,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `deleted-projects-with-rows`.
 - **Scenario: unfiled-cannot-be-deleted** — Test: `projects.test.ts` `unfiled-cannot-be-deleted`.
 - **Scenario: start-run-plans-pages-then-queries** — Test: `projects.test.ts`
-  `start-run-plans-pages-then-queries`.
+  `start-run-plans-pages-then-queries`; its scope (`searches` with no saved search is `no-targets`):
+  `start-run-passes-its-scope`.
 - **Scenario: projects-never-reject** — Test: `projects.test.ts` `projects-never-reject`.
 - **Scenario: capture run** — Tests in `apps/desktop/src/main/changes/__tests__/capture-run.test.ts`:
   `capture-run-visits-each-target-in-its-own-tab`, `capture-run-waits-for-active-tab`,
@@ -232,6 +305,14 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `capture-run-caps-targets`, `run-state-long-polls`; and over the real controller, render profiles and
   pins, `capture-run-pins.test.ts` `capture-run-never-removes-a-pin`. The capture's `pageUrl`:
   `service.test.ts` `capture-records-profile-and-params`.
+- **Scenario: project workspace** — Tests in `apps/desktop/src/main/changes/__tests__/workspace.test.ts`:
+  `site-domain-normalized` (scheme, path, case, IDN, private hosts refused),
+  `competitors-capped-and-unique`, `tags-normalized-and-capped`, `bulk-add-lines-and-combinations`
+  (devices × locales; per-line outcomes; stops at the cap with `limit`),
+  `bulk-add-uses-the-phase-6-path` (each through `searchUrlFor` + `searchParamsForUrl`; no network),
+  `favorite-and-sort`, `unfiled-refuses-workspace-fields`, `workspace-never-rejects`; the values:
+  `projects-spec.test.ts` `projects-workspace-values`; the run scope: `capture-run.test.ts`
+  `run-scope-searches-skips-pages`.
 - **Scenario: router** — Tests in `packages/ipc-contract/src/__tests__/projects-router.test.ts`:
   `every-projects-procedure-enforces-sender` (and fail-closed), `projects-inputs-are-validated`,
   `projects-procedures-call-service`, `projects-answers-are-checked`.

@@ -10,8 +10,20 @@ import { SEARCH_ENGINE_IDS } from './browser-polish.spec';
 import { MAX_PROJECT_PAGES, MAX_PROJECT_QUERIES, MAX_PROJECTS, PROJECT_NAME_MAX_CHARS, PROJECT_QUERY_MAX_CHARS, RETENTION_MODES, UUIDV7_PATTERN } from './capture-db.spec';
 import { SearchParamsSchema } from './serp-search-params.schema';
 import { SERP_DEVICES } from './serp.spec';
+import { DOMAIN_MAX_CHARS, ENTRY_KINDS, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from './workspace-db.spec';
 import {
+  BULK_LINE_OUTCOMES,
+  BULK_SEARCH_LIMITS,
   PROJECT_REFUSALS,
+  RUN_SCOPES,
+  SITE_INPUT_MAX_CHARS,
+  TAG_INPUT_MAX_CHARS,
+  splitBulkSearches,
+  type AddCompetitorAnswer,
+  type BulkAddAnswer,
+  type BulkSearchesInput,
+  type SetSiteAnswer,
+  type SetTagsAnswer,
   PROJECT_RUN_LIMITS,
   RUN_REFUSALS,
   RUN_SCREENSHOT_OUTCOMES,
@@ -77,9 +89,58 @@ export const SavedSearchInputSchema = z.strictObject({
 export const AddQueryInputSchema = z.strictObject({ projectId: id, search: SavedSearchInputSchema });
 export const RemoveQueryInputSchema = z.strictObject({ projectId: id, queryId: id });
 export const ForPageInputSchema = z.strictObject({ url: webUrl });
-/** `startRun`: the project, and whether to take a viewport screenshot of each captured target. */
-export const StartRunInputSchema = z.strictObject({ projectId: id, screenshot: z.boolean() });
+/**
+ * `startRun`: the project, whether to take a viewport screenshot of each captured target, and (Phase
+ * 10) which targets (`RUN_SCOPES`; `all` when left out).
+ */
+export const StartRunInputSchema = z.strictObject({ projectId: id, screenshot: z.boolean(), scope: z.enum(RUN_SCOPES).default('all') });
 export const RunStateInputSchema = z.strictObject({ sinceVersion: count });
+
+
+// Phase 10 Task 4: the project workspace. Domains and tags come in as typed (printable, bounded);
+// main normalizes them (`normalizeSiteDomain`, `normalizeTag`) and answers `invalid-domain` /
+// `invalid-tag` for what it refuses.
+
+/** A site or competitor as typed: printable, not blank, at most `SITE_INPUT_MAX_CHARS`. */
+const domainInput = z
+  .string()
+  .min(1)
+  .max(SITE_INPUT_MAX_CHARS)
+  .regex(PRINTABLE)
+  .refine((value) => value.trim() !== '', { message: 'blank domain' });
+/** A tag as typed: printable, at most `TAG_INPUT_MAX_CHARS`. */
+const tagInput = z.string().min(1).max(TAG_INPUT_MAX_CHARS).regex(PRINTABLE);
+const tagInputs = z.array(tagInput).max(MAX_TAGS_PER_ENTRY);
+/** No value twice. */
+const distinct = <T>(values: readonly T[]): boolean => new Set(values.map((value) => JSON.stringify(value))).size === values.length;
+
+export const SetFavoriteInputSchema = z.strictObject({ projectId: id, favorite: z.boolean() });
+/** `setSite`: a domain (or URL) as typed, or `null` to clear it; and whether subdomains count. */
+export const SetSiteInputSchema = z.strictObject({ projectId: id, domain: domainInput.nullable(), subdomains: z.boolean() });
+export const AddCompetitorInputSchema = z.strictObject({ projectId: id, domain: domainInput });
+export const RemoveCompetitorInputSchema = z.strictObject({ projectId: id, competitorId: id });
+/** `setTags`: a page (`page`) or saved search (`search`) of the project, and its tags afterwards (as typed). */
+export const SetTagsInputSchema = z.strictObject({ projectId: id, entryKind: z.enum(ENTRY_KINDS), entryId: id, tags: tagInputs });
+/** The Bulk add form (`BulkSearchesInput`): 1–`maxLines` queries in `text`, distinct locales and devices. */
+export const BulkSearchesInputSchema = z.strictObject({
+  text: z
+    .string()
+    .min(1)
+    .max(BULK_SEARCH_LIMITS.maxTextChars)
+    .refine((value) => {
+      const lines = splitBulkSearches(value).length;
+      return lines >= 1 && lines <= BULK_SEARCH_LIMITS.maxLines;
+    }, { message: 'one to maxLines queries' }),
+  engine: SavedSearchInputSchema.shape.engine,
+  locales: z
+    .array(z.strictObject({ country: SavedSearchInputSchema.shape.country, language: SavedSearchInputSchema.shape.language }))
+    .min(1)
+    .max(BULK_SEARCH_LIMITS.maxLocales)
+    .refine(distinct, { message: 'a locale twice' }),
+  devices: z.array(z.enum(SERP_DEVICES)).min(1).max(SERP_DEVICES.length).refine(distinct, { message: 'a device twice' }),
+  tags: tagInputs,
+}) satisfies z.ZodType<BulkSearchesInput>;
+export const BulkAddSearchesInputSchema = z.strictObject({ projectId: id, searches: BulkSearchesInputSchema });
 
 export type ProjectIdInput = z.infer<typeof ProjectIdInputSchema>;
 export type AddQueryInput = z.infer<typeof AddQueryInputSchema>;
@@ -88,12 +149,24 @@ export type AddQueryInput = z.infer<typeof AddQueryInputSchema>;
 
 const refused = z.strictObject({ status: z.literal('refused'), reason: z.enum(PROJECT_REFUSALS) });
 
+/** A stored host (`normalizeSiteDomain`'s form). */
+const domain = z.string().min(1).max(DOMAIN_MAX_CHARS).regex(/^[a-z0-9_-]+(\.[a-z0-9_-]+)*$/);
+/** A stored tag (`normalizeTag`'s form). */
+const tag = z.string().min(1).max(TAG_MAX_CHARS).regex(PRINTABLE);
+const tags = z.array(tag).max(MAX_TAGS_PER_ENTRY);
+const site = z.strictObject({ domain, subdomains: z.boolean() });
+const competitor = z.strictObject({ id, domain });
+
 export const ProjectSummarySchema = z.strictObject({
   id,
   name: z.string().min(1).max(PROJECT_NAME_MAX_CHARS),
   unfiled: z.boolean(),
   renderProfile: RenderProfileSchema.nullable(),
   retention: z.strictObject({ mode: z.enum(RETENTION_MODES), value: count.nullable() }),
+  favorite: z.boolean(),
+  site: site.nullable(),
+  createdAt: count,
+  lastCapturedAt: count.nullable(),
 }) satisfies z.ZodType<ProjectSummary>;
 
 export const ProjectsAnswerSchema = z.strictObject({ projects: z.array(ProjectSummarySchema).max(MAX_PROJECTS + 1) }) satisfies z.ZodType<ProjectsAnswer>;
@@ -102,8 +175,9 @@ const captures = { lastCapturedAt: count.nullable(), changeCount: count.nullable
 export const ProjectDetailSchema = z
   .strictObject({
     project: ProjectSummarySchema,
-    pages: z.array(z.strictObject({ id, url: webUrl, ...captures })).max(MAX_PROJECT_PAGES),
-    queries: z.array(z.strictObject({ id, params: SearchParamsSchema, url: webUrl, ...captures })).max(MAX_PROJECT_QUERIES),
+    pages: z.array(z.strictObject({ id, url: webUrl, ...captures, tags })).max(MAX_PROJECT_PAGES),
+    queries: z.array(z.strictObject({ id, params: SearchParamsSchema, url: webUrl, ...captures, tags })).max(MAX_PROJECT_QUERIES),
+    competitors: z.array(competitor).max(MAX_PROJECT_COMPETITORS),
   })
   .nullable() satisfies z.ZodType<ProjectDetail>;
 
@@ -119,6 +193,19 @@ export const StartRunAnswerSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('started'), runId: id }),
   z.strictObject({ status: z.literal('refused'), reason: z.enum(RUN_REFUSALS) }),
 ]) satisfies z.ZodType<StartRunAnswer>;
+
+export const SetSiteAnswerSchema = z.discriminatedUnion('status', [z.strictObject({ status: z.literal('ok'), site: site.nullable() }), refused]) satisfies z.ZodType<SetSiteAnswer>;
+export const AddCompetitorAnswerSchema = z.discriminatedUnion('status', [z.strictObject({ status: z.literal('added'), competitor }), refused]) satisfies z.ZodType<AddCompetitorAnswer>;
+export const SetTagsAnswerSchema = z.discriminatedUnion('status', [z.strictObject({ status: z.literal('ok'), tags }), refused]) satisfies z.ZodType<SetTagsAnswer>;
+export const BulkAddAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('done'),
+    lines: z
+      .array(z.strictObject({ query: z.string().min(1).max(BULK_SEARCH_LIMITS.maxTextChars), outcome: z.enum(BULK_LINE_OUTCOMES), added: z.int().nonnegative().max(BULK_SEARCH_LIMITS.maxLocales * SERP_DEVICES.length) }))
+      .max(BULK_SEARCH_LIMITS.maxLines),
+  }),
+  refused,
+]) satisfies z.ZodType<BulkAddAnswer>;
 
 /** `cancelRun`: whether a run was under way. */
 export const CancelRunAnswerSchema = z.boolean();

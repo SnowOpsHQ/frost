@@ -16,10 +16,12 @@
  */
 import { searchEngine, searchEngineUrl, wellFormed, type SearchEngineId } from './browser-polish.spec';
 import type { CaptureRefusal } from './changes.spec';
-import type { RetentionMode, ScreenshotKind } from './capture-db.spec';
+import { MAX_PROJECT_QUERIES, PROJECT_QUERY_MAX_CHARS, type RetentionMode, type ScreenshotKind } from './capture-db.spec';
+import { isIpLiteral, isPublicHost } from './private-address.spec';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from './render-profile.spec';
 import type { SearchParams } from './serp-search-params.schema';
 import { SERP_DEVICE_LABELS, SERP_PARAM_LIMITS, type SerpDevice } from './serp.spec';
+import { DOMAIN_MAX_CHARS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from './workspace-db.spec';
 
 // ---- The capture run ---------------------------------------------------------------------------
 
@@ -205,34 +207,199 @@ export function queryLabel(params: SearchParams): string {
   return `“${params.query}” on ${params.engineLabel}${settings.length > 0 ? ` (${settings.join(', ')})` : ''}`;
 }
 
+// ---- The project workspace (Phase 10 Task 4) -----------------------------------------------------
+
+/**
+ * Which targets a run visits (plan Decision 11): `all` (Capture now: the pages, then the saved
+ * searches) or `searches` (Check rankings: only the saved searches). `projects.startRun` takes it,
+ * `all` when left out.
+ */
+export const RUN_SCOPES = ['all', 'searches'] as const;
+export type RunScope = (typeof RUN_SCOPES)[number];
+
+/** A site or competitor as typed: a host or a web address (at most this many code units). */
+export const SITE_INPUT_MAX_CHARS = 2_048;
+/** A tag as typed, before `normalizeTag` (at most this many code units). */
+export const TAG_INPUT_MAX_CHARS = TAG_MAX_CHARS * 2;
+
+/** One DNS label of a stored host: letters, digits, `-` and `_` (punycode for IDN), 1–63 long, not starting or ending with `-`. */
+const HOST_LABEL = /^(?!-)[a-z0-9_-]{1,63}(?<!-)$/;
+/** C0 and C1 controls, DEL, and bidirectional formatting characters. */
+const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/;
+
+/**
+ * A site or competitor domain (plan Decision 7) from what the user typed: a host (`Shop.Com`,
+ * `shop.com/path`, `shop.com:8080`) or an `http(s)` URL, read with `URL` (so a name is lowercased and
+ * an IDN becomes punycode), its trailing dots dropped. `null` unless the host is a public name
+ * (`isPublicHost`: not `localhost`, a single label, or a name under a non-public suffix such as
+ * `.local` or `.example`), not an IP literal, of DNS labels of `[a-z0-9_-]` only (none starting or
+ * ending with `-`), and at most
+ * `DOMAIN_MAX_CHARS` long; input with white space or an `@` (userinfo, `mailto:`) is refused. A leading `www.` is kept: matching takes care of it.
+ */
+export function normalizeSiteDomain(input: string): string | null {
+  if (typeof input !== 'string' || input.length > SITE_INPUT_MAX_CHARS || UNPRINTABLE.test(input)) return null;
+  const text = input.trim();
+  // White space and userinfo (`me@host`, `mailto:me@host`) are never part of a site.
+  if (text === '' || /[\s@]/.test(text)) return null;
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(text);
+  if (scheme !== null && !/^https?$/i.test(scheme[1]!)) return null;
+  let host: string;
+  try {
+    host = new URL(scheme === null ? `http://${text}` : text).hostname;
+  } catch {
+    return null;
+  }
+  host = host.replace(/\.+$/, '');
+  if (host === '' || host.length > DOMAIN_MAX_CHARS || isIpLiteral(host) || !isPublicHost(host)) return null;
+  return host.split('.').every((label) => HOST_LABEL.test(label)) ? host : null;
+}
+
+/**
+ * A tag (plan Decision 8) from what the user typed: NFC, white space runs (tabs and line breaks
+ * included) as one space, trimmed, lowercase. `null` for a blank tag, one longer than `TAG_MAX_CHARS`
+ * afterwards, or one with another control or a bidirectional formatting character.
+ */
+export function normalizeTag(input: string): string | null {
+  if (typeof input !== 'string' || input.length > TAG_INPUT_MAX_CHARS) return null;
+  // White space (tabs and line breaks too) first, so only other unprintable characters are refused.
+  const tag = input.normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
+  return tag !== '' && tag.length <= TAG_MAX_CHARS && !UNPRINTABLE.test(tag) ? tag : null;
+}
+
+/**
+ * The tags of one entry as typed, normalized (`normalizeTag`), duplicates dropped, sorted; `null` if
+ * one is refused or there are more than `MAX_TAGS_PER_ENTRY`.
+ */
+export function normalizeTags(input: readonly string[]): string[] | null {
+  const tags = new Set<string>();
+  for (const raw of input) {
+    const tag = normalizeTag(raw);
+    if (tag === null) return null;
+    tags.add(tag);
+  }
+  return tags.size > MAX_TAGS_PER_ENTRY ? null : [...tags].sort();
+}
+
+/**
+ * Bulk add (plan Decision 8): at most `maxLines` queries (`MAX_PROJECT_QUERIES`) of at most
+ * `maxTextChars` typed, with at most `maxLocales` country/language pairs and any of the three devices.
+ */
+export const BULK_SEARCH_LIMITS = {
+  maxLines: MAX_PROJECT_QUERIES,
+  maxLocales: 5,
+  maxTextChars: MAX_PROJECT_QUERIES * (PROJECT_QUERY_MAX_CHARS + 2),
+} as const;
+
+/**
+ * A line's outcome:
+ * - `added`: at least one of its searches was added (and the rest were already saved);
+ * - `exists`: every one of its searches was already saved;
+ * - `invalid`: one of its searches is not a saved search frost can make (`invalid-query`): none of
+ *   the line's searches is stored;
+ * - `limit`: the project reached `MAX_PROJECT_QUERIES` (some of the line's searches may have been
+ *   added before it did); every later line is `limit` too, without being tried.
+ */
+export const BULK_LINE_OUTCOMES = ['added', 'exists', 'invalid', 'limit'] as const;
+export type BulkLineOutcome = (typeof BULK_LINE_OUTCOMES)[number];
+
+/** One line's result: its query, outcome, and how many saved searches it added. */
+export interface BulkLineResult {
+  readonly query: string;
+  readonly outcome: BulkLineOutcome;
+  readonly added: number;
+}
+
+/** A country/language pair of a bulk add (each may be `null`, as in the query form). */
+export interface BulkLocale {
+  readonly country: string | null;
+  readonly language: string | null;
+}
+
+/**
+ * The Bulk add form (`projects.addSearches`): the typed `text` (`splitBulkSearches`), one engine, 1–
+ * `maxLocales` distinct locales, 1–3 distinct devices, and tags for every search it adds (at most
+ * `MAX_TAGS_PER_ENTRY`, `normalizeTag`ged by main).
+ */
+export interface BulkSearchesInput {
+  readonly text: string;
+  readonly engine: SearchEngineId;
+  readonly locales: readonly BulkLocale[];
+  readonly devices: readonly SerpDevice[];
+  readonly tags: readonly string[];
+}
+
+/**
+ * The queries of a Bulk add text: one per line, or comma-separated; each with its white space runs
+ * as one space and trimmed; blanks and repeats dropped; in order. Never capped here: the form and the
+ * input schema refuse more than `BULK_SEARCH_LIMITS.maxLines`.
+ */
+export function splitBulkSearches(text: string): string[] {
+  const out: string[] = [];
+  for (const part of text.split(/[\r\n,]+/)) {
+    const query = part.replace(/\s+/g, ' ').trim();
+    if (query !== '' && !out.includes(query)) out.push(query);
+  }
+  return out;
+}
+
+/** The saved searches one line of a bulk add makes: each locale (in order), on each device (in order). */
+export function bulkSearchInputs(query: string, input: Pick<BulkSearchesInput, 'engine' | 'locales' | 'devices'>): SavedSearchInput[] {
+  return input.locales.flatMap((locale) => input.devices.map((device) => ({ engine: input.engine, query, country: locale.country, language: locale.language, device })));
+}
+
+/** The project list's sorts (view state, not persisted): by name, by its last capture (newest first), by creation (newest first). */
+export const PROJECT_SORTS = ['name', 'last-captured', 'created'] as const;
+export type ProjectSort = (typeof PROJECT_SORTS)[number];
+export const PROJECT_SORT_LABELS: Readonly<Record<ProjectSort, string>> = { name: 'Name', 'last-captured': 'Last captured', created: 'Created' };
+
+/**
+ * `projects` sorted for the list: Unfiled first, then the favorites, then the rest, each part by
+ * `sort` (`name`: A–Z, case-insensitive; `last-captured`: newest `lastCapturedAt` first, never captured last;
+ * `created`: newest first); ties by name, then id. A new array; `projects` is left as it is.
+ */
+export function sortProjects<T extends Pick<ProjectSummary, 'id' | 'name' | 'unfiled' | 'favorite' | 'createdAt' | 'lastCapturedAt'>>(projects: readonly T[], sort: ProjectSort): T[] {
+  const rank = (project: T): number => (project.unfiled ? 0 : project.favorite ? 1 : 2);
+  const byName = (a: T, b: T): number => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const by: Record<ProjectSort, (a: T, b: T) => number> = {
+    name: () => 0,
+    'last-captured': (a, b) => (b.lastCapturedAt ?? Number.NEGATIVE_INFINITY) - (a.lastCapturedAt ?? Number.NEGATIVE_INFINITY) || 0,
+    created: (a, b) => b.createdAt - a.createdAt,
+  };
+  return [...projects].sort((a, b) => rank(a) - rank(b) || by[sort](a, b) || byName(a, b));
+}
+
 // ---- Answers -----------------------------------------------------------------------------------
 
 /**
  * Why a project change was refused:
- * - `not-found`: no such live project (or page, or query, in it);
- * - `unfiled`: Unfiled cannot be renamed or deleted;
+ * - `not-found`: no such live project (or page, query or competitor in it);
+ * - `unfiled`: Unfiled cannot be renamed or deleted, and has no site or competitors;
  * - `invalid-name`: blank, or too long, after trimming;
  * - `invalid-url`: not an `http(s)` URL frost can store;
  * - `invalid-query`: a search that does not fit `SavedSearchInputSchema`, or whose URL Phase 3 does
  *   not read back as a result page with the country and language asked for;
  * - `invalid-profile`: not a render profile;
+ * - `invalid-domain`: a site or competitor that `normalizeSiteDomain` does not read as a public host;
+ * - `invalid-tag`: a tag that `normalizeTag` refuses, or more than `MAX_TAGS_PER_ENTRY` on one entry;
  * - `no-page`: the active tab shows no web page (Add the current page);
  * - `limit`: the project (or frost) holds as many as it can (`MAX_PROJECTS`, `MAX_PROJECT_PAGES`,
- *   `MAX_PROJECT_QUERIES`);
+ *   `MAX_PROJECT_QUERIES`, `MAX_PROJECT_COMPETITORS`, `MAX_PROJECT_TAGS`);
  * - `running`: a capture run of this project is under way (delete waits for it);
  * - `declined`: the confirmation was answered Cancel;
  * - `store-failed`: the database failed.
  */
-export const PROJECT_REFUSALS = ['not-found', 'unfiled', 'invalid-name', 'invalid-url', 'invalid-query', 'invalid-profile', 'no-page', 'limit', 'running', 'declined', 'store-failed'] as const;
+export const PROJECT_REFUSALS = ['not-found', 'unfiled', 'invalid-name', 'invalid-url', 'invalid-query', 'invalid-profile', 'invalid-domain', 'invalid-tag', 'no-page', 'limit', 'running', 'declined', 'store-failed'] as const;
 export type ProjectRefusal = (typeof PROJECT_REFUSALS)[number];
 
 export const PROJECT_REFUSAL_MESSAGES: Readonly<Record<ProjectRefusal, string>> = {
   'not-found': 'That project (or entry) no longer exists.',
-  unfiled: 'Unfiled cannot be renamed or deleted.',
+  unfiled: 'Unfiled cannot be renamed or deleted, and has no site or competitors.',
   'invalid-name': 'Give the project a name.',
   'invalid-url': 'Enter an http or https address.',
   'invalid-query': 'Enter a query, and a two-letter country and a short language code (or leave them empty).',
   'invalid-profile': 'That render profile cannot be used.',
+  'invalid-domain': 'Enter a public domain name or a web address.',
+  'invalid-tag': `Tags are 1 to ${TAG_MAX_CHARS} characters, at most ${MAX_TAGS_PER_ENTRY} on a page or search.`,
   'no-page': 'The current tab shows no web page.',
   limit: 'This project cannot hold any more.',
   running: 'A capture run of this project is under way. Cancel it first.',
@@ -258,6 +425,16 @@ export const RUN_REFUSAL_MESSAGES: Readonly<Record<RunRefusal, string>> = {
 
 export type ProjectRefused = { status: 'refused'; reason: ProjectRefusal };
 
+/**
+ * A project's site (Phase 10, plan Decision 7): `domain` its lowercase host as `normalizeSiteDomain`
+ * gives it; `subdomains` whether every host of its owner domain counts as the site (on by default) or
+ * only `domain` itself, give or take one leading `www.`.
+ */
+export interface ProjectSite {
+  domain: string;
+  subdomains: boolean;
+}
+
 /** A project as listed. */
 export interface ProjectSummary {
   id: string;
@@ -267,6 +444,14 @@ export interface ProjectSummary {
   /** The profile its runs use; `null`: frost's default. */
   renderProfile: RenderProfile | null;
   retention: { mode: RetentionMode; value: number | null };
+  /** Starred in the project list (Phase 10; device-local). */
+  favorite: boolean;
+  /** Whose positions the rank views show (Phase 10); `null`: none set (Unfiled never has one). */
+  site: ProjectSite | null;
+  /** When it was created (`created` sort). */
+  createdAt: number;
+  /** The newest capture filed in it, of any source (a manual capture or a run's), or `null` (`last-captured` sort). */
+  lastCapturedAt: number | null;
 }
 
 /** What a page or query of a project shows: its last capture in the project and its latest version's change count. */
@@ -280,6 +465,8 @@ export interface ProjectEntryCaptures {
 export interface ProjectPageEntry extends ProjectEntryCaptures {
   id: string;
   url: string;
+  /** Its live tags (`normalizeTag` form), sorted (Phase 10). */
+  tags: string[];
 }
 
 export interface ProjectQueryEntry extends ProjectEntryCaptures {
@@ -288,10 +475,21 @@ export interface ProjectQueryEntry extends ProjectEntryCaptures {
   params: SearchParams;
   /** `params.url`: the canonical URL a run visits. */
   url: string;
+  /** Its live tags (`normalizeTag` form), sorted (Phase 10). */
+  tags: string[];
 }
 
-/** `projects.get`: the project with its pages and queries (`null`: no such live project). */
-export type ProjectDetail = { project: ProjectSummary; pages: ProjectPageEntry[]; queries: ProjectQueryEntry[] } | null;
+/** A project's competitor (Phase 10): its host as `normalizeSiteDomain` gives it. */
+export interface ProjectCompetitor {
+  id: string;
+  domain: string;
+}
+
+/**
+ * `projects.get`: the project with its pages and queries, and (Phase 10) its competitors, oldest
+ * first (`null`: no such live project).
+ */
+export type ProjectDetail = { project: ProjectSummary; pages: ProjectPageEntry[]; queries: ProjectQueryEntry[]; competitors: ProjectCompetitor[] } | null;
 
 export interface ProjectsAnswer {
   projects: ProjectSummary[];
@@ -304,6 +502,14 @@ export type AddQueryAnswer = { status: 'added'; query: { id: string } } | Projec
 /** What a delete purged (`null`: the project went but its purge did not run; retention can run it again). */
 export type DeleteProjectAnswer = { status: 'deleted'; purged: { captures: number; versions: number; diffs: number; screenshots: number } | null } | ProjectRefused;
 export type StartRunAnswer = { status: 'started'; runId: string } | { status: 'refused'; reason: RunRefusal };
+/** `setSite`: the site as stored (`null`: cleared). */
+export type SetSiteAnswer = { status: 'ok'; site: ProjectSite | null } | ProjectRefused;
+/** `addCompetitor`: the competitor (its live row when the project already had the domain). */
+export type AddCompetitorAnswer = { status: 'added'; competitor: ProjectCompetitor } | ProjectRefused;
+/** `setTags`: the entry's tags afterwards, sorted. */
+export type SetTagsAnswer = { status: 'ok'; tags: string[] } | ProjectRefused;
+/** `addSearches`: one result per line of `splitBulkSearches(text)`, in order. */
+export type BulkAddAnswer = { status: 'done'; lines: BulkLineResult[] } | ProjectRefused;
 
 // ---- Wording -----------------------------------------------------------------------------------
 

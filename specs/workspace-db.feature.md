@@ -98,7 +98,10 @@ test; unless named otherwise it is in `packages/db/src/change-intel/__tests__/wo
   `DOMAIN_MAX_CHARS`, or `null`, and the subdomains switch; never on Unfiled), `setProjectCadence`
   (`CAPTURE_CADENCES`), `setProjectAutoCapture`; `projectWorkspace(id)` and `projectWorkspaces()` read
   them for live projects. `lastProjectRunAt(projectId)` answers the newest `source = 'project'`
-  capture's time (or `null`), for "due".
+  capture's time (or `null`), for "due". `projectsLastCapturedAt()` answers, in one grouped read
+  (`max(created_at)` of `ci_captures` by `project_id`), every live project's newest capture time of
+  any source (a project without captures is absent), for the project list's `last-captured` sort
+  (Test: `last-captured-at-per-project`).
 - **The `updated_at` rule (Decision 9).** The flag setters change their own column only and **never
   `updated_at`**: `ci_projects` merges last-writer-wins on `updated_at`, so a device-local star on one
   device must never beat a real rename on another. Renames, render profiles, retention and deletes

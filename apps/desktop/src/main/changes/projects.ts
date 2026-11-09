@@ -1,16 +1,30 @@
 import { canonicalJson } from '@app/change-intel';
-import type { ChangeIntelRepository, HistoryEntry, Project } from '@app/db';
+import type { ChangeIntelRepository, EntryTag, HistoryEntry, Project, ProjectWorkspace } from '@app/db';
 import type { ProjectsService, RetentionService } from '@app/ipc-contract';
 import { PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { MAX_TAGS_PER_ENTRY } from '@app/specs/workspace-db.spec';
 import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
 import { SavedSearchInputSchema } from '@app/specs/projects.schema';
-import { queryLabel, searchLocaleFor, searchUrlFor, type ProjectEntryCaptures, type ProjectRefusal, type ProjectSummary, type RunRefusal } from '@app/specs/projects.spec';
+import {
+  normalizeSiteDomain,
+  normalizeTag,
+  queryLabel,
+  searchLocaleFor,
+  searchUrlFor,
+  type ProjectCompetitor,
+  type ProjectEntryCaptures,
+  type ProjectRefusal,
+  type ProjectSite,
+  type ProjectSummary,
+  type RunRefusal,
+} from '@app/specs/projects.spec';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { ScreenshotFiles } from '../screenshots/store';
-import type { CaptureRuns, RunPlanTarget } from './capture-run';
+import { inRunScope, type CaptureRuns, type RunPlanTarget } from './capture-run';
 import { createPurgeFiles, type PurgeFiles } from './purge-files';
 import { searchParamsForUrl } from './serp-params';
+import type { WorkspaceMethod } from './workspace';
 import { storedPageUrl } from './snapshot';
 
 // Projects (Phase 6 Task 6; spec `projects.spec.ts`, `projects.schema.ts`; acceptance
@@ -19,7 +33,9 @@ import { storedPageUrl } from './snapshot';
 // main's own dialog, tombstones it, purges its captures and screenshots as one recorded
 // `project-deleted` purge, and unlinks each screenshot file no row names any more. A saved search is
 // stored as Phase 3's search parameters of its URL (`serp-params.ts`, `searchParamsForUrl`); a row
-// that is not (Phase 6's earlier shape, a tampered URL) is skipped. Every method
+// that is not (Phase 6's earlier shape, a tampered URL) is skipped. Phase 10 (Task 4) adds the
+// workspace to what it answers: each summary's favorite, site, creation and last capture, each entry's
+// tags and the project's competitors (set through `workspace.ts`), and `startRun`'s scope. Every method
 // answers: a refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`), a database failure is
 // `store-failed` and one log line (its code, never its message: that may hold URLs).
 
@@ -77,8 +93,12 @@ function paramsOf(json: string): SearchParams | null {
   }
 }
 
-/** The search parameters Phase 3 reads from a saved search's URL, with the country and language it asked for; else `null`. */
-function savedSearchParams(input: unknown): SearchParams | null {
+/**
+ * The search parameters Phase 3 reads from a saved search's URL (`searchUrlFor` → `searchParamsForUrl`),
+ * with the country and language it asked for; else `null`. The one path every saved search takes (the
+ * query form's `addSearch` and Bulk add, `workspace.ts`).
+ */
+export function savedSearchParams(input: unknown): SearchParams | null {
   const parsed = SavedSearchInputSchema.safeParse(input);
   if (!parsed.success) return null;
   const params = searchParamsForUrl(searchUrlFor(parsed.data), parsed.data.device);
@@ -86,16 +106,36 @@ function savedSearchParams(input: unknown): SearchParams | null {
   return params !== null && params.engine === parsed.data.engine && params.gl === gl && params.hl === hl ? params : null;
 }
 
-const summaryOf = (project: Project): ProjectSummary => ({
+/** A stored domain as answered: only one `normalizeSiteDomain` leaves as it is (else a tampered row: none). */
+const storedDomain = (domain: string | null): string | null => (domain !== null && normalizeSiteDomain(domain) === domain ? domain : null);
+
+/** The project's site from its workspace flags (`null`: none, Unfiled, or a row that does not fit). */
+function siteOf(project: Project, workspace: ProjectWorkspace | null): ProjectSite | null {
+  const domain = project.id === UNFILED_PROJECT_ID || workspace === null ? null : storedDomain(workspace.siteDomain);
+  return domain === null || workspace === null ? null : { domain, subdomains: workspace.siteSubdomains };
+}
+
+const summaryOf = (project: Project, workspace: ProjectWorkspace | null, lastCapturedAt: number | null): ProjectSummary => ({
   id: project.id,
   name: project.name,
   unfiled: project.id === UNFILED_PROJECT_ID,
   renderProfile: profileOf(project.renderProfileJson),
   retention: { mode: project.retention.mode, value: project.retention.value },
+  favorite: workspace?.favorite ?? false,
+  site: siteOf(project, workspace),
+  createdAt: project.createdAt,
+  lastCapturedAt,
 });
 
-/** Main's projects service: the procedures' (but retention's, `retention.ts`), and the retry of deleted projects' purges. */
-export interface MainProjectsService extends Omit<ProjectsService, keyof RetentionService> {
+/** An entry's tags as answered: in `normalizeTag`'s form only, sorted, at most `MAX_TAGS_PER_ENTRY` (a tampered surplus is dropped). */
+const tagsOf = (tags: readonly EntryTag[], kind: EntryTag['entryKind'], entryId: string): string[] =>
+  [...new Set(tags.filter((tag) => tag.entryKind === kind && tag.entryId === entryId && normalizeTag(tag.tag) === tag.tag).map((tag) => tag.tag))].sort().slice(0, MAX_TAGS_PER_ENTRY);
+
+/**
+ * Main's projects service: the procedures' (but retention's, `retention.ts`, and the workspace's,
+ * `workspace.ts`), and the retry of deleted projects' purges.
+ */
+export interface MainProjectsService extends Omit<ProjectsService, keyof RetentionService | WorkspaceMethod> {
   /**
    * Purges every tombstoned project that still has captures or screenshots (a delete whose purge
    * failed): `mode: 'all'`, `project-deleted`, files unlinked as for a delete. Answers how many were
@@ -164,6 +204,14 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
   };
   const storeFailed = refused<ProjectRefusal>('store-failed');
 
+  /** Summaries of `projects`, with their workspace flags and last capture (two reads, whatever the count). */
+  const summaries = async (projects: readonly Project[]): Promise<ProjectSummary[]> => {
+    if (projects.length === 0) return [];
+    const flags = new Map((await store.projectWorkspaces()).map((workspace) => [workspace.projectId, workspace]));
+    const captured = await store.projectsLastCapturedAt();
+    return projects.map((project) => summaryOf(project, flags.get(project.id) ?? null, captured.get(project.id) ?? null));
+  };
+
   /** A page's (or query's) last capture in the project, and the change count of its lane's latest version. */
   const capturesOf = async (projectId: string, url: string, searchParamsJson: string | null): Promise<ProjectEntryCaptures> => {
     const { entries } = await store.history({ pageUrl: url, projectId, limit: LANE_LOOKUP });
@@ -189,7 +237,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
   };
 
   return {
-    list: () => guarded('list', async () => ({ projects: (await store.projects()).map(summaryOf) }), { projects: [] }),
+    list: () => guarded('list', async () => ({ projects: await summaries(await store.projects()) }), { projects: [] }),
 
     get: (projectId) =>
       guarded(
@@ -198,15 +246,19 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
           const project = await store.project(projectId);
           if (project === null) return null;
           const [pages, queries] = [await store.projectPages(projectId), await store.projectQueries(projectId)];
+          const tags = await store.projectTags(projectId);
           const pageEntries = [];
-          for (const page of pages) pageEntries.push({ id: page.id, url: page.url, ...(await capturesOf(projectId, page.url, null)) });
+          for (const page of pages) pageEntries.push({ id: page.id, url: page.url, ...(await capturesOf(projectId, page.url, null)), tags: tagsOf(tags, 'page', page.id) });
           const queryEntries = [];
           for (const query of queries) {
             const params = paramsOf(query.searchParamsJson);
             if (params === null) continue;
-            queryEntries.push({ id: query.id, params, url: params.url, ...(await capturesOf(projectId, params.url, canonicalJson(params))) });
+            queryEntries.push({ id: query.id, params, url: params.url, ...(await capturesOf(projectId, params.url, canonicalJson(params))), tags: tagsOf(tags, 'search', query.id) });
           }
-          return { project: summaryOf(project), pages: pageEntries, queries: queryEntries };
+          const competitors: ProjectCompetitor[] = [];
+          for (const competitor of await store.competitors(projectId)) if (storedDomain(competitor.domain) !== null) competitors.push({ id: competitor.id, domain: competitor.domain });
+          const [summary] = await summaries([project]);
+          return { project: summary!, pages: pageEntries, queries: queryEntries, competitors };
         },
         null,
       ),
@@ -217,7 +269,9 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
         async () => {
           if (!nameFits(name)) return refused<ProjectRefusal>('invalid-name');
           const project = await store.createProject(name, now());
-          return project === null ? refused<ProjectRefusal>('limit') : { status: 'created' as const, project: summaryOf(project) };
+          if (project === null) return refused<ProjectRefusal>('limit');
+          const [summary] = await summaries([project]);
+          return { status: 'created' as const, project: summary! };
         },
         storeFailed,
       ),
@@ -299,9 +353,9 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
     removeQuery: (projectId, queryId) =>
       guarded('remove query', async () => ((await store.removeQuery(projectId, queryId, now())) ? { status: 'ok' as const } : refused<ProjectRefusal>('not-found')), storeFailed),
 
-    forPage: (url) => guarded('projects of a page', async () => ({ projects: (await store.projectsForPage(url)).map(summaryOf) }), { projects: [] }),
+    forPage: (url) => guarded('projects of a page', async () => ({ projects: await summaries(await store.projectsForPage(url)) }), { projects: [] }),
 
-    startRun: (projectId, screenshot) =>
+    startRun: (projectId, screenshot, scope = 'all') =>
       guarded(
         'start a run',
         async () => {
@@ -315,8 +369,9 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
             const params = paramsOf(query.searchParamsJson);
             if (params !== null) targets.push({ kind: 'query', label: queryLabel(params), url: params.url, searchParams: params });
           }
-          if (targets.length === 0) return refused<RunRefusal>('no-targets');
-          return runs.start({ projectId, profile: profileOf(project.renderProfileJson), screenshot, targets });
+          // The run visits only the targets in its scope (`capture-run.ts`); none there is `no-targets`.
+          if (!targets.some((target) => inRunScope(target, scope))) return refused<RunRefusal>('no-targets');
+          return runs.start({ projectId, profile: profileOf(project.renderProfileJson), screenshot, scope, targets });
         },
         refused<RunRefusal>('store-failed'),
       ),

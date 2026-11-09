@@ -99,6 +99,11 @@ export interface WorkspaceOperations {
   projectWorkspaces(): Promise<ProjectWorkspace[]>;
   /** The newest `source = 'project'` capture's time of the project (for "due"), or `null`. */
   lastProjectRunAt(projectId: string): Promise<number | null>;
+  /**
+   * Every live project's newest capture time, of any source (manual, project run, …), in one grouped
+   * read: a project with no capture is absent. For the project list's `last-captured` sort.
+   */
+  projectsLastCapturedAt(): Promise<Map<string, number>>;
 }
 
 /** A stored host: lowercase letters, digits, `-`, `_` in dot-separated labels (punycode for IDN), or a bracketed IPv6 literal. */
@@ -363,6 +368,18 @@ export function createWorkspaceOperations(db: SessionDatabase): WorkspaceOperati
         .from(ciCaptures)
         .where(and(eq(ciCaptures.projectId, projectId), eq(ciCaptures.source, 'project')));
       return row && isTime(row.at) ? row.at : null;
+    },
+
+    async projectsLastCapturedAt() {
+      const rows = await db
+        .select({ projectId: capped(ciCaptures.projectId, 36), at: sql<unknown>`max(${ciCaptures.createdAt})` })
+        .from(ciCaptures)
+        .where(sql`${ciCaptures.projectId} IN (SELECT p.id FROM ci_projects p WHERE p.deleted_at IS NULL)`)
+        .groupBy(ciCaptures.projectId)
+        .limit(MAX_PROJECTS + 1);
+      const out = new Map<string, number>();
+      for (const { projectId, at } of rows) if (isId(projectId) && isTime(at)) out.set(projectId, at);
+      return out;
     },
   };
   return operations;

@@ -8,6 +8,7 @@ import {
   RUN_RETRY_REFUSALS,
   RUN_SCREENSHOT_KIND,
   type ProjectRunLimits,
+  type RunScope,
   type RunScreenshotOutcome,
   type RunState,
   type RunStateName,
@@ -39,6 +40,9 @@ import { storedPageUrl } from './snapshot';
 // `changes-capture.feature.md`, SERP reading): while `serpVerdictOf` says `pending`, for up to
 // `serpSettleWaitMs` of active time, counted in the target's `targetActiveTimeoutMs`; then it is
 // captured as above, whatever the verdict (Phase 10 Task 8 gates the capture on it).
+//
+// A run's scope (Phase 10, `projects.feature.md`, Run scope): `searches` visits only the plan's saved
+// searches ("Check rankings"); its pages are neither visited nor counted as omitted.
 //
 // It only acts on its own tab while that tab is the active one: `navigate` acts on the active tab, and
 // a capture or a screenshot needs it in front. While the user has another tab in front the run waits,
@@ -110,7 +114,14 @@ export interface RunPlan {
   /** The project's render profile; `null`: frost's default. */
   readonly profile: RenderProfile | null;
   readonly screenshot: boolean;
+  /** Which targets it visits (`RUN_SCOPES`): `all` (the default) or only the `searches`. */
+  readonly scope?: RunScope;
   readonly targets: readonly RunPlanTarget[];
+}
+
+/** Whether a run of `scope` visits `target`: every target in `all`, only the saved searches in `searches`. */
+export function inRunScope(target: Pick<RunPlanTarget, 'kind'>, scope: RunScope): boolean {
+  return scope === 'all' || target.kind === 'query';
 }
 
 export interface RunPlanTarget {
@@ -123,8 +134,9 @@ export interface RunPlanTarget {
 
 export interface CaptureRuns {
   /**
-   * Starts a run of `plan`: its targets past `maxRunTargets` are omitted, the rest are visited group
-   * by group (`busy` while one is under way; `not-found` when the project went; `no-tab` when no tab opens).
+   * Starts a run of `plan`: its targets in its scope, those past `maxRunTargets` omitted, the rest
+   * visited group by group (`busy` while one is under way; `no-targets` when none is in scope;
+   * `not-found` when the project went; `no-tab` when no tab opens).
    */
   start(plan: RunPlan): Promise<StartRunAnswer>;
   /** Cancels the run under way; whether there was one. */
@@ -461,7 +473,8 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
   return {
     async start(plan) {
       if (active !== null) return { status: 'refused', reason: 'busy' };
-      const targets = plan.targets.slice(0, limits.maxRunTargets);
+      const inScope = plan.targets.filter((target) => inRunScope(target, plan.scope ?? 'all'));
+      const targets = inScope.slice(0, limits.maxRunTargets);
       if (targets.length === 0) return { status: 'refused', reason: 'no-targets' };
       // Reserved at once: one run at a time, while the project is checked again.
       let previous: number | null = null;
@@ -492,7 +505,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       const tabId = openTab(groups[0]!.profile);
       run.tabId = tabId;
       const runId = uuid(now());
-      const base = { runId, projectId: plan.projectId, current: 0, total: ordered.length, omitted: plan.targets.length - targets.length, screenshot: plan.screenshot };
+      const base = { runId, projectId: plan.projectId, current: 0, total: ordered.length, omitted: inScope.length - targets.length, screenshot: plan.screenshot };
       const initial = ordered.map((target): RunTarget => ({ kind: target.kind, label: target.label, outcome: 'pending', changeCount: null, screenshot: null }));
       if (tabId === null) {
         active = null;

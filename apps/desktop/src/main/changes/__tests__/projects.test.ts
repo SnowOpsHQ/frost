@@ -109,7 +109,7 @@ describe('projects service', () => {
     const { service } = setup();
     // Unfiled is there from the start, first.
     const first = ProjectsAnswerSchema.parse(await service.list());
-    expect(first.projects).toEqual([{ id: UNFILED_PROJECT_ID, name: UNFILED_PROJECT_NAME, unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null } }]);
+    expect(first.projects).toEqual([{ id: UNFILED_PROJECT_ID, name: UNFILED_PROJECT_NAME, unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 0, lastCapturedAt: null }]);
     const made = CreateProjectAnswerSchema.parse(await service.create('  Coffee guides  '));
     expect(made).toMatchObject({ status: 'created', project: { name: 'Coffee guides', unfiled: false, renderProfile: null } });
     const id = made.status === 'created' ? made.project.id : '';
@@ -153,7 +153,7 @@ describe('projects service', () => {
     expect(await service.addQuery(id, { ...SEARCH, query: '  padded  ' })).toEqual({ status: 'refused', reason: 'invalid-query' });
     const detail = ProjectDetailSchema.parse(await service.get(id))!;
     expect(detail.pages.map((p) => p.url)).toEqual([A, B, 'https://example.com/c?x=1']);
-    expect(detail.queries).toEqual([{ id: query.status === 'added' ? query.query.id : '', params: PARAMS, url: PARAMS.url, lastCapturedAt: null, changeCount: null }]);
+    expect(detail.queries).toEqual([{ id: query.status === 'added' ? query.query.id : '', params: PARAMS, url: PARAMS.url, lastCapturedAt: null, changeCount: null, tags: [] }]);
     // Remove.
     expect(await service.removePage(id, detail.pages[0]!.id)).toEqual({ status: 'ok' });
     expect(await service.removePage(id, detail.pages[0]!.id)).toEqual({ status: 'refused', reason: 'not-found' });
@@ -333,6 +333,7 @@ describe('projects service', () => {
       projectId: id,
       profile: PHONE,
       screenshot: true,
+      scope: 'all',
       targets: [
         { kind: 'page', label: A, url: A, searchParams: null },
         { kind: 'query', label: '“green tea” on Bing (DE, de, mobile)', url: PARAMS.url, searchParams: PARAMS },
@@ -342,6 +343,19 @@ describe('projects service', () => {
     expect(service.cancelRun()).toBe(true);
     await expect(service.runState(0)).resolves.toBe(IDLE);
     expect(runs.watch).toHaveBeenCalledWith(0);
+  });
+
+  // spec: specs/projects.feature.md — Run scope: `searches` plans only the saved searches; none is `no-targets`.
+  test('start-run-passes-its-scope', async () => {
+    const { service, runs } = setup();
+    const id = await created(service, 'Guides');
+    await service.addPage(id, A);
+    expect(await service.startRun(id, false, 'searches')).toEqual({ status: 'refused', reason: 'no-targets' });
+    expect(runs.start).not.toHaveBeenCalled();
+    await service.addQuery(id, SEARCH);
+    expect(await service.startRun(id, false, 'searches')).toMatchObject({ status: 'started' });
+    expect(runs.start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ projectId: id, scope: 'searches' }));
+    expect(runs.start.mock.calls[0]![0].targets.map((target) => target.kind)).toEqual(['page', 'query']);
   });
 
   test('projects-never-reject', async () => {

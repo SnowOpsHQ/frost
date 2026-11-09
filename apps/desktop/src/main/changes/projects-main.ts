@@ -11,6 +11,7 @@ import { createRetentionService } from './retention';
 import { confirmCompact, confirmPurgeNow } from './retention-dialog';
 import type { MainChangesService } from './service';
 import type { SearchParamsOf, SerpVerdictOf } from './serp-params';
+import { createWorkspaceService } from './workspace';
 
 // Main's projects service over Electron (Phase 6 Task 6; acceptance `projects.feature.md`): the
 // capture runs drive the browser controller's own tabs (an ordinary browse tab: no WebContents of
@@ -25,7 +26,8 @@ import type { SearchParamsOf, SerpVerdictOf } from './serp-params';
 // Phase 10's sweeps (`workspace-db.feature.md`, Orphans and when the sweeps run): at startup, after
 // that retry, the capture-sourced SERP readings whose capture is gone (a purge pulled through sync)
 // are deleted and the workspace rows (competitors, tags) of projects deleted through sync are
-// tombstoned; after every purge, the orphan readings are swept again.
+// tombstoned; after every purge, the orphan readings are swept again. The project workspace's
+// procedures (Phase 10 Task 4, `workspace.ts`) go out with the projects'.
 
 export interface MainProjectsDeps {
   /** `SessionStore.changeIntel`. */
@@ -102,7 +104,8 @@ export function createMainProjects({ store, userData, browser, changes, screensh
   // orphan readings and workspace rows are swept, the policies due are enforced and orphan files swept.
   void startupChain(() => projects.purgeDeleted(), sweeps.startup, () => retention.startup());
   const { setRetention, retentionPreview, purgeNow, usage, purgeLog, compact } = retention;
-  return { ...projects, setRetention, retentionPreview, purgeNow, usage, purgeLog, compact };
+  const workspace = createWorkspaceService({ store, log });
+  return { ...projects, ...workspace, setRetention, retentionPreview, purgeNow, usage, purgeLog, compact };
 }
 
 // ---- Phase 10's sweeps (`workspace-db.feature.md`, Orphans and when the sweeps run) -------------

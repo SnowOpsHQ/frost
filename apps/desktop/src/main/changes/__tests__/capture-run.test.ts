@@ -1,4 +1,4 @@
-// Spec: specs/projects.spec.ts (PROJECT_RUN_LIMITS, RUN_STATES, RUN_TARGET_OUTCOMES, RUN_RETRY_REFUSALS,
+// Spec: specs/projects.spec.ts (PROJECT_RUN_LIMITS, RUN_STATES, RUN_TARGET_OUTCOMES, RUN_RETRY_REFUSALS, RUN_SCOPES,
 // MOBILE_QUERY_PROFILE, TABLET_QUERY_PROFILE, RUN_SCREENSHOT_KIND, SERP_SETTLE_WAIT_MS), specs/rankings.spec.ts (SERP_RUN_VERDICTS)
 // Acceptance: specs/projects.feature.md (Capture now; Scenarios: capture run), specs/changes-capture.feature.md
 // (SERP reading: a run's search target waits for the reading; Scenario: capture-run-waits-for-the-serp-verdict)
@@ -661,6 +661,29 @@ describe('capture run', () => {
     expect(runs.state().targets).toHaveLength(PROJECT_RUN_LIMITS.maxRunTargets);
     runs.cancel();
     await run(RETRY);
+  });
+
+  // spec: specs/projects.feature.md — Run scope (`RUN_SCOPES`): `searches` visits only the saved searches.
+  test('run-scope-searches-skips-pages', async () => {
+    const desktop = { ...PARAMS, device: 'desktop' as const };
+    const { runs, seen } = setup();
+    await runs.start(plan([...pages(A, B), query(desktop)], { scope: 'searches' }));
+    // Only the search is planned: the pages are neither visited nor counted as omitted.
+    expect(runs.state()).toMatchObject({ total: 1, omitted: 0 });
+    expect(runs.state().targets.map((target) => target.kind)).toEqual(['query']);
+    await run();
+    expect(seen.map((s) => s.url)).toEqual([SEARCH]);
+    expect(runs.state()).toMatchObject({ state: 'done' });
+    expect(outcomes(runs.state())).toEqual(['captured']);
+    // A project with pages only has nothing to visit in that scope.
+    const none = setup();
+    await expect(none.runs.start(plan(pages(A, B), { scope: 'searches' }))).resolves.toEqual({ status: 'refused', reason: 'no-targets' });
+    expect(none.browser.newTab).not.toHaveBeenCalled();
+    // `all` (and no scope) visits pages and searches, as before.
+    const all = setup();
+    await all.runs.start(plan([...pages(A), query(desktop)], { scope: 'all' }));
+    await run();
+    expect(all.seen.map((s) => s.url)).toEqual([A, SEARCH]);
   });
 
   test('run-state-long-polls', async () => {

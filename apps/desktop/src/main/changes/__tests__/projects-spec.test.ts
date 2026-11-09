@@ -1,13 +1,30 @@
 // Spec: specs/projects.spec.ts (searchUrlFor, searchLocaleFor, SEARCH_PARAM_URL_RULES, PROJECT_RUN_LIMITS, queryLabel,
-// deleteProjectDialog, QUERY_DEVICE_PROFILES, QUERY_FIELD_MAX_CHARS), specs/browser-polish.spec.ts (SEARCH_ENGINES, wellFormed)
-// Acceptance: specs/projects.feature.md (Saved searches; Scenarios: search-url-for-params, projects-spec-values)
+// deleteProjectDialog, QUERY_DEVICE_PROFILES, QUERY_FIELD_MAX_CHARS; Phase 10: RUN_SCOPES, PROJECT_REFUSALS, normalizeTag,
+// normalizeTags, BULK_SEARCH_LIMITS, BULK_LINE_OUTCOMES, splitBulkSearches, bulkSearchInputs, PROJECT_SORTS, sortProjects),
+// specs/browser-polish.spec.ts (SEARCH_ENGINES, wellFormed), specs/workspace-db.spec.ts (TAG_MAX_CHARS, MAX_TAGS_PER_ENTRY)
+// Acceptance: specs/projects.feature.md (Saved searches; Tags; Bulk add; Favorites and sort; Run scope;
+// Scenarios: search-url-for-params, projects-spec-values, project workspace)
 import { describe, expect, test } from 'vitest';
 import { SEARCH_ENGINE_IDS, SEARCH_ENGINES } from '@app/specs/browser-polish.spec';
 import { WATCH_TIMEOUT_MS, MAX_PENDING_WATCHES } from '@app/specs/browser.spec';
+import { MAX_PROJECT_QUERIES } from '@app/specs/capture-db.spec';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import {
+  BULK_LINE_OUTCOMES,
+  BULK_SEARCH_LIMITS,
   DELETE_PROJECT,
   MOBILE_QUERY_PROFILE,
+  PROJECT_REFUSAL_MESSAGES,
+  PROJECT_REFUSALS,
+  PROJECT_SORT_LABELS,
+  PROJECT_SORTS,
+  RUN_SCOPES,
+  bulkSearchInputs,
+  normalizeTag,
+  normalizeTags,
+  sortProjects,
+  splitBulkSearches,
+  type ProjectSummary,
   PROJECT_RUN_LIMITS,
   QUERY_DEVICE_PROFILES,
   QUERY_FIELD_MAX_CHARS,
@@ -21,6 +38,7 @@ import {
 } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { SERP_PARAM_LIMITS } from '@app/specs/serp.spec';
+import { MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from '@app/specs/workspace-db.spec';
 
 const BASE: SavedSearchInput = { engine: 'google', query: 'green tea', country: null, language: null, device: 'desktop' };
 const PARAMS: SearchParams = { engine: 'google', engineLabel: 'Google', query: 'green tea', gl: null, hl: null, device: 'desktop', page: 1, offset: null, url: 'https://www.google.com/search?q=green+tea' };
@@ -86,5 +104,70 @@ describe('projects spec', () => {
     expect(dialog.defaultId).toBe(DELETE_PROJECT.dialog.cancelId);
     expect(dialog.buttons[DELETE_PROJECT.confirmIndex]).toBe('Delete Project');
     expect(dialog.detail).toContain('“⁨Tea ‮gnp.exe⁩”');
+  });
+
+  test('projects-workspace-values', () => {
+    // Run scopes, refusals, bulk limits, line outcomes and sorts.
+    expect(RUN_SCOPES).toEqual(['all', 'searches']);
+    expect(PROJECT_REFUSALS).toEqual(expect.arrayContaining(['invalid-domain', 'invalid-tag', 'unfiled', 'limit']));
+    expect(Object.keys(PROJECT_REFUSAL_MESSAGES).sort()).toEqual([...PROJECT_REFUSALS].sort());
+    expect(BULK_SEARCH_LIMITS).toMatchObject({ maxLines: MAX_PROJECT_QUERIES, maxLocales: 5 });
+    expect(BULK_LINE_OUTCOMES).toEqual(['added', 'exists', 'invalid', 'limit']);
+    expect(PROJECT_SORTS).toEqual(['name', 'last-captured', 'created']);
+    expect(Object.keys(PROJECT_SORT_LABELS)).toEqual([...PROJECT_SORTS]);
+    // Tags: NFC, white space runs as one space, trimmed, lowercase; blank, too long or unprintable refused.
+    expect(normalizeTag('  Top\t\n 10 ')).toBe('top 10');
+    expect(normalizeTag('Cafe\u0301')).toBe('café');
+    expect(normalizeTag('x'.repeat(TAG_MAX_CHARS))).toBe('x'.repeat(TAG_MAX_CHARS));
+    for (const bad of ['', '   ', 'x'.repeat(TAG_MAX_CHARS + 1), 'a\u0000b', 'a\u007fb', 'a\u202eb', 'a\u2066b']) expect(normalizeTag(bad), JSON.stringify(bad)).toBeNull();
+    expect(normalizeTags(['B', 'a', ' b '])).toEqual(['a', 'b']);
+    expect(normalizeTags(Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, n) => `t${n}`))).toHaveLength(MAX_TAGS_PER_ENTRY);
+    expect(normalizeTags(Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, n) => `t${n}`))).toBeNull();
+    expect(normalizeTags(['ok', ''])).toBeNull();
+    // Bulk text: lines or commas, white space collapsed, blanks and repeats dropped, in order.
+    expect(splitBulkSearches('green tea\r\nblack  tea, oolong\n\n , green tea\nGreen tea')).toEqual(['green tea', 'black tea', 'oolong', 'Green tea']);
+    expect(splitBulkSearches(' \n, \n')).toEqual([]);
+    // One search per locale, on each device, locales first.
+    expect(
+      bulkSearchInputs('tea', {
+        engine: 'bing',
+        locales: [
+          { country: 'de', language: 'de' },
+          { country: null, language: null },
+        ],
+        devices: ['desktop', 'mobile'],
+      }),
+    ).toEqual([
+      { engine: 'bing', query: 'tea', country: 'de', language: 'de', device: 'desktop' },
+      { engine: 'bing', query: 'tea', country: 'de', language: 'de', device: 'mobile' },
+      { engine: 'bing', query: 'tea', country: null, language: null, device: 'desktop' },
+      { engine: 'bing', query: 'tea', country: null, language: null, device: 'mobile' },
+    ]);
+    // Sort: Unfiled first, favorites next, then by the sort; ties by name, then id. The input is left as it is.
+    const p = (id: string, name: string, changes: Partial<ProjectSummary> = {}): ProjectSummary => ({
+      id,
+      name,
+      unfiled: false,
+      renderProfile: null,
+      retention: { mode: 'forever', value: null },
+      favorite: false,
+      site: null,
+      createdAt: 0,
+      lastCapturedAt: null,
+      ...changes,
+    });
+    const list = [
+      p('1', 'banana', { createdAt: 3, lastCapturedAt: 10 }),
+      p('2', 'Apple', { createdAt: 4 }),
+      p('0', 'Unfiled', { unfiled: true, createdAt: 0 }),
+      p('3', 'cherry', { createdAt: 2, lastCapturedAt: 30, favorite: true }),
+      p('4', 'apple', { createdAt: 1, lastCapturedAt: 20 }),
+      p('5', 'date', { createdAt: 5, favorite: true }),
+    ];
+    const names = (sort: (typeof PROJECT_SORTS)[number]) => sortProjects(list, sort).map((project) => project.id);
+    expect(names('name')).toEqual(['0', '3', '5', '2', '4', '1']);
+    expect(names('last-captured')).toEqual(['0', '3', '5', '4', '1', '2']);
+    expect(names('created')).toEqual(['0', '5', '3', '2', '1', '4']);
+    expect(list.map((project) => project.id)).toEqual(['1', '2', '0', '3', '4', '5']);
   });
 });
