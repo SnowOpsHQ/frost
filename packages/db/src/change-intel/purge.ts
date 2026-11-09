@@ -1,10 +1,11 @@
-import { count, desc, eq, getTableColumns, inArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, getTableColumns, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { PURGE_REASONS, type CapturedTable, type PurgeReason } from '@app/specs/capture-db.spec';
 import type { SessionDatabase } from '../client';
 import { capped, chunks, isCount, isId, isJsonOrNull, isOneOf, isRetention, isTime, pageSize } from './checks';
 import { uuidv7 } from './ids';
 import { ciCaptures, ciDiffs, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions } from './schema';
+import { ciSerpReadings } from './workspace-schema';
 
 // Retention's purges (spec `capture-db.feature.md`, Retention planning; the plan's "The purge path").
 // `planPurge` is a dry run over one project; `executePurge` plans again and, if nothing moved,
@@ -13,6 +14,11 @@ import { ciCaptures, ciDiffs, ciProjects, ciPurges, ciScreenshots, ciTombstones,
 // tombstone and the purge written just before it in the same transaction. Those triggers bind the app
 // and any SQL that respects the schema; whoever can write the database file can also `DROP TRIGGER`,
 // which no trigger can prevent.
+//
+// Phase 10 (`workspace-db.feature.md`, Purge): a capture's SERP reading lives as long as the capture.
+// The purge deletes the purged captures' readings in the same batch, after `ci_captures` (the readings'
+// `_capture_gone_only` guard needs the capture gone first), and `bytes` counts their stored bytes. The
+// readings are not in `CAPTURED_TABLES`, so they get no tombstone, and `ci_purges` keeps its columns.
 //
 // After a purge, main unlinks the files of the answer's `plan.unreferencedHashes` (the plan executed,
 // planned again here), checking `isHashReferenced` once more before each unlink.
@@ -41,8 +47,8 @@ export interface PurgePlan {
   readonly unreferencedHashes: readonly string[];
   readonly counts: PurgeCounts;
   /**
-   * Freed bytes as planned: purged snapshots and diffs (stored UTF-8 bytes), plus each unreferenced
-   * file once by its row's `bytes`. This is the figure `ci_purges.bytes` records; main reports what
+   * Freed bytes as planned: purged snapshots and diffs and the purged captures' SERP readings (stored
+   * UTF-8 bytes), plus each unreferenced file once by its row's `bytes`. This is the figure `ci_purges.bytes` records; main reports what
    * it really freed (the files it did unlink, measured) separately.
    */
   readonly bytes: number;
@@ -250,9 +256,18 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       unreferencedHashes: sorted(unreferenced.map(([hash]) => hash)),
     };
     const fileBytes = unreferenced.reduce((sum, [, { bytes }]) => sum + bytes, 0);
+    let readingBytes = 0;
+    for (const part of chunks(plan.captureIds)) {
+      const [row] = await db
+        .select({ n: sql<unknown>`coalesce(sum(length(CAST(${ciSerpReadings.reading} AS BLOB))), 0)` })
+        .from(ciSerpReadings)
+        .where(and(eq(ciSerpReadings.source, 'capture'), inArray(ciSerpReadings.captureId, part)));
+      readingBytes += num(row?.n);
+    }
     const bytes =
       (await sumOver(ciVersions, sql`length(CAST(${ciVersions.snapshot} AS BLOB))`, plan.versionIds)) +
       (await sumOver(ciDiffs, sql`length(CAST(${ciDiffs.diff} AS BLOB))`, plan.diffIds)) +
+      readingBytes +
       fileBytes;
     const counts = { captures: plan.captureIds.length, versions: plan.versionIds.length, diffs: plan.diffIds.length, screenshots: plan.screenshotIds.length };
     return { ...plan, counts, bytes, fileBytes };
@@ -287,6 +302,8 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       for (const [, table, ids] of order) {
         for (const part of chunks(ids)) items.push(db.delete(table).where(inArray(table.id, part)));
       }
+      // The purged captures' readings, now that the captures are gone (same transaction).
+      for (const part of chunks(fresh.captureIds)) items.push(db.delete(ciSerpReadings).where(and(eq(ciSerpReadings.source, 'capture'), inArray(ciSerpReadings.captureId, part))));
       try {
         await db.batch(items as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
       } catch (error) {

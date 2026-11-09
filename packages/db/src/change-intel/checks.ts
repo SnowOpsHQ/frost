@@ -1,6 +1,8 @@
-import { sql, type SQL } from 'drizzle-orm';
-import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { getTableColumns, sql, type SQL } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
+import type { SQLiteColumn, SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { MAX_HISTORY_PAGE, MAX_RETENTION_DAYS, MAX_RETENTION_VERSIONS, RETENTION_MODES, SHA256_HEX_PATTERN, type RetentionMode } from '@app/specs/capture-db.spec';
+import type { SessionDatabase } from '../client';
 import { noteUrl } from '../content-notes';
 import { isUuidv7 } from './ids';
 
@@ -61,3 +63,31 @@ export function chunks<T>(list: readonly T[], size = IN_LIST_MAX): T[][] {
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
   return out;
 }
+
+// ---- Writes the repository's modules share (`repository.ts`, `readings.ts`, `workspace.ts`) ------
+
+type Value = string | number | null;
+
+/**
+ * `INSERT INTO table (…) SELECT … WHERE condition`: the row is written only if `condition` holds
+ * when the statement runs, inside the batch's transaction. Values are bound as given (booleans as 0/1).
+ */
+export function insertWhere<T extends SQLiteTable>(db: SessionDatabase, table: T, row: Partial<Record<keyof T['$inferInsert'] & string, Value>>, condition: SQL): BatchItem<'sqlite'> {
+  const columns = getTableColumns(table) as Record<string, { name: string }>;
+  const keys = Object.keys(row) as (keyof typeof row & string)[];
+  const names = sql.join(
+    keys.map((key) => sql.identifier(columns[key]!.name)),
+    sql`, `,
+  );
+  const values = sql.join(
+    keys.map((key) => sql`${row[key]}`),
+    sql`, `,
+  );
+  return db.run(sql`INSERT INTO ${table} (${names}) SELECT ${values} WHERE ${condition}`);
+}
+
+/** The project is live (not tombstoned), checked inside the statement. */
+export const liveProject = (projectId: string): SQL => sql`EXISTS (SELECT 1 FROM ci_projects WHERE id = ${projectId} AND deleted_at IS NULL)`;
+
+/** Runs `items` in one transaction (the store's batch). */
+export const batch = (db: SessionDatabase, items: BatchItem<'sqlite'>[]) => db.batch(items as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);

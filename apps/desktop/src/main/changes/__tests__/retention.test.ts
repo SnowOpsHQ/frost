@@ -1,7 +1,8 @@
 // Spec: specs/retention.spec.ts (RETENTION_ENFORCE_MIN_INTERVAL_MS, PURGE_LOG_LIMIT, ORPHAN_TMP_MIN_AGE_MS,
 // PURGE_NOW, COMPACT_DATABASE, formatBytes, purgeCountsText), specs/retention.schema.ts (answers),
 // specs/capture-db.spec.ts (MAX_RETENTION_VERSIONS, MAX_RETENTION_DAYS, UNFILED_PROJECT_ID)
-// Acceptance: specs/retention.feature.md (Scenarios); the purge rules: specs/capture-db.feature.md (Retention planning)
+// Acceptance: specs/retention.feature.md (Scenarios); the purge rules: specs/capture-db.feature.md (Retention planning);
+// readings' bytes: specs/workspace-db.feature.md (Repository, Purge) and specs/workspace-db.spec.ts (SEARCH_KEY_VERSION)
 import { createHash } from 'node:crypto';
 import { lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { openSessionStore, uuidv7, type ChangeIntelRepository, type PurgePolicy } from '@app/db';
 import { MAX_RETENTION_DAYS, MAX_RETENTION_VERSIONS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
 import {
   COMPACT_DATABASE,
   ORPHAN_TMP_MIN_AGE_MS,
@@ -614,6 +616,7 @@ describe('retention service', () => {
         sharedVersions: stored.sharedVersions,
         snapshotBytes: stored.snapshotBytes,
         diffBytes: stored.diffBytes,
+        readingBytes: stored.readingBytes,
         screenshots: 3,
         files: { count: 1, bytes: 1_000, missing: 1, shared: 1 },
         database: { bytes: dbBytes, walBytes: 0 },
@@ -627,6 +630,38 @@ describe('retention service', () => {
     // In memory: no file to measure.
     const memory = createRetentionService({ store: repo, files, purges: createPurgeFiles({ store: repo, files }), databaseFile: ':memory:', running: () => null, confirmPurge: async () => true, confirmCompact: async () => true });
     expect(await memory.usage(null)).toMatchObject({ status: 'ok', usage: { database: null } });
+  });
+
+  test('usage-reports-reading-bytes', async () => {
+    const { service, repo } = setup();
+    const id = await project(repo, 'Rankings');
+    const at = tick();
+    const url = 'https://www.google.com/search?q=green+tea';
+    const readingJson = JSON.stringify({ status: 'ready', title: 'Grüner Tee' });
+    const result = await repo.appendCapture({
+      captureId: uuidv7(at),
+      versionId: uuidv7(at),
+      projectId: id,
+      laneKey: sha(url),
+      pageUrl: url,
+      renderProfileJson: null,
+      renderProfilePartial: false,
+      searchParamsJson: '{"engine":"google"}',
+      source: 'manual',
+      auditTakenAt: at,
+      snapshotJson: '{"s":1}',
+      snapshotHash: sha('{"s":1}'),
+      schemaVersion: 1,
+      createdAt: at,
+      reading: { id: uuidv7(at), searchKey: sha('green tea'), searchKeyVersion: SEARCH_KEY_VERSION, searchParamsJson: '{"engine":"google"}', filtersJson: '{}', status: 'ready', packVersion: 1, readingJson },
+    });
+    expect(result?.status).toBe('appended');
+    await capture(repo, UNFILED_PROJECT_ID, A, 'no reading');
+    const bytes = Buffer.byteLength(readingJson, 'utf8');
+    const mine = UsageAnswerSchema.parse(await service.usage(id));
+    expect(mine).toMatchObject({ status: 'ok', usage: { projectId: id, readingBytes: bytes } });
+    expect(await service.usage(UNFILED_PROJECT_ID)).toMatchObject({ status: 'ok', usage: { readingBytes: 0 } });
+    expect(UsageAnswerSchema.parse(await service.usage(null))).toMatchObject({ status: 'ok', usage: { projectId: null, readingBytes: bytes } });
   });
 
   test('compact-shrinks-and-refuses-during-a-run', async () => {

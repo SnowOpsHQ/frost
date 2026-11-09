@@ -1,6 +1,5 @@
-import { and, asc, count, desc, eq, getTableColumns, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
-import type { SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import {
   CAPTURE_SOURCES,
@@ -23,12 +22,37 @@ import {
   type ScreenshotKind,
 } from '@app/specs/capture-db.spec';
 import type { SessionDatabase } from '../client';
-import { capped, isCount, isHash, isId, isJson, isJsonOrNull, isOneOf, isRetention, isStoredUrl, isTime, pageKey, pageSize, SHA256_GLOB, trimmedText, utf8Bytes, UUIDV7_GLOB } from './checks';
+import {
+  batch,
+  capped,
+  insertWhere,
+  isCount,
+  isHash,
+  isId,
+  isJson,
+  isJsonOrNull,
+  isOneOf,
+  isRetention,
+  isStoredUrl,
+  isTime,
+  liveProject,
+  pageKey,
+  pageSize,
+  SHA256_GLOB,
+  trimmedText,
+  utf8Bytes,
+  UUIDV7_GLOB,
+} from './checks';
 import { uuidv7 } from './ids';
 import { createPurgeOperations, type PurgeOperations } from './purge';
+import { createReadingOperations, isCaptureReading, readingRow, type CaptureReadingInput, type ReadingOperations } from './readings';
 import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions } from './schema';
+import { createWorkspaceOperations, type WorkspaceOperations } from './workspace';
+import { ciEntryTags, ciProjectCompetitors, ciSerpReadings } from './workspace-schema';
 
 export type { ExecutePurgeResult, PurgeCounts, PurgePlan, PurgePolicy, PurgeRecord } from './purge';
+export type { AppendReadingInput, CaptureReadingInput, ReadingOperations, ReadingSearch, ReadingsFilter, StoredReading } from './readings';
+export type { Competitor, EntryTag, ProjectWorkspace, SetEntryTagsInput, WorkspaceOperations } from './workspace';
 
 // The change-intelligence repository (Phase 6 Task 1; spec `capture-db.spec.ts`; acceptance
 // `capture-db.feature.md`): the only reads and writes of the `ci_*` tables. Zod-free and dumb about
@@ -70,6 +94,12 @@ export interface AppendCaptureInput {
    * when `latestVersion` answers `null` (an empty lane, or a latest row that fails its checks).
    */
   readonly diff?: AppendDiffInput;
+  /**
+   * The SERP reading of a result page (Phase 10, `workspace-db.feature.md`), stored in the capture's
+   * batch only if the capture goes in (never for a `stale` append), with the capture's id, project,
+   * page URL and time and `source = 'capture'`. Invalid, it makes the whole input invalid.
+   */
+  readonly reading?: CaptureReadingInput;
 }
 
 export type AppendCaptureResult = { readonly status: 'appended'; readonly captureId: string; readonly versionId: string; readonly newVersion: boolean } | { readonly status: 'stale' };
@@ -205,9 +235,11 @@ export interface ChangeIntelUsage {
   readonly screenshotBytes: number;
   /** Distinct screenshot hashes (files) another project's rows also name (without a project: two or more projects'). */
   readonly sharedScreenshotFiles: number;
+  /** Stored bytes of the SERP readings (Phase 10; `length(CAST(reading AS BLOB))`), orphans included. */
+  readonly readingBytes: number;
 }
 
-export interface ChangeIntelRepository extends PurgeOperations {
+export interface ChangeIntelRepository extends PurgeOperations, ReadingOperations, WorkspaceOperations {
   /** Appends a capture (and a new version and its diff when the snapshot changed) in one transaction; `null` for invalid input. */
   appendCapture(input: AppendCaptureInput): Promise<AppendCaptureResult | null>;
   appendScreenshot(input: AppendScreenshotInput): Promise<boolean>;
@@ -231,7 +263,7 @@ export interface ChangeIntelRepository extends PurgeOperations {
   renameProject(id: string, name: string, now: number): Promise<boolean>;
   setProjectRenderProfile(id: string, renderProfileJson: string | null, now: number): Promise<boolean>;
   setRetention(id: string, mode: RetentionMode, value: number | null, now: number): Promise<boolean>;
-  /** Tombstones the project with its live pages and queries (never Unfiled). */
+  /** Tombstones the project with its live pages and queries, and (Phase 10) its competitors and tags (never Unfiled). */
   tombstoneProject(id: string, now: number): Promise<boolean>;
   /** Live projects, Unfiled first, then by creation. */
   projects(): Promise<Project[]>;
@@ -241,11 +273,13 @@ export interface ChangeIntelRepository extends PurgeOperations {
   project(id: string): Promise<Project | null>;
   /** Adds a page (its live row if it has one already); `null` if invalid or past the cap. */
   addPage(projectId: string, url: string, now: number): Promise<ProjectPage | null>;
+  /** Tombstones a live page, and (Phase 10) its live tags in the same batch. */
   removePage(projectId: string, pageId: string, now: number): Promise<boolean>;
   projectPages(projectId: string): Promise<ProjectPage[]>;
   /** Live projects holding `url` as a live page. */
   projectsForPage(url: string): Promise<Project[]>;
   addQuery(projectId: string, query: string, searchParamsJson: string, now: number): Promise<ProjectQuery | null>;
+  /** Tombstones a live saved search, and (Phase 10) its live tags in the same batch. */
   removeQuery(projectId: string, queryId: string, now: number): Promise<boolean>;
   projectQueries(projectId: string): Promise<ProjectQuery[]>;
 
@@ -257,27 +291,6 @@ export interface ChangeIntelRepository extends PurgeOperations {
 
 // ---- Helpers -----------------------------------------------------------------------------------
 
-type Value = string | number | null;
-
-/**
- * `INSERT INTO table (…) SELECT … WHERE condition`: the row is written only if `condition` holds
- * when the statement runs, inside the batch's transaction. Values are bound as given (booleans as 0/1).
- */
-function insertWhere<T extends SQLiteTable>(db: SessionDatabase, table: T, row: Partial<Record<keyof T['$inferInsert'] & string, Value>>, condition: SQL): BatchItem<'sqlite'> {
-  const columns = getTableColumns(table) as Record<string, { name: string }>;
-  const keys = Object.keys(row) as (keyof typeof row & string)[];
-  const names = sql.join(
-    keys.map((key) => sql.identifier(columns[key]!.name)),
-    sql`, `,
-  );
-  const values = sql.join(
-    keys.map((key) => sql`${row[key]}`),
-    sql`, `,
-  );
-  return db.run(sql`INSERT INTO ${table} (${names}) SELECT ${values} WHERE ${condition}`);
-}
-
-const liveProject = (projectId: string): SQL => sql`EXISTS (SELECT 1 FROM ci_projects WHERE id = ${projectId} AND deleted_at IS NULL)`;
 /**
  * The rows that can be a lane's latest version: those whose id, hash and time are well-formed. The
  * read (`latestVersion`), `appendCapture`'s read and its in-transaction check all use it, so a
@@ -405,9 +418,17 @@ function queryOf(row: { [K in keyof typeof queryColumns]: unknown }): ProjectQue
   return { id, projectId, query: query as string, searchParamsJson: searchParams, createdAt, updatedAt };
 }
 
+/** The live tags of one entry of the project, when `wentNow` (its row was tombstoned in this batch). */
+const entryTagsGone = (kind: 'page' | 'search', entryId: string, projectId: string, wentNow: SQL): SQL[] => [
+  eq(ciEntryTags.entryKind, kind),
+  eq(ciEntryTags.entryId, entryId),
+  eq(ciEntryTags.projectId, projectId),
+  isNull(ciEntryTags.deletedAt),
+  wentNow,
+];
+
 const present = <T>(value: T | null): value is T => value !== null;
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
-const batch = (db: SessionDatabase, items: BatchItem<'sqlite'>[]) => db.batch(items as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
 
 // ---- The repository ----------------------------------------------------------------------------
 
@@ -451,16 +472,20 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
       if (typeof diff !== 'object' || diff === null || !isId(diff.id) || !isId(diff.fromVersionId) || !isCount(diff.engineVersion, 1) || !isCount(diff.changeCount)) return null;
       if (!isJson(diff.diffJson, MAX_DIFF_JSON_BYTES) || !isJson(diff.summaryJson, MAX_DIFF_SUMMARY_JSON_BYTES)) return null;
     }
+    if (input.reading !== undefined && !isCaptureReading(input.reading)) return null;
     return { pageUrl };
   }
 
-  const repository: Omit<ChangeIntelRepository, keyof PurgeOperations> = {
+  const readingTaken = async (id: string): Promise<boolean> => (await db.select({ id: ciSerpReadings.id }).from(ciSerpReadings).where(eq(ciSerpReadings.id, id)).limit(1)).length > 0;
+
+  const repository: Omit<ChangeIntelRepository, keyof PurgeOperations | keyof ReadingOperations | keyof WorkspaceOperations> = {
     async appendCapture(input) {
       const valid = validCapture(input);
       if (valid === null) return null;
       const { captureId, versionId, projectId, laneKey, snapshotHash, createdAt, diff } = input;
       if (!(await isLiveProject(projectId)) || (await idTaken(ciCaptures, 'ci_captures', captureId)) || (await idTaken(ciVersions, 'ci_versions', versionId))) return null;
       if (diff && (await idTaken(ciDiffs, 'ci_diffs', diff.id))) return null;
+      if (input.reading && (await readingTaken(input.reading.id))) return null;
       const [head] = await db.select(versionColumns).from(ciVersions).where(laneHeads(laneKey)).orderBy(desc(ciVersions.createdAt), desc(ciVersions.id)).limit(1);
       // `laneHeads` vouches for these three; the rest of the row is checked as `latestVersion` checks it.
       const latest = head ? { id: head.id as string, snapshotHash: head.snapshotHash as string, createdAt: head.createdAt as number, readable: versionOf(head) !== null } : null;
@@ -480,7 +505,17 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
       // Each insert is conditional on what was read above still holding inside the transaction,
       // so a capture racing another into the lane is refused (`stale`), never written against an
       // older parent. Whether the capture went in says which.
+      // The SERP reading goes in after the capture, in its batch, only if the capture did (both branches).
+      const reading = input.reading
+        ? insertWhere(
+            db,
+            ciSerpReadings,
+            readingRow(input.reading, { projectId, captureId, source: 'capture', pageUrl: valid.pageUrl, observedAt: createdAt, createdAt }),
+            sql`EXISTS (SELECT 1 FROM ci_captures WHERE id = ${captureId})`,
+          )
+        : null;
       const appended = async (items: BatchItem<'sqlite'>[], result: AppendCaptureResult): Promise<AppendCaptureResult> => {
+        if (reading) items.push(reading);
         await batch(db, items);
         return (await captureExists(captureId)) ? result : { status: 'stale' };
       };
@@ -715,6 +750,15 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
           .update(ciProjectQueries)
           .set(gone)
           .where(and(eq(ciProjectQueries.projectId, id), isNull(ciProjectQueries.deletedAt), wentNow)),
+        // Phase 10's device-local workspace rows go with it.
+        db
+          .update(ciProjectCompetitors)
+          .set(gone)
+          .where(and(eq(ciProjectCompetitors.projectId, id), isNull(ciProjectCompetitors.deletedAt), wentNow)),
+        db
+          .update(ciEntryTags)
+          .set(gone)
+          .where(and(eq(ciEntryTags.projectId, id), isNull(ciEntryTags.deletedAt), wentNow)),
       ]);
       return project.length > 0;
     },
@@ -761,11 +805,19 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
 
     async removePage(projectId, pageId, now) {
       if (!isId(projectId) || !isId(pageId) || !isTime(now)) return false;
-      const rows = await db
-        .update(ciProjectPages)
-        .set({ deletedAt: now, updatedAt: now })
-        .where(and(eq(ciProjectPages.id, pageId), eq(ciProjectPages.projectId, projectId), isNull(ciProjectPages.deletedAt)))
-        .returning({ id: ciProjectPages.id });
+      const gone = { deletedAt: now, updatedAt: now };
+      const [rows] = await db.batch([
+        db
+          .update(ciProjectPages)
+          .set(gone)
+          .where(and(eq(ciProjectPages.id, pageId), eq(ciProjectPages.projectId, projectId), isNull(ciProjectPages.deletedAt)))
+          .returning({ id: ciProjectPages.id }),
+        // Its tags go with it, only if it went just now.
+        db
+          .update(ciEntryTags)
+          .set(gone)
+          .where(and(...entryTagsGone('page', pageId, projectId, sql`EXISTS (SELECT 1 FROM ci_project_pages WHERE id = ${pageId} AND deleted_at = ${now})`))),
+      ]);
       return rows.length > 0;
     },
 
@@ -802,11 +854,18 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
 
     async removeQuery(projectId, queryId, now) {
       if (!isId(projectId) || !isId(queryId) || !isTime(now)) return false;
-      const rows = await db
-        .update(ciProjectQueries)
-        .set({ deletedAt: now, updatedAt: now })
-        .where(and(eq(ciProjectQueries.id, queryId), eq(ciProjectQueries.projectId, projectId), isNull(ciProjectQueries.deletedAt)))
-        .returning({ id: ciProjectQueries.id });
+      const gone = { deletedAt: now, updatedAt: now };
+      const [rows] = await db.batch([
+        db
+          .update(ciProjectQueries)
+          .set(gone)
+          .where(and(eq(ciProjectQueries.id, queryId), eq(ciProjectQueries.projectId, projectId), isNull(ciProjectQueries.deletedAt)))
+          .returning({ id: ciProjectQueries.id }),
+        db
+          .update(ciEntryTags)
+          .set(gone)
+          .where(and(...entryTagsGone('search', queryId, projectId, sql`EXISTS (SELECT 1 FROM ci_project_queries WHERE id = ${queryId} AND deleted_at = ${now})`))),
+      ]);
       return rows.length > 0;
     },
 
@@ -836,7 +895,7 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         .where(projectId === undefined ? undefined : eq(ciScreenshots.projectId, projectId))
         .groupBy(ciScreenshots.sha256)
         .as('per_hash');
-      const [captures, versions, diffs, screenshots, files, sharedFiles] = await db.batch([
+      const [captures, versions, diffs, screenshots, files, sharedFiles, readings] = await db.batch([
         db
           .select({ n: count() })
           .from(ciCaptures)
@@ -866,6 +925,10 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
               ? sql`(SELECT count(DISTINCT o.project_id) FROM ci_screenshots o WHERE o.sha256 = ${ciScreenshots.sha256}) > 1`
               : sql`${ciScreenshots.projectId} = ${projectId} AND EXISTS (SELECT 1 FROM ci_screenshots o WHERE o.sha256 = ${ciScreenshots.sha256} AND o.project_id <> ${projectId})`,
           ),
+        db
+          .select({ bytes: sql<unknown>`coalesce(sum(length(CAST(${ciSerpReadings.reading} AS BLOB))), 0)` })
+          .from(ciSerpReadings)
+          .where(projectId === undefined ? undefined : eq(ciSerpReadings.projectId, projectId)),
       ]);
       return {
         captures: num(captures[0]?.n),
@@ -876,6 +939,7 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         screenshots: num(screenshots[0]?.n),
         screenshotBytes: num(files[0]?.bytes),
         sharedScreenshotFiles: num(sharedFiles[0]?.n),
+        readingBytes: num(readings[0]?.bytes),
       };
     },
 
@@ -885,5 +949,5 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
     },
   };
 
-  return { ...repository, ...createPurgeOperations(db) };
+  return { ...repository, ...createPurgeOperations(db), ...createReadingOperations(db), ...createWorkspaceOperations(db) };
 }

@@ -18,6 +18,18 @@ export const ciProjects = sqliteTable('ci_projects', {
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
   deletedAt: integer('deleted_at'),
+  // Phase 10's workspace columns (`0220_project_workspace`; `workspace-db.feature.md`): device-local,
+  // not in `SYNC_TABLES`, and set without touching `updatedAt`.
+  /** Starred in the project list (0/1). */
+  favorite: integer('favorite', { mode: 'boolean' }).notNull().default(false),
+  /** The project site's lowercase host, or `null` (no site). */
+  siteDomain: text('site_domain'),
+  /** Whether the site's subdomains count as the site (0/1, on by default). */
+  siteSubdomains: integer('site_subdomains', { mode: 'boolean' }).notNull().default(true),
+  /** One of `CAPTURE_CADENCES` (`off` by default). */
+  captureCadence: text('capture_cadence').notNull().default('off'),
+  /** Whether a due project may start its run by itself (0/1; gated off in Phase 10). */
+  autoCapture: integer('auto_capture', { mode: 'boolean' }).notNull().default(false),
 });
 
 /** A project's pages: one live row per `(projectId, url)`. */

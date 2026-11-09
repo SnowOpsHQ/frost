@@ -6,7 +6,7 @@ import { createScreenshotFiles } from '../screenshots/store';
 import { createCaptureRuns, stopRunOnQuit } from './capture-run';
 import { createProjectsService, type MainProjectsService } from './projects';
 import { confirmDeleteProject } from './projects-dialog';
-import { createPurgeFiles } from './purge-files';
+import { createPurgeFiles, type PurgeFiles } from './purge-files';
 import { createRetentionService } from './retention';
 import { confirmCompact, confirmPurgeNow } from './retention-dialog';
 import type { MainChangesService } from './service';
@@ -22,6 +22,10 @@ import type { SearchParamsOf } from './serp-params';
 // of each run's end, and at startup (after that retry) it enforces due policies and sweeps orphan
 // files. A quit or a window closing stops a run under way, its tab closed before the session is saved
 // (`stopRunOnQuit`). Main `index.ts` creates it with one line.
+// Phase 10's sweeps (`workspace-db.feature.md`, Orphans and when the sweeps run): at startup, after
+// that retry, the capture-sourced SERP readings whose capture is gone (a purge pulled through sync)
+// are deleted and the workspace rows (competitors, tags) of projects deleted through sync are
+// tombstoned; after every purge, the orphan readings are swept again.
 
 export interface MainProjectsDeps {
   /** `SessionStore.changeIntel`. */
@@ -40,8 +44,9 @@ export interface MainProjectsDeps {
 
 export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
   const files = createScreenshotFiles(userData);
-  // One purge at a time, whoever asks (a delete, Purge now, an enforcement).
-  const purges = createPurgeFiles({ store, files, log: (message) => log(`projects: ${message}`) });
+  const sweeps = createWorkspaceSweeps({ store, log });
+  // One purge at a time, whoever asks (a delete, Purge now, an enforcement); each purge is followed by the readings sweep.
+  const purges = sweptAfterPurge(createPurgeFiles({ store, files, log: (message) => log(`projects: ${message}`) }), sweeps.readings);
   const parent = () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null;
   // The run's end enforces its project's policy (bound below: the runs and retention know each other).
   let afterRun: (projectId: string) => void = () => undefined;
@@ -91,8 +96,71 @@ export function createMainProjects({ store, userData, browser, changes, screensh
   changes.onCaptured((projectId) => retention.afterCapture(projectId));
   screenshots.onSaved((projectId) => retention.afterCapture(projectId));
   // A delete whose purge failed earlier (a crash, a full disk) is purged again at startup; then the
-  // policies due are enforced and orphan files swept.
-  void projects.purgeDeleted().then(() => retention.startup());
+  // orphan readings and workspace rows are swept, the policies due are enforced and orphan files swept.
+  void startupChain(() => projects.purgeDeleted(), sweeps.startup, () => retention.startup());
   const { setRetention, retentionPreview, purgeNow, usage, purgeLog, compact } = retention;
   return { ...projects, setRetention, retentionPreview, purgeNow, usage, purgeLog, compact };
+}
+
+// ---- Phase 10's sweeps (`workspace-db.feature.md`, Orphans and when the sweeps run) -------------
+
+export interface WorkspaceSweeps {
+  /** `deleteOrphanReadings()`: after every purge, and at startup. */
+  readings(): Promise<void>;
+  /** At startup: the readings sweep, then `tombstoneOrphanWorkspaceRows`. */
+  startup(): Promise<void>;
+}
+
+/** An error's name for the log, never its message. */
+const nameOf = (error: unknown): string => (error instanceof Error ? error.name : 'unknown error');
+
+/** The sweeps over `store`; each never rejects (a failure is logged by its error's name). */
+export function createWorkspaceSweeps({
+  store,
+  log,
+  now = Date.now,
+}: {
+  readonly store: Pick<ChangeIntelRepository, 'deleteOrphanReadings' | 'tombstoneOrphanWorkspaceRows'>;
+  readonly log: (message: string) => void;
+  readonly now?: () => number;
+}): WorkspaceSweeps {
+  const readings = async (): Promise<void> => {
+    try {
+      const swept = await store.deleteOrphanReadings();
+      if (swept > 0) log(`projects: removed ${swept} search readings whose capture is gone`);
+    } catch (error) {
+      log(`projects: the orphan readings sweep failed (${nameOf(error)})`);
+    }
+  };
+  return {
+    readings,
+    async startup() {
+      await readings();
+      try {
+        const tombstoned = await store.tombstoneOrphanWorkspaceRows(now());
+        if (tombstoned > 0) log(`projects: tombstoned ${tombstoned} competitors and tags left by deleted projects, pages or searches`);
+      } catch (error) {
+        log(`projects: the workspace sweep failed (${nameOf(error)})`);
+      }
+    },
+  };
+}
+
+/** `purges`, with `sweep` run after each execute that answers `purged` (not `stale`, `empty` or `changed`). */
+export function sweptAfterPurge(purges: PurgeFiles, sweep: () => Promise<void>): PurgeFiles {
+  return {
+    execute: async (plan, reason, at) => {
+      const done = await purges.execute(plan, reason, at);
+      if (done.result?.status === 'purged') await sweep();
+      return done;
+    },
+  };
+}
+
+/** The startup order: the deleted projects' purges, then the sweeps, then retention's startup. */
+export function startupChain(purgeDeleted: () => Promise<unknown>, sweep: () => Promise<void>, retentionStartup: () => Promise<unknown> | unknown): Promise<void> {
+  return purgeDeleted()
+    .then(sweep)
+    .then(() => retentionStartup())
+    .then(() => undefined);
 }

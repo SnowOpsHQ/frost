@@ -265,6 +265,8 @@ export function usageRows(usage: RetentionUsage): { readonly id: string; readonl
     { id: 'versions', label: 'Versions', value: `${NUMBER.format(usage.versions)}${shared}` },
     { id: 'screenshots', label: 'Screenshots', value: NUMBER.format(usage.screenshots) },
     { id: 'stored', label: 'Stored snapshots and diffs', value: `${formatBytes(usage.snapshotBytes)} + ${formatBytes(usage.diffBytes)}` },
+    // The SERP readings kept with captures of result pages (`workspace-db.feature.md`).
+    { id: 'readings', label: 'Search readings', value: formatBytes(usage.readingBytes) },
     { id: 'files', label: 'Screenshot files', value: `${plural(usage.files.count, 'file', 'files')}, ${formatBytes(usage.files.bytes)}${sharedFiles}${missing}` },
     { id: 'database', label: 'Database file (all projects)', value: usage.database === null ? 'In memory this session' : formatBytes(usage.database.bytes + usage.database.walBytes) },
   ];

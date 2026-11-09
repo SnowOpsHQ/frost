@@ -6,7 +6,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { PROJECT_REFUSAL_MESSAGES, QUERY_FIELD_MAX_CHARS, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS, type RunState } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
-import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, type RetentionUsage } from '@app/specs/retention.spec';
+import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, formatBytes, type RetentionUsage } from '@app/specs/retention.spec';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
 import { projectsPaletteSources, retentionPaletteSources } from '../projects-palette';
 import {
@@ -202,12 +202,13 @@ describe('projects view', () => {
     expect(compactText({ status: 'refused', reason: 'compact-failed' })).toBe(RETENTION_REFUSAL_MESSAGES['compact-failed']);
     expect(RETENTION_REFUSAL_MESSAGES['compact-failed']).not.toBe(RETENTION_REFUSAL_MESSAGES['store-failed']);
     expect(compactText(null)).toBe('The database could not be compacted. Try again.');
-    const usage: RetentionUsage = { projectId: P1, captures: 3, versions: 3, sharedVersions: 1, snapshotBytes: 12_000, diffBytes: 800, screenshots: 2, files: { count: 1, bytes: 1_500, missing: 1, shared: 1 }, database: { bytes: 2_000_000, walBytes: 400_000 } };
+    const usage: RetentionUsage = { projectId: P1, captures: 3, versions: 3, sharedVersions: 1, snapshotBytes: 12_000, diffBytes: 800, readingBytes: 0, screenshots: 2, files: { count: 1, bytes: 1_500, missing: 1, shared: 1 }, database: { bytes: 2_000_000, walBytes: 400_000 } };
     expect(usageRows(usage)).toEqual([
       { id: 'captures', label: 'Captures', value: '3' },
       { id: 'versions', label: 'Versions', value: '3 (1 also in another project)' },
       { id: 'screenshots', label: 'Screenshots', value: '2' },
       { id: 'stored', label: 'Stored snapshots and diffs', value: '12.0 kB + 800 B' },
+      { id: 'readings', label: 'Search readings', value: '0 B' },
       { id: 'files', label: 'Screenshot files', value: '1 file, 1.5 kB (1 also in another project) · 1 missing' },
       { id: 'database', label: 'Database file (all projects)', value: '2.4 MB' },
     ]);
@@ -220,6 +221,16 @@ describe('projects view', () => {
     expect(line.reason).toBe('Purge now');
     expect(line.what).toBe('2 captures, 2 versions, 2 diffs and 0 screenshots · 1.2 kB');
     expect(line.when).toBe(new Date(Date.UTC(2026, 9, 1, 12)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+  });
+
+  // spec: specs/workspace-db.feature.md — usage-rows-show-readings; specs/retention.spec.ts (RetentionUsage.readingBytes)
+  test('usage-rows-show-readings', () => {
+    const usage: RetentionUsage = { projectId: P1, captures: 2, versions: 2, sharedVersions: 0, snapshotBytes: 4_000, diffBytes: 0, readingBytes: 48_500, screenshots: 0, files: { count: 0, bytes: 0, missing: 0, shared: 0 }, database: null };
+    const rows = usageRows(usage);
+    expect(rows.find((row) => row.id === 'readings')).toEqual({ id: 'readings', label: 'Search readings', value: formatBytes(48_500) });
+    expect(formatBytes(48_500)).toBe('48.5 kB');
+    // Right after the stored snapshots and diffs.
+    expect(rows.map((row) => row.id)).toEqual(['captures', 'versions', 'screenshots', 'stored', 'readings', 'files', 'database']);
   });
 
   test('retention-palette-actions', async () => {
