@@ -6,13 +6,16 @@ import { PROBE_DISCLOSURE } from '@app/specs/visibility-probes.spec';
 import type { ProbesState } from '@app/specs/visibility-probes.schema';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import type { PaletteContext, PaletteSource } from './palette/registry';
+import { serpEditorModel, trackView, type SerpEditorMode } from './serp-editor-view';
 
 // The SERP and Visibility panels in the command palette (acceptance `serp-panels.feature.md`,
 // Command palette; `command-palette.spec.ts`, Registration API, `FEATURE_PANEL_JUMPS`): both panels'
 // jumps, the outlines, "Check for selector updates", "Enable on-device intent" and the visibility
-// probes. Registered from `components/seo/Serp.tsx` with one call; pure (the procedures and what the
-// chrome last saw are injected) so availability is unit tested. The two actions that download or
-// fetch on the user's behalf ask first, with the same words their panels show.
+// probes, and (Phase 10 Task 9) "Edit search…" and "Track this search…", which open the SERP panel's
+// editor or project picker (`serp-panels.feature.md`, Edit search). Registered from
+// `components/seo/Serp.tsx` with one call; pure (the procedures and what the chrome last saw are
+// injected) so availability is unit tested. The two actions that download or fetch on the user's
+// behalf ask first, with the same words their panels show.
 
 export interface SerpPaletteApi {
   /** `serp.setOutlines`; resolves whether the outlines are drawn now. */
@@ -25,6 +28,8 @@ export interface SerpPaletteApi {
   refreshIntent(): Promise<unknown>;
   runProbes(tabId: number): Promise<boolean>;
   stopProbes(tabId: number): Promise<boolean>;
+  /** Asks the SERP panel of the tab to open its editor or its project picker (`requestSerpEditor`). */
+  openEditor(tabId: number, mode: SerpEditorMode): void;
   /** The last SERP state the chrome saw for a tab (`undefined`: none yet). */
   knownSerp(tabId: number): SerpTabState | undefined;
   /** The last probes state the chrome saw for a tab. */
@@ -94,6 +99,46 @@ export function serpPaletteSources(api: SerpPaletteApi): PaletteSource[] {
       run: async (ctx) => {
         await api.setOutlines(ctx.tab!.id, false);
         return 'SERP outlines hidden';
+      },
+    },
+    {
+      id: 'serp.edit',
+      label: 'Edit search…',
+      group: 'panels',
+      keywords: [...SERP_KEYWORDS, 'edit', 'parameters', 'country', 'language', 'domain', 'time', 'safesearch', 'region'],
+      icon: 'panel-serp',
+      focus: 'handler',
+      // Only on a result page the chrome has seen, of an engine whose settings the editor knows.
+      available: (ctx) => {
+        const known = serpOf(ctx);
+        if (!onWebPage(ctx.tab) || known === undefined) return false;
+        const model = serpEditorModel(known);
+        return model !== null && model.fields.length > 0;
+      },
+      run: (ctx) => {
+        ctx.chrome.openPanel('serp');
+        api.openEditor(ctx.tab!.id, 'edit');
+      },
+    },
+    {
+      id: 'serp.track',
+      label: 'Track this search…',
+      group: 'panels',
+      keywords: [...SERP_KEYWORDS, 'track', 'project', 'save', 'saved search', 'rank tracking'],
+      icon: 'panel-serp',
+      focus: 'handler',
+      available: (ctx) => {
+        const known = serpOf(ctx);
+        return onWebPage(ctx.tab) && known !== undefined && serpEditorModel(known) !== null;
+      },
+      // A search a saved search cannot be answers why; otherwise the panel's project picker opens.
+      run: (ctx) => {
+        const model = serpEditorModel(serpOf(ctx)!);
+        const view = model === null ? null : trackView(model);
+        if (view === null || view.search === null) return view?.reason ?? null;
+        ctx.chrome.openPanel('serp');
+        api.openEditor(ctx.tab!.id, 'track');
+        return undefined;
       },
     },
     {

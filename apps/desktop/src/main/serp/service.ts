@@ -310,21 +310,22 @@ export function createSerpService(options: SerpServiceOptions): Serp {
    * The tab's SERP state and its current entry. A loaded result page with no current reading is read
    * now, unless `passive` (an answer nobody waits for: nothing is started or dropped).
    */
-  const serpState = (tabId: number, passive = false): { serp: SerpState; entry: Entry | null } => {
+  /** The tab's state, its entry, and the engine of the result page it shows (`null`: none). */
+  const serpState = (tabId: number, passive = false): { serp: SerpState; entry: Entry | null; engine: SelectorEngine | null } => {
     const pack = readyPack();
-    if (!pack) return { serp: { status: 'disabled', tabId, reason: 'pack-invalid' }, entry: null };
+    if (!pack) return { serp: { status: 'disabled', tabId, reason: 'pack-invalid' }, entry: null, engine: null };
     const tab = tabs.tab(tabId);
-    if (!tab) return { serp: { status: 'not-serp', tabId, url: '' }, entry: null };
+    if (!tab) return { serp: { status: 'not-serp', tabId, url: '' }, entry: null, engine: null };
     let entry = entries.get(tabId) ?? null;
     if (!entry || !isCurrent(entry, tab, pack)) {
       // A reading of something the tab no longer shows goes (removed from the page if it is still that document).
       if (entry && !passive) retire(entry);
       const match = disposed ? null : matchSerp(tab.url, pack.pack, tab.device);
-      if (!match) return { serp: { status: 'not-serp', tabId, url: tab.url.length <= SERP_PARAM_LIMITS.maxUrlChars ? tab.url : '' }, entry: null };
-      if (tab.loading || passive) return { serp: { status: 'pending', tabId, documentSeq: tab.documentSeq, url: tab.url, params: match.params }, entry: null };
+      if (!match) return { serp: { status: 'not-serp', tabId, url: tab.url.length <= SERP_PARAM_LIMITS.maxUrlChars ? tab.url : '' }, entry: null, engine: null };
+      if (tab.loading || passive) return { serp: { status: 'pending', tabId, documentSeq: tab.documentSeq, url: tab.url, params: match.params }, entry: null, engine: match.engine };
       entry = begin(tabId, tab, match, pack, null);
     }
-    return { serp: stateOf(entry), entry };
+    return { serp: stateOf(entry), entry, engine: entry.engine };
   };
 
   const stateOf = (entry: Entry): SerpState => {
@@ -409,9 +410,11 @@ export function createSerpService(options: SerpServiceOptions): Serp {
 
   /** The tab's `SerpTabState`; `passive`: start and drop nothing (an answer nobody waits for). */
   const tabState = (tabId: number, passive = false): SerpTabState => {
-    const { serp, entry } = serpState(tabId, passive);
+    const { serp, entry, engine } = serpState(tabId, passive);
     const intent = intentOf(entry, serp, passive);
-    return { version, tabId, serp, outlines: entry?.outline != null, intent, pack: packStatus() };
+    // The pack's parameter names of the page's engine, for the SERP parameter editor (Phase 10 Task 9).
+    const paramNames = engine === null ? null : { query: engine.params.query[0]!, gl: engine.params.gl?.[0] ?? null, hl: engine.params.hl?.[0] ?? null };
+    return { version, tabId, serp, outlines: entry?.outline != null, intent, pack: packStatus(), paramNames };
   };
 
   const serp: Serp = {

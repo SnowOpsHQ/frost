@@ -107,6 +107,65 @@ are this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second 
   asking first with `PROBE_DISCLOSURE` and opening the Visibility panel; "Stop visibility probes"
   while one runs.
 
+## Edit search (Phase 10 Task 9; `specs/serp-param-editor.spec.ts`; plan Decisions 4 and 12)
+On a result page the parameters bar offers **Edit search** and **Track this search…**. The editor
+reloads the tab's search with other settings; it never changes what is tracked (a capture of the page
+it lands on is filed under that page's own search key).
+- **Closed values only.** Each field is a menu (`SERP_EDITOR_FIELDS`): Google's domain
+  (`GOOGLE_EDITOR_HOSTS`, the bundled pack's Google hosts), country, language, time (`tbs`), results
+  per page (`num`, with `SERP_NUM_HINT`: the engine may ignore it), SafeSearch (`safe`) and
+  personalised results (`pws`); Bing's country and language (`cc`, `setlang`); DuckDuckGo's region
+  (`kl`), time (`df`) and SafeSearch (`kp`); any other engine its country and language, by the
+  selector pack's names (`SerpTabState.paramNames`). Country, language and region lists are frost's
+  own (`EDITOR_COUNTRIES`, `EDITOR_LANGUAGES`, `EDITOR_DDG_REGIONS`), plus the tab's own value when it
+  has a saved search's form. Nothing typed reaches a URL: the only text is the tab's own query.
+- **DuckDuckGo's region is a search parameter.** `kl` is the pack's `gl` name, so the region is
+  `SearchParams.gl` (`us-en`) and part of the search itself, never a filter
+  (`SERP_FILTER_PARAMS.duckduckgo` is `df`, `kp`).
+- **Apply** loads the built URL (`editedSearchUrl`) through `browser.navigate`, the address bar's
+  path with its browse guards; it is disabled while the URL is `null`. No page script runs.
+- **Track this search…** picks a project and calls `projects.addSearch` with `trackableSearch`'s saved
+  search (Phase 6's validated path: main builds and reads the URL again). It is disabled with the
+  reason (`TRACK_REFUSAL_MESSAGES`) for a search a saved search cannot be: another engine, another
+  address (`google.de`), a later page, filters, or a query or locale a saved search does not take;
+  such a search is tracked by capturing it into a project.
+- **Keyboard.** Every field is a labelled `<select>`; Escape closes the editor and gives focus back
+  to Edit search.
+
+### View model (`apps/desktop/src/renderer/__tests__/serp-editor-view.test.ts`)
+- **Scenario: editor-fields-per-engine** — Google: domain, country, language, time, results per page
+  (with `SERP_NUM_HINT`), SafeSearch, personalised results; Bing: country and language; DuckDuckGo:
+  region, time, SafeSearch; another engine: country and language only, and only those the pack names.
+  Each list is closed; the tab's own country or language is offered when it has a saved search's form.
+- **Scenario: editor-starts-from-the-tabs-filters** — the state starts from the tab's `gl`, `hl`, host
+  and the filters on its page URL (`serpFiltersOf`); changing the country of a "past week" page keeps
+  "past week"; a value the editor does not offer starts as not set and is named as cleared.
+- **Scenario: edited-url-keeps-path-and-allowed-host** — the path is the tab's; Google's host is one of
+  `GOOGLE_EDITOR_HOSTS` over `https:` (another host, or none chosen: `null`); other engines keep their
+  origin; unknown parameters (`ei`, `udm`, tracking) are dropped.
+- **Scenario: edited-url-encodes-values** — the query is re-encoded as `searchEngineUrl` does; a query
+  or a state value with `&`, `#`, `=`, `%`, a newline, `//evil.com` or `@` can never add a parameter or
+  change the host or path (a value outside a field's list gives `null`).
+- **Scenario: edited-url-resets-page** — a page-3 search loads page 1 (no offset parameter).
+- **Scenario: trackable-search-rules** — only an engine of `SEARCH_ENGINES`, on its default address,
+  page 1, no filters, a query and locale a saved search takes; otherwise `null` with the reason; a
+  DuckDuckGo region becomes its country and language.
+- **Scenario: editor-requests-reach-the-panel** — a palette request opens the editor or the picker in
+  the SERP panel of that tab only, once.
+
+### Main (`apps/desktop/src/main/changes/__tests__/serp-params.test.ts`, `apps/desktop/src/main/serp/__tests__/service.test.ts`)
+- **Scenario: edited-url-reads-back** — `GOOGLE_EDITOR_HOSTS` are exactly the bundled pack's Google
+  hosts; for every one, Phase 3's `matchSerp` with the bundled pack reads an edited URL as the same
+  query, `gl` and `hl`, page 1; its filters (`serpFiltersOf`) are the state's; the same for Bing and
+  DuckDuckGo.
+- **Scenario: serp-service-param-names** — the tab state names the pack's query, country and language
+  parameters of a result page's engine, and none for a page that is not one.
+
+### Command palette (`serp-palette.test.ts`)
+- **Scenario: serp-palette-edit-and-track** — "Edit search…" on a known result page opens the SERP
+  panel with the editor; "Track this search…" opens it with the project picker when the search is
+  trackable, and answers the reason when it is not; neither on a page known not to be a result page.
+
 ## End to end (`apps/desktop/e2e/serp.e2e.ts`, `apps/desktop/e2e/visibility.e2e.ts`)
 Synthetic result pages (frost's own minimal markup) served by a loopback server under a public-looking
 name (`--host-resolver-rules`, `--frost-e2e-public-hosts`). The test makes an ephemeral Ed25519

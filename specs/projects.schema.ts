@@ -32,6 +32,7 @@ import {
   RUN_TARGET_KINDS,
   RUN_TARGET_OUTCOMES,
   QUERY_FIELD_MAX_CHARS,
+  PRINTABLE_TEXT,
   type AddPageAnswer,
   type AddQueryAnswer,
   type CreateProjectAnswer,
@@ -53,8 +54,8 @@ const id = z.string().regex(UUIDV7_PATTERN);
 const count = z.int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 /** An `http(s)` URL frost can store (`MAX_STORED_URL_LENGTH`). */
 const webUrl = z.string().min(1).max(MAX_STORED_URL_LENGTH).refine(isWebUrl, { message: 'not an http(s) URL' });
-/** No control characters (C0, DEL, C1) and no bidirectional formatting characters. */
-const PRINTABLE = /^[^\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]*$/;
+/** No control characters (C0, DEL, C1) and no bidirectional formatting characters (`PRINTABLE_TEXT`). */
+const PRINTABLE = PRINTABLE_TEXT;
 /** A project name as typed: printable, not blank; main trims it (at most `PROJECT_NAME_MAX_CHARS` after trimming). */
 const name = z
   .string()

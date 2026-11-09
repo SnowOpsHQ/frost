@@ -1,11 +1,12 @@
 // Spec: specs/command-palette.spec.ts (FEATURE_PANEL_JUMPS, Registration API), specs/intent-classifier.spec.ts
 // (INTENT_ENABLE_PROMPT, INTENT_ENABLE_MESSAGES), specs/serp-selector-pack.spec.ts (PACK_UPDATE_MESSAGES),
-// specs/visibility-probes.spec.ts (PROBE_DISCLOSURE)
-// Acceptance: specs/serp-panels.feature.md (Command palette)
+// specs/visibility-probes.spec.ts (PROBE_DISCLOSURE), specs/serp-param-editor.spec.ts (TRACK_REFUSAL_MESSAGES)
+// Acceptance: specs/serp-panels.feature.md (Command palette; Edit search, Command palette)
 import { describe, expect, test, vi } from 'vitest';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import { FEATURE_PANEL_JUMPS } from '@app/specs/command-palette.spec';
 import { INTENT_ENABLE_MESSAGES, INTENT_ENABLE_PROMPT, type IntentState } from '@app/specs/intent-classifier.spec';
+import { TRACK_REFUSAL_MESSAGES } from '@app/specs/serp-param-editor.spec';
 import { PACK_UPDATE_MESSAGES } from '@app/specs/serp-selector-pack.spec';
 import type { PackStatus, SerpTabState } from '@app/specs/serp-service.schema';
 import { PROBE_DISCLOSURE } from '@app/specs/visibility-probes.spec';
@@ -47,6 +48,7 @@ function setup(context: Partial<PaletteContext> = {}, known: Known = {}) {
     refreshIntent: vi.fn(async () => 'ready' as const),
     runProbes: vi.fn(async () => true),
     stopProbes: vi.fn(async () => true),
+    openEditor: vi.fn(),
     knownSerp: () => known.serp,
     knownProbes: () => known.probes,
     knownIntent: () => known.intent,
@@ -169,5 +171,42 @@ describe('SERP palette actions', () => {
     const refused = setup();
     (refused.api.runProbes as ReturnType<typeof vi.fn>).mockResolvedValue(false);
     await expect(Promise.resolve(refused.action('probes.run').run(refused.ctx))).resolves.toBe('The probes could not start');
+  });
+
+  test('serp-palette-edit-and-track', async () => {
+    const pending = (url: string, engine = 'google', paramNames: SerpTabState['paramNames'] = null): SerpTabState =>
+      ({
+        version: 1,
+        tabId: 3,
+        serp: { status: 'pending', tabId: 3, documentSeq: 1, url, params: { engine, engineLabel: 'Engine', query: 'tea', gl: null, hl: null, device: 'desktop', page: 1, offset: null, url } },
+        outlines: false,
+        intent: null,
+        pack: PACK,
+        paramNames,
+      }) as SerpTabState;
+    // On a known result page: both; it opens the SERP panel on the editor.
+    const known = setup({}, { serp: pending(URL_A) });
+    expect(known.ids()).toEqual(expect.arrayContaining(['serp.edit', 'serp.track']));
+    expect(known.action('serp.edit').label).toBe('Edit search…');
+    expect(known.action('serp.track').label).toBe('Track this search…');
+    await known.action('serp.edit').run(known.ctx);
+    expect(known.chrome.openPanel).toHaveBeenLastCalledWith('serp');
+    expect(known.api.openEditor).toHaveBeenLastCalledWith(3, 'edit');
+    await known.action('serp.track').run(known.ctx);
+    expect(known.api.openEditor).toHaveBeenLastCalledWith(3, 'track');
+    // A search a saved search cannot be: the reason, and nothing opens.
+    const filtered = setup({ tab: tab({ url: 'https://www.google.com/search?q=tea&tbs=qdr:w' }) }, { serp: pending('https://www.google.com/search?q=tea&tbs=qdr:w') });
+    await expect(Promise.resolve(filtered.action('serp.track').run(filtered.ctx))).resolves.toBe(TRACK_REFUSAL_MESSAGES.filters);
+    const german = setup({ tab: tab({ url: 'https://www.google.de/search?q=tea' }) }, { serp: pending('https://www.google.de/search?q=tea') });
+    await expect(Promise.resolve(german.action('serp.track').run(german.ctx))).resolves.toBe(TRACK_REFUSAL_MESSAGES.address);
+    expect(german.api.openEditor).not.toHaveBeenCalled();
+    // Another engine: editable only with the pack's names from main.
+    expect(setup({}, { serp: pending('http://search.frost-e2e.net/find?q=tea', 'synthetic') }).ids()).not.toContain('serp.edit');
+    expect(setup({}, { serp: pending('http://search.frost-e2e.net/find?q=tea', 'synthetic', { query: 'q', gl: 'gl', hl: null }) }).ids()).toContain('serp.edit');
+    // Not on a page known not to be a result page, nor before the chrome has seen one.
+    for (const context of [setup({}, { serp: serpState('not-serp') }), setup(), setup({ tab: undefined })]) {
+      expect(context.ids()).not.toContain('serp.edit');
+      expect(context.ids()).not.toContain('serp.track');
+    }
   });
 });

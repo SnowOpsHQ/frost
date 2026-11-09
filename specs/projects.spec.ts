@@ -272,6 +272,12 @@ export const TAG_INPUT_MAX_CHARS = TAG_MAX_CHARS * 2;
 const HOST_LABEL = /^(?!-)[a-z0-9_-]{1,63}(?<!-)$/;
 /** C0 and C1 controls, DEL, and bidirectional formatting characters. */
 const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/;
+/**
+ * Printable text, as the projects' Zod inputs take it (`projects.schema.ts`) and the SERP editor
+ * checks a saved search's query (`serp-param-editor.spec.ts`): no C0 or C1 controls, no DEL, no
+ * bidirectional formatting characters (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069).
+ */
+export const PRINTABLE_TEXT = /^[^\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/;
 
 /**
  * A site or competitor domain (plan Decision 7) from what the user typed: a host (`Shop.Com`,

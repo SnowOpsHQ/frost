@@ -1,12 +1,15 @@
 // Spec: specs/serp-search-params.schema.ts (SearchParamsSchema), specs/serp-service.schema.ts (SerpState),
 // specs/projects.spec.ts (SavedSearchInput, SEARCH_PARAM_URL_RULES, searchLocaleFor, searchUrlFor),
-// specs/rankings.spec.ts (SERP_RUN_VERDICTS), specs/serp-snapshot.schema.ts (SerpSnapshotSchema)
+// specs/rankings.spec.ts (SERP_RUN_VERDICTS), specs/serp-snapshot.schema.ts (SerpSnapshotSchema),
+// specs/serp-param-editor.spec.ts (GOOGLE_EDITOR_HOSTS, editedSearchUrl), specs/rankings-url.spec.ts (serpFiltersOf)
 // Acceptance: specs/changes-capture.feature.md (Search parameters of a tab; SERP reading), specs/changes-diff.feature.md
-// (Search parameters), specs/projects.feature.md (Saved searches)
+// (Search parameters), specs/projects.feature.md (Saved searches), specs/serp-panels.feature.md (Edit search)
 import { describe, expect, test } from 'vitest';
 import { SEARCH_ENGINE_IDS } from '@app/specs/browser-polish.spec';
 import { searchLocaleFor, searchUrlFor, type SavedSearchInput } from '@app/specs/projects.spec';
 import { SERP_RUN_VERDICTS, type SerpRunVerdict } from '@app/specs/rankings.spec';
+import { serpFiltersOf } from '@app/specs/rankings-url.spec';
+import { GOOGLE_EDITOR_HOSTS, editedSearchUrl, editorParamNames, type EditorState } from '@app/specs/serp-param-editor.spec';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import type { SerpState } from '@app/specs/serp-service.schema';
 import { SerpSnapshotSchema } from '@app/specs/serp-snapshot.schema';
@@ -215,5 +218,39 @@ describe('saved searches', () => {
     expect(searchUrlFor({ engine: 'duckduckgo', query: 'tea', country: 'de', language: null, device: 'desktop' })).toBe('https://duckduckgo.com/?q=tea');
     expect(searchParamsForUrl('https://example.com/search?q=tea', 'desktop')).toBeNull();
     expect(searchParamsForUrl('https://www.google.com/maps?q=tea', 'desktop')).toBeNull();
+  });
+
+  test('edited-url-reads-back', () => {
+    const pack = bundledPack()!;
+    // The editor's Google domains are exactly the bundled pack's Google hosts.
+    expect([...GOOGLE_EDITOR_HOSTS]).toEqual(pack.engines.find((engine) => engine.id === 'google')!.hosts);
+    const names = editorParamNames('google', null);
+    const tab: SearchParams = { ...PARAMS, query: 'green tea & café/?#', page: 3, offset: 20, url: 'https://www.google.com/search?q=green+tea+%26+caf%C3%A9%2F%3F%23&gl=de&hl=de&start=20' };
+    const filterSets: EditorState[] = [{}, { tbs: 'qdr:w' }, { tbs: 'qdr:y', num: '50', safe: 'active', pws: '0' }];
+    for (const host of GOOGLE_EDITOR_HOSTS) {
+      for (const [gl, hl] of [['', ''], ['fr', 'fr'], ['us', 'en-gb'], ['', 'ja']] as const) {
+        for (const filters of filterSets) {
+          const state: EditorState = { host, gl, hl, tbs: '', num: '', safe: '', pws: '', ...filters };
+          const url = editedSearchUrl(tab, state, names);
+          const label = `${host} ${gl} ${hl} ${JSON.stringify(filters)}`;
+          expect(url, label).not.toBeNull();
+          // Phase 3 reads the same query, gl and hl, on page 1, on that host.
+          const read = matchSerp(url!, pack, 'mobile')?.params;
+          expect(read, label).toMatchObject({ engine: 'google', query: 'green tea & café/?#', gl: gl === '' ? null : gl, hl: hl === '' ? null : hl, device: 'mobile', page: 1, offset: null });
+          expect(new URL(read!.url).host, label).toBe(host);
+          expect(searchParamsForUrl(url!, 'mobile'), label).toEqual(read);
+          // The filters the capture would record are the state's.
+          expect(serpFiltersOf(url!, 'google'), label).toEqual(Object.fromEntries(Object.entries(filters).sort()));
+        }
+      }
+    }
+    // Bing and DuckDuckGo (its region is `gl`; time and SafeSearch are filters).
+    const bing = editedSearchUrl({ ...PARAMS, engine: 'bing', engineLabel: 'Bing', url: 'https://www.bing.com/search?q=green+tea&cc=de&setlang=de&first=11', page: 2, offset: 11 }, { gl: 'fr', hl: 'fr' }, editorParamNames('bing', null))!;
+    expect(matchSerp(bing, pack, 'desktop')?.params).toMatchObject({ engine: 'bing', query: 'green tea', gl: 'fr', hl: 'fr', page: 1, offset: null });
+    for (const url of ['https://duckduckgo.com/?q=green+tea&kl=de-de', 'https://html.duckduckgo.com/html/?q=green+tea&kl=de-de']) {
+      const duck = editedSearchUrl({ ...PARAMS, engine: 'duckduckgo', engineLabel: 'DuckDuckGo', gl: 'de-de', hl: null, url }, { gl: 'us-en', df: 'w', kp: '-2' }, editorParamNames('duckduckgo', null))!;
+      expect(matchSerp(duck, pack, 'desktop')?.params, url).toMatchObject({ engine: 'duckduckgo', query: 'green tea', gl: 'us-en', hl: null, page: 1 });
+      expect(serpFiltersOf(duck, 'duckduckgo'), url).toEqual({ df: 'w', kp: '-2' });
+    }
   });
 });
