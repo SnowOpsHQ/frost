@@ -106,6 +106,15 @@ named test.
 - **Scenario: copy-value-of-each-key** — each `COPY_VALUE_KEYS` key reads its documented value.
 - **Scenario: copy-value-missing-is-null** — no title, no description, no H1 (or an empty one), no
   robots meta, no recorded status: `null`; the HTTP `Link` canonical when the HTML has none.
+- **Scenario: copy-value-<key>** (Phase 11 Task 1, one per appended key) — each of the seventeen
+  appended `COPY_VALUE_KEYS` reads its documented value and format (outline indented by level,
+  `name: value` lines, one URL per line), from the audit only.
+- **Scenario: copy-value-absent-is-null** — a key whose part of the audit is missing (no headings,
+  tags, hreflang, `X-Robots-Tag`, headers, robots.txt sitemaps, JSON-LD or links of that kind) is `null`.
+- **Scenario: canonical-html-escaped** — markup values escape `& < > " '` and bidi controls as
+  `escapeHtml` does (`content.copySnippetHtml`).
+- **Scenario: response-headers-masked** — a `SECRET_HEADERS` header value is written as `MASKED_VALUE`;
+  a value over `COPY_VALUE_MAX_CHARS` is cut to it.
 
 ## Router (`packages/ipc-contract/src/__tests__/palette-router.test.ts`)
 - **Scenario: palette-procedures-reject-foreign-sender-first** — `seo.copyValue`,
@@ -173,6 +182,10 @@ named test.
   URL on another host, scheme or path builds nothing.
 - **Scenario: open-in-label-names-the-host** — `openInLabel` is the description, ` — ` and the host;
   `sendsQuery` is true exactly when the URL sent has a query string.
+- **Scenario: open-in-backlink-entries-are-fixed-https-templates** (Phase 11 Task 1, Decision 2; also
+  `main/browser/__tests__/command-palette.test.ts`) — the backlink entries (`backlinks-*`) are fixed
+  `https://` origins of their vendor's host, the page URL goes only in their `urlParam`, and a first use
+  asks consent for their host like every other entry; main opens them through `browser.openTool`.
 - **Scenario: consent-remembers-hosts** (`consent.test.ts`) — granted hosts are kept (deduplicated,
   capped at `OPEN_IN_CONSENT_MAX`, malformed storage ignored, storage errors swallowed).
 - **Scenario: sheet-sizes-match-styles** (`apps/desktop/src/__tests__/palette-styles.test.ts`) —

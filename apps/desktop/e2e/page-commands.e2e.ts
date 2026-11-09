@@ -107,9 +107,13 @@ async function rightClick(id: number, selector: string): Promise<{ id: string; l
   const shown = await app.evaluate(() => (globalThis as unknown as { __contextMenus: Electron.Menu[] }).__contextMenus.length);
   await realClick(id, selector, 'right');
   await expect.poll(() => app.evaluate(() => (globalThis as unknown as { __contextMenus: Electron.Menu[] }).__contextMenus.length)).toBe(shown + 1);
-  return app.evaluate(() =>
+  const items = await app.evaluate(() =>
     (globalThis as unknown as { __contextMenus: Electron.Menu[] }).__contextMenus.at(-1)!.items.map((item) => ({ id: item.id, label: item.label, enabled: item.enabled, type: item.type })),
   );
+  // Phase 11 Task 1: once the tab's audit is ready every menu ends with Copy SEO Data (a separator and
+  // the submenu); whether it is ready yet depends on timing, so it is left out here and covered by
+  // `seo-panels.e2e.ts` (`context-menu-copy-seo-data`, Task 13).
+  return items.at(-1)?.id === 'context-copy-seo' ? items.slice(0, -2) : items;
 }
 
 /** Clicks an item of the last context menu, as Electron does when the user picks it. */

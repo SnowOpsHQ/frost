@@ -6,7 +6,8 @@ import type { CopyValueKey, OpenInTemplateId } from '@app/specs/command-palette.
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile } from '@app/specs/render-profile.spec';
-import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { HighlightMode, ImageFilter } from '@app/specs/seo-sidebar.spec';
+import type { SeoExportKind } from '@app/specs/seo-exports.spec';
 import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@app/ipc-contract';
 import type { SearchEngineId } from '@app/specs/browser-polish.spec';
 
@@ -42,6 +43,13 @@ export const actions = {
   copyUrl: (tabId: number, audit: SeoAuditRef, url: string) => ipc.seo.copyUrl.mutate({ tabId, audit, url }).catch(() => false),
   /** Copies one JSON-LD block of the audit on screen through main's clipboard (main formats it); resolves whether it was copied. */
   copySchemaJson: (tabId: number, audit: SeoAuditRef, block: number) => ipc.seo.copySchemaJson.mutate({ tabId, audit, block }).catch(() => false),
+  /**
+   * Copies a table of the audit on screen as CSV through main's clipboard (`seoExport.copyCsv`, Phase 11
+   * Task 1): images (with the panel's filter), headings, or the audit's speed report; resolves how many rows (`null`: main
+   * wrote nothing, the audit changed; `'failed'`: the IPC call failed).
+   */
+  copySeoCsv: (tabId: number, audit: SeoAuditRef, kind: SeoExportKind, filter?: ImageFilter): Promise<number | null | 'failed'> =>
+    ipc.seoExport.copyCsv.mutate({ tabId, audit, kind, ...(filter === undefined ? {} : { filter }) }).catch(() => 'failed' as const),
   /** Measures the active tab's page speed (`seo.measureSpeed`); resolves its answer, `null` on an IPC failure. */
   measureSpeed: (tabId: number) => ipc.seo.measureSpeed.mutate({ tabId }).catch(() => null),
   /** Starts the accessibility check on the tab's page (`seo.runAccessibility`); resolves whether one is running. */

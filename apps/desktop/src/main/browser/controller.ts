@@ -16,6 +16,7 @@ import { createTabRenderProfiles, type RenderProfileOptions } from './render-pro
 import { withAuditProfiles } from './render-profile-audits';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { createTabA11y, type A11yRunner } from '../seo/a11y-runs';
+import { sameAudit } from '../seo/audit-ref';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
 import { withKnown } from '../seo/context-source';
 import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
@@ -232,11 +233,6 @@ export interface BrowserControllerOptions {
   readonly searchEngine?: () => SearchEngineId;
   /** The content notes' generation (`seo-content.feature.md`; main's content service); without it, `0`. */
   readonly contentNotesGeneration?: () => number;
-}
-
-/** Whether `audit` is the one the panel rendered (`SeoAuditRef`: its URL and when it was taken). */
-function sameAudit(audit: { readonly url: string; readonly takenAt: number }, shown: { readonly url: string; readonly takenAt: number }): boolean {
-  return audit.url === shown.url && audit.takenAt === shown.takenAt;
 }
 
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {

@@ -2,14 +2,19 @@ import { useMemo, useState } from 'react';
 import { altState, filterImages, imageCounts, isLazyInFirstViewport, isOversized, lacksDimensions, type AltState, type PageImage, type SeoAudit } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import { IMAGE_FILTERS, type ImageFilter } from '@app/specs/seo-sidebar.spec';
+import { exportStatus } from '../../export-palette';
+import { CopyIcon } from '../../icons';
+import { actions } from '../../ipc';
 import { declaredSize, formatCount, formatSize, oversizeRatio } from '../../seo-view';
-import { Flash, PanelIssues, UrlActions, useFlash } from './actions';
+import { auditRef, Flash, PanelIssues, UrlActions, useFlash } from './actions';
 import { PageText } from './parts';
 
 // Images (acceptance `seo-panels.feature.md`, Images): each image's source (text; only http(s)
 // sources can be opened, in a background tab through main), its alt (missing, decorative or the
 // text), the declared width/height attributes, the size it is shown at against its file's size
 // (oversized past IMAGE_OVERSIZE_FACTOR), and its `loading`. The chrome never loads the image.
+// Copy as CSV (Phase 11 Task 1, `seo-exports.feature.md`): main formats the rows the current filter
+// selects (No alt: the missing-alt CSV) from the shown audit and writes its own clipboard.
 
 const FILTER_LABELS: Readonly<Record<ImageFilter, string>> = {
   all: 'All',
@@ -174,6 +179,20 @@ export function Images({ audit, tab }: { readonly audit: SeoAudit; readonly tab:
               <span className="seo-segment-count">{formatCount(counts[value])}</span>
             </button>
           ))}
+        </div>
+        <div className="seo-panel-tools">
+          <button
+            type="button"
+            className="seo-toggle"
+            data-testid="seo-images-copy-csv"
+            disabled={rows.length === 0}
+            onClick={() => {
+              void actions.copySeoCsv(tab.id, auditRef(audit), 'images', filter).then((copied) => flash(exportStatus('images', copied)));
+            }}
+          >
+            <CopyIcon />
+            <span>Copy as CSV</span>
+          </button>
         </div>
         <p className="seo-table-count" data-testid="seo-images-shown" data-count={rows.length}>
           {filter === 'all' ? `${formatCount(rows.length)} ${rows.length === 1 ? 'image' : 'images'}` : `${formatCount(rows.length)} of ${formatCount(list.length)} images`}

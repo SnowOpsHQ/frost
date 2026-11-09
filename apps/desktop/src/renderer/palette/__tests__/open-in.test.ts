@@ -4,7 +4,11 @@ import { describe, expect, test } from 'vitest';
 import { ADDRESS_INPUT_MAX_LENGTH } from '@app/specs/browser.spec';
 import { OPEN_IN_TEMPLATES, OPEN_IN_URL_MAX_LENGTH, openInLabel, SITE_FILES, type OpenInTemplate } from '@app/specs/command-palette.spec';
 import { NON_PUBLIC_IPV4_BLOCKS, NON_PUBLIC_NAME_SUFFIXES, parseIpv4 } from '@app/specs/open-in.spec';
+import { OPEN_IN_CONSENT_MESSAGE } from '@app/specs/command-palette.spec';
+import { builtinPaletteSources, type PaletteApi } from '../builtins';
+import { createConsentStore } from '../consent';
 import { isPublicAddress, isPublicHost, openInUrl, pageUrlToSend, sendsQuery, siteFileUrl } from '../open-in';
+import { createPaletteRegistry, type PaletteContext } from '../registry';
 
 const PAGE = 'https://www.example.com/guides/seo basics?ref=nav&x=1';
 
@@ -183,5 +187,48 @@ describe('open in', () => {
     expect(sendsQuery('https://www.example.com/a#?q=1')).toBe(false);
     expect(sendsQuery('https://www.example.com/a')).toBe(false);
     expect(sendsQuery('http://localhost/a?q=1')).toBe(false);
+  });
+
+  test('open-in-backlink-entries-are-fixed-https-templates', () => {
+    // Decision 2: the vendors' public backlink pages, names only; Semrush is left out (its report needs a sign-in).
+    const backlinks = OPEN_IN_TEMPLATES.filter((t) => t.id.startsWith('backlinks-'));
+    expect(backlinks.map((t) => [t.id, t.origin, t.path, t.urlParam])).toEqual([
+      ['backlinks-ahrefs', 'https://ahrefs.com', '/backlink-checker/', 'input'],
+      ['backlinks-majestic', 'https://majestic.com', '/reports/site-explorer', 'q'],
+    ]);
+    for (const template of backlinks) {
+      // A fixed https origin: scheme and host only, the vendor's name in the label, no logo or icon of its own.
+      const origin = new URL(template.origin);
+      expect(origin.protocol, template.id).toBe('https:');
+      expect(origin.origin, template.id).toBe(template.origin);
+      expect(template.label.toLowerCase(), template.id).toContain(template.id.slice('backlinks-'.length));
+      expect(Object.keys(template).sort(), template.id).toEqual(['id', 'keywords', 'label', 'origin', 'params', 'path', 'urlParam']);
+      // The page URL goes only in `urlParam`: never into the host or the path, and only once.
+      const built = new URL(openInUrl(template, PAGE)!);
+      expect(built.origin).toBe(template.origin);
+      expect(built.pathname).toBe(template.path);
+      expect([...built.searchParams.keys()]).toEqual([template.urlParam, ...Object.keys(template.params)]);
+      expect(built.searchParams.get(template.urlParam)).toBe(new URL(PAGE).href);
+      expect(built.href.split(encodeURIComponent('www.example.com')).length - 1).toBe(1);
+      const hostile = new URL(openInUrl(template, 'https://evil.example.net/@ahrefs.com/?input=x#majestic.com')!);
+      expect(hostile.origin).toBe(template.origin);
+      expect(hostile.pathname).toBe(template.path);
+    }
+    // The first use asks consent for the vendor's host, like every other entry; once granted, it does not.
+    const storage = new Map<string, string>();
+    const consent = createConsentStore({ getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => void storage.set(key, value) });
+    const registry = createPaletteRegistry();
+    registry.register(...builtinPaletteSources({ openTool: async () => ({ status: 'opened', tabId: 2 }) } as unknown as PaletteApi, consent));
+    const tab = { id: 1, url: PAGE, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null };
+    const ctx = { state: { version: 1, tabs: [tab], activeTabId: 1 }, tab, audit: null, sidebarOpen: false, chrome: { openPanel: () => undefined, setSidebarOpen: () => undefined } } as unknown as PaletteContext;
+    for (const template of backlinks) {
+      const action = registry.resolve(ctx).find((a) => a.id === `open-in.${template.id}`)!;
+      expect(action, template.id).toBeDefined();
+      expect(action.label).toBe(openInLabel(template));
+      const step = action.confirm!(ctx)!;
+      expect(step.message).toBe(OPEN_IN_CONSENT_MESSAGE.replace('{host}', new URL(template.origin).host));
+      step.accept();
+      expect(action.confirm!(ctx)).toBeNull();
+    }
   });
 });

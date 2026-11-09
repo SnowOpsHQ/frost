@@ -1,6 +1,7 @@
 import type { ContentNotes, ContentNotesRepository } from '@app/db';
 import type { ContentService, SeoAuditRef } from '@app/ipc-contract';
 import { snippetHtml, type SeoAuditResponse } from '@app/seo-core';
+import { shownAudit } from './audit-ref';
 
 // The Content panel's notes and Copy as HTML in main (Phase 2.5 Task 3; acceptance
 // `seo-content.feature.md`, Copy and Store). Notes go to `@app/db` (validated there, both ways);
@@ -57,10 +58,7 @@ export function createContentService(options: ContentServiceOptions): MainConten
       return fallback;
     }
   };
-  const readyAudit = (tabId: number, shown: SeoAuditRef) => {
-    const response = options.audit(tabId);
-    return response.status === 'ready' && response.audit.url === shown.url && response.audit.takenAt === shown.takenAt ? response.audit : null;
-  };
+  const readyAudit = (tabId: number, shown: SeoAuditRef) => shownAudit(options.audit(tabId), shown);
   return {
     generation: () => generation,
     async notes(url) {

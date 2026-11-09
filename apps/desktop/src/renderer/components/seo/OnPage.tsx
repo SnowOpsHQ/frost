@@ -2,13 +2,17 @@ import { formatPx, minSnippetWidth, type SeoAudit, type SnippetCut } from '@app/
 import type { TabState } from '@app/specs/browser.spec';
 import { DESCRIPTION_MAX_CHARS, DESCRIPTION_MIN_CHARS, TITLE_MAX_CHARS, TITLE_MIN_CHARS, type SeoCategory } from '@app/specs/seo-rules.spec';
 import { snippetIndicator } from '../../content-view';
+import { exportStatus } from '../../export-palette';
+import { CopyIcon } from '../../icons';
+import { actions } from '../../ipc';
 import { formatCount } from '../../seo-view';
-import { HighlightToggle } from './actions';
+import { auditRef, Flash, HighlightToggle, useFlash } from './actions';
 import { FactRow, LengthMeter, PageText, Section } from './parts';
 
 // On-Page (spec `seo-sidebar.feature.md`, Sidebar): what search engines read from the page —
 // title and description with their lengths, the URL and indexing tags, the heading outline, word
 // count, and the link and image summaries. Everything is the audit's bounded snapshot facts.
+// The headings' Copy as CSV (Phase 11 Task 1, `seo-exports.feature.md`) is formatted and written by main.
 
 /** `n issue(s)` for a section whose categories have findings; nothing when it is clean. */
 function IssueBadge({ audit, categories }: { readonly audit: SeoAudit; readonly categories: readonly SeoCategory[] }) {
@@ -63,6 +67,7 @@ function Stat({ label, value, testId, tone }: { readonly label: string; readonly
 export function OnPage({ audit, tab }: { readonly audit: SeoAudit; readonly tab: TabState }) {
   const page = audit.page;
   const levels = [1, 2, 3, 4, 5, 6].map((level) => page.headings.filter((h) => h.level === level).length);
+  const [message, flash] = useFlash();
   return (
     <div className="seo-onpage" data-testid="seo-onpage">
       <Section title="Search appearance" badge={<IssueBadge audit={audit} categories={['title', 'meta-description']} />}>
@@ -92,6 +97,17 @@ export function OnPage({ audit, tab }: { readonly audit: SeoAudit; readonly tab:
         {page.headings.length > 0 ? (
           <div className="seo-panel-tools">
             <HighlightToggle tab={tab} mode="headings" label="Highlight on page" testId="seo-highlight-headings" />
+            <button
+              type="button"
+              className="seo-toggle"
+              data-testid="seo-headings-copy-csv"
+              onClick={() => {
+                void actions.copySeoCsv(tab.id, auditRef(audit), 'headings').then((copied) => flash(exportStatus('headings', copied)));
+              }}
+            >
+              <CopyIcon />
+              <span>Copy as CSV</span>
+            </button>
           </div>
         ) : null}
         {page.headings.length === 0 ? (
@@ -138,6 +154,7 @@ export function OnPage({ audit, tab }: { readonly audit: SeoAudit; readonly tab:
         </div>
         {page.images.analysed < page.images.total ? <p className="seo-note">Alt text checked on the first {formatCount(page.images.analysed)} images.</p> : null}
       </Section>
+      <Flash message={message} testId="seo-onpage-flash" />
     </div>
   );
 }

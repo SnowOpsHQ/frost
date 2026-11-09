@@ -148,10 +148,65 @@ export const FEATURE_PANEL_JUMPS = [
  * - `h1`: the first visible H1's text;
  * - `robots-meta`: every robots meta as `name: content`, joined with ` · `;
  * - `status-code`: the main-frame HTTP status, as digits.
- * A key without a value (no H1, no recorded status …) writes nothing and answers `false`; its action
+ *
+ * Phase 11 (Task 1, Decision 2) appends seventeen keys, each read from the same ready audit
+ * (nothing is fetched again):
+ * - `clean-url`: the audited URL's origin and path only (no user info, query or fragment);
+ * - `origin`: its scheme, host and port (`https://example.com`);
+ * - `root-domain`: its host's registrable domain (`registrableDomain`: `www.shop.example.co.uk` →
+ *   `example.co.uk`; an IP address stays itself);
+ * - `title-with-url`, `h1-with-url`: the title (or H1) on the first line, the URL on the second;
+ * - `headings-outline`: the headings the audit kept, one per line in document order, as `H<level>: <text>`
+ *   indented by two spaces per level below 1 (an H3 line starts with four spaces);
+ * - `og-tags`, `twitter-tags`: one `name: value` line per Open Graph (`og:` tags in `SOCIAL_TAGS`
+ *   order, then `og:url`) or Twitter card tag with a value;
+ * - `word-count`: the On-Page panel's word count, as digits (`0` included);
+ * - `canonical-html`: `<link rel="canonical" href="…">` for the `canonical` value;
+ * - `hreflang-html`: one `<link rel="alternate" hreflang="…" href="…">` line per hreflang annotation
+ *   (head, then `Link` header), the resolved URL when it parses, else as written;
+ * - `x-robots-tag`: each `X-Robots-Tag` header value kept, one per line;
+ * - `response-headers`: one `name: value` line per response header the audit kept (main keeps an
+ *   allowlist, `RESPONSE_HEADER_ALLOWLIST`, never every header); a `SECRET_HEADERS` value
+ *   (`devtools.spec.ts`) is written as `MASKED_VALUE`;
+ * - `sitemaps`: the robots.txt `Sitemap:` URLs the audit read, one per line (resolved; else as written);
+ * - `all-schema-json`: every JSON-LD block with text, each pretty-printed when it parsed (as
+ *   `seo.copySchemaJson` writes one) and as kept otherwise, separated by a blank line;
+ * - `internal-urls`, `external-urls`: the distinct link URLs of that kind, one per line, in
+ *   document order (the snapshot's links, at most `SNAPSHOT_LIMITS.maxLinks`).
+ * Multi-line values use `\n` line ends. Markup values escape `& < > " '` and bidi controls exactly as
+ * `content.copySnippetHtml` does (`escapeHtml`). A value longer than `COPY_VALUE_MAX_CHARS` is cut to
+ * it (never inside a surrogate pair).
+ *
+ * A key without a value (no H1, no recorded status, no hreflang …) writes nothing and answers `false`; its action
  * is not offered. Each JSON-LD block is copied by the Schema panel's own `seo.copySchemaJson`.
  */
-export const COPY_VALUE_KEYS = ['url', 'title', 'meta-description', 'canonical', 'h1', 'robots-meta', 'status-code'] as const;
+export const COPY_VALUE_KEYS = [
+  'url',
+  'title',
+  'meta-description',
+  'canonical',
+  'h1',
+  'robots-meta',
+  'status-code',
+  // Phase 11 Task 1 (append-only).
+  'clean-url',
+  'origin',
+  'root-domain',
+  'title-with-url',
+  'h1-with-url',
+  'headings-outline',
+  'og-tags',
+  'twitter-tags',
+  'word-count',
+  'canonical-html',
+  'hreflang-html',
+  'x-robots-tag',
+  'response-headers',
+  'sitemaps',
+  'all-schema-json',
+  'internal-urls',
+  'external-urls',
+] as const;
 export type CopyValueKey = (typeof COPY_VALUE_KEYS)[number];
 export const COPY_VALUE_LABELS: Readonly<Record<CopyValueKey, string>> = {
   url: 'page URL',
@@ -161,7 +216,26 @@ export const COPY_VALUE_LABELS: Readonly<Record<CopyValueKey, string>> = {
   h1: 'H1',
   'robots-meta': 'robots meta tags',
   'status-code': 'HTTP status code',
+  'clean-url': 'URL without query or fragment',
+  origin: 'origin',
+  'root-domain': 'root domain',
+  'title-with-url': 'title and URL',
+  'h1-with-url': 'H1 and URL',
+  'headings-outline': 'headings outline',
+  'og-tags': 'Open Graph tags',
+  'twitter-tags': 'Twitter card tags',
+  'word-count': 'word count',
+  'canonical-html': 'canonical link tag',
+  'hreflang-html': 'hreflang link tags',
+  'x-robots-tag': 'X-Robots-Tag values',
+  'response-headers': 'response headers',
+  sitemaps: 'robots.txt sitemaps',
+  'all-schema-json': 'JSON-LD blocks',
+  'internal-urls': 'internal link URLs',
+  'external-urls': 'external link URLs',
 };
+/** The longest value a copy writes, in UTF-16 code units (a longer one is cut; very large outlines or header lists). */
+export const COPY_VALUE_MAX_CHARS = 1_000_000;
 
 /**
  * "Open in" external tools: a fixed, reviewed table. Each URL is the template's own `https:` origin
@@ -239,6 +313,35 @@ export const OPEN_IN_TEMPLATES = [
     path: '/cdx/search/cdx',
     urlParam: 'url',
     params: { fl: 'timestamp,statuscode,original', limit: '-50' },
+  },
+  // Backlink shortcuts (Phase 11 Task 1, Decision 2; gap analysis §4 Backlinks (a)): the vendors'
+  // public backlink pages, names only (no logos), data only on the same `browser.openTool` path, so the
+  // per-host first-use consent and every refusal above are unchanged. Backlink data itself stays with
+  // the agent's MCP presets. Each entry ships only if the vendor's public page takes the page or domain
+  // as a query parameter, with no sign-in. Verified by fetching the public pages on 2026-11-09:
+  // - Ahrefs: `https://ahrefs.com/backlink-checker/?input=<domain>` loads the free checker with the
+  //   target filled in (no account needed): shipped.
+  // - Majestic: `https://majestic.com/reports/site-explorer?q=<domain>` shows a public summary
+  //   without signing in: shipped.
+  // - Semrush: its backlink report takes the target as `q`, but shows nothing without signing in to
+  //   an account: left out (Decision 2: a page that needs a sign-in is not offered).
+  {
+    id: 'backlinks-ahrefs',
+    label: 'Backlinks to this page (Ahrefs)',
+    keywords: ['backlinks', 'links', 'referring domains', 'inbound', 'ahrefs'],
+    origin: 'https://ahrefs.com',
+    path: '/backlink-checker/',
+    urlParam: 'input',
+    params: {},
+  },
+  {
+    id: 'backlinks-majestic',
+    label: 'Backlinks to this page (Majestic)',
+    keywords: ['backlinks', 'links', 'referring domains', 'inbound', 'majestic', 'trust flow'],
+    origin: 'https://majestic.com',
+    path: '/reports/site-explorer',
+    urlParam: 'q',
+    params: {},
   },
 ] as const satisfies readonly OpenInTemplate[];
 export interface OpenInTemplate {

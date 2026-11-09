@@ -988,3 +988,20 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 | 8 | Which Help URL (README or a docs site)? | Owner decision; constant in `help.spec.ts`. |
 | 9 | Canvas/OffscreenCanvas size limits for overlays of tall full-page crops. | Task 7 spike; fall back to overlay tiles if needed. |
 | 10 | Verify the tab-local route: emulation never reaches `RenderProfileSchema`, pins, captures, screenshots or sync, and never silently drops. | Task 6 tests `render-profile-schema-rejects-emulation-fields`, `audit-stamps-emulation-with-no-profile`, `get-audit-carries-the-stamp`, `capture-refused-when-the-stamp-shows-an-override`, `capture-refused-when-overrides-turned-on-after-audit`, `capture-allowed-when-stamp-and-live-both-off`, `capture-lane-unchanged-by-emulation-stamp`, `capture-refused-when-document-loaded-under-overrides`, `screenshot-refused-while-emulation-on`, `screenshot-allowed-after-emulation-turned-off-with-stale-audit`, `screenshot-refused-when-document-loaded-under-overrides`, `capture-refused-when-overrides-revision-changes-before-persist`, `screenshot-refused-when-css-toggled-during-full-page`, `marker-kept-when-override-on-at-navigation-start`, `emulation-survives-profile-reset`, `reattach-restores-emulation` (`lane-key-unchanged-by-emulation` is only a trivially true regression guard). |
+
+---
+
+## As-built notes
+- **Lead cross-plan check (Open question 7), against main `ec046eb`:** Phases 8 and 9 merged; no
+  world id in `1_700`–`1_709` is used, Phase 10's plan adds no page script or world id, Phase 12
+  reserves only `1_302`; `read_attached_tab` is new. `AGENT_PROTOCOL_VERSION` is `9` on main, so
+  Task 9 sets it to `10`.
+- **Task 1:** backlink "Open in" entries ship for Ahrefs (`/backlink-checker/?input=`) and Majestic
+  (`/reports/site-explorer?q=`), both checked by fetching the public pages on 2026-11-09; Semrush is
+  left out (its backlink report needs a sign-in). "Copy SEO Data" is the last group of every page
+  context menu (link, selection or plain spot); a value the audit lacks shows disabled, not hidden,
+  and "Images as CSV" is disabled when the audit has no images. `actions.copySeoCsv` answers
+  `'failed'` on an IPC failure so the chrome tells "Couldn't copy" apart from "Nothing copied: the
+  audit changed". `audit-ref.ts` also exports `shownAudit` (used by exports and `content-notes.ts`).
+  The `seo-core` purity allowlist gains `seo-exports.spec` and `devtools.spec` (Zod-free) so copy
+  values reuse `SECRET_HEADERS`/`MASKED_VALUE`.

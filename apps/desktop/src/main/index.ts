@@ -7,7 +7,7 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { createAccountMain } from './account/main';
 import { createWindowRegistry } from './app-windows';
 import { createGscMain } from './gsc/main';
-import { contextMenuTemplate } from './browser/context-menu';
+import { contextMenuTemplate, copySeoMenuForContents } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
 import { confirmClearHistory } from './browser/history-dialog';
@@ -26,6 +26,7 @@ import { createCheckFetch } from './seo/checks-fetch';
 import { CHECKS_ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-checks.spec';
 import { profileUserAgent } from '@app/specs/render-profile.spec';
 import { createContentService } from './seo/content-notes';
+import { createSeoExports } from './seo/exports';
 import { confirmClearContentNotes } from './seo/content-notes-dialog';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
@@ -138,7 +139,7 @@ function start(): void {
       edit: (command) => {
         if (live()) contents[command]();
       },
-    }, searchEngine.searchEngine());
+    }, searchEngine.searchEngine(), copySeoMenuForContents(browser, contents, seoExports));
     popupContextMenu(template, window as BrowserWindow);
   };
   // The active tab is audited after each load and SPA route change (specs/seo-sidebar.feature.md):
@@ -306,6 +307,8 @@ function start(): void {
     confirmClearAll: () => confirmClearContentNotes(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
     changed: () => browser.contentNotesChanged(),
   });
+  // SEO table exports, written by main from the tab's ready audit (specs/seo-exports.feature.md).
+  const seoExports = createSeoExports({ audit: (tabId) => browser.seo.getAudit(tabId), clipboard });
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
@@ -489,6 +492,7 @@ function start(): void {
         telemetry: telemetryMain.service,
         gsc: gsc.service,
         aiChecks,
+        seoExport: seoExports,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

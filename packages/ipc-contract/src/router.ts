@@ -31,6 +31,7 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 import { changesRouter, screenshotsRouter } from './changes-router';
 import { projectsRouter } from './projects-router';
 import { inspectorRouter } from './inspector-router';
+import { seoExportRouter } from './seo-export-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).
@@ -308,6 +309,8 @@ export const appRouter = router({
   gsc: gscRouter,
   // Phase 9 Task 10 (`ai-checks.feature.md`): AI checks' mode (consent in main), state and "Check this page".
   aiChecks: aiChecksRouter,
+  // Phase 11 Task 1 (`seo-exports.feature.md`): the Images, Headings and Speed tables as CSV, written by main.
+  seoExport: seoExportRouter,
 });
 
 export type AppRouter = typeof appRouter;
