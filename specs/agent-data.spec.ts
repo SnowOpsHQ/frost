@@ -548,3 +548,114 @@ export const SKILL_FILE_WORDS = {
   toolsLabel: 'Tools it may use',
   inputsLabel: 'Asks you for',
 } as const;
+
+// ---- Chat history: search, rename, archive (Phase 11 Task 8, Decision 10; `agent-data.feature.md`, Chat history) ----
+
+/**
+ * The chat list's two views (`agent.listChats`): `active` (the default) hides archived chats,
+ * `archived` lists only them. Archiving changes nothing else: an archived chat is still stored,
+ * pruned by the retention and counted in `MAX_STORED_CHATS` like any other. Sending a message to an
+ * archived chat unarchives it (it is in use again).
+ */
+export const CHAT_LIST_FILTERS = ['active', 'archived'] as const;
+export type ChatListFilter = (typeof CHAT_LIST_FILTERS)[number];
+
+/** The longest search query (characters). */
+export const CHAT_SEARCH_MAX_CHARS = 200;
+/** The panel asks main to search this long after the last keystroke (milliseconds). */
+export const CHAT_SEARCH_DEBOUNCE_MS = 150;
+/** A search hit's snippet (characters, one line). */
+export const CHAT_SEARCH_SNIPPET_CHARS = 120;
+/**
+ * The most text a search reads per chat (characters, the user's and the assistant's text only, never
+ * tool output): what the panel keeps in memory per chat (`CHAT_ENTRIES_MAX_CHARS`). With at most
+ * `MAX_STORED_CHATS` chats, a search is a bounded scan (no full-text index).
+ */
+export const CHAT_SEARCH_SCAN_MAX_CHARS = 500_000;
+
+/** Any C0/C1 control character (line breaks included) or a line/paragraph separator: a title is one line. */
+const TITLE_REFUSED = /[\p{Cc}\u2028\u2029]/u;
+
+/**
+ * A title the user typed (`agent.renameChat`), cleaned: trimmed, one line (a line break or another
+ * control character refuses it), 1 to `STORED_CHAT_TITLE_MAX_CHARS` characters. `null`: refused.
+ * A user's title is never replaced by the automatic one (the first line of the first message).
+ */
+export function chatTitleFromUser(text: unknown): string | null {
+  if (typeof text !== 'string' || TITLE_REFUSED.test(text)) return null;
+  const title = text.trim();
+  return title === '' || title.length > STORED_CHAT_TITLE_MAX_CHARS ? null : title;
+}
+
+const REGEX_SYNTAX = /[\\^$.*+?()[\]{}|/]/g;
+
+/**
+ * A search query as a matcher: `null` for a blank one (the list is shown unfiltered). The query's
+ * words must appear in order, any run of whitespace between them; letters match whatever their case
+ * (Unicode). Only literal text: no character of the query is a pattern.
+ */
+export function chatSearchMatcher(query: unknown): ((text: string) => { readonly index: number; readonly length: number } | null) | null {
+  if (typeof query !== 'string') return null;
+  const words = query.slice(0, CHAT_SEARCH_MAX_CHARS).trim().split(/\s+/u).filter((word) => word !== '');
+  if (words.length === 0) return null;
+  const pattern = new RegExp(words.map((word) => word.replace(REGEX_SYNTAX, '\\$&')).join('\\s+'), 'iu');
+  return (text) => {
+    if (typeof text !== 'string') return null;
+    const found = pattern.exec(text);
+    return found === null ? null : { index: found.index, length: found[0].length };
+  };
+}
+
+/** A search hit in a chat's text: a one-line snippet and where the match sits in it. */
+export interface ChatSearchMatch {
+  /** At most `CHAT_SEARCH_SNIPPET_CHARS`, whitespace runs shown as one space. Untrusted text: React text only. */
+  readonly snippet: string;
+  readonly start: number;
+  readonly length: number;
+}
+
+const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+
+/**
+ * The snippet for a match at `index` (`length` characters) in `text`: the match, whitespace runs as
+ * one space, with as much text around it as fits in `CHAT_SEARCH_SNIPPET_CHARS` (a third before, the
+ * rest after, more before when the text ends), never splitting a surrogate pair. A match longer than
+ * the snippet is cut, with nothing after it.
+ */
+export function chatSearchSnippet(text: string, index: number, length: number): ChatSearchMatch {
+  const max = CHAT_SEARCH_SNIPPET_CHARS;
+  const one = (part: string) => part.replace(/\s+/gu, ' ');
+  const matched = one(text.slice(index, index + length));
+  const hit = matched.length > max ? matched.slice(0, isHigh(matched.charCodeAt(max - 1)) ? max - 1 : max) : matched;
+  const room = max - hit.length;
+  let before = one(text.slice(Math.max(0, index - max), index));
+  let after = one(text.slice(index + length, index + length + max));
+  if (index - max <= 0) before = before.trimStart();
+  if (index + length + max >= text.length) after = after.trimEnd();
+  const take = Math.min(before.length, Math.max(Math.floor(room / 3), room - after.length));
+  before = before.slice(before.length - take);
+  after = after.slice(0, Math.max(0, room - before.length));
+  // A match cut short is not followed by text from after its end.
+  if (hit.length < matched.length) after = '';
+  if (before.length > 0 && isLow(before.charCodeAt(0))) before = before.slice(1);
+  if (after.length > 0 && isHigh(after.charCodeAt(after.length - 1))) after = after.slice(0, -1);
+  return { snippet: `${before}${hit}${after}`, start: before.length, length: hit.length };
+}
+
+/** The chat list's words (search, the two views, rename and archive). */
+export const CHAT_HISTORY_WORDS = {
+  searchLabel: 'Search chats',
+  searchPlaceholder: 'Search chats',
+  active: 'Active',
+  archived: 'Archived',
+  rename: 'Rename chat',
+  renameField: 'Chat title',
+  archive: 'Archive chat',
+  unarchive: 'Unarchive chat',
+  filterLabel: 'Which chats',
+  noActive: 'No active chats',
+  noArchived: 'No archived chats',
+  noMatch: 'No chats match',
+  renameFailed: `That title could not be used. Use one line of up to ${STORED_CHAT_TITLE_MAX_CHARS} characters.`,
+} as const;

@@ -1,6 +1,6 @@
 // Spec: specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, SESSION_TABLES), specs/render-profile.feature.md (pins),
 // specs/seo-content.spec.ts (CONTENT_TABLES), specs/ai-checks.spec.ts (AI_CHECKS_TABLES),
-// specs/capture-db.spec.ts (SCREENSHOT_EDIT_TABLES; Phase 11 Decision 18: PHASE11_MIGRATIONS spread last)
+// specs/capture-db.spec.ts (SCREENSHOT_EDIT_TABLES; Phase 11 Decision 18: PHASE11_MIGRATIONS spread last, 0230 then 0231)
 // Acceptance: specs/browser-session-db.feature.md (Migrations)
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
@@ -98,10 +98,14 @@ describe('migrations', () => {
     // Ids are strictly increasing; there is nothing but forward SQL.
     const ids = MIGRATIONS.map((m) => m.id);
     expect(ids.every((id, i) => /^\d{4}_[a-z0-9_]+$/.test(id) && (i === 0 || id > ids[i - 1]!))).toBe(true);
-    // Phase 11's block is spread last (Decision 18), in id order, within its range.
-    expect(PHASE11_MIGRATIONS.map((m) => m.id)).toContain('0231_screenshot_edits');
-    expect(MIGRATIONS.slice(-PHASE11_MIGRATIONS.length)).toEqual(PHASE11_MIGRATIONS);
+    // Phase 11's block (Decision 18) sits contiguously and in id order within its range, after every
+    // lower id; a later phase's block may follow it (the strictly-increasing check covers the rest).
+    expect(PHASE11_MIGRATIONS.map((m) => m.id)).toEqual(['0230_agent_chat_lifecycle', '0231_screenshot_edits']);
     expect(PHASE11_MIGRATIONS.every((m) => m.id >= '0230' && m.id < '0240')).toBe(true);
+    const first = MIGRATIONS.indexOf(PHASE11_MIGRATIONS[0]!);
+    expect(first).toBeGreaterThan(0);
+    expect(MIGRATIONS.slice(first, first + PHASE11_MIGRATIONS.length)).toEqual(PHASE11_MIGRATIONS);
+    expect(ids.slice(0, first).every((id) => id < '0230')).toBe(true);
     // The test-only ids sit above every real one (`9000_`, `9001_`, `9999_`).
     expect(ids.every((id) => id < '9000')).toBe(true);
     for (const migration of MIGRATIONS) expect(Object.keys(migration).sort()).toEqual(['id', 'sql']);

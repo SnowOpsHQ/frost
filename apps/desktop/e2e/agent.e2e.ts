@@ -19,6 +19,7 @@ import {
   AGENT_GRANTS_EXPLAINER,
   CHAT_EXPORT_MESSAGES,
   CHAT_EXPORT_UNTRUSTED_NOTE,
+  CHAT_HISTORY_WORDS,
   SKILL_EXPORT_MESSAGES,
   SKILL_FILE_FORMAT,
   SKILL_FILE_VERSION,
@@ -781,6 +782,64 @@ test('agent-chat-export-and-restore', async () => {
     app = undefined;
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+// Phase 11 Task 8 (specs/agent-data.feature.md, Chat history): two chats with the scripted model; one
+// renamed inline and archived (it leaves Active, shows under Archived); main's search finds it by the
+// assistant's text, with the match marked in a snippet, and a phrase only a tool read finds nothing.
+test('chat-rename-archive-search', async () => {
+  await launchWith([{ text: ['The oolong is fresh and floral.'] }, { toolCalls: [{ toolName: 'page_text', input: {} }] }, { text: ['Done reading.'] }]);
+  await send('Green tea notes');
+  await expect(assistantTexts().last()).toHaveText('The oolong is fresh and floral.');
+  await page.getByTestId('agent-new-chat').click();
+  await send('What does this page say?');
+  await expect(assistantTexts().last()).toHaveText('Done reading.');
+  await expect(toolCards().last()).toContainText(AGENT_TOOL_STATUS_LABELS.done);
+
+  await page.getByTestId('agent-chats-toggle').click();
+  const items = page.getByTestId('agent-chat-item');
+  const titles = page.getByTestId('agent-chat-title');
+  await expect(titles).toHaveText(['What does this page say?', 'Green tea notes']);
+  // Rename inline: Escape keeps the title, Enter saves the new one.
+  const tea = items.filter({ hasText: 'Green tea notes' });
+  await tea.getByTestId('agent-chat-rename').click();
+  const field = page.getByTestId('agent-chat-rename-input');
+  await expect(field).toBeFocused();
+  await field.fill('Discarded');
+  await field.press('Escape');
+  await expect(titles).toHaveText(['What does this page say?', 'Green tea notes']);
+  await tea.getByTestId('agent-chat-rename').click();
+  await field.fill('  Tea tasting  ');
+  await field.press('Enter');
+  await expect(titles).toHaveText(['What does this page say?', 'Tea tasting']);
+  // Archive: gone from Active, listed under Archived.
+  await items.filter({ hasText: 'Tea tasting' }).getByTestId('agent-chat-archive').click();
+  await expect(titles).toHaveText(['What does this page say?']);
+  await page.getByTestId('agent-chats-filter-archived').click();
+  await expect(titles).toHaveText(['Tea tasting']);
+  await expect(page.getByTestId('agent-chat-archive')).toHaveAttribute('aria-label', `${CHAT_HISTORY_WORDS.unarchive}: Tea tasting`);
+  // Search (main's): the assistant's words, with a snippet and the match marked.
+  const search = page.getByTestId('agent-chats-search');
+  await search.fill('FRESH and');
+  await expect(titles).toHaveText(['Tea tasting']);
+  await expect(page.getByTestId('agent-chat-snippet')).toHaveText('The oolong is fresh and floral.');
+  await expect(page.getByTestId('agent-chat-snippet').locator('mark')).toHaveText('fresh and');
+  // The archived chat isn't in the Active list's search; the other chat's words are.
+  await page.getByTestId('agent-chats-filter-active').click();
+  await expect(page.getByTestId('agent-chats-no-match')).toHaveText(CHAT_HISTORY_WORDS.noMatch);
+  await search.fill('page say');
+  await expect(titles).toHaveText(['What does this page say?']);
+  // "Where the agent begins." is only in what page_text read: tool output is never searched.
+  await search.fill('agent begins');
+  await expect(page.getByTestId('agent-chats-no-match')).toHaveText(CHAT_HISTORY_WORDS.noMatch);
+  await expect(titles).toHaveCount(0);
+  // Cleared: the Active list again; unarchive brings the chat back.
+  await search.fill('');
+  await page.getByTestId('agent-chats-filter-archived').click();
+  await page.getByTestId('agent-chat-archive').click();
+  await expect(page.getByTestId('agent-chats-view-empty')).toHaveText(CHAT_HISTORY_WORDS.noArchived);
+  await page.getByTestId('agent-chats-filter-active').click();
+  await expect(titles).toHaveText(['What does this page say?', 'Tea tasting']);
 });
 
 // Task 10 (specs/agent-mcp.feature.md, End to end): a command MCP server configured in the

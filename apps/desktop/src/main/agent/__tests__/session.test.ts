@@ -40,7 +40,7 @@ describe('session', () => {
     expect(start.allowedTools).toEqual([...AGENT_TOOL_NAMES]);
     expect(s.runner.calls.map((call) => [call.toolName, call.context.tabId])).toEqual([['page_text', TAB]]);
 
-    expect(state.chats).toEqual([{ id: start.chatId, title: 'Check this page', tabId: TAB, updatedAt: expect.any(Number), running: false }]);
+    expect(state.chats).toEqual([{ id: start.chatId, title: 'Check this page', tabId: TAB, updatedAt: expect.any(Number), running: false, archived: false }]);
     const active = state.active!;
     expect(active).toMatchObject({ id: start.chatId, tabId: TAB, running: false, error: null, modelId: DEFAULT_MODEL_ID });
     expect(active.messages.map((message) => [message.kind, message.kind === 'assistant' ? message.streaming : null, message.kind === 'user' ? message.text : message.text])).toEqual([

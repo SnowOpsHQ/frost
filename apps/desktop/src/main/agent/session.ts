@@ -50,9 +50,15 @@ import type { ChatgptRoute } from './chatgpt/route';
 import type { ChatgptAuth } from './chatgpt/service';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, skillPageUrl as skillPageUrlOf, type BuiltinSkillId, type SkillInputSlot } from '@app/specs/skills.spec';
 import {
+  CHAT_SEARCH_SCAN_MAX_CHARS,
+  chatSearchMatcher,
+  chatSearchSnippet,
+  chatTitleFromUser,
   DEFAULT_CHAT_RETENTION,
   isChatRetention,
   retentionCutoff,
+  type ChatListFilter,
+  type ChatSearchMatch,
   type AgentSetRetentionResult,
   type AgentDeleteAllChatsResult,
   type AgentGrantView,
@@ -102,6 +108,13 @@ import type { McpManager } from './mcp';
 // retention, "Delete all chats" (after main's own confirmation), export (`exportChat`, through
 // main's save dialog) and the skills editor (`UserSkills`) all go through here, as do skills files
 // (Phase 8 Task 6, `SkillFiles`: export, and import after the user reviewed the file).
+//
+// Phase 11 Task 8 (Decision 10; `agent-data.feature.md`, Chat history): `listChats` filters the chats
+// by `active` / `archived` and searches their titles and display text (the user's and the
+// assistant's, never tool output: a chat in memory from memory, a stored one not yet opened from
+// disk through `ChatHistory.texts`); `renameChat` gives a chat the user's title (never replaced by the
+// automatic one) and `archiveChat` archives it. Neither changes `updatedAt`. A message sent to an
+// archived chat unarchives it (in memory at once, on disk with the turn's save).
 
 export interface AgentSessionDeps {
   readonly host: Pick<AgentHost, 'send' | 'onChat' | 'onStatus' | 'status' | 'lastFailure' | 'lockdown' | 'activeChats' | 'strike' | 'restart'>;
@@ -216,7 +229,12 @@ interface SkillRun {
 
 interface Chat {
   readonly id: string;
-  readonly title: string;
+  /** The automatic title (the first line of the first message), or the user's once renamed (Phase 11 Task 8). */
+  title: string;
+  /** Whether `title` is the user's: nothing replaces it but another rename. */
+  titleByUser: boolean;
+  /** When the user archived it; `null`: not archived. */
+  archivedAt: number | null;
   /** The tab it works on; `null` for a chat restored from disk until its next message binds one. */
   tabId: number | null;
   readonly createdAt: number;
@@ -265,6 +283,8 @@ interface Turn {
     readonly chatgptError: ChatgptFailure | undefined;
     readonly modelId: AgentModelId | null;
     readonly updatedAt: number;
+    /** Phase 11 Task 8: a message unarchives the chat; a refused send puts it back. */
+    readonly archivedAt: number | null;
     readonly selected: string | null;
     readonly created: boolean;
   } | null;
@@ -596,6 +616,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   };
 
   // ---- The state ----
+  const summaryOf = (chat: Chat): AgentChatSummary => ({ id: chat.id, title: chat.title, tabId: chat.tabId, updatedAt: chat.updatedAt, running: turn?.chat === chat, archived: chat.archivedAt !== null });
   const cardView = (card: ToolCard): AgentToolCardView => ({
     callId: card.callId,
     toolName: card.toolName,
@@ -656,7 +677,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     const active = selected === null ? undefined : chats.get(selected);
     const summaries: AgentChatSummary[] = [...chats.values()]
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((chat) => ({ id: chat.id, title: chat.title, tabId: chat.tabId, updatedAt: chat.updatedAt, running: turn?.chat === chat }));
+      .map(summaryOf);
     const shown = active === undefined ? [] : active.entries.slice(-MAX_DISPLAY_ENTRIES);
     cached = {
       version,
@@ -770,6 +791,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     usage: chat.usage === null ? null : { ...chat.usage },
     contextTokens: chat.contextTokens,
     truncated: chat.truncated,
+    archivedAt: chat.archivedAt,
+    titleByUser: chat.titleByUser,
     history: structuredClone(chat.history),
     entries: chat.entries.map(entrySnapshot),
   });
@@ -782,6 +805,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     usage: chat.usage === null ? null : { ...chat.usage },
     contextTokens: chat.contextTokens,
     truncated: chat.truncated,
+    archivedAt: chat.archivedAt,
+    titleByUser: chat.titleByUser,
   });
   /**
    * Saves a chat still open (one deleted meanwhile is not written back): its row, and only the
@@ -961,6 +986,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     else chat.chatgptError = before.chatgptError;
     chat.modelId = before.modelId;
     chat.updatedAt = before.updatedAt;
+    chat.archivedAt = before.archivedAt;
     selected = before.selected;
     if (before.created) chats.delete(chat.id);
   };
@@ -1273,6 +1299,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       chat = {
         id: randomId(),
         title: chatTitle(run !== null ? run.skill.name : text),
+        titleByUser: false,
+        archivedAt: null,
         tabId,
         createdAt: now(),
         updatedAt: now(),
@@ -1291,13 +1319,16 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     }
     current.chat = chat;
     chat.tabId = tabId;
-    current.before = { error: chat.error, chatgptError: chat.chatgptError, modelId: chat.modelId, updatedAt: chat.updatedAt, selected, created };
+    current.before = { error: chat.error, chatgptError: chat.chatgptError, modelId: chat.modelId, updatedAt: chat.updatedAt, archivedAt: chat.archivedAt, selected, created };
     current.historyBefore = chat.history.length;
     current.entriesBefore = chat.entries.length;
     chat.history.push({ role: 'user', content });
     chat.entries.push(run !== null ? { ...newEntry('user', skillEntryText(run.inputs, skillPageUrl)), skill: { id: run.skill.id, name: run.skill.name } } : newEntry('user', text));
     chat.error = null;
     delete chat.chatgptError;
+    // A message to an archived chat brings it back to the active list (it is in use again); the
+    // turn's save stores that.
+    chat.archivedAt = null;
     chat.modelId = modelId;
     selected = chat.id;
     touch(chat);
@@ -1372,6 +1403,24 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     }
   };
 
+  /**
+   * Where `match` first hits a chat's display text (the user's and the assistant's words, never a
+   * tool card), within `CHAT_SEARCH_SCAN_MAX_CHARS`: from memory, or for a stored chat not yet opened
+   * from disk (its rows are not read). `null`: no hit.
+   */
+  const searchText = async (chat: Chat, match: NonNullable<ReturnType<typeof chatSearchMatcher>>): Promise<ChatSearchMatch | null> => {
+    const texts = chat.loaded ? chat.entries.map((entry) => entry.text) : history === null ? null : await history.texts(chat.id);
+    let left = CHAT_SEARCH_SCAN_MAX_CHARS;
+    for (const whole of texts ?? []) {
+      if (left <= 0) break;
+      const text = whole.slice(0, left);
+      left -= text.length;
+      const hit = match(text);
+      if (hit !== null) return chatSearchSnippet(text, hit.index, hit.length);
+    }
+    return null;
+  };
+
   /** Deletes what the retention no longer keeps: on disk, and the idle chats in memory past a finite window. */
   const prune = async (): Promise<void> => {
     if (history === null) return;
@@ -1440,6 +1489,50 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       if (!restored) deletedBeforeRestore.add(chatId);
       if (history !== null) void history.remove(chatId).catch(() => log('agent session: a chat could not be deleted from disk'));
       bump();
+      return true;
+    },
+    // ---- Phase 11 Task 8: chat history ----
+    async listChats(filter: ChatListFilter, query?: string): Promise<readonly AgentChatSummary[]> {
+      if (filter !== 'active' && filter !== 'archived') return [];
+      const archived = filter === 'archived';
+      const listed = [...chats.values()].filter((chat) => (chat.archivedAt !== null) === archived).sort((a, b) => b.updatedAt - a.updatedAt);
+      const match = chatSearchMatcher(query);
+      if (match === null) return listed.map(summaryOf);
+      const out: AgentChatSummary[] = [];
+      for (const chat of listed) {
+        let hit: ChatSearchMatch | null = null;
+        try {
+          hit = await searchText(chat, match);
+        } catch {
+          hit = null;
+        }
+        // Deleted, or moved to the other list, while the search ran: left out.
+        if (disposed) return [];
+        if (chats.get(chat.id) !== chat || (chat.archivedAt !== null) !== archived) continue;
+        if (hit !== null) out.push({ ...summaryOf(chat), match: hit });
+        else if (match(chat.title) !== null) out.push(summaryOf(chat));
+      }
+      return out;
+    },
+    renameChat(chatId: string, title: string) {
+      const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
+      const clean = chatTitleFromUser(title);
+      if (chat === undefined || clean === null) return false;
+      chat.title = clean;
+      chat.titleByUser = true;
+      bump();
+      // The stored row too (nothing under `off`); a chat not stored yet gets it with its next save.
+      if (history !== null) void history.rename(chat.id, clean).then((ok) => (ok ? undefined : log('agent session: a chat could not be renamed on disk')));
+      return true;
+    },
+    archiveChat(chatId: string, archived: boolean) {
+      const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
+      if (chat === undefined || typeof archived !== 'boolean') return false;
+      const archivedAt = archived ? (chat.archivedAt ?? now()) : null;
+      if (archivedAt === chat.archivedAt) return true;
+      chat.archivedAt = archivedAt;
+      bump();
+      if (history !== null) void history.setArchived(chat.id, archivedAt).then((ok) => (ok ? undefined : log('agent session: a chat could not be archived on disk')));
       return true;
     },
     async answerApproval(approvalId: string, decision: ApprovalDecision): Promise<AgentAnswerResult> {
@@ -1514,6 +1607,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         chats.set(head.id, {
           id: head.id,
           title: head.title,
+          titleByUser: head.titleByUser,
+          archivedAt: head.archivedAt,
           tabId: null,
           createdAt: Math.min(head.createdAt, updatedAt),
           updatedAt,

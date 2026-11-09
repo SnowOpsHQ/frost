@@ -1,6 +1,8 @@
 import { and, asc, count, desc, eq, gte, lt, notInArray, sql } from 'drizzle-orm';
 import {
   CHAT_RETENTION_PREFERENCE_KEY,
+  CHAT_SEARCH_SCAN_MAX_CHARS,
+  chatTitleFromUser,
   DEFAULT_CHAT_RETENTION,
   isChatRetention,
   MAX_STORED_CHATS,
@@ -19,6 +21,9 @@ import { agentChatEntries, agentChatMessages, agentChats } from './agent-chats-s
 // protocol shape the model is sent) and its entries (the display copy), each a JSON text main
 // wrote; main parses and validates them again on the way out, so the database never interprets
 // them. At most `MAX_STORED_CHATS` are kept: saving one more deletes the least recently updated.
+// Phase 11 Task 8 (migration `0230_agent_chat_lifecycle`): a chat's title can be the user's (never
+// replaced by a save's automatic one) and a chat can be archived; neither changes `updatedAt`, so
+// archived chats are pruned and capped like the rest. Search reads the entries' text only.
 
 /** A stored chat's own row (what the chat list needs at startup). */
 export interface StoredAgentChatHead {
@@ -31,6 +36,10 @@ export interface StoredAgentChatHead {
   readonly outputTokens: number | null;
   readonly contextTokens: number | null;
   readonly truncated: boolean;
+  /** When the user archived it (`null`: not archived). */
+  readonly archivedAt: number | null;
+  /** Whether `title` is the user's (a save whose head says `false` then keeps the stored title). */
+  readonly titleByUser: boolean;
 }
 
 /** A stored chat's rows, read when the chat is opened. */
@@ -70,6 +79,21 @@ export interface AgentChatsRepository {
   deleteChatsUpdatedBefore(cutoff: number): Promise<void>;
   /** How many stored chats `deleteChatsUpdatedBefore(cutoff)` would delete. */
   countChatsUpdatedBefore(cutoff: number): Promise<number>;
+  /**
+   * Gives a stored chat the user's title (`chatTitleFromUser`, trimmed), marked as the user's; its
+   * rows and times are untouched. `false` (nothing written) for an id or a title out of bounds; an
+   * unknown id writes nothing and answers `true`.
+   */
+  renameChat(id: string, title: string): Promise<boolean>;
+  /** Archives a stored chat at `archivedAt` (`null`: unarchives it); its rows and times are untouched. `false` for bad input. */
+  setChatArchived(id: string, archivedAt: number | null): Promise<boolean>;
+  /**
+   * A stored chat's display entries' `text` in order (the user's and the assistant's words, never a
+   * tool card: SQLite reads only `$.text`), within `CHAT_SEARCH_SCAN_MAX_CHARS` in all (bounded in
+   * SQLite, before anything reaches main); an entry that
+   * isn't valid JSON or has no text is skipped. `null` if the chat isn't stored. For search.
+   */
+  chatTexts(id: string): Promise<string[] | null>;
   /** The retention setting (`DEFAULT_CHAT_RETENTION` when unset or tampered). */
   chatRetention(): Promise<ChatRetention>;
   /** Stores the retention setting; `false` (nothing written) for an unknown value or an invalid time. */
@@ -99,7 +123,9 @@ function isStorableHead(chat: StoredAgentChatHead): boolean {
     isCount(chat.inputTokens) &&
     isCount(chat.outputTokens) &&
     isCount(chat.contextTokens) &&
-    typeof chat.truncated === 'boolean'
+    typeof chat.truncated === 'boolean' &&
+    (chat.archivedAt === null || isTime(chat.archivedAt)) &&
+    typeof chat.titleByUser === 'boolean'
   );
 }
 
@@ -159,6 +185,8 @@ export function createAgentChatsRepository(db: SessionDatabase): AgentChatsRepos
           outputTokens: agentChats.outputTokens,
           contextTokens: agentChats.contextTokens,
           truncated: sql<unknown>`${agentChats.truncated}`,
+          archivedAt: sql<unknown>`${agentChats.archivedAt}`,
+          titleByUser: sql<unknown>`${agentChats.titleByUser}`,
         })
         .from(agentChats)
         .orderBy(desc(agentChats.updatedAt), desc(agentChats.id))
@@ -177,6 +205,9 @@ export function createAgentChatsRepository(db: SessionDatabase): AgentChatsRepos
           outputTokens: row.outputTokens,
           contextTokens: row.contextTokens,
           truncated: row.truncated === 1 || row.truncated === true,
+          // A tampered archive time reads as not archived.
+          archivedAt: isTime(row.archivedAt) ? row.archivedAt : null,
+          titleByUser: row.titleByUser === 1 || row.titleByUser === true,
         });
       }
       return out;
@@ -205,8 +236,16 @@ export function createAgentChatsRepository(db: SessionDatabase): AgentChatsRepos
         outputTokens: head.outputTokens,
         contextTokens: head.contextTokens,
         truncated: head.truncated,
+        archivedAt: head.archivedAt,
+        titleByUser: head.titleByUser,
       };
-      const { id: _id, createdAt: _createdAt, ...changes } = values;
+      const { id: _id, createdAt: _createdAt, title: _title, titleByUser: _titleByUser, ...rest } = values;
+      // A stored user title stays unless this save carries a user title too (Task 8: never replaced by the automatic one).
+      const changes = {
+        ...rest,
+        title: sql`CASE WHEN ${agentChats.titleByUser} = 1 AND excluded.title_by_user = 0 THEN ${agentChats.title} ELSE excluded.title END`,
+        titleByUser: sql`CASE WHEN ${agentChats.titleByUser} = 1 OR excluded.title_by_user = 1 THEN 1 ELSE 0 END`,
+      };
       const kept = db.select({ id: agentChats.id }).from(agentChats).orderBy(desc(agentChats.updatedAt), desc(agentChats.id)).limit(MAX_STORED_CHATS);
       // One transaction: the chat is never stored half written. Only rows from the given positions
       // on are touched, so a turn's save writes that turn's rows, not the whole chat.
@@ -249,6 +288,55 @@ export function createAgentChatsRepository(db: SessionDatabase): AgentChatsRepos
               .from(agentChats)
               .where(sql`${lt(agentChats.updatedAt, cutoff)} OR typeof(${agentChats.updatedAt}) <> 'integer'`);
       return row?.n ?? 0;
+    },
+
+    async renameChat(id, title) {
+      const clean = chatTitleFromUser(title);
+      if (!isId(id) || clean === null) return false;
+      // The old title is page or user text: zeroed in the file, as a delete is.
+      await secureBatch([db.update(agentChats).set({ title: clean, titleByUser: true }).where(eq(agentChats.id, id))]);
+      return true;
+    },
+
+    async setChatArchived(id, archivedAt) {
+      if (!isId(id) || (archivedAt !== null && !isTime(archivedAt))) return false;
+      await db.update(agentChats).set({ archivedAt }).where(eq(agentChats.id, id));
+      return true;
+    },
+
+    async chatTexts(id) {
+      if (!isId(id)) return null;
+      const [head] = await db.select({ id: agentChats.id }).from(agentChats).where(eq(agentChats.id, id)).limit(1);
+      if (!head) return null;
+      const entry = agentChatEntries.entry;
+      // Nested CASEs: SQLite evaluates them lazily, so `json_type` never sees text that isn't JSON.
+      const text = sql`CASE WHEN length(${entry}) > ${STORED_CHAT_ROW_MAX_CHARS} OR NOT json_valid(${entry}) THEN NULL ELSE CASE WHEN json_type(${entry}, '$.text') = 'text' AND json_extract(${entry}, '$.kind') IN ('user', 'assistant') THEN json_extract(${entry}, '$.text') ELSE NULL END END`;
+      // The scan's bound is applied in SQLite (a running total of the text before each row), so a
+      // tampered file can't hand main more than `CHAT_SEARCH_SCAN_MAX_CHARS` for one chat.
+      const scanned = db
+        .select({
+          seq: agentChatEntries.seq,
+          text: sql<unknown>`${text}`.as('text'),
+          before: sql<number>`coalesce(sum(length(${text})) OVER (ORDER BY ${agentChatEntries.seq} ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0)`.as('before'),
+        })
+        .from(agentChatEntries)
+        .where(eq(agentChatEntries.chatId, id))
+        .orderBy(asc(agentChatEntries.seq))
+        .limit(MAX_STORED_ROWS_PER_CHAT)
+        .as('scanned');
+      const rows = await db
+        .select({ text: sql<unknown>`substr(${scanned.text}, 1, ${CHAT_SEARCH_SCAN_MAX_CHARS} - ${scanned.before})` })
+        .from(scanned)
+        .where(sql`${scanned.text} IS NOT NULL AND ${scanned.before} < ${CHAT_SEARCH_SCAN_MAX_CHARS}`)
+        .orderBy(asc(scanned.seq));
+      const out: string[] = [];
+      let left = CHAT_SEARCH_SCAN_MAX_CHARS;
+      for (const row of rows) {
+        if (typeof row.text !== 'string' || left <= 0) continue;
+        out.push(row.text.slice(0, left));
+        left -= row.text.length;
+      }
+      return out;
     },
 
     async chatRetention() {

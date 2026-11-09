@@ -9,7 +9,7 @@
  * secret is ever in it; tool output appears only as bounded, inert preview text.
  */
 import { MAX_TOOL_CALLS_PER_TURN, type ApprovalDecision, type ToolActivityStatus } from './agent-approvals.spec';
-import type { ChatRetention } from './agent-data.spec';
+import type { ChatRetention, ChatSearchMatch } from './agent-data.spec';
 import type { ChatgptAccountView, ChatgptFailure, ChatgptModelView } from './agent-chatgpt.spec';
 import type { AgentMcpView } from './agent-mcp.spec';
 import { MAX_OUTPUT_TOKENS, type KeyProtection } from './agent-proxy.spec';
@@ -244,6 +244,16 @@ export interface AgentChatSummary {
   readonly tabId: number | null;
   readonly updatedAt: number;
   readonly running: boolean;
+  /**
+   * Whether the user archived it (Phase 11 Task 8, `agent-data.spec.ts` `CHAT_LIST_FILTERS`): the
+   * `active` list hides it, the `archived` list shows it. `AgentState.chats` lists both.
+   */
+  readonly archived: boolean;
+  /**
+   * `agent.listChats` with a query only: where the query matched the chat's text (the user's and the
+   * assistant's, never tool output). Absent when only the title matched.
+   */
+  readonly match?: ChatSearchMatch;
 }
 
 /** A tool call's card. Its output preview is untrusted page or third-party data: shown as inert text only. */
@@ -379,7 +389,7 @@ export interface AgentState {
   readonly setup: AgentSetupView;
   /** The skills that can run (Task 7), in the picker's order. */
   readonly skills: readonly AgentSkillView[];
-  /** Every chat, most recently updated first. */
+  /** Every chat, most recently updated first (archived ones too, marked `archived`; never a `match`). */
   readonly chats: readonly AgentChatSummary[];
   /** The selected chat; `null` for a new, empty one. */
   readonly active: AgentActiveChatView | null;

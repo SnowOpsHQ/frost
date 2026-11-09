@@ -7,6 +7,17 @@ import type { Migration } from './migrations';
 
 export const PHASE11_MIGRATIONS: readonly Migration[] = [
   {
+    // Task 8 (Decision 10): chat history. `archived_at` (when the user archived the chat, `NULL`:
+    // not archived) hides it from the default list; `title_by_user` (0 or 1) marks a title the user
+    // gave, which a save carrying the automatic one never replaces (`agent-chats.ts`). Neither touches
+    // `updated_at`, so the retention and the `MAX_STORED_CHATS` cap apply to archived chats as to any.
+    id: '0230_agent_chat_lifecycle',
+    sql: `
+      ALTER TABLE agent_chats ADD COLUMN archived_at INTEGER;
+      ALTER TABLE agent_chats ADD COLUMN title_by_user INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
     // Task 7 (Decision 9): the local-only link from an edited screenshot to its source
     // (`capture-db.spec.ts`, `SCREENSHOT_EDIT_TABLES`; `change-intel/schema.ts`, `screenshotEdits`).
     // Not synced, not append-only. When either screenshot's row is deleted (a purge, or a synced

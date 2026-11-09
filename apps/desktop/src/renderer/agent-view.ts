@@ -92,7 +92,9 @@ import {
   type AgentSkillDetail,
   type AgentSkillDraft,
   type ChatExportResult,
+  type ChatListFilter,
   type ChatRetention,
+  type ChatSearchMatch,
   type SkillEditorField,
 } from '@app/specs/agent-data.spec';
 
@@ -655,10 +657,32 @@ export interface ChatListItem {
   readonly title: string;
   readonly selected: boolean;
   readonly running: boolean;
+  /** Phase 11 Task 8: archived (the list offers Unarchive), and a search hit's snippet. */
+  readonly archived: boolean;
+  readonly match?: ChatSearchMatch;
 }
 
 export function chatListItems(chats: readonly AgentChatSummary[], activeId: string | null): readonly ChatListItem[] {
-  return chats.map((chat) => ({ id: chat.id, title: chat.title.trim() === '' ? 'Untitled chat' : chat.title, selected: chat.id === activeId, running: chat.running }));
+  return chats.map((chat) => ({
+    id: chat.id,
+    title: chat.title.trim() === '' ? 'Untitled chat' : chat.title,
+    selected: chat.id === activeId,
+    running: chat.running,
+    archived: chat.archived === true,
+    ...(chat.match !== undefined ? { match: chat.match } : {}),
+  }));
+}
+
+/** The chats one view of the list shows (Phase 11 Task 8): the archived ones under `archived`, the rest under `active`. */
+export function chatsInView(chats: readonly AgentChatSummary[], filter: ChatListFilter): readonly AgentChatSummary[] {
+  return chats.filter((chat) => (chat.archived === true) === (filter === 'archived'));
+}
+
+/** A search hit's snippet in three parts, the match in the middle (offsets kept inside the snippet). */
+export function snippetParts(match: ChatSearchMatch): { readonly before: string; readonly hit: string; readonly after: string } {
+  const start = Math.min(Math.max(0, match.start), match.snippet.length);
+  const end = Math.min(match.snippet.length, start + Math.max(0, match.length));
+  return { before: match.snippet.slice(0, start), hit: match.snippet.slice(start, end), after: match.snippet.slice(end) };
 }
 
 /** The panel header's second line: the selected chat's title, or "New chat". */

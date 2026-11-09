@@ -8,7 +8,7 @@
  */
 import { z } from 'zod';
 import { APPROVAL_DECISIONS, MAX_GRANT_ORIGIN_CHARS } from './agent-approvals.spec';
-import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_RETENTIONS, MAX_USER_SKILLS } from './agent-data.spec';
+import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_LIST_FILTERS, CHAT_RETENTIONS, CHAT_SEARCH_MAX_CHARS, chatTitleFromUser, MAX_USER_SKILLS, STORED_CHAT_TITLE_MAX_CHARS } from './agent-data.spec';
 import { CREDENTIAL_LIMITS, CREDENTIAL_SLOTS, isValidModelSettings } from './agent-proxy.spec';
 import { REASONING_EFFORTS } from './agent-reasoning.spec';
 import { CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
@@ -185,3 +185,27 @@ export const AgentImportSkillsInputSchema = z.strictObject({
 
 /** `agent.cancelSkillImport`: drops the review's token (nothing is imported). */
 export const AgentCancelSkillImportInputSchema = z.strictObject({ token: AgentSkillImportTokenSchema });
+
+// ---- Phase 11 Task 8: chat history (`agent-data.spec.ts`, Chat history) -----------------------
+
+/**
+ * `agent.listChats`: the `active` or `archived` chats, and with a non-blank `query` (at most
+ * `CHAT_SEARCH_MAX_CHARS`) only those whose title or text holds it, each with its `match`.
+ */
+export const AgentListChatsInputSchema = z.strictObject({
+  filter: z.enum(CHAT_LIST_FILTERS),
+  query: z.string().max(CHAT_SEARCH_MAX_CHARS).optional(),
+});
+
+/** `agent.renameChat`: one line, 1 to `STORED_CHAT_TITLE_MAX_CHARS` characters once trimmed (`chatTitleFromUser`; main cleans it again). */
+export const AgentRenameChatInputSchema = z.strictObject({
+  chatId: AgentChatIdSchema,
+  title: z
+    .string()
+    .min(1)
+    .max(STORED_CHAT_TITLE_MAX_CHARS)
+    .refine((title) => chatTitleFromUser(title) !== null, { message: 'not a title' }),
+});
+
+/** `agent.archiveChat`: archive (`true`) or bring back to the active list (`false`). */
+export const AgentArchiveChatInputSchema = z.strictObject({ chatId: AgentChatIdSchema, archived: z.boolean() });

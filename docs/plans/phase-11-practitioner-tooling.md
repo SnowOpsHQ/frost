@@ -1086,3 +1086,13 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   Zod length cap aborts before the base64 check. An area copy keeps the original selection
   rectangle. The editor is a page-column sheet like Projects; a lost race with a purge answers
   `no-source` (file left to the orphan sweep).
+- **Task 8:** chat history lives in main and the agent protocol is unchanged (no version bump for
+  this task). `agent.listChats({ filter, query? })` is called only to search (150 ms debounce); the
+  panel filters `AgentState.chats` (which carries `archived`) itself. Search matches the query's
+  words in order, any whitespace between, case-insensitive and literal, over the title and
+  user/assistant `text`; stored chats are read through `json_extract(entry, '$.text')` with the
+  per-chat cap applied inside SQLite, so tool cards never leave the database. Rename refuses control
+  characters rather than joining lines and writes in `secure_delete` mode; neither rename nor
+  archive changes `updatedAt`. Lead ruling: **sending a message to an archived chat unarchives
+  it**. `migrations-are-forward-only` checks that Phase 11's block is contiguous and above every
+  earlier id, not that it is last (so Phase 12's `0240` can follow).

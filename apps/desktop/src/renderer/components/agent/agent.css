@@ -1159,3 +1159,71 @@
   flex: none;
   text-decoration: none;
 }
+
+/* Phase 11 Task 8: chat history — search, the Active / Archived switch, rename and archive (specs/agent-data.spec.ts, CHAT_HISTORY_WORDS). */
+.agent-chats-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 4px 8px;
+}
+
+.agent-chats-filter {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-chats-filter button.agent-chip {
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.agent-chats-filter button.agent-chip[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.agent-chat-select {
+  height: auto;
+  min-height: 34px;
+}
+
+.agent-chat-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.agent-chat-snippet {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-chat-snippet mark {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: inherit;
+}
+
+.agent-chat-action {
+  width: 28px;
+  height: 28px;
+}
+
+.agent-chat-action .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.agent-chat-rename {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 4px;
+}

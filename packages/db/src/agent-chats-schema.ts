@@ -19,6 +19,10 @@ export const agentChats = sqliteTable('agent_chats', {
   contextTokens: integer('context_tokens'),
   /** Whether earlier entries were dropped before the chat was stored. */
   truncated: integer('truncated', { mode: 'boolean' }).notNull().default(false),
+  /** When the user archived it (Phase 11 Task 8, migration `0230_agent_chat_lifecycle`); `null`: not archived. */
+  archivedAt: integer('archived_at'),
+  /** Whether the title is one the user gave (a save with the automatic title keeps it). */
+  titleByUser: integer('title_by_user', { mode: 'boolean' }).notNull().default(false),
 });
 
 /** What the model is sent: one protocol `ChatMessage` (JSON) per row, in order. */

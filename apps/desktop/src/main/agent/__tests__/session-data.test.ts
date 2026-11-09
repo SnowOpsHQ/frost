@@ -1,6 +1,7 @@
 // Spec: specs/agent-data.spec.ts (CHAT_RETENTIONS, DEFAULT_CHAT_RETENTION, retentionCutoff,
 // MAX_STORED_CHATS, AgentGrantView, AGENT_DELETE_ALL_CHATS_RESULTS) · specs/agent-protocol.schema.ts (ChatMessage)
-// Acceptance: specs/agent-data.feature.md (Stored chats, Retention, Grants page)
+// Phase 11 Task 8: specs/agent-data.spec.ts (CHAT_LIST_FILTERS, chatSearchMatcher, chatSearchSnippet, chatTitleFromUser), AgentChatSummary.archived / match
+// Acceptance: specs/agent-data.feature.md (Stored chats, Retention, Grants page, Chat history)
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_CHAT_RETENTION } from '@app/specs/agent-data.spec';
 import type { ChatMessage } from '@app/specs/agent-protocol.schema';
@@ -41,7 +42,7 @@ describe('stored chats', () => {
     const history = createChatHistory({ store });
     const second = await setup({ steps: [{ text: ['Still fine.'] }], data: { history } });
     second.session.restore(await history.load());
-    expect(second.session.getState().chats).toEqual([{ id: chatId, title: 'How does this page read?', tabId: null, updatedAt: expect.any(Number), running: false }]);
+    expect(second.session.getState().chats).toEqual([{ id: chatId, title: 'How does this page read?', tabId: null, updatedAt: expect.any(Number), running: false, archived: false }]);
     expect(second.session.selectChat(chatId)).toBe(true);
     const active = (await second.until((state) => (state.active?.messages.length ?? 0) > 0)).active!;
     expect(active.messages.map((message) => [message.kind, message.text])).toEqual(before.messages.map((message) => [message.kind, message.text]));
@@ -275,6 +276,8 @@ describe('stored chats', () => {
       usage: { input: 3, output: 4 },
       contextTokens: 7,
       truncated: false,
+      archivedAt: null,
+      titleByUser: false,
       history: [
         { role: 'user', content: 'hi' },
         { role: 'assistant', content: 'Reading.', toolCalls: [{ callId: 'c1', toolName: 'page_text', input: {} }] },
@@ -309,6 +312,143 @@ describe('stored chats', () => {
       { role: 'tool', callId: 'c1', toolName: 'page_text', result: { ok: false, error: { code: 'failed', message: 'twice' } } },
     ];
     expect(pairedHistory(orphan)).toEqual(snapshot.history);
+  });
+});
+
+describe('chat history (Phase 11 Task 8)', () => {
+  /** Two chats on `store`: "Green tea notes" (a text answer) and "Shipping times" (answered after reading the page). */
+  const twoChats = async (store: ReturnType<typeof createMemoryChatsStore>) => {
+    const s = await setup({
+      steps: [{ text: ['The oolong  is\nfresh and floral.'] }, ...TOOL_TURN.steps],
+      outcomes: TOOL_TURN.outcomes,
+      data: { history: createChatHistory({ store }) },
+    });
+    await s.session.send(null, 'Green tea notes');
+    await s.until((state) => !state.running);
+    const tea = s.starts()[0]!.chatId;
+    s.session.newChat();
+    await s.session.send(null, 'Shipping times');
+    await s.until((state) => !state.running);
+    const shipping = s.starts()[1]!.chatId;
+    await vi.waitFor(() => expect(store.heads.size).toBe(2));
+    return { s, tea, shipping };
+  };
+
+  test('search-title-and-text', async () => {
+    const store = createMemoryChatsStore();
+    const { s, tea, shipping } = await twoChats(store);
+    // A blank query lists the filter's chats, most recent first; a title hit has no snippet.
+    expect((await s.session.listChats('active', '')).map((chat) => chat.id)).toEqual([shipping, tea]);
+    // The first message is text too: a hit there carries its snippet.
+    expect(await s.session.listChats('active', '  GREEN  ')).toEqual([{ ...s.session.getState().chats[1]!, match: { snippet: 'Green tea notes', start: 0, length: 5 } }]);
+    // A hit in the title alone (a user's title here) has none.
+    expect(s.session.renameChat(tea, 'Leaf journal')).toBe(true);
+    expect(await s.session.listChats('active', 'JOURNAL')).toEqual([{ id: tea, title: 'Leaf journal', tabId: expect.any(Number), updatedAt: expect.any(Number), running: false, archived: false }]);
+    // A hit in the assistant's text: a one-line snippet with where the match sits (whitespace runs between words match).
+    const [hit] = await s.session.listChats('active', 'oolong is fresh');
+    expect(hit!.id).toBe(tea);
+    expect(hit!.match).toEqual({ snippet: 'The oolong is fresh and floral.', start: 4, length: 15 });
+    expect(hit!.match!.snippet.slice(hit!.match!.start, hit!.match!.start + hit!.match!.length)).toBe('oolong is fresh');
+    // The user's words too, case-folded.
+    expect((await s.session.listChats('active', 'READS WELL')).map((chat) => chat.id)).toEqual([shipping]);
+    expect(await s.session.listChats('active', 'nothing like this')).toEqual([]);
+    // Archive: gone from the active list (and its search), listed under archived; unarchive brings it back.
+    expect(s.session.archiveChat(tea, true)).toBe(true);
+    expect(s.session.getState().chats.find((chat) => chat.id === tea)!.archived).toBe(true);
+    expect((await s.session.listChats('active', '')).map((chat) => chat.id)).toEqual([shipping]);
+    expect(await s.session.listChats('active', 'oolong')).toEqual([]);
+    expect((await s.session.listChats('archived', 'oolong')).map((chat) => [chat.id, chat.archived])).toEqual([[tea, true]]);
+    expect(s.session.archiveChat('00000000-0000-4000-8000-00000000dead', true)).toBe(false);
+    await vi.waitFor(() => expect(store.heads.get(tea)!.archivedAt).not.toBeNull());
+    s.stop();
+
+    // Restored and not opened: searched from disk (text only), without reading the chat's messages.
+    const rowsRead = vi.spyOn(store, 'chatRows');
+    const history = createChatHistory({ store });
+    const again = await setup({ data: { history } });
+    again.session.restore(await history.load());
+    expect((await again.session.listChats('archived', '')).map((chat) => chat.id)).toEqual([tea]);
+    const [stored] = await again.session.listChats('archived', 'FLORAL');
+    expect(stored!.match).toEqual({ snippet: 'The oolong is fresh and floral.', start: 24, length: 6 });
+    expect(rowsRead).not.toHaveBeenCalled();
+    expect(again.session.getState().chats.find((chat) => chat.id === shipping)!.archived).toBe(false);
+    expect(again.session.archiveChat(tea, false)).toBe(true);
+    expect((await again.session.listChats('active', '')).map((chat) => chat.id)).toEqual([shipping, tea]);
+    await vi.waitFor(() => expect(store.heads.get(tea)!.archivedAt).toBeNull());
+  });
+
+  test('search-excludes-tool-output', async () => {
+    const store = createMemoryChatsStore();
+    const { s, shipping } = await twoChats(store);
+    // "Green tea, fresh." is only in the page_text tool's output: no hit, in memory…
+    expect(await s.session.listChats('active', 'tea, fresh')).toEqual([]);
+    expect(await s.session.listChats('active', 'shop.example.com')).toEqual([]);
+    expect((await s.session.listChats('active', 'reads well')).map((chat) => chat.id)).toEqual([shipping]);
+    s.stop();
+    // …or from disk.
+    const history = createChatHistory({ store });
+    const again = await setup({ data: { history } });
+    again.session.restore(await history.load());
+    expect(await again.session.listChats('active', 'tea, fresh')).toEqual([]);
+    expect((await again.session.listChats('active', 'reading the page')).map((chat) => chat.id)).toEqual([shipping]);
+  });
+
+  test('retention-off-rename-in-memory', async () => {
+    const store = createMemoryChatsStore({ retention: 'off' });
+    const history = createChatHistory({ store });
+    await history.load();
+    const s = await setup({ steps: [{ text: ['One.'] }], data: { history } });
+    await s.session.send(null, 'First message');
+    await s.until((state) => !state.running);
+    const chatId = s.starts()[0]!.chatId;
+    const renamed = vi.spyOn(store, 'renameChat');
+    expect(s.session.renameChat(chatId, '  My own title ')).toBe(true);
+    expect(s.session.getState().chats[0]).toMatchObject({ id: chatId, title: 'My own title' });
+    expect(s.session.getState().active!.title).toBe('My own title');
+    expect((await s.session.listChats('active', 'own title')).map((chat) => chat.id)).toEqual([chatId]);
+    expect(s.session.archiveChat(chatId, true)).toBe(true);
+    await history.prune();
+    expect(renamed).not.toHaveBeenCalled();
+    expect(store.heads.size).toBe(0);
+    // Refused: not a title, or an unknown chat.
+    expect(s.session.renameChat(chatId, 'two\nlines')).toBe(false);
+    expect(s.session.renameChat(chatId, '   ')).toBe(false);
+    expect(s.session.renameChat('00000000-0000-4000-8000-00000000dead', 'x')).toBe(false);
+    expect(s.session.getState().chats[0]!.title).toBe('My own title');
+  });
+
+  test('rename-and-archive-stored', async () => {
+    const store = createMemoryChatsStore();
+    const first = await setup({ steps: [{ text: ['One.'] }], data: { history: createChatHistory({ store }) } });
+    await first.session.send(null, 'Automatic title');
+    await first.until((state) => !state.running);
+    const chatId = first.starts()[0]!.chatId;
+    await vi.waitFor(() => expect(store.heads.size).toBe(1));
+    first.stop();
+    // Restored, not opened: renamed and archived on disk, without reading its rows or changing its time.
+    const history = createChatHistory({ store });
+    const second = await setup({ steps: [{ text: ['Two.'] }], data: { history } });
+    second.session.restore(await history.load());
+    const rowsRead = vi.spyOn(store, 'chatRows');
+    const updatedAt = store.heads.get(chatId)!.updatedAt;
+    expect(second.session.renameChat(chatId, 'Mine')).toBe(true);
+    expect(second.session.archiveChat(chatId, true)).toBe(true);
+    await vi.waitFor(() => expect(store.heads.get(chatId)).toMatchObject({ title: 'Mine', titleByUser: true, archivedAt: expect.any(Number), updatedAt }));
+    expect(rowsRead).not.toHaveBeenCalled();
+    second.stop();
+    // Restored again with the user's title, archived. A message unarchives it (it is in use again):
+    // at once in memory, on disk with the turn's save; the user's title stays.
+    const third = createChatHistory({ store });
+    const s = await setup({ steps: [{ text: ['Three.'] }], data: { history: third } });
+    s.session.restore(await third.load());
+    expect(s.session.getState().chats[0]).toMatchObject({ id: chatId, title: 'Mine', archived: true });
+    expect(await s.session.send(chatId, 'More')).toBe('started');
+    expect(s.session.getState().chats[0]).toMatchObject({ id: chatId, archived: false });
+    expect((await s.session.listChats('active', '')).map((chat) => chat.id)).toEqual([chatId]);
+    await s.until((state) => !state.running);
+    await vi.waitFor(() => expect(store.heads.get(chatId)!.updatedAt).toBeGreaterThan(updatedAt));
+    expect(store.heads.get(chatId)).toMatchObject({ title: 'Mine', titleByUser: true, archivedAt: null });
+    expect(s.session.snapshot(chatId)!.title).toBe('Mine');
   });
 });
 
