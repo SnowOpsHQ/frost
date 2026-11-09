@@ -1,17 +1,20 @@
 // Spec: specs/projects.spec.ts (PROJECT_RUN_LIMITS, RUN_STATES, RUN_TARGET_OUTCOMES, RUN_RETRY_REFUSALS, RUN_SCOPES,
-// MOBILE_QUERY_PROFILE, TABLET_QUERY_PROFILE, RUN_SCREENSHOT_KIND, SERP_SETTLE_WAIT_MS), specs/rankings.spec.ts (SERP_RUN_VERDICTS)
-// Acceptance: specs/projects.feature.md (Capture now; Scenarios: capture run), specs/changes-capture.feature.md
-// (SERP reading: a run's search target waits for the reading; Scenario: capture-run-waits-for-the-serp-verdict)
+// MOBILE_QUERY_PROFILE, TABLET_QUERY_PROFILE, RUN_SCREENSHOT_KIND, SERP_SETTLE_WAIT_MS; Phase 10 Task 8:
+// RANK_RUN_QUERY_SPACING_MS, RUN_BLOCK_REASONS), specs/rankings.spec.ts (SERP_RUN_VERDICTS), specs/rankings-url.spec.ts (sameRunSearch)
+// Acceptance: specs/projects.feature.md (Capture now; Searches in a run; Scenarios: capture run, searches in a run),
+// specs/changes-capture.feature.md (SERP reading: a run's search target waits for the reading; Scenario:
+// capture-run-waits-for-the-serp-verdict)
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import type { CaptureAnswer } from '@app/specs/changes.spec';
-import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, SERP_SETTLE_WAIT_MS, TABLET_QUERY_PROFILE, type RunState } from '@app/specs/projects.spec';
+import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, RANK_RUN_QUERY_SPACING_MS, SERP_SETTLE_WAIT_MS, TABLET_QUERY_PROFILE, type RunBlockReason, type RunState } from '@app/specs/projects.spec';
 import type { SerpRunVerdict } from '@app/specs/rankings.spec';
 import { DEFAULT_RENDER_PROFILE, isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
-import { createCaptureRuns, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
+import { createCaptureRuns, runSearchOf, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
 import { storedPageUrl } from '../snapshot';
+import { readySerpFor } from './fakes';
 
 const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const ID = '01920000-0000-7000-8000-000000000001';
@@ -256,9 +259,10 @@ describe('capture run', () => {
   });
 
   test('capture-run-records-query-params', async () => {
-    const { runs, seen, screenshot } = setup();
     const desktop = { ...PARAMS, device: 'desktop' as const };
-    await runs.start(plan([...pages(A), query(desktop)], { screenshot: true }));
+    const targets = [...pages(A), query(desktop)];
+    const { runs, seen, screenshot } = setup(readySerpFor(targets));
+    await runs.start(plan(targets, { screenshot: true }));
     await run();
     expect(seen.map((s) => s.url)).toEqual([A, SEARCH]);
     expect(seen[1]!.options).toEqual({ projectId: PROJECT, source: 'project', searchParams: desktop, pageUrl: SEARCH });
@@ -269,7 +273,7 @@ describe('capture run', () => {
       ['page', 'saved'],
       ['query', 'saved'],
     ]);
-    // The run tab's own parameters from the SERP service win (for a page too); none: the target's.
+    // The run tab's own parameters from the SERP service win (for a page too; a page with none has none).
     const serp = { ...PARAMS, device: 'tablet' as const };
     const asked: [number, string][] = [];
     const read = setup({
@@ -306,7 +310,7 @@ describe('capture run', () => {
       asked.push([tabId, pageUrl]);
       return verdict;
     });
-    const { runs, capture } = setup({ serpVerdictOf });
+    const { runs, capture } = setup({ serpVerdictOf, searchParamsOf: readySerpFor([query(desktop)]).searchParamsOf });
     await runs.start(plan([...pages(A), query(desktop)]));
     await run(RETRY * 6);
     // The page target is captured without a verdict; the search target landed and waits while it is pending.
@@ -322,8 +326,8 @@ describe('capture run', () => {
     expect(runs.state()).toMatchObject({ state: 'done' });
     expect(outcomes(runs.state())).toEqual(['captured', 'captured']);
 
-    // A reading that stays pending: captured after SERP_SETTLE_WAIT_MS of active time (until Task 8,
-    // whatever the verdict, as Phase 6 does); time behind another tab does not count.
+    // A reading that stays pending: after SERP_SETTLE_WAIT_MS of active time the run stops there
+    // (Task 8: `no-reading`, nothing captured); time behind another tab does not count.
     const slow = setup({ serpVerdictOf: () => 'pending' });
     await slow.runs.start(plan([query(desktop)]));
     await run(SERP_SETTLE_WAIT_MS / 2);
@@ -333,18 +337,21 @@ describe('capture run', () => {
     slow.state.activeTabId = 10;
     await run(SERP_SETTLE_WAIT_MS / 2 - RETRY * 2);
     expect(slow.capture).not.toHaveBeenCalled();
+    expect(outcomes(slow.runs.state())).toEqual(['running']);
     await run(SERP_SETTLE_WAIT_MS / 2);
-    expect(slow.capture).toHaveBeenCalledOnce();
-    expect(outcomes(slow.runs.state())).toEqual(['captured']);
+    expect(slow.capture).not.toHaveBeenCalled();
+    expect(slow.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'no-reading' });
+    expect(outcomes(slow.runs.state())).toEqual(['blocked']);
 
-    // The wait counts toward the target's active timeout: a settle wait longer than it ends the target timed out.
+    // The wait counts toward the target's active timeout: a settle wait longer than it stops the run (`timed-out`).
     const late = setup({ serpVerdictOf: () => 'pending', limits: { serpSettleWaitMs: TIMEOUT * 2 } });
     await late.runs.start(plan([query(desktop), ...pages(A)]));
-    await run(TIMEOUT + RETRY * 4);
-    expect(outcomes(late.runs.state())[0]).toBe('timed-out');
-    await run(RETRY * 4);
-    expect(late.capture.mock.calls.map(([, options]) => options.pageUrl)).toEqual([A]);
-    expect(late.runs.state().state).toBe('done');
+    await run(TIMEOUT - RETRY * 4);
+    expect(outcomes(late.runs.state())).toEqual(['running', 'pending']);
+    await run(RETRY * 8);
+    expect(outcomes(late.runs.state())).toEqual(['blocked', 'cancelled']);
+    expect(late.capture).not.toHaveBeenCalled();
+    expect(late.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'timed-out' });
 
     // Cancel during the wait: at once, the target cancelled, nothing captured.
     const cancelled = setup({ serpVerdictOf: () => 'pending' });
@@ -455,9 +462,10 @@ describe('capture run', () => {
   });
 
   test('capture-run-applies-profiles', async () => {
-    const { runs, seen, browser, pins } = setup();
     const desktop = { ...PARAMS, device: 'desktop' as const };
-    await runs.start(plan([...pages(A), query(PARAMS, SEARCH, 'mobile'), query(desktop, `${SEARCH}&x`, 'desktop'), ...pages(B)], { profile: PHONE }));
+    const targets = [...pages(A), query(PARAMS, SEARCH, 'mobile'), query(desktop, `${SEARCH}&x`, 'desktop'), ...pages(B)];
+    const { runs, seen, browser, pins } = setup({ ...readySerpFor(targets), limits: { querySpacingMs: 0, serpSettleWaitMs: 0 } });
+    await runs.start(plan(targets, { profile: PHONE }));
     await run(RETRY * 12);
     // Grouped by profile: the project's group in one tab, the mobile query in a fresh one, each set before its first navigation.
     expect(runs.state().targets.map((t) => t.label)).toEqual([A, 'desktop', B, 'mobile']);
@@ -474,8 +482,9 @@ describe('capture run', () => {
     expect(runs.state().state).toBe('done');
     expect(pins.size).toBe(0);
     // A tablet query is visited as a tablet.
-    const tablet = setup();
-    await tablet.runs.start(plan([query({ ...PARAMS, device: 'tablet' }, SEARCH, 'tablet')]));
+    const tabletTargets = [query({ ...PARAMS, device: 'tablet' }, SEARCH, 'tablet')];
+    const tablet = setup({ ...readySerpFor(tabletTargets), limits: { querySpacingMs: 0, serpSettleWaitMs: 0 } });
+    await tablet.runs.start(plan(tabletTargets));
     await run(RETRY * 6);
     expect(tablet.browser.setRenderProfile.mock.calls).toEqual([[10, TABLET_QUERY_PROFILE]]);
     expect(tablet.seen.map((s) => s.profile)).toEqual([TABLET_QUERY_PROFILE]);
@@ -483,11 +492,12 @@ describe('capture run', () => {
 
   test('capture-run-never-removes-a-pin', async () => {
     // The user pinned profiles to the search engine and to a page's site.
-    const { runs, seen, browser, pins } = setup();
+    const desktop = { ...PARAMS, device: 'desktop' as const };
+    const targets = [query(PARAMS, SEARCH, 'mobile'), query(desktop, `${SEARCH}&x`, 'desktop'), ...pages(A)];
+    const { runs, seen, browser, pins } = setup({ ...readySerpFor(targets), limits: { querySpacingMs: 0, serpSettleWaitMs: 0 } });
     pins.set('https://www.google.com', NO_JS);
     pins.set('https://example.com', PHONE);
-    const desktop = { ...PARAMS, device: 'desktop' as const };
-    await runs.start(plan([query(PARAMS, SEARCH, 'mobile'), query(desktop, `${SEARCH}&x`, 'desktop'), ...pages(A)]));
+    await runs.start(plan(targets));
     await run(RETRY * 12);
     expect(runs.state().state).toBe('done');
     // A mobile query, then a desktop one on the same site: the default profile is never set on a tab.
@@ -666,7 +676,7 @@ describe('capture run', () => {
   // spec: specs/projects.feature.md — Run scope (`RUN_SCOPES`): `searches` visits only the saved searches.
   test('run-scope-searches-skips-pages', async () => {
     const desktop = { ...PARAMS, device: 'desktop' as const };
-    const { runs, seen } = setup();
+    const { runs, seen } = setup(readySerpFor([query(desktop)]));
     await runs.start(plan([...pages(A, B), query(desktop)], { scope: 'searches' }));
     // Only the search is planned: the pages are neither visited nor counted as omitted.
     expect(runs.state()).toMatchObject({ total: 1, omitted: 0 });
@@ -680,7 +690,7 @@ describe('capture run', () => {
     await expect(none.runs.start(plan(pages(A, B), { scope: 'searches' }))).resolves.toEqual({ status: 'refused', reason: 'no-targets' });
     expect(none.browser.newTab).not.toHaveBeenCalled();
     // `all` (and no scope) visits pages and searches, as before.
-    const all = setup();
+    const all = setup(readySerpFor([query(desktop)]));
     await all.runs.start(plan([...pages(A), query(desktop)], { scope: 'all' }));
     await run();
     expect(all.seen.map((s) => s.url)).toEqual([A, SEARCH]);
@@ -706,5 +716,376 @@ describe('capture run', () => {
     await expect(polls[0]).resolves.toBe(idle);
     await vi.advanceTimersByTimeAsync(PROJECT_RUN_LIMITS.runStateWatchTimeoutMs);
     await Promise.all(polls);
+  });
+});
+
+// ---- Searches in a run (Phase 10 Task 8; plan Decision 10) ----------------------------------------
+
+const DESKTOP: SearchParams = { ...PARAMS, device: 'desktop' };
+/** Another search on the same engine: its result page is a result page, but not the target's. */
+const BLACK: SearchParams = { ...DESKTOP, query: 'black tea', url: 'https://www.google.com/search?q=black+tea&gl=de&hl=de' };
+const BLACK_SEARCH = 'https://www.google.com/search?q=black%20tea&hl=de&gl=de';
+const SPACING = RANK_RUN_QUERY_SPACING_MS;
+
+/** Records when each navigation happened (fake clock). */
+function timedNavigations(fake: ReturnType<typeof setup>): [string, number][] {
+  const at: [string, number][] = [];
+  const original = fake.browser.navigate.getMockImplementation()!;
+  fake.browser.navigate.mockImplementation((url: string) => {
+    at.push([url, Date.now()]);
+    return original(url);
+  });
+  return at;
+}
+
+describe('searches in a run', () => {
+  // spec: specs/projects.feature.md — Searches in a run (Pacing); projects.spec.ts RANK_RUN_QUERY_SPACING_MS
+  test('capture-run-spaces-search-targets', async () => {
+    expect(PROJECT_RUN_LIMITS.querySpacingMs).toBe(SPACING);
+    expect(SPACING).toBe(10_000);
+    const targets = [query(DESKTOP), ...pages(A), query(BLACK, BLACK_SEARCH, 'black')];
+    const fake = setup(readySerpFor(targets));
+    const at = timedNavigations(fake);
+    await fake.runs.start(plan(targets));
+    await run(RETRY * 4);
+    // The page after a search is not delayed; the next search waits.
+    expect(at.map(([url]) => url)).toEqual([SEARCH, A]);
+    expect(at[1]![1] - at[0]![1]).toBeLessThanOrEqual(RETRY * 2);
+    // Between targets: the next search is not under way yet.
+    expect(outcomes(fake.runs.state())).toEqual(['captured', 'captured', 'pending']);
+    await run(SPACING);
+    expect(at.map(([url]) => url)).toEqual([SEARCH, A, BLACK_SEARCH]);
+    // From the first search's end (it landed and was captured one look after its navigation): at least the spacing.
+    const gap = at[2]![1] - at[0]![1];
+    expect(gap).toBeGreaterThanOrEqual(SPACING + RETRY);
+    expect(gap).toBeLessThanOrEqual(SPACING + RETRY * 2);
+    await run(RETRY * 4);
+    expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    expect(outcomes(fake.runs.state())).toEqual(['captured', 'captured', 'captured']);
+
+    // The wait is not the next target's active time: a spacing longer than the timeout still captures it.
+    const searches = [query(DESKTOP), query(BLACK, BLACK_SEARCH, 'black')];
+    const long = setup({ ...readySerpFor(searches), limits: { querySpacingMs: TIMEOUT * 2 } });
+    await long.runs.start(plan(searches));
+    await run(TIMEOUT * 2 + RETRY * 6);
+    expect(long.runs.state()).toMatchObject({ state: 'done' });
+    expect(outcomes(long.runs.state())).toEqual(['captured', 'captured']);
+
+    // Cancel during the wait ends the run at once: the next search is never loaded.
+    const cancelled = setup(readySerpFor(searches));
+    const navigated = timedNavigations(cancelled);
+    await cancelled.runs.start(plan(searches));
+    await run(RETRY * 4);
+    expect(outcomes(cancelled.runs.state())).toEqual(['captured', 'pending']);
+    expect(cancelled.runs.cancel()).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cancelled.runs.state()).toMatchObject({ state: 'cancelled' });
+    expect(outcomes(cancelled.runs.state())).toEqual(['captured', 'cancelled']);
+    expect(navigated.map(([url]) => url)).toEqual([SEARCH]);
+    expect(cancelled.tabs.map((t) => t.id)).toEqual([1]);
+    // A stop on quit during the wait does the same.
+    const stopped = setup(readySerpFor(searches));
+    await stopped.runs.start(plan(searches));
+    await run(RETRY * 4);
+    stopped.runs.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stopped.runs.state().state).toBe('cancelled');
+    expect(stopped.browser.navigate.mock.calls).toEqual([[SEARCH]]);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Stop at the first challenge, checked before capture)
+  test('capture-run-stops-at-a-challenge', async () => {
+    type Case = {
+      readonly name: string;
+      readonly reason: RunBlockReason;
+      readonly verdict?: SerpRunVerdict;
+      readonly tabParams?: SearchParams | null;
+      /** Where the navigation lands instead of the search URL. */
+      readonly lands?: string;
+      /** The page commits but never finishes loading. */
+      readonly stuck?: boolean;
+      readonly time: number;
+      /** Blocked before Phase 3 is asked anything. */
+      readonly noVerdict?: boolean;
+    };
+    const cases: Case[] = [
+      { name: 'a consent page on another host', reason: 'not-a-result-page', lands: 'https://consent.google.com/ml?continue=https://www.google.com/search?q%3Dgreen%2Btea&gl=DE', time: RETRY * 4, noVerdict: true },
+      { name: 'a /sorry/ path on the engine host', reason: 'not-a-result-page', lands: 'https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dgreen%2Btea&q=EgQ', time: RETRY * 4, noVerdict: true },
+      { name: 'an unreadable verdict', reason: 'unreadable', verdict: 'unreadable', time: RETRY * 4 },
+      { name: 'a not-serp verdict', reason: 'not-a-result-page', verdict: 'not-serp', time: RETRY * 4 },
+      { name: 'a disabled verdict', reason: 'serp-off', verdict: 'disabled', time: RETRY * 4 },
+      { name: 'a ready verdict for another search', reason: 'mismatch', verdict: 'ready', tabParams: BLACK, time: RETRY * 4 },
+      { name: 'a page that stays pending', reason: 'no-reading', verdict: 'pending', time: SERP_SETTLE_WAIT_MS + RETRY * 4 },
+      { name: 'a page that never finishes loading', reason: 'timed-out', verdict: 'ready', stuck: true, time: TIMEOUT + RETRY * 4, noVerdict: true },
+    ];
+    for (const c of cases) {
+      const serpVerdictOf = vi.fn((_tabId: number, _pageUrl: string): SerpRunVerdict => c.verdict ?? 'ready');
+      const fake = setup({ serpVerdictOf, searchParamsOf: () => (c.tabParams === undefined ? DESKTOP : c.tabParams) });
+      if (c.lands !== undefined || c.stuck)
+        fake.browser.navigate.mockImplementationOnce(() => {
+          const tab = fake.tab(10)!;
+          tab.url = c.lands ?? SEARCH;
+          tab.documentSeq += 1;
+          tab.loading = c.stuck === true;
+          return true;
+        });
+      await fake.runs.start(plan([query(DESKTOP), ...pages(B)], { screenshot: true }));
+      await run(c.time);
+      const ended = fake.runs.state();
+      expect(ended, c.name).toMatchObject({ state: 'blocked', blockedReason: c.reason });
+      expect(outcomes(ended), c.name).toEqual(['blocked', 'cancelled']);
+      // Nothing of that page is stored: no capture (so no version or reading) and no screenshot.
+      expect(fake.capture, c.name).not.toHaveBeenCalled();
+      expect(fake.screenshot, c.name).not.toHaveBeenCalled();
+      // The run went no further, and its tab is gone.
+      expect(fake.browser.navigate.mock.calls, c.name).toEqual([[SEARCH]]);
+      expect(fake.tabs.map((t) => t.id), c.name).toEqual([1]);
+      expect(fake.runs.running(), c.name).toBeNull();
+      if (c.noVerdict) expect(serpVerdictOf, c.name).not.toHaveBeenCalled();
+    }
+    // Not before the settle wait: a pending page is still waited for just short of it.
+    const waiting = setup({ serpVerdictOf: () => 'pending', searchParamsOf: () => DESKTOP });
+    await waiting.runs.start(plan([query(DESKTOP)]));
+    await run(SERP_SETTLE_WAIT_MS - RETRY * 2);
+    expect(waiting.runs.state()).toMatchObject({ state: 'running', blockedReason: null });
+    // A tab that moves away from its landed search page (a consent page by script) stops the run too.
+    const moved = setup({ serpVerdictOf: () => 'pending', searchParamsOf: () => DESKTOP });
+    await moved.runs.start(plan([query(DESKTOP), query(BLACK, BLACK_SEARCH, 'black')]));
+    await run(RETRY * 2);
+    moved.tab(10)!.url = 'https://consent.google.com/ml?continue=x';
+    moved.tab(10)!.documentSeq += 1;
+    await run(RETRY * 2);
+    expect(moved.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'not-a-result-page' });
+    expect(outcomes(moved.runs.state())).toEqual(['blocked', 'cancelled']);
+    expect(moved.capture).not.toHaveBeenCalled();
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (3. captures only on `ready` whose search is the target's)
+  test('capture-run-captures-only-on-ready', async () => {
+    // The tab reads the same search on another device (a site's pin): the same search, captured with the tab's own parameters.
+    const tablet: SearchParams = { ...DESKTOP, device: 'tablet' };
+    const verdicts: SerpRunVerdict[] = ['pending', 'pending', 'ready'];
+    const fake = setup({ serpVerdictOf: () => verdicts.shift() ?? 'ready', searchParamsOf: () => tablet });
+    await fake.runs.start(plan([query(DESKTOP)], { screenshot: true }));
+    await run(RETRY * 2);
+    expect(fake.capture).not.toHaveBeenCalled();
+    await run(RETRY * 4);
+    expect(fake.capture).toHaveBeenCalledExactlyOnceWith(10, { projectId: PROJECT, source: 'project', searchParams: tablet, pageUrl: storedPageUrl(SEARCH) });
+    expect(fake.screenshot).toHaveBeenCalledExactlyOnceWith(10, { kind: 'viewport', projectId: PROJECT, captureId: ID, searchParams: tablet });
+    expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    expect(outcomes(fake.runs.state())).toEqual(['captured']);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (page targets keep Phase 6's behaviour)
+  test('capture-run-page-targets-never-block', async () => {
+    // A page that never settles times out, and the run goes on to the search; a page never asks for a verdict.
+    const serpVerdictOf = vi.fn((_tabId: number, pageUrl: string): SerpRunVerdict => (pageUrl === A ? 'disabled' : 'ready'));
+    const fake = setup({ serpVerdictOf, searchParamsOf: (_tabId, pageUrl) => (pageUrl === A ? null : DESKTOP) });
+    fake.capture.mockImplementation(async (tabId, options) => (options.pageUrl === A ? { status: 'refused', reason: 'no-audit' } : CAPTURED));
+    await fake.runs.start(plan([...pages(A), query(DESKTOP)]));
+    await run(TIMEOUT + RETRY * 6);
+    expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    expect(outcomes(fake.runs.state())).toEqual(['timed-out', 'captured']);
+    expect(serpVerdictOf.mock.calls.every(([, pageUrl]) => pageUrl !== A)).toBe(true);
+    // A page target on a page SERP reading cannot read (or with reading off) is captured, with no parameters.
+    const plain = setup({ serpVerdictOf: () => 'disabled' });
+    await plain.runs.start(plan(pages(A, B)));
+    await run();
+    expect(outcomes(plain.runs.state())).toEqual(['captured', 'captured']);
+    expect(plain.seen.map((s) => s.options.searchParams)).toEqual([null, null]);
+    expect(plain.runs.state().state).toBe('done');
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (the next run starts as any run does)
+  test('capture-run-after-blocked-starts-normally', async () => {
+    let verdict: SerpRunVerdict = 'unreadable';
+    const fake = setup({ serpVerdictOf: () => verdict, searchParamsOf: () => DESKTOP });
+    await fake.runs.start(plan([query(DESKTOP)]));
+    await run();
+    expect(fake.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'unreadable' });
+    verdict = 'ready';
+    expect(await fake.runs.start(plan([query(DESKTOP), ...pages(A)]))).toEqual({ status: 'started', runId: ID });
+    expect(fake.runs.state()).toMatchObject({ state: 'running', blockedReason: null, total: 2 });
+    // Its search waits its spacing after the blocked one (it was sent), then goes as usual.
+    expect(outcomes(fake.runs.state())).toEqual(['pending', 'pending']);
+    await run(SPACING);
+    expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    expect(outcomes(fake.runs.state())).toEqual(['captured', 'captured']);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Pacing, Task 8 review ruling: a navigation the
+  // browse guard refused was never sent and adds no wait)
+  test('capture-run-no-wait-after-a-failed-load', async () => {
+    const searches = [query(DESKTOP), query(BLACK, BLACK_SEARCH, 'black')];
+    const fake = setup(readySerpFor(searches));
+    const at = timedNavigations(fake);
+    // The browse guard refuses the first navigation: nothing is sent.
+    fake.browser.navigate.mockImplementationOnce((url: string) => {
+      at.push([url, Date.now()]);
+      return false;
+    });
+    await fake.runs.start(plan(searches));
+    await run(RETRY * 6);
+    // That target fails; the second goes at once and is captured.
+    expect(at.map(([url]) => url)).toEqual([SEARCH, BLACK_SEARCH]);
+    expect(at[1]![1] - at[0]![1]).toBeLessThan(SPACING);
+    expect(outcomes(fake.runs.state())).toEqual(['failed', 'captured']);
+    expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Task 8 review ruling: a search whose load fails stops the run)
+  test('capture-run-stops-after-a-failed-search-load', async () => {
+    for (const how of ['offline', 'crash'] as const) {
+      const searches = [query(DESKTOP), query(BLACK, BLACK_SEARCH, 'black'), ...pages(A)];
+      const fake = setup(readySerpFor(searches));
+      fake.browser.navigate.mockImplementationOnce((url: string) => {
+        const tab = fake.tab(10)!;
+        if (how === 'offline') tab.error = { code: -101, description: 'ERR_CONNECTION_RESET', url };
+        else tab.crashed = true;
+        return true;
+      });
+      await fake.runs.start(plan(searches, { screenshot: true }));
+      await run(RETRY * 6);
+      expect(fake.runs.state(), how).toMatchObject({ state: 'blocked', blockedReason: 'load-failed' });
+      expect(outcomes(fake.runs.state()), how).toEqual(['blocked', 'cancelled', 'cancelled']);
+      // The next target is never navigated; nothing is captured.
+      expect(fake.browser.navigate.mock.calls, how).toEqual([[SEARCH]]);
+      expect(fake.capture, how).not.toHaveBeenCalled();
+      expect(fake.screenshot, how).not.toHaveBeenCalled();
+    }
+    // A page target's failed load still only fails it, and the run goes on.
+    const page = setup();
+    page.state.fail = true;
+    await page.runs.start(plan(pages(A, B)));
+    await run(RETRY * 6);
+    expect(page.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    expect(outcomes(page.runs.state())).toEqual(['failed', 'failed']);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Task 8 review ruling: a page target that is a result page is a search target)
+  test('capture-run-result-page-target-is-gated', async () => {
+    // A page target whose URL is Google's result page: gated as a search, with its own parameters as the target's.
+    const own = runSearchOf({ kind: 'page', url: SEARCH, searchParams: null });
+    expect(own).toMatchObject({ engine: 'google', query: 'green tea', gl: 'de', hl: 'de' });
+    expect(runSearchOf({ kind: 'page', url: A, searchParams: null })).toBeNull();
+    expect(runSearchOf({ kind: 'query', url: SEARCH, searchParams: DESKTOP })).toBe(DESKTOP);
+    // Unreadable: the run stops there, nothing captured, the next target never visited.
+    const challenge = setup({ serpVerdictOf: () => 'unreadable', searchParamsOf: () => DESKTOP });
+    await challenge.runs.start(plan([...pages(SEARCH), ...pages(A)]));
+    await run();
+    expect(challenge.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'unreadable' });
+    expect(challenge.capture).not.toHaveBeenCalled();
+    expect(challenge.browser.navigate.mock.calls).toEqual([[SEARCH]]);
+    // A ready reading of another search: mismatch against the page's own parameters.
+    const other = setup({ serpVerdictOf: () => 'ready', searchParamsOf: () => BLACK });
+    await other.runs.start(plan(pages(SEARCH)));
+    await run();
+    expect(other.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'mismatch' });
+    expect(other.capture).not.toHaveBeenCalled();
+    // A ready reading of its own search is captured with the tab's parameters; the next search is spaced after it.
+    const ok = setup({ serpVerdictOf: () => 'ready', searchParamsOf: (_tabId, pageUrl) => (pageUrl === storedPageUrl(SEARCH) ? DESKTOP : BLACK) });
+    const at = timedNavigations(ok);
+    await ok.runs.start(plan([...pages(SEARCH), query(BLACK, BLACK_SEARCH, 'black')]));
+    await run(RETRY * 4);
+    expect(ok.seen.map((seen) => seen.options.searchParams)).toEqual([DESKTOP]);
+    expect(at.map(([url]) => url)).toEqual([SEARCH]);
+    await run(SPACING + RETRY * 4);
+    expect(at.map(([url]) => url)).toEqual([SEARCH, BLACK_SEARCH]);
+    expect(at[1]![1] - at[0]![1]).toBeGreaterThanOrEqual(SPACING);
+    expect(ok.runs.state()).toMatchObject({ state: 'done' });
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Task 8 review ruling: the landed document only, never re-checked)
+  test('capture-run-blocks-a-reload-after-the-check', async () => {
+    // The page reloads (same URL, a new document) while the check reads the tab's parameters.
+    const fake = setup({
+      serpVerdictOf: () => 'ready',
+      searchParamsOf: () => {
+        fake.tab(10)!.documentSeq += 1;
+        return DESKTOP;
+      },
+    });
+    await fake.runs.start(plan([query(DESKTOP), ...pages(A)], { screenshot: true }));
+    await run();
+    expect(fake.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'not-a-result-page' });
+    expect(outcomes(fake.runs.state())).toEqual(['blocked', 'cancelled']);
+    expect(fake.capture).not.toHaveBeenCalled();
+    expect(fake.screenshot).not.toHaveBeenCalled();
+    // A reload while the reading is pending, then ready: still stopped, not checked again.
+    let verdict: SerpRunVerdict = 'pending';
+    const late = setup({ serpVerdictOf: () => verdict, searchParamsOf: () => DESKTOP });
+    await late.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 2);
+    late.tab(10)!.documentSeq += 1;
+    verdict = 'ready';
+    await run(RETRY * 2);
+    expect(late.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'not-a-result-page' });
+    expect(late.capture).not.toHaveBeenCalled();
+    // A reload after the capture, before its screenshot: the capture of the checked page stays, without a screenshot, and the run stops.
+    const shot = setup(readySerpFor([query(DESKTOP)]));
+    shot.capture.mockImplementationOnce(async () => {
+      shot.tab(10)!.documentSeq += 1;
+      return CAPTURED;
+    });
+    await shot.runs.start(plan([query(DESKTOP), ...pages(A)], { screenshot: true }));
+    await run();
+    expect(shot.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'not-a-result-page' });
+    expect(shot.runs.state().targets.map((t) => [t.outcome, t.screenshot])).toEqual([
+      ['captured', 'failed'],
+      ['cancelled', null],
+    ]);
+    expect(shot.screenshot).not.toHaveBeenCalled();
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Task 8 review ruling: spacing holds across runs)
+  test('capture-run-spacing-holds-across-runs', async () => {
+    const searches = [query(DESKTOP), query(BLACK, BLACK_SEARCH, 'black')];
+    const fake = setup(readySerpFor(searches));
+    const at = timedNavigations(fake);
+    // Cancel during the wait, then Check rankings at once: the next search still waits its spacing.
+    await fake.runs.start(plan(searches));
+    await run(RETRY * 4);
+    fake.runs.cancel();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await fake.runs.start(plan(searches.slice(1), { scope: 'searches' }))).toMatchObject({ status: 'started' });
+    await run(RETRY * 4);
+    expect(at.map(([url]) => url)).toEqual([SEARCH]);
+    await run(SPACING);
+    expect(at.map(([url]) => url)).toEqual([SEARCH, BLACK_SEARCH]);
+    expect(at[1]![1] - at[0]![1]).toBeGreaterThanOrEqual(SPACING);
+    await run(RETRY * 4);
+    expect(fake.runs.state().state).toBe('done');
+    // A rerun right after a blocked run waits too (the blocked search was sent).
+    fake.capture.mockClear();
+    const blocked = setup({ serpVerdictOf: () => 'unreadable', searchParamsOf: () => DESKTOP });
+    const sent = timedNavigations(blocked);
+    await blocked.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 4);
+    expect(blocked.runs.state().state).toBe('blocked');
+    await blocked.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 4);
+    expect(sent).toHaveLength(1);
+    await run(SPACING);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]![1] - sent[0]![1]).toBeGreaterThanOrEqual(SPACING);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (`ready` with no tab parameters is `no-reading`)
+  test('capture-run-ready-needs-tab-params', async () => {
+    const searchParamsOf = vi.fn((_tabId: number, _pageUrl: string): SearchParams | null => null);
+    const fake = setup({ serpVerdictOf: () => 'ready', searchParamsOf });
+    await fake.runs.start(plan([query(DESKTOP), ...pages(A)], { screenshot: true }));
+    await run();
+    expect(fake.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'no-reading' });
+    expect(outcomes(fake.runs.state())).toEqual(['blocked', 'cancelled']);
+    expect(searchParamsOf).toHaveBeenCalledWith(10, storedPageUrl(SEARCH));
+    expect(fake.capture).not.toHaveBeenCalled();
+    expect(fake.screenshot).not.toHaveBeenCalled();
+    // No `searchParamsOf` at all reads the same.
+    const none = setup({ serpVerdictOf: () => 'ready' });
+    await none.runs.start(plan([query(DESKTOP)]));
+    await run();
+    expect(none.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'no-reading' });
+    expect(none.capture).not.toHaveBeenCalled();
   });
 });

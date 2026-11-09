@@ -4,12 +4,13 @@
 // Acceptance: specs/rankings.feature.md (The views: compare-keeps-picks-on-refresh,
 // compare-shares-one-dates-read, compare-drops-a-stale-answer, compare-says-refusals,
 // series-close-returns-focus); specs/projects.feature.md (The sheet: projects-run-progress-on-every-view;
-// Phase 10 Task 7's star and sort, Settings, tags and Bulk add)
+// Phase 10 Task 7's star and sort, Settings, tags and Bulk add; Task 8's Due, Check rankings, cadence and blocked run)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import { BULK_ADD_TEXT, PROJECT_REFUSAL_MESSAGES, PROJECT_SETTINGS_TEXT, PROJECT_VIEWS, type ProjectSummary } from '@app/specs/projects.spec';
+import { CADENCE_TEXT, CAPTURE_SCHEDULE_NOTE } from '@app/specs/capture-schedule.spec';
+import { BULK_ADD_TEXT, DUE_TEXT, PROJECT_REFUSAL_MESSAGES, PROJECT_SETTINGS_TEXT, PROJECT_VIEWS, RUN_BLOCKED_NOTE, RUN_BLOCK_REASON_LABELS, RUN_REFUSAL_MESSAGES, type ProjectSummary } from '@app/specs/projects.spec';
 import { RANKINGS_REFUSAL_MESSAGES, type RankPoint, type RankTableRow, type ReadingDate, type SearchParamsShape } from '@app/specs/rankings.spec';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,7 +42,7 @@ const comparison = (a: string, b: string) => ({
 const fakes = vi.hoisted(() => ({
   rankings: { table: vi.fn(), series: vi.fn(), readingDates: vi.fn(), compare: vi.fn(), copyCsv: vi.fn(), saveCsv: vi.fn() },
   projects: { list: vi.fn(), get: vi.fn(), runState: vi.fn() },
-  workspace: { setFavorite: vi.fn(), setSite: vi.fn(), addCompetitor: vi.fn(), removeCompetitor: vi.fn(), setTags: vi.fn(), addSearches: vi.fn() },
+  workspace: { setFavorite: vi.fn(), setSite: vi.fn(), addCompetitor: vi.fn(), removeCompetitor: vi.fn(), setTags: vi.fn(), addSearches: vi.fn(), setCadence: vi.fn(), setAutoCapture: vi.fn(), checkRankings: vi.fn() },
 }));
 
 vi.mock('../ipc', () => ({
@@ -88,7 +89,7 @@ const all = <T extends Element = HTMLElement>(testId: string) => [...host.queryS
 const P2 = '01920000-0000-7000-8000-0000000000a2';
 const PAGE = '01920000-0000-7000-8000-0000000000b1';
 const COMPETITOR = '01920000-0000-7000-8000-0000000000c1';
-const summary = (id: string, name: string, more: Partial<ProjectSummary> = {}): ProjectSummary => ({ id, name, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null, ...more });
+const summary = (id: string, name: string, more: Partial<ProjectSummary> = {}): ProjectSummary => ({ id, name, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false, ...more });
 
 /** Renders the sheet on `project` (no run under way). */
 async function openSheet(project: ProjectSummary, detail: Record<string, unknown> = {}, list: ProjectSummary[] = [project]) {
@@ -388,7 +389,7 @@ describe('rankings components', () => {
     const project = { id: P1, name: 'Shop', unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null };
     fakes.projects.list.mockResolvedValue({ projects: [project] });
     fakes.projects.get.mockResolvedValue({ project, pages: [], queries: [], competitors: [] });
-    fakes.projects.runState.mockResolvedValueOnce({ version: 1, runId: P1, projectId: P1, state: 'running', current: 1, total: 2, omitted: 0, screenshot: false, targets: [] }).mockReturnValue(new Promise(() => undefined));
+    fakes.projects.runState.mockResolvedValueOnce({ version: 1, runId: P1, projectId: P1, state: 'running', current: 1, total: 2, omitted: 0, screenshot: false, targets: [], blockedReason: null }).mockReturnValue(new Promise(() => undefined));
     fakes.rankings.table.mockReturnValue(new Promise(() => undefined));
     fakes.rankings.readingDates.mockReturnValue(new Promise(() => undefined));
     const { openProjects } = await import('../components/changes/projects-sheet');
@@ -402,5 +403,58 @@ describe('rankings components', () => {
       expect($('projects-run'), view).not.toBeNull();
       expect($('projects-run-cancel'), view).not.toBeNull();
     }
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Due, Check rankings and a blocked run; Settings: the cadence)
+  test('projects-due-check-rankings-and-cadence', async () => {
+    const SEARCH_ID = '01920000-0000-7000-8000-0000000000d1';
+    const project = summary(P1, 'Shop', { cadence: 'daily', due: true });
+    await openSheet(project, { queries: [{ id: SEARCH_ID, params: params('tea'), url: params('tea').url, lastCapturedAt: null, changeCount: null, tags: [] }] }, [project, summary(P2, 'Other')]);
+    // "Due" beside the due project only, described by its note.
+    const due = Object.fromEntries(all('projects-item').map((item) => [item.dataset.project, item.querySelector('[data-testid="projects-due"]')]));
+    expect(due[P1]!.textContent).toBe(DUE_TEXT.label);
+    expect(due[P1]!.getAttribute('title')).toBe(DUE_TEXT.note);
+    expect(due[P2]).toBeNull();
+    // Check rankings: the saved searches only; a declined disclosure is said.
+    fakes.workspace.checkRankings.mockResolvedValueOnce({ status: 'refused', reason: 'declined' });
+    await click('projects-check-rankings');
+    expect(fakes.workspace.checkRankings).toHaveBeenCalledExactlyOnceWith(P1);
+    expect($('projects-status')!.textContent).toBe(RUN_REFUSAL_MESSAGES.declined);
+    // Settings: the cadence menu and its note; no automatic switch while it is not offered.
+    await click('projects-view-settings');
+    expect($<HTMLSelectElement>('projects-cadence')!.value).toBe('daily');
+    expect([...$<HTMLSelectElement>('projects-cadence')!.options].map((option) => option.value)).toEqual(['off', 'daily', 'weekly']);
+    expect($('projects-cadence-note')!.textContent).toBe(CAPTURE_SCHEDULE_NOTE);
+    expect($('projects-auto-capture')).toBeNull();
+    fakes.workspace.setCadence.mockResolvedValueOnce({ status: 'refused', reason: 'declined' });
+    await select('projects-cadence', 'weekly');
+    expect(fakes.workspace.setCadence).toHaveBeenLastCalledWith(P1, 'weekly');
+    expect($('projects-status')!.textContent).toBe(CADENCE_TEXT.declined);
+    fakes.workspace.setCadence.mockResolvedValueOnce({ status: 'ok' });
+    await select('projects-cadence', 'off');
+    expect(fakes.workspace.setCadence).toHaveBeenLastCalledWith(P1, 'off');
+    expect($('projects-status')!.textContent).toBe(CADENCE_TEXT.saved);
+    expect(fakes.workspace.setAutoCapture).not.toHaveBeenCalled();
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (a blocked run); The sheet (its note)
+  test('projects-blocked-run-says-why', async () => {
+    const project = summary(P1, 'Shop');
+    fakes.projects.list.mockResolvedValue({ projects: [project] });
+    fakes.projects.get.mockResolvedValue({ project, pages: [], queries: [], competitors: [] });
+    const targets = [
+      { kind: 'query', label: '“tea” on Google', outcome: 'blocked', changeCount: null, screenshot: null },
+      { kind: 'query', label: '“coffee” on Google', outcome: 'cancelled', changeCount: null, screenshot: null },
+    ];
+    fakes.projects.runState.mockResolvedValueOnce({ version: 1, runId: P1, projectId: P1, state: 'blocked', current: 1, total: 2, omitted: 0, screenshot: false, targets, blockedReason: 'not-a-result-page' }).mockReturnValue(new Promise(() => undefined));
+    const { openProjects } = await import('../components/changes/projects-sheet');
+    openProjects({ projectId: P1 });
+    await act(async () => root.render(createElement(Projects, { tab: undefined, onClose: vi.fn() })));
+    await flush();
+    expect($('projects-run')!.dataset.state).toBe('blocked');
+    expect($('projects-run-cancel')).toBeNull();
+    expect($('projects-run-blocked')!.textContent).toContain(RUN_BLOCK_REASON_LABELS['not-a-result-page']);
+    expect($('projects-run-blocked')!.textContent).toContain(RUN_BLOCKED_NOTE);
+    expect(all('projects-run-target').map((target) => target.dataset.outcome)).toEqual(['blocked', 'cancelled']);
   });
 });

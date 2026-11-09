@@ -839,9 +839,10 @@ Acceptance: `specs/sync-config.feature.md`, `specs/sync-engine.feature.md`.
   - **What the page can see:** pointer events while you select an area or pick an element, the
     overlay's host element, and the scroll of a full-page shot.
   - **Capture now** works in a visible tab, one target at a time. A search engine may show a
-    consent page or a challenge instead of results, and that is what gets captured. A page that
-    redirects itself by script after it first loads counts as the tab moving away, and its target
-    fails.
+    consent page or a challenge instead of results: since Phase 10 the run stops there and captures
+    nothing of it (saved searches are also paced, one every 10 seconds). A page that redirects
+    itself by script after it first loads counts as the tab moving away, and its target fails (a
+    saved search's stops the run).
   - **Search parameters:** saved searches are read with the bundled selector pack, not an updated
     one. A result page's lane follows its canonical search URL, so the engine's tracking parameters
     never split a search.

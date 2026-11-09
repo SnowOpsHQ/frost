@@ -8,6 +8,7 @@ import {
   RUN_RETRY_REFUSALS,
   RUN_SCREENSHOT_KIND,
   type ProjectRunLimits,
+  type RunBlockReason,
   type RunScope,
   type RunScreenshotOutcome,
   type RunState,
@@ -17,10 +18,11 @@ import {
   type RunTargetOutcome,
   type StartRunAnswer,
 } from '@app/specs/projects.spec';
+import { sameRunSearch } from '@app/specs/rankings-url.spec';
 import type { SerpRunVerdict } from '@app/specs/rankings.spec';
 import { isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
-import type { SearchParamsOf, SerpVerdictOf } from './serp-params';
+import { searchParamsForUrl, type SearchParamsOf, type SerpVerdictOf } from './serp-params';
 import { storedPageUrl } from './snapshot';
 
 // A project's capture run (Phase 6 Task 6; spec `projects.spec.ts`, `PROJECT_RUN_LIMITS`; acceptance
@@ -35,11 +37,37 @@ import { storedPageUrl } from './snapshot';
 // never changes a tab's profile after it has loaded. A site's pin still applies in a run tab (pins are
 // the user's choice); the capture records the profile actually in effect (the audit's), and the search
 // parameters the run tab actually shows: Phase 3's SERP service's for the landed page
-// (`searchParamsOf`), else the target's own (the saved search's for a query, none for a page).
-// A search target that has landed first waits for Phase 3's reading of the page (Phase 10,
-// `changes-capture.feature.md`, SERP reading): while `serpVerdictOf` says `pending`, for up to
-// `serpSettleWaitMs` of active time, counted in the target's `targetActiveTimeoutMs`; then it is
-// captured as above, whatever the verdict (Phase 10 Task 8 gates the capture on it).
+// (`searchParamsOf`) for a page, else none; a search target is captured only on a matching ready
+// reading.
+//
+// Search targets (Phase 10 Task 8, plan Decision 10; `projects.feature.md`, Searches in a run). Once a
+// search target has landed, before anything is captured: (1) the landed URL must be a result page of
+// the target's engine (`searchParamsForUrl` with the bundled pack: a consent page on another host or a
+// `/sorry/` challenge path is not), else the run is `blocked` at once (`not-a-result-page`); (2) it
+// waits while Phase 3's verdict (`serpVerdictOf`, that tab and page) is `pending`, for up to
+// `serpSettleWaitMs` of active time, counted in the target's `targetActiveTimeoutMs`; (3) it captures
+// only on `ready` with the tab's own parameters (`searchParamsOf`) for the target's search
+// (`sameRunSearch`: engine, host, query, `gl`, `hl`, page; not the device); (4) anything else blocks
+// the run without calling `capture` or `screenshot`: `unreadable`, `not-serp`, `disabled` (`serp-off`),
+// another search (`mismatch`), no reading or no parameters (`no-reading`), the target's time running
+// out first (`timed-out`), or its tab leaving the landed page before a capture (`not-a-result-page`: a
+// consent page put there by script). A blocked run ends `blocked` with its `blockedReason`, the target
+// `blocked`, the rest `cancelled`.
+// Lead rulings of the Task 8 security review (amending plan Decision 10):
+// - a search target whose load fails (an error, a crash: never landed) blocks the run (`load-failed`);
+//   a navigation the browse guard refused (never sent) only fails the target;
+// - spacing follows **every search navigation that was sent** (`navigate` answered `true`), landed or
+//   not, and is kept by the run service across runs (`lastSearchAt`): a run started right after another
+//   (Cancel then Check rankings, a rerun after a blocked run) still waits; Cancel and `stop` end the wait
+//   at once; it is between targets, outside any target's active time;
+// - a **page target whose URL is a result page** (`runSearchOf`: `searchParamsForUrl` reads it) is a
+//   search target for the gate and the spacing (its own parameters are what `sameRunSearch` compares),
+//   and for the disclosure (`projects.ts`);
+// - the landed document (`documentSeq`) is recorded when a search target lands: any other document
+//   before its capture or screenshot (a same-URL reload too) stops the run (`not-a-result-page`); the
+//   check is not made again.
+// Page targets that are not result pages keep Phase 6's behaviour: no verdict, no wait, and one that
+// times out is `timed-out` while the run goes on.
 //
 // A run's scope (Phase 10, `projects.feature.md`, Run scope): `searches` visits only the plan's saved
 // searches ("Check rankings"); its pages are neither visited nor counted as omitted.
@@ -99,7 +127,12 @@ export interface CaptureRunDeps {
   readonly limits?: Partial<ProjectRunLimits>;
   /** Called once a run has ended, with its project (retention enforces the project's policy; `retention.ts`). */
   readonly afterRun?: (projectId: string) => void;
-  /** The run tab's search parameters for the landed page from Phase 3's SERP service (`serp-params.ts`); none: the target's. */
+  /** Called once a run has ended, with its end state (the capture schedule suspends automatic starts after `blocked`). */
+  readonly onEnded?: (ended: RunState) => void;
+  /**
+   * The run tab's search parameters for the landed page from Phase 3's SERP service (`serp-params.ts`):
+   * a page target's capture records them (none: no parameters); a search target needs them (none: `no-reading`).
+   */
   readonly searchParamsOf?: SearchParamsOf;
   /**
    * Phase 3's verdict on the run tab's landed page (`serp-params.ts`, `lateSearchParams().verdictOf`:
@@ -124,11 +157,26 @@ export function inRunScope(target: Pick<RunPlanTarget, 'kind'>, scope: RunScope)
   return scope === 'all' || target.kind === 'query';
 }
 
+/**
+ * The search a target's page is (Task 8 review ruling): a query's saved search; for a page, the
+ * search parameters Phase 3 reads from its URL when it is an engine's result page (`searchParamsForUrl`
+ * with the bundled pack; the device does not change whether or which engine reads it); else `null`.
+ * A target with a search is gated, spaced and needs the disclosure. Never throws.
+ */
+export function runSearchOf(target: Pick<RunPlanTarget, 'kind' | 'url' | 'searchParams'>): SearchParams | null {
+  if (target.kind === 'query') return target.searchParams;
+  try {
+    return searchParamsForUrl(target.url, 'desktop');
+  } catch {
+    return null;
+  }
+}
+
 export interface RunPlanTarget {
   readonly kind: RunTargetKind;
   readonly label: string;
   readonly url: string;
-  /** A query's saved search parameters (recorded when the SERP service has none for the run tab); `null` for a page. */
+  /** A query's saved search parameters (what the landed page's search must be, `sameRunSearch`); `null` for a page. */
   readonly searchParams: SearchParams | null;
 }
 
@@ -186,8 +234,10 @@ const RETRY: ReadonlySet<string> = new Set(RUN_RETRY_REFUSALS);
 const errorText = (error: unknown): string | null => (error === null || error === undefined ? null : JSON.stringify(error));
 
 type TargetResult = { readonly outcome: RunTargetOutcome; readonly changeCount: number | null; readonly screenshot: RunScreenshotOutcome | null };
-/** A target's result (`null`: it was not reached), and whether the run ends after it. */
-type Visit = { readonly result: TargetResult | null; readonly end: Extract<RunStateName, 'cancelled' | 'tab-closed'> | null };
+/** A target's result (`null`: it was not reached), whether the run ends after it, and why it stopped (`blocked`). */
+type Visit = { readonly result: TargetResult | null; readonly end: Extract<RunStateName, 'cancelled' | 'tab-closed' | 'blocked'> | null; readonly blockedReason?: RunBlockReason };
+/** What a visit did of its navigation: whether one was sent (`navigate` answered `true`). */
+type VisitTrace = { sent: boolean };
 
 export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
   const { browser } = deps;
@@ -196,7 +246,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
   const uuid = deps.uuidv7 ?? defaultUuidv7;
   const log = (message: string): void => deps.log?.(`projects: ${message}`);
 
-  let current: RunState = { version: 1, runId: null, projectId: null, state: 'idle', current: 0, total: 0, omitted: 0, screenshot: false, targets: [] };
+  let current: RunState = { version: 1, runId: null, projectId: null, state: 'idle', current: 0, total: 0, omitted: 0, screenshot: false, targets: [], blockedReason: null };
   const waiters: { readonly resolve: (state: RunState) => void; readonly timer: ReturnType<typeof setTimeout> }[] = [];
 
   /** Publishes a change: a new version, and every waiting poll answered. */
@@ -216,6 +266,8 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
   };
 
   type Run = { readonly projectId: string; cancelled: boolean; wake: (() => void) | null; tabId: number | null; readonly previous: number | null };
+  /** When the last search navigation was sent, in any run (`null`: none since frost started): the next search waits `querySpacingMs` from it. */
+  let lastSearchAt: number | null = null;
   /** The run under way (reserved as soon as one starts): its cancel flag and the wake-up of its current wait. */
   let active: Run | null = null;
 
@@ -277,15 +329,37 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     return tabId;
   };
 
-  /** The verdict on the run tab's landed page (`null`: not a storable page); `pending` when it cannot be asked. */
-  const verdictOf = (tabId: number, landed: string | null): SerpRunVerdict => {
-    if (landed === null) return 'pending';
+  /** The verdict on the run tab's landed page; `pending` when it cannot be asked. */
+  const verdictOf = (tabId: number, landed: string): SerpRunVerdict => {
     try {
       return deps.serpVerdictOf(tabId, landed);
     } catch {
       return 'pending';
     }
   };
+
+  /** The run tab's own search parameters for its landed page (`null`: none, or `landed` is not a storable page). */
+  const tabParamsOf = (tabId: number, landed: string | null): SearchParams | null => {
+    if (landed === null || deps.searchParamsOf === undefined) return null;
+    try {
+      return deps.searchParamsOf(tabId, landed);
+    } catch {
+      return null;
+    }
+  };
+
+  /** Whether the landed page's URL is a result page of the target's engine (the bundled pack; never throws). */
+  const isEngineResultPage = (landed: string | null, target: SearchParams): boolean => {
+    if (landed === null) return false;
+    try {
+      return searchParamsForUrl(landed, target.device)?.engine === target.engine;
+    } catch {
+      return false;
+    }
+  };
+
+  /** A verdict other than `ready` or `pending`, as the reason the run stops. */
+  const BLOCKED_BY: Readonly<Record<Exclude<SerpRunVerdict, 'ready' | 'pending'>, RunBlockReason>> = { unreadable: 'unreadable', 'not-serp': 'not-a-result-page', disabled: 'serp-off' };
 
   /** Waits until the run's tab is in front again (`null`), or why it will not be. */
   async function untilActive(run: Run, tabId: number): Promise<Visit['end']> {
@@ -301,9 +375,11 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
 
   /**
    * Visits one target in the run's tab. Time counts only from one look at the tab to the next with it
-   * in front at both (an await of a capture or a screenshot counts so too: an approximation).
+   * in front at both (an await of a capture or a screenshot counts so too: an approximation). A search
+   * target is captured only once its landed page passed the gate (the header comment); `trace` says
+   * whether its navigation landed.
    */
-  async function visit(run: Run, tabId: number, plan: RunPlan, target: RunPlanTarget, index: number): Promise<Visit> {
+  async function visit(run: Run, tabId: number, plan: RunPlan, target: RunPlanTarget, index: number, trace: VisitTrace): Promise<Visit> {
     let activeMs = 0;
     let last = now();
     let wasActive = false;
@@ -312,12 +388,35 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     /** The page of the first commit after the navigation (a redirect allowed): the capture must be of it. */
     let landed: string | null = null;
     let sawLoading = false;
-    /** A search target's wait for its reading: the active time it started at (`null`: not yet), and whether it is over. */
+    /** The target's search (a query's, or a result page's own): `null` for a page that is not one (never gated). */
+    const search = runSearchOf(target);
+    const gated = target.kind === 'query' || search !== null;
+    /** A search target's document when it landed: another one before its capture or screenshot stops the run. */
+    let landedSeq: number | null = null;
+    /** A search target's wait for its reading: the active time it started at (`null`: not yet). */
     let settleFrom: number | null = null;
-    let settled = target.kind !== 'query';
+    /** A search target's parameters once its landed page passed the gate (`null`: not yet). */
+    let passed: SearchParams | null = null;
     let captured: { readonly captureId: string; readonly changeCount: number | null; readonly searchParams: SearchParams | null } | null = null;
     const failed: Visit = { result: { outcome: 'failed', changeCount: null, screenshot: null }, end: null };
     const done = (screenshot: RunScreenshotOutcome | null, end: Visit['end'] = null): Visit => ({ result: { outcome: 'captured', changeCount: captured!.changeCount, screenshot }, end });
+    /** The run stops at this search target, with nothing of its page captured. */
+    const blocked = (reason: RunBlockReason): Visit => {
+      log(`target ${index + 1}: the run stopped at this search (${reason})`);
+      return { result: { outcome: 'blocked', changeCount: null, screenshot: null }, end: 'blocked', blockedReason: reason };
+    };
+    /**
+     * A search target's tab left the document that landed (another URL, or a reload): the run stops
+     * (a consent page put there by script). A capture already made of the checked document stays,
+     * without its screenshot.
+     */
+    const movedOn = (): Visit => {
+      if (captured === null) return blocked('not-a-result-page');
+      log(`target ${index + 1}: the run stopped at this search (not-a-result-page)`);
+      return { result: { outcome: 'captured', changeCount: captured.changeCount, screenshot: 'failed' }, end: 'blocked', blockedReason: 'not-a-result-page' };
+    };
+    /** Whether the run's tab still shows the search target's landed document, looked at now (just before a capture or screenshot). */
+    const stillLanded = (): boolean => !gated || tabOf(tabId).tab?.documentSeq === landedSeq;
 
     for (;;) {
       // Cancelled: the run ends here; a capture already made stays, without its screenshot.
@@ -333,21 +432,28 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         await pause(run, limits.captureRetryMs);
         continue;
       }
-      if (activeMs >= limits.targetActiveTimeoutMs) return captured ? done('failed') : { result: { outcome: 'timed-out', changeCount: null, screenshot: null }, end: null };
+      if (activeMs >= limits.targetActiveTimeoutMs) {
+        if (captured) return done('failed');
+        // A search target whose time ran out before a capture stops the run; a page target moves on.
+        return gated ? blocked('timed-out') : { result: { outcome: 'timed-out', changeCount: null, screenshot: null }, end: null };
+      }
 
       if (before === null) {
         before = { seq: tab.documentSeq, url: tab.url, error: errorText(tab.error) };
+        // A navigation the browse guard refuses is never sent: the target fails, and nothing is spaced.
         if (!browser.navigate(target.url)) return failed;
+        trace.sent = true;
         await pause(run, limits.captureRetryMs);
         continue;
       }
       if (tab.loading) sawLoading = true;
-      if (tab.crashed) return captured ? done('failed') : failed;
-      // A failed load: an error that is new since the navigation (or came after it loaded).
+      // A crash, or a failed load (an error that is new since the navigation, or came after it loaded):
+      // a search target's stops the run (a redirect loop, a reset, offline: never a reading).
+      if (tab.crashed) return captured ? done('failed') : gated ? blocked('load-failed') : failed;
       const error = errorText(tab.error);
       if (!captured && !tab.loading && error !== null && (sawLoading || error !== before.error || tab.url !== before.url)) {
         log(`target ${index + 1}: the page did not load`);
-        return failed;
+        return gated ? blocked('load-failed') : failed;
       }
       // Not landed yet (the old document is still there), or still loading: look again shortly.
       if (tab.documentSeq === before.seq || tab.loading) {
@@ -355,28 +461,45 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         continue;
       }
       const page = storedPageUrl(tab.url);
-      landed ??= page;
-      // Moved on since it landed (the user navigated the run's tab): not the target any more.
+      if (landed === null) {
+        landed = page;
+        landedSeq = tab.documentSeq;
+        // 1. A search target's landed URL must be a result page of its engine: at once, before any verdict.
+        if (gated && (search === null || !isEngineResultPage(landed, search))) return blocked('not-a-result-page');
+      }
+      // A search target's page is the document that landed, and only that one (a same-URL reload too): never checked again.
+      if (gated && tab.documentSeq !== landedSeq) return movedOn();
+      // Moved on since it landed (the user navigated the run's tab, or a page did by script).
       if (page !== landed) {
+        if (gated) return movedOn();
         log(`target ${index + 1}: its tab moved to another page`);
         return captured ? done('failed') : failed;
       }
 
-      if (captured === null && !settled) {
-        // A search target waits while Phase 3's reading of the landed page is pending (active time,
-        // counted in the target's timeout); until Task 8 it is captured after, whatever the verdict.
+      if (captured === null && gated && passed === null) {
+        // 2. Waits while Phase 3's reading of the landed page is pending (active time, counted in the target's timeout).
         settleFrom ??= activeMs;
-        if (verdictOf(tabId, landed) === 'pending' && activeMs - settleFrom < limits.serpSettleWaitMs) {
-          await pause(run, limits.captureRetryMs);
-          continue;
+        const verdict = verdictOf(tabId, landed!);
+        if (verdict === 'pending') {
+          if (activeMs - settleFrom < limits.serpSettleWaitMs) {
+            await pause(run, limits.captureRetryMs);
+            continue;
+          }
+          return blocked('no-reading');
         }
-        settled = true;
+        if (verdict !== 'ready') return blocked(BLOCKED_BY[verdict]);
+        // 3. Only a ready reading of the target's own search, with the tab's own parameters.
+        const own = tabParamsOf(tabId, landed);
+        if (own === null) return blocked('no-reading');
+        if (!sameRunSearch(own, search!)) return blocked('mismatch');
+        passed = own;
       }
 
       if (captured === null) {
-        // The run tab's own search parameters for the landed page, else the target's.
-        const own = landed === null || deps.searchParamsOf === undefined ? null : deps.searchParamsOf(tabId, landed);
-        const searchParams = own ?? target.searchParams;
+        // A search target: the parameters its gate passed; a page target: the tab's own, else none.
+        const searchParams = gated ? passed : tabParamsOf(tabId, landed);
+        // The check's reads may take a while: still the document they read, or the run stops.
+        if (!stillLanded()) return movedOn();
         const answer = await deps.capture(tabId, { projectId: plan.projectId, source: 'project', searchParams, ...(landed === null ? {} : { pageUrl: landed }) });
         if (answer.status === 'refused') {
           if (answer.reason === 'no-tab') return { result: null, end: 'tab-closed' };
@@ -396,6 +519,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         continue;
       }
 
+      if (!stillLanded()) return movedOn();
       let shot: TakeScreenshotAnswer;
       try {
         shot = await deps.screenshot(tabId, { kind: RUN_SCREENSHOT_KIND, projectId: plan.projectId, captureId: captured.captureId, searchParams: captured.searchParams });
@@ -419,10 +543,28 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
   async function execute(run: Run, plan: RunPlan, groups: readonly RunGroup[]): Promise<void> {
     let tabId: number | null = run.tabId;
     let end: RunStateName = 'done';
+    let blockedReason: RunBlockReason | null = null;
     let index = 0;
+    /**
+     * Before a search target, the rest of `querySpacingMs` since the last search navigation sent, in
+     * this run or an earlier one (between targets: no target's active time). Whether the run was
+     * cancelled meanwhile.
+     */
+    const spaceBefore = async (target: RunPlanTarget): Promise<boolean> => {
+      if (runSearchOf(target) !== null && lastSearchAt !== null) {
+        const wait = lastSearchAt + limits.querySpacingMs - now();
+        if (wait > 0) await pause(run, wait);
+      }
+      return run.cancelled;
+    };
     try {
       groups: for (let g = 0; g < groups.length; g++) {
         if (g > 0) {
+          // A search that comes next waits its spacing before the new tab opens (not in front of the user empty).
+          if (await spaceBefore(groups[g]!.targets[0]!)) {
+            end = 'cancelled';
+            break;
+          }
           // The last group's tab gives way to the next group's: only with it in front, so a new tab
           // never takes the front from the user.
           const ready = await untilActive(run, tabId!);
@@ -440,21 +582,30 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
           }
         }
         for (const target of groups[g]!.targets) {
+          if (await spaceBefore(target)) {
+            end = 'cancelled';
+            break groups;
+          }
           publish({ current: index + 1 });
           setTarget(index, { outcome: 'running' });
+          const trace: VisitTrace = { sent: false };
           let visited: Visit;
           try {
-            visited = await visit(run, tabId!, plan, target, index);
+            visited = await visit(run, tabId!, plan, target, index, trace);
           } catch (error) {
             log(`target ${index + 1} failed (${error instanceof Error ? error.name : 'unknown error'})`);
+            // A browser or capture failure (the gate's own reads never throw): the target failed, as in Phase 6.
             visited = { result: { outcome: 'failed', changeCount: null, screenshot: null }, end: null };
           }
           if (visited.result !== null) setTarget(index, visited.result);
           index += 1;
+          // Every search navigation sent spaces the next one, landed or not (one the guard refused does not).
+          if (trace.sent && runSearchOf(target) !== null) lastSearchAt = now();
           // Cancelled meanwhile (a `stop` also closed its tab): the run was cancelled, whatever the visit met.
           const ended = run.cancelled ? 'cancelled' : visited.end;
           if (ended !== null) {
             end = ended;
+            if (ended === 'blocked') blockedReason = visited.blockedReason ?? 'no-reading';
             break groups;
           }
         }
@@ -464,9 +615,10 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       // Its tab goes (if still open; `stop` may have closed it already).
       closeRunTab(run);
       active = null;
-      publish({ state: end });
+      publish({ state: end, blockedReason: end === 'blocked' ? blockedReason : null });
       log(`run ${end}`);
       deps.afterRun?.(run.projectId);
+      deps.onEnded?.(current);
     }
   }
 
@@ -505,7 +657,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       const tabId = openTab(groups[0]!.profile);
       run.tabId = tabId;
       const runId = uuid(now());
-      const base = { runId, projectId: plan.projectId, current: 0, total: ordered.length, omitted: inScope.length - targets.length, screenshot: plan.screenshot };
+      const base = { runId, projectId: plan.projectId, current: 0, total: ordered.length, omitted: inScope.length - targets.length, screenshot: plan.screenshot, blockedReason: null };
       const initial = ordered.map((target): RunTarget => ({ kind: target.kind, label: target.label, outcome: 'pending', changeCount: null, screenshot: null }));
       if (tabId === null) {
         active = null;

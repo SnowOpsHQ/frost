@@ -21,17 +21,32 @@ import { isIpLiteral, isPublicHost } from './private-address.spec';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from './render-profile.spec';
 import type { SearchParams } from './serp-search-params.schema';
 import { SERP_DEVICE_LABELS, SERP_PARAM_LIMITS, type SerpDevice } from './serp.spec';
-import { DOMAIN_MAX_CHARS, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from './workspace-db.spec';
+import { DOMAIN_MAX_CHARS, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS, type CaptureCadence } from './workspace-db.spec';
 
 // ---- The capture run ---------------------------------------------------------------------------
 
 /**
  * How long a run's search target waits for Phase 3's reading of its landed result page (active time):
  * Phase 3's read timeout (2 s), its analysis (2 s) and its in-page debounce, with margin (plan
- * Decision 10; `rankings.spec.ts`, `SERP_RUN_VERDICTS`). Until Phase 10 Task 8 the target is captured
- * after the wait whatever the verdict, as Phase 6 captured it.
+ * Decision 10; `rankings.spec.ts`, `SERP_RUN_VERDICTS`). A reading still `pending` after it stops the
+ * run (`no-reading`): a search target is captured only on a matching `ready` reading.
  */
 export const SERP_SETTLE_WAIT_MS = 8_000;
+
+/**
+ * The least time between two search navigations (plan Decision 10): about 10–12 minutes for a full
+ * project of `MAX_PROJECT_QUERIES` searches with their loads, the pace of a person reading result
+ * pages rather than a burst. Fixed: no jitter, nothing meant to look like something it is not. The
+ * wait comes **between** targets, before the next search target is navigated; it is not part of any
+ * target's `targetActiveTimeoutMs`, and Cancel ends it at once. Lead ruling of the Task 8 security
+ * review (amending Decision 10's "only after a search target that landed"): it follows **every search
+ * navigation that was sent** (`navigate` answered `true`), landed or not, and holds **across runs**
+ * (the run service keeps the time of the last one: Cancel then Check rankings, or a rerun after a
+ * blocked run, still waits); a navigation the browse guard refused (never sent) adds none. A page
+ * target whose URL is an engine's result page counts as a search target. Other page targets never
+ * wait for it.
+ */
+export const RANK_RUN_QUERY_SPACING_MS = 10_000;
 
 /**
  * Limits of a capture run:
@@ -49,7 +64,9 @@ export const SERP_SETTLE_WAIT_MS = 8_000;
  *   oldest early with the current state;
  * - `serpSettleWaitMs`: how long a search target waits, once it has landed, while Phase 3's SERP
  *   reading of the page is still `pending` (`SERP_SETTLE_WAIT_MS`); this wait counts toward the
- *   target's `targetActiveTimeoutMs`.
+ *   target's `targetActiveTimeoutMs`;
+ * - `querySpacingMs`: the least time between a search target that landed and the next search target
+ *   (`RANK_RUN_QUERY_SPACING_MS`), waited between targets, outside `targetActiveTimeoutMs`.
  */
 export const PROJECT_RUN_LIMITS = {
   maxRunTargets: 70,
@@ -58,6 +75,7 @@ export const PROJECT_RUN_LIMITS = {
   runStateWatchTimeoutMs: 25_000,
   maxPendingRunWatches: 4,
   serpSettleWaitMs: SERP_SETTLE_WAIT_MS,
+  querySpacingMs: RANK_RUN_QUERY_SPACING_MS,
 } as const;
 export type ProjectRunLimits = { readonly [K in keyof typeof PROJECT_RUN_LIMITS]: number };
 
@@ -70,20 +88,24 @@ export type ProjectRunLimits = { readonly [K in keyof typeof PROJECT_RUN_LIMITS]
  * - `done`: every target was visited;
  * - `cancelled`: Cancel ended it;
  * - `tab-closed`: its tab was closed, which ends it;
- * - `failed`: its tab could not be opened.
+ * - `failed`: its tab could not be opened;
+ * - `blocked` (Phase 10, plan Decision 10): a search target's page was not a matching, read result
+ *   page (a consent page, a challenge, …: `RunState.blockedReason`); the run stopped there, capturing
+ *   nothing of that page.
  */
-export const RUN_STATES = ['idle', 'running', 'waiting-for-tab', 'done', 'cancelled', 'tab-closed', 'failed'] as const;
+export const RUN_STATES = ['idle', 'running', 'waiting-for-tab', 'done', 'cancelled', 'tab-closed', 'failed', 'blocked'] as const;
 export type RunStateName = (typeof RUN_STATES)[number];
 /** The states a run ends in. */
-export const RUN_END_STATES = ['done', 'cancelled', 'tab-closed', 'failed'] as const satisfies readonly RunStateName[];
+export const RUN_END_STATES = ['done', 'cancelled', 'tab-closed', 'failed', 'blocked'] as const satisfies readonly RunStateName[];
 
 /**
  * One target's outcome: `pending` (not reached yet), `running`, `captured` (a new version or one more
  * capture of the latest), `timed-out` (`targetActiveTimeoutMs` of active time without a capture),
  * `failed` (the page did not load, or the capture was refused for another reason than a page not
- * ready yet), `cancelled` (the run ended before it).
+ * ready yet), `cancelled` (the run ended before it), `blocked` (Phase 10: the search target the run
+ * stopped at; nothing of its page was captured).
  */
-export const RUN_TARGET_OUTCOMES = ['pending', 'running', 'captured', 'timed-out', 'failed', 'cancelled'] as const;
+export const RUN_TARGET_OUTCOMES = ['pending', 'running', 'captured', 'timed-out', 'failed', 'cancelled', 'blocked'] as const;
 export type RunTargetOutcome = (typeof RUN_TARGET_OUTCOMES)[number];
 export const RUN_TARGET_KINDS = ['page', 'query'] as const;
 export type RunTargetKind = (typeof RUN_TARGET_KINDS)[number];
@@ -107,6 +129,28 @@ export interface RunTarget {
   readonly screenshot: RunScreenshotOutcome | null;
 }
 
+/**
+ * Why a run stopped at a search target (plan Decision 10, with the Task 8 security review's rulings),
+ * checked after the target's navigation and before anything is captured. A search target is a saved
+ * search, or a page target whose URL is an engine's result page (ruling: its own parameters are the
+ * target's):
+ * - `not-a-result-page`: the landed URL is not a result page of the target's engine
+ *   (`searchParamsForUrl` reads none, or another engine's: a consent page on another host, a
+ *   `/sorry/` challenge path), or Phase 3 said `not-serp`;
+ * - `unreadable`: Phase 3 could not read the result page;
+ * - `serp-off`: SERP reading is off, so frost cannot tell what the page is;
+ * - `mismatch`: a result page of another search (engine, host, query, `gl`, `hl` or page);
+ * - `no-reading`: still `pending` after `serpSettleWaitMs`, or `ready` without the tab's search
+ *   parameters;
+ * - `timed-out`: the target reached `targetActiveTimeoutMs` before any of this;
+ * - `load-failed` (ruling): its load failed or its tab crashed (a redirect loop, a reset, offline):
+ *   never landed. A navigation the browse guard refused was never sent: that target only fails.
+ * The landed document is recorded: any other one before the capture or screenshot (another URL, or a
+ * same-URL reload) is `not-a-result-page` (ruling: never checked again).
+ */
+export const RUN_BLOCK_REASONS = ['not-a-result-page', 'unreadable', 'serp-off', 'mismatch', 'no-reading', 'timed-out', 'load-failed'] as const;
+export type RunBlockReason = (typeof RUN_BLOCK_REASONS)[number];
+
 /** `projects.runState`: the current (or last) run, with a version that grows with every change. */
 export interface RunState {
   readonly version: number;
@@ -121,6 +165,8 @@ export interface RunState {
   /** Whether the run takes a viewport screenshot of each captured target. */
   readonly screenshot: boolean;
   readonly targets: readonly RunTarget[];
+  /** Why the run stopped at a search target (`blocked`); `null` for any other state. */
+  readonly blockedReason: RunBlockReason | null;
 }
 
 /**
@@ -373,7 +419,7 @@ export function sortProjects<T extends Pick<ProjectSummary, 'id' | 'name' | 'unf
 /**
  * Why a project change was refused:
  * - `not-found`: no such live project (or page, query or competitor in it);
- * - `unfiled`: Unfiled cannot be renamed or deleted, and has no site or competitors;
+ * - `unfiled`: Unfiled cannot be renamed or deleted, and has no site, competitors or cadence;
  * - `invalid-name`: blank, or too long, after trimming;
  * - `invalid-url`: not an `http(s)` URL frost can store;
  * - `invalid-query`: a search that does not fit `SavedSearchInputSchema`, or whose URL Phase 3 does
@@ -385,15 +431,18 @@ export function sortProjects<T extends Pick<ProjectSummary, 'id' | 'name' | 'unf
  * - `limit`: the project (or frost) holds as many as it can (`MAX_PROJECTS`, `MAX_PROJECT_PAGES`,
  *   `MAX_PROJECT_QUERIES`, `MAX_PROJECT_COMPETITORS`, `MAX_PROJECT_TAGS`);
  * - `running`: a capture run of this project is under way (delete waits for it);
- * - `declined`: the confirmation was answered Cancel;
- * - `store-failed`: the database failed.
+ * - `declined`: the confirmation was answered Cancel (a delete, or `RANK_RUN_DISCLOSURE` before a
+ *   cadence is first set);
+ * - `store-failed`: the database failed;
+ * - `unavailable`: starting runs automatically is not offered (`AUTO_CAPTURE_AVAILABLE` is `false`:
+ *   `setAutoCapture` answers this, whatever it is asked).
  */
-export const PROJECT_REFUSALS = ['not-found', 'unfiled', 'invalid-name', 'invalid-url', 'invalid-query', 'invalid-profile', 'invalid-domain', 'invalid-tag', 'no-page', 'limit', 'running', 'declined', 'store-failed'] as const;
+export const PROJECT_REFUSALS = ['not-found', 'unfiled', 'invalid-name', 'invalid-url', 'invalid-query', 'invalid-profile', 'invalid-domain', 'invalid-tag', 'no-page', 'limit', 'running', 'declined', 'store-failed', 'unavailable'] as const;
 export type ProjectRefusal = (typeof PROJECT_REFUSALS)[number];
 
 export const PROJECT_REFUSAL_MESSAGES: Readonly<Record<ProjectRefusal, string>> = {
   'not-found': 'That project (or entry) no longer exists.',
-  unfiled: 'Unfiled cannot be renamed or deleted, and has no site or competitors.',
+  unfiled: 'Unfiled cannot be renamed or deleted, and has no site, competitors or cadence.',
   'invalid-name': 'Give the project a name.',
   'invalid-url': 'Enter an http or https address.',
   'invalid-query': 'Enter a query, and a two-letter country and a short language code (or leave them empty).',
@@ -405,14 +454,15 @@ export const PROJECT_REFUSAL_MESSAGES: Readonly<Record<ProjectRefusal, string>> 
   running: 'A capture run of this project is under way. Cancel it first.',
   declined: 'Nothing was deleted.',
   'store-failed': 'The change could not be saved.',
+  unavailable: 'Starting runs automatically is not available.',
 };
 
 /**
  * Why a run did not start: `busy` (one is under way; one at a time, app-wide), `not-found` (no such
  * project), `no-targets` (it has no pages or queries), `no-tab` (no tab could be opened for it),
- * `store-failed`.
+ * `store-failed`, `declined` (Phase 10: `RANK_RUN_DISCLOSURE` was answered Cancel; nothing started).
  */
-export const RUN_REFUSALS = ['busy', 'not-found', 'no-targets', 'no-tab', 'store-failed'] as const;
+export const RUN_REFUSALS = ['busy', 'not-found', 'no-targets', 'no-tab', 'store-failed', 'declined'] as const;
 export type RunRefusal = (typeof RUN_REFUSALS)[number];
 
 export const RUN_REFUSAL_MESSAGES: Readonly<Record<RunRefusal, string>> = {
@@ -421,6 +471,7 @@ export const RUN_REFUSAL_MESSAGES: Readonly<Record<RunRefusal, string>> = {
   'no-targets': 'Add a page or a query to capture first.',
   'no-tab': 'No tab could be opened for the run. Close a tab and try again.',
   'store-failed': 'The project could not be read.',
+  declined: 'Nothing was started: no search was sent.',
 };
 
 export type ProjectRefused = { status: 'refused'; reason: ProjectRefusal };
@@ -452,6 +503,12 @@ export interface ProjectSummary {
   createdAt: number;
   /** The newest capture filed in it, of any source (a manual capture or a run's), or `null` (`last-captured` sort). */
   lastCapturedAt: number | null;
+  /** Its capture cadence (Phase 10 Task 8; device-local; a due notice only): Unfiled is always `off`. */
+  cadence: CaptureCadence;
+  /** Whether its due runs start by themselves: stored, but never acted on while `AUTO_CAPTURE_AVAILABLE` is `false`. */
+  autoCapture: boolean;
+  /** Its cadence is on and its last run (newest `project` capture) is a cadence old, or there is none (`isDue`). */
+  due: boolean;
 }
 
 /** What a page or query of a project shows: its last capture in the project and its latest version's change count. */
@@ -519,7 +576,7 @@ export const PROJECTS_TITLE = 'Projects' as const;
  * The views of one project in the sheet (Phase 10 Tasks 6 and 7; `projects.feature.md`, The sheet), in
  * the switch's order: `overview` (pages, queries, Capture now, retention), `rankings` (the rank table
  * and a search's series), `compare` (two readings side by side) and `settings` (the site, include
- * subdomains and the competitors; Task 8 adds the cadence).
+ * subdomains, the competitors and, Task 8, the cadence).
  */
 export const PROJECT_VIEWS = ['overview', 'rankings', 'compare', 'settings'] as const;
 export type ProjectViewId = (typeof PROJECT_VIEWS)[number];
@@ -558,7 +615,7 @@ export const PROJECT_SETTINGS_TEXT = {
   competitorAdded: 'Competitor added.',
   competitorExists: 'That domain is already a competitor.',
   competitorRemoved: 'Competitor removed.',
-  unfiled: 'Unfiled is where captures land when no project was chosen: it has no site or competitors.',
+  unfiled: 'Unfiled is where captures land when no project was chosen: it has no site, competitors or cadence.',
 } as const;
 
 /** The tag editor of a page or saved search (Phase 10 Task 7; plan Decision 8). */
@@ -573,8 +630,8 @@ export const TAG_EDITOR_TEXT = {
 export const BULK_ADD_TEXT = {
   title: 'Bulk add searches',
   textLabel: 'Queries, one per line or separated by commas',
-  /** What Bulk add does and does not do: it never contacts a search engine. */
-  note: 'Bulk add only saves searches. Nothing is sent to a search engine until you run Check rankings (or Capture now).',
+  /** What Bulk add does and does not do: it never contacts a search engine (and a cadence never starts a run by itself). */
+  note: 'Bulk add only saves searches. Nothing is sent to a search engine until you run Check rankings (or Capture now); a cadence only marks the project due.',
 } as const;
 
 /** A Bulk add line's outcome in words (`BULK_LINE_OUTCOMES`). */
@@ -585,9 +642,24 @@ export const BULK_LINE_OUTCOME_LABELS: Readonly<Record<BulkLineOutcome, string>>
   limit: 'Not added: the project is full',
 };
 
-/** Said beside Capture now: what a run does, and what it may meet. */
+/** Said beside Capture now: what a run does, how it paces searches, and where it stops (plan Decision 10). */
 export const CAPTURE_RUN_NOTE =
-  'frost visits each page in a tab of its own; search engines may show a consent page or a challenge, and that is what gets captured.' as const;
+  `frost visits each page and saved search in a tab of its own. Saved searches go out one every ${RANK_RUN_QUERY_SPACING_MS / 1_000} seconds; if a search engine answers with a consent page or a challenge, the run stops there and captures nothing of it.` as const;
+
+/** "Check rankings" (plan Decision 11: a run of the saved searches only, `scope: 'searches'`). */
+export const CHECK_RANKINGS_TEXT = {
+  button: 'Check rankings',
+  palette: 'Check rankings now',
+  /** Disabled with this when the project has no saved search. */
+  none: 'Add a saved search to check its ranking.',
+} as const;
+
+/** The project list's notice for a project whose cadence says a run is due (`ProjectSummary.due`). */
+export const DUE_TEXT = {
+  label: 'Due',
+  /** Its tooltip and accessible description. */
+  note: 'Its cadence says a run is due: run Check rankings or Capture now. frost never starts one by itself.',
+} as const;
 
 /**
  * The longest `language` the query form takes: a DuckDuckGo region (`<country>-<language>`) still
@@ -603,6 +675,7 @@ export const RUN_STATE_LABELS: Readonly<Record<RunStateName, string>> = {
   cancelled: 'Cancelled',
   'tab-closed': 'Stopped: the run’s tab was closed',
   failed: 'Could not start',
+  blocked: 'Stopped at a search',
 };
 
 export const RUN_TARGET_OUTCOME_LABELS: Readonly<Record<RunTargetOutcome, string>> = {
@@ -612,7 +685,23 @@ export const RUN_TARGET_OUTCOME_LABELS: Readonly<Record<RunTargetOutcome, string
   'timed-out': 'Timed out',
   failed: 'Failed',
   cancelled: 'Not visited',
+  blocked: 'Stopped here: nothing captured',
 };
+
+/** Each `RUN_BLOCK_REASONS` value in words (after "Stopped at a search: "). */
+export const RUN_BLOCK_REASON_LABELS: Readonly<Record<RunBlockReason, string>> = {
+  'not-a-result-page': 'the search engine answered with a page that is not its result page (often a consent page or a challenge).',
+  unreadable: 'the result page could not be read.',
+  'serp-off': 'SERP reading is off, so frost could not tell what the page was.',
+  mismatch: 'the page was a result page for another search.',
+  'no-reading': 'the result page was not read in time.',
+  'timed-out': 'the search did not finish loading in time.',
+  'load-failed': 'the search did not load (offline, a reset or a redirect loop).',
+};
+
+/** Said when a run ended `blocked` (with its reason's label). */
+export const RUN_BLOCKED_NOTE =
+  'The run stopped at this search and stored nothing of its page. Open the search in a tab yourself to see what the engine answered, and run again later.' as const;
 
 /** Capture refusals a run waits through (the page is not ready yet); any other fails the target. */
 export const RUN_RETRY_REFUSALS = ['no-audit', 'busy'] as const satisfies readonly CaptureRefusal[];
@@ -641,3 +730,27 @@ export function deleteProjectDialog(name: string): { type: 'warning'; message: s
   // A function replacement: a `$&` or `$'` in the name stays text.
   return { ...dialog, detail: dialog.detail.replace('{name}', () => `“⁨${name}⁩”`), buttons: [...dialog.buttons] };
 }
+
+/**
+ * Asked once per install, in main's own message box (parented as `DELETE_PROJECT` is; Cancel is the
+ * default and the cancel answer), before the first run with search targets (Capture now on a project
+ * with saved searches, Check rankings) and before a cadence is first set (plan Decision 10). Only
+ * `confirmIndex` (Continue) starts anything; it is remembered under
+ * `RANK_RUN_DISCLOSURE_SETTING_KEY` in `app_settings`. The renderer cannot skip it: main asks inside
+ * `startRun` and `setCadence`.
+ */
+export const RANK_RUN_DISCLOSURE = {
+  dialog: {
+    type: 'info',
+    message: 'Load your saved searches from this computer?',
+    detail: `frost loads a project’s saved searches in a tab, over this computer’s connection, one every ${RANK_RUN_QUERY_SPACING_MS / 1_000} seconds. Each search carries your browse session’s cookies, as in any tab, so the positions recorded are as your signed-in browser profile sees them. Search engines’ terms may restrict automated searches, and an engine may answer with a consent page or a challenge: frost stops at the first one and stores nothing of it. frost asks this once.`,
+    buttons: ['Continue', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  },
+  confirmIndex: 0,
+} as const;
+
+/** The `app_settings` key that remembers `RANK_RUN_DISCLOSURE` was answered Continue on this install. */
+export const RANK_RUN_DISCLOSURE_SETTING_KEY = 'rank_run_disclosure' as const;

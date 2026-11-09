@@ -10,7 +10,7 @@ import { SEARCH_ENGINE_IDS } from './browser-polish.spec';
 import { MAX_PROJECT_PAGES, MAX_PROJECT_QUERIES, MAX_PROJECTS, PROJECT_NAME_MAX_CHARS, PROJECT_QUERY_MAX_CHARS, RETENTION_MODES, UUIDV7_PATTERN } from './capture-db.spec';
 import { SearchParamsSchema } from './serp-search-params.schema';
 import { SERP_DEVICES } from './serp.spec';
-import { DOMAIN_MAX_CHARS, ENTRY_KINDS, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from './workspace-db.spec';
+import { CAPTURE_CADENCES, DOMAIN_MAX_CHARS, ENTRY_KINDS, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from './workspace-db.spec';
 import {
   BULK_LINE_OUTCOMES,
   BULK_SEARCH_LIMITS,
@@ -25,6 +25,7 @@ import {
   type SetSiteAnswer,
   type SetTagsAnswer,
   PROJECT_RUN_LIMITS,
+  RUN_BLOCK_REASONS,
   RUN_REFUSALS,
   RUN_SCREENSHOT_OUTCOMES,
   RUN_STATES,
@@ -142,6 +143,13 @@ export const BulkSearchesInputSchema = z.strictObject({
 }) satisfies z.ZodType<BulkSearchesInput>;
 export const BulkAddSearchesInputSchema = z.strictObject({ projectId: id, searches: BulkSearchesInputSchema });
 
+// Phase 10 Task 8: the cadence (a due notice only) and the automatic start (refused `unavailable`
+// while `AUTO_CAPTURE_AVAILABLE` is `false`). Main asks `RANK_RUN_DISCLOSURE` before a cadence is first set.
+/** `setCadence`: one of `CAPTURE_CADENCES`. */
+export const SetCadenceInputSchema = z.strictObject({ projectId: id, cadence: z.enum(CAPTURE_CADENCES) });
+/** `setAutoCapture`: whether its due runs start by themselves. */
+export const SetAutoCaptureInputSchema = z.strictObject({ projectId: id, on: z.boolean() });
+
 export type ProjectIdInput = z.infer<typeof ProjectIdInputSchema>;
 export type AddQueryInput = z.infer<typeof AddQueryInputSchema>;
 
@@ -167,6 +175,9 @@ export const ProjectSummarySchema = z.strictObject({
   site: site.nullable(),
   createdAt: count,
   lastCapturedAt: count.nullable(),
+  cadence: z.enum(CAPTURE_CADENCES),
+  autoCapture: z.boolean(),
+  due: z.boolean(),
 }) satisfies z.ZodType<ProjectSummary>;
 
 export const ProjectsAnswerSchema = z.strictObject({ projects: z.array(ProjectSummarySchema).max(MAX_PROJECTS + 1) }) satisfies z.ZodType<ProjectsAnswer>;
@@ -231,4 +242,5 @@ export const RunStateSchema = z.strictObject({
     )
     .max(PROJECT_RUN_LIMITS.maxRunTargets)
     .readonly(),
+  blockedReason: z.enum(RUN_BLOCK_REASONS).nullable(),
 }) satisfies z.ZodType<RunState>;

@@ -11,7 +11,7 @@ import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@
 import type { SearchEngineId } from '@app/specs/browser-polish.spec';
 import type { CompareAnswer, CopyCsvAnswer, RankCsvKind, RankRange, RankSeriesAnswer, RankTableAnswer, ReadingDatesAnswer, SaveCsvAnswer } from '@app/specs/rankings.spec';
 import type { AddCompetitorAnswer, BulkAddAnswer, BulkSearchesInput, ProjectChangeAnswer, SetSiteAnswer, SetTagsAnswer } from '@app/specs/projects.spec';
-import type { EntryKind } from '@app/specs/workspace-db.spec';
+import type { CaptureCadence, EntryKind } from '@app/specs/workspace-db.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
 // the user intents it sends. All browser state, and every SEO audit, lives in main. The chrome never
@@ -109,4 +109,9 @@ export const projectsActions = {
   setTags: (projectId: string, entryKind: EntryKind, entryId: string, tags: readonly string[]): Promise<SetTagsAnswer | null> => ipc.projects.setTags.mutate({ projectId, entryKind, entryId, tags: [...tags] }).catch(() => null),
   addSearches: (projectId: string, searches: BulkSearchesInput): Promise<BulkAddAnswer | null> =>
     ipc.projects.addSearches.mutate({ projectId, searches: { ...searches, locales: [...searches.locales], devices: [...searches.devices], tags: [...searches.tags] } }).catch(() => null),
+  // Phase 10 Task 8: main may ask the rank run disclosure before a cadence is first set.
+  setCadence: (projectId: string, cadence: CaptureCadence): Promise<ProjectChangeAnswer | null> => ipc.projects.setCadence.mutate({ projectId, cadence }).catch(() => null),
+  setAutoCapture: (projectId: string, on: boolean): Promise<ProjectChangeAnswer | null> => ipc.projects.setAutoCapture.mutate({ projectId, on }).catch(() => null),
+  /** Check rankings: a run of the saved searches only, without screenshots (main asks the disclosure first when it must). */
+  checkRankings: (projectId: string) => ipc.projects.startRun.mutate({ projectId, screenshot: false, scope: 'searches' }).catch(() => null),
 };

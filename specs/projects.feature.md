@@ -2,7 +2,12 @@
 
 Spec: `specs/projects.spec.ts` (`PROJECT_RUN_LIMITS`, `RUN_STATES`, `RUN_TARGET_OUTCOMES`, Phase 10's
 `RUN_SCOPES`, `normalizeSiteDomain`, `normalizeTag`, `BULK_SEARCH_LIMITS`, `splitBulkSearches`,
-`PROJECT_SORTS`, `sortProjects`,
+`PROJECT_SORTS`, `sortProjects`, Task 8's `RANK_RUN_DISCLOSURE`, `RANK_RUN_DISCLOSURE_SETTING_KEY`,
+`RANK_RUN_QUERY_SPACING_MS`, `RUN_BLOCK_REASONS`, `RUN_BLOCK_REASON_LABELS`, `RUN_BLOCKED_NOTE`,
+`CHECK_RANKINGS_TEXT`, `DUE_TEXT`),
+`specs/capture-schedule.spec.ts` (Task 8: `AUTO_CAPTURE_AVAILABLE`, `CAPTURE_CADENCE_MS`, `isDue`,
+`SCHEDULE_TICK_MS`, `AUTO_CAPTURE_IDLE_S`, `AUTO_CAPTURE_RETRY_MS`, `AUTO_START_SUSPENDED_REASONS`,
+`CAPTURE_SCHEDULE_NOTE`, `CADENCE_TEXT`), `specs/projects.spec.ts` (also
 `RUN_RETRY_REFUSALS`, `QUERY_DEVICE_PROFILES`, `SavedSearchInput`, `SEARCH_PARAM_URL_RULES`,
 `searchLocaleFor`, `searchUrlFor`, `queryLabel`, `PROJECT_REFUSALS`, `RUN_REFUSALS` and their messages,
 `CAPTURE_RUN_NOTE`, `QUERY_FIELD_MAX_CHARS`, `DELETE_PROJECT`, the answer types) and
@@ -120,6 +125,82 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   With `searches` the run visits only the saved searches ("Check rankings"); a project with none is
   `no-targets`. The caps are unchanged.
 
+## Searches in a run (Phase 10 Task 8; plan Decision 10)
+- **Disclosure first.** Before the first run with search targets (Capture now on a project whose run
+  would visit a saved search, Check rankings) main shows `RANK_RUN_DISCLOSURE` in its own message box,
+  parented as `DELETE_PROJECT` is (the focused window, else the app's), Cancel the default: frost loads
+  the saved searches in a tab over this computer's connection, one every
+  `RANK_RUN_QUERY_SPACING_MS`, so the positions recorded are **as your signed-in browser profile sees
+  them**; engines' terms may restrict automated searches and an engine may answer with a consent page
+  or a challenge; frost stops at the first one. Cancel answers `declined` (`RUN_REFUSALS`) and starts
+  nothing; Continue is remembered once per install (`RANK_RUN_DISCLOSURE_SETTING_KEY` in
+  `app_settings`, through main's settings repository) and the run starts. Main asks inside `startRun`
+  (and `setCadence`, Cadence): the renderer cannot skip it. One question at a time: a second
+  `startRun` while it is open waits for the same answer. A run of pages that are not result pages
+  never asks. *Lead rulings of the Task 8 security review (amending plan Decision 10):* a **page
+  target whose URL is an engine's result page** (`runSearchOf`: `searchParamsForUrl` reads it) counts
+  as a search for the disclosure, the pacing and the stop below (its own parameters are what
+  `sameRunSearch` compares); after a Continue, `startRun` **reads the project and its targets again**
+  (a project deleted meanwhile is `not-found`; the run is of what it holds then); an **automatic
+  start** (`startAutomaticRun`, the schedule's) never opens the dialog and is `declined` without a
+  Continue already given.
+- **Pacing.** Search navigations go at least `PROJECT_RUN_LIMITS.querySpacingMs`
+  (`RANK_RUN_QUERY_SPACING_MS`, 10 s) apart: the run waits **between** targets, before it navigates the
+  next search target. *Ruling (amends "only after a search that landed"):* the wait follows **every
+  search navigation that was sent** (`navigate` answered `true`), landed or not, and the run service
+  keeps its time **across runs** (Cancel then Check rankings, or a rerun after a blocked run, still
+  waits); a navigation the browse guard refused was never sent and adds none. The wait is not part of
+  any target's `targetActiveTimeoutMs`; Cancel (or a stop on quit) ends it at once. Page targets that
+  are not result pages never wait. Fixed: no jitter, no user-agent change.
+- **Stop at the first challenge, checked before capture.** Once a search target has landed:
+  1. the landed URL must be a result page of the target's engine (`searchParamsForUrl(landed, device)`
+     with the bundled pack): none, or another engine's (a consent page on another host, a `/sorry/`
+     challenge path), blocks at once (`not-a-result-page`), before any verdict;
+  2. the run waits while `serpVerdictOf(runTab, landed)` is `pending`, up to `serpSettleWaitMs` of
+     active time, counted in the target's `targetActiveTimeoutMs`;
+  3. it captures only on `ready` whose search is the target's: the tab's parameters are
+     `searchParamsOf(runTab, landed)` and `sameRunSearch(tabParams, target.searchParams)` compares
+     engine, host, query, `gl`, `hl` and page (not the device: a site's pin may set another, and the
+     capture records the one in effect). `ready` with no tab parameters is `no-reading`;
+  4. otherwise it blocks **without capturing**: `unreadable`, `not-serp` (`not-a-result-page`),
+     `disabled` (`serp-off`), `ready` for another search (`mismatch`), still `pending` after the wait
+     (`no-reading`), or the target reaching `targetActiveTimeoutMs` before any of this (`timed-out`).
+  *Rulings:* a search target whose load fails or whose tab crashes (offline, a reset, a redirect
+  loop: it never landed) stops the run (`load-failed`); the landed document (`documentSeq`) is
+  recorded, and any other document before the capture or the screenshot (another URL, or a same-URL
+  reload) stops it (`not-a-result-page`) without a new check — a capture already made of the checked
+  document stays, without its screenshot.
+  A blocked run ends `blocked` (`RUN_STATES`, `RUN_END_STATES`) with `RunState.blockedReason`
+  (`RUN_BLOCK_REASONS`); that target is `blocked`, every later one `cancelled`. `changes.capture` and
+  the screenshot are never called for it: nothing of a challenge or consent page (no capture,
+  version, reading or screenshot) is stored in the project. The next run starts as any run does
+  (`blockedReason` `null`).
+- Page targets (the user's own site) that are not result pages keep Phase 6's behaviour: no verdict, no
+  gate, `timed-out` and the run goes on; they never block. A page target that is an engine's result
+  page is a search target (ruling above). Manual captures and screenshots are unchanged.
+
+## Cadence (Phase 10 Task 8; plan Decision 10)
+- A project has a capture cadence (`CAPTURE_CADENCES`: `off`, the default, `daily`, `weekly`), set by
+  `projects.setCadence`; device-local, never the project's `updated_at`. **Unfiled refuses a cadence**
+  (`unfiled`).
+- Before a cadence other than `off` is first set (the disclosure not yet answered Continue on this
+  install), main asks `RANK_RUN_DISCLOSURE` as `startRun` does: Cancel is `declined` and nothing is
+  stored; Continue is remembered. Setting `off` never asks.
+- A cadence is a **due notice only**: `ProjectSummary.due` is `isDue(lastProjectRunAt, cadence, now)`
+  (the project's newest `project`-source capture; none is due at once), shown "Due" in the list with
+  Capture now, while frost is open. Missed periods are never back-filled: a project is due once.
+- `ProjectSummary.autoCapture` and `projects.setAutoCapture` exist for a later phase: while
+  `AUTO_CAPTURE_AVAILABLE` is `false`, `setAutoCapture` answers `unavailable` (nothing stored), the
+  "Start automatically" switch is not shown, and main's scheduler (`capture-schedule.ts`, a
+  `SCHEDULE_TICK_MS` timer started by `projects-main.ts`, stopped on quit) **never starts a run**.
+  With the flag injected (tests only): a due project with auto start on starts (`all`, no
+  screenshots) only with the system idle ≥ `AUTO_CAPTURE_IDLE_S`, a visible, non-minimised frost
+  window, no run under way and (ruling) the disclosure already accepted — it never opens the dialog
+  (`startAutomaticRun`); one attempt per project per `AUTO_CAPTURE_RETRY_MS`; cancelled as soon as it
+  waits for its tab (it yields to the user); after any `blocked` run, manual or automatic, automatic
+  starts are suspended until frost restarts (memory only), heard as the run ends (the run service's
+  `onEnded`, ruling: not sampled at a tick). No login item, no background process, no server.
+
 ## The service
 - Every method answers; none rejects. A refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`); a
   database failure is `store-failed` and one log line with its code, never its message.
@@ -168,9 +249,11 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   4. `changes.capture(runTab, { projectId, source: 'project', searchParams, pageUrl })` (`pageUrl`
      the landed page, which the capture's audit must be of). `searchParams` are **the run tab's own**,
      read from Phase 3's SERP service for the landed page (`searchParamsOf(runTab, pageUrl)`, as a
-     manual capture's), so a run's capture and a manual capture of one search share a lane; when the
-     service has none for it (not read yet, a consent page on another URL, SERP reading disabled),
-     the target's own: the saved search's parameters for a query, none for a page. Asked
+     manual capture's), so a run's capture and a manual capture of one search share a lane. A **search
+     target** is captured only on a matching `ready` reading (Searches in a run: the landed-URL check,
+     the verdict wait, `sameRunSearch`), with those parameters; any other page stops the run
+     (`blocked`) without a capture. A **page target** takes the tab's parameters when the service has
+     them, else none. Asked
      again every `captureRetryMs` while it answers `no-audit`, `busy` or `not-active`; `no-tab` ends the
      run (`tab-closed`), `no-project` ends it (`cancelled`), any other refusal fails the target;
   5. with screenshots asked, a viewport screenshot linked to the capture (`captureId`, the search
@@ -201,14 +284,16 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - **State:** `RunState`, served by the long-poll `projects.runState(sinceVersion)` (answers at once
   when newer, else on the next change or after `runStateWatchTimeoutMs`; at most
   `maxPendingRunWatches` wait).
-- What a run meets is what it captures: search engines may answer with a consent page or a challenge
-  (`CAPTURE_RUN_NOTE`, said beside Capture now).
+- A page target's run captures what it meets; a search target's run stops at a consent page or a
+  challenge and captures nothing of it (`CAPTURE_RUN_NOTE`, said beside Capture now; Searches in a
+  run). Search targets are paced (`querySpacingMs`).
 
 ## Router
 - `projects.list`, `get`, `create`, `rename`, `setRenderProfile`, `remove`, `addPage`,
   `addCurrentPage`, `removePage`, `addSearch`, `removeSearch` (a query; no procedure name says
   "query", by `db-only-in-main`), `forPage`, `startRun`, `cancelRun`, `runState`; Phase 10's
-  `setFavorite`, `setSite`, `addCompetitor`, `removeCompetitor`, `setTags`, `addSearches`. Each is `enforceSender` first, then `requireProjects` (fails closed without the
+  `setFavorite`, `setSite`, `addCompetitor`, `removeCompetitor`, `setTags`, `addSearches`; Task 8's
+  `setCadence`, `setAutoCapture`. Each is `enforceSender` first, then `requireProjects` (fails closed without the
   service), with a strict input; the answers are checked against their schemas on the way out.
 
 ## The sheet
@@ -255,11 +340,22 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
     input and Add (`projects-competitor-input`, `projects-competitor-add`, read the same way), "n of
     `MAX_PROJECT_COMPETITORS`", Add disabled at the cap; adding a domain the project has says
     `competitorExists`;
-  - Task 8's cadence part, after them.
+  - the **cadence** (Task 8, `CADENCE_TEXT`): a labelled `<select>` of `CAPTURE_CADENCES`
+    (`projects-cadence`, `CAPTURE_CADENCE_LABELS`) that calls `setCadence` (main may ask the
+    disclosure first; `declined` says `CADENCE_TEXT.declined` and the menu shows the stored cadence),
+    and the note `CAPTURE_SCHEDULE_NOTE` (`projects-cadence-note`). The "Start automatically" switch
+    (`projects-auto-capture`) shows only when `AUTO_CAPTURE_AVAILABLE` (never in this phase).
 
   For Unfiled the view says `PROJECT_SETTINGS_TEXT.unfiled` and offers nothing to set. The Rankings
   view's "Set your site's domain to see its position" notice carries a button
   (`rankings-open-settings`) that switches to Settings.
+- **Due, Check rankings and a blocked run (Phase 10 Task 8).** A project whose summary is `due` shows
+  `DUE_TEXT.label` beside its name in the list (`projects-due`, described by `DUE_TEXT.note`).
+  Overview's capture row has **Check rankings** (`projects-check-rankings`, `CHECK_RANKINGS_TEXT`):
+  `startRun` with `scope: 'searches'`, without screenshots, disabled with no saved search or while a run
+  is under way. A run that ended `blocked` shows `RUN_BLOCKED_NOTE` and its reason's
+  `RUN_BLOCK_REASON_LABELS` text (`projects-run-blocked`) under its progress; its target says
+  `RUN_TARGET_OUTCOME_LABELS.blocked`. A `declined` start says `RUN_REFUSAL_MESSAGES.declined`.
 - **Tags (Phase 10 Task 7).** Each page and saved search row of Overview shows its tags
   (`projects-page-tags`, `projects-query-tags`, each tag `projects-tag`) and an "Edit tags" button
   (`projects-page-tags-edit`, `projects-query-tags-edit`) that opens an inline editor: one text
@@ -311,10 +407,12 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   sheet on it and starts its run (no screenshots). Deleting that project withdraws the action.
 - "Open rankings" and "Compare searches" (Phase 10 Task 6) open the sheet on the Rankings or Compare
   view of the project last opened in the sheet (else the first project, Unfiled).
+- "Check rankings now" (Phase 10 Task 8; once a project was opened in the sheet this session) opens the
+  sheet on it and starts a `searches` run (main asks the disclosure first when it must).
 
 ## Known limits
-- A search engine that redirects (a consent page on another URL) is captured at the URL it ended on;
-  `get` looks the query up at its search URL, so that capture is not shown on the query's row.
+- A search target that lands on a consent page on another URL stops the run (`not-a-result-page`):
+  nothing of it is captured. A page target that redirects is captured at the URL it ended on.
 - Saved searches are read with the **bundled** selector pack, not one installed by "Check for
   selector updates": a pack update that renames an engine's parameters changes what the SERP service
   reads on a run tab (which the capture records), not the saved search's URL.
@@ -363,8 +461,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `capture-run-visits-each-target-in-its-own-tab`, `capture-run-waits-for-active-tab`,
   `capture-run-retries-until-settled`, `capture-run-waits-for-its-navigation`,
   `capture-run-refuses-a-moved-tab`, `capture-run-fails-fast-on-a-load-error`,
-  `capture-run-records-query-params` (the run tab's parameters from `searchParamsOf`, else the
-  target's), `capture-run-retries-a-screenshot-behind-another-tab`,
+  `capture-run-records-query-params` (a search target is captured with the run tab's parameters
+  from `searchParamsOf` on a matching `ready` reading; a page target with the tab's, else none), `capture-run-retries-a-screenshot-behind-another-tab`,
   `capture-run-applies-profiles`, `capture-run-never-removes-a-pin`, `capture-run-cancels-on-tab-close`,
   `capture-run-cancels`, `capture-run-cancel-during-a-capture`, `capture-run-times-out-per-target`,
   `capture-run-restores-previous-tab`, `capture-run-keeps-the-users-tab`, `one-run-at-a-time`,
@@ -373,6 +471,31 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `capture-run-caps-targets`, `run-state-long-polls`; and over the real controller, render profiles and
   pins, `capture-run-pins.test.ts` `capture-run-never-removes-a-pin`. The capture's `pageUrl`:
   `service.test.ts` `capture-records-profile-and-params`.
+- **Scenario: searches in a run** (Task 8) — Tests in `capture-run.test.ts`:
+  `capture-run-spaces-search-targets` (fake clock; page targets not delayed; the wait is not counted in
+  the next target's active time; Cancel during the wait ends the run at once),
+  `capture-run-stops-at-a-challenge` (one case per reason: a consent page on another host, a
+  `/sorry/` path on the engine host, `unreadable`, `disabled`, `ready` for another search, `pending`
+  past `SERP_SETTLE_WAIT_MS`, a page that never finishes loading; each ends `blocked` with that reason,
+  the rest `cancelled`, and `changes.capture` never called for the blocked target),
+  `capture-run-captures-only-on-ready`, `capture-run-page-targets-never-block`,
+  `capture-run-after-blocked-starts-normally`, `capture-run-no-wait-after-a-failed-load` (a
+  navigation the guard refused), `capture-run-ready-needs-tab-params`; the review rulings'
+  `capture-run-stops-after-a-failed-search-load`, `capture-run-result-page-target-is-gated`,
+  `capture-run-blocks-a-reload-after-the-check`, `capture-run-spacing-holds-across-runs`;
+  `readings-spec.test.ts` `run-search-matches-built-urls`;
+  `projects.test.ts` `rank-run-asks-once-before-first-search-run` (Cancel starts nothing; Continue
+  remembered; a pages-only run never asks), `rank-run-disclosure-review-rulings` (a result-page page
+  asks; targets read again after Continue; an automatic start never asks),
+  `cadence-asks-the-disclosure-first`.
+- **Scenario: cadence** (Task 8) — Tests in `apps/desktop/src/main/changes/__tests__/capture-schedule.test.ts`:
+  `due-after-cadence`, `off-is-never-due`, `no-backfill-after-sleep`, `defaults-never-start-a-run` (the
+  real `AUTO_CAPTURE_AVAILABLE`: due shows, nothing starts, `setAutoCapture` is `unavailable`); with the
+  flag injected: `auto-start-needs-idle-visible-and-free`, `one-auto-attempt-per-retry-window`,
+  `auto-run-yields-to-the-user`, `auto-start-suspended-after-blocked`,
+  `auto-start-needs-the-disclosure-accepted`, `schedule-stops-on-quit`; the
+  chrome: `projects-view.test.ts` `projects-view-due-label`, `projects-view-cadence-settings`,
+  `projects-view-blocked-run`, and "Check rankings now" in `projects-palette-actions`.
 - **Scenario: project workspace** — Tests in `apps/desktop/src/main/changes/__tests__/workspace.test.ts`:
   `site-domain-normalized` (scheme, path, case, IDN, private hosts refused),
   `competitors-capped-and-unique`, `tags-normalized-and-capped`, `bulk-add-lines-and-combinations`

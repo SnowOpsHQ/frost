@@ -2,9 +2,11 @@
 // deleteProjectDialog, QUERY_DEVICE_PROFILES, QUERY_FIELD_MAX_CHARS; Phase 10: RUN_SCOPES, PROJECT_REFUSALS, normalizeTag,
 // normalizeTags, BULK_SEARCH_LIMITS, BULK_LINE_OUTCOMES, splitBulkSearches, bulkSearchInputs, PROJECT_SORTS, sortProjects),
 // specs/browser-polish.spec.ts (SEARCH_ENGINES, wellFormed), specs/workspace-db.spec.ts (TAG_MAX_CHARS, MAX_TAGS_PER_ENTRY)
-// Acceptance: specs/projects.feature.md (Saved searches; Tags; Bulk add; Favorites and sort; Run scope;
+// Phase 10 Task 8: RANK_RUN_DISCLOSURE, RANK_RUN_QUERY_SPACING_MS, RUN_STATES, RUN_END_STATES, RUN_BLOCK_REASONS, RUN_REFUSALS
+// Acceptance: specs/projects.feature.md (Saved searches; Tags; Bulk add; Favorites and sort; Run scope; Searches in a run;
 // Scenarios: search-url-for-params, projects-spec-values, project workspace)
-import { describe, expect, test } from 'vitest';
+import { dialog } from 'electron';
+import { describe, expect, test, vi } from 'vitest';
 import { SEARCH_ENGINE_IDS, SEARCH_ENGINES } from '@app/specs/browser-polish.spec';
 import { WATCH_TIMEOUT_MS, MAX_PENDING_WATCHES } from '@app/specs/browser.spec';
 import { MAX_PROJECT_QUERIES } from '@app/specs/capture-db.spec';
@@ -26,6 +28,16 @@ import {
   splitBulkSearches,
   type ProjectSummary,
   PROJECT_RUN_LIMITS,
+  CAPTURE_RUN_NOTE,
+  RANK_RUN_DISCLOSURE,
+  RANK_RUN_DISCLOSURE_SETTING_KEY,
+  RANK_RUN_QUERY_SPACING_MS,
+  RUN_BLOCK_REASONS,
+  RUN_END_STATES,
+  RUN_REFUSAL_MESSAGES,
+  RUN_REFUSALS,
+  RUN_STATES,
+  RUN_TARGET_OUTCOMES,
   QUERY_DEVICE_PROFILES,
   QUERY_FIELD_MAX_CHARS,
   SEARCH_PARAM_URL_RULES,
@@ -39,6 +51,9 @@ import {
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { SERP_PARAM_LIMITS } from '@app/specs/serp.spec';
 import { MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from '@app/specs/workspace-db.spec';
+import { confirmRankRun } from '../projects-dialog';
+
+vi.mock('electron', async () => (await import('../../../test/electron-fake')).electronFake());
 
 const BASE: SavedSearchInput = { engine: 'google', query: 'green tea', country: null, language: null, device: 'desktop' };
 const PARAMS: SearchParams = { engine: 'google', engineLabel: 'Google', query: 'green tea', gl: null, hl: null, device: 'desktop', page: 1, offset: null, url: 'https://www.google.com/search?q=green+tea' };
@@ -154,6 +169,9 @@ describe('projects spec', () => {
       site: null,
       createdAt: 0,
       lastCapturedAt: null,
+      cadence: 'off',
+      autoCapture: false,
+      due: false,
       ...changes,
     });
     const list = [
@@ -169,5 +187,47 @@ describe('projects spec', () => {
     expect(names('last-captured')).toEqual(['0', '3', '5', '4', '1', '2']);
     expect(names('created')).toEqual(['0', '5', '3', '2', '1', '4']);
     expect(list.map((project) => project.id)).toEqual(['1', '2', '0', '3', '4', '5']);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Disclosure first, Pacing, Stop at the first challenge)
+  test('rank-run-disclosure-values', async () => {
+    const { dialog: box } = RANK_RUN_DISCLOSURE;
+    // Cancel is the default and the cancel answer; only Continue agrees.
+    expect(box.buttons).toEqual(['Continue', 'Cancel']);
+    expect(box.buttons[RANK_RUN_DISCLOSURE.confirmIndex]).toBe('Continue');
+    expect(box.defaultId).toBe(box.cancelId);
+    expect(box.buttons[box.cancelId]).toBe('Cancel');
+    // What it says: this computer's connection, the pace, the signed-in profile, terms, and the stop.
+    expect(box.detail).toContain('as your signed-in browser profile sees them');
+    expect(box.detail).toContain('one every 10 seconds');
+    expect(box.detail).toContain('cookies');
+    expect(box.detail).toMatch(/terms may restrict automated searches/);
+    expect(box.detail).toMatch(/consent page or a challenge: frost stops at the first one/);
+    expect(RANK_RUN_DISCLOSURE_SETTING_KEY).toBe('rank_run_disclosure');
+    expect(RANK_RUN_QUERY_SPACING_MS).toBe(10_000);
+    expect(PROJECT_RUN_LIMITS.querySpacingMs).toBe(RANK_RUN_QUERY_SPACING_MS);
+    expect(CAPTURE_RUN_NOTE).toMatch(/one every 10 seconds/);
+    expect(CAPTURE_RUN_NOTE).toMatch(/run stops there and captures nothing/);
+    // `blocked` is a state, an end state and an outcome; a declined disclosure is a run refusal.
+    expect(RUN_STATES).toContain('blocked');
+    expect(RUN_END_STATES).toContain('blocked');
+    expect(RUN_TARGET_OUTCOMES).toContain('blocked');
+    expect(RUN_BLOCK_REASONS).toEqual(['not-a-result-page', 'unreadable', 'serp-off', 'mismatch', 'no-reading', 'timed-out', 'load-failed']);
+    expect(RUN_REFUSALS).toContain('declined');
+    expect(Object.keys(RUN_REFUSAL_MESSAGES).sort()).toEqual([...RUN_REFUSALS].sort());
+    expect(PROJECT_REFUSALS).toContain('unavailable');
+    // Main's message box: parented when there is a window (else app-modal); only Continue agrees.
+    const showMessageBox = vi.mocked(dialog.showMessageBox);
+    const parent = { id: 1 } as never;
+    showMessageBox.mockResolvedValueOnce({ response: RANK_RUN_DISCLOSURE.confirmIndex, checkboxChecked: false });
+    await expect(confirmRankRun(parent)).resolves.toBe(true);
+    expect(showMessageBox).toHaveBeenLastCalledWith(parent, { ...box, buttons: [...box.buttons] });
+    for (const response of [box.cancelId, 7]) {
+      showMessageBox.mockResolvedValueOnce({ response, checkboxChecked: false });
+      await expect(confirmRankRun(parent)).resolves.toBe(false);
+    }
+    showMessageBox.mockResolvedValueOnce({ response: RANK_RUN_DISCLOSURE.confirmIndex, checkboxChecked: false });
+    await expect(confirmRankRun(null)).resolves.toBe(true);
+    expect(showMessageBox.mock.lastCall).toEqual([{ ...box, buttons: [...box.buttons] }]);
   });
 });

@@ -42,7 +42,7 @@ vi.mock('../serp-params', async (importOriginal) => {
 let clock = 3_000_000;
 const tick = () => (clock += 1_000);
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
-const IDLE: RunState = { version: 1, runId: null, projectId: null, state: 'idle', current: 0, total: 0, omitted: 0, screenshot: false, targets: [] };
+const IDLE: RunState = { version: 1, runId: null, projectId: null, state: 'idle', current: 0, total: 0, omitted: 0, screenshot: false, targets: [], blockedReason: null };
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -69,7 +69,9 @@ function setup() {
   } satisfies CaptureRuns;
   const files = { unlink: vi.fn(async () => true), lock: async () => () => undefined, fileFor: (hash: string) => path.join(dir, 'none', `${hash}.png`) };
   const log = vi.fn((_message: string) => undefined);
-  const projects = createProjectsService({ store: opened.changeIntel, files, confirmDelete: async () => true, activeUrl: () => null, runs, now: tick, log });
+  // Main's disclosure (Phase 10 Task 8) answers Continue; none of this file's business.
+  const settings = { rankRunDisclosureAccepted: async () => true, setRankRunDisclosureAccepted: async () => true };
+  const projects = createProjectsService({ store: opened.changeIntel, files, confirmDelete: async () => true, confirmRankRun: async () => true, settings, activeUrl: () => null, runs, now: tick, log });
   const workspace = createWorkspaceService({ store: opened.changeIntel, now: tick, log });
   return { projects, workspace, repo: opened.changeIntel, raw, log, file: opened.file };
 }

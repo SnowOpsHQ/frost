@@ -5,6 +5,7 @@ import {
   CAPTURE_RUN_NOTE,
   DEFAULT_PROJECT_SORT,
   DELETED_NOT_PURGED,
+  DUE_TEXT,
   PROJECTS_TITLE,
   PROJECT_VIEWS,
   PROJECT_VIEW_LABELS,
@@ -32,7 +33,10 @@ import {
   QUERY_ENGINES,
   TAGS_TEXT_MAX_CHARS,
   addPageText,
+  blockedRunNote,
   changeCountText,
+  checkRankingsButton,
+  dueLabel,
   favoriteButton,
   favoriteText,
   lastCaptureText,
@@ -72,14 +76,16 @@ import { Retention } from './Retention';
 // Overview (all of the above), Rankings (`Rankings.tsx`) and Compare (`Compare.tsx`), Phase 10 Task 6,
 // and Settings (`ProjectSettings.tsx`: site and competitors), Task 7. Task 7 also adds the list's star
 // and sort menu (view state, not kept), the tags of pages and saved searches (an inline editor on each
-// row) and Bulk add (`BulkAdd.tsx`, in place of the query form).
+// row) and Bulk add (`BulkAdd.tsx`, in place of the query form). Task 8 adds "Due" in the list, Check
+// rankings beside Capture now (a run of the saved searches; main asks the disclosure first when it
+// must), a blocked run's note under its progress, and the cadence in Settings.
 
 // The palette's Projects and retention actions (`projects-palette.ts`), once per module instance.
 const unregisterPaletteActions = registerPaletteActions(
   ...projectsPaletteSources({
     open: (request) => openProjects(request),
     lastProject: lastOpenedProject,
-    startRun: (projectId) => ipc.projects.startRun.mutate({ projectId, screenshot: false }).catch(() => null),
+    startRun: (projectId, scope) => ipc.projects.startRun.mutate({ projectId, screenshot: false, ...(scope === undefined ? {} : { scope }) }).catch(() => null),
   }),
   ...retentionPaletteSources({
     open: (request) => openProjects(request),
@@ -155,6 +161,8 @@ function ProjectItem({
   readonly onFavorite: (favorite: boolean) => void;
 }) {
   const star = favoriteButton(project);
+  const due = dueLabel(project);
+  const dueId = useId();
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(project.name);
   const save = async (event: FormEvent) => {
@@ -191,10 +199,20 @@ function ProjectItem({
           </button>
         </form>
       ) : (
-        <button type="button" className="projects-item-open" data-testid="projects-item-open" aria-current={selected ? 'true' : undefined} onClick={onSelect}>
+        <button type="button" className="projects-item-open" data-testid="projects-item-open" aria-current={selected ? 'true' : undefined} aria-describedby={due !== null ? dueId : undefined} onClick={onSelect}>
           <Text value={project.name} className="projects-item-name" />
+          {due !== null ? (
+            <span className="projects-due" data-testid="projects-due" title={DUE_TEXT.note}>
+              {due}
+            </span>
+          ) : null}
         </button>
       )}
+      {due !== null ? (
+        <span id={dueId} hidden>
+          {DUE_TEXT.note}
+        </span>
+      ) : null}
       {!project.unfiled && !renaming ? (
         <button type="button" className="projects-small-button" data-testid="projects-rename" aria-label={`Rename ${project.name}`} onClick={() => setRenaming(true)}>
           Rename
@@ -336,6 +354,7 @@ function EntryRow({
 
 function RunProgress({ run, onCancel }: { readonly run: RunState; readonly onCancel: () => void }) {
   const active = runActive(run.state);
+  const blocked = blockedRunNote(run);
   return (
     <section className="projects-run" data-testid="projects-run" data-state={run.state} aria-label="Capture run">
       <div className="projects-run-head">
@@ -360,6 +379,12 @@ function RunProgress({ run, onCancel }: { readonly run: RunState; readonly onCan
           </li>
         ))}
       </ol>
+      {blocked !== null ? (
+        <div className="projects-run-blocked" data-testid="projects-run-blocked" role="alert">
+          <p className="projects-run-blocked-reason">{blocked.reason}</p>
+          <p className="projects-note">{blocked.note}</p>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -487,6 +512,12 @@ function ProjectView({
     const problem = startRunText(answer);
     if (problem !== null) say(problem);
   };
+  // Check rankings (Phase 10 Task 8): the saved searches only; main asks the disclosure first when it must.
+  const checkRankings = async () => {
+    const problem = startRunText(await projectsActions.checkRankings(projectId));
+    if (problem !== null) say(problem);
+  };
+  const check = checkRankingsButton(queries.length, busy);
   const saveTags = async (entryKind: EntryKind, entryId: string, tags: string[]): Promise<boolean> => {
     const answer = await projectsActions.setTags(projectId, entryKind, entryId, tags);
     say(setTagsText(answer));
@@ -552,6 +583,9 @@ function ProjectView({
               <div className="projects-capture-row">
                 <button type="button" className="panel-button panel-button-primary" data-testid="projects-capture" disabled={busy || pages.length + queries.length === 0} onClick={() => void capture()}>
                   <span>{mine && busy ? 'Capturing…' : 'Capture now'}</span>
+                </button>
+                <button type="button" className="panel-button" data-testid="projects-check-rankings" disabled={check.disabled} title={check.title} onClick={() => void checkRankings()}>
+                  <span>{check.label}</span>
                 </button>
                 <label className="projects-check">
                   <input type="checkbox" data-testid="projects-capture-screenshots" checked={screenshots} onChange={(event) => setScreenshots(event.target.checked)} />

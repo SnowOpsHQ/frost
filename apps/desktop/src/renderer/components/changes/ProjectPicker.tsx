@@ -13,7 +13,7 @@ import { openProjects, useProjectsGeneration } from './projects-sheet';
 // made is never overridden by that default arriving late; a chosen project that is deleted falls back
 // to the default. "Projects" opens the Projects sheet on the chosen project.
 
-const UNFILED_ONLY: ProjectSummary[] = [{ id: UNFILED_PROJECT_ID, name: UNFILED_PROJECT_NAME, unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 0, lastCapturedAt: null }];
+const UNFILED_ONLY: ProjectSummary[] = [{ id: UNFILED_PROJECT_ID, name: UNFILED_PROJECT_NAME, unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 0, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false }];
 
 export function ProjectPicker({ url }: { readonly url: string }) {
   const projectId = useCaptureProject();

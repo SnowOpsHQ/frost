@@ -338,7 +338,7 @@ function start(): void {
   // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
   const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession, searchParamsOf: serpParams.of });
   // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
-  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of, serpVerdictOf: serpParams.verdictOf });
+  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of, serpVerdictOf: serpParams.verdictOf, settings: sessionStore.settings });
   // The DOM inspector (specs/inspector.feature.md): reads the active tab's page in its own isolated world; never writes to it.
   const inspector = createMainInspector({ browser, tabContents, log: logSession });
 

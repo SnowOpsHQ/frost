@@ -1,7 +1,8 @@
 // Spec: specs/rankings.spec.ts (SERP_FILTER_PARAMS, SEARCH_IDENTITY_EXCLUDED, searchIdentityJson, the Zod-free shapes),
 // specs/rankings-url.spec.ts (serpFiltersOf, searchHostOf, sameRunSearch), specs/rankings.schema.ts (SerpFiltersSchema, StoredReadingSchema),
 // specs/workspace-db.spec.ts (MAX_SERP_FILTERS_JSON_BYTES, SEARCH_KEY_VERSION)
-// Acceptance: specs/changes-capture.feature.md (SERP reading; Scenarios: SERP reading spec)
+// Acceptance: specs/changes-capture.feature.md (SERP reading; Scenarios: SERP reading spec),
+// specs/projects.feature.md (Searches in a run: `sameRunSearch` over the shipped engines' built URLs)
 import { describe, expect, expectTypeOf, test } from 'vitest';
 import type { z } from 'zod';
 import { sameRunSearch, searchHostOf, serpFiltersOf, utf8Bytes } from '@app/specs/rankings-url.spec';
@@ -17,6 +18,11 @@ import { SerpFiltersSchema, StoredReadingSchema } from '@app/specs/rankings.sche
 import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
 import { SerpSnapshotSchema } from '@app/specs/serp-snapshot.schema';
 import { MAX_SERP_FILTERS_JSON_BYTES } from '@app/specs/workspace-db.spec';
+import { SEARCH_ENGINE_IDS } from '@app/specs/browser-polish.spec';
+import { bulkSearchInputs, searchUrlFor, type BulkLocale } from '@app/specs/projects.spec';
+import { SERP_DEVICES } from '@app/specs/serp.spec';
+import { savedSearchParams } from '../projects';
+import { searchParamsForUrl } from '../serp-params';
 import { sha256Hex } from '../snapshot';
 import { readyReading } from './fakes';
 
@@ -119,6 +125,48 @@ describe('filters', () => {
     for (const changed of [{ gl: 'us' }, { hl: null }, { query: 'Green tea' }, { page: 2 }, { engine: 'bing' }, { url: 'https://www.google.de/search?q=green+tea&gl=de&hl=de' }, { url: 'nonsense' }]) {
       expect(sameRunSearch({ ...PARAMS, ...changed }, PARAMS), JSON.stringify(changed)).toBe(false);
     }
+  });
+});
+
+describe('a run target and its landed page', () => {
+  // spec: specs/projects.feature.md — Searches in a run (3. `sameRunSearch`): for every shipped engine and
+  // every saved search Bulk add can make, the page a run lands on unchanged reads back as the target's
+  // search, so the gate never stops a run that met its own result page.
+  test('run-search-matches-built-urls', () => {
+    const queries = ['green tea', 'Grüner Tee', 'c++ & "tea" 100%', 'a+b=c?#x', '東京 お茶', 'tea/coffee'];
+    const locales: BulkLocale[] = [
+      { country: null, language: null },
+      { country: 'de', language: null },
+      { country: null, language: 'en' },
+      { country: 'us', language: 'en' },
+      { country: 'br', language: 'pt-br' },
+    ];
+    let checked = 0;
+    for (const engine of SEARCH_ENGINE_IDS) {
+      for (const query of queries) {
+        for (const search of bulkSearchInputs(query, { engine, locales, devices: SERP_DEVICES })) {
+          const label = JSON.stringify(search);
+          // The saved search (`searchUrlFor` → `searchParamsForUrl`), as Bulk add stores it.
+          const target = savedSearchParams(search);
+          expect(target, label).not.toBeNull();
+          // The run visits its canonical URL; it lands there unchanged and Phase 3 reads it (on the device in effect).
+          for (const landed of [target!.url, searchUrlFor(search)]) {
+            const tab = searchParamsForUrl(landed, search.device);
+            expect(tab, `${label} ${landed}`).not.toBeNull();
+            expect(sameRunSearch(tab!, target!), `${label} ${landed}`).toBe(true);
+            // A pin that sets another device changes nothing.
+            const other = SERP_DEVICES.find((device) => device !== search.device)!;
+            expect(sameRunSearch(searchParamsForUrl(landed, other)!, target!), `${label} on ${other}`).toBe(true);
+            checked += 1;
+          }
+          // Another country, language, query or engine host is another search.
+          for (const changed of [{ gl: target!.gl === 'zz' ? 'zy' : 'zz' }, { hl: target!.hl === 'xx' ? 'xy' : 'xx' }, { query: `${target!.query} 2` }, { url: target!.url.replace('://', '://other.') }]) {
+            expect(sameRunSearch({ ...target!, ...changed }, target!), `${label} ${JSON.stringify(changed)}`).toBe(false);
+          }
+        }
+      }
+    }
+    expect(checked).toBe(SEARCH_ENGINE_IDS.length * queries.length * locales.length * SERP_DEVICES.length * 2);
   });
 });
 

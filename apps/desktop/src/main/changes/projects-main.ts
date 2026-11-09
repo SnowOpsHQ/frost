@@ -1,11 +1,13 @@
-import { app, BrowserWindow } from 'electron';
-import type { ChangeIntelRepository } from '@app/db';
+import { app, BrowserWindow, powerMonitor } from 'electron';
+import type { ChangeIntelRepository, SettingsRepository } from '@app/db';
 import type { BrowserService, ProjectsService } from '@app/ipc-contract';
+import type { RunState } from '@app/specs/projects.spec';
 import type { MainScreenshotsService } from '../screenshots/service';
 import { createScreenshotFiles } from '../screenshots/store';
 import { createCaptureRuns, stopRunOnQuit } from './capture-run';
+import { createCaptureSchedule, stopScheduleOnQuit } from './capture-schedule';
 import { createProjectsService, type MainProjectsService } from './projects';
-import { confirmDeleteProject } from './projects-dialog';
+import { confirmDeleteProject, confirmRankRun } from './projects-dialog';
 import { createPurgeFiles, type PurgeFiles } from './purge-files';
 import { createRetentionService } from './retention';
 import { confirmCompact, confirmPurgeNow } from './retention-dialog';
@@ -28,6 +30,11 @@ import { createWorkspaceService } from './workspace';
 // are deleted and the workspace rows (competitors, tags) of projects deleted through sync are
 // tombstoned; after every purge, the orphan readings are swept again. The project workspace's
 // procedures (Phase 10 Task 4, `workspace.ts`) go out with the projects'.
+// Phase 10 Task 8 (`projects.feature.md`, Searches in a run; Cadence): the rank run disclosure is
+// main's own message box, parented as the delete's, its Continue remembered through the settings
+// repository; the capture schedule's timer starts here (Electron's `powerMonitor` and the windows'
+// visibility, read only when a tick looks) and stops on quit. With `AUTO_CAPTURE_AVAILABLE` `false` it
+// never starts a run.
 
 export interface MainProjectsDeps {
   /** `SessionStore.changeIntel`. */
@@ -44,9 +51,14 @@ export interface MainProjectsDeps {
   readonly searchParamsOf: SearchParamsOf;
   /** Phase 3's verdict on a run tab's landed page (`lateSearchParams().verdictOf`: `pending` until it is bound). */
   readonly serpVerdictOf: SerpVerdictOf;
+  /** `SessionStore.settings`: where the rank run disclosure's Continue is remembered (once per install). */
+  readonly settings: Pick<SettingsRepository, 'rankRunDisclosureAccepted' | 'setRankRunDisclosureAccepted'>;
 }
 
-export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf, serpVerdictOf }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
+/** Whether a frost window is on screen: visible and not minimised. */
+const windowVisible = (): boolean => BrowserWindow.getAllWindows().some((win) => !win.isDestroyed() && win.isVisible() && !win.isMinimized());
+
+export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf, serpVerdictOf, settings }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
   const files = createScreenshotFiles(userData);
   const sweeps = createWorkspaceSweeps({ store, log });
   // One purge at a time, whoever asks (a delete, Purge now, an enforcement); each purge is followed by the readings sweep.
@@ -54,6 +66,7 @@ export function createMainProjects({ store, userData, browser, changes, screensh
   const parent = () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null;
   // The run's end enforces its project's policy (bound below: the runs and retention know each other).
   let afterRun: (projectId: string) => void = () => undefined;
+  let runEnded: (ended: RunState) => void = () => undefined;
   const runs = createCaptureRuns({
     browser: {
       getState: () => browser.getState(),
@@ -70,6 +83,8 @@ export function createMainProjects({ store, userData, browser, changes, screensh
     searchParamsOf,
     serpVerdictOf,
     afterRun: (projectId) => afterRun(projectId),
+    // Every run's end reaches the capture schedule (a `blocked` one suspends automatic starts).
+    onEnded: (ended) => runEnded(ended),
     log,
   });
   // Quitting (or closing the window) stops a run with its tab closed at once, so the session saved
@@ -80,6 +95,8 @@ export function createMainProjects({ store, userData, browser, changes, screensh
     files,
     purges,
     confirmDelete: (name) => confirmDeleteProject(parent(), name),
+    confirmRankRun: () => confirmRankRun(parent()),
+    settings,
     activeUrl: () => {
       const state = browser.getState();
       return state.tabs.find((tab) => tab.id === state.activeTabId)?.url ?? null;
@@ -98,6 +115,26 @@ export function createMainProjects({ store, userData, browser, changes, screensh
     log,
   });
   afterRun = (projectId) => retention.afterRun(projectId);
+  // The cadence's schedule: a due notice only while `AUTO_CAPTURE_AVAILABLE` is `false` (it never starts a run).
+  const schedule = createCaptureSchedule({
+    projects: async () => (await projects.list()).projects,
+    runs,
+    // Never opens the disclosure: only with a Continue already given (and `declined` otherwise).
+    startRun: (projectId) => projects.startAutomaticRun(projectId),
+    disclosureAccepted: async () => {
+      try {
+        return await settings.rankRunDisclosureAccepted();
+      } catch {
+        return false;
+      }
+    },
+    powerMonitor: { getSystemIdleTime: () => powerMonitor.getSystemIdleTime() },
+    windowVisible,
+    log,
+  });
+  runEnded = (ended) => schedule.runEnded(ended);
+  stopScheduleOnQuit(app, schedule);
+  schedule.start();
   changes.onCaptured((projectId) => retention.afterCapture(projectId));
   screenshots.onSaved((projectId) => retention.afterCapture(projectId));
   // A delete whose purge failed earlier (a crash, a full disk) is purged again at startup; then the

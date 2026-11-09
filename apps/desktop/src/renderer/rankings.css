@@ -518,3 +518,48 @@
 .projects-bulk-outcome[data-outcome='limit'] .projects-bulk-outcome-text {
   color: var(--danger);
 }
+
+/* Due, a blocked run and the cadence (Phase 10 Task 8) --------------------------------------------
+   specs/projects.feature.md, The sheet (Due, Check rankings and a blocked run; Settings: the cadence). */
+
+.projects-item-open:has(> .projects-due) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.projects-item-open:has(> .projects-due) .projects-item-name {
+  min-width: 0;
+}
+
+.projects-due {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.projects-run-target[data-outcome='blocked'] .projects-run-outcome {
+  color: var(--warn);
+}
+
+.projects-run-blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.projects-run-blocked-reason {
+  margin: 0;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.project-settings-cadence .projects-select {
+  max-width: 200px;
+}

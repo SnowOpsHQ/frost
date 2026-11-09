@@ -182,8 +182,9 @@ tab **and** page: `ready`, `unreadable`, `not-serp`, `disabled` (whatever the pa
 `pending` for a pending page, another tab or page, garbage, a throwing or unbound API (never `null`).
 Once a search target has landed, the run asks it before capturing and looks again every
 `captureRetryMs` while it is `pending`, for up to `serpSettleWaitMs` of active time; that time counts
-toward the target's `targetActiveTimeoutMs`. Then it captures as Phase 6 does (until Phase 10 Task 8,
-whatever the verdict). Page targets do not wait.
+toward the target's `targetActiveTimeoutMs`. Then it captures only on a `ready` reading of the
+target's search; any other verdict stops the run without a capture (Phase 10 Task 8,
+`projects.feature.md`, Searches in a run). Page targets do not wait.
 
 ## The render profile recorded (`profile-in-effect.ts`; captures and screenshots)
 One rule for a capture's and a screenshot's render profile: the profile **set on the tab** when the
@@ -299,9 +300,10 @@ closed), then its strict input.
 
 ### A run's wait for the reading (`capture-run.test.ts`)
 - **Scenario: capture-run-waits-for-the-serp-verdict** — a search target that landed waits while its
-  verdict is `pending`, captures once it is `ready`; one that stays `pending` is captured after
-  `SERP_SETTLE_WAIT_MS` of active time (time behind another tab does not count), and that wait counts
-  toward `targetActiveTimeoutMs` (a settle wait longer than the timeout ends the target `timed-out`);
+  verdict is `pending`, captures once it is `ready`; one that stays `pending` stops the run after
+  `SERP_SETTLE_WAIT_MS` of active time (`blocked`, `no-reading`, nothing captured; time behind another
+  tab does not count), and that wait counts toward `targetActiveTimeoutMs` (a settle wait longer than
+  the timeout stops the run `blocked`, `timed-out`);
   Cancel during the wait ends the run at once, the target `cancelled` and nothing captured; a page
   target never asks for a verdict.
 

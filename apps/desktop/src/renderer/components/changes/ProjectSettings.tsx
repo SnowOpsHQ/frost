@@ -1,14 +1,34 @@
 import { useId, useState, type FormEvent } from 'react';
+import { CADENCE_TEXT, CAPTURE_SCHEDULE_NOTE } from '@app/specs/capture-schedule.spec';
 import { PROJECT_SETTINGS_TEXT, SITE_INPUT_MAX_CHARS, type ProjectCompetitor, type ProjectSummary } from '@app/specs/projects.spec';
 import { CloseIcon, PlusIcon } from '../../icons';
 import { projectsActions } from '../../ipc';
-import { addCompetitorText, competitorFromInput, competitorRoom, removeCompetitorText, settingsAvailable, siteFormChanged, siteFormOf, siteFromForm, siteText, type SiteForm } from '../../projects-view';
+import {
+  CADENCE_OPTIONS,
+  addCompetitorText,
+  cadenceOf,
+  cadenceText,
+  competitorFromInput,
+  competitorRoom,
+  refusalText,
+  removeCompetitorText,
+  settingsAvailable,
+  showAutoCaptureSwitch,
+  siteFormChanged,
+  siteFormOf,
+  siteFromForm,
+  siteText,
+  type SiteForm,
+} from '../../projects-view';
 
 // A project's Settings view (Phase 10 Task 7; acceptance `projects.feature.md`, The sheet): its site
 // (a domain or address, and "Include subdomains") and its competitors (plan Decision 7). The chrome
 // reads what is typed as main does (`normalizeSiteDomain`) and says a refusal before sending; main
 // reads it again and is the authority. Unfiled has no site or competitors. Domains are React text in a
-// `<bdi>`; no inline styles (strict CSP). Task 8 adds the cadence section after the competitors.
+// `<bdi>`; no inline styles (strict CSP). Task 8 adds the cadence section after the competitors: a
+// due notice only (main asks the rank run disclosure before one is first set); the "Start
+// automatically" switch shows only when automatic starts are offered (`AUTO_CAPTURE_AVAILABLE`, never
+// in this phase).
 
 function Text({ value, className, testId }: { readonly value: string; readonly className?: string; readonly testId?: string }) {
   return (
@@ -159,6 +179,58 @@ function CompetitorsSection({ projectId, competitors, onChanged, say }: { readon
   );
 }
 
+function CadenceSection({ project, onChanged, say }: { readonly project: ProjectSummary; readonly onChanged: () => void; readonly say: (text: string) => void }) {
+  const id = useId();
+  const [saving, setSaving] = useState(false);
+  const choose = async (value: string) => {
+    const cadence = cadenceOf(value);
+    if (cadence === null || cadence === project.cadence) return;
+    setSaving(true);
+    try {
+      // Main may ask the disclosure first; Cancel changes nothing, and the menu shows the stored cadence again.
+      say(cadenceText(await projectsActions.setCadence(project.id, cadence)));
+      onChanged();
+    } finally {
+      setSaving(false);
+    }
+  };
+  const setAuto = async (on: boolean) => {
+    setSaving(true);
+    try {
+      say(refusalText(await projectsActions.setAutoCapture(project.id, on)) ?? CADENCE_TEXT.saved);
+      onChanged();
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section className="projects-section project-settings-cadence" aria-labelledby={`${id}-title`}>
+      <h3 className="projects-section-title" id={`${id}-title`}>
+        {CADENCE_TEXT.title}
+      </h3>
+      <label className="projects-field">
+        <span>{CADENCE_TEXT.label}</span>
+        <select className="projects-select" data-testid="projects-cadence" aria-describedby={`${id}-note`} value={project.cadence} disabled={saving} onChange={(event) => void choose(event.target.value)}>
+          {CADENCE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {showAutoCaptureSwitch() ? (
+        <label className="projects-check">
+          <input type="checkbox" data-testid="projects-auto-capture" checked={project.autoCapture} disabled={saving || project.cadence === 'off'} onChange={(event) => void setAuto(event.target.checked)} />
+          <span>{CADENCE_TEXT.auto}</span>
+        </label>
+      ) : null}
+      <p className="projects-note" id={`${id}-note`} data-testid="projects-cadence-note">
+        {CAPTURE_SCHEDULE_NOTE}
+      </p>
+    </section>
+  );
+}
+
 export function ProjectSettings({
   project,
   competitors,
@@ -186,7 +258,7 @@ export function ProjectSettings({
       {/* Keyed by the stored site: a save elsewhere (or a refresh) shows what main holds. */}
       <SiteSection key={`${project.id} ${project.site?.domain ?? ''} ${String(project.site?.subdomains ?? '')}`} project={project} onChanged={onChanged} say={say} />
       <CompetitorsSection projectId={project.id} competitors={competitors} onChanged={onChanged} say={say} />
-      {/* Phase 10 Task 8: the cadence section (plan Decision 10) goes here. */}
+      <CadenceSection project={project} onChanged={onChanged} say={say} />
     </section>
   );
 }

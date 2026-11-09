@@ -1,13 +1,22 @@
-// Spec: specs/projects.spec.ts (PROJECT_REFUSAL_MESSAGES, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS), specs/render-profile.spec.ts
+// Spec: specs/projects.spec.ts (PROJECT_REFUSAL_MESSAGES, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS; Phase 10 Task 8:
+// RUN_BLOCK_REASONS, RUN_BLOCK_REASON_LABELS, RUN_BLOCKED_NOTE, DUE_TEXT, CHECK_RANKINGS_TEXT), specs/capture-schedule.spec.ts
+// (AUTO_CAPTURE_AVAILABLE, CAPTURE_CADENCE_LABELS, CAPTURE_SCHEDULE_NOTE, CADENCE_TEXT), specs/render-profile.spec.ts
 // (QUICK_RENDER_PROFILES), specs/command-palette.spec.ts (Registration API)
 // Acceptance: specs/projects.feature.md (The sheet, with Phase 10 Task 7's star and sort, Settings, tags
-// and Bulk add; Changes panel picker; Command palette)
+// and Bulk add, and Task 8's Due, Check rankings, cadence and blocked run; Changes panel picker; Command palette)
 import { describe, expect, test, vi } from 'vitest';
 import type { TabState } from '@app/specs/browser.spec';
 import { MAX_PROJECT_QUERIES, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { AUTO_CAPTURE_AVAILABLE, CADENCE_TEXT, CAPTURE_CADENCE_LABELS, CAPTURE_SCHEDULE_NOTE } from '@app/specs/capture-schedule.spec';
 import {
   BULK_ADD_TEXT,
   BULK_LINE_OUTCOME_LABELS,
+  CHECK_RANKINGS_TEXT,
+  DUE_TEXT,
+  RUN_BLOCKED_NOTE,
+  RUN_BLOCK_REASONS,
+  RUN_BLOCK_REASON_LABELS,
+  RUN_TARGET_OUTCOME_LABELS,
   BULK_SEARCH_LIMITS,
   DEFAULT_PROJECT_SORT,
   FAVORITE_TEXT,
@@ -25,7 +34,7 @@ import {
   type ProjectSummary,
   type RunState,
 } from '@app/specs/projects.spec';
-import { MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from '@app/specs/workspace-db.spec';
+import { CAPTURE_CADENCES, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from '@app/specs/workspace-db.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, formatBytes, type RetentionUsage } from '@app/specs/retention.spec';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
@@ -38,6 +47,13 @@ import {
   TAGS_TEXT_MAX_CHARS,
   addCompetitorText,
   addPageText,
+  blockedRunNote,
+  CADENCE_OPTIONS,
+  cadenceOf,
+  cadenceText,
+  checkRankingsButton,
+  dueLabel,
+  showAutoCaptureSwitch,
   bulkFromForm,
   bulkOutcomeRows,
   bulkResultText,
@@ -90,7 +106,7 @@ function tab(changes: Partial<TabState> = {}): TabState {
   return { id: 3, url: 'https://www.example.com/a#top', title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
 }
 
-const run = (changes: Partial<RunState>): RunState => ({ version: 2, runId: P1, projectId: P1, state: 'running', current: 1, total: 3, omitted: 0, screenshot: false, targets: [], ...changes });
+const run = (changes: Partial<RunState>): RunState => ({ version: 2, runId: P1, projectId: P1, state: 'running', current: 1, total: 3, omitted: 0, screenshot: false, targets: [], blockedReason: null, ...changes });
 
 describe('projects view', () => {
   test('projects-view-profile-choice', () => {
@@ -206,7 +222,7 @@ describe('projects view', () => {
     await action('projects.compare').run(ctx(tab()));
     expect(api.open).toHaveBeenLastCalledWith({ view: 'compare' });
     api.lastProject.mockReturnValue(P1);
-    expect(ids(tab())).toEqual([...always, 'projects.add-page', 'projects.capture-now']);
+    expect(ids(tab())).toEqual([...always, 'projects.add-page', 'projects.capture-now', 'projects.check-rankings']);
     await action('projects.open-rankings').run(ctx(tab()));
     expect(api.open).toHaveBeenLastCalledWith({ projectId: P1, view: 'rankings' });
     await action('projects.compare').run(ctx(tab()));
@@ -220,11 +236,81 @@ describe('projects view', () => {
     expect(api.startRun).toHaveBeenCalledWith(P1);
     api.startRun.mockResolvedValueOnce({ status: 'refused', reason: 'busy' } as never);
     expect(await action('projects.capture-now').run(ctx(tab()))).toBe(RUN_REFUSAL_MESSAGES.busy);
+    // Phase 10 Task 8 — "Check rankings now": the saved searches only (main asks the disclosure first when it must).
+    expect(action('projects.check-rankings').label).toBe(CHECK_RANKINGS_TEXT.palette);
+    expect(CHECK_RANKINGS_TEXT.palette).toBe('Check rankings now');
+    expect(await action('projects.check-rankings').run(ctx(tab()))).toBe('Checking rankings…');
+    expect(api.open).toHaveBeenLastCalledWith({ projectId: P1, view: 'rankings' });
+    expect(api.startRun).toHaveBeenLastCalledWith(P1, 'searches');
+    api.startRun.mockResolvedValueOnce({ status: 'refused', reason: 'declined' } as never);
+    expect(await action('projects.check-rankings').run(ctx(tab()))).toBe(RUN_REFUSAL_MESSAGES.declined);
+    api.lastProject.mockReturnValue(undefined);
+    expect(ids(tab())).not.toContain('projects.check-rankings');
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Due, Check rankings and a blocked run); projects.spec.ts DUE_TEXT
+  test('projects-view-due-label', () => {
+    expect(DUE_TEXT.label).toBe('Due');
+    expect(DUE_TEXT.note).toContain('never starts one by itself');
+    expect(dueLabel({ due: true, unfiled: false })).toBe(DUE_TEXT.label);
+    expect(dueLabel({ due: false, unfiled: false })).toBeNull();
+    // Unfiled has no cadence: never due, whatever a row says.
+    expect(dueLabel({ due: true, unfiled: true })).toBeNull();
+    // Check rankings: the saved searches only; disabled with none, or while a run is under way.
+    expect(CHECK_RANKINGS_TEXT.button).toBe('Check rankings');
+    expect(checkRankingsButton(2, false)).toEqual({ label: CHECK_RANKINGS_TEXT.button, disabled: false, title: undefined });
+    expect(checkRankingsButton(0, false)).toEqual({ label: CHECK_RANKINGS_TEXT.button, disabled: true, title: CHECK_RANKINGS_TEXT.none });
+    expect(checkRankingsButton(2, true)).toEqual({ label: CHECK_RANKINGS_TEXT.button, disabled: true, title: undefined });
+  });
+
+  // spec: specs/projects.feature.md — Cadence; The sheet (Settings: the cadence); capture-schedule.spec.ts
+  test('projects-view-cadence-settings', () => {
+    expect(CADENCE_OPTIONS).toEqual(CAPTURE_CADENCES.map((value) => ({ value, label: CAPTURE_CADENCE_LABELS[value] })));
+    expect(CADENCE_OPTIONS.map((option) => option.label)).toEqual(['Off', 'Daily', 'Weekly']);
+    for (const cadence of CAPTURE_CADENCES) expect(cadenceOf(cadence)).toBe(cadence);
+    for (const bad of ['hourly', '', '__proto__', 'constructor', 'Daily']) expect(cadenceOf(bad), bad).toBeNull();
+    // No automatic switch while automatic starts are unavailable (the shipped flag).
+    expect(AUTO_CAPTURE_AVAILABLE).toBe(false);
+    expect(showAutoCaptureSwitch()).toBe(false);
+    expect(CAPTURE_SCHEDULE_NOTE).toContain('while frost is open');
+    expect(CAPTURE_SCHEDULE_NOTE).toContain('never starts a run by itself');
+    expect(CAPTURE_SCHEDULE_NOTE).toContain('challenge');
+    expect(cadenceText({ status: 'ok' })).toBe(CADENCE_TEXT.saved);
+    // The disclosure answered Cancel: nothing changed, said in the cadence's own words.
+    expect(cadenceText({ status: 'refused', reason: 'declined' })).toBe(CADENCE_TEXT.declined);
+    expect(cadenceText({ status: 'refused', reason: 'unfiled' })).toBe(PROJECT_REFUSAL_MESSAGES.unfiled);
+    expect(cadenceText({ status: 'refused', reason: 'unavailable' })).toBe(PROJECT_REFUSAL_MESSAGES.unavailable);
+    expect(cadenceText(null)).toMatch(/went wrong/);
+    expect(PROJECT_REFUSAL_MESSAGES.unfiled).toContain('cadence');
+    // Bulk add stays true: a cadence never sends anything by itself.
+    expect(BULK_ADD_TEXT.note).toContain('a cadence only marks the project due');
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (a blocked run); The sheet (a blocked run)
+  test('projects-view-blocked-run', () => {
+    expect(Object.keys(RUN_BLOCK_REASON_LABELS).sort()).toEqual([...RUN_BLOCK_REASONS].sort());
+    expect(RUN_STATE_LABELS.blocked).toBe('Stopped at a search');
+    expect(RUN_TARGET_OUTCOME_LABELS.blocked).toMatch(/nothing captured/);
+    expect(runActive('blocked')).toBe(false);
+    const targets = [
+      { kind: 'page' as const, label: 'a', outcome: 'captured' as const, changeCount: 0, screenshot: null },
+      { kind: 'query' as const, label: 'q', outcome: 'blocked' as const, changeCount: null, screenshot: null },
+      { kind: 'query' as const, label: 'r', outcome: 'cancelled' as const, changeCount: null, screenshot: null },
+    ];
+    const blocked = run({ state: 'blocked', blockedReason: 'not-a-result-page', targets });
+    expect(runProgressText(blocked)).toBe(`${RUN_STATE_LABELS.blocked}: 1 of 3 captured`);
+    for (const reason of RUN_BLOCK_REASONS) expect(blockedRunNote(run({ state: 'blocked', blockedReason: reason, targets }))).toEqual({ reason: `${RUN_STATE_LABELS.blocked}: ${RUN_BLOCK_REASON_LABELS[reason]}`, note: RUN_BLOCKED_NOTE });
+    expect(RUN_BLOCKED_NOTE).toContain('stored nothing');
+    // Only a blocked run has one.
+    expect(blockedRunNote(run({ state: 'done', targets }))).toBeNull();
+    expect(blockedRunNote(run({ state: 'cancelled', blockedReason: 'unreadable' }))).toBeNull();
+    // A declined disclosure started nothing.
+    expect(startRunText({ status: 'refused', reason: 'declined' })).toBe(RUN_REFUSAL_MESSAGES.declined);
   });
 
   // spec: specs/projects.feature.md — The sheet (Star and sort); projects.spec.ts sortProjects, PROJECT_SORTS
   test('projects-view-favorites-and-sort', () => {
-    const summary = (id: string, name: string, more: Partial<ProjectSummary> = {}): ProjectSummary => ({ id, name, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null, ...more });
+    const summary = (id: string, name: string, more: Partial<ProjectSummary> = {}): ProjectSummary => ({ id, name, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false, ...more });
     const P3 = '01920000-0000-7000-8000-0000000000a3';
     const unfiled = summary(UNFILED_PROJECT_ID, 'Unfiled', { unfiled: true, createdAt: 0 });
     const beta = summary(P1, 'beta', { createdAt: 30, lastCapturedAt: 100 });

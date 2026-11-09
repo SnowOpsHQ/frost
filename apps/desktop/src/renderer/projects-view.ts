@@ -1,14 +1,19 @@
 import { SEARCH_ENGINES } from '@app/specs/browser-polish.spec';
 import { MAX_PROJECT_QUERIES, UNFILED_PROJECT_ID, type RetentionMode } from '@app/specs/capture-db.spec';
+import { AUTO_CAPTURE_AVAILABLE, CADENCE_TEXT, CAPTURE_CADENCE_LABELS } from '@app/specs/capture-schedule.spec';
 import {
   BULK_LINE_OUTCOME_LABELS,
   BULK_SEARCH_LIMITS,
+  CHECK_RANKINGS_TEXT,
+  DUE_TEXT,
   FAVORITE_TEXT,
   PROJECT_REFUSAL_MESSAGES,
   PROJECT_SETTINGS_TEXT,
   PROJECT_SORTS,
   PROJECT_SORT_LABELS,
   QUERY_FIELD_MAX_CHARS,
+  RUN_BLOCKED_NOTE,
+  RUN_BLOCK_REASON_LABELS,
   RUN_REFUSAL_MESSAGES,
   RUN_STATE_LABELS,
   SITE_INPUT_MAX_CHARS,
@@ -37,7 +42,7 @@ import {
   type SetTagsAnswer,
   type StartRunAnswer,
 } from '@app/specs/projects.spec';
-import { MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY } from '@app/specs/workspace-db.spec';
+import { CAPTURE_CADENCES, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, type CaptureCadence } from '@app/specs/workspace-db.spec';
 import { QUICK_RENDER_PROFILES, isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import { SERP_DEVICES } from '@app/specs/serp.spec';
 import {
@@ -62,7 +67,8 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 // choice, the query form, a page address as typed, the wording of captures, runs and refusals, and the
 // Changes panel's default project; the retention section's policy form and wording (acceptance
 // `retention.feature.md`, The project view); and (Phase 10 Task 7) the list's star and sort, the
-// Settings view's site and competitors, the tag editor and the Bulk add form. No React, no IPC.
+// Settings view's site and competitors, the tag editor and the Bulk add form; (Task 8) "Due", Check
+// rankings, the cadence menu and a blocked run's note. No React, no IPC.
 
 /** The render-profile choices of a project: frost's default, or one of the quick profiles. */
 export const PROJECT_PROFILE_CHOICES: readonly { readonly id: string; readonly label: string; readonly profile: RenderProfile | null }[] = [
@@ -185,6 +191,42 @@ export function refusalText(answer: { readonly status: string } | null): string 
 export function startRunText(answer: StartRunAnswer | null): string | null {
   if (answer === null) return 'The run could not be started. Try again.';
   return answer.status === 'refused' ? RUN_REFUSAL_MESSAGES[answer.reason] : null;
+}
+
+// ---- Phase 10 Task 8: Due, Check rankings, the cadence, a blocked run ---------------------------
+
+/** "Due" beside a project in the list (its cadence says a run is due); `null` for none (Unfiled never). */
+export function dueLabel(project: Pick<ProjectSummary, 'due' | 'unfiled'>): string | null {
+  return project.due && !project.unfiled ? DUE_TEXT.label : null;
+}
+
+/** The Check rankings button: the saved searches only; disabled with none, or while a run is under way. */
+export function checkRankingsButton(searches: number, busy: boolean): { readonly label: string; readonly disabled: boolean; readonly title: string | undefined } {
+  return { label: CHECK_RANKINGS_TEXT.button, disabled: busy || searches === 0, title: searches === 0 ? CHECK_RANKINGS_TEXT.none : undefined };
+}
+
+/** The cadence menu's options, in `CAPTURE_CADENCES` order. */
+export const CADENCE_OPTIONS: readonly { readonly value: CaptureCadence; readonly label: string }[] = CAPTURE_CADENCES.map((value) => ({ value, label: CAPTURE_CADENCE_LABELS[value] }));
+
+/** The menu's value as a cadence (`null`: not one). */
+export function cadenceOf(value: string): CaptureCadence | null {
+  return CAPTURE_CADENCES.find((cadence) => cadence === value) ?? null;
+}
+
+/** Whether Settings shows the "Start automatically" switch: only when automatic starts are offered (never in this phase). */
+export const showAutoCaptureSwitch = (): boolean => AUTO_CAPTURE_AVAILABLE;
+
+/** What setting the cadence said (the disclosure answered Cancel: nothing changed). */
+export function cadenceText(answer: ProjectChangeAnswer | null): string {
+  if (answer?.status === 'refused' && answer.reason === 'declined') return CADENCE_TEXT.declined;
+  return refusalText(answer) ?? CADENCE_TEXT.saved;
+}
+
+/** A run that ended `blocked`: why, and what it means (`null` for any other run). */
+export function blockedRunNote(run: Pick<RunState, 'state' | 'blockedReason'>): { readonly reason: string; readonly note: string } | null {
+  if (run.state !== 'blocked') return null;
+  const why = run.blockedReason !== null && Object.hasOwn(RUN_BLOCK_REASON_LABELS, run.blockedReason) ? `: ${RUN_BLOCK_REASON_LABELS[run.blockedReason]}` : '.';
+  return { reason: `${RUN_STATE_LABELS.blocked}${why}`, note: RUN_BLOCKED_NOTE };
 }
 
 /** What adding a page said. */

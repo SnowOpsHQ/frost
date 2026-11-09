@@ -1,9 +1,11 @@
 // Spec: specs/browser-polish.spec.ts (HISTORY_PAGE_SIZE, HISTORY_QUERY_MAX_CHARS, JUMP_BACK_IN_*,
-// SEARCH_ENGINE_SETTING_KEY, DEFAULT_SEARCH_ENGINE)
-// Acceptance: specs/browser-polish.feature.md (History view, New-tab page, Search engines)
+// SEARCH_ENGINE_SETTING_KEY, DEFAULT_SEARCH_ENGINE), specs/projects.spec.ts (RANK_RUN_DISCLOSURE_SETTING_KEY, Phase 10 Task 8)
+// Acceptance: specs/browser-polish.feature.md (History view, New-tab page, Search engines), specs/projects.feature.md
+// (Searches in a run: the disclosure is remembered once per install)
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_SEARCH_ENGINE, HISTORY_PAGE_SIZE, JUMP_BACK_IN_MOST_VISITED, JUMP_BACK_IN_RECENT, SEARCH_ENGINE_SETTING_KEY } from '@app/specs/browser-polish.spec';
+import { RANK_RUN_DISCLOSURE_SETTING_KEY } from '@app/specs/projects.spec';
 import { createDrizzle } from '../client';
 import { createHistoryRepository, likePattern, type HistoryRepository, type HistoryVisit } from '../history';
 import { MIGRATIONS, runMigrations } from '../migrations';
@@ -143,5 +145,23 @@ describe('settings repository', () => {
     await settings.setSearchEngine('bing', 8);
     await repo.clearBrowsingData();
     expect(await settings.searchEngine()).toBe('bing');
+  });
+
+  test('settings-store-rank-run-disclosure', async () => {
+    const settings = createSettingsRepository(createDrizzle(raw));
+    expect(await settings.rankRunDisclosureAccepted()).toBe(false);
+    expect(await settings.setRankRunDisclosureAccepted(Number.NaN)).toBe(false);
+    expect(await settings.rankRunDisclosureAccepted()).toBe(false);
+    expect(await settings.setRankRunDisclosureAccepted(9)).toBe(true);
+    expect(await settings.rankRunDisclosureAccepted()).toBe(true);
+    expect(raw.prepare('SELECT value FROM app_settings WHERE key = ?').get(RANK_RUN_DISCLOSURE_SETTING_KEY)).toEqual({ value: 'accepted' });
+    // Kept through Clear Browsing Data; any other stored value reads as not accepted.
+    await repo.clearBrowsingData();
+    expect(await settings.rankRunDisclosureAccepted()).toBe(true);
+    for (const tampered of ['yes', 'true', '1', 'accepted ']) {
+      raw.prepare('UPDATE app_settings SET value = ? WHERE key = ?').run(tampered, RANK_RUN_DISCLOSURE_SETTING_KEY);
+      expect(await settings.rankRunDisclosureAccepted(), tampered).toBe(false);
+    }
+    expect(await settings.searchEngine()).toBe(DEFAULT_SEARCH_ENGINE);
   });
 });

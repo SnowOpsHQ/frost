@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { RetentionMode } from '@app/specs/capture-db.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import type { EntryKind } from '@app/specs/workspace-db.spec';
+import type { CaptureCadence, EntryKind } from '@app/specs/workspace-db.spec';
 import {
   AddCompetitorAnswerSchema,
   AddCompetitorInputSchema,
@@ -26,6 +26,8 @@ import {
   RenameProjectInputSchema,
   RunStateInputSchema,
   RunStateSchema,
+  SetAutoCaptureInputSchema,
+  SetCadenceInputSchema,
   SetFavoriteInputSchema,
   SetProjectProfileInputSchema,
   SetSiteAnswerSchema,
@@ -78,7 +80,9 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 // procedure name says "query" (`db-only-in-main`: no IPC procedure reads as being about the database).
 // Phase 10 Task 4 adds the project workspace (`projects.feature.md`, Site and competitors, Tags, Bulk
 // add, Favorites and sort, Run scope): `setFavorite`, `setSite`, `addCompetitor`, `removeCompetitor`,
-// `setTags`, `addSearches`, and `startRun`'s `scope`.
+// `setTags`, `addSearches`, and `startRun`'s `scope`. Task 8 adds `setCadence` and `setAutoCapture`
+// (`projects.feature.md`, Cadence); main asks the rank run disclosure inside `startRun` and
+// `setCadence` (Searches in a run), so no input can skip it.
 
 /**
  * The retention procedures' half of the service (main's `apps/desktop/src/main/changes/retention.ts`;
@@ -145,6 +149,11 @@ export interface ProjectsService extends RetentionService {
   setTags(projectId: string, entryKind: EntryKind, entryId: string, tags: readonly string[]): Promise<SetTagsAnswer>;
   /** Bulk add: each line's searches (locales × devices) through the saved-search path; per-line outcomes. */
   addSearches(projectId: string, searches: BulkSearchesInput): Promise<BulkAddAnswer>;
+  // ---- The cadence (Phase 10 Task 8; main's `apps/desktop/src/main/changes/projects.ts`) ----
+  /** Sets the project's cadence (a due notice only; never on Unfiled); main asks the disclosure before one is first set. */
+  setCadence(projectId: string, cadence: CaptureCadence): Promise<ProjectChangeAnswer>;
+  /** Whether its due runs start by themselves: `unavailable` while `AUTO_CAPTURE_AVAILABLE` is `false`. */
+  setAutoCapture(projectId: string, on: boolean): Promise<ProjectChangeAnswer>;
 }
 
 /** Hands the procedure main's `ProjectsService` (after `enforceSender`; fails closed without it). */
@@ -280,6 +289,19 @@ export const projectsRouter = router({
     .input(BulkAddSearchesInputSchema)
     .output(BulkAddAnswerSchema)
     .mutation(({ ctx, input }) => ctx.projects.addSearches(input.projectId, input.searches)),
+  // The cadence (Phase 10 Task 8): main asks the disclosure itself before a cadence is first set.
+  setCadence: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(SetCadenceInputSchema)
+    .output(ProjectChangeAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.setCadence(input.projectId, input.cadence)),
+  setAutoCapture: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(SetAutoCaptureInputSchema)
+    .output(ProjectChangeAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.setAutoCapture(input.projectId, input.on)),
   // Retention and disk usage (Task 7; spec `retention.schema.ts`): no path, file name or hash comes in.
   setRetention: publicProcedure
     .use(enforceSender)

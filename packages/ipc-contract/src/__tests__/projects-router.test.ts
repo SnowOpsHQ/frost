@@ -1,4 +1,5 @@
-// Spec: specs/projects.schema.ts (the projects.* inputs and answers, Phase 10's workspace procedures), specs/projects.spec.ts
+// Spec: specs/projects.schema.ts (the projects.* inputs and answers, Phase 10's workspace procedures and Task 8's
+// setCadence / setAutoCapture, RunStateSchema's `blocked` and blockedReason), specs/projects.spec.ts
 // (BULK_SEARCH_LIMITS, SITE_INPUT_MAX_CHARS, TAG_INPUT_MAX_CHARS), specs/workspace-db.spec.ts (MAX_TAGS_PER_ENTRY), specs/ipc-sender.spec.ts
 // Acceptance: specs/projects.feature.md (Router)
 import { TRPCError } from '@trpc/server';
@@ -20,9 +21,9 @@ const PAGE = 'https://example.com/guides/tea';
 const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const ITEM = '01920000-0000-7000-8000-000000000001';
 const PARAMS: SavedSearchInput = { engine: 'google', query: 'green tea', country: 'de', language: 'de', device: 'tablet' };
-const LIST: ProjectsAnswer = { projects: [{ id: UNFILED_PROJECT_ID, name: 'Unfiled', unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 0, lastCapturedAt: null }] };
+const LIST: ProjectsAnswer = { projects: [{ id: UNFILED_PROJECT_ID, name: 'Unfiled', unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 0, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false }] };
 const BULK: BulkSearchesInput = { text: 'green tea\nblack tea', engine: 'google', locales: [{ country: 'de', language: 'de' }, { country: null, language: null }], devices: ['desktop', 'mobile'], tags: ['Brand'] };
-const STATE: RunState = { version: 3, runId: ITEM, projectId: PROJECT, state: 'running', current: 1, total: 1, omitted: 0, screenshot: false, targets: [{ kind: 'page', label: PAGE, outcome: 'running', changeCount: null, screenshot: null }] };
+const STATE: RunState = { version: 3, runId: ITEM, projectId: PROJECT, state: 'running', current: 1, total: 1, omitted: 0, screenshot: false, targets: [{ kind: 'page', label: PAGE, outcome: 'running', changeCount: null, screenshot: null }], blockedReason: null };
 
 const COUNTS = { captures: 2, versions: 2, diffs: 1, screenshots: 1 };
 const USAGE: RetentionUsage = { projectId: PROJECT, captures: 1, versions: 1, sharedVersions: 0, snapshotBytes: 900, diffBytes: 0, readingBytes: 0, screenshots: 1, files: { count: 1, bytes: 300, missing: 0, shared: 0 }, database: { bytes: 40_960, walBytes: 0 } };
@@ -49,6 +50,8 @@ function fakeProjects() {
     removeCompetitor: vi.fn(async () => ({ status: 'ok' as const })),
     setTags: vi.fn(async () => ({ status: 'ok' as const, tags: ['brand'] })),
     addSearches: vi.fn(async () => ({ status: 'done' as const, lines: [{ query: 'green tea', outcome: 'added' as const, added: 4 }] })),
+    setCadence: vi.fn(async () => ({ status: 'ok' as const })),
+    setAutoCapture: vi.fn(async () => ({ status: 'refused' as const, reason: 'unavailable' as const })),
     cancelRun: vi.fn(() => true),
     runState: vi.fn(async () => STATE),
     setRetention: vi.fn(async () => ({ status: 'ok' as const })),
@@ -105,6 +108,8 @@ const VALID_INPUT: Record<string, unknown> = {
   removeCompetitor: { projectId: PROJECT, competitorId: ITEM },
   setTags: { projectId: PROJECT, entryKind: 'search', entryId: ITEM, tags: ['Brand', 'top 10'] },
   addSearches: { projectId: PROJECT, searches: BULK },
+  setCadence: { projectId: PROJECT, cadence: 'weekly' },
+  setAutoCapture: { projectId: PROJECT, on: true },
   runState: { sinceVersion: 2 },
   setRetention: { projectId: PROJECT, policy: { mode: 'versions', value: 3 } },
   retentionPreview: { projectId: PROJECT },
@@ -226,6 +231,19 @@ describe('projects router', () => {
         ].map((searches) => ({ projectId: PROJECT, searches })),
         ...badIds.map((projectId) => ({ projectId, searches: BULK })),
       ],
+      // Phase 10 Task 8: a cadence of `CAPTURE_CADENCES` only; nothing that could skip main's disclosure.
+      setCadence: [
+        {},
+        undefined,
+        { projectId: PROJECT },
+        { projectId: PROJECT, cadence: 'hourly' },
+        { projectId: PROJECT, cadence: 'Daily' },
+        { projectId: PROJECT, cadence: null },
+        { projectId: PROJECT, cadence: 'daily', disclosed: true },
+        { projectId: PROJECT, cadence: 'daily', extra: 1 },
+        ...badIds.map((projectId) => ({ projectId, cadence: 'daily' })),
+      ],
+      setAutoCapture: [{}, undefined, { projectId: PROJECT }, { projectId: PROJECT, on: 'yes' }, { projectId: PROJECT, on: true, extra: 1 }, ...badIds.map((projectId) => ({ projectId, on: true }))],
       runState: [{}, undefined, { sinceVersion: -1 }, { sinceVersion: 1.5 }, { sinceVersion: '1' }, { sinceVersion: 1, extra: 1 }],
       setRetention: [
         { projectId: PROJECT },
@@ -303,6 +321,10 @@ describe('projects router', () => {
     expect(projects.setTags).toHaveBeenCalledWith(PROJECT, 'search', ITEM, ['Brand', 'top 10']);
     await expect(call('addSearches')).resolves.toMatchObject({ status: 'done' });
     expect(projects.addSearches).toHaveBeenCalledWith(PROJECT, BULK);
+    await expect(call('setCadence')).resolves.toEqual({ status: 'ok' });
+    expect(projects.setCadence).toHaveBeenCalledWith(PROJECT, 'weekly');
+    await expect(call('setAutoCapture')).resolves.toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(projects.setAutoCapture).toHaveBeenCalledWith(PROJECT, true);
     await expect(call('cancelRun')).resolves.toBe(true);
     await expect(call('runState')).resolves.toEqual(STATE);
     expect(projects.runState).toHaveBeenCalledWith(2);
@@ -331,6 +353,10 @@ describe('projects router', () => {
     expect((await errorOf(procedure(ctxFor(projects), 'list')(undefined))).code).toBe('INTERNAL_SERVER_ERROR');
     projects.runState.mockResolvedValueOnce({ ...STATE, state: 'bogus' } as unknown as RunState);
     expect((await errorOf(procedure(ctxFor(projects), 'runState')({ sinceVersion: 0 }))).code).toBe('INTERNAL_SERVER_ERROR');
+    // A blocked run (Phase 10 Task 8) passes with its reason.
+    const blocked: RunState = { ...STATE, state: 'blocked', blockedReason: 'not-a-result-page', targets: [{ ...STATE.targets[0]!, outcome: 'blocked' }] };
+    projects.runState.mockResolvedValueOnce(blocked);
+    await expect(procedure(ctxFor(projects), 'runState')({ sinceVersion: 0 })).resolves.toEqual(blocked);
     projects.purgeNow.mockResolvedValueOnce({ status: 'purged', counts: { ...COUNTS, captures: -1 }, bytes: 1, files: 0 });
     expect((await errorOf(procedure(ctxFor(projects), 'purgeNow')({ projectId: PROJECT }))).code).toBe('INTERNAL_SERVER_ERROR');
     projects.usage.mockResolvedValueOnce({ status: 'ok', usage: { ...USAGE, database: { bytes: 1.5, walBytes: 0 } } });
@@ -356,6 +382,16 @@ describe('projects router', () => {
       ['addSearches', 'addSearches', { status: 'done', lines: [{ query: 'tea', outcome: 'skipped', added: 0 }] }],
       ['addSearches', 'addSearches', { status: 'done', lines: [{ query: 'tea', outcome: 'added', added: -1 }] }],
       ['addSearches', 'addSearches', { status: 'done', lines: Array.from({ length: BULK_SEARCH_LIMITS.maxLines + 1 }, () => ({ query: 'tea', outcome: 'added', added: 1 })) }],
+      // Task 8's answers and fields.
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, cadence: 'hourly' }] }],
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, due: 'yes' }] }],
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, autoCapture: undefined }] }],
+      ['setCadence', 'setCadence', { status: 'refused', reason: 'bogus' }],
+      ['setCadence', 'setCadence', { status: 'ok', cadence: 'daily' }],
+      ['setAutoCapture', 'setAutoCapture', { status: 'refused', reason: 'later' }],
+      ['runState', 'runState', { ...STATE, state: 'blocked', blockedReason: 'bogus' }],
+      ['runState', 'runState', { ...STATE, blockedReason: undefined }],
+      ['runState', 'runState', { ...STATE, targets: [{ ...STATE.targets[0]!, outcome: 'stopped' }] }],
     ];
     for (const [name, method, answer] of wrong) {
       const fake = fakeProjects();

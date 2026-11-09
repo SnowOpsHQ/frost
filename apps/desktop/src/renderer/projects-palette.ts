@@ -1,4 +1,4 @@
-import type { ProjectViewId, StartRunAnswer } from '@app/specs/projects.spec';
+import { CHECK_RANKINGS_TEXT, type ProjectViewId, type RunScope, type StartRunAnswer } from '@app/specs/projects.spec';
 import type { CompactAnswer, PurgeNowAnswer } from '@app/specs/retention.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { pageUrlOf } from './changes-view';
@@ -7,8 +7,9 @@ import { compactText, purgeNowText, startRunText } from './projects-view';
 
 // Projects in the command palette (spec `projects.feature.md`, Command palette): "Open projects",
 // "Open rankings" and "Compare searches" (the sheet on that view of the project last opened, Phase 10
-// Task 6), "Add this page to a project" (the sheet, asking which project) and "Capture project now"
-// (the project last opened in the sheet: main's `projects.startRun`). Registered from
+// Task 6), "Add this page to a project" (the sheet, asking which project), "Capture project now"
+// (the project last opened in the sheet: main's `projects.startRun`) and, Task 8, "Check rankings now"
+// (the same, its saved searches only; main asks the disclosure first when it must). Registered from
 // `components/changes/Projects.tsx`; pure (the sheet and the procedure are injected) so availability
 // is unit tested.
 
@@ -17,8 +18,8 @@ export interface ProjectsPaletteApi {
   open(request?: { readonly projectId?: string; readonly addUrl?: string; readonly view?: ProjectViewId }): void;
   /** The project last opened in the sheet (`undefined`: none this session). */
   lastProject(): string | undefined;
-  /** `projects.startRun` (without screenshots); `null` on an IPC failure. */
-  startRun(projectId: string): Promise<StartRunAnswer | null>;
+  /** `projects.startRun` (without screenshots; `all` when no scope is given); `null` on an IPC failure. */
+  startRun(projectId: string, scope?: RunScope): Promise<StartRunAnswer | null>;
 }
 
 const KEYWORDS = ['projects', 'project', 'track', 'monitor', 'pages', 'queries', 'changes'];
@@ -82,6 +83,21 @@ export function projectsPaletteSources(api: ProjectsPaletteApi): PaletteSource[]
         if (projectId === undefined) return null;
         api.open({ projectId });
         return startRunText(await api.startRun(projectId)) ?? 'Capturing the project…';
+      },
+    },
+    {
+      id: 'projects.check-rankings',
+      label: CHECK_RANKINGS_TEXT.palette,
+      group: 'page',
+      keywords: [...KEYWORDS, 'check', 'rankings', 'rank', 'positions', 'serp', 'searches', 'now'],
+      icon: 'panel-changes',
+      focus: 'handler',
+      available: () => api.lastProject() !== undefined,
+      run: async () => {
+        const projectId = api.lastProject();
+        if (projectId === undefined) return null;
+        api.open({ projectId, view: 'rankings' });
+        return startRunText(await api.startRun(projectId, 'searches')) ?? 'Checking rankings…';
       },
     },
   ];
