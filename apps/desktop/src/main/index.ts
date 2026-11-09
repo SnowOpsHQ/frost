@@ -59,6 +59,7 @@ import { gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/p
 import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
 import { createMainProjects } from './changes/projects-main';
+import { createMainRankings } from './changes/rank-dialogs';
 import { lateSearchParams } from './changes/serp-params';
 import { createMainInspector } from './inspector/service';
 import { createAiChecksMain } from './ai-checks/main';
@@ -489,6 +490,7 @@ function start(): void {
         telemetry: telemetryMain.service,
         gsc: gsc.service,
         aiChecks,
+        rankings: createMainRankings({ store: sessionStore.changeIntel, log: logSession }), // specs/rankings.feature.md: rank table, compare, CSV via main's clipboard and save dialog.
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

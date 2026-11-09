@@ -8,6 +8,7 @@ import {
   RANK_CSV_COLUMNS,
   RANK_HISTORY_CSV_COLUMNS,
   RANK_LIMITS,
+  RANK_OUTCOMES,
   SEARCH_KEY_VERSION,
   SERP_FEATURE_TYPES,
   rangeStart,
@@ -298,6 +299,72 @@ export function rankTable(observations: readonly SerpObservation[], options: Ran
     for (const [key, group] of observed.slice(0, Math.max(0, RANK_LIMITS.maxRows - rows.length))) rows.push(rowOf(key, group, null, site, competitors, start));
   }
   return { rows, truncated: total > rows.length };
+}
+
+// ---- The table read in parts (Phase 10 Task 5) ------------------------------------------------------
+
+/**
+ * One search's parts as main reads them, per key and bounded (`rankings.feature.md`, Router): its
+ * newest readings whatever the range (`recent`: at least the two newest, any order) and the site's
+ * points over the range (`points`: `rankOf` of each reading in range, any order), so a long history is
+ * never loaded whole and each reading's snapshot is dropped once its point is taken.
+ */
+export interface RankRowParts {
+  readonly searchKey: string;
+  readonly saved: SavedSearchRef | null;
+  readonly recent: readonly SerpObservation[];
+  readonly points: readonly RankPoint[];
+}
+
+const OUTCOMES: ReadonlySet<string> = new Set<string>(RANK_OUTCOMES);
+/** Whether `value` is enough of a point to keep: a string reading id, a finite time and a known outcome. */
+const isPoint = (value: unknown): value is RankPoint => isRecord(value) && isNonEmptyString(value.readingId) && typeof value.at === 'number' && Number.isFinite(value.at) && typeof value.outcome === 'string' && OUTCOMES.has(value.outcome);
+const byPointTime = (a: RankPoint, b: RankPoint): number => a.at - b.at || (a.readingId < b.readingId ? -1 : a.readingId > b.readingId ? 1 : 0);
+
+/**
+ * One rank table row from its parts (as `rankTable` builds it from every reading): `latest`, `previous`
+ * and `change` from the two newest of `recent` that are of this series (`keyOf` for an older key
+ * version), `competitors` on the latest; `points` the given points within the range (oldest first, a
+ * reading once, the newest `maxPointsPerSeries`) and `best` over all of them. `null` with neither a
+ * reading nor a saved search (no parameters to show). Total: garbage never throws.
+ */
+export function rankRowOf(parts: RankRowParts, options: RankModelOptions): RankRow | null {
+  const input = optionsOf(parts);
+  const opts = optionsOf(options);
+  const searchKey = input.searchKey;
+  if (!isNonEmptyString(searchKey)) return null;
+  const site = siteOf(opts.site);
+  const competitors = competitorsOf(opts.competitors);
+  const start = startOf(opts);
+  const saved = input.saved === null || input.saved === undefined ? null : savedOf(input.saved);
+  const group = groups(input.recent, opts.keyOf).get(searchKey) ?? [];
+  const newest = group.at(-1) ?? null;
+  if (newest === null && saved === null) return null;
+  const latest = newest === null ? null : rankOf(newest, site);
+  const before = group.at(-2);
+  const previous = before === undefined ? null : rankOf(before, site);
+  const seen = new Set<string>();
+  const inRange: RankPoint[] = [];
+  for (const point of Array.isArray(input.points) ? (input.points as unknown[]) : []) {
+    if (!isPoint(point) || seen.has(point.readingId) || point.at < start) continue;
+    seen.add(point.readingId);
+    inRange.push(point);
+  }
+  inRange.sort(byPointTime);
+  let best: number | null = null;
+  for (const point of inRange) if (point.outcome === 'ranked' && isPositiveInt(point.position) && (best === null || point.position < best)) best = point.position;
+  return {
+    searchKey,
+    params: newest?.params ?? (saved as SavedSearchRef).params,
+    filters: newest !== null ? (isRecord(newest.filters) ? newest.filters : {}) : isRecord(saved?.filters) ? saved.filters : {},
+    saved: saved === null ? null : { id: saved.id, tags: saved.tags },
+    latest,
+    previous,
+    change: changeOf(previous, latest),
+    best,
+    points: inRange.slice(-RANK_LIMITS.maxPointsPerSeries),
+    competitors: Object.fromEntries(competitors.map((competitor) => [competitor.host, newest === null ? null : rankOf(newest, competitor)])),
+  };
 }
 
 // ---- CSV rows (Task 5 formats them) -------------------------------------------------------------

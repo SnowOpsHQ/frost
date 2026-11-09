@@ -20,6 +20,7 @@ import type { InspectorService } from './inspector-router';
 import type { TelemetryService } from './telemetry-service';
 import type { GscIpcService } from './gsc-service';
 import type { AiChecksService } from './ai-checks-service';
+import type { RankingsService } from './rankings-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -202,4 +203,6 @@ export interface IpcServices {
   readonly gsc?: GscIpcService;
   /** AI checks (Phase 9 Task 10, `ai-checks-service.ts`). */
   readonly aiChecks?: AiChecksService;
+  /** Rankings: the rank table, series, comparison and CSV export (Phase 10 Task 5, `rankings-service.ts`). */
+  readonly rankings?: RankingsService;
 }

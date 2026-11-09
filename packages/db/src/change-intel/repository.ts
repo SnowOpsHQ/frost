@@ -51,7 +51,7 @@ import { createWorkspaceOperations, type WorkspaceOperations } from './workspace
 import { ciEntryTags, ciProjectCompetitors, ciSerpReadings } from './workspace-schema';
 
 export type { ExecutePurgeResult, PurgeCounts, PurgePlan, PurgePolicy, PurgeRecord } from './purge';
-export type { AppendReadingInput, CaptureReadingInput, ReadingOperations, ReadingSearch, ReadingsFilter, StoredReading } from './readings';
+export type { AppendReadingInput, CaptureReadingInput, ReadingDateRow, ReadingOperations, ReadingSearch, ReadingsCountFilter, ReadingsFilter, StoredReading } from './readings';
 export type { Competitor, EntryTag, ProjectWorkspace, SetEntryTagsInput, WorkspaceOperations } from './workspace';
 
 // The change-intelligence repository (Phase 6 Task 1; spec `capture-db.spec.ts`; acceptance

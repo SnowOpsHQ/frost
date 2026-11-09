@@ -37,6 +37,12 @@
  * positions, change, best, trend points, CSV rows and comparisons from `SerpObservation`s, whatever
  * their source, with the values and wording below (`RANK_OUTCOMES`, `RANK_RANGES`, `RANK_LIMITS`, the
  * CSV columns, `rankLabel`, `changeLabel`, `RANK_HISTORY_NOTE`). Acceptance: `rankings.feature.md`.
+ *
+ * ## The `rankings.*` procedures (Phase 10 Task 5; Decision 14)
+ * What main answers the Rankings and Compare views (`RANKINGS_REFUSALS`, `RankTableAnswer`,
+ * `RankSeriesAnswer`, `ReadingDatesAnswer`, `CompareAnswer`, `CopyCsvAnswer`, `SaveCsvAnswer`) and the
+ * CSV export's file name and save dialog wording (`RANK_CSV_FILE_NAME`, `rankCsvFileName`,
+ * `RANK_CSV_SAVE_DIALOG`). Zod side: `rankings.schema.ts`; acceptance: `rankings.feature.md`, Router and Export.
  */
 import type { SearchEngineId } from './browser-polish.spec';
 import type { RetentionMode } from './capture-db.spec';
@@ -390,3 +396,95 @@ export interface SerpComparison {
   readonly site: { readonly a: RankPoint; readonly b: RankPoint } | null;
   readonly truncated: boolean;
 }
+
+// ---- The `rankings.*` procedures (Phase 10 Task 5; acceptance `rankings.feature.md`, Router and Export) ----
+
+/**
+ * Why a rankings procedure answered no data: `not-found` (the project is not a live one, or a reading
+ * named is not one of that project's), `store-failed` (the database failed; one log line),
+ * `write-failed` (Save CSV: the file the user chose could not be written).
+ */
+export const RANKINGS_REFUSALS = ['not-found', 'store-failed', 'write-failed'] as const;
+export type RankingsRefusal = (typeof RANKINGS_REFUSALS)[number];
+export type RankingsRefused = { readonly status: 'refused'; readonly reason: RankingsRefusal };
+
+/**
+ * Most stored reading bytes one rank table read loads in all (64 MiB; the repository's
+ * `reading_bytes`, summed over every per-search read): once spent, the rows still to read get no
+ * points beyond their newest readings (`RankTableRow.capped`).
+ */
+export const MAX_RANK_TABLE_READ_BYTES = 67_108_864;
+
+/**
+ * A row of `rankings.table`: the model's `RankRow`, and `capped` when the search has more readings in
+ * the range than were read for its points (`RANK_LIMITS.maxPointsPerSeries`, or the table's byte
+ * budget `MAX_RANK_TABLE_READ_BYTES` spent), so its trend and best cover only the newest of them.
+ */
+export type RankTableRow = RankRow & { readonly capped: boolean };
+
+/**
+ * `rankings.table`: the project's rank table (`rows`, `truncated` when `RANK_LIMITS.maxRows` cut it)
+ * over its readings and saved searches, with what the view needs around it: the project's retention
+ * policy (for `rankHistoryNote`), its site (`null`: none set, or Unfiled), its competitors' domains
+ * (the competitor columns, in the project's order) and the tags its saved searches carry (the tag
+ * filter's options, sorted).
+ */
+export type RankTableAnswer =
+  | {
+      readonly status: 'ok';
+      readonly rows: readonly RankTableRow[];
+      readonly truncated: boolean;
+      readonly retention: { readonly mode: RetentionMode; readonly value: number | null };
+      readonly site: { readonly domain: string; readonly subdomains: boolean } | null;
+      readonly competitors: readonly string[];
+      readonly tags: readonly string[];
+    }
+  | RankingsRefused;
+
+/** `rankings.series`: one search's points in the range (oldest first, at most `RANK_LIMITS.maxPointsPerSeries`). */
+export type RankSeriesAnswer = { readonly status: 'ok'; readonly searchKey: string; readonly points: readonly RankPoint[] } | RankingsRefused;
+
+/** One reading of a search, as the Compare view's date picker lists it. */
+export interface ReadingDate {
+  readonly readingId: string;
+  readonly at: number;
+  readonly status: 'ready' | 'unreadable';
+}
+
+/** At most this many dates per search (`rankings.readingDates`; the newest). */
+export const MAX_READING_DATES = RANK_LIMITS.maxPointsPerSeries;
+
+/** `rankings.readingDates`: one search's readings, newest first, at most `MAX_READING_DATES`. */
+export type ReadingDatesAnswer = { readonly status: 'ok'; readonly dates: readonly ReadingDate[] } | RankingsRefused;
+
+/** `rankings.compare`: two readings of one live project side by side (`compareSerps`). */
+export type CompareAnswer = { readonly status: 'ok'; readonly comparison: SerpComparison } | RankingsRefused;
+
+/** `rankings.copyCsv`: how many lines (the header aside) main wrote to the clipboard; `null` when nothing was written. */
+export type CopyCsvAnswer = number | null;
+
+/** `rankings.saveCsv`: written where the user chose (`rows` lines, the header aside), the dialog cancelled (nothing written), or refused. */
+export type SaveCsvAnswer = { readonly status: 'saved'; readonly rows: number } | { readonly status: 'cancelled' } | RankingsRefused;
+
+/**
+ * The file name Save CSV… offers (`{date}`: the day, `YYYY-MM-DD`, UTC), in the Downloads folder; the
+ * user may change both in main's save dialog. The renderer never names a path or a file name.
+ */
+export const RANK_CSV_FILE_NAME = {
+  table: 'frost-rankings-{date}.csv',
+  history: 'frost-rank-history-{date}.csv',
+} as const satisfies Readonly<Record<RankCsvKind, string>>;
+
+/** `RANK_CSV_FILE_NAME[kind]` for the time `at` (Unix ms; a time that is not a valid date gives `undated`). */
+export function rankCsvFileName(kind: RankCsvKind, at: number): string {
+  const date = typeof at === 'number' && Number.isFinite(at) && !Number.isNaN(new Date(at).getTime()) ? new Date(at).toISOString().slice(0, 10) : 'undated';
+  return (RANK_CSV_FILE_NAME[kind] ?? RANK_CSV_FILE_NAME.table).replace('{date}', date);
+}
+
+/** Main's save dialog for Save CSV… (its own words; a CSV filter only). */
+export const RANK_CSV_SAVE_DIALOG = {
+  title: { table: 'Save rankings as CSV', history: 'Save rank history as CSV' },
+  buttonLabel: 'Save',
+  filterName: 'CSV file',
+  extensions: ['csv'],
+} as const;

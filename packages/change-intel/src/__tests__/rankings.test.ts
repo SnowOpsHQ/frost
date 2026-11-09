@@ -19,7 +19,7 @@ import {
   type SerpSnapshotShape,
   type SiteMatch,
 } from '@app/specs/rankings.spec';
-import { rankCsvRows, rankOf, rankSeries, rankTable } from '../index';
+import { rankCsvRows, rankOf, rankRowOf, rankSeries, rankTable } from '../index';
 import { DAY, KEY, NOW, PARAMS, UNREADABLE, keyOf, observe, organic, page, paramsOf, ready } from './serp-fixtures';
 
 const SITE: SiteMatch = { owner: 'example.com', host: 'example.com', subdomains: true };
@@ -394,4 +394,45 @@ test('rank-labels-and-history-note', () => {
   expect(rankHistoryNote({ mode: 'versions', value: 5 })).toContain('newest 5 versions');
   expect(rankHistoryNote({ mode: 'forever', value: null })).toContain(RANK_HISTORY_NOTE.forever);
   expect(Object.values(RANK_HISTORY_NOTE).join(' ')).not.toContain('{n} {n}');
+});
+
+describe('rank-row-from-parts', () => {
+  // spec: rankings.feature.md — The table read in parts (`rankRowOf`; Phase 10 Task 5)
+  test('latest from the newest readings, points and best from the points given, competitors on the latest', () => {
+    const RIVAL: SiteMatch = { owner: 'rival.com', host: 'rival.com', subdomains: true };
+    const withRival = (position: number) => ready([organic('https://rival.com/x'), ...Array.from({ length: position - 2 }, (_, i) => organic(`https://o${i}.org/`)), organic('https://example.com/tea')]);
+    const old = observe(withRival(5), NOW - 400 * DAY);
+    const before = observe(withRival(6), NOW - 300 * DAY);
+    const newest = observe(withRival(3), NOW - 200 * DAY);
+    // Points come in already computed, any order, a duplicate once, out-of-range dropped, garbage skipped.
+    const points = [rankOf(newest, SITE), rankOf(old, SITE), rankOf(before, SITE), rankOf(before, SITE), null, { readingId: 7 }] as never as RankPoint[];
+    const row = rankRowOf({ searchKey: KEY, saved: null, recent: [newest, before], points }, { site: SITE, competitors: [RIVAL], keyOf, range: '365d', now: NOW })!;
+    expect(row.latest).toMatchObject({ readingId: newest.id, position: 3 });
+    expect(row.previous).toMatchObject({ readingId: before.id, position: 6 });
+    expect(row.change).toBe(3);
+    expect(row.points.map((point) => point.readingId)).toEqual([before.id, newest.id]);
+    expect(row.best).toBe(3);
+    expect(row.competitors).toEqual({ 'rival.com': rankOf(newest, RIVAL) });
+    expect(row.params).toEqual(newest.params);
+    // Latest and change whatever the range: the 7-day range keeps no point.
+    const week = rankRowOf({ searchKey: KEY, saved: null, recent: [before, newest, old], points: [] }, { site: SITE, range: '7d', now: NOW })!;
+    expect(week.points).toEqual([]);
+    expect(week.best).toBeNull();
+    expect(week.latest?.readingId).toBe(newest.id);
+    expect(week.change).toBe(3);
+    // A reading of another series in `recent` is not this row's.
+    const other = observe(ready([organic('https://example.com/')], { params: paramsOf({ query: 'black tea' }) }), NOW);
+    expect(rankRowOf({ searchKey: KEY, saved: null, recent: [newest, other], points: [] }, { site: SITE, keyOf })!.latest?.readingId).toBe(newest.id);
+    // A saved search with no reading: its own parameters, no point; with neither, no row.
+    const tea = saved('s-1', 'green tea', ['tea']);
+    expect(rankRowOf({ searchKey: tea.searchKey, saved: tea, recent: [], points: [] }, { site: SITE })).toMatchObject({ latest: null, previous: null, change: null, best: null, saved: { id: 's-1', tags: ['tea'] }, params: tea.params });
+    expect(rankRowOf({ searchKey: KEY, saved: null, recent: [], points: [] }, { site: SITE })).toBeNull();
+    // The points are bounded: the newest maxPointsPerSeries, best over all of them.
+    const many = Array.from({ length: RANK_LIMITS.maxPointsPerSeries + 5 }, (_, i) => ({ ...rankOf(newest, SITE), readingId: `p-${String(i).padStart(4, '0')}`, at: NOW - 100 * DAY + i, position: i === 0 ? 1 : 4 }));
+    const bounded = rankRowOf({ searchKey: KEY, saved: null, recent: [newest], points: many }, { site: SITE, range: 'all', now: NOW })!;
+    expect(bounded.points).toHaveLength(RANK_LIMITS.maxPointsPerSeries);
+    expect(bounded.best).toBe(1);
+    // Total: garbage never throws.
+    for (const garbage of [null, 1, {}, { searchKey: KEY, recent: 'x', points: 7 }]) expect(() => rankRowOf(garbage as never, garbage as never)).not.toThrow();
+  });
 });

@@ -5,7 +5,7 @@ Spec: `specs/rankings.spec.ts` (`SerpObservation`, `SearchKeyOf`, `SiteMatch`, `
 `RANK_CSV_KINDS`, `RANK_CSV_COLUMNS`, `RANK_HISTORY_CSV_COLUMNS`, `rankLabel`, `changeLabel`,
 `RANK_HISTORY_NOTE` and `rankHistoryNote`, `COMPARE_MOVEMENTS` and the `SerpComparison` types), and
 Decisions 3–7 and 15 of `docs/plans/phase-10-projects-rank-tracking.md`. Phase 10 Task 3. Implemented
-by `packages/change-intel/src/rankings.ts` (`rankOf`, `rankSeries`, `rankTable`, `rankCsvRows`) and
+by `packages/change-intel/src/rankings.ts` (`rankOf`, `rankSeries`, `rankTable`, `rankRowOf`, `rankCsvRows`) and
 `compare.ts` (`compareSerps`): pure TypeScript over the Zod-free shapes (no I/O, no Zod, no `URL`, no
 hash, no `*.schema.ts`), so main (Task 5) and any later reader compute positions the same way for any
 source. Each scenario maps to one named test in `packages/change-intel/src/__tests__/rankings.test.ts`
@@ -96,6 +96,15 @@ or `compare.test.ts`.
 - `competitors` of a row: each competitor `host` → its point on the row's latest reading, `null` with
   no reading.
 
+## The table read in parts (`rankRowOf`; Task 5)
+- Main reads the table per search (Router, below), so the model also builds one row from its parts:
+  `RankRowParts` = the search key, its saved search (or `null`), `recent` (its newest readings, at least
+  the two newest, any order; only those of this series count, `SearchKeyOf` for older key versions)
+  and `points` (the site's points over the range, already computed, any order). `latest`, `previous`,
+  `change` and the competitors' points come from `recent`, whatever the range; `points` are the given
+  points within the range (a reading once, oldest first, the newest `maxPointsPerSeries`) and `best` is
+  over all of them. `null` with neither a reading nor a saved search. Total: garbage never throws.
+
 ## CSV rows (`rankCsvRows`; Task 5 formats them)
 - Plain arrays of strings and numbers, the header first; no cell escaping or formula guard here
   (Task 5 applies `csvCell` to string cells). Number cells (page, position, change, best, organic
@@ -129,6 +138,88 @@ or `compare.test.ts`.
 - `RANK_HISTORY_NOTE` / `rankHistoryNote(policy)`: how far back history reaches under the project's
   retention (a reading lives as long as its capture, Decision 15), and that positions are as your
   signed-in browser profile sees them.
+
+## Router (Phase 10 Task 5)
+Spec: `rankings.spec.ts` (`RANKINGS_REFUSALS`, `RankTableAnswer`, `RankSeriesAnswer`, `ReadingDate`,
+`MAX_READING_DATES`, `MAX_RANK_TABLE_READ_BYTES`, `RankTableRow`, `ReadingDatesAnswer`, `CompareAnswer`, `CopyCsvAnswer`, `SaveCsvAnswer`) and
+`rankings.schema.ts` (`RankTableInputSchema`, `RankSeriesInputSchema`, `ReadingDatesInputSchema`,
+`CompareInputSchema`, `RankCsvInputSchema`; `RankTableSchema`, `RankSeriesSchema`,
+`ReadingDatesSchema`, `SerpComparisonSchema` / `CompareAnswerSchema`, `CopyCsvAnswerSchema`,
+`SaveCsvAnswerSchema`). Router: `packages/ipc-contract/src/rankings-router.ts` (`RankingsService` in
+`rankings-service.ts`); main: `apps/desktop/src/main/changes/rankings.ts`, `rank-csv.ts`,
+`rank-dialogs.ts`.
+- Six procedures, each `publicProcedure.use(enforceSender)` then `requireRankings` (fails closed
+  without the service: a masked internal error), a strict input and a strict answer schema: queries
+  `rankings.table` (`projectId`, `range`, `tag?`), `rankings.series` (`projectId`, `searchKey`,
+  `range`), `rankings.readingDates` (`projectId`, `searchKey`), `rankings.compare` (`projectId`, `a`,
+  `b`); mutations `rankings.copyCsv` and `rankings.saveCsv` (`projectId`, `kind`, `range`, `tag?`).
+  No input names a path, a file name, SQL or a reading's text; no procedure name says "query".
+- **A live project only.** Every procedure first checks that `projectId` is a live project (Unfiled
+  included: its readings rank with no site); otherwise it answers `not-found` (`copyCsv`: `null`)
+  and reads nothing else. No procedure reads a row by id alone: `compare` reads each reading by id
+  and refuses (`not-found`) unless both belong to that live project; `series` and `readingDates`
+  read by the project and the search key.
+- **The orphan sweep first.** Before reading, main deletes the project's **capture-sourced**
+  readings whose capture is gone (`deleteOrphanReadings(projectId)`); a reading of another source
+  (`serp-api`, no capture by design) is never an orphan. A failed sweep is logged and the read goes
+  on (the reads skip such orphans too).
+- **Every stored reading is parsed on read** with `StoredReadingSchema` (its `snapshot` with
+  `SerpSnapshotSchema`), and must name the project asked for; a row that fails is skipped (never
+  thrown, never answered). Saved searches are Phase 6's checked parameters (a row that is not is
+  skipped), keyed by `SearchKeyOf` with no filters; the site and competitors are the project's
+  stored domains (`siteMatchOf`; competitors by owner, subdomains on); a stored value that is not in
+  its normalized form is ignored.
+- **The table is read per search, bounded** (`MAX_RANK_TABLE_READ_BYTES`, `RankTableRow`):
+  1. its rows' keys first: the saved searches (their order, a repeated key once, the tag's only),
+     then the searches seen in readings (`readingSearches`, most recently observed first; none with a
+     tag), at most `RANK_LIMITS.maxRows` (`truncated` when more);
+  2. then, one row at a time: (a) its **two newest readings, whatever the range** (`readings` with
+     `limit: 2`), so `latest`, `previous` and `change` never depend on the range nor on how many
+     readings the rest of the project holds; (b) how many readings it has in the range
+     (`countReadings`, the range pushed into SQL); (c) its **points in the range** (`readings` with
+     `from = rangeStart(range, now)`, `limit: RANK_LIMITS.maxPointsPerSeries` and `maxBytes` = what is
+     left of the table's byte budget), each reading parsed and reduced to the site's point at once
+     (`rankOf`; the snapshot dropped); the row is then built by `rankRowOf` from its newest readings
+     (competitors on the latest) and those points;
+  3. the budget, `MAX_RANK_TABLE_READ_BYTES` (64 MiB of stored reading bytes over the whole table
+     read), counts every reading loaded; once it is spent, the rows still to read get no points beyond
+     their newest readings (those in the range);
+  4. a row is `capped` when the store held more of its readings in the range than it answered for its
+     points (or more than `maxPointsPerSeries`), counted on the rows the store answered **before** any
+     was skipped as tampered, so a tampered reading never reads as a cut.
+  Copy CSV and Save CSV… take the table from the same read. `series` reads at most
+  `maxPointsPerSeries` readings of its search in the range. `readingDates` reads ids, times and
+  statuses only (the repository's `readingDates`; no reading JSON), at most `MAX_READING_DATES`, so it
+  may list a reading whose JSON is tampered: `compare` refuses that one.
+- **Older key versions.** Every read takes a search's stored keys from `readingSearches`: its own,
+  and older-version keys whose newest parameters and filters have its key today (`SearchKeyOf`); each
+  reading is then filed by the model's rule.
+- **Never rejects.** Every service method answers: a database failure is `store-failed` and one log
+  line (the error's code or name, never its message: it may hold URLs or SQL). The answer then goes
+  through its schema on the way out, so an answer carrying anything more is a masked internal error.
+
+## Export (Phase 10 Task 5; Decision 14)
+- **Through main.** `copyCsv` and `saveCsv` build the same table as `rankings.table` (the same
+  project, range and tag), take `rankCsvRows(rows, kind)` and format them in main: string cells
+  through `@app/seo-core` `csvCell` (the formula guard: a cell starting `=`, `+`, `-`, `@` (or tab or
+  CR) gets a leading `'`; quoting per RFC 4180), number cells written as numbers without the guard
+  (`-3` stays `-3`), lines joined by CRLF with a final CRLF. Page text (queries, URLs, domains) never
+  reaches a spreadsheet as a formula.
+- **Copy CSV** writes the text to the system clipboard in main (the chrome has no clipboard access)
+  and answers the line count, the header aside; `null` (nothing written) for a project that is not
+  live, a database failure, or no clipboard.
+- **Save CSV…** asks for the file in **main's own save dialog**, parented to the window that asked
+  (else the focused window; with none, app-modal), titled `RANK_CSV_SAVE_DIALOG.title[kind]` ("Save
+  rankings as CSV" / "Save rank history as CSV"), with a CSV filter and overwrite confirmation, offering
+  `rankCsvFileName(kind, now)` (`RANK_CSV_FILE_NAME`: `frost-rankings-YYYY-MM-DD.csv`,
+  `frost-rank-history-YYYY-MM-DD.csv`) in the Downloads folder. The renderer never names a path or a
+  file name. The table is read first (a project that is not live is refused before any dialog);
+  cancelling, or a dialog answering anything but an absolute path, writes nothing (`cancelled`); the
+  file is written only where the user chose, owner-only (`writeOwnerOnly`): opened without truncating
+  (`O_WRONLY | O_CREAT`, created `0o600`), set to `0o600` (a file that already existed too; POSIX; a
+  file system refusing it with `EPERM`, `ENOTSUP` or `EINVAL` is let be), and only then emptied and
+  written, so any other failure leaves an existing file as it was. It answers `saved` with the line
+  count; a write that fails is `write-failed` (one log line, never the path).
 
 ## Scenarios
 - **Scenario: rank-of-ready-reading** — a ready reading with an ad and a featured snippet for the site
@@ -173,6 +264,48 @@ or `compare.test.ts`.
 - **Scenario: compare-two-readings** — per domain `up`, `down`, `same`, `new`, `gone` with `change`;
   features present on each side; site and competitors flagged; the site's points per side.
   (`compare.test.ts`)
+- **Scenario: rank-table-reads-live-project-only** — `table`, `series`, `readingDates`, `compare` and
+  the exports answer `not-found` (or `null`) for a deleted project, an unknown id and another project's
+  readings; a live project's table holds only its own readings, with its retention, site, competitors
+  and tags. (`apps/desktop/src/main/changes/__tests__/rankings.test.ts`)
+- **Scenario: tampered-reading-skipped** — a stored reading whose JSON does not parse, whose snapshot
+  fails `SerpSnapshotSchema` or whose row disagrees with its snapshot is skipped by the table, series,
+  exports and compare (the row not `capped` for it), the rest answered; the dates may list it, never
+  compare it. (`rankings.test.ts`)
+- **Scenario: orphan-reading-ignored-and-swept** — a capture-sourced reading whose capture is gone is
+  in no answer and is deleted by the read's sweep; a capture-less reading of another source is kept and
+  read. (`rankings.test.ts`)
+- **Scenario: compare-refuses-readings-of-another-project** — `compare` with a reading of another
+  project (or a deleted one, or an unknown id) is `not-found`; two readings of the project compare.
+  (`rankings.test.ts`)
+- **Scenario: rankings-never-reject** — a database that throws gives `store-failed` (`null` for Copy
+  CSV), one log line without the error's message. (`rankings.test.ts`)
+- **Scenario: rank-csv-uses-csv-cell** — a query or URL starting `=`, `+`, `-`, `@` is written with a
+  leading `'`; numbers (a negative change) are not; CRLF lines. (`rank-csv.test.ts`)
+- **Scenario: rank-csv-copies-through-main** — Copy CSV writes main's clipboard and answers the line
+  count; nothing written for a project that is not live. (`rank-csv.test.ts`)
+- **Scenario: rank-csv-save-asks-for-the-path** — Save CSV… asks main's dialog (the offered name is
+  `rankCsvFileName`), writes only to the chosen file, owner-only (a new file and an existing one); a
+  refused mode change (`EPERM`) still writes; another failure leaves an existing file's content; Cancel
+  writes nothing; no input names a path. (`rank-csv.test.ts`, `rankings-router.test.ts`)
+- **Scenario: rank-table-latest-is-independent-of-history-size** — a saved search whose readings are
+  older than the newest `MAX_READINGS_PER_READ` of the project still shows its latest, previous and
+  change (in any range); a search with more than `maxPointsPerSeries` readings shows that many points
+  and is `capped`. (`rankings.test.ts`)
+- **Scenario: rank-table-read-is-bounded** — the points reads ask for no more than what is left of the
+  byte budget and load no more than it; once it is spent the later rows keep their latest, get no
+  points beyond their newest readings and are `capped`. (`rankings.test.ts`)
+- **Scenario: rank-csv-bounded** — every read is of one search, at most `maxPointsPerSeries`; the table
+  export has at most `RANK_LIMITS.maxRows` lines; series and dates are bounded. (`rank-csv.test.ts`)
+- **Scenario: rank-row-from-parts** — `rankRowOf` builds a row from its newest readings and its points:
+  latest and change whatever the range, points in range (a reading once, newest `maxPointsPerSeries`),
+  best over them, competitors on the latest; total. (`packages/change-intel/src/__tests__/rankings.test.ts`)
+- **Scenario: every-rankings-procedure-enforces-sender** — each procedure refuses a foreign sender
+  before its input or service, and fails closed without the service. (`rankings-router.test.ts`)
+- **Scenario: rankings-inputs-are-validated** — unknown keys (a `path`), bad ids, keys, ranges, kinds
+  and tags never reach the service. (`rankings-router.test.ts`)
+- **Scenario: rankings-answers-are-checked** — an answer with an extra field or out of bounds is a
+  masked internal error. (`rankings-router.test.ts`)
 - **Scenario: compare-is-bounded** — readings with hundreds of organic domains answer at most
   `maxRows` rows with `truncated`, keeping the site's and competitors' rows; garbage never throws.
   (`compare.test.ts`)

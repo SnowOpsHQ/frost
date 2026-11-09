@@ -581,6 +581,43 @@ describe('workspace storage', () => {
     expect((await t.repo.readings({ projectId: site.id, limit: 2 })).map((r) => r.observedAt)).toEqual([20_000 + fits + 2, 20_000 + fits + 1]);
   });
 
+  // spec: specs/workspace-db.feature.md — Repository: `readings`' `maxBytes`, `countReadings`, `readingDates` (Phase 10 Task 5).
+  test('reading-dates-count-and-byte-budget', async () => {
+    const site = (await t.repo.createProject('Tea', 500))!;
+    const other = (await t.repo.createProject('Other', 500))!;
+    const OTHER_KEY = sha256('black tea key');
+    const ids = [1_000, 2_000, 3_000].map((at) => plant(t.raw, { id: uuidv7(at), project_id: site.id, observed_at: at, reading: '"abcd"', reading_bytes: 6 }));
+    plant(t.raw, { id: uuidv7(2_500), project_id: site.id, observed_at: 2_500, search_key: OTHER_KEY });
+    plant(t.raw, { id: uuidv7(2_600), project_id: other.id, observed_at: 2_600 });
+    const gone = await captureWithReading(3_500, '{"v":1}', { projectId: site.id, reading: readingOf(3_500) });
+    deleteCaptureAsSyncDoes(t.raw, appended(gone.result).captureId);
+
+    // Dates: newest first, the project's and the key's only, orphans skipped, no JSON.
+    expect(await t.repo.readingDates({ projectId: site.id, searchKey: KEY, limit: 10 })).toEqual([
+      { id: ids[2], observedAt: 3_000, status: 'ready' },
+      { id: ids[1], observedAt: 2_000, status: 'ready' },
+      { id: ids[0], observedAt: 1_000, status: 'ready' },
+    ]);
+    expect((await t.repo.readingDates({ projectId: site.id, searchKey: KEY, limit: 2 })).map((d) => d.id)).toEqual([ids[2], ids[1]]);
+    expect((await t.repo.readingDates({ projectId: site.id, searchKey: KEY, limit: 0 })).map((d) => d.id)).toEqual([ids[2]]);
+    expect((await t.repo.readingDates({ projectId: site.id, searchKey: OTHER_KEY, limit: 10 })).map((d) => d.observedAt)).toEqual([2_500]);
+    expect((await t.repo.readingDates({ projectId: other.id, searchKey: KEY, limit: 10 })).map((d) => d.observedAt)).toEqual([2_600]);
+    for (const bad of [{ projectId: 'nope', searchKey: KEY, limit: 5 }, { projectId: site.id, searchKey: 'KEY', limit: 5 }, null]) expect(await t.repo.readingDates(bad as never)).toEqual([]);
+
+    // Counts: as `readings` filters, without its bounds.
+    expect(await t.repo.countReadings({ projectId: site.id })).toBe(4);
+    expect(await t.repo.countReadings({ projectId: site.id, searchKey: KEY })).toBe(3);
+    expect(await t.repo.countReadings({ projectId: site.id, searchKey: KEY, from: 2_000 })).toBe(2);
+    expect(await t.repo.countReadings({ projectId: site.id, searchKey: KEY, from: 1_500, to: 2_500 })).toBe(1);
+    expect(await t.repo.countReadings({ projectId: 'nope' })).toBe(0);
+
+    // A caller's own byte budget: the newest prefix within it (never above the repository's cap).
+    expect((await t.repo.readings({ projectId: site.id, searchKey: KEY, limit: 10, maxBytes: 12 })).map((r) => r.id)).toEqual([ids[2], ids[1]]);
+    expect((await t.repo.readings({ projectId: site.id, searchKey: KEY, limit: 10, maxBytes: 5 }))).toEqual([]);
+    expect((await t.repo.readings({ projectId: site.id, searchKey: KEY, limit: 10, maxBytes: 0 }))).toEqual([]);
+    expect(await t.repo.readings({ projectId: site.id, searchKey: KEY, limit: 10, maxBytes: Number.MAX_SAFE_INTEGER })).toHaveLength(3);
+  });
+
   test('last-project-run-at', async () => {
     const site = (await t.repo.createProject('Tea', 500))!;
     const other = (await t.repo.createProject('Other', 500))!;

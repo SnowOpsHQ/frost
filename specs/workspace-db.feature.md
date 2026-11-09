@@ -78,7 +78,14 @@ test; unless named otherwise it is in `packages/db/src/change-intel/__tests__/wo
   stored reading bytes (`length(CAST(reading AS BLOB))`) stays within `MAX_READING_BYTES_PER_READ`
   (32 MiB). The sizes are read first, in SQL, with the ids; the JSON is then loaded for that prefix
   only, never beyond the budget. A reading is at most `MAX_SERP_READING_JSON_BYTES`, so a read with
-  any reading answers at least one;
+  any reading answers at least one. A caller with a budget of its own across several reads (the rank
+  table, `rankings.feature.md`, Router) passes `maxBytes` (clamped to 1…`MAX_READING_BYTES_PER_READ`),
+  the bytes it has left: the newest prefix within it, possibly none.
+  `countReadings({ projectId, searchKey?, from?, to? })` counts what `readings` would answer without its
+  `limit` and byte bounds (one `count(*)`, orphans skipped), so a caller knows when a read was cut.
+  `readingDates({ projectId, searchKey, limit })` answers one search key's readings of the project
+  newest first, at most `limit` (clamped as `readings`): ids, `observed_at` and status only, the reading
+  JSON never loaded (the Compare view's date picker);
   `readingSearches(projectId)` each search key (with its key version) seen, with its newest reading's
   parameters and filters, its count and newest time; `reading(id)` one reading. Every read skips a
   tampered row (each value checked, text read only up to its cap plus one) and a **capture-sourced**
@@ -164,6 +171,10 @@ test; unless named otherwise it is in `packages/db/src/change-intel/__tests__/wo
 - **Scenario: readings-read-is-bounded** — a `limit` above `MAX_READINGS_PER_READ` answers that many,
   newest first; readings of `MAX_SERP_READING_JSON_BYTES` each answer only the newest 64 (exactly
   `MAX_READING_BYTES_PER_READ`).
+- **Scenario: reading-dates-count-and-byte-budget** — `readingDates` answers one key's readings of
+  one project newest first (ids, times, statuses), bounded by `limit`, orphans skipped;
+  `countReadings` counts as `readings` filters; `readings` with `maxBytes` answers the newest prefix
+  within it (none when the newest alone is larger), never above `MAX_READING_BYTES_PER_READ`.
 - **Scenario: orphan-readings-swept** — a capture-sourced reading whose capture is gone is skipped by
   the reads and removed by `deleteOrphanReadings` (of one project, or all); a `serp-api` row with no
   capture is neither skipped nor removed.

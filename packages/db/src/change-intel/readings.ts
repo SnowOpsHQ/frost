@@ -74,6 +74,21 @@ export interface ReadingsFilter {
   readonly to?: number;
   /** At most this many (clamped to 1…`MAX_READINGS_PER_READ`). */
   readonly limit: number;
+  /**
+   * At most this many stored reading bytes (clamped to 1…`MAX_READING_BYTES_PER_READ`; absent: that
+   * cap): a caller with a budget of its own across several reads (the rank table) passes what is left.
+   */
+  readonly maxBytes?: number;
+}
+
+/** Which readings `countReadings` counts: as `ReadingsFilter`, without the bounds. */
+export type ReadingsCountFilter = Pick<ReadingsFilter, 'projectId' | 'searchKey' | 'from' | 'to'>;
+
+/** One reading's date, as the Compare view's picker lists it (`readingDates`): no reading JSON. */
+export interface ReadingDateRow {
+  readonly id: string;
+  readonly observedAt: number;
+  readonly status: SerpReadingStatus;
 }
 
 export interface ReadingOperations {
@@ -88,6 +103,13 @@ export interface ReadingOperations {
    * never read).
    */
   readings(filter: ReadingsFilter): Promise<StoredReading[]>;
+  /** How many readings `readings` would answer without its `limit` and byte bounds (orphans skipped). */
+  countReadings(filter: ReadingsCountFilter): Promise<number>;
+  /**
+   * One search key's readings of a project, newest first by `(observedAt, id)`, at most `limit`
+   * (clamped to 1…`MAX_READINGS_PER_READ`): ids, times and statuses only, the reading JSON never loaded.
+   */
+  readingDates(filter: { readonly projectId: string; readonly searchKey: string; readonly limit: number }): Promise<ReadingDateRow[]>;
   /** The searches seen in a project's readings, most recently observed first. */
   readingSearches(projectId: string): Promise<ReadingSearch[]>;
   reading(id: string): Promise<StoredReading | null>;
@@ -165,6 +187,18 @@ function readingOf(row: ReadingRow): StoredReading | null {
 
 const present = <T>(value: T | null): value is T => value !== null;
 const readLimit = (limit: unknown): number => Math.min(Math.max(Math.trunc(Number(limit)) || 1, 1), MAX_READINGS_PER_READ);
+const byteBudget = (maxBytes: unknown): number => (maxBytes === undefined ? MAX_READING_BYTES_PER_READ : Math.min(Math.max(Math.trunc(Number(maxBytes)) || 1, 1), MAX_READING_BYTES_PER_READ));
+/** The `WHERE` of a project's (non-orphan) readings, optionally of one key and within `from`…`to`; `null` for an invalid filter. */
+function readingsWhere({ projectId, searchKey, from, to }: ReadingsCountFilter): SQL | null {
+  if (!isId(projectId) || (searchKey !== undefined && !isHash(searchKey)) || (from !== undefined && !isTime(from)) || (to !== undefined && !isTime(to))) return null;
+  return and(
+    eq(ciSerpReadings.projectId, projectId),
+    searchKey === undefined ? undefined : eq(ciSerpReadings.searchKey, searchKey),
+    from === undefined ? undefined : gte(ciSerpReadings.observedAt, from),
+    to === undefined ? undefined : lte(ciSerpReadings.observedAt, to),
+    notOrphan,
+  )!;
+}
 
 export function createReadingOperations(db: SessionDatabase): ReadingOperations {
   const exists = async (id: string): Promise<boolean> => (await db.select({ id: ciSerpReadings.id }).from(ciSerpReadings).where(eq(ciSerpReadings.id, id)).limit(1)).length > 0;
@@ -184,29 +218,23 @@ export function createReadingOperations(db: SessionDatabase): ReadingOperations 
       return exists(input.id);
     },
 
-    async readings({ projectId, searchKey, from, to, limit }) {
-      if (!isId(projectId) || (searchKey !== undefined && !isHash(searchKey)) || (from !== undefined && !isTime(from)) || (to !== undefined && !isTime(to))) return [];
+    async readings(filter) {
+      const where = typeof filter === 'object' && filter !== null ? readingsWhere(filter) : null;
+      if (where === null) return [];
+      const budget = byteBudget(filter.maxBytes);
       // First the newest ids with their stored sizes (measured in SQL; no JSON is loaded), then the
       // rows of the newest prefix that fits the byte budget.
       const sized = await db
         .select({ id: ciSerpReadings.id, bytes: sql<unknown>`length(CAST(${ciSerpReadings.reading} AS BLOB))` })
         .from(ciSerpReadings)
-        .where(
-          and(
-            eq(ciSerpReadings.projectId, projectId),
-            searchKey === undefined ? undefined : eq(ciSerpReadings.searchKey, searchKey),
-            from === undefined ? undefined : gte(ciSerpReadings.observedAt, from),
-            to === undefined ? undefined : lte(ciSerpReadings.observedAt, to),
-            notOrphan,
-          ),
-        )
+        .where(where)
         .orderBy(desc(ciSerpReadings.observedAt), desc(ciSerpReadings.id))
-        .limit(readLimit(limit));
+        .limit(readLimit(filter.limit));
       const ids: string[] = [];
       let total = 0;
       for (const { id, bytes } of sized) {
         total += typeof bytes === 'number' && Number.isFinite(bytes) ? bytes : 0;
-        if (total > MAX_READING_BYTES_PER_READ) break;
+        if (total > budget) break;
         if (typeof id === 'string') ids.push(id);
       }
       const found = new Map<string, StoredReading>();
@@ -214,6 +242,25 @@ export function createReadingOperations(db: SessionDatabase): ReadingOperations 
         for (const reading of (await db.select(readingColumns).from(ciSerpReadings).where(inArray(ciSerpReadings.id, part))).map(readingOf).filter(present)) found.set(reading.id, reading);
       }
       return ids.flatMap((id) => found.get(id) ?? []);
+    },
+
+    async countReadings(filter) {
+      const where = typeof filter === 'object' && filter !== null ? readingsWhere(filter) : null;
+      if (where === null) return 0;
+      const [row] = await db.select({ n: count() }).from(ciSerpReadings).where(where);
+      return isCount(row?.n, 0) ? row.n : 0;
+    },
+
+    async readingDates(filter) {
+      const where = typeof filter === 'object' && filter !== null && isHash(filter.searchKey) ? readingsWhere({ projectId: filter.projectId, searchKey: filter.searchKey }) : null;
+      if (where === null) return [];
+      const rows = await db
+        .select({ id: ciSerpReadings.id, observedAt: ciSerpReadings.observedAt, status: capped(ciSerpReadings.status, 16) })
+        .from(ciSerpReadings)
+        .where(where)
+        .orderBy(desc(ciSerpReadings.observedAt), desc(ciSerpReadings.id))
+        .limit(readLimit(filter.limit));
+      return rows.flatMap(({ id, observedAt, status }) => (isId(id) && isTime(observedAt) && isOneOf(SERP_READING_STATUSES, status) ? [{ id, observedAt, status }] : []));
     },
 
     async readingSearches(projectId) {

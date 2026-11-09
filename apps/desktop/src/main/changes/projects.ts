@@ -81,8 +81,9 @@ function profileOf(json: string | null): RenderProfile | null {
 /**
  * A saved search's stored parameters: Phase 3's (`SearchParamsSchema`), and exactly what Phase 3 reads
  * from their own `url` (so a run only ever visits an engine's result page); else `null` (skipped).
+ * Also the rankings' saved searches (`rankings.ts`).
  */
-function paramsOf(json: string): SearchParams | null {
+export function paramsOf(json: string): SearchParams | null {
   try {
     const parsed = SearchParamsSchema.safeParse(JSON.parse(json));
     if (!parsed.success) return null;
@@ -107,7 +108,7 @@ export function savedSearchParams(input: unknown): SearchParams | null {
 }
 
 /** A stored domain as answered: only one `normalizeSiteDomain` leaves as it is (else a tampered row: none). */
-const storedDomain = (domain: string | null): string | null => (domain !== null && normalizeSiteDomain(domain) === domain ? domain : null);
+export const storedDomain = (domain: string | null): string | null => (domain !== null && normalizeSiteDomain(domain) === domain ? domain : null);
 
 /** The project's site from its workspace flags (`null`: none, Unfiled, or a row that does not fit). */
 function siteOf(project: Project, workspace: ProjectWorkspace | null): ProjectSite | null {
@@ -128,7 +129,7 @@ const summaryOf = (project: Project, workspace: ProjectWorkspace | null, lastCap
 });
 
 /** An entry's tags as answered: in `normalizeTag`'s form only, sorted, at most `MAX_TAGS_PER_ENTRY` (a tampered surplus is dropped). */
-const tagsOf = (tags: readonly EntryTag[], kind: EntryTag['entryKind'], entryId: string): string[] =>
+export const tagsOf = (tags: readonly EntryTag[], kind: EntryTag['entryKind'], entryId: string): string[] =>
   [...new Set(tags.filter((tag) => tag.entryKind === kind && tag.entryId === entryId && normalizeTag(tag.tag) === tag.tag).map((tag) => tag.tag))].sort().slice(0, MAX_TAGS_PER_ENTRY);
 
 /**
