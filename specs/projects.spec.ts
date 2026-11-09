@@ -471,9 +471,11 @@ export const PROJECT_REFUSAL_MESSAGES: Readonly<Record<ProjectRefusal, string>> 
 /**
  * Why a run did not start: `busy` (one is under way; one at a time, app-wide), `not-found` (no such
  * project), `no-targets` (it has no pages or queries), `no-tab` (no tab could be opened for it),
- * `store-failed`, `declined` (Phase 10: `RANK_RUN_DISCLOSURE` was answered Cancel; nothing started).
+ * `store-failed`, `declined` (Phase 10: `RANK_RUN_DISCLOSURE` was answered Cancel; nothing started),
+ * `unavailable` (Phase 10, legal gate L1: a `searches` run, "Check rankings", while
+ * `RANK_CHECK_AVAILABLE` is `false`; refused in main whatever the renderer shows).
  */
-export const RUN_REFUSALS = ['busy', 'not-found', 'no-targets', 'no-tab', 'store-failed', 'declined'] as const;
+export const RUN_REFUSALS = ['busy', 'not-found', 'no-targets', 'no-tab', 'store-failed', 'declined', 'unavailable'] as const;
 export type RunRefusal = (typeof RUN_REFUSALS)[number];
 
 export const RUN_REFUSAL_MESSAGES: Readonly<Record<RunRefusal, string>> = {
@@ -483,6 +485,7 @@ export const RUN_REFUSAL_MESSAGES: Readonly<Record<RunRefusal, string>> = {
   'no-tab': 'No tab could be opened for the run. Close a tab and try again.',
   'store-failed': 'The project could not be read.',
   declined: 'Nothing was started: no search was sent.',
+  unavailable: 'Checking rankings is not available in this version of frost.',
 };
 
 export type ProjectRefused = { status: 'refused'; reason: ProjectRefusal };

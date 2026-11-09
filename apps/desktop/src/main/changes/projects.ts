@@ -48,8 +48,8 @@ import { storedPageUrl } from './snapshot';
 // that is an engine's result page counts as a search (`runSearchOf`), and (whole-branch review) so does
 // any page on an engine's result path (`queriesAnEngine`); after a Continue the project and its targets are
 // read again; `startAutomaticRun` (the schedule's) never opens the dialog. Legal gate L1 (plan Decision
-// 10): while `RANK_CHECK_AVAILABLE` is `false`, `setCadence` (and `setAutoCapture`) answer
-// `unavailable` here in main, whatever the renderer sends, and no summary is `due`. Every method
+// 10): while `RANK_CHECK_AVAILABLE` is `false`, `setCadence` (and `setAutoCapture`) and a `searches`
+// `startRun` ("Check rankings") answer `unavailable` here in main, whatever the renderer sends, and no summary is `due`. Every method
 // answers: a refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`), a database failure is
 // `store-failed` and one log line (its code, never its message: that may hold URLs).
 
@@ -352,6 +352,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
     guarded(
       'start a run',
       async () => {
+        // Legal gate L1: no "Check rankings" (a searches-only run) until the owner's note, whatever the renderer sends.
+        if (scope === 'searches' && !rankCheckAvailable) return refused<RunRefusal>('unavailable');
         if (runs.running() !== null) return refused<RunRefusal>('busy');
         // A deleted project's purge that failed earlier is retried first.
         await purgeDeleted();

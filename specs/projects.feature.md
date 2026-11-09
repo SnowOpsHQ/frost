@@ -131,7 +131,9 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - **Legal gate (L1, plan Decision 10).** "Check rankings" (the Overview button and the palette's "Check
   rankings now") is offered only when `RANK_CHECK_AVAILABLE` (`capture-schedule.spec.ts`) is `true`,
   and it is `false` until the owner's written L1 note is under `docs/research/` (flipped in the same
-  change that adds it). While it is `false` neither is shown. Everything else in this section holds
+  change that adds it). While it is `false` neither is shown, and main refuses `projects.startRun`
+  with `scope: 'searches'` (`unavailable`, `RUN_REFUSALS`; nothing asked or started), whatever the
+  renderer sends, as it refuses `setCadence`. Everything else in this section holds
   regardless: Capture now on a project with saved searches still asks the disclosure, paces its
   searches and stops at the first challenge (Phase 6's run made safer, not an L1 surface).
 - **Disclosure first.** Before the first run with search targets (Capture now on a project whose run
@@ -540,7 +542,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   paths, never does), `cadence-asks-the-disclosure-first` (with `RANK_CHECK_AVAILABLE`
   injected `true`), `set-cadence-unavailable-until-cleared` (the shipped flag: `setCadence` is
   `unavailable` for every cadence, nothing stored, no disclosure asked; `setAutoCapture` `unavailable`;
-  no summary `due`; Capture now with searches still asks and starts).
+  no summary `due`; `startRun` with `scope: 'searches'` `unavailable`, nothing asked or started;
+  Capture now with searches still asks and starts).
 - **Scenario: cadence** (Task 8) — Tests in `apps/desktop/src/main/changes/__tests__/capture-schedule.test.ts`:
   `due-after-cadence`, `off-is-never-due`, `no-backfill-after-sleep`, `defaults-never-start-a-run` (the
   real `AUTO_CAPTURE_AVAILABLE`: due shows, nothing starts, `setAutoCapture` is `unavailable`); with the

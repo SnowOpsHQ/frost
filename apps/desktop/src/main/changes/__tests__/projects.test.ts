@@ -556,6 +556,10 @@ describe('projects service', () => {
     expect((await service.get(id))!.project.due).toBe(false);
     // Capture now on a project with saved searches still asks the disclosure first and starts.
     await service.addQuery(id, SEARCH);
+    // "Check rankings" (a `searches` run) is refused in main, whatever the renderer sends: nothing asked or started.
+    expect(await service.startRun(id, false, 'searches')).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(confirmRankRun).not.toHaveBeenCalled();
+    expect(runs.start).not.toHaveBeenCalled();
     expect(await service.startRun(id, false)).toMatchObject({ status: 'started' });
     expect(confirmRankRun).toHaveBeenCalledOnce();
     expect(runs.start).toHaveBeenCalledOnce();
