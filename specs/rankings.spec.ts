@@ -31,13 +31,23 @@
  * `pending`, up to `SERP_SETTLE_WAIT_MS` (`projects.spec.ts`). `rankings-url.spec.ts` `sameRunSearch`
  * says whether the tab's search is the run target's (engine, host, query, `gl`, `hl`, page; not the
  * device).
+ *
+ * ## The rank read model (Decisions 5, 6, 7 and 15; Phase 10 Task 3)
+ * `@app/change-intel` `rankOf`, `rankSeries`, `rankTable`, `rankCsvRows` and `compareSerps` compute
+ * positions, change, best, trend points, CSV rows and comparisons from `SerpObservation`s, whatever
+ * their source, with the values and wording below (`RANK_OUTCOMES`, `RANK_RANGES`, `RANK_LIMITS`, the
+ * CSV columns, `rankLabel`, `changeLabel`, `RANK_HISTORY_NOTE`). Acceptance: `rankings.feature.md`.
  */
 import type { SearchEngineId } from './browser-polish.spec';
+import type { RetentionMode } from './capture-db.spec';
 import type { SerpResultType } from './serp-selector-pack.spec';
 import type { SerpDevice, SerpFeatureType } from './serp.spec';
-import type { SerpReadingSource } from './workspace-db.spec';
+import { MAX_PROJECT_COMPETITORS, SEARCH_KEY_VERSION, type SerpReadingSource } from './workspace-db.spec';
 
 export type { SerpResultType } from './serp-selector-pack.spec';
+export { SERP_FEATURE_TYPES, type SerpFeatureType } from './serp.spec';
+/** Re-exported for `@app/change-intel`, which imports no spec but this one and `capture.spec.ts`. */
+export { MAX_PROJECT_COMPETITORS, SEARCH_KEY_VERSION };
 
 // ---- Shapes (Zod-free; `rankings.schema.ts` proves Phase 3's schemas fit them) -----------------
 
@@ -107,6 +117,12 @@ export type SerpFilters = Readonly<Record<string, string>>;
 export interface SerpObservation {
   readonly id: string;
   readonly searchKey: string;
+  /**
+   * The key rule `searchKey` was made under (the row's `search_key_version`); absent means
+   * `SEARCH_KEY_VERSION`. A reading of any other version is filed under the key its parameters and
+   * filters have today (`SearchKeyOf`, Decision 4).
+   */
+  readonly searchKeyVersion?: number;
   readonly params: SearchParamsShape;
   readonly filters: SerpFilters;
   readonly observedAt: number;
@@ -114,16 +130,39 @@ export interface SerpObservation {
   readonly snapshot: SerpSnapshotShape;
 }
 
-/** Whose position a rank is (Decision 7): the owner domain, the exact host, and whether subdomains count. */
+/**
+ * The current-version search key of a search (main: SHA-256 hex of `searchIdentityJson(params,
+ * filters, searchHostOf(params.url))`), injected into the read model, which has no hash and no `URL`;
+ * `null` when it has none (an engine URL that does not parse).
+ */
+export type SearchKeyOf = (params: SearchParamsShape, filters: SerpFilters) => string | null;
+
+/**
+ * Whose position a rank is (Decision 7), computed by main from the stored domain: `owner` its owner
+ * domain (Phase 3's `ownerDomain`), `host` the domain as set (a lowercase host), `subdomains` whether
+ * any host of the owner counts (on) or only `host` itself, give or take one leading `www.` (off).
+ */
 export interface SiteMatch {
   readonly owner: string;
   readonly host: string;
   readonly subdomains: boolean;
 }
 
-/** A point's outcome (Decision 6). */
-export type RankOutcome = 'ranked' | 'not-found' | 'unknown' | 'unreadable' | 'no-site';
+/**
+ * A point's outcome (Decision 6): `ranked` (the site has an organic result on the page read),
+ * `not-found` (every organic result was read and none is the site's), `unknown` (a reader cap cut
+ * organic results and none read is the site's), `unreadable` (Phase 3 could not read the page),
+ * `no-site` (the project has no site domain).
+ */
+export const RANK_OUTCOMES = ['ranked', 'not-found', 'unknown', 'unreadable', 'no-site'] as const;
+export type RankOutcome = (typeof RANK_OUTCOMES)[number];
 
+/**
+ * One reading of one search for one site. `position` is the site's best organic position on the page
+ * read (page-local; `ranked` only), `url` that result's link, `organicRead` the organic results read
+ * on the page, `page` the result page (1 for saved searches), `alsoIn` the SERP feature types (in page
+ * order, each once) with a result linking to the site: never a position.
+ */
 export interface RankPoint {
   readonly readingId: string;
   readonly at: number;
@@ -135,6 +174,13 @@ export interface RankPoint {
   readonly alsoIn: readonly string[];
 }
 
+/**
+ * One tracked search (Decision 5): `latest` and `previous` are its two newest readings (whatever the
+ * range), `change` between them (`changeOf`); `points` (oldest first, the newest
+ * `RANK_LIMITS.maxPointsPerSeries`) are within the range, and `best` is the best `ranked` position over
+ * every reading in the range (before that cut); `competitors` maps each competitor's `host` to its point
+ * on the latest reading (`null` with no reading).
+ */
 export interface RankRow {
   readonly searchKey: string;
   readonly params: SearchParamsShape;
@@ -193,3 +239,154 @@ export function searchIdentityJson(params: SearchParamsShape, filters: SerpFilte
 /** What the run tab's SERP state says of its landed page (see the header). */
 export const SERP_RUN_VERDICTS = ['ready', 'unreadable', 'not-serp', 'pending', 'disabled'] as const;
 export type SerpRunVerdict = (typeof SERP_RUN_VERDICTS)[number];
+
+// ---- The rank read model (Decisions 5, 6, 7 and 15; acceptance `rankings.feature.md`) ------------
+
+/** A saved search of the project as the rank table takes it: main computes its key (`SearchKeyOf`, no filters for a Phase 6 saved search). */
+export interface SavedSearchRef {
+  readonly id: string;
+  readonly searchKey: string;
+  readonly params: SearchParamsShape;
+  readonly filters: SerpFilters;
+  readonly tags: readonly string[];
+}
+
+/** The rank table: saved searches first, then searches seen only in readings; `truncated` when `RANK_LIMITS.maxRows` cut it. */
+export interface RankTable {
+  readonly rows: readonly RankRow[];
+  readonly truncated: boolean;
+}
+
+/** The time ranges the rankings view filters points by (`all`: every point kept). */
+export const RANK_RANGES = ['7d', '30d', '90d', '365d', 'all'] as const;
+export type RankRange = (typeof RANK_RANGES)[number];
+
+const DAY_MS = 86_400_000;
+const RANGE_DAYS: Readonly<Record<Exclude<RankRange, 'all'>, number>> = { '7d': 7, '30d': 30, '90d': 90, '365d': 365 };
+
+/**
+ * The earliest `observedAt` a point of `range` may have at time `now` (inclusive; Unix ms): `now`
+ * minus the range's days, never below 0. `all`, a value that is not a range, or a `now` that is not a
+ * finite number keep every point (0).
+ */
+export function rangeStart(range: RankRange, now: number): number {
+  if (!Object.prototype.hasOwnProperty.call(RANGE_DAYS, range) || !Number.isFinite(now)) return 0;
+  return Math.max(0, now - RANGE_DAYS[range as Exclude<RankRange, 'all'>] * DAY_MS);
+}
+
+/**
+ * What one read of the model answers at most: `maxPointsPerSeries` points per search (the newest),
+ * `maxRows` rows per table and per comparison. Competitors are cut to `MAX_PROJECT_COMPETITORS`.
+ */
+export const RANK_LIMITS = { maxPointsPerSeries: 400, maxRows: 150 } as const;
+
+/** The two exports: the table as shown, or every point of every row (`rankCsvRows`). */
+export const RANK_CSV_KINDS = ['table', 'history'] as const;
+export type RankCsvKind = (typeof RANK_CSV_KINDS)[number];
+
+/**
+ * The rank table's CSV header (`rankCsvRows(rows, 'table')`), followed by one column per competitor
+ * named by its domain (its position on the latest reading). `Change` is a number (positions gained,
+ * negative when lost), `new`, `lost` or empty; dates are ISO 8601 (UTC).
+ */
+export const RANK_CSV_COLUMNS = ['Search', 'Engine', 'Country', 'Language', 'Device', 'Page', 'Filters', 'Tags', 'Outcome', 'Position', 'Change', 'Best', 'URL', 'Last checked'] as const;
+
+/** The history CSV's header (`rankCsvRows(rows, 'history')`): one line per point of each row, oldest first. */
+export const RANK_HISTORY_CSV_COLUMNS = ['Search', 'Engine', 'Country', 'Language', 'Device', 'Page', 'Filters', 'Checked', 'Outcome', 'Position', 'Organic results read', 'URL', 'Also in'] as const;
+
+/**
+ * A point as the table shows it: `3`; on a later result page `p2 · 3` (never an absolute rank);
+ * not found `> 10` (10 organic results read; `p2 · > 10` on page 2); `Unknown`, `Unreadable`,
+ * `No site set`; a search with no reading `No reading`.
+ */
+export function rankLabel(point: RankPoint | null): string {
+  if (point === null) return 'No reading';
+  const onPage = (text: string) => (point.page > 1 ? `p${point.page} · ${text}` : text);
+  switch (point.outcome) {
+    case 'ranked':
+      return onPage(String(point.position));
+    case 'not-found':
+      return onPage(`> ${point.organicRead}`);
+    case 'unknown':
+      return 'Unknown';
+    case 'unreadable':
+      return 'Unreadable';
+    case 'no-site':
+      return 'No site set';
+  }
+}
+
+/** A change as the table shows it: `+2` (up two places), `-3` (down three), `0`, `new`, `lost`; empty with none. */
+export function changeLabel(change: RankRow['change']): string {
+  if (change === null) return '';
+  if (typeof change === 'string') return change;
+  return change > 0 ? `+${change}` : String(change);
+}
+
+/**
+ * The rankings view's note on how far back history goes (Decision 15: a reading lives as long as its
+ * capture), by the project's retention mode (`{n}` its value), and on whose view a position is.
+ */
+export const RANK_HISTORY_NOTE = {
+  forever: 'This project keeps every capture, so its rank history reaches back to the first reading.',
+  versions: 'This project keeps the newest {n} versions of each search, so its rank history reaches back only that far; result pages change often, so that can be days.',
+  days: 'This project keeps captures for {n} days, so its rank history reaches back {n} days.',
+  profile: 'Positions are as your signed-in browser profile sees them: an engine may tailor results to the account, location and history of that profile.',
+} as const;
+
+/** The full note for a project's retention (`RANK_HISTORY_NOTE`): its horizon, then whose view it is. */
+export function rankHistoryNote(policy: { readonly mode: RetentionMode; readonly value: number | null }): string {
+  const horizon = RANK_HISTORY_NOTE[policy.mode].replaceAll('{n}', String(policy.value ?? ''));
+  return `${horizon} ${RANK_HISTORY_NOTE.profile}`;
+}
+
+// ---- Comparing two readings ---------------------------------------------------------------------
+
+/** How a domain moved from reading A (the earlier pick) to reading B. */
+export const COMPARE_MOVEMENTS = ['up', 'down', 'same', 'new', 'gone'] as const;
+export type CompareMovement = (typeof COMPARE_MOVEMENTS)[number];
+
+/** One side of a comparison. `features` lists the SERP feature types on its page (in page order, each once). */
+export interface SerpComparisonSide {
+  readonly readingId: string;
+  readonly at: number;
+  readonly params: SearchParamsShape | null;
+  readonly filters: SerpFilters;
+  readonly status: 'ready' | 'unreadable';
+  readonly organicRead: number;
+  readonly complete: boolean;
+  readonly features: readonly SerpFeatureType[];
+}
+
+/** A domain's best organic result on one side. */
+export interface SerpComparisonPlace {
+  readonly position: number;
+  readonly url: string | null;
+}
+
+/**
+ * One owner domain's organic standing on both sides: `change` = A's position − B's (positive: moved
+ * up), `null` unless on both; `role` flags the project's site and competitors (by owner domain).
+ */
+export interface SerpComparisonRow {
+  readonly domain: string;
+  readonly a: SerpComparisonPlace | null;
+  readonly b: SerpComparisonPlace | null;
+  readonly movement: CompareMovement;
+  readonly change: number | null;
+  readonly role: 'site' | 'competitor' | null;
+}
+
+/**
+ * Two readings side by side (`compareSerps`): per owner domain, then which feature types each page has,
+ * and the site's own point on each side (the full Decision 7 rule; `null` with no site). `truncated`
+ * when `RANK_LIMITS.maxRows` cut the rows (the site's and competitors' rows are always kept).
+ */
+export interface SerpComparison {
+  readonly a: SerpComparisonSide;
+  readonly b: SerpComparisonSide;
+  readonly rows: readonly SerpComparisonRow[];
+  readonly features: readonly { readonly type: SerpFeatureType; readonly a: boolean; readonly b: boolean }[];
+  readonly site: { readonly a: RankPoint; readonly b: RankPoint } | null;
+  readonly truncated: boolean;
+}
