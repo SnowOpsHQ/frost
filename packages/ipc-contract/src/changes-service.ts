@@ -10,7 +10,7 @@ import type {
   VersionInput,
 } from '@app/specs/changes.spec';
 import type { ScreenshotKind } from '@app/specs/capture-db.spec';
-import type { ScreenshotImageAnswer, ScreenshotImageSize, ScreenshotsAnswer, ScreenshotsInput, TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
+import type { SaveScreenshotEditAnswer, SaveScreenshotEditInput, ScreenshotImageAnswer, ScreenshotImageSize, ScreenshotsAnswer, ScreenshotsInput, TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
 
 // Change intelligence as the `changes.*` procedures and other phases see it (Phase 6 Task 3; spec
 // `changes.spec.ts`, `changes.schema.ts`; acceptance `changes-capture.feature.md`). Main implements
@@ -72,4 +72,9 @@ export interface ScreenshotsService {
   copy(id: string): Promise<boolean>;
   /** Ends the tab's pending area selection (the screenshot is refused as `cancelled`); whether one was pending. */
   cancelArea(tabId: number): Promise<boolean>;
+  /**
+   * Phase 11 Task 7 (Decision 9): saves an edited copy of a screenshot, composited in main from the
+   * chrome's overlay (`SaveScreenshotEditInput`); the source is never changed.
+   */
+  saveEdit(input: SaveScreenshotEditInput): Promise<SaveScreenshotEditAnswer>;
 }

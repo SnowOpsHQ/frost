@@ -1,5 +1,6 @@
 import type { ClipboardItem, NativeImage, nativeImage as NativeImageModule } from 'electron';
 import { SCREENSHOT_LIMITS, type ScreenshotImageSize, type ScreenshotLimits, type ScreenshotRect } from '@app/specs/screenshot.spec';
+import { pngSize } from './composite';
 import type { Bitmap } from './stitch';
 
 // Encoding and resizing screenshots (Phase 6 Task 5; spec `screenshot.spec.ts`, `SCREENSHOT_LIMITS`;
@@ -22,6 +23,11 @@ export interface ScreenshotImaging {
   render(png: Buffer, size: ScreenshotImageSize, maxBytes: number): { readonly type: 'image/png' | 'image/jpeg'; readonly data: Buffer } | null;
   /** Writes a stored PNG to the system clipboard as an image; `false` if it does not decode. */
   copy(png: Buffer): Promise<boolean>;
+  /**
+   * Phase 11 Task 7: a PNG's premultiplied BGRA bitmap, only if its header names exactly `expected`
+   * (checked before anything is decoded) and it decodes to that size; else `null`.
+   */
+  decode(png: Buffer, expected: { readonly width: number; readonly height: number }): Bitmap | null;
 }
 
 /**
@@ -78,6 +84,16 @@ export function electronImaging(
         else fit = { width: Math.max(1, Math.round(fit.width * 0.7)), height: Math.max(1, Math.round(fit.height * 0.7)) };
       }
       return null;
+    },
+    decode(png, expected) {
+      const header = pngSize(png);
+      if (header === null || header.width !== expected.width || header.height !== expected.height) return null;
+      const image = decode(png);
+      if (!image) return null;
+      const { width, height } = image.getSize();
+      if (width !== expected.width || height !== expected.height) return null;
+      const bitmap = image.toBitmap();
+      return bitmap.length === width * height * 4 ? { bitmap, width, height } : null;
     },
     async copy(png) {
       // Only an image that decodes is offered, as the PNG it is.

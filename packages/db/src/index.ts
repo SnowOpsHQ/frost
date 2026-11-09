@@ -20,6 +20,7 @@ export {
   type AppendCaptureInput,
   type AppendCaptureResult,
   type AppendDiffInput,
+  type AppendScreenshotEditInput,
   type AppendScreenshotInput,
   type CapturedPage,
   type ChangeIntelCursor,

@@ -164,3 +164,20 @@ export const ciTombstones = sqliteTable(
   },
   (table) => [unique().on(table.tableName, table.rowId), index('ci_tombstones_purge_id').on(table.purgeId)],
 );
+
+/**
+ * Phase 11 Task 7: the local-only link from an edited screenshot to its source (migration
+ * `0231_screenshot_edits`, `phase11-migrations.ts`; `capture-db.spec.ts`, `SCREENSHOT_EDIT_TABLES`).
+ * Not a `ci_*` table: not synced, not append-only; a trigger removes a row when either screenshot goes.
+ */
+export const screenshotEdits = sqliteTable(
+  'screenshot_edits',
+  {
+    screenshotId: text('screenshot_id').primaryKey(),
+    sourceId: text('source_id').notNull(),
+    crop: text('crop'),
+    ops: text('ops').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('screenshot_edits_source_id').on(table.sourceId)],
+);

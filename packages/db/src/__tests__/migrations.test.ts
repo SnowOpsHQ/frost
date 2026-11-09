@@ -1,18 +1,20 @@
 // Spec: specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, SESSION_TABLES), specs/render-profile.feature.md (pins),
-// specs/seo-content.spec.ts (CONTENT_TABLES), specs/ai-checks.spec.ts (AI_CHECKS_TABLES)
+// specs/seo-content.spec.ts (CONTENT_TABLES), specs/ai-checks.spec.ts (AI_CHECKS_TABLES),
+// specs/capture-db.spec.ts (SCREENSHOT_EDIT_TABLES; Phase 11 Decision 18: PHASE11_MIGRATIONS spread last)
 // Acceptance: specs/browser-session-db.feature.md (Migrations)
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, test } from 'vitest';
 import { MIGRATIONS_TABLE, SESSION_TABLES } from '@app/specs/browser-session-db.spec';
 import { CONTENT_TABLES } from '@app/specs/seo-content.spec';
-import { CHANGE_INTEL_TABLES } from '@app/specs/capture-db.spec';
+import { CHANGE_INTEL_TABLES, SCREENSHOT_EDIT_TABLES } from '@app/specs/capture-db.spec';
 import { AI_CHECKS_TABLES } from '@app/specs/ai-checks.spec';
 import { seoAiChecks } from '../ai-checks-schema';
 import * as changeIntel from '../change-intel/schema';
 import { seoSnippetVariants, seoTargetQueries } from '../content-schema';
 import { appSettings } from '../settings-schema';
 import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
+import { PHASE11_MIGRATIONS } from '../phase11-migrations';
 import { AGENT_TABLES } from '../agent-tables';
 import { browserTabs, recentVisits, renderProfilePins, schemaMigrations, sitePermissions } from '../schema';
 
@@ -69,10 +71,10 @@ describe('migrations', () => {
   test('migrations-create-schema', () => {
     const db = memory();
     expect(runMigrations(db)).toEqual(MIGRATIONS.map((m) => m.id));
-    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES, ...AI_CHECKS_TABLES].sort());
+    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES, ...AI_CHECKS_TABLES, ...SCREENSHOT_EDIT_TABLES].sort());
     // Phase 2.5 Task 3's Content panel notes are session tables too (`seo-content.feature.md`, content-tables-migrate).
     expect(SESSION_TABLES).toEqual(expect.arrayContaining([...CONTENT_TABLES]));
-    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants, appSettings, seoAiChecks]) {
+    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants, appSettings, seoAiChecks, changeIntel.screenshotEdits]) {
       const name = getTableConfig(table).name;
       expect(sqliteColumns(db, name), name).toEqual(drizzleColumns(table));
     }
@@ -96,6 +98,12 @@ describe('migrations', () => {
     // Ids are strictly increasing; there is nothing but forward SQL.
     const ids = MIGRATIONS.map((m) => m.id);
     expect(ids.every((id, i) => /^\d{4}_[a-z0-9_]+$/.test(id) && (i === 0 || id > ids[i - 1]!))).toBe(true);
+    // Phase 11's block is spread last (Decision 18), in id order, within its range.
+    expect(PHASE11_MIGRATIONS.map((m) => m.id)).toContain('0231_screenshot_edits');
+    expect(MIGRATIONS.slice(-PHASE11_MIGRATIONS.length)).toEqual(PHASE11_MIGRATIONS);
+    expect(PHASE11_MIGRATIONS.every((m) => m.id >= '0230' && m.id < '0240')).toBe(true);
+    // The test-only ids sit above every real one (`9000_`, `9001_`, `9999_`).
+    expect(ids.every((id) => id < '9000')).toBe(true);
     for (const migration of MIGRATIONS) expect(Object.keys(migration).sort()).toEqual(['id', 'sql']);
 
     const db = memory();

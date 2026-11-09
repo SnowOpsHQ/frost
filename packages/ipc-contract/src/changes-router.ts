@@ -3,6 +3,8 @@ import { CaptureInputSchema, DiffInputSchema, HistoryInputSchema, PagesInputSche
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import {
   CancelAreaInputSchema,
+  SaveScreenshotEditAnswerSchema,
+  SaveScreenshotEditInputSchema,
   ScreenshotIdInputSchema,
   ScreenshotImageAnswerSchema,
   ScreenshotImageInputSchema,
@@ -102,4 +104,15 @@ export const screenshotsRouter = router({
     .use(requireScreenshots)
     .input(CancelAreaInputSchema)
     .mutation(({ ctx, input }) => ctx.screenshots.cancelArea(input.tabId)),
+  /**
+   * Phase 11 Task 7 (Decision 9): an edited copy of a screenshot. The input is bounded before main
+   * decodes anything (`SaveScreenshotEditInputSchema`: the overlay's length, its `data:` type and
+   * base64, at most `maxOps` ops); the answer is checked on the way out.
+   */
+  saveEdit: publicProcedure
+    .use(enforceSender)
+    .use(requireScreenshots)
+    .input(SaveScreenshotEditInputSchema)
+    .output(SaveScreenshotEditAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.screenshots.saveEdit(input)),
 });

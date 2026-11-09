@@ -5,6 +5,7 @@ import { AREA_SELECT_HINT, FULL_PAGE_SCROLL_NOTE, type ScreenshotEntry, type Scr
 import { SCREENSHOTS_PAGE_SIZE, canScreenshot, countBadge, formatBytes, laneLabel, pixelSizeText, screenshotAlt, screenshotInput, screenshotKindLabel } from '../../changes-view';
 import { ReloadIcon } from '../../icons';
 import { ipc } from '../../ipc';
+import { openScreenshotEditor, useScreenshotEdits } from '../../screenshot-editor';
 import { useProjectsGeneration } from './projects-sheet';
 import { onScreenshotFinished, runScreenshot, useScreenshotRun } from './screenshot-runs';
 
@@ -153,10 +154,18 @@ function ScreenshotItem({ entry }: { readonly entry: ScreenshotEntry }) {
           <span className="seo-chip changes-shot-profile" data-testid="screenshot-profile">
             {laneLabel(entry)}
           </span>
+          {entry.editedFrom !== null ? (
+            <span className="seo-chip changes-shot-edited" data-testid="screenshot-edited" title="An edited copy; the original is kept">
+              Edited
+            </span>
+          ) : null}
         </span>
         <span className="changes-shot-actions">
           <button type="button" className="seo-action" data-testid="screenshot-preview-toggle" aria-expanded={previewing} onClick={() => setPreviewing(!previewing)}>
             {previewing ? 'Hide preview' : 'Preview'}
+          </button>
+          <button type="button" className="seo-action" data-testid="screenshot-edit" onClick={() => openScreenshotEditor(entry)}>
+            Edit
           </button>
           <button type="button" className="seo-action" data-testid="screenshot-reveal" onClick={() => void reveal()}>
             Reveal in folder
@@ -193,6 +202,8 @@ export function ScreenshotGallery({ url, generation }: { readonly url: string; r
   const listed = useRef(0);
   // Read again when projects change: a delete or a purge (`Retention.tsx`) may have removed screenshots.
   const projects = useProjectsGeneration();
+  // And after an edited copy is saved (Phase 11 Task 7).
+  const edits = useScreenshotEdits();
   listed.current = state.status === 'ready' ? state.screenshots.length : 0;
   useEffect(() => {
     let live = true;
@@ -204,7 +215,7 @@ export function ScreenshotGallery({ url, generation }: { readonly url: string; r
     return () => {
       live = false;
     };
-  }, [url, generation, attempt, projects]);
+  }, [url, generation, attempt, projects, edits]);
   const loadMore = () => {
     if (state.status !== 'ready' || state.next === null || state.loadingMore) return;
     const { next } = state;

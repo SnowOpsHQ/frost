@@ -1,13 +1,24 @@
 // Spec: specs/screenshot.schema.ts (the screenshots.* inputs), specs/screenshot.spec.ts (answers), specs/ipc-sender.spec.ts
 // Acceptance: specs/screenshot.feature.md (Scenarios every-screenshots-procedure-enforces-sender,
-// screenshots-inputs-are-validated, screenshots-procedures-call-service)
+// screenshots-inputs-are-validated, screenshots-procedures-call-service; Editing: save-edit-enforces-sender-and-bounds-input)
 import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import { MAX_HISTORY_PAGE } from '@app/specs/capture-db.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import { SCREENSHOT_LIMITS, type ScreenshotsAnswer, type TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
+import {
+  MAX_OVERLAY_DATA_URL_CHARS,
+  SCREENSHOT_EDIT_LIMITS,
+  SCREENSHOT_LIMITS,
+  SCREENSHOT_OVERLAY_PREFIX,
+  type SaveScreenshotEditAnswer,
+  type SaveScreenshotEditInput,
+  type ScreenshotEditOp,
+  type ScreenshotsAnswer,
+  type TakeScreenshotAnswer,
+} from '@app/specs/screenshot.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
+import { SaveScreenshotEditInputSchema } from '@app/specs/screenshot.schema';
 import { CHANGES_READ_API } from '../changes-service';
 import { appRouter, createSenderPolicy, type IpcContext, type ScreenshotsService } from '../index';
 
@@ -19,6 +30,14 @@ const HASH = 'a'.repeat(64);
 const SAVED: TakeScreenshotAnswer = { status: 'saved', id: ID, kind: 'viewport', width: 800, height: 600, bytes: 1_234, truncated: false };
 const LIST: ScreenshotsAnswer = { screenshots: [], next: { createdAt: 5, id: ID } };
 const DATA_URL = 'data:image/png;base64,iVBORw0KGgo=';
+const EDIT_SAVED: SaveScreenshotEditAnswer = { status: 'saved', id: ID, width: 300, height: 200, bytes: 999 };
+const ARROW: ScreenshotEditOp = { tool: 'arrow', color: '#e5484d', size: 4, from: { x: 1, y: 2 }, to: { x: 30, y: 40 } };
+const EDIT: SaveScreenshotEditInput = {
+  sourceId: ID,
+  crop: { x: 10, y: 20, width: 300, height: 200 },
+  overlay: DATA_URL,
+  ops: [ARROW, { tool: 'box', color: '#111111', size: 2, rect: { x: 5, y: 5, width: 10, height: 10 }, filled: true }, { tool: 'text', color: '#0090ff', size: 16, at: { x: 0, y: 0 }, text: 'Look here' }],
+};
 
 function fakeScreenshots() {
   return {
@@ -28,6 +47,7 @@ function fakeScreenshots() {
     reveal: vi.fn(async (_id: string) => true),
     copy: vi.fn(async (_id: string) => true),
     cancelArea: vi.fn(async (_tabId: number) => true),
+    saveEdit: vi.fn(async (_input: SaveScreenshotEditInput): Promise<SaveScreenshotEditAnswer> => EDIT_SAVED),
   } satisfies ScreenshotsService;
 }
 
@@ -62,6 +82,7 @@ const VALID_INPUT: Record<string, unknown> = {
   reveal: { id: ID },
   copy: { id: ID },
   cancelArea: { tabId: 1 },
+  saveEdit: EDIT,
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (screenshots: ReturnType<typeof fakeScreenshots>) => {
@@ -123,6 +144,8 @@ describe('screenshots router', () => {
       reveal: [{}, undefined, ...badIds.map((id) => ({ id })), ...smuggled, ...smuggled.map((extra) => ({ id: ID, ...extra }))],
       copy: [{}, undefined, ...badIds.map((id) => ({ id })), ...smuggled, ...smuggled.map((extra) => ({ id: ID, ...extra }))],
       cancelArea: [...badTabs, { tabId: 1, extra: 1 }],
+      // Phase 11 Task 7: the edit's own bounds are in save-edit-enforces-sender-and-bounds-input.
+      saveEdit: [{}, undefined, ...badIds.map((sourceId) => ({ ...EDIT, sourceId })), ...smuggled.map((extra) => ({ ...EDIT, ...extra }))],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -167,5 +190,82 @@ describe('screenshots router', () => {
     // Phase 5 lists screenshots through CHANGES_READ_API too.
     expect(Object.keys(CHANGES_READ_API).sort()).toEqual(['diff', 'getVersion', 'history', 'listPages', 'listScreenshots']);
     expect(CHANGES_READ_API.listScreenshots.input.safeParse({ url: PAGE, path: '/etc' }).success).toBe(false);
+  });
+});
+
+describe('screenshots.saveEdit (Phase 11 Task 7)', () => {
+  test('save-edit-enforces-sender-and-bounds-input', async () => {
+    // A foreign sender is refused before anything (also covered for every procedure above).
+    for (const origin of ['https://evil.com', 'null']) {
+      const screenshots = fakeScreenshots();
+      expect((await errorOf(procedure(ctxFor(screenshots, origin), 'saveEdit')(EDIT))).code).toBe(IPC_SENDER_ERROR_CODE);
+      expect(screenshots.saveEdit).not.toHaveBeenCalled();
+    }
+    // Inputs: bounded before main decodes anything.
+    const base64Max = MAX_OVERLAY_DATA_URL_CHARS - SCREENSHOT_OVERLAY_PREFIX.length;
+    const longest = `${SCREENSHOT_OVERLAY_PREFIX}${'A'.repeat(base64Max)}`;
+    const text = (value: string): ScreenshotEditOp => ({ tool: 'text', color: '#111111', size: 12, at: { x: 0, y: 0 }, text: value });
+    const bad: unknown[] = [
+      { ...EDIT, overlay: `${longest}AAAA` },
+      { ...EDIT, overlay: 'data:image/jpeg;base64,AAAA' },
+      { ...EDIT, overlay: 'data:image/svg+xml;base64,AAAA' },
+      { ...EDIT, overlay: `${SCREENSHOT_OVERLAY_PREFIX}` },
+      { ...EDIT, overlay: `${SCREENSHOT_OVERLAY_PREFIX}AA AA` },
+      { ...EDIT, overlay: `${SCREENSHOT_OVERLAY_PREFIX}AAAA"><script>` },
+      { ...EDIT, overlay: 'file:///etc/passwd' },
+      { ...EDIT, overlay: 5 },
+      { ...EDIT, sourceId: 'x' },
+      { ...EDIT, sourceId: HASH },
+      { ...EDIT, crop: { x: -1, y: 0, width: 5, height: 5 } },
+      { ...EDIT, crop: { x: 0, y: 0, width: 0, height: 5 } },
+      { ...EDIT, crop: { x: 0.5, y: 0, width: 5, height: 5 } },
+      { ...EDIT, crop: { x: 0, y: 0, width: SCREENSHOT_EDIT_LIMITS.maxCoordinate + 1, height: 5 } },
+      { ...EDIT, crop: undefined },
+      { ...EDIT, ops: Array.from({ length: SCREENSHOT_EDIT_LIMITS.maxOps + 1 }, () => ARROW) },
+      { ...EDIT, ops: [{ ...ARROW, color: '#123456' }] },
+      { ...EDIT, ops: [{ ...ARROW, color: 'red' }] },
+      { ...EDIT, ops: [{ ...ARROW, tool: 'pen' }] },
+      { ...EDIT, ops: [{ ...ARROW, tool: 'crop' }] },
+      { ...EDIT, ops: [{ ...ARROW, size: 0 }] },
+      { ...EDIT, ops: [{ ...ARROW, size: SCREENSHOT_EDIT_LIMITS.maxOpSize + 1 }] },
+      { ...EDIT, ops: [{ ...ARROW, from: { x: 1.5, y: 0 } }] },
+      { ...EDIT, ops: [{ ...ARROW, extra: 1 }] },
+      { ...EDIT, ops: [text('')] },
+      { ...EDIT, ops: [text('x'.repeat(SCREENSHOT_EDIT_LIMITS.maxTextChars + 1))] },
+      { ...EDIT, ops: [{ tool: 'box', color: '#111111', size: 2, rect: { x: 0, y: 0, width: 4, height: 4 } }] },
+      { ...EDIT, path: '/tmp/x.png' },
+      { ...EDIT, sha256: HASH },
+      { ...EDIT, file: `${HASH}.png` },
+      { sourceId: ID, crop: null, ops: [] },
+      undefined,
+    ];
+    for (const input of bad) {
+      const screenshots = fakeScreenshots();
+      const outcome = await procedure(ctxFor(screenshots), 'saveEdit')(input).then(() => 'accepted', (e: unknown) => (e instanceof TRPCError ? e.code : 'other'));
+      expect(outcome, JSON.stringify(input)?.slice(0, 160)).toBe('BAD_REQUEST');
+      expect(screenshots.saveEdit).not.toHaveBeenCalled();
+    }
+    // An overlay past the cap is refused at once: the base64 check never scans it (only `too_big`).
+    const oversized = SaveScreenshotEditInputSchema.safeParse({ ...EDIT, overlay: `${SCREENSHOT_OVERLAY_PREFIX}${'!'.repeat(base64Max + 1)}` });
+    expect(oversized.success ? [] : oversized.error.issues.map((issue) => issue.code)).toEqual(['too_big']);
+    const notBase64 = SaveScreenshotEditInputSchema.safeParse({ ...EDIT, overlay: `${SCREENSHOT_OVERLAY_PREFIX}!!!!` });
+    expect(notBase64.success ? [] : notBase64.error.issues.map((issue) => issue.code)).toEqual(['custom']);
+    // At the caps: accepted and passed on as given.
+    const screenshots = fakeScreenshots();
+    const call = (input: unknown) => procedure(ctxFor(screenshots), 'saveEdit')(input);
+    const atCaps = { ...EDIT, crop: null, overlay: longest, ops: [...Array.from({ length: SCREENSHOT_EDIT_LIMITS.maxOps - 1 }, () => ARROW), text('x'.repeat(SCREENSHOT_EDIT_LIMITS.maxTextChars))] };
+    await expect(call(atCaps)).resolves.toEqual(EDIT_SAVED);
+    expect(screenshots.saveEdit).toHaveBeenLastCalledWith(atCaps);
+    await expect(call(EDIT)).resolves.toEqual(EDIT_SAVED);
+    expect(screenshots.saveEdit).toHaveBeenLastCalledWith(EDIT);
+    // Answers are checked on the way out.
+    for (const status of ['no-source', 'invalid', 'too-large', 'store-failed', 'busy'] as const) {
+      screenshots.saveEdit.mockResolvedValueOnce({ status });
+      await expect(call(EDIT)).resolves.toEqual({ status });
+    }
+    for (const answer of [{ status: 'saved', id: 'nope', width: 1, height: 1, bytes: 1 }, { status: 'refused' }, { status: 'saved' }, { status: 'invalid', path: '/x' }]) {
+      screenshots.saveEdit.mockResolvedValueOnce(answer as unknown as SaveScreenshotEditAnswer);
+      expect((await errorOf(call(EDIT))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    }
   });
 });

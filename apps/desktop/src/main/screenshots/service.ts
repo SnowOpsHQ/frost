@@ -22,6 +22,7 @@ import type { z } from 'zod';
 import { recordedProfile, tabProfileInEffect } from '../changes/profile-in-effect';
 import { storedPageUrl } from '../changes/snapshot';
 import { captureArea, captureFullPage, captureViewport, ScreenshotFailure, type CaptureOptions, type Captured, type ScreenshotTarget } from './capture';
+import { saveScreenshotEdit } from './edit';
 import type { ScreenshotImaging } from './imaging';
 import type { ScreenshotFiles } from './store';
 
@@ -78,6 +79,8 @@ export interface ScreenshotsServiceDeps {
   readonly activePollMs?: number;
   /** The kinds' capture (tests replace them). */
   readonly capturers?: Partial<ScreenshotCapturers>;
+  /** Phase 11 Task 7: the overlay's cap (tests use a tighter one; default `SCREENSHOT_EDIT_LIMITS`). */
+  readonly editLimits?: { readonly maxOverlayBytes: number };
 }
 
 /** A screenshot's options: the IPC passes `kind` and `projectId`; a project's capture run also its capture and the query's search parameters. */
@@ -137,6 +140,7 @@ function entryOf(row: StoredScreenshot): ScreenshotEntry | null {
     renderProfile,
     searchParams,
     createdAt: row.createdAt,
+    editedFrom: row.editedFrom ?? null,
   });
   return entry.success ? entry.data : null;
 }
@@ -169,6 +173,8 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
   let saved: (projectId: string) => void = () => undefined;
   /** The screenshot each tab is taking (one at a time); its `controller` while the page is being captured (it can be cancelled then). */
   const runs = new Map<number, { readonly kind: ScreenshotKind; controller: AbortController | null }>();
+  /** Whether an edit is being saved (one at a time). */
+  let editing = false;
   const failed = (reason: ScreenshotRefusal, why: string): TakeScreenshotAnswer => {
     log(`screenshot refused (${reason}): ${why}`);
     return refused(reason);
@@ -430,6 +436,37 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
         },
         false,
       ),
+
+    // Phase 11 Task 7 (Decision 9): an edited copy, composited in main (`edit.ts`), one at a time
+    // (each holds decoded bitmaps of up to `maxPixels`): a call meanwhile answers `busy`.
+    saveEdit: async (input) => {
+      if (editing) return { status: 'busy' };
+      editing = true;
+      try {
+        return await guarded(
+        'saveEdit',
+        () =>
+          saveScreenshotEdit(
+            {
+              store,
+              files,
+              imaging,
+              limits,
+              now,
+              uuid,
+              log,
+              thumbnail: (sha256, bitmap) => remember(sha256, dataUrl('image/png', imaging.thumbnail(bitmap))),
+              saved: (projectId) => saved(projectId),
+              ...(deps.editLimits ? { editLimits: deps.editLimits } : {}),
+            },
+            input,
+          ),
+        { status: 'store-failed' },
+        );
+      } finally {
+        editing = false;
+      }
+    },
 
     async cancelArea(tabId) {
       const controller = runs.get(tabId)?.kind === 'area' ? runs.get(tabId)!.controller : null;

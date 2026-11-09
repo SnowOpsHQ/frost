@@ -1073,3 +1073,16 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   popups. UI: a "This tab only" row in the render-profile bar (CSS off, Cookies off, Location with
   six presets or custom, Back to normal) and a status-bar chip. `router.ts` got two lines (import +
   entry) plus one each in `services.ts`, ipc-contract `index.ts` and `StatusBar.tsx`.
+- **Task 7:** Open question 9 measured in Electron 45: a 2D canvas encodes up to 16,384² pixels
+  (sides up to 32,767), so `maxOverlaySide: 32_767`, `maxOverlayPixels: 16_384²`; no screenshot frost
+  takes reaches them, so no tiling (a larger crop is refused with `SCREENSHOT_EDIT_TOO_BIG_NOTE`).
+  Blending is premultiplied BGRA "source over" (what `nativeImage` gives); main checks the PNG
+  header size before any decode. Ops are in source pixels with a `size`; the crop is a step, not an
+  op; `screenshot_edits` stores the crop and main's canonical ops JSON (≤ 512 KiB). Edit rows are
+  removed by an `AFTER DELETE ON ci_screenshots` trigger (so a synced tombstone removes them too), not
+  by `purge.ts`. Security-review rulings: an edited copy has its **own retention lane** (the lane
+  key gains an "is a copy" flag), so saving an edit never purges its source or a taken screenshot;
+  main saves **one edit at a time** (`busy`, appended to `SCREENSHOT_EDIT_RESULTS`); the overlay's
+  Zod length cap aborts before the base64 check. An area copy keeps the original selection
+  rectangle. The editor is a page-column sheet like Projects; a lost race with a purge answers
+  `no-source` (file left to the orphan sweep).

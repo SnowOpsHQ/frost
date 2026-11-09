@@ -205,6 +205,12 @@ export interface ScreenshotEntry {
   renderProfile: RenderProfile | null;
   searchParams: SearchParams | null;
   createdAt: number;
+  /**
+   * Phase 11 Task 7: the screenshot this one is an edited copy of (its row id), from the local-only
+   * `screenshot_edits` table (`capture-db.spec.ts`); `null` for one that was taken, for an edit whose
+   * source has since been purged, and on another device (the link is not synced).
+   */
+  editedFrom: string | null;
 }
 
 export interface ScreenshotsAnswer {
@@ -214,3 +220,133 @@ export interface ScreenshotsAnswer {
 
 /** A `data:image/png;base64,…` or `data:image/jpeg;base64,…` URL, or `null` (no such screenshot, or its file is missing or does not match its hash). */
 export type ScreenshotImageAnswer = string | null;
+
+// ---- Editing a screenshot (Phase 11 Task 7, Decision 9; acceptance `screenshot.feature.md`, Editing) ----
+//
+// The editor works on a screenshot's preview. The chrome draws only the annotation layer: on Save it
+// renders the ops alone onto a transparent PNG exactly the size of the crop (or of the whole
+// screenshot without one) in the screenshot's own pixels, with no page pixels in it, and sends that
+// overlay with the crop and the ops. Main reads the source by its row id (its file checked against
+// its hash), checks the overlay (a `data:image/png;base64,` URL within `maxOverlayBytes`, a PNG whose
+// header names the expected size, which decodes to it), crops the source, alpha-composites the overlay
+// over it (pure TypeScript over premultiplied BGRA, only within the overlay's non-transparent bounds),
+// encodes a new PNG and stores it as a **new** screenshot (a new hash-named file and a new
+// `ci_screenshots` row: the source's project, page, kind, area, segments, render profile and search
+// parameters, `capture_id` null) plus a local-only `screenshot_edits` row linking it to its source.
+// The source file and row never change; the overlay is never stored as sent.
+
+/** The editor's tools: draw an arrow, a box (outline or filled) or a line of text; crop. */
+export const SCREENSHOT_EDIT_TOOLS = ['arrow', 'box', 'text', 'crop'] as const;
+export type ScreenshotEditTool = (typeof SCREENSHOT_EDIT_TOOLS)[number];
+
+/** The six colours an annotation can have (CSS hex). */
+export const SCREENSHOT_EDIT_COLORS = ['#e5484d', '#f5a524', '#ffe629', '#30a46c', '#0090ff', '#111111'] as const;
+export type ScreenshotEditColor = (typeof SCREENSHOT_EDIT_COLORS)[number];
+
+/** How each colour is named (its swatch's label). */
+export const SCREENSHOT_EDIT_COLOR_LABELS: Readonly<Record<ScreenshotEditColor, string>> = {
+  '#e5484d': 'Red',
+  '#f5a524': 'Orange',
+  '#ffe629': 'Yellow',
+  '#30a46c': 'Green',
+  '#0090ff': 'Blue',
+  '#111111': 'Black',
+};
+
+/** How each tool is named (its button). */
+export const SCREENSHOT_EDIT_TOOL_LABELS: Readonly<Record<ScreenshotEditTool, string>> = {
+  arrow: 'Arrow',
+  box: 'Box',
+  text: 'Text',
+  crop: 'Crop',
+};
+
+export const SCREENSHOT_EDIT_LIMITS = {
+  /** Most steps the editor keeps (drawings and crops, undo history included), and most ops one save sends. */
+  maxOps: 200,
+  /** Largest overlay PNG main accepts (bytes, decoded from its base64). */
+  maxOverlayBytes: 8 * 1_024 * 1_024,
+  /** Longest text annotation (UTF-16 code units). */
+  maxTextChars: 200,
+  /** Largest coordinate an op or a crop may name (screenshot pixels). */
+  maxCoordinate: 65_535,
+  /** An op's size: the stroke width of an arrow or a box outline, the font size of a text (screenshot pixels). */
+  minOpSize: 1,
+  maxOpSize: 512,
+  /**
+   * The largest overlay the chrome draws (Open question 9, measured in Electron 45: a 2D canvas of up
+   * to 16,384 × 16,384 pixels encodes, one pixel more of area does not; a side of 32,767 works). A
+   * crop past either is refused in the editor with `SCREENSHOT_EDIT_TOO_BIG_NOTE`; no screenshot frost
+   * takes reaches them (a full page stops at `SCREENSHOT_LIMITS.maxPixels`).
+   */
+  maxOverlaySide: 32_767,
+  maxOverlayPixels: 16_384 * 16_384,
+} as const;
+
+/** The only overlay `data:` URL prefix main accepts. */
+export const SCREENSHOT_OVERLAY_PREFIX = 'data:image/png;base64,' as const;
+
+/** Longest overlay `data:` URL (characters): the prefix and `maxOverlayBytes` in base64, checked before anything is decoded. */
+export const MAX_OVERLAY_DATA_URL_CHARS = SCREENSHOT_OVERLAY_PREFIX.length + 4 * Math.ceil(SCREENSHOT_EDIT_LIMITS.maxOverlayBytes / 3);
+
+/**
+ * A saved edit's outcome (`busy` appended by the security review):
+ * - `saved`: the new screenshot's row id and size;
+ * - `no-source`: no such screenshot, its file is missing or does not match its hash, it does not
+ *   decode to its recorded size, or it was purged (or its project deleted) while the edit was saved;
+ * - `invalid`: the crop is not inside the screenshot, or the overlay is not a PNG of the crop's size
+ *   (by its header and decoded), or it does not decode;
+ * - `too-large`: the overlay is over `maxOverlayBytes`, or the new PNG over `SCREENSHOT_LIMITS.maxPngBytes`;
+ * - `store-failed`: the file or its rows could not be written;
+ * - `busy`: another edit is being saved (main saves one at a time: each holds decoded bitmaps).
+ */
+export const SCREENSHOT_EDIT_RESULTS = ['saved', 'no-source', 'invalid', 'too-large', 'store-failed', 'busy'] as const;
+export type ScreenshotEditResult = (typeof SCREENSHOT_EDIT_RESULTS)[number];
+
+/** How the editor says each outcome (frost's own wording). */
+export const SCREENSHOT_EDIT_RESULT_MESSAGES: Readonly<Record<ScreenshotEditResult, string>> = {
+  saved: 'Saved as a new screenshot. The original is unchanged.',
+  'no-source': 'The original screenshot is no longer there.',
+  invalid: 'The edit could not be applied to this screenshot.',
+  'too-large': 'The edited screenshot is too large to keep.',
+  'store-failed': 'The edited screenshot could not be saved.',
+  busy: 'Another edited screenshot is being saved. Try again in a moment.',
+};
+
+/** Said in the editor when a crop is too large for the chrome to draw its overlay (Open question 9). */
+export const SCREENSHOT_EDIT_TOO_BIG_NOTE = 'This area is too large to annotate. Crop it smaller first.';
+
+/** Said in the editor when it holds `maxOps` steps. */
+export const SCREENSHOT_EDIT_FULL_NOTE = 'This screenshot holds as many edits as it can. Undo some, or save it.';
+
+/** A point in screenshot pixels. */
+export interface ScreenshotEditPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * One annotation, in the source screenshot's pixels (whole pixels; not relative to the crop):
+ * an arrow from a point to another, a box (an outline of `size` px, or `filled`), or a line of text
+ * whose top-left is `at` and whose font is `size` px.
+ */
+export type ScreenshotEditOp =
+  | { tool: 'arrow'; color: ScreenshotEditColor; size: number; from: ScreenshotEditPoint; to: ScreenshotEditPoint }
+  | { tool: 'box'; color: ScreenshotEditColor; size: number; rect: ScreenshotRect; filled: boolean }
+  | { tool: 'text'; color: ScreenshotEditColor; size: number; at: ScreenshotEditPoint; text: string };
+
+/**
+ * `screenshots.saveEdit`: the screenshot edited (its row id), the crop (screenshot pixels; `null`:
+ * the whole screenshot), the overlay (`SCREENSHOT_OVERLAY_PREFIX` + base64 PNG, exactly the crop's
+ * size) and the ops it was drawn from.
+ */
+export interface SaveScreenshotEditInput {
+  sourceId: string;
+  crop: ScreenshotRect | null;
+  overlay: string;
+  ops: ScreenshotEditOp[];
+}
+
+export type SaveScreenshotEditAnswer =
+  | { status: 'saved'; id: string; width: number; height: number; bytes: number }
+  | { status: Exclude<ScreenshotEditResult, 'saved'> };
