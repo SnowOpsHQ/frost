@@ -120,9 +120,10 @@ describe('filters', () => {
 
   test('same-run-search-compares-the-search', () => {
     expect(sameRunSearch(PARAMS, { ...PARAMS })).toBe(true);
-    // Not the device, the label, the offset or the rest of the URL.
-    expect(sameRunSearch({ ...PARAMS, device: 'mobile', engineLabel: 'G', offset: 0, url: `${PARAMS.url}&ei=x` }, PARAMS)).toBe(true);
-    for (const changed of [{ gl: 'us' }, { hl: null }, { query: 'Green tea' }, { page: 2 }, { engine: 'bing' }, { url: 'https://www.google.de/search?q=green+tea&gl=de&hl=de' }, { url: 'nonsense' }]) {
+    // Not the label, the offset or the rest of the URL.
+    expect(sameRunSearch({ ...PARAMS, engineLabel: 'G', offset: 0, url: `${PARAMS.url}&ei=x` }, PARAMS)).toBe(true);
+    // The device counts, as in the search key: another device is another series.
+    for (const changed of [{ device: 'mobile' as const }, { gl: 'us' }, { hl: null }, { query: 'Green tea' }, { page: 2 }, { engine: 'bing' }, { url: 'https://www.google.de/search?q=green+tea&gl=de&hl=de' }, { url: 'nonsense' }]) {
       expect(sameRunSearch({ ...PARAMS, ...changed }, PARAMS), JSON.stringify(changed)).toBe(false);
     }
   });
@@ -154,9 +155,9 @@ describe('a run target and its landed page', () => {
             const tab = searchParamsForUrl(landed, search.device);
             expect(tab, `${label} ${landed}`).not.toBeNull();
             expect(sameRunSearch(tab!, target!), `${label} ${landed}`).toBe(true);
-            // A pin that sets another device changes nothing.
+            // A tab reading another device (a pin) is another search (another search key).
             const other = SERP_DEVICES.find((device) => device !== search.device)!;
-            expect(sameRunSearch(searchParamsForUrl(landed, other)!, target!), `${label} on ${other}`).toBe(true);
+            expect(sameRunSearch(searchParamsForUrl(landed, other)!, target!), `${label} on ${other}`).toBe(false);
             checked += 1;
           }
           // Another country, language, query or engine host is another search.

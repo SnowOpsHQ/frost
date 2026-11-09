@@ -12,7 +12,11 @@ import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, RANK_RUN_QUERY_SPACING_MS, SE
 import type { SerpRunVerdict } from '@app/specs/rankings.spec';
 import { DEFAULT_RENDER_PROFILE, isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
+import { serpFiltersOf } from '@app/specs/rankings-url.spec';
+import { SERP_DEVICE_OF_PRESET } from '@app/specs/serp.spec';
 import { createCaptureRuns, queriesAnEngine, runSearchOf, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
+import { searchKeyOf } from '../search-key';
+import { searchParamsForUrl } from '../serp-params';
 import { storedPageUrl } from '../snapshot';
 import { readySerpFor } from './fakes';
 
@@ -274,7 +278,7 @@ describe('capture run', () => {
       ['query', 'saved'],
     ]);
     // The run tab's own parameters from the SERP service win (for a page too; a page with none has none).
-    const serp = { ...PARAMS, device: 'tablet' as const };
+    const serp = { ...desktop, engineLabel: 'Google (tab)' };
     const asked: [number, string][] = [];
     const read = setup({
       searchParamsOf: (tabId, pageUrl) => {
@@ -467,13 +471,14 @@ describe('capture run', () => {
     const { runs, seen, browser, pins } = setup({ ...readySerpFor(targets), limits: { querySpacingMs: 0, serpSettleWaitMs: 0 } });
     await runs.start(plan(targets, { profile: PHONE }));
     await run(RETRY * 12);
-    // Grouped by profile: the project's group in one tab, the mobile query in a fresh one, each set before its first navigation.
-    expect(runs.state().targets.map((t) => t.label)).toEqual([A, 'desktop', B, 'mobile']);
+    // Grouped by profile: the project's pages in one tab, the mobile query in a fresh one, each set before
+    // its first navigation; the desktop query in a third with the default (never the project's phone).
+    expect(runs.state().targets.map((t) => t.label)).toEqual([A, B, 'mobile', 'desktop']);
     expect(seen.map((s) => [s.tabId, s.profile])).toEqual([
       [10, PHONE],
       [10, PHONE],
-      [10, PHONE],
       [11, MOBILE_QUERY_PROFILE],
+      [12, DEFAULT_RENDER_PROFILE],
     ]);
     expect(browser.setRenderProfile.mock.calls).toEqual([
       [10, PHONE],
@@ -862,16 +867,16 @@ describe('searches in a run', () => {
 
   // spec: specs/projects.feature.md — Searches in a run (3. captures only on `ready` whose search is the target's)
   test('capture-run-captures-only-on-ready', async () => {
-    // The tab reads the same search on another device (a site's pin): the same search, captured with the tab's own parameters.
-    const tablet: SearchParams = { ...DESKTOP, device: 'tablet' };
+    // The tab reads the same search (its own label): captured with the tab's own parameters.
+    const tabOwn: SearchParams = { ...DESKTOP, engineLabel: 'Google (tab)' };
     const verdicts: SerpRunVerdict[] = ['pending', 'pending', 'ready'];
-    const fake = setup({ serpVerdictOf: () => verdicts.shift() ?? 'ready', searchParamsOf: () => tablet });
+    const fake = setup({ serpVerdictOf: () => verdicts.shift() ?? 'ready', searchParamsOf: () => tabOwn });
     await fake.runs.start(plan([query(DESKTOP)], { screenshot: true }));
     await run(RETRY * 2);
     expect(fake.capture).not.toHaveBeenCalled();
     await run(RETRY * 4);
-    expect(fake.capture).toHaveBeenCalledExactlyOnceWith(10, { projectId: PROJECT, source: 'project', searchParams: tablet, pageUrl: storedPageUrl(SEARCH) });
-    expect(fake.screenshot).toHaveBeenCalledExactlyOnceWith(10, { kind: 'viewport', projectId: PROJECT, captureId: ID, searchParams: tablet });
+    expect(fake.capture).toHaveBeenCalledExactlyOnceWith(10, { projectId: PROJECT, source: 'project', searchParams: tabOwn, pageUrl: storedPageUrl(SEARCH) });
+    expect(fake.screenshot).toHaveBeenCalledExactlyOnceWith(10, { kind: 'viewport', projectId: PROJECT, captureId: ID, searchParams: tabOwn });
     expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
     expect(outcomes(fake.runs.state())).toEqual(['captured']);
   });
@@ -1165,5 +1170,68 @@ describe('searches in a run', () => {
     await run();
     expect(none.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'no-reading' });
     expect(none.capture).not.toHaveBeenCalled();
+  });
+  /**
+   * A setup whose SERP service reads the landed page as Phase 3 does: by the bundled pack, on the device
+   * of the profile in effect in the run tab (its own, else its site's pin, else the default).
+   */
+  const deviceAware = (deps: Partial<CaptureRunDeps> = {}) => {
+    const fake: ReturnType<typeof setup> = setup({
+      searchParamsOf: (tabId, pageUrl) => searchParamsForUrl(pageUrl, SERP_DEVICE_OF_PRESET[fake.effective(fake.tab(tabId)!).device]),
+      ...deps,
+    });
+    return fake;
+  };
+  /** The search key the capture's reading is stored under (`service.ts`: the capture's parameters and the landed page's filters). */
+  const storedKeyOf = (options: Parameters<CaptureRunDeps['capture']>[1]): string | null =>
+    options.searchParams === null || options.pageUrl === undefined ? null : searchKeyOf(options.searchParams, serpFiltersOf(options.pageUrl, options.searchParams.engine) ?? {});
+
+  // spec: specs/projects.feature.md — Searches in a run (3. the device counts); specs/projects.spec.ts QUERY_DEVICE_PROFILES
+  // (a `desktop` query is visited with the default profile, never the project's); rankings.feature.md (the saved row's key)
+  test('capture-run-files-a-search-under-its-saved-key', async () => {
+    const saved = searchParamsForUrl(SEARCH, 'desktop')!;
+    expect(saved.device).toBe('desktop');
+    // The project renders as a phone; its desktop saved search is still read on the desktop.
+    const fake = deviceAware();
+    await fake.runs.start(plan([...pages(A), query(saved)], { profile: PHONE }));
+    await run(RETRY * 12);
+    expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    const search = fake.seen.find((seen) => seen.options.searchParams !== null)!;
+    expect(search.options.searchParams?.device).toBe('desktop');
+    // The reading's key is the one the Rankings table looks the saved row up by (`searchKeyOf(saved, {})`).
+    expect(storedKeyOf(search.options)).toBe(searchKeyOf(saved, {}));
+    // The page target still renders with the project's profile.
+    expect(fake.seen.find((seen) => seen.url === A)!.profile).toEqual(PHONE);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (3. another device or other filters is `mismatch`)
+  test('capture-run-blocks-another-device-or-filters', async () => {
+    const saved = searchParamsForUrl(SEARCH, 'desktop')!;
+    const mobile = searchParamsForUrl(SEARCH, 'mobile')!;
+    const cases: { name: string; target: SearchParams; arrange: (fake: ReturnType<typeof setup>) => void }[] = [
+      // The user pinned a phone profile to the engine: the run tab reads the search as mobile.
+      { name: 'a site pin forcing mobile', target: saved, arrange: (fake) => fake.pins.set('https://www.google.com', PHONE) },
+      // A mobile query whose tab profile could not be set reads as desktop.
+      { name: 'a profile that could not be set', target: mobile, arrange: (fake) => fake.browser.setRenderProfile.mockReturnValue(false) },
+      // The engine adds a filter as it lands (past week): another series than the saved search's.
+      {
+        name: 'a filter on the landed URL',
+        target: saved,
+        arrange: (fake) => {
+          const original = fake.browser.navigate.getMockImplementation()!;
+          fake.browser.navigate.mockImplementationOnce((url: string) => original(`${url}&tbs=qdr:w`));
+        },
+      },
+    ];
+    for (const c of cases) {
+      const fake = deviceAware();
+      c.arrange(fake);
+      await fake.runs.start(plan([query(c.target), ...pages(A)], { screenshot: true }));
+      await run(RETRY * 8);
+      expect(fake.runs.state(), c.name).toMatchObject({ state: 'blocked', blockedReason: 'mismatch' });
+      expect(outcomes(fake.runs.state()), c.name).toEqual(['blocked', 'cancelled']);
+      expect(fake.capture, c.name).not.toHaveBeenCalled();
+      expect(fake.screenshot, c.name).not.toHaveBeenCalled();
+    }
   });
 });

@@ -18,9 +18,10 @@ import {
   type RunTargetOutcome,
   type StartRunAnswer,
 } from '@app/specs/projects.spec';
-import { sameRunSearch } from '@app/specs/rankings-url.spec';
-import type { SerpRunVerdict } from '@app/specs/rankings.spec';
+import { sameRunSearch, serpFiltersOf } from '@app/specs/rankings-url.spec';
+import { sortedJson, type SerpRunVerdict } from '@app/specs/rankings.spec';
 import { isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
+import { SERP_DEVICE_OF_PRESET } from '@app/specs/serp.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
 import { isEngineHost, searchParamsForUrl, type SearchParamsOf, type SerpVerdictOf } from './serp-params';
 import { storedPageUrl } from './snapshot';
@@ -30,8 +31,8 @@ import { storedPageUrl } from './snapshot';
 // browse tabs opened through the browser controller (no WebContents of its own), captures each into
 // the project through the changes service, and closes its tab when it is done.
 //
-// Render profiles: targets are grouped by the profile they need (the project's, or a mobile or tablet
-// query's `QUERY_DEVICE_PROFILES`). Each group gets a fresh tab whose profile is set once, before its first
+// Render profiles: targets are grouped by the profile they need (a page the project's, a mobile or tablet
+// query `QUERY_DEVICE_PROFILES`, a desktop query the default). Each group gets a fresh tab whose profile is set once, before its first
 // navigation, with no pin; a group needing frost's default gets no profile set at all. The run never
 // sets the default profile on a tab (that is a Reset, which also unpins the site the tab shows) and
 // never changes a tab's profile after it has loaded. A site's pin still applies in a run tab (pins are
@@ -47,7 +48,8 @@ import { storedPageUrl } from './snapshot';
 // waits while Phase 3's verdict (`serpVerdictOf`, that tab and page) is `pending`, for up to
 // `serpSettleWaitMs` of active time, counted in the target's `targetActiveTimeoutMs`; (3) it captures
 // only on `ready` with the tab's own parameters (`searchParamsOf`) for the target's search
-// (`sameRunSearch`: engine, host, query, `gl`, `hl`, page; not the device); (4) anything else blocks
+// (`sameRunSearch`: engine, host, query, `gl`, `hl`, device, page) with the target URL's filters
+// (`serpFiltersOf`), so its reading is filed under the target's search key; (4) anything else blocks
 // the run without calling `capture` or `screenshot`: `unreadable`, `not-serp`, `disabled` (`serp-off`),
 // another search (`mismatch`), no reading or no parameters (`no-reading`), the target's time running
 // out first (`timed-out`), or its tab leaving the landed page before a capture (`not-a-result-page`: a
@@ -233,10 +235,14 @@ interface RunGroup {
   readonly targets: readonly RunPlanTarget[];
 }
 
-/** The profile a target needs (`null`: the default): a mobile or tablet query's, else the project's. */
+/**
+ * The profile a target needs (`null`: the default): a query's for its own device (a mobile or tablet
+ * query's `QUERY_DEVICE_PROFILES`, a desktop query the default, never the project's: Phase 3 reads the
+ * device from the profile, and the reading must be of the saved search's device); a page the project's.
+ */
 function profileFor(target: RunPlanTarget, project: RenderProfile | null): RenderProfile | null {
-  const device = target.searchParams?.device;
-  const wanted = device === 'mobile' || device === 'tablet' ? QUERY_DEVICE_PROFILES[device] : project;
+  const device = target.kind === 'query' ? target.searchParams?.device : undefined;
+  const wanted = device === 'mobile' || device === 'tablet' ? QUERY_DEVICE_PROFILES[device] : target.kind === 'query' ? null : project;
   return wanted === null || isDefaultRenderProfile(wanted) ? null : wanted;
 }
 
@@ -411,8 +417,14 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     /** The page of the first commit after the navigation (a redirect allowed): the capture must be of it. */
     let landed: string | null = null;
     let sawLoading = false;
-    /** The target's search (a query's, or a result page's own): `null` for a page that is not one. */
-    const search = runSearchOf(target);
+    /**
+     * The target's search (a query's, or a result page's own on the device of its profile, the project's):
+     * `null` for a page that is not one.
+     */
+    const own = runSearchOf(target);
+    const search = own === null || target.kind === 'query' ? own : { ...own, device: SERP_DEVICE_OF_PRESET[profileFor(target, plan.profile)?.device ?? 'none'] };
+    /** The target URL's filters (none for a saved search): the landed page must carry the same. */
+    const filtersOf = (url: string | null): string => (url === null || search === null ? '' : sortedJson(serpFiltersOf(url, search.engine)));
     /** Gated: a query, a result page, or any page on an engine's host (one without a search blocks as it lands). */
     const gated = target.kind === 'query' || queriesAnEngine(target);
     /** A search target's document when it landed: another one before its capture or screenshot stops the run. */
@@ -530,10 +542,11 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         }
         if (verdict !== 'ready') return blocked(BLOCKED_BY[verdict]);
         // 3. Only a ready reading of the target's own search, with the tab's own parameters.
-        const own = tabParamsOf(tabId, landed);
-        if (own === null) return blocked('no-reading');
-        if (!sameRunSearch(own, search!)) return blocked('mismatch');
-        passed = own;
+        const tabParams = tabParamsOf(tabId, landed);
+        if (tabParams === null) return blocked('no-reading');
+        // Another device (a pin, a profile not set) or other filters would file the reading under another key.
+        if (!sameRunSearch(tabParams, search!) || filtersOf(landed) !== filtersOf(target.url)) return blocked('mismatch');
+        passed = tabParams;
       }
 
       if (captured === null) {

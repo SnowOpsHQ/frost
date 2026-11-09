@@ -53,8 +53,11 @@ export function searchHostOf(url: string): string | null {
 }
 
 /**
- * Whether the tab's search is the run target's: same engine, engine host, query, `gl`, `hl` and page.
- * The device is not compared (a site's pin may set another; the capture records the one in effect).
+ * Whether the tab's search is the run target's: same engine, engine host, query, `gl`, `hl`, device and
+ * page. The device counts as it does in the search key (`searchIdentityJson`): a tab whose profile reads
+ * another device (a site's pin, a profile that could not be set) would file the reading under another
+ * series than the saved search's, so the run stops there (`mismatch`). The page's filters are compared
+ * by the run itself (`serpFiltersOf` of the landed URL and of the target's URL).
  */
 export function sameRunSearch(tabParams: SearchParamsShape, targetParams: SearchParamsShape): boolean {
   const host = searchHostOf(tabParams.url);
@@ -65,6 +68,7 @@ export function sameRunSearch(tabParams: SearchParamsShape, targetParams: Search
     tabParams.query === targetParams.query &&
     tabParams.gl === targetParams.gl &&
     tabParams.hl === targetParams.hl &&
+    tabParams.device === targetParams.device &&
     tabParams.page === targetParams.page
   );
 }

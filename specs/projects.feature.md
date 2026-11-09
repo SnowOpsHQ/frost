@@ -48,7 +48,9 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   so is any search while the bundled pack does not verify.
 - A run visits the saved search's canonical `url`, which Phase 3 reads back as the same parameters.
   `device` is not a URL parameter: a `mobile` query is visited with `MOBILE_QUERY_PROFILE` (a phone),
-  a `tablet` query with `TABLET_QUERY_PROFILE` (`QUERY_DEVICE_PROFILES`).
+  a `tablet` query with `TABLET_QUERY_PROFILE` (`QUERY_DEVICE_PROFILES`), a `desktop` query with
+  frost's default (never the project's profile: its device would file the reading under another
+  search key than the saved search's).
 - **Reading saved searches:** a row is used only when its JSON parses with Phase 3's
   `SearchParamsSchema` and is what `searchParamsForUrl(params.url, params.device)` answers (so a run
   only ever visits an engine's result page); any other row is skipped, as the repository skips a
@@ -169,8 +171,12 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
      active time, counted in the target's `targetActiveTimeoutMs`;
   3. it captures only on `ready` whose search is the target's: the tab's parameters are
      `searchParamsOf(runTab, landed)` and `sameRunSearch(tabParams, target.searchParams)` compares
-     engine, host, query, `gl`, `hl` and page (not the device: a site's pin may set another, and the
-     capture records the one in effect). `ready` with no tab parameters is `no-reading`;
+     engine, host, query, `gl`, `hl`, device and page, and the landed URL's filters
+     (`serpFiltersOf`) must be the target URL's (none for a saved search), so a reading a run stores
+     is always under its search's key (`rankings.feature.md`). Another device (a site's pin, a run
+     tab whose profile could not be set) or other filters is `mismatch`, nothing stored. A page target
+     that is a result page is compared on the device of its group's profile (the project's).
+     `ready` with no tab parameters is `no-reading`;
   4. otherwise it blocks **without capturing**: `unreadable`, `not-serp` (`not-a-result-page`),
      `disabled` (`serp-off`), `ready` for another search (`mismatch`), still `pending` after the wait
      (`no-reading`), or the target reaching `targetActiveTimeoutMs` before any of this (`timed-out`).
@@ -249,7 +255,7 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - **Targets:** each page, then each query's canonical URL (`params.url`), at most `maxRunTargets`
   (the rest are `omitted`, and the progress says so).
 - **Render profiles:** the targets are grouped by the profile they need (a `mobile` or `tablet`
-  query's `QUERY_DEVICE_PROFILES` profile, else the project's), groups in the order of their first target, and listed in
+  query's `QUERY_DEVICE_PROFILES` profile, a `desktop` query's the default, a page's the project's), groups in the order of their first target, and listed in
   the order they are visited. Each group gets a fresh browse tab through the browser controller (it
   is active; a tab limit is `no-tab`, or `failed` for a later group), whose own profile is set once,
   without `pin`, before its first navigation; a group needing the default gets no profile set at all.
@@ -510,6 +516,10 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   that the pack refuses, e.g. Google `udm=50`: spaced and blocked `not-a-result-page`, nothing captured)
   and `capture-run-same-document-url-change` (a `pushState` keeping the search captures; one changing
   the query blocks);
+  the council review's `capture-run-files-a-search-under-its-saved-key` (a desktop saved search in a
+  project on a phone profile is read on the desktop: its reading's key is the saved row's) and
+  `capture-run-blocks-another-device-or-filters` (a site pin forcing mobile, a profile that could not
+  be set, a filter on the landed URL: `mismatch`, nothing captured);
   `readings-spec.test.ts` `run-search-matches-built-urls`;
   `projects.test.ts` `rank-run-asks-once-before-first-search-run` (Cancel starts nothing; Continue
   remembered; a pages-only run never asks), `rank-run-disclosure-review-rulings` (a result-page page

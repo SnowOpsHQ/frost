@@ -29,8 +29,9 @@
  * `unreadable`, `not-serp`, `pending` (not read yet; also a state of another tab or page, an unbound
  * read API, or anything that does not fit), `disabled` (SERP reading is off). A run waits while it is
  * `pending`, up to `SERP_SETTLE_WAIT_MS` (`projects.spec.ts`). `rankings-url.spec.ts` `sameRunSearch`
- * says whether the tab's search is the run target's (engine, host, query, `gl`, `hl`, page; not the
- * device).
+ * says whether the tab's search is the run target's (engine, host, query, `gl`, `hl`, device, page),
+ * and a run also needs the landed page's filters to be the target URL's: a reading a run stores is
+ * always filed under its saved search's key.
  *
  * ## The rank read model (Decisions 5, 6, 7 and 15; Phase 10 Task 3)
  * `@app/change-intel` `rankOf`, `rankSeries`, `rankTable`, `rankCsvRows` and `compareSerps` compute

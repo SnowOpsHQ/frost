@@ -172,13 +172,16 @@ export interface RunState {
 /**
  * The render profiles a query is visited with by its `device`: a `mobile` query as a phone, a
  * `tablet` query as a tablet, each with a mobile browser's user agent and otherwise frost's defaults
- * (Phase 3 reads the device back from the profile: `SERP_DEVICE_OF_PRESET`). Other targets (pages,
- * `desktop` queries) use the project's. A run groups its targets by the profile they need and visits
+ * (Phase 3 reads the device back from the profile: `SERP_DEVICE_OF_PRESET`). A `desktop` query uses
+ * frost's default (no profile set; never the project's, whose device would file its reading under
+ * another search key than the saved search's); pages use the project's. A run groups its targets by the profile they need and visits
  * each group in a fresh tab whose profile is set once, before its first navigation, with no pin; a
  * group needing the default gets no profile set (setting the default is a Reset, which would also
  * unpin the site the tab shows). A site's pinned profile still applies in a run tab without one of its
  * own: pins are the user's choice, and the capture records the profile actually in effect (the
- * audit's `renderProfile`) and the search parameters the tab actually shows (below).
+ * audit's `renderProfile`) and the search parameters the tab actually shows (below). A search target
+ * whose tab reads another device than its own (a pin, a profile that could not be set) stops the run
+ * (`mismatch`, `projects.feature.md`, Searches in a run).
  */
 export const MOBILE_QUERY_PROFILE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'mobile' };
 export const TABLET_QUERY_PROFILE: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'tablet', userAgent: 'mobile' };
