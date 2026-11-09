@@ -141,6 +141,50 @@ parses, else computes it (`null` when the versions are in different lanes or eit
 `ChangesReadService` (`listPages`, `history`, `getVersion`, `diff`) is the same reads, each answer
 parsing with its `CHANGES_READ_API` output schema.
 
+## SERP reading (Phase 10; `rankings.spec.ts`, `rankings.schema.ts`, `workspace-db.feature.md`)
+From Phase 10 on, a capture of a result page also stores Phase 3's **reading** of it (the ranked
+`SerpSnapshot`) beside the capture, in the capture's own write batch (`AppendCaptureInput.reading`;
+the plan's Decision 1). Captures taken before have none; there is no backfill.
+1. **Which reading.** Only when the capture records search parameters. After the second `readyTab`
+   check, the service asks `readingOf(tabId, page)` (`serp-params.ts`, `serpReadingOfState`, bound late
+   to `SerpReadApi.snapshot` as `searchParamsOf` is): a finished reading of **that tab and that page**
+   (stored form): a `ready` state's snapshot, or an `unreadable` state rebuilt as
+   `{ status: 'unreadable', reason, params, packVersion }`, validated with `SerpSnapshotSchema`. An
+   `unreadable` reading without parameters has no search key and is none; so is `pending`, `not-serp`,
+   `disabled`, a state of another tab or page, an unbound or throwing read API, or anything that does
+   not fit.
+2. **The same search.** The reading's search parameters must be the capture's (canonical JSON equal):
+   a reading that lags a reload, or a run target captured with its own parameters, records none rather
+   than another search's.
+3. **The row.** `filters` = `serpFiltersOf(page, engine)` (`rankings-url.spec.ts`; the landed page's
+   own URL: the known filter parameters `SERP_FILTER_PARAMS` that Phase 3's canonical URL drops, values
+   lowercase, keys sorted; never cut to fit: past `MAX_SERP_FILTERS_JSON_BYTES` it is `null` and the
+   capture stores no reading);
+   `search_key` = SHA-256 hex (`sha256Hex`, main) of `searchIdentityJson(params, filters,
+   searchHostOf(params.url))`, `search_key_version` = `SEARCH_KEY_VERSION`; the search parameters as
+   the capture's (canonical JSON); `status` and `pack_version` the reading's; the reading as canonical
+   JSON. The capture gives the project, the capture id, the page URL and the time (`observed_at`).
+4. **A capture never fails for its reading.** No reading, another search's, one that does not fit
+   `SerpSnapshotSchema`, or one past `MAX_SERP_READING_JSON_BYTES` (or filters past
+   `MAX_SERP_FILTERS_JSON_BYTES`): the capture is stored without a reading, and once the store has
+   taken it, one log line says why ("SERP reading not recorded: …", frost's own words, never page
+   text: no URL, query or title); a capture the store refuses logs only its own failure. A page with
+   no search parameters asks for no reading and logs nothing.
+5. **Series.** The search key splits by engine host (`google.de` is not `google.com`), filters
+   ("past week" is its own series) and device; the query keeps its case; `url`, `offset` and
+   `engineLabel` never count (`SEARCH_IDENTITY_EXCLUDED`); the order of fields never matters; a field
+   a later phase adds splits series once present, and leaves the key as it was while absent.
+
+**A run's search target waits for the reading** (`capture-run.ts`; `projects.spec.ts`,
+`SERP_SETTLE_WAIT_MS`). `CaptureRunDeps.serpVerdictOf(tabId, pageUrl)` (required; main passes
+`serpVerdictOf` of `serp-params.ts`, `serpVerdictOfState`) answers a `SERP_RUN_VERDICTS` value for that
+tab **and** page: `ready`, `unreadable`, `not-serp`, `disabled` (whatever the page: reading is off), or
+`pending` for a pending page, another tab or page, garbage, a throwing or unbound API (never `null`).
+Once a search target has landed, the run asks it before capturing and looks again every
+`captureRetryMs` while it is `pending`, for up to `serpSettleWaitMs` of active time; that time counts
+toward the target's `targetActiveTimeoutMs`. Then it captures as Phase 6 does (until Phase 10 Task 8,
+whatever the verdict). Page targets do not wait.
+
 ## The render profile recorded (`profile-in-effect.ts`; captures and screenshots)
 One rule for a capture's and a screenshot's render profile: the profile **set on the tab** when the
 page was read is recorded (canonical JSON), whatever its status, with `partial` when it may not all
@@ -227,6 +271,40 @@ closed), then its strict input.
 - **Scenario: serp-params-are-late-bound** — the holder answers `null` for every tab until it is bound
   to a `SerpReadApi`, then that API's answer for the tab and page; a read API that throws is `null`.
 
+- **Scenario: serp-reading-of-state** — a `ready` state of the same tab and stored page answers its
+  snapshot; an `unreadable` one is rebuilt as `{ status: 'unreadable', reason, params, packVersion }`,
+  and is `null` without parameters; `pending`, `not-serp`, `disabled`, another tab or page, garbage, a
+  snapshot that fails `SerpSnapshotSchema`, and an unbound or throwing read API answer `null`.
+- **Scenario: serp-verdict-of-state** — each state status maps to its verdict for the same tab and
+  stored page (`disabled` whatever the page); another tab or page, garbage, a throwing or unbound read
+  API answer `pending`, never `null`.
+
+### SERP reading spec (`readings-spec.test.ts`)
+- **Scenario: search-identity-splits-by-host-filters-and-device** — another engine host, another
+  filter set, another device: another key; the same search: the same key.
+- **Scenario: search-identity-ignores-key-order** — the parameters and filters in any field order give
+  one identity.
+- **Scenario: search-identity-excludes-url-offset-and-label** — `url` (beyond its host), `offset` and
+  `engineLabel` never change the key.
+- **Scenario: search-identity-takes-later-fields** — an unknown field present splits the series; absent
+  (or `undefined`) the key is as before.
+- **Scenario: search-identity-keeps-case** — "Green tea" and "green tea" are two keys.
+- **Scenario: serp-filters-known-names-only** — known names of the page's engine only, lowercase, sorted,
+  empty values dropped; past `MAX_SERP_FILTERS_JSON_BYTES` `null` (never a set with one cut out); another
+  engine, Bing, or a bad URL: none.
+- **Scenario: rankings-shapes-match-schemas** — `SearchParamsSchema`, `SerpSnapshotSchema` and
+  `SerpFiltersSchema` outputs fit the Zod-free shapes (compile time); `StoredReadingSchema` takes a
+  reading row and refuses one whose snapshot is of another status, pack version or search, a filter of
+  another engine, or a capture reading without its capture.
+
+### A run's wait for the reading (`capture-run.test.ts`)
+- **Scenario: capture-run-waits-for-the-serp-verdict** — a search target that landed waits while its
+  verdict is `pending`, captures once it is `ready`; one that stays `pending` is captured after
+  `SERP_SETTLE_WAIT_MS` of active time (time behind another tab does not count), and that wait counts
+  toward `targetActiveTimeoutMs` (a settle wait longer than the timeout ends the target `timed-out`);
+  Cancel during the wait ends the run at once, the target `cancelled` and nothing captured; a page
+  target never asks for a verdict.
+
 ### Load times (`loads.test.ts`)
 - **Scenario: load-times-follow-the-main-frame** — `did-navigate`, `did-finish-load` and a main-frame
   `did-navigate-in-page` to another URL set the tab's load time; a fragment-only move and a
@@ -254,6 +332,20 @@ closed), then its strict input.
 - **Scenario: one-search-shares-a-lane** — a run's capture of a search (its parameters given) and a
   manual capture of the same page whose SERP state reads the same search land in one lane: one
   version, two captures.
+- **Scenario: capture-records-serp-reading** — a capture of a ready result page stores exactly one
+  reading: the capture's id, project and page, its search parameters (the capture's), its filters
+  from the landed URL, the search key and `SEARCH_KEY_VERSION`, its status and pack version; an
+  `unreadable` reading with parameters is stored as `unreadable`; a run's capture of the search too.
+  The reading is asked only after the second look at the tab (a page that changed during the
+  extraction asks for none).
+- **Scenario: capture-without-reading-still-captures** — a pending reading, a reading of other
+  parameters, one that does not fit `SerpSnapshotSchema`, one past `MAX_SERP_READING_JSON_BYTES`, and
+  filters past `MAX_SERP_FILTERS_JSON_BYTES`: the capture succeeds with no reading and one log line
+  each, holding no page text; a capture the store refuses logs no reading line.
+- **Scenario: filtered-serp-is-its-own-series** — the same search with a filter and without (and on
+  another engine host) has another search key; an engine tracking parameter changes nothing.
+- **Scenario: non-serp-capture-has-no-reading** — a page without search parameters asks for no reading,
+  stores none and logs nothing.
 - **Scenario: profile-in-effect-rule** — one rule for both: an `active` loaded profile is not
   partial; `needsReload`, `applying` and `failed` are partial and still recorded; none is `null`; a
   profile that does not fit its schema does not read back. Test:

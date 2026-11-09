@@ -16,9 +16,10 @@ import {
   type RunTargetOutcome,
   type StartRunAnswer,
 } from '@app/specs/projects.spec';
+import type { SerpRunVerdict } from '@app/specs/rankings.spec';
 import { isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
-import type { SearchParamsOf } from './serp-params';
+import type { SearchParamsOf, SerpVerdictOf } from './serp-params';
 import { storedPageUrl } from './snapshot';
 
 // A project's capture run (Phase 6 Task 6; spec `projects.spec.ts`, `PROJECT_RUN_LIMITS`; acceptance
@@ -34,6 +35,10 @@ import { storedPageUrl } from './snapshot';
 // the user's choice); the capture records the profile actually in effect (the audit's), and the search
 // parameters the run tab actually shows: Phase 3's SERP service's for the landed page
 // (`searchParamsOf`), else the target's own (the saved search's for a query, none for a page).
+// A search target that has landed first waits for Phase 3's reading of the page (Phase 10,
+// `changes-capture.feature.md`, SERP reading): while `serpVerdictOf` says `pending`, for up to
+// `serpSettleWaitMs` of active time, counted in the target's `targetActiveTimeoutMs`; then it is
+// captured as above, whatever the verdict (Phase 10 Task 8 gates the capture on it).
 //
 // It only acts on its own tab while that tab is the active one: `navigate` acts on the active tab, and
 // a capture or a screenshot needs it in front. While the user has another tab in front the run waits,
@@ -92,6 +97,11 @@ export interface CaptureRunDeps {
   readonly afterRun?: (projectId: string) => void;
   /** The run tab's search parameters for the landed page from Phase 3's SERP service (`serp-params.ts`); none: the target's. */
   readonly searchParamsOf?: SearchParamsOf;
+  /**
+   * Phase 3's verdict on the run tab's landed page (`serp-params.ts`, `lateSearchParams().verdictOf`:
+   * `pending` until it is bound). Required: every caller says how a search target's page is read.
+   */
+  readonly serpVerdictOf: SerpVerdictOf;
 }
 
 /** What one run visits: built by the projects service from the project's rows. */
@@ -255,6 +265,16 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     return tabId;
   };
 
+  /** The verdict on the run tab's landed page (`null`: not a storable page); `pending` when it cannot be asked. */
+  const verdictOf = (tabId: number, landed: string | null): SerpRunVerdict => {
+    if (landed === null) return 'pending';
+    try {
+      return deps.serpVerdictOf(tabId, landed);
+    } catch {
+      return 'pending';
+    }
+  };
+
   /** Waits until the run's tab is in front again (`null`), or why it will not be. */
   async function untilActive(run: Run, tabId: number): Promise<Visit['end']> {
     for (;;) {
@@ -280,6 +300,9 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     /** The page of the first commit after the navigation (a redirect allowed): the capture must be of it. */
     let landed: string | null = null;
     let sawLoading = false;
+    /** A search target's wait for its reading: the active time it started at (`null`: not yet), and whether it is over. */
+    let settleFrom: number | null = null;
+    let settled = target.kind !== 'query';
     let captured: { readonly captureId: string; readonly changeCount: number | null; readonly searchParams: SearchParams | null } | null = null;
     const failed: Visit = { result: { outcome: 'failed', changeCount: null, screenshot: null }, end: null };
     const done = (screenshot: RunScreenshotOutcome | null, end: Visit['end'] = null): Visit => ({ result: { outcome: 'captured', changeCount: captured!.changeCount, screenshot }, end });
@@ -325,6 +348,17 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       if (page !== landed) {
         log(`target ${index + 1}: its tab moved to another page`);
         return captured ? done('failed') : failed;
+      }
+
+      if (captured === null && !settled) {
+        // A search target waits while Phase 3's reading of the landed page is pending (active time,
+        // counted in the target's timeout); until Task 8 it is captured after, whatever the verdict.
+        settleFrom ??= activeMs;
+        if (verdictOf(tabId, landed) === 'pending' && activeMs - settleFrom < limits.serpSettleWaitMs) {
+          await pause(run, limits.captureRetryMs);
+          continue;
+        }
+        settled = true;
       }
 
       if (captured === null) {

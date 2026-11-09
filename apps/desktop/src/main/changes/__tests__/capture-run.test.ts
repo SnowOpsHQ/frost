@@ -1,14 +1,17 @@
 // Spec: specs/projects.spec.ts (PROJECT_RUN_LIMITS, RUN_STATES, RUN_TARGET_OUTCOMES, RUN_RETRY_REFUSALS,
-// MOBILE_QUERY_PROFILE, TABLET_QUERY_PROFILE, RUN_SCREENSHOT_KIND)
-// Acceptance: specs/projects.feature.md (Capture now; Scenarios: capture run)
+// MOBILE_QUERY_PROFILE, TABLET_QUERY_PROFILE, RUN_SCREENSHOT_KIND, SERP_SETTLE_WAIT_MS), specs/rankings.spec.ts (SERP_RUN_VERDICTS)
+// Acceptance: specs/projects.feature.md (Capture now; Scenarios: capture run), specs/changes-capture.feature.md
+// (SERP reading: a run's search target waits for the reading; Scenario: capture-run-waits-for-the-serp-verdict)
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import type { CaptureAnswer } from '@app/specs/changes.spec';
-import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, TABLET_QUERY_PROFILE, type RunState } from '@app/specs/projects.spec';
+import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, SERP_SETTLE_WAIT_MS, TABLET_QUERY_PROFILE, type RunState } from '@app/specs/projects.spec';
+import type { SerpRunVerdict } from '@app/specs/rankings.spec';
 import { DEFAULT_RENDER_PROFILE, isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
 import { createCaptureRuns, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
+import { storedPageUrl } from '../snapshot';
 
 const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const ID = '01920000-0000-7000-8000-000000000001';
@@ -101,7 +104,8 @@ function setup(deps: Partial<CaptureRunDeps> = {}) {
     return CAPTURED;
   });
   const screenshot = vi.fn(async (_tabId: number, _options: Parameters<CaptureRunDeps['screenshot']>[1]): Promise<TakeScreenshotAnswer> => ({ status: 'saved', id: ID, kind: 'viewport', width: 800, height: 600, bytes: 10, truncated: false }));
-  const runs = createCaptureRuns({ browser: fake.browser, capture, screenshot, uuidv7: () => ID, ...deps });
+  // Every landed result page reads `ready` unless a test says otherwise: no settle wait.
+  const runs = createCaptureRuns({ browser: fake.browser, capture, screenshot, uuidv7: () => ID, serpVerdictOf: () => 'ready', ...deps });
   return { ...fake, runs, capture, screenshot, seen };
 }
 
@@ -292,6 +296,67 @@ describe('capture run', () => {
     await other.runs.start(plan(pages(A), { screenshot: true }));
     await run();
     expect(other.runs.state().targets[0]).toMatchObject({ outcome: 'captured', screenshot: 'failed' });
+  });
+
+  test('capture-run-waits-for-the-serp-verdict', async () => {
+    const desktop = { ...PARAMS, device: 'desktop' as const };
+    let verdict: SerpRunVerdict = 'pending';
+    const asked: [number, string][] = [];
+    const serpVerdictOf = vi.fn((tabId: number, pageUrl: string): SerpRunVerdict => {
+      asked.push([tabId, pageUrl]);
+      return verdict;
+    });
+    const { runs, capture } = setup({ serpVerdictOf });
+    await runs.start(plan([...pages(A), query(desktop)]));
+    await run(RETRY * 6);
+    // The page target is captured without a verdict; the search target landed and waits while it is pending.
+    expect(capture).toHaveBeenCalledOnce();
+    expect(outcomes(runs.state())).toEqual(['captured', 'running']);
+    expect(asked.length).toBeGreaterThan(1);
+    // Asked of the run's tab and its landed page (stored form), never of the page target.
+    expect(new Set(asked.map(([tabId, pageUrl]) => `${tabId} ${pageUrl}`))).toEqual(new Set([`10 ${storedPageUrl(SEARCH)}`]));
+    verdict = 'ready';
+    await run(RETRY * 2);
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(capture).toHaveBeenLastCalledWith(10, { projectId: PROJECT, source: 'project', searchParams: desktop, pageUrl: storedPageUrl(SEARCH) });
+    expect(runs.state()).toMatchObject({ state: 'done' });
+    expect(outcomes(runs.state())).toEqual(['captured', 'captured']);
+
+    // A reading that stays pending: captured after SERP_SETTLE_WAIT_MS of active time (until Task 8,
+    // whatever the verdict, as Phase 6 does); time behind another tab does not count.
+    const slow = setup({ serpVerdictOf: () => 'pending' });
+    await slow.runs.start(plan([query(desktop)]));
+    await run(SERP_SETTLE_WAIT_MS / 2);
+    slow.state.activeTabId = 1;
+    await run(SERP_SETTLE_WAIT_MS * 2);
+    expect(slow.capture).not.toHaveBeenCalled();
+    slow.state.activeTabId = 10;
+    await run(SERP_SETTLE_WAIT_MS / 2 - RETRY * 2);
+    expect(slow.capture).not.toHaveBeenCalled();
+    await run(SERP_SETTLE_WAIT_MS / 2);
+    expect(slow.capture).toHaveBeenCalledOnce();
+    expect(outcomes(slow.runs.state())).toEqual(['captured']);
+
+    // The wait counts toward the target's active timeout: a settle wait longer than it ends the target timed out.
+    const late = setup({ serpVerdictOf: () => 'pending', limits: { serpSettleWaitMs: TIMEOUT * 2 } });
+    await late.runs.start(plan([query(desktop), ...pages(A)]));
+    await run(TIMEOUT + RETRY * 4);
+    expect(outcomes(late.runs.state())[0]).toBe('timed-out');
+    await run(RETRY * 4);
+    expect(late.capture.mock.calls.map(([, options]) => options.pageUrl)).toEqual([A]);
+    expect(late.runs.state().state).toBe('done');
+
+    // Cancel during the wait: at once, the target cancelled, nothing captured.
+    const cancelled = setup({ serpVerdictOf: () => 'pending' });
+    await cancelled.runs.start(plan([query(desktop), ...pages(A)]));
+    await run(RETRY * 4);
+    expect(outcomes(cancelled.runs.state())).toEqual(['running', 'pending']);
+    expect(cancelled.runs.cancel()).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cancelled.runs.state().state).toBe('cancelled');
+    expect(outcomes(cancelled.runs.state())).toEqual(['cancelled', 'cancelled']);
+    expect(cancelled.capture).not.toHaveBeenCalled();
+    expect(cancelled.tabs.map((t) => t.id)).toEqual([1]);
   });
 
   test('capture-run-retries-a-screenshot-behind-another-tab', async () => {

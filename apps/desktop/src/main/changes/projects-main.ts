@@ -10,7 +10,7 @@ import { createPurgeFiles, type PurgeFiles } from './purge-files';
 import { createRetentionService } from './retention';
 import { confirmCompact, confirmPurgeNow } from './retention-dialog';
 import type { MainChangesService } from './service';
-import type { SearchParamsOf } from './serp-params';
+import type { SearchParamsOf, SerpVerdictOf } from './serp-params';
 
 // Main's projects service over Electron (Phase 6 Task 6; acceptance `projects.feature.md`): the
 // capture runs drive the browser controller's own tabs (an ordinary browse tab: no WebContents of
@@ -40,9 +40,11 @@ export interface MainProjectsDeps {
   readonly log: (message: string) => void;
   /** The run tab's search parameters from Phase 3's SERP service (`lateSearchParams().of`: `null` until it is bound). */
   readonly searchParamsOf: SearchParamsOf;
+  /** Phase 3's verdict on a run tab's landed page (`lateSearchParams().verdictOf`: `pending` until it is bound). */
+  readonly serpVerdictOf: SerpVerdictOf;
 }
 
-export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
+export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf, serpVerdictOf }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
   const files = createScreenshotFiles(userData);
   const sweeps = createWorkspaceSweeps({ store, log });
   // One purge at a time, whoever asks (a delete, Purge now, an enforcement); each purge is followed by the readings sweep.
@@ -64,6 +66,7 @@ export function createMainProjects({ store, userData, browser, changes, screensh
     capture: (tabId, options) => changes.capture(tabId, options),
     screenshot: (tabId, options) => screenshots.take(tabId, options),
     searchParamsOf,
+    serpVerdictOf,
     afterRun: (projectId) => afterRun(projectId),
     log,
   });

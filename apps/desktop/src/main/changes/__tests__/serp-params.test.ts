@@ -1,17 +1,21 @@
 // Spec: specs/serp-search-params.schema.ts (SearchParamsSchema), specs/serp-service.schema.ts (SerpState),
-// specs/projects.spec.ts (SavedSearchInput, SEARCH_PARAM_URL_RULES, searchLocaleFor, searchUrlFor)
-// Acceptance: specs/changes-capture.feature.md (Search parameters of a tab), specs/changes-diff.feature.md
+// specs/projects.spec.ts (SavedSearchInput, SEARCH_PARAM_URL_RULES, searchLocaleFor, searchUrlFor),
+// specs/rankings.spec.ts (SERP_RUN_VERDICTS), specs/serp-snapshot.schema.ts (SerpSnapshotSchema)
+// Acceptance: specs/changes-capture.feature.md (Search parameters of a tab; SERP reading), specs/changes-diff.feature.md
 // (Search parameters), specs/projects.feature.md (Saved searches)
 import { describe, expect, test } from 'vitest';
 import { SEARCH_ENGINE_IDS } from '@app/specs/browser-polish.spec';
 import { searchLocaleFor, searchUrlFor, type SavedSearchInput } from '@app/specs/projects.spec';
+import { SERP_RUN_VERDICTS, type SerpRunVerdict } from '@app/specs/rankings.spec';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import type { SerpState } from '@app/specs/serp-service.schema';
+import { SerpSnapshotSchema } from '@app/specs/serp-snapshot.schema';
 import { SelectorPackSchema } from '@app/specs/serp-selector-pack.schema';
 import { SERP_DEVICES } from '@app/specs/serp.spec';
 import { BUNDLED_PACK } from '../../serp/bundled';
 import { matchSerp } from '../../serp/engines';
-import { bundledPack, lateSearchParams, searchParamsForUrl, searchParamsOfState } from '../serp-params';
+import { bundledPack, lateSearchParams, searchParamsForUrl, searchParamsOfState, serpReadingOfState, serpVerdictOfState } from '../serp-params';
+import { readyReading } from './fakes';
 
 const PAGE = 'https://www.google.com/search?q=green+tea&gl=de&hl=de&ei=abc';
 const PARAMS: SearchParams = {
@@ -85,6 +89,95 @@ describe('search parameters of a tab', () => {
       },
     });
     expect(late.of(1, PAGE)).toBeNull();
+  });
+});
+
+/** Phase 3's states of tab `tabId` showing `url`, one per status, with a valid ready reading. */
+const states = (url = PAGE, tabId = 1) => {
+  const reading = readyReading(PARAMS);
+  return {
+    ready: { status: 'ready', tabId, documentSeq: 3, url, readAt: 1, snapshot: reading },
+    unreadable: { status: 'unreadable', tabId, documentSeq: 3, url, readAt: 1, reason: 'no-results', params: PARAMS, packVersion: 2 },
+    'not-serp': { status: 'not-serp', tabId, url },
+    pending: { status: 'pending', tabId, documentSeq: 3, url, params: PARAMS },
+    disabled: { status: 'disabled', tabId, reason: 'pack-invalid' },
+  } satisfies Record<SerpRunVerdict, SerpState>;
+};
+/** Garbage a read API might answer. */
+const GARBAGE: unknown[] = [null, undefined, 'ready', 42, [], {}, { status: 'ready' }, { status: 'ready', tabId: 1, url: 5 }, { status: 'other', tabId: 1, url: PAGE }];
+
+describe('the SERP reading of a tab', () => {
+  test('serp-reading-of-state', () => {
+    const all = states();
+    // A ready state of the same tab and page (stored form, fragment aside): its snapshot, as SerpSnapshotSchema parses it.
+    expect(serpReadingOfState(all.ready, 1, PAGE)).toEqual(SerpSnapshotSchema.parse(all.ready.snapshot));
+    expect(serpReadingOfState({ ...all.ready, url: `${PAGE}#frag` }, 1, PAGE)).toEqual(all.ready.snapshot);
+    // An unreadable state is rebuilt as a reading; without parameters it has no search key, so none.
+    expect(serpReadingOfState(all.unreadable, 1, PAGE)).toEqual({ status: 'unreadable', reason: 'no-results', params: PARAMS, packVersion: 2 });
+    expect(serpReadingOfState({ ...all.unreadable, params: null, packVersion: null }, 1, PAGE)).toBeNull();
+    // Nothing for the rest: pending, not-serp, disabled, another tab or page.
+    for (const state of [all.pending, all['not-serp'], all.disabled]) expect(serpReadingOfState(state, 1, PAGE), state.status).toBeNull();
+    expect(serpReadingOfState(all.ready, 2, PAGE)).toBeNull();
+    expect(serpReadingOfState(all.ready, 1, 'https://www.google.com/search?q=black+tea')).toBeNull();
+    expect(serpReadingOfState(states('about:blank').ready, 1, 'about:blank')).toBeNull();
+    // Anything that does not fit SerpSnapshotSchema.
+    const bad: unknown[] = [
+      ...GARBAGE,
+      ready(PARAMS),
+      { ...all.ready, snapshot: { ...all.ready.snapshot, results: [] } },
+      { ...all.ready, snapshot: { ...all.ready.snapshot, extra: 1 } },
+      { ...all.ready, snapshot: readyReading({ ...PARAMS, gl: 'DE' }) },
+      { ...all.unreadable, reason: 'gone' },
+      { ...all.unreadable, params: { ...PARAMS, page: 0 } },
+    ];
+    for (const state of bad) expect(serpReadingOfState(state, 1, PAGE), JSON.stringify(state)?.slice(0, 80)).toBeNull();
+
+    // Late bound: none until bound, then the API's answer for the tab and page; a throwing API is none.
+    const late = lateSearchParams();
+    expect(late.readingOf(1, PAGE)).toBeNull();
+    late.bind({ snapshot: (tabId: number) => states(PAGE, tabId).ready as SerpState });
+    expect(late.readingOf(1, PAGE)).toEqual(all.ready.snapshot);
+    expect(late.readingOf(1, 'https://example.com/')).toBeNull();
+    late.bind({
+      snapshot: () => {
+        throw new Error('gone');
+      },
+    });
+    expect(late.readingOf(1, PAGE)).toBeNull();
+  });
+
+  test('serp-verdict-of-state', () => {
+    expect(SERP_RUN_VERDICTS).toEqual(['ready', 'unreadable', 'not-serp', 'pending', 'disabled']);
+    // Each status maps to its verdict, for the same tab and stored page.
+    for (const [verdict, state] of Object.entries(states())) expect(serpVerdictOfState(state, 1, PAGE), verdict).toBe(verdict);
+    for (const [verdict, state] of Object.entries(states(`${PAGE}#frag`))) expect(serpVerdictOfState(state, 1, PAGE), verdict).toBe(verdict);
+    // Disabled has no page: SERP reading is off whatever the tab shows.
+    expect(serpVerdictOfState(states().disabled, 1, 'https://example.com/')).toBe('disabled');
+    // Another tab or page, a ready state whose reading does not fit, and garbage: pending, never null.
+    const other = [
+      ...Object.values(states(PAGE, 2)),
+      ...Object.values(states('https://www.google.com/search?q=black+tea')).filter((state) => state.status !== 'disabled'),
+      ready(PARAMS),
+      ...GARBAGE,
+    ];
+    for (const state of other) expect(serpVerdictOfState(state, 1, PAGE), JSON.stringify(state)?.slice(0, 80)).toBe('pending');
+    expect(serpVerdictOfState(states('about:blank').ready, 1, 'about:blank')).toBe('pending');
+
+    // Late bound: pending until bound, and when the API throws.
+    const late = lateSearchParams();
+    expect(late.verdictOf(1, PAGE)).toBe('pending');
+    let status: SerpRunVerdict = 'not-serp';
+    late.bind({ snapshot: (tabId: number) => states(PAGE, tabId)[status] as SerpState });
+    expect(late.verdictOf(1, PAGE)).toBe('not-serp');
+    status = 'ready';
+    expect(late.verdictOf(1, PAGE)).toBe('ready');
+    expect(late.verdictOf(1, 'https://example.com/')).toBe('pending');
+    late.bind({
+      snapshot: () => {
+        throw new Error('gone');
+      },
+    });
+    expect(late.verdictOf(1, PAGE)).toBe('pending');
   });
 });
 

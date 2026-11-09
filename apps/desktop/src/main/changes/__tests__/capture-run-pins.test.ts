@@ -88,7 +88,7 @@ describe('capture run over the real render profiles', () => {
       inEffect.push(controller.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile?.profile ?? null);
       return { status: 'captured', captureId: ID, versionId: ID, newVersion: true, changeCount: null };
     });
-    const runs = createCaptureRuns({ browser: runBrowser(), capture, screenshot: vi.fn(), uuidv7: () => ID, limits: { captureRetryMs: 10 } });
+    const runs = createCaptureRuns({ browser: runBrowser(), capture, screenshot: vi.fn(), uuidv7: () => ID, serpVerdictOf: () => 'ready', limits: { captureRetryMs: 10 } });
     const previous = controller.getState().activeTabId;
     expect(
       await runs.start({

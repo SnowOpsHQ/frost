@@ -24,6 +24,14 @@ import { SERP_DEVICE_LABELS, SERP_PARAM_LIMITS, type SerpDevice } from './serp.s
 // ---- The capture run ---------------------------------------------------------------------------
 
 /**
+ * How long a run's search target waits for Phase 3's reading of its landed result page (active time):
+ * Phase 3's read timeout (2 s), its analysis (2 s) and its in-page debounce, with margin (plan
+ * Decision 10; `rankings.spec.ts`, `SERP_RUN_VERDICTS`). Until Phase 10 Task 8 the target is captured
+ * after the wait whatever the verdict, as Phase 6 captured it.
+ */
+export const SERP_SETTLE_WAIT_MS = 8_000;
+
+/**
  * Limits of a capture run:
  * - `maxRunTargets`: the most targets one run visits, all pages first, then queries (a project can
  *   hold more: the rest are `omitted`, and the run says so);
@@ -36,7 +44,10 @@ import { SERP_DEVICE_LABELS, SERP_PARAM_LIMITS, type SerpDevice } from './serp.s
  * - `runStateWatchTimeoutMs`: how long one `projects.runState` long-poll waits for a change (the
  *   same as `browser.watch`'s `WATCH_TIMEOUT_MS`);
  * - `maxPendingRunWatches`: at most this many `runState` polls wait at once; one more answers the
- *   oldest early with the current state.
+ *   oldest early with the current state;
+ * - `serpSettleWaitMs`: how long a search target waits, once it has landed, while Phase 3's SERP
+ *   reading of the page is still `pending` (`SERP_SETTLE_WAIT_MS`); this wait counts toward the
+ *   target's `targetActiveTimeoutMs`.
  */
 export const PROJECT_RUN_LIMITS = {
   maxRunTargets: 70,
@@ -44,6 +55,7 @@ export const PROJECT_RUN_LIMITS = {
   captureRetryMs: 500,
   runStateWatchTimeoutMs: 25_000,
   maxPendingRunWatches: 4,
+  serpSettleWaitMs: SERP_SETTLE_WAIT_MS,
 } as const;
 export type ProjectRunLimits = { readonly [K in keyof typeof PROJECT_RUN_LIMITS]: number };
 
