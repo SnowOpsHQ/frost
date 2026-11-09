@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { TabState } from '@app/specs/browser.spec';
 import { PROJECT_NAME_MAX_CHARS, PROJECT_QUERY_MAX_CHARS } from '@app/specs/capture-db.spec';
 import {
   CAPTURE_RUN_NOTE,
   DELETED_NOT_PURGED,
   PROJECTS_TITLE,
+  PROJECT_VIEWS,
+  PROJECT_VIEW_LABELS,
   QUERY_FIELD_MAX_CHARS,
   RUN_TARGET_OUTCOME_LABELS,
   queryLabel,
   type ProjectDetail,
   type ProjectSummary,
+  type ProjectViewId,
   type RunState,
 } from '@app/specs/projects.spec';
 import { SERP_DEVICE_LABELS, SERP_DEVICES } from '@app/specs/serp.spec';
@@ -36,7 +39,10 @@ import {
   type QueryForm,
 } from '../../projects-view';
 import { isolatedTooltip } from '../../seo-view';
+import { tablistFocusTarget } from '../../tablist-keys';
+import { Compare } from './Compare';
 import { lastOpenedProject, notifyProjectsChanged, openProjects, setLastOpenedProject, useProjectsRequest } from './projects-sheet';
+import { Rankings } from './Rankings';
 import { Retention } from './Retention';
 
 // The Projects sheet (acceptance `projects.feature.md`, The sheet): over the page column like
@@ -46,7 +52,8 @@ import { Retention } from './Retention';
 // Cancel, and its retention and disk usage (`Retention.tsx`). While a run is under way the sheet
 // shrinks to a band (`data-running`), so the run's tab is shown (a viewport screenshot captures what
 // is on screen). Everything from the user or a page is React text in a `<bdi>`; no inline styles
-// (strict CSP).
+// (strict CSP). A project shows in one of its views (`PROJECT_VIEWS`, a tablist under its name):
+// Overview (all of the above), Rankings (`Rankings.tsx`) and Compare (`Compare.tsx`), Phase 10 Task 6.
 
 // The palette's Projects and retention actions (`projects-palette.ts`), once per module instance.
 const unregisterPaletteActions = registerPaletteActions(
@@ -218,16 +225,56 @@ function RunProgress({ run, onCancel }: { readonly run: RunState; readonly onCan
   );
 }
 
+/** The project's views as a tablist: real buttons, the selected one in the tab order, arrows move between them. */
+function ViewSwitch({ view, panelId, onView }: { readonly view: ProjectViewId; readonly panelId: string; readonly onView: (view: ProjectViewId) => void }) {
+  const buttons = useRef<(HTMLButtonElement | null)[]>([]);
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const target = tablistFocusTarget(event.key, index, PROJECT_VIEWS.length);
+    if (target === null) return;
+    event.preventDefault();
+    onView(PROJECT_VIEWS[target]!);
+    buttons.current[target]?.focus();
+  };
+  return (
+    <div className="projects-views" role="tablist" aria-label="Project views" data-testid="projects-views">
+      {PROJECT_VIEWS.map((id, index) => (
+        <button
+          key={id}
+          ref={(element) => {
+            buttons.current[index] = element;
+          }}
+          type="button"
+          role="tab"
+          id={`${panelId}-${id}`}
+          className="projects-view-tab"
+          data-testid={`projects-view-${id}`}
+          aria-selected={view === id}
+          aria-controls={panelId}
+          tabIndex={view === id ? 0 : -1}
+          onClick={() => onView(id)}
+          onKeyDown={(event) => onKeyDown(event, index)}
+        >
+          {PROJECT_VIEW_LABELS[id]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ProjectView({
   detail,
   run,
   tab,
+  view,
+  onView,
   onChanged,
   onDeleted,
   onOpenUrl,
   say,
 }: {
   readonly detail: NonNullable<ProjectDetail>;
+  readonly view: ProjectViewId;
+  readonly onView: (view: ProjectViewId) => void;
   readonly run: RunState | null;
   readonly tab: TabState | undefined;
   readonly onChanged: () => void;
@@ -294,9 +341,10 @@ function ProjectView({
   };
   const choice = profileChoiceOf(project.renderProfile);
   const canAddCurrent = tab !== undefined && isWebUrl(tab.url);
+  const panelId = useId();
 
   return (
-    <div className="projects-detail" data-testid="projects-detail" data-project={projectId}>
+    <div className="projects-detail" data-testid="projects-detail" data-project={projectId} data-view={view}>
       <header className="projects-detail-head">
         <h2 className="projects-detail-name" data-testid="projects-name">
           <Text value={project.name} />
@@ -308,126 +356,138 @@ function ProjectView({
         ) : null}
       </header>
 
-      <section className="projects-section projects-capture" aria-label="Capture now">
-        <div className="projects-capture-row">
-          <button type="button" className="panel-button panel-button-primary" data-testid="projects-capture" disabled={busy || pages.length + queries.length === 0} onClick={() => void capture()}>
-            <span>{mine && busy ? 'Capturing…' : 'Capture now'}</span>
-          </button>
-          <label className="projects-check">
-            <input type="checkbox" data-testid="projects-capture-screenshots" checked={screenshots} onChange={(event) => setScreenshots(event.target.checked)} />
-            <span>with viewport screenshots</span>
-          </label>
-          <label className="projects-field projects-profile">
-            <span>Render profile</span>
-            <select className="projects-select" data-testid="projects-profile" value={choice} onChange={(event) => setProfile(event.target.value)}>
-              {choice === 'custom' ? <option value="custom">Custom (set elsewhere)</option> : null}
-              {PROJECT_PROFILE_CHOICES.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <p className="projects-note" data-testid="projects-run-note">
-          {CAPTURE_RUN_NOTE}
-        </p>
-        {mine && run ? <RunProgress run={run} onCancel={() => void ipc.projects.cancelRun.mutate().catch(() => false)} /> : null}
-      </section>
+      <ViewSwitch view={view} panelId={panelId} onView={onView} />
 
-      <section className="projects-section" aria-labelledby="projects-pages-title">
-        <h3 className="projects-section-title" id="projects-pages-title">
-          Pages <span className="projects-count">{pages.length}</span>
-        </h3>
-        {pages.length === 0 ? <p className="projects-empty">No pages yet.</p> : null}
-        <ul className="projects-entries">
-          {pages.map((page) => (
-            <EntryRow
-              key={page.id}
-              testId="projects-page"
-              url={page.url}
-              label={page.url}
-              lastCapturedAt={page.lastCapturedAt}
-              changeCount={page.changeCount}
-              running={busy}
-              onOpen={() => onOpenUrl(page.url)}
-              onRemove={() => void change(ipc.projects.removePage.mutate({ projectId, pageId: page.id }).catch(() => null))}
-            />
-          ))}
-        </ul>
-        <form className="projects-add" onSubmit={(event) => void addPage(event)}>
-          <input className="projects-input" data-testid="projects-page-url" type="text" spellCheck={false} autoComplete="off" placeholder="https://example.com/page" aria-label="Page address" value={pageInput} onChange={(event) => setPageInput(event.target.value)} />
-          <button type="submit" className="projects-small-button" data-testid="projects-page-add">
-            <PlusIcon />
-            <span>Add page</span>
-          </button>
-          <button type="button" className="projects-small-button" data-testid="projects-page-add-current" disabled={!canAddCurrent} onClick={() => void addCurrent()}>
-            Add the current page
-          </button>
-        </form>
-      </section>
+      {/* The run's progress and Cancel, above whichever view is shown. */}
+      {mine && run ? <RunProgress run={run} onCancel={() => void ipc.projects.cancelRun.mutate().catch(() => false)} /> : null}
 
-      <section className="projects-section" aria-labelledby="projects-queries-title">
-        <h3 className="projects-section-title" id="projects-queries-title">
-          Search queries <span className="projects-count">{queries.length}</span>
-        </h3>
-        {queries.length === 0 ? <p className="projects-empty">No queries yet.</p> : null}
-        <ul className="projects-entries">
-          {queries.map((query) => (
-            <EntryRow
-              key={query.id}
-              testId="projects-query"
-              url={query.url}
-              label={queryLabel(query.params)}
-              lastCapturedAt={query.lastCapturedAt}
-              changeCount={query.changeCount}
-              running={busy}
-              onOpen={() => onOpenUrl(query.url)}
-              onRemove={() => void change(ipc.projects.removeSearch.mutate({ projectId, queryId: query.id }).catch(() => null))}
-            />
-          ))}
-        </ul>
-        <form className="projects-query-form" onSubmit={(event) => void addQuery(event)}>
-          <label className="projects-field projects-field-wide">
-            <span>Query</span>
-            <input className="projects-input" data-testid="projects-query-text" type="text" spellCheck={false} autoComplete="off" maxLength={PROJECT_QUERY_MAX_CHARS} {...field('query')} />
-          </label>
-          <label className="projects-field">
-            <span>Engine</span>
-            <select className="projects-select" data-testid="projects-query-engine" {...field('engine')}>
-              {QUERY_ENGINES.map((engine) => (
-                <option key={engine.id} value={engine.id}>
-                  {engine.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="projects-field projects-field-short">
-            <span>Country</span>
-            <input className="projects-input" data-testid="projects-query-country" type="text" spellCheck={false} autoComplete="off" placeholder="de" maxLength={2} {...field('country')} />
-          </label>
-          <label className="projects-field projects-field-short">
-            <span>Language</span>
-            <input className="projects-input" data-testid="projects-query-language" type="text" spellCheck={false} autoComplete="off" placeholder="en" maxLength={QUERY_FIELD_MAX_CHARS.language} {...field('language')} />
-          </label>
-          <label className="projects-field">
-            <span>Device</span>
-            <select className="projects-select" data-testid="projects-query-device" {...field('device')}>
-              {SERP_DEVICES.map((device) => (
-                <option key={device} value={device}>
-                  {SERP_DEVICE_LABELS[device]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="submit" className="projects-small-button" data-testid="projects-query-add">
-            <PlusIcon />
-            <span>Add query</span>
-          </button>
-        </form>
-      </section>
+      <div className="projects-view-panel" id={panelId} role="tabpanel" aria-labelledby={`${panelId}-${view}`} data-testid="projects-view-panel">
+        {view === 'rankings' ? <Rankings projectId={projectId} refreshKey={detail} busy={busy} onOpenUrl={onOpenUrl} say={say} /> : null}
+        {view === 'compare' ? <Compare projectId={projectId} refreshKey={detail} /> : null}
+        {view === 'overview' ? (
+          <>
+            <section className="projects-section projects-capture" aria-label="Capture now">
+              <div className="projects-capture-row">
+                <button type="button" className="panel-button panel-button-primary" data-testid="projects-capture" disabled={busy || pages.length + queries.length === 0} onClick={() => void capture()}>
+                  <span>{mine && busy ? 'Capturing…' : 'Capture now'}</span>
+                </button>
+                <label className="projects-check">
+                  <input type="checkbox" data-testid="projects-capture-screenshots" checked={screenshots} onChange={(event) => setScreenshots(event.target.checked)} />
+                  <span>with viewport screenshots</span>
+                </label>
+                <label className="projects-field projects-profile">
+                  <span>Render profile</span>
+                  <select className="projects-select" data-testid="projects-profile" value={choice} onChange={(event) => setProfile(event.target.value)}>
+                    {choice === 'custom' ? <option value="custom">Custom (set elsewhere)</option> : null}
+                    {PROJECT_PROFILE_CHOICES.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <p className="projects-note" data-testid="projects-run-note">
+                {CAPTURE_RUN_NOTE}
+              </p>
+            </section>
 
-      <Retention projectId={projectId} retention={project.retention} refreshKey={detail} busy={busy} say={say} onChanged={onChanged} />
+            <section className="projects-section" aria-labelledby="projects-pages-title">
+              <h3 className="projects-section-title" id="projects-pages-title">
+                Pages <span className="projects-count">{pages.length}</span>
+              </h3>
+              {pages.length === 0 ? <p className="projects-empty">No pages yet.</p> : null}
+              <ul className="projects-entries">
+                {pages.map((page) => (
+                  <EntryRow
+                    key={page.id}
+                    testId="projects-page"
+                    url={page.url}
+                    label={page.url}
+                    lastCapturedAt={page.lastCapturedAt}
+                    changeCount={page.changeCount}
+                    running={busy}
+                    onOpen={() => onOpenUrl(page.url)}
+                    onRemove={() => void change(ipc.projects.removePage.mutate({ projectId, pageId: page.id }).catch(() => null))}
+                  />
+                ))}
+              </ul>
+              <form className="projects-add" onSubmit={(event) => void addPage(event)}>
+                <input className="projects-input" data-testid="projects-page-url" type="text" spellCheck={false} autoComplete="off" placeholder="https://example.com/page" aria-label="Page address" value={pageInput} onChange={(event) => setPageInput(event.target.value)} />
+                <button type="submit" className="projects-small-button" data-testid="projects-page-add">
+                  <PlusIcon />
+                  <span>Add page</span>
+                </button>
+                <button type="button" className="projects-small-button" data-testid="projects-page-add-current" disabled={!canAddCurrent} onClick={() => void addCurrent()}>
+                  Add the current page
+                </button>
+              </form>
+            </section>
+
+            <section className="projects-section" aria-labelledby="projects-queries-title">
+              <h3 className="projects-section-title" id="projects-queries-title">
+                Search queries <span className="projects-count">{queries.length}</span>
+              </h3>
+              {queries.length === 0 ? <p className="projects-empty">No queries yet.</p> : null}
+              <ul className="projects-entries">
+                {queries.map((query) => (
+                  <EntryRow
+                    key={query.id}
+                    testId="projects-query"
+                    url={query.url}
+                    label={queryLabel(query.params)}
+                    lastCapturedAt={query.lastCapturedAt}
+                    changeCount={query.changeCount}
+                    running={busy}
+                    onOpen={() => onOpenUrl(query.url)}
+                    onRemove={() => void change(ipc.projects.removeSearch.mutate({ projectId, queryId: query.id }).catch(() => null))}
+                  />
+                ))}
+              </ul>
+              <form className="projects-query-form" onSubmit={(event) => void addQuery(event)}>
+                <label className="projects-field projects-field-wide">
+                  <span>Query</span>
+                  <input className="projects-input" data-testid="projects-query-text" type="text" spellCheck={false} autoComplete="off" maxLength={PROJECT_QUERY_MAX_CHARS} {...field('query')} />
+                </label>
+                <label className="projects-field">
+                  <span>Engine</span>
+                  <select className="projects-select" data-testid="projects-query-engine" {...field('engine')}>
+                    {QUERY_ENGINES.map((engine) => (
+                      <option key={engine.id} value={engine.id}>
+                        {engine.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="projects-field projects-field-short">
+                  <span>Country</span>
+                  <input className="projects-input" data-testid="projects-query-country" type="text" spellCheck={false} autoComplete="off" placeholder="de" maxLength={2} {...field('country')} />
+                </label>
+                <label className="projects-field projects-field-short">
+                  <span>Language</span>
+                  <input className="projects-input" data-testid="projects-query-language" type="text" spellCheck={false} autoComplete="off" placeholder="en" maxLength={QUERY_FIELD_MAX_CHARS.language} {...field('language')} />
+                </label>
+                <label className="projects-field">
+                  <span>Device</span>
+                  <select className="projects-select" data-testid="projects-query-device" {...field('device')}>
+                    {SERP_DEVICES.map((device) => (
+                      <option key={device} value={device}>
+                        {SERP_DEVICE_LABELS[device]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button type="submit" className="projects-small-button" data-testid="projects-query-add">
+                  <PlusIcon />
+                  <span>Add query</span>
+                </button>
+              </form>
+            </section>
+
+            <Retention projectId={projectId} retention={project.retention} refreshKey={detail} busy={busy} say={say} onChanged={onChanged} />
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -441,6 +501,7 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
   const [selected, setSelected] = useState<string | null>(request?.projectId ?? lastOpenedProject() ?? null);
   const [detail, setDetail] = useState<ProjectDetail | undefined>(undefined);
   const [addUrl, setAddUrl] = useState<string | null>(request?.addUrl ?? null);
+  const [view, setView] = useState<ProjectViewId>(request?.view ?? 'overview');
   const [newName, setNewName] = useState('');
   const [status, setStatus] = useState('');
   const sheet = useRef<HTMLElement>(null);
@@ -461,6 +522,7 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
   useEffect(() => {
     if (!request) return;
     if (request.projectId !== null) setSelected(request.projectId);
+    if (request.view !== null) setView(request.view);
     setAddUrl(request.addUrl);
   }, [request]);
   // Nothing chosen yet: the first project (Unfiled).
@@ -590,6 +652,8 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
                 detail={detail}
                 run={run}
                 tab={tab}
+                view={view}
+                onView={setView}
                 onChanged={reload}
                 onDeleted={() => {
                   // "Capture project now" no longer offers it.

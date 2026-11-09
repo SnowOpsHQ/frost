@@ -9,6 +9,7 @@ import type { RenderProfile } from '@app/specs/render-profile.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@app/ipc-contract';
 import type { SearchEngineId } from '@app/specs/browser-polish.spec';
+import type { CompareAnswer, CopyCsvAnswer, RankCsvKind, RankRange, RankSeriesAnswer, RankTableAnswer, ReadingDatesAnswer, SaveCsvAnswer } from '@app/specs/rankings.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
 // the user intents it sends. All browser state, and every SEO audit, lives in main. The chrome never
@@ -77,4 +78,18 @@ export const actions = {
   reopenClosedTab: () => ipc.history.reopenClosedTab.mutate().catch(() => null),
   showHistory: () => ipc.history.show.mutate().catch(ignore),
   setSearchEngine: (engine: SearchEngineId) => ipc.settings.setSearchEngine.mutate({ engine }).catch(() => false),
+};
+
+/**
+ * The Rankings and Compare views' procedures (`rankings.*`; acceptance `rankings.feature.md`, The
+ * views). Each resolves `null` on an IPC failure (the views say it as `store-failed`); none names a
+ * path: Save CSV… asks in main's own dialog.
+ */
+export const rankingsActions = {
+  table: (input: { projectId: string; range: RankRange; tag?: string }): Promise<RankTableAnswer | null> => ipc.rankings.table.query(input).catch(() => null),
+  series: (projectId: string, searchKey: string, range: RankRange): Promise<RankSeriesAnswer | null> => ipc.rankings.series.query({ projectId, searchKey, range }).catch(() => null),
+  readingDates: (projectId: string, searchKey: string): Promise<ReadingDatesAnswer | null> => ipc.rankings.readingDates.query({ projectId, searchKey }).catch(() => null),
+  compare: (projectId: string, a: string, b: string): Promise<CompareAnswer | null> => ipc.rankings.compare.query({ projectId, a, b }).catch(() => null),
+  copyCsv: (projectId: string, kind: RankCsvKind, range: RankRange, tag: string | null): Promise<CopyCsvAnswer> => ipc.rankings.copyCsv.mutate({ projectId, kind, range, ...(tag === null ? {} : { tag }) }).catch(() => null),
+  saveCsv: (projectId: string, kind: RankCsvKind, range: RankRange, tag: string | null): Promise<SaveCsvAnswer | null> => ipc.rankings.saveCsv.mutate({ projectId, kind, range, ...(tag === null ? {} : { tag }) }).catch(() => null),
 };

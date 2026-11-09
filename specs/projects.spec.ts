@@ -515,6 +515,20 @@ export type BulkAddAnswer = { status: 'done'; lines: BulkLineResult[] } | Projec
 
 export const PROJECTS_TITLE = 'Projects' as const;
 
+/**
+ * The views of one project in the sheet (Phase 10 Task 6; `projects.feature.md`, The sheet), in the
+ * switch's order: `overview` (pages, queries, Capture now, retention), `rankings` (the rank table and
+ * a search's series) and `compare` (two readings side by side). Task 7 adds Settings.
+ */
+export const PROJECT_VIEWS = ['overview', 'rankings', 'compare'] as const;
+export type ProjectViewId = (typeof PROJECT_VIEWS)[number];
+
+export const PROJECT_VIEW_LABELS: Readonly<Record<ProjectViewId, string>> = {
+  overview: 'Overview',
+  rankings: 'Rankings',
+  compare: 'Compare',
+};
+
 /** Said beside Capture now: what a run does, and what it may meet. */
 export const CAPTURE_RUN_NOTE =
   'frost visits each page in a tab of its own; search engines may show a consent page or a challenge, and that is what gets captured.' as const;

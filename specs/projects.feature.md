@@ -226,6 +226,17 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - The History sheet and this one never show together: opening one closes the other.
 - The page column gives way by `.page-column:has(> .projects-sheet)` (no attribute on `App.tsx`'s column).
 - Its retention and disk usage section is `retention.feature.md`'s (The project view).
+- **Views (Phase 10 Task 6).** One project shows in one of its views (`PROJECT_VIEWS`,
+  `PROJECT_VIEW_LABELS`): **Overview** (everything above: Capture now, pages, queries, retention),
+  **Rankings** (the rank table and a search's series) and **Compare** (two readings side by side), both
+  `rankings.feature.md`'s (The views); Task 7 adds **Settings**. The switch is a tablist of real buttons
+  under the project's name (`data-testid="projects-views"`, each `projects-view-<id>` with
+  `aria-selected`; Left/Right/Home/End move between them), and the shown view is a tabpanel
+  (`data-view` on `projects-detail`). It opens on Overview; the palette's "Open rankings" and
+  "Compare searches" open it on that view. While a run is under way the sheet stays the same band
+  (`data-running`) whatever the view, the run's progress and Cancel show above the view (whichever it
+  is), and nothing in a view opens a page (the run's tab is in front). Scenario
+  `projects-run-progress-on-every-view` (`renderer/__tests__/rankings-components.test.ts`).
 
 ## Changes panel
 - A project picker next to Capture now: it lists the projects, starts on the first project listing the
@@ -243,6 +254,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - "Open projects" opens the sheet; "Add this page to a project" (a web page in the tab) opens it asking
   which project; "Capture project now" (once a project was opened in the sheet this session) opens the
   sheet on it and starts its run (no screenshots). Deleting that project withdraws the action.
+- "Open rankings" and "Compare searches" (Phase 10 Task 6) open the sheet on the Rankings or Compare
+  view of the project last opened in the sheet (else the first project, Unfiled).
 
 ## Known limits
 - A search engine that redirects (a consent page on another URL) is captured at the URL it ended on;
@@ -319,7 +332,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - **Scenario: the sheet's helpers and palette** — Tests in
   `apps/desktop/src/renderer/__tests__/projects-view.test.ts`: `projects-view-profile-choice`,
   `projects-view-query-form`, `projects-view-page-input`, `projects-view-wording`,
-  `projects-view-picked-project`, `projects-view-default-capture-project`, `projects-palette-actions`;
+  `projects-view-picked-project`, `projects-view-default-capture-project`, `projects-palette-actions`
+  (with "Open rankings" and "Compare searches");
   `use-projects-sheet.test.ts` `projects-and-history-sheets-exclude-each-other`; and
   `palette-all-features.test.ts` `palette-features-register-together`.
 

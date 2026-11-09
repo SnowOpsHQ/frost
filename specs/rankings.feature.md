@@ -221,6 +221,69 @@ Spec: `rankings.spec.ts` (`RANKINGS_REFUSALS`, `RankTableAnswer`, `RankSeriesAns
   written, so any other failure leaves an existing file as it was. It answers `saved` with the line
   count; a write that fails is `write-failed` (one log line, never the path).
 
+## The views (Phase 10 Task 6)
+Spec: `rankings.spec.ts` (`RANK_TABLE_COLUMNS`, `RANK_RANGE_LABELS`, `DEFAULT_RANK_RANGE`,
+`RANK_VIEW_TEXT`, `COMPARE_MOVEMENT_LABELS`, `RANKINGS_REFUSAL_MESSAGES`, and the wording above) and
+`projects.spec.ts` (`PROJECT_VIEWS`). The Projects sheet's **Rankings** and **Compare** views
+(`projects.feature.md`, The sheet), over the page column (the SEO sidebar left and the agent right are
+unchanged). Pure view model: `apps/desktop/src/renderer/rankings-view.ts`; components:
+`components/changes/Rankings.tsx`, `Compare.tsx`; IPC wrappers: `renderer/ipc.ts` (`rankingsActions`).
+- **Untrusted text stays text.** Queries, titles, URLs and domains are React text (in a `<bdi>`), never
+  HTML; a URL is a tooltip through `isolatedTooltip`. The trend line is an inline SVG `<polyline>` whose
+  `points` are built from numbers only (the `ranked` points' positions and their indices), never from
+  a string of the reading.
+- **The table** (`rankings.table` with the view's range and tag): one row per tracked search (saved
+  searches first, as main answers), columns `RANK_TABLE_COLUMNS` (search, engine, locale, device,
+  filters, tags, position, change, best, trend, last checked), then one column per competitor (its
+  domain, its position on the latest reading). Position is `rankLabel(latest)` (`3`, `p2 · 3`, `> 10`,
+  `Unknown`, `Unreadable`, `No site set`, `No reading`); change is `changeLabel`; best is the best
+  position in range (`—` with none); last checked the latest reading's time (`Never`). A row whose
+  latest point is also in SERP features says so ("Also in …"). A row `capped` by main carries
+  `RANK_VIEW_TEXT.capped` as its hint (`data-capped`). `truncated` says `RANK_VIEW_TEXT.truncated`.
+- **Filters.** A range (`RANK_RANGES`, `RANK_RANGE_LABELS`, opening on `DEFAULT_RANK_RANGE`) and a tag
+  (`All searches`, then the project's tags as main answers them). A tag the project no longer has is
+  dropped from the request (all searches); the rows shown keep only searches carrying the tag. With a
+  tag and no row: `RANK_VIEW_TEXT.noTagged`.
+- **Empty states.** No site set (`site` `null`): "Set your site's domain to see its position". No row
+  with a reading: "No readings yet: capture a search or run Check rankings". Both may show.
+- **History note.** When the project keeps limited history (retention `versions` or `days`) the view
+  shows `rankHistoryNote(retention)`; with `forever` only `RANK_HISTORY_NOTE.profile` (positions are as
+  the signed-in browser profile sees them), always.
+- **Series.** Activating a row (its search button: click, Enter or Space) opens the series below the
+  table (`rankings.series`, the same range): one line per reading, newest first, with its date, its
+  position (`rankLabel`) and the URL of the site's result (inert text, or `—`), and "Also in …".
+  **Open this result page** loads the row's canonical search URL (`params.url`) in the active tab
+  through `browser.navigate` (the address bar's path and browse guards), only when it is `http(s)`,
+  closing the sheet; it is disabled while a run is under way. Nothing else in the views navigates.
+- **Export.** "Copy CSV" (`rankings.copyCsv`) and "Save CSV…" (`rankings.saveCsv`, main's own dialog)
+  export the view's range and tag, as the table (`table`) or every reading (`history`), chosen in an
+  Export select (`RANK_VIEW_TEXT.exportKinds`); the outcome goes to the sheet's status line
+  (`Copied n rows as CSV.`, `Nothing was copied.`, `Saved n rows as CSV.`, `Nothing was saved.`, or the
+  refusal's `RANKINGS_REFUSAL_MESSAGES`).
+- **Compare.** Two pickers, A (left) and B, each a search (the table's rows) and a date of it
+  (`rankings.readingDates`, newest first; an unreadable reading says so). They open on the first
+  search, A on its second-newest reading and B on its newest. "Compare" (`rankings.compare`) is
+  enabled with two different readings picked. The answer shows each side (search and date), the
+  site's own position on each side, the domains (`compareViewRows`: A's and B's positions, `—` when
+  absent, the movement `COMPARE_MOVEMENT_LABELS`, the site and competitors marked) and the SERP
+  features on each side. `truncated` says `RANK_VIEW_TEXT.compareTruncated`.
+- **Refusals.** A refused read shows `RANKINGS_REFUSAL_MESSAGES[reason]`; an IPC failure shows the
+  `store-failed` wording. Nothing throws into the sheet. In Compare a refused table read or dates read
+  says its own refusal (never "No readings yet"); a failed dates read clears that side's pick.
+- **Compare keeps its state across a refresh.** When the project is read again (a run captured), the
+  dates shown stay while they are read again, the picks stay while they are still among them, and the
+  result stays; picks reset only for a changed search or a failed read. One search on both sides is one
+  dates read. A comparison that answers after the picks changed is dropped.
+- **Focus.** Closing a search's series gives focus back to the row button it was opened from.
+- **Keyboard.** Every control is a real `<button>`, `<select>` or `<label>`ed input, in reading order;
+  the view switch is a tablist; the trend SVG is `role="img"` with an `aria-label` from numbers.
+- **Hooks** (e2e): `data-testid` `rankings-view`, `rankings-range`, `rankings-tag`, `rankings-row`
+  (`data-key`, `data-outcome`, `data-capped`), `rankings-row-open`, `rankings-trend`, `rankings-series`,
+  `rankings-series-point`, `rankings-open-result`, `rankings-export-kind`, `rankings-copy-csv`,
+  `rankings-save-csv`, `rankings-no-site`, `rankings-no-readings`, `rankings-history-note`;
+  `compare-view`, `compare-search-a`, `compare-date-a`, `compare-search-b`, `compare-date-b`,
+  `compare-run`, `compare-row` (`data-domain`, `data-movement`, `data-role`), `compare-feature`.
+
 ## Scenarios
 - **Scenario: rank-of-ready-reading** — a ready reading with an ad and a featured snippet for the site
   before its organic results at 4 and 7 answers `ranked` 4 with that result's URL, `organicRead` the
@@ -309,3 +372,32 @@ Spec: `rankings.spec.ts` (`RANKINGS_REFUSALS`, `RankTableAnswer`, `RankSeriesAns
 - **Scenario: compare-is-bounded** — readings with hundreds of organic domains answer at most
   `maxRows` rows with `truncated`, keeping the site's and competitors' rows; garbage never throws.
   (`compare.test.ts`)
+- **Scenario: rank-row-view** — a table row as the view shows it: each outcome's position label
+  (`rankLabel`, `> n` when not found), the change text and its direction, best (`—` with none),
+  locale, device, filters and tags, last checked (`Never`), competitors' positions in the project's
+  order, "Also in", the capped hint, and the openable URL (`http(s)` only).
+  (`apps/desktop/src/renderer/__tests__/rankings-view.test.ts`)
+- **Scenario: trend-points-from-numbers** — the trend's `points` come from the `ranked` points'
+  positions and indices only (digits, `.`, `,` and spaces, whatever the titles or URLs hold); best at
+  the top; a single position is a dot; a series with no position draws nothing; its label is numbers.
+  (`rankings-view.test.ts`)
+- **Scenario: range-and-tag-filter** — the request carries a known range (else
+  `DEFAULT_RANK_RANGE`) and a tag only while the project has it; the options list every range and
+  `All searches` then the tags; the rows shown keep only those carrying the tag. (`rankings-view.test.ts`)
+- **Scenario: history-note-follows-retention** — `versions` and `days` show `rankHistoryNote`,
+  `forever` only the profile note; the empty states follow `site` and the readings.
+  (`rankings-view.test.ts`)
+- **Scenario: compare-view-rows** — comparison rows with each side's position (`—` when absent), the
+  movement label (`Up 2`, `Down 1`, `Same`, `New`, `Gone`), roles; the feature rows; the side labels;
+  the date options and the default picks; the Compare button's readiness. (`rankings-view.test.ts`)
+- **Scenario: compare-shares-one-dates-read** — one search on both pickers reads its dates once (A the
+  second-newest, B the newest); another search on B reads its own.
+  (`apps/desktop/src/renderer/__tests__/rankings-components.test.ts`)
+- **Scenario: compare-keeps-picks-on-refresh** — a refresh keeps the dates, picks and result while it
+  reads, and keeps the picks still listed after. (`rankings-components.test.ts`)
+- **Scenario: compare-drops-a-stale-answer** — a comparison answering after a pick changed is not shown.
+  (`rankings-components.test.ts`)
+- **Scenario: compare-says-refusals** — a refused table read shows `RANKINGS_REFUSAL_MESSAGES[reason]`,
+  not the empty state; a refused dates read says so and Compare waits. (`rankings-components.test.ts`)
+- **Scenario: series-close-returns-focus** — closing the series focuses its row's button.
+  (`rankings-components.test.ts`)

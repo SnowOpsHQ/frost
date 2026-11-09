@@ -488,3 +488,68 @@ export const RANK_CSV_SAVE_DIALOG = {
   filterName: 'CSV file',
   extensions: ['csv'],
 } as const;
+
+// ---- The Rankings and Compare views (Phase 10 Task 6; acceptance `rankings.feature.md`, The views) ----
+
+/** A refusal as the views say it (frost's own words). */
+export const RANKINGS_REFUSAL_MESSAGES: Readonly<Record<RankingsRefusal, string>> = {
+  'not-found': 'That project no longer exists.',
+  'store-failed': 'The rankings could not be read. Try again.',
+  'write-failed': 'The file could not be written. Try another place.',
+};
+
+/** The range filter's options, in `RANK_RANGES` order. */
+export const RANK_RANGE_LABELS: Readonly<Record<RankRange, string>> = {
+  '7d': 'Last 7 days',
+  '30d': 'Last 30 days',
+  '90d': 'Last 90 days',
+  '365d': 'Last 12 months',
+  all: 'All readings',
+};
+
+/** The range the Rankings view opens on. */
+export const DEFAULT_RANK_RANGE: RankRange = '30d';
+
+/**
+ * The rank table's columns, in order (the view's header; one more per competitor, named by its
+ * domain, after them). Not the CSV's (`RANK_CSV_COLUMNS`).
+ */
+export const RANK_TABLE_COLUMNS = ['Search', 'Engine', 'Locale', 'Device', 'Filters', 'Tags', 'Position', 'Change', 'Best', 'Trend', 'Last checked'] as const;
+
+/** How a domain moved, as the Compare view says it (`{n}`: places). */
+export const COMPARE_MOVEMENT_LABELS: Readonly<Record<CompareMovement, string>> = {
+  up: 'Up {n}',
+  down: 'Down {n}',
+  same: 'Same',
+  new: 'New',
+  gone: 'Gone',
+};
+
+/** The Rankings and Compare views' own wording. */
+export const RANK_VIEW_TEXT = {
+  noSite: "Set your site's domain to see its position",
+  noReadings: 'No readings yet: capture a search or run Check rankings',
+  noTagged: 'No saved search carries this tag.',
+  truncated: `Showing the first ${RANK_LIMITS.maxRows} searches.`,
+  capped: 'Trend and best cover only the newest readings of this search.',
+  allTags: 'All searches',
+  noReading: 'Never',
+  openResultPage: 'Open this result page',
+  seriesEmpty: 'No readings of this search in this range.',
+  alsoIn: 'Also in',
+  copied: 'Copied {n} rows as CSV.',
+  notCopied: 'Nothing was copied.',
+  saved: 'Saved {n} rows as CSV.',
+  saveCancelled: 'Nothing was saved.',
+  exportKinds: { table: 'The table as shown', history: 'Every reading' },
+  compareNeedsTwo: 'Choose a search and a date on each side.',
+  compareNoDates: 'This search has no readings yet.',
+  compareSame: 'Choose two different readings.',
+  compareTruncated: `Showing the first ${RANK_LIMITS.maxRows} domains; your site and competitors are always listed.`,
+  unreadableDate: 'unreadable',
+  siteRole: 'Your site',
+  competitorRole: 'Competitor',
+  present: 'Yes',
+  absent: 'No',
+  none: '—',
+} as const;

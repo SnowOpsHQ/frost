@@ -69,5 +69,9 @@ describe('palette actions of every feature', () => {
     const shown = registry.resolve(ctx).map((action) => action.id);
     for (const prefix of ['javascript.', 'devtools.', 'checks.', 'panel.javascript']) expect(shown.some((id) => id.startsWith(prefix)), prefix).toBe(true);
     expect(shown.some((id) => /find|history|reopen|search/.test(id))).toBe(true);
+    // Phase 10 Task 6 (rankings.feature.md, The views): the Rankings and Compare views.
+    const labels = registry.resolve(ctx).map((action) => action.label);
+    expect(labels).toContain('Open rankings');
+    expect(labels).toContain('Compare searches');
   });
 });

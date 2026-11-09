@@ -145,13 +145,26 @@ describe('projects view', () => {
     registry.register(...projectsPaletteSources(api));
     const ctx = (active: TabState | undefined): PaletteContext => ({ state: null, tab: active, audit: null, sidebarOpen: false, chrome: { openPanel: vi.fn(), setSidebarOpen: vi.fn() } });
     const ids = (active: TabState | undefined) => registry.resolve(ctx(active)).map((action) => action.id);
-    // Open projects always; add this page with a web page; capture now once a project was opened.
-    expect(ids(undefined)).toEqual(['projects.open']);
-    expect(ids(tab({ url: 'app://frost/newtab' }))).toEqual(['projects.open']);
-    expect(ids(tab())).toEqual(['projects.open', 'projects.add-page']);
-    api.lastProject.mockReturnValue(P1);
-    expect(ids(tab())).toEqual(['projects.open', 'projects.add-page', 'projects.capture-now']);
+    // Open projects, rankings and compare always; add this page with a web page; capture now once a project was opened.
+    const always = ['projects.open', 'projects.open-rankings', 'projects.compare'];
+    expect(ids(undefined)).toEqual(always);
+    expect(ids(tab({ url: 'app://frost/newtab' }))).toEqual(always);
+    expect(ids(tab())).toEqual([...always, 'projects.add-page']);
+    const labels = registry.resolve(ctx(tab())).map((action) => action.label);
+    expect(labels).toContain('Open rankings');
+    expect(labels).toContain('Compare searches');
     const action = (id: string) => registry.resolve(ctx(tab())).find((a) => a.id === id)!;
+    // Spec: projects.feature.md, Command palette — the last project opened, else the sheet's first.
+    await action('projects.open-rankings').run(ctx(tab()));
+    expect(api.open).toHaveBeenLastCalledWith({ view: 'rankings' });
+    await action('projects.compare').run(ctx(tab()));
+    expect(api.open).toHaveBeenLastCalledWith({ view: 'compare' });
+    api.lastProject.mockReturnValue(P1);
+    expect(ids(tab())).toEqual([...always, 'projects.add-page', 'projects.capture-now']);
+    await action('projects.open-rankings').run(ctx(tab()));
+    expect(api.open).toHaveBeenLastCalledWith({ projectId: P1, view: 'rankings' });
+    await action('projects.compare').run(ctx(tab()));
+    expect(api.open).toHaveBeenLastCalledWith({ projectId: P1, view: 'compare' });
     await action('projects.open').run(ctx(tab()));
     expect(api.open).toHaveBeenLastCalledWith();
     await action('projects.add-page').run(ctx(tab()));

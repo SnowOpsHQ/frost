@@ -1,4 +1,4 @@
-import type { StartRunAnswer } from '@app/specs/projects.spec';
+import type { ProjectViewId, StartRunAnswer } from '@app/specs/projects.spec';
 import type { CompactAnswer, PurgeNowAnswer } from '@app/specs/retention.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { pageUrlOf } from './changes-view';
@@ -6,14 +6,15 @@ import type { PaletteSource } from './palette/registry';
 import { compactText, purgeNowText, startRunText } from './projects-view';
 
 // Projects in the command palette (spec `projects.feature.md`, Command palette): "Open projects",
-// "Add this page to a project" (the sheet, asking which project) and "Capture project now" (the
-// project last opened in the sheet: main's `projects.startRun`). Registered from
+// "Open rankings" and "Compare searches" (the sheet on that view of the project last opened, Phase 10
+// Task 6), "Add this page to a project" (the sheet, asking which project) and "Capture project now"
+// (the project last opened in the sheet: main's `projects.startRun`). Registered from
 // `components/changes/Projects.tsx`; pure (the sheet and the procedure are injected) so availability
 // is unit tested.
 
 export interface ProjectsPaletteApi {
-  /** Opens the Projects sheet (on a project, or to add a page to one). */
-  open(request?: { readonly projectId?: string; readonly addUrl?: string }): void;
+  /** Opens the Projects sheet (on a project and one of its views, or to add a page to one). */
+  open(request?: { readonly projectId?: string; readonly addUrl?: string; readonly view?: ProjectViewId }): void;
   /** The project last opened in the sheet (`undefined`: none this session). */
   lastProject(): string | undefined;
   /** `projects.startRun` (without screenshots); `null` on an IPC failure. */
@@ -21,6 +22,12 @@ export interface ProjectsPaletteApi {
 }
 
 const KEYWORDS = ['projects', 'project', 'track', 'monitor', 'pages', 'queries', 'changes'];
+
+/** Opens the sheet on `view` of the project last opened (else the sheet's first project). */
+function openView(api: ProjectsPaletteApi, view: ProjectViewId): void {
+  const projectId = api.lastProject();
+  api.open(projectId === undefined ? { view } : { projectId, view });
+}
 
 /** The palette's Projects actions, calling `api`. */
 export function projectsPaletteSources(api: ProjectsPaletteApi): PaletteSource[] {
@@ -33,6 +40,24 @@ export function projectsPaletteSources(api: ProjectsPaletteApi): PaletteSource[]
       icon: 'panel-changes',
       focus: 'handler',
       run: () => api.open(),
+    },
+    {
+      id: 'projects.open-rankings',
+      label: 'Open rankings',
+      group: 'browser',
+      keywords: [...KEYWORDS, 'rankings', 'rank', 'ranks', 'positions', 'position', 'serp', 'tracking', 'keywords'],
+      icon: 'panel-changes',
+      focus: 'handler',
+      run: () => openView(api, 'rankings'),
+    },
+    {
+      id: 'projects.compare',
+      label: 'Compare searches',
+      group: 'browser',
+      keywords: [...KEYWORDS, 'compare', 'comparison', 'diff', 'serp', 'rankings', 'dates', 'side'],
+      icon: 'panel-changes',
+      focus: 'handler',
+      run: () => openView(api, 'compare'),
     },
     {
       id: 'projects.add-page',
